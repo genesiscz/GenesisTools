@@ -2103,17 +2103,20 @@ export function TimeSeries({
                 panel.series.map((sf) => {
                     const s = sf.s;
                     let v: number | null = null;
+                    // The time of the point a nearest-point series snapped to; null for a value read at t itself.
+                    let at: number | null = null;
 
                     if (sf.kind === "step" || (sf.stacked && sf.kind === "area")) {
                         v = valueAt(s.points, t);
                     } else {
                         const i = nearestIndex(s.points, t, msPerPx * 40);
                         v = i >= 0 ? s.points[i][1] : null;
+                        at = i >= 0 ? s.points[i][0] : null;
                     }
 
                     const fmt = units?.[s.unit ?? ""]?.format ?? formatForUnit(s.unit);
 
-                    return { s, color: sf.color, v, text: v === null ? "no data" : fmt(v) };
+                    return { s, color: sf.color, v, at, text: v === null ? "no data" : fmt(v) };
                 })
             );
 
@@ -2209,19 +2212,31 @@ export function TimeSeries({
         );
     };
 
+    const displayedTime = (t: number, rows: ReturnType<typeof seriesRows>) => {
+        // A shared snapped point names the time; mixed points and step values use the pointer.
+        const snapped = new Set(rows.filter((r) => r.v !== null).map((r) => r.at));
+        const first = snapped.values().next().value;
+        return snapped.size === 1 && first != null ? first : t;
+    };
+
     const timeBody = (t: number, scope: string | null) => {
         const rows = seriesRows(t, scope);
         const pinT = pin?.kind === "time" && hover?.region === "panel" ? pin.t : null;
         const pinRows = pinT !== null ? seriesRows(pinT, scope) : null;
         const mi = nearestMarker(t);
+        const shownT = displayedTime(t, rows);
+        const shownPinT =
+            pinT !== null && pin?.kind === "time" ? displayedTime(pinT, seriesRows(pinT, pin.panel)) : null;
 
         return (
             <div>
                 <div className="mb-1 flex items-baseline justify-between gap-3">
-                    <span className="font-mono text-[0.72rem] text-ink">{formatTime(t, timeZone, "full")}</span>
-                    {pinT !== null && Math.abs(pinT - t) > msPerPx ? (
+                    <span className="whitespace-nowrap font-mono text-[0.72rem] text-ink">
+                        {formatTime(shownT, timeZone, "full")}
+                    </span>
+                    {shownPinT !== null && Math.abs(shownPinT - shownT) > msPerPx ? (
                         <span className="font-mono text-[0.7rem] text-accent">
-                            {formatDurationShort(t - pinT)} from pin
+                            {formatDurationShort(shownT - shownPinT)} from pin
                         </span>
                     ) : null}
                 </div>
@@ -2240,9 +2255,9 @@ export function TimeSeries({
                                             <span className="text-dim">{r.s.label}</span>
                                         </span>
                                     </td>
-                                    <td className="py-px text-right font-mono text-ink">{r.text}</td>
+                                    <td className="whitespace-nowrap py-px text-right font-mono text-ink">{r.text}</td>
                                     {pinRows ? (
-                                        <td className="py-px pl-2 text-right font-mono text-[0.7rem] text-accent">
+                                        <td className="whitespace-nowrap py-px pl-2 text-right font-mono text-[0.7rem] text-accent">
                                             {delta === null || delta === 0
                                                 ? ""
                                                 : `${delta > 0 ? "+" : "-"}${fmt(Math.abs(delta))}`}

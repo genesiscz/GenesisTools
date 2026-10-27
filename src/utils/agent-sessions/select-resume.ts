@@ -1,10 +1,20 @@
+import { basename } from "node:path";
 import * as p from "@clack/prompts";
+import type { RunningCmuxSession } from "@genesiscz/utils/ai/active-sessions";
 import { isInteractive } from "@genesiscz/utils/cli";
+import { env } from "@genesiscz/utils/env";
 import { logger } from "@genesiscz/utils/logger";
 import { canonicalPath } from "@genesiscz/utils/paths";
+import { readProcessRow } from "@genesiscz/utils/process/libproc-table";
+import { isProcessAlive } from "@genesiscz/utils/process-alive";
 import { profiler } from "@genesiscz/utils/profile";
-import { tableSelect } from "@genesiscz/utils/prompts/clack/table-select";
-import { buildSessionTableOpts, printAmbiguousSessions, toSessionDisplay } from "./session-display";
+import { type TableSelectOptions, tableSelect } from "@genesiscz/utils/prompts/clack/table-select";
+import {
+    buildResumeTableOpts,
+    printAmbiguousSessions,
+    type SessionDisplayItem,
+    toSessionDisplay,
+} from "./session-display";
 import type { AgentSearchFilters, AgentSession, AgentSessionAdapter } from "./types";
 
 /**
@@ -111,7 +121,22 @@ interface SelectResumeOptions {
     interactive?: boolean;
     /** Explicit native IDs prefer the selected launch home over retained source backups. */
     preferredHome?: string;
+    /**
+     * This agent's sessions that run in a cmux tab now. The picker puts the matching ones on top, and a pick there
+     * focuses that tab instead of resuming a second copy. Read only for an interactive pick, and started beside the
+     * history search: the process scan and the cmux tree cost about 2 s, which the search mostly hides.
+     */
+    running?: () => Promise<RunningCmuxSession[]>;
+    /** Whether a scanned session still runs in another tab, asked again as the picker opens. Only tests replace it. */
+    stillRunning?: (entry: RunningCmuxSession) => boolean;
+    /** The table picker. Only tests replace it. */
+    pick?: <T>(opts: TableSelectOptions<T>) => Promise<T | null>;
 }
+
+/** What the resume picker decided: resume a session from history, or focus the tab where it already runs. */
+export type ResumeChoice =
+    | { action: "resume"; session: AgentSession }
+    | { action: "focus"; running: RunningCmuxSession };
 
 /**
  * Resolve within one provider; native ID, metadata, then transcript content.
@@ -122,16 +147,101 @@ interface SelectResumeOptions {
  * in a short terminal, the spinner frame sits inside the rows, the picker erases the wrong lines
  * and looks stuck. Only this function knows the moment the search ends and the picker begins.
  */
-export async function selectResumeSession(options: SelectResumeOptions): Promise<AgentSession | undefined> {
+export async function chooseResume(options: SelectResumeOptions): Promise<ResumeChoice | undefined> {
     const interactive = options.interactive ?? isInteractive();
     const spinner = interactive ? searchSpinner(options.adapter.kind) : undefined;
+    const running = interactive && options.running ? readRunning(options.adapter.kind, options.running) : undefined;
 
     try {
-        return (await resolveResumeSession(options, interactive, spinner)).session;
+        return await resolveResume(options, interactive, spinner, running);
     } catch (error) {
         spinner?.stop("History search failed");
         throw error;
     }
+}
+
+/** {@link chooseResume} for a caller that only resumes: with no running sessions, every choice is a resume. */
+export async function selectResumeSession(
+    options: Omit<SelectResumeOptions, "running">
+): Promise<AgentSession | undefined> {
+    const choice = await chooseResume(options);
+
+    return choice?.action === "resume" ? choice.session : undefined;
+}
+
+/**
+ * The scan starts beside the history search, seconds before the picker opens. A session that quit since, or one in
+ * this very tab (which now runs this command), has no tab to focus: on 2026-10-27 a session quit and resumed in the
+ * same tab was offered as "1 running in cmux".
+ */
+export function runsElsewhere(
+    entry: RunningCmuxSession,
+    here = env.device.getCmuxSurfaceId(),
+    state: (pid: number) => string | null = processState
+): boolean {
+    // The cmux tree reports surface UUIDs in lower case, CMUX_SURFACE_ID in upper case (2026-10-27).
+    if (here && entry.surfaceId.toLowerCase() === here.toLowerCase()) {
+        return false;
+    }
+
+    // A job stopped with Ctrl-Z (state T) is no session to focus: its tab shows the shell again.
+    return isProcessAlive(entry.pid) && !state(entry.pid)?.startsWith("T");
+}
+
+/** The kernel's state letter of one pid (S live, T stopped, Z zombie), or null when it cannot be read. */
+function processState(pid: number): string | null {
+    return readProcessRow(pid)?.state ?? null;
+}
+
+/** The running sessions are an offer on top of the resume, never a reason it fails. */
+async function readRunning(kind: string, load: () => Promise<RunningCmuxSession[]>): Promise<RunningCmuxSession[]> {
+    try {
+        return await profiler.scope("agent-sessions").measureAsync(`resume.running.${kind}`, load);
+    } catch (error) {
+        logger.debug({ error, kind }, "[agent-sessions] running cmux sessions unavailable; offering history only");
+        return [];
+    }
+}
+
+/**
+ * The running sessions the picker offers for this query: those whose name holds it, or whose id starts with it.
+ * Only what the user NAMED goes on top. A running session that only mentions the query in its transcript keeps
+ * its history row, and that row's detail says where it runs (a query of "native" hit 9 running sessions through
+ * hook output alone, 2026-10-27). A named one is offered even outside the project scope or past the match limit:
+ * focusing it is cheaper than resuming a second copy.
+ */
+export function runningResumeHits(running: RunningCmuxSession[], query: string): RunningCmuxSession[] {
+    const needle = query.trim().toLowerCase();
+
+    if (!needle) {
+        return [];
+    }
+
+    return running.filter(
+        (entry) =>
+            (entry.title ?? "").toLowerCase().includes(needle) || entry.sessionId.toLowerCase().startsWith(needle)
+    );
+}
+
+/** A running session's row: its history row when the index has it, else what the process scan knows. */
+function runningDisplay(entry: RunningCmuxSession, known: AgentSession[]): SessionDisplayItem {
+    const session = known.find((candidate) => candidate.sessionId === entry.sessionId);
+
+    if (session) {
+        return toSessionDisplay(session);
+    }
+
+    return {
+        sessionId: entry.sessionId,
+        name: entry.title ?? "(unnamed)",
+        summary: "",
+        branch: "",
+        project: entry.cwd ?? "",
+        ...(entry.cwd ? { projectName: basename(entry.cwd), cwd: entry.cwd } : {}),
+        modified: new Date().toISOString(),
+        source: "cache",
+        firstPrompt: "",
+    };
 }
 
 interface SearchSpinner {
@@ -156,11 +266,12 @@ function searchSpinner(kind: string): SearchSpinner {
     };
 }
 
-async function resolveResumeSession(
+async function resolveResume(
     options: SelectResumeOptions,
     interactive: boolean,
-    spinner: SearchSpinner | undefined
-): Promise<{ session: AgentSession | undefined }> {
+    spinner: SearchSpinner | undefined,
+    runningScan: Promise<RunningCmuxSession[]> | undefined
+): Promise<ResumeChoice | undefined> {
     const { adapter, query, filters = {} } = options;
     const DEFAULT_RESUME_MATCHES = 20;
     const trimmed = query.trim();
@@ -216,19 +327,25 @@ async function resolveResumeSession(
         matches = dedupeSessions([...matches, ...hits.filter((session) => session.kind === adapter.kind)]);
     }
 
-    if (!matches.length) {
+    matches = preferHomeCopies(matches, options.preferredHome);
+    const allRunning = ((await runningScan) ?? []).filter(options.stillRunning ?? ((entry) => runsElsewhere(entry)));
+    const running = runningResumeHits(allRunning, trimmed);
+
+    if (!matches.length && !running.length) {
         throw new Error(`No ${adapter.kind} session matches "${query}" in this project scope`);
     }
-    matches = preferHomeCopies(matches, options.preferredHome);
-    if (matches.length === 1) {
+    // A lone match is resumed without asking, unless it already runs: then the picker offers its tab first.
+    if (matches.length === 1 && !running.length) {
         spinner?.stop("1 matching session");
-        return { session: matches[0] };
+        return { action: "resume", session: matches[0] };
     }
     // Claude's resume has always printed the candidates before refusing, and the shared path
     // named only the count. A count tells the user the query was too broad and nothing about
     // which query would be narrow enough, so both doors now print the table first.
     const candidates = matches.map(toSessionDisplay);
-    spinner?.stop(`${matches.length} matching sessions`);
+    spinner?.stop(
+        `${matches.length} matching session${matches.length === 1 ? "" : "s"}${running.length ? `, ${running.length} running in cmux` : ""}`
+    );
 
     if (!interactive) {
         printAmbiguousSessions(candidates);
@@ -239,9 +356,26 @@ async function resolveResumeSession(
 
     // The same column-aligned picker Claude uses, not a one-line `p.select`: the rows differ by
     // project, branch and age, and a label plus a hint only shows the hint for the focused row.
-    const picked = await tableSelect(
-        buildSessionTableOpts(candidates, { message: `Resume which ${adapter.kind} session?`, query })
+    const picked = await (options.pick ?? tableSelect)(
+        buildResumeTableOpts({
+            running: running.map((entry) => ({
+                running: entry,
+                display: runningDisplay(entry, [...matches, ...sessions]),
+            })),
+            history: candidates,
+            elsewhere: allRunning,
+            message: `Resume which ${adapter.kind} session?`,
+            query,
+        })
     );
 
-    return { session: picked ? matches[candidates.indexOf(picked)] : undefined };
+    if (!picked) {
+        return undefined;
+    }
+
+    if (picked.action === "focus") {
+        return { action: "focus", running: picked.running };
+    }
+
+    return { action: "resume", session: matches[candidates.indexOf(picked.display)] };
 }

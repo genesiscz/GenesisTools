@@ -127,6 +127,11 @@ describe("resolveCodexEffort", () => {
             effort: "xhigh",
             mappedFrom: "ultra",
         });
+        expect(resolveCodexEffort(model("gpt-6.1-terra"), "ultra")).toEqual({
+            ok: true,
+            effort: "xhigh",
+            mappedFrom: "ultra",
+        });
         expect(resolveCodexEffort(model("gpt-6-sol"), "ultra")).toEqual({
             ok: true,
             effort: "max",

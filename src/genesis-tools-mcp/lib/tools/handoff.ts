@@ -21,6 +21,7 @@ export interface HandoffPostArgs {
     tasks: HandoffTaskInput[];
     target?: HandoffTarget;
     refs?: string[];
+    project?: string;
 }
 
 export interface HandoffGetArgs {
@@ -145,7 +146,10 @@ export const HANDOFF_POST_DESCRIPTION =
     "{sessionId|sessionName|agent}, refs, and name. target.agent names the INTENDED RECIPIENT harness " +
     "(claude | codex | grok | copilot) — a session on another harness gets a warning telling it not to work " +
     "the handoff; it never says who wrote it (that is postedBy). name is a readable slug the receiver can " +
-    "fetch by (handoff_get { name }); omit it and it is derived from the title. Returns the handoff with " +
+    "fetch by (handoff_get { name }); omit it and it is derived from the title. project files the handoff " +
+    'under the project it is FOR — a project name ("acme-tools") or a repository path (resolved to its ' +
+    "project); omit it and the project of your working folder is used. Pass it whenever you write the " +
+    "handoff for another project; postedByContext still records your real folder. Returns the handoff with " +
     "final task ids, an editId (edit credential for other sessions — your own session edits without it), and " +
     "a `paste` block: paste it into the receiving agent's chat. To change anything later, call handoff_action.";
 
@@ -193,7 +197,8 @@ export const HANDOFF_ACTION_DESCRIPTION =
     "deny_task {taskId, reason}, undeny_task {taskId}, comment {text}, finish_handoff (rejected unless every " +
     "task is checked or denied — force: true overrides; undo via reopen_handoff). Poster verbs (from the " +
     "posting session, or with editId): add_tasks {tasks:[…]}, modify_task {taskId, text?, acceptanceCriteria?}, " +
-    "modify_handoff {title?, name?, description?, target?, refs?}, deny_task, undeny_task, check_task, comment, " +
+    "modify_handoff {title?, name?, description?, target?, refs?, project?} (project moves the handoff to " +
+    "another project: a name or a repository path; the move is kept in its events as fromProject → project), deny_task, undeny_task, check_task, comment, " +
     "cancel_handoff, reopen_handoff (undoes finish OR cancel; also allowed for the claimer whose own finish " +
     "closed it). attach_file {path, taskId?, note?} attaches a local file (screenshot, log) to the handoff or " +
     "a task. Common short forms are accepted as aliases (done/finish→finish_handoff, check→check_task, " +
@@ -256,6 +261,11 @@ export const HANDOFF_POST_INPUT_SCHEMA = {
             type: "array",
             items: { type: "string" },
             description: "file paths / PR / board URLs the worker will need",
+        },
+        project: {
+            type: "string",
+            description:
+                "the project this handoff is FOR: a project name (e.g. acme-tools) or a repository path, resolved to its project (a worktree names its main checkout). Wins over your working folder; default: the project of your working folder",
         },
     },
     required: ["title", "tasks"],
@@ -426,6 +436,11 @@ export const HANDOFF_ACTION_INPUT_SCHEMA = {
                                 type: "array",
                                 items: { type: "string" },
                                 description: "modify_handoff: replacement refs list",
+                            },
+                            project: {
+                                type: "string",
+                                description:
+                                    "modify_handoff: move the handoff to this project — a project name or a repository path (resolved to its project). The event records fromProject and project",
                             },
                         },
                         required: ["action"],

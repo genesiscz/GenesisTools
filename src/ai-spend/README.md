@@ -60,6 +60,9 @@ and Fast doubling.
 `gpt-6.1-sol` (released 2026-09-29, verified 2026-09-30) keeps GPT-6 Sol's shape and
 list price but halves cached input: $2/$0.10/$2.50/$10, $4/$0.20/$5/$15 above 272K.
 
+`gpt-6.1-terra` (released 2026-10-26, verified 2026-10-27) is half of 6.1 Sol on every
+field: $1/$0.05/$1.25/$5, $2/$0.10/$2.50/$7.50 above 272K, and Fast doubling.
+
 Tier changes are read from `thread_settings_applied.thread_settings` and explicit
 `turn_context` fields, and survive incremental parser resumes.
 Recorded `service_tier: priority` and `fast` select Fast rates. Missing tiers use

@@ -30,6 +30,15 @@ function lastLine(screen: string): string {
     return lines.at(-1)?.trim() ?? "";
 }
 
+/**
+ * The `tools` argv that scrolls a live Claude session to where DECISION `number` was first asked: what a decision link
+ * runs through `tools hub widget show-decision` when no widget is running. `at` is the link's position ("oldest",
+ * "newest"), empty for the default.
+ */
+export function decisionFindArgv({ session, number, at }: { session: string; number: string; at?: string }): string[] {
+    return ["claude", "cmux", "find", "--decision", number, `--at=${at ?? ""}`, "--", session];
+}
+
 export function inTranscript(screen: string): boolean {
     return lastLine(screen).includes(TRANSCRIPT_BANNER) || /n\/N to navigate/.test(lastLine(screen));
 }

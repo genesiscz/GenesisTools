@@ -206,6 +206,14 @@ browser): `.claude/work/research/2026-08-26-CdpNativeHarExport.md`.
   (the launch chain carries the same argv — a field test caught doctor suggesting exactly
   that kill before this guard existed). Kills are never batched: `--yes` applies only the
   safe fixes. Files are MOVED to a /tmp trash dir, never destroyed in place.
+- `resume [--match X] [--workers] [--debugger] [--timeout-ms 5000]` — releases tabs a debugger
+  client left held. Browser-level `Target.setAutoAttach` makes Chrome hold every `window.open()`
+  popup until `Runtime.runIfWaitingForDebugger`; the popup stays blank and its opener shows
+  "Debugger paused in another tab", even after that client is gone. One line per target
+  (`released`, `ok`, `debugger-resumed`, `timeout <step>`, `error <msg>`), `--json` for records,
+  exit 1 when a target timed out. Sends only resume commands (no evaluate, no Network/Page, no new
+  tabs), so it is safe on a browser with a live session. `doctor` lists blank pages with an opener
+  as "possibly held popup" and suggests it.
 
 ## Performance and app state
 

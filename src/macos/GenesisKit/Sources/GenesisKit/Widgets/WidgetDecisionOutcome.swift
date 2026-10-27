@@ -18,7 +18,7 @@ struct WidgetDecisionOutcome: View {
                     HStack(alignment: .top, spacing: 6) {
                         Image(systemName: "arrow.uturn.right").font(.system(size: 10.5, weight: .semibold))
                             .padding(.top, 2)
-                        Text("Superseded by DECISION \(replacement.number)" + (replacement.title.map { ": " + $0 } ?? ""))
+                        Text("Superseded by " + WidgetWords.decision(replacement.number) + (replacement.title.map { ": " + $0 } ?? ""))
                             .font(.system(size: 12, weight: .medium)).lineLimit(2).multilineTextAlignment(.leading)
                         Spacer(minLength: 0)
                         Image(systemName: "chevron.right").font(.system(size: 9, weight: .semibold)).padding(.top, 3)
@@ -29,16 +29,15 @@ struct WidgetDecisionOutcome: View {
                 .buttonStyle(RowButtonStyle(cornerRadius: 8))
                 .disabled(replacement.sessionKey == nil)
                 .instantTooltip(replacement.sessionKey == nil
-                    ? "That decision's session is not in the widget" : "Open DECISION \(replacement.number)")
+                    ? "That decision's session is not in the widget" : "Open " + WidgetWords.decision(replacement.number))
             } else if card.status == "superseded" {
                 Label("Superseded", systemImage: "arrow.uturn.right").font(.system(size: 11, weight: .medium))
                     .foregroundStyle(.secondary)
             }
             if !picked.isEmpty || !(card.answer ?? "").isEmpty {
                 VStack(alignment: .leading, spacing: 4) {
-                    Text(card.answeredVia == "agent" ? "Answer recorded by the agent"
-                         : card.answeredVia == "automatic_heuristic" ? "Answer read from your chat" : "Your answer")
-                        .font(.system(size: 10, weight: .semibold)).foregroundStyle(.secondary)
+                    Text(WidgetAlerts.answeredViaText(card.answeredVia))
+                        .font(.system(size: 11, weight: .semibold)).foregroundStyle(SessionPalette.secondary)
                     ForEach(picked, id: \.id) { choice in
                         HStack(alignment: .top, spacing: 6) {
                             Text(verbatim: choice.id).font(.system(size: 10.5, weight: .semibold, design: .rounded))
@@ -61,27 +60,5 @@ struct WidgetDecisionOutcome: View {
                 }
             }
         }
-    }
-}
-
-/// The row under a decision's options that opens the composer for the user's own answer.
-struct WidgetOwnAnswerRow: View {
-    let action: () -> Void
-
-    var body: some View {
-        Button(action: action) {
-            HStack(alignment: .top, spacing: 8) {
-                Image(systemName: "square.and.pencil").font(.system(size: 10.5, weight: .semibold))
-                    .frame(width: 20, height: 20).background(
-                        .white.opacity(0.07), in: RoundedRectangle(cornerRadius: 5))
-                Text("Write my own answer").font(.system(size: 12)).padding(.top, 2)
-                Spacer(minLength: 0)
-            }.padding(9).frame(maxWidth: .infinity, alignment: .leading)
-                .background(.white.opacity(0.035), in: RoundedRectangle(cornerRadius: 9))
-                .contentShape(RoundedRectangle(cornerRadius: 9))
-        }
-        .buttonStyle(RowButtonStyle(cornerRadius: 9))
-        .instantTooltip("Answer in your own words, with images, a screenshot or voice")
-        .accessibilityLabel("Write my own answer")
     }
 }

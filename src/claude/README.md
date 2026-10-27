@@ -130,7 +130,7 @@ tools claude codex -- -p "one turn"           # args after -- go to claude
 ```
 
 The main loop runs on `codex/<model>` through ai-proxy; titles and the Claude-side calls run on
-the Claude account; one subagent per Codex model (`sol`, `sol-xhigh`, `sol6`, `astra`, `luna`),
+the Claude account; one subagent per Codex model (`sol`, `sol-xhigh`, `sol6`, `astra`, `terra`, `luna`),
 `opus` (and `fable` when the Claude account has it) on the Claude account, and `codex-worker`,
 which hands a task to `tools codex spawn`. Each launch writes a session record
 (`~/.genesis-tools/ai-proxy/sessions/<Claude Code session id>.json`) and gives Claude Code its
@@ -155,7 +155,9 @@ session's accounts only.
   the file's launch-time `model` back whenever a `codex/` or `grok/` id lands there; the session keeps its pick.
 - **Window.** `CLAUDE_CODE_MAX_CONTEXT_TOKENS` and the compact window are the model's usable
   tokens from the Codex catalog, passed in `--settings` too, because the `env` of
-  `~/.claude/settings.json` would otherwise win. `-c <percent>` changes the compact percent.
+  `~/.claude/settings.json` would otherwise win. `-c <percent>` changes the compact percent. The `/model` picker
+  lists only models whose usable window covers this limit; launch a fresh session to use a smaller model. A custom
+  `--settings` after `--` can change the limit, so picker entries are disabled when the limit is unknown.
 - **`--isolated`** uses its own Claude Code config folder under
   `~/.genesis-tools/claude-codex/config/<session id>/` and writes the subagents there as files.
 - **`--port`** aims at another ai-proxy (a second one for tests); it is never started for you.

@@ -44,6 +44,7 @@ import { registerConfigOption } from "@app/azure-devops/commands/config-option";
 import { registerConfigureCommand } from "@app/azure-devops/commands/configure";
 import { registerDashboardCommand } from "@app/azure-devops/commands/dashboard";
 import { registerHistoryCommand } from "@app/azure-devops/commands/history";
+import { registerMaintenanceCommand } from "@app/azure-devops/commands/maintenance";
 import { registerQueryCommand, setWorkItemHandler } from "@app/azure-devops/commands/query";
 import { registerSprintCommands } from "@app/azure-devops/commands/sprint";
 import { registerTimelogCommand } from "@app/azure-devops/commands/timelog";
@@ -90,6 +91,7 @@ registerTimelogCommand(program);
 registerHistoryCommand(program);
 registerSprintCommands(program);
 registerWikiCommand(program);
+registerMaintenanceCommand(program);
 registerCommentCommand(program);
 
 function showHelpFull(): void {
@@ -100,6 +102,7 @@ Usage:
   ${toolCommand("azure-devops")} <command> [options]
 
 Commands:
+  maintenance <kind>     Generate and check project configuration manifests
   configure <url>        Configure organization and project from any Azure DevOps URL (alias: config)
   query <input>          Run an Azure DevOps query and display results
   workitem <input>       Fetch work item(s) by ID or URL (alias: wi)

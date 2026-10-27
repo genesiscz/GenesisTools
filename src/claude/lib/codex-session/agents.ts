@@ -3,12 +3,15 @@
  * passed on every launch and resume because Claude Code does not keep it. Writer 2 writes the same definitions as
  * agent files, only into an isolated `CLAUDE_CONFIG_DIR` under `~/.genesis-tools/claude-codex/config/`.
  *
- * Every model id here is a session route form (`codex/<id>:<effort>`, a bare `claude-*` id), which ai-proxy sends to
- * the accounts in the session record. The `:effort` suffix wins over the subagent's own effort setting, so the
- * Claude Code `effort` field only matters for the Claude ones.
+ * Every model id here is a session route form (`codex/<id>`, a bare `claude-*` id), which ai-proxy sends to the
+ * accounts in the session record. The effort is the agent's `effort` field, not a `:<effort>` suffix: Claude Code
+ * sends it as `output_config.effort`, so an Agent call's own `effort` can raise it. A suffix would win over both
+ * (on 2026-10-27 a terra agent asked for xhigh ran at its `:high` and refused the task).
  */
 import { mkdirSync, writeFileSync } from "node:fs";
 import { isAbsolute, join, relative, resolve } from "node:path";
+import { withSystemNote } from "@app/ai-proxy/lib/sessions/settings";
+import type { ClaudeSessionsConfig } from "@app/ai-proxy/lib/types";
 import { CLAUDE_MODELS } from "@app/claude/lib/models";
 import type { CodexModelInfo } from "@genesiscz/utils/ai/openai/codex-models";
 import { resolveOpenAiSubModel } from "@genesiscz/utils/ai/openai/sub-models";
@@ -36,6 +39,22 @@ export interface SessionAgentsInput {
     claude?: { fable: boolean };
     /** The Codex login the `codex-worker` pins its worker to (`tools codex spawn -a`). */
     codexAccount?: string;
+    /** `claudeSessions` of the proxy config: the subagents' note and the skills nudge. */
+    settings?: ClaudeSessionsConfig;
+}
+
+/** Whether the lead names each subagent's skills: on unless `claudeSessions.subagents.skills.nudge` is false. */
+function skillsNudge(settings: ClaudeSessionsConfig | undefined): boolean {
+    return settings?.subagents?.skills?.nudge !== false;
+}
+
+/** The Codex subagents' system prompt: the built-in one, the configured note around it, and the skills rule. */
+function codexAgentPrompt(settings: ClaudeSessionsConfig | undefined): string {
+    const skills = skillsNudge(settings)
+        ? "\n\nSkills: load only the skills your brief names. A brief that names none needs none; do not load a skill to look around."
+        : "";
+
+    return withSystemNote(`${CODEX_PROMPT}${skills}`, settings?.subagents?.systemNote);
 }
 
 interface CodexAgentSpec {
@@ -73,6 +92,12 @@ const CODEX_AGENTS: CodexAgentSpec[] = [
         use: "OpenAI's frontier model, for the most demanding problems. Slower than sol and uses more of the Codex limits.",
     },
     {
+        name: "terra",
+        alias: "terra",
+        effort: "high",
+        use: "A fast, efficient model for visual reasoning, computer use, and internal writing, at half sol's price. Prefer sol for complex coding, and opus for user-facing copy.",
+    },
+    {
         name: "luna",
         alias: "luna",
         effort: "high",
@@ -85,6 +110,7 @@ const CODEX_PROMPT = [
     "",
     "- Do the task in your brief yourself. Never spawn agents or workflows.",
     "- Change files only when the brief asks for changes. Never commit, push or merge unless the brief says so.",
+    "- A file the brief names as your output (a report, notes or a patch at a given path) is the brief's deliverable: write it. Claude Code's rule against report files covers reports nobody asked for, and on 2026-10-27 eight review agents stopped as blocked instead of writing the report their brief named.",
     "",
     "Final message: a first line `STATUS: done`, `STATUS: blocked` or `STATUS: failed`, then a short summary, the files you changed, and the checks you ran with their results.",
 ].join("\n");
@@ -113,6 +139,33 @@ function codexWorkerPrompt(codexAccount: string | undefined): string {
     ].join("\n");
 }
 
+/**
+ * The note ccx appends to the lead's system prompt. On 2026-10-27 a review loop lead followed its skills to
+ * `tools codex spawn --write ask` workers: 833 of its 1,635 wake-ups were worker approvals and messages, and five
+ * hours went by. Here the native agents already are Codex, inside the session, with no approvals to relay.
+ */
+export function leadPrompt(agents: Record<string, SessionAgentDefinition>, settings?: ClaudeSessionsConfig): string {
+    const codex = Object.entries(agents)
+        .filter(([name, agent]) => agent.model.startsWith("codex/") && name !== "codex-worker")
+        .map(([name, agent]) => `${name} (${agent.model.slice("codex/".length)}, effort ${agent.effort ?? "default"})`);
+
+    const lines = [
+        "This Claude Code session runs on Codex through ai-proxy.",
+        `Its subagents ${codex.join(", ")} are Codex models. When a skill or brief asks for a Codex, Sol, Terra, Luna or Astra worker, start that subagent with the Agent tool (subagent_type, and effort to raise it, for example effort "xhigh"), not \`${toolCommand("codex spawn")}\` or the handoff-to skill.`,
+        `A native subagent needs no approvals from you and reports back once, when it finishes. A \`${toolCommand("codex spawn")}\` worker started with --write ask makes you approve its commands one by one.`,
+        "Use the codex-worker subagent only when the work must run in the Codex CLI's own sandbox.",
+    ];
+
+    if (skillsNudge(settings)) {
+        const allowed = settings?.subagents?.skills?.allowed;
+        lines.push(
+            `Every subagent brief names the skills the subagent should load (or says "no skills"); a subagent loads only those, because each skill it loads costs its context.${allowed?.length ? ` Pick them from: ${allowed.join(", ")}.` : ""}`
+        );
+    }
+
+    return withSystemNote(lines.join("\n"), settings?.lead?.systemNote);
+}
+
 /** The Claude Code id of a Claude model by its catalog alias, with `[1m]` where the model needs the suffix for its 1M window (P5). */
 function claudeModelId(alias: string): string | undefined {
     const model = CLAUDE_MODELS.find((item) => item.aliases?.includes(alias));
@@ -139,10 +192,11 @@ export function sessionAgents(input: SessionAgentsInput): Record<string, Session
         const name = info?.displayName ?? slug;
         agents[spec.name] = {
             description: `Codex ${name} at ${spec.effort} effort. ${spec.use} Bills the session's Codex account.`,
-            prompt: CODEX_PROMPT,
-            model: `codex/${slug}:${spec.effort}`,
+            prompt: codexAgentPrompt(input.settings),
+            model: `codex/${slug}`,
+            effort: spec.effort,
             disallowedTools: ["Agent"],
-            ...(info ? { autoCompactWindow: info.usableTokens } : {}),
+            ...(info ? { autoCompactWindow: info.window } : {}),
         };
     }
 
@@ -151,9 +205,10 @@ export function sessionAgents(input: SessionAgentsInput): Record<string, Session
     agents["codex-worker"] = {
         description: `Hands a task to a headless Codex CLI worker (\`${toolCommand("codex spawn")}\`), waits for it and reports its final message. For long or independent work that should run in the Codex CLI's own sandbox instead of this session.`,
         prompt: codexWorkerPrompt(input.codexAccount),
-        model: `codex/${lunaSlug}:low`,
+        model: `codex/${lunaSlug}`,
+        effort: "low",
         tools: ["Bash", "Read", "Write"],
-        ...(luna ? { autoCompactWindow: luna.usableTokens } : {}),
+        ...(luna ? { autoCompactWindow: luna.window } : {}),
     };
 
     if (!input.claude) {

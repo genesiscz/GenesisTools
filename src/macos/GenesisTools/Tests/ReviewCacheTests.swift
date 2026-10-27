@@ -101,6 +101,30 @@ final class ReviewCacheTests: XCTestCase {
         XCTAssertTrue(DiffScope.range(base: a, head: "HEAD", label: "PR").followsWorkingTree)
         XCTAssertTrue(DiffScope.range(base: a, head: b, label: "PR", fallbackBase: "origin/main").followsWorkingTree)
         XCTAssertFalse(DiffScope.commit(sha: a, title: "x").followsWorkingTree)
+        // The parent of a picked commit is fixed as well; a ref with an ancestor step is not.
+        XCTAssertFalse(DiffScope.range(base: a + "^", head: b, label: "5 commits").followsWorkingTree)
+        XCTAssertFalse(DiffScope.range(base: "1234567~2^2", head: b, label: "x").followsWorkingTree)
+        XCTAssertTrue(DiffScope.range(base: "HEAD^", head: b, label: "x").followsWorkingTree)
+        XCTAssertTrue(DiffScope.range(base: "origin/main~1", head: b, label: "x").followsWorkingTree)
+        XCTAssertTrue(DiffScope.range(base: a + "^{tree}", head: b, label: "x").followsWorkingTree)
+        XCTAssertTrue(DiffScope.range(base: a + "^", head: b, label: "x", fallbackBase: "origin/main").followsWorkingTree)
+    }
+
+    /// The ref-only reads (commits, worktrees, base candidates) run again after a ref moves, never for a file or the index.
+    func testOnlyRefEventsMoveRefs() {
+        let root = URL(fileURLWithPath: "/repo/wt")
+        let layout = ReviewRepositoryLayout(root: root, gitDirectory: URL(fileURLWithPath: "/repo/main/.git/worktrees/wt"),
+                                            commonDirectory: URL(fileURLWithPath: "/repo/main/.git"))
+        XCTAssertFalse(layout.movesRefs("/repo/wt/src/app.ts"))
+        XCTAssertFalse(layout.movesRefs("/repo/main/.git/worktrees/wt/index"))
+        XCTAssertFalse(layout.movesRefs("/repo/main/.git/objects/ab/cdef"))
+        XCTAssertFalse(layout.movesRefs("/repo/main/.git/worktrees/other/index"))
+        XCTAssertTrue(layout.matters("/repo/wt/src/app.ts"))
+        XCTAssertTrue(layout.movesRefs("/repo/main/.git/worktrees/wt/HEAD"))
+        XCTAssertTrue(layout.movesRefs("/repo/main/.git/refs/heads/feature"))
+        XCTAssertTrue(layout.movesRefs("/repo/main/.git/packed-refs"))
+        XCTAssertTrue(layout.movesRefs("/repo/main/.git/worktrees/other/HEAD"))
+        XCTAssertTrue(layout.movesRefs("/repo/main/.git/worktrees/new"))
     }
 
 }

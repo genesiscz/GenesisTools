@@ -114,6 +114,8 @@ function readHttpsHandler(): string | null {
     const run = Bun.spawnSync(["plutil", "-extract", "LSHandlers", "json", "-o", "-", plist], {
         stdout: "pipe",
         stderr: "pipe",
+        // `tools genesis-tools probe` must answer within 5 s; plutil takes about 20 ms.
+        timeout: 2_000,
     });
 
     if (run.exitCode !== 0) {

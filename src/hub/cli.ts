@@ -23,6 +23,7 @@ import { registerDevCommands } from "./commands/dev";
 import { registerDigestCommand } from "./commands/digest";
 import { registerForecastCommand } from "./commands/forecast";
 import { registerInsightsCommands } from "./commands/insights";
+import { registerLinkCommand } from "./commands/link";
 import { registerNavCommands } from "./commands/nav";
 import { registerNotifyCommands } from "./commands/notify";
 import { registerProcsCommand } from "./commands/procs";
@@ -31,7 +32,7 @@ import { registerReadinessCommand } from "./commands/readiness";
 import { registerRulesCommand } from "./commands/rules";
 import { registerSearchCommand } from "./commands/search";
 import { fixThreads, realFixThreadsDeps } from "./lib/fix-threads";
-import { HUB_MODES, HUB_TABS, hubUrl, openHub } from "./lib/open";
+import { HUB_MODES, HUB_TABS, hubPrintUrl, openHub } from "./lib/open";
 import {
     backendFor,
     type DraftAddInput,
@@ -57,8 +58,8 @@ import {
     ProposalError,
     parseProposal,
     proposalKey,
+    proposalListRows,
     proposalMarkdown,
-    proposalsDir,
     saveProposal,
 } from "./lib/proposal";
 import { hubPr, hubPrProjects, hubPrs, PrRefError } from "./lib/prs";
@@ -207,7 +208,7 @@ program
 
             if (opts.printUrl) {
                 out.println(
-                    hubUrl({
+                    hubPrintUrl({
                         mode,
                         session: opts.session,
                         agent: opts.agent,
@@ -340,13 +341,7 @@ proposal
                 : listProposals();
 
         if (opts.json) {
-            out.result(
-                all.map((item) => {
-                    const key = proposalKey(item);
-                    // The stored file's own path wins over any `path` a proposal carries.
-                    return { key, ...item, path: join(proposalsDir(), `${key}.json`) };
-                })
-            );
+            out.result(proposalListRows(all));
             return;
         }
 
@@ -949,11 +944,12 @@ const PR_HELP = "this PR/MR instead of the branch's: its URL, or <repoPath>#<num
 pr.command("find")
     .description("The PR/MR whose source branch is the checked-out branch, or provider null with a reason; read-only")
     .option("--repo <path>", REPO_HELP, ".")
+    .option("--branch <name>", "this branch of the checkout's project instead of the checked-out one")
     .option("--json", "machine-readable output")
-    .action(async (opts: { repo: string; json?: boolean }) => {
+    .action(async (opts: { repo: string; branch?: string; json?: boolean }) => {
         await prVerb({
             json: opts.json,
-            run: () => findBranchPr({ repo: opts.repo }),
+            run: () => findBranchPr({ repo: opts.repo, branch: opts.branch }),
             human: (found) =>
                 found.provider === null
                     ? `No PR/MR: ${found.reason}`
@@ -1286,6 +1282,7 @@ registerDigestCommand(program);
 registerForecastCommand(program);
 registerRulesCommand(program);
 registerNavCommands(program);
+registerLinkCommand(program);
 registerInsightsCommands(program);
 registerProcsCommand(program);
 registerPromptsCommand(program);

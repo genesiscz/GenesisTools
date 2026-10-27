@@ -243,7 +243,9 @@ screenshots into the repo, or take them with `tools chrome-devtools shot`.
 
 Health at any time: `tools chrome-devtools status` (CPU, memory, buffer sizes) ·
 `doctor` (read-only findings + fix commands) · `cleanup` (applies them, interactively in a
-terminal). These rules exist because an unbounded recorder once pinned a core for hours
+terminal). A tab shows "Debugger paused in another tab", or a popup stays blank: run
+`tools chrome-devtools resume --port <n>` (add `--match <url>` to scope it). It releases popups an
+old or dead recorder left held, and sends only resume commands. These rules exist because an unbounded recorder once pinned a core for hours
 and left duplicate processes behind; the recorder is bounded and pid-verified now.
 The tool runs on macOS, Linux and Windows; on Windows the capture root is
 `%TEMP%\GenesisTools\ChromeDevtools` and `status` shows cpu-time without a live %CPU.

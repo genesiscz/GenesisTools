@@ -7,42 +7,43 @@ import SwiftUI
 /// A pulse is a coloured border, optionally with a tinted fill, that fades in and out a few
 /// times over `duration` and then leaves nothing behind. It is an opacity change only: no
 /// shadow, no scale, so it costs nothing at rest (see `PulseGlow` in Theme.swift for why an
-/// animated shadow is banned here).
-struct AttentionPulseStyle: Equatable {
-    var color: Color
-    var cornerRadius: CGFloat
-    var lineWidth: CGFloat = 3
+/// animated shadow is banned here). Public, so the hub's Inbox flashes a revealed card the way the widget flashes a
+/// session (UX audit 2026-10-27, F18).
+public struct AttentionPulseStyle: Equatable {
+    public var color: Color
+    public var cornerRadius: CGFloat
+    public var lineWidth: CGFloat = 3
     /// Border opacity at the top of each blink.
-    var borderOpacity: Double = 0.95
+    public var borderOpacity: Double = 0.95
     /// Fill opacity at the top of each blink. 0 draws the border only.
-    var fillOpacity: Double = 0
+    public var fillOpacity: Double = 0
     /// Total length of the pulse, in seconds.
-    var duration: TimeInterval = 4
+    public var duration: TimeInterval = 4
     /// One blink: the "on" half, then the "off" half.
-    var period: TimeInterval = 1
+    public var period: TimeInterval = 1
     /// How long each blink takes to fade in and to fade out. Equal to half the period gives a
     /// smooth breathing blink; shorter values give a sharper flash that holds.
-    var fadeIn: TimeInterval = 0.5
-    var fadeOut: TimeInterval = 0.5
+    public var fadeIn: TimeInterval = 0.5
+    public var fadeOut: TimeInterval = 0.5
 
     /// Number of blinks. Never zero, and a zero period cannot divide by zero.
     var cycles: Int { max(1, Int((duration / max(period, 0.05)).rounded())) }
 
     /// Three quick flashes of the border over about 1.4 s. Reads as "look here, now" without covering the content,
     /// so it is the default (Martin, 2026-10-23: a settings card under a tinted overlay read as covered, not pointed at).
-    static func borderFlash(color: Color, cornerRadius: CGFloat) -> Self {
+    public static func borderFlash(color: Color, cornerRadius: CGFloat) -> Self {
         Self(color: color, cornerRadius: cornerRadius, lineWidth: 2,
              duration: 1.44, period: 0.48, fadeIn: 0.12, fadeOut: 0.2)
     }
 
     /// The same three flashes with a tinted fill over the whole view, for a target too small for a border to read.
-    static func filledFlash(color: Color, cornerRadius: CGFloat) -> Self {
+    public static func filledFlash(color: Color, cornerRadius: CGFloat) -> Self {
         Self(color: color, cornerRadius: cornerRadius, fillOpacity: 0.30,
              duration: 1.44, period: 0.48, fadeIn: 0.12, fadeOut: 0.2)
     }
 
     /// Four slow blinks of the border only, over 4 s. Asks for attention without alarm.
-    static func slowBorder(color: Color, cornerRadius: CGFloat) -> Self {
+    public static func slowBorder(color: Color, cornerRadius: CGFloat) -> Self {
         Self(color: color, cornerRadius: cornerRadius)
     }
 }
@@ -133,7 +134,7 @@ struct AttentionPulse<Trigger: Equatable>: ViewModifier {
     }
 }
 
-extension View {
+public extension View {
     /// Blinks this view for attention each time `trigger` changes. Pass a counter you bump. The default is a
     /// border-only flash in the accent colour; `.filledFlash` and `.slowBorder` are the other presets.
     func attentionPulse<Trigger: Equatable>(

@@ -1,4 +1,5 @@
 import { expect, test } from "bun:test";
+import { basename, sep } from "node:path";
 import type { NativeSessionSource } from "../types";
 import { claudeNativeId, claudeProjectDirectory, claudeProjectName, isClaudeSubagentPath } from "./claude-paths";
 
@@ -20,4 +21,24 @@ test("project-scoped and flat roots never use the transcript filename as an enco
     expect(claudeNativeId(source("/fixture/projects", "/fixture/projects/-shop/parent/subagents/agent-a.jsonl"))).toBe(
         "-shop/parent/subagents/agent-a"
     );
+});
+
+test("the sub-agent path test answers as the segment split it replaced", () => {
+    const split = (path: string) => path.split(sep).includes("subagents") || basename(path).startsWith("agent-");
+    const paths = [
+        "subagents",
+        `subagents${sep}agent.jsonl`,
+        `${sep}fixture${sep}subagents`,
+        `${sep}fixture${sep}subagents${sep}helper.jsonl`,
+        `${sep}fixture${sep}mysubagents${sep}helper.jsonl`,
+        `${sep}fixture${sep}subagents-old${sep}helper.jsonl`,
+        `${sep}fixture${sep}sub${sep}agents${sep}helper.jsonl`,
+        `${sep}fixture${sep}agent-dir${sep}`,
+        `${sep}fixture${sep}project${sep}agent-a1.jsonl`,
+        `${sep}fixture${sep}project${sep}session.jsonl`,
+        "",
+    ];
+    for (const path of paths) {
+        expect([path, isClaudeSubagentPath(path)]).toEqual([path, split(path)]);
+    }
 });

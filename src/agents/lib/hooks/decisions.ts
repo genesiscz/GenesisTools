@@ -1,4 +1,14 @@
+import { createHash } from "node:crypto";
+import { statSync } from "node:fs";
 import { type AmbiguousAnswer, type ChatAnswer, chatAnswers, userText } from "@app/question/lib/decisions/chat-answers";
+import {
+    askedAtOf,
+    openChatDecisions,
+    openDecisionRefs,
+    pairAnswers,
+    type ReadSession,
+    recordFoundAnswers,
+} from "@app/question/lib/decisions/chat-reading";
 import {
     decisionQuestion,
     decisionQuestionRefs,
@@ -14,10 +24,9 @@ import {
     harvestDecisions,
     kindOf,
     readDecisions,
-    recordChatAnswers,
     recordDelivery,
 } from "@app/question/lib/decisions/store";
-import type { BackwardRead, ReadBackwardOptions, TurnBoundary } from "@genesiscz/utils/agent-sessions/types";
+import type { TurnBoundary } from "@genesiscz/utils/agent-sessions/types";
 import { SafeJSON } from "@genesiscz/utils/json";
 import { appendChatAnswerRun, type ChatAnswerRun, loggedUserMessage } from "./chat-answer-log";
 import type { DecisionsHookConfig } from "./config";
@@ -32,12 +41,22 @@ export const NUDGE_BLOCK_COUNTER = "decisions-nudge-block";
 /** The provider's stable key for the last turn the question nudge spoke in. */
 export const NUDGE_TURN_KEY = "decisions-nudge-turn";
 
-/** When the chat-answer step last read the session (epoch ms): the next read stops there. */
+/** When the chat-answer step last read the session to its end (epoch ms), together with `CHAT_OFFSET_PREFIX`. */
 export const CHAT_CHECKED_KEY = "decisions-chat-checked";
+/**
+ * Prefix (plus a hash of the transcript path) of the byte offset the chat-answer step last read up to. The next read
+ * starts there, so each row is read once, however far the oldest open ask is: a time bound with an 8 MB cap never
+ * reached answers 229 MB back in a 447 MB transcript and read the same 8 MB on every Stop (2026-10-27).
+ */
+export const CHAT_OFFSET_PREFIX = "decisions-chat-offset:";
 /** Prefix of the per-decision mark that the chat-answer step already sent the agent back about it. */
 export const CHAT_SENT_BACK_PREFIX = "decisions-chat-sent-back:";
-/** The most the chat-answer step reads back from a transcript's end, when no time bounds the read (Grok). */
-const CHAT_READ_BYTES = 8 * 1024 * 1024;
+/**
+ * The most the chat-answer step reads back when it has no offset yet (a first read, a new transcript): back to the
+ * oldest open ask. Measured 2026-10-27: 230 MB of a Claude transcript in 365 ms. `tools question chat-answers` reads
+ * further for a backlog.
+ */
+const CHAT_FIRST_READ_BYTES = 512 * 1024 * 1024;
 
 /** How much of a transcript's end is read to find the last reply. A final reply is far smaller. */
 const TAIL_BYTES = 512 * 1024;
@@ -59,18 +78,20 @@ export interface NudgeState {
     record: (session: string, turn: number, blocked: boolean) => void;
 }
 
-/** The chat-answer step's per-session memory: when it last read, and which decisions it sent the agent back about. */
+/**
+ * The chat-answer step's per-session memory: when and up to which byte of a transcript it last read, and which
+ * decisions it sent the agent back about.
+ */
 export interface ChatAnswerState {
     checkedAt: (session: string) => number | undefined;
     setCheckedAt: (session: string, at: number) => void;
+    offset: (session: string, transcript: string) => number | undefined;
+    setOffset: (session: string, transcript: string, offset: number) => void;
     sentBack: (session: string, id: string) => boolean;
     markSentBack: (session: string, ids: string[]) => void;
 }
 
-/** A session's newest entries through its provider's reader (`readSessionBackward`). */
-export type ReadSession = (
-    options: ReadBackwardOptions & { kind: string; transcriptPath: string }
-) => Promise<BackwardRead>;
+export type { ReadSession } from "@app/question/lib/decisions/chat-reading";
 
 export interface DecisionHookDeps {
     log: DecisionLogPaths;
@@ -83,6 +104,8 @@ export interface DecisionHookDeps {
     readTurn?: (options: { kind: string; transcriptPath: string; maxBytes: number }) => Promise<TurnBoundary | null>;
     /** The chat-answer step's state store; tests pass an in-memory one. */
     chat?: ChatAnswerState;
+    /** The transcript's length in bytes, or undefined when it cannot be read; tests pass their fixture's. */
+    transcriptSize?: (path: string) => number | undefined;
     /** Where each chat-answer run is logged (`chat-answers.jsonl`); tests collect them instead. */
     appendRun?: (run: ChatAnswerRun) => void;
     now?: () => number;
@@ -157,21 +180,27 @@ const fileNudgeState: NudgeState = {
     },
 };
 
+function offsetKey(transcript: string): string {
+    return `${CHAT_OFFSET_PREFIX}${createHash("sha1").update(transcript).digest("hex").slice(0, 16)}`;
+}
+
 const fileChatState: ChatAnswerState = {
     checkedAt: (session) => readContextCounts(session)[CHAT_CHECKED_KEY],
     setCheckedAt: (session, at) => setContextValues(session, { [CHAT_CHECKED_KEY]: at }),
+    offset: (session, transcript) => readContextCounts(session)[offsetKey(transcript)],
+    setOffset: (session, transcript, offset) => setContextValues(session, { [offsetKey(transcript)]: offset }),
     sentBack: (session, id) => readContextCounts(session)[`${CHAT_SENT_BACK_PREFIX}${id}`] !== undefined,
     markSentBack: (session, ids) =>
         setContextValues(session, Object.fromEntries(ids.map((id) => [`${CHAT_SENT_BACK_PREFIX}${id}`, 1]))),
 };
 
-function lettersFor(count: number): string[] {
-    return Array.from({ length: count }, (_, index) => String.fromCharCode(97 + index));
-}
-
-/** When a decision was asked as it stands: its latest revision, else its post. */
-function askedAt(row: DecisionRecord): string {
-    return row.revisedTs ?? row.createdTs ?? row.updatedTs;
+function fileSize(path: string): number | undefined {
+    try {
+        return statSync(path).size;
+    } catch (err) {
+        hookDiag("Chat answers: the transcript cannot be read", { err, transcript: path });
+        return undefined;
+    }
 }
 
 function quoted(evidence: { text: string }): string {
@@ -206,10 +235,7 @@ async function runChatAnswers(
         return null;
     }
 
-    const open = readDecisions(deps.log.file).filter(
-        (row) =>
-            row.sessionId === session && kindOf(row) === "decision" && (row.state === "open" || row.state === "drafted")
-    );
+    const open = openChatDecisions(readDecisions(deps.log.file), session);
 
     if (open.length === 0) {
         return null;
@@ -217,21 +243,31 @@ async function runChatAnswers(
 
     const state = deps.chat ?? fileChatState;
     const now = deps.now?.() ?? Date.now();
-    const asked = open.map((row) => Date.parse(askedAt(row))).filter(Number.isFinite);
-    const from = Math.max(asked.length > 0 ? Math.min(...asked) : 0, state.checkedAt(session) ?? 0);
+    const checkedAt = state.checkedAt(session);
+    const mark = state.offset(session, transcriptPath);
+    const size = (deps.transcriptSize ?? fileSize)(transcriptPath);
+    // From where the last read stopped, when it stopped in this file and the file did not shrink: every row once.
+    const resumeAt =
+        mark !== undefined && checkedAt !== undefined && size !== undefined && mark <= size ? mark : undefined;
+    const asked = open.map((row) => Date.parse(askedAtOf(row))).filter(Number.isFinite);
+    const from = Math.max(asked.length > 0 ? Math.min(...asked) : 0, checkedAt ?? 0);
     const read = await deps.readSession({
         kind: payload.harness,
         transcriptPath,
-        maxBytes: CHAT_READ_BYTES,
         includeBoundaryMessage: true,
-        until: (entry) => {
-            const at = entry.timestamp ? Date.parse(entry.timestamp) : Number.NaN;
+        ...(resumeAt !== undefined
+            ? { fromOffset: resumeAt, maxBytes: Number.POSITIVE_INFINITY, until: () => false }
+            : {
+                  maxBytes: CHAT_FIRST_READ_BYTES,
+                  until: (entry) => {
+                      const at = entry.timestamp ? Date.parse(entry.timestamp) : Number.NaN;
 
-            return Number.isFinite(at) && at < from;
-        },
+                      return Number.isFinite(at) && at < from;
+                  },
+              }),
     });
 
-    if (!read.found && from > 0) {
+    if (resumeAt === undefined && !read.found && from > 0) {
         // Not an error for Grok (its rows carry no time), but for Claude and Codex a read that never reached the
         // oldest open ask means an answer before the cut is not seen.
         hookDiag("Chat answers: the read ended before the oldest open ask", {
@@ -243,38 +279,20 @@ async function runChatAnswers(
         });
     }
 
-    const byNumber = new Map(open.map((row) => [row.number, row]));
+    // A decision asked before the last read's end was open then, so every row read now comes after its ask.
     const found = chatAnswers(
         read.entries,
-        open.map((row) => ({
-            number: row.number,
-            letters: lettersFor(row.options.length),
-            askedAt: askedAt(row),
-            revision: row.revision ?? 1,
-        }))
+        openDecisionRefs(
+            open,
+            (row) => resumeAt !== undefined && Date.parse(askedAtOf(row)) <= (checkedAt ?? Number.NEGATIVE_INFINITY)
+        )
     );
-    const pairs = <T extends { number: number }>(items: T[]) =>
-        items.flatMap((item) => {
-            const row = byNumber.get(item.number);
-
-            return row ? [{ row, item }] : [];
-        });
-    const answers = pairs(found.unambiguous);
-    const unclear = pairs(found.ambiguous);
+    const answers = pairAnswers(open, found.unambiguous);
+    const unclear = pairAnswers(open, found.ambiguous);
     let recorded: DecisionRecord[] = [];
 
     if (config.chatAnswers === "record" && answers.length > 0) {
-        recorded = await recordChatAnswers({
-            file: deps.log.file,
-            events: deps.log.events,
-            answers: answers.map(({ row, item }) => ({
-                id: row.id,
-                expectedRevision: row.revision ?? 1,
-                ...(item.option ? { option: item.option } : {}),
-                answer: item.answer,
-                evidence: item.evidence,
-            })),
-        });
+        recorded = await recordFoundAnswers({ file: deps.log.file, events: deps.log.events, answers });
     }
 
     const recordedNote =
@@ -293,9 +311,11 @@ async function runChatAnswers(
         session,
         transcript: transcriptPath,
         mode: config.chatAnswers,
-        open: open.map((row) => ({ id: row.id, number: row.number, askedAt: askedAt(row) })),
+        open: open.map((row) => ({ id: row.id, number: row.number, askedAt: askedAtOf(row) })),
         read: {
-            ...(from > 0 ? { from: new Date(from).toISOString() } : {}),
+            ...(from > 0 && resumeAt === undefined ? { from: new Date(from).toISOString() } : {}),
+            ...(resumeAt !== undefined ? { fromOffset: resumeAt } : {}),
+            ...(read.endOffset !== undefined ? { endOffset: read.endOffset } : {}),
             found: read.found,
             entries: read.entries.length,
             issues: read.issues.length,
@@ -318,8 +338,19 @@ async function runChatAnswers(
     const handled =
         config.chatAnswers !== "record" || answers.every(({ row }) => recorded.some((item) => item.id === row.id));
 
-    if (handled && read.issues.length === 0) {
+    // The next read starts where this one ended. A capped first read or an unreadable row does not hold it back: the
+    // old rule re-read the same capped window on every Stop and never got further. The cut is in the run log and
+    // `hookDiag` above; `tools question chat-answers` reads a backlog without a cap.
+    if (handled) {
         state.setCheckedAt(session, now);
+
+        // From the agent's last reply, not the end: a bare `b)` the user types next answers the decision that reply
+        // asked, and the finder needs that reply in the read to see it.
+        const next = read.lastAssistantOffset ?? read.endOffset;
+
+        if (next !== undefined) {
+            state.setOffset(session, transcriptPath, next);
+        }
     }
 
     if (toRecord.length === 0 && toCheck.length === 0) {

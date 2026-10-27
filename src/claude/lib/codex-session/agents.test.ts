@@ -5,6 +5,7 @@ import { join } from "node:path";
 import {
     agentsArgs,
     claudeCodexConfigRoot,
+    leadPrompt,
     sessionAgents,
     writeAgentFiles,
 } from "@app/claude/lib/codex-session/agents";
@@ -14,16 +15,50 @@ import { SafeJSON } from "@genesiscz/utils/json";
 const catalog = mergeCodexModelRecords({ cache: [] });
 const codexModel = (slug: string): CodexModelInfo | undefined => catalog.get(slug);
 
+describe("leadPrompt", () => {
+    it("names the Codex subagents with their models and sends Codex work to them, not to tools codex spawn", () => {
+        const text = leadPrompt(sessionAgents({ codexModel }));
+
+        expect(text).toContain("sol (gpt-6.1-sol, effort high)");
+        expect(text).toContain("luna (gpt-6-luna, effort high)");
+        expect(text).not.toContain("codex-worker (");
+        expect(text).toContain("with the Agent tool");
+        expect(text).toContain("codex spawn");
+        expect(text).toContain("names the skills the subagent should load");
+    });
+
+    it("takes the configured note and skills list, and the nudge can be turned off", () => {
+        const settings = {
+            lead: { systemNote: { append: "Prefer terra for reviews." } },
+            subagents: { skills: { allowed: ["genesis-tools:github", "simplify"] } },
+        };
+        const agents = sessionAgents({ codexModel, settings });
+        const text = leadPrompt(agents, settings);
+
+        expect(text.endsWith("Prefer terra for reviews.")).toBe(true);
+        expect(text).toContain("Pick them from: genesis-tools:github, simplify.");
+        expect(agents.sol.prompt).toContain("load only the skills your brief names");
+
+        const off = { subagents: { skills: { nudge: false }, systemNote: { replace: "Own prompt." } } };
+        expect(leadPrompt(sessionAgents({ codexModel, settings: off }), off)).not.toContain("names the skills");
+        expect(sessionAgents({ codexModel, settings: off }).sol.prompt).toBe("Own prompt.");
+    });
+});
+
 describe("sessionAgents", () => {
     it("lists the Codex agents with their own windows, the codex-worker, and no Claude agent without a Claude account", () => {
         const agents = sessionAgents({ codexModel });
 
-        expect(Object.keys(agents)).toEqual(["sol", "sol-xhigh", "sol6", "astra", "luna", "codex-worker"]);
-        expect(agents.sol.model).toBe("codex/gpt-6.1-sol:high");
-        expect(agents["sol-xhigh"].model).toBe("codex/gpt-6.1-sol:xhigh");
-        expect(agents.sol.autoCompactWindow).toBe(codexModel("gpt-6.1-sol")?.usableTokens);
+        expect(Object.keys(agents)).toEqual(["sol", "sol-xhigh", "sol6", "astra", "terra", "luna", "codex-worker"]);
+        expect(agents.sol.model).toBe("codex/gpt-6.1-sol");
+        expect(agents.sol.effort).toBe("high");
+        expect(agents.terra.model).toBe("codex/gpt-6.1-terra");
+        expect(agents.terra.effort).toBe("high");
+        expect(agents["sol-xhigh"].model).toBe("codex/gpt-6.1-sol");
+        expect(agents["sol-xhigh"].effort).toBe("xhigh");
+        expect(agents.sol.autoCompactWindow).toBe(codexModel("gpt-6.1-sol")?.window);
         // A 272K model gets its own window, not the main loop's.
-        expect(agents.luna.autoCompactWindow).toBe(codexModel("gpt-6-luna")?.usableTokens);
+        expect(agents.luna.autoCompactWindow).toBe(codexModel("gpt-6-luna")?.window);
         expect(agents.luna.autoCompactWindow).toBeLessThan(agents.sol.autoCompactWindow ?? 0);
         expect(agents.sol.disallowedTools).toEqual(["Agent"]);
         expect(agents["codex-worker"].tools).toEqual(["Bash", "Read", "Write"]);
@@ -76,7 +111,8 @@ describe("writeAgentFiles", () => {
 
         expect(files).toHaveLength(Object.keys(agents).length);
         expect(sol).toStartWith('---\nname: "sol"\n');
-        expect(sol).toContain('model: "codex/gpt-6.1-sol:high"');
+        expect(sol).toContain('model: "codex/gpt-6.1-sol"');
+        expect(sol).toContain('effort: "high"');
         expect(sol).toContain("disallowedTools: Agent");
     });
 

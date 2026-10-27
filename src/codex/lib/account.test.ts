@@ -457,7 +457,7 @@ test("native model aliases preserve the selected account and never refresh crede
     const network = spyOn(globalThis, "fetch").mockRejectedValue(new Error("model resolution must not fetch"));
     try {
         expect(await resolveNativeCodexModel("acc_a", "astra")).toBe("gpt-6-astra");
-        expect(await resolveNativeCodexModel("acc_a", "codex/terra")).toBe("gpt-5.6-terra");
+        expect(await resolveNativeCodexModel("acc_a", "codex/terra")).toBe("gpt-6.1-terra");
         await expect(resolveNativeCodexModel("acc_a", "@account/another:sol")).rejects.toThrow("account");
         await expect(resolveNativeCodexModel("acc_a", "grok/grok-4")).rejects.toThrow("provider");
         expect(network).not.toHaveBeenCalled();

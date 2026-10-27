@@ -16,6 +16,31 @@ public enum ScrollMotion {
     /// Events per second for a timed scroll: one per display frame.
     public static let framesPerSecond = 60.0
 
+    public static func interval(seconds: Double?, count: Int) -> Double {
+        guard count > 1 else { return 0 }
+        return (seconds ?? 0) / Double(count - 1)
+    }
+
+    public struct DeadlineExceeded: LocalizedError {
+        public let dispatched: Bool
+        public var errorDescription: String? { "Scroll deadline expired; inspect before retrying." }
+    }
+
+    public static func dispatch(count: Int, interval: Double, remaining: () -> TimeInterval?,
+                                sleep: (TimeInterval) -> Void, post: (Int) throws -> Void) throws {
+        for index in 0..<count {
+            if index > 0 && interval > 0 {
+                let available = remaining() ?? interval
+                guard available > 0 else { throw DeadlineExceeded(dispatched: index > 0) }
+                sleep(min(interval, available))
+            }
+            if let available = remaining(), available <= 0 {
+                throw DeadlineExceeded(dispatched: index > 0)
+            }
+            try post(index)
+        }
+    }
+
     /// The per-event deltas of one scroll: `total` pixels over `count` events, each a whole pixel, summing
     /// exactly to `total` (the rounding remainder is carried, never dropped). The sign follows `total`.
     public static func deltas(total: Int, count: Int, ease: ScrollEase) -> [Int32] {
@@ -36,6 +61,11 @@ public enum ScrollMotion {
             sent = target
         }
         return result
+    }
+
+    /// How long a scroll with no `--time` takes: as a quick trackpad swipe, 3000 px per second, between 0.25 and 1 s.
+    public static func defaultSeconds(pixels: Int) -> Double {
+        min(1, max(0.25, Double(abs(pixels)) / 3000))
     }
 
     /// The number of events for a scroll lasting `seconds`; one event when no time is given.
@@ -91,8 +121,13 @@ public struct ScrollNumericOptions {
         guard (1...2500).contains(amount) else { throw ScrollNumericError.outOfRange("--amount must be 1–2500") }
         pixels = explicitPixels ?? amount * 40
         guard (1...100_000).contains(pixels) else { throw ScrollNumericError.outOfRange("--pixels must be 1–100000") }
-        seconds = try decimal("--time")
-        if let seconds, !(0.05...30).contains(seconds) { throw ScrollNumericError.outOfRange("--time must be 0.05–30 seconds") }
+        // Animated unless asked otherwise (Martin, 2026-10-26: "the scrolling should always be animated"): a single
+        // wheel event jumps the page by the whole distance, which no person does. `--time 0` is that one event.
+        let asked = try decimal("--time")
+        if let asked, asked != 0, !(0.05...30).contains(asked) {
+            throw ScrollNumericError.outOfRange("--time must be 0 (one event) or 0.05–30 seconds")
+        }
+        seconds = asked == nil ? ScrollMotion.defaultSeconds(pixels: pixels) : asked == 0 ? nil : asked
         repeats = try integer("--repeat") ?? 1
         guard (1...200).contains(repeats) else { throw ScrollNumericError.outOfRange("--repeat must be 1–200") }
         pause = try decimal("--pause") ?? 0.3

@@ -6,12 +6,12 @@ import { suggestEnumFlag } from "@genesiscz/utils/cli";
 import { toolCommand } from "@genesiscz/utils/cli/tool-command";
 import { env } from "@genesiscz/utils/env";
 import { formatRelativeTime } from "@genesiscz/utils/format";
-import { SafeJSON } from "@genesiscz/utils/json";
 import { logger, out } from "@genesiscz/utils/logger";
 import { createBoxTable, renderCliHeader, truncateDisplay } from "@genesiscz/utils/table";
 import { type Command, InvalidArgumentError } from "commander";
 import pc from "picocolors";
 import { hubDbPath, openHubDb } from "../lib/data-db";
+import { logNavigation, type NavRecordFlags, navEntryFromFlags, storeNavEntry } from "../lib/nav-record";
 import { readNav, recordNav, setNavKeep } from "../lib/navigation/store";
 import { navTargetProblem, navTitle, parseNavInput, resolveNavWorktree } from "../lib/navigation/target";
 import {
@@ -22,7 +22,7 @@ import {
     type NavTarget,
     normalizeTarget,
 } from "../lib/navigation/types";
-import { HUB_MODES, HUB_TABS, hubUrl, openHub } from "../lib/open";
+import { HUB_MODES, HUB_TABS, hubPrintUrl, openHub } from "../lib/open";
 
 const { log } = logger.scoped("hub:nav");
 
@@ -43,15 +43,6 @@ function isFolder(path: string): boolean {
         log.debug({ path, error }, "hub nav: not a folder");
         return false;
     }
-}
-
-/** The one log line per navigation, in the day log (`~/.genesis-tools/logs/<date>.log`). */
-function logNavigation(entry: NavEntry, via: string): void {
-    // Debug: the day log keeps every level, and an agent's terminal does not need the block.
-    log.debug(
-        { via, actor: entry.actor, target: entry.target, note: entry.note, from: entry.from, id: entry.id },
-        `hub nav: ${entry.actor} → ${entry.title}${entry.note ? ` (${entry.note})` : ""}`
-    );
 }
 
 /** The calling agent's own session, so an agent need not pass `--from`. */
@@ -162,7 +153,7 @@ async function navOpen(input: string | undefined, flags: NavOpenFlags): Promise<
     };
 
     if (flags.printUrl) {
-        out.println(hubUrl(link));
+        out.println(hubPrintUrl(link));
         return;
     }
 
@@ -212,56 +203,19 @@ async function navOpen(input: string | undefined, flags: NavOpenFlags): Promise<
     }
 }
 
-interface NavRecordFlags {
-    id: string;
-    actor: string;
-    title: string;
-    target: string;
-    at?: string;
-    note?: string;
-    from?: string;
-    keep?: number;
-    replacing?: string[];
-    json?: boolean;
-}
-
-/** The app's door: one entry the hub's engine made or changed. */
-function navRecord(flags: NavRecordFlags): void {
-    if (!isNavActor(flags.actor)) {
+/** The app's door: one entry the hub's engine made or changed. The resident server's door does the same. */
+function navRecord(flags: NavRecordFlags & { json?: boolean }): void {
+    const entry = navEntryFromFlags(flags);
+    if (!entry) {
         out.log.error(suggestEnumFlag(toolCommand("hub nav record"), "--actor", NAV_ACTORS, { given: flags.actor }));
         process.exitCode = 1;
         return;
     }
 
-    const target = normalizeTarget(SafeJSON.parse(flags.target, { strict: true }));
-    const at = flags.at === undefined ? Date.now() : Number(flags.at);
-    const entry: NavEntry = {
-        id: flags.id,
-        at: Number.isFinite(at) ? at : Date.now(),
-        actor: flags.actor,
-        title: flags.title,
-        target,
-    };
+    const stored = storeNavEntry(entry, { keep: flags.keep, replacing: flags.replacing });
 
-    if (flags.note) {
-        entry.note = flags.note;
-    }
-
-    if (flags.from) {
-        entry.from = flags.from;
-    }
-
-    const db = openHubDb();
-
-    try {
-        const result = recordNav(db, entry, { keep: flags.keep, replacing: flags.replacing });
-        logNavigation(entry, "hub");
-
-        if (flags.json) {
-            out.result({ entry, ...result });
-        }
-    } finally {
-        db.close();
+    if (flags.json) {
+        out.result(stored);
     }
 }
 
@@ -356,5 +310,5 @@ export function registerNavCommands(program: Command): void {
             positiveInt
         )
         .option("--json", "print the stored entry")
-        .action((flags: NavRecordFlags) => navRecord(flags));
+        .action((flags: NavRecordFlags & { json?: boolean }) => navRecord(flags));
 }

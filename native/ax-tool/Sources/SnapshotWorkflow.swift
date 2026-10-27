@@ -72,6 +72,10 @@ private func workflowFailure(_ message: String, category: SnapshotRefusal = .ref
 }
 
 private func workflowFailure(_ error: Error, extras: [String: Any] = [:]) -> Never {
+    if let deadline = error as? ScrollMotion.DeadlineExceeded {
+        workflowDispatchState = deadline.dispatched ? "uncertain" : "not_started"
+        workflowFailure(deadline.localizedDescription, extras: extras)
+    }
     if let active = error as? UserActiveError {
         workflowDispatchState = inputGate.posted > 0 ? "uncertain" : "not_started"
         workflowFailure(active.localizedDescription, category: active.category, extras: extras)
@@ -1715,8 +1719,8 @@ func cmdAct(appName _: String) {
                         throw WindowEventError.unavailable("choose --pixels or --pages, not both")
                     }
                     pixels = workflowInteger("--pixels")
-                    guard (1...10000).contains(pixels) else {
-                        throw WindowEventError.unavailable("--pixels must be 1–10000")
+                    guard (1...100000).contains(pixels) else {
+                        throw WindowEventError.unavailable("--pixels must be 1–100000")
                     }
                     pageViewportObservation = nil
                 } else {
@@ -1729,9 +1733,26 @@ func cmdAct(appName _: String) {
                     pixels = try pageScrollDistance(viewport: viewport.observed, axis: axis, pages: pages)
                     pageViewportObservation = viewport
                 }
-                let delta = Int32(pixels)
-                let event = try factory.scroll(point: point, deltaX: direction == "left" ? delta : direction == "right" ? -delta : 0,
-                                               deltaY: direction == "up" ? delta : direction == "down" ? -delta : 0)
+                // Animated like a trackpad swipe, as `control scroll` is (ScrollMotion): one event jumped the page by the
+                // whole distance. `--time 0` keeps that single event.
+                let asked = workflowArgument("--time").map { Double($0) ?? .nan }
+                if let asked, asked != 0, !(asked.isFinite && (0.05...30).contains(asked)) {
+                    throw WindowEventError.unavailable("--time must be 0 (one event) or 0.05–30 seconds")
+                }
+                let seconds: Double? = asked == nil ? ScrollMotion.defaultSeconds(pixels: pixels) : asked == 0 ? nil : asked
+                let count = ScrollMotion.eventCount(seconds: seconds)
+                let interval = ScrollMotion.interval(seconds: seconds, count: count)
+                let towardStart = direction == "up" || direction == "left"
+                let deltas = ScrollMotion.deltas(total: towardStart ? pixels : -pixels, count: count, ease: .flick)
+                let events = try deltas.enumerated().map { index, delta -> CGEvent in
+                    let horizontal = direction == "left" || direction == "right"
+                    let event = try factory.scroll(point: point, deltaX: horizontal ? delta : 0, deltaY: horizontal ? 0 : delta)
+                    if deltas.count > 1 {
+                        event.setIntegerValueField(.scrollWheelEventIsContinuous, value: 1)
+                        event.setIntegerValueField(.scrollWheelEventScrollPhase, value: ScrollMotion.phase(index: index, count: deltas.count))
+                    }
+                    return event
+                }
                 try dispatchAfterPresentation(present: {
                     ActionCursor.emit("scroll", point: point, background: background, target: rawCoords == nil ? "ax" : "pixel")
                 }, validate: {
@@ -1745,7 +1766,12 @@ func cmdAct(appName _: String) {
                 }
                 _ = try verifyPoint(point, pin: .element)
                 try admitVisualAction()
-                }, dispatch: { try inputGate.post { event.postToPid(pid) } })
+                }, dispatch: {
+                    try ScrollMotion.dispatch(count: events.count, interval: interval, remaining: workflowRemaining,
+                                              sleep: { Thread.sleep(forTimeInterval: $0) }) { index in
+                        try inputGate.post { events[index].postToPid(pid) }
+                    }
+                })
                 Thread.sleep(forTimeInterval: 0.1)
             } else if action == "drag" {
                 guard let destination = workflowArgument("--to") else {

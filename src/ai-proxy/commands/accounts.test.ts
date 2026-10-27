@@ -475,7 +475,7 @@ describe("codex accounts: one auth engine", () => {
         process.exitCode = 0;
         await runSessionUse("s-metered", { grok: "billed", allowMetered: ["billed"] });
         const allowed = readSessionRecord("s-metered");
-        closeSessionRecord("s-metered");
+        closeSessionRecord({ id: "s-metered" });
         await runSessionUse("s-metered", { codex: "personal" });
 
         expect(refused?.grokProxyAccount).toBeUndefined();

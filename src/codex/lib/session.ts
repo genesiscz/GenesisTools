@@ -4,7 +4,9 @@ import { recordWorkerTurnCost, type WorkerCostRow } from "@app/ai-spend/lib/work
 import { withTimeout } from "@genesiscz/utils/async";
 import { type CodexFinishedTurn, CodexTurnCostTracker } from "@genesiscz/utils/codex/turn-cost";
 import { codexTurnOutcome } from "@genesiscz/utils/codex/turn-outcome";
+import { SafeJSON } from "@genesiscz/utils/json";
 import { logger } from "@genesiscz/utils/logger";
+import { shellCommandLine } from "@genesiscz/utils/shell/quote";
 import { buildWorkerContract, type ReviewEffort } from "@genesiscz/utils/worker/contract";
 import { WorkerDeliveryRejectedError, workerSourceHome } from "@genesiscz/utils/worker/delivery";
 import type {
@@ -23,7 +25,6 @@ import type {
 } from "./_generated/protocol";
 import type { CodexAccountBinding } from "./account";
 import type { RpcNotification, RpcServerRequest } from "./app-server-client";
-import { isOwnBusCommand, isReadOnlyCommand } from "./bus-approval";
 import type { CodexControl } from "./control";
 import { assignThreadToProject, type CodexProject, resolveProjectSelector } from "./desktop-project";
 import { markReviewShallow, recordReviewTurn } from "./review/controller";
@@ -334,24 +335,8 @@ export class CodexSessionRuntime {
             return approvalResponse(request.method, false);
         }
 
-        if (this.isOwnBusRequest(request)) {
-            this.store.appendEvent(this.meta.name, {
-                source: "daemon",
-                method: "approval/auto-accepted",
-                params: { reason: "the worker's own seeded bus command", detail: approvalDetail(request.params) },
-            });
-            return approvalResponse(request.method, true);
-        }
-
-        if (this.isReadOnlyRequest(request)) {
-            this.store.appendEvent(this.meta.name, {
-                source: "daemon",
-                method: "approval/auto-accepted",
-                params: { reason: "a read-only command", detail: approvalDetail(request.params) },
-            });
-            return approvalResponse(request.method, true);
-        }
-
+        // Even a prior approval for a seemingly read-only command can authorize an unsandboxed retry.
+        // Hold every ask request for an explicit lead decision; command text does not prove confinement.
         const requestId = String(request.id);
         const detail = this.describeApproval(request);
         const params = isRecord(request.params) ? request.params : {};
@@ -364,7 +349,7 @@ export class CodexSessionRuntime {
                 method: request.method,
                 detail,
                 paths: this.approvalPaths(request),
-                command: commandRequest && typeof params.command === "string" ? params.command : undefined,
+                command: commandRequest ? approvalCommand(params.command) : undefined,
                 cwd: commandRequest && typeof params.cwd === "string" ? params.cwd : undefined,
                 requestedAt: new Date().toISOString(),
             },
@@ -410,31 +395,6 @@ export class CodexSessionRuntime {
             lastEventAt: new Date().toISOString(),
             pendingApprovals: {},
         });
-    }
-
-    /** A command approval for this worker's own seeded `tools agents` command, from its own thread. */
-    private isOwnBusRequest(request: RpcServerRequest): boolean {
-        const command = isRecord(request.params) ? request.params.command : undefined;
-
-        return (
-            request.method === "item/commandExecution/requestApproval" &&
-            this.meta.agentsEnabled &&
-            typeof command === "string" &&
-            this.isOwnThreadEvent(request) &&
-            isOwnBusCommand(command, { agentName: this.meta.agentName, session: this.meta.rendezvousSession })
-        );
-    }
-
-    /** A command approval, from this worker's own thread, for a command that only reads (`isReadOnlyCommand`). */
-    private isReadOnlyRequest(request: RpcServerRequest): boolean {
-        const command = isRecord(request.params) ? request.params.command : undefined;
-
-        return (
-            request.method === "item/commandExecution/requestApproval" &&
-            typeof command === "string" &&
-            this.isOwnThreadEvent(request) &&
-            isReadOnlyCommand(command)
-        );
     }
 
     /** Keeps a file-change item's paths from its start to its end, for the approval asked in between. */
@@ -839,12 +799,34 @@ function approvalResponse(method: string, approved: boolean): { decision: string
     return { decision: approved ? "accept" : "decline" };
 }
 
+function approvalCommand(value: unknown): string | undefined {
+    if (typeof value === "string") {
+        return value;
+    }
+
+    if (Array.isArray(value)) {
+        if (value.every((word): word is string => typeof word === "string")) {
+            return value.length ? shellCommandLine(value) : "[]";
+        }
+
+        return `invalid command: ${SafeJSON.stringify(value)}`;
+    }
+
+    return undefined;
+}
+
 function approvalDetail(params: unknown): string {
     if (!isRecord(params)) {
         return "Codex requested approval";
     }
 
-    for (const key of ["reason", "command", "grantRoot", "itemId"]) {
+    const command = approvalCommand(params.command);
+    const reason = typeof params.reason === "string" ? params.reason : "";
+    if (command) {
+        return reason ? `${reason}: ${command}` : command;
+    }
+
+    for (const key of ["reason", "grantRoot", "itemId"]) {
         if (typeof params[key] === "string" && params[key]) {
             return params[key];
         }

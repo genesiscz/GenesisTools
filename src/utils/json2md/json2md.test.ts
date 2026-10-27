@@ -18,7 +18,14 @@ import {
 } from "./document-file";
 import { Json2mdError, pointerOf } from "./errors";
 import { displayWidth, escapeCell, escapeInline, escapeUrl, truncateToWidth } from "./escape";
-import { renderFrontmatter, splitFrontmatter, toYaml } from "./frontmatter";
+import {
+    carryFrontmatterKeys,
+    keepFrontmatterKeys,
+    renderFrontmatter,
+    splitFrontmatter,
+    toYaml,
+    yamlFrontmatterKeys,
+} from "./frontmatter";
 import { json2md, jsonToMarkdown, withConverter } from "./index";
 import { checkMarkdown, hashData, hashText, STAMP_VERSION, stampMarkdown, stripStamp } from "./integrity";
 import { guessDialect, selectValue } from "./select";
@@ -1078,5 +1085,127 @@ describe("defineDocument validation", () => {
 
         expect(definition.data).toBe("./x.json");
         expect(isDefinedDocument(definition)).toBe(true);
+    });
+});
+
+describe("front matter another tool adds", () => {
+    type Data = { items: Array<{ id: number }> };
+
+    function documentWith(frontmatter: Record<string, unknown>) {
+        return defineDocument<Data>({
+            data: "./doc.json",
+            options: { title: "Notes", frontmatter },
+            render: (d) => [{ ul: d.items.map((item) => `item ${item.id}`) }],
+        });
+    }
+
+    async function scratchDoc(items: number[]): Promise<{ modulePath: string; dataPath: string }> {
+        const dir = await mkdtemp(join(tmpdir(), "json2md-frontmatter-"));
+        const dataPath = join(dir, "doc.json");
+        await Bun.write(dataPath, SafeJSONStringify({ items: items.map((id) => ({ id })) }));
+
+        return { modulePath: join(dir, "doc.ts"), dataPath };
+    }
+
+    /** What `ob sessions --fix` does: one more top-level key at the end of the block. */
+    function addSessions(markdown: string): string {
+        return markdown.replace(/\n---\n/, '\nsessions: ["claude:1a2b3c4d(Notes review)"]\n---\n');
+    }
+
+    test("a sessions key added between two builds is neither a hand edit nor lost", async () => {
+        const { modulePath, dataPath } = await scratchDoc([1]);
+        const definition = documentWith({ title: "Notes", tags: ["vault"] });
+        const first = await writeDocument(modulePath, definition);
+        await Bun.write(first.outPath, addSessions(await Bun.file(first.outPath).text()));
+
+        expect((await checkDocument(modulePath, definition)).verdict).toBe("clean");
+        expect((await writeDocument(modulePath, definition)).outcome).toBe("unchanged");
+
+        await Bun.write(dataPath, SafeJSONStringify({ items: [{ id: 1 }, { id: 2 }] }));
+        const second = await writeDocument(modulePath, definition);
+        const text = await Bun.file(second.outPath).text();
+
+        expect(second.outcome).toBe("written");
+        expect(second.carried).toEqual(["sessions"]);
+        expect(text).toContain('sessions: ["claude:1a2b3c4d(Notes review)"]');
+        expect(text).toContain("item 2");
+        // The rebuilt file is clean as written, carried key and all.
+        expect((await writeDocument(modulePath, definition)).outcome).toBe("unchanged");
+    });
+
+    test("an edit of a key the document sets is still a hand edit", async () => {
+        const { modulePath } = await scratchDoc([1]);
+        const definition = documentWith({ title: "Notes" });
+        const first = await writeDocument(modulePath, definition);
+        const text = await Bun.file(first.outPath).text();
+        await Bun.write(first.outPath, addSessions(text).replace("title: Notes", "title: Renamed"));
+
+        expect((await checkDocument(modulePath, definition)).verdict).toBe("hand-edited");
+        expect((await writeDocument(modulePath, definition)).outcome).toBe("refused");
+    });
+
+    test("a key the document sets wins over the existing value", async () => {
+        const { modulePath, dataPath } = await scratchDoc([1]);
+        const first = await writeDocument(modulePath, documentWith({ title: "Notes" }));
+        await Bun.write(first.outPath, addSessions(await Bun.file(first.outPath).text()));
+        await Bun.write(dataPath, SafeJSONStringify({ items: [{ id: 3 }] }));
+        const second = await writeDocument(
+            modulePath,
+            documentWith({ title: "Notes", sessions: ["from the document"] })
+        );
+        const text = await Bun.file(second.outPath).text();
+
+        expect(second.carried).toEqual([]);
+        expect(text).toContain("from the document");
+        expect(text).not.toContain("claude:1a2b3c4d");
+    });
+
+    test("a key the document stops setting goes away instead of being carried", async () => {
+        const { modulePath, dataPath } = await scratchDoc([1]);
+        const first = await writeDocument(modulePath, documentWith({ title: "Notes", ado: 4242 }));
+        await Bun.write(first.outPath, addSessions(await Bun.file(first.outPath).text()));
+        await Bun.write(dataPath, SafeJSONStringify({ items: [{ id: 2 }] }));
+        const second = await writeDocument(modulePath, documentWith({ title: "Notes" }));
+        const text = await Bun.file(second.outPath).text();
+
+        expect(second.carried).toEqual(["sessions"]);
+        expect(text).not.toContain("ado:");
+        expect(text).toContain("sessions:");
+    });
+
+    test("mergeFrontmatter false drops the carried keys", async () => {
+        const { modulePath, dataPath } = await scratchDoc([1]);
+        const definition = documentWith({ title: "Notes" });
+        const first = await writeDocument(modulePath, definition);
+        await Bun.write(first.outPath, addSessions(await Bun.file(first.outPath).text()));
+        await Bun.write(dataPath, SafeJSONStringify({ items: [{ id: 2 }] }));
+        const second = await writeDocument(modulePath, definition, { mergeFrontmatter: false });
+
+        expect(second.carried).toEqual([]);
+        expect(await Bun.file(second.outPath).text()).not.toContain("sessions:");
+    });
+
+    test("a file stamped before the key list existed still treats an added key as carried", async () => {
+        const { modulePath } = await scratchDoc([1]);
+        const definition = documentWith({ title: "Notes" });
+        const first = await writeDocument(modulePath, definition);
+        const legacy = (await Bun.file(first.outPath).text()).replace(/ frontmatter=\S+/, "");
+
+        expect(legacy).not.toContain("frontmatter=");
+        await Bun.write(first.outPath, addSessions(legacy));
+        expect((await checkDocument(modulePath, definition)).verdict).toBe("clean");
+    });
+
+    test("carrying is undone exactly by keeping the generator's keys", () => {
+        const generated = "---\ntitle: Notes\ntags:\n  - vault\n---\n\n# Notes\n";
+        const existing = "---\ntitle: Old\nsessions:\n  - claude:1a2b3c4d\n# a comment\n---\n\nold body\n";
+        const { markdown, carried } = carryFrontmatterKeys(generated, existing);
+
+        expect(carried).toEqual(["sessions"]);
+        expect(markdown).toBe(
+            "---\ntitle: Notes\ntags:\n  - vault\nsessions:\n  - claude:1a2b3c4d\n# a comment\n---\n\n# Notes\n"
+        );
+        expect(keepFrontmatterKeys(markdown, new Set(["title", "tags"]))).toBe(generated);
+        expect(yamlFrontmatterKeys(markdown)).toEqual(["title", "tags", "sessions"]);
     });
 });

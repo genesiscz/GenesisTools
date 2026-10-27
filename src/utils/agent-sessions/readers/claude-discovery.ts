@@ -141,11 +141,21 @@ export async function discoverClaudeHistorySources(
         filePaths: options.filePaths,
         signal: options.signal,
         ...(shallowMainOnly ? { maxDepth: 1 } : {}),
-        includeFile: ({ path, relativePath }) =>
-            path.endsWith(".jsonl") &&
-            basename(path) !== "sessions-index.jsonl" &&
-            !(basename(path) === "journal.jsonl" && relativePath.split(sep).includes("workflows")),
+        includeFile: ({ path, relativePath }) => {
+            if (!path.endsWith(".jsonl")) {
+                return false;
+            }
+
+            const name = basename(path);
+            return (
+                name !== "sessions-index.jsonl" &&
+                !(name === "journal.jsonl" && relativePath.split(sep).includes("workflows"))
+            );
+        },
     });
+    // One `isSubagentPath` per file: the passes below asked it up to five times for each of about 12,500 files.
+    const subagents = new Set(walked.files.filter((file) => isSubagentPath(file.path)));
+    const isSubagent = (file: (typeof walked.files)[number]) => subagents.has(file);
 
     let files = walked.files;
     if (options.project) {
@@ -159,7 +169,7 @@ export async function discoverClaudeHistorySources(
         );
     }
     files = files.filter((file) => {
-        const subagent = isSubagentPath(file.path);
+        const subagent = isSubagent(file);
         if (options.agentsOnly) {
             return subagent;
         }
@@ -174,7 +184,7 @@ export async function discoverClaudeHistorySources(
     const incompleteRoots = new Set<string>();
     const mainGroups = new Map<string, (typeof files)[number][]>();
 
-    for (const file of files.filter((candidate) => !isSubagentPath(candidate.path))) {
+    for (const file of files.filter((candidate) => !isSubagent(candidate))) {
         const key = `${sourceHome(file.root)}\0${basename(file.path)}`;
         const group = mainGroups.get(key) ?? [];
         group.push(file);
@@ -259,15 +269,29 @@ export async function discoverClaudeHistorySources(
         }
     }
 
-    files = files.filter((file) => isSubagentPath(file.path) || retainedMains.has(file.path));
+    files = files.filter((file) => isSubagent(file) || retainedMains.has(file.path));
 
     const indexCache = new Map<string, Map<string, { entry: JsonRecord; fingerprint: string }>>();
     const existingIndexes = new Set<string>();
     const sources: Array<NativeSessionSource<"claude">> = [];
+    // Per root and project folder, not per file: `join` and `dirname` normalize the whole path every call.
+    const indexPaths = new Map<string, string>();
+    const homes = new Map<string, string>();
     for (const file of files) {
-        const parts = file.relativePath.split(sep);
-        const projectDirectory = parts.length > 1 ? parts[0] : "";
-        const indexPath = join(file.root, projectDirectory, "sessions-index.json");
+        const separator = file.relativePath.indexOf(sep);
+        const projectDirectory = separator > 0 ? file.relativePath.slice(0, separator) : "";
+        const indexKey = `${file.root}\0${projectDirectory}`;
+        let indexPath = indexPaths.get(indexKey);
+        if (indexPath === undefined) {
+            indexPath = join(file.root, projectDirectory, "sessions-index.json");
+            indexPaths.set(indexKey, indexPath);
+        }
+
+        let home = homes.get(file.root);
+        if (home === undefined) {
+            home = sourceHome(file.root);
+            homes.set(file.root, home);
+        }
         let index = indexCache.get(indexPath);
         if (!index) {
             index = await readProjectIndex({
@@ -284,18 +308,18 @@ export async function discoverClaudeHistorySources(
                 // readProjectIndex already reports inaccessible or malformed indexes.
             }
         }
-        const nativeId = basename(file.path, ".jsonl");
-        const indexed = isSubagentPath(file.path) ? undefined : index.get(nativeId);
+        const subagent = isSubagent(file);
+        const indexed = subagent ? undefined : index.get(basename(file.path, ".jsonl"));
         sources.push({
             kind: "claude",
             root: file.root,
-            sourceHome: sourceHome(file.root),
+            sourceHome: home,
             filePath: file.path,
             dataPaths: [file.path],
             metadataPaths: existingIndexes.has(indexPath) ? [indexPath] : [],
             searchPaths: [file.path],
             ...(indexed ? { metadataFingerprint: indexed.fingerprint } : {}),
-            metadata: { ...(indexed ? indexMetadata(indexed.entry) : {}), isSubagent: isSubagentPath(file.path) },
+            metadata: { ...(indexed ? indexMetadata(indexed.entry) : {}), isSubagent: subagent },
         });
     }
 

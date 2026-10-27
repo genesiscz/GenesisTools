@@ -225,12 +225,20 @@ Three Monitors, all with `timeout_ms: 1800000`, each re-armed as the very next t
 2. The workers: `bun .claude/skills/babysit/scripts/watch-workers.ts grok:<name> codex:<name> …`. One line per turn
    start and end, shell command, question and stall (3 minutes silent while running); file reads and greps are only
    counted at the turn end (`--tools all` prints them too).
-3. Codex approvals: `bun .claude/skills/babysit/scripts/approve-codex.ts --run <run.json> --name <name>`. The daemon
-   itself accepts read-only commands (since 886b44308); this driver approves the brief's file edits, `git add` of
-   scope files, the one commit with the brief's subject, and the brief's verify commands, including their one
-   sandbox escalation for loopback tests. Everything else prints `NEEDS LEAD`; decide it yourself. Deny rituals
-   (`tools say`), pushes, and unrelated file changes. Add every file a valid fix needs to the worker's scope before
-   approving it.
+3. Codex approvals: `bun .claude/skills/babysit/scripts/approve-codex.ts --run <run.json> --name <name>`. Every
+   command and file-change request in `--write ask` waits for the lead, including reads and the worker's own bus
+   commands. An approval can permit an unsandboxed retry, and the request does not identify that authority reliably.
+   The driver never approves automatically; it refuses known rituals (`tools say`) itself. Use explicit lead
+   approve/deny controls for all other requests. The driver stops with a warning for full-access or other non-ask
+   workers: those modes bypass its approval boundary.
+   - The run card's `trust`, `noBuilds`, scope and roots are advisory for the lead. Editing the card or changing these
+     switches never enables automatic acceptance; `pending` lists every request as needing a manual decision.
+   - 🛑 **Watch the shared feed:** every NEEDS LEAD line goes to `<run dir>/needs-lead.log` with the reason manual
+     approval is required. A request still waiting is repeated after 3 minutes and every 10 minutes thereafter.
+     After a session restart, `approve-codex.ts pending --run <run.json>` lists waiting requests. The driver stops when
+     the session closes or fails, repeated status checks fail, or its finite safety deadline expires. The default deadline is
+     12 hours. Use `--timeout-ms <ms>` to set another finite positive deadline. On expiry, the feed asks the lead to
+     re-arm the driver if the worker still needs monitoring.
 
 Two-way proof: once per new worker, send a ping on the bus (`--to grok_pr<N>` or `--to codex_<name>`) and see the
 reply arrive (Sol answered in 20 s, Grok in 59 s). Do it for every worker you spawn yourself.

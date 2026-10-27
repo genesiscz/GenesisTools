@@ -11,7 +11,7 @@ import { Api } from "@app/azure-devops/api";
 import { formatJSON, loadWorkItemCache, saveWorkItemCache, WORKITEM_FRESHNESS_MINUTES } from "@app/azure-devops/cache";
 import { downloadAttachments } from "@app/azure-devops/commands/attachments";
 import { downloadInlineImages, extractInlineImageUrls } from "@app/azure-devops/inline-images";
-import { commentMarkdown, formatWorkItemMarkdown } from "@app/azure-devops/lib/work-item-markdown";
+import { commentMarkdown, descriptionMarkdown, formatWorkItemMarkdown } from "@app/azure-devops/lib/work-item-markdown";
 import type {
     AttachmentFilter,
     AttachmentInfo,
@@ -30,7 +30,6 @@ import {
     getRelativeTime,
     getTaskFilePath,
     getTasksDir,
-    htmlToMarkdown,
     parseAttachments,
     parseRelations,
     requireConfig,
@@ -89,7 +88,7 @@ function formatWorkItemAI(
     if (item.description) {
         lines.push("");
         lines.push("## Description");
-        const mdDesc = htmlToMarkdown(item.description);
+        const mdDesc = descriptionMarkdown(item.description);
 
         if (full || mdDesc.length <= 500) {
             lines.push(mdDesc);

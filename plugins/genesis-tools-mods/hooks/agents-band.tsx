@@ -7,11 +7,18 @@
 // The model and start come from `agent.spawn`'s answer; for an agent spawned before this module loaded (a reload, or
 // a resumed session) from the `agent-<id>.meta.json` Claude Code writes beside its transcript. Activity comes from
 // the subagent's own `tool.call`s.
+//
+// The session's codex and grok workers (`tools codex spawn`, `tools grok spawn`) are not Claude Code subagents, so
+// `$.agent.list()` never has them. They come from `tools hub agents --session <id> --json` on the band's timer, at
+// most every 30 s, and show as rows of their own. Only a session that ran `tools codex spawn` or `tools grok spawn`
+// (its transcript says so, or a Bash call did it since) asks at all: on 2026-10-27 every open session asked, and 40
+// sessions started 14 `tools hub` processes per 10 s on a Mac already at load 300.
 import type { AgentInfo, AgentSpawnInput, AgentSpawnResult, ElementTable, RenderElement } from "claude-code";
 import type { SpawnedAgents } from "../types";
+import { genesisProbe } from "./genesis";
 import { liveAgo, liveSince } from "./live";
 import { bareDescription, modelLabel } from "./model-label";
-import { type Feature, type Host, isRecord, logMod, settingsOf } from "./shared";
+import { type Feature, type Host, isRecord, logMod, paceAfter, settingsOf } from "./shared";
 import {
     actionRow,
     dimNote,
@@ -45,6 +52,26 @@ let sessionDir: string | undefined;
 let expanded: boolean | null = null;
 let selected: string | undefined;
 
+/** A running codex or grok worker this session started, as `tools hub agents` reported it. */
+export interface SessionWorker {
+    name: string;
+    harness: string;
+    model: string | undefined;
+    startedAt: number | undefined;
+    lastAt: number | undefined;
+    toolCalls: number;
+}
+
+let workers: SessionWorker[] = [];
+/** When the workers may be read again; 0 asks at the next tick. */
+let workersAt = 0;
+const WORKERS_EVERY_MS = 30_000;
+/** With no worker running, a new spawn is seen by `beforeTool` at once, so the timer only catches one started elsewhere. */
+const NO_WORKERS_EVERY_MS = 5 * 60_000;
+const SPAWNS_WORKERS = /\btools (codex|grok) spawn\b/;
+/** Whether this session started a worker; undefined until its transcript was read. */
+let startsWorkers: boolean | undefined;
+
 interface Recent {
     label: string;
     at: number;
@@ -57,6 +84,7 @@ export function refreshAgentDetails(host: Host): Promise<void> {
             return;
         }
 
+        await loadWorkers(host);
         const list = (await host.agents().catch(() => [])).filter((agent) => !agent.teammateId);
         await Promise.all(
             list.map(async (agent) => {
@@ -93,7 +121,13 @@ export const agentsBand: Feature = {
         });
         await refreshAgentDetails(host);
     },
-    beforeTool(_host, e) {
+    beforeTool(host, e) {
+        if (!startsWorkers && typeof e.command === "string" && SPAWNS_WORKERS.test(e.command)) {
+            startsWorkers = true;
+            workersAt = 0;
+            void rememberStartsWorkers(host, true);
+        }
+
         if (e.agentId !== undefined) {
             const before = activity.get(e.agentId);
             const now = Date.now();
@@ -121,6 +155,125 @@ export const agentsBand: Feature = {
         },
     ],
 };
+
+function timeOf(value: unknown): number | undefined {
+    const at = typeof value === "string" ? Date.parse(value) : Number.NaN;
+
+    return Number.isFinite(at) ? at : undefined;
+}
+
+/** The running workers of one session in `tools hub agents --json` output; [] for output it cannot read. */
+export function workersOf(stdout: string, sessionId: string): SessionWorker[] {
+    let parsed: unknown;
+
+    try {
+        parsed = JSON.parse(stdout);
+    } catch {
+        return [];
+    }
+
+    const parents = isRecord(parsed) && Array.isArray(parsed.parents) ? parsed.parents : [];
+    const parent = parents.find((entry) => isRecord(entry) && entry.sessionId === sessionId);
+    const children = isRecord(parent) && Array.isArray(parent.children) ? parent.children : [];
+
+    return children.flatMap((child) =>
+        isRecord(child) && child.kind === "worker" && child.status === "running" && typeof child.name === "string"
+            ? [
+                  {
+                      name: child.name,
+                      harness: typeof child.harness === "string" ? child.harness : "worker",
+                      model: typeof child.model === "string" ? child.model : undefined,
+                      startedAt: timeOf(child.startedAt),
+                      lastAt: timeOf(child.lastAt),
+                      toolCalls: typeof child.toolCalls === "number" ? child.toolCalls : 0,
+                  },
+              ]
+            : []
+    );
+}
+
+/**
+ * Whether a session started a worker, kept across reloads in `$.store` under one key for the last 200 sessions: every
+ * reload of the mods grepped the whole transcript again (113 greps in 53 sessions on 2026-10-27).
+ */
+const STARTS_WORKERS_KEY = "agents.startsWorkers";
+
+async function rememberedStartsWorkers(host: Host): Promise<boolean | undefined> {
+    const held = await host.storeGet(STARTS_WORKERS_KEY).catch(() => undefined);
+    const value = isRecord(held) ? held[await host.sessionId()] : undefined;
+
+    return typeof value === "boolean" ? value : undefined;
+}
+
+async function rememberStartsWorkers(host: Host, value: boolean): Promise<void> {
+    const held = await host.storeGet(STARTS_WORKERS_KEY).catch(() => undefined);
+    const sessionId = await host.sessionId();
+    const others = Object.entries(isRecord(held) ? held : {}).filter(([id]) => id !== sessionId);
+    const next = Object.fromEntries([...others.slice(-199), [sessionId, value]]);
+    await host.storeSet(STARTS_WORKERS_KEY, next).catch(() => undefined);
+}
+
+/** Reads the session's workers from a timer; a failed or timed-out read keeps the last list. */
+async function loadWorkers(host: Host): Promise<void> {
+    const startedAt = Date.now();
+
+    if (startedAt < workersAt) {
+        return;
+    }
+
+    // Until the read below answers, no other tick starts one.
+    workersAt = startedAt + WORKERS_EVERY_MS;
+
+    if (startsWorkers === undefined) {
+        startsWorkers = await rememberedStartsWorkers(host);
+    }
+
+    if (startsWorkers === undefined) {
+        const dir = await sessionDirOf(host);
+        // A Bash call's own `command` field, not a skill or a reply that only names the command. grep exits 0 on a
+        // match and 1 on none; anything else (a timeout, no transcript yet) asks again later.
+        const found = dir
+            ? await host
+                  .run(["grep", "-qE", '"command":"[^"]*tools (codex|grok) spawn', `${dir}.jsonl`], {
+                      timeoutMs: 10_000,
+                  })
+                  .catch(() => undefined)
+            : undefined;
+
+        if (found?.exitCode === 0 || found?.exitCode === 1) {
+            startsWorkers = found.exitCode === 0;
+            await rememberStartsWorkers(host, startsWorkers);
+        }
+    }
+
+    if (!startsWorkers) {
+        return;
+    }
+
+    if (!(await genesisProbe(host)).tools) {
+        workers = [];
+        return;
+    }
+
+    const sessionId = await host.sessionId();
+    const run = await host
+        .run(["tools", "hub", "agents", "--session", sessionId, "--json"], { timeoutMs: 15_000 })
+        .catch(() => undefined);
+
+    if (run?.exitCode !== 0) {
+        return;
+    }
+
+    const next = workersOf(run.stdout, sessionId);
+    // `tools hub agents` took 4.6 s a run on a loaded Mac (2026-10-27, 1216 runs in 6 sessions): a slow read waits ten
+    // times its length, and a session with no worker running asks every 5 minutes.
+    workersAt = paceAfter(next.length > 0 ? WORKERS_EVERY_MS : NO_WORKERS_EVERY_MS, startedAt);
+
+    if (JSON.stringify(next) !== JSON.stringify(workers)) {
+        workers = next;
+        host.redraw();
+    }
+}
 
 /** Keeps the model and start of a spawned subagent, as `agent.spawn` answered. */
 export function recordSpawn(host: Host, e: AgentSpawnInput, result: AgentSpawnResult): void {
@@ -317,15 +470,17 @@ export async function agentsRow(host: Host, ui: ElementTable, columns: number): 
     }
 
     const list = (await host.agents().catch(() => [])).filter((agent) => BUSY.has(agent.status) && !agent.teammateId);
+    const count = list.length + workers.length;
 
-    if (list.length === 0) {
+    if (count === 0) {
         return null;
     }
 
     const { Box, Button, Text } = ui;
     const now = Date.now();
     const all = await factsOf(host, list);
-    const isOpen = expanded ?? list.length <= FOLD_OVER;
+    const format = (await settingsOf(host)).agentModel.format;
+    const isOpen = expanded ?? count <= FOLD_OVER;
     const late = all.filter((facts) => facts.late).length;
     const toggle = () => {
         expanded = !isOpen;
@@ -345,16 +500,43 @@ export async function agentsRow(host: Host, ui: ElementTable, columns: number): 
             </Box>
         );
     };
+    const workerName = (worker: SessionWorker) =>
+        `${worker.model ? `(${modelLabel(worker.model, format)}) ` : ""}${worker.name}`;
+    const workerRow = (worker: SessionWorker) => {
+        const tail = [
+            worker.startedAt === undefined ? "" : liveSince(worker.startedAt, now),
+            worker.lastAt === undefined ? "" : `idle ${liveSince(worker.lastAt, now)}`,
+            plural(worker.toolCalls, "tool"),
+        ]
+            .filter(Boolean)
+            .join(" · ");
+        const label = cut(`◆ ${workerName(worker)} · ${worker.harness}`, Math.max(20, columns - tail.length - 3));
+        const ask = `What is the ${worker.harness} worker ${worker.name} doing now? Read it with \`tools hub agents --agent ${worker.name}\`.`;
+
+        return (
+            <Box key={`worker-${worker.name}`} flexDirection="row">
+                <Button
+                    key={`worker-${worker.name}`}
+                    plain
+                    onPress={() => void host.fill({ text: ask, mode: "replace" })}
+                >
+                    <Text dimColor>{label}</Text>
+                </Button>
+                <Box flexGrow={1} />
+                <Text dimColor>{tail}</Text>
+            </Box>
+        );
+    };
     const header =
-        list.length > FOLD_OVER || expanded === true ? (
+        count > FOLD_OVER || expanded === true ? (
             <Box key="agents-head" flexDirection="row" gap={1}>
                 <Button key="agents-toggle" plain onPress={toggle}>
-                    <Text bold>{`${isOpen ? "▾" : "▸"} ${list.length} agents`}</Text>
+                    <Text bold>{`${isOpen ? "▾" : "▸"} ${count} agents`}</Text>
                 </Button>
                 {late ? <Text color="red">{`${late} past ${settings.warnMinutes}m`}</Text> : null}
                 {isOpen ? null : (
                     <Text dimColor wrap="truncate-end">
-                        {all.map(nameOf).join(" · ")}
+                        {[...all.map(nameOf), ...workers.map(workerName)].join(" · ")}
                     </Text>
                 )}
                 <Box flexGrow={1} />
@@ -364,11 +546,13 @@ export async function agentsRow(host: Host, ui: ElementTable, columns: number): 
             </Box>
         ) : null;
     const shown = isOpen ? all.slice(0, MAX_ROWS) : [];
+    const shownWorkers = isOpen ? workers.slice(0, Math.max(0, MAX_ROWS - shown.length)) : [];
 
     return (
         <Box key="agents-band" flexDirection="column">
             {header}
             {shown.map(row)}
+            {shownWorkers.map(workerRow)}
             {isOpen && all.length > MAX_ROWS ? (
                 <Button key="agents-more" plain dimColor onPress={() => openOn(host, all[MAX_ROWS]?.agent.id)}>
                     {`+${all.length - MAX_ROWS} more in the sidebar`}
@@ -526,6 +710,9 @@ export function forgetAgentDetails(): void {
     transcripts.clear();
     tails.clear();
     refreshing = undefined;
+    workers = [];
+    workersAt = 0;
+    startsWorkers = undefined;
     sessionDir = undefined;
     expanded = null;
     selected = undefined;

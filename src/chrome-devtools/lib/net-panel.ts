@@ -591,6 +591,7 @@ export function panelDumpToHar(dump: PanelDump, opts: { fullUrls?: boolean; capt
             _requestId: key,
             _resourceType: row.resourceType,
             __key: key,
+            __baseKey: key,
         };
     });
 

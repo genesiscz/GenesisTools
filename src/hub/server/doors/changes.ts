@@ -17,6 +17,7 @@ const SESSION_ID = /^[0-9a-f]{8}-[0-9a-f]{4}-[0-9a-f]{4}-[0-9a-f]{4}-[0-9a-f]{12
 export const agentsToolChangesDoor: CallDoor<{ session: string; toolIds: string[] }> = {
     kind: "call",
     name: "agents changes --tools --json",
+    command: ["agents", "changes"],
     match(argv) {
         const parsed = parseArgv(argv, {
             command: ["agents", "changes"],

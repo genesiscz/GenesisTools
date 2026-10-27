@@ -15,6 +15,7 @@ import {
     emptyViewState,
     encodeViewState,
     formatDurationShort,
+    formatTime,
     HOUR,
     laneGutterWidth,
     layoutLanes,
@@ -442,6 +443,143 @@ describe("shared URL hash (Tabs + charts)", () => {
 });
 
 describe("TimeSeries render", () => {
+    test("pin duration follows displayed times, including each panel's scope and pointer fallbacks", async () => {
+        const end = T0 + 510_000;
+        const bar = (id: string, first: number, group?: string): TsSeries => ({
+            id,
+            label: id,
+            kind: "bar",
+            group,
+            points: [
+                [first, 1],
+                [end, 2],
+            ],
+        });
+        const step: TsSeries = {
+            id: "step",
+            label: "step",
+            kind: "step",
+            points: [
+                [T0, 1],
+                [end, 2],
+            ],
+        };
+        const cases: Array<{
+            series: TsSeries[];
+            layout?: "split";
+            pinX: number;
+            hoverX: number;
+            hoverY: number;
+            pinned: number;
+            hovered: number;
+            duration: string | null;
+        }> = [
+            { series: [bar("a", T0)], pinX: 81, hoverX: 86, hoverY: 40, pinned: T0, hovered: T0, duration: null },
+            {
+                series: [
+                    {
+                        ...bar("a", T0),
+                        points: [
+                            [T0, 1],
+                            [T0 + 30_000, 2],
+                            [end, 3],
+                        ],
+                    },
+                ],
+                pinX: 81,
+                hoverX: 110,
+                hoverY: 40,
+                pinned: T0,
+                hovered: T0 + 30_000,
+                duration: "30s from pin",
+            },
+            {
+                series: [bar("a", T0, "a"), bar("b", T0 + 30_000, "b")],
+                layout: "split",
+                pinX: 81,
+                hoverX: 110,
+                hoverY: 160,
+                pinned: T0,
+                hovered: T0 + 30_000,
+                duration: "30s from pin",
+            },
+            {
+                series: [bar("a", T0), step],
+                pinX: 81,
+                hoverX: 110,
+                hoverY: 40,
+                pinned: T0 + 5_000,
+                hovered: T0 + 34_000,
+                duration: "29s from pin",
+            },
+            {
+                series: [bar("a", T0), bar("b", T0 + 30_000)],
+                pinX: 81,
+                hoverX: 110,
+                hoverY: 40,
+                pinned: T0 + 5_000,
+                hovered: T0 + 34_000,
+                duration: "29s from pin",
+            },
+            {
+                series: [step],
+                pinX: 81,
+                hoverX: 110,
+                hoverY: 40,
+                pinned: T0 + 5_000,
+                hovered: T0 + 34_000,
+                duration: "29s from pin",
+            },
+            {
+                series: [bar("a", T0)],
+                pinX: 276,
+                hoverX: 306,
+                hoverY: 40,
+                pinned: T0 + 200_000,
+                hovered: T0 + 230_000,
+                duration: "30s from pin",
+            },
+        ];
+
+        for (const item of cases) {
+            const dom = await mountDom(<p>tooltip harness</p>);
+            const context = new Proxy(
+                { measureText: () => ({ width: 30 }) },
+                {
+                    get: (target, key, receiver) =>
+                        Reflect.has(target, key) ? Reflect.get(target, key, receiver) : () => undefined,
+                }
+            );
+            Object.defineProperty(dom.window.HTMLCanvasElement.prototype, "getContext", {
+                configurable: true,
+                value: () => context,
+            });
+            Object.defineProperty(dom.window.HTMLElement.prototype, "clientWidth", {
+                configurable: true,
+                get: () => 600,
+            });
+            await dom.render(
+                <TimeSeries series={item.series} layout={item.layout} height={80} brush={false} timeZone="UTC" />
+            );
+            const plot = dom.container.querySelector("canvas")?.parentElement;
+            const target = plot?.querySelector('[class*="cursor-default"]');
+            expect(target).toBeTruthy();
+            await dom.pointer(target, "pointerdown", { clientX: item.pinX, clientY: 40, button: 0 });
+            await dom.pointer(target, "pointerup", { clientX: item.pinX, clientY: 40, button: 0 });
+            await dom.pointer(target, "pointermove", { clientX: item.hoverX, clientY: item.hoverY });
+            const pinned = dom.container.querySelector('[role="dialog"]');
+            const hovered = dom.container.querySelector('[role="tooltip"]');
+            expect(pinned?.textContent).toContain(formatTime(item.pinned, "UTC", "full"));
+            expect(hovered?.textContent).toContain(formatTime(item.hovered, "UTC", "full"));
+            if (item.duration === null) {
+                expect(hovered?.textContent).not.toContain("from pin");
+            } else {
+                expect(hovered?.textContent).toContain(item.duration);
+            }
+            await dom.unmount();
+        }
+    });
+
     test("a chart with spans and no series renders as an activity timeline with a compact menu", async () => {
         const dom = await mountDom(
             <TimeSeries

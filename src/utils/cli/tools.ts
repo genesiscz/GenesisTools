@@ -284,12 +284,25 @@ export async function execTool(args: string[], options?: RunToolOptions): Promis
     };
 }
 
+export interface DetachedToolOptions extends Omit<RunToolOptions, "timeout"> {
+    /**
+     * Start the tool through `sh -c '("$@" &)'`: the subshell backgrounds it and exits, so the tool is a child of
+     * launchd before this call returns. An agent harness that kills the caller's whole process tree when its shell
+     * call ends (Claude Code's Bash tool does) then cannot reach it. The returned pid is the shell's. POSIX only;
+     * Windows starts the tool directly.
+     */
+    reparent?: boolean;
+}
+
 /**
  * Start a GenesisTools tool detached and return at once, e.g. a dashboard server that must outlive
  * the caller. Resolved like `execTool`, so a worktree runs its own code, not the main checkout's.
  */
-export function spawnToolDetached(args: string[], options?: Omit<RunToolOptions, "timeout">): number {
-    const proc = Bun.spawn([namedBunExecPath("tools"), "run", getToolsPath(), ...args], {
+export function spawnToolDetached(args: string[], options?: DetachedToolOptions): number {
+    const command = [namedBunExecPath("tools"), "run", getToolsPath(), ...args];
+    const argv =
+        options?.reparent && process.platform !== "win32" ? ["/bin/sh", "-c", '("$@" &)', "sh", ...command] : command;
+    const proc = Bun.spawn(argv, {
         cwd: options?.cwd ?? process.cwd(),
         stdio: ["ignore", "ignore", "ignore"],
         // The `tools` wrapper skips its orphan watchdog for this start.

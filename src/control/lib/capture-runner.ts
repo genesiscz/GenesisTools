@@ -120,6 +120,12 @@ export function peekabooDurationArg(seconds: number): string {
     return `${seconds}s`;
 }
 
+export function validatePeekabooCapturePlan(plan: Plan): void {
+    if (plan.actions.some((action) => action.do === "scroll" && action.time !== undefined)) {
+        throw new CaptureRunError("Timed scroll is unavailable with the peekaboo backend; use native capture.");
+    }
+}
+
 /**
  * Recorder diagnostics name the binary that actually ran, including explicitly selected legacy transports.
  */
@@ -316,6 +322,9 @@ export async function runCapturePlanWithSignal({
 
     throwIfCancelled("before it started");
     const backend = cap.backend ?? "native";
+    if (backend === "peekaboo") {
+        validatePeekabooCapturePlan(plan);
+    }
     let axTool = AX_TOOL_PATH;
     if (backend === "native") {
         validateNativeCapturePlan(plan);

@@ -20,6 +20,9 @@ export const HUB_LINK_KEYS = [
     "tab",
     "filter",
     "worktree",
+    // The Inbox at one card: a decision or todo (`d_3_<session>`) or a pending form (`ask_…`).
+    "decision",
+    "question",
     // Who asked for the place, for the hub's navigation history (`tools hub nav open`): `actor` is user, agent or
     // link (a link without it counts as link), `note` says why, `from` is the agent's session id, `nav` the id the
     // CLI already stored the entry under, so the hub updates that entry instead of adding a second one.

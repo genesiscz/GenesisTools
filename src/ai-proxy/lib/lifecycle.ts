@@ -58,9 +58,15 @@ async function spawnProxy(config: AiProxyConfig): Promise<number> {
     return pid;
 }
 
-async function waitForLocalHealth(config: AiProxyConfig, attempts = 20): Promise<boolean> {
+/**
+ * How long `up` waits for `/health`. A start takes about 5 s, but on 2026-10-27 at a load average of 167 one took 19 s
+ * from the process start to the listen, and the old 5 s wait reported a failed start for a proxy that came up.
+ */
+const LOCAL_HEALTH_WAIT_MS = 60_000;
+
+async function waitForLocalHealth(config: AiProxyConfig): Promise<boolean> {
     const url = `http://${config.listen.host}:${config.listen.port}/health`;
-    const ready = await waitForUrlReady(url, attempts * 250);
+    const ready = await waitForUrlReady(url, LOCAL_HEALTH_WAIT_MS);
     return ready.ready;
 }
 

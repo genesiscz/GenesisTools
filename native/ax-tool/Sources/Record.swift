@@ -78,7 +78,12 @@ private func recordOptions(startWarnings: [String]) -> RecordOptions {
     // Clamp here rather than inside the rate policy, so `metadata.json` and `--help` report the
     // rate the recorder actually used. An idle rate above the active one would ask the stream
     // for MORE frames while nothing moves, which is the opposite of what the flag is for.
-    let activeFps = number("--active-fps", default: 8, min: 0.5, max: 30)
+    // A movie is watched, so it gets a display's rate by default and never drops to the idle rate: the first frames
+    // of a scroll or an animation were recorded at 2 fps until the stream switched back. PNG frames alone keep 8 fps.
+    let videoOut = argValue("--video-out")
+    let activeFps = number("--active-fps", default: videoOut == nil ? 8 : 60, min: 0.5, max: 120)
+    let idleFps = argValue("--idle-fps") == nil && videoOut != nil
+        ? activeFps : min(number("--idle-fps", default: 2, min: 0.1, max: 5), activeFps)
     return RecordOptions(
         selection: captureSelectionOptions(mode: mode),
         mode: mode,
@@ -90,9 +95,9 @@ private func recordOptions(startWarnings: [String]) -> RecordOptions {
         region: region,
         duration: number("--duration", default: 3, min: 0.1, max: 180),
         activeFps: activeFps,
-        idleFps: min(number("--idle-fps", default: 2, min: 0.1, max: 5), activeFps),
+        idleFps: idleFps,
         threshold: number("--threshold", default: 2.5, min: 0, max: 100),
-        videoOut: argValue("--video-out"),
+        videoOut: videoOut,
         outDir: outDir,
         maxFrames: Int(number("--max-frames", default: 800, min: 1, max: 5000)),
         startWarnings: startWarnings
@@ -245,6 +250,13 @@ final class NativeRecorder: NSObject, SCStreamOutput, SCStreamDelegate {
     private var firstTimestamp: CMTime?
     private var lastTimestamp: CMTime?
     private(set) var kept: [KeptFrame] = []
+    /// PNG encoding runs here, off `queue` (`consume`). At most `maxPendingEncodes` frames wait, each a full-size
+    /// image in memory; a changed frame past that is counted in `encoderBehind` and stays in the movie only.
+    private let encodeQueue = DispatchQueue(label: "ax-tool.record.encode", qos: .utility)
+    private static let maxPendingEncodes = 6
+    private var pendingEncodes = 0
+    private var reservedFrames = 0
+    private var encoderBehind = 0
     private(set) var captured = 0
     private(set) var warnings: [String] = []
     private var writer: AVAssetWriter?
@@ -296,11 +308,15 @@ final class NativeRecorder: NSObject, SCStreamOutput, SCStreamDelegate {
             throw NSError(domain: "ax-tool", code: 1, userInfo: [NSLocalizedDescriptionKey: "video already exists; choose a new output path"])
         }
         let writer = try AVAssetWriter(outputURL: url, fileType: options.selection.codec == "prores4444" ? .mov : .mp4)
-        let input = AVAssetWriterInput(mediaType: .video, outputSettings: [
+        var settings: [String: Any] = [
             AVVideoCodecKey: options.selection.codec == "prores4444" ? AVVideoCodecType.proRes4444 : AVVideoCodecType.h264,
             AVVideoWidthKey: width,
             AVVideoHeightKey: height,
-        ])
+        ]
+        if options.selection.codec != "prores4444" {
+            settings[AVVideoCompressionPropertiesKey] = h264Compression(width: width, height: height, fps: options.activeFps)
+        }
+        let input = AVAssetWriterInput(mediaType: .video, outputSettings: settings)
         input.expectsMediaDataInRealTime = true
         let adaptor = AVAssetWriterInputPixelBufferAdaptor(assetWriterInput: input, sourcePixelBufferAttributes: nil)
         writer.add(input)
@@ -310,6 +326,15 @@ final class NativeRecorder: NSObject, SCStreamOutput, SCStreamDelegate {
         self.writer = writer
         self.writerInput = input
         self.adaptor = adaptor
+    }
+
+    private func h264Compression(width: Int, height: Int, fps: Double) -> [String: Any] {
+        [
+            AVVideoAverageBitRateKey: screenMovieBitRate(width: width, height: height, fps: fps),
+            AVVideoExpectedSourceFrameRateKey: Int(fps.rounded()),
+            AVVideoMaxKeyFrameIntervalKey: max(1, Int((fps * 2).rounded())),
+            AVVideoProfileLevelKey: AVVideoProfileLevelH264HighAutoLevel,
+        ]
     }
 
     var frameQueue: DispatchQueue { queue }
@@ -348,34 +373,82 @@ final class NativeRecorder: NSObject, SCStreamOutput, SCStreamDelegate {
         let height = CVPixelBufferGetHeight(pixelBuffer)
         let signature = FrameSignature(bgra: UnsafeRawPointer(base), width: width, height: height,
                                        bytesPerRow: CVPixelBufferGetBytesPerRow(pixelBuffer), stride: 4)
-        let decision = policy.consider(signature)
+        var candidate = policy
+        let decision = candidate.consider(signature)
         if let fps = rate.observe(kept: decision.moved) {
             applyRate(fps)
         }
 
-        guard decision.keep else { return }
+        guard decision.keep else {
+            policy = candidate
+            return
+        }
         let elapsed = CMTimeSubtract(timestamp, firstTimestamp ?? timestamp)
         let timestampMs = Int((CMTimeGetSeconds(elapsed) * 1000).rounded())
+        // A full-size PNG takes longer to encode than a frame lasts (a retina window: 150 to 400 ms). Encoded here, it
+        // held this queue, so the stream and the movie fell to about 6 fps (2026-10-26). The encoder has its own queue;
+        // only the pixels are copied out here, because the stream reuses its few buffers.
+        guard admitPNG(videoConfigured: options.videoOut != nil, pending: pendingEncodes, maximum: Self.maxPendingEncodes) else {
+            encoderBehind += 1
+            return
+        }
         let image = CIImage(cvPixelBuffer: pixelBuffer)
         guard let cgImage = context.createCGImage(image, from: image.extent) else {
             warnings.append("frame at \(timestampMs) ms could not be rendered")
             return
         }
-        let index = kept.count + 1
+        policy = candidate
+        reservedFrames += 1
+        let index = reservedFrames
         let file = String(format: "keep-%04d.png", index)
         let url = URL(fileURLWithPath: options.outDir).appendingPathComponent(file)
-        guard let png = NSBitmapImageRep(cgImage: cgImage).representation(using: .png, properties: [:]) else {
-            warnings.append("frame at \(timestampMs) ms could not be encoded")
-            return
+        let frame = KeptFrame(index: index, file: file, timestampMs: timestampMs, changePercent: decision.changePercent,
+                              reason: decision.reason)
+        let encode = {
+            let failure: String?
+            if let png = NSBitmapImageRep(cgImage: cgImage).representation(using: .png, properties: [:]) {
+                do {
+                    try png.write(to: url, options: .atomic)
+                    failure = nil
+                } catch {
+                    failure = "frame at \(timestampMs) ms could not be written: \(error.localizedDescription)"
+                }
+            } else {
+                failure = "frame at \(timestampMs) ms could not be encoded"
+            }
+            return failure
         }
-        do {
-            try png.write(to: url, options: .atomic)
-        } catch {
-            warnings.append("frame at \(timestampMs) ms could not be written: \(error.localizedDescription)")
-            return
+        if options.videoOut == nil {
+            if let failure = encode() {
+                warnings.append(failure)
+            } else {
+                kept.append(frame)
+            }
+        } else {
+            pendingEncodes += 1
+            encodeQueue.async { [self] in
+                let failure = encode()
+                queue.async { [self] in
+                    pendingEncodes -= 1
+                    if let failure {
+                        warnings.append(failure)
+                    } else {
+                        kept.append(frame)
+                    }
+                }
+            }
         }
-        kept.append(KeptFrame(index: index, file: file, timestampMs: timestampMs, changePercent: decision.changePercent,
-                              reason: decision.reason))
+    }
+
+    /// Waits until every kept frame is on disk and in `kept`. Call it after the stream stopped.
+    func drainFrames() {
+        queue.sync {}
+        encodeQueue.sync {}
+        queue.sync {
+            if encoderBehind > 0 {
+                warnings.append("\(encoderBehind) changed frames were not saved as PNG because the encoder fell behind")
+            }
+        }
     }
 
     // Delegate callbacks are NOT bound to sampleHandlerQueue, so this runs on some other queue.
@@ -620,10 +693,11 @@ func cmdCaptureScreen() {
         recorder.frameQueue.sync {}
         errorExit("recording never stopped: \(error.localizedDescription)")
     }
-    // Drain the frame queue so the last kept frame is on disk before the sheet is built.
-    recorder.frameQueue.sync {}
+    let stoppedAt = CMClockGetTime(CMClockGetHostTimeClock())
     let durationMs = Int((Date().timeIntervalSince(started) * 1000).rounded())
-    recorder.finishVideo(stoppedAt: CMClockGetTime(CMClockGetHostTimeClock()))
+    // Drain the frame and encode queues so the last kept frame is on disk before the sheet is built.
+    recorder.drainFrames()
+    recorder.finishVideo(stoppedAt: stoppedAt)
     if let failure = recorder.failure {
         errorExit("recording stopped early: \(failure.localizedDescription)")
     }

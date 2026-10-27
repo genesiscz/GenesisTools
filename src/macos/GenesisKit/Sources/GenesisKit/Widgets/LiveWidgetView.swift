@@ -32,10 +32,13 @@ public struct LiveWidgetView: View {
     /// An unknown delivery the user checked in the conversation and wants to drop, so later follow-ups can go.
     @State private var discard: WidgetOutgoing?
     @FocusState private var editing: Bool
+    /// The open decision's own answer field has the keyboard; apart from `editing`, because both fields are on screen.
+    @FocusState private var ownAnswerFocused: Bool
     /// Heights for fitting the panel to its content (W3). A plain reference, so measuring never re-renders.
     @State private var fit = WidgetContentFit()
     /// The composer field's height, so its stand-in takes exactly its place while the panel moves.
     @State private var composerFieldHeight: CGFloat = 0
+    @State private var ownAnswerFieldHeight: CGFloat = 0
     @Environment(\.edgePanelMoving) private var panelMoving
     /// Dismiss and Mark complete wait out their Undo note before they reach the decision log.
     @ObservedObject private var ledgerUndo = WidgetLedgerUndo.shared
@@ -75,7 +78,7 @@ public struct LiveWidgetView: View {
             isPresented: Binding(get: { retry != nil }, set: { if !$0 { retry = nil } })
         ) {
             Button("Cancel", role: .cancel) { retry = nil }
-            Button("I checked — retry") {
+            Button("Retry anyway") {
                 if let retry {
                     model.action(["action": "retry", "id": .string(retry.id), "confirmedUnknown": true])
                 }
@@ -89,7 +92,7 @@ public struct LiveWidgetView: View {
             isPresented: Binding(get: { discard != nil }, set: { if !$0 { discard = nil } })
         ) {
             Button("Keep it", role: .cancel) { discard = nil }
-            Button("I checked — discard", role: .destructive) {
+            Button("Discard anyway", role: .destructive) {
                 if let discard {
                     model.action(["action": "cancel", "id": .string(discard.id), "confirmedUnknown": true])
                 }
@@ -125,7 +128,14 @@ public struct LiveWidgetView: View {
             if let notice = model.notice {
                 VStack(alignment: .leading, spacing: 4) {
                     HStack(alignment: .top) {
-                        Text(notice).font(.caption).foregroundStyle(.secondary)
+                        // The tone the sender stored: "Not delivered …" is a warning, not a grey caption like "Inbox
+                        // marked read" (UX audit F22).
+                        if let symbol = WidgetToneLook.symbol(model.noticeTone) {
+                            Image(systemName: symbol).font(.caption).foregroundStyle(WidgetToneLook.color(model.noticeTone))
+                                .accessibilityHidden(true)
+                        }
+                        Text(notice).font(.caption)
+                            .foregroundStyle(model.noticeTone == .warning ? AnyShapeStyle(.primary) : AnyShapeStyle(.secondary))
                             .fixedSize(horizontal: false, vertical: true)
                         Spacer()
                         if let action = model.noticeAction {
@@ -146,7 +156,11 @@ public struct LiveWidgetView: View {
             }
             if let error = model.error {
                 // One sentence; the raw text (a process's stderr) only behind Details.
-                NoticePill(text: error, more: model.errorDetail, tone: .error) { model.error = nil }
+                // Reconnect restarts the widget's link to the hub: the one next step every failed call has.
+                NoticePill(text: error, more: model.errorDetail, tone: .error,
+                           fixes: [.button("Reconnect", symbol: "arrow.clockwise") { model.error = nil; model.start() }]) {
+                    model.error = nil
+                }
                     .accessibilityIdentifier("widget.error")
             }
             if model.connectionLost && model.snapshot != nil {
@@ -227,6 +241,16 @@ public struct LiveWidgetView: View {
                         // kept for the much shorter inbox, drew its rows over the header (Martin, 2026-10-23). The
                         // session list keeps its place when Up and Down pick another session in it.
                         .id(section == "Sessions" ? section : section + "|" + model.selectedKey)
+                        // A decision link brings its card or chat turn to the middle of the list; on appear too, since
+                        // the link usually switches the tab or the session, which makes this a new scroll view.
+                        .task(id: model.revealScroll) {
+                            guard let target = model.revealScroll else { return }
+                            ScrollViewPositioning.scroll(reader, to: target.rowID, anchor: .center)
+                            // Done once its passes ran, so showing the tab again later does not pull the list back.
+                            // A scroll view replaced meanwhile cancels this, and its successor scrolls instead.
+                            do { try await Task.sleep(for: .seconds(0.5)) } catch { return }
+                            if model.revealScroll == target { model.revealScroll = nil }
+                        }
                         .onChange(of: WidgetOutgoingPosition(session: model.selectedKey, messageID: model.outgoing.last?.id)) { previous, next in
                             guard section == "Inbox", previous.session == next.session, let id = next.messageID,
                                   Self.followsOutgoing(model.outgoing.last) else { return }
@@ -392,9 +416,9 @@ public struct LiveWidgetView: View {
 
     private var reduceMotion: Bool { systemReduceMotion || model.effectiveReduceMotion }
 
-    /// While a decision card holds the composer for an own answer, a second one would edit the same draft.
+    /// A decision card that holds the draft for an own answer parks the composer in its place (`composer(ownAnswer:)`).
     private var showsComposer: Bool {
-        !model.inboxOverview && section != "Sessions" && !(section == "Inbox" && model.ownAnswerCard != nil)
+        !model.inboxOverview && section != "Sessions"
     }
 
     /// The inbox's composer sits under the tabs unless the user moved it to the bottom (Widgets → Sessions).
@@ -443,7 +467,7 @@ public struct LiveWidgetView: View {
     }
 
     private func inboxSummary(_ entry: WidgetInboxSession) -> String {
-        [entry.needsAnswer > 0 ? "\(entry.needsAnswer) need your answer" : nil,
+        [entry.needsAnswer > 0 ? WidgetWords.waiting(entry.needsAnswer) : nil,
          entry.unread > 0 ? "\(entry.unread) unread" : nil].compactMap { $0 }.joined(separator: " · ")
     }
 
@@ -507,7 +531,7 @@ public struct LiveWidgetView: View {
         let waiting = cards.filter(\.needsAnswer).count
         let unread = cards.filter { !$0.read && !$0.needsAnswer }.count
         return [cards.count == 1 ? "1 item" : "\(cards.count) items",
-                waiting > 0 ? "\(waiting) need your answer" : nil,
+                waiting > 0 ? WidgetWords.waiting(waiting) : nil,
                 unread > 0 ? "\(unread) unread" : nil].compactMap { $0 }.joined(separator: " · ")
     }
 
@@ -532,12 +556,15 @@ public struct LiveWidgetView: View {
 
     private func inboxRow(_ card: WidgetCard) -> some View {
         let open = isOpen(card)
+        // A staged decision says so in blue, as the inbox of every session does, instead of "Needs your answer".
+        let staged = staged(card)
+        let waiting = card.needsAnswer && !staged
         let _ = RenderProbe.hit("widget.inbox.row")
         return VStack(alignment: .leading, spacing: 0) {
             Button { toggle(card) } label: {
                 HStack(alignment: .top, spacing: 9) {
                     Circle()
-                        .fill(card.needsAnswer ? Color.orange : (card.read ? Color.clear : SessionPalette.blue))
+                        .fill(waiting ? Color.orange : (staged || !card.read ? SessionPalette.blue : Color.clear))
                         .frame(width: 7, height: 7).padding(.top, 5)
                     Image(systemName: Self.kindSymbol(card.kind)).font(.system(size: 11))
                         .foregroundStyle(.secondary).frame(width: 14).padding(.top, 1)
@@ -545,17 +572,20 @@ public struct LiveWidgetView: View {
                         // A one-question form's title is its prompt, which the open card does not repeat: open, it
                         // shows whole and as Markdown, the way the form drew it.
                         let isPrompt = Self.asksOneQuestion(card)
-                        (isPrompt ? Text(.init(card.title)) : Text(card.numberedTitle))
+                        (isPrompt ? Text(.init(card.title)) : Text(WidgetWords.numbered(card.title, number: card.number)))
                             .font(.system(size: 12.5, weight: open ? .semibold : .medium))
                             .lineLimit(open ? (isPrompt ? nil : 4) : 2).fixedSize(horizontal: false, vertical: true)
                         if !open, let preview = Self.previewLine(card.body) {
                             Text(preview).font(.system(size: 11)).foregroundStyle(.secondary).lineLimit(1)
                         }
                         HStack(spacing: 4) {
-                            Text(Self.kindLabel(card))
+                            Text(staged ? "Staged: " + WidgetStagedText.line(WidgetModel.inboxItem(card),
+                                    option: model.shownStagedOption(card.sourceId, stored: card.draftOption))
+                                 : Self.kindLabel(card)).lineLimit(1)
                             Text("·")
                             LiveAgo(date: Date(timeIntervalSince1970: card.at / 1000), style: .brief)
-                        }.font(.system(size: 10)).foregroundStyle(card.needsAnswer ? Color.orange : .secondary)
+                        }.font(.system(size: 11))
+                            .foregroundStyle(waiting ? Color.orange : staged ? SessionPalette.blue : SessionPalette.secondary)
                     }
                     Spacer(minLength: 4)
                     Image(systemName: "chevron.right").font(.system(size: 9, weight: .semibold))
@@ -568,7 +598,7 @@ public struct LiveWidgetView: View {
                 .contentShape(Rectangle())
             }
             .buttonStyle(RowButtonStyle(cornerRadius: 11))
-            .accessibilityLabel(Self.kindLabel(card) + ": " + card.numberedTitle)
+            .accessibilityLabel((staged ? "Staged" : Self.kindLabel(card)) + ": " + WidgetWords.numbered(card.title, number: card.number))
             .accessibilityValue(open ? "Expanded" : "Collapsed")
             .accessibilityIdentifier("widget.inbox.row." + card.id)
             if open {
@@ -580,68 +610,44 @@ public struct LiveWidgetView: View {
         .clipShape(RoundedRectangle(cornerRadius: 11))
         .background(Color.white.opacity(open ? 0.055 : 0.03), in: RoundedRectangle(cornerRadius: 11))
         .overlay(RoundedRectangle(cornerRadius: 11)
-            .strokeBorder(card.needsAnswer ? Color.orange.opacity(0.28) : .clear, lineWidth: 1))
+            .strokeBorder(waiting ? Color.orange.opacity(0.28) : staged ? SessionPalette.blue.opacity(0.3) : .clear, lineWidth: 1))
+        .attentionPulse(trigger: model.revealTrigger("card-" + card.id), style: model.revealStyle,
+                        since: model.revealStart("card-" + card.id))
     }
 
     /// A card whose pick or note is staged, here or in the snapshot.
     private func staged(_ card: WidgetCard) -> Bool {
         card.kind == "decision" && card.needsAnswer
-            && (model.stagedOption(card.sourceId, stored: card.draftOption) != nil || card.draft != nil)
+            && (model.shownStagedOption(card.sourceId, stored: card.draftOption) != nil
+                || model.shownStagedNote(card.sourceId, card.draft) != nil)
     }
 
     /// One option of a decision: the key badge, "a)" and the text, Staged, the recommended mark and the focus ring.
     @ViewBuilder
     private func optionRow(_ card: WidgetCard, choice: WidgetChoice, index: Int, key: String?, picked: Bool,
                            focused: Bool) -> some View {
-        let shape = RoundedRectangle(cornerRadius: 9)
-        let fill: Color = picked ? SessionPalette.blue.opacity(0.16) : .white.opacity(0.065)
-        let border: Color = picked ? SessionPalette.blue.opacity(0.7) : .clear
-        let ring: Color = focused ? Color(nsColor: .keyboardFocusIndicatorColor) : .clear
-        let label = (model.decisionClickStages ? "Stage " : "Answer ") + "\(choice.id): " + Self.choiceText(choice)
+        let stages = model.decisionClickStages
+        let text = Self.choiceText(choice)
         Button {
             model.choose(card, option: choice.id)
         } label: {
-            optionLabel(choice, key: key, picked: picked)
-                .padding(9).frame(maxWidth: .infinity, alignment: .leading)
-                .background(fill, in: shape)
-                .overlay(shape.strokeBorder(border, lineWidth: 1))
-                // Up and Down move through the options; the chosen one wears the focus ring.
-                .overlay(shape.strokeBorder(ring, lineWidth: 2))
-                .contentShape(shape)
-        }
-        .buttonStyle(RowButtonStyle(cornerRadius: 9)).disabled(model.importing > 0)
-        .accessibilityAddTraits(focused ? .isSelected : [])
-        .id("choice-" + card.id + "-" + choice.id)
-        .instantTooltip(Self.choiceTooltip(choice, index: index, stages: model.decisionClickStages, picked: picked))
-        .accessibilityLabel(label)
-        .accessibilityValue(picked ? "Staged" : "")
-    }
-
-    private func optionLabel(_ choice: WidgetChoice, key: String?, picked: Bool) -> some View {
-        HStack(alignment: .top, spacing: 8) {
             // The badge is the key that picks the option; the letter, which the agent and the hub name it by, leads
-            // its text.
-            Text(verbatim: key ?? choice.id).font(.system(size: 11, weight: .semibold, design: .rounded))
-                .padding(.horizontal, 4)
-                .frame(minWidth: 20, minHeight: 20)
-                .background(.white.opacity(0.07), in: RoundedRectangle(cornerRadius: 5))
-            HStack(alignment: .firstTextBaseline, spacing: 5) {
-                if key != nil {
-                    Text(verbatim: choice.id + ")").foregroundStyle(SessionPalette.secondary)
-                }
-                Text(Self.choiceText(choice)).fixedSize(horizontal: false, vertical: true)
-            }
-            .font(.system(size: 12))
-            .padding(.top, 2)
-            Spacer(minLength: 0)
-            if picked {
-                Text("Staged").font(.system(size: 10, weight: .semibold))
-                    .foregroundStyle(SessionPalette.blue).padding(.top, 3)
-            }
-            if choice.recommended {
-                Image(systemName: "sparkle").foregroundStyle(.orange)
-            }
+            // its text. Up and Down move through the options; the chosen one wears the focus ring.
+            WidgetOptionLabel(badge: key ?? choice.id, letter: key == nil ? nil : choice.id, text: text, picked: picked,
+                              recommended: choice.recommended, focused: focused)
         }
+        .buttonStyle(RowButtonStyle(cornerRadius: WidgetOptionLabel.cornerRadius))
+        // An answer on its way takes no second, conflicting pick (forms say "Answer queued" the same way).
+        .disabled(model.importing > 0 || model.cardPending || model.sendingDecisionIDs.contains(card.sourceId))
+        .id("choice-" + card.id + "-" + choice.id)
+        .instantTooltip(Self.choiceTooltip(choice, index: index, stages: stages, picked: picked,
+                                           swaps: model.snapshot?.state.preferences.decisionCommandSwaps ?? true))
+        .accessibilityLabel(WidgetOptionText.accessibilityLabel(letter: choice.id, text: text, stages: stages,
+                                                                recommended: choice.recommended))
+        .accessibilityValue(picked ? "Staged" : "")
+        // Selected is the staged pick; the keyboard's option shows by its focus ring and VoiceOver's own cursor.
+        .accessibilityAddTraits(picked ? .isSelected : [])
+        .accessibilityHint(picked && stages ? "Click again to unstage" : "")
     }
 
     /// The key that picks the option at `index` (the open decision's number keys, as the keymap has them), or nil.
@@ -657,27 +663,13 @@ public struct LiveWidgetView: View {
         ledgerUndo.hold(card, to: state, model: model, reduceMotion: reduceMotion)
     }
 
-    static func choiceTooltip(_ choice: WidgetChoice, index: Int, stages: Bool, picked: Bool) -> String {
-        let key = index < 9 ? " · key \(index + 1)" : ""
-        if !stages { return "Answer \(choice.id)" + (choice.recommended ? " (recommended)" : "") + key }
-        return (picked ? "Staged; click again to unstage" : "Stage \(choice.id), sent later with your other staged decisions")
-            + (choice.recommended ? " (recommended)" : "") + key
+    static func choiceTooltip(_ choice: WidgetChoice, index: Int, stages: Bool, picked: Bool, swaps: Bool = true) -> String {
+        DecisionAnswering.optionTooltip(choice.id, recommended: choice.recommended, stages: stages, picked: picked,
+                                        swaps: swaps, key: index < 9 ? index + 1 : nil)
     }
 
     @ViewBuilder private func cardDetail(_ card: WidgetCard) -> some View {
         VStack(alignment: .leading, spacing: 10) {
-            if let saved = model.draftSavedAt[card.id] ?? (card.draft != nil ? Date(timeIntervalSince1970: card.at / 1000) : nil),
-               card.kind == "decision", card.needsAnswer {
-                HStack(spacing: 4) {
-                    Image(systemName: "checkmark.circle.fill").foregroundStyle(SessionPalette.blue)
-                    // "Staged", as the option badge and the hub say: a note that waits to be sent with the others.
-                    Text(card.draft.map { "Note staged: " + $0 } ?? "Note staged").lineLimit(2)
-                    if model.draftSavedAt[card.id] != nil {
-                        Text("·")
-                        LiveAgo(date: saved, style: .brief)
-                    }
-                }.font(.system(size: 11)).foregroundStyle(.secondary)
-            }
             WidgetReceiptContextView(card: card, model: model)
                 .id(card.id + "|" + String(card.at))
             if !card.body.isEmpty {
@@ -699,15 +691,30 @@ public struct LiveWidgetView: View {
                         .buttonStyle(.borderedProminent).pointerCursor(!model.cardPending)
                         .disabled(model.importing > 0 || model.cardPending)
                 } else {
-                    let staged = model.stagedOption(card.sourceId, stored: card.draftOption)
+                    let staged = model.shownStagedOption(card.sourceId, stored: card.draftOption)
                     ForEach(Array(card.choices.enumerated()), id: \.element.id) { index, choice in
-                        let picked = staged == choice.id
+                        let picked = staged?.contains(choice.id) ?? false
                         let key = Self.choiceKey(index)
                         let focused = model.choiceFocus == WidgetChoiceFocus(cardID: card.id, choiceID: choice.id)
                         optionRow(card, choice: choice, index: index, key: key, picked: picked, focused: focused)
                     }
                     ownAnswer(card)
                 }
+            }
+            // Under the options, beside the buttons that act on it: at the top of the card it pushed the options and
+            // the buttons down under the pointer.
+            let note = model.shownStagedNote(card.sourceId, card.draft)
+            if let saved = model.draftSavedAt[card.id] ?? (note != nil ? Date(timeIntervalSince1970: card.at / 1000) : nil),
+               card.kind == "decision", card.needsAnswer, !model.heldDecisionIDs.contains(card.sourceId) {
+                HStack(spacing: 4) {
+                    Image(systemName: "checkmark.circle.fill").foregroundStyle(SessionPalette.blue)
+                    // "Staged", as the option badge and the hub say: a note that waits to be sent with the others.
+                    Text(note.map { "Note staged: " + $0 } ?? "Note staged").lineLimit(2)
+                    if model.draftSavedAt[card.id] != nil {
+                        Text("·")
+                        LiveAgo(date: saved, style: .brief)
+                    }
+                }.font(.system(size: 11)).foregroundStyle(SessionPalette.secondary)
             }
             HStack(spacing: 8) {
                 if card.kind == "todo" && ["open", "acknowledged"].contains(card.status) {
@@ -717,20 +724,38 @@ public struct LiveWidgetView: View {
                     Button("Mark complete") { holdMove(card, to: "implemented") }
                     Button("Dismiss") { holdMove(card, to: "dismissed") }
                 } else if card.kind == "decision" && card.needsAnswer {
-                    Button("Stage note") { model.saveDraft(card) }
-                        .instantTooltip("Stages your text as this decision's note, sent later with your other staged decisions.")
+                    // Send now is the card's one primary action while a pick or a note waits; Dismiss is quiet and
+                    // sits at the right edge, so it never moves when staging adds the buttons before it (UX audit P13).
                     if staged(card) {
-                        Button("Send now") { model.sendStaged([card.sourceId]) }
-                            .instantTooltip("Sends this staged decision alone, without the others.")
-                        Button("Unstage") { model.discardStaged([card.sourceId]) }
+                        let sending = model.sendingDecisionIDs.contains(card.sourceId)
+                        Button(sending ? "Sending…" : "Send now") {
+                            model.sendStaged([card.sourceId], known: [WidgetModel.inboxItem(card)])
+                        }
+                        .buttonStyle(.genPrimary())
+                        .disabled(sending)
+                        .instantTooltip("Sends this staged decision alone, without the others.")
+                        Button("Unstage") { model.unstage(card) }
+                            .disabled(sending)
+                            .instantTooltip(card.draft == nil ? "Clears the staged pick."
+                                : "Clears the staged pick and puts the note back into the answer field.")
                     }
-                    Button("Dismiss") { holdMove(card, to: "dismissed") }
+                } else if card.kind == "decision" && card.status == "answered" {
+                    // "Waiting to send": the answer waits for the session's next prompt; this sends it now.
+                    let sending = model.sendingDecisionIDs.contains(card.sourceId)
+                    Button(sending ? "Sending…" : "Send again") { model.resendAnswers([WidgetModel.inboxItem(card)]) }
+                        .disabled(sending)
+                        .instantTooltip("Sends the answer to the session now instead of at its next prompt.")
                 }
                 if card.kind == "result" || card.kind == "answer" {
                     Button("Create handoff") { model.destination("handoff") }
                     Button("New agent with context…") { model.destination("new") }
                 }
                 Spacer(minLength: 0)
+                if card.kind == "decision" && card.needsAnswer {
+                    Button("Dismiss") { holdMove(card, to: "dismissed") }
+                        .foregroundStyle(.secondary)
+                        .instantTooltip("Drops the decision without an answer. Undo brings it back.")
+                }
                 IconButton(systemName: model.reading ? "stop.fill" : "speaker.wave.2",
                            tooltip: model.reading ? "Stop reading" : "Read aloud", action: model.toggleRead)
                     .accessibilityLabel(model.reading ? "Stop reading" : "Read aloud")
@@ -750,27 +775,30 @@ public struct LiveWidgetView: View {
         }
     }
 
-    /// "Write my own answer": a row under the options that opens the full composer (text, media, screenshot, voice)
-    /// inside the card; Send delivers the draft as the answer with no option picked.
-    @ViewBuilder private func ownAnswer(_ card: WidgetCard) -> some View {
-        if model.ownAnswerCard?.id == card.id {
-            VStack(alignment: .leading, spacing: 6) {
-                HStack {
-                    Text("Your own answer").font(.system(size: 11, weight: .semibold)).foregroundStyle(.secondary)
-                    Spacer(minLength: 0)
-                    Button("Back to the options") {
-                        GenMotion.perform(expanding: false, reduceMotion: reduceMotion) { model.ownAnswerCardID = nil }
-                    }.buttonStyle(.genHoverPlain()).font(.caption)
+    /// The decision's own answer: a field under its options that is there before it is asked for (Martin, 2026-10-26:
+    /// "maybe it should even just show the input field anyway and when i click it it will animate expand the block so
+    /// the other stuff like the screenshot / recording shows"). A click or Tab types into it at once: the keyboard
+    /// opens the own answer, and the media buttons, Stage note and Send reveal under the field. It is the same field
+    /// in both states, so the keyboard never has to move from one field to another. An empty field that loses the
+    /// keyboard folds back; one with text keeps the answer open.
+    private func ownAnswer(_ card: WidgetCard) -> some View {
+        composer(ownAnswer: card)
+            .disabled(model.importing > 0 || model.cardPending)
+            .frameProbe("widget.ownAnswer")
+            .onChange(of: ownAnswerFocused) { _, focused in
+                if focused {
+                    guard model.ownAnswerCard?.id != card.id else { return }
+                    GenMotion.perform(expanding: true, reduceMotion: reduceMotion) { model.openOwnAnswer(card) }
+                } else if model.ownAnswerCard?.id == card.id, model.ownAnswerIdle {
+                    GenMotion.perform(expanding: false, reduceMotion: reduceMotion) { model.ownAnswerCardID = nil }
                 }
-                composer(ownAnswer: card).disabled(model.cardPending)
             }
-            .transition(.genReveal)
-            .onAppear { editing = true }
-        } else {
-            WidgetOwnAnswerRow {
-                GenMotion.perform(expanding: true, reduceMotion: reduceMotion) { model.openOwnAnswer(card) }
-            }.disabled(model.importing > 0 || model.cardPending)
-        }
+            // The alert's Write my own answer opens the panel first; the field takes the keyboard once it is here.
+            .task(id: model.ownAnswerFocusRequest) {
+                guard model.ownAnswerFocusRequest == card.id else { return }
+                model.ownAnswerFocusRequest = nil
+                ownAnswerFocused = true
+            }
     }
 
     /// "inbox": answers, results and questions; "decisions": decisions and tasks; anything else: every card.
@@ -809,13 +837,13 @@ public struct LiveWidgetView: View {
     }
 
     static func kindLabel(_ card: WidgetCard) -> String {
-        if card.needsAnswer { return "Needs your answer" }
+        if card.needsAnswer { return "Waiting for your answer" }
         switch card.kind {
         case "answer": return card.read ? "Answer" : "New answer"
         case "result": return card.read ? "Agent result" : "New agent result"
         case "todo": return "Task · " + WidgetTask.label(for: card.status)
         case "decision":
-            if let replacement = card.supersededBy { return "Decision · Superseded by DECISION \(replacement.number)" }
+            if let replacement = card.supersededBy { return "Decision · Superseded by " + WidgetWords.decision(replacement.number) }
             if let option = card.option, !option.isEmpty, ["acknowledged", "implemented", "sent", "answered"].contains(card.status) {
                 return "Decision · Answered \(option) · " + statusPhrase(card.status, kind: card.kind)
             }
@@ -826,7 +854,7 @@ public struct LiveWidgetView: View {
     }
 
     /// One phrase for each state of the decision log and the question forms, the same in every tab and row.
-    static func statusPhrase(_ status: String, kind: String) -> String {
+    public static func statusPhrase(_ status: String, kind: String) -> String {
         if kind == "todo" { return WidgetTask.label(for: status) }
         switch status {
         case "open", "pending": return "Waiting for your answer"
@@ -949,11 +977,14 @@ public struct LiveWidgetView: View {
                             .background(
                                 turn.role == "user" ? Color.blue.opacity(0.16) : Color.white.opacity(0.04),
                                 in: RoundedRectangle(cornerRadius: 11))
+                            .attentionPulse(trigger: model.revealTrigger(item.id), style: model.revealStyle,
+                                            since: model.revealStart(item.id))
                     }
                 case .card(let card):
                     VStack(alignment: .leading, spacing: 6) {
                         Text(Self.kindLabel(card)).font(.system(size: 11)).foregroundStyle(SessionPalette.secondary)
-                        Text(card.numberedTitle).font(.system(size: 12, weight: .semibold)).textSelection(.enabled)
+                        Text(WidgetWords.numbered(card.title, number: card.number)).font(.system(size: 12, weight: .semibold))
+                            .textSelection(.enabled)
                         if !card.body.isEmpty {
                             WidgetMarkdown(text: card.body)
                         }
@@ -1188,60 +1219,158 @@ public struct LiveWidgetView: View {
 
     private var composer: some View { composer(ownAnswer: nil) }
 
-    /// The reply composer. With `ownAnswer` it sits in that decision's card and sends the draft as the answer.
+    /// The reply composer, or with `ownAnswer` that decision's own answer field in its card, which sends the draft as
+    /// the answer. The own answer shows only its field until it holds the draft (`open`); then its media buttons,
+    /// Stage note and Send reveal under the field, which stays where it was clicked. While a card holds the draft the
+    /// reply composer keeps its place and its height, parked, with Reply instead to take the draft back: hidden, it
+    /// lifted the card 103 pt under the pointer that had just clicked it.
     private func composer(ownAnswer: WidgetCard?) -> some View {
-        VStack(alignment: .leading, spacing: 8) {
-            if !model.draft.assetIds.isEmpty {
-                attachments(model.draft.assetIds, tile: CGSize(width: 88, height: 60), removable: true)
+        let open = ownAnswer.map { model.ownAnswerCard?.id == $0.id } ?? true
+        let parked = ownAnswer == nil ? model.ownAnswerCard : nil
+        let focused = ownAnswer == nil ? editing : ownAnswerFocused
+        let fieldHeight = ownAnswer == nil ? composerFieldHeight : ownAnswerFieldHeight
+        let shownText = open && parked == nil ? model.draft.text : ""
+        let placeholder = parked.map { "Answering " + WidgetWords.decision($0.number) + " in its card" }
+            ?? (ownAnswer == nil ? "Reply to " + (model.selected?.target.provider.capitalized ?? "agent") + "…"
+                : "Write my own answer…")
+        let shape = RoundedRectangle(cornerRadius: 13)
+        return VStack(alignment: .leading, spacing: 8) {
+            if open && parked == nil {
+                composerProgress
             }
-            if model.voiceActive {
-                HStack(alignment: .center, spacing: 9) {
-                    VoiceLevelBars(level: min(1, model.voiceLevel * 5), tint: .red, reduceMotion: model.effectiveReduceMotion)
-                    VStack(alignment: .leading, spacing: 2) {
-                        Text(model.voiceMode == .note ? "Voice note" : "Dictation")
-                            .font(.system(size: 10, weight: .semibold)).foregroundStyle(.secondary)
-                        let transcript = model.voiceTranscript
-                        // The newest words stay in view: a long dictation drops its beginning, not its end.
-                        Text(transcript.isEmpty ? "Listening… the words appear here as you talk" : transcript)
-                            .font(.caption).lineLimit(3).truncationMode(.head)
-                    }
-                    Spacer(minLength: 0)
-                }
-                .accessibilityElement(children: .combine)
+            if ownAnswer == nil, parked == nil, let candidate = model.replyToCandidate {
+                replyingTo(candidate)
             }
-            if model.importing > 0 {
-                ProgressView("Saving attachment…").controlSize(.small).font(.caption)
-            }
-            HStack(alignment: .bottom, spacing: 8) {
-                let placeholder = ownAnswer.map { "Your own answer to DECISION \($0.number ?? 0)…" }
-                    ?? "Reply to " + (model.selected?.target.provider.capitalized ?? "agent") + "…"
-                if panelMoving, !editing, composerFieldHeight > 0 {
+            // The own answer centres its one-line field on the send button it holds a place for, so the closed field
+            // does not sit low in its box; the reply composer keeps its send button at the foot of a long text.
+            HStack(alignment: ownAnswer == nil ? .bottom : .center, spacing: 8) {
+                if parked != nil {
+                    // Dim, with the arrow that says where the typing went; a disabled field's placeholder read as text.
+                    Label(placeholder, systemImage: "arrow.turn.right.down").font(.system(size: 12)).lineLimit(1)
+                        .foregroundStyle(.tertiary)
+                        .frame(maxWidth: .infinity, minHeight: max(fieldHeight, 16), alignment: .leading)
+                } else if panelMoving, !focused, fieldHeight > 0 {
                     // While the panel's outline moves the composer rides its bottom edge; a drawn stand-in moves for
                     // free, the AppKit field would lay out and rebuild the key view loop on every frame.
-                    Text(model.draft.text.isEmpty ? placeholder : model.draft.text)
+                    Text(shownText.isEmpty ? placeholder : shownText)
                         .font(.system(size: 12)).lineLimit(1...4)
-                        .foregroundStyle(model.draft.text.isEmpty ? .tertiary : .primary)
-                        .frame(maxWidth: .infinity, minHeight: composerFieldHeight, maxHeight: composerFieldHeight,
-                               alignment: .topLeading)
+                        .foregroundStyle(shownText.isEmpty ? .tertiary : .primary)
+                        .frame(maxWidth: .infinity, minHeight: fieldHeight, maxHeight: fieldHeight, alignment: .topLeading)
                 } else {
+                    // One field in every state, so a click that opens the own answer keeps the keyboard in it.
                     TextField(placeholder, text: model.composerText(ownAnswer: ownAnswer?.id), axis: .vertical)
-                        .textFieldStyle(.plain).font(.system(size: 12)).lineLimit(1...4).focused($editing)
+                        .textFieldStyle(.plain).font(.system(size: 12)).lineLimit(1...4)
+                        // Always as tall as its lines (up to four): squeezed to the send button's height, a two-line
+                        // answer showed its first line cut off at the top (Martin, 2026-10-26: "multilines suck").
+                        .fixedSize(horizontal: false, vertical: true)
+                        .focused(ownAnswer == nil ? $editing : $ownAnswerFocused)
+                        // A field with the keyboard owns its text: no snapshot writes into it (FieldTextOwnership).
+                        .onChange(of: focused, initial: true) { _, now in
+                            model.draftFieldFocus(ownAnswer.map { "own:" + $0.id } ?? "reply", focused: now)
+                        }
+                        .onDisappear {
+                            model.draftFieldFocus(ownAnswer.map { "own:" + $0.id } ?? "reply", focused: false)
+                        }
+                        // A decision's own answer: Return stages the text as its note and ⌘-Return sends it, or the
+                        // other way round (Settings: Return in an own answer). Option-Return stays a new line.
+                        .onKeyPress(.return, phases: .down) { press in
+                            guard ownAnswer != nil, !press.modifiers.contains(.option),
+                                  !press.modifiers.contains(.shift) else { return .ignored }
+                            model.returnInOwnAnswer(command: press.modifiers.contains(.command))
+                            return .handled
+                        }
                         .onSubmit { model.send() }
                         .accessibilityLabel(ownAnswer == nil ? "Reply to selected agent" : "Your own answer")
-                        .onGeometryChange(for: CGFloat.self, of: { $0.size.height.rounded() }) { composerFieldHeight = $0 }
-                        .frameProbe("widget.composer.field")
+                        .onGeometryChange(for: CGFloat.self, of: { $0.size.height.rounded() }) { height in
+                            if ownAnswer == nil { composerFieldHeight = height } else { ownAnswerFieldHeight = height }
+                        }
+                        .frameProbe(ownAnswer == nil ? "widget.composer.field" : "widget.ownAnswer.field")
                 }
+                // Held in the layout while the own answer is closed, so the field does not move or rewrap as it opens.
                 Button {
                     model.send()
                 } label: {
                     Image(systemName: "arrow.up.circle.fill").font(.system(size: 23)).foregroundStyle(.blue)
-                }.buttonStyle(.genHoverIcon(accent: .blue, diameter: 28)).disabled(model.importing > 0)
-                    .instantTooltip(ownAnswer == nil ? "Send (Return)" : "Send as your answer (Return)")
+                }.buttonStyle(.genHoverIcon(accent: .blue, diameter: 28))
+                    .disabled(model.importing > 0 || parked != nil || (ownAnswer != nil && model.ownAnswerIdle))
+                    .instantTooltip(ownAnswer == nil ? "Send (Return)"
+                        : "Send as your answer now (" + (model.ownAnswerReturnStages ? "⌘-Return" : "Return") + ")")
                     .accessibilityLabel(ownAnswer == nil ? "Send reply" : "Send your answer")
+                    .opacity(open ? 1 : 0).allowsHitTesting(open).accessibilityHidden(!open)
             }
-            // Each icon is the kit's 22 pt target (IconButton), with 4 pt between neighbours instead of a 15 pt strip
-            // where a click did nothing.
-            HStack(spacing: 4) {
+            if open {
+                composerTools(ownAnswer: ownAnswer, parked: parked).transition(.genReveal)
+            }
+        }
+        .padding(11).background(.white.opacity(0.065), in: shape)
+        // The whole box is the field's target: a click beside the one-line field (or under it, in the padding) starts
+        // typing. The buttons inside keep their own clicks, because a child's gesture wins over this one.
+        .contentShape(shape)
+        .onTapGesture {
+            guard parked == nil else { return }
+            if ownAnswer == nil { editing = true } else { ownAnswerFocused = true }
+        }
+        .frameProbe(ownAnswer == nil ? "widget.composer" : "widget.ownAnswer.box")
+    }
+
+    /// What the reply will name ("Reply to: <title>", the `replyNames` setting), with × to leave it out of this message.
+    /// Dropped, the line stays and says so, with a button that names the card again: the field never moves.
+    private func replyingTo(_ candidate: WidgetCard) -> some View {
+        let named = model.replyToCard != nil
+        let reply = WidgetReplyTo(card: candidate)
+        let title = candidate.kind == "decision" ? WidgetWords.numbered(reply.label, number: candidate.number) : reply.label
+        return HStack(spacing: 4) {
+            Image(systemName: "arrowshape.turn.up.left").font(.system(size: 9)).foregroundStyle(.tertiary)
+                .accessibilityHidden(true)
+            Text(named ? "Replying to: " + title : "Not naming what this answers")
+                .font(.system(size: 10.5)).foregroundStyle(named ? .secondary : .tertiary)
+                .lineLimit(1).truncationMode(.tail)
+                .accessibilityLabel(named ? "Replying to " + title : "The reply does not name what it answers")
+            Spacer(minLength: 0)
+            if named {
+                IconButton(systemName: "xmark", tooltip: "Don't name it in this reply", size: 9) {
+                    model.dropReplyTo()
+                }.accessibilityLabel("Don't name " + title + " in this reply")
+            } else {
+                IconButton(systemName: "arrow.uturn.backward", tooltip: "Name " + title + " again", size: 9) {
+                    model.dropReplyTo(false)
+                }.accessibilityLabel("Name " + title + " again")
+            }
+        }
+        .frame(height: 16)
+        .frameProbe("widget.composer.replyTo")
+    }
+
+    /// What is being added to the draft: its attachments, a dictation, an import.
+    @ViewBuilder private var composerProgress: some View {
+        if !model.draft.assetIds.isEmpty {
+            attachments(model.draft.assetIds, tile: CGSize(width: 88, height: 60), removable: true)
+        }
+        if model.voiceActive {
+            HStack(alignment: .center, spacing: 9) {
+                VoiceLevelBars(level: min(1, model.voiceLevel * 5), tint: .red, reduceMotion: model.effectiveReduceMotion)
+                VStack(alignment: .leading, spacing: 2) {
+                    Text(model.voiceMode == .note ? "Voice note" : "Dictation")
+                        .font(.system(size: 10, weight: .semibold)).foregroundStyle(.secondary)
+                    let transcript = model.voiceTranscript
+                    // The newest words stay in view: a long dictation drops its beginning, not its end.
+                    Text(transcript.isEmpty ? "Listening… the words appear here as you talk" : transcript)
+                        .font(.caption).lineLimit(3).truncationMode(.head)
+                }
+                Spacer(minLength: 0)
+            }
+            .accessibilityElement(children: .combine)
+        }
+        if model.importing > 0 {
+            ProgressView("Saving attachment…").controlSize(.small).font(.caption)
+        }
+    }
+
+    /// The row under the field: the media buttons (each the kit's 22 pt target, 4 pt apart instead of a 15 pt strip
+    /// where a click did nothing), then the keys, an own answer's Stage note, or a parked composer's Reply instead.
+    private func composerTools(ownAnswer: WidgetCard?, parked: WidgetCard?) -> some View {
+        HStack(spacing: 4) {
+            Group {
                 IconButton(systemName: "paperclip", tooltip: "Attach images or videos", action: model.chooseFiles)
                     .accessibilityLabel("Attach media")
                 IconButton(systemName: "clipboard", tooltip: WidgetKeymap.hint("Paste image or video", WidgetKeymap.paste)) {
@@ -1256,16 +1385,28 @@ public struct LiveWidgetView: View {
                            tint: model.recordingVideo ? Color.red : nil, action: model.toggleVideoCapture)
                     .accessibilityLabel(model.recordingVideo ? "Stop and paste the recording" : "Record the screen")
                 voiceButton
-                Spacer(minLength: 8)
+            }
+            .disabled(parked != nil)
+            Spacer(minLength: 8)
+            if let parked {
+                Button("Reply instead") {
+                    GenMotion.perform(expanding: false, reduceMotion: reduceMotion) { model.ownAnswerCardID = nil }
+                    // The field is enabled by that change; it takes the keyboard on the next pass.
+                    Task { @MainActor in editing = true }
+                }
+                .buttonStyle(.genHoverPlain()).font(.system(size: 11))
+                .instantTooltip("Takes the text back from " + WidgetWords.decision(parked.number) + "'s answer field into this reply box")
+            } else if let card = ownAnswer {
+                // Its full width first: the key hint shortens itself, the button never wraps.
+                Button("Stage note") { model.saveDraft(card) }
+                    .buttonStyle(.genHoverPlain()).font(.system(size: 11)).fixedSize().padding(.trailing, 6)
+                    .disabled(model.draft.text.trimmingCharacters(in: .whitespacesAndNewlines).isEmpty)
+                    .instantTooltip("Stages this text as the decision's note, sent later with your other staged decisions")
                 composerKeys
-            }.font(.system(size: 12)).foregroundStyle(.secondary).buttonStyle(.genHoverIcon())
-        }
-        .padding(11).background(.white.opacity(0.065), in: RoundedRectangle(cornerRadius: 13))
-        // The whole box is the field's target: a click beside the one-line field (or under it, in the padding) starts
-        // typing. The buttons inside keep their own clicks, because a child's gesture wins over this one.
-        .contentShape(RoundedRectangle(cornerRadius: 13))
-        .onTapGesture { editing = true }
-        .frameProbe("widget.composer")
+            } else {
+                composerKeys
+            }
+        }.font(.system(size: 12)).foregroundStyle(.secondary).buttonStyle(.genHoverIcon())
     }
 
     /// The composer's keys, in a hint beside the field: Return sends, Option-Return adds a line (SwiftUI's own key
@@ -1274,29 +1415,48 @@ public struct LiveWidgetView: View {
     private var composerKeys: some View {
         let paste = WidgetKeymap.label(WidgetKeymap.paste)
         let close = WidgetKeymap.label(WidgetKeymap.collapse)
-        let base = "↩ send · ⌥↩ new line"
-        let media = paste.isEmpty ? base : base + " · \(paste) media"
+        let keys = Self.ownAnswerKeys(ownAnswer: model.ownAnswerCard != nil, returnStages: model.ownAnswerReturnStages,
+                                      commandSwaps: model.snapshot?.state.preferences.decisionCommandSwaps ?? true)
+        let media = paste.isEmpty ? keys.hint : keys.hint + " · \(paste) media"
         return ViewThatFits(in: .horizontal) {
             Text(close.isEmpty ? media : media + " · \(close) close")
             Text(media)
-            Text(base)
+            Text(keys.hint)
+            Text(keys.short)
         }
         .font(.system(size: 11)).foregroundStyle(SessionPalette.secondary).lineLimit(1)
         .layoutPriority(1)
         .accessibilityElement(children: .ignore)
-        .accessibilityLabel("Return sends. Option Return adds a new line.")
+        .accessibilityLabel(keys.spoken)
+    }
+
+    /// The keys of a composer, as its hint, its shortest hint and VoiceOver's sentence. A decision's own answer follows
+    /// "Return in an own answer" and "⌘ does the other"; the hint named only Return's key while ⌘-Return did the other
+    /// (UX audit P9). The hub's Inbox note shows the same words.
+    public static func ownAnswerKeys(ownAnswer: Bool, returnStages: Bool, commandSwaps: Bool)
+        -> (hint: String, short: String, spoken: String)
+    {
+        guard ownAnswer else {
+            return ("↩ send · ⌥↩ new line", "↩ send", "Return sends. Option Return adds a new line.")
+        }
+        let first = returnStages ? "↩ stage" : "↩ send"
+        let other = commandSwaps ? (returnStages ? " · ⌘↩ send" : " · ⌘↩ stage") : ""
+        let spoken = (returnStages ? "Return stages the note." : "Return sends the answer.")
+            + (commandSwaps ? (returnStages ? " Command Return sends it." : " Command Return stages it as a note.") : "")
+            + " Option Return adds a new line."
+        return (first + other + " · ⌥↩ new line", first + other, spoken)
     }
 
     /// The microphone: Stop while a dictation runs; otherwise a menu of the two modes when the setting asks, else the
     /// set mode at once. Both are drawn buttons with the kit's hover and hand cursor (a SwiftUI `Menu` has neither).
+    /// A round 22 pt target like its neighbours: a glass capsule beside four round buttons read as another kind of
+    /// control.
     @ViewBuilder private var voiceButton: some View {
         let icon = Image(systemName: model.voiceActive ? "stop.circle.fill" : "mic")
-            .padding(.horizontal, 8).padding(.vertical, 4)
         if model.voiceActive || model.composerVoiceChoice != "ask" {
-            Button(action: model.toggleVoice) { icon }
-                .modifier(WidgetGlassControl())
-                .foregroundStyle(model.voiceActive ? .red : .secondary)
-                .instantTooltip(model.voiceActionLabel).accessibilityLabel(model.voiceActionLabel)
+            IconButton(systemName: model.voiceActive ? "stop.circle.fill" : "mic", tooltip: model.voiceActionLabel,
+                       tint: model.voiceActive ? Color.red : nil, action: model.toggleVoice)
+                .accessibilityLabel(model.voiceActionLabel)
         } else {
             MenuButton(style: .genHoverIcon(), items: {
                 [.action("Dictate into the reply box") { model.startVoice(.dictate) },
@@ -1304,7 +1464,6 @@ public struct LiveWidgetView: View {
                      model.startVoice(.note)
                  }]
             }) { icon }
-                .modifier(WidgetGlassControl())
                 .foregroundStyle(.secondary)
                 .instantTooltip(model.voiceActionLabel).accessibilityLabel(model.voiceActionLabel)
         }
@@ -1583,8 +1742,27 @@ final class WidgetContentFit {
     var scheduled = false
 }
 
+/// The look of a note's tone (`WidgetNoticeTone`), the same in the panel's note line and the alert popup's outcome.
+enum WidgetToneLook {
+    static func symbol(_ tone: WidgetNoticeTone) -> String? {
+        switch tone {
+        case .success: return "checkmark.circle.fill"
+        case .warning: return "exclamationmark.triangle.fill"
+        case .info: return nil
+        }
+    }
+
+    static func color(_ tone: WidgetNoticeTone) -> Color {
+        switch tone {
+        case .success: return .green
+        case .warning: return .orange
+        case .info: return SessionPalette.secondary
+        }
+    }
+}
+
 /// The full reasons behind a widget note, as `NoticePill` shows its own behind "Details".
-private struct WidgetNoticeDetails: View {
+struct WidgetNoticeDetails: View {
     let text: String
     @Environment(\.accessibilityReduceMotion) private var reduceMotion
     @State private var showsMore = false
@@ -1608,6 +1786,26 @@ private struct WidgetNoticeDetails: View {
                     .fixedSize(horizontal: false, vertical: true)
                     .transition(.genReveal)
             }
+        }
+    }
+}
+
+/// A failed widget call in the words the panel shows: one sentence of what happened and what to do, and the
+/// machine's own text for Details. A bad answer from `tools` showed Foundation's "The data couldn't be read because it
+/// isn't in the correct format." as the whole error (UX audit 2026-10-27).
+enum WidgetErrorText {
+    static func words(for error: Error) -> (text: String, detail: String?) {
+        switch error {
+        case is DecodingError:
+            return ("The widget could not read the hub's answer. Try again, or reconnect.", String(describing: error))
+        case ToolsBridgeError.timeout(let seconds):
+            return ("The hub did not answer within \(seconds) seconds. Try again, or reconnect.", nil)
+        case let bridge as ToolsBridgeError:
+            // A missing tools command and a refusal already say what happened in a sentence of their own.
+            return (bridge.description, nil)
+        default:
+            return ("The widget's call to the hub failed. Try again, or reconnect.",
+                    error.localizedDescription + "\n" + String(describing: error))
         }
     }
 }

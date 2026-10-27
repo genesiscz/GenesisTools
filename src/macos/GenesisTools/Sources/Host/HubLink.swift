@@ -16,9 +16,11 @@ package enum HubLink {
     package static func arguments(fromLink raw: String) -> [String]? {
         guard let components = URLComponents(string: raw), components.scheme == "genesis-tools", components.host == "hub" else { return nil }
         var args: [String] = []
-        for item in components.queryItems ?? [] where linkKeys.contains(item.name) {
-            guard let value = item.value, !value.isEmpty else { continue }
-            args += ["--\(item.name)", value]
+        for item in components.queryItems ?? [] {
+            // `&amp;` copied out of escaped text (a subagent's task notification is XML) names the key `amp;commit`.
+            let name = item.name.hasPrefix("amp;") ? String(item.name.dropFirst(4)) : item.name
+            guard linkKeys.contains(name), let value = item.value, !value.isEmpty else { continue }
+            args += ["--\(name)", value]
         }
         return args
     }

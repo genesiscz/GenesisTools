@@ -114,6 +114,11 @@ public struct KeepPolicy {
     }
 }
 
+/// PNG-only capture encodes synchronously, while a movie may discard stills under backpressure.
+public func admitPNG(videoConfigured: Bool, pending: Int, maximum: Int) -> Bool {
+    !videoConfigured || pending < maximum
+}
+
 /// Which rate the capture stream should ask for. ScreenCaptureKit caps delivery through
 /// `minimumFrameInterval`, so "idle" means asking for fewer frames while nothing moves — the
 /// point of `--idle-fps`, which is what a long recording of a mostly-still window costs.
@@ -164,6 +169,13 @@ public func frameInterval(fps: Double) -> (value: Int64, timescale: Int32) {
     let safe = max(0.01, fps)
     let timescale: Int32 = 600
     return (Int64((Double(timescale) / safe).rounded()), timescale)
+}
+
+/// The H.264 average bit rate for a screen movie: 0.15 bit per pixel per frame, so text stays sharp while it
+/// scrolls, between 6 and 160 Mbit/s. Without it the encoder picked its own rate, and a fast scroll smeared.
+public func screenMovieBitRate(width: Int, height: Int, fps: Double) -> Int {
+    let bits = Double(width * height) * max(1, fps) * 0.15
+    return Int(min(160_000_000, max(6_000_000, bits)))
 }
 
 /// Output stays fixed during a movie. The live canvas fits without stretching; global CG

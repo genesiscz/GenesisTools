@@ -1,11 +1,9 @@
-import { join } from "node:path";
 import { gatherHarnessPoster } from "@genesiscz/utils/agent/runtime";
 import { routerLink } from "@genesiscz/utils/browser-router/router-link";
 import { toolCommand } from "@genesiscz/utils/cli/tool-command";
 import { json2md } from "@genesiscz/utils/json2md";
-import { genesisToolsDir } from "@genesiscz/utils/storage/root";
 import { isTestProcess } from "@genesiscz/utils/test-process";
-import { DeliveryUnknownError, NotDeliveredError } from "./deliver";
+import { DeliveryUnknownError, NotDeliveredError } from "./delivery-errors";
 import {
     boundContext,
     cleanBlock,
@@ -17,6 +15,7 @@ import {
 } from "./reply-text";
 import { DECISION_STATES } from "./schema";
 import {
+    awaitsDelivery,
     type DecisionKind,
     type DecisionRecord,
     type DecisionState,
@@ -42,12 +41,7 @@ export function currentHarnessSession(): string | null {
     return poster.sessionId;
 }
 
-export function decisionFiles(root = genesisToolsDir("question", "decisions")): {
-    file: string;
-    events: string;
-} {
-    return { file: join(root, "decisions.jsonl"), events: join(root, "events.jsonl") };
-}
+export { decisionFiles } from "./paths";
 
 export interface DecisionSessionView {
     sessionId: string;
@@ -189,7 +183,7 @@ export function decisionsMarkdown(rows: DecisionRecord[]): string {
                           {
                               ul: row.options.map(
                                   (option, index) =>
-                                      `${letter(index)}) ${option}${row.recommended === letter(index) ? " (recommended)" : ""}`
+                                      `${letter(index)}) ${optionLabel(option, letter(index))}${row.recommended === letter(index) ? " (recommended)" : ""}`
                               ),
                           },
                       ]
@@ -227,16 +221,70 @@ export function optionLetters(option: string | undefined | null): string[] {
     return [...new Set((option ?? "").toLowerCase().replace(/[^a-z]/g, ""))].sort();
 }
 
+/**
+ * An option's label without the letter the agent wrote in front of it ("b) build it first" is "build it first"), so
+ * the line's own pick prefix does not repeat it: "b) b) build it first" reached a session on 2026-10-26.
+ */
+function optionLabel(label: string, letter: string): string {
+    const escapedLetter = letter.replace(/[.*+?^${}()|[\]\\]/g, "\\$&");
+    const prefix = new RegExp(`^\\s*\\(?${escapedLetter}[).:](?:\\s+|$)`, "i");
+    return label.replace(prefix, "");
+}
+
+function ledgerRef(number: number, id: string): string {
+    return `Ledger decision ${number} (${id})`;
+}
+
+/** The first lines of a message that answers an inbox item: what it answers, then which item that is. */
+function replyToLines({ title, ref }: { title: string; ref: string }): string[] {
+    return [`Reply to: ${title.trim()}`, ref];
+}
+
+/** The inbox item a widget follow-up answers: what the user looked at when they wrote it. */
+export interface ReplyTarget {
+    id: string;
+    kind: string;
+    title?: string;
+    /** The start of the item's text, for an item with no title. */
+    excerpt?: string;
+    /** A decision's number, so its line names it as a decision answer does. */
+    number?: number;
+}
+
+/** A follow-up's "Reply to:" lines, in the decision answer's form; none when the item has neither title nor text. */
+export function replyTargetLines(target: ReplyTarget): string[] {
+    const title = target.title?.trim() || target.excerpt?.trim();
+    if (!title) {
+        return [];
+    }
+
+    const ref =
+        target.kind === "decision" && target.number
+            ? ledgerRef(target.number, target.id)
+            : `Inbox ${target.kind} (${target.id})`;
+    return replyToLines({ title, ref });
+}
+
 /** Preserves the card title and ledger identity before the user's literal answer or option labels. */
 export function decisionLine(row: DecisionRecord): string {
     const letters = optionLetters(row.option);
-    const labels = letters.map((letter) => row.options[letter.charCodeAt(0) - 97]).filter(Boolean);
-    const text = row.answer?.trim() || labels.join(" / ");
+    const labels = letters
+        .map((letter) => {
+            const label = row.options[letter.charCodeAt(0) - 97];
+            return label ? optionLabel(label, letter) : undefined;
+        })
+        .filter(Boolean);
+    const explicitAnswer = row.answer?.trim();
+    const [singleLetter] = letters;
+    const text =
+        explicitAnswer && letters.length === 1 && singleLetter
+            ? optionLabel(explicitAnswer, singleLetter) || labels.join(" / ")
+            : explicitAnswer || labels.join(" / ");
     const picks = letters.map((letter) => `${letter}) `).join("");
 
     const answer = `${picks}${text}`.trimEnd();
     if (row.title?.trim()) {
-        return [`Reply to: ${row.title.trim()}`, `Ledger decision ${row.number} (${row.id})`, answer].join("\n");
+        return [...replyToLines({ title: row.title, ref: ledgerRef(row.number, row.id) }), answer].join("\n");
     }
 
     return `DECISION ${row.number}: ${answer}`.trimEnd();
@@ -276,8 +324,12 @@ export async function sendSessionDecisions({
     emit: (text: string, numbers: number[]) => unknown;
 }): Promise<SentDecisions> {
     const selected = selectedIds ? new Set(selectedIds) : undefined;
+    // Without ids: only the answers waiting to go out, never a chat answer an agent recorded as `answered`.
     const rows = readDecisions(file).filter(
-        (row) => row.sessionId === session && kindOf(row) === "decision" && (!selected || selected.has(row.id))
+        (row) =>
+            row.sessionId === session &&
+            kindOf(row) === "decision" &&
+            (selected ? selected.has(row.id) : awaitsDelivery(row))
     );
     const due = deliverDecisions(rows, () => undefined);
     const ids = rows.filter((row) => due.numbers.includes(row.number)).map((row) => row.id);

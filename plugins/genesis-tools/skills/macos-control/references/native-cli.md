@@ -128,7 +128,7 @@ for an app that ignores events addressed to a background window.
 | Flag | Meaning |
 | --- | --- |
 | `--pixels N` / `--amount N` | Distance in pixels, or wheel lines at 40 px each (default 3) |
-| `--time S` | Spread the distance over S seconds, 60 events per second, with trackpad phases (began, changed, ended) |
+| `--time S` | Spread the distance over S seconds, 60 events per second, with trackpad phases (began, changed, ended). Default: animated, 0.25 to 1 s by distance (3000 px/s). `--time 0` is one wheel event |
 | `--ease flick\|linear` | `flick` (default) starts fast and slows down like a real flick; `linear` keeps one speed |
 | `--repeat N`, `--pause S` | N scrolls, S seconds apart (default 0.3) |
 | `--alternate` | Every second repeat goes the other way: down, up, down |
@@ -140,7 +140,7 @@ tools control scroll --app <pid> --direction down --pixels 3000 --time 0.6 --rep
 
 Use `--time` whenever the question is how a page BEHAVES while it scrolls (jumps, flicker, lazy
 rows): a single wheel event, or a shell loop of them, gives the page nothing to render between
-steps and hides exactly those bugs. Without `--time` it is one event, as before. Record the
+steps and hides exactly those bugs. Without `--time` the scroll is still animated (since 2026-10-26: "the scrolling should always be animated"); a single event needs `--time 0`. The computer API takes the same as `scroll({..., seconds})`. Record the
 screen (`capture.md`) or read the page's own scroll log to see the result; one screenshot after
 the scroll proves only where it ended.
 

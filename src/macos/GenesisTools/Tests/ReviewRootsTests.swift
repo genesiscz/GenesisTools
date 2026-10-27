@@ -256,6 +256,14 @@ final class ReviewRootsTests: XCTestCase {
         XCTAssertEqual(snapshot.files.first { $0.path == "packages/app/nested.txt" }?.newContents, "nested after\n")
         XCTAssertEqual(snapshot.files.first { $0.path == "huge.txt" }?.skipped, "large file, 976 KB")
         XCTAssertNil(snapshot.files.first { $0.path == "huge.txt" }?.oldContents)
+        XCTAssertTrue(GitWorkingTreeSource.isLarge(snapshot.files.first { $0.path == "huge.txt" }?.skipped))
+        // A click on the note asks for it: the page's message, then a load with the file in `fullFiles`.
+        XCTAssertEqual(DiffRendererEvent(pageMessage: ["type": "showLarge", "fileId": "huge.txt"]), .showLargeFile("huge.txt"))
+        var asked = GitWorkingTreeSource(repo: nested)
+        asked.fullFiles = ["huge.txt"]
+        let whole = try XCTUnwrap(try asked.load().files.first { $0.path == "huge.txt" })
+        XCTAssertNil(whole.skipped)
+        XCTAssertEqual(whole.oldContents?.count, GitWorkingTreeSource.maxBytes + 100)
 
         let model = ReviewModel(repo: nested, options: DiffViewOptions(), renderer: NullRenderer())
         model.reload()
@@ -284,6 +292,43 @@ final class ReviewRootsTests: XCTestCase {
         XCTAssertFalse(layout.matters(layout.commonDirectory.appendingPathComponent("objects/aa/blob").path))
         XCTAssertFalse(layout.matters(linked.appendingPathComponent("node_modules/pkg/index.js").path))
         XCTAssertTrue(layout.matters(linked.appendingPathComponent("packages/app/nested.txt").path))
+    }
+
+    /// A branch stacked on another branch lists only its own commits once the review knows its PR/MR target; the
+    /// repository's default branch counted the lower branch's commits too.
+    func testAStackedBranchListsOnlyItsOwnCommitsFromItsTarget() throws {
+        let root = FileManager.default.temporaryDirectory.appendingPathComponent("stacked-review-\(UUID())").resolvingSymlinksInPath()
+        try FileManager.default.createDirectory(at: root, withIntermediateDirectories: true)
+        defer { try? FileManager.default.removeItem(at: root) }
+        let commit = { (name: String) throws in
+            try "\(name)\n".write(to: root.appendingPathComponent("\(name).txt"), atomically: true, encoding: .utf8)
+            try self.git(root, ["add", "."])
+            try self.git(root, ["-c", "user.name=test", "-c", "user.email=test@example.com", "commit", "-qm", name])
+        }
+        try git(root, ["init", "-q", "-b", "main"])
+        try commit("base")
+        try git(root, ["update-ref", "refs/remotes/origin/main", "HEAD"])
+        try git(root, ["symbolic-ref", "refs/remotes/origin/HEAD", "refs/remotes/origin/main"])
+        try git(root, ["checkout", "-q", "-b", "lower"])
+        for name in ["lower-1", "lower-2", "lower-3"] { try commit(name) }
+        try git(root, ["update-ref", "refs/remotes/origin/lower", "HEAD"])
+        try git(root, ["checkout", "-q", "-b", "upper"])
+        for name in ["upper-1", "upper-2"] { try commit(name) }
+
+        let model = ReviewModel(repo: root, options: DiffViewOptions(), renderer: NullRenderer())
+        func load() {
+            model.reload()
+            let deadline = Date().addingTimeInterval(10)
+            while model.loading && Date() < deadline {
+                RunLoop.current.run(until: Date().addingTimeInterval(0.05))
+            }
+        }
+        load()
+        XCTAssertEqual(model.commits.map(\.subject), ["upper-2", "upper-1", "lower-3", "lower-2", "lower-1"],
+                       "without a target the default branch is the base")
+        model.useBranchTarget("lower")
+        load()
+        XCTAssertEqual(model.commits.map(\.subject), ["upper-2", "upper-1"])
     }
 
     @discardableResult

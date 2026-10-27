@@ -13,6 +13,7 @@ import UniformTypeIdentifiers
 private let markdownRendererKey = "markdownWindow.renderer"
 private let markdownModeKey = "markdownWindow.mode"
 private let markdownSplitKey = "markdownWindow.splitRatio"
+private let markdownSplitSyncKey = "markdownWindow.splitScrollSync"
 private let markdownOutlineKey = "markdownWindow.outline"
 private let markdownFilesKey = "markdownWindow.files"
 private let markdownGitKey = "markdownWindow.git"
@@ -61,6 +62,10 @@ final class MarkdownDocumentsModel: ObservableObject {
     /// The editor's share of the width in split view.
     @Published var splitRatio: Double = MarkdownSplit.defaultRatio {
         didSet { defaults.set(splitRatio, forKey: markdownSplitKey) }
+    }
+    /// Split view scrolls the editor and the preview together, both ways. The button on the divider pauses it.
+    @Published var splitScrollSync = true {
+        didSet { defaults.set(splitScrollSync, forKey: markdownSplitSyncKey) }
     }
     // These three read and write the model's OWN defaults, not
     // `UserDefaults.standard`. A property initializer cannot see `self`, so
@@ -364,6 +369,7 @@ final class MarkdownDocumentsModel: ObservableObject {
         scrollMemory = (defaults.dictionary(forKey: markdownScrollKey) as? [String: [String: Double]]) ?? [:]
         let ratio = defaults.double(forKey: markdownSplitKey)
         splitRatio = ratio > 0 ? ratio : MarkdownSplit.defaultRatio
+        splitScrollSync = defaults.object(forKey: markdownSplitSyncKey) as? Bool ?? true
         showOutline = defaults.bool(forKey: markdownOutlineKey)
         showFiles = defaults.bool(forKey: markdownFilesKey)
         showGit = defaults.bool(forKey: markdownGitKey)
@@ -1132,7 +1138,7 @@ final class MarkdownDocumentsModel: ObservableObject {
     /// ends here, and a note is untrusted: a scheme URL leaves only through
     /// `MarkdownWebView.externalURL`, a `file:` URL is a local path like any
     /// other, and a local target opens only when it is a document.
-    func follow(_ ref: String, from doc: MarkdownDocument) {
+    func follow(_ ref: String, from doc: MarkdownDocument, scanned: Bool = false) {
         var target = ref.trimmingCharacters(in: .whitespacesAndNewlines)
         // `[text][label]` points at a definition further down the file.
         if !MarkdownDocumentLinks.hasScheme(target), MarkdownWebView.externalURL(target) == nil,
@@ -1159,9 +1165,16 @@ final class MarkdownDocumentsModel: ObservableObject {
             if let fragment = MarkdownDocumentLinks.fragment(of: target) { scrollTarget = fragment }
             return
         }
+        let vaultRoot = GenesisKit.host?.markdownVaultRoot
+        let index = MarkdownDocumentLinks.vaultIndex(vaultRoot)
         guard let (url, fragment) = MarkdownDocumentLinks.locate(
-            target, folder: doc.folder, vaultRoot: GenesisKit.host?.markdownVaultRoot
+            target, folder: doc.folder, vaultRoot: vaultRoot, index: index
         ) else {
+            // A note named only by its name is found by the vault scan: a miss before a fresh scan is no answer yet.
+            if !scanned, let index, index.isStale() {
+                index.refreshIfNeeded { [weak self] in self?.follow(ref, from: doc, scanned: true) }
+                return
+            }
             GenesisKit.log("markdown: link \(target) resolves to nothing")
             post(MarkdownNotice("Nothing found for \u{201C}\(target)\u{201D}.", tone: .warning))
             return

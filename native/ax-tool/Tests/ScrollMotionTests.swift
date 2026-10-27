@@ -2,11 +2,36 @@ import XCTest
 @testable import SnapshotSupport
 
 final class ScrollMotionTests: XCTestCase {
+    func testTimedDispatchHonorsDurationAndDeadline() throws {
+        let interval = ScrollMotion.interval(seconds: 1, count: 5)
+        XCTAssertEqual(interval, 0.25)
+        var now = 0.0
+        var posted: [Int] = []
+        try ScrollMotion.dispatch(count: 5, interval: interval, remaining: { 2 - now }, sleep: { now += $0 }) { posted.append($0) }
+        XCTAssertEqual(now, 1, accuracy: 0.0001)
+        XCTAssertEqual(posted, [0, 1, 2, 3, 4])
+        now = 0
+        posted = []
+        XCTAssertThrowsError(try ScrollMotion.dispatch(count: 5, interval: interval, remaining: { 0.5 - now }, sleep: { now += $0 }) { posted.append($0) }) { error in
+            XCTAssertTrue((error as? ScrollMotion.DeadlineExceeded)?.dispatched == true)
+        }
+        XCTAssertEqual(posted, [0, 1])
+        XCTAssertEqual(now, 0.5, accuracy: 0.0001)
+        posted = []
+        XCTAssertThrowsError(try ScrollMotion.dispatch(count: 1, interval: 0, remaining: { 0 }, sleep: { _ in }) { posted.append($0) }) { error in
+            XCTAssertTrue((error as? ScrollMotion.DeadlineExceeded)?.dispatched == false)
+        }
+        XCTAssertTrue(posted.isEmpty)
+    }
     func testNumericDefaultsApplyOnlyWhenOptionsAreAbsent() throws {
         let defaults = try ScrollNumericOptions([:])
         XCTAssertEqual(defaults.pixels, 120)
         XCTAssertEqual(defaults.amount, 3)
-        XCTAssertNil(defaults.seconds)
+        // Animated by default: 120 px over the shortest default time; `--time 0` is the old single event.
+        XCTAssertEqual(defaults.seconds, 0.25)
+        XCTAssertEqual(try ScrollNumericOptions(["--pixels": "1500"]).seconds, 0.5)
+        XCTAssertEqual(try ScrollNumericOptions(["--pixels": "20000"]).seconds, 1)
+        XCTAssertNil(try ScrollNumericOptions(["--time": "0"]).seconds)
         XCTAssertEqual(defaults.repeats, 1)
         XCTAssertEqual(defaults.pause, 0.3)
         let explicit = try ScrollNumericOptions(["--pixels": "200", "--time": "0.5", "--repeat": "2", "--pause": "0"])

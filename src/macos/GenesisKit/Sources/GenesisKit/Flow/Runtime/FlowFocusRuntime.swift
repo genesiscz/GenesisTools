@@ -423,21 +423,52 @@ public final class FlowFocusRuntime: ObservableObject {
             try? await Task.sleep(nanoseconds: 100_000_000)
             guard !Task.isCancelled, let self else { return }
             self.publication = nil
-            do {
-                try self.publish()
-            } catch {
-                self.suppressPublication = true
-                self.reportFailure(error.localizedDescription)
-                self.suppressPublication = false
+            self.publishInBackground()
+        }
+    }
+
+    /// One queue keeps the writes in order. The file write left the main thread after it held Genesis for 0.5 to
+    /// 1.5 s per change while the disk was nearly full (2026-10-27); the first publication in `start` stays
+    /// synchronous, since its failure decides whether this process may own the runtime.
+    private static let writeQueue = DispatchQueue(label: "flow-focus.publish", qos: .utility)
+
+    private func liveState(_ lease: FlowFocusLease) -> FlowFocusLiveSnapshot {
+        FlowFocusLiveSnapshot(ownerNonce: lease.owner.nonce, flowRevision: flowRevision,
+                              configurationRevision: configuration.revision, configurationError: configuration.lastError,
+                              flow: flow.liveSnapshot, focus: focus.liveSnapshot, dnd: dnd.liveSnapshot)
+    }
+
+    private func publishInBackground() {
+        guard role.isOwner, let lease else { return }
+        let state = liveState(lease)
+        guard state != lastSnapshot else { return }
+        publicationAttempts += 1
+        let url = directory.appendingPathComponent("state.json")
+        let mailbox = self.mailbox
+        Self.writeQueue.async {
+            let written = Result {
+                try PerfLog.span("flow-focus.publish") {
+                    try FlowFocusLease.writePrivate(try JSONEncoder().encode(state), to: url)
+                }
+            }
+            if case .success = written { mailbox?.signalStateChange() }
+            Task { @MainActor [weak self] in
+                guard let self else { return }
+                switch written {
+                case .success:
+                    self.lastSnapshot = state
+                case .failure(let error):
+                    self.suppressPublication = true
+                    self.reportFailure(error.localizedDescription)
+                    self.suppressPublication = false
+                }
             }
         }
     }
 
     private func publish() throws {
         guard role.isOwner, let lease else { return }
-        let state = FlowFocusLiveSnapshot(ownerNonce: lease.owner.nonce, flowRevision: flowRevision,
-                                         configurationRevision: configuration.revision, configurationError: configuration.lastError,
-                                         flow: flow.liveSnapshot, focus: focus.liveSnapshot, dnd: dnd.liveSnapshot)
+        let state = liveState(lease)
         guard state != lastSnapshot else { return }
         publicationAttempts += 1
         try PerfLog.span("flow-focus.publish") {

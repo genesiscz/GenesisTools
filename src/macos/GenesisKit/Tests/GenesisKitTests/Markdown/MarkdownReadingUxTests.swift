@@ -251,7 +251,7 @@ final class MarkdownReadingUxTests: XCTestCase {
         let vault = FileManager.default.temporaryDirectory.appendingPathComponent("reading-ux-\(UUID().uuidString)")
         try FileManager.default.createDirectory(at: vault, withIntermediateDirectories: true)
         defer { try? FileManager.default.removeItem(at: vault) }
-        let index = VaultMediaIndex(root: vault) { _ in VaultMediaIndex.Snapshot(paths: [], attachmentFolder: nil) }
+        let index = VaultFileIndex(root: vault) { _ in VaultFileIndex.Snapshot(paths: [], attachmentFolder: nil) }
         let registry = MarkdownMediaRegistry(indexForVault: { _ in index })
         let context = MarkdownMedia.Context(folder: vault, vaultRoot: vault)
         let ready = expectation(description: "scan answered")

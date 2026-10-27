@@ -1,4 +1,4 @@
-import { describe, expect, it } from "bun:test";
+import { describe, expect, it, spyOn } from "bun:test";
 import { chmodSync, mkdtempSync, readFileSync, statSync, writeFileSync } from "node:fs";
 import { tmpdir } from "node:os";
 import { dirname, join } from "node:path";
@@ -11,6 +11,7 @@ import {
     sessionArgs,
     sessionEnv,
 } from "@app/claude/lib/codex-session/launch";
+import { sessionKeyProblem } from "@app/claude/lib/codex-session/proxy-check";
 import { guardSharedModel, isSessionOnlyModel, restoreSharedModel } from "@app/claude/lib/codex-session/settings-guard";
 import { ensureOnboardingSkippedForOAuthToken } from "@app/claude/lib/launch-env";
 import { type CodexModelInfo, mergeCodexModelRecords } from "@genesiscz/utils/ai/openai/codex-models";
@@ -45,8 +46,10 @@ describe("model and effort", () => {
 
         expect(isError(sol) ? sol.error : sol.slug).toBe("gpt-6.1-sol");
         expect(isError(astra) ? astra.error : astra.slug).toBe("gpt-6-astra");
+        const terra = resolveSessionModel("terra", codexModel);
+        expect(isError(terra) ? terra.error : terra.slug).toBe("gpt-6.1-terra");
         expect(resolveSessionModel("gpt-9-nope", codexModel)).toEqual({
-            error: expect.stringContaining("sol, sol6, astra, luna"),
+            error: expect.stringContaining("sol, sol6, astra, terra, luna"),
         });
     });
 
@@ -157,6 +160,7 @@ describe("environment and arguments", () => {
             CLAUDE_CODE_AUTO_COMPACT_WINDOW: "475000",
             CLAUDE_AUTOCOMPACT_PCT_OVERRIDE: "90",
             TOOLS_CLAUDE_ACCOUNT: "proxy:codex:work+claude:personal",
+            CLAUDE_CODE_ENABLE_GATEWAY_MODEL_DISCOVERY: "1",
         });
     });
 
@@ -175,6 +179,7 @@ describe("environment and arguments", () => {
         );
 
         expect(env.ANTHROPIC_DEFAULT_HAIKU_MODEL).toBe("codex/gpt-6-luna:low");
+        expect(env.CLAUDE_CODE_ENABLE_GATEWAY_MODEL_DISCOVERY).toBe("1");
         expect(env.ANTHROPIC_DEFAULT_OPUS_MODEL).toBeUndefined();
     });
 
@@ -189,6 +194,7 @@ describe("environment and arguments", () => {
                 effort: "high",
                 agents,
                 settingsEnv,
+                leadPrompt: "lead note",
                 passthrough: ["-p", "hi"],
             })
         ).toEqual([
@@ -200,6 +206,8 @@ describe("environment and arguments", () => {
             "{}",
             "--settings",
             '{"env":{"CLAUDE_CODE_AUTO_COMPACT_WINDOW":"475000"}}',
+            "--append-system-prompt",
+            "lead note",
             "-p",
             "hi",
         ]);
@@ -210,9 +218,10 @@ describe("environment and arguments", () => {
                 effort: "high",
                 agents: [],
                 settingsEnv,
-                passthrough: ["--effort", "low", "--settings", "{}"],
+                leadPrompt: "lead note",
+                passthrough: ["--effort", "low", "--settings", "{}", "--append-system-prompt", "mine"],
             })
-        ).toEqual(["--resume", "s1", "--effort", "low", "--settings", "{}"]);
+        ).toEqual(["--resume", "s1", "--effort", "low", "--settings", "{}", "--append-system-prompt", "mine"]);
     });
 });
 
@@ -227,8 +236,15 @@ describe("the shared settings model guard (a /model pick must not become every s
 
     it("knows which ids only a proxy session can run", () => {
         expect(
-            ["codex/gpt-6-astra", "grok/grok-4.6", "opus", "claude-opus-5-5[1m]", undefined].map(isSessionOnlyModel)
-        ).toEqual([true, true, false, false, false]);
+            [
+                "codex/gpt-6-astra",
+                "grok/grok-4.6",
+                "codex-claude/gpt-6-astra",
+                "opus",
+                "claude-opus-5-5[1m]",
+                undefined,
+            ].map(isSessionOnlyModel)
+        ).toEqual([true, true, true, false, false, false]);
     });
 
     it("puts back the launch model and changes nothing else, mode included; a Claude id stays", () => {
@@ -304,5 +320,90 @@ describe("the shared settings model guard (a /model pick must not become every s
         await ensureOnboardingSkippedForOAuthToken(isolated);
 
         expect(read(join(isolated, ".claude.json"))).toEqual({ hasCompletedOnboarding: true });
+    });
+});
+
+describe("the session key check before Claude Code starts", () => {
+    const KEY = "gts_fixture-key";
+
+    async function check(answer: (req: Request) => Response): Promise<string | undefined> {
+        const server = Bun.serve({ port: 0, fetch: answer });
+
+        try {
+            return await sessionKeyProblem({
+                baseUrl: `http://127.0.0.1:${server.port}`,
+                key: KEY,
+                model: "codex/gpt-6.1-sol",
+            });
+        } finally {
+            server.stop(true);
+        }
+    }
+
+    const refusal = (status: number, message: string) =>
+        new Response(SafeJSON.stringify({ error: { message, type: "auth_error" } }), { status });
+
+    it("passes a proxy that takes the key as a bearer on count_tokens", async () => {
+        const problem = await check((req) =>
+            new URL(req.url).pathname === "/v1/messages/count_tokens" &&
+            req.headers.get("Authorization") === `Bearer ${KEY}`
+                ? Response.json({ input_tokens: 1 })
+                : refusal(401, "Invalid proxy API key")
+        );
+
+        expect(problem).toBeUndefined();
+    });
+
+    it("describes possible causes and the restart for a rejected key (401)", async () => {
+        const problem = await check(() => refusal(401, "Invalid proxy API key"));
+
+        expect(problem).toContain("401 (Invalid proxy API key)");
+        expect(problem).toContain("may run code from before session keys");
+        expect(problem).toContain("different authentication settings");
+        expect(problem).toContain("tools ai-proxy down && tools ai-proxy up");
+    });
+
+    it("names possible causes when the session key is rejected (403)", async () => {
+        const problem = await check(() => refusal(403, "unknown or closed session"));
+
+        expect(problem).toContain("403 (unknown or closed session)");
+        expect(problem).toContain("unknown, closed or replaced by another launch");
+        expect(problem).toContain("may also use a different GENESIS_TOOLS_HOME");
+    });
+
+    it("handles a failed response body while retaining the status", async () => {
+        const broken = (status: number) =>
+            new Response(
+                new ReadableStream({
+                    start(controller) {
+                        controller.error(new Error("body disconnected"));
+                    },
+                }),
+                { status }
+            );
+        const fetchSpy = spyOn(globalThis, "fetch");
+        try {
+            fetchSpy.mockResolvedValueOnce(broken(401));
+            expect(
+                await sessionKeyProblem({ baseUrl: "http://example.invalid", key: KEY, model: "codex/x" })
+            ).toContain("401 (no message)");
+            fetchSpy.mockResolvedValueOnce(broken(403));
+            expect(
+                await sessionKeyProblem({ baseUrl: "http://example.invalid", key: KEY, model: "codex/x" })
+            ).toContain("403 (no message)");
+            fetchSpy.mockResolvedValueOnce(broken(500));
+            expect(
+                await sessionKeyProblem({ baseUrl: "http://example.invalid", key: KEY, model: "codex/x" })
+            ).toBeUndefined();
+        } finally {
+            fetchSpy.mockRestore();
+        }
+    });
+
+    it("does not block the launch on another failure or no answer", async () => {
+        expect(await check(() => new Response("boom", { status: 500 }))).toBeUndefined();
+        expect(
+            await sessionKeyProblem({ baseUrl: "http://127.0.0.1:9", key: KEY, model: "codex/x", timeoutMs: 500 })
+        ).toBeUndefined();
     });
 });

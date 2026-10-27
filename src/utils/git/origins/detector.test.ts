@@ -630,6 +630,7 @@ describe("gh PR list and view", () => {
                 baseRefOid: "base",
                 mergeable: "CONFLICTING",
                 mergeStateStatus: "DIRTY",
+                mergeCommit: { oid: "landed" },
             })
         );
         expect(detail).toMatchObject({
@@ -659,12 +660,90 @@ describe("gh PR list and view", () => {
             baseSha: "base",
             mergeable: "conflicting",
             mergeStatus: "DIRTY",
+            mergedSha: "landed",
             webUrls: { files: "https://github.com/o/r/pull/15/files" },
         });
         expect(detail.checks).toEqual([
             { name: "CI / lint", status: "success", url: null },
             { name: "CI / test", status: "running", url: null },
         ]);
+    });
+
+    // gh lists a PR's first 100 commits only: a link to the 226th commit of a 252-commit PR read as "not a commit".
+    it("reads the commits after the 100th from the REST API, with the host's count", async () => {
+        const project = projectRefFromRemote("git@github.com:o/r.git");
+
+        if (!project) {
+            throw new Error("fixture remote did not parse");
+        }
+
+        const row = SafeJSON.parse(GH_ROWS, { strict: true })[0];
+        const indexes = (from: number, to: number) => Array.from({ length: to - from }, (_, index) => from + index);
+        const viewed = (count: number) =>
+            SafeJSON.stringify({
+                ...row,
+                commits: indexes(0, count).map((index) => ({ oid: `c${index}`, messageHeadline: `commit ${index}` })),
+            });
+        const rest = (index: number) => ({
+            sha: `c${index}`,
+            commit: {
+                message: `commit ${index}\n\nwhy ${index}\n`,
+                author: { name: "Alice Example", date: "authored" },
+                committer: { date: "committed" },
+            },
+            author: index === 0 ? null : { login: "alice" },
+        });
+        const asked: string[][] = [];
+        const runner =
+            (count: number): CommandRunner =>
+            async (cmd) => {
+                asked.push(cmd);
+
+                if (cmd[1] === "pr") {
+                    return { code: 0, stdout: viewed(count), stderr: "" };
+                }
+
+                if (cmd[4].endsWith("/commits?per_page=100")) {
+                    // `--paginate` prints each page's array back to back.
+                    const pages = [indexes(0, 100), indexes(100, 200), indexes(200, 250)];
+                    return {
+                        code: 0,
+                        stdout: pages.map((page) => SafeJSON.stringify(page.map(rest))).join(""),
+                        stderr: "",
+                    };
+                }
+
+                return { code: 0, stdout: "252\n", stderr: "" };
+            };
+
+        const full = await viewPr({ project, number: 15, runner: runner(100) });
+        expect(full.warnings).toEqual([]);
+        expect(full.pr?.commits).toHaveLength(250);
+        expect(full.pr?.commits[0]).toMatchObject({ sha: "c0", author: "Alice Example", authorLogin: null });
+        expect(full.pr?.commits[225]).toEqual({
+            sha: "c225",
+            title: "commit 225",
+            author: "alice",
+            authorLogin: "alice",
+            date: "committed",
+            body: "why 225",
+        });
+        expect(full.pr?.commitsTotal).toBe(252);
+        expect(asked.find((cmd) => cmd[4]?.endsWith("/commits?per_page=100"))).toEqual([
+            "gh",
+            "api",
+            "--hostname",
+            "github.com",
+            "repos/o/r/pulls/15/commits?per_page=100",
+            "--paginate",
+        ]);
+
+        // Negative control: a PR under 100 commits is one gh call, and its list is its count.
+        asked.length = 0;
+        const small = await viewPr({ project, number: 15, runner: runner(3) });
+        expect(asked).toHaveLength(1);
+        expect(small.pr?.commits).toHaveLength(3);
+        expect(small.pr?.commitsTotal).toBe(3);
     });
 });
 
@@ -686,6 +765,8 @@ const GL_MRS = SafeJSON.stringify([
         sha: "s9",
         has_conflicts: false,
         detailed_merge_status: "not_approved",
+        merge_commit_sha: "merged",
+        squash_commit_sha: "squashed",
     },
 ]);
 
@@ -844,6 +925,7 @@ describe("GitLab MR list and view", () => {
             reviewDecision: "REVIEW_REQUIRED",
             mergeable: "mergeable",
             mergeStatus: "not_approved",
+            mergedSha: "squashed",
             commits: [],
             checks: [{ name: "pipeline 5 (feature/y)", status: "running", url: null }],
             webUrls: { files: "https://gitlab.internal.example/g/p/-/merge_requests/9/diffs" },

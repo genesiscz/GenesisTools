@@ -213,6 +213,79 @@ final class HubLogicTests: XCTestCase {
         guard case .failure(.offBranch) = HubLocalCommits.resolve(ends: [side], repo: repo, head: pushedHead) else {
             return XCTFail("a commit off the PR's line is refused")
         }
+
+        // A pushed commit the forge did not list (gh listed 100 of 252): between the PR's base and its head, it is one
+        // of the PR's own commits, read from the checkout with nothing unpushed.
+        let head = shas[4]
+        guard case .failure(.offBranch) = HubLocalCommits.resolve(ends: [shas[2]], repo: repo, head: head) else {
+            return XCTFail("without a base, an older pushed commit cannot be placed")
+        }
+        let listedPast = try HubLocalCommits.resolve(ends: [shas[2]], repo: repo, head: head, bases: ["origin/nope", shas[0]]).get()
+        XCTAssertEqual(listedPast, HubLocalCommits(first: shas[2], last: nil, count: 1, unpushed: 0, title: "commit 2"),
+                       "the first base that names a commit here decides")
+        let pastRange = try HubLocalCommits.resolve(ends: [shas[3], shas[1]], repo: repo, head: head, bases: [shas[0]]).get()
+        XCTAssertEqual(pastRange.first, shas[1])
+        XCTAssertEqual(pastRange.unpushed, 0)
+        guard case .failure(.offBranch) = HubLocalCommits.resolve(ends: [shas[0]], repo: repo, head: head, bases: [shas[0]]) else {
+            return XCTFail("the base's own commits are not the PR's")
+        }
+        guard case .failure(.offBranch) = HubLocalCommits.resolve(ends: [shas[2]], repo: repo, head: head, bases: ["origin/nope"]) else {
+            return XCTFail("a base that names no commit here proves nothing")
+        }
+    }
+
+    /// A link to a commit the PR held before its branch was rewritten (a rebase, a reword, a regroup): its current form
+    /// by subject, else the old commit from the checkout (2026-10-22: #58 c3e3ad830 opened the whole PR while #58 held
+    /// 4dbdd3869b with the same subject).
+    func testARewrittenCommitFindsItsSuccessorBySubjectElseShowsItself() throws {
+        let repo = FileManager.default.temporaryDirectory.appendingPathComponent("hub-rewritten-\(UUID().uuidString)").path
+        try FileManager.default.createDirectory(atPath: repo, withIntermediateDirectories: true)
+        defer { try? FileManager.default.removeItem(atPath: repo) }
+        func git(_ args: String...) throws -> String {
+            let process = Process()
+            process.executableURL = URL(fileURLWithPath: "/usr/bin/git")
+            process.arguments = ["-C", repo, "-c", "user.name=Alice Example", "-c", "user.email=alice@example.com",
+                                 "-c", "core.hooksPath=/dev/null", "-c", "commit.gpgsign=false"] + args
+            let out = Pipe()
+            process.standardOutput = out
+            try process.run()
+            let data = out.fileHandleForReading.readDataToEndOfFile()
+            process.waitUntilExit()
+            XCTAssertEqual(process.terminationStatus, 0, "git \(args.joined(separator: " "))")
+            return String(decoding: data, as: UTF8.self).trimmingCharacters(in: .whitespacesAndNewlines)
+        }
+        _ = try git("init", "-q", "-b", "main")
+        _ = try git("commit", "-q", "--allow-empty", "-m", "base")
+        _ = try git("commit", "-q", "--allow-empty", "-m", "feat: one")
+        let oldOne = try git("rev-parse", "HEAD")
+        _ = try git("commit", "-q", "--allow-empty", "-m", "feat: two")
+        let oldTwo = try git("rev-parse", "HEAD")
+        _ = try git("checkout", "-q", "-b", "side", "HEAD~2")
+        _ = try git("commit", "-q", "--allow-empty", "-m", "unrelated")
+        let unrelated = try git("rev-parse", "HEAD")
+        func commit(_ sha: String, _ title: String, _ author: String? = "alice") -> HubPRDetail.Commit {
+            HubPRDetail.Commit(sha: sha, title: title, author: author, authorLogin: nil, date: nil, body: nil)
+        }
+        let rewrittenList = [commit("1111111aaa", "feat: one"), commit("2222222bbb", "feat: two")]
+
+        XCTAssertEqual(HubLocalCommits.rewritten(ends: [String(oldOne.prefix(10))], repo: repo, in: rewrittenList),
+                       .successors(first: rewrittenList[0], last: nil))
+        XCTAssertEqual(HubLocalCommits.rewritten(ends: [oldOne, oldTwo], repo: repo, in: rewrittenList),
+                       .successors(first: rewrittenList[0], last: rewrittenList[1]))
+        XCTAssertEqual(HubLocalCommits.rewritten(ends: [oldTwo], repo: repo, in: [commit("3333333ccc", "feat: other")]),
+                       .own(first: oldTwo, last: nil, title: "feat: two", base: nil), "no successor: the commit itself")
+        let oldBase = try git("rev-parse", oldOne + "^")
+        XCTAssertEqual(HubLocalCommits.rewritten(ends: [oldTwo, oldOne], repo: repo, in: []),
+                       .own(first: oldOne, last: oldTwo, title: "feat: two", base: oldBase), "a range from the older end's parent")
+        XCTAssertNil(HubLocalCommits.rewritten(ends: [unrelated, oldTwo], repo: repo, in: []), "two lines make no diff")
+        XCTAssertNil(HubLocalCommits.rewritten(ends: ["0123456789"], repo: repo, in: rewrittenList), "a sha the checkout lacks")
+
+        // Two commits with the subject: the author decides, and a tie names none.
+        let twins = [commit("4444444ddd", "feat: one", "bob"), commit("5555555eee", "feat: one", "Alice Example")]
+        XCTAssertEqual(HubLocalCommits.successor(subject: "feat: one", author: "Alice Example", in: twins)?.sha, "5555555eee")
+        XCTAssertNil(HubLocalCommits.successor(subject: "feat: one", author: "carol", in: twins))
+        XCTAssertEqual(HubLocalCommits.successor(subject: "feat: one", author: "carol", in: [twins[0]])?.sha, "4444444ddd",
+                       "one subject match wins whatever author the forge names")
     }
 
     func testACommitRangeLinkShowsItsCommitsFromTheParentOfTheFirst() throws {
@@ -304,6 +377,87 @@ final class HubLogicTests: XCTestCase {
         XCTAssertNil(PRsModel.projectRoot("", in: projects))
     }
 
+    /// A `repo=` link opens under a checkout's row, which names that checkout's branch: a commit of another branch
+    /// opens in the worktree that has it, else the place names the branch or the PR that holds it.
+    func testACommitLinkNamesTheBranchOrPRThatHoldsIt() throws {
+        let folder = FileManager.default.temporaryDirectory.appendingPathComponent("hub-commit-holder-\(UUID().uuidString)")
+        try FileManager.default.createDirectory(at: folder, withIntermediateDirectories: true)
+        defer { try? FileManager.default.removeItem(at: folder) }
+        let path = folder.appendingPathComponent("app").path
+        let identity = ["-c", "user.name=Fixture", "-c", "user.email=fixture@example.com", "-c", "core.hooksPath=/dev/null",
+                        "-c", "commit.gpgsign=false"]
+        let git = { (args: [String]) -> String? in WorktreeDiscovery.git(path, args) }
+        let commit = { (subject: String) throws -> String in
+            XCTAssertNotNil(git(identity + ["commit", "-q", "--allow-empty", "-m", subject]))
+            return try XCTUnwrap(git(["rev-parse", "HEAD"])?.trimmed)
+        }
+        try FileManager.default.createDirectory(atPath: path, withIntermediateDirectories: true)
+        XCTAssertNotNil(git(["init", "-q", "-b", "main"]))
+        let base = try commit("base")
+        let root = try XCTUnwrap(git(["rev-parse", "--show-toplevel"])?.trimmed)
+
+        // On the checkout's own branch: its row is right.
+        guard case .found(let own) = HubCommitLookup.resolve(repo: path, sha: base, known: []) else { return XCTFail("base") }
+        XCTAssertEqual(own.holder, .row)
+        XCTAssertNil(HubCommitLookup.holderLabel(own, prs: []))
+
+        // A branch nothing has checked out: the place names it, and its PR when the hub lists one.
+        XCTAssertNotNil(git(["checkout", "-q", "-b", "feat/x"]))
+        let feature = try commit("on the feature")
+        XCTAssertNotNil(git(["checkout", "-q", "main"]))
+        guard case .found(let onBranch) = HubCommitLookup.resolve(repo: path, sha: String(feature.prefix(9)), known: []) else {
+            return XCTFail("feature")
+        }
+        XCTAssertEqual(onBranch, HubCommitLookup.Found(root: root, sha: feature, title: "on the feature",
+                                                       holder: .branch(display: "feat/x", head: "feat/x")))
+        XCTAssertEqual(HubCommitLookup.holderLabel(onBranch, prs: []), "feat/x")
+        let json = """
+        {"repo":"app","repoRoot":"\(path)","origin":{"kind":"github","host":"h","web":"https://github.com/acme/app"},
+         "number":12,"title":"t","state":"OPEN","draft":false,"author":"alice","headBranch":"feat/x","baseBranch":"main",
+         "url":"https://github.com/acme/app/pull/12","labels":[],"reviewers":[],"headSha":null,"crossRepository":false,"headRepo":null}
+        """
+        let pr = try JSONDecoder().decode(HubPR.self, from: Data(json.utf8))
+        XCTAssertEqual(HubCommitLookup.holderLabel(onBranch, prs: [pr]), "feat/x (PR #12)")
+
+        // Only a remote has it: the remote's name, and the PR's head branch without it.
+        XCTAssertNotNil(git(["checkout", "-q", "-b", "feat/y"]))
+        let remote = try commit("only on the remote")
+        XCTAssertNotNil(git(["checkout", "-q", "main"]))
+        XCTAssertNotNil(git(["update-ref", "refs/remotes/origin/feat/y", remote]))
+        XCTAssertNotNil(git(["branch", "-q", "-D", "feat/y"]))
+        XCTAssertEqual(HubCommitLookup.holding(remote, in: root).holder, .branch(display: "origin/feat/y", head: "feat/y"))
+
+        // No branch at all (a deleted branch's commit the object store still has).
+        XCTAssertNotNil(git(["checkout", "-q", "-b", "gone"]))
+        let orphan = try commit("on a deleted branch")
+        XCTAssertNotNil(git(["checkout", "-q", "main"]))
+        XCTAssertNotNil(git(["branch", "-q", "-D", "gone"]))
+        guard case .found(let nowhere) = HubCommitLookup.resolve(repo: path, sha: orphan, known: []) else { return XCTFail("orphan") }
+        XCTAssertEqual(nowhere.holder, HubCommitLookup.Holder.none)
+        XCTAssertEqual(HubCommitLookup.holderLabel(nowhere, prs: []), "no branch")
+
+        // A linked worktree has the branch checked out: the link opens in that worktree, whose row names it.
+        let worktree = folder.appendingPathComponent("app-feat").path
+        XCTAssertNotNil(git(["worktree", "add", "-q", worktree, "feat/x"]))
+        guard case .found(let inWorktree) = HubCommitLookup.resolve(repo: path, sha: feature, known: []) else {
+            return XCTFail("worktree")
+        }
+        XCTAssertEqual(WorktreeCleanup.normalizedPath(inWorktree.root), WorktreeCleanup.normalizedPath(worktree))
+        XCTAssertEqual(inWorktree.holder, .row)
+    }
+
+    /// `tools hub pr find --branch … --json`, read for the label a commit link's branch gets.
+    func testTheForgesAnswerForABranchBecomesItsPRLabel() {
+        let github = #"{"provider":"github","host":"github.com","project":"acme/app","number":475,"title":"t","state":"OPEN"}"#
+        let gitlab = #"{"provider":"gitlab","host":"gitlab.example.test","project":"group/app","number":12,"title":"t"}"#
+        let none = #"{"provider":null,"reason":"no PR has feat/x as its source branch","branch":"feat/x","repoPath":"/fixture/app"}"#
+        XCTAssertEqual(HubCommitLookup.branchPRLabel(Data(github.utf8)), "#475")
+        XCTAssertEqual(HubCommitLookup.branchPRLabel(Data(gitlab.utf8)), "!12")
+        XCTAssertNil(HubCommitLookup.branchPRLabel(Data(none.utf8)))
+        XCTAssertNil(HubCommitLookup.branchPRLabel(Data("not json".utf8)))
+        XCTAssertEqual(HubCommitLookup.holderLabel("origin/feat/x", pr: "#475"), "origin/feat/x (PR #475)")
+    }
+
     func testACommitLinkResolvesItsCheckoutAndSubjectFromGit() throws {
         let folder = FileManager.default.temporaryDirectory.appendingPathComponent("hub-commit-link-\(UUID().uuidString)")
         try FileManager.default.createDirectory(at: folder, withIntermediateDirectories: true)
@@ -328,9 +482,20 @@ final class HubLogicTests: XCTestCase {
         let fork = [HubPRProject(project: "https://example.test/other/app", repo: "app", root: "/fixture/none", kind: "gitlab"),
                     HubPRProject(project: "https://example.test/me/app", repo: "app", root: path, kind: "gitlab")]
         XCTAssertEqual(HubCommitLookup.resolve(repo: "group/sub/app", sha: short, known: fork), found)
-        guard case .failed = HubCommitLookup.resolve(repo: "group/sub/app", sha: "0000000", known: fork) else {
+        guard case .failed(let unfetched) = HubCommitLookup.resolve(repo: "group/sub/app", sha: "0000000", known: fork, fetch: { fork }) else {
             return XCTFail("a same-name project without the commit is no match")
         }
+        XCTAssertTrue(unfetched.contains("is not in") && unfetched.contains("fetch it first"),
+                      "a clone of the same name answers where the commit was looked for: \(unfetched)")
+        // The hub's list is read once per run: a project it does not hold yet is asked for again before the miss.
+        let oldList = [HubPRProject(project: "https://example.test/other/tool", repo: "tool", root: "/fixture/none", kind: "github")]
+        var asked = 0
+        XCTAssertEqual(HubCommitLookup.resolve(repo: "acme/app", sha: short, known: oldList, fetch: { asked += 1; return projects }), found)
+        XCTAssertEqual(asked, 1)
+        guard case .failed(let none) = HubCommitLookup.resolve(repo: "acme/app", sha: short, known: oldList, fetch: { oldList }) else {
+            return XCTFail("no checkout in either list")
+        }
+        XCTAssertTrue(none.contains("No checkout of acme/app"), none)
         guard case .failed(let message) = HubCommitLookup.resolve(repo: path, sha: "0000000", known: []) else {
             return XCTFail("a commit the checkout lacks must be said")
         }
@@ -369,7 +534,7 @@ final class HubLogicTests: XCTestCase {
         }
         XCTAssertEqual(viaFork.root, root)
         // No checkout holds it: the miss names the upstream checkout, where the link pointed.
-        guard case .failed(let lacking) = HubCommitLookup.resolve(repo: "group/sub/app", sha: "0000000", known: upstream) else {
+        guard case .failed(let lacking) = HubCommitLookup.resolve(repo: "group/sub/app", sha: "0000000", known: upstream, fetch: { [] }) else {
             return XCTFail("a commit no checkout holds must be said")
         }
         XCTAssertTrue(lacking.contains("is not in"), lacking)
@@ -408,6 +573,18 @@ final class HubLogicTests: XCTestCase {
         XCTAssertNotNil(model.worktrees.first { $0.path == model.selectedWorktree })
         XCTAssertEqual(model.review?.scope, .commit(sha: sha, title: "linked commit"))
         XCTAssertNil(model.error)
+
+        // Still shown once the review has loaded: the load moves `repo` to the `/var/…` spelling of git's
+        // `/private/var/…`, and a page that matched on it said "Loading the worktree's changes…" for good.
+        let review = try XCTUnwrap(model.review)
+        review.reload()
+        let deadline = Date().addingTimeInterval(10)
+        while review.loading && Date() < deadline {
+            try await Task.sleep(nanoseconds: 50_000_000)
+        }
+        XCTAssertFalse(review.loading)
+        let row = try XCTUnwrap(model.worktrees.first { $0.path == root })
+        XCTAssertTrue(model.review(showing: row) === review, "review \(review.repo.path) for \(row.path)")
     }
 
     /// Before the first discovery a link must leave the list empty: opening Worktrees discovers only while the
@@ -572,23 +749,101 @@ final class HubLogicTests: XCTestCase {
     }
 
     @MainActor
-    func testAMissingPRCommitReplacesThePreviousCommitScopeWithTheWholePR() throws {
+    private func rewrittenFixture() throws -> (HubPR, PRsModel, ReviewModel, PRCommitPick) {
         let json = """
         {"repo":"app","repoRoot":"/fixture/app","origin":{"kind":"github","host":"github.com","web":"https://github.com/acme/app"},
          "number":7,"title":"t","state":"OPEN","draft":false,"author":"alice","headBranch":"feature","baseBranch":"develop",
          "url":"https://github.com/acme/app/pull/7","labels":[],"reviewers":[],"headSha":"abcdef0123","crossRepository":false,"headRepo":null}
         """
         let pr = try JSONDecoder().decode(HubPR.self, from: Data(json.utf8))
-        let model = PRsModel()
         let review = ReviewModel(repo: URL(fileURLWithPath: "/fixture/app"), options: DiffViewOptions(), renderer: NullRenderer())
         review.scope = .commit(sha: "1111111", title: "previous")
-        let missing = PRCommitPick(ref: HubPRRef(project: "acme/app", number: 7), sha: "0000000", asked: Date())
+        return (pr, PRsModel(), review, PRCommitPick(ref: HubPRRef(project: "acme/app", number: 7), sha: "c3e3ad830", asked: Date()))
+    }
 
-        model.showMissingCommit(missing, in: pr, review: review)
+    /// The PR holds a commit with the old one's subject: that commit shows, and the note names both, as no error.
+    @MainActor
+    func testARewrittenPRCommitShowsItsSuccessorWithANoteNamingBoth() throws {
+        let (pr, model, review, pending) = try rewrittenFixture()
+        let successor = HubPRDetail.Commit(sha: "4dbdd3869b00", title: "feat: vouchers", author: nil, authorLogin: nil, date: nil, body: nil)
+
+        model.applyLocalLookup(.failure(.offBranch), rewritten: .successors(first: successor, last: nil), pending: pending,
+                               in: [successor], pr: pr, review: review)
+
+        XCTAssertEqual(review.scope, .commit(sha: successor.sha, title: successor.title))
+        let notice = try XCTUnwrap(model.notice)
+        XCTAssertFalse(notice.isError)
+        XCTAssertTrue(notice.text.contains("c3e3ad830") && notice.text.contains("4dbdd3869b"), notice.text)
+    }
+
+    /// No commit of the PR has its subject: the old commit's own diff from the checkout, as no error.
+    @MainActor
+    func testARewrittenPRCommitWithNoSuccessorShowsItsOwnDiff() throws {
+        let (pr, model, review, pending) = try rewrittenFixture()
+        let full = "c3e3ad8307c9a875bc8a93d90d3232184bb67f6a"
+
+        model.applyLocalLookup(.failure(.offBranch), rewritten: .own(first: full, last: nil, title: "feat: vouchers", base: nil),
+                               pending: pending, in: [], pr: pr, review: review)
+
+        XCTAssertEqual(review.scope, .commit(sha: full, title: "feat: vouchers"))
+        let notice = try XCTUnwrap(model.notice)
+        XCTAssertFalse(notice.isError)
+        XCTAssertTrue(notice.text.contains("this is the commit itself"), notice.text)
+    }
+
+    /// Only a sha the checkout lacks still shows the whole PR, replacing the commit on screen, with the error note.
+    @MainActor
+    func testAPRCommitTheCheckoutLacksShowsTheWholePRWithAnError() throws {
+        let (pr, model, review, pending) = try rewrittenFixture()
+
+        model.applyLocalLookup(.failure(.unknown("c3e3ad830")), rewritten: nil, pending: pending, in: [], pr: pr, review: review)
 
         XCTAssertEqual(review.scope, PRsModel.scope(pr, detail: nil))
+        XCTAssertTrue(model.notice?.isError == true)
         XCTAssertTrue(model.notice?.text.contains("so the whole PR shows") == true)
-        XCTAssertEqual(model.notice?.ref, missing.ref)
+        XCTAssertEqual(model.notice?.ref, pending.ref)
+    }
+
+    /// A worktree a link names is compared as git lists it: `/tmp` is `/private/tmp`, `~` and a trailing slash are
+    /// gone, and a folder inside a worktree belongs to the deepest worktree that holds it.
+    func testAWorktreeLinkPathIsComparedAsGitListsIt() throws {
+        let folder = URL(fileURLWithPath: "/tmp").appendingPathComponent("hub-worktree-path-\(UUID().uuidString)")
+        try FileManager.default.createDirectory(at: folder, withIntermediateDirectories: true)
+        defer { try? FileManager.default.removeItem(at: folder) }
+        let real = "/private" + folder.path
+        XCTAssertEqual(WorktreeCleanup.normalizedPath(folder.path + "/"), real)
+        XCTAssertEqual(WorktreeCleanup.normalizedPath(folder.path + "/./sub/.."), real)
+        XCTAssertEqual(WorktreeCleanup.normalizedPath("~/no-such-folder-\(UUID().uuidString)/").hasPrefix(NSHomeDirectory() + "/no-such-folder-"), true)
+        XCTAssertEqual(WorktreeCleanup.selection(for: "cleanup"), WorktreeCleanup.selectionID)
+        let rows = [HubWorktree(path: "/work/app", repo: "app", commonDir: "/work/app/.git", branch: "main", isMain: true),
+                    HubWorktree(path: "/work/app/.claude/worktrees/x", repo: "app", commonDir: "/work/app/.git", branch: "x", isMain: false)]
+        XCTAssertEqual(WorktreeCleanup.owner(of: "/work/app/src", in: rows)?.path, "/work/app")
+        XCTAssertEqual(WorktreeCleanup.owner(of: "/work/app/.claude/worktrees/x/src", in: rows)?.path, "/work/app/.claude/worktrees/x")
+        XCTAssertNil(WorktreeCleanup.owner(of: "/work/application", in: rows))
+        XCTAssertEqual(WorktreeCleanup.selection(for: "/work/app/src/", in: rows), "/work/app", "a listed worktree is selected at once")
+        XCTAssertEqual(WorktreeCleanup.selection(for: "/work/app/.claude/worktrees/x", in: rows), "/work/app/.claude/worktrees/x")
+        XCTAssertEqual(WorktreeCleanup.selection(for: "/work/other/src", in: rows), "/work/other/src", "unlisted: discovery decides")
+    }
+
+    /// A link to a merged PR by bare number widens the PR list to All for that link only: the next launch opens the
+    /// filter the person picked.
+    @MainActor
+    func testALinksWideningIsNotSavedAsTheFilter() throws {
+        let model = PRsModel()
+        model.state = "open"
+        XCTAssertTrue(model.widen(to: try XCTUnwrap(HubPRRef("7"))))
+        XCTAssertEqual(model.state, "all")
+        XCTAssertEqual(HubDefaults.store.string(forKey: "hub.prs.state"), "open")
+        model.state = "merged"
+        XCTAssertEqual(HubDefaults.store.string(forKey: "hub.prs.state"), "merged", "the person's own pick is saved")
+    }
+
+    /// GitHub lists 250 commits of a PR at most: the commits section says how many it left out.
+    @MainActor
+    func testTheCommitsSectionSaysWhatTheForgeLeftOut() {
+        XCTAssertEqual(PRCommitsSection.title(listed: 250, total: 252), "Commits (the forge lists 250 of 252)")
+        XCTAssertEqual(PRCommitsSection.title(listed: 3, total: 3), "Commits")
+        XCTAssertEqual(PRCommitsSection.title(listed: 3, total: nil), "Commits")
     }
 
     /// A range link waits for a fresh detail when the cached one predates its newer end; when that detail

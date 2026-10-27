@@ -8,10 +8,23 @@ import { realWidgetSources, type WidgetSources } from "./snapshot";
 import { widgetRoot } from "./storage";
 
 /**
- * The resident watch rewrites the cache after every roster run, at least every 30 s, so an older file means its
- * writer stopped or hangs.
+ * The resident watch rewrites the cache after every roster run that changed it, and an unchanged one at least every
+ * 55 s, so an older file means its writer stopped or hangs.
  */
 export const WIDGET_ROSTER_CACHE_MAX_AGE_MS = 90_000;
+
+/**
+ * How often the watch rewrites a roster that did not change, so a reader can still tell a live writer from a stopped
+ * one: the safety refresh reads the roster every 30 s, so an unchanged roster is written every second read, well
+ * inside `WIDGET_ROSTER_CACHE_MAX_AGE_MS`. A changed roster is written at once.
+ */
+export const WIDGET_ROSTER_CACHE_HEARTBEAT_MS = 55_000;
+
+/** What a roster shows, without the time it was read: two reads that found the same sessions and agents are equal. */
+export function widgetRosterFingerprint(roster: WidgetRoster): string {
+    const agents = { ...roster.agents, generatedAt: "" };
+    return Bun.hash(SafeJSON.stringify({ rows: roster.rows, agents }, { strict: true })).toString(36);
+}
 
 /**
  * How old a cache the watch still shows at start-up, before its own first read lands (2 s cold at load 75, ~10 s

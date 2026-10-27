@@ -124,6 +124,31 @@ private final class FakeServer: @unchecked Sendable {
 }
 
 final class ToolsServerClientTests: XCTestCase {
+    /// Two faces that find no server at once start one: the second sees the first one's fresh claim.
+    func testAServerStartClaimLetsOneFaceStartAndFreesWhenStaleOrItsServerDied() {
+        let folder = NSTemporaryDirectory() + "gk-claim-\(UUID().uuidString.prefix(8))"
+        let path = folder + "/hub.sock.starting"
+        defer { try? FileManager.default.removeItem(atPath: folder) }
+        let now = Date()
+
+        XCTAssertTrue(HubServerStartClaim.take(path: path, now: now), "the first face starts (the folder is made)")
+        XCTAssertFalse(HubServerStartClaim.take(path: path, now: now.addingTimeInterval(1)),
+                       "a second face within the window skips its start")
+
+        HubServerStartClaim.record(pid: 4242, path: path, at: now)
+        XCTAssertFalse(HubServerStartClaim.take(path: path, now: now.addingTimeInterval(2), isAlive: { _ in true }),
+                       "the started server is alive")
+        XCTAssertTrue(HubServerStartClaim.take(path: path, now: now.addingTimeInterval(3), isAlive: { _ in false }),
+                      "the started server died: the claim is free at once")
+        XCTAssertTrue(HubServerStartClaim.take(path: path, now: now.addingTimeInterval(4 + HubServerStartClaim.window)),
+                      "a claim older than the window is stale")
+    }
+
+    /// The server a face starts outlives the face: the `tools` wrapper skips its orphan watchdog for a detached start.
+    func testAFaceStartsTheServerDetached() {
+        XCTAssertEqual(ToolsServerClient.serverEnvironment()["GENESIS_TOOLS_DETACHED"], "1")
+    }
+
     func testNoServerAnswersNilAndStartsOneOnce() async {
         let starts = Counter()
         let client = ToolsServerClient(socketPath: NSTemporaryDirectory() + "gk-none-\(UUID().uuidString.prefix(8)).sock") {
@@ -154,6 +179,35 @@ final class ToolsServerClientTests: XCTestCase {
         let refused = await client.call(argv: ["other"], timeoutSeconds: 2)
         XCTAssertNil(refused)
         XCTAssertEqual(client.callSync(argv: ["known"], timeout: 2)?.stdout, "hi\n")
+    }
+
+    /// A refusal that names a door-less prefix sends every later argv under it straight to the process: the server
+    /// never sees it again on that connection, while an argv outside the prefix still goes to the server.
+    func testANoDoorPrefixSkipsTheServerForItsArgvs() async throws {
+        let asked = Counter()
+        let server = try FakeServer { request in
+            asked.increment()
+            let id = request["id"] as? Int ?? 0
+            let argv = request["argv"] as? [String] ?? []
+            if argv.first == "known" {
+                return [["id": id, "ok": true, "stdout": "hi\n", "stderr": "", "exit": 0, "ms": 3]]
+            }
+            return [["id": id, "ok": false, "code": "unsupported", "noDoor": ["other", "verb"]]]
+        }
+        defer { server.stop() }
+        let client = ToolsServerClient(socketPath: server.path)
+        let refused = await client.call(argv: ["other", "verb", "--json"], timeoutSeconds: 2)
+        XCTAssertNil(refused)
+        XCTAssertEqual(asked.value, 1)
+        let skipped = await client.call(argv: ["other", "verb", "x"], timeoutSeconds: 2)
+        XCTAssertNil(skipped)
+        XCTAssertNil(client.callSync(argv: ["other", "verb"], timeout: 2))
+        XCTAssertEqual(asked.value, 1, "an argv under a door-less prefix never reaches the server")
+        let other = await client.call(argv: ["other", "noun"], timeoutSeconds: 2)
+        XCTAssertNil(other)
+        XCTAssertEqual(asked.value, 2, "another argv still asks")
+        let known = await client.call(argv: ["known"], timeoutSeconds: 2)
+        XCTAssertEqual(known?.stdout, "hi\n")
     }
 
     /// A line split across reads is joined, and the half line a dropped connection left behind never

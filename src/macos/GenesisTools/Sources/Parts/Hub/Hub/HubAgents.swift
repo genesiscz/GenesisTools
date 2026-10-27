@@ -437,21 +437,42 @@ final class HubAgentsModel: ObservableObject {
     /// Lands new rows. Moves (a new row, a bucket change) slide with the SWR animation; a refresh that only
     /// changed counts and times lands without one: animated, every such refresh cost about 500 ms of main
     /// thread in frame commits (`hub.agents.refresh.render`, 2026-10-01).
+    /// Only a few moved rows slide. A refresh that moves many (a full list after a slow answer, a session
+    /// changing bucket with its children) landed under the animation too: SwiftUI then laid out the whole list
+    /// and walked its accessibility responders on every frame of the slide, 0.6 to 2.5 s of main thread per
+    /// refresh with 50 sessions and 626 agents (`hub.agents.refresh.render`, stall stacks in `publish`, 2026-10-27).
     private func publish(_ nextParents: [AgentParent], _ nextOrphans: [AgentNode]) {
         guard nextParents != parents || nextOrphans != orphans else { return }
         let shape: ([AgentParent], [AgentNode]) -> [String] = { parents, orphans in
             parents.flatMap { ["p" + $0.sessionId] + AgentTree.flatten($0.children).map(\.id) } + orphans.map(\.id)
         }
-        let moved = shape(nextParents, nextOrphans) != shape(parents, orphans)
+        let before = shape(parents, orphans)
+        let after = shape(nextParents, nextOrphans)
+        let changed = Self.changedRows(from: before, to: after)
+        let animated = changed > 0 && (Self.animateEveryMove || changed <= Self.animatedChangeLimit)
+        // Named in the stall line's recent work, so the next slow render says which kind of refresh it was.
+        HubPerf.log("agents.publish \(after.count) rows, \(changed) moved, \(animated ? "animated" : "plain")")
         let land = {
             if nextParents != self.parents { self.parents = nextParents }
             if nextOrphans != self.orphans { self.orphans = nextOrphans }
         }
-        if moved {
+        if animated {
             withAnimation(SWR.animation, land)
         } else {
             land()
         }
+    }
+
+    /// More moved rows than this land without the slide (as `PRThreadsStore.animatedChangeLimit`).
+    static let animatedChangeLimit = 8
+    /// `GENESIS_HUB_AGENTS_ANIMATE_ALL=1` slides every move again, the old behavior, for A/B measurements.
+    private static let animateEveryMove = ProcessInfo.processInfo.environment["GENESIS_HUB_AGENTS_ANIMATE_ALL"] == "1"
+
+    /// Rows that appeared, left or changed place between two orders of row ids. A move counts once.
+    static func changedRows(from before: [String], to after: [String]) -> Int {
+        guard before != after else { return 0 }
+        let difference = after.difference(from: before)
+        return max(difference.insertions.count, difference.removals.count)
     }
 
     /// Parents and each parent's children in their sticky order (GenesisKit `StickyOrder`).
@@ -679,6 +700,10 @@ final class HubAgentsModel: ObservableObject {
     /// as the CLI's answer after a transcript grew. Even rounds move a child of the open parent, odd rounds a
     /// child of another parent.
     func benchRefresh(_ round: Int) {
+        if round % 3 == 2 {
+            benchMove()
+            return
+        }
         let open = selectedParent?.sessionId
         let candidates = parents.indices.filter { !parents[$0].children.isEmpty }
         let pick = candidates.first { (parents[$0].sessionId == open) == round.isMultiple(of: 2) } ?? candidates.first
@@ -688,6 +713,24 @@ final class HubAgentsModel: ObservableObject {
         child.toolCalls = (child.toolCalls ?? 0) + 1
         child.lastAt = ISO8601DateFormatter().string(from: Date())
         next[slot].children[0] = child
+        apply(AgentsEnvelope(parents: next, orphans: orphans), scope: nil)
+    }
+
+    /// The first twelve agents of the session with the most leave the list, and come back on the next call: a
+    /// refresh that moves many rows at once, as a full list after a slow answer does.
+    private var benchTaken: (parent: String, children: [AgentNode])?
+
+    private func benchMove() {
+        var next = parents
+        if let taken = benchTaken, let slot = next.firstIndex(where: { $0.sessionId == taken.parent }) {
+            next[slot].children = taken.children + next[slot].children
+            benchTaken = nil
+        } else {
+            guard let slot = next.indices.max(by: { next[$0].children.count < next[$1].children.count }),
+                  next[slot].children.count > 12 else { return }
+            benchTaken = (next[slot].sessionId, Array(next[slot].children.prefix(12)))
+            next[slot].children.removeFirst(12)
+        }
         apply(AgentsEnvelope(parents: next, orphans: orphans), scope: nil)
     }
 

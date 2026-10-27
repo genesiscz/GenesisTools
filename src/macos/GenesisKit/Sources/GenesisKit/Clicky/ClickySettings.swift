@@ -45,6 +45,10 @@ public struct ClickyPreferences: Codable, Equatable {
     public var volume: Double = 0.45
     public var releaseSounds = true
     public var randomizedPitch = true
+    /// How far Randomized pitch moves each sound, as a fraction either way (0.04 = ±4%), for the built-in sounds and
+    /// packs alike. 4% sits between the old 5% of the built-in sounds and the 3% packs got first.
+    public var pitchRange: Double = 0.04
+    public static let pitchRangeLimits: ClosedRange<Double> = 0.005...0.15
     public var spatialAudio = true
     public var repeatSounds = false
     public var quietHours = false
@@ -67,6 +71,18 @@ public struct ClickyPreferences: Codable, Equatable {
     public var delayPromptSeconds = 45
     /// Outputs the user chose to keep although they are late: never offered again.
     public var delayAcceptedUIDs: [String] = []
+    /// No click sound while Clicky's output is Bluetooth: each start of the sound claims the headphones for this Mac in
+    /// Smart Routing ("Hijack" in audioaccessoryd), which can pull AirPods away from an iPhone while you type. Off by
+    /// default: the engine pauses instead of stopping, so it claims the route about once per 10 min, not per burst.
+    /// (Named `muteOnBluetooth` so the `silentOnBluetooth: true` that one build saved as its default is not read back.)
+    public var muteOnBluetooth = false
+    /// Seconds the paused sound engine keeps the output after the last click before it stops and gives it back; 0 never
+    /// stops it. Never is the default: paused, the engine used 0.007% CPU over 60 s, held no sleep assertion and no
+    /// Smart Routing session (running: 2.2% CPU, a coreaudiod PreventUserIdleSystemSleep, and a session), 2026-10-27.
+    public var releaseOutputSeconds = 0
+    /// Seconds the engine keeps running after the last click before it pauses. 30 s by default: a pause in typing
+    /// shorter than that no longer claims Bluetooth headphones again on the next key.
+    public var pauseAfterSeconds = 30
 
     public init() {}
 
@@ -82,6 +98,8 @@ public struct ClickyPreferences: Codable, Equatable {
         try read(.volume, into: &volume)
         try read(.releaseSounds, into: &releaseSounds)
         try read(.randomizedPitch, into: &randomizedPitch)
+        try read(.pitchRange, into: &pitchRange)
+        pitchRange = min(max(pitchRange, Self.pitchRangeLimits.lowerBound), Self.pitchRangeLimits.upperBound)
         try read(.spatialAudio, into: &spatialAudio)
         try read(.repeatSounds, into: &repeatSounds)
         try read(.quietHours, into: &quietHours)
@@ -100,6 +118,9 @@ public struct ClickyPreferences: Codable, Equatable {
         try read(.delayWarningMilliseconds, into: &delayWarningMilliseconds)
         try read(.delayPromptSeconds, into: &delayPromptSeconds)
         try read(.delayAcceptedUIDs, into: &delayAcceptedUIDs)
+        try read(.muteOnBluetooth, into: &muteOnBluetooth)
+        try read(.releaseOutputSeconds, into: &releaseOutputSeconds)
+        try read(.pauseAfterSeconds, into: &pauseAfterSeconds)
     }
 
     public mutating func normalize() {
@@ -109,6 +130,8 @@ public struct ClickyPreferences: Codable, Equatable {
         excludedApplications = Array(Set(excludedApplications.filter { !$0.isEmpty })).sorted()
         delayWarningMilliseconds = min(5000, max(20, delayWarningMilliseconds))
         delayPromptSeconds = min(300, max(0, delayPromptSeconds))
+        releaseOutputSeconds = releaseOutputSeconds <= 0 ? 0 : min(3600, max(3, releaseOutputSeconds))
+        pauseAfterSeconds = min(600, max(1, pauseAfterSeconds))
     }
 
     public func isQuiet(at date: Date, calendar: Calendar = .current) -> Bool {

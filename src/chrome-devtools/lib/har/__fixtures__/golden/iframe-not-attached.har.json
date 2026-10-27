@@ -496,7 +496,17 @@
     },
     "headersSize": -1,
     "bodySize": 1732,
-    "cookies": [],
+    "cookies": [
+     {
+      "name": "__cfduid",
+      "value": "d239ee441e68fed7d9fdd3af885f2ad131590380010",
+      "path": "/",
+      "domain": "codesandbox.io",
+      "expires": "2020-06-24T04:13:30.000Z",
+      "httpOnly": true,
+      "secure": true
+     }
+    ],
     "headers": [
      {
       "name": "status",

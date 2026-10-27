@@ -43,6 +43,56 @@ public final class ToolsServerClient: @unchecked Sendable {
         home.appendingPathComponent(".genesis-tools/hub/server/hub.sock").path
     }
 
+    /// The server a `ToolsBridge` built without one asks first. An app sets it once at launch, before it builds a
+    /// bridge (the widget face, for its `tools hub widget …` calls); nil, the default, keeps those bridges processes.
+    nonisolated(unsafe) public static var shared: ToolsServerClient?
+
+    /// Starts `tools hub serve` once, detached from any call: it outlives the call that found no server, exits by
+    /// itself after 10 minutes with no connection, and restarts when its code changes (src/hub/server/server.ts).
+    /// It runs through the same `tools` launcher chain as every per-call child, so its macOS privacy identity is
+    /// GenesisTools.app, as before.
+    public static func startHubServer(binaryPath: String) {
+        guard ToolsBridge.isExecutableFile(binaryPath) else { return }
+
+        let claimPath = defaultSocketPath() + ".starting"
+        guard HubServerStartClaim.take(path: claimPath) else {
+            PerfSpans.log("hub server start skipped: another face started one moments ago")
+            return
+        }
+
+        let plan = ToolsBridge.launchPlan(binaryPath: binaryPath, argv: ["hub", "serve"])
+        let process = Process()
+        process.executableURL = plan.executable
+        process.arguments = plan.arguments
+        process.currentDirectoryURL = plan.workingDirectory
+        process.environment = serverEnvironment()
+        process.qualityOfService = .utility
+        process.standardInput = FileHandle.nullDevice
+        process.standardOutput = FileHandle.nullDevice
+        process.standardError = FileHandle.nullDevice
+        process.terminationHandler = { finished in
+            PerfSpans.log("hub server pid=\(finished.processIdentifier) exited \(finished.terminationStatus)")
+        }
+        do {
+            try process.run()
+            HubServerStartClaim.record(pid: process.processIdentifier, path: claimPath)
+            PerfSpans.log("hub server started pid=\(process.processIdentifier)")
+        } catch {
+            unlink(claimPath)
+            PerfSpans.log("hub server cannot start: \(error.localizedDescription)")
+        }
+    }
+
+    /// The started server's environment: detached, as the CLI's own start is (src/utils/cli/detached.ts), so the `tools`
+    /// wrapper skips its orphan watchdog and the server outlives the face that started it. An install closes every
+    /// face; the watchdog then stopped a face's server 2 s later, and the hub's first calls after the 2026-10-27 03:46
+    /// install waited 0.9 to 6.9 s for it.
+    package static func serverEnvironment() -> [String: String] {
+        var environment = ToolsBridge.scrubbedEnvironment()
+        environment["GENESIS_TOOLS_DETACHED"] = "1"
+        return environment
+    }
+
     private struct StreamHandlers {
         let onLines: @MainActor ([String]) -> Void
         let onEnd: @MainActor (End) -> Void
@@ -64,6 +114,10 @@ public final class ToolsServerClient: @unchecked Sendable {
     private var streams: [Int: StreamHandlers] = [:]
     private var lastStart: Date?
     private var connectedAt: Date?
+    /// The argv prefixes this server named as having no door (`noDoor` in an `unsupported` answer): an argv under one
+    /// goes straight to the process, without waiting in the server's queue for the same answer. Kept for one
+    /// connection only, since the next server may have doors this one lacks.
+    private var noDoor: [[String]] = []
 
     public init(
         socketPath: String = ToolsServerClient.defaultSocketPath(),
@@ -179,6 +233,7 @@ public final class ToolsServerClient: @unchecked Sendable {
         onCall: ((ToolsRunResult?) -> Void)? = nil,
         stream: StreamHandlers? = nil
     ) -> Int? {
+        if lock.withLock({ noDoor.contains { argv.starts(with: $0) } }) { return nil }
         guard connectIfNeeded() else { return nil }
 
         let id: Int = lock.withLock {
@@ -321,11 +376,19 @@ public final class ToolsServerClient: @unchecked Sendable {
         }
 
         for line in lines.push(chunk[0..<count]) {
-            handle(line)
+            handle(line, connection: connection)
         }
     }
 
-    private func handle(_ line: Data) {
+    /// Remembers the door-less prefix of a refusal, for the connection that gave it.
+    private func rememberNoDoor(_ object: [String: Any], connection: Int) {
+        guard let prefix = object["noDoor"] as? [String], !prefix.isEmpty else { return }
+        lock.withLock {
+            if generation == connection, fd >= 0, !noDoor.contains(prefix) { noDoor.append(prefix) }
+        }
+    }
+
+    private func handle(_ line: Data, connection: Int) {
         guard let object = try? JSONSerialization.jsonObject(with: line) as? [String: Any],
               let id = object["id"] as? Int
         else {
@@ -357,6 +420,7 @@ public final class ToolsServerClient: @unchecked Sendable {
 
         if let callback = lock.withLock({ calls.removeValue(forKey: id) }) {
             guard object["ok"] as? Bool == true else {
+                rememberNoDoor(object, connection: connection)
                 callback(nil)
                 return
             }
@@ -372,6 +436,7 @@ public final class ToolsServerClient: @unchecked Sendable {
 
         // A subscribe the server refused (unsupported, draining): end it so the caller starts the process.
         if object["ok"] as? Bool == false, let handlers = lock.withLock({ streams.removeValue(forKey: id) }) {
+            rememberNoDoor(object, connection: connection)
             let end = End(exit: 1, stderr: "", reason: object["code"] as? String ?? "unsupported")
             DispatchQueue.main.async { MainActor.assumeIsolated { handlers.onEnd(end) } }
         }
@@ -389,6 +454,7 @@ public final class ToolsServerClient: @unchecked Sendable {
             streams.removeAll()
             source = nil
             fd = -1
+            noDoor.removeAll()
             // A server that served for a while and then went away (a restart after a code change, the memory
             // cap) may be replaced at once. One that dies right after connecting keeps the start throttle.
             if let connectedAt, Date().timeIntervalSince(connectedAt) > 30 { lastStart = nil }
@@ -468,4 +534,59 @@ private final class Once: @unchecked Sendable {
 
 private final class ResultBox: @unchecked Sendable {
     var value: ToolsRunResult?
+}
+
+/// One start of `tools hub serve` for every face on this Mac. The face that finds no server first creates
+/// `<socket>.starting` (exclusively) and writes the pid it started into it; a face that finds a claim younger than
+/// `window`, whose pid is not known to be dead, skips its own start and its calls run as processes until the server
+/// listens. At the 2026-10-27 03:46 install the hub and the widget each started a server, and one exited at once.
+package enum HubServerStartClaim {
+    package static let window: TimeInterval = 20
+
+    /// True when the caller may start the server now; the claim is then its own until `window` passes.
+    package static func take(path: String, now: Date = Date(), isAlive: (pid_t) -> Bool = processExists) -> Bool {
+        if create(path, now: now) { return true }
+
+        if let claim = read(path), now.timeIntervalSince(claim.at) < window, claim.pid.map(isAlive) ?? true {
+            return false
+        }
+
+        // A stale claim: its time passed, or the server it started is gone.
+        unlink(path)
+        return create(path, now: now)
+    }
+
+    /// Names the process the claim started, so a server that died at once frees the claim before `window` ends.
+    package static func record(pid: pid_t, path: String, at: Date = Date()) {
+        write("\(at.timeIntervalSince1970)\n\(pid)\n", to: path, flags: O_WRONLY | O_TRUNC)
+    }
+
+    package static func processExists(_ pid: pid_t) -> Bool {
+        kill(pid, 0) == 0 || errno == EPERM
+    }
+
+    private static func create(_ path: String, now: Date) -> Bool {
+        if write("\(now.timeIntervalSince1970)\n", to: path, flags: O_WRONLY | O_CREAT | O_EXCL) { return true }
+        guard errno == ENOENT else { return false }
+
+        try? FileManager.default.createDirectory(atPath: (path as NSString).deletingLastPathComponent,
+                                                 withIntermediateDirectories: true)
+        return write("\(now.timeIntervalSince1970)\n", to: path, flags: O_WRONLY | O_CREAT | O_EXCL)
+    }
+
+    private static func read(_ path: String) -> (at: Date, pid: pid_t?)? {
+        guard let text = try? String(contentsOfFile: path, encoding: .utf8) else { return nil }
+        let lines = text.split(separator: "\n").map(String.init)
+        guard let seconds = lines.first.flatMap(Double.init) else { return nil }
+        return (Date(timeIntervalSince1970: seconds), lines.count > 1 ? pid_t(lines[1]) : nil)
+    }
+
+    @discardableResult
+    private static func write(_ text: String, to path: String, flags: Int32) -> Bool {
+        let fd = open(path, flags, 0o600)
+        guard fd >= 0 else { return false }
+        defer { close(fd) }
+        let bytes = Array(text.utf8)
+        return Darwin.write(fd, bytes, bytes.count) == bytes.count
+    }
 }

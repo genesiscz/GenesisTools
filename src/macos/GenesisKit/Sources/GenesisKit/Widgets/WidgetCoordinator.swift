@@ -200,6 +200,10 @@ public final class WidgetCoordinator: NSObject, NSWindowDelegate {
         model.showSettingsPage = { [weak self] in self?.showSettings(pageID: $0) }
         model.showMedia = { [weak self] selection in self?.showMedia(selection) }
         model.inboxArrived = { [weak self] items in self?.alert(items) }
+        model.decisionsAnsweredElsewhere = { [weak self] items in self?.alertAnswered(items) }
+        model.stagedAtStart = { [weak self] items in self?.remindStaged(items) }
+        model.stagedLeftInPopup = { [weak self] items in self?.remindStaged(items) }
+        model.decisionRequested = { [weak self] id in self?.showDecision(id) }
     }
 
     /// A main-spin with a panel open: the panel closes, so the app answers again, and says why. The spin's stack and
@@ -212,8 +216,8 @@ public final class WidgetCoordinator: NSObject, NSWindowDelegate {
         model.notice = "The panel closed: it redrew for \(Int(seconds)) s without a pause. The details are in app-perf.log."
     }
 
-    /// Plays the alert chime. Tests replace it.
-    var playChime: (String?) -> Void = { WidgetAlerts.chime($0) }
+    /// Plays the alert chime at a volume from 0 to 1. Tests replace it.
+    var playChime: (String?, Float) -> Void = { WidgetAlerts.chime($0, volume: $1) }
 
     /// New decisions, questions and answers: one chime, and the newest item pops up in the agents preview.
     func alert(_ items: [WidgetInboxItem]) {
@@ -222,18 +226,81 @@ public final class WidgetCoordinator: NSObject, NSWindowDelegate {
         let wanted = WidgetAlerts.wanted(items, preferences: preferences)
         guard let item = WidgetAlerts.popupItem(wanted) else { return }
         PerfLog.mark("widget.alert items=\(wanted.count) id=\(item.id) kind=\(item.kind)")
-        playChime(WidgetAlerts.sound(for: wanted, preferences: preferences))
+        playChime(WidgetAlerts.sound(for: wanted, preferences: preferences), WidgetAlerts.volume(preferences))
         // The chime and the flash say nothing to VoiceOver; one announcement per burst, like the chime.
         GenAnnounce.post(WidgetAlerts.announcement(item, session: model.session(forKey: item.key)?.title),
                          priority: item.needsAnswer ? .high : .medium)
         // The session that asked flashes on its rail bubble and in the lists, popup or not: it says why the widget
         // chimed or opened (Martin, 2026-10-23).
         model.flashAttention(item.key, seconds: WidgetAlerts.flashSeconds(preferences))
-        // Checked before the module switch: a popup the user's interaction refuses must not swap the pane they use.
-        guard preferences?.alertPopup ?? true, let surface = peekSurface(), model.canPeek(on: surface) else { return }
+        guard preferences?.alertPopup ?? true else { return }
+        popUp(item, with: wanted, preferences: preferences, seconds: WidgetAlerts.popupSeconds(preferences))
+    }
+
+    /// Decisions answered outside the widget (Settings → Automatic decisions): an agent recorded the answer the user
+    /// gave in the chat, or the Stop hook read it from a reply. One sound, the sessions flash, and the newest pops up
+    /// with the option that was taken; the rest join it by Alerts → Several at once.
+    func alertAnswered(_ items: [WidgetInboxItem]) {
+        guard panelsEnabled, let newest = items.max(by: { $0.at < $1.at }) else { return }
+        let preferences = model.snapshot?.state.preferences
+        PerfLog.mark("widget.alert answered-elsewhere items=\(items.count) id=\(newest.id) via=\(newest.answeredVia ?? "")")
+        guard preferences?.autoDecisionPopup ?? true else { return }
+        playChime(WidgetAlerts.autoDecisionSound(preferences), WidgetAlerts.volume(preferences))
+        GenAnnounce.post(WidgetAlerts.announcement(newest, session: model.session(forKey: newest.key)?.title),
+                         priority: .medium)
+        for key in Set(items.map(\.key)) { model.flashAttention(key, seconds: WidgetAlerts.flashSeconds(preferences)) }
+        popUp(newest, with: items, preferences: preferences, seconds: WidgetAlerts.autoDecisionSeconds(preferences))
+    }
+
+    /// A decision link (`tools hub widget show-decision`): its popup, as a new decision shows, staying until closed.
+    /// A decision the inbox does not list (answered, or asked only in chat) opens its session at that card, scrolled
+    /// to and flashed, or at the chat turn that asked it (`WidgetModel.openDecision`).
+    func showDecision(_ id: String) {
+        let items = (model.snapshot?.notifications?.sessions ?? []).flatMap { $0.items ?? [] }
+            + (model.snapshot?.notifications?.staged ?? [])
+        PerfLog.mark("widget.show-decision \(id) listed=\(items.contains { $0.sourceId == id })")
+        if let item = items.first(where: { $0.sourceId == id }) {
+            popUp(item, with: [item], preferences: model.snapshot?.state.preferences, seconds: 0)
+            return
+        }
+        let sessionID = id.split(separator: "_", maxSplits: 2).dropFirst(2).first.map(String.init) ?? id
+        guard let key = (model.snapshot?.sessions ?? []).first(where: { $0.key.contains(sessionID) })?.key else {
+            model.notice = "That decision's session is not in the widget."
+            return
+        }
+        openSession(key)
+        model.openDecision(id: id, sessionKey: key)
+    }
+
+    /// The widget started with staged decisions (Settings → Staged at start): a popup lists them with Send now and
+    /// stays until it is closed, so a pick staged before a restart is not left behind.
+    func remindStaged(_ items: [WidgetInboxItem]) {
+        guard panelsEnabled, let newest = items.max(by: { $0.at < $1.at }) else { return }
+        let preferences = model.snapshot?.state.preferences
+        PerfLog.mark("widget.staged-reminder items=\(items.count) shown=\(preferences?.stagedReminder ?? true)")
+        guard preferences?.stagedReminder ?? true else { return }
+        let reminder = WidgetInboxItem(id: WidgetAlerts.stagedReminderID, sourceId: WidgetAlerts.stagedReminderID,
+                                       kind: "staged", key: newest.key, at: newest.at, needsAnswer: false)
+        popUp(reminder, with: [reminder], preferences: preferences, seconds: 0)
+    }
+
+    /// Pops `first` up in the agents preview, and the rest of `burst` joins it oldest first (listed or queued), unless
+    /// the newest replaces. Checked before the module switch: a popup the user's interaction refuses must not swap the
+    /// pane they use. An open popup takes a new alert even with the pointer on it, since nothing moves under the
+    /// pointer, and an alert for the decision it shows takes its place.
+    private func popUp(_ first: WidgetInboxItem, with burst: [WidgetInboxItem], preferences: WidgetPreferences?,
+                       seconds: Double) {
+        let many = WidgetAlerts.popupMany(preferences)
+        let open = model.peekItem != nil && (many != .newest || model.peekItem?.sourceId == first.sourceId)
+        guard let surface = model.peekItem == nil ? peekSurface() : model.hoveredSurface,
+              open || model.canPeek(on: surface) else { return }
         // The peek shows the agents module and gives the user's own module back when it ends.
-        model.showPeek(item, on: surface, module: moduleIDs(for: surface).contains("agents") ? "agents" : nil,
-                       seconds: WidgetAlerts.popupSeconds(preferences))
+        let module = moduleIDs(for: surface).contains("agents") ? "agents" : nil
+        model.showPeek(first, on: surface, module: module, seconds: seconds, many: many)
+        guard many != .newest, model.peekItem != nil else { return }
+        for other in burst.filter({ $0.id != first.id }).sorted(by: { $0.at < $1.at }) {
+            model.showPeek(other, on: surface, module: module, seconds: seconds, many: many)
+        }
     }
 
     /// The visible edge whose selected module is the agents inbox, else the first visible edge that has it.
@@ -733,23 +800,34 @@ public final class WidgetCoordinator: NSObject, NSWindowDelegate {
     /// another app while a script opens and closes panels, and each of their clicks closed the panel under test
     /// within a second (2026-10-11).
     func collapseIfOutside(_ event: NSEvent) {
-        guard !passivePanels, event.timestamp > model.openedAt, model.expanded != nil, !model.dialogOpen else { return }
+        guard !passivePanels else { return }
+        // A click elsewhere closes the alert popup (and every alert listed or queued in it) when Alerts says so.
+        if model.expanded == nil, model.peekItem != nil, model.snapshot?.state.preferences.alertPopupClickAway ?? false,
+           isOutsidePanels(event) {
+            model.dismissPeek(all: true)
+            return
+        }
+        guard event.timestamp > model.openedAt, model.expanded != nil, !model.dialogOpen else { return }
         // A dictation keeps the panel, so its words stay in view; Esc or the close button still closes it.
-        guard !model.voiceActive else { return }
+        guard !model.voiceActive, isOutsidePanels(event) else { return }
+        model.requestCollapse()
+    }
+
+    /// Whether a click landed outside every panel, its sheets and children, and every other GenesisTools window.
+    private func isOutsidePanels(_ event: NSEvent) -> Bool {
         var window = event.window
         while let candidate = window {
-            if panels.values.contains(where: { $0.panel === candidate }) { return }
+            if panels.values.contains(where: { $0.panel === candidate }) { return false }
             window = candidate.sheetParent ?? candidate.parent
         }
         let point =
             event.window?.convertPoint(toScreen: event.locationInWindow) ?? event.locationInWindow
         guard !panels.values.contains(where: { $0.panel.isVisible && $0.panel.frame.contains(point) })
-        else { return }
+        else { return false }
         // A click on another GenesisTools window keeps the panel: the vault key window that a dictation or a send
         // raises took its Allow click as "outside" and closed the panel under it (Martin, 2026-10-23: "allow with touch
         // id does literally hide the widget").
-        if Self.ownWindowOwnsPoint(point) { return }
-        model.requestCollapse()
+        return !Self.ownWindowOwnsPoint(point)
     }
 
     /// The view chain AppKit's hit test picks at a CoreGraphics screen point (top-left origin) in each visible panel, for
@@ -852,15 +930,18 @@ public final class WidgetCoordinator: NSObject, NSWindowDelegate {
         switch Self.panelKey(
             stroke: stroke,
             context: .init(previewOpen: MediaPreviewKeyboard.isOpen, agents: isAgent, editingText: editingText,
-                           answering: model.answerCard, list: model.keyboardList, controlFocused: controlFocused))
+                           answering: model.answerCardOnScreen, list: model.keyboardList, controlFocused: controlFocused))
         {
         case .pass: return event
-        case .list(let key):
+        case .list(let key, let alternate):
             // Only a list that took the key swallows it; otherwise the scroll view under it still scrolls.
-            return model.moveInList(key, controlFocused: controlFocused) ? nil : event
+            return model.moveInList(key, controlFocused: controlFocused, alternate: alternate) ? nil : event
         case .collapse:
-            // The leave question first (Esc keeps the staged decisions), then the staged view, then the list.
-            if model.stagedLeavePrompt {
+            // Esc in a decision's own answer field leaves the field, not the session (an empty one folds back); then
+            // the leave question (Esc keeps the staged decisions), then the staged view, then the list.
+            if editingText, model.ownAnswerCard != nil {
+                panel.makeFirstResponder(nil)
+            } else if model.stagedLeavePrompt {
                 model.resolveStagedLeave("keep")
             } else if model.stagedView != nil {
                 model.stagedView = nil
@@ -884,7 +965,10 @@ public final class WidgetCoordinator: NSObject, NSWindowDelegate {
                 .comboBox, .slider, .incrementor].contains(role)
     }
 
-    enum PanelKey: Equatable { case pass, collapse, previous, next, choose(String), list(WidgetListKey.Kind) }
+    /// `list(_, alternate:)`: a list key; `alternate` is ⌘↩ ("openAlt"), the other of what Return does there.
+    enum PanelKey: Equatable {
+        case pass, collapse, previous, next, choose(String), list(WidgetListKey.Kind, alternate: Bool = false)
+    }
 
     struct PanelKeyContext {
         let previewOpen: Bool
@@ -928,6 +1012,13 @@ public final class WidgetCoordinator: NSObject, NSWindowDelegate {
             if ids.contains(WidgetKeymap.listUp) { return .list(.up) }
             if ids.contains(WidgetKeymap.listDown) { return .list(.down) }
             if ids.contains(WidgetKeymap.listOpen) { return context.controlFocused ? .pass : .list(.open) }
+            // ⌘↩ ("openAlt"): Return's own binding with ⌘ held, so it follows a rebound Return.
+            if stroke.modifiers == [.command] {
+                let plain = KeyStroke(keyCode: stroke.keyCode, character: stroke.character, modifiers: [])
+                if WidgetKeymap.commandIDs(for: plain, in: [.window], keymap: keymap).contains(WidgetKeymap.listOpen) {
+                    return context.controlFocused ? .pass : .list(.open, alternate: true)
+                }
+            }
         }
         if let number = WidgetKeymap.choiceNumber(in: ids),
            let card = context.answering, number <= card.choices.count

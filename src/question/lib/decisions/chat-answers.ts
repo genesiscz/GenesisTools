@@ -25,6 +25,11 @@ export interface OpenDecisionRef {
      * revision. Revised decisions without timestamped evidence remain open for explicit recording.
      */
     askedAt?: string;
+    /**
+     * Asked before the first entry given (the Stop hook's read from where it last stopped): every user entry comes
+     * after its ask, also in history without timestamps where the ask itself is not among the entries.
+     */
+    askedBefore?: boolean;
 }
 
 export interface Evidence {
@@ -241,9 +246,11 @@ export function chatAnswers(entries: readonly NativeHistoryEntry[], open: readon
 
             // A repeated number cannot locate a revised ask in timestamp-free history. Leave it for explicit recording.
             const knownRevision =
-                (decision.revision ?? 1) === 1 || (askedAt !== undefined && time(entry.timestamp) !== undefined);
+                decision.askedBefore === true ||
+                (decision.revision ?? 1) === 1 ||
+                (askedAt !== undefined && time(entry.timestamp) !== undefined);
 
-            if (!knownRevision || !afterAsk(entry, index, askedAt, firstAsk)) {
+            if (!knownRevision || (!decision.askedBefore && !afterAsk(entry, index, askedAt, firstAsk))) {
                 continue;
             }
 

@@ -45,7 +45,9 @@ export const observationSchema = z
         observationRecovery: z.object({ retries: z.number().int().min(1).max(2) }).optional(),
         window: z.object({ id: z.number().int().positive(), title: z.string() }).passthrough(),
         scope: z.enum(["window", "chrome", "query"]).default("window"),
-        elements: z.array(rowSchema).max(2000),
+        // ax-tool's own cap (`observedElementLimit` in HierarchySource.swift). At 2000 a diff page with 93 files, which
+        // ax-tool observes whole, was refused here, so every action of a recording plan on it failed (2026-10-26).
+        elements: z.array(rowSchema).max(4000),
     })
     .refine(
         (value) => new Set(value.elements.map((row) => row.index)).size === value.elements.length,

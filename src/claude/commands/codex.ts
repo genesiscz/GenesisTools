@@ -15,6 +15,7 @@ import {
 } from "@app/ai-proxy/lib/sessions/accounts";
 import {
     closeSessionRecord,
+    hashSessionKey,
     listSessionRecords,
     type MeteredConfirmation,
     openSessionRecord,
@@ -27,6 +28,7 @@ import type { AiProxyConfig } from "@app/ai-proxy/lib/types";
 import {
     agentsArgs,
     claudeCodexConfigRoot,
+    leadPrompt,
     sessionAgents,
     writeAgentFiles,
 } from "@app/claude/lib/codex-session/agents";
@@ -40,6 +42,7 @@ import {
     sessionArgs,
     sessionEnv,
 } from "@app/claude/lib/codex-session/launch";
+import { sessionKeyProblem } from "@app/claude/lib/codex-session/proxy-check";
 import { guardSharedModel } from "@app/claude/lib/codex-session/settings-guard";
 import { ensureOnboardingSkippedForOAuthToken } from "@app/claude/lib/launch-env";
 import { scoreAccounts, sortGrouped } from "@app/claude/lib/usage/account-picker";
@@ -312,6 +315,7 @@ export async function runCodexSession(
         codexModel,
         ...(claude ? { claude: { fable: claude.hasFable } } : {}),
         ...(codexLogin ? { codexAccount: codexLogin } : {}),
+        settings: config.claudeSessions,
     });
     const configDir = opts.isolated ? join(claudeCodexConfigRoot(), sessionId) : undefined;
 
@@ -336,12 +340,26 @@ export async function runCodexSession(
             model: model.slug,
             effort: effort.effort,
             window: model.info.window,
+            // A user-provided --settings may override the launch limit, so its effective value is unknown here.
+            ...(!passthrough.some((arg) => arg === "--settings" || arg.startsWith("--settings="))
+                ? { pickerContextTokens: model.info.usableTokens }
+                : {}),
             compactPercent: compact.percent,
             cacheKeyPolicy: "claude-session",
             ...(ownAgents ? { agents: ownAgents } : {}),
             meteredConfirmed: metered,
         })
     );
+    const keyHash = hashSessionKey(key);
+    const keyProblem = await sessionKeyProblem({ baseUrl: proxyBaseUrl(config), key, model: `codex/${model.slug}` });
+
+    if (keyProblem) {
+        await whenSessionRecordFree(() =>
+            closeSessionRecord({ id: sessionId, reason: "exited", expectedKeyHash: keyHash })
+        );
+        return fail(keyProblem);
+    }
+
     const claudeIds = claude
         ? {
               haiku: claudeModelByAlias("haiku"),
@@ -367,7 +385,9 @@ export async function runCodexSession(
               }
             : {}),
         smallCodexModel: `codex/${resolveOpenAiSubModel("luna")}:low`,
-        maxContextTokens: model.info.usableTokens,
+        // The model's whole window: Codex's own 95% `usablePercent` left compaction at about 408K of 500K
+        // (2026-10-27); Claude Code keeps its own output reserve inside the window and compacts at `compact.percent`.
+        maxContextTokens: model.info.window,
         compactPercent: compact.percent,
         accountLabel: [`codex:${codex.label}`, ...(claude ? [`claude:${claude.label}`] : [])].join("+"),
     });
@@ -382,17 +402,18 @@ export async function runCodexSession(
         effort: effort.effort,
         agents: agentArgs,
         settingsEnv: {
-            CLAUDE_CODE_MAX_CONTEXT_TOKENS: String(model.info.usableTokens),
-            CLAUDE_CODE_AUTO_COMPACT_WINDOW: String(model.info.usableTokens),
+            CLAUDE_CODE_MAX_CONTEXT_TOKENS: String(model.info.window),
+            CLAUDE_CODE_AUTO_COMPACT_WINDOW: String(model.info.window),
             CLAUDE_AUTOCOMPACT_PCT_OVERRIDE: String(compact.percent),
         },
+        leadPrompt: leadPrompt(agents, config.claudeSessions),
         passthrough,
     });
 
     out.printlnErr(
         pc.dim(
             `${reopened ? "Resuming" : "Starting"} Claude Code on ${pc.magenta(`codex/${model.slug}`)} at ${effort.effort}, ` +
-                `window ${Math.round(model.info.usableTokens / 1000)}k, compact at ${compact.percent}%, session ${sessionId}` +
+                `window ${Math.round(model.info.window / 1000)}k, compact at ${compact.percent}%, session ${sessionId}` +
                 (configDir ? `, config ${configDir}` : "")
         )
     );
@@ -410,20 +431,31 @@ export async function runCodexSession(
     // A /model pick in this session would become every other session's default through the shared settings.
     const modelGuard = configDir ? undefined : guardSharedModel();
     let code: number;
+    // Claude Code owns the terminal until it exits: a warning printed meanwhile draws over its screen (2026-10-27,
+    // the model guard's). The day log still gets every line.
+    const consoleLevel = logger.level;
+    logger.level = "silent";
 
     try {
         code = await spawnClaude(args, launchEnv, (pid) => {
             whenSessionRecordFree(() =>
-                updateSessionRecord(sessionId, (record) => {
-                    record.claudePid = pid;
-                    record.claudePidStartMs = processStartMs(pid) ?? undefined;
+                updateSessionRecord({
+                    id: sessionId,
+                    expectedKeyHash: keyHash,
+                    change: (record) => {
+                        record.claudePid = pid;
+                        record.claudePidStartMs = processStartMs(pid) ?? undefined;
+                    },
                 })
             ).catch((err) => logger.warn({ err, session: sessionId }, "[codex] could not record the Claude Code pid"));
         });
     } finally {
+        logger.level = consoleLevel;
         // Also when the spawn throws: an open record would count as a live session on its login.
         modelGuard?.stop();
-        await whenSessionRecordFree(() => closeSessionRecord(sessionId, "exited"));
+        await whenSessionRecordFree(() =>
+            closeSessionRecord({ id: sessionId, reason: "exited", expectedKeyHash: keyHash })
+        );
     }
 
     process.exit(code);

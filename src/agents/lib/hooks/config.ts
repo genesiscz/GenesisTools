@@ -267,6 +267,13 @@ export interface DecisionsHookConfig {
     harnesses: HarnessName[];
     /** Safety net: store an unposted `❓ DECISION N` block as an open decision under its number. */
     harvest: boolean;
+    /**
+     * The inbox (`tools question inbox`, the hub) stores the unposted `❓ DECISION N` blocks it lists as open decisions
+     * under their numbers, so the widget counts them and every surface can answer them; the widget reads the decision
+     * log only, so it counted one fewer than the hub (2026-10-27, decision audit F6). Default on. The agent's own post
+     * of that number later becomes the decision's next revision.
+     */
+    harvestListed: boolean;
     /** UserPromptSubmit: hand answered, undelivered decisions to the session's next prompt. */
     injectAnswers: boolean;
     /**
@@ -535,6 +542,7 @@ export const DEFAULT_HOOKS_CONFIG: HooksConfig = {
         maxBlocksPerSession: 2,
         harnesses: ["claude", "codex", "grok"],
         harvest: false,
+        harvestListed: true,
         injectAnswers: false,
         staleness: { warnAfterMinutes: 30, alarmAfterMinutes: 120, notify: true },
     },
@@ -1328,6 +1336,7 @@ function mergeDecisions(stored: Partial<DecisionsHookConfig> | undefined): Decis
         }),
         harnesses,
         harvest: boolOr(stored?.harvest, base.harvest),
+        harvestListed: boolOr(stored?.harvestListed, base.harvestListed),
         injectAnswers: boolOr(stored?.injectAnswers, base.injectAnswers),
         staleness: {
             warnAfterMinutes: countOr({

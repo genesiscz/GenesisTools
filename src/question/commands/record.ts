@@ -7,7 +7,7 @@ import type { Command } from "commander";
 import { imageInputs } from "../lib/message";
 import { recordAnswer } from "../lib/record";
 import type { QaTag } from "../lib/types";
-import { collect } from "./ask";
+import { collect } from "./options";
 
 export function registerRecordCommand(program: Command): void {
     // No `answer` alias: that verb now answers a PENDING form (`tools question answer <id>`),

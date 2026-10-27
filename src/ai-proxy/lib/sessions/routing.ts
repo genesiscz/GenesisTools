@@ -16,9 +16,17 @@ const PREFIXED_AGENTS: readonly SessionAgent[] = ["codex", "grok"];
 const ONE_M_SUFFIX = /\[1m\]$/i;
 
 /**
- * The agent a short model id names inside a session: `codex/<id>` and `grok/<id>` by their prefix, a bare
- * `claude-*` id by its name (P5). Every other id (a full `account/provider/model`, an `@account/…` ref) is not a
- * session form and resolves as for any client.
+ * Claude Code (2.1.310) adds a gateway's `/v1/models` entry to its `/model` picker only when the id contains "claude"
+ * or "anthropic", and applies `CLAUDE_CODE_MAX_CONTEXT_TOKENS` only to an id that does not start with `claude-`
+ * (any other `claude-*` id gets its 200k default). So the picker names a session model `codex-claude/<id>`, which
+ * routes as `codex/<id>`.
+ */
+export const PICKER_ID_SUFFIX = "-claude";
+
+/**
+ * The agent a short model id names inside a session: `codex/<id>` and `grok/<id>` by their prefix (also as the
+ * picker's `codex-claude/<id>`), a bare `claude-*` id by its name (P5). Every other id (a full
+ * `account/provider/model`, an `@account/…` ref) is not a session form and resolves as for any client.
  */
 export function sessionModelAgent(modelId: string): { agent: SessionAgent; upstreamId: string } | undefined {
     const slash = modelId.indexOf("/");
@@ -29,7 +37,8 @@ export function sessionModelAgent(modelId: string): { agent: SessionAgent; upstr
             : undefined;
     }
 
-    const prefix = modelId.slice(0, slash);
+    const named = modelId.slice(0, slash);
+    const prefix = named.endsWith(PICKER_ID_SUFFIX) ? named.slice(0, -PICKER_ID_SUFFIX.length) : named;
     const upstreamId = modelId.slice(slash + 1);
     const agent = PREFIXED_AGENTS.find((name) => name === prefix);
 

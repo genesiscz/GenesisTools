@@ -3,7 +3,13 @@ import type { TranscriptTurn } from "@genesiscz/utils/ai/transcripts/types";
 import { looksLikeDump, whySentence } from "../decisions/delivery-text";
 import { parseDecisionBlocks } from "../decisions/read";
 import { findRefs } from "../decisions/reply-text";
-import { type DecisionDelivery, type DecisionRecord, type HarvestedDecision, kindOf } from "../decisions/store";
+import {
+    type AnsweredVia,
+    type DecisionDelivery,
+    type DecisionRecord,
+    type HarvestedDecision,
+    kindOf,
+} from "../decisions/store";
 import type { AskForm } from "../pending/types";
 
 /**
@@ -67,6 +73,12 @@ export interface InboxDecision {
     /** The chosen letters once answered. */
     option: string | null;
     answer: string | null;
+    /**
+     * Who stored the answer: `inbox` (the user's send), `agent` (the agent recorded the user's chat answer) or
+     * `automatic_heuristic` (the decision Stop hook read it from the chat). The decision log is the one place that
+     * says a decision was answered in chat; every surface reads it from here.
+     */
+    answeredVia: AnsweredVia | null;
     /** `transcript`: read from the session's last reply only. `store`: a posted or harvested row. */
     source: "transcript" | "store";
     at: string;
@@ -85,6 +97,11 @@ export interface InboxDecision {
     draft: string | null;
     /** Where the last send took the answer: cmux pane, codex worker, resume, or queued (with why). */
     delivery: InboxDeliveryView | null;
+    /**
+     * The posted text's revision (1 until the agent re-posts it with `supersedes`). A pick sends it back as
+     * `--expected-revision`, so a pick made on text the agent has since changed is refused, as in the widget.
+     */
+    revision: number;
 }
 
 export interface InboxQuestion {
@@ -155,6 +172,8 @@ export interface InboxSession {
     cwd: string | null;
     branch: string | null;
     account: string | null;
+    /** The account home the session runs under (`AgentSessionRow.sourceHome`); null when the list does not know it. */
+    sourceHome: string | null;
     /** When the newest item was asked. */
     lastAt: string;
     /** Items still needing an answer (waiting or drafted). */
@@ -179,6 +198,24 @@ export interface InboxSession {
  */
 export const INBOX_STALE_MS = 72 * 60 * 60 * 1000;
 
+/**
+ * Whether a session's waiting items count (the widget's badges, the hub's header): the session worked, or asked the
+ * newest of them, within `INBOX_STALE_MS`. Per session, so every waiting item of a counted session counts. The one
+ * rule both surfaces count with; the widget used to ask it per item by the row's last update, so a stage on an old
+ * decision counted it again there and nowhere else.
+ */
+export function inboxSessionFresh({
+    activityAt,
+    newestAskAt,
+    now,
+}: {
+    activityAt: number;
+    newestAskAt: number;
+    now: number;
+}): boolean {
+    return Math.max(activityAt, newestAskAt) >= now - INBOX_STALE_MS;
+}
+
 /** The session fields the inbox shows; a subset of `AgentSessionRow`. */
 export interface InboxSessionInfo {
     provider: string;
@@ -188,6 +225,7 @@ export interface InboxSessionInfo {
     project: string | null;
     gitBranch?: string | null;
     account: string | null;
+    sourceHome?: string;
     mtime: number;
 }
 
@@ -352,6 +390,7 @@ function fromRecord(row: DecisionRecord): InboxDecision {
         status: STATUS[row.state],
         option: row.option ?? null,
         answer: row.answer ?? null,
+        answeredVia: row.answeredVia ?? null,
         source: "store",
         at: row.createdTs ?? row.updatedTs,
         context: row.context ?? row.reasoning ?? null,
@@ -373,6 +412,7 @@ function fromRecord(row: DecisionRecord): InboxDecision {
         draftOption: row.draftOption || null,
         draft: row.draft || null,
         delivery: inboxDelivery(row.delivery),
+        revision: row.revision ?? 1,
     };
 }
 
@@ -389,6 +429,7 @@ function fromBlock(sessionId: string, block: HarvestedDecision, at: string): Inb
         status: "waiting",
         option: null,
         answer: null,
+        answeredVia: null,
         source: "transcript",
         at,
         context: block.context ?? null,
@@ -408,6 +449,7 @@ function fromBlock(sessionId: string, block: HarvestedDecision, at: string): Inb
         draftOption: null,
         draft: null,
         delivery: null,
+        revision: 1,
     };
 }
 
@@ -507,6 +549,7 @@ export function buildInbox({ sessions, scans, rows, forms, now = Date.now() }: B
                           cwd: info.cwd || null,
                           branch: info.gitBranch ?? null,
                           account: info.account,
+                          sourceHome: info.sourceHome ?? null,
                       }
                     : {},
                 activityAt: info?.mtime ?? 0,
@@ -575,7 +618,6 @@ export function buildInbox({ sessions, scans, rows, forms, now = Date.now() }: B
 
         entry.items.sort((a, b) => a.at.localeCompare(b.at));
         const lastAt = entry.items.reduce((latest, item) => (item.at > latest ? item.at : latest), "");
-        const newest = Math.max(entry.activityAt, Date.parse(lastAt) || 0);
         result.push({
             sessionId: entry.sessionId,
             provider: entry.info.provider ?? null,
@@ -584,11 +626,12 @@ export function buildInbox({ sessions, scans, rows, forms, now = Date.now() }: B
             cwd: entry.info.cwd ?? null,
             branch: entry.info.branch ?? null,
             account: entry.info.account ?? null,
+            sourceHome: entry.info.sourceHome ?? null,
             lastAt,
             waiting: entry.items.filter((item) => item.kind === "form" || isOpen(item.status)).length,
             drafted: entry.items.filter((item) => item.kind === "decision" && hasDraft(item)).length,
             queued: entry.items.filter((item) => item.kind === "decision" && item.status === "answered").length,
-            stale: newest < now - INBOX_STALE_MS,
+            stale: !inboxSessionFresh({ activityAt: entry.activityAt, newestAskAt: Date.parse(lastAt) || 0, now }),
             reply: entry.reply,
             items: entry.items,
         });

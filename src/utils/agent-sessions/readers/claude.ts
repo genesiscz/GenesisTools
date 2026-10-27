@@ -4,6 +4,7 @@ import { basename, sep } from "node:path";
 import { createInterface } from "node:readline";
 import { flattenToolInput } from "@genesiscz/utils/agent-sessions/native-content";
 import { readJsonlBackward, readJsonlTurnBoundary } from "@genesiscz/utils/agent-sessions/read-backward";
+import { readJsonlForward } from "@genesiscz/utils/agent-sessions/read-forward";
 import type { JsonRecord, JsonValue } from "@genesiscz/utils/agent-sessions/source-scan";
 import { asRecord, blocksMetadata, scanJsonlRecords } from "@genesiscz/utils/agent-sessions/source-scan";
 import { isWrapperUserText } from "@genesiscz/utils/agent-sessions/user-text";
@@ -13,6 +14,7 @@ import { boundHistoryText, HISTORY_METADATA_LIMITS } from "../metadata";
 import type {
     BackwardRead,
     BoundedMetadataField,
+    ForwardRead,
     HistoryMetadataRead,
     HistoryReadOptions,
     HistoryRecordRead,
@@ -22,6 +24,7 @@ import type {
     NativeSessionSource,
     NativeSourceIssue,
     ReadBackwardOptions,
+    ReadForwardOptions,
     TurnBoundary,
 } from "../types";
 import { claudeNativeId, claudeProjectDirectory, claudeProjectName, isClaudeSubagentPath } from "./claude-paths";
@@ -114,6 +117,7 @@ function historyEntry(options: {
     inputText?: string;
     searchText?: string;
     paths?: string[];
+    callId?: string;
 }): NativeHistoryEntry | undefined {
     if (!options.text && !options.searchText) {
         return;
@@ -127,6 +131,7 @@ function historyEntry(options: {
         ...(options.tool ? { tool: options.tool } : {}),
         ...(options.toolEvent ? { toolEvent: options.toolEvent } : {}),
         ...(options.inputText ? { inputText: options.inputText } : {}),
+        ...(options.callId ? { callId: options.callId } : {}),
         paths: options.paths ?? [],
         commits: commitHashes(options.text),
         ...(options.timestamp ? { timestamp: options.timestamp } : {}),
@@ -198,6 +203,7 @@ function contentEntries(options: {
                 tool,
                 toolEvent: "call",
                 paths,
+                callId: id,
             });
             if (entry) {
                 entries.push(entry);
@@ -623,9 +629,32 @@ export type ClaudeHistoryOperations = Pick<NativeSessionReader<"claude">, "parse
     Required<
         Pick<
             NativeSessionReader<"claude">,
-            "readMetadata" | "scan" | "readRecords" | "readBackward" | "readTurnBoundary"
+            "readMetadata" | "scan" | "readRecords" | "readBackward" | "readTurnBoundary" | "readForward"
         >
     >;
+
+/** The session JSONL from an offset to its end; a row's key is its `uuid`, the id a transcript scroll targets. */
+async function readClaudeForward(
+    source: NativeSessionSource<"claude">,
+    options: ReadForwardOptions
+): Promise<ForwardRead> {
+    const tools: ToolContext = { names: new Map(), paths: new Map() };
+
+    return readJsonlForward({
+        ...options,
+        path: source.filePath,
+        rowKey: (value, position) => asText(asRecord(value).uuid) || `@${position}`,
+        rowEntries: (value, line) => {
+            const row = asRecord(value);
+
+            if (row.type === "user" && (row.isMeta === true || row.isSidechain === true)) {
+                return [];
+            }
+
+            return recordEntries(row, line, tools);
+        },
+    });
+}
 
 /**
  * The session JSONL from its end. A tool result's name comes from its call, an earlier row, so walking back from a
@@ -678,5 +707,6 @@ export function createClaudeHistoryOperations(): ClaudeHistoryOperations {
         readRecords: readClaudeRecords,
         readBackward: readClaudeBackward,
         readTurnBoundary: readClaudeTurnBoundary,
+        readForward: readClaudeForward,
     };
 }

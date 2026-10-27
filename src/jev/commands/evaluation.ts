@@ -157,7 +157,7 @@ async function createAction(options: { name?: string; from?: string; bundle?: st
         const saved = store().save(options.name, source);
         out.result({
             saved: { name: saved.name, path: saved.path, bytes: saved.source.length },
-            next: toolCommand("jev evaluation run", saved.name, "--input", '"…"'),
+            next: toolCommand("jev evaluation run", saved.name, "--input", "…"),
         });
         return;
     }

@@ -71,7 +71,7 @@ struct DecisionsView: View {
                         .accessibilityElement(children: .ignore)
                         .accessibilityLabel("Reading the decisions")
                     } else if shown.isEmpty {
-                        Text(model.decisions.isEmpty ? "No decisions recorded for this session." : filter == "open" ? "No open decisions." : "Nothing here.")
+                        Text(Self.emptyText(filter: filter, hasAny: !model.decisions.isEmpty))
                             .font(.system(size: 12.5))
                             .foregroundColor(ReviewPalette.dim)
                             .frame(maxWidth: .infinity)
@@ -101,25 +101,46 @@ struct DecisionsView: View {
         }
     }
 
+    /// Why the pane lists nothing, per filter (it said "Nothing here.").
+    static func emptyText(filter: String, hasAny: Bool) -> String {
+        guard hasAny else { return "No decisions recorded for this session." }
+        switch filter {
+        case "open": return "No open decisions in this session."
+        case "answered": return "No answered decisions in this session."
+        default: return "No decisions recorded for this session."
+        }
+    }
+
+    /// The caption under the filter: what a click on an option does under the widget's Decision click setting, which
+    /// this pane follows (it said "A click stages an option" also while clicks sent at once).
+    static func caption(stages: Bool) -> (text: String, tooltip: String) {
+        stages
+            ? ("A click stages an option · Send delivers",
+               "Posted and harvested decisions, and the ones the last reply asks. A click on an option stages it; Send delivers every staged answer to the session. ⌘-click sends it at once.")
+            : ("A click sends the option at once",
+               "Posted and harvested decisions, and the ones the last reply asks. A click on an option sends it to the session at once. ⌘-click stages it instead.")
+    }
+
     private var toolbar: some View {
-        HStack(spacing: 10) {
-            Picker("", selection: Binding(get: { filter }, set: { next in
-                HubMainBusy.measure("decisions.filter")
-                filter = next
-            })) {
-                Text("Open").tag("open")
-                Text("Answered").tag("answered")
-                Text("All").tag("all")
-            }
-            .pickerStyle(.segmented)
-            .frame(width: 210)
-            .instantTooltip("Which decisions to show")
+        let caption = Self.caption(stages: DecisionAnswering.clickStages(inbox.preferences, command: false))
+        return HStack(spacing: 10) {
+            // The kit's tabs: a native segmented picker draws its selection grey whenever the window is not key.
+            GenSegmentedTabs(
+                "Which decisions to show",
+                items: [.init("open", "Open"), .init("answered", "Answered"), .init("all", "All")],
+                selection: Binding(get: { filter }, set: { next in
+                    HubMainBusy.measure("decisions.filter")
+                    filter = next
+                }),
+                minSegmentWidth: 64,
+                identifier: "hub.decisions.filter")
+            .fixedSize()
             // Short enough for the pane's header; the whole explanation is the tooltip (it was cut mid-sentence, H19).
-            Text("A click stages an option · Send delivers")
+            Text(caption.text)
                 .font(.system(size: 11))
                 .foregroundColor(ReviewPalette.dim)
                 .lineLimit(1)
-                .instantTooltip("Posted and harvested decisions, and the ones the last reply asks. A click on an option stages it; Send delivers every staged answer to the session.")
+                .instantTooltip(caption.tooltip)
             if model.loadingDecisions {
                 ProgressView().controlSize(.small)
             }

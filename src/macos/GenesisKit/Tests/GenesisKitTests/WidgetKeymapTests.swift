@@ -80,6 +80,14 @@ final class WidgetKeymapTests: XCTestCase {
         XCTAssertEqual(press(36, list: true, editingText: true), .pass, "Return in the composer is the composer's")
         XCTAssertEqual(press(36, list: true, controlFocused: true), .pass, "Return activates the focused control")
         XCTAssertEqual(press(125, list: true, controlFocused: true), .list(.down), "arrow navigation stays available")
+        // ⌘↩ in a list: the other of what Return does ("openAlt"), never a plain open and never dropped.
+        let commandReturn = KeyStroke(keyCode: 36, character: "\r", modifiers: [.command])
+        XCTAssertEqual(WidgetCoordinator.panelKey(stroke: commandReturn, context: .init(
+            previewOpen: false, agents: true, editingText: false, answering: nil, list: true), keymap: keys()),
+            .list(.open, alternate: true))
+        XCTAssertEqual(WidgetCoordinator.panelKey(stroke: commandReturn, context: .init(
+            previewOpen: false, agents: true, editingText: false, answering: nil, list: false), keymap: keys()),
+            .pass, "no list on screen")
     }
 
     /// With a decision card open, Up and Down still reach the list (which walks the card's options first), and the

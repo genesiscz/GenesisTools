@@ -10,8 +10,15 @@ import { Command } from "commander";
 import { type InboxCommandDeps, registerInboxCommand } from "../../commands/inbox";
 import { paneMiss } from "../decisions/deliver";
 import { livePaneTargets } from "../decisions/deliver.fixtures";
+import { decisionFiles } from "../decisions/paths";
 import { parseDecisionBlocks } from "../decisions/read";
-import { type DecisionRecord, postDecisions, readDecisions, updateDecision } from "../decisions/store";
+import {
+    type DecisionRecord,
+    harvestDecisions,
+    postDecisions,
+    readDecisions,
+    updateDecision,
+} from "../decisions/store";
 import { type AskDeps, getAskForm, postAskForm } from "../pending/ask";
 import type { AskForm } from "../pending/types";
 import { answerInboxDecision, answerInboxDecisions, answerInboxForm } from "./answer";
@@ -496,6 +503,46 @@ describe("loadInbox", () => {
         expect([first.scanned.read, second.scanned.fromCache, third.scanned.read]).toEqual([1, 1, 1]);
         const item = second.sessions[0]?.items[0];
         expect(item?.kind === "decision" ? item.number : null).toBe(3);
+    });
+
+    test("the blocks it lists that the log lacks are stored (harvestListed), so every surface reads the same rows", async () => {
+        const dir = mkdtempSync(join(tmpdir(), "gt-inbox-harvest-"));
+        const files = { file: join(dir, "decisions.jsonl"), events: join(dir, "events.jsonl") };
+        const row = { ...SESSION, provider: "claude", cwdShort: "app", model: null, filePath: "/tmp/gt-inbox/h.jsonl" };
+        const asks: { sessionId: string; numbers: number[]; at: string | null }[] = [];
+        const deps: InboxDeps = {
+            sessions: async () => [row as AgentSessionRow],
+            tail: async () => [turn("assistant", ASK)],
+            stat: () => ({ size: 1, mtimeMs: 1 }),
+            rows: () => readDecisions(files.file),
+            forms: () => [],
+            readCache: async () => null,
+            writeCache: async () => undefined,
+            harvest: async ({ sessionId, found, at }) => {
+                asks.push({ sessionId, numbers: found.map((block) => block.number), at });
+                return (await harvestDecisions(files.file, files.events, { sessionId, found })).length;
+            },
+        };
+
+        const first = await loadInbox({ deps });
+        const second = await loadInbox({ deps });
+
+        expect(asks.map((ask) => [ask.sessionId, ask.numbers])).toEqual([[SESSION.sessionId, [3]]]);
+        expect(readDecisions(files.file).map((stored) => [stored.number, stored.state, stored.harvested])).toEqual([
+            [3, "open", true],
+        ]);
+        const listed = (result: typeof first) => result.sessions[0]?.items.map((item) => [item.kind, item.source]);
+        expect(listed(first)).toEqual([["decision", "store"]]);
+        expect(listed(second)).toEqual([["decision", "store"]]);
+
+        // The agent's own post of that number later is the decision's next revision, not a clash.
+        const [posted] = await postDecisions(files.file, files.events, {
+            sessionId: SESSION.sessionId,
+            decisions: [{ number: 3, prompt: "Keep the cache, posted?", options: ["keep", "drop"] }],
+        });
+        expect(posted).toMatchObject({ number: 3, revision: 2, state: "open" });
+        expect(posted?.harvested).toBeUndefined();
+        expect(readDecisions(files.file)).toHaveLength(1);
     });
 });
 
@@ -1059,6 +1106,106 @@ test("a stale inbox card cannot answer a newer posted question", async () => {
                 },
             }
         )
-    ).rejects.toThrow("stale decision revision");
+    ).rejects.toThrow("changed: the agent posted a new text");
     expect(readDecisions(files.file)[0].state).toBe("open");
+});
+
+async function runInboxJson(argv: string[]): Promise<Record<string, unknown>> {
+    const program = new Command();
+    program.exitOverride();
+    registerInboxCommand(program);
+    const printed: string[] = [];
+    const write = process.stdout.write.bind(process.stdout);
+    process.stdout.write = ((chunk: string) => {
+        printed.push(String(chunk));
+        return true;
+    }) as typeof process.stdout.write;
+
+    try {
+        await program.parseAsync(["inbox", ...argv], { from: "user" });
+        await Bun.sleep(5);
+    } finally {
+        process.stdout.write = write;
+        process.exitCode = 0;
+    }
+
+    return SafeJSON.parse(printed.join("").trim(), { strict: true }) as Record<string, unknown>;
+}
+
+describe("inbox --session --all-items --since: the cursor", () => {
+    /** A session with one stored decision and a transcript whose last reply asks nothing. */
+    async function cursorSession(session: string): Promise<{ argv: string[] }> {
+        const dir = mkdtempSync(join(tmpdir(), "gt-inbox-cursor-"));
+        const transcript = join(dir, `${session}.jsonl`);
+        writeFileSync(
+            transcript,
+            [
+                {
+                    type: "user",
+                    uuid: "u1",
+                    timestamp: "2026-03-01T10:00:00.000Z",
+                    message: { role: "user", content: "go" },
+                },
+                {
+                    type: "assistant",
+                    uuid: "a1",
+                    timestamp: "2026-03-01T10:01:00.000Z",
+                    message: { role: "assistant", content: [{ type: "text", text: "Done." }] },
+                },
+            ]
+                .map((row) => SafeJSON.stringify(row, { strict: true }))
+                .join("\n") + "\n"
+        );
+        const { file, events } = decisionFiles();
+        await postDecisions(file, events, {
+            sessionId: session,
+            decisions: [{ prompt: "Keep the cache?", options: ["keep it", "drop it"] }],
+        });
+
+        return { argv: ["--session", session, "--json", "--all-items", "--transcript", transcript] };
+    }
+
+    test("a cursor whose inputs did not move answers that nothing changed", async () => {
+        const { argv } = await cursorSession("s-cursor-same");
+        const first = await runInboxJson(argv);
+        const again = await runInboxJson([...argv, "--since", String(first.cursor)]);
+
+        expect(first.full).toBe(true);
+        expect(first.decisions).toHaveLength(1);
+        expect(again).toMatchObject({
+            cursor: first.cursor,
+            full: false,
+            decisions: [],
+            todos: [],
+            entries: [],
+            forms: [],
+            removed: { decisions: [], todos: [], entries: [], forms: [] },
+        });
+    });
+
+    test("a decision posted after the cursor comes back alone, with a new cursor", async () => {
+        const { argv } = await cursorSession("s-cursor-moved");
+        const first = await runInboxJson(argv);
+        const { file, events } = decisionFiles();
+        await postDecisions(file, events, {
+            sessionId: "s-cursor-moved",
+            decisions: [{ prompt: "Ship on Friday?", options: ["yes", "no"] }],
+        });
+        const next = await runInboxJson([...argv, "--since", String(first.cursor)]);
+        const changed = next.decisions as { number: number }[];
+
+        expect(next.full).toBe(false);
+        expect(next.cursor).not.toBe(first.cursor);
+        expect(changed.map((item) => item.number)).toEqual([2]);
+        expect(next.removed).toEqual({ decisions: [], todos: [], entries: [], forms: [] });
+    });
+
+    test("an unknown cursor gets the whole answer", async () => {
+        const { argv } = await cursorSession("s-cursor-unknown");
+        const answer = await runInboxJson([...argv, "--since", "c1-0000"]);
+
+        expect(answer.full).toBe(true);
+        expect(answer.decisions).toHaveLength(1);
+        expect(typeof answer.cursor).toBe("string");
+    });
 });

@@ -62,14 +62,31 @@ public enum DiffScope: Hashable {
     /// Whether a change on disk can change this diff. A commit, or a range whose ends are commit ids, is
     /// fixed: no file event moves it, so the window does not load it again for one (a PR's range was
     /// re-read about three times a minute all night while agents wrote in its repository, 2026-09-30).
-    /// A range on a name (`HEAD`, `origin/main`, a fallback base) moves with a commit or a fetch.
+    /// A range on a name (`HEAD`, `origin/main`, a fallback base) moves with a commit or a fetch. A commit's
+    /// parent (`<id>^`, the base of a range of picked commits) is fixed too: read as a name, it made the hub
+    /// re-read one five-commit range with 19 git processes every few seconds while an agent wrote in that
+    /// checkout (254 `spawn.storm` marks, 19,711 git children in one day, 2026-10-27).
     public var followsWorkingTree: Bool {
         switch self {
         case .commit, .compare: return false
         case .range(let base, let head, _, let fallbackBase):
-            return !(Self.isObjectID(base) && Self.isObjectID(head) && (fallbackBase.map(Self.isObjectID) ?? true))
+            return !(Self.isFixedRevision(base) && Self.isFixedRevision(head) && (fallbackBase.map(Self.isFixedRevision) ?? true))
         default: return true
         }
+    }
+
+    /// A commit id, or its ancestor by `^`, `^<n>` or `~<n>` steps (`abc1234^`, `abc1234~2^2`): no ref
+    /// update or file change moves it.
+    public static func isFixedRevision(_ revision: String) -> Bool {
+        guard let cut = revision.firstIndex(where: { $0 == "^" || $0 == "~" }) else { return isObjectID(revision) }
+        guard isObjectID(String(revision[..<cut])) else { return false }
+        var rest = revision[cut...]
+        while let step = rest.first {
+            guard step == "^" || step == "~" else { return false }
+            rest = rest.dropFirst()
+            rest = rest.drop(while: \.isNumber)
+        }
+        return true
     }
 
     /// A full or abbreviated commit id (7 to 64 hex digits), never a ref name.
@@ -169,6 +186,25 @@ public struct ReviewRepositoryLayout: Equatable {
         guard path == root.path || path.hasPrefix(root.path + "/") else { return false }
         return !path.contains("/node_modules/") && !path.contains("/.build/")
     }
+
+    /// An event that can move a ref (a commit, a checkout, a fetch, a branch made or deleted, a worktree added, removed
+    /// or switched): what the commit list, the worktrees and the base candidates read. The index and the working tree
+    /// change none of them.
+    public func movesRefs(_ event: String) -> Bool {
+        let path = URL(fileURLWithPath: event).standardizedFileURL.path
+        for directory in [gitDirectory.path, commonDirectory.path] {
+            if path == directory { return true }
+            if path.hasPrefix(directory + "/") {
+                let relative = String(path.dropFirst(directory.count + 1))
+                if relative == "worktrees" || relative.hasPrefix("worktrees/") {
+                    let parts = relative.split(separator: "/")
+                    return parts.count <= 2 || (parts.count == 3 && parts[2] == "HEAD")
+                }
+                return ["HEAD", "packed-refs", "refs"].contains(relative) || relative.hasPrefix("refs/")
+            }
+        }
+        return false
+    }
 }
 
 /// A repository's changes for one scope. Blob metadata is checked in batches before eligible
@@ -194,12 +230,22 @@ public struct GitWorkingTreeSource {
     }
 
     public static let maxBytes = 1_000_000
+    /// The limit for a file a reader asked to see anyway (`fullFiles`): past it the page would stall drawing it.
+    public static let maxShownBytes = 20_000_000
+
+    /// The note of a file skipped only for its size; a reader may ask to see it anyway (`fullFiles`).
+    public static func largeNote(_ size: Int) -> String { "large file, \(size / 1024) KB" }
+
+    /// Whether `note` (`DiffFile.skipped`) says the file was skipped only for its size, so it can be shown on request.
+    public static func isLarge(_ note: String?) -> Bool { note?.hasPrefix("large file, ") == true }
     public static let emptyTree = "4b825dc642cb6eb9a060e54bf8d69288fbee4904"
 
     public let repo: URL
     /// The base the Branch scope compares against when it exists here: the PR's target branch
     /// (`origin/<target>`). Without it, a stacked PR's Branch diff ran against `origin/HEAD`.
     public var preferredBase: String? = nil
+    /// Repository-relative paths read up to `maxShownBytes` instead of `maxBytes`: large files the reader asked to see.
+    public var fullFiles: Set<String> = []
 
     public init(repo: URL, preferredBase: String? = nil) {
         self.repo = repo
@@ -270,7 +316,8 @@ public struct GitWorkingTreeSource {
 
     public func load(scope: DiffScope = .uncommitted, session: String? = nil) throws -> Snapshot {
         let layout = try repositoryLayout()
-        let source = GitWorkingTreeSource(repo: layout.root, preferredBase: preferredBase)
+        var source = GitWorkingTreeSource(repo: layout.root, preferredBase: preferredBase)
+        source.fullFiles = fullFiles
         var snapshot = try source.loadCanonical(scope: scope, session: session)
         snapshot.repository = layout
         switch scope {
@@ -713,11 +760,13 @@ public struct GitWorkingTreeSource {
     /// One `git cat-file --batch` for every `rev:path` (rev "" = the index): `<oid> blob <size>\n<bytes>\n`
     /// or `<name> missing\n`. Keys of the result are `rev:path`.
     private func catFile(_ specs: [(rev: String, path: String)]) -> Blobs {
-        catFileBatch(specs.map { "\($0.rev):\($0.path)" })
+        let names = specs.map { "\($0.rev):\($0.path)" }
+        let full = Set(specs.filter { fullFiles.contains($0.path) }.map { "\($0.rev):\($0.path)" })
+        return catFileBatch(names, full: full)
     }
 
     /// One `git cat-file --batch` for these object names (`rev:path` or a bare oid), keyed by name.
-    private func catFileBatch(_ names: [String], gitDir: String? = nil) -> Blobs {
+    private func catFileBatch(_ names: [String], gitDir: String? = nil, full: Set<String> = []) -> Blobs {
         guard !names.isEmpty else { return Blobs() }
         let request = names.map { "\($0)\n" }.joined()
         guard let metadata = try? gitData(["cat-file", "--batch-check"], input: Data(request.utf8), gitDir: gitDir) else { return Blobs() }
@@ -727,8 +776,8 @@ public struct GitWorkingTreeSource {
             let fields = line.split(separator: " ")
             guard fields.count == 3, fields[1] == "blob", let size = Int(fields[2]), size >= 0 else { continue }
             result.oids[name] = String(fields[0])
-            if size > Self.maxBytes {
-                result.contents[name] = .skipped("large file, \(size / 1024) KB")
+            if size > (full.contains(name) ? Self.maxShownBytes : Self.maxBytes) {
+                result.contents[name] = .skipped(Self.largeNote(size))
             } else {
                 eligible.append((name, String(fields[0])))
             }
@@ -746,7 +795,8 @@ public struct GitWorkingTreeSource {
             guard fields.count == 3, fields[1] == "blob", let size = Int(fields[2]), size >= 0,
                   size < data.distance(from: cursor, to: data.endIndex) else { break }
             let end = data.index(cursor, offsetBy: size)
-            result.contents[name] = decode(data[cursor..<end], size: size)
+            result.contents[name] = decode(data[cursor..<end], size: size,
+                                           limit: full.contains(name) ? Self.maxShownBytes : Self.maxBytes)
             cursor = data.index(after: end)
         }
 
@@ -763,14 +813,15 @@ public struct GitWorkingTreeSource {
         }
 
         let size = (try? url.resourceValues(forKeys: [.fileSizeKey]).fileSize) ?? 0
-        guard size <= Self.maxBytes else { return .skipped("large file, \(size / 1024) KB") }
+        let limit = fullFiles.contains(path) ? Self.maxShownBytes : Self.maxBytes
+        guard size <= limit else { return .skipped(Self.largeNote(size)) }
         guard let data = try? Data(contentsOf: url) else { return .skipped("unreadable") }
-        return decode(data[...], size: data.count)
+        return decode(data[...], size: data.count, limit: limit)
     }
 
-    private func decode(_ bytes: Data.SubSequence, size: Int) -> Content {
-        if size > Self.maxBytes {
-            return .skipped("large file, \(size / 1024) KB")
+    private func decode(_ bytes: Data.SubSequence, size: Int, limit: Int = Self.maxBytes) -> Content {
+        if size > limit {
+            return .skipped(Self.largeNote(size))
         }
 
         if bytes.prefix(8000).contains(0) {

@@ -15,6 +15,27 @@ struct ClickyOutputCard: View {
             }
             Divider()
             NativeSettingsToggle(
+                "Silent on Bluetooth headphones",
+                detail: "Typing makes no sound while Clicky plays on a Bluetooth device. Each sound start claims the headphones for this Mac, which can pull AirPods away from your iPhone. The play buttons here still sound.",
+                identifier: "clicky.output.muteOnBluetooth", isOn: $model.preferences.muteOnBluetooth)
+            NativeSettingsPicker(
+                "Pause the sound engine after",
+                detail: "While it runs, the engine uses about 2% CPU and keeps the Mac awake. Each restart after a pause claims Bluetooth headphones for this Mac again, which can pull AirPods from your iPhone, so a short pause means more claims while you type.",
+                identifier: "clicky.output.pause",
+                options: [NativeSettingsOption(3, "3 seconds"), NativeSettingsOption(10, "10 seconds"),
+                    NativeSettingsOption(30, "30 seconds"), NativeSettingsOption(120, "2 minutes"),
+                    NativeSettingsOption(600, "10 minutes")],
+                selection: $model.preferences.pauseAfterSeconds)
+            NativeSettingsPicker(
+                "Release the output after",
+                detail: "A paused engine uses no CPU and does not block sleep. It stops after this long, and the next click then waits for the output to start again.",
+                identifier: "clicky.output.release",
+                options: [NativeSettingsOption(10, "10 seconds"), NativeSettingsOption(30, "30 seconds"),
+                    NativeSettingsOption(120, "2 minutes"), NativeSettingsOption(600, "10 minutes"),
+                    NativeSettingsOption(0, "Never")],
+                selection: $model.preferences.releaseOutputSeconds)
+            Divider()
+            NativeSettingsToggle(
                 "Suggest a faster output",
                 detail: "When Clicky's output is late by more than the limit below, a small prompt offers a faster one. It never takes the keyboard.",
                 identifier: "clicky.output.delayWarning", isOn: $model.preferences.delayWarning)

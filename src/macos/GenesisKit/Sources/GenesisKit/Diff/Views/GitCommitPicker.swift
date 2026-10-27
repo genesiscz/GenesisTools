@@ -239,6 +239,17 @@ public extension View {
     }
 }
 
+/// What a plain click on a row of the commit list does. A setting: Hub settings → Panes → Commit list.
+public enum GitCommitClickMode: String, CaseIterable, Sendable {
+    /// The first click chooses the commit, a second click on it shows it, and a click on another commit chooses the
+    /// run between them (Martin, 2026-10-26). The default.
+    case chooseThenShow
+    /// A click shows the commit at once; Shift-click or Shift with the arrows chooses a run.
+    case showAtOnce
+
+    public static let defaultsKey = "genesiskit.commitPicker.click"
+}
+
 /// What the open list shows and where its highlight is: the filter text, the rows it keeps, the details read so far.
 struct GitCommitPickerState {
     let choices: [GitCommitChoice]
@@ -258,31 +269,76 @@ struct GitCommitPickerState {
     var highlighted: String?
     /// Where a Shift-extended range started; nil while one commit is chosen.
     var anchor: String?
+    /// The row a plain click chose (`GitCommitClickMode.chooseThenShow`): a second click on it shows it, a click on
+    /// another row chooses the run between them. The pointer never moves it, unlike `highlighted`.
+    var chosen: String?
+    /// The row the arrow keys last put the highlight on: a deliberate place, so a Shift-click may start there.
+    private var keyed: String?
+    /// The commit on screen when the list opened: where a Shift-click starts when nothing else was chosen.
+    let shown: String?
 
     init(choices: [GitCommitChoice], selection: String?, query: String = "") {
         self.choices = choices
         self.query = query
+        shown = selection.flatMap { sha in choices.first { $0.sha == sha }?.id }
         refilter()
         highlighted = selection.flatMap { sha in rows.first { $0.sha == sha }?.id } ?? rows.first?.id
     }
 
     /// Moves the highlight `step` rows, stopping at either end; from no highlight, down starts at the top. A plain move
-    /// ends a range.
+    /// ends a range and a choice: the keyboard took over.
     mutating func move(_ step: Int) {
         anchor = nil
+        chosen = nil
         advance(step)
+        keyed = highlighted
     }
 
     /// Shift with an arrow: the range grows from where it started.
     mutating func extend(_ step: Int) {
-        if anchor == nil { anchor = highlighted }
+        if anchor == nil { anchor = chosen ?? highlighted }
         advance(step)
     }
 
-    /// Shift-click: the range runs from where it started (or the highlighted row) to `id`.
+    /// Shift-click: the range runs from where it started to `id`. It starts at the chosen row, the row the keys moved
+    /// to, or the commit on screen, never at `highlighted` alone: the pointer moves that to the row it is over, so a
+    /// Shift-click started its range at the clicked row itself and chose nothing (Martin, 2026-10-26).
     mutating func extend(to id: String) {
-        if anchor == nil { anchor = highlighted }
+        if anchor == nil { anchor = chosen ?? keyed ?? shown ?? highlighted }
         highlighted = id
+    }
+
+    /// What a plain click in `GitCommitClickMode.chooseThenShow` did.
+    enum ClickOutcome: Equatable {
+        /// It chose a commit, or the run between the chosen one and this one; the list stays open.
+        case chose
+        /// A second click on the chosen commit: show it.
+        case show(String)
+        /// A click inside the chosen run: show the run.
+        case showRange
+    }
+
+    /// A plain click on `id`: the first click chooses, a second click on the same commit shows it, a click on another
+    /// commit chooses the run between them when `ranges` (else that commit instead), and a click inside a run shows it.
+    mutating func choose(_ id: String, ranges: Bool) -> ClickOutcome {
+        if let range {
+            if range.contains(where: { $0.id == id }) {
+                return .showRange
+            }
+            highlighted = id
+            return .chose
+        }
+        if chosen == id {
+            return .show(id)
+        }
+        if let chosen, ranges {
+            anchor = chosen
+        } else {
+            chosen = id
+            anchor = nil
+        }
+        highlighted = id
+        return .chose
     }
 
     /// The commits of a range, in the list's order and with every commit between its ends (also the ones the filter
@@ -329,6 +385,7 @@ struct GitCommitPickerList: View {
     /// When a key last moved the highlight: rows that scroll under a still pointer must not take it back.
     @State private var keyMovedAt = Date.distantPast
     @State private var loading = false
+    @AppStorage(GitCommitClickMode.defaultsKey) private var clickModeRaw = GitCommitClickMode.chooseThenShow.rawValue
     @FocusState private var searchFocused: Bool
 
     static let width: CGFloat = 470
@@ -417,13 +474,14 @@ struct GitCommitPickerList: View {
                         let inRange = Set(state.range?.map(\.id) ?? [])
                         ForEach(state.rows) { choice in
                             GitCommitPickerRow(choice: choice, current: choice.sha == selection,
-                                               highlighted: choice.id == state.highlighted || inRange.contains(choice.id)) {
+                                               highlighted: choice.id == state.highlighted || choice.id == state.chosen
+                                                   || inRange.contains(choice.id)) {
                                 click(choice)
                             }
                             .id(choice.id)
                             .onHover { inside in
-                                // A range keeps its ends while the pointer crosses other rows.
-                                guard inside, state.anchor == nil, state.highlighted != choice.id,
+                                // A range and a chosen commit keep their rows while the pointer crosses others.
+                                guard inside, state.anchor == nil, state.chosen == nil, state.highlighted != choice.id,
                                       Date().timeIntervalSince(keyMovedAt) > 0.4 else { return }
                                 state.highlighted = choice.id
                             }
@@ -468,8 +526,18 @@ struct GitCommitPickerList: View {
 
     /// The keys, and with a range how many commits Return shows.
     private var keysHint: String {
+        let choosing = GitCommitClickMode(rawValue: clickModeRaw) != .showAtOnce
         if let range = state.range {
-            return "\(Plural.count(range.count, "commit")) chosen  ·  ↩ show them  ·  ↑↓ back to one"
+            let click = choosing ? "click one or ↩" : "↩"
+            return "\(Plural.count(range.count, "commit")) chosen  ·  \(click) show them  ·  ↑↓ back to one"
+        }
+        if choosing, state.chosen != nil {
+            return pickRange == nil ? "click it again or ↩ show it  ·  esc close"
+                : "click it again or ↩ show it  ·  click another for a run  ·  esc close"
+        }
+        if choosing {
+            return pickRange == nil ? "click to choose  ·  ↑↓ move  ·  ↩ show  ·  esc close"
+                : "click to choose  ·  ⇧-click or ⇧↑↓ a run  ·  ↩ show  ·  esc close"
         }
         return pickRange == nil ? "↑↓ move  ·  ↩ show  ·  esc close"
             : "↑↓ move  ·  ⇧↑↓ or ⇧-click more  ·  ↩ show  ·  esc close"
@@ -483,7 +551,8 @@ struct GitCommitPickerList: View {
         }
     }
 
-    /// A click shows that one commit; with Shift (when ranges are offered) it extends the range instead.
+    /// With Shift (when ranges are offered) a click extends the range. Otherwise `clickMode` decides: show the commit at
+    /// once, or choose it first (`GitCommitPickerState.choose`).
     private func click(_ choice: GitCommitChoice) {
         if pickRange != nil, NSEvent.modifierFlags.contains(.shift) {
             state.extend(to: choice.id)
@@ -491,7 +560,23 @@ struct GitCommitPickerList: View {
             return
         }
 
-        pick(choice)
+        guard GitCommitClickMode(rawValue: clickModeRaw) != .showAtOnce else {
+            pick(choice)
+            return
+        }
+
+        switch state.choose(choice.id, ranges: pickRange != nil) {
+        case .chose:
+            keyMovedAt = Date()
+        case .show(let id):
+            if let shown = state.choices.first(where: { $0.id == id }) {
+                pick(shown)
+            }
+        case .showRange:
+            if let range = state.range {
+                pickRange?(range)
+            }
+        }
     }
 
     private func move(_ step: Int, extending: Bool = false) -> KeyPress.Result {

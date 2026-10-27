@@ -949,14 +949,11 @@ final class WidgetVoiceNotesStoreTests: XCTestCase {
 
 @MainActor
 final class ToolsLineStreamTests: XCTestCase {
-    private func script(_ body: String) throws -> (ToolsBridge, URL) {
-        let fm = FileManager.default
-        let dir = fm.temporaryDirectory.appendingPathComponent("line-stream-\(UUID().uuidString)", isDirectory: true)
-        try fm.createDirectory(at: dir, withIntermediateDirectories: true)
-        let file = dir.appendingPathComponent("tools")
-        try "#!/bin/sh\n\(body)\n".write(to: file, atomically: true, encoding: .utf8)
-        try fm.setAttributes([.posixPermissions: 0o755], ofItemAtPath: file.path)
-        return (ToolsBridge(binaryPath: file.path), dir)
+    /// Each version names one immutable script body. The executable is published once and kept so
+    /// macOS never checks a test executable that was removed after launch. Bump the name if the body changes.
+    private func script(_ name: String, _ body: String) throws -> ToolsBridge {
+        let file = try WidgetVoiceDraftOrderingTests.persistentScript(name, "#!/bin/sh\n\(body)\n")
+        return ToolsBridge(binaryPath: file.path)
     }
 
     func testBackgroundAndUtilityPrioritiesShareOneLaunchPlan() {
@@ -980,8 +977,7 @@ final class ToolsLineStreamTests: XCTestCase {
     }
 
     func testABackgroundStreamRunsTheCommandAtNiceFifteen() throws {
-        let (bridge, dir) = try script("sleep 0.5; echo \"$1\"; ps -o nice= -p $$")
-        defer { try? FileManager.default.removeItem(at: dir) }
+        let bridge = try script("line-stream-priority-v1", "sleep 0.5; echo \"$1\"; ps -o nice= -p $$")
         var lines: [String] = []
         let exited = expectation(description: "exit")
         let stream = try ToolsLineStream(bridge: bridge, subcommand: "index", args: [], priority: .background,
@@ -993,8 +989,7 @@ final class ToolsLineStreamTests: XCTestCase {
     }
 
     func testDeliversWholeLinesThenTheExit() throws {
-        let (bridge, dir) = try script("printf 'one\\ntw'; printf 'o\\nthree\\n'; echo oops >&2; exit 3")
-        defer { try? FileManager.default.removeItem(at: dir) }
+        let bridge = try script("line-stream-lines-v1", "printf 'one\\ntw'; printf 'o\\nthree\\n'; echo oops >&2; exit 3")
         var lines: [String] = []
         let exited = expectation(description: "exit")
         var report: ToolsLineStream.Exit?
@@ -1011,8 +1006,7 @@ final class ToolsLineStreamTests: XCTestCase {
     }
 
     func testGracefulInputEndStillDeliversTheFinalTranscript() throws {
-        let (bridge, dir) = try script("echo ready; cat >/dev/null; echo final")
-        defer { try? FileManager.default.removeItem(at: dir) }
+        let bridge = try script("line-stream-input-end-v1", "echo ready; cat >/dev/null; echo final")
         let ready = expectation(description: "ready")
         let exited = expectation(description: "exit")
         var lines: [String] = []
@@ -1033,8 +1027,7 @@ final class ToolsLineStreamTests: XCTestCase {
     }
 
     func testStartGateDeliveryAndClosedInputRefusal() throws {
-        let (bridge, dir) = try script("read gate; echo received-$gate; cat >/dev/null")
-        defer { try? FileManager.default.removeItem(at: dir) }
+        let bridge = try script("line-stream-gate-v1", "read gate; echo received-$gate; cat >/dev/null")
         let received = expectation(description: "gate delivered")
         let exited = expectation(description: "exit")
         let stream = try ToolsLineStream(bridge: bridge, subcommand: "x", args: [], onLines: {
@@ -1050,8 +1043,7 @@ final class ToolsLineStreamTests: XCTestCase {
     }
 
     func testClosedReaderThrowsWithoutSIGPIPE() throws {
-        let (bridge, dir) = try script("exec 0<&-; echo closed; sleep 1")
-        defer { try? FileManager.default.removeItem(at: dir) }
+        let bridge = try script("line-stream-closed-reader-v1", "exec 0<&-; echo closed; sleep 1")
         let closed = expectation(description: "reader closed")
         let exited = expectation(description: "exit")
         let stream = try ToolsLineStream(bridge: bridge, subcommand: "x", args: [], onLines: { _ in closed.fulfill() },
@@ -1064,8 +1056,7 @@ final class ToolsLineStreamTests: XCTestCase {
 
     func testStopClosesStdinSoAStdinWatcherEnds() throws {
         // `cat` stands in for a `--live` follow: it runs until its stdin closes.
-        let (bridge, dir) = try script("echo ready; exec cat")
-        defer { try? FileManager.default.removeItem(at: dir) }
+        let bridge = try script("line-stream-stop-v1", "echo ready; exec cat")
         let ready = expectation(description: "ready")
         let exited = expectation(description: "exit")
         var report: ToolsLineStream.Exit?

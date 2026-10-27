@@ -1370,7 +1370,10 @@ export class ComputerUse {
     async scroll(input: ComputerCall<"scroll">) {
         const { options, signal } = parseCall("scroll", input);
         return this.perform({
-            input: options,
+            input: {
+                ...options,
+                timeout_ms: options.timeout_ms ?? Math.max(this.timeoutMs, ((options.seconds ?? 0) + 5) * 1000),
+            },
             build: (record) => {
                 if (options.pages !== undefined && options.pixels !== undefined) {
                     throw new ComputerUseError("INVALID_SCROLL", "Choose pages or pixels.");
@@ -1391,6 +1394,11 @@ export class ComputerUse {
                     if (!options.revision && !record.implicitActionAllowed) {
                         throw new ComputerUseError("OBSERVE_FIRST", "Observe before another coordinate action.");
                     }
+                    // The window is pinned, not its pixels: a scroll at a point presses nothing, and a page that
+                    // repaints (a pulsing badge, a live diff) refused every coordinate scroll as "window pixels
+                    // changed since capture" (2026-10-26).
+                    const rows = record.snapshot.elements;
+                    const windowRow = rows.find((row) => row.index === 0);
                     target = [
                         "--coords",
                         this.point({
@@ -1399,6 +1407,7 @@ export class ComputerUse {
                             y: options.y,
                             coordinateSpace: options.coordinate_space,
                         }),
+                        ...(windowRow ? rowPin(windowRow, rows) : []),
                     ];
                 } else {
                     target = [
@@ -1423,6 +1432,7 @@ export class ComputerUse {
                     ...(options.pixels === undefined
                         ? ["--pages", String(options.pages ?? 1)]
                         : ["--pixels", String(options.pixels)]),
+                    ...(options.seconds === undefined ? [] : ["--time", String(options.seconds)]),
                     ...(options.background ? ["--background"] : []),
                 ];
             },

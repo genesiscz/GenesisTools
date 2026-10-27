@@ -80,6 +80,7 @@ import type { HookPayload } from "./payload";
 import { parseHookPayload } from "./payload";
 import { checkRuleExamples, replayCorpus } from "./rules-check";
 import { applyRuleSelection, applySetting, ruleEnabled, setHooksConfig, setRuleSelection } from "./set-config";
+import { BUILT_IN_RULES } from "./tool-rules";
 import { unpushedReminders, unpushedState } from "./unpushed";
 import { writeJsonFile } from "./write-json";
 
@@ -2040,6 +2041,8 @@ describe("decision hub hooks", () => {
             now: () => Date.parse(after(10)),
             chat: {
                 checkedAt: (session: string) => chat.get(`${session}:checked`),
+                offset: () => undefined,
+                setOffset: () => undefined,
                 setCheckedAt: (session: string, at: number) => chat.set(`${session}:checked`, at),
                 sentBack: (session: string, id: string) => chat.has(`${session}:${id}`),
                 markSentBack: (session: string, ids: string[]) => {
@@ -2112,6 +2115,92 @@ describe("decision hub hooks", () => {
         expect(readDecisions(log.file)[1]?.state).toBe("open");
     });
 
+    it("reads each transcript row once: from the agent's last reply on, a bare answer still found", async () => {
+        const { log, counts } = harness();
+        const [row] = await postDecisions(log.file, log.events, {
+            sessionId: "sess-1",
+            decisions: [{ prompt: "Keep?", options: ["yes", "no"] }],
+        });
+        const at = (minutes: number) => new Date(Date.parse(row.createdTs ?? "") + minutes * 60_000).toISOString();
+        const transcriptPath = join(mkdtempSync(join(tmpdir(), "gt-chat-offset-")), "session.jsonl");
+        const line = (item: object) => `${SafeJSON.stringify(item)}\n`;
+        const before = line({ type: "user", timestamp: at(-60), message: { content: "an old turn" } });
+        const reply = line({ type: "assistant", timestamp: at(1), message: { content: "❓ DECISION 1 — Keep?" } });
+        writeFileSync(transcriptPath, `${before}${reply}`);
+        const offsets = new Map<string, number>();
+        let checked: number | undefined;
+        let now = Date.parse(at(2));
+        const asked: { fromOffset?: number; maxBytes?: number }[] = [];
+        const readSession: ReadSession = (options) => {
+            asked.push({ fromOffset: options.fromOffset, maxBytes: options.maxBytes });
+            return createClaudeHistoryOperations().readBackward(
+                {
+                    kind: "claude",
+                    root: "/",
+                    sourceHome: "/",
+                    filePath: transcriptPath,
+                    dataPaths: [transcriptPath],
+                    metadataPaths: [],
+                },
+                options
+            );
+        };
+        const runs: ChatAnswerRun[] = [];
+        const deps = {
+            log,
+            counts,
+            readSession,
+            now: () => now,
+            appendRun: (run: ChatAnswerRun) => {
+                runs.push(run);
+            },
+            chat: {
+                checkedAt: () => checked,
+                setCheckedAt: (_session: string, value: number) => {
+                    checked = value;
+                },
+                offset: (_session: string, path: string) => offsets.get(path),
+                setOffset: (_session: string, path: string, value: number) => {
+                    offsets.set(path, value);
+                },
+                sentBack: () => false,
+                markSentBack: () => undefined,
+            },
+        };
+        const payload = stopPayload("Done.", { transcript_path: transcriptPath });
+
+        // First Stop: no offset yet, so it reads back by time; the next read starts at the reply that asked.
+        expect(await runDecisionStop(payload, decisionsOn({ chatAnswers: "record" }), deps)).toBeNull();
+        expect(asked[0]).toEqual({ fromOffset: undefined, maxBytes: 512 * 1024 * 1024 });
+        expect(offsets.get(transcriptPath)).toBe(Buffer.byteLength(before));
+
+        // The user answers with a bare letter; the agent replies. Only the rows from the asking reply on are read.
+        writeFileSync(
+            transcriptPath,
+            `${before}${reply}${line({ type: "user", timestamp: at(3), message: { content: "b)" } })}${line({
+                type: "assistant",
+                timestamp: at(4),
+                message: { content: "Dropping it." },
+            })}`
+        );
+        now = Date.parse(at(5));
+        expect(await runDecisionStop(payload, decisionsOn({ chatAnswers: "record" }), deps)).toHaveProperty(
+            "systemMessage"
+        );
+        expect(asked[1]).toEqual({ fromOffset: Buffer.byteLength(before), maxBytes: Number.POSITIVE_INFINITY });
+        expect(runs[1]?.read).toMatchObject({ fromOffset: Buffer.byteLength(before), entries: 3 });
+        expect(readDecisions(log.file)[0]).toMatchObject({ id: row.id, state: "acknowledged", option: "b" });
+
+        // A transcript shorter than the stored offset was replaced: the offset is ignored and the read goes by time.
+        offsets.set(transcriptPath, 10_000_000);
+        await postDecisions(log.file, log.events, {
+            sessionId: "sess-1",
+            decisions: [{ prompt: "Ship?", options: ["now"] }],
+        });
+        await runDecisionStop(payload, decisionsOn({ chatAnswers: "record" }), deps);
+        expect(asked[2]?.fromOffset).toBeUndefined();
+    });
+
     it("keeps a split assistant ask at the cursor boundary for a bare answer on the next Stop", async () => {
         const { log, counts } = harness();
         const [row] = await postDecisions(log.file, log.events, {
@@ -2160,6 +2249,8 @@ describe("decision hub hooks", () => {
             },
             chat: {
                 checkedAt: () => checked,
+                offset: () => undefined,
+                setOffset: () => undefined,
                 setCheckedAt: (_session: string, value: number) => {
                     checked = value;
                 },
@@ -2227,6 +2318,8 @@ describe("decision hub hooks", () => {
                 },
                 chat: {
                     checkedAt: () => undefined,
+                    offset: () => undefined,
+                    setOffset: () => undefined,
                     setCheckedAt: () => undefined,
                     sentBack: () => false,
                     markSentBack: () => undefined,
@@ -2268,6 +2361,8 @@ describe("decision hub hooks", () => {
             },
             chat: {
                 checkedAt: () => checked,
+                offset: () => undefined,
+                setOffset: () => undefined,
                 setCheckedAt: (_session: string, at: number) => {
                     checked = at;
                 },
@@ -2334,6 +2429,8 @@ describe("decision hub hooks", () => {
             appendRun: (run: ChatAnswerRun) => runs.push(run),
             chat: {
                 checkedAt: () => undefined,
+                offset: () => undefined,
+                setOffset: () => undefined,
                 setCheckedAt: () => undefined,
                 sentBack: () => false,
                 markSentBack: () => undefined,
@@ -2388,6 +2485,8 @@ describe("decision hub hooks", () => {
                 }),
                 chat: {
                     checkedAt: () => undefined,
+                    offset: () => undefined,
+                    setOffset: () => undefined,
                     setCheckedAt: () => undefined,
                     sentBack: () => false,
                     markSentBack: () => undefined,
@@ -2431,6 +2530,8 @@ describe("decision hub hooks", () => {
                 ...deps,
                 chat: {
                     checkedAt: () => undefined,
+                    offset: () => undefined,
+                    setOffset: () => undefined,
                     setCheckedAt: () => undefined,
                     sentBack: () => false,
                     markSentBack: () => undefined,
@@ -3057,7 +3158,7 @@ describe("the guard runs custom rules beside the built-in ones", () => {
     it("imports nothing and returns the built-in registry while no custom rule is configured", async () => {
         const { rules, custom } = await guardRules(DEFAULT_HOOKS_CONFIG);
 
-        expect(rules).toBe(SHELL_RULES);
+        expect(rules).toBe(BUILT_IN_RULES);
         expect(custom).toBeNull();
     });
 
@@ -3148,7 +3249,7 @@ describe("the rule picker's selection", () => {
 
 describe("rules check", () => {
     it("every built-in rule passes its own examples", () => {
-        const failed = checkRuleExamples(SHELL_RULES, { cwd: repoRoot() }).filter((check) => !check.ok);
+        const failed = checkRuleExamples(BUILT_IN_RULES, { cwd: repoRoot() }).filter((check) => !check.ok);
 
         expect(failed).toEqual([]);
     });

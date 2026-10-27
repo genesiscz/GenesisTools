@@ -79,6 +79,11 @@ export const widgetPreferencesSchema = z.object({
     alertAnswerSound: z.string().trim().min(1).max(40).default("same"),
     /** Seconds the session that raised an alert flashes in the widget; 0 does not flash it. */
     alertFlashSeconds: z.number().int().min(0).max(30).default(5),
+    /**
+     * What a reply names as the item it answers ("Reply to: <title>"): the selected card, else the agent's newest item
+     * ("selected-or-newest"); the selected card only; or nothing.
+     */
+    replyNames: z.enum(["selected-or-newest", "selected", "never"]).default("selected-or-newest"),
     /** Where a session inbox puts its reply composer: under the tabs, or below the list. */
     inboxComposer: z.enum(["top", "bottom"]).default("top"),
     /** A rail session bubble's tooltip: only while hover previews are off ("auto"), always, or never. */
@@ -87,6 +92,12 @@ export const widgetPreferencesSchema = z.object({
     railOrder: z.enum(["list", "stable"]).default("list"),
     /** A click on a decision option: stages the pick to send later with others ("stage"), or sends it at once. */
     decisionClick: z.enum(["stage", "send"]).default("stage"),
+    /** ⌘-click on an option (and ⌘-Return in a decision's own answer) does the other: sends while a click stages. */
+    decisionCommandSwaps: z.boolean().default(true),
+    /** Return in a decision's own answer field: stages the text as its note ("stage"), or sends it as the answer. */
+    ownAnswerReturn: z.enum(["stage", "send"]).default("stage"),
+    /** When the widget starts with staged decisions, a popup lists them with Send now, until it is closed. */
+    stagedReminder: z.boolean().default(true),
     /** Leaving the inbox with staged decisions: ask what to do ("ask"), keep them staged, or send them. */
     stagedOnLeave: z.enum(["ask", "keep", "send"]).default("ask"),
     /** Seconds before a successful send-and-close folds the panel; 0 keeps it open. */
@@ -99,8 +110,22 @@ export const widgetPreferencesSchema = z.object({
     overviewFilter: z.enum(["all", "needs", "unread"]).default("all"),
     /** The composer's microphone: records a voice note and puts its transcript in the field ("note"), or live dictation. */
     composerVoice: z.enum(["ask", "note", "live"]).default("ask"),
-    /** Seconds the alert popup stays while the pointer is not on it. */
-    alertPopupSeconds: z.number().int().min(3).max(60).default(7),
+    /** Seconds the alert popup stays while the pointer is not on it; 0 keeps it until it is closed or answered. */
+    alertPopupSeconds: z.number().int().min(0).max(60).default(7),
+    /** A click outside the widget closes the alert popup. */
+    alertPopupClickAway: z.boolean().default(false),
+    /** Another alert while the popup is open: listed under the first ("list"), shown after it ("queue"), or replacing it. */
+    alertPopupMany: z.enum(["list", "queue", "newest"]).default("list"),
+    /** After a pick sent from the alert popup: stay in the popup with its result ("stay"), or open its session. */
+    popupSendOpens: z.enum(["stay", "session"]).default("stay"),
+    /** The alert sounds' volume, in percent of the system volume. */
+    alertVolume: z.number().int().min(0).max(100).default(100),
+    /** A decision answered outside the widget (an agent recorded the chat answer, or a reply was read) pops up. */
+    autoDecisionPopup: z.boolean().default(true),
+    /** Seconds that popup stays while the pointer is not on it; 0 keeps it until it is closed. */
+    autoDecisionSeconds: z.number().int().min(0).max(60).default(5),
+    /** The sound it plays: a system sound name, "same" for `alertSound`, or "none". */
+    autoDecisionSound: z.string().trim().min(1).max(40).default("Tink"),
     /** Seconds a widget note stays before it fades; 0 keeps it until it is closed. A note with a button stays 10 s or more. */
     noteSeconds: z.number().int().min(0).max(60).default(6),
     /** A global shortcut opens and closes the widget from any app. */
@@ -160,8 +185,22 @@ export const widgetAssetSchema = z.discriminatedUnion("type", [
 ]);
 export type WidgetAsset = z.infer<typeof widgetAssetSchema>;
 
+export const widgetReplyToSchema = z.object({
+    id: z.string().min(1),
+    kind: z.string().min(1),
+    title: z.string().max(500).optional(),
+    excerpt: z.string().max(500).optional(),
+    number: z.number().int().positive().optional(),
+});
+export type WidgetReplyTo = z.infer<typeof widgetReplyToSchema>;
+
 export const widgetPayloadSchema = z.discriminatedUnion("kind", [
-    z.object({ kind: z.literal("followup"), text: z.string().max(64_000) }),
+    z.object({
+        kind: z.literal("followup"),
+        text: z.string().max(64_000),
+        /** The inbox item the user looked at while writing: delivered as a "Reply to:" line (`replyNames`). */
+        replyTo: widgetReplyToSchema.optional(),
+    }),
     z.object({
         kind: z.literal("decision"),
         id: z.string(),
@@ -249,5 +288,7 @@ export const widgetStateSchema = z.object({
     inboxRead: z.record(z.string(), z.number().finite().nonnegative()).default({}),
     /** "Mark all read": items at or before this time stop counting in the badges; they stay in their sessions. */
     inboxClearedAt: z.number().finite().nonnegative().optional(),
+    /** `tools hub widget show-decision`: the running widget shows this decision once per `at` (a decision link). */
+    showDecision: z.object({ id: z.string().min(1), at: z.number().finite() }).optional(),
 });
 export type WidgetState = z.infer<typeof widgetStateSchema>;

@@ -4,6 +4,7 @@ import { existsSync, mkdirSync } from "node:fs";
 import { join } from "node:path";
 import { getDatabase, getOrCreateRepo, upsertIssue } from "@app/github/lib/cache";
 import { formatPR } from "@app/github/lib/output";
+import { readPrFields } from "@app/github/lib/pr-fields";
 import { calculateReviewStats, fetchPRReviewThreads, parseThreads } from "@app/github/lib/review-threads";
 import { getOctokit } from "@genesiscz/utils/github/octokit";
 import { withRetry } from "@genesiscz/utils/github/rate-limit";
@@ -21,6 +22,7 @@ import type {
 import { detectRepoFromGit, parseGitHubUrl } from "@genesiscz/utils/github/url-parser";
 import { setGlobalVerbose, verbose } from "@genesiscz/utils/github/utils";
 import { logger, out } from "@genesiscz/utils/logger";
+import { maxCacheAgeOption } from "@genesiscz/utils/storage/cache-flag";
 import chalk from "chalk";
 import { Command } from "commander";
 
@@ -396,7 +398,7 @@ export async function prCommand(input: string, options: PRCommandOptions): Promi
 export function createPRCommand(): Command {
     const cmd = new Command("pr")
         .description("Fetch GitHub pull request details")
-        .argument("<input>", "PR number or URL")
+        .argument("<input>", "PR number or URL (a branch name too, with --include)")
         .option("-r, --repo <owner/repo>", "Repository (auto-detected from URL or git)")
         .option("-c, --comments", "Include issue comments (default: true)", true)
         .option("--no-comments", "Exclude issue comments")
@@ -430,8 +432,28 @@ export function createPRCommand(): Command {
         .option("--checks", "Include CI check status")
         .option("-v, --verbose", "Enable verbose logging")
         .option("-w, --worktree [path]", "Switch to/create worktree for PR branch")
+        .option(
+            "--include <fields>",
+            "Print only these gh pr view JSON fields (comma-separated), plus `checks` for gh pr checks; a lean, cacheable answer"
+        )
+        .addOption(maxCacheAgeOption("--include answer, shared by every caller on this Mac,"))
         .action(async (input, opts) => {
             try {
+                if (typeof opts.include === "string") {
+                    const { value } = await readPrFields({
+                        input,
+                        fields: opts.include
+                            .split(",")
+                            .map((field: string) => field.trim())
+                            .filter(Boolean),
+                        cwd: process.cwd(),
+                        repo: opts.repo,
+                        maxCacheAgeSeconds: opts.maxCacheAge,
+                    });
+                    out.result(value);
+                    return;
+                }
+
                 await prCommand(input, opts);
             } catch (error) {
                 logger.error({ error }, "PR command failed");

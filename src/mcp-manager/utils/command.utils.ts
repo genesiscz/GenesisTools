@@ -85,11 +85,11 @@ Non-Interactive Examples (for scripts and AI assistants):
     --env "API_KEY=xxx" --env "TOKEN=yyy" --provider claude
 
   # Install http server with headers (uses colon separator, multiple flags supported)
-  ${toolCommand("mcp-manager install", "jina-ai", '"https://api.jina.ai/mcp"', "--type", "http")} \\
+  ${toolCommand("mcp-manager install", "jina-ai", "https://api.jina.ai/mcp", "--type", "http")} \\
     --headers "Authorization: Bearer YOUR_TOKEN" --provider claude
 
   # Install with Basic Auth (base64 values with = padding work correctly)
-  ${toolCommand("mcp-manager install", "jenkins", '"https://jenkins.example.com/mcp"', "--type", "http")} \\
+  ${toolCommand("mcp-manager install", "jenkins", "https://jenkins.example.com/mcp", "--type", "http")} \\
     --headers "Authorization: Basic cWtmb2x0eW5tYXI6YWJjMTIz==" --provider claude
 
   # Enable/disable with specific provider

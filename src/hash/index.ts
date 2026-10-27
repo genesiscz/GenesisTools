@@ -30,7 +30,7 @@ const EXAMPLES: Array<{ line: string; note: string }> = [
     { line: toolCommand("hash", "installer.dmg"), note: "sha256 of one file" },
     { line: toolCommand("hash", "-a", "blake3", "dist/"), note: "blake3 of every file under dist/" },
     { line: `cat data.bin | ${toolCommand("hash", "-a", "sha512")}`, note: "hash stdin" },
-    { line: `${toolCommand("hash", "'dist/**/*.js'")} > SHA256SUMS`, note: "write a checksum file" },
+    { line: `${toolCommand("hash", "dist/**/*.js")} > SHA256SUMS`, note: "write a checksum file" },
     { line: toolCommand("hash", "-c", "SHA256SUMS"), note: "verify it (exit 1 on any failure)" },
 ];
 

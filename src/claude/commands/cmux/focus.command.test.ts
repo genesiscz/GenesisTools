@@ -2,6 +2,7 @@ import { afterEach, beforeEach, describe, expect, mock, test } from "bun:test";
 import type { CmuxLivePane, CmuxLiveSnapshot, CmuxLiveSurface } from "@genesiscz/utils/cmux/lib/live-snapshot";
 import { CmuxRpcError, CmuxTransportError } from "@genesiscz/utils/cmux/lib/socket";
 import type { SessionCmuxRefs } from "@genesiscz/utils/cmux/session-refs";
+import type { CmuxTree } from "@genesiscz/utils/cmux/tree";
 import { out } from "@genesiscz/utils/logger";
 
 const SESSION_A = "8b6e69bf-0efc-4990-ba3e-b77262498421";
@@ -502,5 +503,87 @@ describe("focusCommand", () => {
             `focus-window --window ${WINDOW_1}`,
             `focus-pane ws-uuid ${RECORDED_PANE_ID}`,
         ]);
+    });
+});
+
+describe("focusRunningSession", () => {
+    const RUNNING_SURFACE = "5E5E5E5E-0000-4000-8000-000000000005";
+    const running = {
+        sessionId: SESSION_A,
+        title: "acme-conventions",
+        cwd: "/repo",
+        pid: 4242,
+        // The process scan keys surfaces in lower case; cmux answers in upper case.
+        surfaceId: RUNNING_SURFACE.toLowerCase(),
+        surfaceRef: "surface:5",
+    };
+
+    function tree(surfaceIds: string[]): CmuxTree {
+        return {
+            fetchedAt: "2026-10-27T15:00:00.000Z",
+            available: true,
+            totalMs: 1,
+            windows: [
+                {
+                    id: WINDOW_1,
+                    index: 0,
+                    key: true,
+                    workspaces: [
+                        {
+                            id: "workspace:11",
+                            name: "GenesisTools",
+                            panes: [
+                                {
+                                    id: RECORDED_PANE_ID,
+                                    title: "claude",
+                                    active: false,
+                                    surfaces: surfaceIds.map((id, index) => ({
+                                        id,
+                                        title: "claude",
+                                        type: "terminal",
+                                        index,
+                                        selected: false,
+                                        active: false,
+                                    })),
+                                },
+                            ],
+                        },
+                    ],
+                },
+            ],
+        };
+    }
+
+    test("raises the window, the pane and then the tab the process runs in", async () => {
+        const { focusRunningSession } = await import("@app/claude/commands/cmux/focus");
+        let activated = 0;
+        const focused = await focusRunningSession(running, {
+            fetchTree: async () => tree(["0THER000-0000-4000-8000-000000000000", RUNNING_SURFACE]),
+            activate: async () => {
+                activated++;
+                return true;
+            },
+        });
+
+        expect(focused).toBe(true);
+        expect(events).toEqual([
+            `focus-window --window ${WINDOW_1}`,
+            `focus-pane workspace:11 ${RECORDED_PANE_ID}`,
+            `focus-surface ${RUNNING_SURFACE}`,
+        ]);
+        expect(activated).toBe(1);
+    });
+
+    test("a tab that closed while the picker was open focuses nothing", async () => {
+        const { focusRunningSession } = await import("@app/claude/commands/cmux/focus");
+        const focused = await focusRunningSession(running, {
+            fetchTree: async () => tree(["0THER000-0000-4000-8000-000000000000"]),
+            activate: async () => {
+                throw new Error("nothing may be raised for a closed tab");
+            },
+        });
+
+        expect(focused).toBe(false);
+        expect(events).toEqual([]);
     });
 });

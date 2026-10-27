@@ -30,7 +30,7 @@ const CALLER_MISTAKES = [
     /^DECISION \d+ is not waiting/,
     /^DECISION \d+ has options/,
     /^DECISION \d+ is already/,
-    /^stale decision revision:/,
+    /^DECISION \d+ changed: the agent posted a new text/,
 ];
 
 function refusal(err: unknown) {

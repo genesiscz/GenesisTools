@@ -29,8 +29,11 @@ export interface ChatAnswerRun {
     transcript: string;
     mode: "record" | "remind";
     open: { id: string; number: number; askedAt: string }[];
-    /** Where the read stopped: `from` is the time it read back to, `found` whether it got there. */
-    read: { from?: string; found: boolean; entries: number; issues: number };
+    /**
+     * Where the read went: `from` is the time a first read went back to and `found` whether it got there;
+     * `fromOffset` the byte a read from the last read's end started at; `endOffset` where the next one starts.
+     */
+    read: { from?: string; fromOffset?: number; endOffset?: number; found: boolean; entries: number; issues: number };
     users: LoggedUserMessage[];
     unambiguous: ChatAnswer[];
     ambiguous: AmbiguousAnswer[];

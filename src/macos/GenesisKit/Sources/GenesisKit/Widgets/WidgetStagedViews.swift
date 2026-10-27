@@ -3,12 +3,29 @@ import SwiftUI
 /// A decision's staged pick or note, as one line: "a) Back both up" or the note.
 enum WidgetStagedText {
     static func line(_ item: WidgetInboxItem, option: String?) -> String {
-        if let option, let index = option.unicodeScalars.first.map({ Int($0.value) - 97 }),
-           let options = item.options, options.indices.contains(index) {
-            let note = item.draft.map { " · " + $0 } ?? ""
-            return "\(option)) " + options[index] + note
+        let options = item.options ?? []
+        // Every staged letter with its own text: a ⇧-pick in the hub stores "ac", which read "ac) <text of a>" (F14).
+        let picks = (option ?? "").compactMap { letter -> String? in
+            guard let index = letter.unicodeScalars.first.map({ Int($0.value) - 97 }), options.indices.contains(index)
+            else { return nil }
+            // The option's own "b) " is dropped: the line read "b) b) drop it" (UX audit F1).
+            return "\(letter)) " + WidgetOptionText.text(options[index], letter: String(letter))
         }
-        return item.draft ?? "Nothing picked"
+        guard !picks.isEmpty else { return item.draft ?? "Nothing picked" }
+        return picks.joined(separator: " / ") + (item.draft.map { " · " + $0 } ?? "")
+    }
+}
+
+extension WidgetModel {
+    /// The pick a view draws as staged: none while a discard of it waits for its Undo note (`heldDecisionIDs`), so a
+    /// discarded decision does not still read "Staged" elsewhere for those seconds.
+    func shownStagedOption(_ sourceId: String, stored: String?) -> String? {
+        heldDecisionIDs.contains(sourceId) ? nil : stagedOption(sourceId, stored: stored)
+    }
+
+    /// The staged note a view draws, with the same rule.
+    func shownStagedNote(_ sourceId: String, _ draft: String?) -> String? {
+        heldDecisionIDs.contains(sourceId) ? nil : draft
     }
 }
 
@@ -96,13 +113,18 @@ struct WidgetStagedList: View {
                         model.sendStaged(chosen.map(\.sourceId))
                         model.stagedView = nil
                     }
-                    .buttonStyle(.borderedProminent).disabled(chosen.isEmpty)
+                    // Drawn by the kit, not `.borderedProminent`: in the non-activating panel the native one is grey.
+                    .buttonStyle(.genPrimary()).disabled(chosen.isEmpty)
                     // The leave question over this list owns ⌘↩ while it is shown.
                     .keyboardShortcut(model.stagedLeavePrompt ? nil : KeyboardShortcut(.return, modifiers: [.command]))
                     .instantTooltip("Sends the checked decisions now, one message per session (⌘↩)")
-                    Button("Discard checked") { model.discardStaged(chosen.map(\.sourceId)) }
+                    Button("Discard checked") {
+                        // Held behind an Undo note (`holdDiscard`): the notes typed into these decisions are gone
+                        // after it, so the discard waits, as the leave question's Discard does (UX audit F21).
+                        model.holdDiscard(chosen.map(\.sourceId))
+                    }
                         .buttonStyle(.genHover()).disabled(chosen.isEmpty)
-                        .instantTooltip("Clears the picks and notes; the decisions still wait for an answer.")
+                        .instantTooltip("Clears the picks and notes; the decisions still wait for an answer. Undo brings them back.")
                     Spacer(minLength: 0)
                     Button("Keep staged") {
                         GenMotion.perform(expanding: false, reduceMotion: reduceMotion) { model.stagedView = nil }
@@ -152,7 +174,8 @@ struct WidgetStagedLeavePrompt: View {
     @ObservedObject var model: WidgetModel
 
     var body: some View {
-        let items = model.stagedItems
+        // `stagedForLeave`, as the question itself counts: a pick made a moment before Esc is not listed yet.
+        let items = model.stagedForLeave
         ZStack {
             Color.black.opacity(0.35).allowsHitTesting(true)
             VStack(alignment: .leading, spacing: 10) {
@@ -163,7 +186,7 @@ struct WidgetStagedLeavePrompt: View {
                 // Return and Esc keep the answers (the safe choice); sending cannot be undone, so it needs ⌘↩ or a click.
                 HStack(spacing: 8) {
                     Button("Keep staged (send later)") { model.resolveStagedLeave("keep") }
-                        .buttonStyle(.borderedProminent).keyboardShortcut(.defaultAction)
+                        .buttonStyle(.genPrimary()).keyboardShortcut(.defaultAction)
                         .instantTooltip("Closes the panel; the decisions stay staged for later (↩)")
                     Button("Send now") { model.resolveStagedLeave("send") }
                         .buttonStyle(.genHover(accent: SessionPalette.blue))

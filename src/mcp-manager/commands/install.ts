@@ -44,7 +44,7 @@ export async function installServer(
         if (!isInteractive()) {
             logger.error("Server name is required in non-interactive mode.");
             logger.info(
-                `Usage: ${toolCommand("mcp-manager install", "<name>", '"<command>"', "--type", "stdio", "--provider", "claude")}`
+                `Usage: ${toolCommand("mcp-manager install", "<name>", "<command>", "--type", "stdio", "--provider", "claude")}`
             );
             process.exit(1);
         }

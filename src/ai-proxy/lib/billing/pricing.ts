@@ -107,6 +107,14 @@ const RATE_GROUPS: Array<{ ids: string[]; rate: ModelRate }> = [
         },
     },
     {
+        ids: ["gpt-6.1-terra"],
+        rate: {
+            inputUsdPerMTok: 1,
+            outputUsdPerMTok: 5,
+            rules: [{ contextFrom: OPENAI_LONG_CONTEXT, inputUsdPerMTok: 2, outputUsdPerMTok: 7.5 }],
+        },
+    },
+    {
         ids: ["gpt-6-luna"],
         rate: {
             inputUsdPerMTok: 0.1,

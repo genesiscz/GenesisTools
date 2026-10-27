@@ -9,7 +9,7 @@ import {
     sessionKeyRejection,
     validateClients,
 } from "@app/ai-proxy/lib/clients";
-import { setCodexModelOverrides } from "@app/ai-proxy/lib/codex-catalog";
+import { listedCodexModels, setCodexModelOverrides } from "@app/ai-proxy/lib/codex-catalog";
 import { loadConfigFresh } from "@app/ai-proxy/lib/config";
 import { stripBasePath } from "@app/ai-proxy/lib/path-prefix";
 import { acquireProvider, buildProviderMap, providerUnavailableResponse } from "@app/ai-proxy/lib/providers/registry";
@@ -17,8 +17,15 @@ import type { ProxyProvider } from "@app/ai-proxy/lib/providers/types";
 import { handleRealtimeClientSecrets, handleRealtimeUpgrade, realtimeWebsocket } from "@app/ai-proxy/lib/realtime";
 import { applyReasoningEffortToBody, findInvalidImageDataPayload } from "@app/ai-proxy/lib/rewrite-upstream-body";
 import { messageToAnthropicSse } from "@app/ai-proxy/lib/server-tools/web-search";
-import { noteSessionRequest, sweepSessionRecords } from "@app/ai-proxy/lib/sessions/records";
+import { sweepCompactions } from "@app/ai-proxy/lib/sessions/codex-compaction";
+import { sessionPickerModels } from "@app/ai-proxy/lib/sessions/picker-models";
+import {
+    DEFAULT_SESSION_RETENTION_DAYS,
+    noteSessionRequest,
+    sweepSessionRecords,
+} from "@app/ai-proxy/lib/sessions/records";
 import { resolveSessionRoute, sessionPinnedRoute } from "@app/ai-proxy/lib/sessions/routing";
+import { setClaudeSessionSettings } from "@app/ai-proxy/lib/sessions/settings";
 import { requestTagsFor } from "@app/ai-proxy/lib/sessions/tags";
 import { resolveThinkingMode } from "@app/ai-proxy/lib/thinking-config";
 import { resolveTranslationMode } from "@app/ai-proxy/lib/translation-config";
@@ -43,6 +50,25 @@ import { logger } from "@genesiscz/utils/logger";
 import { isObject } from "@genesiscz/utils/object";
 
 const MAX_REQUEST_BODY_BYTES = 4 * 1024 * 1024;
+
+/**
+ * Logs a request that threw. When the client already hung up (Claude Code quit or was interrupted), the upstream
+ * fetch fails with "The connection was closed": that is the client's choice, logged at debug as 499, not a 502
+ * warning (on 2026-10-27 every resume of a ccx session left one in the warn log).
+ */
+export function logRequestFailure(input: {
+    req: Request;
+    err: unknown;
+    status: number;
+    fields: Record<string, unknown>;
+}): void {
+    if (input.req.signal.aborted) {
+        logger.debug({ ...input.fields, status: 499, error: input.err }, "ai-proxy: the client closed the request");
+        return;
+    }
+
+    logger.warn({ ...input.fields, status: input.status, error: input.err }, "ai-proxy: request failed");
+}
 
 function mapProxyRequestError(err: unknown): { status: number; message: string } {
     if (err instanceof GrokAuthExpiredError || err instanceof CopilotAuthExpiredError) {
@@ -349,6 +375,7 @@ export function startAiProxyServer(runtime: AiProxyRuntime) {
 
     try {
         sweepSessionRecords({ retentionDays: runtime.config.sessionRetentionDays });
+        sweepCompactions(runtime.config.sessionRetentionDays ?? DEFAULT_SESSION_RETENTION_DAYS);
     } catch (err) {
         logger.warn({ err }, "ai-proxy: session sweep failed; records stay as they are");
     }
@@ -375,6 +402,7 @@ export function startAiProxyServer(runtime: AiProxyRuntime) {
 
             const config = await loadConfigFresh();
             setCodexModelOverrides(config.codexModels);
+            setClaudeSessionSettings(config.claudeSessions);
 
             // An unknown or closed session key is refused before any route runs, and never forwarded anywhere.
             const sessionRejection = sessionKeyRejection(req);
@@ -409,6 +437,20 @@ export function startAiProxyServer(runtime: AiProxyRuntime) {
                     return new Response(
                         SafeJSON.stringify({ error: { message: "Invalid proxy API key", type: "auth_error" } }),
                         { status: 401, headers: { "Content-Type": "application/json" } }
+                    );
+                }
+
+                if (client.session) {
+                    return new Response(
+                        SafeJSON.stringify(
+                            sessionPickerModels({
+                                models: listedCodexModels(),
+                                contextLimit: client.session.pickerContextTokens,
+                            })
+                        ),
+                        {
+                            headers: { "Content-Type": "application/json" },
+                        }
                     );
                 }
 
@@ -592,16 +634,12 @@ export function startAiProxyServer(runtime: AiProxyRuntime) {
                     return response;
                 } catch (err) {
                     const mapped = mapProxyRequestError(err);
-                    logger.warn(
-                        {
-                            path,
-                            model,
-                            elapsedMs: Math.round(performance.now() - requestStarted),
-                            status: mapped.status,
-                            error: err,
-                        },
-                        "ai-proxy: request failed"
-                    );
+                    logRequestFailure({
+                        req,
+                        err,
+                        status: mapped.status,
+                        fields: { path, model, elapsedMs: Math.round(performance.now() - requestStarted) },
+                    });
 
                     return new Response(
                         SafeJSON.stringify({
@@ -761,16 +799,12 @@ export function startAiProxyServer(runtime: AiProxyRuntime) {
                     return response;
                 } catch (err) {
                     const mapped = mapProxyRequestError(err);
-                    logger.warn(
-                        {
-                            path,
-                            model,
-                            elapsedMs: Math.round(performance.now() - requestStarted),
-                            status: mapped.status,
-                            error: err,
-                        },
-                        "ai-proxy: request failed"
-                    );
+                    logRequestFailure({
+                        req,
+                        err,
+                        status: mapped.status,
+                        fields: { path, model, elapsedMs: Math.round(performance.now() - requestStarted) },
+                    });
 
                     return new Response(SafeJSON.stringify({ error: { message: mapped.message } }), {
                         status: mapped.status,

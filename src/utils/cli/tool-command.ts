@@ -1,3 +1,5 @@
+import { shellWord } from "@genesiscz/utils/shell/quote";
+
 /**
  * A `tools …` command line for hint text: `toolCommand("macos permissions build")` is
  * `tools macos permissions build`. `command` holds only the tool and its subcommand words, and
@@ -5,7 +7,7 @@
  * so `scripts/ci/check-tool-commands.ts` can fail when a named command was renamed or removed.
  */
 export function toolCommand(command: string, ...args: string[]): string {
-    const quoted = args.map((arg) => (arg.includes(" ") ? `"${arg}"` : arg));
+    const quoted = args.map(shellWord);
 
     return ["tools", command, ...quoted].join(" ");
 }

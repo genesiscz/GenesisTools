@@ -109,9 +109,9 @@ export async function readWidgetReceiptContext({
             receivedAt = row.ts;
         }
     } else if (id.startsWith("decision:")) {
-        const row = (sources ? sources.decisions() : readDecisions(decisionFiles().file)).find(
-            (entry) => entry.id === sourceId
-        );
+        const result = sources ? sources.decisions() : readDecisions(decisionFiles().file);
+        const rows = Array.isArray(result) ? result : result.rows;
+        const row = rows.find((entry) => entry.id === sourceId);
         if (row && row.sessionId === target.sessionId && widgetProvider(row.provider) === target.provider) {
             found = true;
             sourceContext = { ...row, agent: row.provider };

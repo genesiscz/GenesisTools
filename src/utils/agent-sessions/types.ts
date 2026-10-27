@@ -116,6 +116,8 @@ export interface NativeHistoryEntry {
     toolEvent?: "call" | "result";
     /** Call input values only; file filters must not mistake result prose for an input. */
     inputText?: string;
+    /** A tool call's own id (Claude `tool_use.id`, Codex `call_id`, Grok tool call id), on calls only. */
+    callId?: string;
     paths: string[];
     commits: string[];
     timestamp?: string;
@@ -251,7 +253,49 @@ export interface ReadBackwardOptions {
     includeBoundaryMessage?: boolean;
     /** At most this many bytes from the end (default `READ_BACKWARD_MAX_BYTES`). */
     maxBytes?: number;
+    /**
+     * Read only from this absolute byte offset to the end: an earlier read's `endOffset`, so each row is read once
+     * across reads. Reaching it is a clean end (no issue; `found` stays false unless `until` accepted an entry).
+     */
+    fromOffset?: number;
     signal?: AbortSignal;
+}
+
+/** What `readForward` reads: a session from a byte offset to its end, oldest row first. */
+export interface ReadForwardOptions {
+    /** The absolute byte offset to start at: 0, or an earlier read's `endOffset` of the same file. */
+    fromOffset: number;
+    /**
+     * Only rows whose raw text holds one of these strings are parsed: a cheap filter before the parse. A row that
+     * passes it still goes through the provider's own parse, so a feature never names a record field here.
+     */
+    contains?: readonly string[];
+    signal?: AbortSignal;
+}
+
+/** One source row of a forward read, with the entries the provider made of it. */
+export interface ForwardRow {
+    /**
+     * The row's stable key in its provider: Claude's row `uuid` (what a transcript scroll targets), else `@<offset>`
+     * for providers whose rows carry no id (Codex, Grok).
+     */
+    key: string;
+    /** Where the row starts in the file. */
+    offset: number;
+    /** `line` on these is the row's place among the rows this read returned (1-based), not a line of the file. */
+    entries: NativeHistoryEntry[];
+}
+
+export interface ForwardRead {
+    rows: ForwardRow[];
+    /**
+     * The file read and its inode and length when the read began, before any byte was read; null when it could not be
+     * opened. A caller that keeps `endOffset` keeps this identity beside it and starts again at 0 when it changes.
+     */
+    file: { path: string; ino: number; size: number } | null;
+    /** Where the next read starts: the length when this read began, or the start of a last row still being written. */
+    endOffset: number;
+    issues: NativeSourceIssue[];
 }
 
 export interface TurnBoundary {
@@ -266,6 +310,16 @@ export interface BackwardRead {
     /** Whether `until` accepted an entry; false when the walk reached the start of the file or `maxBytes`. */
     found: boolean;
     issues: NativeSourceIssue[];
+    /**
+     * Where a later read's `fromOffset` starts: the source's length when this read began, or the start of its last row
+     * when that row was still being written. Absent when the reader cannot tell.
+     */
+    endOffset?: number;
+    /**
+     * Where the newest row with an assistant entry starts. A later read from here keeps the reply that a bare answer
+     * (`b)`) refers to, which a read from `endOffset` would cut off. Absent when the read held no assistant entry.
+     */
+    lastAssistantOffset?: number;
 }
 
 /**
@@ -283,6 +337,11 @@ export interface NativeSessionReader<Kind extends string = AgentKind> {
         source: NativeSessionSource<Kind>,
         options: Omit<ReadBackwardOptions, "until">
     ): Promise<TurnBoundary | null>;
+    /**
+     * The rows of a session from `options.fromOffset` to its end, each with its stable key: an incremental scan that
+     * reads only what was appended since the last one (the question tool's decision rows).
+     */
+    readForward(source: NativeSessionSource<Kind>, options: ReadForwardOptions): Promise<ForwardRead>;
     importSession?(
         session: AgentSession<Kind>,
         context: NativeSessionImportContext

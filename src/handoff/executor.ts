@@ -8,6 +8,7 @@ import { CANCELLED_INFO, claimMatches, DONE_INFO, isHumanOwner, sessionIdMatches
 import { generateEditId, generateEventUid, generateHandoffId, normalizeEditId, normalizeHandoffId } from "./ids";
 import { appendHandoffEvents } from "./log-store";
 import { isEventsOnlyInclude, type ProjectedHandoff, parseIncludeSections, projectHandoff } from "./project";
+import { resolveHandoffProject } from "./project-ref";
 import {
     catchUpHandoffs,
     findHandoffsByName,
@@ -290,6 +291,11 @@ export interface PostHandoffInput {
     tasks: HandoffTaskInput[];
     target?: HandoffTarget;
     refs?: string[];
+    /**
+     * The project the handoff is FOR: a project name, or a repository path resolved to its project.
+     * Wins over the poster's working folder, which `postedByContext` still records.
+     */
+    project?: string;
 }
 
 export interface PostHandoffResponse {
@@ -355,6 +361,7 @@ export function postHandoff(input: PostHandoffInput, deps: HandoffDeps = {}): Po
         );
     }
 
+    const named = input.project !== undefined ? resolveHandoffProject(input.project) : null;
     const by = buildBy(deps);
     const event: HandoffEvent = {
         ev: "post",
@@ -386,6 +393,10 @@ export function postHandoff(input: PostHandoffInput, deps: HandoffDeps = {}): Po
         event.refs = input.refs;
     }
 
+    if (named !== null) {
+        event.project = named.project;
+    }
+
     appendHandoffEvents([event], deps.base);
 
     return withDb(deps, (db) => {
@@ -403,6 +414,8 @@ export function postHandoff(input: PostHandoffInput, deps: HandoffDeps = {}): Po
                 tasks: handoff.tasks.length,
                 by: by.sessionId,
                 targetAgent: target?.agent,
+                project: handoff.project,
+                posterProject: by.project,
             },
             "handoff posted"
         );
@@ -431,7 +444,7 @@ export function postHandoff(input: PostHandoffInput, deps: HandoffDeps = {}): Po
                 ? mintHandoffLaunch({
                       name: handoff.name ?? handoff.id,
                       prompt: pasteAgentText(handoff.id),
-                      cwd: launchCwd(by),
+                      cwd: named?.launchCwd ?? launchCwd(by),
                       deps,
                   })
                 : null;
@@ -1340,6 +1353,16 @@ function parseAction(
                       ? (normalizeTargetInput(payload.target) ?? null)
                       : undefined;
             const refs = asStringArray(payload.refs);
+            let project: string | undefined;
+
+            if ("project" in payload) {
+                try {
+                    project = resolveHandoffProject(payload.project, "modify_handoff: project").project;
+                } catch (error) {
+                    return shapeFail(index, verb, error instanceof Error ? error.message : String(error));
+                }
+            }
+
             let name: string | null | undefined;
 
             if ("name" in payload) {
@@ -1371,12 +1394,13 @@ function parseAction(
                 name === undefined &&
                 description === undefined &&
                 target === undefined &&
-                refs === undefined
+                refs === undefined &&
+                project === undefined
             ) {
                 return shapeFail(
                     index,
                     verb,
-                    'modify_handoff needs at least one of title/name/description/target/refs — e.g. { action: "modify_handoff", title: "…" }. Tasks are edited via modify_task/add_tasks.'
+                    'modify_handoff needs at least one of title/name/description/target/refs/project — e.g. { action: "modify_handoff", title: "…" }. Tasks are edited via modify_task/add_tasks.'
                 );
             }
 
@@ -1391,6 +1415,7 @@ function parseAction(
                     ...(description !== undefined ? { description } : {}),
                     ...(target !== undefined ? { target } : {}),
                     ...(refs !== undefined ? { refs } : {}),
+                    ...(project !== undefined ? { project, fromProject: handoff.project } : {}),
                 },
             };
         }

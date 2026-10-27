@@ -59,10 +59,7 @@ export function parseGrepCommand(
     }
 
     if (!question?.trim()) {
-        throw new GrepSetupError(
-            "usage",
-            `A question is required: ${toolCommand("jev grep", '"<question>"', "[root]")}.`
-        );
+        throw new GrepSetupError("usage", `A question is required: ${toolCommand("jev grep", "<question>")} [root].`);
     }
 
     let concurrency: number | undefined;

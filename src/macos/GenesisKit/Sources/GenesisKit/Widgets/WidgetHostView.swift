@@ -508,105 +508,372 @@ struct WarmPaneVisibility: ViewModifier {
     }
 }
 
-/// The alert popup: what arrived and from which session. A click opens it in the inbox; the close button, Esc while the
-/// widget has the keyboard, and VoiceOver's escape gesture close it without opening anything.
+/// The alert popup: what arrived, from which session, and for a decision its options, which answer in place (Martin,
+/// 2026-10-26: "this is still ugly"). The panel is the container, so the tile draws no card of its own (golden gate:
+/// no card in a card); its shape carries only the alert flash. The header opens the item in its session; ×, Esc
+/// while the widget has the keyboard, and VoiceOver's escape close it without opening anything.
 struct WidgetPeekView: View {
     @ObservedObject var model: WidgetModel
     let item: WidgetInboxItem
-    /// The card's natural height, before it stretches to fill the pane.
+    /// The tile's natural height, before it stretches to fill the pane.
     var measured: (CGFloat) -> Void = { _ in }
 
-    /// The gap between the card and the panel edge on every side.
+    /// The gap between the tile and the panel edge on every side.
     static let inset: CGFloat = 8
-    /// The panel's corner (EdgePanelShape's 18) minus the inset, so the card's corner runs parallel to the panel's.
+    /// The panel's corner (EdgePanelShape's 18) minus the inset, so the flash runs parallel to the panel's edge.
     static let cornerRadius: CGFloat = 18 - inset
+    /// The options the tile lists; the rest wait in the session's inbox.
+    static let shownOptions = 4
+    /// The later alerts the tile lists under the shown one; the rest wait in the inbox.
+    static let shownWaiting = 3
 
     /// The kicker names the decision ("Decision 4"), so the title under it does not repeat the number.
     private var title: String {
+        if isReminder {
+            let count = model.stagedItems.count
+            return count == 0 ? "Nothing is staged now." : Plural.count(count, "decision") + " staged and not sent yet"
+        }
         let plain = item.title?.trimmingCharacters(in: .whitespacesAndNewlines) ?? ""
         return plain.isEmpty ? "Open the inbox to see it." : plain
     }
 
+    /// The options a click answers here: an open decision's.
+    private var options: [String] {
+        guard item.kind == "decision", item.needsAnswer else { return [] }
+        return item.options ?? []
+    }
+
+    /// The overview's words for the same move.
+    private var openTitle: String {
+        item.needsAnswer && options.isEmpty ? "Answer in its session" : "Open in its session"
+    }
+
+    /// The symbol and colour of an alert's kind: orange waits for you, green was answered elsewhere, blue is news.
+    static func mark(_ item: WidgetInboxItem) -> (symbol: String, tint: Color) {
+        if item.kind == "staged" { return ("tray.full.fill", .orange) }
+        if item.isAnsweredElsewhere { return ("checkmark.bubble.fill", .green) }
+        return item.needsAnswer ? ("questionmark.bubble.fill", .orange) : ("text.bubble.fill", SessionPalette.blue)
+    }
+
     var body: some View {
-        Button {
-            guard let surface = model.hoveredSurface else { return }
-            model.openInboxNotification(on: surface, key: item.key, needsAnswer: item.needsAnswer)
-        } label: {
-            VStack(alignment: .leading, spacing: 0) {
+        VStack(alignment: .leading, spacing: 0) {
+            VStack(alignment: .leading, spacing: 8) {
                 header
-                    .fixedSize(horizontal: false, vertical: true)
-                    .onGeometryChange(for: CGFloat.self, of: \.size.height) { headerHeight = $0; report() }
-                Spacer(minLength: Self.footerGap)
-                footer
-                    .onGeometryChange(for: CGFloat.self, of: \.size.height) { footerHeight = $0; report() }
+                if let outcome = model.peekOutcome {
+                    // What the send from this popup did, read where it was sent (UX audit F5).
+                    outcomeBlock(outcome)
+                } else {
+                    if !options.isEmpty { optionList }
+                    if item.isAnsweredElsewhere { answeredBody }
+                    if isReminder { stagedBody }
+                }
+                if model.peekMany == .list, !model.peekQueue.isEmpty { waitingList }
             }
-            .padding(Self.padding)
-            .frame(maxWidth: .infinity, maxHeight: .infinity, alignment: .topLeading)
-            .background(RoundedRectangle(cornerRadius: Self.cornerRadius, style: .continuous)
-                .fill(Color.primary.opacity(0.05)))
-            .overlay(RoundedRectangle(cornerRadius: Self.cornerRadius, style: .continuous)
-                .strokeBorder(Color.primary.opacity(0.08), lineWidth: 1))
-            .contentShape(Rectangle())
+            .fixedSize(horizontal: false, vertical: true)
+            .onGeometryChange(for: CGFloat.self, of: \.size.height) { contentHeight = $0; report() }
+            Spacer(minLength: Self.footerGap)
+            footer
+                .onGeometryChange(for: CGFloat.self, of: \.size.height) { footerHeight = $0; report() }
         }
-        .buttonStyle(RowButtonStyle(cornerRadius: Self.cornerRadius))
+        .padding(Self.padding)
+        .frame(maxWidth: .infinity, maxHeight: .infinity, alignment: .topLeading)
         .attentionPulse(trigger: model.attentionTrigger(item.key), style: popupAttention, since: model.attentionStart(item.key))
-        .accessibilityLabel(WidgetAlerts.kicker(item) + ": " + title)
-        .accessibilityValue(WidgetPeekOptions.accessibilityValue(item))
+        .accessibilityElement(children: .contain)
+        .accessibilityLabel(WidgetAlerts.kicker(item))
         .accessibilityAction(.escape) { model.dismissPeek() }
         .accessibilityAction(named: "Close") { model.dismissPeek() }
         .overlay(alignment: .topTrailing) {
-            IconButton(systemName: "xmark", tooltip: "Close without opening it", size: 10) { model.dismissPeek() }
+            IconButton(systemName: "xmark", tooltip: closeTooltip, size: 10) { model.dismissPeek() }
                 .accessibilityLabel("Close the alert")
                 .accessibilityIdentifier("widget.peek.close")
                 .padding(.top, 5).padding(.trailing, 5)
         }
     }
 
-    @State private var headerHeight: CGFloat = 0
+    @State private var contentHeight: CGFloat = 0
     @State private var footerHeight: CGFloat = 0
-    private static let padding: CGFloat = 10
+    /// The header's and the options' hover plates keep this much panel around them.
+    private static let padding: CGFloat = 6
     private static let footerGap: CGFloat = 10
 
-    /// The card's natural height: header, gap and footer, without the stretch that fills the pane.
+    /// The tile's natural height: content, gap and footer, without the stretch that fills the pane.
     private func report() {
-        guard headerHeight > 0, footerHeight > 0 else { return }
-        measured(headerHeight + Self.footerGap + footerHeight + 2 * Self.padding)
+        guard contentHeight > 0, footerHeight > 0 else { return }
+        measured(contentHeight + Self.footerGap + footerHeight + 2 * Self.padding)
     }
 
-    private var footer: some View {
-        HStack(spacing: 3) {
-            Text(item.needsAnswer ? "Click to answer" : "Click to read")
-            Image(systemName: "chevron.right").font(.system(size: 9, weight: .semibold))
+    /// The first line. After a send from the staged reminder it no longer says "Staged, not sent" in orange over the
+    /// outcome of that send.
+    private var kicker: String {
+        isReminder && model.peekOutcome != nil ? "Staged decisions" : WidgetAlerts.kicker(item)
+    }
+
+    /// The staged reminder (`WidgetCoordinator.remindStaged`): it lists the staged decisions, not one item.
+    private var isReminder: Bool { item.kind == "staged" }
+
+    private func open(ownAnswer: Bool = false) {
+        guard let surface = model.hoveredSurface else { return }
+        if isReminder {
+            model.dismissPeek()
+            model.openStaged(on: surface)
+            return
         }
-        .font(.system(size: 11)).foregroundStyle(.secondary)
+        model.openAlert(item, on: surface, ownAnswer: ownAnswer)
     }
 
+    /// The alerts queued after this one (Alerts → Several at once: one after another).
+    private var queued: Int { model.peekMany == .queue ? model.peekQueue.count : 0 }
+
+    private var closeTooltip: String {
+        queued > 0 ? "Close it and show the next alert" : "Close without opening it"
+    }
+
+    /// The kicker, the title and the session: one button that opens the item in its session.
     private var header: some View {
-        VStack(alignment: .leading, spacing: 6) {
-            HStack(spacing: 6) {
-                Image(systemName: item.needsAnswer ? "questionmark.bubble.fill" : "text.bubble.fill")
-                    .foregroundStyle(item.needsAnswer ? Color.orange : SessionPalette.blue)
-                Text(WidgetAlerts.kicker(item)).font(.system(size: 11, weight: .semibold))
-                    .foregroundStyle(item.needsAnswer ? Color.orange : .secondary)
-                Spacer(minLength: 0)
-                LiveAgo(date: Date(timeIntervalSince1970: item.at / 1000), style: .brief)
-                    .font(.system(size: 10)).foregroundStyle(.secondary)
-                // Room for the close button, which sits over this corner outside the row button.
-                Color.clear.frame(width: 18, height: 1)
+        Button { open() } label: {
+            VStack(alignment: .leading, spacing: 5) {
+                HStack(spacing: 6) {
+                    Image(systemName: Self.mark(item).symbol).foregroundStyle(Self.mark(item).tint)
+                    Text(kicker).font(.system(size: 11, weight: .semibold))
+                        .foregroundStyle((item.needsAnswer || item.isAnsweredElsewhere || isReminder) && model.peekOutcome == nil
+                                         ? Self.mark(item).tint : .secondary)
+                    Spacer(minLength: 0)
+                    if queued > 0 {
+                        Text("\(queued) next").font(.system(size: 11)).foregroundStyle(.secondary)
+                            .accessibilityLabel(queued == 1 ? "1 more alert after this one" : "\(queued) more alerts after this one")
+                    }
+                    LiveAgo(date: Date(timeIntervalSince1970: item.at / 1000), style: .brief)
+                        .font(.system(size: 11)).foregroundStyle(.secondary)
+                    // Room for the close button, which sits over this corner outside the header button.
+                    Color.clear.frame(width: 18, height: 1)
+                }
+                Text(title).font(.system(size: 13, weight: .semibold))
+                    .lineLimit(3).multilineTextAlignment(.leading).fixedSize(horizontal: false, vertical: true)
+                if !isReminder, let session = model.session(forKey: item.key) {
+                    Text([session.title, session.project].filter { !$0.isEmpty }.joined(separator: " · "))
+                        .font(.system(size: 11)).foregroundStyle(.secondary)
+                        .lineLimit(1).truncationMode(.middle)
+                }
             }
-            Text(title).font(.system(size: 12.5, weight: .medium))
-                .lineLimit(3).multilineTextAlignment(.leading).fixedSize(horizontal: false, vertical: true)
-            if let session = model.session(forKey: item.key) {
-                Text([session.title, session.project].filter { !$0.isEmpty }.joined(separator: " · "))
-                    .font(.system(size: 11)).foregroundStyle(.secondary)
-                    .lineLimit(1).truncationMode(.middle)
+            .padding(.horizontal, 8).padding(.vertical, 6)
+            .frame(maxWidth: .infinity, alignment: .leading)
+            .contentShape(Rectangle())
+        }
+        .buttonStyle(RowButtonStyle(cornerRadius: WidgetOptionLabel.cornerRadius))
+        .instantTooltip(openTitle)
+        .accessibilityLabel(kicker + ": " + title)
+        .accessibilityHint(openTitle)
+        .accessibilityIdentifier("widget.peek.open")
+    }
+
+    /// The decision's options as the inbox draws them: a click stages one (or sends it, by the Decision click
+    /// setting) without opening anything, and the row says Staged at once. A send shows its outcome here.
+    private var optionList: some View {
+        VStack(alignment: .leading, spacing: 5) {
+            ForEach(Array(options.prefix(Self.shownOptions).enumerated()), id: \.offset) { index, option in
+                // A pick sent at once stays in the popup, which shows its outcome (`peekOutcome`), or opens its session
+                // when "After a send" says so (UX audit P11: it expanded the whole panel by itself, with no setting).
+                // Read at the click, ⌘ included: a click that only stages never opens anything.
+                WidgetItemOptionButton(model: model, item: item, index: index, option: option) {
+                    if !model.clickStagesNow, Self.sendOpensSession(model.snapshot?.state.preferences) { open() }
+                }
             }
-            // The pane is never shorter than the rail beside it; the decision's options fill it with what the click
-            // will ask, instead of an empty card (Martin, 2026-10-25: "this is now quite ugly").
-            if item.needsAnswer, let options = item.options, !options.isEmpty {
-                WidgetPeekOptions(options: options, recommended: item.recommended).padding(.top, 4)
+            if options.count > Self.shownOptions {
+                // A count opens what it counts (UX audit P5): the decision in its session, with every option.
+                moreButton("\(options.count - Self.shownOptions) more in its session",
+                           tooltip: "Opens the decision in its session with all its options") { open() }
             }
         }
+    }
+
+    /// A decision answered outside the widget: the option it took, marked as the answer, who recorded it, and the
+    /// answer's own words when they say more than the option.
+    private var answeredBody: some View {
+        let picks = WidgetAlerts.answeredOptions(item)
+        let answer = item.answer?.trimmingCharacters(in: .whitespacesAndNewlines) ?? ""
+        let saysMore = !answer.isEmpty && !picks.contains { $0.text.caseInsensitiveCompare(answer) == .orderedSame }
+            && answer.lowercased() != (item.option ?? "").lowercased()
+        return VStack(alignment: .leading, spacing: 5) {
+            ForEach(picks, id: \.letter) { pick in WidgetAnsweredOptionRow(letter: pick.letter, text: pick.text) }
+            if saysMore {
+                Text(answer).font(.system(size: 12)).lineLimit(4).fixedSize(horizontal: false, vertical: true)
+                    .padding(.horizontal, 8)
+            }
+            Text(WidgetAlerts.answeredViaText(item.answeredVia)).font(.system(size: 11))
+                .foregroundStyle(.secondary).padding(.horizontal, 8)
+        }
+        .accessibilityIdentifier("widget.peek.answered")
+    }
+
+    /// The alerts that came while this one was open (Alerts → Several at once: listed together), one line each. A
+    /// click shows that alert here in full, and this one takes its row.
+    private var waitingList: some View {
+        let waiting = model.peekQueue
+        return VStack(alignment: .leading, spacing: 2) {
+            Text(waiting.count == 1 ? "1 more alert" : "\(waiting.count) more alerts")
+                .font(.system(size: 11, weight: .medium)).foregroundStyle(.secondary).padding(.leading, 8)
+            ForEach(waiting.prefix(Self.shownWaiting), id: \.id) { other in
+                Button { model.showWaitingPeek(other) } label: {
+                    HStack(spacing: 6) {
+                        Image(systemName: Self.mark(other).symbol).font(.system(size: 10))
+                            .foregroundStyle(Self.mark(other).tint)
+                        Text(WidgetAlerts.kicker(other)).font(.system(size: 11, weight: .semibold))
+                            .foregroundStyle(other.needsAnswer || other.isAnsweredElsewhere ? Self.mark(other).tint : .secondary)
+                        Text(other.title ?? "").font(.system(size: 11)).foregroundStyle(.secondary)
+                            .lineLimit(1).truncationMode(.tail)
+                        Spacer(minLength: 0)
+                    }
+                    .padding(.horizontal, 8).padding(.vertical, 4)
+                    .frame(maxWidth: .infinity, alignment: .leading)
+                    .contentShape(Rectangle())
+                }
+                .buttonStyle(RowButtonStyle(cornerRadius: WidgetOptionLabel.cornerRadius))
+                .instantTooltip("Show it here")
+                .accessibilityLabel(WidgetAlerts.kicker(other) + ": " + (other.title ?? ""))
+                .accessibilityHint("Shows it here")
+            }
+            if waiting.count > Self.shownWaiting {
+                moreButton("\(waiting.count - Self.shownWaiting) more in the inbox",
+                           tooltip: "Opens the inbox of every session") {
+                    guard let surface = model.hoveredSurface else { return }
+                    model.toggleInboxOverview(on: surface)
+                }
+            }
+        }
+        .accessibilityElement(children: .contain)
+        .accessibilityIdentifier("widget.peek.waiting")
+    }
+
+    /// The staged decisions, one line each: the decision, its title and the pick or "note".
+    private var stagedBody: some View {
+        let staged = model.stagedItems
+        return VStack(alignment: .leading, spacing: 3) {
+            ForEach(staged.prefix(Self.shownWaiting + 1), id: \.id) { row in
+                HStack(spacing: 6) {
+                    // Blue: staged reads blue on every surface; orange is "waiting for your answer" (F2).
+                    Text(WidgetWords.decision(row.number)).font(.system(size: 11, weight: .semibold))
+                        .foregroundStyle(SessionPalette.blue)
+                    Text(row.title ?? "").font(.system(size: 11)).lineLimit(1).truncationMode(.tail)
+                    Spacer(minLength: 4)
+                    Text(model.shownStagedOption(row.sourceId, stored: row.draftOption)
+                        .map { $0.map { "\($0))" }.joined(separator: " ") } ?? "note")
+                        .font(.system(size: 11, weight: .medium)).foregroundStyle(.secondary)
+                }
+                .padding(.horizontal, 8)
+                .accessibilityElement(children: .combine)
+            }
+            if staged.count > Self.shownWaiting + 1 {
+                moreButton("\(staged.count - Self.shownWaiting - 1) more staged",
+                           tooltip: "Opens the staged decisions in the inbox") { open() }
+            }
+        }
+        .accessibilityElement(children: .contain)
+        .accessibilityIdentifier("widget.peek.staged")
+    }
+
+    /// The outcome of a send from this popup: delivered (green), or not delivered with the reason (orange), its hub
+    /// details behind Details. The model keeps it for Close after send, then the popup moves on.
+    private func outcomeBlock(_ outcome: WidgetPeekOutcome) -> some View {
+        let tint = WidgetToneLook.color(outcome.tone)
+        return VStack(alignment: .leading, spacing: 6) {
+            HStack(alignment: .top, spacing: 7) {
+                Image(systemName: WidgetToneLook.symbol(outcome.tone) ?? "info.circle")
+                    .foregroundStyle(tint).padding(.top, 1).accessibilityHidden(true)
+                Text(outcome.text).font(.system(size: 12)).fixedSize(horizontal: false, vertical: true)
+            }
+            if let detail = outcome.detail, !detail.isEmpty {
+                WidgetNoticeDetails(text: detail)
+            }
+        }
+        .padding(8).frame(maxWidth: .infinity, alignment: .leading)
+        .background(tint.opacity(0.12), in: RoundedRectangle(cornerRadius: WidgetOptionLabel.cornerRadius))
+        .accessibilityElement(children: .combine)
+        .accessibilityIdentifier("widget.peek.outcome")
+    }
+
+    /// "2 more in its session": a quiet link-like button, since a count opens what it counts.
+    private func moreButton(_ title: String, tooltip: String, action: @escaping () -> Void) -> some View {
+        Button(action: action) {
+            HStack(spacing: 3) {
+                Text(title)
+                Image(systemName: "chevron.right").font(.system(size: 8.5, weight: .semibold))
+            }
+            .font(.system(size: 11)).foregroundStyle(.secondary)
+        }
+        .buttonStyle(.genHover())
+        .padding(.leading, 2)
+        .instantTooltip(tooltip)
+    }
+
+    /// The decision's staged pick or note, here or in the snapshot.
+    private var staged: Bool {
+        model.shownStagedOption(item.sourceId, stored: item.draftOption) != nil
+            || model.shownStagedNote(item.sourceId, item.draft) != nil
+    }
+
+    /// Real buttons where "Click to answer" was a hint: the own answer, then Send now while a pick waits, else Open.
+    private var footer: some View {
+        HStack(spacing: 6) {
+            if let outcome = model.peekOutcome {
+                Spacer(minLength: 0)
+                if !outcome.sendAgain.isEmpty {
+                    let sending = outcome.sendAgain.allSatisfy { model.sendingDecisionIDs.contains($0.sourceId) }
+                    Button(sending ? "Sending…" : "Send again") { model.resendAnswers(outcome.sendAgain) }
+                        .buttonStyle(.genPrimary())
+                        .disabled(sending)
+                        .instantTooltip("Sends the answers again now, instead of with the session's next prompt")
+                        .accessibilityIdentifier("widget.peek.sendAgain")
+                }
+                Button(isReminder ? "Show them" : "Open in its session") { open() }
+            } else {
+                footerButtons
+            }
+        }
+        .buttonStyle(.genHover()).font(.system(size: 11.5)).lineLimit(1)
+        .padding(.horizontal, 2)
+    }
+
+    /// The footer while nothing was sent from the popup: the own answer, then Send now while a pick waits, else Open.
+    @ViewBuilder private var footerButtons: some View {
+        if !options.isEmpty {
+            Button { open(ownAnswer: true) } label: {
+                ViewThatFits(in: .horizontal) {
+                    Label("Write my own answer", systemImage: "square.and.pencil")
+                    Label("Own answer", systemImage: "square.and.pencil")
+                }
+            }
+            .instantTooltip("Opens it in its session with the answer field ready to type")
+            .accessibilityIdentifier("widget.peek.ownAnswer")
+        }
+        Spacer(minLength: 0)
+        if isReminder {
+            let ids = model.stagedItems.map(\.sourceId)
+            let sending = !ids.isEmpty && ids.allSatisfy { model.sendingDecisionIDs.contains($0) }
+            Button("Show them") { open() }
+                .instantTooltip("Opens the staged decisions in the inbox")
+            Button(sending ? "Sending…" : "Send now") { model.sendStaged(ids) }
+                .buttonStyle(.genPrimary())
+                .disabled(ids.isEmpty || sending)
+                .instantTooltip("Sends every staged decision now, one message per session")
+                .accessibilityIdentifier("widget.peek.sendStaged")
+        } else if staged {
+            let sending = model.sendingDecisionIDs.contains(item.sourceId)
+            Button(sending ? "Sending…" : "Send now") {
+                model.sendStaged([item.sourceId], known: [item])
+                if Self.sendOpensSession(model.snapshot?.state.preferences) { open() }
+            }
+                .buttonStyle(.genPrimary())
+                .disabled(sending)
+                .instantTooltip("Sends this staged decision alone, without the others.")
+        } else {
+            Button(openTitle) { open() }
+        }
+    }
+
+    /// Alerts → After a send (`popupSendOpens`): a pick sent from the popup leaves it for its session ("session"), or
+    /// the popup stays and shows the send's result ("stay", the default).
+    static func sendOpensSession(_ preferences: WidgetPreferences?) -> Bool {
+        preferences?.popupSendOpens == "session"
     }
 
     private var popupAttention: AttentionPulseStyle {
@@ -616,50 +883,28 @@ struct WidgetPeekView: View {
     }
 }
 
-/// A decision's options in the alert card, up to four, the recommended one marked; read-only, the card's click answers.
-struct WidgetPeekOptions: View {
-    let options: [String]
-    let recommended: String?
+/// An option a decision took outside the widget: the option row's shape, green, with a check where the inbox puts
+/// its recommended mark.
+struct WidgetAnsweredOptionRow: View {
+    let letter: String
+    let text: String
 
     var body: some View {
-        VStack(alignment: .leading, spacing: 4) {
-            ForEach(Array(options.prefix(4).enumerated()), id: \.offset) { index, option in
-                let picked = Self.isRecommended(option, at: index, recommended)
-                HStack(alignment: .firstTextBaseline, spacing: 6) {
-                    Image(systemName: picked ? "star.fill" : "circle")
-                        .font(.system(size: picked ? 8 : 6, weight: .semibold))
-                        .foregroundStyle(picked ? Color.green : Color.secondary)
-                        .frame(width: 10)
-                    Text(option).font(.system(size: 11.5)).lineLimit(2).fixedSize(horizontal: false, vertical: true)
-                        .foregroundStyle(picked ? .primary : .secondary)
-                }
-                .accessibilityElement(children: .combine)
-                .accessibilityLabel(option + (picked ? ", recommended" : ""))
-            }
-            if options.count > 4 {
-                Text("\(options.count - 4) more").font(.system(size: 10.5)).foregroundStyle(.secondary).padding(.leading, 16)
-            }
+        let shape = RoundedRectangle(cornerRadius: WidgetOptionLabel.cornerRadius)
+        HStack(alignment: .top, spacing: 8) {
+            Text(verbatim: letter).font(.system(size: 11, weight: .semibold, design: .rounded))
+                .padding(.horizontal, 4).frame(minWidth: 20, minHeight: 20)
+                .background(.white.opacity(0.07), in: RoundedRectangle(cornerRadius: 5))
+            Text(text).font(.system(size: 12)).fixedSize(horizontal: false, vertical: true).padding(.top, 2)
+            Spacer(minLength: 0)
+            Image(systemName: "checkmark").font(.system(size: 11, weight: .bold)).foregroundStyle(.green)
+                .padding(.top, 3).accessibilityHidden(true)
         }
-    }
-
-    /// The single alert button speaks the same four options and recommendation its label draws.
-    static func accessibilityValue(_ item: WidgetInboxItem) -> String {
-        guard item.needsAnswer, let options = item.options else { return "" }
-        var labels = options.prefix(4).enumerated().map { index, option in
-            option + (isRecommended(option, at: index, item.recommended) ? ", recommended" : "")
-        }
-        if options.count > 4 { labels.append("\(options.count - 4) more") }
-        return labels.joined(separator: "; ")
-    }
-
-    /// The hub names the recommended option by its letter ("b") or its whole text.
-    static func isRecommended(_ option: String, at index: Int, _ recommended: String?) -> Bool {
-        guard let recommended = recommended?.trimmingCharacters(in: .whitespaces).lowercased(), !recommended.isEmpty
-        else { return false }
-        let lower = option.lowercased()
-        let letter = String(UnicodeScalar(97 + index)!)
-        return recommended == letter || lower == recommended
-            || lower.hasPrefix(recommended + ")") || lower.hasPrefix(recommended + ".")
+        .padding(8).frame(maxWidth: .infinity, alignment: .leading)
+        .background(Color.green.opacity(0.12), in: shape)
+        .overlay(shape.strokeBorder(Color.green.opacity(0.45), lineWidth: 1))
+        .accessibilityElement(children: .combine)
+        .accessibilityLabel("Answered " + letter + ": " + text)
     }
 }
 
@@ -677,7 +922,7 @@ struct AgentWidgetModuleView: View {
                 Text(model.selected?.title ?? "Your agent inbox").font(.system(size: 13, weight: .semibold))
                     .lineLimit(2)
                 if let card = model.card {
-                    Text(card.numberedTitle).font(.system(size: 12)).lineLimit(3)
+                    Text(WidgetWords.numbered(card.title, number: card.number)).font(.system(size: 12)).lineLimit(3)
                     if !card.body.isEmpty {
                         Text(card.body).font(.system(size: 11)).foregroundStyle(.secondary).lineLimit(3)
                     }

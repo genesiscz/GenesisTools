@@ -3,6 +3,57 @@
 Newest first. Each entry: date, symptom as the user saw it, cause, fix, commit. Generic lessons go to
 checklist.md or motion.md as well.
 
+- 2026-10-27 20:01 — **The widget's own answer field dropped and restored typed text, and ⌘A / ⌘C only beeped.**
+  - *A late snapshot wrote an older draft into the field.* `hub widget watch` reads state.json when a snapshot starts
+    and sends it 1 to 17 s later, and the model let any snapshot write a draft once its last save had landed. The
+    saves showed it: 180 bytes stored at 19:41:18, then the field saved exactly the 101 bytes stored at 19:41:03.
+    Fix: `FieldTextOwnership` (GenesisKit): a field with the keyboard, typed into in the last 3 s, with a save on the
+    way, or whose snapshot was read before its last stored write (state.json's revision as the floor) keeps its text.
+    Rule: a field that round-trips through stored state is never written by a snapshot older than its own last save.
+  - *Edit shortcuts beeped in the widget panels and the widget's and Clicky's settings windows.* Those faces build
+    their own main menu without an Edit menu, and ⌘A, ⌘C, ⌘X, ⌘Z only reach a field editor through one. Fix:
+    `EditingPanel` sends them to the first responder, and `StandardEditing.menuItem()` is in both faces' menus.
+    Rule: a face that sets `NSApp.mainMenu` adds `StandardEditing.menuItem()`.
+
+- 2026-10-27 03:40 — **The hub Inbox and the widget's decision surfaces (UX audit F1 to F22, P1 to P14).**
+  - *A primary button's blue was picked by eye.* White on the first "send blue" measured 4.19:1, and
+    `SessionPalette.blue` as a fill 2.6:1. Fix: `GenPrimaryButtonStyle.blue` (0.12, 0.32, 0.80) with a test that
+    computes the contrast of the white label. Lesson: a fill under text gets a computed 4.5:1 assertion, never a look.
+  - *Typing a note staged the decision.* A 600 ms autosave after each pause wrote a staged note, showed "Send 1 answer"
+    mid-sentence and reloaded every session (306 to 432 ms of main thread per load). Fix: the note stays in the card and
+    in the model's `noteTexts`, and only Return, ⌘-Return, Stage note or a pick writes it. Rule: typing never writes
+    the store; staging is an explicit act.
+  - *One state, four words.* The same closed decision read "sent" in its header and "queued … when the decisions hook
+    is on" in its footer; "D22" beside "Decision 22"; "3 answers waiting" for three open questions. Fix: one vocabulary
+    in GenesisKit (`WidgetWords`, `LiveWidgetView.statusPhrase`) that the hub and the widget both call.
+  - *A flash trigger built from the selection.* The planned `focusedItemID == id ? focusRequest : 0` changes again when
+    the reveal clears and when another card is revealed, and `AttentionPulse` plays on every change, so the old card
+    would flash a second time. Fix: a reveal count per item (`revealCounts[id]`). Rule: an attention trigger changes
+    only for its own target. Caught in review, before it shipped.
+  - *An option label kept the agent's letter* ("a) a) keep it" on 176 of 201 options), because the row drew the badge
+    and the raw label. Fix: `InboxChoice.shownLabel` through `WidgetOptionText.text`, in the row and in ⌘F.
+  - *A failed widget call showed Foundation's own words* ("The data couldn't be read because it isn't in the correct
+    format.") as the whole error. Fix: `WidgetErrorText` maps the error to one sentence, the decoder's text goes behind
+    Details, and the error offers Reconnect.
+  - Commits **c69ce78bda** (widget), **68de680c8** (hub Inbox), **39de367d7** (After a send, the error text).
+
+- 2026-10-26 14:22 — **The decision alert and the own answer (Martin's screenshot of DECISION 15: "this is still ugly").**
+  - *The alert read as an empty card.* A fill and a border inside the panel (a card in a card), options drawn as radio
+    circles that took no click, and a faint "Click to answer" pinned under a band of nothing. Fix: no card in the
+    panel; the options are the inbox's option buttons (`WidgetItemOptionButton`, one view for the alert, a session's
+    inbox and the inbox of every session); the footer has real buttons. Lesson: a thing drawn like a choice or an
+    input must be one.
+  - *"Write my own answer" did not focus the field, and the card jumped 103 pt up under the pointer.* The row was
+    swapped for a new composer whose `.onAppear` focus ran before the field existed, and the reply composer above hid
+    in the same update. Fix: the own answer is one field in both states, so the keyboard never moves between two
+    views; the reply composer parks in its place at its height. Check: `testAClickOnTheOwnAnswerFieldTypesThereInPlace`
+    clicks for real and asserts where the first responder is, the typed text and the field's frame.
+  - *A test trap:* a key event posted to a hidden test window goes nowhere, because the window is never key. Insert
+    the text into its first responder instead.
+  - *A capture trap:* the hosted render of the whole panel drew the old code's decision card as a white block, while
+    the new code's rendered. A `cacheDisplay` limit, not the look: retake it or check the live app before calling it a
+    change.
+
 - 2026-10-25 21:55 — **The git sidebar's Repository list (Martin's report, six points).** Branch feat/2026-10-25-repo-panel.
   - *A deleted file said "This file is not in a git repository", and the list then said it too.* git ran in the deleted
     file's folder. Fix: the nearest existing ancestor; the list keeps the last repository (02b5a96462).

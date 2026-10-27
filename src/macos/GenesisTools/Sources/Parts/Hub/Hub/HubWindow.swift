@@ -99,10 +99,24 @@ struct HubRequest {
     var from: String?
     var nav: String?
 
+    /// What the request named that the hub cannot open (an unknown mode or tab, a file with no PR), said in the
+    /// header instead of dropped without a word.
+    var problems: [String] = []
+
     /// The file `--reveal` names, in the PR `--pr` names.
     var prReveal: PRReveal? {
         guard let pr, let reveal, !reveal.isEmpty else { return nil }
         return PRReveal(ref: pr, path: reveal, threadID: nil)
+    }
+
+    /// The mode a first launch opens in: `--mode`, else the mode of the place the request names. A `--worktree` alone
+    /// opened the Sessions mode, while a running hub took the same request to Worktrees (`navigate`).
+    var launchMode: HubMode {
+        if let mode { return mode }
+        if agent != nil { return .agents }
+        if pr != nil { return .prs }
+        if commit != nil || worktree != nil { return .worktrees }
+        return inboxItem != nil ? .inbox : .sessions
     }
 
     /// Off screen, never active, on scratch settings.
@@ -121,8 +135,18 @@ struct HubRequest {
             case "--reveal": reveal = value; index += 1
             case "--commit": commit = value; index += 1
             case "--repo": repo = value; index += 1
-            case "--tab": tab = value.flatMap(HubTab.init(rawValue:)); index += 1
-            case "--mode": mode = value.flatMap(HubMode.init(rawValue:)); index += 1
+            case "--tab":
+                tab = value.flatMap(HubTab.init(rawValue:))
+                if tab == nil, let value {
+                    problems.append("tab=\(value) is no hub tab (\(HubTab.allCases.map(\.rawValue).joined(separator: ", ")))")
+                }
+                index += 1
+            case "--mode":
+                mode = value.flatMap(HubMode.init(rawValue:))
+                if mode == nil, let value {
+                    problems.append("mode=\(value) is no hub mode (\(HubMode.allCases.map(\.rawValue).joined(separator: ", ")))")
+                }
+                index += 1
             case "--panes":
                 let list = (value ?? "").split(separator: ",").compactMap { HubTab(rawValue: String($0)) }
                 panes = list.isEmpty ? nil : list
@@ -177,6 +201,9 @@ struct HubRequest {
             }
             index += 1
         }
+        if reveal != nil, pr == nil {
+            problems.append("reveal=\(reveal ?? "") opens a file in a PR's review: the link names no PR (pr=)")
+        }
     }
 
     /// The text of `--palette [text]` and `--find [text]`: the next argument unless it is another
@@ -207,8 +234,7 @@ package func runHub(_ args: [String]) -> Never {
     let wantedPR = request.pr
     let tab = request.tab ?? .transcript
     // `--pr` alone means the PRs mode, as it does for a request handed to a running hub (`apply`).
-    let mode = request.mode ?? (request.agent != nil ? .agents : request.pr != nil ? .prs
-        : request.commit != nil ? .worktrees : request.inboxItem != nil ? .inbox : .sessions)
+    let mode = request.launchMode
     let activate = request.activate
     if !request.isScripted, !HubSingleInstance.claim() {
         exit(HubSingleInstance.forwardToRunningHub(args) ? 0 : 1)
@@ -689,6 +715,8 @@ final class HubModel: ObservableObject {
     var readSessions: (Int) async throws -> [HubSession] = { try await HubSource.sessions(hours: $0) }
     var readSessionCache: (Int) async -> [HubSession]? = { await HubSessionListCache.read(hours: $0) }
     var writeSessionCache: ([HubSession], Int) -> Void = { HubSessionListCache.write($0, hours: $1) }
+    /// The PR of a branch of the checkout at a root, from the forge (`HubCommitLookup.branchPR`); runs off the main thread.
+    var findBranchPR: @Sendable (_ root: String, _ branch: String) -> String? = { HubCommitLookup.branchPR(root: $0, branch: $1) }
     var readTranscript: (HubSession, Int) async throws -> TranscriptEnvelope = { try await HubSource.transcript($0, limit: $1) }
     var readDecisions: (String) throws -> SessionDecisionsEnvelope = {
         try JSONDecoder().decode(SessionDecisionsEnvelope.self, from: ToolsCLIRunner.run(["question", "inbox", "--session", $0, "--json"]))
@@ -913,7 +941,9 @@ final class HubModel: ObservableObject {
             return mode == .worktrees && shownCommit.map { $0.commit.lowercased().hasPrefix(from) && selectedWorktree == $0.repo } == true
         }
         if let worktree = asked.worktree {
-            return mode == .worktrees && selectedWorktree == WorktreeCleanup.selection(for: worktree)
+            // A folder inside a worktree selects that worktree.
+            let wanted = WorktreeCleanup.selection(for: worktree)
+            return mode == .worktrees && selectedWorktree.map { wanted == $0 || wanted.hasPrefix($0 + "/") } == true
         }
         if asked.agent != nil || asked.mode == .agents, asked.session != nil || asked.agent != nil {
             return mode == .agents && agents.matchesRequest(parent: asked.session, child: asked.agent ?? AgentTree.mainChild)
@@ -1065,13 +1095,35 @@ final class HubModel: ObservableObject {
         }
     }
 
-    /// A place's title with the commit shown in it: "PR #563 Fix it · commit 0751d8a971".
+    /// A place's title with the commit shown in it: "PR #563 Fix it · commit 0751d8a971". A commit of a branch the
+    /// checkout's row does not name says what holds it: "app feat/x (PR #12) · commit 0751d8a971".
     @MainActor
     func navTitle(_ target: HubNavTarget) -> String {
         guard let place = target.place else { return HubNavRequest(HubRequest(target.arguments))?.title ?? "Hub" }
-        let name = navTitle(place)
+        var name = navTitle(place)
         guard let commit = target["commit"] else { return name }
+        if place.mode == .worktrees, let shown = shownCommit, shown.repo == place.selection, shown.commit == commit,
+           let holder = shown.holder {
+            name = "\(worktrees.first { $0.path == shown.repo }?.repo ?? (shown.repo as NSString).lastPathComponent) \(holder)"
+        }
         return "\(name) · commit \(commit.split(separator: ".").filter { !$0.isEmpty }.map { String($0.prefix(10)) }.joined(separator: ".."))"
+    }
+
+    /// Names what holds the shown commit once it is known (a branch's PR arrives from the forge after the place
+    /// showed the branch alone): the label, and the title of the place's History entry when it is recorded already.
+    /// False when the hub shows something else by now.
+    @MainActor
+    func nameCommitHolder(_ holder: String, for shown: HubShownCommit) -> Bool {
+        guard shownCommit == shown else { return false }
+        // A label is no navigation: a newer link's lookup still in flight keeps its turn.
+        let request = commitLinkRequest
+        shownCommit = HubShownCommit(repo: shown.repo, commit: shown.commit, holder: holder)
+        commitLinkRequest = request
+        let target = navTarget(navEntry)
+        if let id = history.currentID, history.entry(id)?.target == target {
+            persistNav(history.retitle(id, navTitle(target)))
+        }
+        return true
     }
 
     /// What a history entry shows, for the arrows' tooltips.
@@ -1227,6 +1279,13 @@ final class HubModel: ObservableObject {
         selectWorktree(busiest)
     }
 
+    /// The review the Worktrees page shows for `worktree`: the one made for it. Matched on `home`, never `repo`:
+    /// the first load moves `repo` to the diff layout's root, which spells git's `/private/tmp/…` as `/tmp/…`, so
+    /// a worktree under /tmp or /var stayed on "Loading the worktree's changes…" (2026-10-26).
+    func review(showing worktree: HubWorktree) -> ReviewModel? {
+        review.flatMap { $0.home.path == worktree.path ? $0 : nil }
+    }
+
     func selectWorktree(_ worktree: HubWorktree) {
         selectedWorktree = worktree.path
         shownCommit = nil
@@ -1246,11 +1305,11 @@ final class HubModel: ObservableObject {
     /// `--repo` + `--commit` link. The checkout is selected before the mode opens, so a first walk of
     /// the worktrees includes it; a launch that has not settled yet opens the mode when it settles.
     @MainActor
-    func showCommit(repo: String, sha: String, title: String, base: String? = nil, link: String? = nil) {
+    func showCommit(repo: String, sha: String, title: String, base: String? = nil, link: String? = nil, holder: String? = nil) {
         cancelSessionNavigation()
         commitLinkRequest = UUID()
         selectedWorktree = repo
-        shownCommit = HubShownCommit(repo: repo, commit: link ?? String(sha.prefix(12)))
+        shownCommit = HubShownCommit(repo: repo, commit: link ?? String(sha.prefix(12)), holder: holder)
         notice = nil
         if didSettleLaunch || initialMode != .worktrees {
             setMode(.worktrees)
@@ -1465,7 +1524,14 @@ final class HubModel: ObservableObject {
                     withAnimation(SWR.animation) { self.worktrees += added }
                 }
                 if !self.worktrees.contains(where: { $0.path == path }) {
-                    self.error = "\(path) is not a git worktree"
+                    // A folder inside a worktree (a link to `src/` of a checkout) selects that worktree.
+                    if let owner = WorktreeCleanup.owner(of: path, in: self.worktrees) {
+                        if self.selectedWorktree == path {
+                            self.selectedWorktree = owner.path
+                        }
+                    } else {
+                        self.error = "\(path) is not a git worktree"
+                    }
                 }
             }
         }
@@ -1649,9 +1715,10 @@ final class HubModel: ObservableObject {
 
     /// The folder the File menu's Cursor / cmux / New session and the palette's commands act on: the
     /// worktree or PR on screen in those modes, else the selected session's project. Only the session
-    /// was read, so in Worktrees mode they opened the wrong folder or refused.
+    /// was read, so in Worktrees mode they opened the wrong folder or refused. The File menu reads this, never
+    /// `paletteContext`, whose project list walks every session's folders (a 535 ms stall sampled in menu validation).
     @MainActor
-    private var paletteCurrentPath: String? {
+    var paletteCurrentPath: String? {
         if mode == .worktrees, let path = selectedWorktree, path != WorktreeCleanup.selectionID {
             return path
         }
@@ -1674,7 +1741,7 @@ final class HubModel: ObservableObject {
             roots.append(path)
         } else if mode == .prs, let path = prs.selected?.localWorktree ?? prs.selected?.repoRoot {
             roots.append(path)
-        } else if let current = paletteContext.currentPath {
+        } else if let current = paletteCurrentPath {
             roots.append(current)
         }
         roots += extraFolders.filter { !roots.contains($0) }
@@ -1753,6 +1820,10 @@ final class HubModel: ObservableObject {
 
     /// `--filter`, `--palette`, `--find`: the list filter and the two overlays, first launch or later.
     func applyOverlays(_ request: HubRequest) {
+        if !request.problems.isEmpty {
+            HubPerf.log("hub.request problems: \(request.problems.joined(separator: "; "))")
+            post(request.problems.joined(separator: "; "), .warning)
+        }
         if let mode = request.widgetDestination, ["new", "resume"].contains(mode) {
             MainActor.assumeIsolated {
                 HubWidgetDestinationStore.shared.request = HubWidgetDestinationRequest(
@@ -1827,7 +1898,8 @@ final class HubModel: ObservableObject {
             navigate(request)
             return true
         }
-        if asked.actor != .user, MainActor.assumeIsolated({ HubDefaults.preferences.agentNavigation }) == .listOnly {
+        // Only an agent's push waits in History: a link is a click of the person reading the reply.
+        if asked.actor == .agent, MainActor.assumeIsolated({ HubDefaults.preferences.agentNavigation }) == .listOnly {
             MainActor.assumeIsolated {
                 let entry = history.record(asked.target, title: asked.title, actor: asked.actor, agentSession: asked.from,
                                            note: asked.note, id: asked.id)
@@ -1879,8 +1951,9 @@ final class HubModel: ObservableObject {
         }
         if let worktree = request.worktree {
             setMode(.worktrees)
-            selectedWorktree = WorktreeCleanup.selection(for: worktree)
-            MainActor.assumeIsolated { addWorktreesIfMissing(worktree) }
+            let wanted = WorktreeCleanup.selection(for: worktree, in: worktrees)
+            selectedWorktree = wanted
+            MainActor.assumeIsolated { addWorktreesIfMissing(wanted) }
         }
         if let ref = request.pr {
             MainActor.assumeIsolated { prs.request(ref, reveal: request.prReveal, commit: request.commit) }

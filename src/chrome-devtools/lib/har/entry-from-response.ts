@@ -2,7 +2,15 @@
 import { logger } from "@genesiscz/utils/logger";
 import { parseRequestCookies, parseResponseCookies } from "./cookies.ts";
 import { calculateRequestHeaderSize, calculateResponseHeaderSize, getHeaderValue, parseHeaders } from "./headers.ts";
-import type { CdpResourceTiming, CdpResponse, HarBuildOptions, HarEntry, HarPage } from "./types.ts";
+import type {
+    CdpBlockedCookie,
+    CdpResourceTiming,
+    CdpResponse,
+    HarBuildOptions,
+    HarCookie,
+    HarEntry,
+    HarPage,
+} from "./types.ts";
 import { formatMillis, isHttp1x } from "./util.ts";
 
 const log = logger.child({ component: "chrome-devtools:har" });
@@ -37,6 +45,27 @@ function formatIP(ipAddress: string | undefined): string | undefined {
     return ipAddress.replaceAll(/^\[|]$/g, "");
 }
 
+/** Drops the cookies CDP reports as blocked. Matches by name, like upstream (see build.ts). */
+export function withoutBlockedCookies(cookies: HarCookie[], blockedCookies: CdpBlockedCookie[]): HarCookie[] {
+    return cookies.filter(
+        ({ name }) =>
+            !blockedCookies.some((blockedCookie) => {
+                if (blockedCookie.cookie) {
+                    return blockedCookie.cookie.name === name;
+                }
+
+                if (blockedCookie.cookieLine) {
+                    const cookie = parseResponseCookies(blockedCookie.cookieLine)[0];
+                    if (cookie) {
+                        return cookie.name === name;
+                    }
+                }
+
+                return false;
+            })
+    );
+}
+
 export function entryFromResponse(
     entry: HarEntry,
     response: CdpResponse,
@@ -52,23 +81,7 @@ export function entryFromResponse(
     if (entry.extraResponseInfo) {
         const blockedCookies = entry.extraResponseInfo.blockedCookies;
         if (blockedCookies) {
-            cookies = cookies.filter(
-                ({ name }) =>
-                    !blockedCookies.some((blockedCookie) => {
-                        if (blockedCookie.cookie) {
-                            return blockedCookie.cookie.name === name;
-                        }
-
-                        if (blockedCookie.cookieLine) {
-                            const cookie = parseResponseCookies(blockedCookie.cookieLine)[0];
-                            if (cookie) {
-                                return cookie.name === name;
-                            }
-                        }
-
-                        return false;
-                    })
-            );
+            cookies = withoutBlockedCookies(cookies, blockedCookies);
         }
 
         delete entry.extraResponseInfo;

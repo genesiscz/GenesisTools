@@ -19,6 +19,11 @@ enum HubCommitSha {
         commits.first { $0.sha.lowercased().hasPrefix(sha) }
     }
 
+    /// Whether the full sha `full` starts with `sha` (normalized), as `find` matches a list.
+    static func matches(_ sha: String, _ full: String) -> Bool {
+        full.lowercased().hasPrefix(sha)
+    }
+
     static func invalid(_ raw: String) -> String {
         "\(raw.prefix(48)) is not a commit: a link names one by 7 to 40 hex characters, or a range as <from>..<to>"
     }
@@ -95,8 +100,12 @@ struct HubLocalCommits: Equatable {
     }
 
     /// `ends` are the link's normalized shas, `head` the PR's pushed head and `pushed` the shas the forge lists for it.
-    /// Runs git, so never on the main thread.
-    nonisolated static func resolve(ends: [String], repo: String, head: String, pushed: Set<String> = []) -> Result<HubLocalCommits, Miss> {
+    /// `bases` are the PR's base candidates, best first (the recorded base commit, the fetched base, `origin/<base>`):
+    /// the first that names a commit here decides membership by ancestry, because the forge's list can stop early
+    /// (gh listed 100 commits of a 252-commit PR, and GitHub's REST API lists 250 at most). Runs git, so never on the
+    /// main thread.
+    nonisolated static func resolve(ends: [String], repo: String, head: String, bases: [String] = [],
+                                    pushed: Set<String> = []) -> Result<HubLocalCommits, Miss> {
         var full: [String] = []
         for end in ends {
             guard let sha = git(repo, ["rev-parse", "--verify", "--quiet", end + "^{commit}"])?
@@ -109,8 +118,16 @@ struct HubLocalCommits: Equatable {
             guard isAncestor(last, of: first, repo: repo) else { return .failure(.unrelated) }
             swap(&first, &last)
         }
-        guard isAncestor(head, of: last, repo: repo),
-              pushed.contains(first) || isAncestor(head, of: first, repo: repo) else {
+        // One of the PR's own commits, listed or not: the head has it and the base does not.
+        let base = bases.lazy.compactMap { candidate in
+            git(repo, ["rev-parse", "--verify", "--quiet", candidate + "^{commit}"])?.trimmingCharacters(in: .whitespacesAndNewlines)
+        }.first { !$0.isEmpty }
+        let inPR = { (sha: String) -> Bool in
+            guard let base else { return false }
+            return isAncestor(sha, of: head, repo: repo) && !isAncestor(sha, of: base, repo: repo)
+        }
+        guard inPR(last) || isAncestor(head, of: last, repo: repo),
+              pushed.contains(first) || inPR(first) || isAncestor(head, of: first, repo: repo) else {
             return .failure(.offBranch)
         }
         let span = Int(git(repo, ["rev-list", "--count", "--ancestry-path", first + ".." + last])?
@@ -123,6 +140,55 @@ struct HubLocalCommits: Equatable {
         let title = git(repo, ["log", "-1", "--format=%s", last])?.trimmingCharacters(in: .whitespacesAndNewlines) ?? ""
         return .success(HubLocalCommits(first: first, last: full.count > 1 ? last : nil, count: span + 1,
                                         unpushed: unpushed, title: title))
+    }
+
+    /// What a link still shows when the PR no longer holds its commits: the branch was rewritten (a rebase, a reword,
+    /// a regroup, a force-push), and the old commits stay in the checkout until git collects them.
+    enum Rewritten: Equatable {
+        /// The PR's own commits with the same subject (and author): the link's commits in their current form.
+        case successors(first: HubPRDetail.Commit, last: HubPRDetail.Commit?)
+        /// No such commit: the link's own commits from the checkout, one commit, or a range from `base` (the parent of
+        /// its older end) to its newer end.
+        case own(first: String, last: String?, title: String, base: String?)
+    }
+
+    /// The commit of `commits` with this subject: the only one, else the only one by this author; nil when none or
+    /// several match. GitLab names a commit's author by name, GitHub by login when it can, so a single subject match
+    /// wins whatever its author says.
+    nonisolated static func successor(subject: String, author: String, in commits: [HubPRDetail.Commit]) -> HubPRDetail.Commit? {
+        let same = commits.filter { $0.title == subject }
+        if same.count == 1 { return same[0] }
+        let byAuthor = same.filter { candidate in
+            [candidate.author, candidate.authorLogin].contains { $0?.caseInsensitiveCompare(author) == .orderedSame }
+        }
+        return byAuthor.count == 1 ? byAuthor[0] : nil
+    }
+
+    /// The `ends` of a link the PR does not hold, as `Rewritten`: their successors in `commits` when every end has one,
+    /// else their own diff from the checkout at `repo`. Nil when an end is not in the checkout, or a range's ends are on
+    /// two lines (no diff runs between them). Runs git, so never on the main thread.
+    nonisolated static func rewritten(ends: [String], repo: String, in commits: [HubPRDetail.Commit]) -> Rewritten? {
+        var found: [(sha: String, subject: String, author: String)] = []
+        for end in ends {
+            guard let line = git(repo, ["show", "-s", "--format=%H%x00%s%x00%an", end + "^{commit}", "--"])?
+                .trimmingCharacters(in: .whitespacesAndNewlines) else { return nil }
+            let parts = line.components(separatedBy: "\0")
+            guard parts.count == 3 else { return nil }
+            found.append((parts[0], parts[1], parts[2]))
+        }
+        guard let one = found.first else { return nil }
+        let successors = found.map { successor(subject: $0.subject, author: $0.author, in: commits) }
+        if successors.allSatisfy({ $0 != nil }), let first = successors[0] {
+            return .successors(first: first, last: successors.count > 1 ? successors[1] : nil)
+        }
+        guard found.count > 1 else {
+            return .own(first: one.sha, last: nil, title: one.subject, base: nil)
+        }
+        let other = found[1]
+        let ordered = one.sha == other.sha || isAncestor(one.sha, of: other.sha, repo: repo) ? (one, other)
+            : isAncestor(other.sha, of: one.sha, repo: repo) ? (other, one) : nil
+        guard let (older, newer) = ordered, let base = HubCommitLookup.parent(of: older.sha, in: repo) else { return nil }
+        return .own(first: older.sha, last: newer.sha, title: newer.subject, base: base)
     }
 
     nonisolated private static func isAncestor(_ older: String, of newer: String, repo: String) -> Bool {
@@ -163,6 +229,21 @@ enum HubCommitLookup {
         let title: String
         /// For a range: the parent of its first commit, so the diff shows every commit of it.
         var base: String? = nil
+        /// What holds the commit when `root`'s own branch does not (`holding(_:in:)`).
+        var holder: Holder = .row
+    }
+
+    /// Which branch holds a `repo=` link's commit. The link opens under a checkout's row, and the row names that
+    /// checkout's branch, which is wrong for a commit of another branch ("worktree app develop · commit d0a41ccc89"
+    /// for a commit only an MR's branch has).
+    enum Holder: Equatable {
+        /// The checkout's HEAD holds it, so its row names the right branch.
+        case row
+        /// A branch no checkout has: `display` as the hub says it (`origin/feat/x` when only the remote has it),
+        /// `head` as a PR names its head branch (`feat/x`).
+        case branch(display: String, head: String)
+        /// No branch holds it: only a PR's ref, a stash or the reflog keeps it.
+        case none
     }
 
     enum Outcome: Equatable {
@@ -172,23 +253,42 @@ enum HubCommitLookup {
 
     /// `repo` is a checkout path (any folder inside it), or a forge path such as `owner/repo` that `known` (else a
     /// fresh `tools hub pr projects`) maps to its checkout. Runs git, so off the main thread.
-    static func resolve(repo: String, sha: String, to: String? = nil, known: [HubPRProject]) -> Outcome {
+    /// `fetch` lists the projects afresh (`tools hub pr projects`): `known` is the hub's list, read once per run, so a
+    /// miss asks again before it is said (a project cloned since, or a commit fetched since into a fork).
+    static func resolve(repo: String, sha: String, to: String? = nil, known: [HubPRProject],
+                        fetch: () throws -> [HubPRProject] = { try PRsModel.fetchProjects() }) -> Outcome {
         let text = repo.trimmingCharacters(in: .whitespacesAndNewlines)
         let folder: String
         if text.hasPrefix("/") || text.hasPrefix("~") {
             folder = (text as NSString).expandingTildeInPath
         } else {
-            let projects: [HubPRProject]
+            var projects: [HubPRProject]
             do {
-                projects = known.isEmpty ? try PRsModel.fetchProjects() : known
+                projects = known.isEmpty ? try fetch() : known
             } catch {
                 return .failed("Could not list the projects to find \(text): \(error)")
             }
             let shas = [sha] + (to.map { [$0] } ?? [])
             // The checkout of the path the link names, while it holds the link's commits; else a fork that does.
-            // With neither, that checkout still answers, so the miss names where the commit was looked for.
-            let exact = PRsModel.projectRoot(text, in: projects)
-            guard let root = exact.flatMap({ holds($0, shas) ? $0 : nil }) ?? sameName(text, holding: shas, in: projects) ?? exact else {
+            let holder = { (projects: [HubPRProject]) -> String? in
+                PRsModel.projectRoot(text, in: projects).flatMap { holds($0, shas) ? $0 : nil } ?? sameName(text, holding: shas, in: projects)
+            }
+            var found = holder(projects)
+            if found == nil, !known.isEmpty {
+                do {
+                    let fresh = try fetch()
+                    found = holder(fresh)
+                    // The fresh list first; a checkout only the old list names still answers where the commit was looked for.
+                    projects = fresh + projects.filter { old in !fresh.contains { $0.root == old.root } }
+                    HubPerf.log("hub.commitLink \(text) \(sha): asked the projects again, \(found == nil ? "still none holds it" : "found it")")
+                } catch {
+                    HubPerf.log("hub.commitLink could not list the projects again: \(error)")
+                }
+            }
+            // With no holder, the checkout of that path, else a clone of the same name, still answers, so the miss
+            // names where the commit was looked for ("not in ~/…/app-tools, fetch it first"), not "no checkout".
+            let clone = sameNamed(text, in: projects).first { FileManager.default.fileExists(atPath: $0.root) }?.root
+            guard let root = found ?? PRsModel.projectRoot(text, in: projects) ?? clone else {
                 return .failed("No checkout of \(text) under the repo roots, so commit \(sha) cannot open")
             }
             folder = root
@@ -206,7 +306,8 @@ enum HubCommitLookup {
         }
         let first = String(line[..<separator])
         guard let to else {
-            return .found(Found(root: root, sha: first, title: String(line[line.index(after: separator)...])))
+            let held = holding(first, in: root)
+            return .found(Found(root: held.root, sha: first, title: String(line[line.index(after: separator)...]), holder: held.holder))
         }
         guard let last = WorktreeDiscovery.git(root, ["rev-parse", "--verify", "--quiet", "\(to)^{commit}"])?.trimmed, !last.isEmpty else {
             return .failed("Commit \(to) is not in \(place) (fetch it first)")
@@ -222,7 +323,90 @@ enum HubCommitLookup {
         }
         let count = WorktreeDiscovery.git(root, ["rev-list", "--count", base == emptyTree ? newer : "\(base)..\(newer)"])?.trimmed ?? "?"
         let label = "\(older.prefix(10))..\(newer.prefix(10)) (\(count) commits)"
-        return .found(Found(root: root, sha: newer, title: label, base: base))
+        let held = holding(newer, in: root)
+        return .found(Found(root: held.root, sha: newer, title: label, base: base, holder: held.holder))
+    }
+
+    /// Where the commit `sha` of the checkout at `root` lives: that checkout while its HEAD holds it; else the linked
+    /// worktree whose HEAD holds it (the nearest one), whose row then names the right branch; else the checkout, with
+    /// the branch that holds it (the nearest of the six newest; a local branch before a remote one). Runs git.
+    static func holding(_ sha: String, in root: String) -> (root: String, holder: Holder) {
+        if WorktreeDiscovery.git(root, ["merge-base", "--is-ancestor", sha, "HEAD"]) != nil {
+            return (root, .row)
+        }
+        let distance = { (head: String) -> Int? in
+            guard WorktreeDiscovery.git(root, ["merge-base", "--is-ancestor", sha, head]) != nil else { return nil }
+            return WorktreeDiscovery.git(root, ["rev-list", "--count", "\(sha)..\(head)"]).flatMap { Int($0.trimmed) }
+        }
+        let own = WorktreeCleanup.normalizedPath(root)
+        var nearest: (path: String, distance: Int)?
+        for block in (WorktreeDiscovery.git(root, ["worktree", "list", "--porcelain"]) ?? "").components(separatedBy: "\n\n") {
+            let lines = block.split(separator: "\n").map(String.init)
+            guard let path = lines.first(where: { $0.hasPrefix("worktree ") }).map({ String($0.dropFirst(9)) }),
+                  let head = lines.first(where: { $0.hasPrefix("HEAD ") }).map({ String($0.dropFirst(5)) }),
+                  WorktreeCleanup.normalizedPath(path) != own, FileManager.default.fileExists(atPath: path),
+                  let steps = distance(head) else { continue }
+            if nearest.map({ steps < $0.distance }) ?? true {
+                nearest = (path, steps)
+            }
+        }
+        if let nearest {
+            return (nearest.path, .row)
+        }
+        for space in ["refs/heads", "refs/remotes"] {
+            let refs = (WorktreeDiscovery.git(root, ["for-each-ref", "--contains", sha, "--sort=-committerdate", "--format=%(refname)", space]) ?? "")
+                .split(separator: "\n").map(String.init).filter { !$0.hasSuffix("/HEAD") }
+            // The branch the commit was made on, not a later one that merged it: the fewest commits past it.
+            let ranked = refs.prefix(6).compactMap { ref in distance(ref).map { (ref, $0) } }
+            guard let ref = ranked.min(by: { $0.1 < $1.1 })?.0 ?? refs.first else { continue }
+            let display = String(ref.dropFirst(space.count + 1))
+            let head = space == "refs/remotes" ? display.split(separator: "/", maxSplits: 1).last.map(String.init) ?? display : display
+            return (root, .branch(display: display, head: head))
+        }
+        return (root, .none)
+    }
+
+    /// The words for what holds a link's commit, in its History title and its notice: the open PR whose head branch
+    /// it is (from the hub's PR list) with that branch, the branch, or "no branch"; nil when the checkout's row names it.
+    static func holderLabel(_ found: Found, prs: [HubPR]) -> String? {
+        switch found.holder {
+        case .row:
+            return nil
+        case .none:
+            return "no branch"
+        case .branch(let display, let head):
+            let root = WorktreeCleanup.normalizedPath(found.root)
+            let pr = prs.first { $0.headBranch == head && $0.repoRoot.map(WorktreeCleanup.normalizedPath) == root }
+            return pr.map { holderLabel(display, pr: $0.label) } ?? display
+        }
+    }
+
+    /// "feat/x (PR #12)": a branch with its PR, in the History title and the notice alike.
+    static func holderLabel(_ display: String, pr: String) -> String {
+        "\(display) (PR \(pr))"
+    }
+
+    /// The PR of `branch` in the project of the checkout at `root`, asked from the forge (`tools hub pr find
+    /// --branch`): `#12` or `!12`; nil when the branch has none or the forge cannot say. Runs a process, so off
+    /// the main thread. The hub's PR list shows one page per project, so an older branch's PR is not in it.
+    static func branchPR(root: String, branch: String) -> String? {
+        do {
+            return branchPRLabel(try ToolsCLIRunner.run(["hub", "pr", "find", "--repo", root, "--branch", branch, "--json"]))
+        } catch {
+            HubPerf.log("hub.commitLink no PR lookup for \(branch): \(error)")
+            return nil
+        }
+    }
+
+    /// `#12` (GitHub) or `!12` (GitLab) out of `tools hub pr find --json`; nil for `"provider": null`.
+    static func branchPRLabel(_ data: Data) -> String? {
+        struct Found: Decodable {
+            let provider: String?
+            let number: Int?
+        }
+        guard let found = try? JSONDecoder().decode(Found.self, from: data), let provider = found.provider,
+              let number = found.number else { return nil }
+        return provider == "gitlab" ? "!\(number)" : "#\(number)"
     }
 
     /// The first parent of `sha` in the checkout at `root`, the base of a range that starts at `sha`: git's empty
@@ -250,16 +434,19 @@ enum HubCommitLookup {
     /// (`me/app`). The projects with the same last name are the candidates, and the first that holds every commit
     /// of the link (both ends of a range) wins.
     static func sameName(_ repo: String, holding shas: [String], in projects: [HubPRProject]) -> String? {
+        sameNamed(repo, in: projects).first { holds($0.root, shas) }?.root
+    }
+
+    /// The projects whose web path ends in the same name as `repo`'s (`app-tools` for `group/team/app-tools`).
+    static func sameNamed(_ repo: String, in projects: [HubPRProject]) -> [HubPRProject] {
         let name = { (path: String) -> String in
             var last = path.lowercased().split(separator: "/").last.map(String.init) ?? ""
             if last.hasSuffix(".git") { last.removeLast(4) }
             return last
         }
         let wanted = name(repo)
-        guard !wanted.isEmpty else { return nil }
-        return projects.first { candidate in
-            name(candidate.project) == wanted && holds(candidate.root, shas)
-        }?.root
+        guard !wanted.isEmpty else { return [] }
+        return projects.filter { name($0.project) == wanted }
     }
 
     /// Git's empty tree: the base of a range that starts at a root commit (`GitWorkingTreeSource` diffs from it).
@@ -272,11 +459,38 @@ extension HubModel {
         guard commitLinkRequest == request else { return }
         switch outcome {
         case .found(let found):
-            showCommit(repo: found.root, sha: found.sha, title: found.title, base: found.base, link: commitLinkRaw)
+            let holder = HubCommitLookup.holderLabel(found, prs: prs.prs)
+            showCommit(repo: found.root, sha: found.sha, title: found.title, base: found.base, link: commitLinkRaw, holder: holder)
+            if let holder {
+                sayCommitHolder(holder, sha: found.sha, root: found.root)
+            }
+            // The PR list holds one page per project, so an older branch's PR may be missing: the forge is asked.
+            if case .branch(let display, let head) = found.holder, holder == display, let shown = shownCommit {
+                let find = findBranchPR, root = found.root
+                Task {
+                    let perf = HubPerf.begin("hub.commitLink.pr", "\(head)", awaits: true)
+                    let pr = await Task.detached(priority: .utility) { find(root, head) }.value
+                    perf.end(pr.map { "PR \($0)" } ?? "no PR")
+                    guard let pr else { return }
+                    let named = HubCommitLookup.holderLabel(display, pr: pr)
+                    if nameCommitHolder(named, for: shown) {
+                        sayCommitHolder(named, sha: found.sha, root: root)
+                    }
+                }
+            }
         case .failed(let message):
             HubPerf.log("hub.commitLink \(message)")
             notice = message
         }
+    }
+
+    /// The row says the checkout's branch, so the screen says where a linked commit really is.
+    @MainActor
+    func sayCommitHolder(_ holder: String, sha: String, root: String) {
+        let branch = worktrees.first { $0.path == root }?.branch
+        let text = "Commit \(sha.prefix(10)) is on \(holder)" + (branch.map { ", not on \($0), the branch of this checkout" } ?? "")
+        HubPerf.log("hub.commitLink \(text)")
+        post(text, .warning)
     }
 
     /// `--commit` without `--pr` (a link's `repo=…&commit=…`): the commit in its project's Worktrees diff. The

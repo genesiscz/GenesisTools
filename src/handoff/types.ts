@@ -126,6 +126,11 @@ export type HandoffEvent =
           tasks: HandoffTaskInput[];
           target?: HandoffTarget;
           refs?: string[];
+          /**
+           * The project the poster named, already resolved to a project name. Wins over
+           * `by.project` (the poster's own folder), which stays the poster's real context.
+           */
+          project?: string;
       })
     | (HandoffEventBase & { ev: "claim"; via: "target-match" | "explicit" })
     | (HandoffEventBase & { ev: "unclaim" })
@@ -153,6 +158,10 @@ export type HandoffEvent =
           description?: string;
           target?: HandoffTarget | null;
           refs?: string[];
+          /** Moves the handoff to this project (a resolved name). */
+          project?: string;
+          /** The project the handoff was under when the move was asked for, kept so the history reads from → to. */
+          fromProject?: string | null;
       })
     | (HandoffEventBase & { ev: "finish"; force?: boolean })
     | (HandoffEventBase & { ev: "cancel" })

@@ -42,6 +42,39 @@ describe("formatWorkItemMarkdown", () => {
         expect(md).not.toContain("<img");
     });
 
+    // Regression test: a Markdown-format description was run through the HTML converter, which joined it into one line
+    test("keeps a Markdown description line for line", () => {
+        const description =
+            "1 Popis\n-------\n\n*   First rule.\n*   Second rule.\n\n1.1 Umístění\n------------\n\n*   Under the banners.";
+        const md = formatWorkItemMarkdown(item({ description }));
+
+        expect(md).toContain("1 Popis\n-------\n\n*   First rule.\n*   Second rule.");
+        expect(md).toContain("1.1 Umístění\n------------");
+        expect(md).not.toContain("\\*");
+    });
+
+    test("keeps indentation and trailing whitespace in a Markdown description", () => {
+        const description = "    first()\n    second()\n\n";
+
+        expect(formatWorkItemMarkdown(item({ description }))).toContain(`## Description\n\n${description}`);
+        expect(formatWorkItemMarkdown(item({ description }), new Map())).toContain(`## Description\n\n${description}`);
+    });
+
+    test("keeps Markdown autolinks and the lines that follow them", () => {
+        for (const link of ["<https://example.com>", "<alice@example.com>"]) {
+            const description = `${link}\n\n- First\n- Second`;
+
+            expect(formatWorkItemMarkdown(item({ description }))).toContain(`## Description\n\n${description}`);
+        }
+    });
+
+    test("keeps a Markdown description with inline HTML line for line", () => {
+        const description = "## Odkazy\n\n- First\n\n<details><summary>Rozdíl</summary>\n\nText.\n\n</details>";
+        const md = formatWorkItemMarkdown(item({ description }));
+
+        expect(md).toContain("## Odkazy\n\n- First\n\n<details><summary>Rozdíl</summary>");
+    });
+
     test("converts HTML comments instead of dumping the tags", () => {
         const md = formatWorkItemMarkdown(
             item({

@@ -18,6 +18,7 @@ import { atomicWriteFileSync } from "@genesiscz/utils/storage/atomic-file";
 import { withFileLock } from "@genesiscz/utils/storage/file-lock";
 import { isTestProcess } from "@genesiscz/utils/test-process";
 import type { z } from "zod";
+import { retractDecisionBanners } from "./banners";
 import {
     type ANSWERED_VIA,
     type DECISION_KINDS,
@@ -109,6 +110,8 @@ export interface DecisionRecord {
      * `agent` on a move from open or drafted straight to `acknowledged` (an answer the user gave in chat).
      */
     answeredVia?: AnsweredVia;
+    /** When the answer was stored: the move that set `answeredVia`. Later updates move `updatedTs`, not this. */
+    answeredTs?: string;
     /** The decision that replaced this one (`superseded`); it exists in the store, in any session. */
     supersededBy?: string;
     commitRefs?: string[];
@@ -234,6 +237,51 @@ export interface PromptReceipt {
     token: string;
 }
 
+/**
+ * Who asks for an update. `agent`: the doors agents write through (`question_update`, `tools question update`); an
+ * agent records what happened and never queues or sends an answer (`agentPatch`). `user` (the store's default): the
+ * inbox's own answer and send paths, the widget and the hub, which deliver what they move to `answered`. Every caller
+ * of `updateDecisions` was classified on 2026-10-27; a new agent-facing door passes `actor: "agent"`.
+ */
+export type DecisionActor = "agent" | "user";
+
+/**
+ * An answered decision a whole-session send may deliver: one the inbox answered (`answeredVia: "inbox"`), or one an
+ * earlier send already tried (`delivery`). An `answered` row with neither is a chat answer an agent recorded through
+ * the old protocol (2026-10-27: 91 of them in 15 sessions), and sending it would type the user's own words back into
+ * the session a second time.
+ */
+export function awaitsDelivery(row: DecisionRecord): boolean {
+    return (
+        kindOf(row) === "decision" &&
+        row.state === "answered" &&
+        (row.delivery !== undefined || row.answeredVia === "inbox")
+    );
+}
+
+/**
+ * An agent's `answered` or `sent`: the agent has the answer (the user gave it in chat, or a send reached it), and
+ * only a send may queue or deliver one. It lands as `acknowledged`, which delivers nothing, with a comment that says
+ * so. Other patches pass unchanged.
+ */
+function agentPatch(row: DecisionRecord, patch: DecisionPatch): DecisionPatch {
+    if (kindOf(row) !== "decision" || (patch.state !== "answered" && patch.state !== "sent")) {
+        return patch;
+    }
+
+    const asked = patch.state;
+    const done = row.state === "acknowledged" || row.state === "implemented";
+    const note = `Recorded as acknowledged: an agent asked for ${asked}, and only a send queues or delivers an answer.`;
+    logger.info({ id: row.id, from: row.state, asked }, "[decisions] an agent's answered or sent became acknowledged");
+    const { state: _state, ...rest } = patch;
+
+    return {
+        ...rest,
+        ...(done ? {} : { state: "acknowledged" as const }),
+        comment: [patch.comment?.trim(), note].filter(Boolean).join(" "),
+    };
+}
+
 export function promptReserved(row: DecisionRecord): boolean {
     return (row.promptReservation?.expiresAt ?? 0) > Date.now();
 }
@@ -259,7 +307,7 @@ export async function reservePromptDecisions({
             (row) =>
                 row.sessionId === session &&
                 kindOf(row) === "decision" &&
-                (!selected || selected.has(row.id)) &&
+                (selected ? selected.has(row.id) : awaitsDelivery(row)) &&
                 row.state === "answered" &&
                 !row.delivery?.queueId &&
                 (row.promptReservation?.expiresAt ?? 0) <= now &&
@@ -448,16 +496,43 @@ export async function postDecisions(
             });
             const content = contentOf(decision, excerpts[index]);
 
-            if (decision.supersedes) {
+            // A number the inbox or the Stop hook stored from the reply before the agent posted it: the agent's post
+            // is that decision's next revision, not a clash (`decisions.harvestListed`).
+            const harvested =
+                decision.supersedes === undefined && decision.number !== undefined
+                    ? existing.find(
+                          (row) =>
+                              row.harvested === true &&
+                              row.sessionId === sessionId &&
+                              kindOf(row) === kind &&
+                              row.number === decision.number &&
+                              SUPERSEDABLE.has(row.state) &&
+                              !revised.has(row.id)
+                      )
+                    : undefined;
+            const supersedes = decision.supersedes ?? harvested?.id;
+
+            if (supersedes) {
                 const row = supersede({
-                    target: byId.get(decision.supersedes),
-                    id: decision.supersedes,
+                    target: byId.get(supersedes),
+                    id: supersedes,
                     kind,
                     sessionId,
                     revised,
                 });
+                // The staged pick was made on the old text, so it goes with the old version; say so on the row.
+                const pick = [...(row.draftOption ?? "")].map((letter) => `${letter})`).join(" ");
+                const dropped = [pick, row.draft?.trim() ? "note" : ""].filter(Boolean).join(" and ");
                 const next: DecisionRecord = {
                     ...withoutVersioned(row),
+                    ...(dropped
+                        ? {
+                              comments: [
+                                  ...(row.comments ?? []),
+                                  `The agent posted a new text (revision ${(row.revision ?? 1) + 1}), so the staged ${dropped} on the earlier text was cleared; it is kept in that version. Pick again.`,
+                              ],
+                          }
+                        : {}),
                     ...content,
                     ...context,
                     // The provider is half of the item's session identity, which a revision keeps. The delivery pane
@@ -473,6 +548,11 @@ export async function postDecisions(
                     updatedTs: ts,
                 };
                 delete next.notified;
+
+                if (harvested) {
+                    delete next.harvested;
+                }
+
                 revised.set(next.id, next);
                 created.push(next);
                 continue;
@@ -648,7 +728,7 @@ function patched(
     stored: ReadonlyMap<string, DecisionRecord>
 ): DecisionRecord {
     if (patch.expectedRevision !== undefined && patch.expectedRevision !== (row.revision ?? 1)) {
-        throw new Error(`stale decision revision: ${row.id}`);
+        throw staleRevisionError(row.number);
     }
 
     if (patch.state && !canMove(row, patch.state)) {
@@ -701,8 +781,10 @@ function patched(
 
     if (patch.state === "answered") {
         next.answeredVia = "inbox";
+        next.answeredTs = ts;
     } else if (recorded) {
         next.answeredVia = "agent";
+        next.answeredTs = ts;
     }
 
     // A letter past the options would be delivered as `DECISION 1: z)`, naming nothing.
@@ -721,7 +803,109 @@ function patched(
         delete next.draftOption;
     }
 
+    // Nothing staged any more (an unstage, a cleared pick): plain `open` again, whichever surface cleared it. The
+    // widget's unstage used to leave `drafted` with empty fields, which every list then showed as staged.
+    if (next.state === "drafted" && !next.draftOption && !next.draft?.trim()) {
+        next.state = "open";
+        delete next.draft;
+        delete next.draftOption;
+    }
+
     return next;
+}
+
+export interface DecisionLogRepair {
+    /** Chat answers agents recorded as `answered`, now `acknowledged`. */
+    acknowledged: string[];
+    /** `drafted` rows with nothing staged, now `open`. */
+    reopened: string[];
+}
+
+/**
+ * Repairs two shapes old code left in the log; `apply: false` only reports them.
+ * - A chat answer an agent recorded as `answered` (no delivery, not answered in the inbox, `awaitsDelivery` false):
+ *   it read as "waiting to send" with Send again, and a whole-session send typed it back into the session. It moves
+ *   to `acknowledged` with its option and answer, `answeredVia: agent`, and a comment.
+ * - A `drafted` row with nothing staged: back to `open`.
+ * Nothing else changes, and every move is an event.
+ */
+export async function repairDecisionLog({
+    file,
+    events,
+    apply,
+    now = () => new Date().toISOString(),
+}: {
+    file: string;
+    events: string;
+    apply: boolean;
+    now?: () => string;
+}): Promise<DecisionLogRepair> {
+    return withDecisionsLock(file, () => {
+        const rows = readDecisions(file);
+        const ts = now();
+        const repair: DecisionLogRepair = { acknowledged: [], reopened: [] };
+        const next = rows.map((row): DecisionRecord => {
+            if (kindOf(row) !== "decision") {
+                return row;
+            }
+
+            const chatAnswer =
+                row.state === "answered" &&
+                !awaitsDelivery(row) &&
+                !promptReserved(row) &&
+                (Boolean(row.option) || Boolean(row.answer?.trim()));
+
+            if (chatAnswer) {
+                repair.acknowledged.push(row.id);
+                return {
+                    ...row,
+                    state: "acknowledged",
+                    answeredVia: row.answeredVia ?? "agent",
+                    answeredTs: row.answeredTs ?? row.updatedTs,
+                    updatedTs: ts,
+                    comments: [
+                        ...(row.comments ?? []),
+                        "Repaired: an agent recorded this chat answer as answered, which read as waiting to be sent. It is acknowledged; nothing sends it again.",
+                    ],
+                };
+            }
+
+            if (row.state === "drafted" && !row.draftOption && !row.draft?.trim()) {
+                repair.reopened.push(row.id);
+                const reopened: DecisionRecord = { ...row, state: "open", updatedTs: ts };
+                delete reopened.draft;
+                delete reopened.draftOption;
+                return reopened;
+            }
+
+            return row;
+        });
+
+        if (apply && repair.acknowledged.length + repair.reopened.length > 0) {
+            rewrite(file, next);
+
+            for (const id of repair.acknowledged) {
+                appendEvent(events, { ev: "repaired", id, ts, state: "acknowledged" });
+            }
+
+            for (const id of repair.reopened) {
+                appendEvent(events, { ev: "repaired", id, ts, state: "open" });
+            }
+        }
+
+        return repair;
+    });
+}
+
+/**
+ * The refusal for a write made on text the agent has since re-posted (`expectedRevision`), in the words every surface
+ * shows: the widget's stage, the hub's and the sidebar's draft, an inbox answer. It used to read "stale decision
+ * revision: d_…", which the widget showed as it was.
+ */
+export function staleRevisionError(number: number): Error {
+    return new Error(
+        `DECISION ${number} changed: the agent posted a new text since you read it. Read it again and pick again.`
+    );
 }
 
 /** Throws unless `target` names another stored decision and `next` is (becoming) superseded. */
@@ -751,10 +935,11 @@ export async function updateDecision(
     events: string,
     id: string,
     payload: unknown,
-    now = () => new Date().toISOString()
+    now = () => new Date().toISOString(),
+    { actor = "user" }: { actor?: DecisionActor } = {}
 ): Promise<DecisionRecord> {
     const patch = parseDecisionInput(decisionPatchSchema, payload, "decision update");
-    const [row] = await applyUpdates({ file, events, updates: [{ ...patch, id }], now });
+    const [row] = await applyUpdates({ file, events, updates: [{ ...patch, id }], now, actor });
 
     if (!row) {
         throw new Error(`no decision ${id}`);
@@ -771,10 +956,11 @@ export async function updateDecisions(
     file: string,
     events: string,
     payload: unknown,
-    now = () => new Date().toISOString()
+    now = () => new Date().toISOString(),
+    { actor = "user" }: { actor?: DecisionActor } = {}
 ): Promise<DecisionRecord[]> {
     const { updates } = parseDecisionInput(decisionBatchUpdateSchema, payload, "question update");
-    return applyUpdates({ file, events, updates, now });
+    return applyUpdates({ file, events, updates, now, actor });
 }
 
 export interface TodoUpdateSnapshot {
@@ -994,6 +1180,7 @@ function applyUpdates({
     signal,
     beforeUpdate,
     answeredVia,
+    actor = "user",
 }: {
     file: string;
     events: string;
@@ -1003,12 +1190,17 @@ function applyUpdates({
     beforeUpdate?: (row: DecisionRecord) => void;
     /** Who recorded a chat answer, in place of `agent`; never reachable from `question_update`. */
     answeredVia?: AnsweredVia;
+    /** `agent` updates never queue or send an answer (`agentPatch`); see `DecisionActor`. */
+    actor?: DecisionActor;
 }): Promise<DecisionRecord[]> {
     signal?.throwIfAborted();
-    return withDecisionsLock(file, () => {
+    // Decisions this write moved out of waiting: their banners go once the write is done (`retractDecisionBanners`).
+    let closed: string[] = [];
+    const written = withDecisionsLock(file, () => {
         signal?.throwIfAborted();
         const rows = readDecisions(file);
         const byId = new Map(rows.map((row) => [row.id, row]));
+        const before = new Map(byId);
         const ts = now();
 
         for (const { id, ...patch } of updates) {
@@ -1019,7 +1211,7 @@ function applyUpdates({
             }
 
             beforeUpdate?.(row);
-            const next = patched(row, patch, ts, byId);
+            const next = patched(row, actor === "agent" ? agentPatch(row, patch) : patch, ts, byId);
 
             if (answeredVia && next.answeredVia === "agent") {
                 next.answeredVia = answeredVia;
@@ -1041,6 +1233,14 @@ function applyUpdates({
             appendEvent(events, { ev: "updated", id: row.id, ts, state: row.state });
         }
 
+        closed = result
+            .filter((row) => SUPERSEDABLE.has(before.get(row.id)?.state ?? "open") && !SUPERSEDABLE.has(row.state))
+            .map((row) => row.id);
+        return result;
+    });
+
+    return written.then((result) => {
+        retractDecisionBanners(closed);
         return result;
     });
 }
@@ -1365,6 +1565,7 @@ export async function reconcileQueuedDecision({
             delete row.answer;
             delete row.option;
             delete row.answeredVia;
+            delete row.answeredTs;
         }
         rewrite(file, rows);
         appendEvent(events, { ev: received ? "sent" : "queue_cancelled", id, ts, state: row.state });
@@ -1438,7 +1639,12 @@ export async function moveDecisions(
  * sort would otherwise throw on it and break every listing and update. Any other read error throws.
  */
 export function readDecisions(file: string): DecisionRecord[] {
-    const { rows, skipped } = readJsonlRows<unknown>(file);
+    return readDecisionsWithIntegrity(file).rows;
+}
+
+/** The same decision read, including whether the file was missing or any torn or invalid row was skipped. */
+export function readDecisionsWithIntegrity(file: string): { rows: DecisionRecord[]; complete: boolean } {
+    const { rows, skipped, missing } = readJsonlRows<unknown>(file);
     const valid = rows.filter(isStoredDecision);
     const malformed = rows.length - valid.length;
 
@@ -1446,7 +1652,7 @@ export function readDecisions(file: string): DecisionRecord[] {
         logger.warn({ file, skipped, malformed }, "[decisions] skipped unreadable lines in the decision log");
     }
 
-    return valid;
+    return { rows: valid, complete: !missing && skipped === 0 && malformed === 0 };
 }
 
 function isStoredDecision(value: unknown): value is DecisionRecord {

@@ -89,6 +89,8 @@ export interface ResponsesToAnthropicOptions {
     signReasoning?: (item: JsonRecord) => string;
     /** Names the upstream in log lines. */
     label?: string;
+    /** Client request abort, which may reject the upstream read before output cancellation. */
+    signal?: AbortSignal;
     /**
      * A rewrite of one tool's input, chosen by tool name. That call's arguments are held until it is complete and
      * then sent once, rewritten; every other call streams as it arrives.
@@ -545,6 +547,10 @@ export function responsesSseToAnthropic(
     const encoder = new TextEncoder();
     let buffer = "";
 
+    // Set when the client stops reading (Claude Code stopping a subagent): the read loop then fails with "The
+    // connection was closed", which is the stop, not a translation failure.
+    let clientCancelled = false;
+
     return new ReadableStream<Uint8Array>({
         async start(controller) {
             let streamSucceeded = false;
@@ -606,10 +612,17 @@ export function responsesSseToAnthropic(
                 emit(finishFrames(state, undefined));
                 streamSucceeded = true;
             } catch (err) {
-                logger.warn(
-                    { err, model: options.model, upstream: label },
-                    "ai-proxy: /responses SSE translation failed"
-                );
+                if (clientCancelled || options.signal?.aborted) {
+                    logger.debug(
+                        { err, model: options.model, upstream: label },
+                        "ai-proxy: the client stopped the stream"
+                    );
+                } else {
+                    logger.warn(
+                        { err, model: options.model, upstream: label },
+                        "ai-proxy: /responses SSE translation failed"
+                    );
+                }
 
                 if (!safeStreamControllerError(controller, err, streamSucceeded)) {
                     logger.debug({ err }, "ai-proxy: skipped controller.error (client abort or detached)");
@@ -625,6 +638,7 @@ export function responsesSseToAnthropic(
             }
         },
         cancel(reason) {
+            clientCancelled = true;
             reader.cancel(reason).catch((err) => {
                 logger.debug({ err }, "ai-proxy: upstream reader cancel failed");
             });

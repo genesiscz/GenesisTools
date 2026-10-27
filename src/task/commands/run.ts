@@ -45,7 +45,7 @@ export function registerRunCommand(program: Command): void {
             if (command.length === 0) {
                 out.printlnErr("error: Command required after --");
                 out.printlnErr(
-                    `error: Example: ${toolCommand("task run", "--session", "metro", "--", "bash", "-c", "'echo", "hi'")}`
+                    `error: Example: ${toolCommand("task run", "--session", "metro", "--", "bash", "-c", "echo hi")}`
                 );
                 await out.flush();
                 process.exit(1);

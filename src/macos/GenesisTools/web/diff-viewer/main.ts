@@ -42,6 +42,8 @@ interface BridgeFile {
     key: string;
     /** An image file's two sides as URLs the page's own scheme serves; null for a side the file lacks. */
     image?: BridgeImage | null;
+    /** Skipped only for its size: a click on its note asks Swift for it anyway (`showLarge`). */
+    large?: boolean;
 }
 
 /** Swift leaves a nil side out, so a missing side is undefined here. */
@@ -178,6 +180,12 @@ interface ItemContext {
 }
 
 function openOnCommandClick(click: OnLineClickProps | OnDiffLineClickProps, context: ItemContext): void {
+    // A file skipped for its size shows one note line; a click on it asks for the whole file (Martin, 2026-10-26).
+    if (!click.event.metaKey && largeFiles.has(context.item.id)) {
+        post({ type: "showLarge", fileId: context.item.id });
+        return;
+    }
+
     // ⌘-click opens the line in the editor; a plain click stays a selection.
     if (click.event.metaKey) {
         post({
@@ -338,6 +346,9 @@ function sideOf(side: string | undefined): Side {
 // files are remembered by path, so a new file list from Swift (a scope switch, a refresh) keeps them.
 const folded = new Set<string>();
 
+/** Files skipped for their size, by id: a click on their note line asks for them (`openOnCommandClick`). */
+const largeFiles = new Set<string>();
+
 /** The header's fold chevron: shows the state, names the header for VoiceOver and `tools control`. */
 function foldChevron(path: string): HTMLElement {
     const isFolded = folded.has(path);
@@ -462,6 +473,13 @@ function openComposer(fileId: string, range: SelectedLineRange): void {
 
 const themes = { light: "pierre-light", dark: "pierre-dark" } as const;
 
+/**
+ * Rows pierre renders beyond each edge of the viewport (its default is 200 px). A fast flick moves 300 px per frame,
+ * so the scroll ran past the rendered rows; pierre then pins them to the viewport edge until the next render, and at
+ * a file boundary the headers stopped and snapped ("the file headers jump", Martin, 2026-10-26).
+ */
+const OVERSCROLL_PX = 2000;
+
 /** Space below an open file. The unsafeCSS rule on `[data-code]` and `itemMetrics.paddingBottom` must agree. */
 const FILE_GAP = 12;
 /** pierre's own bottom padding of a file with code (`DEFAULT_CODE_VIEW_FILE_METRICS.paddingBottom`). */
@@ -556,6 +574,7 @@ async function createHighlightWorkers(): Promise<WorkerPoolManager | undefined> 
 
 const highlightWorkers = await createHighlightWorkers();
 const viewer = new CodeView<AnnotationMeta, undefined>(viewOptions(), highlightWorkers);
+viewer.config.overscrollSize = OVERSCROLL_PX;
 viewer.setup(host);
 
 // CodeView draws nothing until the pool says it is ready, and the pool says so on an animation
@@ -2869,6 +2888,9 @@ const probe = {
     lastFrame: 0,
     frameTop: 0,
     stuckFrames: 0,
+    /** Frames where pierre's rendered rows sat away from their place in the page (`stickyPin`). */
+    pinnedFrames: 0,
+    maxPin: 0,
     corrections: 0,
     renderedMax: 0,
     /** Frames where the code under the viewport moved by a different amount than the scroll did. */
@@ -2911,6 +2933,8 @@ function probeBegin(now: number): void {
     probe.maxGap = 0;
     probe.lastFrame = now;
     probe.stuckFrames = 0;
+    probe.pinnedFrames = 0;
+    probe.maxPin = 0;
     probe.jumps = 0;
     probe.maxJump = 0;
     probe.anchored = 0;
@@ -2942,6 +2966,12 @@ function probeFrame(now: number): void {
 
     if (probe.wheelSinceFrame > 0 && top === probe.frameTop && !atEdge) {
         probe.stuckFrames += 1;
+    }
+
+    const pin = Math.abs(stickyPin());
+    if (pin > 1) {
+        probe.pinnedFrames += 1;
+        probe.maxPin = Math.max(probe.maxPin, pin);
     }
 
     probe.wheelSinceFrame = 0;
@@ -3034,6 +3064,22 @@ function heightDrift(): string {
         })
         .filter((line): line is string => line !== null)
         .join("; ");
+}
+
+/**
+ * How far pierre's rendered rows sit from their place in the page, in px. pierre draws the rows near the viewport
+ * inside one `position: sticky` box after a spacer; when the scroll outruns its rendering, the box sticks to the
+ * viewport edge, so the rows (and their file headers) stop moving with the scroll and snap when the next render
+ * lands. 0 while the rows follow the scroll. Private fields, read for diagnosis only.
+ */
+function stickyPin(): number {
+    const box: unknown = Reflect.get(viewer, "stickyContainer");
+    const spacer: unknown = Reflect.get(viewer, "stickyOffset");
+    if (!(box instanceof HTMLElement) || !(spacer instanceof HTMLElement)) {
+        return 0;
+    }
+
+    return box.getBoundingClientRect().top - spacer.getBoundingClientRect().bottom;
 }
 
 /** The code line under a point of the viewport, through the file's shadow root; null over a header or a gap. */
@@ -3149,6 +3195,7 @@ function probeEnd(now: number): void {
             `diff.scroll ${Math.round(probe.travelled)}px in ${Math.round(seconds * 1000)}ms (${Math.round(probe.travelled / seconds)} px/s), ` +
             `wheel ${Math.round(probe.wheel)}px in ${probe.wheelEvents} events, ${probe.scrollEvents} scroll events, ` +
             `frames ${probe.frames} (max gap ${Math.round(probe.maxGap)}ms, ${probe.slowFrames} over 34ms), stuck ${probe.stuckFrames}, ` +
+            `pinned ${probe.pinnedFrames}${probe.pinnedFrames > 0 ? ` (max ${Math.round(probe.maxPin)}px)` : ""}, ` +
             `jumps ${probe.jumps}${probe.jumps > 0 ? ` (max ${Math.round(probe.maxJump)}px, ${probe.anchored} put back: ${probe.jumpNotes.join("; ")})` : ""}, ` +
             `corrections ${probe.corrections}, end speed ${endSpeed.toFixed(2)} px/ms, items on page ${probe.renderedMax}, ${files.length} files` +
             `${now - probe.lastEvent > 1000 ? " (ended late)" : ""}`,
@@ -3311,6 +3358,14 @@ function addFiles(batch: FilesBatch): void {
     }
 
     const parseStart = performance.now();
+    for (const file of batch.files) {
+        if (file.large) {
+            largeFiles.add(file.id);
+        } else {
+            largeFiles.delete(file.id);
+        }
+    }
+
     const items = batch.files.map(toItem);
     loadParseMs += performance.now() - parseStart;
     loadBatches += 1;

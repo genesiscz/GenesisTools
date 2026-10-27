@@ -17,7 +17,21 @@ public final class WidgetModel: ObservableObject {
                 (snapshot?.sessions ?? []).map { ($0.key, $0) }, uniquingKeysWith: { first, _ in first })
             sessionRoster.update(snapshot?.sessions ?? [])
             updateInbox(snapshot?.notifications ?? .empty)
+            takeShowDecision(snapshot?.state.showDecision)
+            resolveDecisionReveal()
         }
+    }
+    /// Called for each new `state.showDecision` (a decision link while the widget runs). The first snapshot only
+    /// remembers the request it finds, so an old link is not replayed at start.
+    public var decisionRequested: ((String) -> Void)?
+    private var shownDecisionAt: Double?
+    private var showDecisionSeen = false
+
+    private func takeShowDecision(_ request: WidgetShowDecision?) {
+        defer { showDecisionSeen = true }
+        guard let request, request.at != shownDecisionAt else { return }
+        shownDecisionAt = request.at
+        if showDecisionSeen { decisionRequested?(request.id) }
     }
     private var sessionRoster = WidgetSessionRoster()
     /// Every snapshot session by key. `selected` is read many times per body; a linear search over ~1000 sessions
@@ -66,7 +80,26 @@ public final class WidgetModel: ObservableObject {
     @Published public var hoveredSurface: WidgetSurfaceID?
     /// A new inbox item the widget pops up by itself (an alert). The agents preview shows it until `showPeek`'s
     /// timer ends, or until the pointer leaves the panel when the user moved onto it.
-    @Published public private(set) var peekItem: WidgetInboxItem?
+    @Published public private(set) var peekItem: WidgetInboxItem? {
+        didSet {
+            // An outcome belongs to the alert it was sent from; the next alert starts without one.
+            if peekItem?.id != oldValue?.id, peekOutcome != nil { peekOutcome = nil }
+        }
+    }
+    /// What a send from the popup did (its Send now, or Send now in the staged reminder), shown in the popup itself:
+    /// the popup stays for `sendCloseSeconds` with it before it moves on, so the result is read where it was sent
+    /// (ux audit F5). Nil while nothing was sent from the popup on screen.
+    @Published public internal(set) var peekOutcome: WidgetPeekOutcome?
+    /// Alerts that arrived while the popup was open, oldest first (Alerts → Several at once: listed or one after
+    /// another). The newest-replaces mode keeps it empty.
+    @Published public private(set) var peekQueue: [WidgetInboxItem] = []
+    /// How the open popup takes another alert, and how long it stays while the pointer is not on it (0: until closed).
+    public private(set) var peekMany: WidgetAlerts.PopupMany = .newest
+    private(set) var peekSeconds: Double = 7
+    /// Duration and the inbox generation when each displayed or waiting alert arrived.
+    private var peekDurations: [String: Double] = [:]
+    private var peekInboxGenerations: [String: Int] = [:]
+    private var inboxGeneration = 0
     private var peekTask: Task<Void, Never>?
     /// The module a peek replaced on its surface (`previous`, nil when none was chosen) and the one it showed. The
     /// end of the peek puts `previous` back, unless the selection is no longer `shown`: the user picked a module.
@@ -75,6 +108,19 @@ public final class WidgetModel: ObservableObject {
     private var pointerInside: Set<String> = []
     /// Called with the items that arrived in a complete inbox snapshot (never the first one).
     public var inboxArrived: (([WidgetInboxItem]) -> Void)?
+    /// Decisions answered outside the widget since the last snapshot (Automatic decisions), oldest first.
+    public var decisionsAnsweredElsewhere: (([WidgetInboxItem]) -> Void)?
+    /// The answered-elsewhere decisions already seen; the first complete snapshot is the baseline, so a restart
+    /// announces nothing that was answered before it.
+    private var answeredSeen: Set<String> = []
+    private var answeredObserved = false
+    /// Called once, with the first complete snapshot, when decisions are staged and not sent: a pick staged before the
+    /// widget restarted waited unseen (DECISION 26, 2026-10-26). The coordinator shows the staged reminder.
+    public var stagedAtStart: (([WidgetInboxItem]) -> Void)?
+    /// The popup's time ran out on a decision staged in it while "Closing with staged decisions" is "keep": the popup
+    /// closes and the coordinator shows the staged reminder, so the pick is not left behind unseen (D159, 2026-10-27).
+    public var stagedLeftInPopup: (([WidgetInboxItem]) -> Void)?
+    private var stagedStartChecked = false
     public func session(forKey key: String) -> WidgetSession? { sessionIndex[key] }
     @Published public var moduleSelections: [String: String] = [:]
     @Published public var draggedSidePosition: Double?
@@ -202,6 +248,7 @@ public final class WidgetModel: ObservableObject {
             guard notice != oldValue else { return }
             noticeAction = nil
             noticeDetail = nil
+            noticeTone = .info
             // A hover that ended with the panel (it closed under the pointer) must not keep the next note forever.
             noticeHeld = false
             if let notice { GenAnnounce.post(notice) }
@@ -215,6 +262,9 @@ public final class WidgetModel: ObservableObject {
     /// The reasons behind `notice` (each session a queued send did not reach, and why), shown behind Details. A new
     /// note drops them.
     @Published public var noticeDetail: String?
+    /// How `notice` reads: a plain note, a success, or a warning (a send that reached nobody). A new note resets it to
+    /// `.info`; `postNote(_:tone:)` sets it (ux audit F22: "Not delivered" looked like a success).
+    @Published public internal(set) var noticeTone: WidgetNoticeTone = .info
     private var noticeFade: Task<Void, Never>?
     /// The pointer is on the note: its fade waits until the pointer leaves (ux checklist, Attention).
     private var noticeHeld = false
@@ -222,12 +272,14 @@ public final class WidgetModel: ObservableObject {
     /// Shows `text` as the widget's note, with an optional button (Undo, Send again). It is announced, and it fades
     /// after the note duration setting (`noteSeconds`, 6 s by default); a note with a button stays at least 10 s. A
     /// newer note replaces it and cancels its fade. Errors go to `error`, which never fades.
-    public func postNote(_ text: String, action: WidgetNoticeAction? = nil, detail: String? = nil) {
+    public func postNote(_ text: String, action: WidgetNoticeAction? = nil, detail: String? = nil,
+                         tone: WidgetNoticeTone = .info) {
         // The same text again does not change `notice`, so its didSet would neither announce nor restart the fade.
         if notice == text { GenAnnounce.post(text) }
         notice = text
         noticeAction = action
         noticeDetail = detail
+        noticeTone = tone
         scheduleNoticeFade()
     }
 
@@ -316,7 +368,9 @@ public final class WidgetModel: ObservableObject {
     /// What the callers of `updatePreferences` asked to hear about the write that carries their patch.
     private var pendingPreferenceOutcomes: [(saved: () -> Void, failed: () -> Void)] = []
     private var draftTasks: [String: Task<Void, Never>] = [:]
-    private var dirtyDrafts: Set<String> = []
+    /// Which drafts the composer owns and which a snapshot may write (`FieldTextOwnership`).
+    var draftOwnership = FieldTextOwnership()
+    private var draftReleaseTask: Task<Void, Never>?
     private var draftRevisions: [String: Int] = [:]
     /// Sending replaces the composer; bindings retained by its disposed field cannot write into the new draft.
     @Published private var composerGeneration = 0
@@ -498,8 +552,21 @@ public final class WidgetModel: ObservableObject {
               !heldCardIDs.contains(card.id) else { return nil }
         return card
     }
-    /// The decision whose card shows the composer for the user's own answer instead of the options.
+    /// `answerCard` while a session's inbox shows it: not behind the inbox of every session, another tab or the staged
+    /// list. Only then do the number keys answer it; a key used to stage an option of a decision nobody could see.
+    public var answerCardOnScreen: WidgetCard? {
+        guard activeModuleID == "agents", !inboxOverview, section == "Inbox", stagedView == nil else { return nil }
+        guard let card = answerCard, LiveWidgetView.filtered([card], by: inboxFilter).contains(where: { $0.id == card.id })
+        else { return nil }
+        return card
+    }
+    /// The decision whose own answer field holds the draft (its toolbar open, the reply composer parked).
     @Published public var ownAnswerCardID: String?
+    /// The card the composer's × dropped from the reply, by session: a follow-up does not name it (`replyToCard`).
+    @Published public var replyToDropped: [String: String] = [:]
+    /// A decision whose own answer field takes the keyboard as soon as its card shows it (the alert's "Write my own
+    /// answer" opens the panel first, so the field is not there yet when it is asked for).
+    @Published public var ownAnswerFocusRequest: String?
     /// `ownAnswerCardID` while that decision is still the one the composer answers.
     public var ownAnswerCard: WidgetCard? {
         guard let card = answerCard, card.id == ownAnswerCardID else { return nil }
@@ -651,6 +718,8 @@ public final class WidgetModel: ObservableObject {
 
     public func stop() {
         sendCloseRevision += 1
+        // A Discard still in its Undo window is what the user chose: it goes out now, not never.
+        commitHeldDiscard()
         peekTask?.cancel()
         preferenceTask?.cancel()
         flushPreferences()
@@ -681,7 +750,8 @@ public final class WidgetModel: ObservableObject {
         speechTask?.cancel()
         quietTask?.cancel()
         for task in draftTasks.values { task.cancel() }
-        for key in dirtyDrafts {
+        draftReleaseTask?.cancel()
+        for key in draftOwnership.unsaved {
             if let draft = drafts[key] {
                 defaults.set(draft.text, forKey: "widget.recovered-draft." + key)
             }
@@ -726,14 +796,7 @@ public final class WidgetModel: ObservableObject {
                     submittedCards.remove(kind + ":" + id)
                 }
             }
-            for (key, value) in next.state.drafts where !dirtyDrafts.contains(key) {
-                drafts[key] = value
-            }
-            for key in dirtyDrafts {
-                if let incoming = next.state.drafts[key] {
-                    drafts[key]?.assetIds = incoming.assetIds.filter { !submittedAssets.contains($0) }
-                }
-            }
+            applyStoredDrafts(next.state)
             if let session = sessionIndex[selectedKey] {
                 lastSelected = session
             }
@@ -804,6 +867,7 @@ public final class WidgetModel: ObservableObject {
         hoverTask?.cancel()
         peekTask?.cancel()
         peekItem = nil
+        peekQueue = []
         open(surface.edge)
     }
 
@@ -844,9 +908,48 @@ public final class WidgetModel: ObservableObject {
             && (hoveredSurface == nil || hoveredSurface == surface)
     }
 
-    /// Pops `item` up in `surface`'s preview for `seconds`, unless the user is in a panel, a window or a drag. With
-    /// `module`, the surface shows that module for the peek and gets the user's own module back when the peek ends.
-    func showPeek(_ item: WidgetInboxItem, on surface: WidgetSurfaceID, module: String? = nil, seconds: Double = 7) {
+    /// Pops `item` up in `surface`'s preview for `seconds` (0: until it is closed), unless the user is in a panel, a
+    /// window or a drag. With `module`, the surface shows that module for the peek and gets the user's own module back
+    /// when the peek ends. While a popup is open, `many` decides: the new item is listed under it or queued after it
+    /// (even with the pointer on the popup, since nothing moves under it), or it replaces the shown one.
+    func showPeek(_ item: WidgetInboxItem, on surface: WidgetSurfaceID, module: String? = nil, seconds: Double = 7,
+                  many: WidgetAlerts.PopupMany = .newest) {
+        // The same decision again (answered elsewhere while its alert is shown or waits): it takes that place.
+        if let shown = peekItem, let peeked = hoveredSurface {
+            if shown.sourceId == item.sourceId {
+                peekItem = item
+                peekSeconds = seconds
+                peekDurations[item.id] = seconds
+                peekInboxGenerations[item.id] = inboxGeneration
+                PerfLog.mark("widget.peek replaced id=\(item.id) answered=\(item.isAnsweredElsewhere)")
+                schedulePeekEnd(on: peeked)
+                presentationChanged?()
+                return
+            }
+            if let index = peekQueue.firstIndex(where: { $0.sourceId == item.sourceId }) {
+                let previous = peekQueue[index]
+                peekDurations[previous.id] = nil
+                peekInboxGenerations[previous.id] = nil
+                peekQueue[index] = item
+                peekDurations[item.id] = seconds
+                peekInboxGenerations[item.id] = inboxGeneration
+                presentationChanged?()
+                return
+            }
+        }
+        if let shown = peekItem, many != .newest, let peeked = hoveredSurface {
+            if shown.id != item.id, !peekQueue.contains(where: { $0.id == item.id }) {
+                peekQueue.append(item)
+                peekDurations[item.id] = seconds
+                peekInboxGenerations[item.id] = inboxGeneration
+            }
+            peekMany = many
+            PerfLog.mark("widget.peek added id=\(item.id) mode=\(many.rawValue) waiting=\(peekQueue.count)")
+            // A new row gives the list its full time again; a queue keeps the shown alert's own countdown.
+            if many == .list { schedulePeekEnd(on: peeked) }
+            presentationChanged?()
+            return
+        }
         guard canPeek(on: surface) else { return }
         if let module, moduleSelections[surface.key] != module {
             if let replaced = peekReplaced, replaced.surface != surface { restorePeekModule() }
@@ -856,34 +959,194 @@ public final class WidgetModel: ObservableObject {
         }
         hoverTask?.cancel()
         peekItem = item
+        peekQueue = []
+        peekDurations = [item.id: seconds]
+        peekInboxGenerations = [item.id: inboxGeneration]
+        peekMany = many
+        peekSeconds = seconds
         hoveredSurface = surface
         presentationChanged?()
+        schedulePeekEnd(on: surface)
+    }
+
+    /// The popup's decisions take the staged pick and note of `staged` (every staged decision of the snapshot). The
+    /// popup holds the item it opened with, so without this a pick staged in it showed only until the snapshot listed
+    /// it, then read as unanswered (Martin, 2026-10-27: "it shown as staged for a second ... then it just reset").
+    func refreshPeekStaging(_ staged: [WidgetInboxItem]) {
+        guard peekItem != nil else { return }
+        let byId = Dictionary(staged.map { ($0.sourceId, $0) }, uniquingKeysWith: { first, _ in first })
+        func fresh(_ item: WidgetInboxItem) -> WidgetInboxItem {
+            guard item.kind == "decision", item.needsAnswer else { return item }
+            var copy = item
+            copy.draftOption = byId[item.sourceId]?.draftOption
+            copy.draft = byId[item.sourceId]?.draft
+            return copy
+        }
+        if let shown = peekItem {
+            let next = fresh(shown)
+            if next != shown { peekItem = next }
+        }
+        let queue = peekQueue.map(fresh)
+        if queue != peekQueue { peekQueue = queue }
+    }
+
+    /// The popup's time ran out with a decision staged in it: it does not just go away (D159, 2026-10-27: staged in
+    /// the popup at 01:08:32, the popup closed 7 s later, and the answer was never sent). "Closing with staged
+    /// decisions" decides, as for the panel: "send" sends them and the popup shows the result; "keep" closes it and
+    /// shows the staged reminder; "ask" (the default) keeps the popup with its Send now and looks again after its
+    /// time. Returns whether the end was handled here.
+    func holdPeekForStaged(on surface: WidgetSurfaceID) -> Bool {
+        guard let shown = peekItem else { return false }
+        let inPopup = Set(([shown] + peekQueue).map(\.sourceId))
+        // A send from the popup is under way: its result shows here (`showPeekOutcome`).
+        if !inPopup.isDisjoint(with: sendingDecisionIDs) {
+            schedulePeekEnd(on: surface)
+            return true
+        }
+        let staged = stagedForLeave.filter { inPopup.contains($0.sourceId) }
+        guard !staged.isEmpty else { return false }
+        switch snapshot?.state.preferences.stagedOnLeave ?? "ask" {
+        case "send":
+            PerfLog.mark("widget.peek staged send=\(staged.count) id=\(shown.id)")
+            schedulePeekEnd(on: surface)
+            sendStaged(staged.map(\.sourceId), known: staged)
+        case "keep":
+            PerfLog.mark("widget.peek staged remind=\(staged.count) id=\(shown.id)")
+            endPeek(advance: false)
+            stagedLeftInPopup?(stagedForLeave)
+        default:
+            PerfLog.mark("widget.peek staged held=\(staged.count) id=\(shown.id)")
+            schedulePeekEnd(on: surface)
+        }
+        return true
+    }
+
+    /// Starts the popup's countdown again. It ends the popup only while the pointer is off it; with 0 seconds the
+    /// popup stays until it is closed.
+    private func schedulePeekEnd(on surface: WidgetSurfaceID) {
         peekTask?.cancel()
+        peekTask = nil
+        guard peekSeconds > 0, let item = peekItem else { return }
+        let seconds = peekSeconds
         peekTask = Task { [weak self] in
             do { try await Task.sleep(for: .seconds(seconds)) } catch { return }
             guard let self, self.peekItem == item, !self.pointerInside.contains(surface.key) else { return }
+            if self.holdPeekForStaged(on: surface) { return }
             self.endPeek()
         }
     }
 
-    /// The popup's close button, Esc and VoiceOver's escape: the popup ends without opening anything.
-    public func dismissPeek() {
+    /// A row of the popup's list of later alerts: that alert takes the popup, and the one shown takes its row.
+    public func showWaitingPeek(_ item: WidgetInboxItem) {
+        guard let shown = peekItem, let index = peekQueue.firstIndex(where: { $0.id == item.id }) else { return }
+        peekQueue[index] = shown
+        peekItem = item
+        peekSeconds = peekDurations[item.id] ?? 7
+        if let surface = hoveredSurface { schedulePeekEnd(on: surface) }
+        PerfLog.mark("widget.peek swapped id=\(item.id) for=\(shown.id)")
+        presentationChanged?()
+    }
+
+    /// Decisions `ids` were sent: they leave the popup, which shows the next alert or closes. The popup holds the
+    /// decision it opened with, and a decision answered here is in no later snapshot list, so it read as unanswered
+    /// after a successful send (Martin, 2026-10-27: "i confirmed it after staging and it doesnt seem like").
+    func dropSentFromPeek(_ ids: Set<String>) {
+        let queue = peekQueue.filter { !ids.contains($0.sourceId) }
+        if queue != peekQueue { peekQueue = queue }
+        guard let shown = peekItem, ids.contains(shown.sourceId) else { return }
+        PerfLog.mark("widget.peek sent id=\(shown.id) waiting=\(peekQueue.count)")
+        if peekQueue.isEmpty {
+            dismissPeek(all: true)
+            return
+        }
+        peekItem = peekQueue.removeFirst()
+        presentationChanged?()
+    }
+
+    /// A send started from the popup ended: the popup shows `outcome` instead of closing at once. `ids` are the
+    /// decisions sent. Delivered, it stays `sendCloseSeconds` (0: until closed), then moves on as a sent decision does
+    /// (`dropSentFromPeek`), and the staged reminder closes once nothing is staged any more. Not delivered or failed,
+    /// it stays until closed, with Send again for the answers no receiver took.
+    func showPeekOutcome(_ outcome: WidgetPeekOutcome, sent ids: Set<String>, delivered: Bool) {
+        guard let shown = peekItem,
+              ids.contains(shown.sourceId) || shown.sourceId == WidgetAlerts.stagedReminderID else {
+            if delivered { dropSentFromPeek(ids) }
+            return
+        }
+        peekOutcome = outcome
+        // The popup's own countdown would end it under the result.
+        peekTask?.cancel()
+        peekTask = nil
+        PerfLog.mark("widget.peek outcome id=\(shown.id) tone=\(outcome.tone.rawValue) delivered=\(delivered)")
+        let seconds = snapshot?.state.preferences.sendCloseSeconds ?? 2.5
+        guard delivered, seconds > 0 else { return }
+        peekTask = Task { [weak self] in
+            do { try await Task.sleep(for: .seconds(seconds)) } catch { return }
+            guard let self, self.peekItem?.id == shown.id else { return }
+            if shown.sourceId == WidgetAlerts.stagedReminderID {
+                if self.stagedItems.allSatisfy({ ids.contains($0.sourceId) }) {
+                    self.dismissPeek(all: true)
+                } else {
+                    self.peekOutcome = nil
+                }
+            } else {
+                self.dropSentFromPeek(ids)
+            }
+        }
+    }
+
+    /// The popup's close button, Esc and VoiceOver's escape: the popup ends without opening anything. In the
+    /// one-after-another mode it shows the next alert instead, unless `all`; a click elsewhere closes all of them.
+    public func dismissPeek(all: Bool = false) {
         guard let item = peekItem else { return }
-        PerfLog.mark("widget.peek dismissed id=\(item.id)")
+        PerfLog.mark("widget.peek dismissed id=\(item.id) all=\(all)")
         hoverTask?.cancel()
-        endPeek()
+        endPeek(advance: !all)
         // The pointer is on the panel (it pressed ×): without this the hover list would open in the popup's place.
-        if expanded == nil, let surface = hoveredSurface, presentation(for: surface) == .preview {
+        if peekItem == nil, expanded == nil, let surface = hoveredSurface, presentation(for: surface) == .preview {
             hoveredSurface = nil
             presentationChanged?()
         }
     }
 
-    private func endPeek() {
+    /// The next queued alert that still applies: a decision answered in the meantime is skipped.
+    private func nextQueuedPeek() -> WidgetInboxItem? {
+        while !peekQueue.isEmpty {
+            let next = peekQueue.removeFirst()
+            // Only a newer complete snapshot with the uncapped decision list can prove settlement. Older hubs,
+            // incomplete reads, or the capped and filtered overview cannot prove that an absent decision settled.
+            if next.kind == "decision", next.needsAnswer, inbox.complete,
+               inboxGeneration > (peekInboxGenerations[next.id] ?? inboxGeneration),
+               let pending = inbox.pendingDecisionIDs, !pending.contains(next.sourceId) {
+                peekDurations[next.id] = nil
+                peekInboxGenerations[next.id] = nil
+                continue
+            }
+            guard let fresh = inboxOverviewItems.first(where: { $0.id == next.id }) else { return next }
+            if next.kind == "decision", next.needsAnswer { return fresh.needsAnswer ? fresh : next }
+            if fresh.needsAnswer || !next.needsAnswer { return fresh }
+        }
+        return nil
+    }
+
+    private func endPeek(advance: Bool = true) {
         peekTask?.cancel()
         peekTask = nil
         guard let item = peekItem else { return }
+        if advance, peekMany == .queue, let surface = hoveredSurface, let next = nextQueuedPeek() {
+            peekDurations[item.id] = nil
+            peekInboxGenerations[item.id] = nil
+            peekItem = next
+            peekSeconds = peekDurations[next.id] ?? 7
+            PerfLog.mark("widget.peek next id=\(next.id) after=\(item.id) waiting=\(peekQueue.count)")
+            presentationChanged?()
+            schedulePeekEnd(on: surface)
+            return
+        }
         peekItem = nil
+        peekQueue = []
+        peekDurations = [:]
+        peekInboxGenerations = [:]
         if expanded == nil, let surface = hoveredSurface, !pointerInside.contains(surface.key) {
             hoveredSurface = nil
         }
@@ -907,12 +1170,11 @@ public final class WidgetModel: ObservableObject {
         pointerChanged?(surface, inside)
         if !inside { scheduleQuietReduction() }
         if !inside, peekItem != nil, hoveredSurface == surface {
-            // The user moved onto the popup and away again: it closes like a hover preview.
+            // The user moved onto the popup and away again: its countdown starts again, since "Preview stays" counts
+            // the time the pointer is off it. It closed after 220 ms before, 2.5 s after it appeared (Martin,
+            // 2026-10-26: "expands the widget for a few seconds then it disappears").
             hoverTask?.cancel()
-            hoverTask = Task { [weak self] in
-                do { try await Task.sleep(for: .milliseconds(220)) } catch { return }
-                self?.endPeek()
-            }
+            schedulePeekEnd(on: surface)
             return
         }
         guard layout.hoverPreviews, !dialogOpen else { return }
@@ -981,6 +1243,7 @@ public final class WidgetModel: ObservableObject {
     }
 
     func updateInbox(_ value: WidgetInboxSummary) {
+        inboxGeneration += 1
         var arrived = false
         var arrivedKeys: Set<String> = []
         var arrivals: [WidgetInboxItem] = []
@@ -1008,6 +1271,14 @@ public final class WidgetModel: ObservableObject {
         if arrived { inboxPulse += 1 }
         if arrivals.contains(where: \.needsAnswer) { waitingPulse += 1 }
         if !arrivals.isEmpty { inboxArrived?(arrivals) }
+        if value.complete {
+            let answered = value.answeredElsewhere ?? []
+            let fresh = answeredObserved
+                ? answered.filter { !answeredSeen.contains($0.sourceId) && $0.at > inboxStartedAt } : []
+            answeredSeen.formUnion(answered.map(\.sourceId))
+            answeredObserved = true
+            if !fresh.isEmpty { decisionsAnsweredElsewhere?(fresh.sorted { $0.at < $1.at }) }
+        }
         for key in arrivedKeys { inboxSessionPulses[key, default: 0] += 1 }
         if inboxWatermarks.count > 4096 {
             let removed = inboxWatermarks.sorted { $0.value.at < $1.value.at }.prefix(inboxWatermarks.count - 3072)
@@ -1037,7 +1308,12 @@ public final class WidgetModel: ObservableObject {
         railActivitySessions = snapshot?.state.preferences.railOrder == "stable"
             ? railActive : railActive.sorted(by: Self.previewOrder(inbox: inboxSessions, sort: previewSort))
         inboxOverviewItems = Self.overviewItems(value.sessions)
-        reconcileStaged(value.staged ?? value.sessions.flatMap { $0.items ?? [] })
+        let listed = value.sessions.flatMap { $0.items ?? [] }
+        reconcileStaged(value.staged ?? listed, listed: listed)
+        if value.complete, !stagedStartChecked {
+            stagedStartChecked = true
+            if !stagedItems.isEmpty { stagedAtStart?(stagedItems) }
+        }
         if !inboxFilterPicked, let opening = snapshot?.state.preferences.inboxFilter, opening != inboxFilter {
             inboxFilter = opening
         }
@@ -1159,6 +1435,8 @@ public final class WidgetModel: ObservableObject {
 
     /// Opens a decision's card by its id (`d_<n>_<session>`), in its own session when that is another one: the
     /// "Superseded by" link. The card arrives with that session's snapshot, so the selection is set after `select`.
+    /// Once the session's cards are known, the card is shown open, scrolled to and flashed (`resolveDecisionReveal`);
+    /// a decision the log does not have shows where the chat asked it.
     public func openDecision(id: String, sessionKey: String?) {
         guard let sessionKey else {
             notice = "That decision's session is not in the widget."
@@ -1168,6 +1446,130 @@ public final class WidgetModel: ObservableObject {
         section = "Inbox"
         foldedCardIDs.remove("decision:" + id)
         selectedCardID = "decision:" + id
+        chatDecision = nil
+        pendingDecision = (id: id, sessionKey: sessionKey)
+        resolveDecisionReveal()
+    }
+
+    /// A decision link waiting for its session's cards: its id and session.
+    private var pendingDecision: (id: String, sessionKey: String)?
+    /// A decision link whose decision the log does not list: the Conversation tab looks for where the chat asked it.
+    @Published public internal(set) var chatDecision: WidgetChatDecision?
+    /// The row a decision link scrolls to, with a count so the same row asked twice scrolls again.
+    @Published public internal(set) var revealScroll: WidgetRevealScroll?
+    /// One flash counter per revealed row, so revealing one row never flashes another (ux ledger, 2026-10-27).
+    @Published public private(set) var revealCounts: [String: Int] = [:]
+    private var revealStarts: [String: Date] = [:]
+    /// The transcript identity whose load finished, so an empty list in the middle of a reload is not read as "the
+    /// chat does not have it".
+    private var settledTranscript: String?
+
+    /// The flash trigger and start of one revealed row (`"card-" + card id` or `"turn:" + turn id`).
+    public func revealTrigger(_ rowID: String) -> Int { revealCounts[rowID] ?? 0 }
+    public func revealStart(_ rowID: String) -> Date? { revealStarts[rowID] }
+
+    /// The border flash of a revealed row, as long as the alert flash setting (`alertFlashSeconds`).
+    var revealStyle: AttentionPulseStyle {
+        var style = AttentionPulseStyle.borderFlash(color: .orange, cornerRadius: 11)
+        style.duration = WidgetAlerts.flashSeconds(snapshot?.state.preferences)
+        style.period = 0.8
+        style.fadeIn = 0.18
+        style.fadeOut = 0.3
+        return style
+    }
+
+    /// Scrolls the panel to `rowID` and flashes its border (no flash when the flash setting is 0).
+    func reveal(_ rowID: String) {
+        let count = (revealCounts[rowID] ?? 0) + 1
+        if WidgetAlerts.flashSeconds(snapshot?.state.preferences) > 0 {
+            revealStarts[rowID] = Date()
+            revealCounts[rowID] = count
+        }
+        revealScroll = WidgetRevealScroll(rowID: rowID, count: count)
+    }
+
+    /// Finishes a decision link once the facts are in: the card when the session lists it, else the chat.
+    func resolveDecisionReveal() {
+        if let pending = pendingDecision {
+            guard selectedKey == pending.sessionKey else {
+                pendingDecision = nil
+                return
+            }
+            let cardID = "decision:" + pending.id
+            if cards.contains(where: { $0.id == cardID }) {
+                pendingDecision = nil
+                section = "Inbox"
+                // "Messages" hides decisions; the chosen filter stays until the reader picks another.
+                if Self.filteredOut(kind: "decision", by: inboxFilter) {
+                    inboxFilter = "all"
+                    inboxFilterPicked = true
+                }
+                foldedCardIDs.remove(cardID)
+                selectedCardID = cardID
+                PerfLog.mark("widget.decision-reveal card \(pending.id)")
+                reveal("card-" + cardID)
+                return
+            }
+            // Only a snapshot that names this session has its whole list; a cached list can predate the decision.
+            guard snapshot?.selectedKey == pending.sessionKey, error == nil else { return }
+            pendingDecision = nil
+            let number = Self.decisionNumber(pending.id)
+            PerfLog.mark("widget.decision-reveal chat \(pending.id)")
+            chatDecision = WidgetChatDecision(id: pending.id, number: number, sessionKey: pending.sessionKey)
+            section = "Conversation"
+            postNote("Decision \(number.map(String.init) ?? "") was asked only in chat and is not in the decision log. "
+                     + "Showing the chat.")
+        }
+        guard let chat = chatDecision, !chat.settled, selectedKey == chat.sessionKey, section == "Conversation",
+              let followed = followedTranscript, settledTranscript == followed, !transcriptLoading else { return }
+        chatDecision?.settled = true
+        if let number = chat.number, let turn = Self.firstTurnAsking(number, in: transcript) {
+            chatDecision?.turnID = turn.id
+            reveal("turn:" + turn.id)
+            return
+        }
+        // Older than the loaded turns, or no transcript: the session's own terminal finds it.
+        chatDecision?.terminal = true
+        postNote("Decision \(chat.number.map(String.init) ?? "") was asked only in chat and is not in the decision log, "
+                 + "and not in the recent chat either. Showing it in its terminal.")
+        guard let number = chat.number, let sessionId = sessionIndex[chat.sessionKey]?.target.sessionId else { return }
+        let bridge = bridge
+        Task { [weak self] in
+            do {
+                let result = try await bridge.run(
+                    subcommand: "claude", args: ["cmux", "find", "--decision", String(number), "--", sessionId],
+                    timeoutSeconds: 60)
+                PerfLog.mark("widget.decision-reveal terminal exit=\(result.exitCode)")
+                if result.exitCode != 0 {
+                    self?.fail("The terminal could not show Decision \(number).", detail: result.stderr)
+                }
+            } catch {
+                self?.fail("The terminal could not show Decision \(number).", detail: error.localizedDescription)
+            }
+        }
+    }
+
+    /// The number in a decision id (`d_<n>_<session>`).
+    nonisolated static func decisionNumber(_ id: String) -> Int? {
+        let parts = id.split(separator: "_", maxSplits: 2)
+        return parts.count >= 2 && parts[0] == "d" ? Int(parts[1]) : nil
+    }
+
+    /// The first turn that asks DECISION `number` ("DECISION 17" never matches "DECISION 172"); the agent's own turn
+    /// before a user turn that only quotes it.
+    nonisolated static func firstTurnAsking(_ number: Int, in turns: [TranscriptTurn]) -> TranscriptTurn? {
+        let pattern = "DECISION[ \\t]+\(number)(?![0-9])"
+        let asking = turns.filter { $0.text.range(of: pattern, options: .regularExpression) != nil }
+        return asking.first { $0.role == "assistant" } ?? asking.first
+    }
+
+    /// The inbox filter hides a card of this kind (`LiveWidgetView.filtered`).
+    nonisolated static func filteredOut(kind: String, by filter: String) -> Bool {
+        switch filter {
+        case "inbox": return ["decision", "todo"].contains(kind)
+        case "decisions": return !["decision", "todo"].contains(kind)
+        default: return false
+        }
     }
 
     /// "Mark all read": every answer up to now is read, and older questions, decisions and results stop counting in
@@ -1221,12 +1623,26 @@ public final class WidgetModel: ObservableObject {
     public var stagedItems: [WidgetInboxItem] { stagedRows.filter { !heldDecisionIDs.contains($0.sourceId) } }
     /// Picks staged or cleared here that the next snapshot has not shown yet, by decision id ("" is a cleared pick).
     @Published var pendingStage: [String: String] = [:]
+    /// When each `pendingStage` entry was asked for (epoch ms): `reconcileStaged` drops it once its row changed after
+    /// that, whatever the row now holds, or after `pendingStageLifetime`, so a pick another surface replaced or a
+    /// decision sent elsewhere stops showing the old pick (it stayed until the widget restarted).
+    var pendingStageAt: [String: Double] = [:]
+    /// The item each pending pick was made on, so a leave or a popup's end right after the click still knows it.
+    var pendingStageItems: [String: WidgetInboxItem] = [:]
+    /// When the hub confirmed each pending pick was written (epoch ms): a row written after it is another surface's.
+    var pendingStageDone: [String: Double] = [:]
+    /// Decisions whose send runs now, so their Send now says Sending… and a second press cannot send them twice.
+    @Published public var sendingDecisionIDs: Set<String> = []
     /// The question about staged decisions before the panel closes (`requestCollapse`).
     @Published public var stagedLeavePrompt = false
     /// The staged decisions view: nil closed, "session" for the selected session's, "all" for every session's.
     @Published public var stagedView: String?
     /// The staged decisions the user kept at the last leave; the prompt asks again only for a newly staged one.
     var keptStaged: Set<String> = []
+    /// A Discard of staged decisions held for its Undo (the leave question's Discard; `holdDiscard`): the ids leave
+    /// every send at once (`heldDecisionIDs`), and the decision log hears of it when the Undo window ends.
+    @Published public internal(set) var heldDiscard: [String] = []
+    var discardTask: Task<Void, Never>?
     /// User edits and selections invalidate a send's pending automatic close, even if changed back afterwards.
     var sendCloseRevision = 0
     /// When this widget last saved a decision's draft, by card id, for the card's "Draft saved" line.
@@ -1257,15 +1673,44 @@ public final class WidgetModel: ObservableObject {
         return true
     }
 
-    public func openInboxItem(_ item: WidgetInboxItem) {
+    /// Opens `item` in its session's inbox, unfolded; with `surface`, the panel opens there too.
+    public func openInboxItem(_ item: WidgetInboxItem, on surface: WidgetSurfaceID? = nil) {
         guard !stopping else { return }
         listOrigin = .overview
         openingInbox = item
         select(item.key)
         selectedCardID = item.id
         foldedCardIDs.remove(item.id)
+        // An explicit open must reveal its target even if the reader had picked the opposite filter.
+        let decisionLike = ["decision", "todo"].contains(item.kind)
+        if (inboxFilter == "inbox" && decisionLike) || (inboxFilter == "decisions" && !decisionLike) {
+            inboxFilterPicked = true
+            inboxFilter = "all"
+        }
         section = "Inbox"
+        if let surface { openModule("agents", on: surface) }
         acknowledgeOpenedInbox()
+    }
+
+    /// The alert card's header, Open and Write my own answer: the alert's own item opens in its session (not the
+    /// session's newest one); with `ownAnswer` its own answer field takes the keyboard, holding a staged note.
+    public func openAlert(_ item: WidgetInboxItem, on surface: WidgetSurfaceID, ownAnswer: Bool = false) {
+        openInboxItem(item, on: surface)
+        // The card the popup opened flashes, so the eye finds it in the session's list.
+        reveal("card-" + item.id)
+        guard ownAnswer, !stopping else { return }
+        ownAnswerCardID = item.id
+        ownAnswerFocusRequest = item.id
+        if draft.text.isEmpty, let note = item.draft, !note.isEmpty { setText(note) }
+    }
+
+    /// The staged decisions of every session, in the inbox (the staged reminder's Show them).
+    public func openStaged(on surface: WidgetSurfaceID) {
+        guard !stopping else { return }
+        inboxOverview = true
+        section = "Inbox"
+        stagedView = "all"
+        openModule("agents", on: surface)
     }
 
     /// The inbox button: every session's entries in one list. A second click while that list is open hides the panel.
@@ -1324,6 +1769,7 @@ public final class WidgetModel: ObservableObject {
         hoverTask?.cancel()
         peekTask?.cancel()
         peekItem = nil
+        peekQueue = []
         restorePeekModule()
         voice?.finishInput()
         speechTask?.cancel()
@@ -1413,11 +1859,12 @@ public final class WidgetModel: ObservableObject {
     /// Up, Down or Return in the list on screen. True when the list took the key; false lets it through (the scroll
     /// view then scrolls). The ends of a list stop the move; they do not wrap.
     @discardableResult
-    public func moveInList(_ kind: WidgetListKey.Kind, controlFocused: Bool = false) -> Bool {
+    /// `alternate`: ⌘ was held (⌘↩): the list does the other of what Return does, as ⌘-click does on an option.
+    public func moveInList(_ kind: WidgetListKey.Kind, controlFocused: Bool = false, alternate: Bool = false) -> Bool {
         guard keyboardList else { return false }
         if kind == .open, controlFocused { return false }
         if inboxOverview, kind == .open, !inboxOverviewHasFocus { return false }
-        listKey = WidgetListKey(kind: kind, serial: (listKey?.serial ?? 0) + 1)
+        listKey = WidgetListKey(kind: kind, serial: (listKey?.serial ?? 0) + 1, alternate: alternate)
         // The inbox of every session owns its filter, grouping and highlight (WidgetInboxOverview).
         if inboxOverview { return true }
         switch section {
@@ -1521,7 +1968,12 @@ public final class WidgetModel: ObservableObject {
     func composerText(ownAnswer: String? = nil) -> Binding<String> {
         let key = selectedKey
         let generation = composerGeneration
-        return Binding(get: { [weak self] in self?.drafts[key]?.text ?? "" }, set: { [weak self] text in
+        // An own answer field shows the draft only while its card holds it; closed, it is an empty field under the
+        // options, and the reply composer's text stays out of it.
+        return Binding(get: { [weak self] in
+            guard let self, ownAnswer == nil || self.ownAnswerCardID == ownAnswer else { return "" }
+            return self.drafts[key]?.text ?? ""
+        }, set: { [weak self] text in
             guard let self, self.selectedKey == key, self.composerGeneration == generation,
                   ownAnswer == nil || self.ownAnswerCardID == ownAnswer else { return }
             self.setText(text)
@@ -1536,7 +1988,8 @@ public final class WidgetModel: ObservableObject {
         var value = drafts[key] ?? WidgetDraft()
         value.text = String(text.prefix(Self.draftTextLimit))
         drafts[key] = value
-        dirtyDrafts.insert(key)
+        draftOwnership.edited(key, at: Date())
+        scheduleDraftRelease(key)
         draftRevisions[key, default: 0] += 1
         let revision = draftRevisions[key, default: 0]
         draftTasks[key]?.cancel()
@@ -1548,10 +2001,62 @@ public final class WidgetModel: ObservableObject {
                 [weak self] in
                 guard let self, self.draftRevisions[key, default: 0] == revision,
                     self.drafts[key]?.text == captured else { return }
-                self.dirtyDrafts.remove(key)
+                self.draftLanded(key)
             })
         }
         scheduleQuietReduction()
+    }
+
+    /// Writes the stored drafts a snapshot carries into the composer, except where the composer owns the text
+    /// (`draftOwnership`): there only the attachments follow, as before.
+    private func applyStoredDrafts(_ state: WidgetState) {
+        let now = Date()
+        for (key, value) in state.drafts {
+            if draftOwnership.accepts(key, revision: state.revision, now: now) {
+                if drafts[key] != value { drafts[key] = value }
+            } else if drafts[key] != nil {
+                let assets = value.assetIds.filter { !submittedAssets.contains($0) }
+                if drafts[key]?.assetIds != assets { drafts[key]?.assetIds = assets }
+            }
+        }
+    }
+
+    /// A field that shows the draft of `key` took or left the keyboard (`field` names it: the reply box, an own answer).
+    /// Leaving it hands the text back to the stored state, so a change made elsewhere meanwhile shows now.
+    func draftFieldFocus(_ field: String, focused: Bool) {
+        draftOwnership.focus(field: field, key: focused ? selectedKey : nil)
+        if !focused { applyHeldDrafts() }
+    }
+
+    /// The newest snapshot's drafts, for the keys whose hold has ended.
+    private func applyHeldDrafts() {
+        guard let state = lastReceived?.state else { return }
+        applyStoredDrafts(state)
+    }
+
+    /// Applies the newest snapshot once the typing hold on `key` runs out.
+    private func scheduleDraftRelease(_ key: String) {
+        draftReleaseTask?.cancel()
+        let delay = draftOwnership.quietPeriod + 0.05
+        draftReleaseTask = Task { [weak self] in
+            do { try await Task.sleep(for: .seconds(delay)) } catch { return }
+            self?.applyHeldDrafts()
+        }
+    }
+
+    /// The newest write of `key`'s draft is stored. Until `state.json`'s revision after it is read, no snapshot writes
+    /// the key; then only snapshots read at that revision or later do, so one read before the write cannot undo it.
+    private func draftLanded(_ key: String) {
+        draftOwnership.landed(key)
+        let file = Self.widgetStateFile(stateRoot: stateRoot)
+        let fallback = (lastReceived?.state.revision ?? 0) + 1
+        Task { [weak self] in
+            let revision = await Task.detached(priority: .utility) { Self.storedRevision(file) }.value
+            guard let self else { return }
+            // Unreadable: any snapshot newer than the one on screen counts as read after the write.
+            self.draftOwnership.stored(key, at: revision ?? fallback)
+            self.applyHeldDrafts()
+        }
     }
 
     public func attachShelfItem(_ id: String, to key: String) async throws {
@@ -1565,19 +2070,19 @@ public final class WidgetModel: ObservableObject {
             guard !self.stopping else { throw CancellationError() }
             let attachment = try JSONDecoder().decode(WidgetShelfAttachment.self, from: JSONEncoder().encode(response))
             var latest = attachment.draft
-            if self.dirtyDrafts.contains(key), let local = self.drafts[key] { latest.text = local.text }
+            if self.draftOwnership.isUnsaved(key), let local = self.drafts[key] { latest.text = local.text }
             let merged = try attachment.merging(into: latest)
             self.draftTasks[key]?.cancel()
             self.draftRevisions[key, default: 0] += 1
             let revision = self.draftRevisions[key, default: 0]
             self.drafts[key] = merged
-            self.dirtyDrafts.insert(key)
+            self.draftOwnership.pending(key)
             if let assetId = attachment.assetId { self.submittedAssets.remove(assetId) }
             _ = try await self.call(["action": "draft", "key": .string(key), "draft": try .value(merged)])
             try Task.checkCancellation()
             guard !self.stopping else { throw CancellationError() }
             if self.draftRevisions[key, default: 0] == revision, self.drafts[key] == merged {
-                self.dirtyDrafts.remove(key)
+                self.draftLanded(key)
             }
         }
         // The queue tail waits for completion; the originating caller owns the throwing result.
@@ -1603,7 +2108,7 @@ public final class WidgetModel: ObservableObject {
             let localText = self.drafts[key]?.text ?? ""
             let expectedLength = localText.isEmpty ? note.text.count : localText.count + 1 + note.text.count
             guard expectedLength <= Self.draftTextLimit else { throw Self.draftTooLong }
-            if self.dirtyDrafts.contains(key), let local = self.drafts[key] {
+            if self.draftOwnership.isUnsaved(key), let local = self.drafts[key] {
                 _ = try await self.call(["action": "draft-text", "key": .string(key), "text": .string(local.text)])
             }
             try Task.checkCancellation()
@@ -1619,11 +2124,11 @@ public final class WidgetModel: ObservableObject {
             self.draftRevisions[key, default: 0] += 1
             let savedRevision = self.draftRevisions[key, default: 0]
             self.drafts[key] = merged
-            self.dirtyDrafts.insert(key)
+            self.draftOwnership.pending(key)
             _ = try await self.call(["action": "draft-text", "key": .string(key), "text": .string(merged.text)])
             try Task.checkCancellation()
             if self.draftRevisions[key, default: 0] == savedRevision, self.drafts[key]?.text == merged.text {
-                self.dirtyDrafts.remove(key)
+                self.draftLanded(key)
             }
         }
         mutationTask = Task { _ = await operation.result }
@@ -1856,29 +2361,33 @@ public final class WidgetModel: ObservableObject {
         }
     }
 
-    /// The composer's Send (Return): it answers the open decision, else it is a follow-up to the session.
+    /// Send (Return): in a decision's own answer field it answers that decision; in the reply composer it is a
+    /// follow-up to the session, as its "Reply to …" says. The reply composer used to answer the open decision too,
+    /// which nothing on screen said, and the decision's own field is now under its options.
     public func send() {
         if ownAnswerCard != nil {
             submitOwnAnswer()
             return
         }
-        submit(answering: answerCard != nil && !cardPending)
+        submit()
     }
 
     /// Sends the draft (text and media) as the answer to `ownAnswerCard`, with no option picked.
     public func submitOwnAnswer() {
         guard let card = ownAnswerCard else { return }
         guard !draft.text.trimmingCharacters(in: .whitespacesAndNewlines).isEmpty || !draft.assetIds.isEmpty else {
-            error = "Write your answer or attach media first."
+            postNote("Write your answer or attach media first.")
             return
         }
         submit(answering: true)
         if submittedCards.contains(card.id) { ownAnswerCardID = nil }
     }
 
-    public func submit(choice: String? = nil, answering: Bool = false) {
+    /// `withDraft`: the draft's text and media go with it and the draft empties. Without, an option goes alone and a
+    /// reply being typed in the composer stays where it is.
+    public func submit(choice: String? = nil, answering: Bool = false, withDraft: Bool = true) {
         guard let session = selected, importing == 0 else { return }
-        let submitted = draft
+        let submitted = withDraft ? draft : WidgetDraft()
         do {
             var payload: WidgetJSON = ["kind": "followup", "text": .string(submitted.text)]
             if let card, answering || choice != nil {
@@ -1908,6 +2417,10 @@ public final class WidgetModel: ObservableObject {
                     ]
                 }
             }
+            if case .object(var fields) = payload, fields["kind"] == .string("followup"), let reply = replyToCard {
+                fields["replyTo"] = try .value(WidgetReplyTo(card: reply))
+                payload = .object(fields)
+            }
             if !answering && choice == nil
                 && submitted.text.trimmingCharacters(in: .whitespacesAndNewlines).isEmpty
                 && submitted.assetIds.isEmpty
@@ -1922,16 +2435,26 @@ public final class WidgetModel: ObservableObject {
             let file = journal.appendingPathComponent(
                 String(Int64(Date().timeIntervalSince1970 * 1000)) + "-" + UUID().uuidString + ".json")
             try JSONEncoder().encode(request).write(to: file, options: .atomic)
+            guard withDraft else {
+                if let card, answering || choice != nil { submittedCards.insert(card.id) }
+                drainJournal()
+                return
+            }
             draftTasks[selectedKey]?.cancel()
-            dirtyDrafts.insert(selectedKey)
+            draftOwnership.pending(selectedKey)
             drafts[selectedKey] = WidgetDraft()
             // A save of the typed text still on its way would land after the clear below and put the sent text back
             // on the hub; a new revision makes it skip itself.
             draftRevisions[selectedKey, default: 0] += 1
             composerGeneration += 1
+            replyToDropped[selectedKey] = nil
             submittedAssets.formUnion(submitted.assetIds)
             if let card, answering || choice != nil { submittedCards.insert(card.id) }
-            action(["action": "draft-text", "key": .string(selectedKey), "text": ""])
+            let sentKey = selectedKey
+            action(["action": "draft-text", "key": .string(sentKey), "text": ""]) { [weak self] in
+                guard let self, self.drafts[sentKey]?.text.isEmpty ?? true else { return }
+                self.draftLanded(sentKey)
+            }
             drainJournal()
         } catch { report(error) }
     }
@@ -2061,14 +2584,14 @@ public final class WidgetModel: ObservableObject {
                     self.draftTasks[key]?.cancel()
                     self.draftTasks[key] = nil
                     self.draftRevisions[key, default: 0] += 1
-                    self.dirtyDrafts.insert(key)
+                    self.draftOwnership.pending(key)
                     let saved = restored.text
                     self.action(["action": "draft-text", "key": .string(key), "text": .string(saved)]) { [weak self] in
                         guard let self, self.drafts[key]?.text == saved else { return }
-                        self.dirtyDrafts.remove(key)
+                        self.draftLanded(key)
                     }
                 } else {
-                    self.dirtyDrafts.remove(key)
+                    self.draftLanded(key)
                 }
                 self.drafts[key] = restored
                 self.submittedAssets.subtract(message.assetIds)
@@ -2345,7 +2868,7 @@ public final class WidgetModel: ObservableObject {
             drafts[key] = WidgetDraft(
                 text: [existing, text].filter { !$0.isEmpty }.joined(separator: " "),
                 assetIds: drafts[key]?.assetIds ?? [])
-            dirtyDrafts.insert(key)
+            draftOwnership.pending(key)
             // A typed save still waiting out its delay holds the text from before the dictation; it must not
             // land after this one and overwrite the merged draft.
             draftTasks[key]?.cancel()
@@ -2354,7 +2877,7 @@ public final class WidgetModel: ObservableObject {
                 let merged = drafts[key]?.text ?? ""
                 action(["action": "draft-text", "key": .string(key), "text": .string(merged)]) { [weak self] in
                     guard let self, self.drafts[key]?.text == merged else { return }
-                    self.dirtyDrafts.remove(key)
+                    self.draftLanded(key)
                 }
             }
         }
@@ -2474,6 +2997,8 @@ public final class WidgetModel: ObservableObject {
         guard session.target.provider != "unknown" else {
             transcriptError =
                 "This source has no live transcript. Its questions, answers and attachments remain in this timeline."
+            settledTranscript = identity
+            resolveDecisionReveal()
             return
         }
         let key = session.key
@@ -2481,7 +3006,11 @@ public final class WidgetModel: ObservableObject {
         transcriptTask = Task { [weak self] in
             guard let self else { return }
             defer {
-                if self.followedTranscript == identity { self.transcriptLoading = false }
+                if self.followedTranscript == identity {
+                    self.transcriptLoading = false
+                    self.settledTranscript = identity
+                    self.resolveDecisionReveal()
+                }
             }
             do {
                 let envelope = try await self.transcriptCache.value(for: self.transcriptQuery(session))
@@ -2541,8 +3070,10 @@ public final class WidgetModel: ObservableObject {
         }
     }
 
+    /// One sentence on screen, the error's own text behind Details (`WidgetErrorText`).
     func report(_ error: Error) {
-        self.error = error.localizedDescription
+        let words = WidgetErrorText.words(for: error)
+        fail(words.text, detail: words.detail)
         PerfLog.mark("widget.error \(error.localizedDescription)")
     }
 }
@@ -2636,6 +3167,32 @@ public struct WidgetListKey: Equatable, Sendable {
     public enum Kind: Equatable, Sendable { case up, down, open }
     public let kind: Kind
     public let serial: Int
+    /// ⌘ was held with the key (⌘↩, "openAlt"): the list does the other of what Return does. A flag, not a fourth
+    /// `Kind`, so every exhaustive switch over `Kind` keeps compiling.
+    public var alternate: Bool = false
+
+    /// ⌘↩: an `.open` with ⌘ held.
+    public var isOpenAlt: Bool { kind == .open && alternate }
+}
+
+/// How the widget's note reads: plain, a success, or a warning (a send no receiver took, a refused write).
+public enum WidgetNoticeTone: String, Equatable, Sendable { case info, success, warning }
+
+/// What a send started from the alert popup did, for the popup to show before it moves on (`WidgetModel.peekOutcome`).
+public struct WidgetPeekOutcome: Equatable {
+    public let text: String
+    public let tone: WidgetNoticeTone
+    /// Answered decisions no receiver took, for the popup's Send again (`WidgetModel.resendAnswers`).
+    public let sendAgain: [WidgetInboxItem]
+    /// Hub details (each session's own reason), behind a Details disclosure.
+    public let detail: String?
+
+    public init(text: String, tone: WidgetNoticeTone, sendAgain: [WidgetInboxItem] = [], detail: String? = nil) {
+        self.text = text
+        self.tone = tone
+        self.sendAgain = sendAgain
+        self.detail = detail
+    }
 }
 
 /// Which session's cmux popover a row's accessibility action asked for, and in which list.
@@ -2648,4 +3205,25 @@ public struct WidgetCmuxRequest: Equatable, Sendable {
 public struct WidgetChoiceFocus: Equatable, Sendable {
     public let cardID: String
     public let choiceID: String
+}
+
+/// The row a decision link scrolls the session panel to (`WidgetModel.reveal`): `"card-" + card id` in the inbox,
+/// `"turn:" + turn id` in the conversation. `count` makes a second link to the same row scroll again.
+public struct WidgetRevealScroll: Equatable, Sendable {
+    public let rowID: String
+    public let count: Int
+}
+
+/// A decision link to a decision the log does not list (asked only in a chat reply): the Conversation tab shows the
+/// turn that asked it, or, when that turn is older than the loaded ones, the session's terminal does.
+public struct WidgetChatDecision: Equatable, Sendable {
+    public let id: String
+    public let number: Int?
+    public let sessionKey: String
+    /// The transcript was searched once it loaded.
+    public var settled = false
+    /// The turn that asked it, when the loaded conversation has it.
+    public var turnID: String?
+    /// The loaded conversation lacks it, so `tools claude cmux find --decision` ran.
+    public var terminal = false
 }

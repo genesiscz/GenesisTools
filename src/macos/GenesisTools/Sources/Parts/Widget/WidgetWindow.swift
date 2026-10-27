@@ -28,6 +28,13 @@ private final class AgentWidgetDelegate: NSObject, NSApplicationDelegate {
             }
             return args[index + 1]
         }
+        // Every bridge the widget builds asks the resident hub server first, which answers `hub widget call`, `hub
+        // widget context` and `hub widget tasks list` without a process each (src/hub/server/doors/widget.ts); an argv
+        // with no door goes to the process at once. The preview build and `GENESIS_HUB_SERVER=0` keep processes only.
+        if !NativePreview.enabled, ProcessInfo.processInfo.environment["GENESIS_HUB_SERVER"] != "0" {
+            let binary = ToolsBridge.defaultBinaryPath()
+            ToolsServerClient.shared = ToolsServerClient(startServer: { ToolsServerClient.startHubServer(binaryPath: binary) })
+        }
         let tools = URL(fileURLWithPath: ToolsBridge.defaultBinaryPath()).resolvingSymlinksInPath()
         let wrapper = tools.deletingLastPathComponent().appendingPathComponent("widget-tools").path
         let stateRoot = value("--state-root") ?? Bundle.main.object(forInfoDictionaryKey: "GenesisToolsWidgetStateRoot") as? String
@@ -95,6 +102,8 @@ private final class AgentWidgetDelegate: NSObject, NSApplicationDelegate {
         WidgetKeymap.shared.bind(quit, to: WidgetKeymap.quit)
         root.submenu = application
         menu.addItem(root)
+        // Text fields take ⌘A, ⌘C, ⌘X, ⌘V, ⌘Z and ⇧⌘Z from an Edit menu; without one they beep.
+        menu.addItem(StandardEditing.menuItem())
         NSApp.mainMenu = menu
         // `--no-activate` is a rebuild's relaunch (relaunch.ts): a widget that is off then stays quiet instead of
         // opening the settings over the app in front.

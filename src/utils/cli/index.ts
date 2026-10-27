@@ -16,6 +16,6 @@ export { commandWords, parseNonNegativeInt } from "./parse";
 export { recordRunOnExit } from "./run-record";
 export { printLn, writeStdout } from "./stdout";
 export { toolCommand } from "./tool-command";
-export type { CollectedOutput, RunToolOptions } from "./tools";
+export type { CollectedOutput, DetachedToolOptions, RunToolOptions } from "./tools";
 export { collectOutput, execTool, execToolInteractive, spawnToolDetached } from "./tools";
 export { parseVariadic } from "./variadic";

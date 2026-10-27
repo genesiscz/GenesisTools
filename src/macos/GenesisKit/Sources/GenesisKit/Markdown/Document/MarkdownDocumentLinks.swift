@@ -11,8 +11,15 @@ import SwiftUI
 import UniformTypeIdentifiers
 
 /// Resolves what a click inside a rendered document points at: a relative link
-/// against the file's folder, a wikilink against the folder and then the vault.
+/// against the file's folder, a wikilink against the folder, the vault root, and then
+/// by note name anywhere in the vault (Obsidian's shortest-path form).
 public enum MarkdownDocumentLinks {
+    /// The vault's shared file index, for links that name a note only by its name.
+    static func vaultIndex(_ vaultRoot: String?) -> VaultFileIndex? {
+        guard let vaultRoot, !vaultRoot.isEmpty else { return nil }
+        return VaultFileIndex.forVault(URL(fileURLWithPath: (vaultRoot as NSString).expandingTildeInPath))
+    }
+
     /// The heading a link points at: `Note#Heading` → "Heading", none → nil.
     /// A `#page=2` style fragment on a non-markdown file is left to its app.
     static func fragment(of ref: String) -> String? {
@@ -30,6 +37,7 @@ public enum MarkdownDocumentLinks {
         _ ref: String,
         folder: URL,
         vaultRoot: String?,
+        index: VaultFileIndex? = nil,
         exists: (String) -> Bool = { FileManager.default.fileExists(atPath: $0) }
     ) -> URL? {
         var target = ref.trimmingCharacters(in: .whitespacesAndNewlines)
@@ -52,6 +60,30 @@ public enum MarkdownDocumentLinks {
         if let vaultRoot, !vaultRoot.isEmpty {
             roots.append(URL(fileURLWithPath: vaultRoot))
         }
+        // A bare note may have a nearer match outside this folder. Wait for the index before
+        // accepting a vault-root match, then rank all indexed candidates together.
+        let ext = (target as NSString).pathExtension.lowercased()
+        if !target.contains("/"), let index {
+            let local = folder.appendingPathComponent(target).standardizedFileURL
+            if exists(local.path) { return local }
+            if ext != "md" {
+                let md = folder.appendingPathComponent("\(target).md").standardizedFileURL
+                if exists(md.path) { return md }
+            }
+            // Keep a literal non-note file at the root ahead of note-name lookup.
+            if !ext.isEmpty, ext != "md", let vaultRoot {
+                let literal = URL(fileURLWithPath: vaultRoot).appendingPathComponent(target).standardizedFileURL
+                if exists(literal.path) { return literal }
+            }
+            guard index.isReady else { return nil }
+            let base = index.root.standardizedFileURL.path
+            let here = folder.standardizedFileURL.path
+            let near = here.hasPrefix(base + "/") ? String(here.dropFirst(base.count + 1)) : ""
+            for path in index.notes(named: target, near: near) {
+                let url = index.root.appendingPathComponent(path).standardizedFileURL
+                if exists(url.path) { return url }
+            }
+        }
         for root in roots {
             let direct = root.appendingPathComponent(target).standardizedFileURL
             if exists(direct.path) { return direct }
@@ -59,6 +91,16 @@ public enum MarkdownDocumentLinks {
                 let md = root.appendingPathComponent("\(target).md").standardizedFileURL
                 if exists(md.path) { return md }
             }
+        }
+        // `[[Overview]]` in `Project/Design/Figma.md` names `Project/Overview.md`: Obsidian finds a note by its
+        // name (or a path tail) anywhere in the vault, the nearest one first.
+        guard let index, !target.hasPrefix("../"), !target.hasPrefix("./") else { return nil }
+        let base = index.root.standardizedFileURL.path
+        let here = folder.standardizedFileURL.path
+        let near = here.hasPrefix(base + "/") ? String(here.dropFirst(base.count + 1)) : ""
+        for path in index.notes(named: target, near: near) {
+            let url = index.root.appendingPathComponent(path).standardizedFileURL
+            if exists(url.path) { return url }
         }
         return nil
     }
@@ -84,14 +126,15 @@ public enum MarkdownDocumentLinks {
         _ ref: String,
         folder: URL,
         vaultRoot: String?,
+        index: VaultFileIndex? = nil,
         exists: (String) -> Bool = { FileManager.default.fileExists(atPath: $0) }
     ) -> (url: URL, fragment: String?)? {
         let fragment = fragment(of: ref)
-        if let url = resolve(ref, folder: folder, vaultRoot: vaultRoot, exists: exists) {
+        if let url = resolve(ref, folder: folder, vaultRoot: vaultRoot, index: index, exists: exists) {
             return (url, fragment)
         }
         guard fragment == nil, let suffix = lineSuffix(ref.trimmingCharacters(in: .whitespacesAndNewlines)),
-              let url = resolve(suffix.path, folder: folder, vaultRoot: vaultRoot, exists: exists)
+              let url = resolve(suffix.path, folder: folder, vaultRoot: vaultRoot, index: index, exists: exists)
         else { return nil }
         return (url, suffix.fragment)
     }

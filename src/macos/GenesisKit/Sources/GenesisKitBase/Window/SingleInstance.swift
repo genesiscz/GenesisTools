@@ -18,6 +18,8 @@ public final class SingleInstance: @unchecked Sendable {
     /// The holder may still be starting (a hub serves right after its window exists, ~0.5 s in).
     private let forwardAttempts = 3
     private var lockDescriptor: Int32 = -1
+    /// A read-only handle on the lock file for `isRunningElsewhere`, opened on its first call.
+    private var probeDescriptor: Int32 = -1
 
     /// `notificationPrefix` names the two distributed notifications (`<prefix>.request`, `<prefix>.ack`).
     public init(name: String, lockFile: URL, notificationPrefix: String, retryHint: String, log: @escaping (String) -> Void) {
@@ -53,12 +55,18 @@ public final class SingleInstance: @unchecked Sendable {
 
     /// Another process holds the lock, so one runs there. Asks the kernel, not the pid file, which outlives
     /// the process that wrote it.
+    /// The lock file is opened once and kept: a dock timer asks this on the main thread every few seconds, and an
+    /// `open` there waited 0.5 to 2.2 s per call while the disk was nearly full (review window, 2026-10-27).
     public var isRunningElsewhere: Bool {
         guard lockDescriptor < 0 else { return false }
-        let descriptor = open(lockFile.path, O_RDONLY | O_CLOEXEC)
-        guard descriptor >= 0 else { return false }
-        defer { close(descriptor) }
-        return flock(descriptor, LOCK_SH | LOCK_NB) != 0
+        if probeDescriptor < 0 {
+            probeDescriptor = open(lockFile.path, O_RDONLY | O_CLOEXEC)
+        }
+        guard probeDescriptor >= 0 else { return false }
+        guard flock(probeDescriptor, LOCK_SH | LOCK_NB) == 0 else { return true }
+        // Held, this shared lock would refuse a later launch its exclusive claim.
+        flock(probeDescriptor, LOCK_UN)
+        return false
     }
 
     /// The pid the lock holder wrote, while that process runs.

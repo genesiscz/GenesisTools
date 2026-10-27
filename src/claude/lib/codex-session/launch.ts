@@ -19,7 +19,7 @@ import { toolCommand } from "@genesiscz/utils/cli/tool-command";
 import { SafeJSON } from "@genesiscz/utils/json";
 
 /** The model aliases P3 names; any catalog id works too. */
-export const SESSION_MODEL_ALIASES = ["sol", "sol6", "astra", "luna"] as const;
+export const SESSION_MODEL_ALIASES = ["sol", "sol6", "astra", "terra", "luna"] as const;
 export const DEFAULT_SESSION_MODEL = "sol";
 /** switcheroo's `ccx` runs its main loop at high unless asked, and the generated subagents run at high. */
 export const DEFAULT_SESSION_EFFORT = "high";
@@ -119,7 +119,7 @@ export interface SessionEnvInput {
     claude?: { haiku: string; sonnet?: string; opus: string; subscriptionType?: string };
     /** The small-model slot without a Claude account. */
     smallCodexModel: string;
-    /** Window × usable percent, plain digits. */
+    /** The model's whole window, plain digits. */
     maxContextTokens: number;
     compactPercent: number;
     /** `codex:<account>+claude:<account>` for `tools claude who` and the statusline. */
@@ -178,6 +178,8 @@ export function sessionEnv(
         CLAUDE_CODE_AUTO_COMPACT_WINDOW: String(Math.floor(input.maxContextTokens)),
         CLAUDE_AUTOCOMPACT_PCT_OVERRIDE: String(input.compactPercent),
         TOOLS_CLAUDE_ACCOUNT: `proxy:${input.accountLabel}`,
+        // `/model` lists the proxy's Codex models (`sessionPickerModels`), so a session switches without a relaunch.
+        CLAUDE_CODE_ENABLE_GATEWAY_MODEL_DISCOVERY: "1",
     };
 }
 
@@ -198,15 +200,19 @@ export function sessionArgs(input: {
     effort: string;
     agents: string[];
     settingsEnv: Record<string, string>;
+    /** Appended to the lead's system prompt, unless the user passes their own `--append-system-prompt`. */
+    leadPrompt: string;
     passthrough: string[];
 }): string[] {
     const ownSettings = input.passthrough.some((arg) => arg === "--settings" || arg.startsWith("--settings="));
+    const ownPrompt = input.passthrough.some((arg) => arg.startsWith("--append-system-prompt"));
 
     return [
         ...(input.resume ? ["--resume", input.sessionId] : ["--session-id", input.sessionId]),
         ...(passthroughSets(input.passthrough, "--effort") ? [] : ["--effort", input.effort]),
         ...input.agents,
         ...(ownSettings ? [] : ["--settings", SafeJSON.stringify({ env: input.settingsEnv })]),
+        ...(ownPrompt ? [] : ["--append-system-prompt", input.leadPrompt]),
         ...input.passthrough,
     ];
 }

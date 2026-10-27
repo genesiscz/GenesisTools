@@ -171,7 +171,11 @@ enum HubMarkdownExport {
 /// A child still running after `runCapturing`'s 60 s default is killed, and the call throws.
 enum ToolsCLIRunner {
     static func run(_ args: [String]) throws -> Data {
-        let result = try capture(args)
+        try output(of: capture(args), args)
+    }
+
+    /// A capture's stdout, or the error `run` throws for a nonzero exit.
+    static func output(of result: ProcessCapture, _ args: [String]) throws -> Data {
         if result.status != 0 {
             let message = String(decoding: result.stderr, as: UTF8.self)
             throw ReviewError.git("tools \(args.first ?? "") exited \(result.status): \(message.trimmed.suffix(300))")
@@ -199,6 +203,74 @@ enum ToolsCLIRunner {
             }
         }
 
+        return try processCapture(args, timeout: timeout, traceId: traceId, started: started)
+    }
+
+    /// `capture` that its task can stop: a server call is cancelled there, and a running process is terminated (the
+    /// `tools` wrapper passes the signal to the tool). A cancelled task throws `CancellationError`, never a capture.
+    static func captureCancellable(_ args: [String], timeout: TimeInterval = 60) async throws -> ProcessCapture {
+        let run = try await captureStoppable(args, timeout: timeout)
+        try Task.checkCancellation()
+        return run.capture
+    }
+
+    /// `capture` for work a stop may come too late for (F19's send). A cancel of the calling task before the child
+    /// starts throws `CancellationError`; a cancel while it runs terminates it, waits for its end and returns what it
+    /// printed, with `stopped` set. The tool decides what the stop undoes: a widget send honors it only before it
+    /// writes (`cancelPoint`, src/hub/lib/widget/staged.ts), so a send that already typed finishes and says so.
+    /// A server door is one idempotent write, so a cancel there only stops the wait for its answer.
+    static func captureStoppable(_ args: [String], timeout: TimeInterval = 60) async throws -> (capture: ProcessCapture, stopped: Bool) {
+        let traceId = ToolsCallTrace.newId()
+        let started = Date()
+        if let server = HubSource.server {
+            let start = CFAbsoluteTimeGetCurrent()
+            let result = await server.call(argv: args, timeoutSeconds: Int(timeout), traceId: traceId)
+            try Task.checkCancellation()
+            if let result {
+                PerfLog.since("hub.srv.\(args.prefix(3).joined(separator: "."))", start)
+                ToolsCallTrace.record(
+                    traceId: traceId, via: "server", argv: args, started: started,
+                    exit: result.exitCode, outBytes: result.stdout.utf8.count, stderr: result.stderr
+                )
+                let capture = ProcessCapture(status: result.exitCode, stdout: Data(result.stdout.utf8), stderr: Data(result.stderr.utf8))
+                return (capture, false)
+            }
+        }
+
+        try Task.checkCancellation()
+        let run = try await runStoppable { handle in
+            try processCapture(args, timeout: timeout, traceId: traceId, started: started, handle: handle)
+        }
+        return (run.value, run.stopped)
+    }
+
+    /// Runs `work` off the main thread; a cancel of the calling task stops the process `work` hands its handle,
+    /// and the call throws `CancellationError` once `work` returned.
+    static func runCancellable<T: Sendable>(_ work: @escaping @Sendable (ProcessCancelHandle) throws -> T) async throws -> T {
+        let run = try await runStoppable(work)
+        try Task.checkCancellation()
+        return run.value
+    }
+
+    /// `runCancellable` that returns what `work` returned also after a cancel: `stopped` says a cancel came.
+    static func runStoppable<T: Sendable>(
+        _ work: @escaping @Sendable (ProcessCancelHandle) throws -> T
+    ) async throws -> (value: T, stopped: Bool) {
+        let handle = ProcessCancelHandle()
+        let value = try await withTaskCancellationHandler {
+            try await withCheckedThrowingContinuation { (continuation: CheckedContinuation<T, Error>) in
+                DispatchQueue.global(qos: .userInitiated).async {
+                    continuation.resume(with: Result { try work(handle) })
+                }
+            }
+        } onCancel: {
+            handle.cancel()
+        }
+        return (value, handle.cancelled)
+    }
+
+    private static func processCapture(_ args: [String], timeout: TimeInterval, traceId: String, started: Date,
+                                       handle: ProcessCancelHandle? = nil) throws -> ProcessCapture {
         let span = HubPerf.begin("tools.\(args.prefix(3).joined(separator: "."))")
         defer { span.end() }
         // Said plainly, as ToolsBridge.run says it: a missing path reached the hub as Cocoa's "The file tools doesn't exist".
@@ -220,9 +292,9 @@ enum ToolsCLIRunner {
         }
         process.environment = environment
         do {
-            let capture = try process.runCapturing(timeout: timeout)
+            let capture = try process.runCapturing(timeout: timeout, afterStart: handle.map { handle in { handle.adopt(process) } })
             ToolsCallTrace.record(
-                traceId: traceId, via: "process", argv: args, started: started,
+                traceId: traceId, via: handle?.cancelled == true ? "process-cancelled" : "process", argv: args, started: started,
                 exit: capture.status, outBytes: capture.stdout.count, stderr: String(decoding: capture.stderr.suffix(400), as: UTF8.self)
             )
             return capture
@@ -232,6 +304,31 @@ enum ToolsCLIRunner {
             )
             throw ReviewError.git("tools \(args.prefix(3).joined(separator: " ")) did not exit within \(Int(timeout.seconds)) s and was killed")
         }
+    }
+}
+
+/// The running child of a cancellable capture. A cancel before the child started terminates it as soon as it does.
+final class ProcessCancelHandle: @unchecked Sendable {
+    private let lock = NSLock()
+    private var process: Process?
+    private var _cancelled = false
+
+    var cancelled: Bool { lock.withLock { _cancelled } }
+
+    func adopt(_ process: Process) {
+        let stop = lock.withLock { () -> Bool in
+            self.process = process
+            return _cancelled
+        }
+        if stop { process.terminate() }
+    }
+
+    func cancel() {
+        let running = lock.withLock { () -> Process? in
+            _cancelled = true
+            return process
+        }
+        if let running, running.isRunning { running.terminate() }
     }
 }
 
@@ -403,7 +500,7 @@ struct WorktreeDetailView: View {
                 }
             }
 
-            if let review = model.review, review.repo.path == worktree.path {
+            if let review = model.review(showing: worktree) {
                 ReviewRootView(model: review)
             } else {
                 Text("Loading the worktree's changes…")
@@ -414,6 +511,10 @@ struct WorktreeDetailView: View {
         }
         // Without a diff under it the header floated to the middle of the window.
         .frame(maxWidth: .infinity, maxHeight: .infinity, alignment: .top)
+        // The branch's MR target is the base its commits count from, also for a review made after the facts arrived.
+        .onChange(of: [facts?.pr?.target ?? "", model.review.map { "\(ObjectIdentifier($0))" } ?? ""], initial: true) { _, _ in
+            model.review(showing: worktree)?.useBranchTarget(facts?.pr?.target)
+        }
         // `--worktree <path>` and a forwarded request set the selection without a click, so nothing made
         // the review: the page showed its header and nothing else.
         .task(id: worktree.path) {

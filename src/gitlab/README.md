@@ -25,6 +25,7 @@ Talks to the GitLab REST and GraphQL APIs directly. Nothing about the instance i
 | **Judgements** | An agent judges a review in one markdown file per MR: `review skeleton` writes every item's heading, `review check` proves it complete (text-checked anchors, badges, house rules), `review render` gives the full report or a chat digest, `comments post` turns the decisions into drafts with a ledger and a read back |
 | **Stable ids** | Every file, thread, draft and affected MR gets an id kept per MR (`F03`, `T01` threads by others, `Y02` threads I started, `D04` my drafts, `M01`), and each id travels with the GitLab id it names, so a stale id cannot reach the wrong thread |
 | **Batch writes** | `pr <iids> comments add --top-level --now` and `pr <iids> labels` keep a ledger, dedupe, and log before/after |
+| **Inbox** | `inbox` lists what changed since you last looked: new reviews on your MRs, new activity on the MRs you review, failed pipelines on yours, threads waiting for your reply, pending to-dos; the mark is the last note id per MR |
 | **Stale-MR cleanup** | `pr stale` collects facts, lets an agent review, renders a note, then posts, labels and closes one MR at a time |
 
 ---
@@ -47,6 +48,10 @@ tools gitlab pr touching bun.lock package.json
 
 # One MR: title, author, branches, state, threads, my drafts
 tools gitlab pr 42
+
+# Since you last looked: reviews you received, MRs you review, threads waiting for you (moves the mark)
+tools gitlab inbox
+tools gitlab inbox --peek --all-projects
 
 # Receiving a review on my MR !42: JSON, or the report with code excerpts
 tools gitlab pr 42 review --receive --cwd ~/code/web-app
@@ -135,6 +140,23 @@ Tests assert against `NEUTRAL_DEFAULTS` and `NEUTRAL_CONFIG`, never the seam.
 | `activity user [--from/--to/--days]` | One user's events per local day: counts per action, commit totals, links; `--tz`, `--project` filter, `--format text\|md\|json`, `--detail` timeline |
 | `activity user commits --user <u> --since <date>` | Day-by-day report of a user's commits across projects (Markdown or `--json`) |
 | `activity project --since <date>` | Monthly commit report and maintainer leaderboard for one project |
+| `inbox` | Since the last check: your MRs with new comments, pushes, approvals or a failed pipeline, the MRs you review (as reviewer, or because you commented in the last `--lookback-days`), threads whose last word is someone else's, pending to-dos. Then it moves the mark. `--peek` and `--since <time>` leave the mark; `--role author\|reviewer\|all`, `--all-projects`, `--json` |
+| `inbox mark [--at <time>]` | Move the mark without listing anything |
+
+### `inbox`
+
+```bash
+tools gitlab inbox                 # everything since the last check, then the mark moves
+tools gitlab inbox --peek          # the same list, the mark stays
+tools gitlab inbox --since 2026-10-22T08:00 --role reviewer
+tools gitlab inbox mark            # catch up without reading
+```
+
+- **Scope.** One project by default (`--project`, `GITLAB_PROJECT`, the configured default, the origin remote); `--all-projects` reads every project. Each scope keeps its own mark, so a one-project check never moves the all-projects mark.
+- **The mark** lives in `inbox.json` next to the config: per host, user and scope, the time of the last check and the highest note id seen on each MR. A note counts as new when its id is above the MR's mark, so a skewed clock cannot hide a comment; an MR seen for the first time uses the time. The first check covers the last 24 hours.
+- **Waiting for you.** An unresolved thread whose last note is someone else's: on your own MR any thread, on another MR one you wrote in. The link points at that last note.
+- **Never a partial mark.** When any request fails, the list says so on stderr, the command exits 1, and the mark stays. Role-filtered checks also leave the shared mark unchanged. Pending to-dos and open waiting threads remain visible across checks.
+- The next step for one MR is `pr <iid> comments`.
 
 ### `pr stale`
 

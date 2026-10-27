@@ -140,6 +140,25 @@ final class ClickyTests: XCTestCase {
         XCTAssertGreaterThan(statistics.hours.count, statistics.minutes.count)
     }
 
+    func testPitchRangeDefaultsToFourPercentAndIsClampedWhenRead() throws {
+        let old = try JSONDecoder().decode(ClickyPreferences.self, from: Data(#"{"randomizedPitch":true}"#.utf8))
+        XCTAssertEqual(old.pitchRange, 0.04)
+        let wild = try JSONDecoder().decode(ClickyPreferences.self, from: Data(#"{"pitchRange":5}"#.utf8))
+        XCTAssertEqual(wild.pitchRange, ClickyPreferences.pitchRangeLimits.upperBound)
+        var changed = old
+        changed.pitchRange = 0.1
+        let encoded = try JSONEncoder().encode(changed)
+        XCTAssertEqual(try JSONDecoder().decode(ClickyPreferences.self, from: encoded).pitchRange, 0.1)
+    }
+
+    func testPauseAfterDefaultsToThirtySecondsAndIsClamped() throws {
+        let old = try JSONDecoder().decode(ClickyPreferences.self, from: Data(#"{"volume":0.5}"#.utf8))
+        XCTAssertEqual(old.pauseAfterSeconds, 30)
+        var wild = try JSONDecoder().decode(ClickyPreferences.self, from: Data(#"{"pauseAfterSeconds":99999}"#.utf8))
+        wild.normalize()
+        XCTAssertEqual(wild.pauseAfterSeconds, 600)
+    }
+
     func testPhysicalKeyChartIncludesFunctionKeysAndKeepsPositionsDistinct() {
         let keys = ClickyKeyLayout.rows.flatMap { $0 }
         XCTAssertEqual(Set(keys.map(\.code)).count, keys.count)
@@ -382,6 +401,56 @@ final class ClickyTests: XCTestCase {
             signatures.insert(Array(down.prefix(100)))
         }
         XCTAssertEqual(signatures.count, 7)
+    }
+
+    /// The sounds are computed at the output's own rate: same length in time, and on a 44.1 kHz output the same power as
+    /// the 48 kHz sound the mixer used to resample (the old path, built here by hand), with no resampler on the way.
+    @MainActor
+    func testSoundsRenderAtTheOutputRateAndMatchTheResampledSound() throws {
+        for rate in [24_000.0, 44_100.0] {
+            let down = ClickySynthesis.samples(profile: .basalt, release: false, variant: 1, sampleRate: rate)
+            XCTAssertEqual(down.count, Int(rate * 0.11))
+            XCTAssertTrue(down.allSatisfy { $0.isFinite && abs($0) <= 1 })
+        }
+        let rate = 44_100.0
+        let output = try XCTUnwrap(AVAudioFormat(standardFormatWithSampleRate: rate, channels: 2))
+        func power(_ engine: AVAudioEngine) throws -> Double {
+            let buffer = try XCTUnwrap(AVAudioPCMBuffer(pcmFormat: output, frameCapacity: 8192))
+            XCTAssertEqual(try engine.renderOffline(8192, to: buffer), .success)
+            let left = UnsafeBufferPointer(start: buffer.floatChannelData![0], count: Int(buffer.frameLength))
+            return left.prefix(Int(rate * 0.11)).reduce(0) { $0 + Double($1 * $1) }
+        }
+        let engine = AVAudioEngine()
+        try engine.enableManualRenderingMode(.offline, format: output, maximumFrameCount: 8192)
+        let audio = ClickyAudio(engine: engine)
+        defer { audio.stop() }
+        var preferences = ClickyPreferences()
+        preferences.volume = 1
+        preferences.randomizedPitch = false
+        preferences.spatialAudio = false
+        try audio.play(profile: .basalt, release: false, preferences: preferences, pan: 0)
+        let native = try power(engine)
+
+        let old = AVAudioEngine()
+        try old.enableManualRenderingMode(.offline, format: output, maximumFrameCount: 8192)
+        let source = try XCTUnwrap(AVAudioFormat(standardFormatWithSampleRate: ClickySynthesis.sampleRate, channels: 1))
+        let player = AVAudioPlayerNode()
+        let varispeed = AVAudioUnitVarispeed()
+        old.attach(player)
+        old.attach(varispeed)
+        old.connect(player, to: varispeed, format: source)
+        old.connect(varispeed, to: old.mainMixerNode, format: source)
+        try old.start()
+        let samples = ClickySynthesis.samples(profile: .basalt, release: false, variant: 1)
+        let buffer = try XCTUnwrap(AVAudioPCMBuffer(pcmFormat: source, frameCapacity: AVAudioFrameCount(samples.count)))
+        buffer.frameLength = buffer.frameCapacity
+        samples.withUnsafeBufferPointer { buffer.floatChannelData![0].update(from: $0.baseAddress!, count: samples.count) }
+        player.scheduleBuffer(buffer)
+        player.play()
+        let resampled = try power(old)
+        old.stop()
+        XCTAssertGreaterThan(native, 0)
+        XCTAssertEqual(native, resampled, accuracy: resampled * 0.03)
     }
 
     @MainActor
@@ -1290,6 +1359,47 @@ final class ClickyPackTests: XCTestCase {
         XCTAssertEqual(release?.filename, "release-a.wav")
     }
 
+    func testRandomizedPackSelectionNeverRepeatsTheTakeJustPlayedAndReleaseFollowsThePress() async throws {
+        var fixture = try Fixture()
+        defer { fixture.dispose() }
+        var playback = try XCTUnwrap(fixture.manifest["playback"] as? [String: Any])
+        var categories = try XCTUnwrap(playback["categories"] as? [String: [String: [String]]])
+        categories["letter"] = ["press": ["press-a.wav", "press-b.wav"], "release": ["release-a.wav", "release-b.wav"]]
+        playback["categories"] = categories
+        fixture.manifest["playback"] = playback
+        try fixture.writeManifest()
+        let prepared = try await ClickyPackLoader().prepare(at: fixture.root, entry: fixture.entry)
+        var state = ClickyPackSelectionState()
+        var previous: Int?
+        for _ in 0..<40 {
+            let press = try XCTUnwrap(state.next(playback: prepared.playback, keyCode: 0, release: false, randomize: true))
+            XCTAssertNotEqual(press.variant, previous)
+            previous = press.variant
+        }
+        let release = try XCTUnwrap(state.next(playback: prepared.playback, keyCode: 0, release: true, randomize: true))
+        XCTAssertEqual(release.variant, previous)
+    }
+
+    func testTrimCutsALeadInAndASecondHitAndLeavesACleanSampleAlone() {
+        func hit(_ frames: inout [Float], at start: Int, amplitude: Float) {
+            for index in 0..<1_200 where start + index < frames.count {
+                frames[start + index] += amplitude * sin(Float(index) * 0.3) * exp(-Float(index) / 300)
+            }
+        }
+        var doubled = [Float](repeating: 0, count: 9_600)
+        for index in doubled.indices { doubled[index] = 0.01 * sin(Float(index) * 1.7) }
+        hit(&doubled, at: 1_920, amplitude: 0.8)
+        hit(&doubled, at: 6_000, amplitude: 0.6)
+        let trimmed = ClickySampleTrim.trimmed(doubled)
+        XCTAssertLessThan(trimmed.count, 6_000 - 1_920 + ClickySampleTrim.leadIn)
+        XCTAssertGreaterThan(trimmed.count, 1_200)
+        XCTAssertEqual(trimmed.last ?? 1, 0, accuracy: 0.001)
+
+        var clean = [Float](repeating: 0, count: 4_800)
+        hit(&clean, at: 0, amplitude: 0.8)
+        XCTAssertEqual(ClickySampleTrim.trimmed(clean), clean)
+    }
+
     func testCatalogueRejectsAmbiguousIdentityAndVersionsButRetainsUnavailableRows() async throws {
         let fixture = try Fixture()
         defer { fixture.dispose() }
@@ -2086,7 +2196,8 @@ extension ClickyPackTests {
         XCTAssertFalse(FileManager.default.fileExists(atPath: fixture.root.path))
         var preferences = ClickyPreferences()
         preferences.volume = 1
-        preferences.randomizedPitch = true
+        // Takes in turn: randomized pitch also shuffles a pack's takes, and this test names each take by its loudness.
+        preferences.randomizedPitch = false
         preferences.spatialAudio = false
         func render(_ key: UInt16, release: Bool) throws -> Double {
             XCTAssertTrue(try audio.playSelected(keyCode: key, release: release, preview: false, preferences: preferences, pan: 0))

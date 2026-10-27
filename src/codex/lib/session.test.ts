@@ -582,6 +582,73 @@ describe("CodexSessionRuntime", () => {
         });
     });
 
+    test("all four approval methods wait for explicit approve or deny controls", async () => {
+        const home = mkdtempSync(join(tmpdir(), "gt-codex-runtime-manual-controls-"));
+        await env.testing.withOverrides({ GENESIS_TOOLS_HOME: home }, async () => {
+            const store = new CodexSessionStore();
+            const meta = { ...makeMeta(home), writePolicy: "ask" as const, approvalPolicy: "untrusted" as const };
+            store.writeMeta(meta);
+            const runtime = new CodexSessionRuntime({ client: new FakeRpcClient(), store, meta });
+            const methods = [
+                {
+                    method: "item/commandExecution/requestApproval",
+                    params: { command: "cat README.md", cwd: home },
+                    legacy: false,
+                },
+                { method: "item/fileChange/requestApproval", params: { itemId: "file-1" }, legacy: false },
+                {
+                    method: "execCommandApproval",
+                    params: {
+                        callId: "call-1",
+                        conversationId: "thread-1",
+                        command: ["cat", "a file's name; $HOME"],
+                        cwd: home,
+                        parsedCmd: [],
+                        reason: "inspect file",
+                    },
+                    legacy: true,
+                },
+                { method: "execCommandApproval", params: { command: ["cat", 42], cwd: home }, legacy: true },
+                { method: "execCommandApproval", params: { command: [], cwd: home }, legacy: true },
+                { method: "applyPatchApproval", params: { fileChanges: {} }, legacy: true },
+            ];
+            for (const { method, params, legacy } of methods) {
+                for (const op of ["approve", "deny"] as const) {
+                    const id = `${method}-${op}`;
+                    let settled = false;
+                    const pending = runtime.handleServerRequest({ id, method, params });
+                    void pending.then(() => {
+                        settled = true;
+                    });
+                    await Bun.sleep(0);
+                    expect(settled).toBe(false);
+                    const record = store.readMeta(meta.name)?.pendingApprovals[id];
+                    expect(record).toBeDefined();
+                    if (method === "item/commandExecution/requestApproval") {
+                        expect(record?.command).toBe("cat README.md");
+                    }
+                    if (method === "execCommandApproval") {
+                        if ("reason" in params) {
+                            expect(record?.command).toBe("'cat' 'a file'\\''s name; $HOME'");
+                            expect(record?.detail).toContain("inspect file");
+                            expect(record?.detail).toContain("'cat' 'a file'\\''s name; $HOME'");
+                        } else if ("command" in params && Array.isArray(params.command) && params.command.length) {
+                            expect(record?.detail).toContain('invalid command: ["cat",42]');
+                        } else {
+                            expect(record?.detail).toBe("[]");
+                        }
+                    }
+                    await runtime.execute({ op, requestId: id });
+                    const decision =
+                        op === "approve" ? (legacy ? "approved" : "accept") : legacy ? "denied" : "decline";
+                    await expect(pending).resolves.toEqual({ decision });
+                    expect(store.readMeta(meta.name)?.pendingApprovals[id]).toBeUndefined();
+                }
+            }
+            await runtime.close();
+        });
+    });
+
     test("holds ask approvals until an approve control resolves them", async () => {
         const home = mkdtempSync(join(tmpdir(), "gt-codex-runtime-ask-approval-"));
 
@@ -636,7 +703,7 @@ describe("CodexSessionRuntime", () => {
             await Bun.sleep(0);
             try {
                 expect(store.readMeta(meta.name)?.pendingApprovals["command-context"]).toMatchObject({
-                    detail: "bunx biome check src/a.ts",
+                    detail: "bunx biome check src/a.ts: touch outside.ts",
                     command: "touch outside.ts",
                     cwd: home,
                 });
@@ -939,7 +1006,7 @@ describe("an ask worker's own bus commands", () => {
         }
     });
 
-    test("the runtime accepts them itself and still forwards everything else to the lead", async () => {
+    test("the runtime holds its own bus command for an explicit lead decision", async () => {
         const home = mkdtempSync(join(tmpdir(), "gt-codex-runtime-bus-approval-"));
 
         await env.testing.withOverrides({ GENESIS_TOOLS_HOME: home }, async () => {
@@ -958,14 +1025,11 @@ describe("an ask worker's own bus commands", () => {
             await runtime.start({});
             const method = "item/commandExecution/requestApproval";
 
-            await expect(
-                runtime.handleServerRequest({
-                    id: 1,
-                    method,
-                    params: { threadId: "thread-1", command: own("message --from codex_reviewer --to lead --body hi") },
-                })
-            ).resolves.toEqual({ decision: "accept" });
-            expect(notices).toEqual([]);
+            const ownRequest = runtime.handleServerRequest({
+                id: 1,
+                method,
+                params: { threadId: "thread-1", command: own("message --from codex_reviewer --to lead --body hi") },
+            });
 
             // A subagent's copy of the same command is not the worker's: tools agents refuses it anyway.
             const fromSubagent = runtime.handleServerRequest({
@@ -979,7 +1043,9 @@ describe("an ask worker's own bus commands", () => {
                 params: { threadId: "thread-1", command: "touch x" },
             });
             await Bun.sleep(0);
-            expect(notices).toHaveLength(2);
+            expect(notices).toHaveLength(3);
+            await runtime.execute({ op: "approve", requestId: "1" });
+            await expect(ownRequest).resolves.toEqual({ decision: "accept" });
 
             await runtime.execute({ op: "deny", requestId: "2" });
             await runtime.execute({ op: "deny", requestId: "3" });
@@ -1109,7 +1175,7 @@ describe("an ask worker's read-only commands", () => {
         expect(isReadOnlyCommand("cat a\\#b.ts")).toBe(true);
     });
 
-    test("the runtime accepts a read-only command itself and names the files of a file change it forwards", async () => {
+    test("the runtime holds a read-only command and names file changes for the lead", async () => {
         const home = mkdtempSync(join(tmpdir(), "gt-codex-runtime-read-only-"));
 
         await env.testing.withOverrides({ GENESIS_TOOLS_HOME: home }, async () => {
@@ -1127,14 +1193,16 @@ describe("an ask worker's read-only commands", () => {
             });
             await runtime.start({});
 
-            await expect(
-                runtime.handleServerRequest({
-                    id: 1,
-                    method: "item/commandExecution/requestApproval",
-                    params: { threadId: "thread-1", command: zsh("cat CLAUDE.md") },
-                })
-            ).resolves.toEqual({ decision: "accept" });
-            expect(notices).toEqual([]);
+            const read = runtime.handleServerRequest({
+                id: 1,
+                method: "item/commandExecution/requestApproval",
+                params: { threadId: "thread-1", command: zsh("cat CLAUDE.md") },
+            });
+            await Bun.sleep(0);
+            expect(notices).toHaveLength(1);
+            await runtime.execute({ op: "deny", requestId: "1" });
+            await expect(read).resolves.toEqual({ decision: "decline" });
+            notices.length = 0;
 
             await runtime.handleNotification({
                 method: "item/started",

@@ -14,8 +14,10 @@ import {
     type DecisionRecord,
     postDecisions,
     readDecisions,
+    readDecisionsWithIntegrity,
     updateDecisions,
 } from "@app/question/lib/decisions/store";
+import { buildInbox } from "@app/question/lib/inbox/build";
 import { sendInboxMessage } from "@app/question/lib/message";
 import { postAskForm } from "@app/question/lib/pending/ask";
 import { MAX_ANSWER_IMAGE_BYTES } from "@app/question/lib/pending/form";
@@ -113,6 +115,7 @@ import {
 } from "../widget/voice-notes";
 import { StdinLines, WARM_SESSIONS, watchWidget, widgetSelectionLine } from "../widget/watch";
 import { importWidgetAsset, reviseVideoAsset } from "./assets";
+import * as dispatchModule from "./dispatch";
 import { widgetDeliveryReceipt, widgetDispatcher } from "./dispatch";
 import { processWidgetOutbox } from "./engine";
 import { changeOutgoing, enqueueWidgetMessage, messageReadiness, recoverWidgetOutbox } from "./outbox";
@@ -677,8 +680,9 @@ describe("widget source and delivery contracts", () => {
 
         expect(await unstageDecisions({ ids: [a3.id, a1.id], files })).toBe(1);
         const after = readDecisions(files.file).find((entry) => entry.id === a3.id);
-        expect(after?.state).toBe("drafted");
-        expect(after?.draftOption ?? "").toBe("");
+        // Nothing staged any more: open again, as every other surface's clear leaves it (F14, 2026-10-27).
+        expect(after?.state).toBe("open");
+        expect(after?.draftOption).toBeUndefined();
         expect(after && isStaged(after)).toBe(false);
     });
 
@@ -727,6 +731,86 @@ describe("widget source and delivery contracts", () => {
         expect(again.sessions[0]?.result?.delivered).toBe(true);
         expect(sent).toHaveLength(1);
         expect(readDecisions(files.file).find((entry) => entry.id === row.id)?.state).toBe("sent");
+    });
+
+    test("a Cancel after the agent got the message lets the send record it, so Send again types nothing twice", async () => {
+        const directory = await root();
+        await env.testing.withOverrides({ GENESIS_TOOLS_HOME: directory }, async () => {
+            const files = decisionFiles();
+            const [row] = await postDecisions(
+                files.file,
+                files.events,
+                { sessionId: "cancel-a", provider: "codex", decisions: [{ prompt: "Ship?", options: ["yes", "no"] }] },
+                { env: {} }
+            );
+            await updateDecisions(files.file, files.events, {
+                updates: [{ id: row.id, state: "drafted", draftOption: "a" }],
+            });
+            const cancel = new AbortController();
+            let typed = 0;
+            // The real transport kills its child when the signal it was given aborts: after it typed, that left the
+            // answer recorded as undelivered, and Send again typed it a second time (F19, 2026-10-27).
+            const transport = spyOn(dispatchModule, "widgetDeliverDeps").mockImplementation((signal) => ({
+                codexWorkerFor: () => "fixture-worker",
+                runTool: async () => {
+                    typed++;
+                    cancel.abort();
+                    if (signal?.aborted) {
+                        throw new DeliveryUnknownError("The transport was killed after it typed.");
+                    }
+
+                    return { success: true, stdout: '{"queued":false,"turnId":"fixture-turn"}', stderr: "" };
+                },
+            }));
+            try {
+                const targets = { "cancel-a": { provider: "codex" } };
+                const first = await performWidgetAction({
+                    input: { action: "send-staged", ids: [row.id], targets },
+                    signal: cancel.signal,
+                });
+                expect(first).toMatchObject({ sent: 1, queued: 0, failed: 0 });
+                expect(readDecisions(files.file).find((entry) => entry.id === row.id)?.state).toBe("sent");
+
+                const again = await performWidgetAction({
+                    input: { action: "resend-answers", ids: [row.id], targets },
+                });
+                expect(again).toMatchObject({ sent: 0, queued: 0, failed: 0 });
+                await performWidgetAction({ input: { action: "send-staged", ids: [row.id], targets } });
+                expect(typed).toBe(1);
+            } finally {
+                transport.mockRestore();
+            }
+        });
+    });
+
+    test("a Cancel before the send started writes and types nothing, and the answer stays staged", async () => {
+        const directory = await root();
+        const files = { file: join(directory, "decisions.jsonl"), events: join(directory, "events.jsonl") };
+        const [row] = await postDecisions(
+            files.file,
+            files.events,
+            { sessionId: "cancel-b", provider: "codex", decisions: [{ prompt: "Ship?", options: ["yes", "no"] }] },
+            { env: {} }
+        );
+        await updateDecisions(files.file, files.events, {
+            updates: [{ id: row.id, state: "drafted", draftOption: "a" }],
+        });
+        const deliver = {
+            codexWorkerFor: () => "fixture-worker",
+            runTool: async () => {
+                throw new Error("No transport may run");
+            },
+        };
+        const cancel = new AbortController();
+        cancel.abort();
+        await expect(sendStagedDecisions({ ids: [row.id], files, deliver, signal: cancel.signal })).rejects.toThrow();
+        await expect(
+            resendAnsweredDecisions({ ids: [row.id], files, deliver, signal: cancel.signal })
+        ).rejects.toThrow();
+        expect(readDecisions(files.file).find((entry) => entry.id === row.id)).toMatchObject({
+            state: "drafted",
+            draftOption: "a",
+        });
     });
 
     test("a media-only reply keeps the original session and card title in one literal message", async () => {
@@ -1693,6 +1777,15 @@ test("send-and-close timing defaults to 2.5 seconds and can keep the panel open"
     expect(widgetPreferencesSchema.safeParse({ sendCloseSeconds: 61 }).success).toBe(false);
 });
 
+test("staging keys default to Return stages, ⌘ does the other, and a reminder at start", () => {
+    const defaults = widgetPreferencesSchema.parse({});
+    expect(defaults.decisionCommandSwaps).toBe(true);
+    expect(defaults.ownAnswerReturn).toBe("stage");
+    expect(defaults.stagedReminder).toBe(true);
+    expect(widgetPreferencesSchema.parse({ ownAnswerReturn: "send" }).ownAnswerReturn).toBe("send");
+    expect(widgetPreferencesSchema.safeParse({ ownAnswerReturn: "later" }).success).toBe(false);
+});
+
 test("an open TODO does not mark its session as waiting for an answer", async () => {
     const directory = await root();
     const file = join(directory, "decisions.jsonl");
@@ -1763,7 +1856,7 @@ test("decision cards carry recorded answers and supersede links; only open decis
     });
     const sources: WidgetSources = {
         sessions: async () => [],
-        decisions: () => readDecisions(file),
+        decisions: () => readDecisionsWithIntegrity(file),
         forms: () => [],
         answers: () => [],
         agents: async () => ({ generatedAt: "", parents: [], orphans: [] }),
@@ -1798,6 +1891,22 @@ test("decision cards carry recorded answers and supersede links; only open decis
     });
     // The overview lists the session's entries, the waiting one first.
     expect(session?.items?.[0]).toMatchObject({ id: `decision:${replacement.id}`, needsAnswer: true });
+    expect(snapshot.notifications?.pendingDecisionIDs).toContain(replacement.id);
+    expect(snapshot.notifications?.pendingDecisionIDs).not.toContain(answered.id);
+    expect(snapshot.notifications?.pendingDecisionIDs).not.toContain(old.id);
+    // The chat answer an agent recorded is listed as answered elsewhere; the inbox's own answers never are.
+    expect(snapshot.notifications?.answeredElsewhere).toMatchObject([
+        {
+            id: `decision:${answered.id}`,
+            key: sessionKey,
+            needsAnswer: false,
+            option: "b",
+            answer: "drop it, said in chat",
+            answeredVia: "agent",
+        },
+    ]);
+    const weekLater = await widgetSnapshot({ root: directory, sources, now: Date.now() + 8 * 86_400_000 });
+    expect(weekLater.notifications?.answeredElsewhere).toEqual([]);
     expect(
         snapshot.notifications?.sessions.find((entry) => entry.pendingItem?.sourceId === elsewhere.id)?.pendingItem
     ).toMatchObject({ number: 1, title: "Other" });
@@ -1820,6 +1929,25 @@ test("decision cards carry recorded answers and supersede links; only open decis
     const cleared = await widgetSnapshot({ root: directory, sources });
     expect(cleared.notifications?.sessions.find((entry) => entry.key === sessionKey)?.needsAnswer ?? 0).toBe(0);
     expect(cleared.notifications?.staged.map((entry) => entry.sourceId)).toEqual([replacement.id]);
+    expect(cleared.notifications?.pendingDecisionIDs).toContain(replacement.id);
+    const failed = await widgetSnapshot({
+        root: directory,
+        sources: {
+            ...sources,
+            decisions: () => {
+                throw new Error("fixture decision read failed");
+            },
+        },
+    });
+    expect(failed.notifications?.complete).toBe(false);
+    const missing = await widgetSnapshot({
+        root: directory,
+        sources: {
+            ...sources,
+            decisions: () => readDecisionsWithIntegrity(join(directory, "missing-decisions.jsonl")),
+        },
+    });
+    expect(missing.notifications?.pendingDecisionIDs).toBeUndefined();
     expect(readDecisions(file).find((row) => row.id === replacement.id)?.updatedTs).not.toBe(replacement.createdTs);
 
     await updateDecisions(file, events, {
@@ -1834,6 +1962,14 @@ test("decision cards carry recorded answers and supersede links; only open decis
     });
     expect(moved.notifications?.sessions.find((entry) => entry.key === sessionKey)?.needsAnswer ?? 0).toBe(0);
     expect(moved.notifications?.staged).toEqual([]);
+    await files.appendFile(file, '{"id":');
+    const partial = await widgetSnapshot({ root: directory, sources });
+    expect(partial.notifications?.pendingDecisionIDs).toBeUndefined();
+    const oldSource = await widgetSnapshot({
+        root: directory,
+        sources: { ...sources, decisions: () => readDecisions(file) },
+    });
+    expect(oldSource.notifications?.pendingDecisionIDs).toBeUndefined();
 });
 
 test("a session lists its waiting entries first, then the newest, at most eight", () => {
@@ -1864,12 +2000,37 @@ test("alert preferences default on with the Glass sound, load from an older stat
         alertAnswers: true,
         alertSound: "Glass",
         alertPopup: true,
+        alertPopupSeconds: 7,
+        alertPopupClickAway: false,
+        alertPopupMany: "list",
+        alertVolume: 100,
     });
     await performWidgetAction({
         root: directory,
-        input: { action: "preferences", patch: { alertSound: "none", alertPopup: false } },
+        input: {
+            action: "preferences",
+            patch: {
+                alertSound: "none",
+                alertPopup: false,
+                alertPopupSeconds: 0,
+                alertPopupMany: "queue",
+                alertVolume: 40,
+            },
+        },
     });
-    expect((await readWidgetState(directory)).preferences).toMatchObject({ alertSound: "none", alertPopup: false });
+    expect((await readWidgetState(directory)).preferences).toMatchObject({
+        alertSound: "none",
+        alertPopup: false,
+        alertPopupSeconds: 0,
+        alertPopupMany: "queue",
+        alertVolume: 40,
+    });
+    for (const patch of [{ alertPopupMany: "stack" }, { alertVolume: 101 }, { alertPopupSeconds: -1 }]) {
+        await expect(
+            performWidgetAction({ root: directory, input: { action: "preferences", patch } })
+        ).rejects.toThrow();
+    }
+
     for (const alertSound of ["", "x".repeat(41)]) {
         await expect(
             performWidgetAction({ root: directory, input: { action: "preferences", patch: { alertSound } } })
@@ -1973,6 +2134,31 @@ test("a form answer keeps the composer text: it is serialized with the answers a
     expect((await readWidgetState(directory)).drafts[widgetSessionKey(target)]?.text).toBe(
         "picked b because the cache is per machine"
     );
+});
+
+test("a follow-up names the inbox item it answers in a Reply to line, and one without replyTo is sent as typed", async () => {
+    const directory = await root();
+    const enqueue = (payload: WidgetOutgoing["payload"]) =>
+        enqueueWidgetMessage({ root: directory, id: randomUUID(), target, payload, assetIds: [] });
+    const named = await enqueue({
+        kind: "followup",
+        text: "its ok already set up as plugin",
+        replyTo: { id: "d-7", kind: "decision", title: "Install the hook as a plugin?", number: 4 },
+    });
+    const answer = await enqueue({
+        kind: "followup",
+        text: "thanks",
+        replyTo: { id: "a-1", kind: "answer", excerpt: "The build is green on master" },
+    });
+    const plain = await enqueue({ kind: "followup", text: "its ok already set up as plugin" });
+    const state = await readWidgetState(directory);
+    expect(await serializeWidgetMessage(named, state)).toBe(
+        "Reply to: Install the hook as a plugin?\nLedger decision 4 (d-7)\nits ok already set up as plugin"
+    );
+    expect(await serializeWidgetMessage(answer, state)).toBe(
+        "Reply to: The build is green on master\nInbox answer (a-1)\nthanks"
+    );
+    expect(await serializeWidgetMessage(plain, state)).toBe("its ok already set up as plugin");
 });
 
 test("unchanged video settings preserve the prepared revision and a real change invalidates it", async () => {
@@ -4324,6 +4510,80 @@ test("incoming answer, Decision and pending-form writes wake the Widget without 
     });
 });
 
+test("a decision link reaches the widget at once, before a slow full refresh finishes", async () => {
+    const directory = await root();
+    await env.testing.withOverrides({ GENESIS_TOOLS_HOME: directory }, async () => {
+        const controller = new AbortController();
+        const emitted: { at?: number; selectedKey?: string }[] = [];
+        let firstSnapshot!: () => void;
+        const started = new Promise<void>((resolve) => {
+            firstSnapshot = resolve;
+        });
+        let releaseSlow!: () => void;
+        const slow = new Promise<void>((resolve) => {
+            releaseSlow = resolve;
+        });
+        let calls = 0;
+        const worker = watchWidget({
+            root: directory,
+            signal: controller.signal,
+            emit: (snapshot) => {
+                emitted.push({ at: snapshot.state.showDecision?.at, selectedKey: snapshot.selectedKey ?? undefined });
+                firstSnapshot();
+            },
+            dependencies: {
+                inboxPaths: {
+                    answerLog: join(directory, "question", "log"),
+                    database: join(directory, "question", "qa.db"),
+                    decisions: join(directory, "question", "decisions", "decisions.jsonl"),
+                },
+                snapshot: async () => {
+                    calls++;
+                    if (calls > 1) {
+                        // Every refresh after the first stands in for a rebuild under heavy load.
+                        await slow;
+                    }
+
+                    return {
+                        version: 1,
+                        state: await readWidgetState(directory),
+                        activity: [],
+                        sessions: [],
+                        cards: [],
+                        manifests: {},
+                        changes: null,
+                        errors: [],
+                        selectedKey: `refresh-${calls}`,
+                    };
+                },
+                dispatcher: {
+                    validate: async () => {},
+                    dispatch: async () => ({ delivered: true, channel: "fixture" }),
+                },
+            },
+        });
+        try {
+            await withTimeout(started, 3000);
+            const at = Date.now();
+            await mutateWidgetState(directory, (state) => {
+                state.showDecision = { id: "d_7_fixture-session", at };
+            });
+            const deadline = Date.now() + 3000;
+            while (!emitted.some((entry) => entry.at === at) && Date.now() < deadline) {
+                await Bun.sleep(20);
+            }
+            const fast = emitted.find((entry) => entry.at === at);
+            expect(fast).toBeDefined();
+            // It rode on the first snapshot: the slow rebuild had not returned yet.
+            expect(fast?.selectedKey).toBe("refresh-1");
+        } finally {
+            releaseSlow();
+            controller.abort();
+            await withTimeout(worker, 3000);
+        }
+    });
+});
+
 test("a snapshot carries the cards of the sessions that need you beside the selected one's", async () => {
     const directory = await root();
     const file = join(directory, "decisions.jsonl");
@@ -5043,6 +5303,77 @@ describe("background Widget roster", () => {
         });
     });
 
+    test("a roster run that found the same sessions and agents writes no cache and rebuilds no snapshot", async () => {
+        const directory = await root();
+        await env.testing.withOverrides({ GENESIS_TOOLS_HOME: directory }, async () => {
+            let reader: WidgetRosterReader | undefined;
+            const refresh = spyOn(WidgetRosterReader.prototype, "refresh").mockImplementation(function (
+                this: WidgetRosterReader
+            ) {
+                reader = this;
+                this.agents = { generatedAt: "2026-01-01T10:00:00.000Z", parents: [], orphans: [] };
+                Reflect.get(this, "options").changed();
+            });
+            const request = spyOn(WidgetRosterReader.prototype, "request").mockImplementation(() => {});
+            let writes = 0;
+            const controller = new AbortController();
+            let ready = () => {};
+            const started = new Promise<void>((resolve) => {
+                ready = resolve;
+            });
+            const worker = watchWidget({
+                root: directory,
+                signal: controller.signal,
+                emit: () => ready(),
+                dependencies: {
+                    inboxPaths: {
+                        answerLog: join(directory, "question/log"),
+                        database: join(directory, "question/qa.db"),
+                        decisions: join(directory, "question/decisions.jsonl"),
+                    },
+                    watchInbox: async () => ({ active: true, errorCount: 0, unsubscribe: async () => {} }),
+                    sessionRoots: { claude: [], codex: [], grok: [] },
+                    writeRosterCache: async () => {
+                        writes++;
+                    },
+                    dispatcher: {
+                        validate: async () => {},
+                        dispatch: async () => ({ delivered: true, channel: "fixture" }),
+                    },
+                },
+            });
+            try {
+                await withTimeout(started, 5000);
+                expect(writes).toBe(1);
+                const changed = () => Reflect.get(reader ?? {}, "options").changed();
+                // A later read of the same roster: only its time differs.
+                if (reader) {
+                    reader.agents = { generatedAt: "2026-01-01T10:00:05.000Z", parents: [], orphans: [] };
+                }
+
+                changed();
+                expect(writes).toBe(1);
+                // A failed run, then a good one with the same roster: the snapshot must leave the error behind.
+                if (reader) {
+                    reader.error = "fixture failure";
+                }
+
+                changed();
+                if (reader) {
+                    reader.error = undefined;
+                }
+
+                changed();
+                expect(writes).toBe(2);
+            } finally {
+                controller.abort();
+                await withTimeout(worker, 5000);
+                request.mockRestore();
+                refresh.mockRestore();
+            }
+        });
+    });
+
     test("a seeded roster shows until the first run lands and never replaces a completed one", () => {
         const f = scheduled();
         try {
@@ -5744,4 +6075,45 @@ describe("widget agent result", () => {
             expect(await lastAssistantTextOf(resolved, size)).toBe("Final highlights.");
         });
     }
+});
+
+test("the widget's badge and the hub's Inbox count the same waiting decisions (one freshness rule)", async () => {
+    const directory = await root();
+    const now = Date.now();
+    const iso = (ms: number) => new Date(ms).toISOString();
+    const day = 86_400_000;
+    const row = (sessionId: string, askedAt: number, updatedAt: number, state: "open" | "drafted") => ({
+        id: `d_1_${sessionId}`,
+        sessionId,
+        number: 1,
+        prompt: "Keep it?",
+        options: ["yes", "no"],
+        state,
+        ...(state === "drafted" ? { draftOption: "a" } : {}),
+        provider: "codex",
+        createdTs: iso(askedAt),
+        updatedTs: iso(updatedAt),
+    });
+    // Asked five days ago and staged a minute ago: the stage is no new activity, so neither surface counts it.
+    // Asked a day ago: both count it.
+    const rows = [
+        row("quiet-session", now - 5 * day, now - 60_000, "drafted"),
+        row("recent-session", now - day, now - day, "open"),
+    ];
+    const sources: WidgetSources = {
+        sessions: async () => [],
+        decisions: () => rows,
+        forms: () => [],
+        answers: () => [],
+        agents: async () => ({ generatedAt: "", parents: [], orphans: [] }),
+    };
+
+    const snapshot = await widgetSnapshot({ root: directory, sources, now });
+    const hub = buildInbox({ sessions: [], scans: new Map(), rows, forms: [], now });
+    const hubWaiting = hub.filter((session) => !session.stale).reduce((sum, session) => sum + session.waiting, 0);
+
+    expect(snapshot.notifications?.needsAnswer).toBe(1);
+    expect(hubWaiting).toBe(1);
+    // The staged pick stays listed for sending either way.
+    expect(snapshot.notifications?.staged.map((item) => item.sourceId)).toEqual(["d_1_quiet-session"]);
 });

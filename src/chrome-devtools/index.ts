@@ -11,6 +11,7 @@
  *   net-panel    the OPEN DevTools Network panel's own log (what Preserve log collected)
  *   status       recorders, CPU/memory, buffers, endpoints
  *   doctor       read-only diagnosis · cleanup — the mutating counterpart
+ *   resume       release tabs a debugger client left held (popup stuck blank, "Debugger paused in another tab")
  *   cookies, console, eval, nav, shot, grid, trace, targets, rm-cookie
  *   snapshot, click, fill, scroll — read a tab and act on it by label (the page agent)
  *   open, restart — launch/relaunch a browser WITH the debugging flag
@@ -32,6 +33,7 @@ import { registerPage } from "./commands/page.ts";
 import { registerPerf } from "./commands/perf.ts";
 import { registerReact } from "./commands/react.ts";
 import { registerRecord, registerWatchTombstone } from "./commands/record.ts";
+import { registerResume } from "./commands/resume.ts";
 import { registerScripting } from "./commands/scripting.ts";
 import { registerStatus } from "./commands/status.ts";
 import { registerStorage } from "./commands/storage.ts";
@@ -67,6 +69,7 @@ registerNetPanel(program);
 registerStatus(program);
 registerDoctor(program);
 registerCleanup(program);
+registerResume(program);
 registerBrowse(program);
 registerInspect(program);
 registerPage(program);

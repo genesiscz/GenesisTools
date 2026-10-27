@@ -1,7 +1,14 @@
+import { loadHooksConfig } from "@app/agents/lib/hooks/config";
 import type { DeliverDeps } from "@app/question/lib/decisions/deliver";
 import { decisionFiles } from "@app/question/lib/decisions/read";
 import { sendAnsweredDecisions } from "@app/question/lib/decisions/send";
-import { type DecisionRecord, kindOf, readDecisions, updateDecisions } from "@app/question/lib/decisions/store";
+import {
+    awaitsDelivery,
+    type DecisionRecord,
+    kindOf,
+    readDecisions,
+    updateDecisions,
+} from "@app/question/lib/decisions/store";
 import { answerInboxDecisions, type InboxAnswerResult } from "@app/question/lib/inbox/answer";
 import { waitingBlock } from "@app/question/lib/inbox/load";
 import { logger } from "@genesiscz/utils/logger";
@@ -14,8 +21,18 @@ export interface StagedTarget {
 }
 
 export interface StagedSendResult {
-    /** One entry per session, in the order the sessions first appear in `ids`. */
-    sessions: Array<{ session: string; numbers: number[]; result?: InboxAnswerResult; error?: string }>;
+    /**
+     * One entry per session, in the order the sessions first appear in `ids`. `deliversLater`: answers no receiver
+     * took still reach the session by themselves (the decisions hook injects queued answers at its next prompt, or a
+     * session-queue entry was saved); false means only a later send delivers them.
+     */
+    sessions: Array<{
+        session: string;
+        numbers: number[];
+        result?: InboxAnswerResult;
+        error?: string;
+        deliversLater?: boolean;
+    }>;
     /** Answers a receiver took. */
     sent: number;
     /** Answers stored and waiting for the session's next prompt: no receiver took them. */
@@ -24,11 +41,30 @@ export interface StagedSendResult {
 }
 
 /**
+ * Whether an answer no receiver took reaches its session by itself: a saved session-queue entry is consumed by the
+ * session, and the decisions hook (`decisions.injectAnswers`) puts queued answers into its next prompt. Without
+ * either, only a later send delivers it, and the widget must not say "it waits for the next prompt".
+ */
+function deliversLater(queueId: string | undefined): boolean {
+    return queueId !== undefined || loadHooksConfig().decisions.injectAnswers === true;
+}
+
+/**
  * A staged decision: the user picked an option or wrote a note in an inbox and has not sent it. It is the decision
  * log's own unsent state (`drafted` with `draftOption` or `draft`), so the hub, the widget and the CLI see one list.
  */
 export function isStaged(row: DecisionRecord): boolean {
     return kindOf(row) === "decision" && row.state === "drafted" && Boolean(row.draftOption || row.draft?.trim());
+}
+
+/**
+ * The one place a send honors a cancel: before it writes or delivers anything, so a cancelled send leaves every
+ * answer staged. Past it the delivery and its record run to the end, and `deliver` must not carry the signal: a
+ * transport killed after it typed the message left the answer recorded as undelivered, and Send again typed it a
+ * second time (F19, 2026-10-27).
+ */
+export function cancelPoint(signal: AbortSignal | undefined): void {
+    signal?.throwIfAborted();
 }
 
 /**
@@ -41,12 +77,16 @@ export async function sendStagedDecisions({
     targets = {},
     files = decisionFiles(),
     deliver = {},
+    signal,
 }: {
     ids: readonly string[];
     targets?: Record<string, StagedTarget>;
     files?: { file: string; events: string };
     deliver?: DeliverDeps;
+    /** A cancel: it counts only before this send writes or delivers anything (`cancelPoint`). */
+    signal?: AbortSignal;
 }): Promise<StagedSendResult> {
+    cancelPoint(signal);
     const wanted = new Set(ids);
     const staged = readDecisions(files.file).filter((row) => wanted.has(row.id) && isStaged(row));
     const bySession = new Map<string, DecisionRecord[]>();
@@ -87,7 +127,12 @@ export async function sendStagedDecisions({
                 },
                 { ...files, block: waitingBlock, deliver }
             );
-            result.sessions.push({ session, numbers, result: sent });
+            result.sessions.push({
+                session,
+                numbers,
+                result: sent,
+                ...(sent.delivered ? {} : { deliversLater: deliversLater(sent.queueId) }),
+            });
             logger.info(
                 { session, numbers, delivered: sent.delivered, provider },
                 sent.delivered ? "widget send-staged: delivered" : "widget send-staged: queued for the next prompt"
@@ -116,17 +161,22 @@ export async function resendAnsweredDecisions({
     targets = {},
     files = decisionFiles(),
     deliver = {},
+    signal,
 }: {
     ids: readonly string[];
     targets?: Record<string, StagedTarget>;
     files?: { file: string; events: string };
     deliver?: DeliverDeps;
+    /** As `sendStagedDecisions`. */
+    signal?: AbortSignal;
 }): Promise<StagedSendResult> {
+    cancelPoint(signal);
     const wanted = new Set(ids);
     const bySession = new Map<string, DecisionRecord[]>();
 
     for (const row of readDecisions(files.file)) {
-        if (wanted.has(row.id) && kindOf(row) === "decision" && row.state === "answered") {
+        // Only an answer that waits to go out: a chat answer an agent recorded as `answered` is never sent back.
+        if (wanted.has(row.id) && awaitsDelivery(row)) {
             bySession.set(row.sessionId, [...(bySession.get(row.sessionId) ?? []), row]);
         }
     }
@@ -144,6 +194,7 @@ export async function resendAnsweredDecisions({
                 session,
                 numbers,
                 result: { session, text: "", channel: "queued", delivered: false, detail },
+                deliversLater: true,
             });
             result.queued += rows.length;
             continue;
@@ -174,6 +225,7 @@ export async function resendAnsweredDecisions({
                     ...(sent.target ? { target: sent.target } : {}),
                     ...(sent.error ? { error: sent.error } : {}),
                 },
+                ...(delivered ? {} : { deliversLater: deliversLater(sent.queueId) }),
             });
 
             if (delivered) {

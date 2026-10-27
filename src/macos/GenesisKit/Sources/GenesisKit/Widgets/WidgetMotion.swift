@@ -36,18 +36,3 @@ struct WidgetBubbleField: View, Animatable {
         }.allowsHitTesting(false).accessibilityHidden(true)
     }
 }
-
-struct WidgetGlassControl: ViewModifier {
-    @Environment(\.accessibilityReduceTransparency) private var systemOpaque
-    @Environment(\.widgetReduceTransparency) private var requestedOpaque
-    func body(content: Content) -> some View {
-        if systemOpaque || requestedOpaque {
-            content.background(Color(white: 0.16), in: Capsule())
-        } else if #available(macOS 26.0, *) {
-            // Glass is not hit-tested; the capsule is, as the opaque form's fill is.
-            content.glassEffect(.regular.tint(.black.opacity(0.4)).interactive(), in: Capsule()).contentShape(Capsule())
-        } else {
-            content.background(.ultraThinMaterial, in: Capsule())
-        }
-    }
-}

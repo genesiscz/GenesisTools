@@ -1,6 +1,7 @@
 import AppKit
 import Carbon.HIToolbox
 import Combine
+import CoreAudio
 import CoreGraphics
 import Foundation
 import UserNotifications
@@ -128,7 +129,7 @@ public final class ClickyModel: ObservableObject {
         }
         soundLibrary.restore(preferences.selectedPack)
         guard !previewOnly && observeSystemEvents else { return }
-        outputMonitor = AudioOutputMonitor { [weak self] in self?.refreshOutput() }
+        outputMonitor = AudioOutputMonitor { [weak self] in self?.refreshOutputInBackground() }
         refreshOutput()
         let workspace = NSWorkspace.shared.notificationCenter
         for name in [
@@ -482,23 +483,67 @@ public final class ClickyModel: ObservableObject {
         if previous.outputDeviceUID != preferences.outputDeviceUID || previous.outputRules != preferences.outputRules
             || previous.delayWarning != preferences.delayWarning
             || previous.delayWarningMilliseconds != preferences.delayWarningMilliseconds {
-            refreshOutput()
+            refreshOutputInBackground()
+        }
+        audio?.idleRelease = TimeInterval(preferences.releaseOutputSeconds)
+        audio?.pauseAfter = TimeInterval(preferences.pauseAfterSeconds)
+        if preferences.muteOnBluetooth, !previous.muteOnBluetooth, silencedByBluetooth {
+            audio?.stop()
         }
         refreshContext()
     }
 
     // MARK: - Output
 
+    /// Keys make no sound while the output is Bluetooth and the setting says so; a preview in Settings still plays.
+    var silencedByBluetooth: Bool {
+        preferences.muteOnBluetooth && output?.effective?.isBluetooth == true
+    }
+
     private func makeAudio() {
         audio = ClickyAudio()
+        audio?.idleRelease = TimeInterval(preferences.releaseOutputSeconds)
+        audio?.pauseAfter = TimeInterval(preferences.pauseAfterSeconds)
         audio?.setOutput(output?.effective?.id)
     }
 
     /// Reads the outputs again, decides where Clicky plays, and offers a faster output when that one is late.
     public func refreshOutput() {
-        outputs = AudioOutputs.outputs()
-        let resolved = ClickyOutputRouting.resolve(preferences: preferences, outputs: outputs,
-                                                   systemID: AudioOutputs.systemDefaultID())
+        applyOutputs(AudioOutputs.outputs(), systemID: AudioOutputs.systemDefaultID())
+    }
+
+    /// The Core Audio reads behind `refreshOutput`, off the main thread. They held it 1.4 to 2.5 s per device change
+    /// while coreaudiod was busy (2026-10-27); a change that lands during a read runs one more read after it.
+    private static let outputQueue = DispatchQueue(label: "clicky.outputs", qos: .userInitiated)
+    private var outputReadRunning = false
+    private var outputReadAgain = false
+
+    func refreshOutputInBackground() {
+        guard !outputReadRunning else {
+            outputReadAgain = true
+            return
+        }
+        outputReadRunning = true
+        Self.outputQueue.async { [weak self] in
+            let outputs = AudioOutputs.outputs()
+            let systemID = AudioOutputs.systemDefaultID()
+            DispatchQueue.main.async {
+                MainActor.assumeIsolated {
+                    guard let self else { return }
+                    self.applyOutputs(outputs, systemID: systemID)
+                    self.outputReadRunning = false
+                    if self.outputReadAgain {
+                        self.outputReadAgain = false
+                        self.refreshOutputInBackground()
+                    }
+                }
+            }
+        }
+    }
+
+    private func applyOutputs(_ outputs: [AudioOutputDevice], systemID: AudioDeviceID?) {
+        self.outputs = outputs
+        let resolved = ClickyOutputRouting.resolve(preferences: preferences, outputs: outputs, systemID: systemID)
         if resolved != output, let effective = resolved.effective {
             log.notice("Output \(effective.name, privacy: .public), \(effective.delayText, privacy: .public): \(resolved.reason, privacy: .public)")
         }
@@ -678,6 +723,13 @@ public final class ClickyModel: ObservableObject {
     }
 
     private func playSelected(keyCode: UInt16, release: Bool, preview: Bool, pan: Float) {
+        if !preview, silencedByBluetooth {
+            if preferences.visualizer && (!release || preferences.releaseSounds) {
+                lastPan = pan
+                pulse &+= 1
+            }
+            return
+        }
         if audio == nil { makeAudio() }
         do {
             let imported = try audio?.playSelected(keyCode: keyCode, release: release, preview: preview,

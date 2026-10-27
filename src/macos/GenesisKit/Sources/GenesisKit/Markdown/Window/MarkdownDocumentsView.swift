@@ -990,8 +990,15 @@ private struct MarkdownDocumentPane: View {
     @State private var dragStartRatio: Double?
     /// The body line the editor is showing, sent to the preview in split view.
     @State private var syncLine: MarkdownLineSync?
+    /// The other way: the file line the preview has at its top, sent to the editor in split view.
+    @State private var editorLine: MarkdownLineSync?
+    /// One counter for both, so a line sent again is always a new value.
+    @State private var syncTokens = 0
+    /// The editor's last top line, so a resumed sync can catch the preview up at once.
+    @State private var editorTop: Int?
     /// This pane's links, as one anchor of the hover preview.
     @State private var linkHoverOwner = UUID()
+    @State private var linkHoverGeneration = 0
 
     var body: some View {
         let _ = RenderProbe.hit("md.pane")
@@ -1024,20 +1031,32 @@ private struct MarkdownDocumentPane: View {
         .onChange(of: model.modeRaw) { _, _ in live.reset(doc.displayText) }
         // A render moves every block, so the page needs the line again.
         .onChange(of: live.text) { _, _ in
-            guard let current = syncLine else { return }
-            syncLine = MarkdownLineSync(line: current.line, token: current.token + 1)
+            guard model.splitScrollSync, let current = syncLine else { return }
+            syncTokens += 1
+            syncLine = MarkdownLineSync(line: current.line, token: syncTokens)
+        }
+        .onChange(of: model.splitScrollSync) { _, on in
+            if on, let editorTop { follow(editorTop) }
         }
         // A text hit from the file sidebar: the page counts body lines, the
         // hit counts file lines, so the frontmatter comes off first.
         .onChange(of: model.lineTarget) { _, target in
             guard let target else { return }
-            follow(target.line)
+            follow(target.line, always: true)
         }
         .onAppear {
-            if let target = model.lineTarget { follow(target.line) }
+            if let target = model.lineTarget { follow(target.line, always: true) }
         }
         // A link preview waiting on this pane's page has no anchor once the pane is gone.
-        .onDisappear { MarkdownHoverPreviewController.shared.exit(owner: linkHoverOwner) }
+        .onDisappear {
+            linkHoverGeneration += 1
+            MarkdownHoverPreviewController.shared.exit(owner: linkHoverOwner)
+        }
+        .onReceive(NotificationCenter.default.publisher(for: .markdownSplitSyncChanged)) { notification in
+            if let enabled = notification.object as? Bool, model.splitScrollSync != enabled {
+                model.splitScrollSync = enabled
+            }
+        }
     }
 
     /// The file's path under "File is gone" or "Not a text file": a click opens it in its default app, its folder in
@@ -1155,13 +1174,14 @@ private struct MarkdownDocumentPane: View {
                 // transaction that wedged the app on 2026-09-10 11:33 (79
                 // minutes at 100% of a core, 5.9 GB, stuck in
                 // `StackLayout.prioritize` → `PlatformViewLayoutEngine`).
-                sourceView(onTopLine: follow)
+                sourceView(onTopLine: { follow($0) }, scrollToLine: editorLine)
                     .frame(
                         width: MarkdownSplit.editorWidth(total: total, ratio: model.splitRatio),
                         height: geo.size.height
                     )
                 divider(total: total)
-                previewView(live.text, sync: syncLine)
+                    .overlay { scrollSyncButton }
+                previewView(live.text, sync: syncLine, onTopLine: model.splitScrollSync ? { followPreview($0) } : nil)
                     .frame(
                         width: MarkdownSplit.previewWidth(total: total, ratio: model.splitRatio),
                         height: geo.size.height
@@ -1197,7 +1217,9 @@ private struct MarkdownDocumentPane: View {
     }
 
     @ViewBuilder
-    private func previewView(_ markdown: String, sync: MarkdownLineSync? = nil) -> some View {
+    private func previewView(
+        _ markdown: String, sync: MarkdownLineSync? = nil, onTopLine: ((Int) -> Void)? = nil
+    ) -> some View {
         // A json, csv, yaml or log tab is not markdown, and handing it to the renderer as-is
         // reflowed it into a paragraph of prose. Line sync goes with it: once the preview is a
         // reformatted document, it no longer has the editor's lines to scroll to.
@@ -1227,6 +1249,7 @@ private struct MarkdownDocumentPane: View {
                 restoreScroll: model.scrollOffset(for: doc.id, pane: .preview),
                 onScroll: { model.rememberScroll($0, for: doc.id, pane: .preview) },
                 syncLine: native ? sync : nil,
+                onTopLine: native ? onTopLine : nil,
                 lineNumbers: !native && DocumentPreview.presentation(for: doc.url) != .table,
                 lineHighlight: webHighlight,
                 // Faded out by a click: gone until a new range is opened, also
@@ -1279,7 +1302,7 @@ private struct MarkdownDocumentPane: View {
     }
 
     /// The source, editable. ⌘S writes it; the preview shows the draft too.
-    private func sourceView(onTopLine: ((Int) -> Void)?) -> some View {
+    private func sourceView(onTopLine: ((Int) -> Void)?, scrollToLine: MarkdownLineSync? = nil) -> some View {
         MarkdownSourceEditor(
             text: Binding(get: { doc.displayText }, set: { doc.edit($0) }),
             font: .monospacedSystemFont(ofSize: 12 * model.zoom, weight: .regular),
@@ -1291,6 +1314,7 @@ private struct MarkdownDocumentPane: View {
             selection: model.sourceSelection,
             onSelectionChange: { model.editorSelectionChanged($0, byUser: $1, in: doc.id) },
             onTopLine: onTopLine,
+            scrollToLine: scrollToLine,
             onOpenLink: { model.follow($0, from: doc) },
             completions: { MarkdownVaultSuggestions.shared.values(for: $0) },
             onDropFiles: { model.acceptDrop($0) },
@@ -1366,10 +1390,16 @@ private struct MarkdownDocumentPane: View {
     /// The pointer on a link in the page: the note or file it points at previews next to the link, as a
     /// tab does. A web address, a heading in this note or a folder shows nothing.
     private func previewLink(_ hover: MarkdownLinkHover?) {
+        linkHoverGeneration += 1
+        let generation = linkHoverGeneration
         let controller = MarkdownHoverPreviewController.shared
         guard let hover,
               let url = MarkdownHoverTarget.url(
-                  forLink: hover.href, folder: doc.folder, text: doc.displayText, vaultRoot: GenesisKit.host?.markdownVaultRoot
+                  forLink: hover.href, folder: doc.folder, text: doc.displayText, vaultRoot: GenesisKit.host?.markdownVaultRoot,
+                  onIndexReady: {
+                      guard linkHoverGeneration == generation else { return }
+                      previewLink(hover)
+                  }
               ),
               let web = model.webProxy.web,
               let anchor = MarkdownHoverPlacement.screenRect(ofTopLeft: hover.rect, in: web)
@@ -1382,8 +1412,39 @@ private struct MarkdownDocumentPane: View {
 
     /// The editor scrolled to `line` (counted over the whole file). The page
     /// counts lines over the body alone, so the frontmatter comes off first.
-    private func follow(_ line: Int) {
+    /// `always`: a jump the reader asked for (a hit in the file sidebar), which moves the page even while the
+    /// scroll sync is paused.
+    private func follow(_ line: Int, always: Bool = false) {
+        editorTop = line
+        guard always || model.splitScrollSync else { return }
         let body = max(0, line - MarkdownFrontmatter.bodyLineOffset(in: doc.displayText))
-        syncLine = MarkdownLineSync(line: body, token: (syncLine?.token ?? 0) + 1)
+        syncTokens += 1
+        syncLine = MarkdownLineSync(line: body, token: syncTokens)
+    }
+
+    /// The reader scrolled the preview: the editor puts the same line at its top. The page keeps its own place, so
+    /// the last line sent to it is dropped; a later render must not pull the page back there.
+    private func followPreview(_ bodyLine: Int) {
+        let line = bodyLine + MarkdownFrontmatter.bodyLineOffset(in: doc.displayText)
+        editorTop = line
+        syncLine = nil
+        syncTokens += 1
+        editorLine = MarkdownLineSync(line: line, token: syncTokens)
+    }
+
+    /// The round button in the middle of the split divider: pauses and resumes the scroll sync (remembered).
+    private var scrollSyncButton: some View {
+        let on = model.splitScrollSync
+        return IconButton(
+            systemName: on ? "link" : "pause.fill",
+            tooltip: on ? "Scrolling is synced: click to pause" : "Scroll sync is paused: click to sync again",
+            size: 9,
+            tint: on ? model.theme.textMuted : model.theme.accent
+        ) { model.splitScrollSync.toggle() }
+        .frame(width: 20, height: 20)
+        .background(Circle().fill(model.theme.page))
+        .overlay(Circle().strokeBorder(model.theme.border, lineWidth: 1))
+        .accessibilityLabel(on ? "Pause scroll sync" : "Resume scroll sync")
+        .accessibilityIdentifier("markdown-split-scroll-sync")
     }
 }

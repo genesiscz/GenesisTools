@@ -9,6 +9,7 @@ import {
 } from "./deliver";
 import { decisionFiles, decisionLine, decisionLines, sendSessionDecisions } from "./read";
 import {
+    awaitsDelivery,
     finishPromptDecisions,
     kindOf,
     type PromptReceipt,
@@ -84,7 +85,13 @@ export async function sendAnsweredDecisions({
     const provider = providerOf(given, rows);
 
     if (dryRun) {
-        const due = rows.filter((row) => row.state === "answered" && kindOf(row) === "decision");
+        // What a real send would take: the ids asked for, else only the answers waiting to go out.
+        const due = rows.filter(
+            (row) =>
+                row.state === "answered" &&
+                kindOf(row) === "decision" &&
+                (selected !== undefined || awaitsDelivery(row))
+        );
 
         if (due.length === 0) {
             throw new Error("nothing to send");

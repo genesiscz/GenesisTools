@@ -302,6 +302,9 @@ public struct WidgetPreferences: Codable, Equatable, Sendable {
     public var alertAnswerSound: String?
     /// Seconds the session that raised an alert flashes; 0 does not flash it. Default 5.
     public var alertFlashSeconds: Double?
+    /// What a follow-up names as the item it answers: "selected-or-newest" (default: the selected card, else the
+    /// agent's newest item), "selected" (the selected card only) or "never".
+    public var replyNames: String?
     /// A session inbox's composer: "top" (default, under the tabs) or "bottom".
     public var inboxComposer: String?
     /// A rail bubble's tooltip: "auto" (default, only without hover previews), "always" or "never".
@@ -310,6 +313,12 @@ public struct WidgetPreferences: Codable, Equatable, Sendable {
     public var railOrder: String?
     /// A click on a decision option: "stage" (default, sent later with the other staged ones) or "send" (at once).
     public var decisionClick: String?
+    /// ⌘-click on an option and ⌘-Return in a decision's own answer do the other action. Default true.
+    public var decisionCommandSwaps: Bool?
+    /// Return in a decision's own answer field: "stage" (default, the text becomes its note) or "send".
+    public var ownAnswerReturn: String?
+    /// At start, a popup lists the staged decisions with Send now until it is closed. Default true.
+    public var stagedReminder: Bool?
     /// Leaving the inbox with staged decisions: "ask" (default), "keep" or "send".
     public var stagedOnLeave: String?
     /// Seconds to show a delivered note before a send-and-close folds the panel; 0 keeps it open. Default 2.5.
@@ -322,8 +331,22 @@ public struct WidgetPreferences: Codable, Equatable, Sendable {
     public var overviewFilter: String?
     /// The composer's microphone: "note" (default, a voice note whose transcript fills the field) or "live".
     public var composerVoice: String?
-    /// Seconds the alert popup stays when the pointer is not on it. Default 7.
+    /// Seconds the alert popup stays when the pointer is not on it; 0 keeps it until it is closed. Default 7.
     public var alertPopupSeconds: Double?
+    /// A click outside the widget closes the alert popup. Default off.
+    public var alertPopupClickAway: Bool?
+    /// Another alert while the popup is open: "list" (default, listed under it), "queue" (after it) or "newest".
+    public var alertPopupMany: String?
+    /// After a pick sent from the alert popup: "stay" (default, the popup shows its result) or "session" (opens it).
+    public var popupSendOpens: String?
+    /// The alert sounds' volume in percent of the system volume. Default 100.
+    public var alertVolume: Double?
+    /// A decision answered outside the widget pops up with a sound (Automatic decisions). Default on.
+    public var autoDecisionPopup: Bool?
+    /// Seconds that popup stays while the pointer is not on it; 0 keeps it until it is closed. Default 5.
+    public var autoDecisionSeconds: Double?
+    /// Its sound: a system sound name, "same" (`alertSound`) or "none". Default "Tink".
+    public var autoDecisionSound: String?
     /// Seconds a widget note stays before it fades; 0 keeps it until it is closed. Default 6. A note with a button
     /// stays at least 10 s.
     public var noteSeconds: Double?
@@ -344,6 +367,34 @@ public struct WidgetPreferences: Codable, Equatable, Sendable {
     public var voiceAccount: String?
     public var voiceModel: String?
     public var voiceLanguage: String
+}
+/// The inbox item a follow-up answers, sent as its payload's `replyTo` and delivered as a "Reply to: <title>" line.
+public struct WidgetReplyTo: Codable, Equatable, Sendable {
+    public var id: String
+    public var kind: String
+    public var title: String?
+    /// The start of the item's text, for an item with no title.
+    public var excerpt: String?
+    public var number: Int?
+
+    public init(card: WidgetCard) {
+        id = card.sourceId
+        kind = card.kind
+        number = card.kind == "decision" ? card.number : nil
+        let title = Self.line(card.title)
+        self.title = title.isEmpty ? nil : title
+        let excerpt = title.isEmpty ? Self.line(card.body) : ""
+        self.excerpt = excerpt.isEmpty ? nil : excerpt
+    }
+
+    /// What the composer and the message show: the title, else the excerpt.
+    public var label: String { title ?? excerpt ?? kind }
+
+    /// One line of at most 160 characters: the wire takes 500, and a reply needs only enough to recognise the item.
+    private static func line(_ text: String) -> String {
+        let flat = text.split(whereSeparator: \.isWhitespace).joined(separator: " ")
+        return flat.count > 160 ? String(flat.prefix(159)) + "…" : flat
+    }
 }
 /// A global shortcut as the widget preferences store it: a Carbon virtual key code and a Carbon modifier mask.
 public struct WidgetShortcutChord: Codable, Equatable, Sendable {
@@ -429,6 +480,12 @@ public struct WidgetState: Codable, Equatable, Sendable {
     public var assets: [String: WidgetAsset]
     public var drafts: [String: WidgetDraft]
     public var outgoing: [WidgetOutgoing]
+    /// A decision link asked the running widget to show this decision (`tools hub widget show-decision`).
+    public var showDecision: WidgetShowDecision?
+}
+public struct WidgetShowDecision: Codable, Equatable, Sendable {
+    public var id: String
+    public var at: Double
 }
 public struct WidgetActivityEvent: Codable, Equatable, Identifiable, Sendable {
     public var id: String
@@ -457,7 +514,16 @@ public struct WidgetInboxItem: Codable, Equatable, Sendable {
     /// A staged decision's unsent pick and note; see `WidgetCard.draftOption`.
     public var draftOption: String? = nil
     public var draft: String? = nil
+    /// A decision answered outside the widget (`WidgetInboxSummary.answeredElsewhere`): the chosen letters, the
+    /// answer, and who stored it ("agent" or "automatic_heuristic").
+    public var option: String? = nil
+    public var answer: String? = nil
+    public var answeredVia: String? = nil
+    /// A decision row's last write (epoch ms): `reconcileStaged` drops an optimistic pick once the row changed after
+    /// the pick was asked for, whatever the row now holds. Nil from an older hub.
+    public var updatedAt: Double? = nil
     public var isStaged: Bool { kind == "decision" && needsAnswer && (draftOption != nil || draft != nil) }
+    public var isAnsweredElsewhere: Bool { kind == "decision" && !needsAnswer && answeredVia != nil }
 }
 public struct WidgetInboxSession: Codable, Equatable, Sendable {
     public var key: String
@@ -478,6 +544,10 @@ public struct WidgetInboxSummary: Codable, Equatable, Sendable {
     public var sessions: [WidgetInboxSession]
     /// Every staged decision, uncapped (a session's `items` stop at eight); nil from an older hub.
     public var staged: [WidgetInboxItem]? = nil
+    /// Decisions answered outside the widget in the last week, newest first, at most 20; nil from an older hub.
+    public var answeredElsewhere: [WidgetInboxItem]? = nil
+    /// Uncapped pending decision IDs; absent from older hubs. Only complete snapshots are authoritative.
+    public var pendingDecisionIDs: [String]? = nil
     public var profile: Profile?
     public static let empty = WidgetInboxSummary(unread: 0, needsAnswer: 0, complete: false, truncated: false, sessions: [])
 }

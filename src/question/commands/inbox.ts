@@ -1,25 +1,15 @@
-import { loadHooksConfig } from "@app/agents/lib/hooks/config";
-import { suggestCommand } from "@genesiscz/utils/cli";
 import { SafeJSON } from "@genesiscz/utils/json";
 import { logger, out } from "@genesiscz/utils/logger";
-import { createBoxTable, renderCliHeader, truncateDisplay } from "@genesiscz/utils/table";
 import type { Command } from "commander";
-import { resolveDeliveryTarget } from "../lib/decisions/deliver";
-import { decisionFiles } from "../lib/decisions/read";
 import type { PromptReceipt } from "../lib/decisions/store";
-import {
-    type AnswerDecisionDeps,
-    answerInboxDecisions,
-    answerInboxForm,
-    type DecisionAnswer,
-    type InboxAnswerResult,
-} from "../lib/inbox/answer";
-import { dismissDecision, draftDecision, sendDrafts } from "../lib/inbox/drafts";
-import { loadInbox, loadSessionDecisions, loadSessionInbox, waitingBlock } from "../lib/inbox/load";
+import type { AnswerDecisionDeps, DecisionAnswer, InboxAnswerResult } from "../lib/inbox/answer";
 import type { AskDeps } from "../lib/pending/ask";
-import { attachImageFiles } from "../lib/pending/form";
 import type { AskAnswer } from "../lib/pending/types";
-import { collect } from "./ask";
+import { collect } from "./options";
+
+// Every store and delivery module is imported in the action that needs it: `inbox --session <id> --json` runs in
+// every Claude session's mods, and the eager imports of every inbox action (delivery, codex spawn, the session
+// listing, the ask form) cost each call about 150 ms of CPU before it read anything (2026-10-27).
 
 const { log } = logger.scoped("question-inbox");
 
@@ -42,6 +32,21 @@ interface AnswerFlags {
 function positiveInt(value: string | undefined, fallback: number): number {
     const parsed = Number.parseInt(value ?? "", 10);
     return Number.isFinite(parsed) && parsed > 0 ? parsed : fallback;
+}
+
+/** `--expected-revision <n>`: a revision is 1 or more; anything else is refused, never read as "no check". */
+function revisionFlag(value: string | undefined): number | undefined {
+    if (value === undefined) {
+        return undefined;
+    }
+
+    const parsed = Number.parseInt(value, 10);
+
+    if (!Number.isInteger(parsed) || parsed < 1) {
+        throw new Error("--expected-revision takes a revision number, 1 or more");
+    }
+
+    return parsed;
 }
 
 function promptReceipt(raw: string | undefined): PromptReceipt | undefined {
@@ -134,8 +139,17 @@ export interface InboxCommandDeps {
     forms?: AskDeps;
 }
 
-function realDecisionDeps(): AnswerDecisionDeps {
+async function realDecisionDeps(): Promise<AnswerDecisionDeps> {
+    const [{ decisionFiles }, { waitingBlock }] = await Promise.all([
+        import("../lib/decisions/read"),
+        import("../lib/inbox/load"),
+    ]);
+
     return { ...decisionFiles(), block: waitingBlock };
+}
+
+async function decisionDeps(deps: InboxCommandDeps): Promise<AnswerDecisionDeps> {
+    return deps.decisions ? deps.decisions() : realDecisionDeps();
 }
 
 async function answer(flags: AnswerFlags, deps: InboxCommandDeps): Promise<InboxAnswerResult> {
@@ -147,7 +161,9 @@ async function answer(flags: AnswerFlags, deps: InboxCommandDeps): Promise<Inbox
         }
 
         const parsed = formAnswers(flags.answers);
+        const { attachImageFiles } = await import("../lib/pending/form");
         const answers = flags.image?.length ? attachImageFiles(parsed, flags.image) : parsed;
+        const { answerInboxForm } = await import("../lib/inbox/answer");
 
         return answerInboxForm({
             formId: flags.form,
@@ -161,6 +177,8 @@ async function answer(flags: AnswerFlags, deps: InboxCommandDeps): Promise<Inbox
         throw new Error("pass --session with --decision or --batch, or --form");
     }
 
+    const { answerInboxDecisions } = await import("../lib/inbox/answer");
+
     return answerInboxDecisions(
         {
             session: flags.session,
@@ -169,8 +187,64 @@ async function answer(flags: AnswerFlags, deps: InboxCommandDeps): Promise<Inbox
             ...(flags.cwd ? { cwd: flags.cwd } : {}),
             dryRun,
         },
-        (deps.decisions ?? realDecisionDeps)()
+        await decisionDeps(deps)
     );
+}
+
+interface InboxListOptions {
+    hours?: string;
+    session?: string;
+    json?: boolean;
+    allItems?: boolean;
+    since?: string;
+    transcript?: string;
+    transcriptProvider?: string;
+}
+
+const PROVIDERS = ["claude", "codex", "grok"] as const;
+
+function isProvider(value: string): value is (typeof PROVIDERS)[number] {
+    return PROVIDERS.some((provider) => provider === value);
+}
+
+/**
+ * `inbox --session <id> --json --all-items [--since <cursor>]`. With a cursor whose inputs did not move, it answers
+ * "nothing changed" without loading the stores (`lib/inbox/session-cursor.ts` says why that cannot skip a change);
+ * otherwise it builds the whole answer and sends the change since the cursor, or everything for an unknown one.
+ */
+async function sessionInboxAnswer(options: InboxListOptions & { session: string }): Promise<Record<string, unknown>> {
+    const { session, since } = options;
+    const provider = options.transcriptProvider ?? "claude";
+
+    if (!isProvider(provider)) {
+        throw new Error(`--transcript-provider takes ${PROVIDERS.join(", ")}; got "${provider}"`);
+    }
+
+    const cursors = await import("../lib/inbox/session-cursor");
+
+    if (since && cursors.cursorStillHolds(session, since)) {
+        return {
+            sessionId: session,
+            cursor: since,
+            full: false,
+            decisions: [],
+            todos: [],
+            entries: [],
+            forms: [],
+            removed: { decisions: [], todos: [], entries: [], forms: [] },
+        };
+    }
+
+    const { loadSessionInbox } = await import("../lib/inbox/load");
+    // Every input's identity is taken before it is read, so a write during this read moves it past the snapshot.
+    const trace = cursors.baseTrace();
+    const inbox = await loadSessionInbox(session, {
+        trace,
+        ...(options.transcript ? { transcript: { path: options.transcript, provider } } : {}),
+    });
+    const { cursor, delta } = cursors.recordAnswer({ session, answer: inbox, trace, ...(since ? { since } : {}) });
+
+    return delta ? { sessionId: session, cursor, full: false, ...delta } : { ...inbox, cursor, full: true };
 }
 
 /**
@@ -187,15 +261,22 @@ export function registerInboxCommand(program: Command, deps: InboxCommandDeps = 
         .option("--json", "Print { sessions, scanned, elapsedMs }")
         .option(
             "--all-items",
-            "With --session --json: also its todos, its newest Q→A entries and its pending forms: { sessionId, decisions, todos, entries, forms }"
+            "With --session --json: also its todos, its newest Q→A entries and its pending forms: { sessionId, decisions, todos, entries, forms, cursor }"
         )
-        .action(async (options: { hours?: string; session?: string; json?: boolean; allItems?: boolean }) => {
+        .option(
+            "--since <cursor>",
+            "With --session --json --all-items: only what changed since the answer that carried this cursor: { cursor, full: false, decisions, todos, entries, forms, removed, staged? }; an unknown cursor gets the whole answer (full: true)"
+        )
+        .option("--transcript <path>", "With --session: the session's transcript file, so it is not looked up by id")
+        .option("--transcript-provider <kind>", "The provider of --transcript: claude, codex or grok", "claude")
+        .action(async (options: InboxListOptions) => {
             if (options.session) {
                 if (options.json && options.allItems) {
-                    out.result(await loadSessionInbox(options.session));
+                    out.result(await sessionInboxAnswer({ ...options, session: options.session }));
                     return;
                 }
 
+                const { loadSessionDecisions } = await import("../lib/inbox/load");
                 const decisions = await loadSessionDecisions(options.session);
 
                 if (options.json) {
@@ -210,12 +291,15 @@ export function registerInboxCommand(program: Command, deps: InboxCommandDeps = 
                 return;
             }
 
+            const { loadInbox } = await import("../lib/inbox/load");
             const result = await loadInbox({ hours: positiveInt(options.hours, 72) });
 
             if (options.json) {
                 out.result(result);
                 return;
             }
+
+            const { createBoxTable, renderCliHeader, truncateDisplay } = await import("@genesiscz/utils/table");
 
             renderCliHeader("Waiting for you", `${result.sessions.length} sessions · ${result.elapsedMs} ms`);
             const table = createBoxTable(["SESSION", "PROJECT", "WAITING", "ITEMS"]);
@@ -276,12 +360,13 @@ export function registerInboxCommand(program: Command, deps: InboxCommandDeps = 
                           '[{"itemId":"q1","selectedChoices":["c1"]}]',
                       ]
                     : ["inbox", "answer", "--session", "ID", "--decision", "1", "--option", "a"];
+                const { suggestCommand } = await import("@genesiscz/utils/cli");
                 out.printlnErr(suggestCommand("tools question", { replaceCommand: example }));
                 process.exitCode = 1;
             }
         });
 
-    const storeDeps = () => (deps.decisions ?? realDecisionDeps)();
+    const storeDeps = () => decisionDeps(deps);
 
     // `inbox` itself owns `--session` (list mode), so these read it through the globals, like `answer`.
     inbox
@@ -292,8 +377,9 @@ export function registerInboxCommand(program: Command, deps: InboxCommandDeps = 
         .option("--text <note>", "The unsent note; empty clears it")
         .option("--provider <name>")
         .option("--cwd <path>")
+        .option("--expected-revision <n>", "Refuse when the agent re-posted the decision since this revision")
         .action(async (_flags: AnswerFlags, command: Command) => {
-            const flags: AnswerFlags = command.optsWithGlobals();
+            const flags: AnswerFlags & { expectedRevision?: string } = command.optsWithGlobals();
 
             try {
                 if (!flags.session) {
@@ -306,6 +392,8 @@ export function registerInboxCommand(program: Command, deps: InboxCommandDeps = 
                     throw new Error("--decision takes a number");
                 }
 
+                const expectedRevision = revisionFlag(flags.expectedRevision);
+                const { draftDecision } = await import("../lib/inbox/drafts");
                 out.result(
                     await draftDecision(
                         {
@@ -315,8 +403,9 @@ export function registerInboxCommand(program: Command, deps: InboxCommandDeps = 
                             ...(flags.text !== undefined ? { text: flags.text } : {}),
                             ...(flags.provider ? { provider: flags.provider } : {}),
                             ...(flags.cwd ? { cwd: flags.cwd } : {}),
+                            ...(expectedRevision !== undefined ? { expectedRevision } : {}),
                         },
-                        storeDeps()
+                        await storeDeps()
                     )
                 );
             } catch (error) {
@@ -330,8 +419,9 @@ export function registerInboxCommand(program: Command, deps: InboxCommandDeps = 
         .command("dismiss")
         .description("Drop a decision that no longer matters, without sending anything")
         .requiredOption("--decision <n>", "The decision number")
+        .option("--expected-revision <n>", "Refuse when the agent re-posted the decision since this revision")
         .action(async (_flags: AnswerFlags, command: Command) => {
-            const flags: AnswerFlags = command.optsWithGlobals();
+            const flags: AnswerFlags & { expectedRevision?: string } = command.optsWithGlobals();
 
             try {
                 if (!flags.session) {
@@ -344,8 +434,19 @@ export function registerInboxCommand(program: Command, deps: InboxCommandDeps = 
                     throw new Error("--decision takes a number");
                 }
 
-                const { file, events } = storeDeps();
-                out.result(await dismissDecision({ session: flags.session, number }, { file, events }));
+                const { file, events } = await storeDeps();
+                const expectedRevision = revisionFlag(flags.expectedRevision);
+                const { dismissDecision } = await import("../lib/inbox/drafts");
+                out.result(
+                    await dismissDecision(
+                        {
+                            session: flags.session,
+                            number,
+                            ...(expectedRevision !== undefined ? { expectedRevision } : {}),
+                        },
+                        { file, events }
+                    )
+                );
             } catch (error) {
                 log.debug({ error }, "inbox dismiss refused");
                 out.result({ error: error instanceof Error ? error.message : String(error) });
@@ -385,6 +486,7 @@ export function registerInboxCommand(program: Command, deps: InboxCommandDeps = 
                 }
 
                 const waitSeconds = Number.parseFloat(flags.waitLive ?? "0");
+                const { sendDrafts } = await import("../lib/inbox/drafts");
                 out.result(
                     await sendDrafts(
                         {
@@ -399,7 +501,7 @@ export function registerInboxCommand(program: Command, deps: InboxCommandDeps = 
                             promptReceipt: promptReceipt(flags.ackPrompt ?? flags.releasePrompt),
                             ...(flags.releasePrompt ? { releasePrompt: true } : {}),
                         },
-                        storeDeps()
+                        await storeDeps()
                     )
                 );
             } catch (error) {
@@ -423,6 +525,10 @@ export function registerInboxCommand(program: Command, deps: InboxCommandDeps = 
                 return;
             }
 
+            const [{ resolveDeliveryTarget }, { loadHooksConfig }] = await Promise.all([
+                import("../lib/decisions/deliver"),
+                import("@app/agents/lib/hooks/config"),
+            ]);
             const target = await resolveDeliveryTarget({
                 session: flags.session,
                 ...(flags.provider ? { provider: flags.provider } : {}),

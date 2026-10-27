@@ -1425,3 +1425,12 @@ on the same kind of fixture opens 0 files without `--include-cloud` and 2 with i
 line. `--apply` exits 1 when a selected file, or one named by `--path`, was not evicted. The C engine, the shim and the
 binary are not compiled on a Mac without Xcode or the Command Line Tools: an error names `xcode-select --install`, and
 clang never opens the install dialog.
+
+## 2026-10-27 20:20 — `tools du size`: plain `du -sk`, cacheable with `--max-cache-age`
+
+No scan code changed: the C engine and the Bun engine are untouched, so no benchmark was rerun. `tools du size
+<paths...>` runs the system `du -sk` on each path and prints `{ "<path>": KiB }`; totals equal `du -sk` by
+construction (checked on `src/du`: 1036 KiB both ways). `--max-cache-age <s>` serves a size another caller measured
+within that age from `~/.genesis-tools/du/cache/sizes/`. The genesis-tools-mods Session files row uses it for the
+worktree sizes, which one session walked every 5 minutes at 3 to 17 s each on a full, loaded disk. Measured with
+load 33: a first answer 0.23 s for two small folders, a cached one 0.19 s (the Bun start).

@@ -2,6 +2,7 @@ import type {
     ElementTable,
     EngineInterface,
     HookStream,
+    ProcessRunInit,
     Register,
     RenderElement,
     Timer,
@@ -29,7 +30,7 @@ import {
     setIdleDueAt,
 } from "./idle";
 import { inbox, inboxChip } from "./inbox";
-import { linksStep, rememberToolPaths } from "./links";
+import { appendLinkedPullRequestNote, linksStep, rememberToolPaths, takeLinkedPullRequestNote } from "./links";
 import { startLiveClock } from "./live";
 import {
     type CallSection,
@@ -385,12 +386,96 @@ function streamOf<C, R>(stage: AsyncGenerator<C, R>): HookStream<C, R> {
 }
 
 /**
+ * Every process a mod starts, one JSON line each in `<agents>/mods-log/processes-<day>.jsonl`: the command (each
+ * argument cut at 120 characters), the folder, the function that asked (from the call stack), the session, the time
+ * it took and the exit code. Martin, 2026-10-27: log all of them, to see what the sessions repeat and could share
+ * from a cache. Lines are kept in memory and written together (every 20 lines, or by the first start 10 s after the
+ * oldest), so the log itself does not double the spawns: an append is a `sh` process too.
+ */
+const processLog: { lines: string[]; since: number } = { lines: [], since: 0 };
+
+/**
+ * The function that asked for the process, read from the call stack. The engine loads the hook files as numbered
+ * sources (`[source:50]`), so a stack names functions, not files: `runProbe < primeGenesisProbe`.
+ */
+function callerFeature(): string {
+    const names: string[] = [];
+    for (const frame of (new Error().stack ?? "").split("\n").slice(1)) {
+        const name = /^\s*at (?:async )?([\w$.]+) /.exec(frame)?.[1];
+        if (name && !["callerFeature", "run", "Object.run", "Promise.all"].includes(name)) {
+            names.push(name);
+        }
+
+        if (names.length === 2) {
+            break;
+        }
+    }
+
+    return names.join(" < ") || "unknown";
+}
+
+async function logProcess(
+    $: EngineInterface,
+    argv: readonly string[],
+    init: ProcessRunInit | undefined,
+    started: { at: number; feature: string },
+    outcome: { exitCode?: number; error?: string }
+): Promise<void> {
+    const now = Date.now();
+    processLog.lines.push(
+        JSON.stringify({
+            at: new Date(started.at).toISOString(),
+            session: await $.session.id(),
+            feature: started.feature,
+            argv: argv.map((arg) => (arg.length > 120 ? `${arg.slice(0, 120)}…` : arg)),
+            cwd: init?.cwd,
+            ms: now - started.at,
+            ...outcome,
+        })
+    );
+    if (processLog.lines.length === 1) {
+        processLog.since = now;
+    }
+
+    if (processLog.lines.length < 20 && now - processLog.since < 10_000) {
+        return;
+    }
+
+    const home = (await $.env.get("GENESIS_TOOLS_HOME")) ?? (await $.env.get("HOME"));
+    const lines = processLog.lines.splice(0);
+    if (!home) {
+        return;
+    }
+
+    const day = new Date(now).toISOString().slice(0, 10);
+    const path = `${home}/.genesis-tools/agents/mods-log/processes-${day}.jsonl`;
+    await $.process
+        .run(["/bin/sh", "-c", 'mkdir -p "$(dirname "$1")" && cat >> "$1"', "sh", path], {
+            stdin: `${lines.join("\n")}\n`,
+            timeoutMs: 5_000,
+        })
+        .catch(() => undefined);
+}
+
+/**
  * The engine as the feature files reach it. Built here because only this file may hand `$` on (see `shared.ts`);
  * each closure spells the call it makes, so `claude plugin validate` reads every capability the plugin uses.
  */
 function hostOf($: EngineInterface): Host {
     return {
-        run: (argv, init) => $.process.run(argv, init),
+        run: async (argv, init) => {
+            // Read the stack now: after the first await only the engine's frames are left on it.
+            const started = { at: Date.now(), feature: callerFeature() };
+            try {
+                const done = await $.process.run(argv, init);
+                void logProcess($, argv, init, started, { exitCode: done.exitCode });
+
+                return done;
+            } catch (error) {
+                void logProcess($, argv, init, started, { error: String(error).slice(0, 200) });
+                throw error;
+            }
+        },
         read: (path) => $.fs.read(path),
         write: (path, text) => $.fs.write(path, text),
         // `$.fs.write` replaces a file and the engine has no append, so this is the one place an append runs `cat >>`
@@ -494,6 +579,15 @@ function showPane(
     });
 }
 
+/** Runs one feature's part of a shared event; a throw is logged to `mods-log/errors.jsonl` and goes no further. */
+async function isolated(host: Host, event: string, part: () => void | Promise<void>): Promise<void> {
+    try {
+        await part();
+    } catch (error) {
+        await logMod(host, "errors", { event, error: error instanceof Error ? error.message : String(error) });
+    }
+}
+
 async function logShow($: EngineInterface, record: Record<string, unknown>): Promise<void> {
     await logMod(hostOf($), "sidebar", { event: "show", ...record });
 }
@@ -561,6 +655,16 @@ export const register: Register = (on) => {
 
             afterTools({ host, event: e, features: FEATURES });
 
+            // The PR numbers the links mod linked in the message that asked for this call: the model reads which
+            // repository each went to with this result, while the turn still runs, not only after it ends.
+            if (e.agentId === undefined && e.tool_use_id !== undefined && result.deny === undefined) {
+                const note = takeLinkedPullRequestNote();
+
+                if (note) {
+                    return { ...result, context: [...(result.context ?? []), note] };
+                }
+            }
+
             return result;
         } finally {
             for (const end of ends) {
@@ -624,6 +728,15 @@ export const register: Register = (on) => {
         if (e.agentId === undefined) {
             stopIdleTimer();
 
+            // PR numbers of the turn's last message, which no tool result followed: the model reads them next turn.
+            await appendLinkedPullRequestNote((text) =>
+                $.session.append({ message: { type: "user", content: [{ type: "text", text }] } })
+            ).catch((error) =>
+                logMod(host, "links", { event: "attribution-append-failed", error: String(error) }).catch(
+                    () => undefined
+                )
+            );
+
             const settings = idleCompactSettings(await readHooksFile(host, await agentsDir(host)));
 
             if (settings.enabled) {
@@ -647,7 +760,8 @@ export const register: Register = (on) => {
         }
 
         for (const feature of FEATURES) {
-            await feature.afterTurn?.(host, e);
+            // One feature that throws must not take the others' turn-end work with it.
+            await isolated(host, "afterTurn", () => feature.afterTurn?.(host, e));
         }
 
         return done;
@@ -664,7 +778,7 @@ export const register: Register = (on) => {
 
         if (result.skip === undefined) {
             for (const feature of FEATURES) {
-                await feature.compacted?.(host, e.agentId);
+                await isolated(host, "compacted", () => feature.compacted?.(host, e.agentId));
             }
         }
 

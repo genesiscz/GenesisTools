@@ -114,14 +114,17 @@ export class NativeCaptureControls {
             windowIndex: this.capture.windowIndex,
         });
         try {
-            if (this.binding?.key === key) {
+            if (
+                this.binding?.key === key &&
+                !(this.capture.mode === "isolated" && (this.capture.windowIds?.length ?? 0) > 1)
+            ) {
                 // A dispatched action without a refreshed snapshot invalidates ComputerUse's rows.
                 // Reobserve the pinned window; the bridge retains and checks the app's launch identity.
                 const state = await this.computer.get_app_state({
                     app: options.app,
                     window_id: this.binding.windowId,
                     image: options.image ?? false,
-                    element_limit: 2000,
+                    element_limit: 4000,
                 });
                 if (state.window.id !== this.binding.windowId) {
                     throw new Error("The bound recording window changed. Select the target again.");
@@ -156,7 +159,60 @@ export class NativeCaptureControls {
                 app,
                 window_id: this.capture.windowId,
                 image: options.image ?? false,
-                element_limit: 2000,
+                element_limit: 4000,
+            });
+        }
+        // Resolve only recorded windows belonging to this app; never choose the first match silently.
+        if (this.capture.mode === "isolated") {
+            const listed = required(await this.native.run({ args: ["window", "--app", app], timeoutMs: 5000 }));
+            const windows = z
+                .array(
+                    z.object({
+                        window_id: z.number().int().positive().optional(),
+                        title: z.string().optional(),
+                        minimized: z.boolean().optional(),
+                    })
+                )
+                .parse(listed.windows);
+            if (windows.some((window) => window.window_id === undefined)) {
+                throw new Error("Cannot verify the recorded window IDs for this app.");
+            }
+            const ids = (this.capture.windowIds ?? []).filter((id) =>
+                windows.some(
+                    (window) =>
+                        window.window_id === id &&
+                        !window.minimized &&
+                        (windowTitle === undefined || window.title === windowTitle)
+                )
+            );
+            const matches: ComputerState[] = [];
+            for (const windowId of ids) {
+                const state = await this.computer.get_app_state({
+                    app,
+                    window_id: windowId,
+                    image: options.image ?? false,
+                    element_limit: 4000,
+                });
+                if (action && (action.do === "ax-set" || action.do === "ax-press" || action.do === "ax-perform")) {
+                    const count = state.elements.filter((element) => match(element, action)).length;
+                    if (count > 1) {
+                        throw new Error("Native capture target is ambiguous.");
+                    }
+                    if (count === 1) {
+                        matches.push(state);
+                    }
+                } else {
+                    matches.push(state);
+                }
+            }
+            if (matches.length !== 1) {
+                throw new Error("Native capture requires one exact recorded window or AX target.");
+            }
+            return this.computer.get_app_state({
+                app,
+                window_id: matches[0].window.id,
+                image: options.image ?? false,
+                element_limit: 4000,
             });
         }
         const listed = required(await this.native.run({ args: ["window", "--app", app], timeoutMs: 5000 }));
@@ -175,7 +231,7 @@ export class NativeCaptureControls {
                 app,
                 window_index: indexes[0],
                 image: options.image ?? false,
-                element_limit: 2000,
+                element_limit: 4000,
             });
         }
         if (action && (action.do === "ax-set" || action.do === "ax-press" || action.do === "ax-perform")) {
@@ -185,7 +241,7 @@ export class NativeCaptureControls {
                     app,
                     window_index: windowIndex,
                     image: false,
-                    element_limit: 2000,
+                    element_limit: 4000,
                 });
                 const count = state.elements.filter((element) => match(element, action)).length;
                 if (count > 1) {
@@ -200,7 +256,7 @@ export class NativeCaptureControls {
                     app,
                     window_id: matches[0].window.id,
                     image: false,
-                    element_limit: 2000,
+                    element_limit: 4000,
                 });
             }
         }
@@ -295,7 +351,8 @@ export class NativeCaptureControls {
                         app,
                         revision: state.revision,
                         direction: action.direction,
-                        pixels: action.amount ?? 3,
+                        pixels: action.amount ?? 120,
+                        ...(action.time === undefined ? {} : { seconds: action.time }),
                     };
                     if (action.coords) {
                         let [x, y] = coordinates(action.coords);

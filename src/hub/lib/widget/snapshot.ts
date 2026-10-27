@@ -2,8 +2,13 @@ import { existsSync, statSync } from "node:fs";
 import { sessionChangesPath } from "@app/agents/lib/changes/log";
 import { type AgentSessionRow, listAgentSessionRows } from "@app/ai/lib/sessions/agent-session-rows";
 import { decisionFiles } from "@app/question/lib/decisions/read";
-import { type AnsweredVia, type DecisionRecord, kindOf, readDecisions } from "@app/question/lib/decisions/store";
-import { INBOX_STALE_MS } from "@app/question/lib/inbox/build";
+import {
+    type AnsweredVia,
+    type DecisionRecord,
+    kindOf,
+    readDecisionsWithIntegrity,
+} from "@app/question/lib/decisions/store";
+import { INBOX_STALE_MS, inboxSessionFresh } from "@app/question/lib/inbox/build";
 import { renderFormAnswer } from "@app/question/lib/pending/render";
 import { listFormsSnapshot, PENDING_MIGRATIONS } from "@app/question/lib/pending/store";
 import type { AskForm, AskItem } from "@app/question/lib/pending/types";
@@ -164,7 +169,7 @@ export function widgetTitle(text: string | null | undefined): string | undefined
 }
 export interface WidgetSources {
     sessions(refresh: boolean): Promise<AgentSessionRow[]>;
-    decisions(): DecisionRecord[];
+    decisions(): DecisionRecord[] | { rows: DecisionRecord[]; complete: boolean };
     forms(session?: string): AskForm[];
     answers(session?: string): QaRow[];
     /** The newest `limit` answers of each session in one read (the warm sessions); else `answers` per session. */
@@ -238,9 +243,18 @@ export interface WidgetInboxItem {
     options?: string[];
     recommended?: string;
     revision?: number;
+    /**
+     * A decision row's last write (epoch ms): the widget drops its optimistic pick once the row changed after the
+     * pick was asked for, whatever the row now holds (another surface's pick, a revision).
+     */
+    updatedAt?: number;
     /** A decision's unsent pick and note (`drafted`); see `WidgetCard.draftOption`. */
     draftOption?: string;
     draft?: string;
+    /** A decision answered outside the widget (`answeredElsewhere`): the chosen letters, the answer and who stored it. */
+    option?: string;
+    answer?: string;
+    answeredVia?: AnsweredVia;
 }
 export interface WidgetInboxSession {
     key: string;
@@ -252,6 +266,10 @@ export interface WidgetInboxSession {
     /** The session's listed entries, the ones waiting for an answer first, then newest first; at most `INBOX_ITEMS_PER_SESSION`. */
     items?: WidgetInboxItem[];
 }
+
+/** How far back, and how many, decisions answered outside the widget the snapshot carries. */
+export const ANSWERED_ELSEWHERE_DAYS = 7;
+export const ANSWERED_ELSEWHERE_MAX = 20;
 
 /** The entries one session lists in the widget's inbox overview; its counts still cover every item. */
 export const INBOX_ITEMS_PER_SESSION = 8;
@@ -270,6 +288,14 @@ export interface WidgetInboxSummary {
     sessions: WidgetInboxSession[];
     /** Every staged decision, uncapped: the widget sends from this list, not from a session's capped `items`. */
     staged: WidgetInboxItem[];
+    /**
+     * Decisions answered outside the widget (an agent recorded the user's chat answer, or the Stop hook read it from
+     * the chat) in the last {@link ANSWERED_ELSEWHERE_DAYS} days, newest first, at most {@link ANSWERED_ELSEWHERE_MAX}.
+     * The widget shows each new one, and its settings list them (Automatic decisions).
+     */
+    answeredElsewhere: WidgetInboxItem[];
+    /** Uncapped open or drafted decision IDs; optional for older producers. Authoritative only when complete. */
+    pendingDecisionIDs?: string[];
     profile?: { hostId: "local" };
 }
 
@@ -553,7 +579,7 @@ export const realWidgetSources: WidgetSources = {
             maxDiscoveryAgeMs: WIDGET_DISCOVERY_REUSE_MS,
             failClosed: true,
         }),
-    decisions: () => readDecisions(decisionFiles().file),
+    decisions: () => readDecisionsWithIntegrity(decisionFiles().file),
     forms: (sessionHint) => widgetForms({ dbPath: toolDataDir("question", "qa.db"), sessionHint }),
     answers: (sessionId) =>
         queryEntriesSnapshot({
@@ -803,13 +829,16 @@ export async function widgetSnapshot({
             stop();
         }
     }
-    const [rows, decisions, waitingForms, agents, answerRoster] = await Promise.all([
+    const [rows, decisionRead, waitingForms, agents, answerRoster] = await Promise.all([
         read("sessions", () => sources.sessions(refresh), []),
         read("decisions", sources.decisions, []),
         read("questions", () => sources.forms(), []),
         read("agents", () => sources.agents(refresh), { generatedAt: "", parents: [], orphans: [] }),
         read("answer sessions", () => sources.answers(), []),
     ]);
+    // Older injected sources return only rows and cannot attest to read integrity.
+    const decisions = Array.isArray(decisionRead) ? decisionRead : decisionRead.rows;
+    const decisionsComplete = !Array.isArray(decisionRead) && decisionRead.complete;
     const inboxWindow: WidgetInboxWindow = {
         clearedAt: state.inboxClearedAt ?? 0,
         staleBefore: now - INBOX_STALE_MS,
@@ -1004,6 +1033,9 @@ export async function widgetSnapshot({
             live.add(session.key);
         }
     }
+    /** Per session, its newest waiting decision's ask: with the session's activity, `inboxSessionFresh` (the hub's rule). */
+    const newestAsk = new Map<string, number>();
+    const waitingIn = new Set<WidgetSession>();
     for (const decision of decisions) {
         const session =
             findSession(decision.sessionId, decision.provider) ??
@@ -1011,13 +1043,19 @@ export async function widgetSnapshot({
                 targetOf({ ...decision, sessionId: decision.sessionId }, decision.id),
                 decision.sessionTitle ?? decision.sessionId,
                 decision.project ?? decision.cwd ?? "",
-                timeOf(decision.updatedTs)
+                // A session outside the roster has no known activity: its decision's ask stands for it, as in the
+                // hub. Its last update would let a stage on an old decision count the session as active again.
+                askedTimeOf(decision)
             );
-        if (
-            kindOf(decision) === "decision" &&
-            ["open", "drafted"].includes(decision.state) &&
-            inboxFresh(session, timeOf(decision.updatedTs))
-        ) {
+        if (kindOf(decision) === "decision" && ["open", "drafted"].includes(decision.state)) {
+            newestAsk.set(session.key, Math.max(newestAsk.get(session.key) ?? 0, askedTimeOf(decision)));
+            waitingIn.add(session);
+        }
+    }
+    const decisionsCount = (session: WidgetSession) =>
+        inboxSessionFresh({ activityAt: session.activityAt, newestAskAt: newestAsk.get(session.key) ?? 0, now });
+    for (const session of waitingIn) {
+        if (decisionsCount(session)) {
             session.status = "waiting";
         }
     }
@@ -1152,19 +1190,57 @@ export async function widgetSnapshot({
             options: row.options,
             ...(row.recommended ? { recommended: row.recommended } : {}),
             revision: row.revision ?? 1,
+            updatedAt: timeOf(row.updatedTs),
             ...stagedOf(row),
         };
         // A staged pick is unsent input: it stays in `staged` after "Mark all read" and in a quiet session.
         if (item.draftOption || item.draft) {
             staged.push(item);
         }
-        // "Mark all read" compares the time it was asked: staging an older decision updates the row, and must not
-        // count it as new again. A recent update still keeps the decision fresh in a quiet session.
-        if (item.at > (state.inboxClearedAt ?? 0) && inboxFresh(session, timeOf(row.updatedTs))) {
+        // Freshness is the hub's rule (`inboxSessionFresh`, per session by the newest ask), so the badge and the hub's
+        // header count the same decisions. "Mark all read" is the widget's own mark and compares the time it was
+        // asked: staging an older decision updates the row, and must not count it as new again.
+        if (item.at > (state.inboxClearedAt ?? 0) && decisionsCount(session)) {
             pendingDecisions += 1;
             putInbox(session, item, 1);
         }
     }
+    const answeredSince = now - ANSWERED_ELSEWHERE_DAYS * 86_400_000;
+    const answeredElsewhere: WidgetInboxItem[] = [];
+    for (const row of decisions) {
+        const via = row.answeredVia;
+        if (
+            kindOf(row) !== "decision" ||
+            (via !== "agent" && via !== "automatic_heuristic") ||
+            !["acknowledged", "implemented"].includes(row.state)
+        ) {
+            continue;
+        }
+
+        const at = timeOf(row.answeredTs ?? row.updatedTs);
+        const session = at >= answeredSince ? findSession(row.sessionId, row.provider) : undefined;
+        if (!session) {
+            continue;
+        }
+
+        const answer = row.answer?.trim();
+        // The card's id, so a click on the entry opens this decision's card in its session.
+        answeredElsewhere.push({
+            id: `decision:${row.id}`,
+            sourceId: row.id,
+            kind: "decision",
+            key: session.key,
+            at,
+            needsAnswer: false,
+            number: row.number,
+            ...decisionTitle(row),
+            options: row.options,
+            ...(row.option ? { option: row.option } : {}),
+            ...(answer ? { answer: answer.slice(0, 300) } : {}),
+            answeredVia: via,
+        });
+    }
+    answeredElsewhere.sort((a, b) => b.at - a.at);
     let unreadResults = 0;
     const resultNodes = new Map<string, AgentNode>();
     for (const node of [
@@ -1216,6 +1292,14 @@ export async function widgetSnapshot({
             .slice(0, 512)
             .map((entry) => ({ ...entry, items: listedInboxItems(entry.items ?? []) })),
         staged,
+        ...(decisionsComplete
+            ? {
+                  pendingDecisionIDs: decisions
+                      .filter((row) => kindOf(row) === "decision" && ["open", "drafted"].includes(row.state))
+                      .map((row) => row.id),
+              }
+            : {}),
+        answeredElsewhere: answeredElsewhere.slice(0, ANSWERED_ELSEWHERE_MAX),
         ...(prof.enabled ? { profile: { hostId: "local" as const } } : {}),
     };
     const inboxMetadata: { notifications?: WidgetInboxSummary } = { notifications };

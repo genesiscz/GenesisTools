@@ -1709,37 +1709,6 @@ struct TimelineRowView: View {
     }
 }
 
-/// A text-like button of a dense row (`genHoverPlain`, a tooltip) while its row is live; the bare label
-/// otherwise, drawn the same (the style adds no padding or background at rest).
-private struct LiveButton<Label: View>: View {
-    let live: Bool
-    let tooltip: String
-    let action: () -> Void
-    @ViewBuilder let label: () -> Label
-
-    var body: some View {
-        if live {
-            Button(action: action, label: label)
-                .buttonStyle(.genHoverPlain())
-                .instantTooltip(tooltip)
-        } else {
-            label()
-        }
-    }
-}
-
-private extension View {
-    /// `.instantTooltip` only while the row is live (`LiveButton`).
-    @ViewBuilder
-    func liveTooltip(_ live: Bool, _ text: String) -> some View {
-        if live {
-            instantTooltip(text)
-        } else {
-            self
-        }
-    }
-}
-
 /// A reply to a review thread, through the Review path (PRThreadsStore → `tools hub pr reply`).
 struct TimelineReplyForm: View {
     let event: TimelineEvent

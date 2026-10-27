@@ -1,13 +1,14 @@
-import { chmodSync, existsSync, mkdirSync, statSync, unlinkSync } from "node:fs";
+import { chmodSync, existsSync, mkdirSync, unlinkSync } from "node:fs";
 import { createConnection, createServer, type Server, type Socket } from "node:net";
 import { dirname } from "node:path";
+import { newestLoadedModuleMtime } from "@genesiscz/utils/bun/loaded-modules";
 import { SafeJSON } from "@genesiscz/utils/json";
 import { logger } from "@genesiscz/utils/logger";
 import { physFootprintBytes } from "@genesiscz/utils/process/footprint";
 import { profiler } from "@genesiscz/utils/profile";
 import { withFileLock } from "@genesiscz/utils/storage/file-lock";
 import { withTraceId } from "@genesiscz/utils/trace";
-import type { Door } from "./doors/types";
+import { type Door, doorlessPrefix } from "./doors/types";
 import { type CallResult, type EndReason, type HubServerHealth, LineBuffer, parseRequest } from "./protocol";
 
 const log = logger.child({ component: "hub-server" });
@@ -80,27 +81,7 @@ export async function socketAnswers(socketPath: string, deadlineMs = 1000): Prom
     });
 }
 
-/**
- * Newest mtime among the loaded modules under `root`, in ms. A module edited after this process
- * started means the server runs old code: it drains, and the hub's next call starts the new code.
- */
-export function newestLoadedModuleMtime(root: string): number {
-    let newest = 0;
-    for (const path of Object.keys(require.cache)) {
-        if (!path.startsWith(root)) {
-            continue;
-        }
-
-        try {
-            newest = Math.max(newest, statSync(path).mtimeMs);
-        } catch {
-            // A module file that was deleted counts as changed.
-            newest = Number.POSITIVE_INFINITY;
-        }
-    }
-
-    return newest;
-}
+export { newestLoadedModuleMtime };
 
 /**
  * The resident hub server: line-delimited JSON over a unix socket (src/hub/server/protocol.ts).
@@ -138,6 +119,12 @@ async function startHubServerOwned(options: HubServerOptions): Promise<HubServer
 
     const callDoors = options.doors.filter((door) => door.kind === "call");
     const streamDoors = options.doors.filter((door) => door.kind === "stream");
+    // `noDoor`: the prefix under which nothing has a door, so the client skips the server for it from now on and a
+    // door-less call never waits behind a busy door for this answer (src/macos/GenesisKit ToolsServerClient).
+    const unsupported = (id: number, argv: readonly string[]): Record<string, unknown> => {
+        const prefix = doorlessPrefix(argv, options.doors);
+        return { id, ok: false, code: "unsupported", ...(prefix ? { noDoor: prefix } : {}) };
+    };
 
     const send = (connection: Connection, message: Record<string, unknown>): void => {
         if (connection.socket.destroyed || !connection.socket.writable) {
@@ -179,6 +166,17 @@ async function startHubServerOwned(options: HubServerOptions): Promise<HubServer
             idleTimer = setTimeout(() => {
                 void drain("idle");
             }, options.idleMs);
+        }
+    };
+
+    // A server going away answers every pending call "draining" now and stops its door, so the client runs its own
+    // process at once instead of waiting up to DRAIN_DEADLINE_MS for an answer that never comes: when an install
+    // ended the server, the hub's first calls waited 0.9 to 6.9 s before their processes (2026-10-27 03:46).
+    const answerInFlight = (connection: Connection): void => {
+        for (const [id, controller] of connection.calls) {
+            connection.calls.delete(id);
+            send(connection, { id, ok: false, code: "draining" });
+            controller.abort();
         }
     };
 
@@ -226,6 +224,11 @@ async function startHubServerOwned(options: HubServerOptions): Promise<HubServer
                 result = { stdout: "", stderr: `${error instanceof Error ? error.message : String(error)}\n`, exit: 1 };
             } finally {
                 clearTimeout(timer);
+            }
+
+            // A drain answers the call at once and takes it out (`answerInFlight`): its result has no reader then.
+            const owed = connection.calls.get(id) === controller;
+            if (owed) {
                 connection.calls.delete(id);
             }
 
@@ -245,6 +248,10 @@ async function startHubServerOwned(options: HubServerOptions): Promise<HubServer
                 },
                 "hub server call"
             );
+            if (!owed) {
+                return;
+            }
+
             send(connection, {
                 id,
                 ok: true,
@@ -255,7 +262,7 @@ async function startHubServerOwned(options: HubServerOptions): Promise<HubServer
             return;
         }
 
-        send(connection, { id, ok: false, code: "unsupported" });
+        send(connection, unsupported(id, argv));
     };
 
     const runStream = async (connection: Connection, id: number, argv: string[]): Promise<void> => {
@@ -311,7 +318,7 @@ async function startHubServerOwned(options: HubServerOptions): Promise<HubServer
             return;
         }
 
-        send(connection, { id, ok: false, code: "unsupported" });
+        send(connection, unsupported(id, argv));
     };
 
     const handleLine = (connection: Connection, line: string): void => {
@@ -451,6 +458,8 @@ async function startHubServerOwned(options: HubServerOptions): Promise<HubServer
                 for (const controller of connection.subscriptions.values()) {
                     controller.abort();
                 }
+
+                answerInFlight(connection);
             }
 
             let deadline: ReturnType<typeof setTimeout> | undefined;

@@ -26,6 +26,25 @@ private func signature(_ bytes: [UInt8], width: Int, height: Int) -> FrameSignat
 }
 
 final class FrameSamplerTests: XCTestCase {
+    func testPNGOnlyNeverDropsForBackpressureButMovieStillsAreBounded() {
+        XCTAssertTrue(admitPNG(videoConfigured: false, pending: 6, maximum: 6))
+        XCTAssertTrue(admitPNG(videoConfigured: true, pending: 5, maximum: 6))
+        XCTAssertFalse(admitPNG(videoConfigured: true, pending: 6, maximum: 6))
+    }
+    func testBackpressureDoesNotCommitARejectedCandidate() {
+        let dark = signature(frame(width: 16, height: 16) { _, _ in (0, 0, 0) }, width: 16, height: 16)
+        let light = signature(frame(width: 16, height: 16) { _, _ in (255, 255, 255) }, width: 16, height: 16)
+        var policy = KeepPolicy(thresholdPercent: 10, maxFrames: 2)
+        XCTAssertTrue(policy.consider(dark).keep)
+        var rejected = policy
+        XCTAssertTrue(rejected.consider(light).keep)
+        XCTAssertEqual(policy.keptCount, 1)
+        var admitted = policy
+        XCTAssertTrue(admitted.consider(light).keep, "rejected frame must not become the baseline")
+        policy = admitted
+        XCTAssertEqual(policy.keptCount, 2)
+        XCTAssertEqual(policy.consider(light).reason, "cap")
+    }
     func testIdenticalFramesDoNotChange() {
         let a = signature(frame(width: 64, height: 32) { _, _ in (10, 20, 30) }, width: 64, height: 32)
         let b = signature(frame(width: 64, height: 32) { _, _ in (10, 20, 30) }, width: 64, height: 32)
@@ -203,5 +222,10 @@ final class CaptureCanvasGeometryTests: XCTestCase {
         var policy = KeepPolicy(thresholdPercent: 0)
         XCTAssertTrue(policy.consider(before).keep)
         XCTAssertTrue(policy.consider(after).keep)
+    }
+    func testAScreenMovieGetsABitRateForItsSizeAndRateWithinBounds() {
+        XCTAssertEqual(screenMovieBitRate(width: 2056, height: 1228, fps: 60), 22_722_912)
+        XCTAssertEqual(screenMovieBitRate(width: 320, height: 200, fps: 8), 6_000_000)
+        XCTAssertEqual(screenMovieBitRate(width: 6016, height: 3384, fps: 120), 160_000_000)
     }
 }

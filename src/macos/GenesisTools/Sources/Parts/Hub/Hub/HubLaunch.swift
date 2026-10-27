@@ -263,9 +263,14 @@ struct LaunchPicker: View {
     }
 
     let mode: Mode
+    /// Return presses Start or Resume (the "New session here" popover). The Inbox's resume sheet turns it off: there
+    /// Resume also types the staged answers into the reopened session, which Return must never do by itself (UX audit
+    /// 2026-10-27, F16).
+    var returnStarts = true
     let done: (LaunchOutcome) -> Void
 
     @State private var harness = AgentHarness.claude
+    @GenReduceMotion private var reduceMotion
     @AppStorage("hub.launch.account") private var account = ""
     @StateObject private var model = TerminalTreeModel()
     @State private var target = CmuxTarget.newWorkspace(window: nil)
@@ -344,9 +349,11 @@ struct LaunchPicker: View {
             }
             HStack {
                 Spacer()
+                // Esc cancels, as in every hub sheet (`.cancelAction`); it did nothing here.
                 Button("Cancel") { done(.cancelled) }
+                    .keyboardShortcut(.cancelAction)
                 Button(buttonTitle) { start() }
-                    .keyboardShortcut(.defaultAction)
+                    .keyboardShortcut(returnStarts ? .defaultAction : nil)
                     .disabled(command.isEmpty || busy)
             }
         }
@@ -354,7 +361,7 @@ struct LaunchPicker: View {
         // Layout widens the popover so the panes draw at a readable size; Tree narrows it again.
         // The same component backs "Start an agent here" and "Resume", so both do it.
         .frame(width: wide ? Self.wideWidth : Self.narrowWidth)
-        .animation(.snappy(duration: 0.3), value: wide)
+        .animation(reduceMotion ? nil : .snappy(duration: 0.3), value: wide)
     }
 
     @ViewBuilder

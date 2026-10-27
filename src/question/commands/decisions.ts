@@ -5,6 +5,7 @@ import { SafeJSON } from "@genesiscz/utils/json";
 import { out } from "@genesiscz/utils/logger";
 import * as p from "@genesiscz/utils/prompts/p";
 import type { Command } from "commander";
+import { backfillChatAnswers } from "../lib/decisions/chat-reading";
 import {
     currentHarnessSession,
     DECISION_STATUSES,
@@ -21,7 +22,7 @@ import {
     staleTaskInstalled,
     uninstallStaleTask,
 } from "../lib/decisions/stale";
-import { type DecisionKind, updateDecisions } from "../lib/decisions/store";
+import { type DecisionKind, repairDecisionLog, updateDecisions } from "../lib/decisions/store";
 
 export function readStdinJson(): unknown {
     return SafeJSON.parse(readFileSync(0, "utf8"), { strict: true });
@@ -179,7 +180,44 @@ export function registerDecisionCommands(program: Command): void {
         )
         .action(async () => {
             const { file, events } = decisionFiles();
-            out.result({ updated: await updateDecisions(file, events, asBatch(readStdinJson())), events });
+            // The agents' CLI door, like question_update: an answered or sent is recorded as acknowledged.
+            const updated = await updateDecisions(file, events, asBatch(readStdinJson()), undefined, {
+                actor: "agent",
+            });
+            out.result({ updated, events });
+        });
+
+    program
+        .command("chat-answers")
+        .description(
+            "Find the user's chat answers to a session's open decisions in its whole transcript (no byte cap), the backlog the decision Stop hook could not reach. Reports only, unless --apply"
+        )
+        .requiredOption("--session <id>", "The session whose open decisions to check")
+        .option("--transcript <path>", "The session's transcript, when its id does not find it")
+        .option("--provider <name>", "The transcript's provider (claude, codex, grok); with --transcript", "claude")
+        .option("--apply", "Store each unambiguous answer as acknowledged (answeredVia automatic_heuristic)")
+        .action(async (options: { session: string; transcript?: string; provider: string; apply?: boolean }) => {
+            const { file, events } = decisionFiles();
+            const result = await backfillChatAnswers({
+                session: options.session,
+                file,
+                events,
+                apply: options.apply === true,
+                ...(options.transcript ? { transcript: { kind: options.provider, path: options.transcript } } : {}),
+            });
+            out.result({ applied: options.apply === true, ...result });
+        });
+
+    program
+        .command("repair")
+        .description(
+            "Repair the decision log: chat answers agents recorded as answered (no delivery) become acknowledged, so no send delivers them again; drafted rows with nothing staged become open. Reports only, unless --apply"
+        )
+        .option("--apply", "Write the repair (back up decisions.jsonl and events.jsonl first)")
+        .action(async (options: { apply?: boolean }) => {
+            const { file, events } = decisionFiles();
+            const repair = await repairDecisionLog({ file, events, apply: options.apply === true });
+            out.result({ applied: options.apply === true, ...repair });
         });
 
     program

@@ -39,6 +39,34 @@ describe("captureResponseBody", () => {
         expect(capture).toBe(frames.join(""));
     });
 
+    it("closes the upstream when the client stops reading, instead of holding it until the idle limit", async () => {
+        let sourceCancelled = false;
+        const upstream = new ReadableStream<Uint8Array>({
+            start(controller) {
+                controller.enqueue(new TextEncoder().encode("data: first\n\n"));
+                // Never closes: a Codex turn of a subagent that Claude Code stops.
+            },
+            cancel() {
+                sourceCancelled = true;
+            },
+        });
+        const captured = captureResponseBody(new Response(upstream));
+        const reader = captured.response.body?.getReader();
+
+        expect(reader).toBeDefined();
+        await reader?.read();
+        await reader?.cancel("subagent stopped");
+
+        const outcome = await Promise.race([
+            captured.captureFailure,
+            Bun.sleep(2_000).then(() => "capture still reading after 2 s"),
+        ]);
+
+        expect(outcome).toBe("the client stopped reading");
+        expect(sourceCancelled).toBe(true);
+        expect(await captured.responseBody).toBe("data: first\n\n");
+    });
+
     it("resolves the timeline even when the body is empty", async () => {
         const captured = captureResponseBody(new Response(null, { status: 204 }));
 

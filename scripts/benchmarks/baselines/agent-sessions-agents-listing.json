@@ -1,0 +1,23 @@
+{
+    "name": "agent-sessions-agents-listing",
+    "capturedAt": "2026-10-27T02:50:10.782Z",
+    "commit": "ba1cc79247",
+    "loadAvg": [
+        44.4111328125,
+        52.01904296875,
+        65.00537109375
+    ],
+    "hostname": "MacBook-Pro-2262.local",
+    "metrics": {
+        "current.discover.coldMs": 492.894,
+        "current.candidates.coldMs": 49.001,
+        "current.sources": 12456,
+        "current.sourcesHash": 713099812,
+        "current.completeRoots": 0,
+        "current.issues": 1,
+        "current.candidates": 12456,
+        "current.discover.warmMs": 101.579,
+        "current.candidates.warmMs": 39.22
+    },
+    "notes": "live Claude roots, read-only | commit ba1cc79247 | uptime 3:50  up 7 days, 18:43, 28 users, load averages: 44.41 52.02 65.01"
+}

@@ -67,13 +67,15 @@ function gpt6(
  * GET wham/models (2026-07-12, plan "plus"); Astra's default context window
  * verified from the native Codex model catalogue on 2026-09-07. The GPT-6 and GPT-5.6 windows were
  * re-read from the native Codex cache (`~/.codex/models_cache.json`) on 2026-10-13: 6.1 Sol has 500K,
- * the others 272K. Refresh via fetchWhamModels().
+ * the others 272K. GPT-6.1 Terra (500K, default effort low) was read from the same cache on 2026-10-27.
+ * Refresh via fetchWhamModels().
  * `gpt-5.4*` and `gpt-5-codex` were absent from that list, but higher plans may still serve them —
  * unsupported ids surface WHAM's own 400 to the caller.
  */
 export const OPENAI_SUB_STATIC_CATALOG: WhamModelRecord[] = [
     gpt6("gpt-6-astra", "GPT-6-Astra", 272_000, { defaultEffort: "medium", ultra: "xhigh" }),
     gpt6("gpt-6.1-sol", "GPT-6.1-Sol", 500_000, { defaultEffort: "low", ultra: "xhigh" }),
+    gpt6("gpt-6.1-terra", "GPT-6.1 Terra", 500_000, { defaultEffort: "low", ultra: "xhigh" }),
     gpt6("gpt-6-sol", "GPT-6-Sol", 272_000, { defaultEffort: "medium", ultra: true }),
     gpt6("gpt-6-luna", "GPT-6-Luna", 272_000, { defaultEffort: "medium" }),
     gpt6("gpt-5.6-sol", "GPT-5.6-Sol", 272_000, { defaultEffort: "low", ultra: true }),
@@ -103,7 +105,7 @@ export const OPENAI_SUB_BUILTIN_ALIAS_NAMES = [
 
 const OPENAI_SUB_BUILTIN_ALIASES: Record<string, (catalog: WhamModelRecord[]) => string | undefined> = {
     astra: () => "gpt-6-astra",
-    terra: () => "gpt-5.6-terra",
+    terra: () => "gpt-6.1-terra",
     luna: () => "gpt-6-luna",
     sol: () => "gpt-6.1-sol",
     sol6: () => "gpt-6-sol",

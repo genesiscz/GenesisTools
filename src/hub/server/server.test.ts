@@ -8,16 +8,21 @@ import { currentTraceId } from "@genesiscz/utils/trace";
 import { parseArgv } from "./argv";
 import { askHubServer, callHubServer } from "./client";
 import { agentsToolChangesDoor } from "./doors/changes";
-import { repoDoor, usageSessionsDoor } from "./doors/frequent";
+import { proposalListDoor, repoDoor, usageSessionsDoor } from "./doors/frequent";
+import { HUB_SERVER_DOORS } from "./doors/index";
+import { navConfigureDoor, navListDoor, navRecordDoor } from "./doors/nav";
 import { transcriptFetchDoor, transcriptLiveDoor } from "./doors/transcript";
-import type { CallDoor, StreamDoor } from "./doors/types";
+import { type CallDoor, doorlessPrefix, type StreamDoor } from "./doors/types";
+import { widgetCallDoor, widgetContextDoor, widgetTasksListDoor } from "./doors/widget";
 import { ensureHubServer } from "./ensure";
 import { LineBuffer } from "./protocol";
 import { type HubServerHandle, startHubServer } from "./server";
+import { type RowsWorker, type SessionRowsJob, type SessionRowsRequest, SessionRowsRunner } from "./session-rows";
 
 const echoDoor: CallDoor<string[]> = {
     kind: "call",
     name: "echo",
+    command: ["echo"],
     match: (argv) => (argv[0] === "echo" ? argv.slice(1) : null),
     run: async (words) => ({ stdout: `${words.join(" ")}\n`, stderr: "", exit: 0 }),
 };
@@ -26,6 +31,7 @@ const echoDoor: CallDoor<string[]> = {
 const slowDoor: CallDoor<true> = {
     kind: "call",
     name: "slow",
+    command: ["slow"],
     match: (argv) => (argv[0] === "slow" ? true : null),
     run: (_parsed, { signal }) =>
         new Promise((resolve) => {
@@ -38,6 +44,7 @@ const slowDoor: CallDoor<true> = {
 const throwDoor: CallDoor<true> = {
     kind: "call",
     name: "throw",
+    command: ["throw"],
     match: (argv) => (argv[0] === "throw" ? true : null),
     run: async () => {
         throw new Error("door broke");
@@ -47,6 +54,7 @@ const throwDoor: CallDoor<true> = {
 const ticksDoor: StreamDoor<number> = {
     kind: "stream",
     name: "ticks",
+    command: ["ticks"],
     match: (argv) => (argv[0] === "ticks" ? Number(argv[1]) : null),
     stream: async (count, ctx) => {
         // One synchronous burst: it must leave as one message.
@@ -62,6 +70,7 @@ const ticksDoor: StreamDoor<number> = {
 const traceDoor: CallDoor<true> = {
     kind: "call",
     name: "trace",
+    command: ["trace"],
     match: (argv) => (argv[0] === "trace" ? true : null),
     run: async () => {
         await Bun.sleep(1);
@@ -151,7 +160,10 @@ describe("hub server", () => {
         expect(await client.next()).toMatchObject({ id: 10, exit: 130 });
 
         client.send({ id: 2, op: "call", argv: ["nope"] });
-        expect(await client.next()).toEqual({ id: 2, ok: false, code: "unsupported" });
+        // The refusal names the prefix nothing answers, so the client skips the server for it from then on.
+        expect(await client.next()).toEqual({ id: 2, ok: false, code: "unsupported", noDoor: ["nope"] });
+        client.send({ id: 5, op: "subscribe", argv: ["nope", "x"] });
+        expect(await client.next()).toEqual({ id: 5, ok: false, code: "unsupported", noDoor: ["nope"] });
 
         client.socket.write("{not json\n");
         expect(await client.next()).toMatchObject({ ok: false, code: "bad-request" });
@@ -193,6 +205,23 @@ describe("hub server", () => {
         const drained = handle.drain("test");
         expect(await client.next()).toMatchObject({ id: 2, end: true, reason: "restart" });
         await drained;
+    });
+
+    it("a drain answers a call in flight with draining at once, and sends nothing more for it", async () => {
+        const { socketPath, handle } = await start();
+        const client = await connect(socketPath);
+        client.send({ id: 7, op: "call", argv: ["slow"] });
+        await Bun.sleep(50);
+        servers.splice(servers.indexOf(handle), 1);
+        const drained = handle.drain("test");
+        const answer = await Promise.race([
+            client.next(),
+            Bun.sleep(1000).then(() => ({ timedOut: "no answer within 1 s; the drain waits for the door" })),
+        ]);
+        expect(answer).toEqual({ id: 7, ok: false, code: "draining" });
+        await drained;
+        const late = await Promise.race([client.next(), Bun.sleep(100).then(() => null)]);
+        expect(late).toBeNull();
     });
 
     it("runs each call under its own trace id, across awaits, and drops one that is not a plain id", async () => {
@@ -271,6 +300,10 @@ describe("hub server argv", () => {
         expect(parseArgv(["a", "b", "x", "--other"], shape)).toBeNull();
         expect(parseArgv(["a", "b", "x", "--json", "--json"], shape)).toBeNull();
         expect(parseArgv(["a", "b", "x", "--limit"], shape)).toBeNull();
+        // `--flag=value` takes any value, a leading "-" included; a bool flag never takes one.
+        expect(parseArgv(["a", "b", "x", "--limit=-5"], shape)?.flags.get("--limit")).toBe("-5");
+        expect(parseArgv(["a", "b", "x", "--limit=5", "--limit", "6"], shape)).toBeNull();
+        expect(parseArgv(["a", "b", "x", "--json=1"], shape)).toBeNull();
         expect(parseArgv(["a", "b"], shape)).toBeNull();
     });
 
@@ -352,6 +385,232 @@ describe("hub server argv", () => {
         expect(usageSessionsDoor.match(["ai", "usage", "sessions", "--hours", "24"])).toBeNull();
         expect(usageSessionsDoor.match(["ai", "usage", "sessions", "--json", "--hours", "0"])).toBeNull();
         expect(usageSessionsDoor.match(["ai", "usage", "sessions", "--json", "--provider", "claude"])).toBeNull();
+    });
+
+    it("hub nav: the record argv the hub sends, free text as --flag=value and --replacing last", () => {
+        const record = [
+            "hub",
+            "nav",
+            "record",
+            "--id=e1",
+            "--at=1700000000000",
+            "--actor=user",
+            "--title=-starts with a dash",
+            '--target={"mode":"inbox"}',
+            "--keep=20",
+            "--note=why",
+        ];
+        expect(navRecordDoor.match([...record, "--replacing", "e0", "e00"])).toMatchObject({
+            entry: { id: "e1", at: 1_700_000_000_000, actor: "user", title: "-starts with a dash", note: "why" },
+            keep: 20,
+            replacing: ["e0", "e00"],
+            json: false,
+        });
+        expect(navRecordDoor.match([...record, "--replacing"])).toBeNull();
+        expect(navRecordDoor.match([...record, "--replacing", "e0", "--json"])).toBeNull();
+        // An actor or a target the CLI refuses: the process prints its error.
+        expect(
+            navRecordDoor.match(record.map((word) => (word === "--actor=user" ? "--actor=robot" : word)))
+        ).toBeNull();
+        expect(
+            navRecordDoor.match(record.map((word) => (word.startsWith("--target=") ? "--target={" : word)))
+        ).toBeNull();
+        expect(navRecordDoor.match(record.filter((word) => !word.startsWith("--title=")))).toBeNull();
+        expect(navRecordDoor.match(record.map((word) => (word === "--keep=20" ? "--keep=0" : word)))).toBeNull();
+        expect(navConfigureDoor.match(["hub", "nav", "configure", "--keep=20"])).toBe(20);
+        expect(navConfigureDoor.match(["hub", "nav", "configure"])).toBeNull();
+        expect(navListDoor.match(["hub", "nav", "list", "--json", "--limit", "5"])).toEqual({ limit: 5 });
+        expect(navListDoor.match(["hub", "nav", "list"])).toBeNull();
+    });
+
+    it("hub nav: an entry the door records is the one its list door reads back", async () => {
+        const signal = new AbortController().signal;
+        const entry = navRecordDoor.match([
+            "hub",
+            "nav",
+            "record",
+            "--id=door-entry",
+            "--actor=agent",
+            "--title=The door's place",
+            '--target={"mode":"inbox"}',
+            "--json",
+        ]);
+        expect(entry).not.toBeNull();
+        if (!entry) {
+            return;
+        }
+
+        const stored = await navRecordDoor.run(entry, { signal });
+        expect(stored.exit).toBe(0);
+        expect(SafeJSON.parse(stored.stdout, { strict: true })).toMatchObject({ entry: { id: "door-entry" } });
+        const listed = await navListDoor.run({ limit: 50 }, { signal });
+        expect(listed.exit).toBe(0);
+        expect(listed.stdout).toContain('"door-entry"');
+    });
+
+    it("hub widget call: a state action from the request file; a send, a capture or an unreadable file runs as a process", () => {
+        const dir = mkdtempSync(join(tmpdir(), "hub-door-widget-"));
+        const request = (body: unknown): string => {
+            const path = join(dir, `${Math.random().toString(36).slice(2)}.json`);
+            writeFileSync(path, SafeJSON.stringify(body, { strict: true }));
+            return path;
+        };
+        const call = (path: string) => widgetCallDoor.match(["hub", "widget", "call", "--input", path]);
+        expect(call(request({ action: "selection", key: null }))).toEqual({ action: "selection", key: null });
+        expect(call(request({ action: "send-staged", ids: ["d1"], targets: {} }))).toBeNull();
+        expect(call(request({ action: "capture", key: "claude:s1" }))).toBeNull();
+        expect(call(request({ action: "append-draft", key: "claude:s1", text: "x" }))).toBeNull();
+        expect(call(join(dir, "missing.json"))).toBeNull();
+        expect(widgetCallDoor.match(["hub", "widget", "call", "--input", "relative.json"])).toBeNull();
+        expect(
+            widgetCallDoor.match([
+                "hub",
+                "widget",
+                "--state-root",
+                dir,
+                "call",
+                "--input",
+                request({ action: "read", id: "x" }),
+            ])
+        ).toBeNull();
+    });
+
+    it("hub widget context and tasks list: the widget's shapes, the CLI's defaults", () => {
+        expect(widgetContextDoor.match(["hub", "widget", "context", "d_1", "--key", "claude:s1", "--json"])).toEqual({
+            id: "d_1",
+            key: "claude:s1",
+            before: 2,
+            after: 2,
+        });
+        expect(widgetContextDoor.match(["hub", "widget", "context", "d_1", "--key", "k", "--before", "11"])).toBeNull();
+        expect(widgetContextDoor.match(["hub", "widget", "context", "d_1"])).toBeNull();
+        const list = ["hub", "widget", "tasks", "list", "--json", "--scope", "active", "--limit", "200"];
+        expect(widgetTasksListDoor.match(list)).toEqual({ scope: "active", limit: 200 });
+        expect(widgetTasksListDoor.match([...list, "--project", "Fixture", "--session", "codex:s1"])).toEqual({
+            scope: "active",
+            limit: 200,
+            projects: ["Fixture"],
+            sessions: ["codex:s1"],
+        });
+        expect(widgetTasksListDoor.match([...list, "--project", "A", "B"])).toBeNull();
+        expect(widgetTasksListDoor.match(list.map((word) => (word === "active" ? "later" : word)))).toBeNull();
+        expect(widgetTasksListDoor.match(list.map((word) => (word === "200" ? "251" : word)))).toBeNull();
+    });
+
+    it("hub proposal list: all four PR flags or none", () => {
+        const pr = ["--provider", "gitlab", "--host", "gitlab.example.org", "--project", "group/app", "--number", "12"];
+        expect(proposalListDoor.match(["hub", "proposal", "list", "--json", ...pr])).toEqual({
+            pr: { provider: "gitlab", host: "gitlab.example.org", project: "group/app", number: 12 },
+        });
+        expect(proposalListDoor.match(["hub", "proposal", "list", "--json"])).toEqual({});
+        expect(proposalListDoor.match(["hub", "proposal", "list", "--json", ...pr.slice(0, 6)])).toBeNull();
+        expect(proposalListDoor.match(["hub", "proposal", "list", "--json", ...pr.slice(0, -1), "0"])).toBeNull();
+        expect(
+            proposalListDoor.match(["hub", "proposal", "list", "--json", "--provider", "bitbucket", ...pr.slice(2)])
+        ).toBeNull();
+        expect(proposalListDoor.match(["hub", "proposal", "list", ...pr])).toBeNull();
+    });
+});
+
+describe("SessionRowsRunner", () => {
+    const job: SessionRowsJob = { listing: { hours: 24 }, fresh: false, cacheWrite: true, liveLocations: true };
+
+    function fakeWorkers() {
+        const workers: Array<RowsWorker & { requests: SessionRowsRequest[]; terminated: boolean }> = [];
+        const createWorker = () => {
+            const worker = {
+                requests: [] as SessionRowsRequest[],
+                terminated: false,
+                onmessage: null as RowsWorker["onmessage"],
+                onerror: null as RowsWorker["onerror"],
+                postMessage(request: SessionRowsRequest) {
+                    worker.requests.push(request);
+                },
+                terminate() {
+                    worker.terminated = true;
+                },
+            };
+            workers.push(worker);
+            return worker;
+        };
+        return { workers, createWorker };
+    }
+
+    it("runs on the worker, and an identical ask while it runs shares the one rebuild", async () => {
+        const { workers, createWorker } = fakeWorkers();
+        const runner = new SessionRowsRunner({ createWorker, inline: async () => "inline\n" });
+        try {
+            const first = runner.run(job, "t1");
+            const second = runner.run(job, "t2");
+            const other = runner.run({ ...job, listing: { hours: 72 } });
+            expect(workers).toHaveLength(1);
+            expect(workers[0].requests.map((request) => request.listing.hours)).toEqual([24, 72]);
+            expect(workers[0].requests[0].traceId).toBe("t1");
+            for (const request of workers[0].requests) {
+                workers[0].onmessage?.(
+                    new MessageEvent("message", {
+                        data: { id: request.id, ok: true, text: `${request.listing.hours}\n` },
+                    })
+                );
+            }
+
+            expect(await first).toBe("24\n");
+            expect(await second).toBe("24\n");
+            expect(await other).toBe("72\n");
+            // Done: the next ask starts a rebuild of its own.
+            // Left running: stop() below fails it.
+            runner.run(job).catch(() => undefined);
+            expect(workers[0].requests).toHaveLength(3);
+        } finally {
+            runner.stop();
+        }
+    });
+
+    it("a failed worker fails its asks and the next ask starts a new one; no worker at all runs the job inline", async () => {
+        const { workers, createWorker } = fakeWorkers();
+        const runner = new SessionRowsRunner({ createWorker, inline: async () => "inline\n" });
+        try {
+            const failed = runner.run(job);
+            workers[0].onerror?.(new ErrorEvent("error", { message: "worker crashed" }));
+            await expect(failed).rejects.toThrow("worker crashed");
+            expect(workers[0].terminated).toBe(true);
+            // Left running: stop() below fails it.
+            runner.run(job).catch(() => undefined);
+            expect(workers).toHaveLength(2);
+        } finally {
+            runner.stop();
+        }
+
+        const inline = new SessionRowsRunner({
+            createWorker: () => {
+                throw new Error("no workers here");
+            },
+            inline: async () => "inline\n",
+        });
+        expect(await inline.run(job)).toBe("inline\n");
+    });
+});
+
+describe("doorlessPrefix", () => {
+    it("names the shortest prefix no door shares, and nothing while a door could still match", () => {
+        const doors = HUB_SERVER_DOORS;
+        expect(doorlessPrefix(["hub", "nav", "open", "#12"], doors)).toEqual(["hub", "nav", "open"]);
+        expect(doorlessPrefix(["hub", "proposal", "show", "k", "--json"], doors)).toEqual(["hub", "proposal", "show"]);
+        expect(doorlessPrefix(["hub", "widget", "snapshot", "--json"], doors)).toEqual(["hub", "widget", "snapshot"]);
+        expect(doorlessPrefix(["hub", "widget", "--state-root", "/s", "call"], doors)).toEqual([
+            "hub",
+            "widget",
+            "--state-root",
+        ]);
+        expect(doorlessPrefix(["ai-spend", "session", "--id", "x"], doors)).toEqual(["ai-spend"]);
+        // A door with this command exists, so another shape of it is not cached: the server decides each one.
+        expect(doorlessPrefix(["agents", "changes", "id", "--last-turns", "5", "--store-blobs"], doors)).toBeNull();
+        expect(doorlessPrefix(["hub", "agents", "unknown"], doors)).toBeNull();
+        expect(doorlessPrefix(["hub", "widget", "call", "--input", "/x.json"], doors)).toBeNull();
+        expect(doorlessPrefix(["hub", "nav", "record", "--id=1"], doors)).toBeNull();
+        for (const door of doors) {
+            expect(door.command.length).toBeGreaterThan(0);
+        }
     });
 });
 

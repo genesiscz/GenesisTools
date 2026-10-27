@@ -73,7 +73,7 @@ public enum WidgetFeatureSettings {
                         id: "widgets.general", title: "General", symbol: "rectangle.topthird.inset.filled",
                         tint: .blue, subtitle: "Put your tools where they belong."
                     ) {
-                        WidgetGeneralSettings(model: model)
+                        WidgetGeneralSettings(model: model, openSession: openSession)
                     },
                     NativeSettingsPage(
                         id: "widgets.sessions", title: "Projects / Sessions", symbol: "folder",
@@ -118,6 +118,7 @@ public enum WidgetFeatureSettings {
 
 private struct WidgetGeneralSettings: View {
     @ObservedObject var model: WidgetModel
+    let openSession: (WidgetSession) -> Void
     @ObservedObject private var appearance = NativeSettingsAppearance.shared
     private var prefs: WidgetPreferences? { model.snapshot?.state.preferences }
 
@@ -257,12 +258,35 @@ private struct WidgetGeneralSettings: View {
                     }.labelsHidden().pickerStyle(.segmented).frame(width: 250, alignment: .trailing)
                 }
                 Divider()
-                NativeSettingsRow("Decision click", detail: "Stage keeps your pick to send later with the others, one message per session.") {
+                NativeSettingsRow("Replies name what they answer", detail: "A reply starts with \"Reply to:\" and the title of the card you selected, or of the agent's newest item, so the agent knows what it answers. The reply box shows it, with × to leave it out.") {
+                    Picker("Replies name what they answer", selection: string("replyNames", prefs?.replyNames ?? "selected-or-newest")) {
+                        Text("Selected, else newest").tag("selected-or-newest")
+                        Text("Selected card only").tag("selected")
+                        Text("Never").tag("never")
+                    }.labelsHidden().frame(width: 190, alignment: .trailing)
+                }
+                Divider()
+                NativeSettingsRow("Decision click", detail: "Stage keeps your pick to send later with the others, one message per session. The hub's Inbox follows it too.") {
                     Picker("Decision click", selection: string("decisionClick", prefs?.decisionClick ?? "stage")) {
                         Text("Stage").tag("stage")
                         Text("Send at once").tag("send")
                     }.labelsHidden().pickerStyle(.segmented).frame(width: 250, alignment: .trailing)
                 }
+                Divider()
+                NativeSettingsToggle(
+                    "⌘ does the other", detail: "⌘-click on an option, and ⌘-Return in a decision's own answer, send at once while a click stages, and stage while a click sends. In the widget and the hub's Inbox.",
+                    isOn: boolean("decisionCommandSwaps", prefs?.decisionCommandSwaps ?? true))
+                Divider()
+                NativeSettingsRow("Return in an own answer", detail: "Return in a decision's own answer field, or its note in the hub's Inbox: stage the text as its note to send later, or send it as the answer now.") {
+                    Picker("Return in an own answer", selection: string("ownAnswerReturn", prefs?.ownAnswerReturn ?? "stage")) {
+                        Text("Stage").tag("stage")
+                        Text("Send").tag("send")
+                    }.labelsHidden().pickerStyle(.segmented).frame(width: 250, alignment: .trailing)
+                }
+                Divider()
+                NativeSettingsToggle(
+                    "Staged at start", detail: "When the widget starts with decisions staged and not sent, a popup lists them with Send now until you close it.",
+                    isOn: boolean("stagedReminder", prefs?.stagedReminder ?? true))
                 Divider()
                 NativeSettingsRow("Closing with staged decisions", detail: "What happens to staged decisions when the inbox closes.") {
                     Picker("Closing with staged decisions", selection: string("stagedOnLeave", prefs?.stagedOnLeave ?? "ask")) {
@@ -316,22 +340,56 @@ private struct WidgetGeneralSettings: View {
                     soundPicker("alertAnswerSound", prefs?.alertAnswerSound ?? "same", same: true)
                 }
                 Divider()
+                NativeSettingsSlider(
+                    "Sound volume", detail: "Both alert sounds, as a share of the Mac's volume. Releasing the slider plays the decision sound.",
+                    identifier: "widget.alertVolume",
+                    value: Binding(
+                        get: { Double(WidgetAlerts.volume(prefs)) * 100 },
+                        set: { patch(["alertVolume": .number($0.rounded())]) }),
+                    in: 0...100, step: 5, ticks: [0, 25, 50, 75, 100],
+                    format: { $0 <= 0 ? "Off" : "\(Int($0.rounded())) %" },
+                    onCommit: { WidgetAlerts.preview(prefs?.alertSound ?? WidgetAlerts.defaultSound, volume: Float($0 / 100)) })
+                Divider()
                 NativeSettingsToggle(
                     "Open the widget", detail: "The widget opens a short preview of the new item; a click on it answers.",
                     identifier: "widget.alertPopup", isOn: boolean("alertPopup", prefs?.alertPopup ?? true))
                 Divider()
-                NativeSettingsRow("Preview stays", detail: "How long the preview stays while the pointer is not on it. × or Esc closes it sooner.") {
-                    Picker(
-                        "Preview stays",
-                        selection: Binding(
-                            get: { Int(WidgetAlerts.popupSeconds(prefs)) },
-                            set: { patch(["alertPopupSeconds": .number(Double($0))]) })
-                    ) {
-                        ForEach(Self.popupSecondsChoices(current: Int(WidgetAlerts.popupSeconds(prefs))), id: \.self) {
-                            Text("\($0) seconds").tag($0)
-                        }
-                    }.labelsHidden().frame(width: 150, alignment: .trailing)
-                        .accessibilityIdentifier("widget.alertPopupSeconds")
+                Group {
+                    NativeSettingsRow("Preview stays", detail: "How long the preview stays while the pointer is not on it. Until closed keeps it until you answer, open or close it. × or Esc closes it sooner.") {
+                        Picker(
+                            "Preview stays",
+                            selection: Binding(
+                                get: { Int(WidgetAlerts.popupSeconds(prefs)) },
+                                set: { patch(["alertPopupSeconds": .number(Double($0))]) })
+                        ) {
+                            ForEach(Self.popupSecondsChoices(current: Int(WidgetAlerts.popupSeconds(prefs))), id: \.self) {
+                                Text($0 == 0 ? "Until closed" : "\($0) seconds").tag($0)
+                            }
+                        }.labelsHidden().frame(width: 150, alignment: .trailing)
+                            .accessibilityIdentifier("widget.alertPopupSeconds")
+                    }
+                    Divider()
+                    NativeSettingsToggle(
+                        "Close on a click elsewhere", detail: "A click outside the widget closes the preview and every alert waiting in it.",
+                        identifier: "widget.alertPopupClickAway",
+                        isOn: boolean("alertPopupClickAway", prefs?.alertPopupClickAway ?? false))
+                    Divider()
+                    NativeSettingsRow("Several at once", detail: "Another alert while the preview is open. Listed shows it under the first one, Queued shows it when the first one closes, Replaced shows only the newest.") {
+                        Picker("Several at once", selection: string("alertPopupMany", WidgetAlerts.popupMany(prefs).rawValue)) {
+                            Text("Listed").tag(WidgetAlerts.PopupMany.list.rawValue)
+                            Text("Queued").tag(WidgetAlerts.PopupMany.queue.rawValue)
+                            Text("Replaced").tag(WidgetAlerts.PopupMany.newest.rawValue)
+                        }.labelsHidden().pickerStyle(.segmented).frame(width: 250, alignment: .trailing)
+                            .accessibilityIdentifier("widget.alertPopupMany")
+                    }
+                    Divider()
+                    NativeSettingsRow("After a send", detail: "After a pick sent from the alert popup: stay in the popup with its result, or open its session.") {
+                        Picker("After a send", selection: string("popupSendOpens", prefs?.popupSendOpens ?? "stay")) {
+                            Text("Stay").tag("stay")
+                            Text("Open its session").tag("session")
+                        }.labelsHidden().pickerStyle(.segmented).frame(width: 250, alignment: .trailing)
+                            .accessibilityIdentifier("widget.popupSendOpens")
+                    }
                 }
                 .disabled(!(prefs?.alertPopup ?? true))
                 Divider()
@@ -365,6 +423,40 @@ private struct WidgetGeneralSettings: View {
                 }
             }
             .nativeSettingsAnchor("alerts")
+            NativeSettingsCard(
+                "Automatic decisions",
+                subtitle: "Decisions answered outside the widget: an agent recorded the answer you gave in the chat, or your reply was read as one."
+            ) {
+                NativeSettingsToggle(
+                    "Announce them", detail: "A sound and a short preview that shows which option was taken.",
+                    identifier: "widget.autoDecisionPopup",
+                    isOn: boolean("autoDecisionPopup", prefs?.autoDecisionPopup ?? true))
+                Divider()
+                Group {
+                    NativeSettingsRow("Preview stays", detail: "How long the preview stays while the pointer is not on it. Several at once in Alerts applies here too.") {
+                        Picker(
+                            "Automatic decision preview stays",
+                            selection: Binding(
+                                get: { Int(WidgetAlerts.autoDecisionSeconds(prefs)) },
+                                set: { patch(["autoDecisionSeconds": .number(Double($0))]) })
+                        ) {
+                            ForEach(Self.popupSecondsChoices(current: Int(WidgetAlerts.autoDecisionSeconds(prefs))), id: \.self) {
+                                Text($0 == 0 ? "Until closed" : "\($0) seconds").tag($0)
+                            }
+                        }.labelsHidden().frame(width: 150, alignment: .trailing)
+                            .accessibilityIdentifier("widget.autoDecisionSeconds")
+                    }
+                    Divider()
+                    NativeSettingsRow("Sound", detail: "Plays at the Sound volume set in Alerts.") {
+                        soundPicker("autoDecisionSound", prefs?.autoDecisionSound ?? WidgetAlerts.defaultAutoDecisionSound,
+                                    same: true, label: "Automatic decision sound")
+                    }
+                }
+                .disabled(!(prefs?.autoDecisionPopup ?? true))
+                Divider()
+                WidgetAnsweredElsewhereLog(model: model, openSession: openSession)
+            }
+            .nativeSettingsAnchor("automatic-decisions")
             NativeSettingsCard("Shortcut", subtitle: "A global shortcut that opens the widget from any app.") {
                 NativeSettingsToggle(
                     "Open with a shortcut",
@@ -393,9 +485,10 @@ private struct WidgetGeneralSettings: View {
         }.task { model.refreshSettings() }
     }
 
-    /// The popup durations offered, plus a stored value that is none of them, so the picker never shows a blank.
+    /// The popup durations offered (0 is "Until closed"), plus a stored value that is none of them, so the picker
+    /// never shows a blank.
     static func popupSecondsChoices(current: Int) -> [Int] {
-        Array(Set([4, 7, 10, 15, 30, current])).sorted()
+        Array(Set([4, 7, 10, 15, 30, current]).subtracting([0])).sorted() + [0]
     }
 
     /// The note durations offered (0 is "Until closed"), plus a stored value that is none of them.
@@ -405,16 +498,16 @@ private struct WidgetGeneralSettings: View {
     }
 
     /// A system sound picker with a play button. `same` adds "Same as decisions", stored as "same".
-    private func soundPicker(_ key: String, _ value: String, same: Bool) -> some View {
+    private func soundPicker(_ key: String, _ value: String, same: Bool, label: String? = nil) -> some View {
         let played = value == "same" ? prefs?.alertSound ?? WidgetAlerts.defaultSound : value
         return HStack(spacing: 6) {
-            Picker(key == "alertSound" ? "Decision sound" : "Answer sound", selection: string(key, value)) {
+            Picker(label ?? (key == "alertSound" ? "Decision sound" : "Answer sound"), selection: string(key, value)) {
                 if same { Text("Same as decisions").tag("same") }
                 Text("None").tag("none")
                 ForEach(WidgetAlerts.sounds, id: \.self) { Text($0).tag($0) }
             }.labelsHidden().frame(width: 160, alignment: .trailing)
             IconButton(systemName: "speaker.wave.2", tooltip: "Play this sound") {
-                WidgetAlerts.preview(played)
+                WidgetAlerts.preview(played, volume: WidgetAlerts.volume(prefs))
             }.disabled(played == "none")
         }
     }
@@ -425,7 +518,7 @@ private struct WidgetGeneralSettings: View {
         NativeSettingsRow("Inbox of every session opens with", detail: "The filter the inbox button's list shows first.") {
             Picker("Inbox of every session opens with", selection: string("overviewFilter", prefs?.overviewFilter ?? "all")) {
                 Text("All").tag("all")
-                Text("Needs you").tag("needs")
+                Text("Waiting").tag("needs")
                 Text("Unread").tag("unread")
             }.labelsHidden().pickerStyle(.segmented).frame(width: 250, alignment: .trailing)
         }
@@ -433,7 +526,7 @@ private struct WidgetGeneralSettings: View {
         NativeSettingsRow("Session inbox opens with", detail: "The filter a session's inbox shows first.") {
             Picker("Session inbox opens with", selection: string("inboxFilter", prefs?.inboxFilter ?? "all")) {
                 Text("All").tag("all")
-                Text("Inbox entries").tag("inbox")
+                Text("Messages").tag("inbox")
                 Text("Decisions").tag("decisions")
             }.labelsHidden().pickerStyle(.segmented).frame(width: 300, alignment: .trailing)
         }
@@ -447,6 +540,53 @@ private struct WidgetGeneralSettings: View {
     }
     private func patch(_ values: [String: WidgetJSON]) {
         model.action(["action": "preferences", "patch": .object(values)])
+    }
+}
+
+/// Settings → Automatic decisions: the decisions answered outside the widget in the last week, newest first. A row
+/// names the decision, the option it took and who recorded it; Open shows its session in the widget.
+private struct WidgetAnsweredElsewhereLog: View {
+    @ObservedObject var model: WidgetModel
+    let openSession: (WidgetSession) -> Void
+
+    var body: some View {
+        let items = model.inbox.answeredElsewhere ?? []
+        VStack(alignment: .leading, spacing: 8) {
+            Text("Last 7 days").font(.system(size: 13, weight: .semibold))
+            if items.isEmpty {
+                Text("No decision was answered outside the widget in the last 7 days.")
+                    .font(.caption).foregroundStyle(.secondary)
+            }
+            ForEach(items, id: \.id) { item in row(item) }
+        }
+        .frame(maxWidth: .infinity, alignment: .leading)
+        .accessibilityElement(children: .contain)
+        .accessibilityIdentifier("widget.autoDecisionLog")
+    }
+
+    private func row(_ item: WidgetInboxItem) -> some View {
+        let session = model.session(forKey: item.key)
+        let picks = WidgetAlerts.answeredOptions(item).map { $0.letter + ") " + $0.text }
+        let answer = picks.isEmpty ? item.answer ?? "" : picks.joined(separator: "; ")
+        let when = Date(timeIntervalSince1970: item.at / 1000).formatted(.dateTime.month(.abbreviated).day().hour().minute())
+        let details = [WidgetAlerts.answeredViaText(item.answeredVia), session?.title ?? "", when].filter { !$0.isEmpty }
+        return HStack(alignment: .top, spacing: 8) {
+            Image(systemName: "checkmark.bubble.fill").foregroundStyle(.green).padding(.top, 1)
+                .accessibilityHidden(true)
+            VStack(alignment: .leading, spacing: 2) {
+                Text([WidgetAlerts.kicker(item).replacingOccurrences(of: " answered", with: ""), item.title ?? ""]
+                    .filter { !$0.isEmpty }.joined(separator: " · "))
+                    .font(.system(size: 12, weight: .semibold)).lineLimit(1).truncationMode(.tail)
+                if !answer.isEmpty { Text(answer).font(.system(size: 12)).lineLimit(2) }
+                Text(details.joined(separator: " · ")).font(.caption).foregroundStyle(.secondary).lineLimit(1)
+            }
+            Spacer(minLength: 0)
+            if let session {
+                Button("Open") { openSession(session) }
+                    .help("Shows its session in the widget")
+            }
+        }
+        .accessibilityElement(children: .combine)
     }
 }
 
@@ -890,24 +1030,29 @@ private struct WidgetDictationSettings: View {
 /// What the Agents card reads from `tools agents hooks doctor --json`.
 private struct AgentHooksDoctor: Decodable {
     struct Config: Decodable {
-        struct Decisions: Decodable { var questionNudge: String? }
+        struct Decisions: Decodable {
+            var questionNudge: String?
+            var harvestListed: Bool?
+        }
         var decisions: Decisions
     }
     var config: Config
     var stopHookWired: Bool
 }
 
-/// The agents hooks' question nudge (`decisions.questionNudge` in `~/.genesis-tools/agents/hooks.json`), read and
-/// written through `tools agents hooks`. On writes `block`; a `warn` set from the CLI shows as on.
+/// The agents hooks' question nudge (`decisions.questionNudge` in `~/.genesis-tools/agents/hooks.json`) and whether
+/// the inbox keeps the decisions it finds only in a reply (`decisions.harvestListed`), read and written through
+/// `tools agents hooks`. The nudge writes `block` when on; a `warn` set from the CLI shows as on.
 private struct WidgetAgentHooksCard: View {
     let bridge: ToolsBridge
     @State private var nudge: String?
+    @State private var harvestListed: Bool?
     @State private var stopWired = true
     @State private var busy = false
     @State private var failure: String?
 
     var body: some View {
-        NativeSettingsCard("Agents", subtitle: "Checks that run when a coding agent ends its turn.") {
+        NativeSettingsCard("Agents", subtitle: "What the agents hooks do with the decisions an agent asks.") {
             NativeSettingsToggle(
                 "Remind agents to log decisions",
                 detail: "An agent that asks you to decide in its reply, without sending the decision to your inbox, is sent back once to send it.",
@@ -916,6 +1061,15 @@ private struct WidgetAgentHooksCard: View {
                     get: { (nudge ?? "off") != "off" },
                     set: { on in Task { await run(["config", "set", "decisions.questionNudge", on ? "block" : "off", "--write"]) } }))
             .disabled(nudge == nil || busy)
+            Divider()
+            NativeSettingsToggle(
+                "Keep decisions found in replies",
+                detail: "The inbox saves a decision that an agent wrote only in its reply, so the widget and the hub show and answer the same decisions.",
+                identifier: "widget.agentsHarvestListed",
+                isOn: Binding(
+                    get: { harvestListed ?? true },
+                    set: { on in Task { await run(["config", "set", "decisions.harvestListed", on ? "true" : "false", "--write"]) } }))
+            .disabled(harvestListed == nil || busy)
             if (nudge ?? "off") != "off" && !stopWired {
                 Divider()
                 NativeSettingsRow("Stop hook not installed", detail: "The reminder runs in the agents' Stop hook, which is not in your Claude Code settings yet.") {
@@ -937,6 +1091,7 @@ private struct WidgetAgentHooksCard: View {
             guard result.exitCode == 0 else { throw ToolsBridgeError.refused(result.stderr) }
             let doctor = try JSONDecoder().decode(AgentHooksDoctor.self, from: Data(result.stdout.utf8))
             nudge = doctor.config.decisions.questionNudge ?? "off"
+            harvestListed = doctor.config.decisions.harvestListed ?? true
             stopWired = doctor.stopHookWired
             failure = nil
         } catch {
@@ -1006,7 +1161,7 @@ private struct WidgetSettingsError: View {
 /// The hover list's filter and order choices, shared by the settings card and the list's own controls.
 enum WidgetPreviewChoices {
     static let filters: [NativeSettingsOption<String>] = [
-        .init("needs-you", "Needs you", detail: "Sessions with a question or decision waiting for your answer."),
+        .init("needs-you", "Waiting for you", detail: "Sessions with a question or decision waiting for your answer."),
         .init("active", "Active too", detail: "Also the sessions that work now or hold unread answers."),
     ]
     static let sorts: [NativeSettingsOption<String>] = [

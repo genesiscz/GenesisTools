@@ -10,6 +10,7 @@ import { SafeJSON } from "@genesiscz/utils/json";
 import { keptBin } from "@genesiscz/utils/test/kept-executable";
 import { Command } from "commander";
 import {
+    decisionFindArgv,
     findInTranscript,
     pressesToOldest,
     searchCount,
@@ -151,6 +152,11 @@ describe("transcript find", () => {
                 throw new Error("decision link must run find");
             }
 
+            // A decision link asks the running widget first (dad00bf52e); without one, show-decision runs the chat
+            // find below with the link's position, which the real `claude cmux find` command must still read.
+            expect(plan.argv).toEqual(["tools", "hub", "widget", "show-decision", "fixture", "7", `--at=${at ?? ""}`]);
+            const linkAt = plan.argv.at(-1)?.slice("--at=".length);
+
             let parsed: unknown;
             const program = new Command().name("claude").exitOverride();
             registerCmuxCommand(program);
@@ -165,7 +171,8 @@ describe("transcript find", () => {
             find.action((session, text, options) => {
                 parsed = { session, text, decision: options.decision, at: options.at || undefined };
             });
-            await program.parseAsync(plan.argv.slice(2), { from: "user" });
+            const fallback = decisionFindArgv({ session: "fixture", number: "7", at: linkAt });
+            await program.parseAsync(fallback.slice(1), { from: "user" });
             expect(parsed).toEqual({ session: "fixture", text: undefined, decision: "7", at });
         }
     });

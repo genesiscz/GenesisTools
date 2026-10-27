@@ -9,9 +9,10 @@ export const QUESTION_UPDATE_INPUT_SCHEMA = z.toJSONSchema(decisionBatchUpdateSc
 
 export const QUESTION_UPDATE_DESCRIPTION =
     "Update decisions and todos you posted with question_post (type decision|todo), several per call, as ONE " +
-    "change: a batch with an unknown id or an illegal move changes nothing. Per item: `state` (decision: open → " +
-    "answered|drafted|acknowledged|superseded, drafted → answered|acknowledged|superseded, answered → sent, " +
-    "sent → acknowledged|superseded, acknowledged → implemented|superseded; todo: open → acknowledged|implemented, " +
+    "change: a batch with an unknown id or an illegal move changes nothing. Per item: `state` (decision: open or " +
+    "drafted → acknowledged|superseded, sent → acknowledged|superseded, acknowledged → implemented|superseded; " +
+    "`answered` and `sent` belong to the inbox's own send, and an agent's answered or sent is recorded as " +
+    "acknowledged; todo: open → acknowledged|implemented, " +
     "acknowledged → implemented), `answer` (a copy of an answer the user gave in chat), `option` (the letter), " +
     "`supersededBy` (the id of the decision that replaces this one), `commitRefs`, `verdict`, `comment` (appended). " +
     "open or drafted → acknowledged needs `option` or `answer` and delivers nothing; superseded needs " +
@@ -23,6 +24,7 @@ export async function handleQuestionUpdate(
     deps: { decisionLog?: { file: string; events: string } } = {}
 ): Promise<string> {
     const { file, events } = deps.decisionLog ?? decisionFiles();
-    const updated = await updateDecisions(file, events, args);
+    // An agent's door: its answered or sent is recorded as acknowledged (`DecisionActor`).
+    const updated = await updateDecisions(file, events, args, undefined, { actor: "agent" });
     return SafeJSON.stringify({ updated, events });
 }

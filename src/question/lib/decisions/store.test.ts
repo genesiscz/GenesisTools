@@ -16,12 +16,17 @@ import { listSessionMessages } from "@genesiscz/utils/agent-sessions/message-que
 import type { NativeHistoryEntry } from "@genesiscz/utils/agent-sessions/types";
 import { withTimeout } from "@genesiscz/utils/async";
 import { listClaudeSessionInventory } from "@genesiscz/utils/claude/peer-message";
+import { standInSender } from "@genesiscz/utils/claude/peer-sender";
 import { env } from "@genesiscz/utils/env";
 import { SafeJSON } from "@genesiscz/utils/json";
+import { readJsonlRows } from "@genesiscz/utils/jsonl";
 import { withFileLock } from "@genesiscz/utils/storage/file-lock";
 import { answerGitWithoutSpawning } from "@genesiscz/utils/test/no-git";
 import { z } from "zod";
+import { stagedSendText } from "../inbox/drafts";
+import { setDecisionBannerRemover } from "./banners";
 import { chatAnswers } from "./chat-answers";
+import { backfillChatAnswers } from "./chat-reading";
 import { DeliveryUnknownError, deliverToSession, resolveDeliveryTarget } from "./deliver";
 import { livePaneTargets, noPaneTargets } from "./deliver.fixtures";
 import { decisionPayload, validateQuestionItems } from "./items";
@@ -42,6 +47,7 @@ import {
 import { DECISION_STATES, decisionUpdateInputSchema, postDecisionsInputSchema } from "./schema";
 import { sendAnsweredDecisions } from "./send";
 import {
+    awaitsDelivery,
     createTodo,
     type DecisionRecord,
     harvestDecisions,
@@ -49,7 +55,9 @@ import {
     moveDecisions,
     postDecisions,
     readDecisions,
+    readDecisionsWithIntegrity,
     recordChatAnswers,
+    repairDecisionLog,
     updateDecision,
     updateDecisions,
     updateTodo,
@@ -97,6 +105,23 @@ function foreignRow(sessionId: string, number: number): DecisionRecord {
 }
 
 describe("decision store", () => {
+    test("the integrity read reports torn and malformed rows without changing the ordinary read", () => {
+        const dir = mkdtempSync(join(tmpdir(), "decision-integrity-"));
+        const file = join(dir, "decisions.jsonl");
+        const row = foreignRow("fixture", 1);
+        expect(readJsonlRows(file)).toEqual({ rows: [], skipped: 0, missing: true });
+        expect(readDecisionsWithIntegrity(file)).toEqual({ rows: [], complete: false });
+        expect(readDecisions(file)).toEqual([]);
+        writeFileSync(file, "");
+        expect(readJsonlRows(file)).toEqual({ rows: [], skipped: 0 });
+        expect(readDecisionsWithIntegrity(file)).toEqual({ rows: [], complete: true });
+        writeFileSync(file, SafeJSON.stringify(row) + "\n");
+        expect(readDecisionsWithIntegrity(file)).toEqual({ rows: [row], complete: true });
+        appendFileSync(file, '{"id":\n' + SafeJSON.stringify({ id: "invalid" }) + "\n");
+        expect(readDecisionsWithIntegrity(file)).toEqual({ rows: [row], complete: false });
+        expect(readDecisions(file)).toEqual([row]);
+    });
+
     test("numbers are consecutive per session and never reused", async () => {
         const dir = mkdtempSync(join(tmpdir(), "decisions-"));
         const file = join(dir, "decisions.jsonl");
@@ -700,6 +725,97 @@ describe("decision kinds, batch updates, harvest and staleness", () => {
         expect(decisionLine({ ...row, option: undefined })).toBe("DECISION 4: keep, and log it");
     });
 
+    test("a single selected option is not repeated in an explicit answer", () => {
+        const row = {
+            ...foreignRow("abc", 4),
+            options: ["keep", "build", "path"],
+            state: "answered" as const,
+            option: "b",
+            answer: "b) build it",
+        };
+
+        expect(deliverDecisions([row], () => undefined).text).toBe("DECISION 4: b) build it");
+        expect(decisionLine({ ...row, answer: "  B. build it  " })).toBe("DECISION 4: b) build it");
+        expect(decisionLine({ ...row, answer: "build it" })).toBe("DECISION 4: b) build it");
+        expect(decisionLine({ ...row, answer: "a) keep" })).toBe("DECISION 4: b) a) keep");
+        expect(decisionLine({ ...row, option: "ab", answer: "b) build it" })).toBe("DECISION 4: a) b) b) build it");
+        expect(decisionLine({ ...row, option: undefined })).toBe("DECISION 4: b) build it");
+        expect(decisionLine({ ...row, option: "a", answer: "a.ts" })).toBe("DECISION 4: a) a.ts");
+        expect(decisionLine({ ...row, option: "c", answer: "C:\\work\\repo" })).toBe("DECISION 4: c) C:\\work\\repo");
+        expect(decisionLine({ ...row, answer: undefined })).toBe("DECISION 4: b) build");
+        expect(deliverDecisions([{ ...row, answer: "b)" }], () => undefined).text).toBe("DECISION 4: b) build");
+        expect(decisionLine({ ...row, answer: " b) " })).toBe("DECISION 4: b) build");
+        expect(decisionLine({ ...row, answer: "b)", options: ["keep", "b) build", "path"] })).toBe(
+            "DECISION 4: b) build"
+        );
+        expect(decisionLine({ ...row, answer: "b)", options: [] })).toBe("DECISION 4: b)");
+        expect(decisionLine({ ...row, option: "ab", answer: "b)" })).toBe("DECISION 4: a) b) b)");
+    });
+
+    test("an option the agent lettered itself is not lettered twice", () => {
+        const row = {
+            ...foreignRow("abc", 23),
+            title: "Build order",
+            options: ["a) run it now", "b) build the tool first, then run it for today"],
+            option: "b",
+        };
+
+        expect(decisionLine(row)).toBe(
+            "Reply to: Build order\nLedger decision 23 (d_23_abc)\nb) build the tool first, then run it for today"
+        );
+        expect(decisionLine({ ...row, options: ["(a) now", "B. later"], option: "ab" })).toContain("a) b) now / later");
+        expect(decisionsMarkdown([{ ...row, option: undefined, recommended: "b" }])).toContain(
+            "- a) run it now\n- b) build the tool first, then run it for today (recommended)"
+        );
+    });
+
+    test("indented lettered options are not lettered twice, while literal labels stay intact", () => {
+        const row = {
+            ...foreignRow("abc", 23),
+            options: ["  a) run it", "\tB. later", "  C:\\work\\repo"],
+        };
+
+        expect(decisionsMarkdown([row])).toContain("- a) run it\n- b) later\n- c)   C:\\work\\repo");
+        expect(decisionLine({ ...row, option: "a" })).toBe("DECISION 23: a) run it");
+        expect(decisionLine({ ...row, option: "b" })).toBe("DECISION 23: b) later");
+        expect(decisionLine({ ...row, option: "c" })).toBe("DECISION 23: c)   C:\\work\\repo");
+
+        const literal = { ...row, options: ["  a.ts"] };
+        expect(decisionsMarkdown([literal])).toContain("- a)   a.ts");
+        expect(decisionLine({ ...literal, option: "a" })).toBe("DECISION 23: a)   a.ts");
+    });
+
+    test("markdown treats generated option letters as literal characters", () => {
+        const options = Array.from({ length: 65480 }, () => "ordinary");
+        options[0] = "a) run it";
+        options[27] = "(keep)";
+        options[65479] = "(wrap target";
+
+        const markdown = decisionsMarkdown([{ ...foreignRow("abc", 23), options }]);
+        expect(markdown).toContain("- a) run it");
+        expect(markdown).toContain("- |) (keep)");
+        expect(markdown).toContain("- () (wrap target");
+    });
+
+    for (const [option, label] of [
+        ["a", "a.ts"],
+        ["c", "C:\\work\\repo"],
+    ] as const) {
+        const row = {
+            ...foreignRow("abc", 23),
+            options: ["a.ts", "other", "C:\\work\\repo"],
+            option,
+        };
+
+        test(`preserves ${label} in decision markdown`, () => {
+            expect(decisionsMarkdown([row])).toContain(`- ${option}) ${label}`);
+        });
+
+        test(`preserves ${label} in the option-derived answer`, () => {
+            expect(decisionLine(row)).toBe(`DECISION 23: ${option}) ${label}`);
+        });
+    }
+
     test("a titled card retains its chat label separately from its allocated ledger number", () => {
         const row = {
             ...foreignRow("original-session", 2),
@@ -1071,6 +1187,7 @@ describe("delivery routes", () => {
                 sendClaudePeer: async (input) => {
                     received.push(input);
                 },
+                receiverMode: async () => "prompting",
                 findTargets: async () => {
                     throw new Error("Native delivery must not inspect terminals");
                 },
@@ -1080,7 +1197,46 @@ describe("delivery routes", () => {
             }
         );
         expect(result).toEqual({ channel: "claude-peer", delivered: true, target: "original Claude session" });
-        expect(received).toEqual([{ session: peer, text, token: null, priority: "next", timeoutMs: 5000 }]);
+        expect(received).toEqual([
+            { session: peer, text, token: null, priority: "next", sender: null, timeoutMs: 5000 },
+        ]);
+    });
+
+    // DECISION 25 a): a bypass receiver holds a plain frame for approval, so the answer carries a stand-in sender
+    // of the receiver's class; a receiver of unknown class gets the plain frame as before.
+    test("a bypass Claude receiver gets the answer from a stand-in bypass sender", async () => {
+        const peer = {
+            pid: 43,
+            sessionId: "bypass-session",
+            name: "fixture",
+            cwd: "/fixture/project",
+            status: "idle",
+            kind: "interactive",
+            socketPath: "/fixture/receiver.sock",
+            file: "/fixture/home/sessions/43.json",
+        };
+        for (const [mode, attested] of [
+            ["bypass", true],
+            [null, false],
+        ] as const) {
+            const senders: unknown[] = [];
+            await deliverToSession(
+                { session: peer.sessionId, provider: "claude", sourceHome: "/fixture/home", text: "a)" },
+                {
+                    nativeWorkers: () => [],
+                    claudePeers: () => [peer],
+                    peerToken: () => null,
+                    receiverMode: async (sessionId) => {
+                        expect(sessionId).toBe(peer.sessionId);
+                        return mode;
+                    },
+                    sendClaudePeer: async (input) => {
+                        senders.push(input.sender);
+                    },
+                }
+            );
+            expect(senders).toEqual([attested ? standInSender("bypass") : null]);
+        }
     });
 
     test("real native peer transport preserves a long Unicode reply as one user frame", async () => {
@@ -1798,7 +1954,7 @@ test("revision preconditions are checked against rows re-read under the write lo
         await Bun.sleep(0);
         writeFileSync(file, SafeJSON.stringify({ ...row, prompt: "Changed?", revision: 2 }) + "\n");
     });
-    await expect(pending).rejects.toThrow("stale decision revision");
+    await expect(pending).rejects.toThrow("DECISION 1 changed: the agent posted a new text");
     expect(readDecisions(file)[0]).toMatchObject({ prompt: "Changed?", revision: 2, state: "open" });
     const accepted = await updateDecision(file, events, row.id, {
         state: "answered",
@@ -1875,7 +2031,9 @@ test("decision dry-run applies the same selected-kind filter as delivery", async
     // Existing files may contain legacy answered TODO rows, even though current transitions reject them.
     writeFileSync(
         file,
-        `${[decision, todo].map((row) => SafeJSON.stringify({ ...row, state: "answered", option: "a" })).join("\n")}\n`
+        `${[decision, todo]
+            .map((row) => SafeJSON.stringify({ ...row, state: "answered", option: "a", answeredVia: "inbox" }))
+            .join("\n")}\n`
     );
     const files = { file, events };
     const preview = await sendAnsweredDecisions({ session: "test-session", files, dryRun: true });
@@ -1912,7 +2070,7 @@ test("a lost receipt stamps only the decisions this send claimed, never one rese
         file,
         `${[
             { ...reserved, state: "answered", option: "a", delivery: reservation },
-            { ...open, state: "answered", option: "a" },
+            { ...open, state: "answered", option: "a", answeredVia: "inbox" },
         ]
             .map((row) => SafeJSON.stringify(row))
             .join("\n")}\n`
@@ -2001,6 +2159,10 @@ describe("answers recorded by an agent, and superseded decisions", () => {
 
         expect(fromOpen).toMatchObject({ state: "acknowledged", option: "b", answeredVia: "agent" });
         expect(fromDrafted).toMatchObject({ state: "acknowledged", option: "a", answeredVia: "agent" });
+        // The widget shows a chat answer by the time it was recorded, which a later update must not move.
+        expect(fromOpen.answeredTs).toBe(fromOpen.updatedTs);
+        const implemented = await updateDecision(file, events, open.id, { state: "implemented", comment: "done" });
+        expect(implemented.answeredTs).toBe(fromOpen.answeredTs);
         expect(fromDrafted.draft).toBeUndefined();
         expect(fromDrafted.draftOption).toBeUndefined();
         await expect(updateDecision(file, events, bare.id, { state: "acknowledged" })).rejects.toThrow(
@@ -2014,8 +2176,10 @@ describe("answers recorded by an agent, and superseded decisions", () => {
         const { file, events, rows } = await fixture(["Inbox?"]);
         const answered = await updateDecision(file, events, rows[0].id, { state: "answered", option: "a" });
         expect(answered.answeredVia).toBe("inbox");
+        expect(answered.answeredTs).toBe(answered.updatedTs);
         const acknowledged = await updateDecision(file, events, rows[0].id, { state: "acknowledged" });
         expect(acknowledged.answeredVia).toBe("inbox");
+        expect(acknowledged.answeredTs).toBe(answered.answeredTs);
     });
 
     test("superseded needs a link or a reason, and the link must name another stored decision", async () => {
@@ -2839,5 +3003,209 @@ describe("chatAnswers", () => {
 
         expect(found.unambiguous).toMatchObject([{ number: 4, answer: "call it Atlas" }]);
         expect(found.unambiguous[0]?.option).toBeUndefined();
+    });
+});
+
+describe("chat answers an agent records are never sent again (F2)", () => {
+    test("an agent's answered or sent lands as acknowledged; the inbox's own answer still waits to go out", async () => {
+        const { file, events } = scratch();
+        await postDecisions(file, events, {
+            sessionId: "abc",
+            decisions: [
+                { prompt: "one", options: ["keep", "drop"] },
+                { prompt: "two", options: ["a", "b"] },
+            ],
+        });
+
+        const [agent] = await updateDecisions(
+            file,
+            events,
+            { updates: [{ id: "d_1_abc", state: "answered", option: "b", answer: "drop it" }] },
+            undefined,
+            { actor: "agent" }
+        );
+        expect(agent).toMatchObject({ state: "acknowledged", option: "b", answer: "drop it", answeredVia: "agent" });
+        expect(agent?.comments?.at(-1)).toContain("an agent asked for answered");
+        expect(awaitsDelivery(agent as DecisionRecord)).toBe(false);
+
+        // Negative control: the user's path (the store's default actor) still queues the answer for a send.
+        const [user] = await updateDecisions(file, events, {
+            updates: [{ id: "d_2_abc", state: "answered", option: "a" }],
+        });
+        expect(user).toMatchObject({ state: "answered", answeredVia: "inbox" });
+        expect(awaitsDelivery(user as DecisionRecord)).toBe(true);
+        expect(stagedSendText(readDecisions(file), "abc")).toBe("DECISION 2: a) a");
+    });
+
+    test("an old-shape chat answer (answered, no answeredVia, no delivery) is left out of every whole-session send", () => {
+        const chat: DecisionRecord = { ...foreignRow("abc", 1), state: "answered", option: "a" };
+        const inbox: DecisionRecord = { ...foreignRow("abc", 2), state: "answered", option: "a", answeredVia: "inbox" };
+
+        expect(awaitsDelivery(chat)).toBe(false);
+        expect(awaitsDelivery(inbox)).toBe(true);
+        expect(stagedSendText([chat, inbox], "abc")).toBe("DECISION 2: a) a");
+        expect(stagedSendText([chat], "abc")).toBeUndefined();
+    });
+
+    test("the repair reports first, then acknowledges old chat answers and reopens empty drafts, keeping history", async () => {
+        const { file, events } = scratch();
+        const rows: DecisionRecord[] = [
+            { ...foreignRow("abc", 1), state: "answered", option: "a", answer: "yes" },
+            { ...foreignRow("abc", 2), state: "answered", option: "a", answeredVia: "inbox" },
+            {
+                ...foreignRow("abc", 3),
+                state: "answered",
+                option: "a",
+                delivery: { route: "cmux", uncertain: true, at: "2026-01-01T00:00:00.000Z" },
+            },
+            { ...foreignRow("abc", 4), state: "drafted", draft: "", draftOption: "" },
+            { ...foreignRow("abc", 5), state: "drafted", draftOption: "a" },
+        ];
+        writeFileSync(file, `${rows.map((row) => SafeJSON.stringify(row)).join("\n")}\n`);
+        const before = readFileSync(file, "utf8");
+
+        const dry = await repairDecisionLog({ file, events, apply: false });
+        expect(dry).toEqual({ acknowledged: ["d_1_abc"], reopened: ["d_4_abc"] });
+        expect(readFileSync(file, "utf8")).toBe(before);
+        expect(existsSync(events)).toBe(false);
+
+        const applied = await repairDecisionLog({ file, events, apply: true, now: () => "2026-01-02T00:00:00.000Z" });
+        expect(applied).toEqual(dry);
+        const after = readDecisions(file);
+        expect(after.map((row) => row.state)).toEqual(["acknowledged", "answered", "answered", "open", "drafted"]);
+        expect(after[0]).toMatchObject({
+            option: "a",
+            answer: "yes",
+            answeredVia: "agent",
+            answeredTs: "2026-01-01T00:00:00.000Z",
+            updatedTs: "2026-01-02T00:00:00.000Z",
+        });
+        expect(after[0]?.comments?.at(-1)).toContain("nothing sends it again");
+        expect(after[3]?.draftOption).toBeUndefined();
+        expect(readFileSync(events, "utf8").trim().split("\n")).toHaveLength(2);
+
+        expect(await repairDecisionLog({ file, events, apply: true })).toEqual({ acknowledged: [], reopened: [] });
+    });
+
+    test("unstaging a pick leaves the decision open, not an empty drafted row", async () => {
+        const { file, events } = scratch();
+        await postDecisions(file, events, { sessionId: "abc", decisions: [{ prompt: "one", options: ["a", "b"] }] });
+        await updateDecision(file, events, "d_1_abc", { state: "drafted", draftOption: "a" });
+
+        const row = await updateDecision(file, events, "d_1_abc", { draft: "", draftOption: "" });
+
+        expect(row.state).toBe("open");
+        expect(row.draftOption).toBeUndefined();
+        expect(row.draft).toBeUndefined();
+    });
+});
+
+describe("chat answers read from where the last read stopped", () => {
+    test("a decision asked before the read counts every user entry, also in history without timestamps", () => {
+        const entries = [{ line: -2, role: "user" as const, text: "D3 b) keep the old one", paths: [], commits: [] }];
+        const decision = { number: 3, letters: ["a", "b"] };
+
+        // Without the hint, timestamp-free history needs the ask among the entries.
+        expect(chatAnswers(entries, [decision]).unambiguous).toEqual([]);
+        expect(chatAnswers(entries, [{ ...decision, askedBefore: true }]).unambiguous).toMatchObject([
+            { number: 3, option: "b", answer: "keep the old one" },
+        ]);
+        // A revised decision too: it was open, as revised, when the last read ended.
+        expect(chatAnswers(entries, [{ ...decision, revision: 2, askedBefore: true }]).unambiguous).toHaveLength(1);
+    });
+
+    test("the backfill reads the whole transcript back to the oldest open ask, reports first, then records", async () => {
+        const { file, events } = scratch();
+        const [row] = await postDecisions(file, events, {
+            sessionId: "abc",
+            decisions: [{ prompt: "Keep it?", options: ["yes", "no"] }],
+        });
+        const later = new Date(Date.parse(row.createdTs ?? "") + 60_000).toISOString();
+        const reads: { maxBytes?: number; transcriptPath: string }[] = [];
+        const read = async (options: { maxBytes?: number; transcriptPath: string }) => {
+            reads.push({ maxBytes: options.maxBytes, transcriptPath: options.transcriptPath });
+            return {
+                found: true,
+                issues: [],
+                entries: [{ line: -1, role: "user" as const, text: "D1 b)", paths: [], commits: [], timestamp: later }],
+            };
+        };
+        const transcript = { kind: "claude", path: "/fixture/abc.jsonl" };
+
+        const dry = await backfillChatAnswers({ session: "abc", file, events, apply: false, transcript, read });
+        expect(dry).toMatchObject({ open: [1], recorded: [], unambiguous: [{ number: 1, option: "b" }] });
+        expect(readDecisions(file)[0]?.state).toBe("open");
+        expect(reads[0]).toEqual({ maxBytes: Number.POSITIVE_INFINITY, transcriptPath: "/fixture/abc.jsonl" });
+
+        const applied = await backfillChatAnswers({ session: "abc", file, events, apply: true, transcript, read });
+        expect(applied.recorded).toEqual([row.id]);
+        expect(readDecisions(file)[0]).toMatchObject({
+            state: "acknowledged",
+            option: "b",
+            answeredVia: "automatic_heuristic",
+        });
+        // Nothing open any more: a second run reads nothing.
+        expect(
+            (await backfillChatAnswers({ session: "abc", file, events, apply: true, transcript, read })).open
+        ).toEqual([]);
+        expect(reads).toHaveLength(2);
+    });
+});
+
+describe("a revision and a staged pick (F12)", () => {
+    test("a supersede keeps the staged pick in the old version and says on the row that it was cleared", async () => {
+        const { file, events } = scratch();
+        const [row] = await postDecisions(file, events, {
+            sessionId: "abc",
+            decisions: [{ prompt: "Keep it?", options: ["yes", "no"] }],
+        });
+        await updateDecision(file, events, row.id, { state: "drafted", draftOption: "b", draft: "for now" });
+        const [revised] = await postDecisions(file, events, {
+            sessionId: "abc",
+            decisions: [{ prompt: "Keep it, as is?", options: ["yes", "no"], supersedes: row.id }],
+        });
+
+        expect(revised).toMatchObject({ id: row.id, state: "open", revision: 2 });
+        expect(revised.draftOption).toBeUndefined();
+        expect(revised.versions?.[0]).toMatchObject({ revision: 1, draftOption: "b", draft: "for now" });
+        expect(revised.comments?.at(-1)).toContain("the staged b) and note on the earlier text was cleared");
+        // A pick made on the old text is refused in words a surface shows.
+        await expect(
+            updateDecision(file, events, row.id, { state: "drafted", draftOption: "a", expectedRevision: 1 })
+        ).rejects.toThrow("DECISION 1 changed: the agent posted a new text since you read it.");
+    });
+});
+
+describe("decision banners (F13)", () => {
+    test("a write that moves a decision out of waiting retracts its banner; a write that keeps it waiting does not", async () => {
+        const { file, events } = scratch();
+        const removed: string[][] = [];
+        setDecisionBannerRemover(async (ids) => {
+            removed.push(ids);
+        });
+
+        try {
+            const [first, second] = await postDecisions(file, events, {
+                sessionId: "abc",
+                decisions: [
+                    { prompt: "one", options: ["a", "b"] },
+                    { prompt: "two", options: ["a", "b"] },
+                ],
+            });
+            await updateDecision(file, events, first.id, { state: "drafted", draftOption: "a" });
+            await updateDecision(file, events, second.id, { comment: "looked at it" });
+            expect(removed).toEqual([]);
+
+            await updateDecisions(
+                file,
+                events,
+                { updates: [{ id: first.id, state: "answered", option: "b" }] },
+                undefined,
+                { actor: "agent" }
+            );
+            expect(removed).toEqual([[`qa-decision-${first.id}`]]);
+        } finally {
+            setDecisionBannerRemover(undefined);
+        }
     });
 });

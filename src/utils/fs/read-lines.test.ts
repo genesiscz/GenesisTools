@@ -1,5 +1,5 @@
 import { afterAll, describe, expect, it } from "bun:test";
-import { mkdtempSync, rmSync, writeFileSync } from "node:fs";
+import { appendFileSync, mkdtempSync, rmSync, statSync, writeFileSync } from "node:fs";
 import { tmpdir } from "node:os";
 import { join } from "node:path";
 import { compressBytes } from "@genesiscz/utils/compress/zstd";
@@ -141,6 +141,33 @@ describe("bounded backward reads", () => {
             "old",
         ]);
         expect(offsets).toEqual([4, 0]);
+    });
+
+    it("reads only what was appended after an earlier walk's end, the line at that offset whole", () => {
+        const path = file("backward-from.txt", "old\nkept\n");
+        let end = -1;
+        expect([...readLinesBackwardSync(path, { onSource: (value) => (end = value) })]).toEqual(["kept", "old"]);
+        appendFileSync(path, "new one\nnewest\n");
+
+        for (const chunkBytes of [1, 3, 1024]) {
+            const walk = readLinesBackwardSync(path, { chunkBytes, fromOffset: end });
+            const seen: string[] = [];
+            let next = walk.next();
+
+            while (!next.done) {
+                seen.push(next.value);
+                next = walk.next();
+            }
+
+            expect(seen).toEqual(["newest", "new one"]);
+            expect(next.value).toMatchObject({ reason: "offset", position: end, bytesRead: 15 });
+        }
+
+        // Nothing appended since: nothing is read, and it is still a clean end.
+        expect(readLinesBackwardSync(path, { fromOffset: statSync(path).size }).next()).toMatchObject({
+            done: true,
+            value: { reason: "offset", bytesRead: 0 },
+        });
     });
 });
 

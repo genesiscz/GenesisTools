@@ -36,7 +36,8 @@ export function genesisMdHandlerPath(): string | null {
 
     const probe = spawnSync("osascript", ["-l", "JavaScript", "-e", HANDLER_PROBE], {
         encoding: "utf8",
-        timeout: 5_000,
+        // `tools genesis-tools probe` must answer within 5 s, and this is its slowest lookup.
+        timeout: 2_000,
     });
     const found = probe.stdout?.trim();
 

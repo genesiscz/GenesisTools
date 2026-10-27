@@ -27,6 +27,7 @@ interface TreeArgs {
 export const agentsTreeDoor: CallDoor<TreeArgs> = {
     kind: "call",
     name: "hub agents --json",
+    command: ["hub", "agents"],
     match(argv) {
         const parsed = parseArgv(argv, {
             command: ["hub", "agents"],
@@ -82,6 +83,7 @@ interface CountsArgs {
 export const agentsCountsDoor: CallDoor<CountsArgs> = {
     kind: "call",
     name: "hub agents counts",
+    command: ["hub", "agents", "counts"],
     match(argv) {
         const parsed = parseArgv(argv, {
             command: ["hub", "agents", "counts"],
@@ -120,6 +122,7 @@ interface MailArgs {
 export const agentsMailDoor: CallDoor<MailArgs> = {
     kind: "call",
     name: "hub agents mail",
+    command: ["hub", "agents", "mail"],
     match(argv) {
         const parsed = parseArgv(argv, {
             command: ["hub", "agents", "mail"],
@@ -150,6 +153,7 @@ export const agentsMailDoor: CallDoor<MailArgs> = {
 export const subagentsDoor: CallDoor<string> = {
     kind: "call",
     name: "ai sessions subagents --json",
+    command: ["ai", "sessions", "subagents"],
     match(argv) {
         const parsed = parseArgv(argv, {
             command: ["ai", "sessions", "subagents"],
