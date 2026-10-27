@@ -499,12 +499,12 @@ describe("sessions already running in a cmux tab", () => {
             adapter: adapter([session("here", "unrelated")]),
             query: "Conventions",
             interactive: true,
-            running: async () => [tab("elsewhere", "col-tools-conventions", "/other/repo"), tab("x", "nothing")],
+            running: async () => [tab("elsewhere", "acme-conventions", "/other/repo"), tab("x", "nothing")],
             pick,
         });
 
-        expect(choice).toEqual({ action: "focus", running: tab("elsewhere", "col-tools-conventions", "/other/repo") });
-        expect(shown[0].rows.map((row) => row.value.display.name)).toEqual(["col-tools-conventions"]);
+        expect(choice).toEqual({ action: "focus", running: tab("elsewhere", "acme-conventions", "/other/repo") });
+        expect(shown[0].rows.map((row) => row.value.display.name)).toEqual(["acme-conventions"]);
         expect(shown[0].rows[0].value.display.projectName).toBe("repo");
     });
 
