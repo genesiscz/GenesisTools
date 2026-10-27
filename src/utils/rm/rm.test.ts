@@ -6,6 +6,7 @@ import {
     readdirSync,
     realpathSync,
     renameSync,
+    unlinkSync,
     utimesSync,
     writeFileSync,
 } from "node:fs";
@@ -303,6 +304,27 @@ describe("trash", () => {
         expect(slept).toHaveLength(1);
         expect(slept[0]).toBeGreaterThan(4 * 60_000);
         expect(result.items).toBe(1);
+        expect(listBatches(trashPaths)).toHaveLength(0);
+    });
+
+    test("a drainer started while another sleeps still drains a due batch at once", async () => {
+        const target = resolveTarget(file(join(dir("t3"), "c.txt")), base);
+        moveToTrash([{ target, rule: "test" }], { config, caller: null, graceMinutes: 0, paths: trashPaths });
+        mkdirSync(join(trashPaths.lockPath, ".."), { recursive: true });
+        writeFileSync(trashPaths.lockPath, String(process.pid));
+        let slept = 0;
+
+        const result = await runDrainer({
+            config,
+            paths: trashPaths,
+            sleep: async () => {
+                slept++;
+            },
+        });
+        unlinkSync(trashPaths.lockPath);
+
+        expect(result.items).toBe(1);
+        expect(slept).toBe(0);
         expect(listBatches(trashPaths)).toHaveLength(0);
     });
 
