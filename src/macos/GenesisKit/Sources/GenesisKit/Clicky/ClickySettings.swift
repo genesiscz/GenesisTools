@@ -67,6 +67,13 @@ public struct ClickyPreferences: Codable, Equatable {
     public var delayPromptSeconds = 45
     /// Outputs the user chose to keep although they are late: never offered again.
     public var delayAcceptedUIDs: [String] = []
+    /// No click sound while Clicky's output is Bluetooth: each start of the sound claims the headphones for this Mac in
+    /// Smart Routing ("Hijack" in audioaccessoryd), which can pull AirPods away from an iPhone while you type.
+    public var silentOnBluetooth = true
+    /// Seconds the paused sound engine keeps the output after the last click before it stops and gives it back; 0 never
+    /// stops it. Never is the default: paused, the engine used 0.007% CPU over 60 s, held no sleep assertion and no
+    /// Smart Routing session (running: 2.2% CPU, a coreaudiod PreventUserIdleSystemSleep, and a session), 2026-10-27.
+    public var releaseOutputSeconds = 0
 
     public init() {}
 
@@ -100,6 +107,8 @@ public struct ClickyPreferences: Codable, Equatable {
         try read(.delayWarningMilliseconds, into: &delayWarningMilliseconds)
         try read(.delayPromptSeconds, into: &delayPromptSeconds)
         try read(.delayAcceptedUIDs, into: &delayAcceptedUIDs)
+        try read(.silentOnBluetooth, into: &silentOnBluetooth)
+        try read(.releaseOutputSeconds, into: &releaseOutputSeconds)
     }
 
     public mutating func normalize() {
@@ -109,6 +118,7 @@ public struct ClickyPreferences: Codable, Equatable {
         excludedApplications = Array(Set(excludedApplications.filter { !$0.isEmpty })).sorted()
         delayWarningMilliseconds = min(5000, max(20, delayWarningMilliseconds))
         delayPromptSeconds = min(300, max(0, delayPromptSeconds))
+        releaseOutputSeconds = releaseOutputSeconds <= 0 ? 0 : min(3600, max(3, releaseOutputSeconds))
     }
 
     public func isQuiet(at date: Date, calendar: Calendar = .current) -> Bool {

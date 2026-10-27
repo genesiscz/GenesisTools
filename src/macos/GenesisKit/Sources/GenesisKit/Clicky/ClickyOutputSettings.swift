@@ -15,6 +15,19 @@ struct ClickyOutputCard: View {
             }
             Divider()
             NativeSettingsToggle(
+                "Silent on Bluetooth headphones",
+                detail: "Typing makes no sound while Clicky plays on a Bluetooth device. Each sound start claims the headphones for this Mac, which can pull AirPods away from your iPhone. The play buttons here still sound.",
+                identifier: "clicky.output.silentOnBluetooth", isOn: $model.preferences.silentOnBluetooth)
+            NativeSettingsPicker(
+                "Release the output after",
+                detail: "The sound engine pauses 3 seconds after the last click: no CPU, no sleep block. It stops after this long, and the next click then waits for the output to start again.",
+                identifier: "clicky.output.release",
+                options: [NativeSettingsOption(10, "10 seconds"), NativeSettingsOption(30, "30 seconds"),
+                    NativeSettingsOption(120, "2 minutes"), NativeSettingsOption(600, "10 minutes"),
+                    NativeSettingsOption(0, "Never")],
+                selection: $model.preferences.releaseOutputSeconds)
+            Divider()
+            NativeSettingsToggle(
                 "Suggest a faster output",
                 detail: "When Clicky's output is late by more than the limit below, a small prompt offers a faster one. It never takes the keyboard.",
                 identifier: "clicky.output.delayWarning", isOn: $model.preferences.delayWarning)

@@ -3,9 +3,12 @@ import Foundation
 
 /// Original procedural sounds. No recordings, downloaded samples, or third-party sound assets.
 public enum ClickySynthesis {
+    /// The rate packs are recorded at, and the one the sounds are made at until the output device names its own.
     public static let sampleRate = 48_000.0
 
-    public static func samples(profile: ClickySwitch, release: Bool, variant: Int) -> [Float] {
+    /// The same sound at any rate: every term is a function of time, so a 44.1 kHz or 24 kHz output gets it computed
+    /// at its own rate instead of resampled on every render.
+    public static func samples(profile: ClickySwitch, release: Bool, variant: Int, sampleRate: Double = sampleRate) -> [Float] {
         let duration = release ? 0.065 : 0.11
         let frames = Int(sampleRate * duration)
         var state = UInt64(variant + 1) &* 7919 &+ UInt64(ClickySwitch.allCases.firstIndex(of: profile)! + 1) * 104729
@@ -48,11 +51,25 @@ struct ClickyAudioStartState {
 @MainActor
 final class ClickyAudio {
     private let engine: AVAudioEngine
-    private let format = AVAudioFormat(standardFormatWithSampleRate: ClickySynthesis.sampleRate, channels: 1)!
+    /// The voices' format: mono at the output device's own rate (set by each start), so the mixer never resamples. At
+    /// 48 kHz into a device at another rate, the mixer resampled all twelve voices on every render: `Resampler2` under
+    /// `AUGraphMultiBusNode` was the hottest frame of the settings face, median 6% and up to 13.5% CPU (2026-10-27).
+    private var format = ClickyAudio.format(rate: ClickySynthesis.sampleRate)
     private let voices: [(AVAudioPlayerNode, AVAudioUnitVarispeed)]
     private var buffers: [String: AVAudioPCMBuffer] = [:]
     private var cursor = 0
+    /// 3 s after the last click the engine pauses: no render, the output unit kept.
+    private var idlePause: DispatchWorkItem?
+    /// `idleRelease` after the last click it stops and gives the output back.
     private var idleStop: DispatchWorkItem?
+    /// How long the paused engine keeps the output before it stops (the "Release the output after" setting; 0 is never).
+    /// A start
+    /// after a stop took 350 to 460 ms off-main, 711 times in one day, and each opened an audio session that Smart
+    /// Routing counts as this Mac claiming the headphones; a resume from pause opens neither.
+    var idleRelease: TimeInterval = 0
+    static let pauseAfter: TimeInterval = 3
+    /// Paused by `pauseEngine`: a click resumes it with `start()`, which is quick and keeps the voices' wiring.
+    private var paused = false
     /// The engine starts here, never on the main thread: the start ran inside the keyboard event tap and took 0.4 to
     /// 1 s after each 3 s pause on 2026-10-23 (HangWatch stalls in the settings face), and a tap that waits delays
     /// every key the user types.
@@ -71,33 +88,52 @@ final class ClickyAudio {
     private final class EngineBox: @unchecked Sendable {
         let engine: AVAudioEngine
         let voices: [(AVAudioPlayerNode, AVAudioUnitVarispeed)]
-        let format: AVAudioFormat
-        private var wired = false
+        /// The format the voices are wired in; nil before the first start.
+        private var wired: AVAudioFormat?
         /// The output device the next start plays on; nil keeps the engine's own choice (the system output).
         var device: AudioDeviceID?
+        private var pinned: AudioDeviceID?
 
-        init(engine: AVAudioEngine, voices: [(AVAudioPlayerNode, AVAudioUnitVarispeed)], format: AVAudioFormat) {
+        init(engine: AVAudioEngine, voices: [(AVAudioPlayerNode, AVAudioUnitVarispeed)]) {
             self.engine = engine
             self.voices = voices
-            self.format = format
         }
 
-        /// Wires the voices once, then starts. The first `mainMixerNode` read creates the output unit, which waits for
-        /// CoreAudio: 0.5 s on the main thread when the settings face launched (HangWatch, 2026-10-23 21:30).
-        func start() throws {
-            if let device, !AudioOutputs.pin(engine, to: device) {
-                PerfLog.mark("clicky.audio.output \(device) refused")
-            }
-            if !wired {
-                for (player, rate) in voices {
-                    engine.attach(player)
-                    engine.attach(rate)
-                    engine.connect(player, to: rate, format: format)
-                    engine.connect(rate, to: engine.mainMixerNode, format: format)
+        /// Wires the voices in the output's own rate, then starts, and returns that format. The first `mainMixerNode`
+        /// read creates the output unit, which waits for CoreAudio: 0.5 s on the main thread when the settings face
+        /// launched (HangWatch, 2026-10-23 21:30). A resume from pause finds everything wired and only starts.
+        func start() throws -> AVAudioFormat {
+            if let device, device != pinned {
+                if AudioOutputs.pin(engine, to: device) {
+                    pinned = device
+                } else {
+                    PerfLog.mark("clicky.audio.output \(device) refused")
                 }
-                wired = true
+            }
+            let output = engine.outputNode.outputFormat(forBus: 0)
+            let format = ClickyAudio.format(rate: output.sampleRate > 0 ? output.sampleRate : ClickySynthesis.sampleRate)
+            if wired?.sampleRate != format.sampleRate {
+                let mixer = engine.mainMixerNode
+                for (player, rate) in voices {
+                    if wired == nil {
+                        engine.attach(player)
+                        engine.attach(rate)
+                    }
+                    engine.connect(player, to: rate, format: format)
+                    engine.connect(rate, to: mixer, format: format)
+                }
+                if !engine.isInManualRenderingMode, output.sampleRate > 0 {
+                    engine.connect(mixer, to: engine.outputNode, format: output)
+                }
+                wired = format
             }
             try engine.start()
+            return format
+        }
+
+        /// The output may be another device, or the same one at another rate, at the next start.
+        func forgetDevice() {
+            pinned = nil
         }
     }
     private let box: EngineBox
@@ -109,14 +145,19 @@ final class ClickyAudio {
         outputDevice = device
         if starting { startState.outputChanged() }
         let box = box
-        startQueue.async { box.device = device }
+        startQueue.async {
+            box.device = device
+            box.forgetDevice()
+        }
         stopVoices()
     }
     private struct PackBank {
         let reference: ClickyPackReference
         let manifestHash: String
         let playback: ClickyPackPlayback
-        let buffers: [String: AVAudioPCMBuffer]
+        /// The decoded 48 kHz frames per file, kept so a new output rate can convert them again.
+        let samples: [String: ClickyPreparedSample]
+        var buffers: [String: AVAudioPCMBuffer]
         let decodedFrames: Int
     }
     private var banks: [PackBank] = []
@@ -132,25 +173,10 @@ final class ClickyAudio {
             let bank = banks.remove(at: index)
             banks.append(bank)
         } else {
-            var decoded: [String: AVAudioPCMBuffer] = [:]
-            var unique: [String: AVAudioPCMBuffer] = [:]
-            for (name, sample) in pack.samples {
-                if let existing = unique[sample.sha256] {
-                    decoded[name] = existing
-                    continue
-                }
-                guard let buffer = AVAudioPCMBuffer(pcmFormat: format, frameCapacity: AVAudioFrameCount(sample.frames.count)),
-                    let channel = buffer.floatChannelData?[0]
-                else { throw ClickyPackError.invalid("This sound pack could not allocate an audio buffer.") }
-                buffer.frameLength = buffer.frameCapacity
-                sample.frames.withUnsafeBufferPointer { pointer in
-                    if let base = pointer.baseAddress { channel.update(from: base, count: pointer.count) }
-                }
-                decoded[name] = buffer
-                unique[sample.sha256] = buffer
-            }
+            let decoded = try Self.buffers(pack.samples, format: format)
+            let frames = Dictionary(pack.samples.values.map { ($0.sha256, $0.frames.count) }, uniquingKeysWith: { first, _ in first })
             let bank = PackBank(reference: reference, manifestHash: pack.manifestHash, playback: pack.playback,
-                                buffers: decoded, decodedFrames: unique.values.reduce(0) { $0 + Int($1.frameLength) })
+                                samples: pack.samples, buffers: decoded, decodedFrames: frames.values.reduce(0, +))
             banks.removeAll { $0.reference == reference }
             banks.append(bank)
             if banks.count > 3 { banks.removeFirst(banks.count - 3) }
@@ -178,9 +204,12 @@ final class ClickyAudio {
         } else {
             choice = liveSelection.next(playback: bank.playback, keyCode: keyCode, release: release)
         }
-        guard let choice, !release || preferences.releaseSounds, let buffer = bank.buffers[choice.filename] else { return true }
+        guard let choice, !release || preferences.releaseSounds, bank.buffers[choice.filename] != nil else { return true }
         let gain = bank.playback.gain * (release ? bank.playback.keyupGain : 1)
-        try schedule(buffer, preferences: preferences, pan: pan, gain: gain, pitchVariation: bank.playback.pitchVariation)
+        let filename = choice.filename
+        // Looked up when it plays: a start that changed the output rate converts the bank first.
+        try schedule({ [weak self] in self?.banks.last(where: { $0.reference == reference })?.buffers[filename] },
+                     preferences: preferences, pan: pan, gain: gain, pitchVariation: bank.playback.pitchVariation)
         return true
     }
 
@@ -188,51 +217,136 @@ final class ClickyAudio {
         self.engine = engine
         let voices = (0..<12).map { _ in (AVAudioPlayerNode(), AVAudioUnitVarispeed()) }
         self.voices = voices
-        box = EngineBox(engine: engine, voices: voices, format: format)
+        box = EngineBox(engine: engine, voices: voices)
+        buffers = Self.synthesize(format)
+        // A hardware change stops the engine without telling `running`; the next click must start it again.
+        NotificationCenter.default.addObserver(forName: .AVAudioEngineConfigurationChange, object: engine, queue: .main) { [weak self] _ in
+            MainActor.assumeIsolated {
+                guard let self else { return }
+                if self.starting {
+                    self.configChangedWhileStarting = true
+                } else {
+                    self.running = false
+                    self.paused = false
+                }
+                // The device may come back at another rate: the next start reads it again.
+                let box = self.box
+                self.startQueue.async { box.forgetDevice() }
+            }
+        }
+    }
+
+    nonisolated static func format(rate: Double) -> AVAudioFormat {
+        AVAudioFormat(standardFormatWithSampleRate: rate, channels: 1)!
+    }
+
+    /// Every built-in sound, computed at `format`'s rate.
+    nonisolated static func synthesize(_ format: AVAudioFormat) -> [String: AVAudioPCMBuffer] {
+        var made: [String: AVAudioPCMBuffer] = [:]
         for profile in ClickySwitch.allCases {
             for release in [false, true] {
                 for variant in 0..<3 {
-                    let samples = ClickySynthesis.samples(profile: profile, release: release, variant: variant)
+                    let samples = ClickySynthesis.samples(profile: profile, release: release, variant: variant,
+                                                          sampleRate: format.sampleRate)
                     let buffer = AVAudioPCMBuffer(pcmFormat: format, frameCapacity: AVAudioFrameCount(samples.count))!
                     buffer.frameLength = buffer.frameCapacity
                     samples.withUnsafeBufferPointer { pointer in
                         buffer.floatChannelData![0].update(from: pointer.baseAddress!, count: samples.count)
                     }
-                    buffers[key(profile, release, variant)] = buffer
+                    made[key(profile, release, variant)] = buffer
                 }
             }
         }
-        // A hardware change stops the engine without telling `running`; the next click must start it again.
-        NotificationCenter.default.addObserver(forName: .AVAudioEngineConfigurationChange, object: engine, queue: .main) { [weak self] _ in
-            MainActor.assumeIsolated {
-                guard let self else { return }
-                if self.starting { self.configChangedWhileStarting = true } else { self.running = false }
+        return made
+    }
+
+    /// A pack's 48 kHz samples as buffers in `format`, converted once when the output runs at another rate.
+    static func buffers(_ samples: [String: ClickyPreparedSample], format: AVAudioFormat) throws -> [String: AVAudioPCMBuffer] {
+        var decoded: [String: AVAudioPCMBuffer] = [:]
+        var unique: [String: AVAudioPCMBuffer] = [:]
+        for (name, sample) in samples {
+            if let existing = unique[sample.sha256] {
+                decoded[name] = existing
+                continue
+            }
+            guard let buffer = convert(sample.frames, to: format) else {
+                throw ClickyPackError.invalid("This sound pack could not allocate an audio buffer.")
+            }
+            decoded[name] = buffer
+            unique[sample.sha256] = buffer
+        }
+        return decoded
+    }
+
+    private static func convert(_ frames: [Float], to format: AVAudioFormat) -> AVAudioPCMBuffer? {
+        let source = Self.format(rate: ClickySynthesis.sampleRate)
+        guard let input = AVAudioPCMBuffer(pcmFormat: source, frameCapacity: AVAudioFrameCount(max(1, frames.count))),
+              let channel = input.floatChannelData?[0] else { return nil }
+        input.frameLength = AVAudioFrameCount(frames.count)
+        frames.withUnsafeBufferPointer { pointer in
+            if let base = pointer.baseAddress { channel.update(from: base, count: pointer.count) }
+        }
+        guard format.sampleRate != source.sampleRate else { return input }
+        guard let converter = AVAudioConverter(from: source, to: format) else { return nil }
+        converter.sampleRateConverterQuality = AVAudioQuality.max.rawValue
+        let capacity = AVAudioFrameCount((Double(frames.count) * format.sampleRate / source.sampleRate).rounded(.up)) + 64
+        guard let output = AVAudioPCMBuffer(pcmFormat: format, frameCapacity: capacity) else { return nil }
+        var fed = false
+        var error: NSError?
+        let status = converter.convert(to: output, error: &error) { _, outStatus in
+            if fed {
+                outStatus.pointee = .endOfStream
+                return nil
+            }
+            fed = true
+            outStatus.pointee = .haveData
+            return input
+        }
+        return status == .error ? nil : output
+    }
+
+    /// The output runs at a new rate: every sound again at that rate, before the waiting click plays.
+    private func adopt(_ next: AVAudioFormat, synthesized: [String: AVAudioPCMBuffer]?) {
+        guard next.sampleRate != format.sampleRate else { return }
+        format = next
+        buffers = synthesized ?? Self.synthesize(next)
+        for index in banks.indices {
+            if let converted = try? Self.buffers(banks[index].samples, format: next) {
+                banks[index].buffers = converted
             }
         }
+        PerfLog.mark(String(format: "clicky.audio.rate %.0f Hz", next.sampleRate))
     }
 
     func play(profile: ClickySwitch, release: Bool, preferences: ClickyPreferences, pan: Float) throws {
         let variant = preferences.randomizedPitch ? Int.random(in: 0..<3) : 1
-        guard let buffer = buffers[key(profile, release, variant)] else { return }
-        try schedule(buffer, preferences: preferences, pan: pan, gain: 1, pitchVariation: 0.05)
+        let key = Self.key(profile, release, variant)
+        guard buffers[key] != nil else { return }
+        // Looked up when it plays: a start that changed the output rate makes the sounds again first.
+        try schedule({ [weak self] in self?.buffers[key] }, preferences: preferences, pan: pan, gain: 1, pitchVariation: 0.05)
     }
 
-    private func schedule(_ buffer: AVAudioPCMBuffer, preferences: ClickyPreferences, pan: Float, gain: Float, pitchVariation: Float) throws {
+    private func schedule(_ buffer: @escaping () -> AVAudioPCMBuffer?, preferences: ClickyPreferences, pan: Float, gain: Float,
+                          pitchVariation: Float) throws {
         guard preferences.volume > 0 else { return }
+        idlePause?.cancel()
         idleStop?.cancel()
         // Offline rendering (tests) starts at once: no hardware to wake.
         if !running, !starting, engine.isInManualRenderingMode {
-            try box.start()
+            adopt(try box.start(), synthesized: nil)
             running = true
+            paused = false
         }
         guard running else {
             pendingClick = { [weak self] in
-                try? self?.play(buffer, preferences: preferences, pan: pan, gain: gain, pitchVariation: pitchVariation)
+                guard let current = buffer() else { return }
+                try? self?.play(current, preferences: preferences, pan: pan, gain: gain, pitchVariation: pitchVariation)
             }
             startEngine()
             return
         }
-        try play(buffer, preferences: preferences, pan: pan, gain: gain, pitchVariation: pitchVariation)
+        guard let current = buffer() else { return }
+        try play(current, preferences: preferences, pan: pan, gain: gain, pitchVariation: pitchVariation)
     }
 
     private func startEngine() {
@@ -241,18 +355,26 @@ final class ClickyAudio {
         guard !starting else { return }
         starting = true
         let box = box
+        let resumed = paused
+        let rate = format.sampleRate
         startQueue.async {
             let begun = Date()
             var failure: Error?
-            do { try box.start() } catch { failure = error }
+            var started: AVAudioFormat?
+            do { started = try box.start() } catch { failure = error }
             let ms = Date().timeIntervalSince(begun) * 1000
+            // A new rate: the sounds are made here too, off the main thread.
+            let synthesized = started.flatMap { $0.sampleRate == rate ? nil : ClickyAudio.synthesize($0) }
             DispatchQueue.main.async { [weak self] in
                 MainActor.assumeIsolated {
                     guard let self else { return }
                     self.starting = false
                     self.running = failure == nil
+                    self.paused = false
+                    if let started { self.adopt(started, synthesized: synthesized) }
                     let completion = self.startState.complete()
-                    PerfLog.mark(String(format: "clicky.audio.start %.1fms off-main", ms)
+                    PerfLog.mark(String(format: "clicky.audio.start %.1fms off-main%@ at %.0f Hz", ms, resumed ? " (resume)" : "",
+                                        started?.sampleRate ?? rate)
                         + (failure.map { " failed: \($0.localizedDescription)" } ?? ""))
                     if self.configChangedWhileStarting {
                         // The engine stopped during the start: start it again before the waiting click plays.
@@ -290,11 +412,28 @@ final class ClickyAudio {
         voice.1.rate = preferences.randomizedPitch ? Float.random(in: (1 - pitchVariation)...(1 + pitchVariation)) : 1
         voice.0.scheduleBuffer(buffer, at: nil, options: .interrupts)
         if !voice.0.isPlaying { voice.0.play() }
+        let pause = DispatchWorkItem { [weak self] in
+            MainActor.assumeIsolated { self?.pauseEngine() }
+        }
         let stop = DispatchWorkItem { [weak self] in
             MainActor.assumeIsolated { self?.stopVoices() }
         }
+        idlePause = pause
+        DispatchQueue.main.asyncAfter(deadline: .now() + Self.pauseAfter, execute: pause)
+        guard idleRelease > 0 else { return }
         idleStop = stop
-        DispatchQueue.main.asyncAfter(deadline: .now() + 3, execute: stop)
+        DispatchQueue.main.asyncAfter(deadline: .now() + max(Self.pauseAfter, idleRelease), execute: stop)
+    }
+
+    /// No render while idle; the output unit and the wiring stay, so the next click resumes quickly.
+    private func pauseEngine() {
+        idlePause = nil
+        guard running, !starting, !engine.isInManualRenderingMode else { return }
+        running = false
+        paused = true
+        let engine = engine
+        // On the start queue, in order with a resume that a click right after queues behind it.
+        startQueue.async { engine.pause() }
     }
 
     func stop() {
@@ -303,6 +442,8 @@ final class ClickyAudio {
     }
 
     private func stopVoices() {
+        idlePause?.cancel()
+        idlePause = nil
         idleStop?.cancel()
         idleStop = nil
         // A start in flight finishes first; the engine stops right after it.
@@ -311,13 +452,14 @@ final class ClickyAudio {
             return
         }
         // Never started: the voices are not wired yet, and a player outside an engine raises on stop.
-        guard running else { return }
+        guard running || paused else { return }
         running = false
+        paused = false
         for voice in voices { voice.0.stop() }
         engine.stop()
     }
 
-    private func key(_ profile: ClickySwitch, _ release: Bool, _ variant: Int) -> String {
+    nonisolated private static func key(_ profile: ClickySwitch, _ release: Bool, _ variant: Int) -> String {
         "\(profile.rawValue)-\(release)-\(variant)"
     }
 }

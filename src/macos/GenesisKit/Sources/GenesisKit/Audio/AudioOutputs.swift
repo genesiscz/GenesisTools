@@ -28,6 +28,11 @@ public struct AudioOutputDevice: Identifiable, Hashable, Sendable {
 
     public var isBuiltIn: Bool { transport == kAudioDeviceTransportTypeBuiltIn }
 
+    /// Bluetooth headphones or speakers (AirPods), classic or Low Energy.
+    public var isBluetooth: Bool {
+        transport == kAudioDeviceTransportTypeBluetooth || transport == kAudioDeviceTransportTypeBluetoothLE
+    }
+
     /// "2.0 s late" or "27 ms late".
     public var delayText: String { Self.delayText(delay) }
 
