@@ -233,7 +233,8 @@ export function optionLetters(option: string | undefined | null): string[] {
  * the line's own pick prefix does not repeat it: "b) b) build it first" reached a session on 2026-10-26.
  */
 function optionLabel(label: string, letter: string): string {
-    const prefix = new RegExp(`^\\(?${letter}[).:](?:\\s+|$)`, "i");
+    const escapedLetter = letter.replace(/[.*+?^${}()|[\]\\]/g, "\\$&");
+    const prefix = new RegExp(`^\\s*\\(?${escapedLetter}[).:](?:\\s+|$)`, "i");
     return label.replace(prefix, "");
 }
 
@@ -246,7 +247,12 @@ export function decisionLine(row: DecisionRecord): string {
             return label ? optionLabel(label, letter) : undefined;
         })
         .filter(Boolean);
-    const text = row.answer?.trim() || labels.join(" / ");
+    const explicitAnswer = row.answer?.trim();
+    const [singleLetter] = letters;
+    const text =
+        explicitAnswer && letters.length === 1 && singleLetter
+            ? optionLabel(explicitAnswer, singleLetter)
+            : explicitAnswer || labels.join(" / ");
     const picks = letters.map((letter) => `${letter}) `).join("");
 
     const answer = `${picks}${text}`.trimEnd();

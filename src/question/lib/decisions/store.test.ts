@@ -706,6 +706,26 @@ describe("decision kinds, batch updates, harvest and staleness", () => {
         expect(decisionLine({ ...row, option: undefined })).toBe("DECISION 4: keep, and log it");
     });
 
+    test("a single selected option is not repeated in an explicit answer", () => {
+        const row = {
+            ...foreignRow("abc", 4),
+            options: ["keep", "build", "path"],
+            state: "answered" as const,
+            option: "b",
+            answer: "b) build it",
+        };
+
+        expect(deliverDecisions([row], () => undefined).text).toBe("DECISION 4: b) build it");
+        expect(decisionLine({ ...row, answer: "  B. build it  " })).toBe("DECISION 4: b) build it");
+        expect(decisionLine({ ...row, answer: "build it" })).toBe("DECISION 4: b) build it");
+        expect(decisionLine({ ...row, answer: "a) keep" })).toBe("DECISION 4: b) a) keep");
+        expect(decisionLine({ ...row, option: "ab", answer: "b) build it" })).toBe("DECISION 4: a) b) b) build it");
+        expect(decisionLine({ ...row, option: undefined })).toBe("DECISION 4: b) build it");
+        expect(decisionLine({ ...row, option: "a", answer: "a.ts" })).toBe("DECISION 4: a) a.ts");
+        expect(decisionLine({ ...row, option: "c", answer: "C:\\work\\repo" })).toBe("DECISION 4: c) C:\\work\\repo");
+        expect(decisionLine({ ...row, answer: undefined })).toBe("DECISION 4: b) build");
+    });
+
     test("an option the agent lettered itself is not lettered twice", () => {
         const row = {
             ...foreignRow("abc", 23),
@@ -721,6 +741,34 @@ describe("decision kinds, batch updates, harvest and staleness", () => {
         expect(decisionsMarkdown([{ ...row, option: undefined, recommended: "b" }])).toContain(
             "- a) run it now\n- b) build the tool first, then run it for today (recommended)"
         );
+    });
+
+    test("indented lettered options are not lettered twice, while literal labels stay intact", () => {
+        const row = {
+            ...foreignRow("abc", 23),
+            options: ["  a) run it", "\tB. later", "  C:\\work\\repo"],
+        };
+
+        expect(decisionsMarkdown([row])).toContain("- a) run it\n- b) later\n- c)   C:\\work\\repo");
+        expect(decisionLine({ ...row, option: "a" })).toBe("DECISION 23: a) run it");
+        expect(decisionLine({ ...row, option: "b" })).toBe("DECISION 23: b) later");
+        expect(decisionLine({ ...row, option: "c" })).toBe("DECISION 23: c)   C:\\work\\repo");
+
+        const literal = { ...row, options: ["  a.ts"] };
+        expect(decisionsMarkdown([literal])).toContain("- a)   a.ts");
+        expect(decisionLine({ ...literal, option: "a" })).toBe("DECISION 23: a)   a.ts");
+    });
+
+    test("markdown treats generated option letters as literal characters", () => {
+        const options = Array.from({ length: 65480 }, () => "ordinary");
+        options[0] = "a) run it";
+        options[27] = "(keep)";
+        options[65479] = "(wrap target";
+
+        const markdown = decisionsMarkdown([{ ...foreignRow("abc", 23), options }]);
+        expect(markdown).toContain("- a) run it");
+        expect(markdown).toContain("- |) (keep)");
+        expect(markdown).toContain("- () (wrap target");
     });
 
     for (const [option, label] of [
