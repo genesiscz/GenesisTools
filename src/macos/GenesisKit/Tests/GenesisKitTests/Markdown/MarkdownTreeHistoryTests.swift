@@ -15,6 +15,12 @@ final class MarkdownTreeHistoryTests: XCTestCase {
             FileTreeRow(id: "/vault/Tasks.base", name: "Tasks.base", isFolder: false, depth: 0),
         ]
         XCTAssertEqual(MarkdownFileTreeView.noteRows(rows).map(\.name), ["Design", "Plan.md", "Board.canvas", "Tasks.base"])
+        // A revealed or selected picture stays, so "Show in Sidebar" on its tab finds the row.
+        XCTAssertEqual(MarkdownFileTreeView.noteRows(rows, keep: ["/vault/Design/shot.png"]).map(\.name),
+                       ["Design", "Plan.md", "shot.png", "Board.canvas", "Tasks.base"])
+        let memo = MarkdownNoteRowsMemo()
+        XCTAssertEqual(memo.rows(rows, keep: []).count, 4)
+        XCTAssertEqual(memo.rows(rows, keep: ["/vault/data.json"]).count, 5, "a new kept path is not served from the old answer")
     }
 
     private func place(_ root: String, _ open: Set<String> = [], _ y: Double = 0) -> MarkdownTreePlace {
