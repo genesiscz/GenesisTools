@@ -4,9 +4,12 @@
 // that exists, a commit the repository has, a decision asked in an earlier message. Every transform and every
 // candidate it rejected goes to `mods-log/links.jsonl` with the reason, to tune the heuristics from real replies.
 // A genesis.tools link (a note, a folder, a commit in the hub, a decision) is written only when this Mac opens it
-// (`genesis.ts`); else a note gets its plain path and a folder, a commit or a decision stays text.
+// (`genesis.ts`); else a note gets its plain path and a folder, a commit or a decision stays text. A commit links into
+// the PR that holds it when `tools hub link` names one (`commit-links.ts`), in GitHub and GitLab checkouts alike, and a
+// hub link the reply built by hand gets its `&amp;` undone and its problems logged as `bad-hub-link`.
 import type { HookStream, TurnStepChunk, TurnStepInput, TurnStepResult } from "claude-code";
-import { decisionLink, encodePath, finderLink, type GenesisProbe, genesisProbe, hubLink, mdLink } from "./genesis";
+import { COMMIT, checkHubLink, commitLink, type ForgeProject, forgeProject } from "./commit-links";
+import { decisionLink, encodePath, finderLink, type GenesisProbe, genesisProbe, mdLink } from "./genesis";
 import { type Host, isRecord, logMod } from "./shared";
 
 const DOC = new Set(["md", "mdx", "json", "jsonl", "yaml", "yml", "toml", "log", "txt", "csv"]);
@@ -60,8 +63,6 @@ const ANY_EXT = new Set([
 /** A path as written: absolute or under the home, relative with a slash, or a bare name with a known extension. */
 const PATH =
     /(?:~\/|\/(?:Users|tmp|private|opt|var|Applications|Library|Volumes)\/)[^\s`'"()<>[\]|,;]+|(?:\.{1,2}\/)?(?:[\w@.+-]+\/)+[\w@.+-]*(?::\d+(?:-\d+)?)?|[\w@+-][\w@.+-]*\.[a-zA-Z][a-zA-Z0-9]{0,6}(?::\d+(?:-\d+)?)?/g;
-/** A commit: 7 to 12 hex characters with at least one digit and one letter. */
-const SHA = /\b(?=[0-9a-f]*\d)(?=[0-9a-f]*[a-f])[0-9a-f]{7,12}\b/g;
 const DECISION = /❓\s*DECISION\s+(\d+)/g;
 /** A pull request named by number: `#507`, not inside a word or a URL anchor. */
 const PR = /(?<![\w/#&])#(\d{1,6})\b/g;
@@ -74,7 +75,10 @@ export interface LinkContext {
     home: string;
     cwd: string;
     root: string | undefined;
+    /** The forge project's web path (`owner/repo`, `group/sub/app`): the `repo=` of a commit no PR holds. */
     repo: string | undefined;
+    /** The forge of the session's checkout; `#123` is linked through `gh` on GitHub only. */
+    project: ForgeProject | undefined;
     sessionId: string;
     askedBefore: Set<number>;
     probe: GenesisProbe;
@@ -224,7 +228,7 @@ export function takeLinkedPullRequestNote(): string | undefined {
 
 /** The PR's title and URL from `gh`, kept for the session; null for a number that is no PR of this repository. */
 async function pullRequest(ctx: LinkContext, n: string): Promise<{ title: string; url: string } | null> {
-    if (!ctx.root || !ctx.repo) {
+    if (!ctx.root || !ctx.repo || ctx.project?.kind !== "github") {
         return null;
     }
 
@@ -304,7 +308,7 @@ async function linkPlain(ctx: LinkContext, text: string): Promise<string> {
         hits.push({ start: match.index ?? 0, end: (match.index ?? 0) + match[0].length, kind: "pr", token: match[0] });
     }
 
-    for (const match of text.matchAll(SHA)) {
+    for (const match of text.matchAll(COMMIT)) {
         hits.push({ start: match.index ?? 0, end: (match.index ?? 0) + match[0].length, kind: "sha", token: match[0] });
     }
 
@@ -343,9 +347,21 @@ async function linkPlain(ctx: LinkContext, text: string): Promise<string> {
                 replacement = `[${hit.token}](${link})`;
             }
         } else if (hit.kind === "sha") {
-            const link = ctx.repo ? hubLink(ctx.probe, { repo: ctx.repo, commit: hit.token }) : undefined;
+            const ends = hit.token.split("..");
+            const root = ctx.root;
+            const known = root ? (await Promise.all(ends.map((end) => isCommit(ctx, end)))).every(Boolean) : false;
+            const link =
+                root && known
+                    ? await commitLink({
+                          host: ctx.host,
+                          probe: ctx.probe,
+                          root,
+                          project: ctx.project,
+                          spec: hit.token,
+                      })
+                    : undefined;
 
-            if (link && (await isCommit(ctx, hit.token))) {
+            if (link) {
                 const bold = text.slice(start - 2, start) === "**" && text.slice(end, end + 2) === "**";
                 start = bold ? start - 2 : start;
                 end = bold ? end + 2 : end;
@@ -391,6 +407,17 @@ export async function linkLine(ctx: LinkContext, line: string): Promise<string> 
         out += await linkPlain(ctx, line.slice(at, start));
         at = start + match[0].length;
 
+        const written = match[1] ?? match[2];
+        const url = match[1] ? /\]\(([^)\s]*)\)$/.exec(match[1])?.[1] : match[2];
+        const checked = written && url ? checkHubLink(url) : undefined;
+
+        if (written && url && checked && checked.problems.length > 0) {
+            const fixed = written.replace(url, checked.url);
+            ctx.log.push({ kind: "bad-hub-link", token: written, problems: checked.problems, link: fixed });
+            out += fixed;
+            continue;
+        }
+
         const code = match[3];
 
         if (code) {
@@ -428,10 +455,8 @@ async function contextOf(host: Host, messageCount: number): Promise<LinkContext>
               .run(["git", "-C", root, "remote", "get-url", "origin"], { timeoutMs: 3_000 })
               .catch(() => undefined)
         : undefined;
-    const repo =
-        origin?.exitCode === 0
-            ? /github\.com[:/]([^/\s]+\/[^/\s]+?)(?:\.git)?\s*$/.exec(origin.stdout)?.[1]
-            : undefined;
+    const project = origin?.exitCode === 0 ? forgeProject(origin.stdout) : undefined;
+    const repo = project?.path;
     const askedBefore = new Set<number>();
 
     for (const message of (await host.messages()).slice(0, messageCount)) {
@@ -444,7 +469,7 @@ async function contextOf(host: Host, messageCount: number): Promise<LinkContext>
         }
     }
 
-    return { host, home, cwd, root, repo, sessionId, askedBefore, probe: await genesisProbe(host), log: [] };
+    return { host, home, cwd, root, repo, project, sessionId, askedBefore, probe: await genesisProbe(host), log: [] };
 }
 
 /** Notes the absolute paths a tool call names, so a bare file name in a later reply finds its one path. */
