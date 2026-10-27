@@ -1,3 +1,4 @@
+import { decisionFindArgv } from "@app/claude/lib/cmux/transcript-find";
 import { execToolInteractive, runTool } from "@genesiscz/utils/cli";
 import { withInterrupt } from "@genesiscz/utils/cli/interrupt";
 import { SafeJSON } from "@genesiscz/utils/json";
@@ -68,16 +69,7 @@ widget
         }
 
         logger.info({ id }, "show-decision: no running widget, showing it in its chat");
-        const result = await execToolInteractive([
-            "claude",
-            "cmux",
-            "find",
-            "--decision",
-            number,
-            `--at=${options.at ?? ""}`,
-            "--",
-            session,
-        ]);
+        const result = await execToolInteractive(decisionFindArgv({ session, number, at: options.at }));
         process.exitCode = result.exitCode;
     });
 widget
