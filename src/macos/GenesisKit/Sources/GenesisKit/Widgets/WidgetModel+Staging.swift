@@ -32,13 +32,6 @@ extension WidgetModel {
                 return
             }
             saveDraft(card)
-        } else if card.kind == "decision", card.needsAnswer, draft.assetIds.isEmpty {
-            // The staged pick goes with the typed words, as Send now sends them; the outbox sent the words alone.
-            guard !text.isEmpty else {
-                postNote("Write your answer first.")
-                return
-            }
-            sendDecisionNow(card, option: nil, note: text)
         } else {
             submitOwnAnswer()
         }
@@ -103,11 +96,9 @@ extension WidgetModel {
               option: DecisionAnswering.nextPick(current, option, adding: adding), item: item)
     }
 
-    /// Sends `card`'s decision now the one way every decision send goes: stage the pick and the note, then
-    /// send-staged, as Send now does. The session card's send at once and its own answer's Send went through the
-    /// outbox, which took only the clicked letter or only the typed words and dropped the staged rest (decision
-    /// audit F8). `option` nil keeps the staged letters, `note` nil the staged note; typed words leave the composer
-    /// once the hub has them.
+    /// Sends a card's selected option by staging its pick and note, then sending the staged decision.
+    /// `option` nil keeps the staged letters, `note` nil keeps the staged note; typed words leave the composer
+    /// once the hub has them. Text-only own answers use the durable outbox and carry their staged pick there.
     func sendDecisionNow(_ card: WidgetCard, option: String?, note: String?) {
         guard let selected, let revision = card.revision else { return }
         let item = Self.inboxItem(card)
@@ -118,6 +109,7 @@ extension WidgetModel {
               completed: { [weak self] in
                   guard let self else { return }
                   self.pendingStage[card.sourceId] = nil
+                  self.pendingStageNotes[card.sourceId] = nil
                   if note != nil, self.selectedKey == key, self.draft.text == typed {
                       self.setText("")
                       if self.ownAnswerCardID == card.id { self.ownAnswerCardID = nil }
@@ -184,13 +176,16 @@ extension WidgetModel {
         item: WidgetInboxItem? = nil, completed: (() -> Void)? = nil
     ) {
         sendCloseRevision += 1
-        markPending(id, option ?? "", item: item)
+        markPending(id, option ?? "", item: item, note: note)
         var fields: [String: WidgetJSON] = [
             "action": "ledger", "id": .string(id), "sessionId": .string(sessionId),
             "expectedRevision": .number(Double(revision)), "state": "drafted", "draftOption": .string(option ?? ""),
         ]
         if let note { fields["draft"] = .string(note) }
-        action(.object(fields), failed: { [weak self] in self?.pendingStage[id] = nil }, completed: { [weak self] in
+        action(.object(fields), failed: { [weak self] in
+            self?.pendingStage[id] = nil
+            self?.pendingStageNotes[id] = nil
+        }, completed: { [weak self] in
             self?.pendingStageDone[id] = Date().timeIntervalSince1970 * 1000
             completed?()
         })
@@ -205,8 +200,9 @@ extension WidgetModel {
     nonisolated static let pendingStageUnansweredLifetime: TimeInterval = 60
 
     /// A pick or a clear (`""`) made here, shown at once until a snapshot shows the decision log has it.
-    func markPending(_ id: String, _ option: String, item: WidgetInboxItem? = nil) {
+    func markPending(_ id: String, _ option: String, item: WidgetInboxItem? = nil, note: String? = nil) {
         pendingStage[id] = option
+        if let note { pendingStageNotes[id] = note }
         pendingStageAt[id] = Date().timeIntervalSince1970 * 1000
         pendingStageDone[id] = nil
         if let item { pendingStageItems[id] = item }
@@ -219,7 +215,7 @@ extension WidgetModel {
         noteClearedPicks(before: stagedRows, after: staged, listed: listed)
         if staged != stagedRows { stagedRows = staged }
         refreshPeekStaging(staged)
-        let shown = Dictionary(items.map { ($0.sourceId, (pick: $0.draftOption ?? "", at: $0.updatedAt ?? 0)) },
+        let shown = Dictionary(items.map { ($0.sourceId, (pick: $0.draftOption ?? "", note: $0.draft, at: $0.updatedAt ?? 0)) },
                                uniquingKeysWith: { first, _ in first })
         let now = Date().timeIntervalSince1970 * 1000
         for (id, option) in pendingStage {
@@ -227,7 +223,7 @@ extension WidgetModel {
             // Shown as picked here (a decision the list no longer holds shows no pick, so a pending unstage "" is
             // done); or the row changed after this pick landed, so another surface or a revision wrote it since; or
             // no snapshot confirmed the pick in time.
-            let confirmed = (row?.pick ?? "") == option
+            let confirmed = (row?.pick ?? "") == option && (pendingStageNotes[id].map { row?.note == $0 } ?? true)
             let overtaken = pendingStageDone[id].map { done in (row?.at ?? 0) > done } ?? false
             let expired = pendingStageDone[id].map { done in now - done > Self.pendingStageLifetime * 1000 }
                 ?? pendingStageAt[id].map { asked in now - asked > Self.pendingStageUnansweredLifetime * 1000 }
@@ -240,6 +236,7 @@ extension WidgetModel {
         pendingStageAt = pendingStageAt.filter { pendingStage[$0.key] != nil }
         pendingStageDone = pendingStageDone.filter { pendingStage[$0.key] != nil }
         pendingStageItems = pendingStageItems.filter { pendingStage[$0.key] != nil }
+        pendingStageNotes = pendingStageNotes.filter { pendingStage[$0.key] != nil }
     }
 
     /// A staged pick the agent's new text cleared (a revision drops the staged pick, since it was made on the old
@@ -405,7 +402,10 @@ extension WidgetModel {
     public func discardStaged(_ ids: [String], completed: (() -> Void)? = nil) {
         guard !ids.isEmpty else { return }
         sendCloseRevision += 1
-        for id in ids { markPending(id, "") }
+        for id in ids {
+            pendingStageNotes[id] = nil
+            markPending(id, "")
+        }
         action(["action": "unstage", "ids": .array(ids.map { .string($0) })], failed: { [weak self] in
             for id in ids { self?.pendingStage[id] = nil }
             completed?()
@@ -440,12 +440,19 @@ extension WidgetModel {
     public var stagedForLeave: [WidgetInboxItem] {
         let listed = Set(stagedItems.map(\.sourceId))
         let pending = pendingStage.compactMap { id, option -> WidgetInboxItem? in
-            guard !option.isEmpty, !listed.contains(id), !heldDecisionIDs.contains(id),
-                  var item = pendingStageItems[id] else { return nil }
-            item.draftOption = option
+            guard (!option.isEmpty || pendingStageNotes[id]?.isEmpty == false), !listed.contains(id),
+                  !heldDecisionIDs.contains(id), var item = pendingStageItems[id] else { return nil }
+            item.draftOption = option.isEmpty ? nil : option
+            if let note = pendingStageNotes[id] { item.draft = note }
             return item
         }
-        return stagedItems.filter { pendingStage[$0.sourceId] != "" } + pending.sorted { $0.at < $1.at }
+        let listedItems = stagedItems.compactMap { item -> WidgetInboxItem? in
+            guard pendingStage[item.sourceId] != "" || pendingStageNotes[item.sourceId]?.isEmpty == false else { return nil }
+            var fresh = item
+            if pendingStage[item.sourceId] != nil, let note = pendingStageNotes[item.sourceId] { fresh.draft = note }
+            return fresh
+        }
+        return listedItems + pending.sorted { $0.at < $1.at }
     }
 
     /// The answer to the leave question: "send", "keep" or "discard". Keep and Discard close the panel at once;

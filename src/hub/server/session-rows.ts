@@ -51,6 +51,7 @@ export async function answerSessionRows(request: SessionRowsRequest): Promise<Se
 
 /** How long the worker stays after its last answer, keeping its transcript caches warm for the next refresh. */
 const IDLE_MS = 10 * 60_000;
+const JOB_TIMEOUT_MS = 5 * 60_000;
 
 /**
  * Runs the session rows rebuild on one resident worker thread, off the server's event loop: a 20 to 70 s rebuild under
@@ -70,6 +71,7 @@ export class SessionRowsRunner {
             createWorker?: () => RowsWorker;
             inline?: (job: SessionRowsJob) => Promise<string>;
             idleMs?: number;
+            jobTimeoutMs?: number;
         } = {}
     ) {}
 
@@ -102,14 +104,31 @@ export class SessionRowsRunner {
         clearTimeout(this.idle);
         const id = ++this.sequence;
         return new Promise<string>((resolve, reject) => {
+            const deadline = setTimeout(() => {
+                if (this.worker !== worker) {
+                    return;
+                }
+                this.worker = undefined;
+                worker.terminate();
+                this.failPending("the session rows worker job timed out");
+            }, this.options.jobTimeoutMs ?? JOB_TIMEOUT_MS);
+            deadline.unref?.();
             this.pending.set(id, (reply) => {
+                clearTimeout(deadline);
                 if (reply.ok) {
                     resolve(reply.text);
                 } else {
                     reject(new Error(reply.error));
                 }
             });
-            worker.postMessage({ id, traceId, ...job } satisfies SessionRowsRequest);
+            try {
+                worker.postMessage({ id, traceId, ...job } satisfies SessionRowsRequest);
+            } catch (error) {
+                this.pending.delete(id);
+                clearTimeout(deadline);
+                reject(error);
+                this.armIdle();
+            }
         });
     }
 
@@ -124,12 +143,18 @@ export class SessionRowsRunner {
             // The worker never keeps the server alive: the server's own idle drain decides when it exits.
             worker.unref?.();
             worker.onmessage = (event: MessageEvent<SessionRowsReply>) => {
+                if (this.worker !== worker) {
+                    return;
+                }
                 const answer = this.pending.get(event.data.id);
                 this.pending.delete(event.data.id);
                 answer?.(event.data);
                 this.armIdle();
             };
             worker.onerror = (event) => {
+                if (this.worker !== worker) {
+                    return;
+                }
                 log.warn(
                     { error: event.message },
                     "hub server: the session rows worker failed; the next ask starts one"

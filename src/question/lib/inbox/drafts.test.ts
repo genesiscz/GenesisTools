@@ -3,6 +3,7 @@ import { mkdtempSync, writeFileSync } from "node:fs";
 import { tmpdir } from "node:os";
 import { join } from "node:path";
 import { SafeJSON } from "@genesiscz/utils/json";
+import { withFileLock } from "@genesiscz/utils/storage/file-lock";
 import { answerGitWithoutSpawning } from "@genesiscz/utils/test/no-git";
 import { deliverDecisions, parseDecisionBlocks } from "../decisions/read";
 import {
@@ -88,6 +89,45 @@ describe("draftDecision", () => {
         const deps = { file, events, block: async () => block() };
 
         await expect(draftDecision({ session: "s", number: 1, option: "c" }, deps)).rejects.toThrow("options a-b");
+    });
+
+    test("a competing revision wins the lock before a stale pick or dismiss", async () => {
+        for (const action of ["draft", "dismiss"] as const) {
+            const { file, events } = scratch();
+            const [row] = await postDecisions(file, events, {
+                sessionId: "s",
+                decisions: [{ prompt: "Original?", options: ["keep", "drop"] }],
+            });
+            const deps = { file, events, block: async () => block() };
+            let pending: Promise<DecisionRecord> | undefined;
+            await withFileLock(file + ".lock", async () => {
+                // Each call reads revision 1 synchronously, then waits for this lock.
+                pending =
+                    action === "draft"
+                        ? draftDecision({ session: "s", number: 1, option: "a", expectedRevision: 1 }, deps)
+                        : dismissDecision({ session: "s", number: 1, expectedRevision: 1 }, deps);
+                pending.catch(() => undefined);
+                writeFileSync(
+                    file,
+                    SafeJSON.stringify({
+                        ...row,
+                        prompt: "Revised?",
+                        revision: 2,
+                        state: "drafted",
+                        draftOption: "b",
+                        draft: "new revision note",
+                    }) + "\n"
+                );
+            });
+            await expect(pending).rejects.toThrow("DECISION 1 changed");
+            expect(readDecisions(file)[0]).toMatchObject({
+                prompt: "Revised?",
+                revision: 2,
+                state: "drafted",
+                draftOption: "b",
+                draft: "new revision note",
+            });
+        }
     });
 
     test("a pick or a dismiss on text the agent re-posted since is refused; on the current text it lands", async () => {

@@ -8,7 +8,7 @@ import { physFootprintBytes } from "@genesiscz/utils/process/footprint";
 import { profiler } from "@genesiscz/utils/profile";
 import { withFileLock } from "@genesiscz/utils/storage/file-lock";
 import { withTraceId } from "@genesiscz/utils/trace";
-import { type Door, doorlessPrefix } from "./doors/types";
+import { type Door, DoorUnsupported, doorlessPrefix } from "./doors/types";
 import { type CallResult, type EndReason, type HubServerHealth, LineBuffer, parseRequest } from "./protocol";
 
 const log = logger.child({ component: "hub-server" });
@@ -216,12 +216,22 @@ async function startHubServerOwned(options: HubServerOptions): Promise<HubServer
                 );
             });
             let result: CallResult;
+            let fallback = false;
             try {
                 result = await Promise.race([door.run(parsed, { signal: controller.signal }), timeout, cancelled]);
             } catch (error) {
-                errors++;
-                log.warn({ error, door: door.name }, "hub server door threw");
-                result = { stdout: "", stderr: `${error instanceof Error ? error.message : String(error)}\n`, exit: 1 };
+                if (error instanceof DoorUnsupported) {
+                    fallback = true;
+                    result = { stdout: "", stderr: "", exit: 0 };
+                } else {
+                    errors++;
+                    log.warn({ error, door: door.name }, "hub server door threw");
+                    result = {
+                        stdout: "",
+                        stderr: `${error instanceof Error ? error.message : String(error)}\n`,
+                        exit: 1,
+                    };
+                }
             } finally {
                 clearTimeout(timer);
             }
@@ -249,6 +259,10 @@ async function startHubServerOwned(options: HubServerOptions): Promise<HubServer
                 "hub server call"
             );
             if (!owed) {
+                return;
+            }
+            if (fallback) {
+                send(connection, unsupported(id, argv));
                 return;
             }
 

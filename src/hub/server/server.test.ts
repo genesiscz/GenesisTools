@@ -12,7 +12,7 @@ import { proposalListDoor, repoDoor, usageSessionsDoor } from "./doors/frequent"
 import { HUB_SERVER_DOORS } from "./doors/index";
 import { navConfigureDoor, navListDoor, navRecordDoor } from "./doors/nav";
 import { transcriptFetchDoor, transcriptLiveDoor } from "./doors/transcript";
-import { type CallDoor, doorlessPrefix, type StreamDoor } from "./doors/types";
+import { type CallDoor, DoorUnsupported, doorlessPrefix, type StreamDoor } from "./doors/types";
 import { widgetCallDoor, widgetContextDoor, widgetTasksListDoor } from "./doors/widget";
 import { ensureHubServer } from "./ensure";
 import { LineBuffer } from "./protocol";
@@ -448,31 +448,55 @@ describe("hub server argv", () => {
         expect(listed.stdout).toContain('"door-entry"');
     });
 
-    it("hub widget call: a state action from the request file; a send, a capture or an unreadable file runs as a process", () => {
+    it("hub widget call reads bounded regular files asynchronously and keeps process fallback", async () => {
         const dir = mkdtempSync(join(tmpdir(), "hub-door-widget-"));
-        const request = (body: unknown): string => {
-            const path = join(dir, `${Math.random().toString(36).slice(2)}.json`);
-            writeFileSync(path, SafeJSON.stringify(body, { strict: true }));
-            return path;
-        };
+        const request = join(dir, "request.json");
+        const fifo = join(dir, "pipe");
+        expect(Bun.spawnSync(["mkfifo", fifo], { env: process.env }).exitCode).toBe(0);
         const call = (path: string) => widgetCallDoor.match(["hub", "widget", "call", "--input", path]);
-        expect(call(request({ action: "selection", key: null }))).toEqual({ action: "selection", key: null });
-        expect(call(request({ action: "send-staged", ids: ["d1"], targets: {} }))).toBeNull();
-        expect(call(request({ action: "capture", key: "claude:s1" }))).toBeNull();
-        expect(call(request({ action: "append-draft", key: "claude:s1", text: "x" }))).toBeNull();
-        expect(call(join(dir, "missing.json"))).toBeNull();
-        expect(widgetCallDoor.match(["hub", "widget", "call", "--input", "relative.json"])).toBeNull();
-        expect(
-            widgetCallDoor.match([
-                "hub",
-                "widget",
-                "--state-root",
-                dir,
-                "call",
-                "--input",
-                request({ action: "read", id: "x" }),
-            ])
-        ).toBeNull();
+        const signal = new AbortController().signal;
+        expect(call("relative.json")).toBeNull();
+        expect(widgetCallDoor.match(["hub", "widget", "--state-root", dir, "call", "--input", request])).toBeNull();
+        expect(call(request)).toBe(request);
+        const fifoResult = await widgetCallDoor.run(fifo, { signal });
+        expect(fifoResult.exit).toBe(1);
+        expect(fifoResult.stderr).toContain("regular file");
+        writeFileSync(request, "x".repeat(1024 * 1024 + 1));
+        expect((await widgetCallDoor.run(request, { signal })).exit).toBe(1);
+        writeFileSync(request, SafeJSON.stringify({ action: "capture" }, { strict: true }));
+        await expect(widgetCallDoor.run(request, { signal })).rejects.toBeInstanceOf(DoorUnsupported);
+        writeFileSync(request, SafeJSON.stringify({ action: "selection", key: null }, { strict: true }));
+        expect((await widgetCallDoor.run(request, { signal })).exit).toBe(0);
+    });
+
+    it("a FIFO request does not block unrelated server calls", async () => {
+        const dir = mkdtempSync(join(tmpdir(), "hub-door-fifo-"));
+        const fifo = join(dir, "pipe");
+        expect(Bun.spawnSync(["mkfifo", fifo], { env: process.env }).exitCode).toBe(0);
+        const request = join(dir, "request.json");
+        writeFileSync(request, SafeJSON.stringify({ action: "capture" }, { strict: true }));
+        const socketPath = join(dir, "server.sock");
+        const handle = await startHubServer({
+            socketPath,
+            doors: [widgetCallDoor, echoDoor],
+            maxFootprintBytes: Number.MAX_SAFE_INTEGER,
+            idleMs: 0,
+            checkEveryMs: 60_000,
+            callTimeoutMs: 1000,
+        });
+        if (!handle) {
+            throw new Error("server did not start");
+        }
+        servers.push(handle);
+        const client = await connect(socketPath);
+        client.send({ id: 1, op: "call", argv: ["hub", "widget", "call", "--input", fifo], timeoutMs: 500 });
+        client.send({ id: 2, op: "call", argv: ["echo", "alive"] });
+        client.send({ id: 3, op: "call", argv: ["hub", "widget", "call", "--input", request] });
+        const answers = [await client.next(), await client.next(), await client.next()];
+        expect(answers.find((answer) => answer.id === 1)).toMatchObject({ exit: 1 });
+        expect(answers.find((answer) => answer.id === 2)).toMatchObject({ exit: 0, stdout: "alive\n" });
+        expect(answers.find((answer) => answer.id === 3)).toMatchObject({ ok: false, code: "unsupported" });
+        client.socket.end();
     });
 
     it("hub widget context and tasks list: the widget's shapes, the CLI's defaults", () => {
@@ -561,6 +585,28 @@ describe("SessionRowsRunner", () => {
             // Left running: stop() below fails it.
             runner.run(job).catch(() => undefined);
             expect(workers[0].requests).toHaveLength(3);
+        } finally {
+            runner.stop();
+        }
+    });
+
+    it("expires a silent worker and allows a fresh rebuild", async () => {
+        const { workers, createWorker } = fakeWorkers();
+        const runner = new SessionRowsRunner({ createWorker, jobTimeoutMs: 20 });
+        try {
+            const first = runner.run(job);
+            const second = runner.run(job);
+            const failures = await Promise.allSettled([first, second]);
+            expect(failures.map((result) => result.status)).toEqual(["rejected", "rejected"]);
+            expect(workers[0].terminated).toBe(true);
+            const next = runner.run(job);
+            expect(workers).toHaveLength(2);
+            workers[1].onmessage?.(
+                new MessageEvent("message", {
+                    data: { id: workers[1].requests[0].id, ok: true, text: "fresh\n" },
+                })
+            );
+            expect(await next).toBe("fresh\n");
         } finally {
             runner.stop();
         }

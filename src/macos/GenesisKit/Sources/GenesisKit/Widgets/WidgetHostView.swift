@@ -614,7 +614,7 @@ struct WidgetPeekView: View {
     private func open(ownAnswer: Bool = false) {
         guard let surface = model.hoveredSurface else { return }
         if isReminder {
-            model.dismissPeek()
+            model.endPeek(advance: false)
             model.openStaged(on: surface)
             return
         }

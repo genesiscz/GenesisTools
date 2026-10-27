@@ -260,7 +260,8 @@ public final class WidgetCoordinator: NSObject, NSWindowDelegate {
             + (model.snapshot?.notifications?.staged ?? [])
         PerfLog.mark("widget.show-decision \(id) listed=\(items.contains { $0.sourceId == id })")
         if let item = items.first(where: { $0.sourceId == id }) {
-            popUp(item, with: [item], preferences: model.snapshot?.state.preferences, seconds: 0)
+            openSession(item.key)
+            model.openDecision(id: id, sessionKey: item.key)
             return
         }
         let sessionID = id.split(separator: "_", maxSplits: 2).dropFirst(2).first.map(String.init) ?? id
@@ -333,6 +334,9 @@ public final class WidgetCoordinator: NSObject, NSWindowDelegate {
         if let shutdownTask { await shutdownTask.value; return }
         let task = Task { [self] in
             stop()
+            if !(await model.waitForShutdownMutations()) {
+                PerfLog.mark("widget shutdown: queued writes did not finish within 4 seconds")
+            }
             // A shelf item removed during its Undo is removed before the app quits, or it is back on the next launch.
             await shelf?.waitForRemoval()
             await voiceNotes?.shutdown()

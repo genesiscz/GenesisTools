@@ -1,5 +1,5 @@
 import { existsSync, mkdirSync, readFileSync, writeFileSync } from "node:fs";
-import { dirname, join } from "node:path";
+import { dirname, join, resolve } from "node:path";
 import { env } from "@genesiscz/utils/env";
 import { SafeJSON } from "@genesiscz/utils/json";
 import { logger } from "@genesiscz/utils/logger";
@@ -108,6 +108,24 @@ function readTextOrNull(path: string): string | null {
 
         return null;
     }
+}
+
+/** The data root actually watched by a live widget; a requested root never silently selects another widget. */
+export function runningWidgetRoot({
+    root,
+    deps = {},
+}: {
+    root?: string;
+    deps?: NativeInboxDeps;
+} = {}): string | undefined {
+    if ((deps.platform ?? process.platform) !== "darwin") {
+        return undefined;
+    }
+    const exists = deps.exists ?? existsSync;
+    const live = deps.liveWidgetLock ?? isLiveWidgetLock;
+    const locks = root ? [join(resolve(root), "worker.lock")] : widgetLockPaths();
+    const lock = locks.find((candidate) => exists(candidate) && live(candidate));
+    return lock ? dirname(lock) : undefined;
 }
 
 export function readNativeInboxSignals(deps: NativeInboxDeps = {}): NativeInboxSignals {

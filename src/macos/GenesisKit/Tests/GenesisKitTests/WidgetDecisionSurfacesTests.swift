@@ -323,6 +323,119 @@ final class WidgetDecisionSurfacesTests: XCTestCase {
         XCTAssertTrue(text.contains("You have 2 decisions staged"), text)
     }
 
+    func testDecisionLinkSelectsTheDecisionInAnOpenPanel() throws {
+        let model = try model(preferences: ["showWidget": true])
+        let coordinator = WidgetCoordinator(binaryPath: "/fixture/tools", openHub: { _ in }, model: model)
+        defer { coordinator.stop() }
+        model.expanded = .right
+        model.inboxOverview = true
+        model.stagedView = "all"
+        model.hover(WidgetSurfaceID(edge: .right), inside: true)
+        coordinator.showDecision("d4")
+        XCTAssertEqual(model.selectedKey, key + "1")
+        XCTAssertEqual(model.selectedCardID, "decision:d4")
+        XCTAssertEqual(model.section, "Inbox")
+        XCTAssertFalse(model.inboxOverview)
+        XCTAssertNil(model.stagedView)
+    }
+
+    func testShutdownWaitsForHeldDiscard() async throws {
+        let model = try model(staged: Array(staged().prefix(1)))
+        let started = expectation(description: "held discard started")
+        let finished = expectation(description: "widget shutdown finished")
+        var release: CheckedContinuation<Void, Never>?
+        var completed = false
+        var actions: [WidgetJSON] = []
+        model.actionRunner = { value in
+            actions.append(value)
+            if case .object(let fields) = value, fields["action"] == "unstage" {
+                await withCheckedContinuation { continuation in
+                    release = continuation
+                    started.fulfill()
+                }
+            }
+            return ["ok": true]
+        }
+        let coordinator = WidgetCoordinator(binaryPath: "/fixture/tools", openHub: { _ in }, model: model)
+        // Snapshot application queues selection before the test installs its runner. Drain that setup write so
+        // this case isolates the held discard; the separate ordering test covers a discard behind a held write.
+        let setupDrained = expectation(description: "snapshot setup writes drained")
+        model.afterMutations { setupDrained.fulfill() }
+        await fulfillment(of: [setupDrained], timeout: 1)
+        let ids = model.stagedItems.map(\.sourceId)
+        XCTAssertEqual(ids, ["d7"], "the fixture must contain the staged decision")
+        model.holdDiscard(ids)
+        XCTAssertEqual(model.heldDiscard, ids, "shutdown must receive the held discard")
+        Task { await coordinator.shutdown(); completed = true; finished.fulfill() }
+        await fulfillment(of: [started], timeout: 1)
+        XCTAssertFalse(completed, "shutdown waits for the held discard; actions: \(actions)")
+        release?.resume()
+        await fulfillment(of: [finished], timeout: 1)
+        XCTAssertTrue(completed)
+    }
+
+    func testShutdownKeepsHeldDiscardBehindEarlierWrites() async throws {
+        let model = try model(staged: Array(staged().prefix(1)))
+        let earlierStarted = expectation(description: "earlier write started")
+        let discardStarted = expectation(description: "held discard started")
+        let finished = expectation(description: "shutdown writes finished")
+        var release: CheckedContinuation<Void, Never>?
+        var writes: [String] = []
+        model.actionRunner = { value in
+            if case .object(let fields) = value, case .string(let action) = fields["action"] {
+                writes.append(action)
+                if action == "unstage" { discardStarted.fulfill() }
+            }
+            return ["ok": true]
+        }
+        model.afterMutations {
+            await withCheckedContinuation { continuation in
+                release = continuation
+                earlierStarted.fulfill()
+            }
+        }
+        await fulfillment(of: [earlierStarted], timeout: 1)
+        let ids = model.stagedItems.map(\.sourceId)
+        XCTAssertEqual(ids, ["d7"])
+        model.holdDiscard(ids)
+        XCTAssertEqual(model.heldDiscard, ids)
+        model.stop()
+        var result: Bool?
+        Task { result = await model.waitForShutdownMutations(); finished.fulfill() }
+        XCTAssertFalse(writes.contains("unstage"), "the discard cannot pass the earlier write")
+        release?.resume()
+        await fulfillment(of: [discardStarted, finished], timeout: 1)
+        XCTAssertEqual(result, true)
+        XCTAssertEqual(writes.filter { $0 == "unstage" }.count, 1)
+    }
+
+    func testShutdownMutationWaitHasADeadline() async throws {
+        let model = try model(staged: Array(staged().prefix(1)))
+        let started = expectation(description: "stuck discard started")
+        let finished = expectation(description: "bounded wait finished")
+        var release: CheckedContinuation<Void, Never>?
+        var result: Bool?
+        model.actionRunner = { value in
+            if case .object(let fields) = value, fields["action"] == "unstage" {
+                await withCheckedContinuation { continuation in
+                    release = continuation
+                    started.fulfill()
+                }
+            }
+            return ["ok": true]
+        }
+        let ids = model.stagedItems.map(\.sourceId)
+        XCTAssertEqual(ids, ["d7"], "the fixture must contain the staged decision")
+        model.holdDiscard(ids)
+        XCTAssertEqual(model.heldDiscard, ids)
+        model.stop()
+        await fulfillment(of: [started], timeout: 1)
+        Task { result = await model.waitForShutdownMutations(timeout: .milliseconds(30)); finished.fulfill() }
+        await fulfillment(of: [finished], timeout: 1)
+        XCTAssertEqual(result, false, "a stuck write cannot make shutdown wait without a deadline")
+        release?.resume()
+    }
+
     private func recognizedText(_ image: CGImage) throws -> String {
         let request = VNRecognizeTextRequest()
         request.recognitionLevel = .accurate
