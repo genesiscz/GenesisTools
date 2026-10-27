@@ -58,6 +58,23 @@ function fixture(): { dir: string; transcript: string; reads: number[]; deps: Tr
 }
 
 describe("transcriptRows", () => {
+    test("skips oversized rows and reaches later complete calls without losing a partial row", async () => {
+        const { transcript, deps } = fixture();
+        const huge = line({ type: "user", text: "x".repeat(17 * 1024 * 1024) });
+        const call = called("a1", "toolu_after", "Bash", { command: "tools question ask" }, "2026-03-01T10:03:00.000Z");
+        writeFileSync(transcript, huge + call + '{"type":"assistant"');
+
+        const first = await transcriptRows({ transcript, deps });
+        expect(first.calls.map((item) => item.id)).toEqual(["toolu_after"]);
+        expect(first.offset).toBe(Buffer.byteLength(huge + call));
+        expect(first.issues.some((issue) => issue.includes("Oversized row"))).toBe(true);
+
+        appendFileSync(transcript, ',"uuid":"done","message":{"content":[]}}\n');
+        const second = await transcriptRows({ transcript, deps });
+        expect(second.scanned.from).toBe(first.offset);
+        expect(second.offset).toBeGreaterThan(first.offset);
+        expect(second.calls.map((item) => item.id)).toEqual(["toolu_after"]);
+    });
     test("first asks and question calls, then only the appended bytes, and nothing for an unchanged file", async () => {
         const { transcript, reads, deps } = fixture();
         writeFileSync(
