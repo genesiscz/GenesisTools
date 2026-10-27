@@ -37,6 +37,7 @@ interface FetchArgs {
 export const transcriptFetchDoor: CallDoor<FetchArgs> = {
     kind: "call",
     name: "ai sessions tail --json",
+    command: ["ai", "sessions", "tail"],
     match(argv) {
         const parsed = parseArgv(argv, { command: ["ai", "sessions", "tail"], positionals: 1, flags: TAIL_FLAGS });
         if (parsed?.flags.get("--json") !== true || parsed.flags.has("--live")) {
@@ -77,6 +78,7 @@ interface LiveArgs {
 export const transcriptLiveDoor: StreamDoor<LiveArgs> = {
     kind: "stream",
     name: "ai sessions tail --live",
+    command: ["ai", "sessions", "tail"],
     match(argv) {
         const parsed = parseArgv(argv, { command: ["ai", "sessions", "tail"], positionals: 1, flags: TAIL_FLAGS });
         if (parsed?.flags.get("--live") !== true || parsed.flags.has("--json")) {

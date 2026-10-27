@@ -551,6 +551,20 @@ export function listProposalsFor(
     return readListedProposal(path).filter((item) => proposalKey(item) === proposalKey(ref));
 }
 
+/**
+ * The rows of `hub proposal list --json`: each proposal with its key and its stored file's path, which wins over any
+ * `path` a proposal carries. The CLI and the resident server's door both print these.
+ */
+export function proposalListRows(
+    items: ReviewProposal[],
+    base?: string
+): Array<ReviewProposal & { key: string; path: string }> {
+    return items.map((item) => {
+        const key = proposalKey(item);
+        return { key, ...item, path: join(proposalsDir(base), `${key}.json`) };
+    });
+}
+
 /** One stored file for a list: skipped (and logged) when it is unreadable or of another shape. */
 function readListedProposal(path: string): ReviewProposal[] {
     try {

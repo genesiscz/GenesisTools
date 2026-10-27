@@ -58,8 +58,8 @@ import {
     ProposalError,
     parseProposal,
     proposalKey,
+    proposalListRows,
     proposalMarkdown,
-    proposalsDir,
     saveProposal,
 } from "./lib/proposal";
 import { hubPr, hubPrProjects, hubPrs, PrRefError } from "./lib/prs";
@@ -341,13 +341,7 @@ proposal
                 : listProposals();
 
         if (opts.json) {
-            out.result(
-                all.map((item) => {
-                    const key = proposalKey(item);
-                    // The stored file's own path wins over any `path` a proposal carries.
-                    return { key, ...item, path: join(proposalsDir(), `${key}.json`) };
-                })
-            );
+            out.result(proposalListRows(all));
             return;
         }
 
