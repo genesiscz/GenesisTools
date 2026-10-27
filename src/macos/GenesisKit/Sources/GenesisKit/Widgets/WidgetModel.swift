@@ -368,7 +368,9 @@ public final class WidgetModel: ObservableObject {
     /// What the callers of `updatePreferences` asked to hear about the write that carries their patch.
     private var pendingPreferenceOutcomes: [(saved: () -> Void, failed: () -> Void)] = []
     private var draftTasks: [String: Task<Void, Never>] = [:]
-    private var dirtyDrafts: Set<String> = []
+    /// Which drafts the composer owns and which a snapshot may write (`FieldTextOwnership`).
+    var draftOwnership = FieldTextOwnership()
+    private var draftReleaseTask: Task<Void, Never>?
     private var draftRevisions: [String: Int] = [:]
     /// Sending replaces the composer; bindings retained by its disposed field cannot write into the new draft.
     @Published private var composerGeneration = 0
@@ -748,7 +750,8 @@ public final class WidgetModel: ObservableObject {
         speechTask?.cancel()
         quietTask?.cancel()
         for task in draftTasks.values { task.cancel() }
-        for key in dirtyDrafts {
+        draftReleaseTask?.cancel()
+        for key in draftOwnership.unsaved {
             if let draft = drafts[key] {
                 defaults.set(draft.text, forKey: "widget.recovered-draft." + key)
             }
@@ -793,14 +796,7 @@ public final class WidgetModel: ObservableObject {
                     submittedCards.remove(kind + ":" + id)
                 }
             }
-            for (key, value) in next.state.drafts where !dirtyDrafts.contains(key) {
-                drafts[key] = value
-            }
-            for key in dirtyDrafts {
-                if let incoming = next.state.drafts[key] {
-                    drafts[key]?.assetIds = incoming.assetIds.filter { !submittedAssets.contains($0) }
-                }
-            }
+            applyStoredDrafts(next.state)
             if let session = sessionIndex[selectedKey] {
                 lastSelected = session
             }
@@ -1992,7 +1988,8 @@ public final class WidgetModel: ObservableObject {
         var value = drafts[key] ?? WidgetDraft()
         value.text = String(text.prefix(Self.draftTextLimit))
         drafts[key] = value
-        dirtyDrafts.insert(key)
+        draftOwnership.edited(key, at: Date())
+        scheduleDraftRelease(key)
         draftRevisions[key, default: 0] += 1
         let revision = draftRevisions[key, default: 0]
         draftTasks[key]?.cancel()
@@ -2004,10 +2001,62 @@ public final class WidgetModel: ObservableObject {
                 [weak self] in
                 guard let self, self.draftRevisions[key, default: 0] == revision,
                     self.drafts[key]?.text == captured else { return }
-                self.dirtyDrafts.remove(key)
+                self.draftLanded(key)
             })
         }
         scheduleQuietReduction()
+    }
+
+    /// Writes the stored drafts a snapshot carries into the composer, except where the composer owns the text
+    /// (`draftOwnership`): there only the attachments follow, as before.
+    private func applyStoredDrafts(_ state: WidgetState) {
+        let now = Date()
+        for (key, value) in state.drafts {
+            if draftOwnership.accepts(key, revision: state.revision, now: now) {
+                if drafts[key] != value { drafts[key] = value }
+            } else if drafts[key] != nil {
+                let assets = value.assetIds.filter { !submittedAssets.contains($0) }
+                if drafts[key]?.assetIds != assets { drafts[key]?.assetIds = assets }
+            }
+        }
+    }
+
+    /// A field that shows the draft of `key` took or left the keyboard (`field` names it: the reply box, an own answer).
+    /// Leaving it hands the text back to the stored state, so a change made elsewhere meanwhile shows now.
+    func draftFieldFocus(_ field: String, focused: Bool) {
+        draftOwnership.focus(field: field, key: focused ? selectedKey : nil)
+        if !focused { applyHeldDrafts() }
+    }
+
+    /// The newest snapshot's drafts, for the keys whose hold has ended.
+    private func applyHeldDrafts() {
+        guard let state = lastReceived?.state else { return }
+        applyStoredDrafts(state)
+    }
+
+    /// Applies the newest snapshot once the typing hold on `key` runs out.
+    private func scheduleDraftRelease(_ key: String) {
+        draftReleaseTask?.cancel()
+        let delay = draftOwnership.quietPeriod + 0.05
+        draftReleaseTask = Task { [weak self] in
+            do { try await Task.sleep(for: .seconds(delay)) } catch { return }
+            self?.applyHeldDrafts()
+        }
+    }
+
+    /// The newest write of `key`'s draft is stored. Until `state.json`'s revision after it is read, no snapshot writes
+    /// the key; then only snapshots read at that revision or later do, so one read before the write cannot undo it.
+    private func draftLanded(_ key: String) {
+        draftOwnership.landed(key)
+        let file = Self.widgetStateFile(stateRoot: stateRoot)
+        let fallback = (lastReceived?.state.revision ?? 0) + 1
+        Task { [weak self] in
+            let revision = await Task.detached(priority: .utility) { Self.storedRevision(file) }.value
+            guard let self else { return }
+            // Unreadable: any snapshot newer than the one on screen counts as read after the write.
+            self.draftOwnership.stored(key, at: revision ?? fallback)
+            self.applyHeldDrafts()
+        }
     }
 
     public func attachShelfItem(_ id: String, to key: String) async throws {
@@ -2021,19 +2070,19 @@ public final class WidgetModel: ObservableObject {
             guard !self.stopping else { throw CancellationError() }
             let attachment = try JSONDecoder().decode(WidgetShelfAttachment.self, from: JSONEncoder().encode(response))
             var latest = attachment.draft
-            if self.dirtyDrafts.contains(key), let local = self.drafts[key] { latest.text = local.text }
+            if self.draftOwnership.isUnsaved(key), let local = self.drafts[key] { latest.text = local.text }
             let merged = try attachment.merging(into: latest)
             self.draftTasks[key]?.cancel()
             self.draftRevisions[key, default: 0] += 1
             let revision = self.draftRevisions[key, default: 0]
             self.drafts[key] = merged
-            self.dirtyDrafts.insert(key)
+            self.draftOwnership.pending(key)
             if let assetId = attachment.assetId { self.submittedAssets.remove(assetId) }
             _ = try await self.call(["action": "draft", "key": .string(key), "draft": try .value(merged)])
             try Task.checkCancellation()
             guard !self.stopping else { throw CancellationError() }
             if self.draftRevisions[key, default: 0] == revision, self.drafts[key] == merged {
-                self.dirtyDrafts.remove(key)
+                self.draftLanded(key)
             }
         }
         // The queue tail waits for completion; the originating caller owns the throwing result.
@@ -2059,7 +2108,7 @@ public final class WidgetModel: ObservableObject {
             let localText = self.drafts[key]?.text ?? ""
             let expectedLength = localText.isEmpty ? note.text.count : localText.count + 1 + note.text.count
             guard expectedLength <= Self.draftTextLimit else { throw Self.draftTooLong }
-            if self.dirtyDrafts.contains(key), let local = self.drafts[key] {
+            if self.draftOwnership.isUnsaved(key), let local = self.drafts[key] {
                 _ = try await self.call(["action": "draft-text", "key": .string(key), "text": .string(local.text)])
             }
             try Task.checkCancellation()
@@ -2075,11 +2124,11 @@ public final class WidgetModel: ObservableObject {
             self.draftRevisions[key, default: 0] += 1
             let savedRevision = self.draftRevisions[key, default: 0]
             self.drafts[key] = merged
-            self.dirtyDrafts.insert(key)
+            self.draftOwnership.pending(key)
             _ = try await self.call(["action": "draft-text", "key": .string(key), "text": .string(merged.text)])
             try Task.checkCancellation()
             if self.draftRevisions[key, default: 0] == savedRevision, self.drafts[key]?.text == merged.text {
-                self.dirtyDrafts.remove(key)
+                self.draftLanded(key)
             }
         }
         mutationTask = Task { _ = await operation.result }
@@ -2392,7 +2441,7 @@ public final class WidgetModel: ObservableObject {
                 return
             }
             draftTasks[selectedKey]?.cancel()
-            dirtyDrafts.insert(selectedKey)
+            draftOwnership.pending(selectedKey)
             drafts[selectedKey] = WidgetDraft()
             // A save of the typed text still on its way would land after the clear below and put the sent text back
             // on the hub; a new revision makes it skip itself.
@@ -2401,7 +2450,11 @@ public final class WidgetModel: ObservableObject {
             replyToDropped[selectedKey] = nil
             submittedAssets.formUnion(submitted.assetIds)
             if let card, answering || choice != nil { submittedCards.insert(card.id) }
-            action(["action": "draft-text", "key": .string(selectedKey), "text": ""])
+            let sentKey = selectedKey
+            action(["action": "draft-text", "key": .string(sentKey), "text": ""]) { [weak self] in
+                guard let self, self.drafts[sentKey]?.text.isEmpty ?? true else { return }
+                self.draftLanded(sentKey)
+            }
             drainJournal()
         } catch { report(error) }
     }
@@ -2531,14 +2584,14 @@ public final class WidgetModel: ObservableObject {
                     self.draftTasks[key]?.cancel()
                     self.draftTasks[key] = nil
                     self.draftRevisions[key, default: 0] += 1
-                    self.dirtyDrafts.insert(key)
+                    self.draftOwnership.pending(key)
                     let saved = restored.text
                     self.action(["action": "draft-text", "key": .string(key), "text": .string(saved)]) { [weak self] in
                         guard let self, self.drafts[key]?.text == saved else { return }
-                        self.dirtyDrafts.remove(key)
+                        self.draftLanded(key)
                     }
                 } else {
-                    self.dirtyDrafts.remove(key)
+                    self.draftLanded(key)
                 }
                 self.drafts[key] = restored
                 self.submittedAssets.subtract(message.assetIds)
@@ -2815,7 +2868,7 @@ public final class WidgetModel: ObservableObject {
             drafts[key] = WidgetDraft(
                 text: [existing, text].filter { !$0.isEmpty }.joined(separator: " "),
                 assetIds: drafts[key]?.assetIds ?? [])
-            dirtyDrafts.insert(key)
+            draftOwnership.pending(key)
             // A typed save still waiting out its delay holds the text from before the dictation; it must not
             // land after this one and overwrite the merged draft.
             draftTasks[key]?.cancel()
@@ -2824,7 +2877,7 @@ public final class WidgetModel: ObservableObject {
                 let merged = drafts[key]?.text ?? ""
                 action(["action": "draft-text", "key": .string(key), "text": .string(merged)]) { [weak self] in
                     guard let self, self.drafts[key]?.text == merged else { return }
-                    self.dirtyDrafts.remove(key)
+                    self.draftLanded(key)
                 }
             }
         }

@@ -190,6 +190,8 @@ private final class FeaturesAppDelegate: NSObject, NSApplicationDelegate {
         ClickyKeymap.shared.bind(quit, to: ClickyKeymap.quit)
         root.submenu = application
         menu.addItem(root)
+        // Text fields take ⌘A, ⌘C, ⌘X, ⌘V, ⌘Z and ⇧⌘Z from an Edit menu; without one they beep.
+        menu.addItem(StandardEditing.menuItem())
         NSApp.mainMenu = menu
     }
 

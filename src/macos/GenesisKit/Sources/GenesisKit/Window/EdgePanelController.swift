@@ -2,7 +2,7 @@ import AppKit
 import QuartzCore
 import SwiftUI
 
-private final class EdgeInteractionPanel: NSPanel {
+private final class EdgeInteractionPanel: EditingPanel {
     override var canBecomeKey: Bool { true }
     override var canBecomeMain: Bool { false }
     override func constrainFrameRect(_ frameRect: NSRect, to screen: NSScreen?) -> NSRect { frameRect }

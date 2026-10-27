@@ -3,6 +3,18 @@
 Newest first. Each entry: date, symptom as the user saw it, cause, fix, commit. Generic lessons go to
 checklist.md or motion.md as well.
 
+- 2026-10-27 20:01 — **The widget's own answer field dropped and restored typed text, and ⌘A / ⌘C only beeped.**
+  - *A late snapshot wrote an older draft into the field.* `hub widget watch` reads state.json when a snapshot starts
+    and sends it 1 to 17 s later, and the model let any snapshot write a draft once its last save had landed. The
+    saves showed it: 180 bytes stored at 19:41:18, then the field saved exactly the 101 bytes stored at 19:41:03.
+    Fix: `FieldTextOwnership` (GenesisKit): a field with the keyboard, typed into in the last 3 s, with a save on the
+    way, or whose snapshot was read before its last stored write (state.json's revision as the floor) keeps its text.
+    Rule: a field that round-trips through stored state is never written by a snapshot older than its own last save.
+  - *Edit shortcuts beeped in the widget panels and the widget's and Clicky's settings windows.* Those faces build
+    their own main menu without an Edit menu, and ⌘A, ⌘C, ⌘X, ⌘Z only reach a field editor through one. Fix:
+    `EditingPanel` sends them to the first responder, and `StandardEditing.menuItem()` is in both faces' menus.
+    Rule: a face that sets `NSApp.mainMenu` adds `StandardEditing.menuItem()`.
+
 - 2026-10-27 03:40 — **The hub Inbox and the widget's decision surfaces (UX audit F1 to F22, P1 to P14).**
   - *A primary button's blue was picked by eye.* White on the first "send blue" measured 4.19:1, and
     `SessionPalette.blue` as a fill 2.6:1. Fix: `GenPrimaryButtonStyle.blue` (0.12, 0.32, 0.80) with a test that

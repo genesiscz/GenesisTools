@@ -102,6 +102,8 @@ private final class AgentWidgetDelegate: NSObject, NSApplicationDelegate {
         WidgetKeymap.shared.bind(quit, to: WidgetKeymap.quit)
         root.submenu = application
         menu.addItem(root)
+        // Text fields take ⌘A, ⌘C, ⌘X, ⌘V, ⌘Z and ⇧⌘Z from an Edit menu; without one they beep.
+        menu.addItem(StandardEditing.menuItem())
         NSApp.mainMenu = menu
         // `--no-activate` is a rebuild's relaunch (relaunch.ts): a widget that is off then stays quiet instead of
         // opening the settings over the app in front.
