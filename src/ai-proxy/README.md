@@ -162,6 +162,16 @@ Supported values: `minimal`, `low`, `medium`, `high`, `xhigh`, `max`, `ultra`. E
     Each effort level has its own prompt cache, so another effort re-reads the whole context uncached (428K tokens on
     2026-10-27); set one only when speed matters more than the cache.
   - `compaction.words`: the summary length asked for, default `5000`; `0` asks for none.
+  - `compaction.background` (native mode, `tools claude codex` sessions only): Codex's `async_compaction`. When a
+    turn's context reaches `startAt` (default `0.8`) of the session's compaction point (window times compact percent),
+    the proxy compacts that turn in the background. Claude Code's compaction turn (auto, `/compact`, or idle compaction
+    near the cache's expiry) is then answered at once, and the turns after the background point stay verbatim behind
+    the item. A run in flight is awaited, never repeated. A new run starts when the context grew by `refreshFraction`
+    (default `0.15`) of the compaction point. The result is not used when another login made it, when the history
+    before it changed (a rewound or edited turn), or when more than `maxTailFraction` (default `0.4`) came after it;
+    the turn then compacts the normal way, and the summary tells the agent to say so to the user once. Set
+    `enabled: false` to turn it off. Claude Code's own background compaction ("precomputed compaction") needs a server
+    flag that was off on 2026-10-28; when it sends its compaction turn early, the same path answers it.
   - `lead.systemNote` and `subagents.systemNote`: `{ prepend, append, replace }` around the note `tools claude codex`
     gives the main loop and its Codex subagents.
   - `subagents.skills.nudge` (default `true`): the lead names in each brief the skills a subagent loads, and the
@@ -390,7 +400,18 @@ The proxy appends one JSON object per completed request under `~/.genesis-tools/
 - `daily.json` — today's rollup by account/model
 - `billing.json` — cached subscription billing snapshots (5 min TTL)
 
+- `compaction-events.jsonl` — one line per compaction event: `turn`, `done` (with the client's wait), `retry` (Claude
+  Code asked for the summary again), `missed` (a compaction prompt that was not read as one), `background-*`,
+  `recompacted`, `blocked`
+
 Data stays on disk locally only. To reset history, truncate or delete `requests.jsonl` (and optionally `daily.json`).
+
+### Watching it live
+
+`tools ai-proxy monitor` prints each request and each compaction event as one line while they happen.
+`--session <prefix>`, `--model <text>`, `--compaction`, `--slow <secs>` and `--errors` filter; `--since <minutes>` prints
+the recent past first, `--once` stops after it, and `--json` gives one object per line. It is made for an agent's
+Monitor tool: `tools ai-proxy monitor --session 8cf9eff2 --compaction --errors`.
 
 ### Client billing (2026-07)
 

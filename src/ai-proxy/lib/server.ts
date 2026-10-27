@@ -18,6 +18,7 @@ import { handleRealtimeClientSecrets, handleRealtimeUpgrade, realtimeWebsocket }
 import { applyReasoningEffortToBody, findInvalidImageDataPayload } from "@app/ai-proxy/lib/rewrite-upstream-body";
 import { messageToAnthropicSse } from "@app/ai-proxy/lib/server-tools/web-search";
 import { sweepCompactions } from "@app/ai-proxy/lib/sessions/codex-compaction";
+import { recordCompactionEvent } from "@app/ai-proxy/lib/sessions/compaction-events";
 import { sessionPickerModels } from "@app/ai-proxy/lib/sessions/picker-models";
 import {
     DEFAULT_SESSION_RETENTION_DAYS,
@@ -31,6 +32,7 @@ import { resolveThinkingMode } from "@app/ai-proxy/lib/thinking-config";
 import { resolveTranslationMode } from "@app/ai-proxy/lib/translation-config";
 import { handleChatCompletions } from "@app/ai-proxy/lib/translators";
 import {
+    hasCompactionPromptText,
     isClaudeCodeCompactionTurn,
     isClaudeCodeModelProbe,
     modelProbeReply,
@@ -284,13 +286,23 @@ async function readModelBody(req: Request): Promise<ModelBody | { error: Respons
 
     const claudeSessionId = claudeSessionIdFromMetadata(parsed.metadata);
     const cacheKey = typeof parsed.prompt_cache_key === "string" ? parsed.prompt_cache_key.trim() : "";
+    const compaction = isClaudeCodeCompactionTurn(parsed);
+
+    if (!compaction && hasCompactionPromptText(parsed)) {
+        recordCompactionEvent({
+            kind: "missed",
+            ...(claudeSessionId ? { claudeSession: claudeSessionId } : {}),
+            ...(typeof parsed.model === "string" ? { model: parsed.model } : {}),
+            reason: "the request carries Claude Code's compaction prompt, but it was not read as a compaction turn",
+        });
+    }
 
     return {
         bodyText,
         model: parsed.model,
         claudeSessionId,
         conversationId: claudeSessionId ?? (cacheKey || undefined),
-        compaction: isClaudeCodeCompactionTurn(parsed),
+        compaction,
         probe: isClaudeCodeModelProbe(parsed),
         stream: parsed.stream === true,
         clientEffort:

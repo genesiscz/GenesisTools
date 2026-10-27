@@ -42,6 +42,11 @@ export interface CompactionRecord {
      * for another login's item, whose own earlier items are restored for that login first.
      */
     history: unknown[];
+    /**
+     * A background compaction answered the turn: its item covers only the start of `history`, and these raw input
+     * items (the turns after it) follow the item, for that login only. Another login compacts the whole history.
+     */
+    tail?: { account: string; items: unknown[] };
 }
 
 function isCompactionRecord(value: unknown): value is CompactionRecord {
@@ -52,7 +57,9 @@ function isCompactionRecord(value: unknown): value is CompactionRecord {
         typeof value.createdAt === "string" &&
         isObject(value.items) &&
         Object.values(value.items).every(isObject) &&
-        Array.isArray(value.history)
+        Array.isArray(value.history) &&
+        (value.tail === undefined ||
+            (isObject(value.tail) && typeof value.tail.account === "string" && Array.isArray(value.tail.items)))
     );
 }
 
@@ -327,7 +334,7 @@ export function compactionMarkers(input: unknown[]): Array<{ index: number; id: 
  */
 export async function expandCompactionMarkers(
     input: unknown[],
-    itemFor: (id: string) => Promise<Record<string, unknown> | undefined>
+    itemFor: (id: string) => Promise<Record<string, unknown> | unknown[] | undefined>
 ): Promise<unknown[]> {
     const markers = compactionMarkers(input);
 
@@ -338,9 +345,10 @@ export async function expandCompactionMarkers(
     const out = [...input];
 
     for (const { index, id } of [...markers].reverse()) {
-        const item = await itemFor(id);
+        const found = await itemFor(id);
+        const items = Array.isArray(found) ? found : found ? [found] : [];
 
-        if (!item) {
+        if (items.length === 0) {
             continue;
         }
 
@@ -357,7 +365,7 @@ export async function expandCompactionMarkers(
             };
         }
 
-        out.splice(index, 0, item);
+        out.splice(index, 0, ...items);
     }
 
     return out;

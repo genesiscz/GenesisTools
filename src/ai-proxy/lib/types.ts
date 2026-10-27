@@ -316,6 +316,21 @@ export interface ClaudeSessionsConfig {
         effort?: ReasoningEffort | "session";
         /** The summary length the model is asked to stay under, in words. Default 5000; 0 asks for no limit. */
         words?: number;
+        /**
+         * Native mode only: compact in the background before Claude Code asks (Codex's `async_compaction`), so its
+         * compaction turn is answered at once. Each fraction is of the session's compaction point (window times
+         * compact percent).
+         */
+        background?: {
+            /** Default true. */
+            enabled?: boolean;
+            /** Start when a turn's context reaches this fraction of the compaction point. Default 0.8. */
+            startAt?: number;
+            /** Compact again when the context grew by this fraction since the last background run. Default 0.15. */
+            refreshFraction?: number;
+            /** Use the result only when the turns after it are at most this fraction. Default 0.4. */
+            maxTailFraction?: number;
+        };
     };
     /** The note ccx appends to the main loop's system prompt. */
     lead?: { systemNote?: SystemNoteConfig };

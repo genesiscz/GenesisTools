@@ -55,6 +55,37 @@ export function isClaudeCodeCompactionTurn(body: { messages?: unknown }): boolea
     return compactionPromptIndex(messagesOf(body)) >= 0;
 }
 
+/**
+ * How Claude Code 2.1.311+ opens the paragraph it appends when it asks for the summary again, because the last reply
+ * had no `<summary>` tag (bundle and mock-server test, 2026-10-27). Seeing it means the earlier answer was wasted.
+ */
+export const CLAUDE_CODE_COMPACTION_RETRY_MARK = "For this reply only";
+
+/** The compaction turn is Claude Code's second ask: the earlier reply had no summary it could use. */
+export function isClaudeCodeCompactionRetry(body: { messages?: unknown }): boolean {
+    const messages = messagesOf(body);
+    const prompt = messages[compactionPromptIndex(messages)];
+
+    return isObject(prompt) && textOf(prompt.content).includes(CLAUDE_CODE_COMPACTION_RETRY_MARK);
+}
+
+/**
+ * The compaction prompt in a user text block of the last three messages, wherever it sits. With
+ * `isClaudeCodeCompactionTurn` false this is a detection gap: Claude Code 2.1.312 put a system message after the prompt,
+ * and every compaction fell back to the slow written summary unnoticed (2026-10-27). Tool results are not read, so a
+ * session that only quotes the prompt is not counted.
+ */
+export function hasCompactionPromptText(body: { messages?: unknown }): boolean {
+    return messagesOf(body)
+        .slice(-3)
+        .some(
+            (message) =>
+                isObject(message) &&
+                message.role === "user" &&
+                textOf(message.content).includes(CLAUDE_CODE_COMPACTION_MARK)
+        );
+}
+
 /** The compaction turn without Claude Code's summary prompt: the text blocks carrying it go, and an empty message too. */
 export function withoutCompactionPrompt(body: Record<string, unknown>): Record<string, unknown> {
     const messages = messagesOf(body);
