@@ -355,10 +355,20 @@ async function pullRequest(
     const run = await ctx.host
         .run(["gh", "pr", "view", n, "--repo", repo, "--json", "title,url"], { timeoutMs: 8_000 })
         .catch(() => undefined);
+
+    // A run that timed out, could not start, or failed for another reason than "no such PR" (network, auth) is
+    // asked again on the next reply instead of keeping the number unlinked for the whole session.
+    if (
+        !run ||
+        (run.exitCode !== 0 && !/no pull requests? found|could not resolve to a pull ?request/i.test(run.stderr))
+    ) {
+        return null;
+    }
+
     let found: { title: string; url: string } | null = null;
 
     try {
-        const parsed: unknown = run?.exitCode === 0 ? JSON.parse(run.stdout) : undefined;
+        const parsed: unknown = run.exitCode === 0 ? JSON.parse(run.stdout) : undefined;
 
         if (isRecord(parsed) && typeof parsed.title === "string" && typeof parsed.url === "string") {
             found = { title: parsed.title.replace(/^Draft: /, ""), url: parsed.url };
@@ -387,7 +397,13 @@ async function isCommit(ctx: LinkContext, sha: string): Promise<boolean> {
     const run = await ctx.host
         .run(["git", "-C", ctx.root, "cat-file", "-t", sha], { timeoutMs: 3_000 })
         .catch(() => undefined);
-    const yes = run?.exitCode === 0 && run.stdout.trim() === "commit";
+
+    // A timed-out lookup (a busy machine) is no answer: keep it out of the cache.
+    if (!run) {
+        return false;
+    }
+
+    const yes = run.exitCode === 0 && run.stdout.trim() === "commit";
     commits.set(key, yes);
 
     return yes;
