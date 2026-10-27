@@ -149,6 +149,15 @@ final class HubInboxUXTests: XCTestCase {
         XCTAssertFalse(closed.contains("Send now"), closed)
     }
 
+    /// F1: an open card at rest draws its empty note as the placeholder text, not as a text field (a platform responder
+    /// per card; an off-screen render shows no AppKit field, so the old card read no placeholder at all).
+    @MainActor
+    func testAnOpenCardAtRestDrawsItsNotePlaceholderWithoutAField() throws {
+        let item = try Self.decision(#"{"number":6,"title":"Cache","choices":[{"id":"a","label":"Keep the cache"}]}"#)
+        let text = try Self.read(card: item)
+        XCTAssertTrue(text.contains("Write my own answer"), text)
+    }
+
     // MARK: - Fixtures
 
     static func decision(_ fields: String) throws -> InboxItem {

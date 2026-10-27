@@ -2069,16 +2069,19 @@ struct InboxDecisionCard: View, Equatable {
     @State private var showsDeliveryDetails = false
     /// The pointer is on the card.
     @State private var hovering = false
+    /// A click or a VoiceOver press on the resting note asked for the real field (`openNote`).
+    @State private var noteOpen = false
     @FocusState private var noteFocused: Bool
     /// ⌘F: when the current match is in this card's folded context, the context unfolds by itself.
     @Environment(\.panelFindHighlight) private var highlight
     @GenReduceMotion private var reduceMotion
 
     private var writing: Bool { state.writing }
-    /// The card's options and footer are buttons with hover styles and tooltips only while the pointer is on it, it
-    /// is the key card, or its note has the keyboard; otherwise the same labels, which VoiceOver still presses
-    /// (`restingButton`). Each control is a responder that SwiftUI walks per changed accessibility node (F1).
-    private var live: Bool { hovering || state.keyCard || noteFocused }
+    /// The card's options, footer and note field are real controls (buttons with hover styles and tooltips, a text
+    /// field) only while the pointer is on it, it is the key card, or its note has or asked for the keyboard; otherwise
+    /// the same labels, which VoiceOver still presses (`restingButton`, `restingNote`). Each control is a responder that
+    /// SwiftUI walks per changed accessibility node (F1).
+    private var live: Bool { hovering || state.keyCard || noteFocused || noteOpen }
     private var sessionSending: Bool { state.sessionSending }
     private var pickable: Bool { item.isOpen && session.sessionId != nil }
     private var letters: String { state.letters }
@@ -2342,51 +2345,20 @@ struct InboxDecisionCard: View, Equatable {
         let keys = LiveWidgetView.ownAnswerKeys(ownAnswer: true,
                                                 returnStages: DecisionAnswering.returnStages(state.preferences, command: false),
                                                 commandSwaps: state.preferences?.decisionCommandSwaps ?? true)
+        let placeholder = (item.choices ?? []).isEmpty ? "Your answer…" : "Write my own answer…"
         return VStack(alignment: .leading, spacing: 4) {
-            TextField((item.choices ?? []).isEmpty ? "Your answer…" : "Write my own answer…", text: $note, axis: .vertical)
-                .textFieldStyle(.plain)
-                .font(.system(size: 12))
-                .lineLimit(1...4)
-                .padding(7)
-                // The field's own edge: an input drawn as one (P8 keeps it; it is a control, not a box around content).
-                .background(RoundedRectangle(cornerRadius: 7).stroke(Color.white.opacity(noteFocused ? 0.3 : 0.12)))
-                .disabled(!pickable)
-                .focused($noteFocused)
-                .accessibilityHint(Text(keys.spoken))
-                .onChange(of: noteFocused) { _, focused in
-                    if focused {
-                        inbox.noteFocusID = item.id
-                        inbox.keyCardID = item.id
-                    } else if inbox.noteFocusID == item.id {
-                        inbox.noteFocusID = nil
-                    }
+            Group {
+                // A typed note keeps its field: only the empty one rests as its placeholder.
+                if live || !pickable || !note.isEmpty {
+                    noteEditor(placeholder)
+                } else {
+                    restingNote(placeholder)
                 }
-                // Return stages the note and ⌘-Return sends it with the pick, or the other way round (the widget's
-                // "Return in an own answer"). Option-Return stays a new line.
-                .onKeyPress(.return, phases: .down) { press in
-                    guard pickable, !press.modifiers.contains(.option), !press.modifiers.contains(.shift) else { return .ignored }
-                    submitNote(command: press.modifiers.contains(.command))
-                    return .handled
-                }
-                // Esc puts the staged note back and leaves the field.
-                .onKeyPress(.escape) {
-                    note = item.draft ?? ""
-                    inbox.noteTexts[item.id] = nil
-                    noteDirty = false
-                    noteHint = nil
-                    noteFocused = false
-                    return .handled
-                }
-                .onChange(of: note) { _, value in
-                    // The stored note itself (its seeding, a re-seed after another surface staged one) is no edit.
-                    guard noteSeeded else { return }
-                    noteHint = nil
-                    let stored = item.draft ?? ""
-                    // Kept here and in the model, never written on a pause: nothing is staged until Return, ⌘-Return
-                    // or Stage note, so typing neither stages the decision nor reloads the Inbox (F3).
-                    inbox.noteTexts[item.id] = value == stored ? nil : value
-                    noteDirty = value != stored
-                }
+            }
+            .padding(7)
+            // The field's own edge: an input drawn as one (P8 keeps it; it is a control, not a box around content).
+            .background(RoundedRectangle(cornerRadius: 7).stroke(Color.white.opacity(noteFocused ? 0.3 : 0.12)))
+            .accessibilityHint(Text(keys.spoken))
             HStack(spacing: 8) {
                 // The keys of the note, or what Return could not do: a quiet hint, never an error (P9, P12).
                 Text(noteHint ?? keys.hint)
@@ -2409,6 +2381,78 @@ struct InboxDecisionCard: View, Equatable {
             }
             .frame(minHeight: 18)
         }
+        .onChange(of: noteFocused) { _, focused in
+            if focused {
+                inbox.noteFocusID = item.id
+                inbox.keyCardID = item.id
+            } else {
+                noteOpen = false
+                if inbox.noteFocusID == item.id { inbox.noteFocusID = nil }
+            }
+        }
+        .onChange(of: note) { _, value in
+            // The stored note itself (its seeding, a re-seed after another surface staged one) is no edit.
+            guard noteSeeded else { return }
+            noteHint = nil
+            let stored = item.draft ?? ""
+            // Kept here and in the model, never written on a pause: nothing is staged until Return, ⌘-Return
+            // or Stage note, so typing neither stages the decision nor reloads the Inbox (F3).
+            inbox.noteTexts[item.id] = value == stored ? nil : value
+            noteDirty = value != stored
+        }
+    }
+
+    private func noteEditor(_ placeholder: String) -> some View {
+        TextField(placeholder, text: $note, axis: .vertical)
+            .textFieldStyle(.plain)
+            .font(.system(size: 12))
+            .lineLimit(1...4)
+            .disabled(!pickable)
+            .focused($noteFocused)
+            // Return stages the note and ⌘-Return sends it with the pick, or the other way round (the widget's
+            // "Return in an own answer"). Option-Return stays a new line.
+            .onKeyPress(.return, phases: .down) { press in
+                guard pickable, !press.modifiers.contains(.option), !press.modifiers.contains(.shift) else { return .ignored }
+                submitNote(command: press.modifiers.contains(.command))
+                return .handled
+            }
+            // Esc puts the staged note back and leaves the field.
+            .onKeyPress(.escape) {
+                note = item.draft ?? ""
+                inbox.noteTexts[item.id] = nil
+                noteDirty = false
+                noteHint = nil
+                noteFocused = false
+                return .handled
+            }
+    }
+
+    /// The empty note of a card at rest, drawn as the field draws its placeholder but without the text field, which is
+    /// a platform responder per open card (F1). The pointer on the card, the key card and a click or VoiceOver press
+    /// bring the real field back; a click or a press puts the keyboard in it.
+    private func restingNote(_ placeholder: String) -> some View {
+        Text(verbatim: placeholder)
+            .font(.system(size: 12))
+            .foregroundColor(Self.placeholderColor)
+            .lineLimit(1)
+            .frame(maxWidth: .infinity, alignment: .leading)
+            .contentShape(Rectangle())
+            .onTapGesture { openNote() }
+            .accessibilityElement(children: .ignore)
+            .accessibilityLabel(Text(verbatim: placeholder))
+            .accessibilityAddTraits(.isButton)
+            .accessibilityAction { openNote() }
+    }
+
+    /// The plain text field's placeholder in the hub's dark appearance: 209 over the card's 29 in a snapshot, white at
+    /// 0.796. No system color resolves to it (`placeholderTextColor` and `.secondary` draw 153, `labelColor` 221).
+    private static let placeholderColor = Color.white.opacity(0.796)
+
+    /// Builds the note's field and moves the keyboard into it once it exists.
+    private func openNote() {
+        guard pickable else { return }
+        noteOpen = true
+        DispatchQueue.main.async { noteFocused = true }
     }
 
     /// Return or ⌘-Return in the note: stage it or send it, as the widget's own answer does; a hint when there is
