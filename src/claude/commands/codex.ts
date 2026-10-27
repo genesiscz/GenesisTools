@@ -15,6 +15,7 @@ import {
 } from "@app/ai-proxy/lib/sessions/accounts";
 import {
     closeSessionRecord,
+    hashSessionKey,
     listSessionRecords,
     type MeteredConfirmation,
     openSessionRecord,
@@ -337,16 +338,23 @@ export async function runCodexSession(
             model: model.slug,
             effort: effort.effort,
             window: model.info.window,
+            // A user-provided --settings may override the launch limit, so its effective value is unknown here.
+            ...(!passthrough.some((arg) => arg === "--settings" || arg.startsWith("--settings="))
+                ? { pickerContextTokens: model.info.usableTokens }
+                : {}),
             compactPercent: compact.percent,
             cacheKeyPolicy: "claude-session",
             ...(ownAgents ? { agents: ownAgents } : {}),
             meteredConfirmed: metered,
         })
     );
+    const keyHash = hashSessionKey(key);
     const keyProblem = await sessionKeyProblem({ baseUrl: proxyBaseUrl(config), key, model: `codex/${model.slug}` });
 
     if (keyProblem) {
-        await whenSessionRecordFree(() => closeSessionRecord(sessionId, "exited"));
+        await whenSessionRecordFree(() =>
+            closeSessionRecord({ id: sessionId, reason: "exited", expectedKeyHash: keyHash })
+        );
         return fail(keyProblem);
     }
 
@@ -428,9 +436,13 @@ export async function runCodexSession(
     try {
         code = await spawnClaude(args, launchEnv, (pid) => {
             whenSessionRecordFree(() =>
-                updateSessionRecord(sessionId, (record) => {
-                    record.claudePid = pid;
-                    record.claudePidStartMs = processStartMs(pid) ?? undefined;
+                updateSessionRecord({
+                    id: sessionId,
+                    expectedKeyHash: keyHash,
+                    change: (record) => {
+                        record.claudePid = pid;
+                        record.claudePidStartMs = processStartMs(pid) ?? undefined;
+                    },
                 })
             ).catch((err) => logger.warn({ err, session: sessionId }, "[codex] could not record the Claude Code pid"));
         });
@@ -438,7 +450,9 @@ export async function runCodexSession(
         logger.level = consoleLevel;
         // Also when the spawn throws: an open record would count as a live session on its login.
         modelGuard?.stop();
-        await whenSessionRecordFree(() => closeSessionRecord(sessionId, "exited"));
+        await whenSessionRecordFree(() =>
+            closeSessionRecord({ id: sessionId, reason: "exited", expectedKeyHash: keyHash })
+        );
     }
 
     process.exit(code);

@@ -124,7 +124,7 @@ describe("session records", () => {
         expect(resolveSessionKey(otherKey)).toEqual({ state: "open", record: other });
 
         expect(resolveSessionKey(newSessionKey()).state).toBe("unknown");
-        closeSessionRecord(SESSION);
+        closeSessionRecord({ id: SESSION });
         expect(resolveSessionKey(key).state).toBe("closed");
     });
 
@@ -134,7 +134,7 @@ describe("session records", () => {
             codexAccount: "work",
             meteredConfirmed: [{ account: "billed", confirmedAt: "2026-10-25T20:00:00.000Z", how: "flag" }],
         });
-        closeSessionRecord(SESSION);
+        closeSessionRecord({ id: SESSION });
         const second = openSessionRecord({ id: SESSION, codexAccount: "side", claudeAccount: "personal" });
 
         expect([first.reopened, second.reopened]).toEqual([false, true]);
@@ -149,10 +149,43 @@ describe("session records", () => {
         expect(second.record.closedAt).toBeUndefined();
     });
 
+    it("does not let stale launch callbacks update or close a rotated session", () => {
+        const first = openSessionRecord({ id: SESSION, codexAccount: "work" });
+        const second = openSessionRecord({ id: SESSION, codexAccount: "side" });
+        const oldHash = hashSessionKey(first.key);
+        const newHash = hashSessionKey(second.key);
+
+        expect(
+            updateSessionRecord({
+                id: SESSION,
+                change: (record) => {
+                    record.claudePid = 111;
+                },
+                expectedKeyHash: oldHash,
+            })
+        ).toBeUndefined();
+        expect(closeSessionRecord({ id: SESSION, reason: "exited", expectedKeyHash: oldHash })).toBeUndefined();
+        expect(readSessionRecord(SESSION)?.claudePid).toBeUndefined();
+        expect(resolveSessionKey(second.key).state).toBe("open");
+        expect(
+            updateSessionRecord({
+                id: SESSION,
+                change: (record) => {
+                    record.claudePid = 222;
+                },
+                expectedKeyHash: newHash,
+            })?.claudePid
+        ).toBe(222);
+        expect(closeSessionRecord({ id: SESSION, reason: "exited", expectedKeyHash: newHash })?.closedAt).toBeDefined();
+    });
+
     it("rebuilds a reopened record from the new launch, so an account the launch left out is gone", () => {
         openSessionRecord({ id: SESSION, codexProxyAccount: "codex", claudeProxyAccount: "personal", model: "a" });
-        updateSessionRecord(SESSION, (record) => {
-            record.moves.push({ agent: "codex", from: "codex", to: "side", at: "2026-10-26T01:00:00.000Z" });
+        updateSessionRecord({
+            id: SESSION,
+            change: (record) => {
+                record.moves.push({ agent: "codex", from: "codex", to: "side", at: "2026-10-26T01:00:00.000Z" });
+            },
         });
 
         // --resume with a managed login instead of the configured account, and --claude none.
@@ -198,8 +231,11 @@ describe("session records", () => {
 
         withPathArbitrationSync(path, () => {
             try {
-                updateSessionRecord(SESSION, (draft) => {
-                    draft.model = "lost";
+                updateSessionRecord({
+                    id: SESSION,
+                    change: (draft) => {
+                        draft.model = "lost";
+                    },
                 });
             } catch (error) {
                 refused = error;
@@ -222,8 +258,11 @@ describe("session records", () => {
                 throw busy;
             }
 
-            return updateSessionRecord(SESSION, (draft) => {
-                draft.model = "kept";
+            return updateSessionRecord({
+                id: SESSION,
+                change: (draft) => {
+                    draft.model = "kept";
+                },
             });
         });
 
@@ -239,7 +278,7 @@ describe("session keys at the door, resolved once per request", () => {
 
         expect(sessionKeyRejection(req)).toBeNull();
         // The record closes between the gate and the route: the request keeps the resolution the gate made.
-        closeSessionRecord(SESSION);
+        closeSessionRecord({ id: SESSION });
         expect((await resolveClient(req, config()))?.session?.id).toBe(SESSION);
         expect(sessionKeyRejection(bearer(key))).toContain("closed");
     });
@@ -262,7 +301,7 @@ describe("session keys at the door", () => {
             "unknown or closed session; relaunch with tools claude codex"
         );
 
-        closeSessionRecord(SESSION);
+        closeSessionRecord({ id: SESSION });
         expect(await resolveClient(bearer(key), config())).toBeNull();
         expect(sessionKeyRejection(bearer(key))).toContain(`session ${SESSION} closed`);
     });
@@ -296,8 +335,11 @@ describe("routeDenial", () => {
         );
         expect(routeDenial(unconfirmed, metered)).toContain("--allow-metered work");
 
-        const confirmed = updateSessionRecord(SESSION, (current) => {
-            current.meteredConfirmed.push({ account: "work", confirmedAt: new Date().toISOString(), how: "flag" });
+        const confirmed = updateSessionRecord({
+            id: SESSION,
+            change: (current) => {
+                current.meteredConfirmed.push({ account: "work", confirmedAt: new Date().toISOString(), how: "flag" });
+            },
         });
         const client: ResolvedClient = { name: "session", isOwner: false, session: confirmed };
 
@@ -339,11 +381,14 @@ describe("sweepSessionRecords", () => {
 
     it("deletes closed records past the retention and keeps younger ones", () => {
         newSession();
-        closeSessionRecord(SESSION);
+        closeSessionRecord({ id: SESSION });
         createSessionRecord({ id: "young", codexProxyAccount: "codex" });
-        closeSessionRecord("young");
-        updateSessionRecord(SESSION, (record) => {
-            record.closedAt = new Date(Date.now() - 31 * 86_400_000).toISOString();
+        closeSessionRecord({ id: "young" });
+        updateSessionRecord({
+            id: SESSION,
+            change: (record) => {
+                record.closedAt = new Date(Date.now() - 31 * 86_400_000).toISOString();
+            },
         });
 
         expect(sweepSessionRecords({ retentionDays: 30 }).pruned).toEqual([SESSION]);

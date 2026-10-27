@@ -22,8 +22,19 @@ export interface PickerModelList {
  * picker keeps (`PICKER_ID_SUFFIX`). The picker's own effort control sets `output_config.effort`, which the proxy
  * honours for an id without an effort suffix.
  */
-export function sessionPickerModels(models: CodexModelInfo[]): PickerModelList {
-    const data = models.map(
+export function sessionPickerModels({
+    models,
+    contextLimit,
+}: {
+    models: CodexModelInfo[];
+    contextLimit?: number;
+}): PickerModelList {
+    // Unknown launch limits cannot safely admit a smaller model.
+    const compatible =
+        typeof contextLimit === "number" && Number.isFinite(contextLimit) && contextLimit > 0
+            ? models.filter((model) => model.usableTokens >= contextLimit)
+            : [];
+    const data = compatible.map(
         (model): PickerModel => ({
             type: "model",
             id: `codex${PICKER_ID_SUFFIX}/${model.slug}`,

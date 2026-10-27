@@ -75,7 +75,7 @@ function gpt6(
 export const OPENAI_SUB_STATIC_CATALOG: WhamModelRecord[] = [
     gpt6("gpt-6-astra", "GPT-6-Astra", 272_000, { defaultEffort: "medium", ultra: "xhigh" }),
     gpt6("gpt-6.1-sol", "GPT-6.1-Sol", 500_000, { defaultEffort: "low", ultra: "xhigh" }),
-    gpt6("gpt-6.1-terra", "GPT-6.1 Terra", 500_000, { defaultEffort: "low", ultra: true }),
+    gpt6("gpt-6.1-terra", "GPT-6.1 Terra", 500_000, { defaultEffort: "low", ultra: "xhigh" }),
     gpt6("gpt-6-sol", "GPT-6-Sol", 272_000, { defaultEffort: "medium", ultra: true }),
     gpt6("gpt-6-luna", "GPT-6-Luna", 272_000, { defaultEffort: "medium" }),
     gpt6("gpt-5.6-sol", "GPT-5.6-Sol", 272_000, { defaultEffort: "low", ultra: true }),

@@ -1,4 +1,4 @@
-import { describe, expect, it } from "bun:test";
+import { describe, expect, it, spyOn } from "bun:test";
 import { chmodSync, mkdtempSync, readFileSync, statSync, writeFileSync } from "node:fs";
 import { tmpdir } from "node:os";
 import { dirname, join } from "node:path";
@@ -350,18 +350,50 @@ describe("the session key check before Claude Code starts", () => {
         expect(problem).toBeUndefined();
     });
 
-    it("names the restart when the proxy is older than session keys (401)", async () => {
+    it("describes possible causes and the restart for a rejected key (401)", async () => {
         const problem = await check(() => refusal(401, "Invalid proxy API key"));
 
         expect(problem).toContain("401 (Invalid proxy API key)");
+        expect(problem).toContain("may run code from before session keys");
+        expect(problem).toContain("different authentication settings");
         expect(problem).toContain("tools ai-proxy down && tools ai-proxy up");
     });
 
-    it("names the other home when the proxy does not know the record (403)", async () => {
+    it("names possible causes when the session key is rejected (403)", async () => {
         const problem = await check(() => refusal(403, "unknown or closed session"));
 
         expect(problem).toContain("403 (unknown or closed session)");
-        expect(problem).toContain("GENESIS_TOOLS_HOME");
+        expect(problem).toContain("unknown, closed or replaced by another launch");
+        expect(problem).toContain("may also use a different GENESIS_TOOLS_HOME");
+    });
+
+    it("handles a failed response body while retaining the status", async () => {
+        const broken = (status: number) =>
+            new Response(
+                new ReadableStream({
+                    start(controller) {
+                        controller.error(new Error("body disconnected"));
+                    },
+                }),
+                { status }
+            );
+        const fetchSpy = spyOn(globalThis, "fetch");
+        try {
+            fetchSpy.mockResolvedValueOnce(broken(401));
+            expect(
+                await sessionKeyProblem({ baseUrl: "http://example.invalid", key: KEY, model: "codex/x" })
+            ).toContain("401 (no message)");
+            fetchSpy.mockResolvedValueOnce(broken(403));
+            expect(
+                await sessionKeyProblem({ baseUrl: "http://example.invalid", key: KEY, model: "codex/x" })
+            ).toContain("403 (no message)");
+            fetchSpy.mockResolvedValueOnce(broken(500));
+            expect(
+                await sessionKeyProblem({ baseUrl: "http://example.invalid", key: KEY, model: "codex/x" })
+            ).toBeUndefined();
+        } finally {
+            fetchSpy.mockRestore();
+        }
     });
 
     it("does not block the launch on another failure or no answer", async () => {

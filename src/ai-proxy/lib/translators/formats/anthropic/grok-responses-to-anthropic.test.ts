@@ -300,23 +300,69 @@ describe("grokResponsesSseToAnthropic", () => {
             },
         });
         const warn = spyOn(logger, "warn");
-        const debug = spyOn(logger, "debug");
+        let notifyStop: () => void = () => {};
+        const stopped = new Promise<void>((resolve) => {
+            notifyStop = resolve;
+        });
+        const debug = spyOn(logger, "debug").mockImplementation((...args: unknown[]) => {
+            if (args.some((arg) => typeof arg === "string" && arg.includes("client stopped the stream"))) {
+                notifyStop();
+            }
+        });
+        let timer: ReturnType<typeof setTimeout> | undefined;
 
         try {
             const reader = responsesSseToAnthropic(upstream, { model: "gpt-6.1-terra", label: "codex" }).getReader();
             await reader.read();
             await reader.cancel("subagent stopped");
-
-            const deadline = Date.now() + 2_000;
-            const logged = (spy: typeof warn, text: string) =>
-                spy.mock.calls.some((call) => call.some((arg) => typeof arg === "string" && arg.includes(text)));
-
-            while (!logged(debug, "client stopped the stream") && Date.now() < deadline) {
-                await Bun.sleep(10);
+            await Promise.race([
+                stopped,
+                new Promise<never>((_, reject) => {
+                    timer = setTimeout(() => reject(new Error("stop was not logged")), 2_000);
+                }),
+            ]);
+            expect(
+                warn.mock.calls.some((call) =>
+                    call.some((arg) => typeof arg === "string" && arg.includes("SSE translation failed"))
+                )
+            ).toBe(false);
+        } finally {
+            if (timer) {
+                clearTimeout(timer);
             }
 
-            expect(logged(debug, "client stopped the stream")).toBe(true);
-            expect(logged(warn, "SSE translation failed")).toBe(false);
+            warn.mockRestore();
+            debug.mockRestore();
+        }
+    });
+
+    it("distinguishes an aborted upstream read from an independent upstream failure", async () => {
+        const warn = spyOn(logger, "warn");
+        const debug = spyOn(logger, "debug");
+        try {
+            for (const aborted of [true, false]) {
+                const abort = new AbortController();
+                if (aborted) {
+                    abort.abort();
+                }
+
+                const upstream = new ReadableStream<Uint8Array>({
+                    start(controller) {
+                        controller.error(new Error("read failed"));
+                    },
+                });
+                const reader = responsesSseToAnthropic(upstream, {
+                    model: "gpt-6.1-terra",
+                    label: "codex",
+                    signal: abort.signal,
+                }).getReader();
+                await expect(reader.read()).rejects.toThrow("read failed");
+                const warned = warn.mock.calls.some((call) =>
+                    call.some((arg) => typeof arg === "string" && arg.includes("SSE translation failed"))
+                );
+                expect(warned).toBe(!aborted);
+                warn.mockClear();
+            }
         } finally {
             warn.mockRestore();
             debug.mockRestore();
