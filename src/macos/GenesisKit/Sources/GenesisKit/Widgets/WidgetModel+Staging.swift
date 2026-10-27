@@ -164,6 +164,7 @@ extension WidgetModel {
     func reconcileStaged(_ items: [WidgetInboxItem]) {
         let staged = items.filter(\.isStaged)
         if staged != stagedRows { stagedRows = staged }
+        refreshPeekStaging(staged)
         guard !pendingStage.isEmpty else { return }
         let shown = Dictionary(items.map { ($0.sourceId, $0.draftOption ?? "") }, uniquingKeysWith: { first, _ in first })
         // A decision the list no longer holds shows no pick, so a pending unstage ("") is done.

@@ -950,6 +950,27 @@ public final class WidgetModel: ObservableObject {
         schedulePeekEnd(on: surface)
     }
 
+    /// The popup's decisions take the staged pick and note of `staged` (every staged decision of the snapshot). The
+    /// popup holds the item it opened with, so without this a pick staged in it showed only until the snapshot listed
+    /// it, then read as unanswered (Martin, 2026-10-27: "it shown as staged for a second ... then it just reset").
+    func refreshPeekStaging(_ staged: [WidgetInboxItem]) {
+        guard peekItem != nil else { return }
+        let byId = Dictionary(staged.map { ($0.sourceId, $0) }, uniquingKeysWith: { first, _ in first })
+        func fresh(_ item: WidgetInboxItem) -> WidgetInboxItem {
+            guard item.kind == "decision", item.needsAnswer else { return item }
+            var copy = item
+            copy.draftOption = byId[item.sourceId]?.draftOption
+            copy.draft = byId[item.sourceId]?.draft
+            return copy
+        }
+        if let shown = peekItem {
+            let next = fresh(shown)
+            if next != shown { peekItem = next }
+        }
+        let queue = peekQueue.map(fresh)
+        if queue != peekQueue { peekQueue = queue }
+    }
+
     /// Starts the popup's countdown again. It ends the popup only while the pointer is off it; with 0 seconds the
     /// popup stays until it is closed.
     private func schedulePeekEnd(on surface: WidgetSurfaceID) {

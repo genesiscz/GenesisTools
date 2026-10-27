@@ -748,6 +748,31 @@ final class WidgetInteractionTests: XCTestCase {
         XCTAssertEqual(reminded.count, 1, "once per start")
     }
 
+    /// A pick staged in a decision's popup stays shown once the snapshot lists it as staged, and an unstage clears it.
+    @MainActor
+    func testAPickStagedInThePopupStaysShownAfterTheSnapshotListsIt() {
+        let domain = "widget-tests." + UUID().uuidString
+        let defaults = UserDefaults(suiteName: domain)!
+        defer { defaults.removePersistentDomain(forName: domain) }
+        let value = model(defaults: defaults)
+        defer { value.stop() }
+        let side = WidgetSurfaceID(edge: .right)
+        func item(_ number: Int, pick: String? = nil) -> WidgetInboxItem {
+            WidgetInboxItem(id: "decision:d_\(number)_s", sourceId: "d_\(number)_s", kind: "decision",
+                key: "local:claude:s:", at: Double(number) * 1_000, needsAnswer: true, title: "Ship \(number)?",
+                number: number, revision: 1, draftOption: pick)
+        }
+
+        value.showPeek(item(1), on: side, seconds: 60, many: .list)
+        value.showPeek(item(2), on: side, seconds: 60, many: .list)
+        value.reconcileStaged([item(1, pick: "a"), item(2, pick: "b")])
+        XCTAssertEqual(value.peekItem?.draftOption, "a", "the popup shows the staged pick")
+        XCTAssertEqual(value.peekQueue.first?.draftOption, "b", "a listed alert shows its staged pick too")
+        XCTAssertEqual(value.stagedOption("d_1_s", stored: value.peekItem?.draftOption), "a")
+        value.reconcileStaged([item(2, pick: "b")])
+        XCTAssertNil(value.peekItem?.draftOption, "an unstaged decision reads as waiting again")
+    }
+
     /// Several alerts in one popup (Alerts → Several at once), a popup that stays until it is closed, and a pointer
     /// that leaves the popup: the countdown starts again instead of closing it 220 ms later.
     @MainActor
