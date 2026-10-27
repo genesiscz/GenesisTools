@@ -14,8 +14,11 @@ import {
     recordFields,
     type SessionAccountChoice,
 } from "@app/ai-proxy/lib/sessions/accounts";
+import { restoreCompaction } from "@app/ai-proxy/lib/sessions/codex-compaction";
 import {
     type AiProxySessionRecord,
+    acknowledgeCompactionDrop,
+    isCompactionId,
     readSessionRecord,
     SESSION_ACCOUNT_FIELD,
     SESSION_LOGIN_FIELD,
@@ -46,6 +49,72 @@ function fail(message: string): void {
 /** What the record says an agent runs on: the login, else the configured proxy account. */
 function currentLabel(record: AiProxySessionRecord, agent: SessionAgent): string | undefined {
     return record[SESSION_LOGIN_FIELD[agent]] ?? record[SESSION_ACCOUNT_FIELD[agent]];
+}
+
+export async function runSessionCompaction(
+    id: string,
+    action: "compaction-drop" | "compaction-restore",
+    options: { marker?: string; from?: string; acknowledgeContextLoss?: boolean }
+): Promise<void> {
+    const marker = options.marker;
+
+    if (!marker || !isCompactionId(marker)) {
+        fail("Pass the exact blocked compaction ID with --marker.");
+        return;
+    }
+
+    const record = readSessionRecord(id);
+
+    if (!record?.blockedCompactions?.includes(marker)) {
+        fail("This session has not reported that compaction ID as blocked.");
+        return;
+    }
+
+    try {
+        if (action === "compaction-drop") {
+            const changed = await acknowledgeCompactionDrop({
+                sessionId: id,
+                marker,
+                acknowledged: options.acknowledgeContextLoss === true,
+            });
+
+            if (!changed) {
+                fail("The session record no longer exists.");
+                return;
+            }
+
+            out.log.success(`Session ${id} may continue without ${marker}. Earlier compacted context is lost.`);
+            return;
+        }
+
+        if (!options.from) {
+            fail("Pass the saved compaction record with --from <file>.");
+            return;
+        }
+
+        const restored = restoreCompaction(marker, options.from);
+        const changed = await whenSessionRecordFree(() =>
+            updateSessionRecord({
+                id,
+                change: (draft) => {
+                    draft.droppedCompactions = draft.droppedCompactions?.filter((entry) => entry !== marker);
+                },
+            })
+        );
+
+        if (!changed) {
+            fail("The record was restored, but the session record no longer exists.");
+            return;
+        }
+
+        out.log.success(`Restored ${marker}. The next request can use it.`);
+
+        if (restored.backup) {
+            out.log.info(`The previous record was preserved at ${restored.backup}.`);
+        }
+    } catch (error) {
+        fail(error instanceof Error ? error.message : String(error));
+    }
 }
 
 export async function runSessionUse(id: string, options: SessionUseOptions): Promise<void> {
