@@ -5123,6 +5123,77 @@ describe("background Widget roster", () => {
         });
     });
 
+    test("a roster run that found the same sessions and agents writes no cache and rebuilds no snapshot", async () => {
+        const directory = await root();
+        await env.testing.withOverrides({ GENESIS_TOOLS_HOME: directory }, async () => {
+            let reader: WidgetRosterReader | undefined;
+            const refresh = spyOn(WidgetRosterReader.prototype, "refresh").mockImplementation(function (
+                this: WidgetRosterReader
+            ) {
+                reader = this;
+                this.agents = { generatedAt: "2026-01-01T10:00:00.000Z", parents: [], orphans: [] };
+                Reflect.get(this, "options").changed();
+            });
+            const request = spyOn(WidgetRosterReader.prototype, "request").mockImplementation(() => {});
+            let writes = 0;
+            const controller = new AbortController();
+            let ready = () => {};
+            const started = new Promise<void>((resolve) => {
+                ready = resolve;
+            });
+            const worker = watchWidget({
+                root: directory,
+                signal: controller.signal,
+                emit: () => ready(),
+                dependencies: {
+                    inboxPaths: {
+                        answerLog: join(directory, "question/log"),
+                        database: join(directory, "question/qa.db"),
+                        decisions: join(directory, "question/decisions.jsonl"),
+                    },
+                    watchInbox: async () => ({ active: true, errorCount: 0, unsubscribe: async () => {} }),
+                    sessionRoots: { claude: [], codex: [], grok: [] },
+                    writeRosterCache: async () => {
+                        writes++;
+                    },
+                    dispatcher: {
+                        validate: async () => {},
+                        dispatch: async () => ({ delivered: true, channel: "fixture" }),
+                    },
+                },
+            });
+            try {
+                await withTimeout(started, 5000);
+                expect(writes).toBe(1);
+                const changed = () => Reflect.get(reader ?? {}, "options").changed();
+                // A later read of the same roster: only its time differs.
+                if (reader) {
+                    reader.agents = { generatedAt: "2026-01-01T10:00:05.000Z", parents: [], orphans: [] };
+                }
+
+                changed();
+                expect(writes).toBe(1);
+                // A failed run, then a good one with the same roster: the snapshot must leave the error behind.
+                if (reader) {
+                    reader.error = "fixture failure";
+                }
+
+                changed();
+                if (reader) {
+                    reader.error = undefined;
+                }
+
+                changed();
+                expect(writes).toBe(2);
+            } finally {
+                controller.abort();
+                await withTimeout(worker, 5000);
+                request.mockRestore();
+                refresh.mockRestore();
+            }
+        });
+    });
+
     test("a seeded roster shows until the first run lands and never replaces a completed one", () => {
         const f = scheduled();
         try {
