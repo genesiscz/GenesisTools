@@ -14,6 +14,7 @@ import {
     type DecisionRecord,
     postDecisions,
     readDecisions,
+    readDecisionsWithIntegrity,
     updateDecisions,
 } from "@app/question/lib/decisions/store";
 import { sendInboxMessage } from "@app/question/lib/message";
@@ -1763,7 +1764,7 @@ test("decision cards carry recorded answers and supersede links; only open decis
     });
     const sources: WidgetSources = {
         sessions: async () => [],
-        decisions: () => readDecisions(file),
+        decisions: () => readDecisionsWithIntegrity(file),
         forms: () => [],
         answers: () => [],
         agents: async () => ({ generatedAt: "", parents: [], orphans: [] }),
@@ -1798,6 +1799,9 @@ test("decision cards carry recorded answers and supersede links; only open decis
     });
     // The overview lists the session's entries, the waiting one first.
     expect(session?.items?.[0]).toMatchObject({ id: `decision:${replacement.id}`, needsAnswer: true });
+    expect(snapshot.notifications?.pendingDecisionIDs).toContain(replacement.id);
+    expect(snapshot.notifications?.pendingDecisionIDs).not.toContain(answered.id);
+    expect(snapshot.notifications?.pendingDecisionIDs).not.toContain(old.id);
     // The chat answer an agent recorded is listed as answered elsewhere; the inbox's own answers never are.
     expect(snapshot.notifications?.answeredElsewhere).toMatchObject([
         {
@@ -1833,6 +1837,25 @@ test("decision cards carry recorded answers and supersede links; only open decis
     const cleared = await widgetSnapshot({ root: directory, sources });
     expect(cleared.notifications?.sessions.find((entry) => entry.key === sessionKey)?.needsAnswer ?? 0).toBe(0);
     expect(cleared.notifications?.staged.map((entry) => entry.sourceId)).toEqual([replacement.id]);
+    expect(cleared.notifications?.pendingDecisionIDs).toContain(replacement.id);
+    const failed = await widgetSnapshot({
+        root: directory,
+        sources: {
+            ...sources,
+            decisions: () => {
+                throw new Error("fixture decision read failed");
+            },
+        },
+    });
+    expect(failed.notifications?.complete).toBe(false);
+    const missing = await widgetSnapshot({
+        root: directory,
+        sources: {
+            ...sources,
+            decisions: () => readDecisionsWithIntegrity(join(directory, "missing-decisions.jsonl")),
+        },
+    });
+    expect(missing.notifications?.pendingDecisionIDs).toBeUndefined();
     expect(readDecisions(file).find((row) => row.id === replacement.id)?.updatedTs).not.toBe(replacement.createdTs);
 
     await updateDecisions(file, events, {
@@ -1847,6 +1870,14 @@ test("decision cards carry recorded answers and supersede links; only open decis
     });
     expect(moved.notifications?.sessions.find((entry) => entry.key === sessionKey)?.needsAnswer ?? 0).toBe(0);
     expect(moved.notifications?.staged).toEqual([]);
+    await files.appendFile(file, '{"id":');
+    const partial = await widgetSnapshot({ root: directory, sources });
+    expect(partial.notifications?.pendingDecisionIDs).toBeUndefined();
+    const oldSource = await widgetSnapshot({
+        root: directory,
+        sources: { ...sources, decisions: () => readDecisions(file) },
+    });
+    expect(oldSource.notifications?.pendingDecisionIDs).toBeUndefined();
 });
 
 test("a session lists its waiting entries first, then the newest, at most eight", () => {

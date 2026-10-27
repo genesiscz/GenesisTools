@@ -18,6 +18,7 @@ import { withTimeout } from "@genesiscz/utils/async";
 import { listClaudeSessionInventory } from "@genesiscz/utils/claude/peer-message";
 import { env } from "@genesiscz/utils/env";
 import { SafeJSON } from "@genesiscz/utils/json";
+import { readJsonlRows } from "@genesiscz/utils/jsonl";
 import { withFileLock } from "@genesiscz/utils/storage/file-lock";
 import { answerGitWithoutSpawning } from "@genesiscz/utils/test/no-git";
 import { z } from "zod";
@@ -49,6 +50,7 @@ import {
     moveDecisions,
     postDecisions,
     readDecisions,
+    readDecisionsWithIntegrity,
     recordChatAnswers,
     updateDecision,
     updateDecisions,
@@ -97,6 +99,23 @@ function foreignRow(sessionId: string, number: number): DecisionRecord {
 }
 
 describe("decision store", () => {
+    test("the integrity read reports torn and malformed rows without changing the ordinary read", () => {
+        const dir = mkdtempSync(join(tmpdir(), "decision-integrity-"));
+        const file = join(dir, "decisions.jsonl");
+        const row = foreignRow("fixture", 1);
+        expect(readJsonlRows(file)).toEqual({ rows: [], skipped: 0, missing: true });
+        expect(readDecisionsWithIntegrity(file)).toEqual({ rows: [], complete: false });
+        expect(readDecisions(file)).toEqual([]);
+        writeFileSync(file, "");
+        expect(readJsonlRows(file)).toEqual({ rows: [], skipped: 0 });
+        expect(readDecisionsWithIntegrity(file)).toEqual({ rows: [], complete: true });
+        writeFileSync(file, SafeJSON.stringify(row) + "\n");
+        expect(readDecisionsWithIntegrity(file)).toEqual({ rows: [row], complete: true });
+        appendFileSync(file, '{"id":\n' + SafeJSON.stringify({ id: "invalid" }) + "\n");
+        expect(readDecisionsWithIntegrity(file)).toEqual({ rows: [row], complete: false });
+        expect(readDecisions(file)).toEqual([row]);
+    });
+
     test("numbers are consecutive per session and never reused", async () => {
         const dir = mkdtempSync(join(tmpdir(), "decisions-"));
         const file = join(dir, "decisions.jsonl");

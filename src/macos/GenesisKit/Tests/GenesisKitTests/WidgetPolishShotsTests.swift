@@ -298,6 +298,11 @@ final class WidgetPolishShotsTests: XCTestCase {
         model.inboxOverview = true
         XCTAssertNil(model.answerCardOnScreen, "nor one behind the inbox of every session")
         model.inboxOverview = false
+        model.inboxFilter = "inbox"
+        XCTAssertNil(model.answerCardOnScreen, "Messages hides decisions from number-key targeting")
+        model.inboxFilter = "decisions"
+        XCTAssertEqual(model.answerCardOnScreen?.id, decision.id, "a visible decision still takes number keys")
+        model.inboxFilter = "all"
 
         model.setText("Also rebase it first")
         model.choose(decision, option: "b")
@@ -311,6 +316,28 @@ final class WidgetPolishShotsTests: XCTestCase {
         XCTAssertEqual(answer["option"] as? String, "b")
         XCTAssertEqual(answer["text"] as? String, "", "the option went alone")
         XCTAssertEqual(reply["text"] as? String, "Also rebase it first", "the reply went as a reply")
+    }
+
+    func testOpeningAnAlertRevealsAFilteredDecision() throws {
+        let model = try model(panelBackground: nil, cards: [Self.manifestCard(key + "0")])
+        defer { model.stop() }
+        model.actionRunner = { _ in ["ok": true] }
+        let decision = try XCTUnwrap(model.cards.first)
+        let item = WidgetModel.inboxItem(decision)
+        let side = WidgetSurfaceID(edge: .right)
+        model.inboxFilter = "inbox"
+        model.openAlert(item, on: side)
+        XCTAssertEqual(model.inboxFilter, "all", "Open reveals the decision under Messages")
+        XCTAssertEqual(model.answerCardOnScreen?.id, decision.id)
+        model.collapse()
+        model.inboxFilter = "inbox"
+        model.openAlert(item, on: side, ownAnswer: true)
+        XCTAssertEqual(model.inboxFilter, "all", "Write my own answer reveals the decision")
+        XCTAssertEqual(model.ownAnswerFocusRequest, decision.id)
+        model.collapse()
+        model.inboxFilter = "decisions"
+        model.openAlert(item, on: side)
+        XCTAssertEqual(model.inboxFilter, "decisions", "a compatible filter remains selected")
     }
 
     /// Unstage on a card with a staged note: the pick goes, and the note comes back into the card's own answer field
