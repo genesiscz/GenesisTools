@@ -739,6 +739,9 @@ final class HubLogicTests: XCTestCase {
         XCTAssertEqual(WorktreeCleanup.owner(of: "/work/app/src", in: rows)?.path, "/work/app")
         XCTAssertEqual(WorktreeCleanup.owner(of: "/work/app/.claude/worktrees/x/src", in: rows)?.path, "/work/app/.claude/worktrees/x")
         XCTAssertNil(WorktreeCleanup.owner(of: "/work/application", in: rows))
+        XCTAssertEqual(WorktreeCleanup.selection(for: "/work/app/src/", in: rows), "/work/app", "a listed worktree is selected at once")
+        XCTAssertEqual(WorktreeCleanup.selection(for: "/work/app/.claude/worktrees/x", in: rows), "/work/app/.claude/worktrees/x")
+        XCTAssertEqual(WorktreeCleanup.selection(for: "/work/other/src", in: rows), "/work/other/src", "unlisted: discovery decides")
     }
 
     /// A link to a merged PR by bare number widens the PR list to All for that link only: the next launch opens the
