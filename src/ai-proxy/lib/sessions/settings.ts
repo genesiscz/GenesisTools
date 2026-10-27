@@ -12,6 +12,7 @@ export function setClaudeSessionSettings(next: ClaudeSessionsConfig | undefined)
 
 /** Claude Code's compaction turn on a Codex model: the effort to run it at (undefined: the session's) and the length. */
 export function compactionSettings(config: ClaudeSessionsConfig = current): {
+    mode: "native" | "summary";
     effort: ReasoningEffort | undefined;
     words: number | undefined;
 } {
@@ -21,6 +22,7 @@ export function compactionSettings(config: ClaudeSessionsConfig = current): {
     const words = config.compaction?.words ?? 5000;
 
     return {
+        mode: config.compaction?.mode ?? "native",
         effort: effort === "session" ? undefined : effort,
         words: Number.isFinite(words) && words > 0 ? Math.round(words) : undefined,
     };

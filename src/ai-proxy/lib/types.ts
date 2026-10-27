@@ -306,6 +306,12 @@ export interface SystemNoteConfig {
 export interface ClaudeSessionsConfig {
     /** Claude Code's compaction turn on a Codex model. */
     compaction?: {
+        /**
+         * Default "native": Codex's own server-side compaction (`compaction_trigger`), at the session's effort and on
+         * its cached prefix; Claude Code keeps a placeholder note. "summary": the model writes Claude Code's text
+         * summary, at `effort` and under `words`.
+         */
+        mode?: "native" | "summary";
         /** Default "session": the session's own effort, which keeps its prompt cache (another effort misses it). */
         effort?: ReasoningEffort | "session";
         /** The summary length the model is asked to stay under, in words. Default 5000; 0 asks for no limit. */
