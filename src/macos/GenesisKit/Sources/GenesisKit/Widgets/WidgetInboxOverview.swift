@@ -40,7 +40,7 @@ struct WidgetInboxOverview: View {
             list(items)
                 .onChange(of: model.listKey) { _, key in
                     guard let key else { return }
-                    handle(key.kind, rows: drawnOrder(items), proxy: proxy)
+                    handle(key.kind, alternate: key.alternate, rows: drawnOrder(items), proxy: proxy)
                 }
                 .onChange(of: focusID) { _, id in model.inboxOverviewHasFocus = id != nil }
                 // A row that left the list (a filter, the grouping or a snapshot) cannot keep the keys' highlight, or
@@ -65,8 +65,11 @@ struct WidgetInboxOverview: View {
 
     /// Up and Down move the highlight, and inside an open decision walk its options first; Return opens or folds the
     /// highlighted row, or stages the highlighted option as a click does; with "Send at once" Return does not send,
-    /// as in a session's inbox. No motion: keys repeat.
-    private func handle(_ kind: WidgetListKey.Kind, rows: [WidgetInboxItem], proxy: ScrollViewProxy) {
+    /// as in a session's inbox. ⌘-Return (`alternate`) does the other, as ⌘-click does: it sends while a click stages,
+    /// and stages while a click sends, so a keyboard user can answer in either setting (UX audit F15). No motion: keys
+    /// repeat.
+    private func handle(_ kind: WidgetListKey.Kind, alternate: Bool = false, rows: [WidgetInboxItem],
+                        proxy: ScrollViewProxy) {
         let current = focusID.flatMap { id in rows.firstIndex { $0.id == id } }
         let options = current.map { openOptions(rows[$0]) } ?? []
         let option = focusedOption.flatMap { options.firstIndex(of: $0) }
@@ -75,11 +78,7 @@ struct WidgetInboxOverview: View {
             guard let current else { return }
             let item = rows[current]
             if let option {
-                guard model.decisionClickStages else {
-                    model.postNote("Return does not send an answer. Click the option to send it.")
-                    return
-                }
-                model.choose(item, option: options[option])
+                answer(item, letter: options[option], alternate: alternate)
                 return
             }
             model.releaseAgentFit()
@@ -109,12 +108,43 @@ struct WidgetInboxOverview: View {
         }
     }
 
+    /// Return or ⌘-Return on an option the arrows chose. Return never sends by itself; ⌘-Return follows "⌘ does the
+    /// other". `model.choose` reads ⌘ from the key event, so a send that must happen without ⌘ seen stages first and
+    /// sends that staged pick.
+    private func answer(_ item: WidgetInboxItem, letter: String, alternate: Bool) {
+        let preferences = model.snapshot?.state.preferences
+        let stages = DecisionAnswering.clickStages(preferences, command: alternate)
+        let swaps = preferences?.decisionCommandSwaps ?? true
+        if stages {
+            guard model.clickStagesNow else {
+                model.postNote("Hold ⌘ with Return to stage it.")
+                return
+            }
+            model.choose(item, option: letter)
+            return
+        }
+        guard alternate else {
+            model.postNote(swaps ? "Return does not send an answer. ⌘-Return sends it."
+                                 : "Return does not send an answer. Click the option to send it.")
+            return
+        }
+        guard model.clickStagesNow else {
+            model.choose(item, option: letter)
+            return
+        }
+        // A click would stage here, and on the staged letter it would unstage: stage only a new letter, then send.
+        if model.stagedOption(item.sourceId, stored: item.draftOption)?.contains(letter) != true {
+            model.choose(item, option: letter)
+        }
+        model.sendStaged([item.sourceId], known: [item])
+    }
+
     private func list(_ items: [WidgetInboxItem]) -> some View {
         VStack(alignment: .leading, spacing: 10) {
             HStack(spacing: 8) {
                 GenSegmentedTabs(
                     "Inbox items",
-                    items: [.init("all", "All"), .init("needs", "Needs you"), .init("unread", "Unread")],
+                    items: [.init("all", "All"), .init("needs", "Waiting"), .init("unread", "Unread")],
                     selection: Binding(get: { filter }, set: { value in
                         model.holdAgentFit()
                         filterPick = value
@@ -182,7 +212,7 @@ struct WidgetInboxOverview: View {
                 AIProviderGlyph(meta: AIProviders.meta(for: session.target.provider), size: 14)
             }
             Text(session?.title ?? "Unknown session").font(.system(size: 11.5, weight: .semibold)).lineLimit(1)
-            Text([Plural.count(items.count, "item"), waiting > 0 ? "\(waiting) need you" : nil]
+            Text([Plural.count(items.count, "item"), waiting > 0 ? WidgetWords.waitingShort(waiting) : nil]
                 .compactMap { $0 }.joined(separator: " · "))
                 .font(.system(size: 10)).foregroundStyle(waiting > 0 ? Color.orange : .secondary)
             Spacer(minLength: 0)
@@ -200,7 +230,7 @@ struct WidgetInboxOverview: View {
     private static func summary(_ items: [WidgetInboxItem]) -> String {
         let waiting = items.filter(\.needsAnswer).count
         let sessions = Set(items.map(\.key)).count
-        return [Plural.count(items.count, "item"), waiting > 0 ? "\(waiting) need your answer" : nil,
+        return [Plural.count(items.count, "item"), waiting > 0 ? WidgetWords.waiting(waiting) : nil,
                 "from " + Plural.count(sessions, "session")].compactMap { $0 }.joined(separator: " · ")
     }
 
@@ -273,8 +303,9 @@ struct WidgetInboxOverview: View {
     }
 
     private func stagedLine(_ item: WidgetInboxItem) -> String? {
-        let option = model.stagedOption(item.sourceId, stored: item.draftOption)
-        guard item.kind == "decision", item.needsAnswer, option != nil || item.draft != nil else { return nil }
+        let option = model.shownStagedOption(item.sourceId, stored: item.draftOption)
+        let note = model.shownStagedNote(item.sourceId, item.draft)
+        guard item.kind == "decision", item.needsAnswer, option != nil || note != nil else { return nil }
         return WidgetStagedText.line(item, option: option)
     }
 
@@ -324,14 +355,14 @@ struct WidgetInboxOverview: View {
     }
 
     static func title(_ item: WidgetInboxItem) -> String {
-        if let title = item.numberedTitle, item.title?.isEmpty == false {
-            return title
+        if let title = item.title, !title.isEmpty {
+            return WidgetWords.numbered(title, number: item.number)
         }
         return kindLabel(item)
     }
 
     static func kindLabel(_ item: WidgetInboxItem) -> String {
-        if item.needsAnswer { return item.kind == "decision" ? "Decision · needs your answer" : "Needs your answer" }
+        if item.needsAnswer { return item.kind == "decision" ? "Decision · waiting for your answer" : "Waiting for your answer" }
         switch item.kind {
         case "answer": return "New answer"
         case "result": return "Agent result"

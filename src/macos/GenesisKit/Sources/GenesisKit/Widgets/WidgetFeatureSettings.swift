@@ -502,7 +502,7 @@ private struct WidgetGeneralSettings: View {
         NativeSettingsRow("Inbox of every session opens with", detail: "The filter the inbox button's list shows first.") {
             Picker("Inbox of every session opens with", selection: string("overviewFilter", prefs?.overviewFilter ?? "all")) {
                 Text("All").tag("all")
-                Text("Needs you").tag("needs")
+                Text("Waiting").tag("needs")
                 Text("Unread").tag("unread")
             }.labelsHidden().pickerStyle(.segmented).frame(width: 250, alignment: .trailing)
         }
@@ -510,7 +510,7 @@ private struct WidgetGeneralSettings: View {
         NativeSettingsRow("Session inbox opens with", detail: "The filter a session's inbox shows first.") {
             Picker("Session inbox opens with", selection: string("inboxFilter", prefs?.inboxFilter ?? "all")) {
                 Text("All").tag("all")
-                Text("Inbox entries").tag("inbox")
+                Text("Messages").tag("inbox")
                 Text("Decisions").tag("decisions")
             }.labelsHidden().pickerStyle(.segmented).frame(width: 300, alignment: .trailing)
         }
@@ -1130,7 +1130,7 @@ private struct WidgetSettingsError: View {
 /// The hover list's filter and order choices, shared by the settings card and the list's own controls.
 enum WidgetPreviewChoices {
     static let filters: [NativeSettingsOption<String>] = [
-        .init("needs-you", "Needs you", detail: "Sessions with a question or decision waiting for your answer."),
+        .init("needs-you", "Waiting for you", detail: "Sessions with a question or decision waiting for your answer."),
         .init("active", "Active too", detail: "Also the sessions that work now or hold unread answers."),
     ]
     static let sorts: [NativeSettingsOption<String>] = [

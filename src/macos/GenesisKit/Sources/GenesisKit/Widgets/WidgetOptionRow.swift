@@ -1,12 +1,13 @@
 import SwiftUI
 
-/// A decision option's words, the same in the alert card, a session's inbox and the inbox of every session.
-enum WidgetOptionText {
+/// A decision option's words, the same in the alert card, a session's inbox, the inbox of every session and the hub's
+/// Inbox.
+public enum WidgetOptionText {
     /// "a", "b", … for the option at `index`.
-    static func letter(_ index: Int) -> String { String(UnicodeScalar(97 + index).map(Character.init) ?? "?") }
+    public static func letter(_ index: Int) -> String { String(UnicodeScalar(97 + index).map(Character.init) ?? "?") }
 
     /// The hub names the recommended option by its letter ("b") or its whole text.
-    static func isRecommended(_ option: String, at index: Int, _ recommended: String?) -> Bool {
+    public static func isRecommended(_ option: String, at index: Int, _ recommended: String?) -> Bool {
         guard let recommended = recommended?.trimmingCharacters(in: .whitespaces).lowercased(), !recommended.isEmpty
         else { return false }
         let lower = option.lowercased()
@@ -14,14 +15,39 @@ enum WidgetOptionText {
             || lower.hasPrefix(recommended + ")") || lower.hasPrefix(recommended + ".")
     }
 
-    /// The option text without a letter the agent already wrote ("a) Record…"); the row draws the letter itself.
-    static func text(_ option: String, letter: String) -> String {
+    /// The option text without a letter the agent already wrote ("a) Record…"); the row draws the letter itself. 176
+    /// of 201 stored options began with their letter on 2026-10-27, and the hub drew "a) a) Record…" (UX audit F1).
+    public static func text(_ option: String, letter: String) -> String {
         LiveWidgetView.choiceText(WidgetChoice(id: letter, title: option, recommended: false))
     }
 
     /// What VoiceOver reads for an option button: the verb its click does, the letter, the text, and the mark.
-    static func accessibilityLabel(letter: String, text: String, stages: Bool, recommended: Bool) -> String {
+    public static func accessibilityLabel(letter: String, text: String, stages: Bool, recommended: Bool) -> String {
         (stages ? "Stage " : "Answer ") + letter + ": " + text + (recommended ? ", recommended" : "")
+    }
+}
+
+/// The words every decision surface uses for the same things, in the widget and the hub (UX audit 2026-10-27: "1 need
+/// you", "3 answers waiting" and "DECISION 4" beside "Decision 4" named one thing four ways).
+public enum WidgetWords {
+    /// "Decision 4", or "Decision" without a number. Sentence case: "DECISION 4" is how agents write it in a reply.
+    public static func decision(_ number: Int?) -> String {
+        number.map { "Decision \($0)" } ?? "Decision"
+    }
+
+    /// "Decision 4: Field manifest format".
+    public static func numbered(_ title: String, number: Int?) -> String {
+        number.map { decision($0) + ": " + title } ?? title
+    }
+
+    /// "1 waiting for your answer", "3 waiting for your answer": right for every count, unlike "1 need your answer".
+    public static func waiting(_ count: Int) -> String {
+        "\(count) waiting for your answer"
+    }
+
+    /// The short form beside a session's name: "1 waiting", "3 waiting".
+    public static func waitingShort(_ count: Int) -> String {
+        "\(count) waiting"
     }
 }
 
@@ -92,7 +118,8 @@ struct WidgetItemOptionButton: View {
     var body: some View {
         let letter = WidgetOptionText.letter(index)
         let text = WidgetOptionText.text(option, letter: letter)
-        let picked = model.stagedOption(item.sourceId, stored: item.draftOption) == letter
+        // A ⇧-pick in the hub stages several letters ("ac"): each of them reads Staged (F14).
+        let picked = model.shownStagedOption(item.sourceId, stored: item.draftOption)?.contains(letter) ?? false
         let recommended = WidgetOptionText.isRecommended(option, at: index, item.recommended)
         let stages = model.decisionClickStages
         Button {
