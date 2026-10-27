@@ -723,6 +723,25 @@ describe("decision kinds, batch updates, harvest and staleness", () => {
         );
     });
 
+    for (const [option, label] of [
+        ["a", "a.ts"],
+        ["c", "C:\\work\\repo"],
+    ] as const) {
+        const row = {
+            ...foreignRow("abc", 23),
+            options: ["a.ts", "other", "C:\\work\\repo"],
+            option,
+        };
+
+        test(`preserves ${label} in decision markdown`, () => {
+            expect(decisionsMarkdown([row])).toContain(`- ${option}) ${label}`);
+        });
+
+        test(`preserves ${label} in the option-derived answer`, () => {
+            expect(decisionLine(row)).toBe(`DECISION 23: ${option}) ${label}`);
+        });
+    }
+
     test("a titled card retains its chat label separately from its allocated ledger number", () => {
         const row = {
             ...foreignRow("original-session", 2),
