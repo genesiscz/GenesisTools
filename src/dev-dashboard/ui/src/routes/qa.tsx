@@ -28,6 +28,7 @@ import { QaSectionHeading } from "@/components/QaSectionHeading";
 import { QaSessionActions } from "@/components/QaSessionActions";
 import { QaSourceToggle, type QaViewMode } from "@/components/QaSourceToggle";
 import { QaTopBar } from "@/components/QaTopBar";
+import { ReadingColumn } from "@/components/ReadingColumn";
 import { usePendingForms } from "@/hooks/usePendingForms";
 import { useQaStream } from "@/hooks/useQaStream";
 import { qaLogApi, qaPendingApi } from "@/lib/api";
@@ -815,15 +816,17 @@ function QaFeed() {
             />
 
             {pending.forms.length > 0 ? (
-                <section className="flex flex-col gap-3" data-testid="qa-pending-section">
-                    <h2 className="font-mono text-xs text-[var(--dd-text-muted)] first-letter:uppercase">
-                        Waiting for you
-                        <span className="dd-accent-text ml-1.5">{pending.forms.length}</span>
-                    </h2>
-                    {pending.forms.map((form) => (
-                        <QaPendingCard key={form.id} form={form} pinned={form.id === pinnedId} />
-                    ))}
-                </section>
+                <ReadingColumn>
+                    <section className="flex flex-col gap-3" data-testid="qa-pending-section">
+                        <h2 className="font-mono text-xs text-[var(--dd-text-muted)] first-letter:uppercase">
+                            Waiting for you
+                            <span className="dd-accent-text ml-1.5">{pending.forms.length}</span>
+                        </h2>
+                        {pending.forms.map((form) => (
+                            <QaPendingCard key={form.id} form={form} pinned={form.id === pinnedId} />
+                        ))}
+                    </section>
+                </ReadingColumn>
             ) : null}
 
             {logQuery.isError ? (
@@ -842,20 +845,22 @@ function QaFeed() {
                 </div>
             ) : (
                 <QaClockProvider>
-                    <div className={`flex flex-col gap-3${showScrollNav ? " pr-0 lg:pr-68" : ""}`}>
-                        {displayEntries.map((entry) => (
-                            <QaCard
-                                key={entry.id}
-                                entry={entry}
-                                unread={!seenIds.has(entry.id)}
-                                readAt={readAtById.get(entry.id) ?? entry.readAt}
-                                viewMode={viewMode}
-                                highlightTokens={highlightTokens}
-                                pinned={entry.id === pinnedId}
-                                onSeen={markSeen}
-                                onUnseen={markUnseen}
-                            />
-                        ))}
+                    <div className={showScrollNav ? "pr-0 lg:pr-68" : undefined}>
+                        <ReadingColumn className="flex flex-col gap-3">
+                            {displayEntries.map((entry) => (
+                                <QaCard
+                                    key={entry.id}
+                                    entry={entry}
+                                    unread={!seenIds.has(entry.id)}
+                                    readAt={readAtById.get(entry.id) ?? entry.readAt}
+                                    viewMode={viewMode}
+                                    highlightTokens={highlightTokens}
+                                    pinned={entry.id === pinnedId}
+                                    onSeen={markSeen}
+                                    onUnseen={markUnseen}
+                                />
+                            ))}
+                        </ReadingColumn>
                     </div>
                     <QaScrollNav entries={displayEntries} seenIds={seenIds} visible={showScrollNav} />
                 </QaClockProvider>

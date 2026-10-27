@@ -249,3 +249,70 @@ pre,
 .dd-card-handle-s { bottom: -5px; left: calc(50% - 5px); cursor: ns-resize; }
 .dd-card-handle-w { left: -5px; top: calc(50% - 5px); cursor: ew-resize; }
 .dd-card-handle-e { right: -5px; top: calc(50% - 5px); cursor: ew-resize; }
+
+/* ReadingColumn: a centred column the reader can resize from either edge, like the
+   Genesis Markdown viewer. The grips show while the pointer is over the column. */
+.dd-reading-column {
+    position: relative;
+    width: 100%;
+    margin-inline: auto;
+}
+
+.dd-reading-grip {
+    position: absolute;
+    top: 0;
+    bottom: 0;
+    z-index: 5;
+    width: 12px;
+    cursor: col-resize;
+    opacity: 0;
+    touch-action: none;
+    transition: opacity 150ms;
+}
+
+.dd-reading-grip::after {
+    content: "";
+    position: absolute;
+    top: 0;
+    bottom: 0;
+    left: 4px;
+    width: 3px;
+    border-radius: 2px;
+    background: var(--dd-border-strong, var(--dd-border));
+}
+
+.dd-reading-grip-l {
+    left: -14px;
+}
+
+.dd-reading-grip-r {
+    right: -14px;
+}
+
+.dd-reading-column:hover > .dd-reading-grip,
+.dd-reading-grip-active,
+.dd-reading-grip:focus-visible {
+    opacity: 1;
+}
+
+.dd-reading-grip:hover::after,
+.dd-reading-grip-active::after,
+.dd-reading-grip:focus-visible::after {
+    background: var(--dd-accent-from);
+}
+
+.dd-reading-grip:focus-visible {
+    outline: none;
+}
+
+body.dd-reading-resizing {
+    cursor: col-resize;
+    user-select: none;
+    -webkit-user-select: none;
+}
+
+@media (pointer: coarse) {
+    .dd-reading-grip {
+        display: none;
+    }
+}

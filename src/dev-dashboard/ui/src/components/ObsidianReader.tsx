@@ -5,6 +5,7 @@ import { Button } from "@ui/components/button";
 import { Copy, Globe, GlobeLock } from "lucide-react";
 import { useCallback, useEffect, useState } from "react";
 import { QaSourceToggle, type QaViewMode } from "@/components/QaSourceToggle";
+import { ReadingColumn } from "@/components/ReadingColumn";
 import { obsidianApi } from "@/lib/api";
 
 interface Props {
@@ -122,11 +123,15 @@ export function ObsidianReader({ path }: Props) {
                 )}
             </div>
             {viewMode === "reading" ? (
-                <article
-                    className="dd-markdown flex-1 overflow-auto px-5 py-4"
-                    dangerouslySetInnerHTML={{ __html: data.html }}
-                    onClick={onArticleClick}
-                />
+                <div className="flex-1 overflow-auto px-5 py-4">
+                    <ReadingColumn>
+                        <article
+                            className="dd-markdown"
+                            dangerouslySetInnerHTML={{ __html: data.html }}
+                            onClick={onArticleClick}
+                        />
+                    </ReadingColumn>
+                </div>
             ) : (
                 <pre className="flex-1 overflow-auto px-5 py-4 font-mono text-xs whitespace-pre-wrap text-[var(--dd-text-secondary)]">
                     {data.source}
