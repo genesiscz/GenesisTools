@@ -140,6 +140,17 @@ final class ClickyTests: XCTestCase {
         XCTAssertGreaterThan(statistics.hours.count, statistics.minutes.count)
     }
 
+    func testPitchRangeDefaultsToFourPercentAndIsClampedWhenRead() throws {
+        let old = try JSONDecoder().decode(ClickyPreferences.self, from: Data(#"{"randomizedPitch":true}"#.utf8))
+        XCTAssertEqual(old.pitchRange, 0.04)
+        let wild = try JSONDecoder().decode(ClickyPreferences.self, from: Data(#"{"pitchRange":5}"#.utf8))
+        XCTAssertEqual(wild.pitchRange, ClickyPreferences.pitchRangeLimits.upperBound)
+        var changed = old
+        changed.pitchRange = 0.1
+        let encoded = try JSONEncoder().encode(changed)
+        XCTAssertEqual(try JSONDecoder().decode(ClickyPreferences.self, from: encoded).pitchRange, 0.1)
+    }
+
     func testPhysicalKeyChartIncludesFunctionKeysAndKeepsPositionsDistinct() {
         let keys = ClickyKeyLayout.rows.flatMap { $0 }
         XCTAssertEqual(Set(keys.map(\.code)).count, keys.count)

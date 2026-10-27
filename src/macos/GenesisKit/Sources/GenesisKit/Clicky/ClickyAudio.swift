@@ -195,10 +195,6 @@ final class ClickyAudio {
         previewSelection.clear()
     }
 
-    /// Randomized pitch for a pack: every bundled manifest says 0, so the switch did nothing while a pack played.
-    /// ±3% is under half a semitone: the recording keeps its character and a repeated key stops sounding identical.
-    static let packPitchVariation: Float = 0.03
-
     @discardableResult
     func playSelected(keyCode: UInt16, release: Bool, preview: Bool, preferences: ClickyPreferences, pan: Float) throws -> Bool {
         guard let reference = activeReference, let bank = banks.last(where: { $0.reference == reference }) else { return false }
@@ -214,8 +210,7 @@ final class ClickyAudio {
         let filename = choice.filename
         // Looked up when it plays: a start that changed the output rate converts the bank first.
         try schedule({ [weak self] in self?.banks.last(where: { $0.reference == reference })?.buffers[filename] },
-                     preferences: preferences, pan: pan, gain: gain,
-                     pitchVariation: max(bank.playback.pitchVariation, Self.packPitchVariation))
+                     preferences: preferences, pan: pan, gain: gain)
         return true
     }
 
@@ -329,11 +324,10 @@ final class ClickyAudio {
         let key = Self.key(profile, release, variant)
         guard buffers[key] != nil else { return }
         // Looked up when it plays: a start that changed the output rate makes the sounds again first.
-        try schedule({ [weak self] in self?.buffers[key] }, preferences: preferences, pan: pan, gain: 1, pitchVariation: 0.05)
+        try schedule({ [weak self] in self?.buffers[key] }, preferences: preferences, pan: pan, gain: 1)
     }
 
-    private func schedule(_ buffer: @escaping () -> AVAudioPCMBuffer?, preferences: ClickyPreferences, pan: Float, gain: Float,
-                          pitchVariation: Float) throws {
+    private func schedule(_ buffer: @escaping () -> AVAudioPCMBuffer?, preferences: ClickyPreferences, pan: Float, gain: Float) throws {
         guard preferences.volume > 0 else { return }
         idlePause?.cancel()
         idleStop?.cancel()
@@ -346,13 +340,13 @@ final class ClickyAudio {
         guard running else {
             pendingClick = { [weak self] in
                 guard let current = buffer() else { return }
-                try? self?.play(current, preferences: preferences, pan: pan, gain: gain, pitchVariation: pitchVariation)
+                try? self?.play(current, preferences: preferences, pan: pan, gain: gain)
             }
             startEngine()
             return
         }
         guard let current = buffer() else { return }
-        try play(current, preferences: preferences, pan: pan, gain: gain, pitchVariation: pitchVariation)
+        try play(current, preferences: preferences, pan: pan, gain: gain)
     }
 
     private func startEngine() {
@@ -409,13 +403,14 @@ final class ClickyAudio {
         }
     }
 
-    private func play(_ buffer: AVAudioPCMBuffer, preferences: ClickyPreferences, pan: Float, gain: Float,
-                      pitchVariation: Float) throws {
+    private func play(_ buffer: AVAudioPCMBuffer, preferences: ClickyPreferences, pan: Float, gain: Float) throws {
         let voice = voices[cursor]
         cursor = (cursor + 1) % voices.count
         voice.0.volume = min(1, max(0, Float(preferences.volume) * gain))
         voice.0.pan = preferences.spatialAudio ? pan : 0
-        voice.1.rate = preferences.randomizedPitch ? Float.random(in: (1 - pitchVariation)...(1 + pitchVariation)) : 1
+        // One range for built-in sounds and packs (Settings › Randomized pitch); a pack manifest's own value is always 0.
+        let range = Float(preferences.pitchRange)
+        voice.1.rate = preferences.randomizedPitch && range > 0 ? Float.random(in: (1 - range)...(1 + range)) : 1
         voice.0.scheduleBuffer(buffer, at: nil, options: .interrupts)
         if !voice.0.isPlaying { voice.0.play() }
         let pause = DispatchWorkItem { [weak self] in
