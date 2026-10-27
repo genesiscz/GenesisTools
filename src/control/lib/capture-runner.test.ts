@@ -40,9 +40,25 @@ mock.module("./vitrinka-publish", () => ({
     },
 }));
 
-const { CaptureRunError, peekabooDurationArg, recorderFailed, runCapturePlan, runCapturePlanWithSignal } = await import(
-    "./capture-runner"
-);
+const {
+    CaptureRunError,
+    peekabooDurationArg,
+    recorderFailed,
+    runCapturePlan,
+    runCapturePlanWithSignal,
+    validatePeekabooCapturePlan,
+} = await import("./capture-runner");
+
+test("peekaboo rejects explicit scroll timing before capture", () => {
+    const base: Plan = {
+        capture: { mode: "screen", duration: 2, backend: "peekaboo" },
+        actions: [{ atMs: 0, do: "scroll", direction: "down" }],
+    };
+    expect(() => validatePeekabooCapturePlan(base)).not.toThrow();
+    expect(() =>
+        validatePeekabooCapturePlan({ ...base, actions: [{ atMs: 0, do: "scroll", direction: "down", time: 1 }] })
+    ).toThrow("Timed scroll");
+});
 
 // Regression: PR #376 review round 3 — plan durations reached peekaboo unconverted.
 // `capture-plan.ts` documents `capture.duration` in SECONDS, but peekaboo reads a bare

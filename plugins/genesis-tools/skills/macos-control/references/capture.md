@@ -166,8 +166,8 @@ recording can use one `computer-use run` script; not every adaptive action needs
   `{ "atMs": 800, "do": "scroll", "direction": "down", "amount": 9000, "time": 1.4, "coords": {…}, "app": "<pid>" }`.
   `amount` is pixels; `time` spreads them over that many seconds with trackpad phases, and a scroll without `time`
   is already animated (0.25 to 1 s by distance; `time: 0` is the old single wheel event). A scroll with `coords`
-  goes straight to the window, with no observation first. Never write a row of short scroll actions: each one
-  observes the window, which takes seconds on a big web page, so they land after the recording ends.
+  observes and pins the recorded window before dispatch. Observation can take seconds on a large page, so allow
+  time for it in the recording plan. Never write a row of short scroll actions to simulate one gesture.
 - **Never start a recorder with `( … &)` in a shell.** The subshell exits at once, the GenesisTools launcher sees
   its parent gone and stops the tool, and the result says `cancelled: true` after under a second. Run the plan in
   the foreground, use the harness's own background mode, or start recorder and input from one script.

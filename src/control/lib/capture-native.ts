@@ -114,14 +114,17 @@ export class NativeCaptureControls {
             windowIndex: this.capture.windowIndex,
         });
         try {
-            if (this.binding?.key === key) {
+            if (
+                this.binding?.key === key &&
+                !(this.capture.mode === "isolated" && (this.capture.windowIds?.length ?? 0) > 1)
+            ) {
                 // A dispatched action without a refreshed snapshot invalidates ComputerUse's rows.
                 // Reobserve the pinned window; the bridge retains and checks the app's launch identity.
                 const state = await this.computer.get_app_state({
                     app: options.app,
                     window_id: this.binding.windowId,
                     image: options.image ?? false,
-                    element_limit: 2000,
+                    element_limit: 4000,
                 });
                 if (state.window.id !== this.binding.windowId) {
                     throw new Error("The bound recording window changed. Select the target again.");
@@ -156,24 +159,61 @@ export class NativeCaptureControls {
                 app,
                 window_id: this.capture.windowId,
                 image: options.image ?? false,
-                element_limit: 2000,
+                element_limit: 4000,
             });
         }
-        // An isolated recording names its windows exactly; an action on one of their apps acts on that window. Without
-        // this, a plan that recorded `windowIds: [id]` had every action refused as "requires one exact window".
-        if (this.capture.mode === "isolated" && windowTitle === undefined) {
-            for (const windowId of this.capture.windowIds ?? []) {
-                try {
-                    return await this.computer.get_app_state({
-                        app,
-                        window_id: windowId,
-                        image: options.image ?? false,
-                        element_limit: 2000,
-                    });
-                } catch (error) {
-                    logger.debug({ error, app, windowId }, "capture: a recorded window is not this app's");
+        // Resolve only recorded windows belonging to this app; never choose the first match silently.
+        if (this.capture.mode === "isolated") {
+            const listed = required(await this.native.run({ args: ["window", "--app", app], timeoutMs: 5000 }));
+            const windows = z
+                .array(
+                    z.object({
+                        window_id: z.number().int().positive().optional(),
+                        title: z.string().optional(),
+                        minimized: z.boolean().optional(),
+                    })
+                )
+                .parse(listed.windows);
+            if (windows.some((window) => window.window_id === undefined)) {
+                throw new Error("Cannot verify the recorded window IDs for this app.");
+            }
+            const ids = (this.capture.windowIds ?? []).filter((id) =>
+                windows.some(
+                    (window) =>
+                        window.window_id === id &&
+                        !window.minimized &&
+                        (windowTitle === undefined || window.title === windowTitle)
+                )
+            );
+            const matches: ComputerState[] = [];
+            for (const windowId of ids) {
+                const state = await this.computer.get_app_state({
+                    app,
+                    window_id: windowId,
+                    image: options.image ?? false,
+                    element_limit: 4000,
+                });
+                if (action && (action.do === "ax-set" || action.do === "ax-press" || action.do === "ax-perform")) {
+                    const count = state.elements.filter((element) => match(element, action)).length;
+                    if (count > 1) {
+                        throw new Error("Native capture target is ambiguous.");
+                    }
+                    if (count === 1) {
+                        matches.push(state);
+                    }
+                } else {
+                    matches.push(state);
                 }
             }
+            if (matches.length !== 1) {
+                throw new Error("Native capture requires one exact recorded window or AX target.");
+            }
+            return this.computer.get_app_state({
+                app,
+                window_id: matches[0].window.id,
+                image: options.image ?? false,
+                element_limit: 4000,
+            });
         }
         const listed = required(await this.native.run({ args: ["window", "--app", app], timeoutMs: 5000 }));
         const windows = z
@@ -191,7 +231,7 @@ export class NativeCaptureControls {
                 app,
                 window_index: indexes[0],
                 image: options.image ?? false,
-                element_limit: 2000,
+                element_limit: 4000,
             });
         }
         if (action && (action.do === "ax-set" || action.do === "ax-press" || action.do === "ax-perform")) {
@@ -201,7 +241,7 @@ export class NativeCaptureControls {
                     app,
                     window_index: windowIndex,
                     image: false,
-                    element_limit: 2000,
+                    element_limit: 4000,
                 });
                 const count = state.elements.filter((element) => match(element, action)).length;
                 if (count > 1) {
@@ -216,7 +256,7 @@ export class NativeCaptureControls {
                     app,
                     window_id: matches[0].window.id,
                     image: false,
-                    element_limit: 2000,
+                    element_limit: 4000,
                 });
             }
         }
@@ -247,9 +287,6 @@ export class NativeCaptureControls {
             if (action.do === "focus") {
                 const result = await this.focus(action);
                 return { ok: result.ok, stdout: result.ok ? "Focused through native AX" : "", stderr: result.detail };
-            }
-            if (action.do === "scroll" && action.coords && !relative) {
-                return await this.scrollAt(app, action);
             }
             const windowTitle =
                 ("windowTitle" in action ? action.windowTitle : undefined) ??
@@ -350,31 +387,6 @@ export class NativeCaptureControls {
             logger.debug({ error, action: action.do }, "Native capture action stopped without fallback");
             return { ok: false, stdout: "", stderr: error instanceof Error ? error.message : String(error) };
         }
-    }
-    /**
-     * A scroll at a screen point goes straight to `ax-tool scroll`: window-addressed, animated, and with no window
-     * observation first. Observing a web page of a few thousand elements took seconds, so a plan's scroll landed after
-     * the recording it was meant for had ended (2026-10-26).
-     */
-    private async scrollAt(app: string, action: Extract<Action, { do: "scroll" }>) {
-        const [x, y] = coordinates(action.coords ?? "");
-        const args = [
-            "scroll",
-            "--app",
-            app,
-            "--direction",
-            action.direction,
-            "--pixels",
-            String(action.amount ?? 120),
-        ];
-        args.push("--coords", `${Math.round(x)},${Math.round(y)}`);
-        if (action.time !== undefined) {
-            args.push("--time", String(action.time));
-        }
-
-        const result = await this.native.run({ args, timeoutMs: ((action.time ?? 1) + 5) * 1000 });
-        const compact = { ok: result.ok, action: "scroll", error: result.error };
-        return { ok: result.ok, stdout: SafeJSON.stringify(compact), stderr: result.error ?? "", data: compact };
     }
     dispose() {
         this.binding = undefined;

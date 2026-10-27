@@ -72,6 +72,10 @@ private func workflowFailure(_ message: String, category: SnapshotRefusal = .ref
 }
 
 private func workflowFailure(_ error: Error, extras: [String: Any] = [:]) -> Never {
+    if let deadline = error as? ScrollMotion.DeadlineExceeded {
+        workflowDispatchState = deadline.dispatched ? "uncertain" : "not_started"
+        workflowFailure(deadline.localizedDescription, extras: extras)
+    }
     if let active = error as? UserActiveError {
         workflowDispatchState = inputGate.posted > 0 ? "uncertain" : "not_started"
         workflowFailure(active.localizedDescription, category: active.category, extras: extras)
@@ -1715,8 +1719,8 @@ func cmdAct(appName _: String) {
                         throw WindowEventError.unavailable("choose --pixels or --pages, not both")
                     }
                     pixels = workflowInteger("--pixels")
-                    guard (1...10000).contains(pixels) else {
-                        throw WindowEventError.unavailable("--pixels must be 1–10000")
+                    guard (1...100000).contains(pixels) else {
+                        throw WindowEventError.unavailable("--pixels must be 1–100000")
                     }
                     pageViewportObservation = nil
                 } else {
@@ -1737,7 +1741,7 @@ func cmdAct(appName _: String) {
                 }
                 let seconds: Double? = asked == nil ? ScrollMotion.defaultSeconds(pixels: pixels) : asked == 0 ? nil : asked
                 let count = ScrollMotion.eventCount(seconds: seconds)
-                let interval = (seconds ?? 0) / Double(count)
+                let interval = ScrollMotion.interval(seconds: seconds, count: count)
                 let towardStart = direction == "up" || direction == "left"
                 let deltas = ScrollMotion.deltas(total: towardStart ? pixels : -pixels, count: count, ease: .flick)
                 let events = try deltas.enumerated().map { index, delta -> CGEvent in
@@ -1763,11 +1767,9 @@ func cmdAct(appName _: String) {
                 _ = try verifyPoint(point, pin: .element)
                 try admitVisualAction()
                 }, dispatch: {
-                    for (index, event) in events.enumerated() {
-                        if index > 0, interval > 0 {
-                            Thread.sleep(forTimeInterval: interval)
-                        }
-                        try inputGate.post { event.postToPid(pid) }
+                    try ScrollMotion.dispatch(count: events.count, interval: interval, remaining: workflowRemaining,
+                                              sleep: { Thread.sleep(forTimeInterval: $0) }) { index in
+                        try inputGate.post { events[index].postToPid(pid) }
                     }
                 })
                 Thread.sleep(forTimeInterval: 0.1)

@@ -107,7 +107,7 @@ func cmdScroll(appName: String) {
 
     ActionCursor.emit("scroll", point: point, background: !foreground, target: hasTarget ? "ax" : "pixel")
     let count = ScrollMotion.eventCount(seconds: seconds)
-    let interval = (seconds ?? 0) / Double(count)
+    let interval = ScrollMotion.interval(seconds: seconds, count: count)
     var sent = 0
     for round in 0..<repeats {
         if round > 0 {

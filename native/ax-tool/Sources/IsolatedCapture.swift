@@ -563,9 +563,10 @@ func captureIsolatedWindows(_ options: RecordOptions) {
         catch { compositor.queue.sync { compositor.error = error } }
     }
     compositor.queue.sync { compositor.finish() }
-    recorder.drainFrames()
+    let stoppedAt = CMClockGetTime(CMClockGetHostTimeClock())
     let duration = Date().timeIntervalSince(started)
-    recorder.finishVideo(stoppedAt: CMClockGetTime(CMClockGetHostTimeClock()))
+    recorder.drainFrames()
+    recorder.finishVideo(stoppedAt: stoppedAt)
     if let error = compositor.error { errorExit("isolated recording stopped early: \(error.localizedDescription)") }
     guard !recorder.kept.isEmpty else { errorExit("isolated recording produced no frames") }
     let directory = URL(fileURLWithPath: options.outDir)

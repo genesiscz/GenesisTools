@@ -45,8 +45,18 @@ describe("captureToolCommand", () => {
     });
 });
 
-function captureFixture(options: { noAfter?: boolean; noIdentity?: boolean } = {}) {
+function captureFixture(
+    options: {
+        noAfter?: boolean;
+        noIdentity?: boolean;
+        isolated?: boolean;
+        recordedWindow?: number;
+        windows?: Array<{ id: number; target: boolean }>;
+        lateDuplicate?: boolean;
+    } = {}
+) {
     const calls: string[][] = [];
+    const timeouts: Array<number | undefined> = [];
     let launch = 123;
     let missing = false;
     let title = "Fixture";
@@ -61,17 +71,56 @@ function captureFixture(options: { noAfter?: boolean; noIdentity?: boolean } = {
         screenshot: {},
         elements: [
             { index: 0, depth: 0, role: "AXWindow", actions: ["AXRaise"], x: 0, y: 0, width: 400, height: 300 },
-            { index: 1, depth: 1, role: "AXButton", AXIdentifier: "save", AXTitle: "Save", actions: ["AXPress"] },
+            ...(options.windows && !options.windows.find((window) => window.id === id)?.target
+                ? []
+                : [
+                      {
+                          index: 1,
+                          depth: 1,
+                          role: "AXButton",
+                          AXIdentifier: "save",
+                          AXTitle: "Save",
+                          actions: ["AXPress"],
+                      },
+                  ]),
+            ...(options.lateDuplicate
+                ? [
+                      ...Array.from({ length: 2000 }, (_, index) => ({
+                          index: index + 2,
+                          depth: 1,
+                          role: "AXStaticText",
+                          actions: [],
+                      })),
+                      {
+                          index: 2002,
+                          depth: 1,
+                          role: "AXButton",
+                          AXIdentifier: "save",
+                          AXTitle: "Save",
+                          actions: ["AXPress"],
+                      },
+                  ]
+                : []),
         ],
     });
     const controls = new NativeCaptureControls(
-        { mode: "window", app: "Fixture", duration: 5 },
+        options.isolated
+            ? { mode: "isolated", windowIds: options.windows?.map((window) => window.id), duration: 5 }
+            : { mode: "window", app: "Fixture", windowId: options.recordedWindow, duration: 5 },
         {
             native: {
-                run: async ({ args }): Promise<AxResult> => {
+                run: async ({ args, timeoutMs }): Promise<AxResult> => {
                     calls.push(args);
+                    timeouts.push(timeoutMs);
                     if (args[0] === "window") {
-                        return { ok: true, windows: duplicate ? [{ title }, { title }] : [{ title }] };
+                        return {
+                            ok: true,
+                            windows: options.windows
+                                ? options.windows.map((window) => ({ title, window_id: window.id }))
+                                : duplicate
+                                  ? [{ title }, { title }]
+                                  : [{ title }],
+                        };
                     }
 
                     if (args[0] === "see") {
@@ -80,7 +129,11 @@ function captureFixture(options: { noAfter?: boolean; noIdentity?: boolean } = {
                         }
 
                         return snapshot(
-                            args.includes("--window-index") ? 10 + Number(args[args.indexOf("--window-index") + 1]) : 10
+                            args.includes("--window-id")
+                                ? Number(args[args.indexOf("--window-id") + 1])
+                                : args.includes("--window-index")
+                                  ? 10 + Number(args[args.indexOf("--window-index") + 1])
+                                  : 10
                         );
                     }
 
@@ -92,6 +145,7 @@ function captureFixture(options: { noAfter?: boolean; noIdentity?: boolean } = {
     return {
         controls,
         calls,
+        timeouts,
         restart: () => {
             launch++;
         },
@@ -108,6 +162,59 @@ function captureFixture(options: { noAfter?: boolean; noIdentity?: boolean } = {
 }
 
 describe("native capture target binding", () => {
+    it("pins coordinate scrolls to the observed process and budgets their duration", async () => {
+        const f = captureFixture({ recordedWindow: 10 });
+        const action = {
+            do: "scroll" as const,
+            atMs: 0,
+            app: "Fixture",
+            direction: "down" as const,
+            coords: { x: 30, y: 30 },
+            amount: 20_000,
+            time: 15,
+        };
+        expect((await f.controls.run(action)).ok).toBe(true);
+        const actIndex = f.calls.findIndex((args) => args[0] === "act");
+        expect(f.calls[actIndex]).toContain("--time");
+        expect(f.calls[actIndex]).toContain("15");
+        expect(f.calls[actIndex]).toContain("20000");
+        expect(f.calls.find((args) => args[0] === "see")).toContain("--window-id");
+        expect(f.timeouts[actIndex]).toBeGreaterThanOrEqual(20_000);
+        expect((await f.controls.run({ ...action, coords: { x: 500, y: 30 } })).ok).toBe(false);
+        expect(f.calls.filter((args) => args[0] === "act")).toHaveLength(1);
+        f.restart();
+        expect((await f.controls.run(action)).ok).toBe(false);
+        expect(f.calls.filter((args) => args[0] === "act")).toHaveLength(1);
+        f.controls.dispose();
+    });
+
+    it("selects the unique isolated window and refuses duplicate targets", async () => {
+        for (const duplicate of [false, true]) {
+            const f = captureFixture({
+                isolated: true,
+                windows: [
+                    { id: 10, target: duplicate },
+                    { id: 11, target: true },
+                ],
+            });
+            expect((await f.controls.run({ do: "ax-press", axId: "save", app: "Fixture", atMs: 0 })).ok).toBe(
+                !duplicate
+            );
+            const acts = f.calls.filter((args) => args[0] === "act");
+            expect(acts).toHaveLength(duplicate ? 0 : 1);
+            if (!duplicate) {
+                expect(f.calls.filter((args) => args[0] === "see").at(-1)).toContain("11");
+            }
+            f.controls.dispose();
+        }
+    });
+
+    it("refuses a duplicate target beyond the old 2000-row projection", async () => {
+        const f = captureFixture({ lateDuplicate: true });
+        expect((await f.controls.run({ do: "ax-press", axId: "save", app: "Fixture", atMs: 0 })).ok).toBe(false);
+        expect(f.calls.filter((args) => args[0] === "act")).toHaveLength(0);
+        f.controls.dispose();
+    });
     it("uses fresh observations and actions for a 20-action fixed-window recording", async () => {
         const f = captureFixture();
         for (let step = 0; step < 20; step++) {

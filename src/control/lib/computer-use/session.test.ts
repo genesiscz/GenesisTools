@@ -54,9 +54,11 @@ function fixture(options: { evaluate?: Evaluator } = {}) {
         elements,
     };
     const calls: string[][] = [];
+    const timeouts: Array<number | undefined> = [];
     const native: NativeBridge = {
-        run: async ({ args }) => {
+        run: async ({ args, timeoutMs }) => {
             calls.push(args);
+            timeouts.push(timeoutMs);
             const pathIndex = args.indexOf("--path");
             if (pathIndex >= 0) {
                 snapshot.screenshot.path = args[pathIndex + 1];
@@ -93,8 +95,25 @@ function fixture(options: { evaluate?: Evaluator } = {}) {
             };
         },
     };
-    return { calls, native, computer: new ComputerUse({ native, evaluate: options.evaluate }), snapshot };
+    return { calls, timeouts, native, computer: new ComputerUse({ native, evaluate: options.evaluate }), snapshot };
 }
+test("timed scroll extends the default timeout but preserves an explicit timeout", async () => {
+    for (const explicit of [undefined, 4000]) {
+        const f = fixture();
+        const state = await f.computer.get_app_state({ app: "Fixture", image: false });
+        await f.computer.scroll({
+            app: "Fixture",
+            revision: state.revision,
+            element_index: 0,
+            direction: "down",
+            seconds: 15,
+            ...(explicit === undefined ? {} : { timeout_ms: explicit }),
+        });
+        const index = f.calls.findIndex((args) => args[0] === "act");
+        expect(f.timeouts[index]).toBe(explicit ?? 20_000);
+        expect(f.calls[index]).toContain("--time");
+    }
+});
 function evaluation(answers: EvaluationResponse["answers"]): EvaluationResponse {
     return {
         model: "fixture",
