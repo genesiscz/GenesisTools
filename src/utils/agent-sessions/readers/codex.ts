@@ -40,6 +40,7 @@ import {
     projectionFileState,
     sqliteColumns,
 } from "./codex-projection";
+import { anchorRecord, anchorStrings, historyEntryBuilder, type ToolContext } from "./history-entry";
 
 export { type CodexProjectionIndex, codexProjectionCachePath, readCodexProjectionIndex } from "./codex-projection";
 
@@ -179,11 +180,6 @@ function userMessage(row: JsonRecord): string {
     }
     return textBlocks(payload.content).join("\n");
 }
-interface ToolContext {
-    names: Map<string, string>;
-    paths: Map<string, string[]>;
-}
-
 function stringifyValue(value: JsonValue | undefined): string {
     return typeof value === "string" ? value : value === undefined ? "" : SafeJSON.stringify(value, { strict: true });
 }
@@ -237,35 +233,7 @@ function commitHashes(text: string): string[] {
     return [...new Set((text.match(/\b[a-f0-9]{7,40}\b/gi) ?? []).filter((value) => !/^(.)\1+$/.test(value)))];
 }
 
-function entry(options: {
-    role: NativeHistoryEntry["role"];
-    text: string;
-    line: number;
-    timestamp?: string;
-    tool?: string;
-    toolEvent?: "call" | "result";
-    inputText?: string;
-    searchText?: string;
-    paths?: string[];
-    callId?: string;
-}): NativeHistoryEntry | undefined {
-    if (!options.text && !options.searchText) {
-        return;
-    }
-    return {
-        line: options.line,
-        role: options.role,
-        text: options.text,
-        ...(options.searchText ? { searchText: options.searchText } : {}),
-        ...(options.tool ? { tool: options.tool } : {}),
-        ...(options.toolEvent ? { toolEvent: options.toolEvent } : {}),
-        ...(options.inputText ? { inputText: options.inputText } : {}),
-        ...(options.callId ? { callId: options.callId } : {}),
-        paths: options.paths ?? [],
-        commits: commitHashes(options.text),
-        ...(options.timestamp ? { timestamp: options.timestamp } : {}),
-    };
-}
+const entry = historyEntryBuilder(commitHashes);
 
 function contentEntries(options: {
     content: JsonValue | undefined;
@@ -1371,8 +1339,7 @@ export type CodexHistoryOperations = Pick<NativeSessionReader<"codex">, "parserV
             | "readTurnBoundary"
             | "readForward"
             | "continuedIn"
-            | "currentModel"
-            | "scanInsights"
+            | "modelOfRow"
             | "rowAnchors"
         >
     >;
@@ -1441,16 +1408,6 @@ async function readCodexTurnBoundary(
             return legacyEntries(row, line, tools).filter((entry) => entry.role === "user");
         },
     });
-}
-
-function anchorRecord(value: unknown): Record<string, unknown> {
-    return typeof value === "object" && value !== null && !Array.isArray(value)
-        ? Object.fromEntries(Object.entries(value))
-        : {};
-}
-
-function anchorStrings(values: unknown[]): string[] {
-    return values.filter((value): value is string => typeof value === "string" && value.length > 0);
 }
 
 /**

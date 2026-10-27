@@ -470,3 +470,21 @@ export interface NativeIndexSyncResult extends NativeIndexStatus {
     unchanged: number;
     removed: number;
 }
+
+/** The reader members a provider's history module implements itself; the provider's reader spreads them in. */
+export type HistoryOperations<Kind extends AgentKind> = Pick<NativeSessionReader<Kind>, "parserVersion"> &
+    Required<
+        Pick<
+            NativeSessionReader<Kind>,
+            | "readMetadata"
+            | "scan"
+            | "readRecords"
+            | "readBackward"
+            | "readTurnBoundary"
+            | "readForward"
+            | "continuedIn"
+            | "currentModel"
+            | "scanInsights"
+            | "rowAnchors"
+        >
+    >;
