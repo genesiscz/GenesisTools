@@ -1,10 +1,18 @@
 import { realpathSync, statSync } from "node:fs";
 import { tmpdir } from "node:os";
-import { basename, dirname, isAbsolute, join, relative, resolve } from "node:path";
+import { basename, dirname, isAbsolute, join, relative, resolve, sep } from "node:path";
+
+/**
+ * The machine-wide temp folder: `/tmp` on macOS and Linux, where the agents' scratch convention and the trash live
+ * (macOS's `os.tmpdir()` is a per-user `/var/folders/...` folder, so it is not used there), `os.tmpdir()` on Windows.
+ */
+export function sharedTempRoot(): string {
+    return process.platform === "win32" ? tmpdir() : join(sep, "tmp");
+}
 
 /** Where moved-aside items wait for the drain, unless the config names another folder. */
 export function defaultTrashRoot(): string {
-    return process.platform === "win32" ? join(tmpdir(), "GenesisTools", "rm") : "/tmp/GenesisTools/rm";
+    return join(sharedTempRoot(), "GenesisTools", "rm");
 }
 
 /** The trash folder at the mount point of a volume other than the trash root's, so a move stays a rename. */
