@@ -1,6 +1,7 @@
 import { registerActivity } from "@app/gitlab/commands/activity";
 import { registerAnalyzeProject } from "@app/gitlab/commands/analyze-project";
 import { registerAnalyzeUser } from "@app/gitlab/commands/analyze-user";
+import { registerInbox } from "@app/gitlab/commands/inbox";
 import { publicUsage, registerPr } from "@app/gitlab/commands/pr";
 import { loadConfig } from "@app/gitlab/lib/config";
 import { Command, Help } from "commander";
@@ -27,6 +28,7 @@ export function buildProgram(): { program: Command; pr: Command } {
     registerActivity(user);
     registerAnalyzeUser(user);
     registerAnalyzeProject(activity);
+    registerInbox(program);
 
     // Every renderer reads the configured date style, so the config loads before any command runs.
     program.hook("preAction", async () => {

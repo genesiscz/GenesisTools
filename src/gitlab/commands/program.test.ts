@@ -22,8 +22,8 @@ describe("the gitlab command tree", () => {
     const all = leaves(program);
     const mrLeaves = leaves(pr, ["pr"]).filter(({ cmd }) => cmd.registeredArguments[0]?.name() === "iid");
 
-    test("the top level has only pr and activity", () => {
-        expect(program.commands.map((cmd) => cmd.name()).sort()).toEqual(["activity", "pr"]);
+    test("the top level has only pr, activity and inbox", () => {
+        expect(program.commands.map((cmd) => cmd.name()).sort()).toEqual(["activity", "inbox", "pr"]);
     });
 
     test("every leaf prints its own usage, and an MR leaf prints the MR first", () => {
