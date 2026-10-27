@@ -73,6 +73,12 @@ const CODEX_AGENTS: CodexAgentSpec[] = [
         use: "OpenAI's frontier model, for the most demanding problems. Slower than sol and uses more of the Codex limits.",
     },
     {
+        name: "terra",
+        alias: "terra",
+        effort: "high",
+        use: "A fast, efficient model for visual reasoning, computer use, and clear writing, at half sol's price. Prefer sol for complex coding.",
+    },
+    {
         name: "luna",
         alias: "luna",
         effort: "high",

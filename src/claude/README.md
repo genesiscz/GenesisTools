@@ -130,7 +130,7 @@ tools claude codex -- -p "one turn"           # args after -- go to claude
 ```
 
 The main loop runs on `codex/<model>` through ai-proxy; titles and the Claude-side calls run on
-the Claude account; one subagent per Codex model (`sol`, `sol-xhigh`, `sol6`, `astra`, `luna`),
+the Claude account; one subagent per Codex model (`sol`, `sol-xhigh`, `sol6`, `astra`, `terra`, `luna`),
 `opus` (and `fable` when the Claude account has it) on the Claude account, and `codex-worker`,
 which hands a task to `tools codex spawn`. Each launch writes a session record
 (`~/.genesis-tools/ai-proxy/sessions/<Claude Code session id>.json`) and gives Claude Code its
