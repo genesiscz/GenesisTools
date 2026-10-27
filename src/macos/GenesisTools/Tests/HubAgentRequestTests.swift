@@ -57,4 +57,16 @@ final class HubAgentRequestTests: XCTestCase {
 
         XCTAssertEqual(HubAgentsModel.requested(child: "worker-12", parent: nil, in: index)?.key, "p|worker-1234")
     }
+
+    /// A refresh slides only when few rows move; a move counts once, a bulk change counts every row.
+    func testChangedRowsCountsMovesOnceAndBulkChangesInFull() {
+        let rows = (0..<30).map { "r\($0)" }
+        XCTAssertEqual(HubAgentsModel.changedRows(from: rows, to: rows), 0)
+        var moved = rows
+        moved.insert(moved.remove(at: 20), at: 0)
+        XCTAssertEqual(HubAgentsModel.changedRows(from: rows, to: moved), 1)
+        XCTAssertEqual(HubAgentsModel.changedRows(from: rows, to: rows + ["new"]), 1)
+        XCTAssertEqual(HubAgentsModel.changedRows(from: rows, to: Array(rows.dropFirst(12))), 12)
+        XCTAssertGreaterThan(HubAgentsModel.changedRows(from: rows, to: rows.reversed()), HubAgentsModel.animatedChangeLimit)
+    }
 }

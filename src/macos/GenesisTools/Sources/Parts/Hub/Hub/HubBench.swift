@@ -229,14 +229,16 @@ enum HubBench {
         /// `agents`: the Agents list lands again with one agent's numbers moved, 0.7 s apart, the way a refresh
         /// after a transcript grew does (`hub.agents.refresh.render` in the live hub). Even steps move a child of
         /// the open parent (its detail is on screen), odd steps a child of another parent (nothing on screen
-        /// should re-render beyond that row). `GENESIS_HUB_BENCH_AGENTS_ROUNDS` sets the steps (default 12).
+        /// should re-render beyond that row). Every third step (`agents.move`) twelve agents leave the list or
+        /// come back, a refresh that moves many rows. `GENESIS_HUB_BENCH_AGENTS_ROUNDS` sets the steps (default 12).
         private func addAgentsRefresh() {
             let agents = model.agents
-            order.append("agents.refresh")
+            order += ["agents.refresh", "agents.move"]
             PerfLog.mark("hub.bench agents: \(agents.parents.count) parents, open \(agents.selectedID ?? "none")")
             let rounds = ProcessInfo.processInfo.environment["GENESIS_HUB_BENCH_AGENTS_ROUNDS"].flatMap(Int.init) ?? 12
             for round in 0..<rounds {
-                steps.append(Step(scenario: "agents.refresh", action: { agents.benchRefresh(round) }, delay: 0.7))
+                let scenario = round % 3 == 2 ? "agents.move" : "agents.refresh"
+                steps.append(Step(scenario: scenario, action: { agents.benchRefresh(round) }, delay: 0.7))
             }
         }
 
