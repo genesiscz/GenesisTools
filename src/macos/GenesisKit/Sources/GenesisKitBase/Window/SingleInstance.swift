@@ -19,7 +19,11 @@ public final class SingleInstance: @unchecked Sendable {
     private let forwardAttempts = 3
     private var lockDescriptor: Int32 = -1
     /// A read-only handle on the lock file for `isRunningElsewhere`, opened on its first call.
-    private var probeDescriptor: Int32 = -1
+    private(set) var probeDescriptor: Int32 = -1
+
+    deinit {
+        if probeDescriptor >= 0 { close(probeDescriptor) }
+    }
 
     /// `notificationPrefix` names the two distributed notifications (`<prefix>.request`, `<prefix>.ack`).
     public init(name: String, lockFile: URL, notificationPrefix: String, retryHint: String, log: @escaping (String) -> Void) {

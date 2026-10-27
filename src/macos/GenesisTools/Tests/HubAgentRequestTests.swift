@@ -67,6 +67,9 @@ final class HubAgentRequestTests: XCTestCase {
         XCTAssertEqual(HubAgentsModel.changedRows(from: rows, to: moved), 1)
         XCTAssertEqual(HubAgentsModel.changedRows(from: rows, to: rows + ["new"]), 1)
         XCTAssertEqual(HubAgentsModel.changedRows(from: rows, to: Array(rows.dropFirst(12))), 12)
+        let replacements = (0..<8).map { "new\($0)" }
+        XCTAssertEqual(HubAgentsModel.changedRows(from: Array(rows.prefix(8)), to: replacements), 16)
+        XCTAssertEqual(HubAgentsModel.changedRows(from: ["a", "b", "c"], to: ["c", "a", "new"]), 3)
         XCTAssertGreaterThan(HubAgentsModel.changedRows(from: rows, to: rows.reversed()), HubAgentsModel.animatedChangeLimit)
     }
 }
