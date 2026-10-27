@@ -534,30 +534,34 @@ export interface DrainerOptions {
 }
 
 /**
- * The background drainer: drains due batches, then sleeps until the next one is due (at most 10 minutes, so a
- * restore or a new batch is noticed), and exits when no batch waits. One runs at a time.
+ * The background drainer. Every start drains the due batches at once: claims keep two drainers off one batch, so
+ * a new batch never waits for a drainer that sleeps toward a later one. Then one drainer at a time (the lock) sleeps
+ * until the next batch is due (at most 10 minutes, so a restore or a new batch is noticed), and exits when no
+ * batch waits.
  */
 export async function runDrainer(options: DrainerOptions): Promise<DrainResult> {
     const paths = options.paths ?? defaultTrashPaths();
     const now = options.now ?? (() => new Date());
     const sleep = options.sleep ?? ((ms: number) => Bun.sleep(ms));
-    const release = acquireDrainerLock(paths.lockPath);
     const total: DrainResult = { batches: 0, items: 0, bytes: 0 };
+    const add = (result: DrainResult): void => {
+        total.batches += result.batches;
+        total.items += result.items;
+        total.bytes += result.bytes;
+    };
+
+    add(await drainDue({ config: options.config, paths, now: now() }));
+    const release = acquireDrainerLock(paths.lockPath);
 
     if (!release) {
         return total;
     }
 
     try {
-        const swept = await sweepOrphans({ config: options.config, paths, now: now() });
-        total.batches += swept.batches;
-        total.bytes += swept.bytes;
+        add(await sweepOrphans({ config: options.config, paths, now: now() }));
 
         while (true) {
-            const result = await drainDue({ config: options.config, paths, now: now() });
-            total.batches += result.batches;
-            total.items += result.items;
-            total.bytes += result.bytes;
+            add(await drainDue({ config: options.config, paths, now: now() }));
             const waiting = listBatches(paths);
 
             if (waiting.length === 0) {
