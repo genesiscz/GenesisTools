@@ -174,7 +174,8 @@ struct WidgetStagedLeavePrompt: View {
     @ObservedObject var model: WidgetModel
 
     var body: some View {
-        let items = model.stagedItems
+        // `stagedForLeave`, as the question itself counts: a pick made a moment before Esc is not listed yet.
+        let items = model.stagedForLeave
         ZStack {
             Color.black.opacity(0.35).allowsHitTesting(true)
             VStack(alignment: .leading, spacing: 10) {

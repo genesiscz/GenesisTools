@@ -56,11 +56,14 @@ public enum DecisionAnswering {
     public static func optionTooltip(_ letter: String, recommended: Bool, stages: Bool, picked: Bool, swaps: Bool,
                                      key: Int? = nil) -> String {
         let keyText = key.map { " · key \($0)" } ?? ""
+        // ⇧ always stages and keeps the other picked letters (`nextPick`), on every surface.
+        let shiftText = picked ? " · ⇧-click takes it out of the pick" : " · ⇧-click adds it to the pick"
         if !stages {
-            return "Answer \(letter)" + (recommended ? " (recommended)" : "") + keyText + (swaps ? " · ⌘-click stages it" : "")
+            return "Answer \(letter)" + (recommended ? " (recommended)" : "") + keyText
+                + (swaps ? " · ⌘-click stages it" : "") + shiftText
         }
         return (picked ? "Staged; click again to unstage" : "Stage \(letter), sent later with your other staged decisions")
-            + (recommended ? " (recommended)" : "") + keyText + (swaps ? " · ⌘-click sends it now" : "")
+            + (recommended ? " (recommended)" : "") + keyText + (swaps ? " · ⌘-click sends it now" : "") + shiftText
     }
 
     /// Where a session's answers go: its agent, the account home it runs under and its folder. An empty field is left

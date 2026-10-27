@@ -1,5 +1,6 @@
 import AppKit
 import SwiftUI
+import Vision
 import XCTest
 
 @testable import GenesisKit
@@ -17,9 +18,12 @@ final class WidgetDecisionSurfacesTests: XCTestCase {
         let state = FileManager.default.temporaryDirectory.appendingPathComponent("widget-decisions-" + UUID().uuidString)
         try FileManager.default.createDirectory(at: state.appendingPathComponent("native-submissions"),
                                                 withIntermediateDirectories: true)
-        // A tools stand-in that answers every call with an empty JSON object, so no startup call shows an error.
+        // A tools stand-in that answers every call with an empty JSON object, so no startup call shows an error, and
+        // `agents hooks doctor` with the settings' Agents card's fields.
         let tools = state.appendingPathComponent("tools")
-        try "#!/bin/sh\necho '{}'\n".write(to: tools, atomically: true, encoding: .utf8)
+        let doctor = #"{"config":{"decisions":{"questionNudge":"block","harvestListed":true}},"stopHookWired":true}"#
+        try "#!/bin/sh\nfor a in \"$@\"; do if [ \"$a\" = doctor ]; then echo '\(doctor)'; exit 0; fi; done\necho '{}'\n"
+            .write(to: tools, atomically: true, encoding: .utf8)
         try FileManager.default.setAttributes([.posixPermissions: 0o755], ofItemAtPath: tools.path)
         let model = WidgetModel(binaryPath: tools.path, stateRoot: state.path,
             defaults: defaults, appearance: NativeSettingsAppearance(defaults: defaults,
@@ -180,6 +184,57 @@ final class WidgetDecisionSurfacesTests: XCTestCase {
         XCTAssertEqual(model.shownStagedOption(two[0].sourceId, stored: two[0].draftOption), "b", "Undo brings them back")
     }
 
+    /// Decision audit F12 in the widget: a revision that clears a staged pick says so in plain words, with the name
+    /// every surface uses ("Decision 7", not "DECISION 7").
+    func testARevisionThatClearsAStagedPickSaysSoInPlainWords() throws {
+        let model = try model()
+        defer { model.stop() }
+        let old = WidgetInboxItem(id: "decision:d7", sourceId: "d7", kind: "decision", key: key + "0", at: 0,
+                                  needsAnswer: true, title: "x", number: 7, revision: 1, draftOption: "b")
+        model.reconcileStaged([old])
+        var revised = old
+        revised.revision = 2
+        revised.draftOption = nil
+        model.reconcileStaged([], listed: [revised])
+        XCTAssertEqual(model.notice, "Decision 7 changed. The agent wrote new text, so your staged pick b) is cleared. "
+            + "Read the decision again and pick.")
+        XCTAssertEqual(model.noticeTone, .warning)
+    }
+
+    /// ⇧-click adds a letter on every surface, so the shared tooltip says it, and says the other way on a picked one.
+    func testTheOptionTooltipNamesTheShiftClick() {
+        XCTAssertTrue(DecisionAnswering.optionTooltip("b", recommended: false, stages: true, picked: false, swaps: true)
+            .hasSuffix(" · ⇧-click adds it to the pick"))
+        XCTAssertTrue(DecisionAnswering.optionTooltip("b", recommended: false, stages: true, picked: true, swaps: true)
+            .hasSuffix(" · ⇧-click takes it out of the pick"))
+        XCTAssertEqual(DecisionAnswering.optionTooltip("b", recommended: true, stages: false, picked: false, swaps: true, key: 2),
+                       "Answer b (recommended) · key 2 · ⌘-click stages it · ⇧-click adds it to the pick")
+    }
+
+    /// The leave question counts a pick made a moment before Esc, which no snapshot lists yet (decision audit F16).
+    func testTheLeaveQuestionCountsAPickNoSnapshotListsYet() throws {
+        let model = try model(staged: Array(staged().prefix(1)))
+        defer { model.stop() }
+        let fresh = WidgetInboxItem(id: "decision:d4", sourceId: "d4", kind: "decision", key: key + "1", at: 2,
+                                    needsAnswer: true, title: "x", number: 4, options: Self.threeOptions, revision: 1)
+        model.markPending("d4", "a", item: fresh)
+        XCTAssertEqual(model.stagedItems.count, 1)
+        XCTAssertEqual(model.stagedForLeave.count, 2)
+        let renderer = ImageRenderer(content: WidgetStagedLeavePrompt(model: model)
+            .frame(width: 420, height: 300).environment(\.colorScheme, .dark).background(Color.black))
+        renderer.scale = 2
+        let text = try recognizedText(XCTUnwrap(renderer.cgImage))
+        XCTAssertTrue(text.contains("You have 2 decisions staged"), text)
+    }
+
+    private func recognizedText(_ image: CGImage) throws -> String {
+        let request = VNRecognizeTextRequest()
+        request.recognitionLevel = .accurate
+        request.usesLanguageCorrection = false
+        try VNImageRequestHandler(cgImage: image).perform([request])
+        return (request.results ?? []).compactMap { $0.topCandidates(1).first?.string }.joined(separator: "\n")
+    }
+
     /// P7: the primary button draws its accent in a window that is not key, where `.borderedProminent` turned grey.
     func testThePrimaryButtonKeepsItsColourOutsideAKeyWindow() throws {
         let button = Button("Send 3 now") {}.buttonStyle(.genPrimary())
@@ -300,6 +355,6 @@ final class WidgetDecisionSurfacesTests: XCTestCase {
         let general = try XCTUnwrap(WidgetFeatureSettings.sections(model: model, modules: WidgetModuleChoice.builtins,
             openSession: { _ in }).flatMap(\.pages).first { $0.id == "widgets.general" })
         let page = ScrollView { general.content().padding(24) }
-        try write(page, CGSize(width: 760, height: 3600), "settings-general", model: model, folder: folder)
+        try write(page, CGSize(width: 760, height: 5200), "settings-general", model: model, folder: folder)
     }
 }

@@ -1022,24 +1022,29 @@ private struct WidgetDictationSettings: View {
 /// What the Agents card reads from `tools agents hooks doctor --json`.
 private struct AgentHooksDoctor: Decodable {
     struct Config: Decodable {
-        struct Decisions: Decodable { var questionNudge: String? }
+        struct Decisions: Decodable {
+            var questionNudge: String?
+            var harvestListed: Bool?
+        }
         var decisions: Decisions
     }
     var config: Config
     var stopHookWired: Bool
 }
 
-/// The agents hooks' question nudge (`decisions.questionNudge` in `~/.genesis-tools/agents/hooks.json`), read and
-/// written through `tools agents hooks`. On writes `block`; a `warn` set from the CLI shows as on.
+/// The agents hooks' question nudge (`decisions.questionNudge` in `~/.genesis-tools/agents/hooks.json`) and whether
+/// the inbox keeps the decisions it finds only in a reply (`decisions.harvestListed`), read and written through
+/// `tools agents hooks`. The nudge writes `block` when on; a `warn` set from the CLI shows as on.
 private struct WidgetAgentHooksCard: View {
     let bridge: ToolsBridge
     @State private var nudge: String?
+    @State private var harvestListed: Bool?
     @State private var stopWired = true
     @State private var busy = false
     @State private var failure: String?
 
     var body: some View {
-        NativeSettingsCard("Agents", subtitle: "Checks that run when a coding agent ends its turn.") {
+        NativeSettingsCard("Agents", subtitle: "What the agents hooks do with the decisions an agent asks.") {
             NativeSettingsToggle(
                 "Remind agents to log decisions",
                 detail: "An agent that asks you to decide in its reply, without sending the decision to your inbox, is sent back once to send it.",
@@ -1048,6 +1053,15 @@ private struct WidgetAgentHooksCard: View {
                     get: { (nudge ?? "off") != "off" },
                     set: { on in Task { await run(["config", "set", "decisions.questionNudge", on ? "block" : "off", "--write"]) } }))
             .disabled(nudge == nil || busy)
+            Divider()
+            NativeSettingsToggle(
+                "Keep decisions found in replies",
+                detail: "The inbox saves a decision that an agent wrote only in its reply, so the widget and the hub show and answer the same decisions.",
+                identifier: "widget.agentsHarvestListed",
+                isOn: Binding(
+                    get: { harvestListed ?? true },
+                    set: { on in Task { await run(["config", "set", "decisions.harvestListed", on ? "true" : "false", "--write"]) } }))
+            .disabled(harvestListed == nil || busy)
             if (nudge ?? "off") != "off" && !stopWired {
                 Divider()
                 NativeSettingsRow("Stop hook not installed", detail: "The reminder runs in the agents' Stop hook, which is not in your Claude Code settings yet.") {
@@ -1069,6 +1083,7 @@ private struct WidgetAgentHooksCard: View {
             guard result.exitCode == 0 else { throw ToolsBridgeError.refused(result.stderr) }
             let doctor = try JSONDecoder().decode(AgentHooksDoctor.self, from: Data(result.stdout.utf8))
             nudge = doctor.config.decisions.questionNudge ?? "off"
+            harvestListed = doctor.config.decisions.harvestListed ?? true
             stopWired = doctor.stopHookWired
             failure = nil
         } catch {
