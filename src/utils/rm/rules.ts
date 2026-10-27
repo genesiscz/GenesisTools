@@ -1,6 +1,7 @@
 import { type Dirent, existsSync, lstatSync, readdirSync, readFileSync } from "node:fs";
 import { homedir } from "node:os";
 import { basename, dirname, isAbsolute, join, parse, relative, resolve } from "node:path";
+import type { TranscriptAnchor } from "@genesiscz/utils/agent/source-anchor";
 import { SafeJSON } from "@genesiscz/utils/json";
 import { logger } from "@genesiscz/utils/logger";
 import { nativeHome } from "@genesiscz/utils/providers/session-paths";
@@ -51,6 +52,14 @@ export interface RmCaller {
     project?: string | null;
     /** The operating-system user that ran the command. */
     user?: string;
+    /** `AI_AGENT` as the harness sets it, e.g. `claude-code_2-1-296_agent`. */
+    aiAgent?: string | null;
+    repoRoot?: string;
+    branch?: string | null;
+    commitSha?: string | null;
+    worktreePath?: string | null;
+    /** Where in the session's transcript the command was received, as the question log stamps its entries. */
+    transcriptAnchor?: TranscriptAnchor;
 }
 
 export interface RmGitFacts {

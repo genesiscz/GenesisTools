@@ -1,5 +1,6 @@
 import { userInfo } from "node:os";
-import { getAgentRuntimeContext } from "@genesiscz/utils/agent/runtime";
+import { gatherHarnessPoster } from "@genesiscz/utils/agent/runtime";
+import { createTranscriptAnchor } from "@genesiscz/utils/agent/source-anchor";
 import { spawnToolDetached } from "@genesiscz/utils/cli";
 import { failureCaller } from "@genesiscz/utils/cli/failures/caller";
 import { env } from "@genesiscz/utils/env";
@@ -34,21 +35,29 @@ export interface RmPlanItem {
 }
 
 /**
- * The caller as the agent runtime sees it: which agent, session and project, the session's title and model (read
- * from its transcript), and the operating-system user. A run outside any agent is a person.
+ * The caller, stamped the way the question log stamps an answer (`gatherHarnessPoster`, the one poster stamp for
+ * anything a harness posts, plus its transcript anchor): agent, session and title, project, checkout, branch and
+ * commit. The model comes from the session's transcript, as the failures log reads it, and the operating-system user
+ * names a person. A run outside any agent is a person.
  */
-export function rmCallerFromRuntime(): RmCaller {
+export function rmCallerFromRuntime(now = Date.now()): RmCaller {
     const processEnv = env.getProcessEnv();
-    const runtime = getAgentRuntimeContext({}, processEnv);
-    const details = runtime.isInAgent ? failureCaller({ context: runtime, processEnv }) : null;
+    const poster = gatherHarnessPoster({}, processEnv);
+    const details = poster.isInAgent ? failureCaller({ context: poster, processEnv }) : null;
     return {
-        agent: runtime.agent,
-        sessionId: runtime.sessionId,
-        isInAgent: runtime.isInAgent,
-        sessionTitle: runtime.sessionTitle,
+        agent: poster.agent,
+        sessionId: poster.sessionId,
+        isInAgent: poster.isInAgent,
+        sessionTitle: poster.sessionTitle,
         model: details?.model ?? null,
-        project: runtime.project,
+        project: poster.project,
         user: userInfo().username,
+        aiAgent: poster.aiAgent,
+        repoRoot: poster.repoRoot,
+        branch: poster.branch,
+        commitSha: poster.commitSha,
+        worktreePath: poster.worktreePath,
+        transcriptAnchor: createTranscriptAnchor({ context: poster, receivedAt: now }),
     };
 }
 
