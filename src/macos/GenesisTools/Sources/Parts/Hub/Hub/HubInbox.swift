@@ -559,14 +559,16 @@ final class HubInboxModel: ObservableObject {
                     switch result {
                     case .success(let envelope):
                         // A pick the reload now shows (or that another surface changed meanwhile) is the store's.
-                        self.pendingLetters = self.pendingLetters.filter { self.writing.contains($0.key)
+                        // Each assignment publishes, and every view of the Inbox runs again: only a change assigns.
+                        let pending = self.pendingLetters.filter { self.writing.contains($0.key)
                             || self.pendingWrites[$0.key] != nil }
+                        if pending != self.pendingLetters { self.pendingLetters = pending }
                         // An unchanged Inbox (the usual reload on a mode switch) redraws nothing.
                         if self.sessions != envelope.sessions {
                             HubMainBusy.measure("inbox.render")
                             self.sessions = envelope.sessions
                         }
-                        self.error = nil
+                        if self.error != nil { self.error = nil }
                         self.loadedAt = Date()
                         self.pruneFormImages()
                         self.applyReveal()
@@ -728,6 +730,21 @@ final class HubInboxModel: ObservableObject {
     /// The letters a card shows as staged: a click's a moment ago, else the last load's.
     func letters(_ item: InboxItem) -> String {
         pendingLetters[item.id] ?? item.draftOption ?? ""
+    }
+
+    /// What `item`'s card draws of this model, as values: the card compares them and skips a publish that changed none.
+    func cardState(for item: InboxItem, in session: InboxSession, hubSession: HubSession?) -> InboxCardState {
+        InboxCardState(
+            letters: letters(item),
+            heldDismiss: heldDismiss.contains(item.id),
+            writing: writing.contains(item.id),
+            sessionSending: session.sessionId.map { sendingSessions.contains($0) } ?? false,
+            writeError: writeErrors[item.id],
+            writeErrorDetail: writeErrorDetails[item.id],
+            preferences: preferences,
+            noteFocusRequest: noteFocusTarget == item.id ? noteFocusCount : nil,
+            hubSession: hubSession
+        )
     }
 
     /// The widget's settings as they are now: a click follows a change made since the last load.
@@ -1432,7 +1449,7 @@ struct InboxMain: View {
             PanelFindBarSlot()
             ScrollViewReader { proxy in
                 ScrollView {
-                    LazyVStack(alignment: .leading, spacing: 22) {
+                    LazyVStack(alignment: .leading, spacing: 0) {
                         if rows.isEmpty, inbox.loading {
                             PaneSkeleton("Looking for waiting sessions")
                         } else if rows.isEmpty, let failure = inbox.error {
@@ -1450,29 +1467,11 @@ struct InboxMain: View {
                             EmptyState(symbol: "tray", text: "No session is waiting for an answer.")
                                 .padding(.top, 40)
                         }
-                        ForEach(rows.filter { !$0.isQueuedOnly }) { session in
-                            InboxSessionSection(model: model, inbox: inbox, session: session, keysFocused: keysFocused)
-                                .id(session.id)
-                        }
-                        let queuedOnly = rows.filter(\.isQueuedOnly)
-                        if !queuedOnly.isEmpty {
-                            // Answered, not yet taken by the session: shown apart, so they never read as waiting.
-                            HStack(spacing: 8) {
-                                Image(systemName: "tray.and.arrow.down").foregroundColor(ReviewPalette.modified)
-                                    .accessibilityHidden(true)
-                                Text("Waiting to send")
-                                    .font(.system(size: 12.5, weight: .semibold))
-                                    .foregroundColor(Color.white.opacity(0.8))
-                                Text("Answered and not delivered yet. Nothing here waits for you.")
-                                    .font(.system(size: 11))
-                                    .foregroundColor(ReviewPalette.dim)
-                                    .lineLimit(1)
-                            }
-                            .padding(.top, 6)
-                            ForEach(queuedOnly) { session in
-                                InboxSessionSection(model: model, inbox: inbox, session: session, keysFocused: keysFocused)
-                                    .id(session.id)
-                            }
+                        // Each header, card and Send bar is its own lazy element: a mode switch builds the cards on
+                        // screen, not every card of the first session (16 cards, 52 option buttons, 435 to 640 ms, F1).
+                        let hubSessions = Self.hubSessionIndex(model.sessions)
+                        ForEach(InboxListRow.rows(rows)) { row in
+                            listRow(row, hubSessions: hubSessions)
                         }
                     }
                     .padding(18)
@@ -1583,6 +1582,69 @@ struct InboxMain: View {
     static let numberRow: [UInt16: Int] = [18: 1, 19: 2, 20: 3, 21: 4, 23: 5, 22: 6, 26: 7, 28: 8, 25: 9]
 
     /// In the window's title bar (`TitlebarHeader`): the list starts right under it.
+    /// One element of the lazy list. A card gets its state as values and is compared with its last one, so a
+    /// publish that changed nothing on it runs no card body (F3); the hub's session rows are indexed once per pass.
+    @ViewBuilder
+    private func listRow(_ row: InboxListRow, hubSessions: [String: HubSession]) -> some View {
+        let hubSession = { (session: InboxSession) in session.sessionId.flatMap { hubSessions[$0] } }
+        switch row {
+        case .header(let session, let first):
+            InboxSessionHeader(model: model, inbox: inbox, session: session, hubSession: hubSession(session))
+                .findRow("session:\(session.id)")
+                .padding(.top, first ? 0 : 22)
+        case .queuedTitle:
+            // Answered, not yet taken by the session: shown apart, so they never read as waiting.
+            HStack(spacing: 8) {
+                Image(systemName: "tray.and.arrow.down").foregroundColor(ReviewPalette.modified)
+                    .accessibilityHidden(true)
+                Text("Waiting to send")
+                    .font(.system(size: 12.5, weight: .semibold))
+                    .foregroundColor(Color.white.opacity(0.8))
+                Text("Answered and not delivered yet. Nothing here waits for you.")
+                    .font(.system(size: 11))
+                    .foregroundColor(ReviewPalette.dim)
+                    .lineLimit(1)
+            }
+            .padding(.top, 28)
+        case .card(let session, let item):
+            Group {
+                if item.isForm {
+                    InboxFormCard(inbox: inbox, item: item)
+                } else {
+                    InboxDecisionCard(model: model, inbox: inbox, session: session, item: item,
+                                      keyed: keysFocused && inbox.keyCardID == item.id,
+                                      state: inbox.cardState(for: item, in: session, hubSession: hubSession(session)))
+                        .equatable()
+                }
+            }
+            .attentionPulse(trigger: inbox.revealCounts[item.id] ?? 0,
+                            style: revealFlash,
+                            since: inbox.focusedItemID == item.id ? inbox.focusedAt : nil)
+            .padding(.top, 10)
+        case .sendBar(let session):
+            InboxSendBar(model: model, inbox: inbox, session: session)
+                .padding(.top, 10)
+        }
+    }
+
+    /// The hub's session rows by session id: one pass over the list per body, not a search per card.
+    static func hubSessionIndex(_ sessions: [HubSession]) -> [String: HubSession] {
+        Dictionary(sessions.map { ($0.sessionId, $0) }, uniquingKeysWith: { first, _ in first })
+    }
+
+    /// A revealed card flashes its border for the widget's "Flash the session" time, then leaves nothing behind (F18:
+    /// a 2 pt outline stayed until the next link). 0 seconds is off.
+    private var revealFlash: AttentionPulseStyle {
+        var style = AttentionPulseStyle.borderFlash(color: InboxStyle.accent, cornerRadius: 11)
+        style.duration = WidgetAlerts.flashSeconds(inbox.preferences)
+        style.period = 0.8
+        style.fadeIn = 0.18
+        style.fadeOut = 0.3
+        // "Flash the session" at 0 seconds: no flash at all.
+        if style.duration <= 0 { style.borderOpacity = 0 }
+        return style
+    }
+
     private func header(_ rows: [InboxSession]) -> some View {
         let staged = inbox.stagedCount
         return TitlebarHeader {
@@ -1651,54 +1713,52 @@ struct InboxMain: View {
     }
 }
 
-private struct InboxSessionSection: View {
-    @ObservedObject var model: HubModel
-    @ObservedObject var inbox: HubInboxModel
-    let session: InboxSession
-    /// The main list has the keyboard: the key card draws its ring.
-    var keysFocused = false
-    @State private var showInfo = false
+/// The Inbox list's elements, one per lazy row (`InboxMain`): a session's header, each of its cards, its Send bar,
+/// and the "Waiting to send" title above the sessions whose answers only wait for delivery.
+enum InboxListRow: Identifiable {
+    case header(InboxSession, first: Bool)
+    case card(InboxSession, InboxItem)
+    case sendBar(InboxSession)
+    case queuedTitle
 
-    private var hubSession: HubSession? {
-        session.sessionId.flatMap { id in model.sessions.first { $0.sessionId == id } }
-    }
-
-    /// A revealed card flashes its border for the widget's "Flash the session" time, then leaves nothing behind (F18:
-    /// a 2 pt outline stayed until the next link). 0 seconds is off.
-    private var revealFlash: AttentionPulseStyle {
-        var style = AttentionPulseStyle.borderFlash(color: InboxStyle.accent, cornerRadius: 11)
-        style.duration = WidgetAlerts.flashSeconds(inbox.preferences)
-        style.period = 0.8
-        style.fadeIn = 0.18
-        style.fadeOut = 0.3
-        // "Flash the session" at 0 seconds: no flash at all.
-        if style.duration <= 0 { style.borderOpacity = 0 }
-        return style
-    }
-
-    var body: some View {
-        VStack(alignment: .leading, spacing: 10) {
-            header
-                .findRow("session:\(session.id)")
-            ForEach(session.items) { item in
-                Group {
-                    if item.isForm {
-                        InboxFormCard(inbox: inbox, item: item)
-                    } else {
-                        InboxDecisionCard(model: model, inbox: inbox, session: session, item: item,
-                                          keyed: keysFocused && inbox.keyCardID == item.id)
-                    }
-                }
-                .attentionPulse(trigger: inbox.revealCounts[item.id] ?? 0,
-                                style: revealFlash,
-                                since: inbox.focusedItemID == item.id ? inbox.focusedAt : nil)
-                .id(item.id)
-            }
-            InboxSendBar(model: model, inbox: inbox, session: session)
+    /// The scroll targets stay what they were: the session id on its header, the item id on its card.
+    var id: String {
+        switch self {
+        case .header(let session, _): return session.id
+        case .card(_, let item): return item.id
+        case .sendBar(let session): return "send:\(session.id)"
+        case .queuedTitle: return "inbox:queued-title"
         }
     }
 
-    private var header: some View {
+    /// The waiting sessions first, then the queued-only ones under their title, each as header, cards, Send bar.
+    static func rows(_ sessions: [InboxSession]) -> [InboxListRow] {
+        var rows: [InboxListRow] = []
+        func add(_ session: InboxSession) {
+            rows.append(.header(session, first: rows.isEmpty))
+            rows += session.items.map { .card(session, $0) }
+            rows.append(.sendBar(session))
+        }
+        sessions.filter { !$0.isQueuedOnly }.forEach(add)
+        let queued = sessions.filter(\.isQueuedOnly)
+        if !queued.isEmpty {
+            rows.append(.queuedTitle)
+            queued.forEach(add)
+        }
+        return rows
+    }
+}
+
+/// A session's header in the Inbox: provider, title, project, branch, the session's details, its cmux pane and its
+/// transcript.
+private struct InboxSessionHeader: View {
+    @ObservedObject var model: HubModel
+    @ObservedObject var inbox: HubInboxModel
+    let session: InboxSession
+    let hubSession: HubSession?
+    @State private var showInfo = false
+
+    var body: some View {
         HStack(spacing: 8) {
             ProviderBadge(provider: session.provider ?? "?")
             FindText(session.displayTitle, field: "title")
@@ -1906,17 +1966,54 @@ struct InboxDeliveryLine: View {
     }
 }
 
+/// What a decision card draws of the Inbox and hub models, as values (`HubInboxModel.cardState`).
+struct InboxCardState: Equatable {
+    var letters: String
+    var heldDismiss: Bool
+    var writing: Bool
+    var sessionSending: Bool
+    var writeError: String?
+    var writeErrorDetail: String?
+    var preferences: WidgetPreferences?
+    /// The note-focus request's count while it names this card, nil otherwise: a change moves the keyboard into it.
+    var noteFocusRequest: Int?
+    /// The hub's row of the card's session, for "Open in transcript"; nil when the hub's list does not hold it.
+    var hubSession: HubSession?
+}
+
 /// One decision, with the context that led to it: the findings, the code it points at, each option
 /// with its reason and a Recommended badge. A click and Return in the note answer as in the widget
 /// (`DecisionAnswering`, the widget's Decision click and Return settings): they stage, or send at once,
 /// and ⌘ does the other; ⇧-click stages another letter. The session's Send delivers every staged answer.
-struct InboxDecisionCard: View {
-    @ObservedObject var model: HubModel
-    @ObservedObject var inbox: HubInboxModel
+///
+/// The card observes neither model: what it draws of them comes in `state`, and the models are only called for its
+/// actions. A publish that changes nothing on a card (a reload, the session list's minute refresh, a navigation)
+/// leaves its body alone instead of running every card on screen again (300 to 430 ms for a changed list, F3).
+struct InboxDecisionCard: View, Equatable {
+    let model: HubModel
+    let inbox: HubInboxModel
     let session: InboxSession
     let item: InboxItem
     /// The card the main list's number keys act on, while the list has the keyboard: drawn with the focus ring (F8).
-    var keyed = false
+    let keyed: Bool
+    let state: InboxCardState
+
+    /// `state` nil reads it from the models now; a list that shows many cards passes it, with the hub session looked
+    /// up once per list.
+    init(model: HubModel, inbox: HubInboxModel, session: InboxSession, item: InboxItem, keyed: Bool = false,
+         state: InboxCardState? = nil) {
+        self.model = model
+        self.inbox = inbox
+        self.session = session
+        self.item = item
+        self.keyed = keyed
+        self.state = state ?? inbox.cardState(for: item, in: session,
+                                              hubSession: session.sessionId.flatMap { id in model.sessions.first { $0.sessionId == id } })
+    }
+
+    nonisolated static func == (lhs: Self, rhs: Self) -> Bool {
+        lhs.item == rhs.item && lhs.session == rhs.session && lhs.keyed == rhs.keyed && lhs.state == rhs.state
+    }
     @State private var note = ""
     @State private var noteSeeded = false
     /// The note was changed here since the store last held it: only then does a click send it along.
@@ -1935,13 +2032,13 @@ struct InboxDecisionCard: View {
     @Environment(\.panelFindHighlight) private var highlight
     @GenReduceMotion private var reduceMotion
 
-    private var writing: Bool { inbox.writing.contains(item.id) }
-    private var sessionSending: Bool { session.sessionId.map { inbox.sendingSessions.contains($0) } ?? false }
+    private var writing: Bool { state.writing }
+    private var sessionSending: Bool { state.sessionSending }
     private var pickable: Bool { item.isOpen && session.sessionId != nil }
-    private var letters: String { inbox.letters(item) }
+    private var letters: String { state.letters }
     /// A pick or a note is staged and not sent: blue on the option, the card, its header and the sidebar (F2).
     private var staged: Bool {
-        item.isOpen && !inbox.heldDismiss.contains(item.id) && (!letters.isEmpty || !(item.draft ?? "").trimmed.isEmpty)
+        item.isOpen && !state.heldDismiss && (!letters.isEmpty || !(item.draft ?? "").trimmed.isEmpty)
     }
     /// What the card's state reads in its header: the widget's phrase for every state of the decision log (F7).
     private var statusPhrase: String { LiveWidgetView.statusPhrase(item.status, kind: "decision") }
@@ -2033,8 +2130,8 @@ struct InboxDecisionCard: View {
             }
         }
         // Return on the main list's key card puts the keyboard into this note.
-        .onChange(of: inbox.noteFocusCount) { _, _ in
-            if inbox.noteFocusTarget == item.id, pickable { noteFocused = true }
+        .onChange(of: state.noteFocusRequest) { _, request in
+            if request != nil, pickable { noteFocused = true }
         }
         .sheet(isPresented: $showReply) {
             InboxReplySheet(title: heading, markdown: session.reply?.markdown ?? item.prompt ?? "")
@@ -2193,8 +2290,8 @@ struct InboxDecisionCard: View {
 
     private var noteField: some View {
         let keys = LiveWidgetView.ownAnswerKeys(ownAnswer: true,
-                                                returnStages: DecisionAnswering.returnStages(inbox.preferences, command: false),
-                                                commandSwaps: inbox.preferences?.decisionCommandSwaps ?? true)
+                                                returnStages: DecisionAnswering.returnStages(state.preferences, command: false),
+                                                commandSwaps: state.preferences?.decisionCommandSwaps ?? true)
         return VStack(alignment: .leading, spacing: 4) {
             TextField((item.choices ?? []).isEmpty ? "Your answer…" : "Write my own answer…", text: $note, axis: .vertical)
                 .textFieldStyle(.plain)
@@ -2277,9 +2374,9 @@ struct InboxDecisionCard: View {
 
     private var footerRow: some View {
         VStack(alignment: .leading, spacing: 6) {
-            if let failure = inbox.writeErrors[item.id] {
+            if let failure = state.writeError {
                 // One sentence; the tool's own words behind Details, never cut in the middle (F10).
-                NoticePill(text: failure, more: inbox.writeErrorDetails[item.id], tone: .error)
+                NoticePill(text: failure, more: state.writeErrorDetail, tone: .error)
             }
             if let record = item.delivery {
                 VStack(alignment: .leading, spacing: 2) {
@@ -2334,7 +2431,7 @@ struct InboxDecisionCard: View {
                         .font(.system(size: 11))
                         .foregroundColor(ReviewPalette.renamed)
                 }
-                if let hubSession = session.sessionId.flatMap({ id in model.sessions.first { $0.sessionId == id } }) {
+                if let hubSession = state.hubSession {
                     Button("Open in transcript") {
                         model.transcriptQuery = "DECISION \(item.number ?? 0)"
                         model.openSession(hubSession)
@@ -2345,7 +2442,7 @@ struct InboxDecisionCard: View {
                     .instantTooltip("Open the session and search the transcript for this decision")
                 }
                 // The routine destructive action: quiet, last, apart from the send (P13).
-                if item.isOpen, inbox.heldDismiss.contains(item.id) {
+                if item.isOpen, state.heldDismiss {
                     Button("Dismissed · Undo") { inbox.undoDismiss(item) }
                         .buttonStyle(.genHoverPlain())
                         .font(.system(size: 11))
@@ -2369,7 +2466,7 @@ struct InboxDecisionCard: View {
         let picked = item.isOpen ? letters.contains(choice.id) : (item.option ?? "").contains(choice.id)
         let stagedPick = picked && item.isOpen
         let answered = picked && !item.isOpen
-        let preferences = inbox.preferences
+        let preferences = state.preferences
         let stages = DecisionAnswering.clickStages(preferences, command: false)
         let recommended = choice.recommended == true || item.recommended == choice.id
         let shape = RoundedRectangle(cornerRadius: 8)
