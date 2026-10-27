@@ -155,7 +155,7 @@ tools gitlab inbox mark            # catch up without reading
 - **Scope.** One project by default (`--project`, `GITLAB_PROJECT`, the configured default, the origin remote); `--all-projects` reads every project. Each scope keeps its own mark, so a one-project check never moves the all-projects mark.
 - **The mark** lives in `inbox.json` next to the config: per host, user and scope, the time of the last check and the highest note id seen on each MR. A note counts as new when its id is above the MR's mark, so a skewed clock cannot hide a comment; an MR seen for the first time uses the time. The first check covers the last 24 hours.
 - **Waiting for you.** An unresolved thread whose last note is someone else's: on your own MR any thread, on another MR one you wrote in. The link points at that last note.
-- **Never a partial mark.** When any request fails, the list says so on stderr, the command exits 1, and the mark stays.
+- **Never a partial mark.** When any request fails, the list says so on stderr, the command exits 1, and the mark stays. Role-filtered checks also leave the shared mark unchanged. Pending to-dos and open waiting threads remain visible across checks.
 - The next step for one MR is `pr <iid> comments`.
 
 ### `pr stale`

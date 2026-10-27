@@ -1,6 +1,7 @@
 import { homedir } from "node:os";
 import { dirname, isAbsolute, join, relative, sep } from "node:path";
 import { suggestCommand } from "@genesiscz/utils/cli";
+import { toolCommand } from "@genesiscz/utils/cli/tool-command";
 import { json2mdBuild, transclusionHints } from "@genesiscz/utils/genesis-tools/tools/hints";
 import type { DocumentHints } from "@genesiscz/utils/json2md/document-file";
 import { type DocumentEnvironment, shortPath } from "@genesiscz/utils/json2md/environment";
@@ -100,5 +101,7 @@ export function documentEnvironment(): DocumentEnvironment {
         unresolvedImporterDir: unlinkedImporterDir,
         reportUnresolved: reportPackageNotLinked,
         scaffoldSpecifier: "@genesiscz/utils/json2md/document-file",
+        checkCommand: (modulePath) => toolCommand("json2md check", modulePath),
+        forceBuildCommand: (modulePath) => toolCommand("json2md build", modulePath, "--force"),
     };
 }

@@ -182,12 +182,18 @@ export const MANIFEST_KINDS: ManifestKind[] = [
                 api.getProjectProcess(),
             ]);
             const chosen = definitions.filter((definition) => !wanted || wanted.has(definition.name.toLowerCase()));
-            const processTypes = process ? await api.getProcessWorkItemTypes(process.id) : [];
+            if (!process) {
+                throw new Error("Cannot build workflow manifest: the project process is unavailable");
+            }
+            const processTypes = await api.getProcessWorkItemTypes(process.id);
             const refByName = new Map(processTypes.map((type) => [type.name, type.referenceName]));
             const entries = await Promise.all(
                 chosen.map(async (definition): Promise<[string, WorkflowEntry]> => {
                     const ref = refByName.get(definition.name);
-                    const rules = process && ref ? await api.getProcessRules(process.id, ref) : [];
+                    if (!ref) {
+                        throw new Error(`Cannot build workflow manifest: no process type for ${definition.name}`);
+                    }
+                    const rules = await api.getProcessRules(process.id, ref);
                     return [definition.name, buildWorkflow(definition.transitions ?? {}, rules)];
                 })
             );

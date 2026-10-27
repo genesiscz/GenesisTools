@@ -1,6 +1,5 @@
 import { basename, dirname, isAbsolute, relative, resolve } from "node:path";
-import { suggestCommand } from "@genesiscz/utils/cli";
-import { toolCommand } from "@genesiscz/utils/cli/tool-command";
+
 import { SafeJSON } from "@genesiscz/utils/json";
 import {
     checkDocument,
@@ -121,7 +120,14 @@ const JSON_SAMPLE = {
  * the document lived in. The portable import plus a one-time `tools link install` is the
  * better trade: the file is the same everywhere, and the setup is visible and reversible.
  */
-function template(input: { data: string; title: string; moduleName: string; specifier: string }): string {
+function template(input: {
+    data: string;
+    title: string;
+    moduleName: string;
+    specifier: string;
+    build?: string;
+    check?: string;
+}): string {
     return `import { defineDocument } from ${SafeJSON.stringify(input.specifier)};
 
 /**
@@ -131,8 +137,7 @@ function template(input: { data: string; title: string; moduleName: string; spec
  *   ${input.moduleName}   this file, the only place a shape decision lives
  *   ${input.moduleName.replace(/\.ts$/, ".md")}   the output, never edited by hand
  *
- * Regenerate:  ${toolCommand("json2md build", input.moduleName)}
- * Verify:      ${toolCommand("json2md check", input.moduleName)}
+${input.build ? ` * Regenerate:  ${input.build}\n` : ""}${input.check ? ` * Verify:      ${input.check}\n` : ""} *
  *
  * The .md carries a stamp recording the hash of the generated body, so a hand edit is
  * detected and the build refuses to overwrite it.
@@ -215,7 +220,11 @@ function registerBuild(program: Command, env: DocumentEnvironment): void {
                         out.log.info(line);
                     }
 
-                    out.log.info(suggestCommand("tools json2md", { replaceCommand: ["build", file, "--force"] }));
+                    const forceCommand = env.forceBuildCommand?.(file);
+                    if (forceCommand) {
+                        out.log.info(forceCommand);
+                    }
+
                     continue;
                 }
 
@@ -370,6 +379,8 @@ function registerInit(program: Command, env: DocumentEnvironment): void {
                     title,
                     moduleName: basename(modulePath),
                     specifier: env.scaffoldSpecifier,
+                    build: env.hints().rebuildCommand?.(basename(modulePath)),
+                    check: env.checkCommand?.(basename(modulePath)),
                 })
             );
             out.log.success(`Created ${shortPath(modulePath)}.`);
@@ -384,7 +395,10 @@ function registerInit(program: Command, env: DocumentEnvironment): void {
 
                 // The scaffold files were created; not being linked yet is guidance for the
                 // next step, not a failure, so this stays exit 0.
-                out.log.info(`Then: ${toolCommand("json2md build", shortPath(modulePath))}`);
+                const build = env.hints().rebuildCommand?.(shortPath(modulePath));
+                if (build) {
+                    out.log.info(`Then: ${build}`);
+                }
 
                 return;
             }
@@ -406,8 +420,15 @@ function registerInit(program: Command, env: DocumentEnvironment): void {
             }
 
             out.log.success(`Created ${shortPath(result.outPath)}.`);
-            out.log.info(`Regenerate with  ${toolCommand("json2md build", shortPath(modulePath))}`);
-            out.log.info(`Verify with      ${toolCommand("json2md check", shortPath(modulePath))}`);
+            const build = env.hints().rebuildCommand?.(shortPath(modulePath));
+            const check = env.checkCommand?.(shortPath(modulePath));
+            if (build) {
+                out.log.info(`Regenerate with  ${build}`);
+            }
+
+            if (check) {
+                out.log.info(`Verify with      ${check}`);
+            }
         });
 }
 

@@ -576,6 +576,7 @@ export interface GitLabEvent {
     target_type: string | null;
     created_at: string;
     push_data?: GitLabPushData;
+    note?: { noteable_type?: string; noteable_iid?: number | null };
 }
 
 export interface GitLabBranch {

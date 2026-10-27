@@ -1600,7 +1600,14 @@ export class Api {
         const url = Api.witUrl(this.config, ["classificationnodes", "areas"], {
             $depth: String(Api.ITERATION_NODE_DEPTH),
         });
-        return this.get<IterationClassificationNode>(url, "project area classification nodes");
+        const root = await this.get<IterationClassificationNode>(url, "project area classification nodes");
+        const truncated = findTruncatedNodes(root);
+        if (truncated.length > 0) {
+            logger.warn(
+                `[api] area tree truncated at depth ${Api.ITERATION_NODE_DEPTH}; ${truncated.length} node(s) have unlisted children, first: ${truncated[0]}`
+            );
+        }
+        return root;
     }
 
     /** Every tag defined in the project. */

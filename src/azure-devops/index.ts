@@ -102,6 +102,7 @@ Usage:
   ${toolCommand("azure-devops")} <command> [options]
 
 Commands:
+  maintenance <kind>     Generate and check project configuration manifests
   configure <url>        Configure organization and project from any Azure DevOps URL (alias: config)
   query <input>          Run an Azure DevOps query and display results
   workitem <input>       Fetch work item(s) by ID or URL (alias: wi)

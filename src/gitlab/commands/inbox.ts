@@ -12,7 +12,7 @@
  */
 
 import { progress, type TargetOptions, wholeDays, withProject } from "@app/gitlab/commands/shared";
-import { currentUser, getProject, resolveProjectApi } from "@app/gitlab/lib/client";
+import { currentUser, getProject, resolveApi, resolveProjectApi } from "@app/gitlab/lib/client";
 import {
     advanceCheck,
     buildInboxReport,
@@ -27,7 +27,11 @@ import {
     renderInboxText,
     writeInboxState,
 } from "@app/gitlab/lib/inbox";
+import { isInteractive, suggestEnumFlag } from "@genesiscz/utils/cli";
+import { SafeJSON } from "@genesiscz/utils/json";
 import { out } from "@genesiscz/utils/logger";
+import * as p from "@genesiscz/utils/prompts/p";
+import { withFileLock } from "@genesiscz/utils/storage/file-lock";
 import type { Command } from "commander";
 
 interface ScopeOptions extends TargetOptions {
@@ -37,7 +41,7 @@ interface ScopeOptions extends TargetOptions {
 interface InboxOptions extends ScopeOptions {
     peek?: boolean;
     since?: string;
-    role: string;
+    role: string | boolean;
     json?: boolean;
     lookbackDays: string;
 }
@@ -62,9 +66,10 @@ function withScope(cmd: Command): Command {
 
 /** The API, the token's owner, the project id (null for every project) and the state key of this scope. */
 async function resolveScope(opts: ScopeOptions) {
-    const api = await resolveProjectApi({ host: opts.host, project: opts.project });
+    const projectApi = opts.allProjects ? null : await resolveProjectApi({ host: opts.host, project: opts.project });
+    const api = projectApi ?? (await resolveApi({ host: opts.host }));
     const me = await currentUser(api);
-    const project = opts.allProjects ? null : await getProject(api, api.project);
+    const project = projectApi ? await getProject(projectApi, projectApi.project) : null;
     const scope = project ? `project ${project.path_with_namespace}` : "all projects";
 
     return { api, me, projectId: project?.id ?? null, scope, key: checkKey(api.host, me.username, scope) };
@@ -79,7 +84,7 @@ export function registerInbox(program: Command): Command {
             )
             .option("--peek", "List without moving the mark")
             .option("--since <time>", "List since this time instead of the mark (the mark stays)")
-            .option("--role <role>", "author (your MRs) | reviewer (MRs you review) | all", "all")
+            .option("--role [role]", "author (your MRs) | reviewer (MRs you review) | all", "all")
             .option("--json", "The report as JSON on stdout")
             .option(
                 "--lookback-days <N>",
@@ -99,8 +104,32 @@ export function registerInbox(program: Command): Command {
 }
 
 async function runInbox(opts: InboxOptions): Promise<void> {
-    if (!isRole(opts.role)) {
-        throw new Error(`--role must be ${INBOX_ROLES.join(", ")}, got "${opts.role}"`);
+    let role = opts.role;
+    if (role === true && isInteractive()) {
+        const selected = await p.select({
+            message: "Inbox role",
+            options: INBOX_ROLES.map((value) => ({ value, label: value })),
+        });
+        if (p.isCancel(selected)) {
+            return;
+        }
+        if (typeof selected !== "string") {
+            process.exitCode = 1;
+            return;
+        }
+        role = selected;
+    }
+    if (typeof role !== "string" || !isRole(role)) {
+        out.error(
+            suggestEnumFlag(
+                "tools gitlab inbox",
+                "--role",
+                INBOX_ROLES,
+                typeof role === "string" ? { given: role } : {}
+            )
+        );
+        process.exitCode = 1;
+        return;
     }
 
     const lookbackDays = wholeDays(opts.lookbackDays, "--lookback-days");
@@ -121,7 +150,7 @@ async function runInbox(opts: InboxOptions): Promise<void> {
     const result = await collectInbox(api, {
         me: { id: me.id, username: me.username },
         since,
-        role: opts.role,
+        role,
         projectId,
         marks: opts.since ? {} : (check?.mrs ?? {}),
         lookbackDays,
@@ -154,24 +183,33 @@ async function runInbox(opts: InboxOptions): Promise<void> {
         return;
     }
 
-    if (opts.peek || opts.since) {
+    if (opts.peek || opts.since || role !== "all") {
         progress(`the mark stays at ${check?.lastCheckedAt ?? "none (no check yet)"}`);
         return;
     }
 
-    state.checks[key] = advanceCheck(check, startedAt, result.seen);
-    writeInboxState(statePath, state);
-    progress(`mark moved to ${startedAt} (${statePath})`);
+    await withFileLock(`${statePath}.lock`, async () => {
+        const latest = readInboxState(statePath);
+        if (SafeJSON.stringify(latest.checks[key] ?? null) !== SafeJSON.stringify(check ?? null)) {
+            progress("mark changed during this check; leaving it unchanged");
+            return;
+        }
+        latest.checks[key] = advanceCheck(check, startedAt, result.seen);
+        writeInboxState(statePath, latest);
+        progress(`mark moved to ${startedAt} (${statePath})`);
+    });
 }
 
-async function runMark(opts: ScopeOptions & { at?: string }): Promise<void> {
+async function runMark(_opts: ScopeOptions & { at?: string }, command: Command): Promise<void> {
+    const opts = command.optsWithGlobals<ScopeOptions & { at?: string }>();
     const at = opts.at ? parseTime(opts.at, "--at") : new Date().toISOString();
     const { key } = await resolveScope(opts);
     const statePath = inboxStatePath();
-    const state = readInboxState(statePath);
-
-    // Without a fetch there are no note ids to record, so the time decides for every MR.
-    state.checks[key] = { lastCheckedAt: at, mrs: {} };
-    writeInboxState(statePath, state);
+    await withFileLock(`${statePath}.lock`, async () => {
+        const state = readInboxState(statePath);
+        // Without a fetch there are no note ids to record, so the time decides for every MR.
+        state.checks[key] = { lastCheckedAt: at, mrs: {} };
+        writeInboxState(statePath, state);
+    });
     out.println(`Mark set to ${at} for ${key} (${statePath})`);
 }

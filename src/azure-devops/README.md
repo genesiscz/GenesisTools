@@ -332,7 +332,7 @@ tools azure-devops maintenance workflow --types "Bug,Task" -f md
 # Write one as `export const AdoFields = {...} as const` (--name picks another identifier; a .json path writes JSON)
 tools azure-devops maintenance fields --types "Bug,Task" --into src/ado-fields.generated.ts --name SampleAdoFields
 
-# Write every manifest (or --only some) into one folder as ado-<kind>.generated.ts, exports prefixed
+# Write the default manifests (identities require explicit --only) into one folder, exports prefixed
 tools azure-devops maintenance sync --into src/ado --prefix Sample --types "Bug,Task"
 
 # Compare written manifests (files or folders) with ADO: prints each drift and exits 1
