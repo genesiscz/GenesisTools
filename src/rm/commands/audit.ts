@@ -112,6 +112,7 @@ export function registerAuditCommands(program: Command): void {
                     caller?.sessionTitle ? `"${truncateDisplay(caller.sessionTitle, 30)}"` : undefined,
                     caller?.model ?? undefined,
                     caller && !caller.isInAgent ? caller.user : undefined,
+                    caller?.branch ? `on ${caller.branch}` : undefined,
                 ]
                     .filter(Boolean)
                     .join(" ");
