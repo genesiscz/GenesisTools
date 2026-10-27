@@ -233,9 +233,12 @@ function registerBuild(program: Command, env: DocumentEnvironment): void {
                     continue;
                 }
 
-                // A dry run reports `unchanged` for everything it did not write, including a file
-                // it WOULD write (missing, or stale). Only a `clean` check means up to date.
-                if (flags.dryRun && result.outcome === "unchanged" && result.check?.verdict !== "clean") {
+                // A dry run reports `unchanged` even when the file would be written.
+                if (
+                    flags.dryRun &&
+                    result.outcome === "unchanged" &&
+                    (result.wouldWrite || result.check?.verdict !== "clean")
+                ) {
                     out.log.info(
                         `${shortPath(result.outPath)} would be written from ${shortPath(result.dataPath)} (dry run).`
                     );

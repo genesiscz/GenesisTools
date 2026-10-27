@@ -1258,6 +1258,19 @@ describe("front matter another tool adds", () => {
         expect(await Bun.file(first.outPath).text()).toContain("sessions:");
     });
 
+    test("projecting a carried block preserves the entire generated body", () => {
+        const existing = "---\nsessions: [one]\n---\nold body\n";
+
+        for (const body of ["\n# Notes\n", "  indented body\n", "", "# Notes\n"]) {
+            const generated = stampMarkdown(body);
+            const carried = carryFrontmatterKeys(generated, existing);
+
+            expect(carried.carried).toEqual(["sessions"]);
+            expect(keepFrontmatterKeys(carried.markdown, new Set())).toBe(generated);
+            expect(checkMarkdown({ current: carried.markdown, regenerated: generated }).verdict).toBe("clean");
+        }
+    });
+
     test("carrying is undone exactly by keeping the generator's keys", () => {
         const generated = "---\ntitle: Notes\ntags:\n  - vault\n---\n\n# Notes\n";
         const existing = "---\ntitle: Old\nsessions:\n  - claude:1a2b3c4d\n# a comment\n---\n\nold body\n";

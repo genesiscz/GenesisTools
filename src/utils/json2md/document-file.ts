@@ -267,6 +267,8 @@ export interface WriteResult extends BuildResult {
     check: CheckResult | null;
     /** Front matter keys kept from the file this build replaced, because another tool wrote them. */
     carried: string[];
+    /** A clean dry run would still write because mergeFrontmatter is disabled. */
+    wouldWrite?: boolean;
 }
 
 export interface WriteOptions extends DocumentHints {
@@ -322,7 +324,13 @@ export async function writeDocument<T>(
             await Bun.write(pinned.outPath, pinned.markdown);
         }
 
-        return { ...pinned, outcome: removeExtras && !options.dryRun ? "written" : "unchanged", check, carried: [] };
+        return {
+            ...pinned,
+            outcome: removeExtras && !options.dryRun ? "written" : "unchanged",
+            check,
+            carried: [],
+            ...(removeExtras && options.dryRun ? { wouldWrite: true } : {}),
+        };
     }
 
     // Only `stale` is known to be safe. `unstamped` cannot rule out a hand edit (a hand-written
