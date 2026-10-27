@@ -40,6 +40,7 @@ import {
     webSearchResponse,
 } from "@app/ai-proxy/lib/server-tools/web-search";
 import { loginAccountName } from "@app/ai-proxy/lib/sessions/records";
+import { compactionSettings } from "@app/ai-proxy/lib/sessions/settings";
 import {
     anthropicToResponses,
     stripReasoningInput,
@@ -370,7 +371,7 @@ export class OpenAiSubscriptionProvider implements ProxyProvider {
         };
         const replay = { kept: [] as string[], dropped: {} as Partial<Record<EnvelopeRejection | "dead", number>> };
         const compaction = isClaudeCodeCompactionTurn(parsed);
-        const summaryWords = compaction ? env.aiProxy.getCompactionWords() : undefined;
+        const summaryWords = compaction ? compactionSettings().words : undefined;
 
         if (summaryWords) {
             parsed = limitCompactionSummary(parsed, summaryWords);
@@ -417,7 +418,7 @@ export class OpenAiSubscriptionProvider implements ProxyProvider {
                 : "";
         // A compaction turn writes a summary of what is already known: the session's xhigh only made it slower (6 to 8
         // minutes per compaction on 2026-10-27), so it runs at the compaction effort when the model has that effort.
-        const compactionEffort = compaction ? env.aiProxy.getCompactionEffort() : undefined;
+        const compactionEffort = compaction ? compactionSettings().effort : undefined;
         const effort =
             compactionEffort && (!catalog || catalog.efforts.includes(compactionEffort))
                 ? compactionEffort

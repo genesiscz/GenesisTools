@@ -292,6 +292,37 @@ export interface AiProxyConfig {
     codexModels?: Record<string, CodexModelOverride>;
     /** Closed session records (`sessions/<id>.json`) are deleted after this many days. Default 30. */
     sessionRetentionDays?: number;
+    /** How the proxy and `tools claude codex` treat Claude Code sessions on Codex models. */
+    claudeSessions?: ClaudeSessionsConfig;
+}
+
+/** Text around a built-in system note: `replace` drops the built-in text, `prepend` and `append` keep it. */
+export interface SystemNoteConfig {
+    prepend?: string;
+    append?: string;
+    replace?: string;
+}
+
+export interface ClaudeSessionsConfig {
+    /** Claude Code's compaction turn on a Codex model. */
+    compaction?: {
+        /** Default "low". "session" keeps the session's own effort (and its prompt cache, which an effort change misses). */
+        effort?: ReasoningEffort | "session";
+        /** The summary length the model is asked to stay under, in words. Default 5000; 0 asks for no limit. */
+        words?: number;
+    };
+    /** The note ccx appends to the main loop's system prompt. */
+    lead?: { systemNote?: SystemNoteConfig };
+    /** The Codex subagents ccx defines (sol, terra, luna, …). */
+    subagents?: {
+        systemNote?: SystemNoteConfig;
+        skills?: {
+            /** Default true: the lead names in each brief the skills the subagent may load, and it loads only those. */
+            nudge?: boolean;
+            /** The skills the lead may hand a subagent. Absent: any skill. */
+            allowed?: string[];
+        };
+    };
 }
 
 /** `ultra` is a Codex UI level: the Codex agent resolves it per model (codex-rs `resolve_reasoning_effort`). */

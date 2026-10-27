@@ -24,6 +24,24 @@ describe("leadPrompt", () => {
         expect(text).not.toContain("codex-worker (");
         expect(text).toContain("with the Agent tool");
         expect(text).toContain("codex spawn");
+        expect(text).toContain("names the skills the subagent should load");
+    });
+
+    it("takes the configured note and skills list, and the nudge can be turned off", () => {
+        const settings = {
+            lead: { systemNote: { append: "Prefer terra for reviews." } },
+            subagents: { skills: { allowed: ["genesis-tools:github", "simplify"] } },
+        };
+        const agents = sessionAgents({ codexModel, settings });
+        const text = leadPrompt(agents, settings);
+
+        expect(text.endsWith("Prefer terra for reviews.")).toBe(true);
+        expect(text).toContain("Pick them from: genesis-tools:github, simplify.");
+        expect(agents.sol.prompt).toContain("load only the skills your brief names");
+
+        const off = { subagents: { skills: { nudge: false }, systemNote: { replace: "Own prompt." } } };
+        expect(leadPrompt(sessionAgents({ codexModel, settings: off }), off)).not.toContain("names the skills");
+        expect(sessionAgents({ codexModel, settings: off }).sol.prompt).toBe("Own prompt.");
     });
 });
 

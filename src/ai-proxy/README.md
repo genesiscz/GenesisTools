@@ -142,6 +142,14 @@ Supported values: `minimal`, `low`, `medium`, `high`, `xhigh`, `max`, `ultra`. E
   `xhigh`, like `max`.
 - **Per-model overrides** go in `config.json` as `codexModels.<slug>`: `window`, `usablePercent`,
   `compactPercent`, `defaultEffort`. The proxy uses `defaultEffort`; `tools claude codex` uses the rest.
+- **Claude Code on Codex** reads `config.json` `claudeSessions` (every field optional, read on each request):
+  - `compaction.effort`: the effort of Claude Code's compaction turn, default `"low"`; `"session"` keeps the
+    session's effort, which also keeps its prompt cache (an effort change read 428K tokens uncached on 2026-10-27).
+  - `compaction.words`: the summary length asked for, default `5000`; `0` asks for none.
+  - `lead.systemNote` and `subagents.systemNote`: `{ prepend, append, replace }` around the note `tools claude codex`
+    gives the main loop and its Codex subagents.
+  - `subagents.skills.nudge` (default `true`): the lead names in each brief the skills a subagent loads, and the
+    subagent loads only those. `subagents.skills.allowed`: the list the lead picks from.
 
 - **The client's own field wins.** An explicit `reasoning_effort` (or a nested `reasoning.effort`
   on the Responses door) takes precedence over the suffix, which is the fallback.
