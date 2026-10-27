@@ -31,7 +31,7 @@ export function sessionPickerModels(models: CodexModelInfo[]): PickerModelList {
             description: [
                 "Codex subscription",
                 model.efforts.length > 0 ? `effort ${model.efforts.join("/")}` : undefined,
-                `${Math.round(model.usableTokens / 1000)}k window`,
+                `${Math.round(model.window / 1000)}k window`,
             ]
                 .filter(Boolean)
                 .join(" · "),

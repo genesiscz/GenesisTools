@@ -150,7 +150,7 @@ export function sessionAgents(input: SessionAgentsInput): Record<string, Session
             model: `codex/${slug}`,
             effort: spec.effort,
             disallowedTools: ["Agent"],
-            ...(info ? { autoCompactWindow: info.usableTokens } : {}),
+            ...(info ? { autoCompactWindow: info.window } : {}),
         };
     }
 
@@ -162,7 +162,7 @@ export function sessionAgents(input: SessionAgentsInput): Record<string, Session
         model: `codex/${lunaSlug}`,
         effort: "low",
         tools: ["Bash", "Read", "Write"],
-        ...(luna ? { autoCompactWindow: luna.usableTokens } : {}),
+        ...(luna ? { autoCompactWindow: luna.window } : {}),
     };
 
     if (!input.claude) {

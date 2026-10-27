@@ -25,9 +25,9 @@ describe("sessionAgents", () => {
         expect(agents.terra.effort).toBe("high");
         expect(agents["sol-xhigh"].model).toBe("codex/gpt-6.1-sol");
         expect(agents["sol-xhigh"].effort).toBe("xhigh");
-        expect(agents.sol.autoCompactWindow).toBe(codexModel("gpt-6.1-sol")?.usableTokens);
+        expect(agents.sol.autoCompactWindow).toBe(codexModel("gpt-6.1-sol")?.window);
         // A 272K model gets its own window, not the main loop's.
-        expect(agents.luna.autoCompactWindow).toBe(codexModel("gpt-6-luna")?.usableTokens);
+        expect(agents.luna.autoCompactWindow).toBe(codexModel("gpt-6-luna")?.window);
         expect(agents.luna.autoCompactWindow).toBeLessThan(agents.sol.autoCompactWindow ?? 0);
         expect(agents.sol.disallowedTools).toEqual(["Agent"]);
         expect(agents["codex-worker"].tools).toEqual(["Bash", "Read", "Write"]);
