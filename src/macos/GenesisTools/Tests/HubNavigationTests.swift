@@ -106,7 +106,7 @@ final class HubNavigationTests: XCTestCase {
         model.findBranchPR = { root, branch in
             XCTAssertEqual(root, "/fixture/commit-holder")
             XCTAssertEqual(branch, "feat/old")
-            gate.wait()
+            XCTAssertEqual(gate.wait(timeout: .now() + 10), .success, "the test never opened the gate")
             answered.fulfill()
             return "#475"
         }
