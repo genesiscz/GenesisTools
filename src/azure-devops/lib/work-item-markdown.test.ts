@@ -53,6 +53,13 @@ describe("formatWorkItemMarkdown", () => {
         expect(md).not.toContain("\\*");
     });
 
+    test("keeps a Markdown description with inline HTML line for line", () => {
+        const description = "## Odkazy\n\n- First\n\n<details><summary>Rozdíl</summary>\n\nText.\n\n</details>";
+        const md = formatWorkItemMarkdown(item({ description }));
+
+        expect(md).toContain("## Odkazy\n\n- First\n\n<details><summary>Rozdíl</summary>");
+    });
+
     test("converts HTML comments instead of dumping the tags", () => {
         const md = formatWorkItemMarkdown(
             item({

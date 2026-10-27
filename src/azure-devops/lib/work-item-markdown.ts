@@ -26,11 +26,12 @@ export function commentMarkdown(comment: Comment, imageMap?: Map<string, string>
 }
 
 /**
- * The description as markdown. A Markdown-format field holds no HTML tag and is used as is: the HTML converter
- * would collapse its line breaks into one line. The batch read does not return `multilineFieldsFormat`.
+ * The description as markdown. An HTML-format field starts with a tag; a Markdown-format one may still hold inline
+ * HTML and is used as is, because the HTML converter would collapse its line breaks into one line. The batch read
+ * does not return `multilineFieldsFormat`.
  */
 export function descriptionMarkdown(description: string, imageMap?: Map<string, string>): string {
-    if (/<\/?[a-z!]/i.test(description)) {
+    if (/^\s*<[a-z]/i.test(description)) {
         return htmlToMarkdown(imageMap ? rewriteImageUrls(description, imageMap) : description);
     }
 
