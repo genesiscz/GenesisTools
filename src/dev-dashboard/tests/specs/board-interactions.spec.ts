@@ -1,4 +1,5 @@
 import { expect, test } from "@playwright/test";
+import { renderSharePage } from "../../lib/obsidian/share-template";
 import { boardDoc, freshBoard, seedCard, seedNote, seedTextCard } from "../helpers/boards-test-api";
 import { BoardDetailPage } from "../pages/board-detail-page";
 
@@ -539,5 +540,229 @@ test.describe("staged pill + picker re-answer", () => {
         await expect
             .poll(async () => (await request.get(`/api/boards/${slug}/questions`)).json())
             .toMatchObject({ questions: [{ answer: ["Beta"], staged: true }] });
+    });
+});
+
+test.describe("reading width", () => {
+    test("shared note exposes and preserves the rendered width", async ({ page }) => {
+        await page.goto("/");
+        await page.evaluate(() => localStorage.removeItem("dd-share:reading-width"));
+        const html = renderSharePage({
+            title: "Test note",
+            rendered: { html: "<p>Text</p>", hasMath: false, hasMermaid: false, tags: [] },
+            source: "Text",
+        });
+        await page.route("**/__reading-width-fixture", (route) =>
+            route.fulfill({ contentType: "text/html", body: html })
+        );
+        await page.goto("/__reading-width-fixture");
+        const left = page.locator(".dd-share-grip-l");
+        const right = page.locator(".dd-share-grip-r");
+        await expect(left).toHaveAttribute("aria-valuenow", "780");
+        await expect(right).toHaveAttribute("aria-valuemin", "420");
+        await expect(right).toHaveAttribute(
+            "aria-valuemax",
+            String(await page.evaluate(() => document.body.clientWidth - 60))
+        );
+        await left.focus();
+        await page.keyboard.press("ArrowRight");
+        await expect(left).toHaveAttribute("aria-valuenow", "740");
+        await expect(right).toHaveAttribute("aria-valuetext", "740 pixels");
+        await right.focus();
+        await page.keyboard.press("ArrowRight");
+        await expect(right).toHaveAttribute("aria-valuenow", "780");
+        await page.reload();
+        const restored = page.locator(".dd-share-grip-r");
+        await expect(restored).toHaveAttribute("aria-valuenow", "780");
+        await restored.focus();
+        for (let i = 0; i < 10; i++) {
+            await page.keyboard.press("Shift+ArrowLeft");
+        }
+        await expect(restored).toHaveAttribute("aria-valuenow", "420");
+        await page.keyboard.press("Enter");
+        await expect(restored).toHaveAttribute("aria-valuenow", "780");
+        expect(await page.evaluate(() => localStorage.getItem("dd-share:reading-width"))).toBeNull();
+        await restored.focus();
+        await page.keyboard.press("ArrowLeft");
+        await expect(restored).toHaveAttribute("aria-valuenow", "740");
+        await restored.dblclick({ force: true });
+        await expect(restored).toHaveAttribute("aria-valuenow", "780");
+        expect(await page.evaluate(() => localStorage.getItem("dd-share:reading-width"))).toBeNull();
+        const box = await restored.boundingBox();
+
+        if (!box) {
+            throw new Error("reading width grip missing");
+        }
+
+        await page.mouse.move(box.x + box.width / 2, box.y + 2);
+        await page.mouse.down();
+        await page.mouse.move(box.x + box.width / 2 - 30, box.y + 2);
+        await expect(restored).toHaveAttribute("aria-valuenow", "720");
+        await restored.dispatchEvent("pointercancel", { pointerId: 1 });
+        await page.mouse.up();
+        await expect(restored).toHaveAttribute("aria-valuenow", "780");
+        expect(await page.evaluate(() => localStorage.getItem("dd-share:reading-width"))).toBeNull();
+        await page.mouse.move(box.x + box.width / 2, box.y + 2);
+        await page.mouse.down();
+        await page.mouse.move(box.x + box.width / 2 - 30, box.y + 2);
+        await page.mouse.up();
+        await expect(restored).toHaveAttribute("aria-valuenow", "720");
+        expect(await page.evaluate(() => localStorage.getItem("dd-share:reading-width"))).toBe("720");
+        await page.reload();
+        await expect(left).toHaveAttribute("aria-valuenow", "720");
+        const leftBox = await left.boundingBox();
+
+        if (!leftBox) {
+            throw new Error("left reading width grip missing");
+        }
+
+        await page.mouse.move(leftBox.x + leftBox.width / 2, leftBox.y + 2);
+        await page.mouse.down();
+        await page.mouse.move(leftBox.x + leftBox.width / 2 + 20, leftBox.y + 2);
+        await expect(left).toHaveAttribute("aria-valuenow", "680");
+        await page.mouse.up();
+        expect(await page.evaluate(() => localStorage.getItem("dd-share:reading-width"))).toBe("680");
+        await page.reload();
+        await expect(right).toHaveAttribute("aria-valuenow", "680");
+        await expect(right).toHaveAttribute("aria-valuetext", "680 pixels");
+    });
+
+    test("Q&A columns report the same saved width", async ({ page }) => {
+        const now = Date.now();
+        const entry = {
+            id: "entry",
+            ts: now,
+            sessionId: "session",
+            sessionTitle: null,
+            project: "test",
+            repoRoot: "/",
+            cwd: "/",
+            branch: null,
+            commitSha: null,
+            commitMessage: null,
+            agent: "unknown",
+            isWorktree: false,
+            worktreePath: null,
+            aiAgent: null,
+            agentLabel: null,
+            tag: "question",
+            question: "Question",
+            answerMd: "Answer",
+            refs: [],
+            source: "cli",
+            turnUuid: null,
+            answerHtml: "",
+            answerHtmlPreview: "",
+            questionHtml: "",
+            supersededBy: null,
+            readAt: null,
+        };
+        const form = {
+            id: "form",
+            createdAt: now,
+            projectPath: "/",
+            cwd: "/",
+            status: "pending",
+            items: [{ id: "item", promptMarkdown: "Question", required: true }],
+        };
+        await page.route("**/api/qa/log?*", (route) => route.fulfill({ json: { entries: [entry] } }));
+        await page.route("**/api/qa/pending", (route) => route.fulfill({ json: { forms: [form] } }));
+        const sound = { id: "synth:fixture", label: "Fixture", kind: "synth", isDefault: true };
+        await page.route("**/api/qa/audio-library", (route) =>
+            route.fulfill({ json: { bundled: [], synth: [sound], default: sound } })
+        );
+        await page.route("**/api/qa/decisions", (route) =>
+            route.fulfill({
+                json: { sessions: [], scanned: { sessions: 0, fromCache: 0, read: 0, failed: 0 }, elapsedMs: 0 },
+            })
+        );
+        await page.route("**/api/handoff/log?*", (route) => route.fulfill({ json: { handoffs: [], info: [] } }));
+        await page.route("**/api/cmux/snapshot", (route) =>
+            route.fulfill({
+                json: {
+                    snapshot: { fetchedAt: new Date(now).toISOString(), available: false, workspaces: [], panes: [] },
+                },
+            })
+        );
+        await page.route("**/api/qa/stream", (route) => route.fulfill({ status: 204 }));
+        await page.goto("/");
+        await page.evaluate(() => localStorage.removeItem("dd:reading-width"));
+        await page.goto("/qa");
+        const columns = page.locator(".dd-reading-column");
+        await expect(columns).toHaveCount(2);
+        const first = columns.nth(0).locator(".dd-reading-grip-l");
+        const second = columns.nth(1).locator(".dd-reading-grip-r");
+        await expect(first).toHaveAttribute("aria-valuemin", "420");
+        const initialWidth = await first.getAttribute("aria-valuenow");
+        const maximum = await first.getAttribute("aria-valuemax");
+        expect(Number(initialWidth)).toBeGreaterThanOrEqual(420);
+        expect(Number(maximum)).toBeGreaterThanOrEqual(Number(initialWidth));
+        await expect(first).toHaveAttribute("aria-valuetext", `${initialWidth} pixels`);
+        await first.focus();
+        await page.keyboard.press("ArrowRight");
+        const width = await first.getAttribute("aria-valuenow");
+        await expect(second).toHaveAttribute("aria-valuenow", width ?? "");
+        await expect(first).toHaveAttribute("aria-valuetext", `${width} pixels`);
+        await page.reload();
+        await expect(first).toHaveAttribute("aria-valuenow", width ?? "");
+        await expect(second).toHaveAttribute("aria-valuenow", width ?? "");
+        await second.focus();
+        await page.keyboard.press("ArrowLeft");
+        const narrower = String(Number(width) - 40);
+        await expect(first).toHaveAttribute("aria-valuenow", narrower);
+        await expect(second).toHaveAttribute("aria-valuenow", narrower);
+        const box = await second.boundingBox();
+
+        if (!box) {
+            throw new Error("reading width grip missing");
+        }
+
+        await page.mouse.move(box.x + box.width / 2, box.y + 2);
+        await page.mouse.down();
+        await page.mouse.move(box.x + box.width / 2 - 30, box.y + 2);
+        await expect(second).toHaveAttribute("aria-valuenow", String(Number(narrower) - 60));
+        await second.dispatchEvent("pointercancel", { pointerId: 1 });
+        await page.mouse.up();
+        await expect(second).toHaveAttribute("aria-valuenow", narrower);
+        expect(await page.evaluate(() => localStorage.getItem("dd:reading-width"))).toBe(narrower);
+
+        await page.mouse.move(box.x + box.width / 2, box.y + 2);
+        await page.mouse.down();
+        await page.mouse.move(box.x + box.width / 2 - 30, box.y + 2);
+        await page.mouse.up();
+        const afterRightDrag = String(Number(narrower) - 60);
+        await expect(first).toHaveAttribute("aria-valuenow", afterRightDrag);
+        expect(await page.evaluate(() => localStorage.getItem("dd:reading-width"))).toBe(afterRightDrag);
+        await page.reload();
+        await expect(second).toHaveAttribute("aria-valuenow", afterRightDrag);
+
+        const leftBox = await first.boundingBox();
+
+        if (!leftBox) {
+            throw new Error("left reading width grip missing");
+        }
+
+        await page.mouse.move(leftBox.x + leftBox.width / 2, leftBox.y + 2);
+        await page.mouse.down();
+        await page.mouse.move(leftBox.x + leftBox.width / 2 + 20, leftBox.y + 2);
+        await page.mouse.up();
+        const afterLeftDrag = String(Number(afterRightDrag) - 40);
+        await expect(second).toHaveAttribute("aria-valuenow", afterLeftDrag);
+        expect(await page.evaluate(() => localStorage.getItem("dd:reading-width"))).toBe(afterLeftDrag);
+        await page.reload();
+        await expect(first).toHaveAttribute("aria-valuenow", afterLeftDrag);
+        await second.focus();
+        for (let i = 0; i < 12; i++) {
+            await page.keyboard.press("Shift+ArrowLeft");
+        }
+        await expect(second).toHaveAttribute("aria-valuenow", "420");
+        await expect(first).toHaveAttribute("aria-valuetext", "420 pixels");
+        await page.keyboard.press("Enter");
+        expect(await page.evaluate(() => localStorage.getItem("dd:reading-width"))).toBeNull();
+        await second.focus();
+        await page.keyboard.press("ArrowLeft");
+        await expect(second).not.toHaveAttribute("aria-valuenow", "420");
+        await second.dblclick({ force: true });
+        expect(await page.evaluate(() => localStorage.getItem("dd:reading-width"))).toBeNull();
     });
 });

@@ -1,4 +1,12 @@
-import { type KeyboardEvent, type PointerEvent, type ReactNode, useCallback, useRef, useState } from "react";
+import {
+    type KeyboardEvent,
+    type PointerEvent,
+    type ReactNode,
+    useCallback,
+    useLayoutEffect,
+    useRef,
+    useState,
+} from "react";
 import { usePersistedState } from "@/lib/persisted-state";
 
 // One reading width for every page that reads long text (the Q&A feed, an Obsidian
@@ -21,8 +29,37 @@ export function ReadingColumn({ children, className }: Props) {
     // The width while a drag runs; it is saved once, on release.
     const [dragWidth, setDragWidth] = useState<number | null>(null);
     const columnRef = useRef<HTMLDivElement>(null);
-    const dragRef = useRef<{ startX: number; startWidth: number; sign: number } | null>(null);
+    const dragRef = useRef<{ startX: number; startWidth: number; sign: number; width: number | null } | null>(null);
     const width = dragWidth ?? saved;
+
+    useLayoutEffect(() => {
+        const column = columnRef.current;
+        const parent = column?.parentElement;
+
+        if (!column || !parent) {
+            return;
+        }
+
+        const update = () => {
+            const current = Math.round(column.getBoundingClientRect().width);
+            const maximum = Math.max(current, parent.clientWidth);
+            const minimum = Math.min(MIN_WIDTH, maximum);
+
+            for (const grip of column.querySelectorAll<HTMLElement>(":scope > .dd-reading-grip")) {
+                grip.setAttribute("aria-valuemin", String(minimum));
+                grip.setAttribute("aria-valuemax", String(maximum));
+                grip.setAttribute("aria-valuenow", String(current));
+                grip.setAttribute("aria-valuetext", `${current} pixels`);
+            }
+        };
+
+        update();
+        const observer = new ResizeObserver(update);
+        observer.observe(column);
+        observer.observe(parent);
+
+        return () => observer.disconnect();
+    }, [width]);
 
     const clamp = useCallback((value: number) => {
         const available = columnRef.current?.parentElement?.clientWidth ?? value;
@@ -37,7 +74,12 @@ export function ReadingColumn({ children, className }: Props) {
 
         event.preventDefault();
         event.currentTarget.setPointerCapture(event.pointerId);
-        dragRef.current = { startX: event.clientX, startWidth: columnRef.current.getBoundingClientRect().width, sign };
+        dragRef.current = {
+            startX: event.clientX,
+            startWidth: columnRef.current.getBoundingClientRect().width,
+            sign,
+            width: null,
+        };
         document.body.classList.add("dd-reading-resizing");
     };
 
@@ -49,19 +91,22 @@ export function ReadingColumn({ children, className }: Props) {
         }
 
         // The column is centred, so one edge moving by dx widens it by 2 * dx.
-        setDragWidth(clamp(drag.startWidth + drag.sign * (event.clientX - drag.startX) * 2));
+        drag.width = clamp(drag.startWidth + drag.sign * (event.clientX - drag.startX) * 2);
+        setDragWidth(drag.width);
     };
 
     const endDrag = (commit: boolean) => {
-        if (!dragRef.current) {
+        const drag = dragRef.current;
+
+        if (!drag) {
             return;
         }
 
         dragRef.current = null;
         document.body.classList.remove("dd-reading-resizing");
 
-        if (commit && dragWidth !== null) {
-            setSaved(dragWidth);
+        if (commit && drag.width !== null) {
+            setSaved(drag.width);
         }
 
         setDragWidth(null);
@@ -90,7 +135,6 @@ export function ReadingColumn({ children, className }: Props) {
             aria-orientation="vertical"
             aria-label="Reading width"
             aria-keyshortcuts="ArrowLeft ArrowRight Enter"
-            aria-valuenow={width ?? undefined}
             tabIndex={0}
             title="Drag to resize, double-click for the full width"
             className={`dd-reading-grip ${sign > 0 ? "dd-reading-grip-r" : "dd-reading-grip-l"}${dragWidth !== null ? " dd-reading-grip-active" : ""}`}
