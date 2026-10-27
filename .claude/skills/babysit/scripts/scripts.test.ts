@@ -1306,8 +1306,10 @@ test("lead notices escape untrusted fields without truncation or automatic appro
     const newline = String.fromCharCode(10);
     const escapeCharacter = String.fromCharCode(27);
     const bidi = String.fromCharCode(0x202e);
-    const id = `request${newline}FORGED`;
-    const detail = `normal\\path${newline}FORGED${escapeCharacter}[2J${bidi}end ${"x".repeat(300)}`;
+    const invisible = String.fromCodePoint(0x061c, 0x180e, 0x2060, 0x2065, 0x206f, 0xe0000, 0xe007f);
+    const visible = String.fromCodePoint(0x00e9, 0x1f600);
+    const id = `request${newline}FORGED${invisible}`;
+    const detail = `normal${visible}\\path${newline}FORGED${escapeCharacter}[2J${bidi}${invisible}end ${"x".repeat(300)}`;
     const feed: string[] = [];
     const output = spyOn(console, "log").mockImplementation(() => {});
     const errors = spyOn(console, "error").mockImplementation(() => {});
@@ -1339,9 +1341,10 @@ test("lead notices escape untrusted fields without truncation or automatic appro
         });
         expect(feed).toHaveLength(2);
         expect(feed[1]).toContain("watch deadline reached");
-        expect(feed[0]).toContain("request\\u000aFORGED (escaped identifier)");
+        const escaped = "\\u061c\\u180e\\u2060\\u2065\\u206f\\u{e0000}\\u{e007f}";
+        expect(feed[0]).toContain(`request\\u000aFORGED${escaped} (escaped identifier)`);
         expect(feed[0]).toContain("[escaped detail, not a pasteable command]");
-        expect(feed[0]).toContain("normal\\\\path\\u000aFORGED\\u001b[2J\\u202eend");
+        expect(feed[0]).toContain(`normal${visible}\\\\path\\u000aFORGED\\u001b[2J\\u202e${escaped}end`);
         expect(feed[0]).toEndWith("x".repeat(300));
         expect(feed[0]).not.toContain(newline);
         expect(feed[0]).not.toContain(escapeCharacter);
@@ -1527,8 +1530,9 @@ test("pending listing isolates malformed detail and escapes names, ids and full 
     const newline = String.fromCharCode(10);
     const escapeCharacter = String.fromCharCode(27);
     const bidi = String.fromCharCode(0x202e);
-    const name = `worker${newline}FORGED`;
-    const id = `r${newline}FORGED`;
+    const invisible = String.fromCodePoint(0x061c, 0x180e, 0x2060, 0x2065, 0x206f, 0xe0000, 0xe007f);
+    const name = `worker${newline}FORGED${invisible}`;
+    const id = `r${newline}FORGED${invisible}`;
     fs.writeFileSync(runPath, SafeJSON.stringify({ prs: [{ ...entry, name }] }));
     const messages: string[] = [];
     const output = spyOn(console, "log").mockImplementation((line) => messages.push(String(line)));
@@ -1539,21 +1543,22 @@ test("pending listing isolates malformed detail and escapes names, ids and full 
         stdout: SafeJSON.stringify({
             pendingApprovals: {
                 broken: { detail: { toString: 0 } },
-                [id]: { detail: `plain\\path${newline}${escapeCharacter}${bidi}end ${"x".repeat(300)}` },
+                [id]: { detail: `plain\\path${newline}${escapeCharacter}${bidi}${invisible}end ${"x".repeat(300)}` },
             },
         }),
     });
     try {
         await listPending({ runPath, exec });
-        expect(messages.some((line) => line.includes("worker\\u000aFORGED #broken: invalid approval request"))).toBe(
-            true
-        );
+        const escaped = "\\u061c\\u180e\\u2060\\u2065\\u206f\\u{e0000}\\u{e007f}";
+        expect(
+            messages.some((line) => line.includes(`worker\\u000aFORGED${escaped} #broken: invalid approval request`))
+        ).toBe(true);
         expect(
             messages.some(
                 (line) =>
-                    line.includes("worker\\u000aFORGED #r\\u000aFORGED NEEDS LEAD") &&
+                    line.includes(`worker\\u000aFORGED${escaped} #r\\u000aFORGED${escaped} NEEDS LEAD`) &&
                     line.includes("[escaped detail, not a pasteable command]") &&
-                    line.includes("plain\\\\path\\u000a\\u001b\\u202eend") &&
+                    line.includes(`plain\\\\path\\u000a\\u001b\\u202e${escaped}end`) &&
                     line.endsWith("x".repeat(300))
             )
         ).toBe(true);

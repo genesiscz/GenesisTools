@@ -1038,10 +1038,11 @@ function briefDecision(entry: RunEntry, request: ApprovalRequest): { ok: boolean
 // Preserve the complete text while preventing control characters from forging feed lines or terminal output.
 function approvalDisplay(value: string): string {
     // biome-ignore lint/suspicious/noControlCharactersInRegex: This matcher escapes control characters in untrusted output.
-    const controls = /[\u0000-\u001f\u007f-\u009f\u200b-\u200f\u2028-\u202e\u2066-\u2069\ufeff]/g;
-    return value
-        .replace(/\\/g, "\\\\")
-        .replace(controls, (char) => `\\u${char.charCodeAt(0).toString(16).padStart(4, "0")}`);
+    const controls = /[\p{Cf}\u0000-\u001f\u007f-\u009f\u2028-\u2029\u2060-\u206f\u{e0000}-\u{e007f}]/gu;
+    return value.replace(/\\/g, "\\\\").replace(controls, (char) => {
+        const code = char.codePointAt(0) ?? 0;
+        return code > 0xffff ? `\\u{${code.toString(16)}}` : `\\u${code.toString(16).padStart(4, "0")}`;
+    });
 }
 
 const STATUS_FAILURE_LIMIT = 10;
