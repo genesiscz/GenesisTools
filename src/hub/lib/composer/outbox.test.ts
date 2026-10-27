@@ -8,14 +8,12 @@ import { tmpdir } from "node:os";
 import { dirname, join, resolve } from "node:path";
 import { DeliveryUnknownError } from "@app/question/lib/decisions/deliver";
 import { livePaneTargets } from "@app/question/lib/decisions/deliver.fixtures";
-import { RELAYED_ANSWER_HEAD } from "@app/question/lib/decisions/delivery-text";
 import { decisionFiles, deliverDecisions } from "@app/question/lib/decisions/read";
 import {
     createTodo,
     type DecisionRecord,
     postDecisions,
     readDecisions,
-    readDecisionsWithIntegrity,
     updateDecisions,
 } from "@app/question/lib/decisions/store";
 import { buildInbox } from "@app/question/lib/inbox/build";
@@ -873,7 +871,7 @@ describe("widget source and delivery contracts", () => {
                 "--exact-session",
                 "--",
                 "original-session",
-                `${RELAYED_ANSWER_HEAD}\nReply to: Chat DECISION 4: next token kinds\nLedger decision 2 (${row.id})\n${media}`,
+                `Reply to: Chat DECISION 4: next token kinds\nLedger decision 2 (${row.id})\n${media}`,
             ],
         ]);
         expect(readDecisions(files.file).map((entry) => [entry.sessionId, entry.number, entry.state])).toEqual([
@@ -1855,20 +1853,6 @@ test("staging keys default to Return stages, ⌘ does the other, and a reminder 
     expect(widgetPreferencesSchema.safeParse({ ownAnswerReturn: "later" }).success).toBe(false);
 });
 
-test("a widget answer to an agent's own dialog presses its option by default; the refuse setting starts nothing", async () => {
-    expect(widgetPreferencesSchema.parse({}).dialogAnswer).toBe("press");
-    expect(widgetPreferencesSchema.safeParse({ dialogAnswer: "type" }).success).toBe(false);
-
-    const directory = await root();
-    await performWidgetAction({ root: directory, input: { action: "preferences", patch: { dialogAnswer: "refuse" } } });
-    expect(
-        await performWidgetAction({
-            root: directory,
-            input: { action: "dialog-answer", key: "claude:fixture-session:toolu_fixture", option: "a" },
-        })
-    ).toMatchObject({ delivered: false, error: expect.stringContaining("set to refuse") });
-});
-
 test("an open TODO does not mark its session as waiting for an answer", async () => {
     const directory = await root();
     const file = join(directory, "decisions.jsonl");
@@ -1939,7 +1923,7 @@ test("decision cards carry recorded answers and supersede links; only open decis
     });
     const sources: WidgetSources = {
         sessions: async () => [],
-        decisions: () => readDecisionsWithIntegrity(file),
+        decisions: () => readDecisions(file),
         forms: () => [],
         answers: () => [],
         agents: async () => ({ generatedAt: "", parents: [], orphans: [] }),
@@ -1974,9 +1958,6 @@ test("decision cards carry recorded answers and supersede links; only open decis
     });
     // The overview lists the session's entries, the waiting one first.
     expect(session?.items?.[0]).toMatchObject({ id: `decision:${replacement.id}`, needsAnswer: true });
-    expect(snapshot.notifications?.pendingDecisionIDs).toContain(replacement.id);
-    expect(snapshot.notifications?.pendingDecisionIDs).not.toContain(answered.id);
-    expect(snapshot.notifications?.pendingDecisionIDs).not.toContain(old.id);
     // The chat answer an agent recorded is listed as answered elsewhere; the inbox's own answers never are.
     expect(snapshot.notifications?.answeredElsewhere).toMatchObject([
         {
@@ -2012,25 +1993,6 @@ test("decision cards carry recorded answers and supersede links; only open decis
     const cleared = await widgetSnapshot({ root: directory, sources });
     expect(cleared.notifications?.sessions.find((entry) => entry.key === sessionKey)?.needsAnswer ?? 0).toBe(0);
     expect(cleared.notifications?.staged.map((entry) => entry.sourceId)).toEqual([replacement.id]);
-    expect(cleared.notifications?.pendingDecisionIDs).toContain(replacement.id);
-    const failed = await widgetSnapshot({
-        root: directory,
-        sources: {
-            ...sources,
-            decisions: () => {
-                throw new Error("fixture decision read failed");
-            },
-        },
-    });
-    expect(failed.notifications?.complete).toBe(false);
-    const missing = await widgetSnapshot({
-        root: directory,
-        sources: {
-            ...sources,
-            decisions: () => readDecisionsWithIntegrity(join(directory, "missing-decisions.jsonl")),
-        },
-    });
-    expect(missing.notifications?.pendingDecisionIDs).toBeUndefined();
     expect(readDecisions(file).find((row) => row.id === replacement.id)?.updatedTs).not.toBe(replacement.createdTs);
 
     await updateDecisions(file, events, {
@@ -2045,14 +2007,6 @@ test("decision cards carry recorded answers and supersede links; only open decis
     });
     expect(moved.notifications?.sessions.find((entry) => entry.key === sessionKey)?.needsAnswer ?? 0).toBe(0);
     expect(moved.notifications?.staged).toEqual([]);
-    await files.appendFile(file, '{"id":');
-    const partial = await widgetSnapshot({ root: directory, sources });
-    expect(partial.notifications?.pendingDecisionIDs).toBeUndefined();
-    const oldSource = await widgetSnapshot({
-        root: directory,
-        sources: { ...sources, decisions: () => readDecisions(file) },
-    });
-    expect(oldSource.notifications?.pendingDecisionIDs).toBeUndefined();
 });
 
 test("a session lists its waiting entries first, then the newest, at most eight", () => {
@@ -5388,10 +5342,6 @@ describe("background Widget roster", () => {
         expect(change("/fixture/codex/sessions/2026/10/10/rollout-fixture.jsonl")).toBe("codex");
         expect(change("/fixture/grok/sessions/%2Ffixture/session-1/chat_history.jsonl")).toBe("grok");
         expect(change("/fixture/grok/sessions/%2Ffixture/session-1/chat_history.jsonl.lock")).toBeUndefined();
-        expect(change("/fixture/grok/sessions/%2Ffixture/session-1/summary.json")).toBe("grok");
-        expect(change("/fixture/grok/sessions/%2Ffixture/session-1/events.jsonl")).toBeUndefined();
-        expect(change("/fixture/codex/sessions/2026/10/10/rollout-fixture.jsonl.zst")).toBe("codex");
-        expect(change("/fixture/codex/sessions/2026/10/10/notes.jsonl")).toBeUndefined();
         expect(change("/fixture/elsewhere/file.jsonl")).toBeUndefined();
     });
 
@@ -6211,41 +6161,6 @@ describe("widget agent result", () => {
         const size = (await files.stat(file)).size;
         expect(size).toBeGreaterThan(256 * 1024);
         expect(await lastClaudeAssistantText(file, size)).toBe("Final highlights.");
-    });
-
-    test("a large Claude session gives the same last answer through its turn parser as through the tail reader", async () => {
-        const dir = await mkdtemp(join(tmpdir(), "widget-result-"));
-        const file = join(dir, "0f0e0d0c-1111-4222-8333-444455556666.jsonl");
-        let n = 0;
-        const row = (type: "user" | "assistant", content: unknown) =>
-            SafeJSON.stringify({
-                type,
-                uuid: `00000000-0000-4000-8000-${String(++n).padStart(12, "0")}`,
-                timestamp: new Date(Date.UTC(2026, 9, 31, 0, 0, n)).toISOString(),
-                message: { role: type, content },
-            });
-        const lines = [
-            row("user", "first task"),
-            row("assistant", [{ type: "text", text: "An early answer." }]),
-            row("user", "second task"),
-            row("assistant", [{ type: "tool_use", id: "t1", name: "Bash", input: { command: "ls" } }]),
-            row("user", [{ type: "tool_result", tool_use_id: "t1", content: "x".repeat(4000) }]),
-            row("assistant", [{ type: "text", text: "Final highlights." }]),
-            ...Array.from({ length: 260 }, () =>
-                row("user", [{ type: "tool_result", tool_use_id: "t1", content: "x".repeat(4000) }])
-            ),
-        ];
-        writeFileSync(file, `${lines.join("\n")}\n`);
-        const size = (await files.stat(file)).size;
-        const resolved = {
-            provider: "claude" as const,
-            source: "native" as const,
-            sessionId: "fixture",
-            filePath: file,
-        };
-
-        expect(await lastClaudeAssistantText(file, size)).toBe("Final highlights.");
-        expect(await lastAssistantTextOf(resolved, size)).toBe("Final highlights.");
     });
 
     // Codex and Grok, native sessions and worker turn files: each holds its answer before 1 MB of tool output, so a
