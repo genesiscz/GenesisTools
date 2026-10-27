@@ -11,7 +11,7 @@ import type { SessionWorktree, TmpReading, TmpUsage } from "../types";
 import { sessionDirOf } from "./agents-band";
 import { liveAgo } from "./live";
 import { bareDescription } from "./model-label";
-import { type Feature, type Host, isRecord, logMod, settingsOf } from "./shared";
+import { type Feature, type Host, isRecord, logMod, paceAfter, settingsOf } from "./shared";
 import { actionButton, type Kit, line, type Pressable, plural, pressed, sidebarFrame } from "./sidebar";
 
 let usage: TmpUsage = null;
@@ -29,6 +29,29 @@ async function kbOf(host: Host, argv: string[], column: number): Promise<number 
 
 async function folderKb(host: Host, path: string): Promise<number | null> {
     return (await host.exists(path)) ? kbOf(host, ["du", "-sk", path], 0) : 0;
+}
+
+/** A worktree's last size, the git status it was measured at, and when `du` may walk it again. */
+const worktreeKb = new Map<string, { kb: number | null; status: string; nextAt: number }>();
+const WORKTREE_EVERY_MS = 30 * 60_000;
+
+/**
+ * A worktree's size, walked again only when its git status changed or 30 minutes passed (ten times the walk's length
+ * when that is longer). `du` on a 5-6 GB col-fe worktree took 3 to 17 s on a full disk (2026-10-27), and one session
+ * walked eight of them every 5 minutes.
+ */
+async function worktreeSize(host: Host, path: string, status: string): Promise<number | null> {
+    const held = worktreeKb.get(path);
+    const startedAt = Date.now();
+
+    if (held && held.status === status && startedAt < held.nextAt) {
+        return held.kb;
+    }
+
+    const kb = await folderKb(host, path);
+    worktreeKb.set(path, { kb, status, nextAt: paceAfter(WORKTREE_EVERY_MS, startedAt) });
+
+    return kb;
 }
 
 /** The main checkout's folder name, so every worktree of one repository shares its /tmp/cc project folder. */
@@ -144,7 +167,7 @@ async function worktreesOf(host: Host, scratch: string): Promise<SessionWorktree
             source,
             ...(status?.exitCode === 0 ? statusOf(status.stdout) : { branch: "?", changes: 0 }),
             isLocked: locked.has(path),
-            kb: await folderKb(host, path),
+            kb: await worktreeSize(host, path, status?.stdout ?? ""),
         });
     }
 

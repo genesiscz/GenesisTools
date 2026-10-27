@@ -18,7 +18,7 @@ import type { SpawnedAgents } from "../types";
 import { genesisProbe } from "./genesis";
 import { liveAgo, liveSince } from "./live";
 import { bareDescription, modelLabel } from "./model-label";
-import { type Feature, type Host, isRecord, logMod, settingsOf } from "./shared";
+import { type Feature, type Host, isRecord, logMod, paceAfter, settingsOf } from "./shared";
 import {
     actionRow,
     dimNote,
@@ -63,8 +63,11 @@ export interface SessionWorker {
 }
 
 let workers: SessionWorker[] = [];
+/** When the workers may be read again; 0 asks at the next tick. */
 let workersAt = 0;
 const WORKERS_EVERY_MS = 30_000;
+/** With no worker running, a new spawn is seen by `beforeTool` at once, so the timer only catches one started elsewhere. */
+const NO_WORKERS_EVERY_MS = 5 * 60_000;
 const SPAWNS_WORKERS = /\btools (codex|grok) spawn\b/;
 /** Whether this session started a worker; undefined until its transcript was read. */
 let startsWorkers: boolean | undefined;
@@ -190,11 +193,14 @@ export function workersOf(stdout: string, sessionId: string): SessionWorker[] {
 
 /** Reads the session's workers from a timer; a failed or timed-out read keeps the last list. */
 async function loadWorkers(host: Host): Promise<void> {
-    if (Date.now() - workersAt < WORKERS_EVERY_MS) {
+    const startedAt = Date.now();
+
+    if (startedAt < workersAt) {
         return;
     }
 
-    workersAt = Date.now();
+    // Until the read below answers, no other tick starts one.
+    workersAt = startedAt + WORKERS_EVERY_MS;
 
     if (startsWorkers === undefined) {
         const dir = await sessionDirOf(host);
@@ -232,6 +238,9 @@ async function loadWorkers(host: Host): Promise<void> {
     }
 
     const next = workersOf(run.stdout, sessionId);
+    // `tools hub agents` took 4.6 s a run on a loaded Mac (2026-10-27, 1216 runs in 6 sessions): a slow read waits ten
+    // times its length, and a session with no worker running asks every 5 minutes.
+    workersAt = paceAfter(next.length > 0 ? WORKERS_EVERY_MS : NO_WORKERS_EVERY_MS, startedAt);
 
     if (JSON.stringify(next) !== JSON.stringify(workers)) {
         workers = next;

@@ -123,6 +123,14 @@ export async function logMod(host: Host, feature: string, record: Record<string,
     }
 }
 
+/**
+ * When a periodic reader may run again: `everyMs` after its start, or ten times the run's own length when that is
+ * longer. A command that turns slow because the Mac is loaded is asked less often, instead of adding to the load.
+ */
+export function paceAfter(everyMs: number, startedAt: number, now = Date.now()): number {
+    return startedAt + Math.max(everyMs, (now - startedAt) * 10);
+}
+
 /** `12s`, `4m 05s`, `1h 02m`. */
 export function shortDuration(ms: number): string {
     const s = Math.max(0, Math.floor(ms / 1000));

@@ -106,9 +106,11 @@ const TAGS: ReadonlySet<string> = new Set<LoggedEntry["tag"]>(["question", "acti
 const TICK_MS = 10_000;
 /**
  * A read mark or a lost lifecycle event is recovered by a session snapshot this often, including an empty session.
- * Between snapshots, bounded incremental reads of the event logs detect this session's changes.
+ * Between snapshots, bounded incremental reads of the event logs detect this session's changes. Each snapshot is a
+ * `tools question inbox` of about 3 s and a transcript grep of up to 8 s on a loaded Mac; at 5 minutes, 26 sessions ran
+ * 566 of them in two hours (2026-10-27).
  */
-const SLOW_MS = 5 * 60_000;
+const SLOW_MS = 15 * 60_000;
 /** The maximum bytes read from one changed shared log, before any allocation or line splitting. */
 const LOG_READ_BYTES = 65_536;
 /** A tool call more than this before its entry did not record it. */
