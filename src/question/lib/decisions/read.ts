@@ -237,6 +237,40 @@ function optionLabel(label: string, letter: string): string {
     return label.replace(prefix, "");
 }
 
+function ledgerRef(number: number, id: string): string {
+    return `Ledger decision ${number} (${id})`;
+}
+
+/** The first lines of a message that answers an inbox item: what it answers, then which item that is. */
+function replyToLines({ title, ref }: { title: string; ref: string }): string[] {
+    return [`Reply to: ${title.trim()}`, ref];
+}
+
+/** The inbox item a widget follow-up answers: what the user looked at when they wrote it. */
+export interface ReplyTarget {
+    id: string;
+    kind: string;
+    title?: string;
+    /** The start of the item's text, for an item with no title. */
+    excerpt?: string;
+    /** A decision's number, so its line names it as a decision answer does. */
+    number?: number;
+}
+
+/** A follow-up's "Reply to:" lines, in the decision answer's form; none when the item has neither title nor text. */
+export function replyTargetLines(target: ReplyTarget): string[] {
+    const title = target.title?.trim() || target.excerpt?.trim();
+    if (!title) {
+        return [];
+    }
+
+    const ref =
+        target.kind === "decision" && target.number
+            ? ledgerRef(target.number, target.id)
+            : `Inbox ${target.kind} (${target.id})`;
+    return replyToLines({ title, ref });
+}
+
 /** Preserves the card title and ledger identity before the user's literal answer or option labels. */
 export function decisionLine(row: DecisionRecord): string {
     const letters = optionLetters(row.option);
@@ -251,7 +285,7 @@ export function decisionLine(row: DecisionRecord): string {
 
     const answer = `${picks}${text}`.trimEnd();
     if (row.title?.trim()) {
-        return [`Reply to: ${row.title.trim()}`, `Ledger decision ${row.number} (${row.id})`, answer].join("\n");
+        return [...replyToLines({ title: row.title, ref: ledgerRef(row.number, row.id) }), answer].join("\n");
     }
 
     return `DECISION ${row.number}: ${answer}`.trimEnd();

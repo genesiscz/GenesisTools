@@ -2136,6 +2136,31 @@ test("a form answer keeps the composer text: it is serialized with the answers a
     );
 });
 
+test("a follow-up names the inbox item it answers in a Reply to line, and one without replyTo is sent as typed", async () => {
+    const directory = await root();
+    const enqueue = (payload: WidgetOutgoing["payload"]) =>
+        enqueueWidgetMessage({ root: directory, id: randomUUID(), target, payload, assetIds: [] });
+    const named = await enqueue({
+        kind: "followup",
+        text: "its ok already set up as plugin",
+        replyTo: { id: "d-7", kind: "decision", title: "Install the hook as a plugin?", number: 4 },
+    });
+    const answer = await enqueue({
+        kind: "followup",
+        text: "thanks",
+        replyTo: { id: "a-1", kind: "answer", excerpt: "The build is green on master" },
+    });
+    const plain = await enqueue({ kind: "followup", text: "its ok already set up as plugin" });
+    const state = await readWidgetState(directory);
+    expect(await serializeWidgetMessage(named, state)).toBe(
+        "Reply to: Install the hook as a plugin?\nLedger decision 4 (d-7)\nits ok already set up as plugin"
+    );
+    expect(await serializeWidgetMessage(answer, state)).toBe(
+        "Reply to: The build is green on master\nInbox answer (a-1)\nthanks"
+    );
+    expect(await serializeWidgetMessage(plain, state)).toBe("its ok already set up as plugin");
+});
+
 test("unchanged video settings preserve the prepared revision and a real change invalidates it", async () => {
     const directory = await root();
     const id = randomUUID();

@@ -1,5 +1,6 @@
 import { readFile } from "node:fs/promises";
 import { join, resolve } from "node:path";
+import { replyTargetLines } from "@app/question/lib/decisions/read";
 import { MAX_MEDIA_CONTEXT_CHARS } from "@app/question/lib/pending/types";
 import { SafeJSON } from "@genesiscz/utils/json";
 import { videoManifestSchema } from "@genesiscz/utils/video/types";
@@ -86,7 +87,9 @@ export async function serializeWidgetMessage(message: WidgetOutgoing, state: Wid
         }
         return asset;
     });
-    const text = message.payload.text;
+    const payload = message.payload;
+    const replyTo = payload.kind === "followup" && payload.replyTo ? replyTargetLines(payload.replyTo) : [];
+    const text = [...replyTo, payload.text].filter(Boolean).join("\n");
     const media = await serializeWidgetMedia(assets);
     return [text, media].filter(Boolean).join("\n\n");
 }

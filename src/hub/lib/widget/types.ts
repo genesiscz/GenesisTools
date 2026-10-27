@@ -79,6 +79,11 @@ export const widgetPreferencesSchema = z.object({
     alertAnswerSound: z.string().trim().min(1).max(40).default("same"),
     /** Seconds the session that raised an alert flashes in the widget; 0 does not flash it. */
     alertFlashSeconds: z.number().int().min(0).max(30).default(5),
+    /**
+     * What a reply names as the item it answers ("Reply to: <title>"): the selected card, else the agent's newest item
+     * ("selected-or-newest"); the selected card only; or nothing.
+     */
+    replyNames: z.enum(["selected-or-newest", "selected", "never"]).default("selected-or-newest"),
     /** Where a session inbox puts its reply composer: under the tabs, or below the list. */
     inboxComposer: z.enum(["top", "bottom"]).default("top"),
     /** A rail session bubble's tooltip: only while hover previews are off ("auto"), always, or never. */
@@ -180,8 +185,22 @@ export const widgetAssetSchema = z.discriminatedUnion("type", [
 ]);
 export type WidgetAsset = z.infer<typeof widgetAssetSchema>;
 
+export const widgetReplyToSchema = z.object({
+    id: z.string().min(1),
+    kind: z.string().min(1),
+    title: z.string().max(500).optional(),
+    excerpt: z.string().max(500).optional(),
+    number: z.number().int().positive().optional(),
+});
+export type WidgetReplyTo = z.infer<typeof widgetReplyToSchema>;
+
 export const widgetPayloadSchema = z.discriminatedUnion("kind", [
-    z.object({ kind: z.literal("followup"), text: z.string().max(64_000) }),
+    z.object({
+        kind: z.literal("followup"),
+        text: z.string().max(64_000),
+        /** The inbox item the user looked at while writing: delivered as a "Reply to:" line (`replyNames`). */
+        replyTo: widgetReplyToSchema.optional(),
+    }),
     z.object({
         kind: z.literal("decision"),
         id: z.string(),
