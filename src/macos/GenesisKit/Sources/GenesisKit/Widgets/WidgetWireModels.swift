@@ -515,6 +515,8 @@ public struct WidgetInboxSummary: Codable, Equatable, Sendable {
     public var staged: [WidgetInboxItem]? = nil
     /// Decisions answered outside the widget in the last week, newest first, at most 20; nil from an older hub.
     public var answeredElsewhere: [WidgetInboxItem]? = nil
+    /// Uncapped pending decision IDs; absent from older hubs. Only complete snapshots are authoritative.
+    public var pendingDecisionIDs: [String]? = nil
     public var profile: Profile?
     public static let empty = WidgetInboxSummary(unread: 0, needsAnswer: 0, complete: false, truncated: false, sessions: [])
 }

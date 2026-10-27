@@ -95,6 +95,10 @@ public final class WidgetModel: ObservableObject {
     /// How the open popup takes another alert, and how long it stays while the pointer is not on it (0: until closed).
     public private(set) var peekMany: WidgetAlerts.PopupMany = .newest
     private(set) var peekSeconds: Double = 7
+    /// Duration and the inbox generation when each displayed or waiting alert arrived.
+    private var peekDurations: [String: Double] = [:]
+    private var peekInboxGenerations: [String: Int] = [:]
+    private var inboxGeneration = 0
     private var peekTask: Task<Void, Never>?
     /// The module a peek replaced on its surface (`previous`, nil when none was chosen) and the one it showed. The
     /// end of the peek puts `previous` back, unless the selection is no longer `shown`: the user picked a module.
@@ -549,7 +553,9 @@ public final class WidgetModel: ObservableObject {
     /// list. Only then do the number keys answer it; a key used to stage an option of a decision nobody could see.
     public var answerCardOnScreen: WidgetCard? {
         guard activeModuleID == "agents", !inboxOverview, section == "Inbox", stagedView == nil else { return nil }
-        return answerCard
+        guard let card = answerCard, LiveWidgetView.filtered([card], by: inboxFilter).contains(where: { $0.id == card.id })
+        else { return nil }
+        return card
     }
     /// The decision whose own answer field holds the draft (its toolbar open, the reply composer parked).
     @Published public var ownAnswerCardID: String?
@@ -914,21 +920,31 @@ public final class WidgetModel: ObservableObject {
             if shown.sourceId == item.sourceId {
                 peekItem = item
                 peekSeconds = seconds
+                peekDurations[item.id] = seconds
+                peekInboxGenerations[item.id] = inboxGeneration
                 PerfLog.mark("widget.peek replaced id=\(item.id) answered=\(item.isAnsweredElsewhere)")
                 schedulePeekEnd(on: peeked)
                 presentationChanged?()
                 return
             }
             if let index = peekQueue.firstIndex(where: { $0.sourceId == item.sourceId }) {
+                let previous = peekQueue[index]
+                peekDurations[previous.id] = nil
+                peekInboxGenerations[previous.id] = nil
                 peekQueue[index] = item
+                peekDurations[item.id] = seconds
+                peekInboxGenerations[item.id] = inboxGeneration
                 presentationChanged?()
                 return
             }
         }
         if let shown = peekItem, many != .newest, let peeked = hoveredSurface {
-            if shown.id != item.id, !peekQueue.contains(where: { $0.id == item.id }) { peekQueue.append(item) }
+            if shown.id != item.id, !peekQueue.contains(where: { $0.id == item.id }) {
+                peekQueue.append(item)
+                peekDurations[item.id] = seconds
+                peekInboxGenerations[item.id] = inboxGeneration
+            }
             peekMany = many
-            peekSeconds = seconds
             PerfLog.mark("widget.peek added id=\(item.id) mode=\(many.rawValue) waiting=\(peekQueue.count)")
             // A new row gives the list its full time again; a queue keeps the shown alert's own countdown.
             if many == .list { schedulePeekEnd(on: peeked) }
@@ -945,6 +961,8 @@ public final class WidgetModel: ObservableObject {
         hoverTask?.cancel()
         peekItem = item
         peekQueue = []
+        peekDurations = [item.id: seconds]
+        peekInboxGenerations = [item.id: inboxGeneration]
         peekMany = many
         peekSeconds = seconds
         hoveredSurface = surface
@@ -1024,6 +1042,8 @@ public final class WidgetModel: ObservableObject {
         guard let shown = peekItem, let index = peekQueue.firstIndex(where: { $0.id == item.id }) else { return }
         peekQueue[index] = shown
         peekItem = item
+        peekSeconds = peekDurations[item.id] ?? 7
+        if let surface = hoveredSurface { schedulePeekEnd(on: surface) }
         PerfLog.mark("widget.peek swapped id=\(item.id) for=\(shown.id)")
         presentationChanged?()
     }
@@ -1094,7 +1114,17 @@ public final class WidgetModel: ObservableObject {
     private func nextQueuedPeek() -> WidgetInboxItem? {
         while !peekQueue.isEmpty {
             let next = peekQueue.removeFirst()
+            // Only a newer complete snapshot with the uncapped decision list can prove settlement. Older hubs,
+            // incomplete reads, or the capped and filtered overview cannot prove that an absent decision settled.
+            if next.kind == "decision", next.needsAnswer, inbox.complete,
+               inboxGeneration > (peekInboxGenerations[next.id] ?? inboxGeneration),
+               let pending = inbox.pendingDecisionIDs, !pending.contains(next.sourceId) {
+                peekDurations[next.id] = nil
+                peekInboxGenerations[next.id] = nil
+                continue
+            }
             guard let fresh = inboxOverviewItems.first(where: { $0.id == next.id }) else { return next }
+            if next.kind == "decision", next.needsAnswer { return fresh.needsAnswer ? fresh : next }
             if fresh.needsAnswer || !next.needsAnswer { return fresh }
         }
         return nil
@@ -1105,7 +1135,10 @@ public final class WidgetModel: ObservableObject {
         peekTask = nil
         guard let item = peekItem else { return }
         if advance, peekMany == .queue, let surface = hoveredSurface, let next = nextQueuedPeek() {
+            peekDurations[item.id] = nil
+            peekInboxGenerations[item.id] = nil
             peekItem = next
+            peekSeconds = peekDurations[next.id] ?? 7
             PerfLog.mark("widget.peek next id=\(next.id) after=\(item.id) waiting=\(peekQueue.count)")
             presentationChanged?()
             schedulePeekEnd(on: surface)
@@ -1113,6 +1146,8 @@ public final class WidgetModel: ObservableObject {
         }
         peekItem = nil
         peekQueue = []
+        peekDurations = [:]
+        peekInboxGenerations = [:]
         if expanded == nil, let surface = hoveredSurface, !pointerInside.contains(surface.key) {
             hoveredSurface = nil
         }
@@ -1209,6 +1244,7 @@ public final class WidgetModel: ObservableObject {
     }
 
     func updateInbox(_ value: WidgetInboxSummary) {
+        inboxGeneration += 1
         var arrived = false
         var arrivedKeys: Set<String> = []
         var arrivals: [WidgetInboxItem] = []
@@ -1520,6 +1556,12 @@ public final class WidgetModel: ObservableObject {
         select(item.key)
         selectedCardID = item.id
         foldedCardIDs.remove(item.id)
+        // An explicit open must reveal its target even if the reader had picked the opposite filter.
+        let decisionLike = ["decision", "todo"].contains(item.kind)
+        if (inboxFilter == "inbox" && decisionLike) || (inboxFilter == "decisions" && !decisionLike) {
+            inboxFilterPicked = true
+            inboxFilter = "all"
+        }
         section = "Inbox"
         if let surface { openModule("agents", on: surface) }
         acknowledgeOpenedInbox()

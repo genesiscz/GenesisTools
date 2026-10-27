@@ -49,16 +49,16 @@ export function parseJsonlChunk<T = unknown>(data: Buffer, existingRemainder?: B
 /**
  * Every well-formed row of an append-only JSONL log. A missing file has no rows. A torn or
  * corrupt line (a writer killed mid-append, a hand edit) is skipped and counted, so one bad
- * line cannot hide every other row. Any other read error throws.
+ * line cannot hide every other row. A missing file also carries `missing: true`; any other read error throws.
  */
-export function readJsonlRows<T>(path: string): { rows: T[]; skipped: number } {
+export function readJsonlRows<T>(path: string): { rows: T[]; skipped: number; missing?: true } {
     let text: string;
 
     try {
         text = readFileSync(path, "utf8");
     } catch (error) {
         if (error instanceof Error && "code" in error && error.code === "ENOENT") {
-            return { rows: [], skipped: 0 };
+            return { rows: [], skipped: 0, missing: true };
         }
 
         throw error;

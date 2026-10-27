@@ -684,6 +684,102 @@ final class WidgetInteractionTests: XCTestCase {
         if case .object(let fields) = calls.first { XCTAssertEqual(fields["action"], "unstage") } else { XCTFail() }
     }
 
+    @MainActor
+    func testQueuedDecisionsUseOnlyNewerCompleteAuthoritativeSnapshots() throws {
+        let defaults = UserDefaults(suiteName: "widget-tests." + UUID().uuidString)!
+        let value = model(defaults: defaults)
+        defer { value.stop() }
+        let side = WidgetSurfaceID(edge: .right)
+        let first = WidgetInboxItem(id: "decision:first", sourceId: "first", kind: "decision", key: "k",
+                                    at: 1, needsAnswer: true)
+        let waiting = WidgetInboxItem(id: "decision:waiting", sourceId: "waiting", kind: "decision", key: "k",
+                                      at: 2, needsAnswer: true)
+        func summary(_ ids: [String]?, complete: Bool) -> WidgetInboxSummary {
+            var result = WidgetInboxSummary(unread: 0, needsAnswer: 0, complete: complete, truncated: true, sessions: [])
+            result.pendingDecisionIDs = ids
+            return result
+        }
+        func begin() {
+            value.collapse()
+            value.showPeek(first, on: side, seconds: 0, many: .queue)
+            value.showPeek(waiting, on: side, seconds: 0, many: .queue)
+        }
+        value.updateInbox(summary([], complete: true))
+        begin()
+        value.dismissPeek()
+        XCTAssertEqual(value.peekItem, waiting, "a snapshot older than the arrival cannot settle it")
+        begin()
+        value.updateInbox(summary([], complete: false))
+        value.dismissPeek()
+        XCTAssertEqual(value.peekItem, waiting, "an incomplete read cannot settle it")
+        begin()
+        value.updateInbox(summary(nil, complete: true))
+        value.dismissPeek()
+        XCTAssertEqual(value.peekItem, waiting, "an older hub cannot prove settlement")
+        begin()
+        value.updateInbox(summary(["waiting"], complete: true))
+        value.dismissPeek()
+        XCTAssertEqual(value.peekItem, waiting, "a pending decision omitted by the capped overview survives")
+        begin()
+        value.updateInbox(summary([], complete: true))
+        value.dismissPeek()
+        XCTAssertNil(value.peekItem, "a newer complete decision list skips a settled item")
+
+        let oldWire = #"{"unread":0,"needsAnswer":0,"complete":true,"truncated":false,"sessions":[]}"#
+        let old = try JSONDecoder().decode(WidgetInboxSummary.self, from: Data(oldWire.utf8))
+        XCTAssertNil(old.pendingDecisionIDs, "old producer remains decodable")
+        let newWire = #"{"unread":0,"needsAnswer":0,"complete":true,"truncated":false,"sessions":[],"pendingDecisionIDs":["waiting"]}"#
+        let new = try JSONDecoder().decode(WidgetInboxSummary.self, from: Data(newWire.utf8))
+        XCTAssertEqual(new.pendingDecisionIDs, ["waiting"])
+    }
+
+    @MainActor
+    func testEachPopupKeepsItsDurationAcrossListAndQueue() async throws {
+        let defaults = UserDefaults(suiteName: "widget-tests." + UUID().uuidString)!
+        let value = model(defaults: defaults)
+        defer { value.stop() }
+        let side = WidgetSurfaceID(edge: .right)
+        let first = WidgetInboxItem(id: "decision:first", sourceId: "first", kind: "decision", key: "k", at: 1, needsAnswer: true)
+        let second = WidgetInboxItem(id: "decision:second", sourceId: "second", kind: "decision", key: "k", at: 2, needsAnswer: true)
+
+        value.showPeek(first, on: side, seconds: 0, many: .list)
+        value.showPeek(second, on: side, seconds: 0.2, many: .list)
+        try await Task.sleep(for: .milliseconds(350))
+        XCTAssertEqual(value.peekItem, first, "a finite arrival cannot close an until-closed alert")
+        value.showWaitingPeek(second)
+        try await Task.sleep(for: .milliseconds(350))
+        XCTAssertNil(value.peekItem, "an accessibility swap starts the new finite timer")
+
+        value.showPeek(first, on: side, seconds: 0.2, many: .list)
+        value.showPeek(second, on: side, seconds: 0, many: .list)
+        value.hover(side, inside: true)
+        value.showWaitingPeek(second)
+        try await Task.sleep(for: .milliseconds(350))
+        XCTAssertEqual(value.peekItem, second, "swapping to until-closed retains that duration while hovered")
+        value.hover(side, inside: false)
+        try await Task.sleep(for: .milliseconds(300))
+        XCTAssertEqual(value.peekItem, second, "leaving does not close the until-closed swap")
+        value.collapse()
+
+        value.showPeek(first, on: side, seconds: 0.2, many: .queue)
+        value.showPeek(second, on: side, seconds: 0, many: .queue)
+        try await Task.sleep(for: .milliseconds(350))
+        XCTAssertEqual(value.peekItem, second, "until-closed waits until the first finite alert expires")
+        try await Task.sleep(for: .milliseconds(300))
+        XCTAssertEqual(value.peekItem, second, "the promoted until-closed alert stays")
+        value.collapse()
+
+        value.showPeek(first, on: side, seconds: 0, many: .queue)
+        value.showPeek(second, on: side, seconds: 0.2, many: .queue)
+        value.hover(side, inside: true)
+        value.hover(side, inside: false)
+        try await Task.sleep(for: .milliseconds(350))
+        XCTAssertEqual(value.peekItem, first, "hover exit uses the shown alert's own zero duration")
+        value.dismissPeek()
+        try await Task.sleep(for: .milliseconds(350))
+        XCTAssertNil(value.peekItem, "the promoted finite alert uses its own duration")
+    }
+
     /// Several alerts in one popup (Alerts → Several at once), a popup that stays until it is closed, and a pointer
     /// that leaves the popup: the countdown starts again instead of closing it 220 ms later.
     @MainActor

@@ -1639,7 +1639,12 @@ export async function moveDecisions(
  * sort would otherwise throw on it and break every listing and update. Any other read error throws.
  */
 export function readDecisions(file: string): DecisionRecord[] {
-    const { rows, skipped } = readJsonlRows<unknown>(file);
+    return readDecisionsWithIntegrity(file).rows;
+}
+
+/** The same decision read, including whether the file was missing or any torn or invalid row was skipped. */
+export function readDecisionsWithIntegrity(file: string): { rows: DecisionRecord[]; complete: boolean } {
+    const { rows, skipped, missing } = readJsonlRows<unknown>(file);
     const valid = rows.filter(isStoredDecision);
     const malformed = rows.length - valid.length;
 
@@ -1647,7 +1652,7 @@ export function readDecisions(file: string): DecisionRecord[] {
         logger.warn({ file, skipped, malformed }, "[decisions] skipped unreadable lines in the decision log");
     }
 
-    return valid;
+    return { rows: valid, complete: !missing && skipped === 0 && malformed === 0 };
 }
 
 function isStoredDecision(value: unknown): value is DecisionRecord {

@@ -2,7 +2,12 @@ import { existsSync, statSync } from "node:fs";
 import { sessionChangesPath } from "@app/agents/lib/changes/log";
 import { type AgentSessionRow, listAgentSessionRows } from "@app/ai/lib/sessions/agent-session-rows";
 import { decisionFiles } from "@app/question/lib/decisions/read";
-import { type AnsweredVia, type DecisionRecord, kindOf, readDecisions } from "@app/question/lib/decisions/store";
+import {
+    type AnsweredVia,
+    type DecisionRecord,
+    kindOf,
+    readDecisionsWithIntegrity,
+} from "@app/question/lib/decisions/store";
 import { INBOX_STALE_MS, inboxSessionFresh } from "@app/question/lib/inbox/build";
 import { renderFormAnswer } from "@app/question/lib/pending/render";
 import { listFormsSnapshot, PENDING_MIGRATIONS } from "@app/question/lib/pending/store";
@@ -164,7 +169,7 @@ export function widgetTitle(text: string | null | undefined): string | undefined
 }
 export interface WidgetSources {
     sessions(refresh: boolean): Promise<AgentSessionRow[]>;
-    decisions(): DecisionRecord[];
+    decisions(): DecisionRecord[] | { rows: DecisionRecord[]; complete: boolean };
     forms(session?: string): AskForm[];
     answers(session?: string): QaRow[];
     /** The newest `limit` answers of each session in one read (the warm sessions); else `answers` per session. */
@@ -289,6 +294,8 @@ export interface WidgetInboxSummary {
      * The widget shows each new one, and its settings list them (Automatic decisions).
      */
     answeredElsewhere: WidgetInboxItem[];
+    /** Uncapped open or drafted decision IDs; optional for older producers. Authoritative only when complete. */
+    pendingDecisionIDs?: string[];
     profile?: { hostId: "local" };
 }
 
@@ -572,7 +579,7 @@ export const realWidgetSources: WidgetSources = {
             maxDiscoveryAgeMs: WIDGET_DISCOVERY_REUSE_MS,
             failClosed: true,
         }),
-    decisions: () => readDecisions(decisionFiles().file),
+    decisions: () => readDecisionsWithIntegrity(decisionFiles().file),
     forms: (sessionHint) => widgetForms({ dbPath: toolDataDir("question", "qa.db"), sessionHint }),
     answers: (sessionId) =>
         queryEntriesSnapshot({
@@ -822,13 +829,16 @@ export async function widgetSnapshot({
             stop();
         }
     }
-    const [rows, decisions, waitingForms, agents, answerRoster] = await Promise.all([
+    const [rows, decisionRead, waitingForms, agents, answerRoster] = await Promise.all([
         read("sessions", () => sources.sessions(refresh), []),
         read("decisions", sources.decisions, []),
         read("questions", () => sources.forms(), []),
         read("agents", () => sources.agents(refresh), { generatedAt: "", parents: [], orphans: [] }),
         read("answer sessions", () => sources.answers(), []),
     ]);
+    // Older injected sources return only rows and cannot attest to read integrity.
+    const decisions = Array.isArray(decisionRead) ? decisionRead : decisionRead.rows;
+    const decisionsComplete = !Array.isArray(decisionRead) && decisionRead.complete;
     const inboxWindow: WidgetInboxWindow = {
         clearedAt: state.inboxClearedAt ?? 0,
         staleBefore: now - INBOX_STALE_MS,
@@ -1282,6 +1292,13 @@ export async function widgetSnapshot({
             .slice(0, 512)
             .map((entry) => ({ ...entry, items: listedInboxItems(entry.items ?? []) })),
         staged,
+        ...(decisionsComplete
+            ? {
+                  pendingDecisionIDs: decisions
+                      .filter((row) => kindOf(row) === "decision" && ["open", "drafted"].includes(row.state))
+                      .map((row) => row.id),
+              }
+            : {}),
         answeredElsewhere: answeredElsewhere.slice(0, ANSWERED_ELSEWHERE_MAX),
         ...(prof.enabled ? { profile: { hostId: "local" as const } } : {}),
     };
