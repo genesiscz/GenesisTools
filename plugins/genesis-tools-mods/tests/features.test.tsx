@@ -1148,9 +1148,8 @@ test("a hand-built hub link gets its &amp; fixed and its mangled PR named", () =
         problems: ["&amp; in the query: the app dropped the key after it"],
     });
     expect(
-        checkHubLink("https://genesis.tools/hub?pr=cprdigital%2Fprojects%2Fcol%2Fcol-fe%2190007555&commit=504f89faee")
-            ?.problems
-    ).toEqual(["pr=cprdigital/projects/col/col-fe!90007555: 90007555 is no PR number (a mangled %21 or %23?)"]);
+        checkHubLink("https://genesis.tools/hub?pr=acme%2Fteam%2Fapp%2190007555&commit=504f89faee")?.problems
+    ).toEqual(["pr=acme/team/app!90007555: 90007555 is no PR number (a mangled %21 or %23?)"]);
     expect(checkHubLink("genesis-tools://hub?pr=acme%2Fapp%237&commit=abc1234")?.problems).toEqual([]);
     expect(checkHubLink("https://genesis.tools/hub?commit=abc1234")?.problems).toEqual([
         "commit= without pr= or repo=: the hub cannot place it",
