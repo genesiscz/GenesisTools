@@ -1137,10 +1137,37 @@ final class WidgetVisibilityTests: XCTestCase {
 
     /// ⌘ turns an option click or a Return in an own answer around while the setting is on.
     func testCommandDoesTheOtherActionWhileTheSettingIsOn() {
-        XCTAssertTrue(WidgetModel.stages(true, command: false, swaps: true))
-        XCTAssertFalse(WidgetModel.stages(true, command: true, swaps: true), "⌘-click sends while clicks stage")
-        XCTAssertTrue(WidgetModel.stages(false, command: true, swaps: true), "⌘-click stages while clicks send")
-        XCTAssertTrue(WidgetModel.stages(true, command: true, swaps: false), "the setting off: ⌘ changes nothing")
+        XCTAssertTrue(DecisionAnswering.stages(true, command: false, swaps: true))
+        XCTAssertFalse(DecisionAnswering.stages(true, command: true, swaps: true), "⌘-click sends while clicks stage")
+        XCTAssertTrue(DecisionAnswering.stages(false, command: true, swaps: true), "⌘-click stages while clicks send")
+        XCTAssertTrue(DecisionAnswering.stages(true, command: true, swaps: false), "the setting off: ⌘ changes nothing")
+    }
+
+    /// The hub's Inbox reads the widget's settings from its state.json: a changed file is read again, and an unreadable
+    /// one keeps the last good read.
+    func testTheWidgetPreferencesFileFollowsTheSettingsTheWidgetSaved() throws {
+        let folder = FileManager.default.temporaryDirectory.appendingPathComponent("widget-prefs-" + UUID().uuidString)
+        try FileManager.default.createDirectory(at: folder, withIntermediateDirectories: true)
+        defer { try? FileManager.default.removeItem(at: folder) }
+        let file = folder.appendingPathComponent("state.json")
+        func save(_ click: String, at stamp: Date) throws {
+            let preferences = try JSONDecoder().decode(WidgetPreferences.self, from: Data(
+                #"{"excludedKeys":[],"projects":[],"sessions":[],"showChanges":true,"placement":"both","side":"right","quietSeconds":15,"voiceProvider":"xai","voiceLanguage":"","decisionClick":"CLICK","decisionCommandSwaps":true}"#
+                    .replacingOccurrences(of: "CLICK", with: click).utf8))
+            try JSONEncoder().encode(["preferences": preferences]).write(to: file)
+            try FileManager.default.setAttributes([.modificationDate: stamp], ofItemAtPath: file.path)
+        }
+        let reader = WidgetPreferencesFile(path: file.path)
+        XCTAssertNil(reader.current(), "no file: the defaults")
+        try save("send", at: Date(timeIntervalSince1970: 1_000))
+        XCTAssertFalse(DecisionAnswering.clickStages(reader.current(), command: false), "Send at once")
+        XCTAssertTrue(DecisionAnswering.clickStages(reader.current(), command: true), "⌘-click stages")
+        try save("stage", at: Date(timeIntervalSince1970: 2_000))
+        XCTAssertTrue(DecisionAnswering.clickStages(reader.current(), command: false), "a changed file is read again")
+        try Data("{".utf8).write(to: file)
+        XCTAssertEqual(reader.current()?.decisionClick, "stage", "an unreadable file keeps the last good read")
+        XCTAssertTrue(DecisionAnswering.returnStages(nil, command: false), "Return stages by default")
+        XCTAssertFalse(DecisionAnswering.returnStages(nil, command: true), "⌘-Return sends by default")
     }
 
     /// What the inbox shows for an open decision with the own-answer composer, and for a superseded one with the

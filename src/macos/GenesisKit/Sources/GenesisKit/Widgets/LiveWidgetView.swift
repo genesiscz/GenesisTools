@@ -640,12 +640,8 @@ public struct LiveWidgetView: View {
     }
 
     static func choiceTooltip(_ choice: WidgetChoice, index: Int, stages: Bool, picked: Bool, swaps: Bool = true) -> String {
-        let key = index < 9 ? " · key \(index + 1)" : ""
-        if !stages {
-            return "Answer \(choice.id)" + (choice.recommended ? " (recommended)" : "") + key + (swaps ? " · ⌘-click stages it" : "")
-        }
-        return (picked ? "Staged; click again to unstage" : "Stage \(choice.id), sent later with your other staged decisions")
-            + (choice.recommended ? " (recommended)" : "") + key + (swaps ? " · ⌘-click sends it now" : "")
+        DecisionAnswering.optionTooltip(choice.id, recommended: choice.recommended, stages: stages, picked: picked,
+                                        swaps: swaps, key: index < 9 ? index + 1 : nil)
     }
 
     @ViewBuilder private func cardDetail(_ card: WidgetCard) -> some View {

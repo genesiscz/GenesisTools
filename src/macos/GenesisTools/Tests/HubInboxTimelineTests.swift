@@ -186,14 +186,54 @@ final class HubDecisionsSourceTests: XCTestCase {
         XCTAssertEqual(HubInboxModel.keyOrder(rows, showsQuiet: true), ["fresh-a", "fresh-c", "quiet-b"])
     }
 
-    /// A click MARKS an option: plain click replaces the pick (and clears it on the chosen one),
-    /// Cmd-click adds or removes a letter. Nothing here sends.
-    func testAClickMarksAndCmdClickAdds() {
+    /// A staging click MARKS an option: plain click replaces the pick (and clears it on the chosen one),
+    /// ⇧-click adds or removes a letter.
+    func testAClickMarksAndShiftClickAdds() {
         XCTAssertEqual(InboxDecisionCard.toggled("", "a", add: false), "a")
         XCTAssertEqual(InboxDecisionCard.toggled("a", "a", add: false), "", "a second click clears")
         XCTAssertEqual(InboxDecisionCard.toggled("a", "b", add: false), "b", "a plain click replaces")
-        XCTAssertEqual(InboxDecisionCard.toggled("a", "c", add: true), "ac", "Cmd-click adds")
-        XCTAssertEqual(InboxDecisionCard.toggled("ac", "a", add: true), "c", "Cmd-click on a marked letter removes it")
+        XCTAssertEqual(InboxDecisionCard.toggled("a", "c", add: true), "ac", "⇧-click adds")
+        XCTAssertEqual(InboxDecisionCard.toggled("ac", "a", add: true), "c", "⇧-click on a marked letter removes it")
+    }
+
+    /// A click answers as in the widget: it stages, or with Send at once (or ⌘ while clicks stage) it sends that one
+    /// letter now; ⇧-click always stages another letter.
+    func testAClickStagesOrSendsAsTheWidgetSettingSays() {
+        XCTAssertTrue(HubInboxModel.clickPlan(letters: "", letter: "a", shift: false, stages: true) == ("a", false))
+        XCTAssertTrue(HubInboxModel.clickPlan(letters: "a", letter: "a", shift: false, stages: true) == ("", false),
+                      "a click on the staged letter clears it")
+        XCTAssertTrue(HubInboxModel.clickPlan(letters: "ac", letter: "b", shift: false, stages: false) == ("b", true),
+                      "a send sends the clicked letter only")
+        XCTAssertTrue(HubInboxModel.clickPlan(letters: "a", letter: "c", shift: true, stages: false) == ("ac", false),
+                      "⇧-click stages another letter even while clicks send")
+    }
+
+    /// A send through the widget's engine reads as the widget's note, and a delivery over a Claude session's own
+    /// channel no longer reads "Not sent".
+    func testASendReadsAsTheWidgetSaysIt() {
+        let waiting = InboxDelivery.outcome(WidgetDecisionSendOutcome(["sent": 0, "queued": 1, "failed": 0, "sessions": [
+            ["session": "s1", "numbers": [4], "result": ["delivered": false, "detail": "no cmux pane runs this session"]],
+        ]], titles: ["s1": "gt-fixes"]), ids: ["d_4_s1"], resend: false)
+        XCTAssertEqual(waiting.summary,
+                       "Not delivered to gt-fixes: No cmux pane runs this session. The answers wait for its next prompt.")
+        XCTAssertTrue(waiting.isQueued)
+        XCTAssertEqual(waiting.resendIDs, ["d_4_s1"], "Send again sends the waiting answers")
+        let sent = InboxDelivery.outcome(WidgetDecisionSendOutcome(["sent": 2, "queued": 0, "failed": 0, "sessions": [
+            ["session": "s1", "numbers": [4, 5], "result": ["delivered": true]],
+        ]], titles: [:]), ids: ["d_4_s1", "d_5_s1"], resend: false)
+        XCTAssertEqual(sent.summary, "2 decisions delivered.")
+        XCTAssertFalse(sent.isQueued || sent.isError)
+        let failed = InboxDelivery.outcome(WidgetDecisionSendOutcome(["sent": 0, "queued": 0, "failed": 1, "sessions": [
+            ["session": "s1", "numbers": [4], "error": "boom"],
+        ]], titles: ["s1": "gt-fixes"]), ids: ["d_4_s1"], resend: false)
+        XCTAssertTrue(failed.isError)
+        XCTAssertEqual(failed.summary, "1 decision could not be sent and stay staged.")
+        let peer = InboxDelivery(text: "DECISION 4: a)", channel: "claude-peer", delivered: true,
+                                 target: "original Claude session", error: nil, raw: nil, detail: nil)
+        XCTAssertEqual(peer.summary, "Sent to original Claude session")
+        let skipped = InboxDelivery.outcome(WidgetDecisionSendOutcome(["sessions": [], "sent": 0, "queued": 0, "failed": 0],
+                                                                      titles: [:]), ids: ["d_4_s1"], resend: false)
+        XCTAssertEqual(skipped.summary, "These decisions are no longer staged, so nothing was sent.")
     }
 }
 
