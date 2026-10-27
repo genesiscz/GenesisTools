@@ -91,6 +91,8 @@ export interface PrDetail extends PrSummary {
     mergeable: Mergeable | null;
     /** The host's raw merge gate: gh `mergeStateStatus`, GitLab `detailed_merge_status`. */
     mergeStatus: string | null;
+    /** The commit that landed a merged PR on its base (a squash or merge commit); null while it is open. */
+    mergedSha: string | null;
     checks: PrCheck[];
     webUrls: { pr: string; files: string; commits: string; checks: string };
 }
@@ -426,6 +428,7 @@ export const GH_VIEW_FIELDS = [
     "baseRefOid",
     "mergeable",
     "mergeStateStatus",
+    "mergeCommit",
 ];
 
 function ghSummary(row: Record<string, unknown>): PrSummary | null {
@@ -686,6 +689,7 @@ export function parseGhPrView(json: string): PrDetail {
         baseSha: str(row.baseRefOid),
         mergeable: ghMergeable(str(row.mergeable)),
         mergeStatus: str(row.mergeStateStatus),
+        mergedSha: isRecord(row.mergeCommit) ? str(row.mergeCommit.oid) : null,
         checks: records(row.statusCheckRollup).map((check) => {
             const name = str(check.name) ?? str(check.context) ?? "check";
             const workflow = str(check.workflowName);
@@ -870,6 +874,7 @@ export function parseGlabMrView({
         baseSha: str(diffRefs.base_sha),
         mergeable: glabMergeable(row),
         mergeStatus: str(row.detailed_merge_status) ?? str(row.merge_status),
+        mergedSha: str(row.squash_commit_sha) ?? str(row.merge_commit_sha),
         checks: pipelineRows.map((pipeline) => ({
             name: `pipeline ${num(pipeline.id) ?? "?"}${str(pipeline.ref) ? ` (${str(pipeline.ref)})` : ""}`,
             status: glabPipelineStatus(pipeline.status),

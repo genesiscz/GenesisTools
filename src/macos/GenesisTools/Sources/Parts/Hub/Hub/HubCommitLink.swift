@@ -19,6 +19,11 @@ enum HubCommitSha {
         commits.first { $0.sha.lowercased().hasPrefix(sha) }
     }
 
+    /// Whether the full sha `full` starts with `sha` (normalized), as `find` matches a list.
+    static func matches(_ sha: String, _ full: String) -> Bool {
+        full.lowercased().hasPrefix(sha)
+    }
+
     static func invalid(_ raw: String) -> String {
         "\(raw.prefix(48)) is not a commit: a link names one by 7 to 40 hex characters, or a range as <from>..<to>"
     }

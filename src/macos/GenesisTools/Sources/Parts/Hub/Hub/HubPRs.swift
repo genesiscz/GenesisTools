@@ -200,6 +200,8 @@ struct HubPRDetail: Decodable, Equatable {
     }
 
     let body: String?
+    /// The commit that landed a merged PR on its base (its squash or merge commit), which no commit list holds.
+    var mergedSha: String? = nil
     /// The head this detail describes; a newer one than the list's row means a push since the list.
     let headSha: String?
     let commits: [Commit]?
@@ -929,8 +931,15 @@ final class PRsModel: ObservableObject {
         pendingCommit = nil
         let sha = missing ?? pending.sha
         review.setScope(Self.scope(shown, detail: details[shown.id], fetch: fetchedHead(shown)))
+        let whole = shown.isGitLab ? "MR" : "PR"
+        // A link to the commit that merged the PR (an agent naming "the commit of !6958") is the whole PR, not a miss.
+        if let merged = details[shown.id]?.mergedSha, HubCommitSha.matches(sha, merged) {
+            HubPerf.log("prs.commit \(shown.label) \(sha) is its merge commit")
+            notice = PRNotice(ref: pending.ref, text: "\(sha) is the commit that merged \(shown.label), so the whole \(whole) shows")
+            return
+        }
         HubPerf.log("prs.commit \(shown.label) \(sha) not among its commits")
-        notice = PRNotice(ref: pending.ref, text: "\(sha) is not a commit of \(shown.label), so the whole \(shown.isGitLab ? "MR" : "PR") shows")
+        notice = PRNotice(ref: pending.ref, text: "\(sha) is not a commit of \(shown.label), so the whole \(whole) shows")
     }
 
     /// The overview scrolled to `scroll`; a later appearance of the PR does not scroll again.
