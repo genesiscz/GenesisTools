@@ -24,6 +24,7 @@ import { answerGitWithoutSpawning } from "@genesiscz/utils/test/no-git";
 import { z } from "zod";
 import { stagedSendText } from "../inbox/drafts";
 import { chatAnswers } from "./chat-answers";
+import { backfillChatAnswers } from "./chat-reading";
 import { DeliveryUnknownError, deliverToSession, resolveDeliveryTarget } from "./deliver";
 import { livePaneTargets, noPaneTargets } from "./deliver.fixtures";
 import { decisionPayload, validateQuestionItems } from "./items";
@@ -3002,5 +3003,57 @@ describe("chat answers an agent records are never sent again (F2)", () => {
         expect(row.state).toBe("open");
         expect(row.draftOption).toBeUndefined();
         expect(row.draft).toBeUndefined();
+    });
+});
+
+describe("chat answers read from where the last read stopped", () => {
+    test("a decision asked before the read counts every user entry, also in history without timestamps", () => {
+        const entries = [{ line: -2, role: "user" as const, text: "D3 b) keep the old one", paths: [], commits: [] }];
+        const decision = { number: 3, letters: ["a", "b"] };
+
+        // Without the hint, timestamp-free history needs the ask among the entries.
+        expect(chatAnswers(entries, [decision]).unambiguous).toEqual([]);
+        expect(chatAnswers(entries, [{ ...decision, askedBefore: true }]).unambiguous).toMatchObject([
+            { number: 3, option: "b", answer: "keep the old one" },
+        ]);
+        // A revised decision too: it was open, as revised, when the last read ended.
+        expect(chatAnswers(entries, [{ ...decision, revision: 2, askedBefore: true }]).unambiguous).toHaveLength(1);
+    });
+
+    test("the backfill reads the whole transcript back to the oldest open ask, reports first, then records", async () => {
+        const { file, events } = scratch();
+        const [row] = await postDecisions(file, events, {
+            sessionId: "abc",
+            decisions: [{ prompt: "Keep it?", options: ["yes", "no"] }],
+        });
+        const later = new Date(Date.parse(row.createdTs ?? "") + 60_000).toISOString();
+        const reads: { maxBytes?: number; transcriptPath: string }[] = [];
+        const read = async (options: { maxBytes?: number; transcriptPath: string }) => {
+            reads.push({ maxBytes: options.maxBytes, transcriptPath: options.transcriptPath });
+            return {
+                found: true,
+                issues: [],
+                entries: [{ line: -1, role: "user" as const, text: "D1 b)", paths: [], commits: [], timestamp: later }],
+            };
+        };
+        const transcript = { kind: "claude", path: "/fixture/abc.jsonl" };
+
+        const dry = await backfillChatAnswers({ session: "abc", file, events, apply: false, transcript, read });
+        expect(dry).toMatchObject({ open: [1], recorded: [], unambiguous: [{ number: 1, option: "b" }] });
+        expect(readDecisions(file)[0]?.state).toBe("open");
+        expect(reads[0]).toEqual({ maxBytes: Number.POSITIVE_INFINITY, transcriptPath: "/fixture/abc.jsonl" });
+
+        const applied = await backfillChatAnswers({ session: "abc", file, events, apply: true, transcript, read });
+        expect(applied.recorded).toEqual([row.id]);
+        expect(readDecisions(file)[0]).toMatchObject({
+            state: "acknowledged",
+            option: "b",
+            answeredVia: "automatic_heuristic",
+        });
+        // Nothing open any more: a second run reads nothing.
+        expect(
+            (await backfillChatAnswers({ session: "abc", file, events, apply: true, transcript, read })).open
+        ).toEqual([]);
+        expect(reads).toHaveLength(2);
     });
 });

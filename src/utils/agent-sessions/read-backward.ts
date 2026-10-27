@@ -24,6 +24,8 @@ export function readJsonlBackward(
     const issues: NativeSourceIssue[] = [];
     let line = 0;
     let position = 0;
+    let endOffset: number | undefined;
+    let lastAssistantOffset: number | undefined;
     const issue = (message: string) => {
         issues.push({ path: options.path, message });
         logger.warn({ path: options.path, maxBytes: limit, position, line }, message);
@@ -31,6 +33,10 @@ export function readJsonlBackward(
     const walk = readLinesBackwardSync(options.path, {
         maxBytes: limit,
         signal: options.signal,
+        ...(options.fromOffset !== undefined ? { fromOffset: options.fromOffset } : {}),
+        onSource: (end) => {
+            endOffset = end;
+        },
         onLine: (offset) => {
             position = offset;
         },
@@ -41,7 +47,7 @@ export function readJsonlBackward(
             const next = walk.next();
 
             if (next.done) {
-                if (next.value.reason !== "eof") {
+                if (next.value.reason !== "eof" && next.value.reason !== "offset") {
                     position = next.value.position;
                     issue(`Backward read stopped: ${next.value.reason}; read ${next.value.bytesRead} bytes`);
                 }
@@ -61,11 +67,20 @@ export function readJsonlBackward(
             try {
                 row = SafeJSON.parse(text, { strict: true }) as JsonValue;
             } catch {
+                // The newest row cut short is one still being written: a later read starts at it, not after it.
+                if (line === -1 && !text.endsWith("}")) {
+                    endOffset = position;
+                }
+
                 issue(`Unreadable row at line ${line} from the end; skipped`);
                 continue;
             }
 
             const entries = options.rowEntries(row, line, position);
+
+            if (lastAssistantOffset === undefined && entries.some((entry) => entry.role === "assistant")) {
+                lastAssistantOffset = position;
+            }
             // A loop, not `findLastIndex`: the dashboards compile src/utils with a `lib` older than ES2023.
             let stop = -1;
 
@@ -80,7 +95,12 @@ export function readJsonlBackward(
 
             if (stop >= 0) {
                 rows.push(options.includeBoundaryMessage ? entries : entries.slice(stop));
-                return { entries: rows.reverse().flat(), found: true, issues };
+                return {
+                    entries: rows.reverse().flat(),
+                    found: true,
+                    issues,
+                    ...ended(endOffset, lastAssistantOffset),
+                };
             }
 
             rows.push(entries);
@@ -89,7 +109,17 @@ export function readJsonlBackward(
         walk.return({ reason: "eof", position, bytesRead: 0 });
     }
 
-    return { entries: rows.reverse().flat(), found: false, issues };
+    return { entries: rows.reverse().flat(), found: false, issues, ...ended(endOffset, lastAssistantOffset) };
+}
+
+function ended(
+    endOffset: number | undefined,
+    lastAssistantOffset: number | undefined
+): { endOffset?: number; lastAssistantOffset?: number } {
+    return {
+        ...(endOffset === undefined ? {} : { endOffset }),
+        ...(lastAssistantOffset === undefined ? {} : { lastAssistantOffset }),
+    };
 }
 
 /** A stable prompt boundary even for a timestamp-free transcript: the prompt's absolute byte offset. */

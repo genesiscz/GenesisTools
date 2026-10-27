@@ -330,7 +330,8 @@ export function readLastLines(path: string, { maxBytes = END_BYTES, method }: Ed
 }
 
 export interface BackwardLineEnd {
-    reason: "eof" | "maxBytes" | "aborted";
+    /** `offset`: the walk reached `fromOffset`, a clean end like `eof`. */
+    reason: "eof" | "maxBytes" | "aborted" | "offset";
     position: number;
     bytesRead: number;
 }
@@ -341,6 +342,14 @@ export interface BackwardLineOptions {
     signal?: AbortSignal;
     /** Absolute byte offset of the line about to be yielded (in the decompressed content for a `.zst` file). */
     onLine?: (position: number) => void;
+    /**
+     * Stop at this absolute byte offset, a line start the caller read up to before (an earlier walk's `onSource`
+     * end): the lines from there to the end, read once each across walks. Reaching it ends the walk with `offset`.
+     * An offset past the end reads nothing.
+     */
+    fromOffset?: number;
+    /** Called once before the first line, with the content's length: where a later walk's `fromOffset` starts. */
+    onSource?: (end: number) => void;
 }
 
 /** A chunk of a file read from its end, and the absolute offset of its first byte. */
@@ -418,14 +427,23 @@ function zstdBackwardSource(path: string): BackwardSource {
  */
 export function* readLinesBackwardSync(
     path: string,
-    { chunkBytes = 256 * 1024, maxBytes = Number.POSITIVE_INFINITY, signal, onLine }: BackwardLineOptions = {}
+    {
+        chunkBytes = 256 * 1024,
+        maxBytes = Number.POSITIVE_INFINITY,
+        signal,
+        onLine,
+        fromOffset = 0,
+        onSource,
+    }: BackwardLineOptions = {}
 ): Generator<string, BackwardLineEnd> {
-    if (!(chunkBytes > 0) || !(maxBytes >= 0)) {
-        throw new Error("Backward read requires a positive chunk size and a nonnegative byte limit");
+    if (!(chunkBytes > 0) || !(maxBytes >= 0) || !(fromOffset >= 0)) {
+        throw new Error("Backward read requires a positive chunk size and a nonnegative byte limit and offset");
     }
 
     const source = isZstdPath(path) ? zstdBackwardSource(path) : plainBackwardSource(path, chunkBytes);
-    const start = Math.max(0, source.end - maxBytes);
+    onSource?.(source.end);
+    const floor = Math.min(fromOffset, source.end);
+    const start = Math.max(floor, source.end - maxBytes);
     const chunks = source.chunks(start);
     let position = source.end;
     let bytesRead = 0;
@@ -479,6 +497,16 @@ export function* readLinesBackwardSync(
 
         if (signal?.aborted) {
             return { reason: "aborted", position, bytesRead };
+        }
+
+        if (start > 0 && start === floor) {
+            // The line that starts at `fromOffset` is whole: an earlier walk ended right before it.
+            if (parts.length > 0) {
+                onLine?.(start);
+                yield Buffer.concat(parts.reverse()).toString("utf8");
+            }
+
+            return { reason: "offset", position: start, bytesRead };
         }
 
         if (start > 0) {
