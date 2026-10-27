@@ -98,6 +98,50 @@ final class WidgetDecisionSurfacesTests: XCTestCase {
 
     // MARK: - Values
 
+    /// A reply names what it answers (`replyNames`): the selected open card, else the agent's newest item; the
+    /// selected card only; or nothing. The composer's × drops it for one message. An agent got "its ok already set up
+    /// as plugin" with no "Reply to" line and could not tell which question it answered (2026-10-27).
+    func testAReplyNamesTheSelectedCardElseTheNewestAgentItem() throws {
+        let answer: [String: Any] = ["id": "answer:a1", "kind": "answer", "sessionKey": key + "0", "sourceId": "a1",
+            "at": Date().timeIntervalSince1970 * 1000, "title": "", "body": "The hook is\n  installed as a plugin now.",
+            "status": "unread", "choices": [], "attachments": [], "refs": [], "read": false]
+        let cards = [Self.card(key + "0", number: 4), answer]
+
+        let model = try model(cards: cards)
+        XCTAssertEqual(model.replyNames, "selected-or-newest")
+        XCTAssertEqual(model.replyToCard?.id, "answer:a1", "with nothing selected, the agent's newest item")
+        let excerpt = WidgetReplyTo(card: try XCTUnwrap(model.replyToCard))
+        XCTAssertEqual(excerpt, WidgetReplyTo(card: model.cards[1]))
+        XCTAssertNil(excerpt.title)
+        XCTAssertEqual(excerpt.excerpt, "The hook is installed as a plugin now.", "an untitled item sends its text")
+        XCTAssertNil(excerpt.number)
+
+        model.selectedCardID = "decision:d4"
+        let decision = WidgetReplyTo(card: try XCTUnwrap(model.replyToCard))
+        XCTAssertEqual([decision.id, decision.kind, decision.title], ["d4", "decision", "Field manifest format"])
+        XCTAssertEqual(decision.number, 4)
+        XCTAssertNil(decision.excerpt)
+
+        model.foldedCardIDs.insert("decision:d4")
+        XCTAssertEqual(model.replyToCard?.id, "answer:a1", "a folded card is not what the user looks at")
+        model.foldedCardIDs.remove("decision:d4")
+
+        model.dropReplyTo()
+        XCTAssertNil(model.replyToCard, "the × leaves it out of this message")
+        XCTAssertEqual(model.replyToCandidate?.id, "decision:d4", "and the composer still says what it dropped")
+        model.dropReplyTo(false)
+        XCTAssertEqual(model.replyToCard?.id, "decision:d4")
+
+        let selectedOnly = try self.model(preferences: ["replyNames": "selected"], cards: cards)
+        XCTAssertNil(selectedOnly.replyToCard, "the selected card only: nothing selected names nothing")
+        selectedOnly.selectedCardID = "decision:d4"
+        XCTAssertEqual(selectedOnly.replyToCard?.id, "decision:d4")
+
+        let never = try self.model(preferences: ["replyNames": "never"], cards: cards)
+        never.selectedCardID = "decision:d4"
+        XCTAssertNil(never.replyToCandidate, "off names nothing, selected or not")
+    }
+
     /// F12, P3: one phrase for a waiting count that is right at 1, and "Decision 4" instead of "DECISION 4".
     func testTheWaitingCountAndTheDecisionNameReadTheSameEverywhere() {
         XCTAssertEqual(WidgetWords.waiting(1), "1 waiting for your answer", "it read \"1 need your answer\"")

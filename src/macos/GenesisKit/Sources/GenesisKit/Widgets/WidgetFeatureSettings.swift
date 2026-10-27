@@ -258,6 +258,14 @@ private struct WidgetGeneralSettings: View {
                     }.labelsHidden().pickerStyle(.segmented).frame(width: 250, alignment: .trailing)
                 }
                 Divider()
+                NativeSettingsRow("Replies name what they answer", detail: "A reply starts with \"Reply to:\" and the title of the card you selected, or of the agent's newest item, so the agent knows what it answers. The reply box shows it, with × to leave it out.") {
+                    Picker("Replies name what they answer", selection: string("replyNames", prefs?.replyNames ?? "selected-or-newest")) {
+                        Text("Selected, else newest").tag("selected-or-newest")
+                        Text("Selected card only").tag("selected")
+                        Text("Never").tag("never")
+                    }.labelsHidden().frame(width: 190, alignment: .trailing)
+                }
+                Divider()
                 NativeSettingsRow("Decision click", detail: "Stage keeps your pick to send later with the others, one message per session. The hub's Inbox follows it too.") {
                     Picker("Decision click", selection: string("decisionClick", prefs?.decisionClick ?? "stage")) {
                         Text("Stage").tag("stage")

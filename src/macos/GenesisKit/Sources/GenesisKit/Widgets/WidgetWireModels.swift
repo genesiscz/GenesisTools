@@ -302,6 +302,9 @@ public struct WidgetPreferences: Codable, Equatable, Sendable {
     public var alertAnswerSound: String?
     /// Seconds the session that raised an alert flashes; 0 does not flash it. Default 5.
     public var alertFlashSeconds: Double?
+    /// What a follow-up names as the item it answers: "selected-or-newest" (default: the selected card, else the
+    /// agent's newest item), "selected" (the selected card only) or "never".
+    public var replyNames: String?
     /// A session inbox's composer: "top" (default, under the tabs) or "bottom".
     public var inboxComposer: String?
     /// A rail bubble's tooltip: "auto" (default, only without hover previews), "always" or "never".
@@ -364,6 +367,34 @@ public struct WidgetPreferences: Codable, Equatable, Sendable {
     public var voiceAccount: String?
     public var voiceModel: String?
     public var voiceLanguage: String
+}
+/// The inbox item a follow-up answers, sent as its payload's `replyTo` and delivered as a "Reply to: <title>" line.
+public struct WidgetReplyTo: Codable, Equatable, Sendable {
+    public var id: String
+    public var kind: String
+    public var title: String?
+    /// The start of the item's text, for an item with no title.
+    public var excerpt: String?
+    public var number: Int?
+
+    public init(card: WidgetCard) {
+        id = card.sourceId
+        kind = card.kind
+        number = card.kind == "decision" ? card.number : nil
+        let title = Self.line(card.title)
+        self.title = title.isEmpty ? nil : title
+        let excerpt = title.isEmpty ? Self.line(card.body) : ""
+        self.excerpt = excerpt.isEmpty ? nil : excerpt
+    }
+
+    /// What the composer and the message show: the title, else the excerpt.
+    public var label: String { title ?? excerpt ?? kind }
+
+    /// One line of at most 160 characters: the wire takes 500, and a reply needs only enough to recognise the item.
+    private static func line(_ text: String) -> String {
+        let flat = text.split(whereSeparator: \.isWhitespace).joined(separator: " ")
+        return flat.count > 160 ? String(flat.prefix(159)) + "…" : flat
+    }
 }
 /// A global shortcut as the widget preferences store it: a Carbon virtual key code and a Carbon modifier mask.
 public struct WidgetShortcutChord: Codable, Equatable, Sendable {

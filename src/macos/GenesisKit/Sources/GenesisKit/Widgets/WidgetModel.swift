@@ -560,6 +560,8 @@ public final class WidgetModel: ObservableObject {
     }
     /// The decision whose own answer field holds the draft (its toolbar open, the reply composer parked).
     @Published public var ownAnswerCardID: String?
+    /// The card the composer's × dropped from the reply, by session: a follow-up does not name it (`replyToCard`).
+    @Published public var replyToDropped: [String: String] = [:]
     /// A decision whose own answer field takes the keyboard as soon as its card shows it (the alert's "Write my own
     /// answer" opens the panel first, so the field is not there yet when it is asked for).
     @Published public var ownAnswerFocusRequest: String?
@@ -2366,6 +2368,10 @@ public final class WidgetModel: ObservableObject {
                     ]
                 }
             }
+            if case .object(var fields) = payload, fields["kind"] == .string("followup"), let reply = replyToCard {
+                fields["replyTo"] = try .value(WidgetReplyTo(card: reply))
+                payload = .object(fields)
+            }
             if !answering && choice == nil
                 && submitted.text.trimmingCharacters(in: .whitespacesAndNewlines).isEmpty
                 && submitted.assetIds.isEmpty
@@ -2392,6 +2398,7 @@ public final class WidgetModel: ObservableObject {
             // on the hub; a new revision makes it skip itself.
             draftRevisions[selectedKey, default: 0] += 1
             composerGeneration += 1
+            replyToDropped[selectedKey] = nil
             submittedAssets.formUnion(submitted.assetIds)
             if let card, answering || choice != nil { submittedCards.insert(card.id) }
             action(["action": "draft-text", "key": .string(selectedKey), "text": ""])

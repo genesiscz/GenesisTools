@@ -1238,6 +1238,9 @@ public struct LiveWidgetView: View {
             if open && parked == nil {
                 composerProgress
             }
+            if ownAnswer == nil, parked == nil, let candidate = model.replyToCandidate {
+                replyingTo(candidate)
+            }
             // The own answer centres its one-line field on the send button it holds a place for, so the closed field
             // does not sit low in its box; the reply composer keeps its send button at the foot of a long text.
             HStack(alignment: ownAnswer == nil ? .bottom : .center, spacing: 8) {
@@ -1301,6 +1304,34 @@ public struct LiveWidgetView: View {
             if ownAnswer == nil { editing = true } else { ownAnswerFocused = true }
         }
         .frameProbe(ownAnswer == nil ? "widget.composer" : "widget.ownAnswer.box")
+    }
+
+    /// What the reply will name ("Reply to: <title>", the `replyNames` setting), with × to leave it out of this message.
+    /// Dropped, the line stays and says so, with a button that names the card again: the field never moves.
+    private func replyingTo(_ candidate: WidgetCard) -> some View {
+        let named = model.replyToCard != nil
+        let reply = WidgetReplyTo(card: candidate)
+        let title = candidate.kind == "decision" ? WidgetWords.numbered(reply.label, number: candidate.number) : reply.label
+        return HStack(spacing: 4) {
+            Image(systemName: "arrowshape.turn.up.left").font(.system(size: 9)).foregroundStyle(.tertiary)
+                .accessibilityHidden(true)
+            Text(named ? "Replying to: " + title : "Not naming what this answers")
+                .font(.system(size: 10.5)).foregroundStyle(named ? .secondary : .tertiary)
+                .lineLimit(1).truncationMode(.tail)
+                .accessibilityLabel(named ? "Replying to " + title : "The reply does not name what it answers")
+            Spacer(minLength: 0)
+            if named {
+                IconButton(systemName: "xmark", tooltip: "Don't name it in this reply", size: 9) {
+                    model.dropReplyTo()
+                }.accessibilityLabel("Don't name " + title + " in this reply")
+            } else {
+                IconButton(systemName: "arrow.uturn.backward", tooltip: "Name " + title + " again", size: 9) {
+                    model.dropReplyTo(false)
+                }.accessibilityLabel("Name " + title + " again")
+            }
+        }
+        .frame(height: 16)
+        .frameProbe("widget.composer.replyTo")
     }
 
     /// What is being added to the draft: its attachments, a dictation, an import.
