@@ -523,6 +523,11 @@ describe("sessions already running in a cmux tab", () => {
         // Nothing still runs elsewhere, so the lone history match is resumed without a picker.
         expect(choice).toEqual({ action: "resume", session: only });
         expect(runsElsewhere(tab("there", "x"), "surface-uuid-here")).toBe(true);
+        // cmux reports the surface in lower case and the environment in upper case: still this tab.
+        expect(runsElsewhere(tab("here", "x"), "SURFACE-UUID-HERE")).toBe(false);
+        // A job stopped with Ctrl-Z runs nowhere to focus.
+        expect(runsElsewhere(tab("there", "x"), "surface-uuid-here", () => "T")).toBe(false);
+        expect(runsElsewhere(tab("there", "x"), "surface-uuid-here", () => "S+")).toBe(true);
     });
 
     test("without a terminal the running sessions are never read", async () => {
