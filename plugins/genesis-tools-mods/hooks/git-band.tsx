@@ -75,7 +75,48 @@ function checksText(stdout: string): string {
 const EVERY_MS = 3 * 60_000;
 /** The earlier branches of a checkout whose PRs a row looks up, the last first. */
 const EARLIER_PRS = 3;
-const ghCache = new Map<string, { at: number; pr: BandPr | null }>();
+const ghCache = new Map<string, { at: number; ttlMs: number; pr: BandPr | null }>();
+/**
+ * How long a branch's PR answer holds. An open PR keeps `GH_TTL_MS` (pushes and CI move it); a branch with no PR, or a
+ * merged or closed one, changes rarely: on 2026-10-27, 90 of 133 shared answers were "no PR", each asked again every
+ * 2 minutes by 21 sessions. The band's refresh press and `/mod-git refresh` still read them at once.
+ */
+const GH_NO_PR_TTL_MS = 10 * 60_000;
+const GH_CLOSED_TTL_MS = 30 * 60_000;
+
+function prTtl(pr: BandPr | null): number {
+    if (!pr) {
+        return GH_NO_PR_TTL_MS;
+    }
+
+    return pr.state === "OPEN" ? GH_TTL_MS : GH_CLOSED_TTL_MS;
+}
+
+function parsedPr(text: string | undefined, viaTools: boolean, tracked: boolean): BandPr | null {
+    try {
+        const answer: unknown = text ? JSON.parse(text) : undefined;
+        const parsed: unknown = viaTools && isRecord(answer) ? answer.pr : answer;
+
+        if (isRecord(parsed) && typeof parsed.number === "number") {
+            return {
+                number: parsed.number,
+                title: String(parsed.title ?? ""),
+                url: String(parsed.url ?? ""),
+                state: String(parsed.state ?? ""),
+                draft: parsed.isDraft === true,
+                tracked,
+                own: false,
+                hidden: false,
+                ...checkCounts(parsed.statusCheckRollup),
+                checks: checksOf(parsed.statusCheckRollup),
+            };
+        }
+    } catch {
+        return null;
+    }
+
+    return null;
+}
 let refreshing: Promise<void> | undefined;
 let requestedRefresh = 0;
 let completedRefresh = 0;
@@ -240,7 +281,7 @@ async function prOf(
     const key = `${root}|${which || `@${ask.branch ?? ""}`}`;
     const held = ghCache.get(key);
 
-    if (held && Date.now() - held.at < GH_TTL_MS) {
+    if (held && Date.now() - held.at < held.ttlMs) {
         return held.pr ? { ...held.pr, tracked } : null;
     }
 
@@ -251,30 +292,15 @@ async function prOf(
     const argv = viaTools
         ? ["tools", "github", "pr", which || String(ask.branch), "--include", fields, "--max-cache-age", GH_TTL_S]
         : ["gh", "pr", "view", ...(which ? [which] : []), "--json", fields];
-    const viewed = await sharedRun(host, { argv, cwd: root, ttlMs: GH_TTL_MS, timeoutMs: 15_000 });
-    const text = viewed?.exitCode === 0 ? viewed.stdout : undefined;
-    let pr: BandPr | null = null;
+    // The longest hold first; an answer that turns out to be an open PR is read again under the short one, which
+    // reruns the command only when the shared file is older than that.
+    const run = { argv, cwd: root, timeoutMs: 15_000 };
+    let viewed = await sharedRun(host, { ...run, ttlMs: GH_CLOSED_TTL_MS });
+    let pr = viewed?.exitCode === 0 ? parsedPr(viewed.stdout, Boolean(viaTools), tracked) : null;
 
-    try {
-        const answer: unknown = text ? JSON.parse(text) : undefined;
-        const parsed: unknown = viaTools && isRecord(answer) ? answer.pr : answer;
-
-        if (isRecord(parsed) && typeof parsed.number === "number") {
-            pr = {
-                number: parsed.number,
-                title: String(parsed.title ?? ""),
-                url: String(parsed.url ?? ""),
-                state: String(parsed.state ?? ""),
-                draft: parsed.isDraft === true,
-                tracked,
-                own: false,
-                hidden: false,
-                ...checkCounts(parsed.statusCheckRollup),
-                checks: checksOf(parsed.statusCheckRollup),
-            };
-        }
-    } catch {
-        pr = null;
+    if (!viewed || viewed.exitCode !== 0 || prTtl(pr) < GH_CLOSED_TTL_MS) {
+        viewed = await sharedRun(host, { ...run, ttlMs: viewed?.exitCode === 0 ? prTtl(pr) : GH_TTL_MS });
+        pr = viewed?.exitCode === 0 ? parsedPr(viewed.stdout, Boolean(viaTools), tracked) : null;
     }
 
     // A PR with a check to look at gets `gh pr checks`, which says why a status failed (`Deployment was blocked`)
@@ -295,7 +321,7 @@ async function prOf(
         }
     }
 
-    ghCache.set(key, { at: Date.now(), pr });
+    ghCache.set(key, { at: Date.now(), ttlMs: viewed?.exitCode === 0 ? prTtl(pr) : GH_TTL_MS, pr });
 
     return pr;
 }
