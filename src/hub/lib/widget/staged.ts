@@ -58,6 +58,16 @@ export function isStaged(row: DecisionRecord): boolean {
 }
 
 /**
+ * The one place a send honors a cancel: before it writes or delivers anything, so a cancelled send leaves every
+ * answer staged. Past it the delivery and its record run to the end, and `deliver` must not carry the signal: a
+ * transport killed after it typed the message left the answer recorded as undelivered, and Send again typed it a
+ * second time (F19, 2026-10-27).
+ */
+export function cancelPoint(signal: AbortSignal | undefined): void {
+    signal?.throwIfAborted();
+}
+
+/**
  * Sends the staged decisions `ids` as their answers: one message per session, through `answerInboxDecisions`, the
  * path the inbox and the hub's Decisions pane send with. A session that fails keeps its decisions staged and is
  * reported; the other sessions still go. An id that is not staged (sent meanwhile, unstaged) is skipped.
@@ -67,12 +77,16 @@ export async function sendStagedDecisions({
     targets = {},
     files = decisionFiles(),
     deliver = {},
+    signal,
 }: {
     ids: readonly string[];
     targets?: Record<string, StagedTarget>;
     files?: { file: string; events: string };
     deliver?: DeliverDeps;
+    /** A cancel: it counts only before this send writes or delivers anything (`cancelPoint`). */
+    signal?: AbortSignal;
 }): Promise<StagedSendResult> {
+    cancelPoint(signal);
     const wanted = new Set(ids);
     const staged = readDecisions(files.file).filter((row) => wanted.has(row.id) && isStaged(row));
     const bySession = new Map<string, DecisionRecord[]>();
@@ -147,12 +161,16 @@ export async function resendAnsweredDecisions({
     targets = {},
     files = decisionFiles(),
     deliver = {},
+    signal,
 }: {
     ids: readonly string[];
     targets?: Record<string, StagedTarget>;
     files?: { file: string; events: string };
     deliver?: DeliverDeps;
+    /** As `sendStagedDecisions`. */
+    signal?: AbortSignal;
 }): Promise<StagedSendResult> {
+    cancelPoint(signal);
     const wanted = new Set(ids);
     const bySession = new Map<string, DecisionRecord[]>();
 

@@ -457,6 +457,11 @@ final class HubInboxModel: ObservableObject {
     @Published private(set) var sendingSessions: Set<String> = []
     /// The running stage of each session's send (the target lookup, the widget's send, a resumed send): Cancel stops it.
     private var sendTasks: [String: Task<Void, Never>] = [:]
+    /// Whether each running send can still stop (F19). The target lookup and the widget's send can: the widget's send
+    /// honors a stop only before it writes, so a late one never leaves an answer typed but not marked sent. A resumed
+    /// send (`question inbox send`) cannot, so it has no entry, and its line reads "Sending…".
+    @Published private(set) var sendCancel: [String: SendCancel] = [:]
+    enum SendCancel: Equatable { case available, requested }
     /// The last Send result per session id (where the answers went, or why nothing did).
     @Published private(set) var sessionResults: [String: InboxDelivery] = [:]
     /// Set when a Send found no live target: the view shows the resume dialog for this session.
@@ -938,6 +943,7 @@ final class HubInboxModel: ObservableObject {
         sessionResults[sessionId] = nil
         var targetArgs = ["question", "inbox", "target", "--session", sessionId]
         if let provider = session.provider { targetArgs += ["--provider", provider] }
+        sendCancel[sessionId] = .available
         sendTasks[sessionId] = Task { [weak self] in
             // A failed run or unreadable JSON is an error, never "no target known": a nil here once
             // fell through to a send that queued the answers silently.
@@ -959,9 +965,12 @@ final class HubInboxModel: ObservableObject {
     }
 
     /// The slow-send line's Cancel (F19): the running stage of this session's send stops, its `tools` child is
-    /// terminated, and every answer stays staged; a send queued behind it is dropped too.
+    /// terminated, and every answer stays staged; a send queued behind it is dropped too. A widget send that already
+    /// writes finishes and reads as what it did, so Send again never types an answer twice.
     func cancelSend(_ session: InboxSession) {
-        guard let sessionId = session.sessionId, let task = sendTasks[sessionId] else { return }
+        guard let sessionId = session.sessionId, let task = sendTasks[sessionId], sendCancel[sessionId] == .available
+        else { return }
+        sendCancel[sessionId] = .requested
         queuedSends[sessionId] = nil
         HubPerf.log("inbox.send.cancel \(sessionId.prefix(8))")
         task.cancel()
@@ -971,6 +980,7 @@ final class HubInboxModel: ObservableObject {
     private func endSend(_ sessionId: String, cancelled: Bool = false) {
         sendingSessions.remove(sessionId)
         sendTasks[sessionId] = nil
+        sendCancel[sessionId] = nil
         if cancelled { record(.cancelled, for: sessionId) }
     }
 
@@ -1086,6 +1096,7 @@ final class HubInboxModel: ObservableObject {
         let request = DecisionAnswering.sendRequest(action, ids: ids, targets: [sessionId: target])
         let titles = [sessionId: session.displayTitle]
         HubPerf.log("inbox.\(action.rawValue) \(ids.count) to \(sessionId.prefix(8))")
+        sendCancel[sessionId] = .available
         sendTasks[sessionId] = Task { [weak self] in
             let span = HubPerf.begin("inbox.\(action.rawValue)")
             let delivery = await Self.callWidget(request, ids: ids, titles: titles, resend: action == .resendAnswers)
@@ -1139,19 +1150,31 @@ final class HubInboxModel: ObservableObject {
         defer { try? FileManager.default.removeItem(at: file) }
         do {
             try JSONEncoder().encode(request).write(to: file)
-            // The send can wait on a busy receiver: room beyond the default. Cancel (F19) stops it.
-            let capture = try await ToolsCLIRunner.captureCancellable(["hub", "widget", "call", "--input", file.path], timeout: 120)
-            guard capture.status == 0, let result = try? JSONDecoder().decode(WidgetJSON.self, from: capture.stdout) else {
-                let why = String(decoding: capture.stderr, as: UTF8.self).trimmed
-                return .failure("Nothing was sent: the widget's sender did not answer. The answers stay staged.",
-                                raw: "tools hub widget call exited \(capture.status): \(why)")
-            }
-            return .outcome(WidgetDecisionSendOutcome(result, titles: titles), ids: ids, resend: resend)
+            // The send can wait on a busy receiver: room beyond the default. Cancel (F19) stops it before it writes.
+            let run = try await ToolsCLIRunner.captureStoppable(["hub", "widget", "call", "--input", file.path], timeout: 120)
+            return widgetDelivery(run.capture, stopped: run.stopped, ids: ids, titles: titles, resend: resend)
         } catch is CancellationError {
             return .cancelled
         } catch {
             return .failure("Nothing was sent: the hub could not run tools. The answers stay staged.", raw: "\(error)")
         }
+    }
+
+    /// A widget send's answer. A send its Cancel stopped wrote nothing (`cancelPoint`, src/hub/lib/widget/staged.ts)
+    /// and reads as cancelled; one the Cancel came too late for finished and reads as what it did, with that said.
+    nonisolated static func widgetDelivery(_ capture: ProcessCapture, stopped: Bool, ids: [String],
+                                           titles: [String: String], resend: Bool) -> InboxDelivery {
+        guard capture.status == 0, let result = try? JSONDecoder().decode(WidgetJSON.self, from: capture.stdout) else {
+            if stopped { return .cancelled }
+            let why = String(decoding: capture.stderr, as: UTF8.self).trimmed
+            return .failure("Nothing was sent: the widget's sender did not answer. The answers stay staged.",
+                            raw: "tools hub widget call exited \(capture.status): \(why)")
+        }
+        var delivery = InboxDelivery.outcome(WidgetDecisionSendOutcome(result, titles: titles), ids: ids, resend: resend)
+        if stopped, delivery.error == nil, let text = delivery.outcomeText {
+            delivery.outcomeText = "Too late to cancel: the send had started. " + text
+        }
+        return delivery
     }
 
     /// Answers a form: one entry per question, the chosen choice ids, any text and any `@file`
@@ -1914,12 +1937,18 @@ struct InboxSendBar: View {
                             .font(.system(size: 11))
                             .foregroundColor(ReviewPalette.dim)
                             .fixedSize(horizontal: false, vertical: true)
-                        Button("Cancel") { inbox.cancelSend(session) }
-                            .buttonStyle(.genHoverPlain())
-                            .font(.system(size: 11))
-                            .foregroundColor(ReviewPalette.renamed)
-                            .fixedSize()
-                            .instantTooltip("Stop this send now; the answers stay staged")
+                        let cancel = session.sessionId.flatMap { inbox.sendCancel[$0] }
+                        Button(cancel == .available ? "Cancel" : cancel == .requested ? "Cancelling…" : "Sending…") {
+                            inbox.cancelSend(session)
+                        }
+                        .buttonStyle(.genHoverPlain())
+                        .font(.system(size: 11))
+                        .foregroundColor(cancel == .available ? ReviewPalette.renamed : ReviewPalette.dim)
+                        .fixedSize()
+                        .disabled(cancel != .available)
+                        .instantTooltip(cancel == .available ? "Stop this send before it writes; the answers stay staged"
+                                        : cancel == .requested ? "Stopping the send; a send that already started finishes"
+                                        : "This send already goes to the session and cannot stop")
                     }
                 }
                 let preview = Self.preview(drafted)

@@ -128,17 +128,20 @@ export async function performWidgetAction({
                 ...(request.draftOption !== undefined ? { draftOption: request.draftOption } : {}),
             });
         }
+        // A cancel stops a send only before it writes (`cancelPoint`); its transport never sees the signal.
         case "send-staged":
             return sendStagedDecisions({
                 ids: request.ids,
                 targets: request.targets,
-                deliver: widgetDeliverDeps(signal),
+                deliver: widgetDeliverDeps(),
+                signal,
             });
         case "resend-answers":
             return resendAnsweredDecisions({
                 ids: request.ids,
                 targets: request.targets,
-                deliver: widgetDeliverDeps(signal),
+                deliver: widgetDeliverDeps(),
+                signal,
             });
         case "unstage":
             return { unstaged: await unstageDecisions({ ids: request.ids }) };

@@ -115,6 +115,7 @@ import {
 } from "../widget/voice-notes";
 import { StdinLines, WARM_SESSIONS, watchWidget, widgetSelectionLine } from "../widget/watch";
 import { importWidgetAsset, reviseVideoAsset } from "./assets";
+import * as dispatchModule from "./dispatch";
 import { widgetDeliveryReceipt, widgetDispatcher } from "./dispatch";
 import { processWidgetOutbox } from "./engine";
 import { changeOutgoing, enqueueWidgetMessage, messageReadiness, recoverWidgetOutbox } from "./outbox";
@@ -730,6 +731,86 @@ describe("widget source and delivery contracts", () => {
         expect(again.sessions[0]?.result?.delivered).toBe(true);
         expect(sent).toHaveLength(1);
         expect(readDecisions(files.file).find((entry) => entry.id === row.id)?.state).toBe("sent");
+    });
+
+    test("a Cancel after the agent got the message lets the send record it, so Send again types nothing twice", async () => {
+        const directory = await root();
+        await env.testing.withOverrides({ GENESIS_TOOLS_HOME: directory }, async () => {
+            const files = decisionFiles();
+            const [row] = await postDecisions(
+                files.file,
+                files.events,
+                { sessionId: "cancel-a", provider: "codex", decisions: [{ prompt: "Ship?", options: ["yes", "no"] }] },
+                { env: {} }
+            );
+            await updateDecisions(files.file, files.events, {
+                updates: [{ id: row.id, state: "drafted", draftOption: "a" }],
+            });
+            const cancel = new AbortController();
+            let typed = 0;
+            // The real transport kills its child when the signal it was given aborts: after it typed, that left the
+            // answer recorded as undelivered, and Send again typed it a second time (F19, 2026-10-27).
+            const transport = spyOn(dispatchModule, "widgetDeliverDeps").mockImplementation((signal) => ({
+                codexWorkerFor: () => "fixture-worker",
+                runTool: async () => {
+                    typed++;
+                    cancel.abort();
+                    if (signal?.aborted) {
+                        throw new DeliveryUnknownError("The transport was killed after it typed.");
+                    }
+
+                    return { success: true, stdout: '{"queued":false,"turnId":"fixture-turn"}', stderr: "" };
+                },
+            }));
+            try {
+                const targets = { "cancel-a": { provider: "codex" } };
+                const first = await performWidgetAction({
+                    input: { action: "send-staged", ids: [row.id], targets },
+                    signal: cancel.signal,
+                });
+                expect(first).toMatchObject({ sent: 1, queued: 0, failed: 0 });
+                expect(readDecisions(files.file).find((entry) => entry.id === row.id)?.state).toBe("sent");
+
+                const again = await performWidgetAction({
+                    input: { action: "resend-answers", ids: [row.id], targets },
+                });
+                expect(again).toMatchObject({ sent: 0, queued: 0, failed: 0 });
+                await performWidgetAction({ input: { action: "send-staged", ids: [row.id], targets } });
+                expect(typed).toBe(1);
+            } finally {
+                transport.mockRestore();
+            }
+        });
+    });
+
+    test("a Cancel before the send started writes and types nothing, and the answer stays staged", async () => {
+        const directory = await root();
+        const files = { file: join(directory, "decisions.jsonl"), events: join(directory, "events.jsonl") };
+        const [row] = await postDecisions(
+            files.file,
+            files.events,
+            { sessionId: "cancel-b", provider: "codex", decisions: [{ prompt: "Ship?", options: ["yes", "no"] }] },
+            { env: {} }
+        );
+        await updateDecisions(files.file, files.events, {
+            updates: [{ id: row.id, state: "drafted", draftOption: "a" }],
+        });
+        const deliver = {
+            codexWorkerFor: () => "fixture-worker",
+            runTool: async () => {
+                throw new Error("No transport may run");
+            },
+        };
+        const cancel = new AbortController();
+        cancel.abort();
+        await expect(sendStagedDecisions({ ids: [row.id], files, deliver, signal: cancel.signal })).rejects.toThrow();
+        await expect(
+            resendAnsweredDecisions({ ids: [row.id], files, deliver, signal: cancel.signal })
+        ).rejects.toThrow();
+        expect(readDecisions(files.file).find((entry) => entry.id === row.id)).toMatchObject({
+            state: "drafted",
+            draftOption: "a",
+        });
     });
 
     test("a media-only reply keeps the original session and card title in one literal message", async () => {

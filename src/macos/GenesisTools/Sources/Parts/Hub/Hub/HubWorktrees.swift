@@ -209,6 +209,17 @@ enum ToolsCLIRunner {
     /// `capture` that its task can stop: a server call is cancelled there, and a running process is terminated (the
     /// `tools` wrapper passes the signal to the tool). A cancelled task throws `CancellationError`, never a capture.
     static func captureCancellable(_ args: [String], timeout: TimeInterval = 60) async throws -> ProcessCapture {
+        let run = try await captureStoppable(args, timeout: timeout)
+        try Task.checkCancellation()
+        return run.capture
+    }
+
+    /// `capture` for work a stop may come too late for (F19's send). A cancel of the calling task before the child
+    /// starts throws `CancellationError`; a cancel while it runs terminates it, waits for its end and returns what it
+    /// printed, with `stopped` set. The tool decides what the stop undoes: a widget send honors it only before it
+    /// writes (`cancelPoint`, src/hub/lib/widget/staged.ts), so a send that already typed finishes and says so.
+    /// A server door is one idempotent write, so a cancel there only stops the wait for its answer.
+    static func captureStoppable(_ args: [String], timeout: TimeInterval = 60) async throws -> (capture: ProcessCapture, stopped: Bool) {
         let traceId = ToolsCallTrace.newId()
         let started = Date()
         if let server = HubSource.server {
@@ -221,18 +232,30 @@ enum ToolsCLIRunner {
                     traceId: traceId, via: "server", argv: args, started: started,
                     exit: result.exitCode, outBytes: result.stdout.utf8.count, stderr: result.stderr
                 )
-                return ProcessCapture(status: result.exitCode, stdout: Data(result.stdout.utf8), stderr: Data(result.stderr.utf8))
+                let capture = ProcessCapture(status: result.exitCode, stdout: Data(result.stdout.utf8), stderr: Data(result.stderr.utf8))
+                return (capture, false)
             }
         }
 
-        return try await runCancellable { handle in
+        try Task.checkCancellation()
+        let run = try await runStoppable { handle in
             try processCapture(args, timeout: timeout, traceId: traceId, started: started, handle: handle)
         }
+        return (run.value, run.stopped)
     }
 
     /// Runs `work` off the main thread; a cancel of the calling task stops the process `work` hands its handle,
     /// and the call throws `CancellationError` once `work` returned.
     static func runCancellable<T: Sendable>(_ work: @escaping @Sendable (ProcessCancelHandle) throws -> T) async throws -> T {
+        let run = try await runStoppable(work)
+        try Task.checkCancellation()
+        return run.value
+    }
+
+    /// `runCancellable` that returns what `work` returned also after a cancel: `stopped` says a cancel came.
+    static func runStoppable<T: Sendable>(
+        _ work: @escaping @Sendable (ProcessCancelHandle) throws -> T
+    ) async throws -> (value: T, stopped: Bool) {
         let handle = ProcessCancelHandle()
         let value = try await withTaskCancellationHandler {
             try await withCheckedThrowingContinuation { (continuation: CheckedContinuation<T, Error>) in
@@ -243,8 +266,7 @@ enum ToolsCLIRunner {
         } onCancel: {
             handle.cancel()
         }
-        try Task.checkCancellation()
-        return value
+        return (value, handle.cancelled)
     }
 
     private static func processCapture(_ args: [String], timeout: TimeInterval, traceId: String, started: Date,

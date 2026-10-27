@@ -48,6 +48,47 @@ final class HubInboxUXTests: XCTestCase {
         XCTAssertEqual(delivery.summary, "Send cancelled. Nothing more was sent, and the answers stay staged.")
     }
 
+    /// F19: a Cancel that comes after a send started writing waits for the child's own end and returns what it
+    /// printed, so the hub reads what the send did instead of "cancelled" while it lands.
+    func testAStoppedCaptureReturnsWhatTheChildFinished() async throws {
+        let process = Process()
+        process.executableURL = URL(fileURLWithPath: "/bin/sh")
+        // On TERM the child finishes its work and answers, as a widget send past its cancel point does.
+        process.arguments = ["-c", "trap 'kill $!; echo finished; exit 0' TERM; sleep 30 & wait"]
+        let started = Date()
+        let task = Task {
+            try await ToolsCLIRunner.runStoppable { handle in
+                try process.runCapturing(timeout: 60, afterStart: { handle.adopt(process) })
+            }
+        }
+        try await Task.sleep(for: .milliseconds(300))
+        task.cancel()
+        let run = try await task.value
+        XCTAssertTrue(run.stopped)
+        XCTAssertEqual(run.value.status, 0)
+        XCTAssertEqual(String(decoding: run.value.stdout, as: UTF8.self).trimmed, "finished")
+        XCTAssertLessThan(Date().timeIntervalSince(started), 5, "the stop did not reach the child")
+    }
+
+    /// F19: a send the Cancel came too late for reads as delivered, never as cancelled, so nobody sends it twice; one
+    /// the Cancel stopped before it wrote reads as cancelled; a failure without a Cancel stays a failure.
+    func testASendTheCancelCameTooLateForReadsAsDelivered() {
+        let answer = #"{"sent":2,"queued":0,"failed":0,"sessions":[{"session":"s1","numbers":[4,5],"result":{"delivered":true}}]}"#
+        let delivered = ProcessCapture(status: 0, stdout: Data(answer.utf8), stderr: Data())
+        let late = HubInboxModel.widgetDelivery(delivered, stopped: true, ids: ["d_4_s1", "d_5_s1"], titles: [:], resend: false)
+        XCTAssertFalse(late.isCancelled || late.isQueued || late.isError)
+        XCTAssertEqual(late.summary, "Too late to cancel: the send had started. 2 decisions delivered.")
+        XCTAssertEqual(late.resendIDs, [], "a delivered send offers no Send again")
+        let plain = HubInboxModel.widgetDelivery(delivered, stopped: false, ids: ["d_4_s1", "d_5_s1"], titles: [:], resend: false)
+        XCTAssertEqual(plain.summary, "2 decisions delivered.")
+
+        let aborted = ProcessCapture(status: 1, stdout: Data(), stderr: Data("The operation was aborted.".utf8))
+        XCTAssertTrue(HubInboxModel.widgetDelivery(aborted, stopped: true, ids: ["d_4_s1"], titles: [:], resend: false).isCancelled)
+        let failed = HubInboxModel.widgetDelivery(aborted, stopped: false, ids: ["d_4_s1"], titles: [:], resend: false)
+        XCTAssertTrue(failed.isError)
+        XCTAssertFalse(failed.isCancelled)
+    }
+
     /// F1: an option whose label already starts with its letter shows the letter once, in the badge only.
     func testAnOptionShowsItsLetterOnce() throws {
         let item = try Self.decision(#"{"choices":[{"id":"a","label":"a) Keep the cache"},{"id":"b","label":"Drop it"}]}"#)
