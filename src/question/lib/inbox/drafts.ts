@@ -1,3 +1,4 @@
+import { letterPastOptions } from "@genesiscz/utils/agents/dialogs/keys";
 import { refuseUnlessWaiting } from "../decisions/answers";
 import { type DeliverDeps, isLiveDelivery, type LocatedDelivery, locateDelivery } from "../decisions/deliver";
 import { optionLetters } from "../decisions/read";
@@ -99,7 +100,7 @@ export async function draftDecision(input: DraftInput, deps: DraftDeps) {
     const empty = draftOption.length === 0 && draft.trim().length === 0;
 
     if (option && row.options.length > 0) {
-        const past = [...option].find((letter) => letter.charCodeAt(0) - 97 >= row.options.length);
+        const past = letterPastOptions(option, row.options.length);
 
         if (past) {
             const last = String.fromCharCode(96 + row.options.length);
