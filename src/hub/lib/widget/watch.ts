@@ -108,6 +108,30 @@ export async function watchWidget({
             const profiledInbox = new Map<string, { at: number; id: string }>();
             /** The widget's latest pick, until `state.json` names it too. */
             let picked: string | undefined;
+            /** The last snapshot sent, so a decision link can ride on it at once (`showDecisionNow`). */
+            let lastSnapshot: Awaited<ReturnType<typeof widgetSnapshot>> | undefined;
+            /**
+             * A decision link (`tools hub widget show-decision`) writes `state.showDecision`. A full refresh rebuilds
+             * the whole snapshot first, and waits for a refresh already running: 0.5 to 1.3 s on 2026-10-27 at load 60
+             * to 100, up to 14 s at load 600. So the last snapshot goes out again at once with the new state; the
+             * widget acts on `showDecision.at` it has not seen, and the full refresh follows as before.
+             */
+            const showDecisionNow = async () => {
+                if (!lastSnapshot || signal.aborted) {
+                    return;
+                }
+                const state = await readWidgetState(directory).catch((error: unknown) => {
+                    logger.debug({ error }, "Widget state unreadable for a decision link");
+                    return undefined;
+                });
+                const request = state?.showDecision;
+                if (!state || !request || request.at === lastSnapshot.state.showDecision?.at || signal.aborted) {
+                    return;
+                }
+                lastSnapshot = { ...lastSnapshot, state };
+                prof.record("show-decision fast path", Date.now() - request.at, `id=${request.id}`);
+                emit(lastSnapshot);
+            };
             const refresh = async () => {
                 const state = await readWidgetState(directory);
                 if (picked && state.selectedKey === picked) {
@@ -211,6 +235,7 @@ export async function watchWidget({
                             snapshot.rosterLoading ? "roster loading" : `sessions=${snapshot.sessions.length}`
                         );
                     }
+                    lastSnapshot = snapshot;
                     emit(snapshot);
                 }
             };
@@ -299,7 +324,14 @@ export async function watchWidget({
                 prof.record("start roster cache", performance.now(), warm ? "seeded" : "none");
                 roster.refresh();
             }
-            const subscription = watchPath(join(directory, "state.json"), requestRefresh, { debounceMs: 180 });
+            const subscription = watchPath(
+                join(directory, "state.json"),
+                () => {
+                    void showDecisionNow();
+                    return requestRefresh();
+                },
+                { debounceMs: 180 }
+            );
             const stopSelections = selections?.((key) => {
                 picked = key;
                 void requestRefresh();
