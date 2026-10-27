@@ -33,6 +33,7 @@ import {
     lookupSessionCwd,
     waitingBlock,
 } from "./load";
+import { cursorStillHolds, InboxTrace, recordAnswer } from "./session-cursor";
 
 // A decision post reads its checkout with eight `git` starts; see no-git.ts for the CI hang they caused.
 answerGitWithoutSpawning();
@@ -426,6 +427,32 @@ describe("sessionDecisions", () => {
 });
 
 describe("loadSessionInbox", () => {
+    test("a prompt reservation prevents an unchanged cursor until its lease expires", async () => {
+        const row: DecisionRecord = {
+            id: "d_1_lease",
+            sessionId: "s-lease",
+            number: 1,
+            prompt: "Choose?",
+            options: [],
+            state: "answered",
+            answeredVia: "inbox",
+            answer: "yes",
+            updatedTs: "2026-03-01T08:00:00.000Z",
+            promptReservation: { token: "fixture", expiresAt: Date.now() + 60_000 },
+        };
+        const trace = new InboxTrace();
+        const deps = { rows: () => [row], forms: () => [], entries: () => [], decisions: async () => [] };
+        const held = await loadSessionInbox("s-lease", { ...deps, trace });
+        const { cursor } = recordAnswer({ session: "s-lease", answer: held, trace });
+        expect(held.staged).toBeUndefined();
+        expect(cursorStillHolds("s-lease", cursor)).toBe(false);
+
+        row.promptReservation = { token: "fixture", expiresAt: Date.now() - 1 };
+        const nextTrace = new InboxTrace();
+        const released = await loadSessionInbox("s-lease", { ...deps, trace: nextTrace });
+        expect(released.staged).toContain("yes");
+        expect(nextTrace.unprovable).toBeNull();
+    });
     test("one session's decisions, todos by number, its entries and its pending forms, from one read of the log", async () => {
         const row = (overrides: Partial<DecisionRecord>): DecisionRecord => ({
             id: "d_1_s-alpha",

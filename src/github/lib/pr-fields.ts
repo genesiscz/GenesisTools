@@ -92,17 +92,24 @@ export async function readPrFields({
                         "gh",
                         "pr",
                         "checks",
-                        String(answer.pr.number),
+                        /^https?:\/\//i.test(input) ? input : String(answer.pr.number),
                         ...repoArgs,
                         "--json",
                         "name,description,link,bucket",
                     ],
                     { cwd, timeoutMs: GH_TIMEOUT_MS }
                 );
-                const parsed: unknown = checks.stdout.trim().startsWith("[")
-                    ? SafeJSON.parse(checks.stdout, { strict: true })
-                    : [];
-                answer.checks = Array.isArray(parsed) ? parsed : [];
+                if (![0, 1, 8].includes(checks.code) || !checks.stdout.trim().startsWith("[")) {
+                    throw new Error(`gh pr checks ${input} failed (exit ${checks.code}): ${checks.stderr.trim()}`);
+                }
+
+                const parsed: unknown = SafeJSON.parse(checks.stdout, { strict: true });
+
+                if (!Array.isArray(parsed)) {
+                    throw new Error(`gh pr checks ${input} answered no array`);
+                }
+
+                answer.checks = parsed;
             }
 
             return answer;

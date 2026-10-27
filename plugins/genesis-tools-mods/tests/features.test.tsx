@@ -2185,6 +2185,57 @@ test("older CLI fallback retries truncated output and matches old entries before
     forgetGenesisProbe();
 });
 
+test("indexed transcript reads retry a missing file and an incomplete scan at the same size", async () => {
+    forgetAgentDetails();
+    forgetAnswers();
+    forgetGenesisProbe();
+    const base = checkoutHost();
+    let reads = 0;
+    const host: Host = {
+        ...base,
+        async stat(path) {
+            return path.endsWith(".jsonl") ? { kind: "file", size: 100, mtimeMs: 1, isLink: false } : base.stat(path);
+        },
+        async run(argv) {
+            if (argv[1] === "genesis-tools") {
+                return {
+                    stdout: JSON.stringify({ links: {}, router: {} }),
+                    stderr: "",
+                    exitCode: 0,
+                    isStdoutTruncated: false,
+                    isStderrTruncated: false,
+                };
+            }
+            reads++;
+            const answer =
+                reads === 1
+                    ? { file: null, offset: 0, asks: [], calls: [], issues: ["unreadable"] }
+                    : {
+                          file: { path: "fixture", ino: 1 },
+                          offset: reads === 2 ? 20 : 100,
+                          asks: [{ number: 42, row: "row" }],
+                          calls: [],
+                      };
+            return {
+                stdout: JSON.stringify(answer),
+                stderr: "",
+                exitCode: 0,
+                isStdoutTruncated: false,
+                isStderrTruncated: false,
+            };
+        },
+    };
+
+    await findRows(host, [42], []);
+    await findRows(host, [42], []);
+    expect(jumpRowOf({ decision: 42 })).toBeUndefined();
+    await findRows(host, [42], []);
+    expect(jumpRowOf({ decision: 42 })).toBe("row");
+    expect(reads).toBe(3);
+    forgetAnswers();
+    forgetGenesisProbe();
+});
+
 test("indexed transcript calls match an entry added after an unchanged transcript", async () => {
     forgetAgentDetails();
     forgetAnswers();
@@ -2201,7 +2252,12 @@ test("indexed transcript calls match an entry added after an unchanged transcrip
             const value =
                 argv[1] === "genesis-tools"
                     ? { links: {}, router: {} }
-                    : { asks: [{ number: 42, row: "ask-row" }], calls: [{ id: "old-call", at }] };
+                    : {
+                          file: { path: "fixture", ino: 1 },
+                          offset: 100,
+                          asks: [{ number: 42, row: "ask-row" }],
+                          calls: [{ id: "old-call", at }],
+                      };
 
             if (argv[1] === "question") {
                 indexReads++;
