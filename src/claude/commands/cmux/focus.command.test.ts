@@ -510,7 +510,7 @@ describe("focusRunningSession", () => {
     const RUNNING_SURFACE = "5E5E5E5E-0000-4000-8000-000000000005";
     const running = {
         sessionId: SESSION_A,
-        title: "col-tools-conventions",
+        title: "acme-conventions",
         cwd: "/repo",
         pid: 4242,
         // The process scan keys surfaces in lower case; cmux answers in upper case.
