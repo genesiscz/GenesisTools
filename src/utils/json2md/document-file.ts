@@ -14,12 +14,13 @@ import { resolveIncludes } from "@genesiscz/utils/markdown/includes";
 import { hasTransclusionTokens, type TransclusionRegistry } from "@genesiscz/utils/transclude";
 import TOML from "@iarna/toml";
 import { Json2mdError } from "./errors";
-import { carryFrontmatterKeys } from "./frontmatter";
+import { carryFrontmatterKeys, yamlFrontmatterKeys } from "./frontmatter";
 import { type DocumentOptions, json2md } from "./index";
 import {
     type CheckResult,
     checkMarkdown,
     hashData,
+    hashText,
     ownedFrontmatterKeys,
     stampMarkdown,
     stripStamp,
@@ -314,7 +315,14 @@ export async function writeDocument<T>(
     const check = checkMarkdown({ current, regenerated: pinned.markdown, sourceHash: pinned.sourceHash });
 
     if (check.verdict === "clean") {
-        return { ...pinned, outcome: "unchanged", check, carried: [] };
+        const removeExtras =
+            options.mergeFrontmatter === false && stripStamp(current).body !== stripStamp(pinned.markdown).body;
+
+        if (removeExtras && !options.dryRun) {
+            await Bun.write(pinned.outPath, pinned.markdown);
+        }
+
+        return { ...pinned, outcome: removeExtras && !options.dryRun ? "written" : "unchanged", check, carried: [] };
     }
 
     // Only `stale` is known to be safe. `unstamped` cannot rule out a hand edit (a hand-written
@@ -325,16 +333,18 @@ export async function writeDocument<T>(
     }
 
     const fresh = await buildDocument(modulePath, definition, hintsOf(options));
-    // The stamp's key list says what the generator wrote last time, so a key the document stopped setting is
-    // dropped rather than carried as if another tool had added it.
+    // A matching legacy full-body hash proves every existing key belonged to the generator.
+    const oldBody = stripStamp(current).body;
+    const legacyKeys =
+        check.stamp && check.stamp.frontmatter === undefined && hashText(oldBody) === check.stamp.content
+            ? yamlFrontmatterKeys(oldBody)
+            : null;
+    const owned = legacyKeys ? new Set(legacyKeys) : (ownedFrontmatterKeys(check.stamp, pinned.markdown) ?? new Set());
+    // The previous ownership set prevents removed generator keys from being carried back.
     const { markdown, carried } =
         options.mergeFrontmatter === false
             ? { markdown: fresh.markdown, carried: [] }
-            : carryFrontmatterKeys(
-                  fresh.markdown,
-                  current,
-                  ownedFrontmatterKeys(check.stamp, pinned.markdown) ?? new Set()
-              );
+            : carryFrontmatterKeys(fresh.markdown, current, owned);
 
     if (!options.dryRun) {
         await Bun.write(fresh.outPath, markdown);
