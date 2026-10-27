@@ -285,7 +285,7 @@ export function decisionLine(row: DecisionRecord): string {
     const [singleLetter] = letters;
     const text =
         explicitAnswer && letters.length === 1 && singleLetter
-            ? optionLabel(explicitAnswer, singleLetter)
+            ? optionLabel(explicitAnswer, singleLetter) || labels.join(" / ")
             : explicitAnswer || labels.join(" / ");
     const picks = letters.map((letter) => `${letter}) `).join("");
 
