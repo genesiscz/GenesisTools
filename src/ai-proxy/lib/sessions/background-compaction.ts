@@ -1,6 +1,7 @@
 import { createHash } from "node:crypto";
 import { existsSync, mkdirSync, readdirSync, readFileSync, statSync, unlinkSync } from "node:fs";
 import { join } from "node:path";
+import { withSystemReminders } from "@app/ai-proxy/lib/sessions/cache-shape";
 import type { BackgroundCompactionSettings } from "@app/ai-proxy/lib/sessions/settings";
 import { getAiProxyStorage } from "@app/ai-proxy/lib/storage";
 import { claudeCodeThreadKey } from "@app/ai-proxy/lib/translators/formats/anthropic/claude-code-turns";
@@ -8,6 +9,7 @@ import { SafeJSON } from "@genesiscz/utils/json";
 import { logger } from "@genesiscz/utils/logger";
 import { isObject } from "@genesiscz/utils/object";
 import { atomicWriteFileSync, isMissingFileError } from "@genesiscz/utils/storage/atomic-file";
+import { estimateTokens } from "@genesiscz/utils/tokens";
 
 /**
  * Background compaction, the proxy's copy of Codex's `async_compaction` (codex-rs, off by default there in 2026-10):
@@ -26,8 +28,6 @@ export interface BackgroundResult {
     /** How many raw Responses input items the item compacts, and their hash. */
     prefixLength: number;
     prefixHash: string;
-    /** The raw input it compacted (markers left as text): the history of the record a used result becomes. */
-    prefix: unknown[];
     /** The context of the turn it compacted (input plus cached tokens). */
     contextTokens: number;
     startedAt: number;
@@ -132,7 +132,6 @@ function isBackgroundResult(value: unknown): value is BackgroundResult {
         isObject(value.item) &&
         typeof value.accountHash === "string" &&
         typeof value.prefixHash === "string" &&
-        Array.isArray(value.prefix) &&
         [value.prefixLength, value.contextTokens, value.startedAt, value.readyAt].every(
             (number) => typeof number === "number" && Number.isFinite(number) && number >= 0
         ) &&
@@ -326,8 +325,8 @@ export function matchBackground(input: {
 }
 
 /** A rough token count for a tail of Responses input items: 4 characters per token, as Claude Code estimates. */
-export function estimateTokens(items: unknown[]): number {
-    return Math.ceil((SafeJSON.stringify(items) ?? "").length / 4);
+export function estimateItemTokens(items: unknown[]): number {
+    return estimateTokens(SafeJSON.stringify(items) ?? "");
 }
 
 /**
@@ -355,15 +354,8 @@ export function withUserReminder(input: unknown[], text: string): unknown[] {
         return input;
     }
 
-    const reminder = { type: "input_text", text: `<system-reminder>\n${text}\n</system-reminder>` };
-    const content =
-        typeof message.content === "string"
-            ? [{ type: "input_text", text: message.content }, reminder]
-            : Array.isArray(message.content)
-              ? [...message.content, reminder]
-              : [reminder];
-
-    return input.map((item, index) => (index === at ? { ...message, content } : item));
+    const reminded = withSystemReminders(message, [text]);
+    return input.map((item, index) => (index === at ? reminded : item));
 }
 
 /** Tests start clean. */

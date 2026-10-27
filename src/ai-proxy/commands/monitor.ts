@@ -93,8 +93,8 @@ function seconds(ms: number | undefined): string {
 
 export function formatRequest(record: UsageRequestRecord): string {
     const usage = record.usage ?? {};
-    const cached = usage.cache_read_input_tokens ?? usage.cached_prompt_tokens ?? 0;
-    const input = (usage.prompt_tokens ?? 0) + (usage.cache_read_input_tokens ?? 0);
+    const cached = usage.cache_read_input_tokens ?? 0;
+    const input = (usage.prompt_tokens ?? 0) + cached;
     const hit = input > 0 ? `${Math.round((cached / input) * 100)}%` : "-";
     const status = record.status >= 400 || record.error ? pc.red(String(record.status)) : String(record.status);
     const flags = [
@@ -155,7 +155,6 @@ export function formatEvent(event: CompactionEvent): string {
         (event.session ?? event.claudeSession ?? "-").slice(0, 8),
         event.model ?? "",
         event.mode ? `mode=${event.mode}` : "",
-        event.thread ? pc.dim(`thread=${event.thread}`) : "",
         event.id ?? "",
         seconds(event.durationMs),
         tokens,

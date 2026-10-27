@@ -1634,6 +1634,52 @@ describe("native /v1/messages route: reasoning carried in gtr1 envelopes", () =>
         expect(signatures.every((signature) => signature.split(".")[2] === accountHash8("backup"))).toBe(true);
     });
 
+    it("with failover on, a compacted turn and its cross-login rebuild stay on the primary login", async () => {
+        const authHeaders: Array<string | null> = [];
+        globalThis.fetch = (async (_url: RequestInfo | URL, init?: RequestInit) => {
+            authHeaders.push(new Headers(init?.headers).get("authorization"));
+            return new Response('{"error":{"message":"slow down"}}', { status: 429, headers: { "retry-after": "60" } });
+        }) as typeof fetch;
+        const { OpenAiSubscriptionProvider } = await import("./openai-subscription");
+        const provider = await OpenAiSubscriptionProvider.create({
+            ...account,
+            failover: true,
+            openaiSub: { failoverAccountNames: ["backup"] },
+        });
+        const turn = async (items: Record<string, Record<string, unknown>>) => {
+            const id = `gtc1.${crypto.randomUUID()}`;
+            saveCompaction({
+                id,
+                model: "gpt-6.1-sol",
+                createdAt: new Date().toISOString(),
+                items,
+                history: [{ role: "user", content: [{ type: "input_text", text: "earlier" }] }],
+            });
+            const bodyText = SafeJSON.stringify({
+                model: "gpt-6.1-sol",
+                stream: true,
+                messages: [{ role: "user", content: `${compactionNote(id)}\nGo on.` }],
+            });
+            authHeaders.length = 0;
+            const res = await provider.messages?.(
+                new Request("http://localhost/v1/messages", { method: "POST", body: bodyText }),
+                "gpt-6.1-sol",
+                bodyText
+            );
+            await res?.text();
+            return { id, status: res?.status, headers: [...authHeaders] };
+        };
+
+        // Another login made the item: the rebuild for the primary does not fail over, and nothing is saved for it.
+        const rebuilt = await turn({ otherlgn: { type: "compaction", encrypted_content: "old" } });
+        expect(rebuilt.headers).toEqual([`Bearer ${TEST_TOKEN}`]);
+        expect(Object.keys(loadCompaction(rebuilt.id)?.items ?? {})).toEqual(["otherlgn"]);
+        // The primary holds the item and is now cooling: the turn carries the item, so the backup login never gets it.
+        const held = await turn({ [accountHash8("codex")]: { type: "compaction", encrypted_content: "held" } });
+        expect(held.headers).toEqual([]);
+        expect(held.status).toBe(503);
+    });
+
     it("a written-summary compaction goes out with tool_choice none", async () => {
         const sent: Array<Record<string, unknown>> = [];
         globalThis.fetch = (async (_url: RequestInfo | URL, init?: RequestInit) => {
@@ -3716,6 +3762,27 @@ describe("Codex's exec tool on the Claude Code route", () => {
             },
         ]);
         expect(SafeJSON.stringify(fromMain.input)).toBe(SafeJSON.stringify(fromWorktree.input));
+    });
+
+    it("preserves exec replay when a surviving deferred tool call is introduced", async () => {
+        const monitor = { name: "Monitor", defer_loading: true, input_schema: { type: "object", properties: {} } };
+        const messages = [
+            ...history("/wt/src/ai-proxy/lib/providers/codex/exec/runner.ts"),
+            { role: "assistant", content: [{ type: "tool_use", id: "call_monitor", name: "Monitor", input: {} }] },
+            { role: "user", content: [{ type: "tool_result", tool_use_id: "call_monitor", content: "done" }] },
+        ];
+        const body = await sentBody(messages, [bash, monitor]);
+        const input = body.input as Array<Record<string, unknown>>;
+        expect(input.map((item) => item.type)).toEqual([
+            undefined,
+            "custom_tool_call",
+            "custom_tool_call_output",
+            "additional_tools",
+            "function_call",
+            "function_call_output",
+        ]);
+        expect(input[1]?.name).toBe("exec");
+        expect(input[4]?.name).toBe("Monitor");
     });
 
     it("with the setting off, the same history goes up as the Bash function call it is", async () => {
