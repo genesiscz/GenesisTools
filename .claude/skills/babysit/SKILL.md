@@ -225,25 +225,18 @@ Three Monitors, all with `timeout_ms: 1800000`, each re-armed as the very next t
 2. The workers: `bun .claude/skills/babysit/scripts/watch-workers.ts grok:<name> codex:<name> …`. One line per turn
    start and end, shell command, question and stall (3 minutes silent while running); file reads and greps are only
    counted at the turn end (`--tools all` prints them too).
-3. Codex approvals: `bun .claude/skills/babysit/scripts/approve-codex.ts --run <run.json> --name <name>`. The daemon
-   itself accepts read-only commands (since 886b44308); this driver approves the brief's file edits, `git add` of
-   scope files, the one commit with the brief's subject, and the brief's verify commands, including their one
-   sandbox escalation for loopback tests. Everything else prints `NEEDS LEAD`; decide it yourself. Deny rituals
-   (`tools say`), pushes, and unrelated file changes. Add every file a valid fix needs to the worker's scope before
-   approving it.
-   - **Trust level**, read from the run card on every poll, so a switch reaches running drivers at once:
-     `approve-codex.ts trust <strict|edits|routine|all> --run <run.json> [--name <worker>]`. `routine` (the default)
-     also approves any command inside the worker's worktree unless it pushes, deletes, commits outside the brief,
-     changes packages, reaches the network or starts an agent. `edits` lets a worker only edit and read: the driver
-     refuses every other command by itself, and the lead runs the checks and commits (Martin, 2026-10-26: "they
-     shouldnt run anything thats ur job during fixing"). `approve-codex.ts builds deny --run <run.json>` refuses test
-     runs, builds and typechecks on every level (a full disk, a busy Mac). Rituals are refused without asking.
-   - 🛑 **Watch the shared feed, never the per-worker logs:** every driver also writes its NEEDS LEAD lines to
-     `<run dir>/needs-lead.log`, and repeats a request still waiting after 3 minutes as `STILL WAITING` every 10
-     minutes. A Monitor on `tail -n 0 -F <run dir>/needs-lead.log` sees drivers started after it. After a session
-     restart, `approve-codex.ts pending --run <run.json>` lists every waiting request. A driver runs until its
-     worker's session closes. (2026-10-26: 28 workers each waited 20 to 30 minutes on one read, because the lead's
-     monitor tailed only the logs that existed when it started and six drivers had stopped at a 30-minute deadline.)
+3. Codex approvals: `bun .claude/skills/babysit/scripts/approve-codex.ts --run <run.json> --name <name>`. Every
+   command and file-change request in `--write ask` waits for the lead, including reads and the worker's own bus
+   commands. An approval can permit an unsandboxed retry, and the request does not identify that authority reliably.
+   The driver never approves automatically; it refuses known rituals (`tools say`) itself. Use explicit lead
+   approve/deny controls for all other requests. The driver stops with a warning for full-access or other non-ask
+   workers: those modes bypass its approval boundary.
+   - The run card's `trust`, `noBuilds`, scope and roots are advisory for the lead. Editing the card or changing these
+     switches never enables automatic acceptance; `pending` lists every request as needing a manual decision.
+   - 🛑 **Watch the shared feed:** every NEEDS LEAD line goes to `<run dir>/needs-lead.log` with the reason manual
+     approval is required. A request still waiting is repeated after 3 minutes and every 10 minutes thereafter.
+     After a session restart, `approve-codex.ts pending --run <run.json>` lists waiting requests. The driver runs
+     until the session closes or a status failure prevents safe monitoring.
 
 Two-way proof: once per new worker, send a ping on the bus (`--to grok_pr<N>` or `--to codex_<name>`) and see the
 reply arrive (Sol answered in 20 s, Grok in 59 s). Do it for every worker you spawn yourself.
