@@ -43,7 +43,10 @@ export function modelPrefix(label: string, format: Format): string {
     return format === "label" ? `${label} · ` : `(${label}) `;
 }
 
-/** A description without the model the agent-model mod put in front (`(H) `, `(H5.5) `, `haiku-5-5 · `). */
+/**
+ * A description without the model the agent-model mod put in front (`(H) `, `(H5.5) `, `haiku-5-5 · `, and a
+ * proxy session's `codex/gpt-6.1-terra · `).
+ */
 export function bareDescription(description: string): string {
-    return description.replace(/^\([A-Z][\d.]*\) /, "").replace(/^[a-z]+(?:-[\w.]+)* · /, "");
+    return description.replace(/^\([A-Z][\d.]*\) /, "").replace(/^[a-z]+(?:[-/][\w.]+)* · /, "");
 }

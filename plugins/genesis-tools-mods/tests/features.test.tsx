@@ -1,6 +1,13 @@
 import type { On, TurnStepChunk } from "claude-code";
 import { expect, mock, test } from "claude-code/testing";
-import { agentsBand, factsOf, forgetAgentDetails, lastSaidOf, refreshAgentDetails } from "../hooks/agents-band";
+import {
+    agentsBand,
+    factsOf,
+    forgetAgentDetails,
+    lastSaidOf,
+    refreshAgentDetails,
+    workersOf,
+} from "../hooks/agents-band";
 import {
     answersFrom,
     answersOf,
@@ -673,6 +680,8 @@ test("agents sidebar: an agent's last words from its transcript's end, past a by
     expect(bareDescription("(H) Sleeper one")).toBe("Sleeper one");
     expect(bareDescription("haiku-5-5 · Sleeper one")).toBe("Sleeper one");
     expect(bareDescription("Fix the (B) case")).toBe("Fix the (B) case");
+    expect(bareDescription("codex/gpt-6.1-terra · Review PR 601")).toBe("Review PR 601");
+    expect(bareDescription("codex-claude/gpt-6.1-sol · Review PR 601")).toBe("Review PR 601");
 });
 
 test("hook ledger: a repeated entry and a repeated area block become receipts", async () => {
@@ -1196,6 +1205,7 @@ function machine({
     title = "feat: widgets",
     hubLinkQuery,
     more = [],
+    lookups = 0,
 }: {
     on: On;
     links?: "all" | "none";
@@ -1205,7 +1215,10 @@ function machine({
     hubLinkQuery?: Record<string, string>;
     /** More reply lines after the three fixed chunks. */
     more?: string[];
+    /** How many `gh pr view 42` and `git cat-file` lookups time out before they answer. */
+    lookups?: number;
 }): void {
+    let timeouts = lookups;
     forgetGenesisProbe();
     forgetCommitLinks();
     mock.env(on, { HOME: "/home/test" });
@@ -1267,6 +1280,14 @@ function machine({
 
         if (argv.endsWith("remote get-url origin")) {
             return answer(remote);
+        }
+
+        if (
+            (/^gh pr view 42 --repo [\w./-]+ --json title,url$/.test(argv) || argv.endsWith("cat-file -t abc1234f")) &&
+            timeouts > 0
+        ) {
+            timeouts--;
+            throw new Error("$.process.run(gh) is still running after 8000 ms");
         }
 
         if (/^gh pr view 42 --repo [\w./-]+ --json title,url$/.test(argv)) {
@@ -1442,6 +1463,25 @@ test("without tools hub link a commit keeps its project link", async ($, on) => 
     }
 
     expect(text).toContain("[**abc1234f**](https://links.example.test/hub?repo=group%2Fsub%2Fapp&commit=abc1234f)");
+});
+
+test("a PR or commit lookup that timed out is asked again on the next reply", async ($, on) => {
+    machine({ on, lookups: 2 });
+    const reply = async () => {
+        let text = "";
+        for await (const chunk of $.turn.step({ turnId: "t1", index: 0, model: "claude-haiku-5-5", messageCount: 1 })) {
+            text += chunk.kind === "text" ? chunk.text : "";
+        }
+
+        return text;
+    };
+
+    const first = await reply();
+    expect(first).not.toContain("pull/42");
+    expect(first).not.toContain("commit=abc1234f");
+    const second = await reply();
+    expect(second).toContain("(https://github.com/acme/widgets/pull/42)");
+    expect(second).toContain("commit=abc1234f");
 });
 
 test("SSH origins retain dots in the repository name", async ($, on) => {
@@ -2455,4 +2495,39 @@ test("the inbox watcher activates after enabling it and gates reads when both co
     forgetAnswers();
     forgetGenesisProbe();
     forgetSettings();
+});
+
+test("the agents band lists the session's running codex and grok workers from tools hub agents", () => {
+    const child = (name: string, status: string, kind = "worker") => ({
+        id: name,
+        harness: "codex",
+        kind,
+        name,
+        model: "gpt-6.1-terra",
+        status,
+        startedAt: "2026-10-27T11:18:13.991Z",
+        lastAt: "2026-10-27T14:47:19.391Z",
+        toolCalls: 158,
+    });
+    const stdout = JSON.stringify({
+        parents: [
+            { sessionId: "other", children: [child("not-mine", "running")] },
+            {
+                sessionId: "sess-1",
+                children: [child("pr599", "running"), child("pr598", "idle"), child("sub-1", "running", "subagent")],
+            },
+        ],
+    });
+
+    expect(workersOf(stdout, "sess-1")).toEqual([
+        {
+            name: "pr599",
+            harness: "codex",
+            model: "gpt-6.1-terra",
+            startedAt: Date.parse("2026-10-27T11:18:13.991Z"),
+            lastAt: Date.parse("2026-10-27T14:47:19.391Z"),
+            toolCalls: 158,
+        },
+    ]);
+    expect(workersOf("not json", "sess-1")).toEqual([]);
 });

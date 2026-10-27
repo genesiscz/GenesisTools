@@ -41,7 +41,8 @@ export async function publishIdleDue({
 }): Promise<void> {
     const count = await tokens;
     if (current()) {
-        setIdleDueAt(count === undefined || count >= minTokens ? at : undefined);
+        // An unknown size skips the compaction at fire time (`idleSkipReason`), so it shows no countdown either.
+        setIdleDueAt(count !== undefined && count >= minTokens ? at : undefined);
     }
 }
 

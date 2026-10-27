@@ -622,6 +622,15 @@ function showPane(
     });
 }
 
+/** Runs one feature's part of a shared event; a throw is logged to `mods-log/errors.jsonl` and goes no further. */
+async function isolated(host: Host, event: string, part: () => void | Promise<void>): Promise<void> {
+    try {
+        await part();
+    } catch (error) {
+        await logMod(host, "errors", { event, error: error instanceof Error ? error.message : String(error) });
+    }
+}
+
 async function logShow($: EngineInterface, record: Record<string, unknown>): Promise<void> {
     await logMod(hostOf($), "sidebar", { event: "show", ...record });
 }
@@ -785,7 +794,8 @@ export const register: Register = (on) => {
         }
 
         for (const feature of FEATURES) {
-            await feature.afterTurn?.(host, e);
+            // One feature that throws must not take the others' turn-end work with it.
+            await isolated(host, "afterTurn", () => feature.afterTurn?.(host, e));
         }
 
         return done;
@@ -802,7 +812,7 @@ export const register: Register = (on) => {
 
         if (result.skip === undefined) {
             for (const feature of FEATURES) {
-                await feature.compacted?.(host, e.agentId);
+                await isolated(host, "compacted", () => feature.compacted?.(host, e.agentId));
             }
         }
 
