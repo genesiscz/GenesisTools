@@ -23,9 +23,10 @@ export const TMP_PANE = "mods-tmp";
 async function kbOf(host: Host, argv: string[], column: number): Promise<number | null> {
     const done = await host.run(argv, { timeoutMs: 60_000 }).catch(() => undefined);
     const lines = done?.stdout.trim().split("\n") ?? [];
-    const value = Number(lines[lines.length - 1]?.trim().split(/\s+/)[column]);
+    const token = lines[lines.length - 1]?.trim().split(/\s+/)[column] ?? "";
+    const value = Number(token);
 
-    return Number.isFinite(value) && lines.length > 0 ? value : null;
+    return done?.exitCode === 0 && /^\d+$/.test(token) && Number.isFinite(value) ? value : null;
 }
 
 async function folderKb(host: Host, path: string): Promise<number | null> {
@@ -95,7 +96,7 @@ function nextWorktreeAt(startedAt: number): number {
  * when that is longer). `du` on a 5-6 GB web app worktree took 3 to 17 s on a full disk (2026-10-27), and one session
  * walked eight of them every 5 minutes.
  */
-async function worktreeSize(host: Host, path: string, status: string): Promise<number | null> {
+export async function worktreeSize(host: Host, path: string, status: string): Promise<number | null> {
     const held = worktreeKb.get(path);
     const startedAt = Date.now();
 
@@ -115,7 +116,10 @@ async function worktreeSize(host: Host, path: string, status: string): Promise<n
     // `tools du size` shares one answer with every caller on the Mac; a changed status asks for a fresh walk.
     const maxAge = held && held.status !== status ? 0 : WORKTREE_EVERY_MS / 1000;
     const kb = (await genesisProbe(host)).tools ? await sharedKb(host, path, maxAge) : await folderKb(host, path);
-    worktreeKb.set(path, { kb, status, nextAt: nextWorktreeAt(startedAt) });
+
+    if (kb !== null) {
+        worktreeKb.set(path, { kb, status, nextAt: nextWorktreeAt(startedAt) });
+    }
 
     return kb;
 }

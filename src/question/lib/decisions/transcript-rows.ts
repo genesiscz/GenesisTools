@@ -1,6 +1,7 @@
 import { createHash } from "node:crypto";
 import { closeSync, openSync, readFileSync, readSync, statSync } from "node:fs";
 import type { ForwardRead, ForwardRow, ReadForwardOptions } from "@genesiscz/utils/agent-sessions/types";
+import { toolCommand } from "@genesiscz/utils/cli/tool-command";
 import { SafeJSON } from "@genesiscz/utils/json";
 import { logger } from "@genesiscz/utils/logger";
 import { atomicWriteFileSync } from "@genesiscz/utils/storage/atomic-file";
@@ -26,7 +27,7 @@ export const ROW_FILTER = [
     "question_update",
     "question_answer",
     "inbox_send",
-    "tools question",
+    toolCommand("question"),
 ] as const;
 const FIRST_ASK = /(^|[^[])❓\s*\**\s*DECISION\s+(\d+)/gm;
 const QUESTION_TOOL = /genesis[-_]tools.*(question_post|question_update|question_answer|inbox_send)$/;

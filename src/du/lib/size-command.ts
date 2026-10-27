@@ -1,3 +1,4 @@
+import { resolve } from "node:path";
 import { spawnRunner } from "@genesiscz/utils/git/origins/runner";
 import type { CommandRunner } from "@genesiscz/utils/git/origins/types";
 import { logger, out } from "@genesiscz/utils/logger";
@@ -23,15 +24,18 @@ export async function folderKb({
     maxCacheAgeSeconds?: number;
     run?: CommandRunner;
 }): Promise<{ value: number | null; hit: boolean }> {
+    const absolutePath = resolve(path);
+
     return cached<number | null>({
         storage,
-        key: `sizes/${Bun.hash(path).toString(16)}.json`,
+        key: `sizes/${Bun.hash(absolutePath).toString(16)}.json`,
         maxAgeSeconds: maxCacheAgeSeconds,
         fetch: async () => {
-            const done = await run(["du", "-sk", path], { cwd: "/", timeoutMs: DU_TIMEOUT_MS });
-            const kb = Number(done.stdout.trim().split("\n").pop()?.split(/\s+/)[0]);
+            const done = await run(["du", "-sk", absolutePath], { cwd: "/", timeoutMs: DU_TIMEOUT_MS });
+            const token = done.stdout.trim().split("\n").pop()?.split(/\s+/)[0] ?? "";
+            const kb = Number(token);
 
-            if (!Number.isFinite(kb)) {
+            if (done.code !== 0 || !/^\d+$/.test(token) || !Number.isFinite(kb)) {
                 logger.warn({ path, exit: done.code, stderr: done.stderr.slice(-300) }, "du -sk gave no size");
                 return null;
             }

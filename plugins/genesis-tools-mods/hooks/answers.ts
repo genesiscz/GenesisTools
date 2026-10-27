@@ -116,6 +116,9 @@ const TICK_MS = 10_000;
 const SLOW_MS = 15 * 60_000;
 /** The maximum bytes read from one changed shared log, before any allocation or line splitting. */
 const LOG_READ_BYTES = 65_536;
+/** Bound the older-CLI fallback before its output reaches the plugin. */
+const SEARCH_CHUNK_BYTES = 65_536;
+const MAX_SEARCH_CHUNK_BYTES = 1_048_576;
 /** A tool call more than this before its entry did not record it. */
 const ENTRY_WINDOW_MS = 10 * 60_000;
 const FIRST_ASK = /(^|[^[])❓\s*\**\s*DECISION\s+(\d+)/gm;
@@ -129,6 +132,7 @@ let cursorUnsupported = false;
 let rowsUnsupported = false;
 /** The transcript size at the last `transcript-rows` call: an unchanged transcript holds no new row. */
 let rowsSize = -1;
+let indexedCalls: { id: string; at: number }[] = [];
 /** What the last read saw: the hash of this session's lines in the shared logs. */
 let heldStamp: string | undefined;
 let lastReadAt = 0;
@@ -158,6 +162,7 @@ export function forgetAnswers(): void {
     cursorUnsupported = false;
     rowsUnsupported = false;
     rowsSize = -1;
+    indexedCalls = [];
     heldStamp = undefined;
     lastReadAt = 0;
     seenFiles.clear();
@@ -167,6 +172,9 @@ export function forgetAnswers(): void {
     entryRows.clear();
     searchedSize = -1;
     searchedOffset = 0;
+    searchChunkBytes = SEARCH_CHUNK_BYTES;
+    searchOutputLimit = MAX_SEARCH_CHUNK_BYTES + 1;
+    skippingOversized = false;
     searchedTranscript = undefined;
     recentCalls = [];
 }
@@ -498,6 +506,9 @@ async function stampOf(host: Host): Promise<{ own: string; lines: number }> {
 let searchedSize = -1;
 /** Bytes of the transcript already searched: the next search reads only what was appended after them. */
 let searchedOffset = 0;
+let searchChunkBytes = SEARCH_CHUNK_BYTES;
+let searchOutputLimit = MAX_SEARCH_CHUNK_BYTES + 1;
+let skippingOversized = false;
 let searchedTranscript: string | undefined;
 /** Question tool calls of the last ENTRY_WINDOW_MS, kept so an entry logged after its call's search still finds it. */
 let recentCalls: { id: string; at: number }[] = [];
@@ -511,6 +522,7 @@ const SEARCH_STORE_KEEP = 100;
 
 interface SearchMark {
     offset: number;
+    skippingOversized?: boolean;
     asks: [number, string][];
     entries: [string, string][];
     at: number;
@@ -519,6 +531,11 @@ interface SearchMark {
 async function restoreSearch(host: Host, transcript: string): Promise<void> {
     searchedTranscript = transcript;
     searchedOffset = 0;
+    searchChunkBytes = SEARCH_CHUNK_BYTES;
+    searchOutputLimit = MAX_SEARCH_CHUNK_BYTES + 1;
+    skippingOversized = false;
+    rowsSize = -1;
+    indexedCalls = [];
     recentCalls = [];
     const all = await host.storeGet(SEARCH_STORE_KEY).catch(() => undefined);
     const mark = isRecord(all) ? all[transcript] : undefined;
@@ -533,6 +550,11 @@ async function restoreSearch(host: Host, transcript: string): Promise<void> {
     }
 
     searchedOffset = mark.offset;
+    skippingOversized = mark.skippingOversized === true;
+
+    if (skippingOversized) {
+        searchChunkBytes = MAX_SEARCH_CHUNK_BYTES;
+    }
 
     for (const pair of mark.asks) {
         if (
@@ -565,7 +587,13 @@ async function saveSearch(host: Host, transcript: string): Promise<void> {
         .sort((x, y) => y.at - x.at)
         .slice(0, SEARCH_STORE_KEEP - 1)
         .map((held): [string, unknown] => [held.path, held.mark]);
-    const mark: SearchMark = { offset: searchedOffset, asks: [...askRows], entries: [...entryRows], at: Date.now() };
+    const mark: SearchMark = {
+        offset: searchedOffset,
+        skippingOversized,
+        asks: [...askRows],
+        entries: [...entryRows],
+        at: Date.now(),
+    };
 
     await host
         .storeSet(SEARCH_STORE_KEY, Object.fromEntries([...kept, [transcript, mark]]))
@@ -586,6 +614,14 @@ async function rowsFromIndex(
     entries: readonly LoggedEntry[]
 ): Promise<boolean> {
     if (size === rowsSize) {
+        for (const entry of entries) {
+            const call = entryRows.has(entry.id) ? undefined : callFor(entry.at, indexedCalls);
+
+            if (call) {
+                entryRows.set(entry.id, call);
+            }
+        }
+
         return true;
     }
 
@@ -635,6 +671,7 @@ async function rowsFromIndex(
         }
     }
 
+    indexedCalls = calls;
     rowsSize = size;
     await logMod(host, "answers", { event: "rows", scanned: parsed.scanned, asks: askRows.size, calls: calls.length });
     return true;
@@ -645,7 +682,7 @@ async function rowsFromIndex(
  * index (`tools question transcript-rows`), or with an older CLI one `grep` over the bytes appended to the transcript
  * since the last search, for the assistant lines that could hold them.
  */
-async function findRows(host: Host, numbers: readonly number[], entries: readonly LoggedEntry[]): Promise<void> {
+export async function findRows(host: Host, numbers: readonly number[], entries: readonly LoggedEntry[]): Promise<void> {
     const dir = await sessionDirOf(host);
 
     if (!dir) {
@@ -684,38 +721,121 @@ async function findRows(host: Host, numbers: readonly number[], entries: readonl
 
     if (size < searchedOffset) {
         searchedOffset = 0;
+        skippingOversized = false;
     }
 
     const from = searchedOffset;
-    // `tail -c +N` starts at byte N (1-based). The last line prints 1 when the searched bytes end on a line break,
-    // so a search that stopped inside a line being written starts at the same place next time.
+    const count = Math.min(searchChunkBytes, size - from);
+
+    if (skippingOversized) {
+        // Only the byte count crosses the process boundary. The unfinished row itself is never parsed.
+        const skipScript = `export LC_ALL=C
+last=$(tail -c +"$4" "$1" | head -c 1 | wc -l | tr -d ' ')
+tail -c +"$2" "$1" | head -c "$3" | awk -v last="$last" '
+NR == 1 { bytes = length($0); next }
+NR == 2 { complete = 1; exit }
+END { if (NR == 1 && last == 1) complete = 1; print "__SKIP_BYTES__" (bytes + complete) ":" (complete + 0) }
+'`;
+        const skipped = await host
+            .run(
+                ["/bin/sh", "-c", skipScript, "sh", transcript, String(from + 1), String(count), String(from + count)],
+                {
+                    timeoutMs: 15_000,
+                }
+            )
+            .catch(() => undefined);
+        const marker =
+            skipped && !skipped.isStdoutTruncated && skipped.exitCode === 0 && !skipped.stderr
+                ? /^__SKIP_BYTES__(\d+):([01])\s*$/.exec(skipped.stdout)
+                : null;
+        const bytes = marker ? Number(marker[1]) : 0;
+
+        if (bytes <= 0 || bytes > count) {
+            await logMod(host, "answers", { event: "search-skip-failed", transcript, from, to: from + count });
+            return;
+        }
+
+        searchedOffset = from + bytes;
+        skippingOversized = marker?.[2] !== "1";
+        searchedSize = searchedOffset === size ? size : -1;
+
+        if (!skippingOversized) {
+            searchChunkBytes = SEARCH_CHUNK_BYTES;
+            searchOutputLimit = MAX_SEARCH_CHUNK_BYTES + 1;
+            await logMod(host, "answers", { event: "search-coverage-gap-end", transcript, to: searchedOffset });
+        }
+
+        await saveSearch(host, transcript);
+        return;
+    }
+
+    // Withhold an incomplete last line. LC_ALL=C makes awk's lengths byte offsets, not character counts.
+    const script = `export LC_ALL=C
+last=$(tail -c +"$4" "$1" | head -c 1 | wc -l | tr -d ' ')
+tail -c +"$2" "$1" | head -c "$3" | awk -v last="$last" '
+function emit(s) {
+    consumed += length(s) + 1
+    if (index(s, "\\"type\\":\\"assistant\\"") && (index(s, "DECISION") || index(s, "mcp__genesis-tools__") || index(s, "tools question"))) print s
+}
+NR > 1 { emit(previous) }
+{ previous = $0 }
+END { if (NR && last == 1) emit(previous); print "__SEARCH_BYTES__" consumed + 0 }
+'`;
     const found = await host
-        .run(
-            [
-                "/bin/sh",
-                "-c",
-                'tail -c +"$2" "$1" | head -c "$3" | grep -F -e "DECISION" -e "mcp__genesis-tools__" -e "tools question" | grep -F \'"type":"assistant"\'; tail -c +"$4" "$1" | head -c 1 | wc -l | tr -d " "',
-                "sh",
-                transcript,
-                String(from + 1),
-                String(size - from),
-                String(size),
-            ],
-            { timeoutMs: 15_000 }
-        )
+        .run(["/bin/sh", "-c", script, "sh", transcript, String(from + 1), String(count), String(from + count)], {
+            timeoutMs: 15_000,
+        })
         .catch(() => undefined);
 
-    if (!found || found.exitCode !== 0) {
+    if (!found || found.exitCode !== 0 || found.stderr) {
+        return;
+    }
+
+    if (found.isStdoutTruncated) {
+        searchOutputLimit = Math.min(searchOutputLimit, count);
+        searchChunkBytes = Math.max(1, Math.floor(count / 2));
+
+        if (count <= 1) {
+            skippingOversized = true;
+            searchChunkBytes = MAX_SEARCH_CHUNK_BYTES;
+            await saveSearch(host, transcript);
+            await logMod(host, "answers", { event: "search-coverage-gap", transcript, from, reason: "stdout limit" });
+        }
+
+        await logMod(host, "answers", { event: "search-truncated", transcript, from, to: from + count });
         return;
     }
 
     const lines = found.stdout.split("\n").filter(Boolean);
-    const endsOnBreak = lines.pop() === "1";
-    searchedSize = size;
+    const marker = /^__SEARCH_BYTES__(\d+)$/.exec(lines.pop() ?? "");
+    const consumed = marker ? Number(marker[1]) : -1;
 
-    if (endsOnBreak) {
-        searchedOffset = size;
+    if (consumed < 0 || consumed > count) {
+        await logMod(host, "answers", { event: "search-invalid-marker", transcript, from, to: from + count });
+        return;
     }
+
+    if (consumed === 0 && count < size - from) {
+        const next = Math.max(searchChunkBytes * 2, count + 1);
+
+        if (next > MAX_SEARCH_CHUNK_BYTES || next >= searchOutputLimit) {
+            skippingOversized = true;
+            searchChunkBytes = MAX_SEARCH_CHUNK_BYTES;
+            await logMod(host, "answers", {
+                event: "search-coverage-gap",
+                transcript,
+                from,
+                reason: "oversized or unrepresentable row; a matching row cannot be indexed",
+            });
+        } else {
+            searchChunkBytes = next;
+        }
+    } else if (consumed > 0) {
+        searchOutputLimit = MAX_SEARCH_CHUNK_BYTES + 1;
+    }
+
+    searchedOffset = from + consumed;
+    searchedSize = searchedOffset === size || (consumed === 0 && count === size - from) ? size : -1;
 
     for (const [n, uuid] of firstAsks(lines)) {
         if (!askRows.has(n)) {
@@ -724,20 +844,19 @@ async function findRows(host: Host, numbers: readonly number[], entries: readonl
     }
 
     const known = new Set(recentCalls.map((call) => call.id));
-    const newest = Math.max(Date.now(), ...entries.map((entry) => entry.at));
-    recentCalls = [...recentCalls, ...questionCalls(lines).filter((call) => !known.has(call.id))].filter(
-        (call) => call.at >= newest - 2 * ENTRY_WINDOW_MS
-    );
+    const calls = [...recentCalls, ...questionCalls(lines).filter((call) => !known.has(call.id))];
 
     for (const entry of entries) {
-        const call = entryRows.has(entry.id) ? undefined : callFor(entry.at, recentCalls);
+        const call = entryRows.has(entry.id) ? undefined : callFor(entry.at, calls);
 
         if (call) {
             entryRows.set(entry.id, call);
         }
     }
 
-    await logMod(host, "answers", { event: "search", from, to: size, lines: lines.length });
+    const newest = Math.max(Date.now(), ...entries.map((entry) => entry.at));
+    recentCalls = calls.filter((call) => call.at >= newest - 2 * ENTRY_WINDOW_MS);
+    await logMod(host, "answers", { event: "search", from, to: searchedOffset, lines: lines.length });
     await saveSearch(host, transcript);
 }
 
