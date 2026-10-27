@@ -45,6 +45,25 @@ import { isObject } from "@genesiscz/utils/object";
 
 const MAX_REQUEST_BODY_BYTES = 4 * 1024 * 1024;
 
+/**
+ * Logs a request that threw. When the client already hung up (Claude Code quit or was interrupted), the upstream
+ * fetch fails with "The connection was closed": that is the client's choice, logged at debug as 499, not a 502
+ * warning (on 2026-10-27 every resume of a ccx session left one in the warn log).
+ */
+export function logRequestFailure(input: {
+    req: Request;
+    err: unknown;
+    status: number;
+    fields: Record<string, unknown>;
+}): void {
+    if (input.req.signal.aborted) {
+        logger.debug({ ...input.fields, status: 499, error: input.err }, "ai-proxy: the client closed the request");
+        return;
+    }
+
+    logger.warn({ ...input.fields, status: input.status, error: input.err }, "ai-proxy: request failed");
+}
+
 function mapProxyRequestError(err: unknown): { status: number; message: string } {
     if (err instanceof GrokAuthExpiredError || err instanceof CopilotAuthExpiredError) {
         return {
@@ -607,16 +626,12 @@ export function startAiProxyServer(runtime: AiProxyRuntime) {
                     return response;
                 } catch (err) {
                     const mapped = mapProxyRequestError(err);
-                    logger.warn(
-                        {
-                            path,
-                            model,
-                            elapsedMs: Math.round(performance.now() - requestStarted),
-                            status: mapped.status,
-                            error: err,
-                        },
-                        "ai-proxy: request failed"
-                    );
+                    logRequestFailure({
+                        req,
+                        err,
+                        status: mapped.status,
+                        fields: { path, model, elapsedMs: Math.round(performance.now() - requestStarted) },
+                    });
 
                     return new Response(
                         SafeJSON.stringify({
@@ -776,16 +791,12 @@ export function startAiProxyServer(runtime: AiProxyRuntime) {
                     return response;
                 } catch (err) {
                     const mapped = mapProxyRequestError(err);
-                    logger.warn(
-                        {
-                            path,
-                            model,
-                            elapsedMs: Math.round(performance.now() - requestStarted),
-                            status: mapped.status,
-                            error: err,
-                        },
-                        "ai-proxy: request failed"
-                    );
+                    logRequestFailure({
+                        req,
+                        err,
+                        status: mapped.status,
+                        fields: { path, model, elapsedMs: Math.round(performance.now() - requestStarted) },
+                    });
 
                     return new Response(SafeJSON.stringify({ error: { message: mapped.message } }), {
                         status: mapped.status,
