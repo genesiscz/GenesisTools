@@ -24,7 +24,7 @@ function looksLikePath(value: string): boolean {
 export function resolveHandoffProject(raw: unknown, field = "project"): ResolvedHandoffProject {
     if (typeof raw !== "string" || raw.trim().length === 0) {
         throw new Error(
-            `${field} must be a project name or a repository path — e.g. "col-tools" or "/path/to/col-tools".`
+            `${field} must be a project name or a repository path — e.g. "acme-tools" or "/path/to/acme-tools".`
         );
     }
 
