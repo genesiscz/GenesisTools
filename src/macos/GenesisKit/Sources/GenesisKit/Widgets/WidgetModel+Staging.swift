@@ -12,13 +12,7 @@ extension WidgetModel {
     /// What this click does: `decisionClickStages`, turned around while ⌘ is down (`decisionCommandSwaps`, on by
     /// default), so a ⌘-click sends at once while clicks stage, and stages while clicks send (Martin, 2026-10-26).
     public var clickStagesNow: Bool {
-        Self.stages(decisionClickStages, command: NSEvent.modifierFlags.contains(.command),
-                    swaps: snapshot?.state.preferences.decisionCommandSwaps ?? true)
-    }
-
-    /// Whether an action stages: `stagesByDefault`, turned around while ⌘ is down and `swaps` is on.
-    nonisolated static func stages(_ stagesByDefault: Bool, command: Bool, swaps: Bool) -> Bool {
-        stagesByDefault != (swaps && command)
+        DecisionAnswering.clickStages(snapshot?.state.preferences, command: NSEvent.modifierFlags.contains(.command))
     }
 
     /// Return in a decision's own answer field stages the text as its note ("stage", the default) or sends it.
@@ -31,8 +25,7 @@ extension WidgetModel {
             send()
             return
         }
-        if Self.stages(ownAnswerReturnStages, command: command,
-                       swaps: snapshot?.state.preferences.decisionCommandSwaps ?? true) {
+        if DecisionAnswering.returnStages(snapshot?.state.preferences, command: command) {
             guard !draft.text.trimmingCharacters(in: .whitespacesAndNewlines).isEmpty else {
                 postNote("Write your answer first.")
                 return
@@ -84,7 +77,7 @@ extension WidgetModel {
             stage(id: item.sourceId, sessionId: session.target.sessionId, revision: revision, option: option,
                   completed: { [weak self] in
                       self?.pendingStage[item.sourceId] = nil
-                      self?.deliverDecisions([item], action: "send-staged")
+                      self?.deliverDecisions([item], action: .sendStaged)
                   })
             return
         }
@@ -201,21 +194,21 @@ extension WidgetModel {
         // A second press while the first send runs: that send's note answers it.
         let fresh = chosen.filter { !sendingDecisionIDs.contains($0.sourceId) }
         guard !fresh.isEmpty else { return }
-        deliverDecisions(fresh, action: "send-staged", thenClose: thenClose)
+        deliverDecisions(fresh, action: .sendStaged, thenClose: thenClose)
     }
 
     /// Sends again answered decisions that no session took (the notice's Send again), for every kind of agent.
     public func resendAnswers(_ items: [WidgetInboxItem]) {
         guard !items.isEmpty else { return }
         postNote("Sending again…")
-        deliverDecisions(items, action: "resend-answers")
+        deliverDecisions(items, action: .resendAnswers)
     }
 
     /// One message per session through the hub, then a note that says what really happened: delivered, waiting
     /// for the session's next prompt (with why, and Send again), or not sent at all (an error, with the hub's own
     /// words behind Details). When the panel was closed meanwhile, the sessions that took nothing flash on the rail.
-    private func deliverDecisions(_ items: [WidgetInboxItem], action: String, thenClose: Bool = false) {
-        let staged = action == "send-staged"
+    private func deliverDecisions(_ items: [WidgetInboxItem], action: DecisionAnswering.SendAction, thenClose: Bool = false) {
+        let staged = action == .sendStaged
         let opened = openedAt
         let closeRevision = sendCloseRevision
         let draftAtSend = draft
@@ -224,35 +217,31 @@ extension WidgetModel {
         // Every staged send says it started: a Send now that changed nothing on screen read as a dead button.
         if staged { postNote("Sending " + Plural.count(items.count, "decision") + "…") }
         // The "Sending…" note this send put up; a failure takes it down, unless another note replaced it meanwhile.
-        let sendingNote = staged || action == "resend-answers" ? notice : nil
-        var targets: [String: WidgetJSON] = [:]
+        let sendingNote = staged || action == .resendAnswers ? notice : nil
+        var targets: [String: DecisionAnswering.Target] = [:]
         var titles: [String: String] = [:]
         for item in items {
             guard let session = session(forKey: item.key) else { continue }
             let target = session.target
-            var fields: [String: WidgetJSON] = ["provider": .string(target.provider)]
-            if !target.sourceHome.isEmpty { fields["sourceHome"] = .string(target.sourceHome) }
-            if !target.cwd.isEmpty { fields["cwd"] = .string(target.cwd) }
-            targets[target.sessionId] = .object(fields)
+            targets[target.sessionId] = DecisionAnswering.Target(provider: target.provider, sourceHome: target.sourceHome,
+                                                                 cwd: target.cwd)
             titles[target.sessionId] = session.title
         }
-        PerfLog.mark("widget.decision-send \(action) start: \(items.count) to "
+        PerfLog.mark("widget.decision-send \(action.rawValue) start: \(items.count) to "
             + titles.values.sorted().joined(separator: ", "))
         afterMutations { [weak self] in
             guard let self else { return }
             defer { self.sendingDecisionIDs.subtract(ids) }
             do {
-                let result = try await self.call([
-                    "action": .string(action), "ids": .array(items.map { .string($0.sourceId) }),
-                    "targets": .object(targets),
-                ])
+                let result = try await self.call(DecisionAnswering.sendRequest(action, ids: items.map(\.sourceId),
+                                                                               targets: targets))
                 let outcome = WidgetDecisionSendOutcome(result, titles: titles)
                 let text = outcome.notice(items: items, staged: staged)
-                if let details = outcome.details { PerfLog.mark("widget.decision-send \(action) not delivered: \(details)") }
+                if let details = outcome.details { PerfLog.mark("widget.decision-send \(action.rawValue) not delivered: \(details)") }
                 let waiting = items.filter { item in
                     self.session(forKey: item.key).map { outcome.queuedSessions.contains($0.target.sessionId) } ?? false
                 }
-                PerfLog.mark("widget.decision-send \(action) result: \(text)")
+                PerfLog.mark("widget.decision-send \(action.rawValue) result: \(text)")
                 if outcome.failed == 0 { self.dropSentFromPeek(ids) }
                 if outcome.delivered {
                     postNote(text)
@@ -284,7 +273,7 @@ extension WidgetModel {
                 flashUnsent(waiting.isEmpty ? items : waiting)
             } catch {
                 if let sendingNote, self.notice == sendingNote { self.notice = nil }
-                PerfLog.mark("widget.decision-send \(action) failed: \(error.localizedDescription)")
+                PerfLog.mark("widget.decision-send \(action.rawValue) failed: \(error.localizedDescription)")
                 fail(staged ? "The decisions could not be sent. They stay staged, so you can send them again."
                          : "The answers could not be sent again. They still wait for the session's next prompt.",
                      detail: error.localizedDescription)
@@ -371,101 +360,5 @@ public struct WidgetNoticeAction {
     public init(title: String, run: @escaping @MainActor () -> Void) {
         self.title = title
         self.run = run
-    }
-}
-
-/// What a decision send did, read from the hub's answer: how many went out, waited or failed, and why a session
-/// took nothing.
-struct WidgetDecisionSendOutcome {
-    var sent = 0
-    var queued = 0
-    var failed = 0
-    /// Sessions whose answers no receiver took: the session id, its title, the reason as one sentence, and the hub's
-    /// own words (for Details and the log).
-    var waiting: [(session: String, title: String, reason: String, detail: String?)] = []
-    /// The hub's own words for each session whose send threw, as "<title>: <error>".
-    var failures: [String] = []
-
-    var queuedSessions: Set<String> { Set(waiting.map(\.session)) }
-    /// Every answer reached a live receiver.
-    var delivered: Bool { waiting.isEmpty && failed == 0 && queued == 0 }
-    /// The hub's raw reasons, one line per session, for Details and the log; nil when it gave none.
-    var details: String? {
-        let lines = waiting.compactMap { entry in entry.detail.map { "\(entry.title): \($0)" } } + failures
-        return lines.isEmpty ? nil : lines.joined(separator: "\n")
-    }
-
-    init(_ result: WidgetJSON, titles: [String: String]) {
-        guard case .object(let fields) = result else { return }
-        if case .number(let value) = fields["sent"] { sent = Int(value) }
-        if case .number(let value) = fields["queued"] { queued = Int(value) }
-        if case .number(let value) = fields["failed"] { failed = Int(value) }
-        guard case .array(let sessions) = fields["sessions"] else { return }
-        for case .object(let entry) in sessions {
-            guard case .string(let session) = entry["session"] else { continue }
-            let title = titles[session] ?? "the session"
-            if case .string(let error) = entry["error"], !error.isEmpty {
-                failures.append("\(title): \(error)")
-                continue
-            }
-            guard case .object(let answer) = entry["result"], answer["delivered"] != .bool(true) else { continue }
-            var detail: String?
-            if case .string(let text) = answer["detail"], !text.isEmpty { detail = text }
-            waiting.append((session, title, Self.sentence(for: detail), detail))
-        }
-    }
-
-    /// Why no receiver took the answers, in one sentence. The hub words its reasons for logs ("No native Claude
-    /// receiver claims this session.", "no cmux pane runs this session"); the known ones are matched here, and
-    /// anything else reads as the generic sentence with the hub's text behind Details (ux catalogue P24). The hub's
-    /// reasons: `src/question/lib/decisions/deliver.ts` (`resolveDeliveryTarget`, `nativeWorkers`, `undelivered`)
-    /// and `delivery-text.ts` (`deliverySentence`).
-    static func sentence(for detail: String?) -> String {
-        let generic = "No running agent took them."
-        guard let text = detail?.lowercased(), !text.isEmpty else { return generic }
-        let known: [(needle: String, sentence: String)] = [
-            ("worker is busy", "Its worker is busy with another turn."),
-            ("worker session has not started", "Its worker has not started yet."),
-            ("not ready for another turn", "Its worker is not ready for another turn."),
-            ("claude terminals run this session",
-             "Several Claude terminals run this session, so none was picked. Close the extra one, then send again."),
-            ("no native claude receiver", "No open Claude terminal takes messages for this session."),
-            ("receiver belongs to another source home", "Its Claude terminal runs under another account."),
-            ("worker belongs to another source home", "Its worker runs under another account."),
-            ("several owned workers match", "Several workers match this session, so none was picked."),
-            ("worker runs this thread", "No Codex worker runs this conversation."),
-            ("cmux is not running", "cmux is not running."),
-            ("workspace of this session was closed", "Its cmux workspace was closed."),
-            ("no cmux pane runs this session", "No cmux pane runs this session."),
-            ("cmux panes match this session", "Several cmux panes match this session, so none was picked."),
-            ("does not identify the exact recipient", "No cmux pane could be matched to this session for certain."),
-            ("cmux send failed", "cmux could not type the answers."),
-            ("too large to save for later", "The answers are too long to keep for a later delivery."),
-            ("already saved this message", "An earlier send already saved them for this session."),
-        ]
-        return known.first { text.contains($0.needle) }?.sentence ?? generic
-    }
-
-    /// The note: a plain summary when everything went out, else what did not and why.
-    func notice(items: [WidgetInboxItem], staged: Bool) -> String {
-        var parts: [String] = []
-        if sent > 0 { parts.append(Plural.count(sent, "decision") + " delivered.") }
-        if let first = waiting.first {
-            if waiting.count == 1 {
-                parts.append("Not delivered to \(first.title): \(first.reason) The answers wait for its next prompt.")
-            } else {
-                // One reason for all of them is worth saying; several differ per session and live behind Details.
-                let why = Set(waiting.map(\.reason)).count == 1 ? first.reason + " " : ""
-                parts.append("Not delivered to \(Plural.count(waiting.count, "session")): \(why)"
-                             + "The answers wait for each session's next prompt.")
-            }
-        }
-        if queued > 0, waiting.isEmpty {
-            parts.append("\(Plural.count(queued, "decision")) waiting for the session queue.")
-        }
-        if failed > 0 {
-            parts.append("\(Plural.count(failed, "decision")) could not be sent" + (staged ? " and stay staged." : "."))
-        }
-        return parts.isEmpty ? WidgetModel.stagedSummary(items, future: false) + "." : parts.joined(separator: " ")
     }
 }

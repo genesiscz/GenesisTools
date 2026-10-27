@@ -258,7 +258,7 @@ private struct WidgetGeneralSettings: View {
                     }.labelsHidden().pickerStyle(.segmented).frame(width: 250, alignment: .trailing)
                 }
                 Divider()
-                NativeSettingsRow("Decision click", detail: "Stage keeps your pick to send later with the others, one message per session.") {
+                NativeSettingsRow("Decision click", detail: "Stage keeps your pick to send later with the others, one message per session. The hub's Inbox follows it too.") {
                     Picker("Decision click", selection: string("decisionClick", prefs?.decisionClick ?? "stage")) {
                         Text("Stage").tag("stage")
                         Text("Send at once").tag("send")
@@ -266,10 +266,10 @@ private struct WidgetGeneralSettings: View {
                 }
                 Divider()
                 NativeSettingsToggle(
-                    "⌘ does the other", detail: "⌘-click on an option, and ⌘-Return in a decision's own answer, send at once while a click stages, and stage while a click sends.",
+                    "⌘ does the other", detail: "⌘-click on an option, and ⌘-Return in a decision's own answer, send at once while a click stages, and stage while a click sends. In the widget and the hub's Inbox.",
                     isOn: boolean("decisionCommandSwaps", prefs?.decisionCommandSwaps ?? true))
                 Divider()
-                NativeSettingsRow("Return in an own answer", detail: "Return in a decision's own answer field: stage the text as its note to send later, or send it as the answer now.") {
+                NativeSettingsRow("Return in an own answer", detail: "Return in a decision's own answer field, or its note in the hub's Inbox: stage the text as its note to send later, or send it as the answer now.") {
                     Picker("Return in an own answer", selection: string("ownAnswerReturn", prefs?.ownAnswerReturn ?? "stage")) {
                         Text("Stage").tag("stage")
                         Text("Send").tag("send")

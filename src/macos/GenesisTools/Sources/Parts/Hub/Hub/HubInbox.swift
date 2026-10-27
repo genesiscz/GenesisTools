@@ -294,19 +294,47 @@ struct InboxDelivery: Decodable, Equatable {
     let raw: String?
     /// The form path uses `detail` for its note.
     let detail: String?
+    /// A send through the widget's engine: its outcome's own words (`WidgetDecisionSendOutcome.notice`), the same note
+    /// the widget shows.
+    var outcomeText: String? = nil
+    /// Answered decisions no receiver took: Send again sends them (`resend-answers`), as in the widget.
+    var resendIDs: [String] = []
+
+    private enum CodingKeys: String, CodingKey {
+        case text, channel, delivered, target, error, raw, detail
+    }
 
     static func failure(_ message: String) -> InboxDelivery {
         InboxDelivery(text: nil, channel: nil, delivered: false, target: nil, error: message, raw: nil, detail: nil)
     }
 
+    /// A send through the widget's engine (`send-staged`, `resend-answers`), read by the widget's outcome: delivered,
+    /// waiting for the session's next prompt (with Send again), or failed.
+    static func outcome(_ outcome: WidgetDecisionSendOutcome, ids: [String], resend: Bool) -> InboxDelivery {
+        // The hub skipped every id (sent, unstaged or answered meanwhile): the widget's sentence, never "sent".
+        guard outcome.sent + outcome.queued + outcome.failed > 0 || !outcome.waiting.isEmpty else {
+            return .failure(resend ? "These answers no longer wait for a send, so nothing was sent."
+                                   : "These decisions are no longer staged, so nothing was sent.")
+        }
+        let text = outcome.notice(summary: Plural.count(ids.count, "decision") + " sent.", staged: !resend)
+        var delivery = InboxDelivery(text: nil, channel: "widget", delivered: outcome.delivered, target: nil,
+                                     error: outcome.failed > 0 ? text : nil, raw: outcome.details, detail: nil)
+        delivery.outcomeText = text
+        delivery.resendIDs = outcome.waiting.isEmpty || outcome.failed > 0 ? [] : ids
+        return delivery
+    }
+
     var summary: String {
         if let error { return error }
+        if let outcomeText { return outcomeText }
         switch channel {
         case "cmux": return "Sent to \(target ?? "the session's cmux pane")"
         case "codex": return "Steered into \(target ?? "the codex worker")"
         case "resume": return "Resumed at \(target ?? "a new pane"); the answer reaches it on its first prompt"
         case "form": return "Answered; the waiting agent receives it"
         case "dry-run": return "Dry run: \(text ?? "")"
+        // A Claude session's own message channel (`claude-peer`) and any later route: it says where the answer went.
+        case _ where delivered == true: return "Sent to \(target ?? "the session")"
         default:
             return "Not sent: \(target ?? detail ?? "no live target"). The next prompt of the session receives it when the decisions hook is on."
         }
@@ -419,6 +447,13 @@ final class HubInboxModel: ObservableObject {
     var reveal: Reveal?
     /// Called once after the next load (a snapshot run waits for it).
     var onLoaded: (() -> Void)?
+    /// The widget's settings for answering a decision (Decision click, ⌘ does the other, Return in an own answer):
+    /// the Inbox answers the way the widget does (`DecisionAnswering`). Read again on each load and before each click.
+    @Published private(set) var preferences: WidgetPreferences?
+    /// The decision whose note field has the keyboard: ⌘-Return there belongs to the note, not to the Send bar.
+    @Published var noteFocusID: String?
+    /// Work waiting for an item's draft writes to land: a send at once waits for its pick.
+    private var afterWrites: [String: [() -> Void]] = [:]
 
     /// The badge count (mode switch, header): items of sessions that moved in the last three days.
     var waitingCount: Int { sessions.reduce(0) { $0 + $1.countedWaiting } }
@@ -448,10 +483,12 @@ final class HubInboxModel: ObservableObject {
             let span = HubPerf.begin("inbox.load")
             let result = Result { try JSONDecoder().decode(InboxEnvelope.self, from: ToolsCLIRunner.run(["question", "inbox", "--json"])) }
             span.end((try? result.get()).map { "\($0.sessions.count) sessions, tools \($0.elapsedMs ?? -1) ms" } ?? "failed")
+            let preferences = WidgetPreferencesFile.shared.current()
             DispatchQueue.main.async { [weak self] in
                 MainActor.assumeIsolated {
                     guard let self else { return }
                     self.loading = false
+                    if self.preferences != preferences { self.preferences = preferences }
                     if self.reloadPending {
                         self.reloadPending = false
                         self.load()
@@ -513,16 +550,53 @@ final class HubInboxModel: ObservableObject {
         }
     }
 
-    /// Marks (or clears) a decision's pick and note. Nothing is sent: this is the pick-then-send model.
-    /// Pass the whole letters string (`"a"`, `"ac"`, or `""` to clear the pick); `text` is the note.
-    func draft(_ item: InboxItem, in session: InboxSession, option: String?, text: String?) {
+    /// Marks (or clears) a decision's pick and note: it is staged. Pass the whole letters string (`"a"`, `"ac"`, or
+    /// `""` to clear the pick); `text` is the note. `then` runs once the write landed (a send at once).
+    func draft(_ item: InboxItem, in session: InboxSession, option: String?, text: String?, then: (() -> Void)? = nil) {
         guard let sessionId = session.sessionId, let number = item.number else { return }
         var args = ["question", "inbox", "draft", "--session", sessionId, "--decision", String(number)]
         if let option { args += ["--option", option] }
         if let text { args += ["--text", text] }
         if let provider = session.provider { args += ["--provider", provider] }
         if let cwd = session.cwd, !cwd.isEmpty { args += ["--cwd", cwd] }
-        write(args, item: item)
+        write(args, item: item, then: then)
+    }
+
+    /// The widget's settings as they are now: a click follows a change made since the last load.
+    private func freshPreferences() -> WidgetPreferences? {
+        let current = WidgetPreferencesFile.shared.current()
+        if current != preferences { preferences = current }
+        return current
+    }
+
+    /// A click on a decision option, as the widget answers one (`DecisionAnswering.clickStages`): it stages the pick (a
+    /// click on the staged letter clears it) or sends it at once, and ⌘ does the other while "⌘ does the other" is on.
+    /// ⇧-click adds or removes another letter, staged.
+    func choose(_ item: InboxItem, in session: InboxSession, letter: String, note: String, shift: Bool, command: Bool) {
+        let plan = Self.clickPlan(letters: item.draftOption ?? "", letter: letter, shift: shift,
+                                  stages: DecisionAnswering.clickStages(freshPreferences(), command: command))
+        draft(item, in: session, option: plan.option, text: note,
+              then: plan.send ? { [weak self] in self?.sendStaged([item.id], in: session) } : nil)
+    }
+
+    /// What a click on `letter` does with the staged `letters`: the pick it stores, and whether it is sent at once.
+    nonisolated static func clickPlan(letters: String, letter: String, shift: Bool, stages: Bool) -> (option: String, send: Bool) {
+        if shift { return (InboxDecisionCard.toggled(letters, letter, add: true), false) }
+        return stages ? (InboxDecisionCard.toggled(letters, letter, add: false), false) : (letter, true)
+    }
+
+    /// Return in a decision's note, as Return in the widget's own answer (`DecisionAnswering.returnStages`): it stages
+    /// the note with the pick, or sends both now; ⌘-Return does the other.
+    func submitNote(_ item: InboxItem, in session: InboxSession, note: String, command: Bool) {
+        if DecisionAnswering.returnStages(freshPreferences(), command: command) {
+            draft(item, in: session, option: nil, text: note)
+            return
+        }
+        guard !note.trimmed.isEmpty || !(item.draftOption ?? "").isEmpty else {
+            writeErrors[item.id] = "Write your answer or pick an option first."
+            return
+        }
+        draft(item, in: session, option: nil, text: note) { [weak self] in self?.sendStaged([item.id], in: session) }
     }
 
     /// Drops a decision that no longer matters, without sending anything.
@@ -534,7 +608,8 @@ final class HubInboxModel: ObservableObject {
     /// A draft or dismiss write: run it, then reload so the stored pick shows. No delivery banner;
     /// a failed write says why on the card. `queued`: a write that waited behind another one; it
     /// leaves the card's error alone, so a failure of the one before it stays readable.
-    private func write(_ args: [String], item: InboxItem, queued: Bool = false) {
+    private func write(_ args: [String], item: InboxItem, queued: Bool = false, then: (() -> Void)? = nil) {
+        if let then { afterWrites[item.id, default: []].append(then) }
         guard !writing.contains(item.id) else {
             pendingWrites[item.id] = Self.keepingPick(args, from: pendingWrites[item.id] ?? runningWrites[item.id])
             return
@@ -563,13 +638,17 @@ final class HubInboxModel: ObservableObject {
                     self.runningWrites[item.id] = nil
                     if let failure {
                         self.writeErrors[item.id] = "Not saved: \(failure)"
+                        // A send waiting on this pick must not send what was stored before it.
+                        self.afterWrites[item.id] = nil
                     } else {
                         self.writeGeneration += 1
                     }
                     if let next = self.pendingWrites.removeValue(forKey: item.id) {
                         self.write(next, item: item, queued: true)
                     } else {
+                        let waiting = self.afterWrites.removeValue(forKey: item.id) ?? []
                         self.load()
+                        waiting.forEach { $0() }
                     }
                 }
             }
@@ -669,6 +748,12 @@ final class HubInboxModel: ObservableObject {
     /// resume dialog reopened it: the send then waits for that pane to be live and types into it.
     func deliverSession(_ session: InboxSession, resumeTarget: String?) {
         guard let sessionId = session.sessionId else { return }
+        // A live target: the widget's own send (`send-staged`), worded as the widget words it. A resumed session
+        // waits for its new pane below, which only `inbox send` does.
+        guard resumeTarget != nil else {
+            sendStaged(session.draftedItems.map(\.id), in: session)
+            return
+        }
         sendingSessions.insert(sessionId)
         var args = ["question", "inbox", "send", "--session", sessionId]
         if let provider = session.provider { args += ["--provider", provider] }
@@ -696,6 +781,51 @@ final class HubInboxModel: ObservableObject {
                     }
                 }
             }
+        }
+    }
+
+    /// Sends the staged decisions `ids` of `session` with the widget's own engine (`tools hub widget call`, the
+    /// `send-staged` action: one message per session), or sends answered ones again (`resend-answers`, Send again).
+    /// The result reads as the widget's note: delivered, waiting for the session's next prompt, or failed.
+    func sendStaged(_ ids: [String], in session: InboxSession, action: DecisionAnswering.SendAction = .sendStaged) {
+        guard let sessionId = session.sessionId, !ids.isEmpty, !sendingSessions.contains(sessionId) else { return }
+        sendingSessions.insert(sessionId)
+        sessionResults[sessionId] = nil
+        let target = DecisionAnswering.Target(provider: session.provider ?? "", cwd: session.cwd ?? "")
+        let request = DecisionAnswering.sendRequest(action, ids: ids, targets: [sessionId: target])
+        let titles = [sessionId: session.displayTitle]
+        HubPerf.log("inbox.\(action.rawValue) \(ids.count) to \(sessionId.prefix(8))")
+        DispatchQueue.global(qos: .userInitiated).async {
+            let span = HubPerf.begin("inbox.\(action.rawValue)")
+            let delivery = Self.callWidget(request, ids: ids, titles: titles, resend: action == .resendAnswers)
+            span.end(delivery.isError ? "failed" : delivery.isQueued ? "waiting" : "delivered")
+            DispatchQueue.main.async { [weak self] in
+                MainActor.assumeIsolated {
+                    guard let self else { return }
+                    self.sendingSessions.remove(sessionId)
+                    self.sessionResults[sessionId] = delivery
+                    self.writeGeneration += 1
+                    self.load()
+                }
+            }
+        }
+    }
+
+    /// Runs one widget action through `tools hub widget call` and reads its answer with the widget's outcome.
+    nonisolated static func callWidget(_ request: WidgetJSON, ids: [String], titles: [String: String], resend: Bool) -> InboxDelivery {
+        let file = FileManager.default.temporaryDirectory.appendingPathComponent("hub-inbox-send-\(UUID().uuidString).json")
+        defer { try? FileManager.default.removeItem(at: file) }
+        do {
+            try JSONEncoder().encode(request).write(to: file)
+            // The send can wait on a busy receiver: room beyond the default.
+            let capture = try ToolsCLIRunner.capture(["hub", "widget", "call", "--input", file.path], timeout: 120)
+            guard capture.status == 0, let result = try? JSONDecoder().decode(WidgetJSON.self, from: capture.stdout) else {
+                let why = String(decoding: capture.stderr, as: UTF8.self).trimmed.suffix(200)
+                return .failure("Nothing was sent: tools hub widget call exited \(capture.status): \(why)")
+            }
+            return .outcome(WidgetDecisionSendOutcome(result, titles: titles), ids: ids, resend: resend)
+        } catch {
+            return .failure("Nothing was sent: \(error)")
         }
     }
 
@@ -1239,7 +1369,8 @@ struct InboxSendBar: View {
     private var sending: Bool { session.sessionId.map { inbox.sendingSessions.contains($0) } ?? false }
     private var result: InboxDelivery? { session.sessionId.flatMap { inbox.sessionResults[$0] } }
     private var ownsShortcut: Bool {
-        guard !drafted.isEmpty else { return false }
+        // ⌘-Return in a decision's note is the note's own (send or stage it, as the widget's own answer does).
+        guard !drafted.isEmpty, inbox.noteFocusID == nil else { return false }
         if claimsShortcut || inbox.selectedID == session.id { return true }
         let staging = inbox.sessions.filter { !$0.draftedItems.isEmpty }
         return staging.count == 1 && staging[0].id == session.id
@@ -1302,6 +1433,18 @@ struct InboxSendBar: View {
                 }
                 if let result {
                     InboxDeliveryLine(delivery: result)
+                    if !result.resendIDs.isEmpty {
+                        Button {
+                            inbox.sendStaged(result.resendIDs, in: session, action: .resendAnswers)
+                        } label: {
+                            Label("Send again", systemImage: "arrow.clockwise")
+                                .font(.system(size: 11.5))
+                                .foregroundColor(ReviewPalette.renamed)
+                        }
+                        .buttonStyle(.genHoverPlain())
+                        .disabled(sending)
+                        .instantTooltip("Send these answers to the session again, as the widget's Send again does")
+                    }
                     if result.isQueued || result.isError {
                         Button {
                             inbox.resumeFor = session
@@ -1352,8 +1495,9 @@ struct InboxDeliveryLine: View {
 }
 
 /// One decision, with the context that led to it: the findings, the code it points at, each option
-/// with its reason and a Recommended badge. A click MARKS an option (⌘-click adds a second); the
-/// session's Send delivers every mark at once. Nothing is sent on a click.
+/// with its reason and a Recommended badge. A click and Return in the note answer as in the widget
+/// (`DecisionAnswering`, the widget's Decision click and Return settings): they stage, or send at once,
+/// and ⌘ does the other; ⇧-click stages another letter. The session's Send delivers every staged answer.
 struct InboxDecisionCard: View {
     @ObservedObject var model: HubModel
     @ObservedObject var inbox: HubInboxModel
@@ -1369,6 +1513,7 @@ struct InboxDecisionCard: View {
     @State private var showReply = false
     @State private var showsDeliveryDetails = false
     @State private var saveTask: Task<Void, Never>?
+    @FocusState private var noteFocused: Bool
     /// ⌘F: when the current match is in this card's folded context, the context unfolds by itself.
     @Environment(\.panelFindHighlight) private var highlight
     @GenReduceMotion private var reduceMotion
@@ -1576,6 +1721,22 @@ struct InboxDecisionCard: View {
             .padding(7)
             .background(RoundedRectangle(cornerRadius: 7).stroke(Color.white.opacity(0.12)))
             .disabled(!pickable)
+            .focused($noteFocused)
+            .onChange(of: noteFocused) { _, focused in
+                if focused {
+                    inbox.noteFocusID = item.id
+                } else if inbox.noteFocusID == item.id {
+                    inbox.noteFocusID = nil
+                }
+            }
+            // Return stages the note and ⌘-Return sends it with the pick, or the other way round (the widget's
+            // "Return in an own answer"). Option-Return stays a new line.
+            .onKeyPress(.return, phases: .down) { press in
+                guard pickable, !press.modifiers.contains(.option), !press.modifiers.contains(.shift) else { return .ignored }
+                saveTask?.cancel()
+                inbox.submitNote(item, in: session, note: note, command: press.modifiers.contains(.command))
+                return .handled
+            }
             .onChange(of: note) { _, value in
                 guard noteSeeded, pickable else { return }
                 saveTask?.cancel()
@@ -1655,10 +1816,13 @@ struct InboxDecisionCard: View {
 
     private func optionRow(_ choice: InboxChoice) -> some View {
         let chosen = letters.contains(choice.id)
+        let preferences = inbox.preferences
+        let stages = DecisionAnswering.clickStages(preferences, command: false)
         return Button {
-            let add = (NSApp.currentEvent?.modifierFlags ?? NSEvent.modifierFlags).contains(.command)
-            let next = Self.toggled(letters, choice.id, add: add)
-            inbox.draft(item, in: session, option: next, text: note)
+            let flags = NSApp.currentEvent?.modifierFlags ?? NSEvent.modifierFlags
+            saveTask?.cancel()
+            inbox.choose(item, in: session, letter: choice.id, note: note, shift: flags.contains(.shift),
+                         command: flags.contains(.command))
         } label: {
             HStack(alignment: .top, spacing: 9) {
                 Text(verbatim: "\(choice.id))")
@@ -1691,12 +1855,15 @@ struct InboxDecisionCard: View {
         .buttonStyle(.genHoverRow(accent: .white, cornerRadius: 7))
         .disabled(!pickable)
         .instantTooltip(pickable
-            ? (chosen ? "Click to unstage \(choice.id))  ·  ⌘-click to add another" : "Stage \(choice.id))  ·  ⌘-click to stage a second")
+            ? DecisionAnswering.optionTooltip(choice.id, recommended: choice.recommended == true || item.recommended == choice.id,
+                                              stages: stages, picked: chosen,
+                                              swaps: preferences?.decisionCommandSwaps ?? true)
+                + " · ⇧-click stages another letter"
             : "Already \(item.status)")
     }
 
-    /// Toggles one letter in a pick string. Plain click replaces the set; ⌘-click adds or removes.
-    static func toggled(_ current: String, _ id: String, add: Bool) -> String {
+    /// Toggles one letter in a pick string. Plain click replaces the set; ⇧-click adds or removes.
+    nonisolated static func toggled(_ current: String, _ id: String, add: Bool) -> String {
         var set = Set(current.map(String.init))
         if add {
             if set.contains(id) { set.remove(id) } else { set.insert(id) }
