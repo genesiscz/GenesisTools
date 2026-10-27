@@ -30,6 +30,32 @@ export function isClaudeCodeCompactionTurn(body: { messages?: unknown }): boolea
 }
 
 /**
+ * The compaction turn with a length limit added to its last user message, at the end so the cached prefix stays
+ * whole. A Codex model unasked wrote 15K to 26K tokens of summary, 6 to 8 minutes of output (2026-10-27).
+ */
+export function limitCompactionSummary(body: Record<string, unknown>, words: number): Record<string, unknown> {
+    const messages = Array.isArray(body.messages) ? body.messages : [];
+    const last = messages.at(-1);
+
+    if (!isObject(last)) {
+        return body;
+    }
+
+    const limit = `Keep the whole summary under ${words} words. Prefer exact identifiers, file paths, commands, commit SHAs and open tasks over narration.`;
+    const content =
+        typeof last.content === "string"
+            ? [
+                  { type: "text", text: last.content },
+                  { type: "text", text: limit },
+              ]
+            : Array.isArray(last.content)
+              ? [...last.content, { type: "text", text: limit }]
+              : last.content;
+
+    return { ...body, messages: [...messages.slice(0, -1), { ...last, content }] };
+}
+
+/**
  * Claude Code's `model_validation` probe: one user "Hi" at `max_tokens: 1`, sent once when `/model` or `--model`
  * names an id it does not know (Claude Code 2.1.296 binary, checked 2026-10-25). It throws on any error, and gives
  * up after 15 s with no retry.

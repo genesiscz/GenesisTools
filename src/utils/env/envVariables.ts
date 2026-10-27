@@ -155,6 +155,22 @@ export const env = {
             const raw = getTrimmed("AI_PROXY_CODEX_ALL_TURNS")?.toLowerCase();
             return raw !== "0" && raw !== "false" && raw !== "off";
         },
+        /**
+         * The effort a Codex model gets for Claude Code's compaction turn. Default "low": at the session's xhigh a
+         * 400K-token compaction took 6 to 8 minutes (2026-10-27). "session" keeps the session's own effort.
+         */
+        getCompactionEffort: (): string | undefined => {
+            const raw = getTrimmed("AI_PROXY_COMPACTION_EFFORT")?.toLowerCase();
+            return raw === "session" ? undefined : (raw ?? "low");
+        },
+        /**
+         * The length a Codex model is asked to keep Claude Code's compaction summary under, in words. Default 5000:
+         * unasked, a Codex model wrote 15K to 26K tokens at about 42 per second. 0 asks for no limit.
+         */
+        getCompactionWords: (): number | undefined => {
+            const raw = Number(getTrimmed("AI_PROXY_COMPACTION_WORDS") ?? 5000);
+            return Number.isFinite(raw) && raw > 0 ? Math.round(raw) : undefined;
+        },
     },
 
     github: {
