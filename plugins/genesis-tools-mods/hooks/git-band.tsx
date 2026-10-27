@@ -34,6 +34,7 @@ import {
 import { type GenesisProbe, genesisProbe, hubLink } from "./genesis";
 import { liveAgo } from "./live";
 import { type Feature, type Host, isRecord, logMod, settingsOf } from "./shared";
+import { sharedRun } from "./shared-run";
 import {
     actionButton,
     buttonsWidth,
@@ -227,7 +228,9 @@ async function prOf(
         "--json",
         "number,title,url,state,isDraft,statusCheckRollup",
     ];
-    const text = await run(host, argv, root);
+    // Every session that shows this checkout asks the same, so one answer serves them all for the TTL.
+    const viewed = await sharedRun(host, { argv, cwd: root, ttlMs: GH_TTL_MS, timeoutMs: 15_000 });
+    const text = viewed?.exitCode === 0 ? viewed.stdout : undefined;
     let pr: BandPr | null = null;
 
     try {
@@ -254,12 +257,12 @@ async function prOf(
     // A PR with a check to look at gets `gh pr checks`, which says why a status failed (`Deployment was blocked`)
     // and counts a re-run once. It exits 1 with a failed check and 8 with a pending one, so its exit code says nothing.
     if (pr && (pr.failed > 0 || pr.pending > 0)) {
-        const done = await host
-            .run(["gh", "pr", "checks", String(pr.number), "--json", "name,description,link,bucket"], {
-                cwd: root,
-                timeoutMs: 15_000,
-            })
-            .catch(() => undefined);
+        const done = await sharedRun(host, {
+            argv: ["gh", "pr", "checks", String(pr.number), "--json", "name,description,link,bucket"],
+            cwd: root,
+            ttlMs: GH_TTL_MS,
+            timeoutMs: 15_000,
+        });
         const checks = done ? prChecksOf(done.stdout) : undefined;
 
         if (checks) {
