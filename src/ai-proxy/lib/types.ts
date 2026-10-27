@@ -306,7 +306,7 @@ export interface SystemNoteConfig {
 export interface ClaudeSessionsConfig {
     /** Claude Code's compaction turn on a Codex model. */
     compaction?: {
-        /** Default "low". "session" keeps the session's own effort (and its prompt cache, which an effort change misses). */
+        /** Default "session": the session's own effort, which keeps its prompt cache (another effort misses it). */
         effort?: ReasoningEffort | "session";
         /** The summary length the model is asked to stay under, in words. Default 5000; 0 asks for no limit. */
         words?: number;

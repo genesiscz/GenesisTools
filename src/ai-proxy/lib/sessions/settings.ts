@@ -15,7 +15,9 @@ export function compactionSettings(config: ClaudeSessionsConfig = current): {
     effort: ReasoningEffort | undefined;
     words: number | undefined;
 } {
-    const effort = config.compaction?.effort ?? "low";
+    // The session's own effort by default: each effort level has its own prompt cache, so another effort re-reads
+    // the whole context uncached (probe 2026-10-27: high, high, low, high, low read 0, 25.8K, 0, 25.8K, 25.8K).
+    const effort = config.compaction?.effort ?? "session";
     const words = config.compaction?.words ?? 5000;
 
     return {

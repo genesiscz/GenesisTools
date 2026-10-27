@@ -1300,21 +1300,22 @@ describe("native /v1/messages route: reasoning carried in gtr1 envelopes", () =>
         ).text();
 
         expect(sent[0]?.tool_choice).toBe("none");
-        // The summary runs at low effort and is asked for a length, at the end of the input so the cache stays.
-        expect((sent[0]?.reasoning as Record<string, unknown> | undefined)?.effort).toBe("low");
+        // The summary keeps the session's effort (another effort misses the cache) and is asked for a length, at the
+        // end of the input so the cached prefix stays.
+        expect((sent[0]?.reasoning as Record<string, unknown> | undefined)?.effort).toBe("xhigh");
         const input = (sent[0]?.input ?? []) as Array<Record<string, unknown>>;
         expect(SafeJSON.stringify(input.at(-1))).toContain("under 5000 words");
         // WHAM treats a tool without `strict` as strict, and the model then fills every optional field.
         expect(sent[0]?.tools).toEqual([expect.objectContaining({ type: "function", name: "Read", strict: false })]);
     });
 
-    it("claudeSessions.compaction in the config keeps the session's effort and drops the length", async () => {
+    it("claudeSessions.compaction in the config sets another effort and drops the length", async () => {
         const sent: Array<Record<string, unknown>> = [];
         globalThis.fetch = (async (_url: RequestInfo | URL, init?: RequestInit) => {
             sent.push(SafeJSON.parse(String(init?.body)) as Record<string, unknown>);
             return whamStreamResponse();
         }) as typeof fetch;
-        setClaudeSessionSettings({ compaction: { effort: "session", words: 0 } });
+        setClaudeSessionSettings({ compaction: { effort: "low", words: 0 } });
 
         try {
             await (
@@ -1329,7 +1330,7 @@ describe("native /v1/messages route: reasoning carried in gtr1 envelopes", () =>
             setClaudeSessionSettings(undefined);
         }
 
-        expect((sent[0]?.reasoning as Record<string, unknown> | undefined)?.effort).toBe("xhigh");
+        expect((sent[0]?.reasoning as Record<string, unknown> | undefined)?.effort).toBe("low");
         expect(SafeJSON.stringify(sent[0]?.input)).not.toContain("words");
     });
 
