@@ -7,6 +7,19 @@ final class SingleInstanceTests: XCTestCase {
         SingleInstance(name: "test", lockFile: lock, notificationPrefix: "test.single.\(UUID().uuidString)", retryHint: "", log: { _ in })
     }
 
+    func testTheProbeDescriptorClosesWhenTheWatcherIsDestroyed() throws {
+        let lock = FileManager.default.temporaryDirectory.appendingPathComponent("single-\(UUID().uuidString).lock")
+        defer { try? FileManager.default.removeItem(at: lock) }
+        FileManager.default.createFile(atPath: lock.path, contents: nil)
+        var watcher: SingleInstance? = instance(lock)
+        XCTAssertFalse(watcher!.isRunningElsewhere)
+        let descriptor = watcher!.probeDescriptor
+        XCTAssertGreaterThanOrEqual(descriptor, 0)
+        XCTAssertNotEqual(fcntl(descriptor, F_GETFD), -1)
+        watcher = nil
+        XCTAssertEqual(fcntl(descriptor, F_GETFD), -1)
+    }
+
     /// The probe keeps its handle open, so it must not keep the shared lock it tests with: a later launch would
     /// lose its exclusive claim to it.
     func testTheProbeSeesAHolderAndNeverBlocksALaterClaim() throws {

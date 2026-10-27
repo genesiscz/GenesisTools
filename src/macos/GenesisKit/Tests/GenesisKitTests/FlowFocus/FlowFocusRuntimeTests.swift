@@ -779,6 +779,40 @@ final class FlowFocusRuntimeTests: XCTestCase {
         await runtime.stop()
     }
 
+    func testPendingPublicationReversionDrainsBeforeLeaseHandoff() async throws {
+        let runtime = FlowFocusRuntime(dataRoot: directory, hostID: "test.pending-owner", liveServices: false, presentsWindows: false)
+        await runtime.start()
+        XCTAssertTrue(runtime.role.isOwner)
+        let file = runtime.directory.appendingPathComponent("state.json")
+        let initialData = try Data(contentsOf: file)
+        let initial = try JSONDecoder().decode(FlowFocusLiveSnapshot.self, from: initialData)
+        var changed = try XCTUnwrap(JSONSerialization.jsonObject(with: initialData) as? [String: Any])
+        changed["configurationError"] = "fixture change"
+        let intermediate = try JSONDecoder().decode(FlowFocusLiveSnapshot.self, from: JSONSerialization.data(withJSONObject: changed))
+        let started = DispatchSemaphore(value: 0)
+        let resume = DispatchSemaphore(value: 0)
+        defer { resume.signal() }
+        runtime.beforeBackgroundWrite = { started.signal(); _ = resume.wait(timeout: .now() + 5) }
+        runtime.enqueuePublication(intermediate)
+        try await waitUntil { started.wait(timeout: .now()) == .success }
+        runtime.beforeBackgroundWrite = nil
+        runtime.enqueuePublication(initial)
+
+        let stopping = Task { await runtime.stop() }
+        try await waitUntil { runtime.role == .stopped }
+        XCTAssertNil(try FlowFocusLease.acquire(directory: runtime.directory, hostID: "test.too-early"))
+        resume.signal()
+        await stopping.value
+        XCTAssertEqual(try JSONDecoder().decode(FlowFocusLiveSnapshot.self, from: Data(contentsOf: file)), initial)
+
+        let replacement = FlowFocusRuntime(dataRoot: directory, hostID: "test.replacement", liveServices: false, presentsWindows: false)
+        await replacement.start()
+        XCTAssertTrue(replacement.role.isOwner)
+        let latest = try JSONDecoder().decode(FlowFocusLiveSnapshot.self, from: Data(contentsOf: file))
+        XCTAssertEqual(latest.ownerNonce, try FlowFocusLease.readOwner(directory: replacement.directory).nonce)
+        await replacement.stop()
+    }
+
     func testPublicationFailureDoesNotRescheduleItselfAndLaterChangesCanRecover() async throws {
         let runtime = FlowFocusRuntime(dataRoot: directory, hostID: "test.snapshot-recovery", liveServices: false, presentsWindows: false)
         await runtime.start()

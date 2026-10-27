@@ -65,6 +65,10 @@ public final class FlowFocusRuntime: ObservableObject {
     private var receivedFlowRevision: UInt64?
     private var receivedConfigurationRevision: UInt64?
     private var lastSnapshot: FlowFocusLiveSnapshot?
+    private var requestedSnapshot: FlowFocusLiveSnapshot?
+    private var requestGeneration: UInt64 = 0
+    /// Test seam for holding a background write while the owner stops or changes state.
+    var beforeBackgroundWrite: (@Sendable () -> Void)?
     private var reconnecting = false
     private var lastExternalTarget: FlowFocusTarget?
     private var dictationWindow: NSWindowController?
@@ -228,6 +232,12 @@ public final class FlowFocusRuntime: ObservableObject {
         // The owner's own "delete activity" runs outside the mailbox; the ledger is not handed over mid-deletion.
         await focus.finishLedgerWrites()
         await configuration.flush()
+        // A queued state write must finish before another owner can publish to the same file.
+        await withCheckedContinuation { continuation in
+            Self.writeQueue.async { continuation.resume() }
+        }
+        lastSnapshot = nil
+        requestedSnapshot = nil
         if Self.activeOwners[directory] === self { Self.activeOwners.removeValue(forKey: directory) }
         lease?.release()
         lease = nil
@@ -440,24 +450,33 @@ public final class FlowFocusRuntime: ObservableObject {
 
     private func publishInBackground() {
         guard role.isOwner, let lease else { return }
-        let state = liveState(lease)
-        guard state != lastSnapshot else { return }
+        enqueuePublication(liveState(lease))
+    }
+
+    func enqueuePublication(_ state: FlowFocusLiveSnapshot) {
+        guard role.isOwner, lease?.owner.nonce == state.ownerNonce, state != requestedSnapshot else { return }
+        requestedSnapshot = state
+        requestGeneration &+= 1
+        let generation = requestGeneration
         publicationAttempts += 1
         let url = directory.appendingPathComponent("state.json")
-        let mailbox = self.mailbox
+        let beforeWrite = beforeBackgroundWrite
         Self.writeQueue.async {
+            beforeWrite?()
             let written = Result {
                 try PerfLog.span("flow-focus.publish") {
                     try FlowFocusLease.writePrivate(try JSONEncoder().encode(state), to: url)
                 }
             }
-            if case .success = written { mailbox?.signalStateChange() }
             Task { @MainActor [weak self] in
-                guard let self else { return }
+                guard let self, self.role.isOwner, self.lease?.owner.nonce == state.ownerNonce,
+                      self.requestGeneration == generation else { return }
                 switch written {
                 case .success:
                     self.lastSnapshot = state
+                    self.mailbox?.signalStateChange()
                 case .failure(let error):
+                    self.requestedSnapshot = nil
                     self.suppressPublication = true
                     self.reportFailure(error.localizedDescription)
                     self.suppressPublication = false
@@ -476,6 +495,7 @@ public final class FlowFocusRuntime: ObservableObject {
                                            to: directory.appendingPathComponent("state.json"))
         }
         lastSnapshot = state
+        requestedSnapshot = state
         mailbox?.signalStateChange()
     }
 

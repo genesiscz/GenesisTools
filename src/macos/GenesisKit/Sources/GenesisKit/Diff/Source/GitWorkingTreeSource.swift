@@ -192,13 +192,13 @@ public struct ReviewRepositoryLayout: Equatable {
     /// change none of them.
     public func movesRefs(_ event: String) -> Bool {
         let path = URL(fileURLWithPath: event).standardizedFileURL.path
-        for directory in [gitDirectory.path, commonDirectory.path] {
+        for directory in [commonDirectory.path, gitDirectory.path] {
             if path == directory { return true }
             if path.hasPrefix(directory + "/") {
                 let relative = String(path.dropFirst(directory.count + 1))
                 if relative == "worktrees" || relative.hasPrefix("worktrees/") {
                     let parts = relative.split(separator: "/")
-                    return parts.count <= 2 || (parts.count == 3 && parts[2] == "HEAD")
+                    return parts.count <= 2 || (parts.count == 3 && ["HEAD", "gitdir"].contains(parts[2]))
                 }
                 return ["HEAD", "packed-refs", "refs"].contains(relative) || relative.hasPrefix("refs/")
             }

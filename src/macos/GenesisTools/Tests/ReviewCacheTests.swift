@@ -124,6 +124,8 @@ final class ReviewCacheTests: XCTestCase {
         XCTAssertTrue(layout.movesRefs("/repo/main/.git/refs/heads/feature"))
         XCTAssertTrue(layout.movesRefs("/repo/main/.git/packed-refs"))
         XCTAssertTrue(layout.movesRefs("/repo/main/.git/worktrees/other/HEAD"))
+        XCTAssertTrue(layout.movesRefs("/repo/main/.git/worktrees/wt/gitdir"))
+        XCTAssertTrue(layout.movesRefs("/repo/main/.git/worktrees/other/gitdir"))
         XCTAssertTrue(layout.movesRefs("/repo/main/.git/worktrees/new"))
     }
 

@@ -471,8 +471,12 @@ final class HubAgentsModel: ObservableObject {
     /// Rows that appeared, left or changed place between two orders of row ids. A move counts once.
     static func changedRows(from before: [String], to after: [String]) -> Int {
         guard before != after else { return 0 }
-        let difference = after.difference(from: before)
-        return max(difference.insertions.count, difference.removals.count)
+        let difference = after.difference(from: before).inferringMoves()
+        let newRows = difference.insertions.filter { change in
+            if case .insert(_, _, let associatedWith) = change { return associatedWith == nil }
+            return false
+        }.count
+        return difference.removals.count + newRows
     }
 
     /// Parents and each parent's children in their sticky order (GenesisKit `StickyOrder`).

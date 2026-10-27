@@ -4,6 +4,20 @@ import XCTest
 
 /// Which faces keep the link relay in front of them (LinkRelay.swift).
 final class LinkRelayTests: XCTestCase {
+    func testNewerSwitchClearsAndInvalidatesAnInFlightStackRead() throws {
+        var snapshot = BrowserURLForwarder.StackSnapshot()
+        let first = try XCTUnwrap(snapshot.begin(shouldRead: true))
+        snapshot.finish([1, 2], generation: first)
+        let stale = try XCTUnwrap(snapshot.begin(shouldRead: true))
+        XCTAssertNil(snapshot.begin(shouldRead: false))
+        snapshot.finish([3, 4], generation: stale)
+        XCTAssertEqual(snapshot.stack, [])
+
+        let next = try XCTUnwrap(snapshot.begin(shouldRead: true))
+        snapshot.finish([5, 6], generation: next)
+        XCTAssertEqual(snapshot.stack, [5, 6])
+    }
+
     /// The Grok web app's X login left it for Brave and the app stayed signed out (2026-10-16).
     func testASignInStepFromASafariWebAppGoesBackIntoItAndOtherLinksDoNot() {
         let webApp = "com.apple.Safari.WebApp.5A6B70DC-0000-4A8A-994F-97CB051AA8D8"
