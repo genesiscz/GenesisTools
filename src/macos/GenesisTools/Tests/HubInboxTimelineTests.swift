@@ -92,10 +92,12 @@ final class HubInboxTimelineTests: XCTestCase {
 
         let target = { (json: String) in try JSONDecoder().decode(InboxTargetResolution.self, from: Data(json.utf8)) }
         let failed = HubInboxModel.sendStep(.failure(Broken()))
-        guard case .report(let why) = failed else {
+        guard case .report(let why, let raw) = failed else {
             return XCTFail("a failed target read must not send or queue: \(failed)")
         }
-        XCTAssertTrue(why.contains("no store"))
+        // One sentence on screen; the tool's own words behind Details (F10).
+        XCTAssertFalse(why.contains("no store"), why)
+        XCTAssertTrue(raw?.contains("no store") == true)
         XCTAssertFalse(HubInboxModel.queueHook(from: .failure(Broken())), "a failed lookup never offers Keep queued")
         XCTAssertTrue(HubInboxModel.queueHook(from: .success(try target(#"{"kind":"none","queueHookOn":true}"#))))
         XCTAssertEqual(HubInboxModel.sendStep(.success(try target(#"{"kind":"none"}"#))), .askWhereToResume)
@@ -103,10 +105,11 @@ final class HubInboxTimelineTests: XCTestCase {
 
         XCTAssertEqual(HubInboxModel.resumeStep(.cancelled), .nothing)
         XCTAssertEqual(HubInboxModel.resumeStep(.launched("Resume: fix the cart")), .deliver(resumeTarget: "resumed — Resume: fix the cart"))
-        guard case .report(let refused) = HubInboxModel.resumeStep(.failed("cmux: no socket")) else {
+        guard case .report(let refused, let raw) = HubInboxModel.resumeStep(.failed("cmux: no socket")) else {
             return XCTFail("a failed resume must not deliver")
         }
-        XCTAssertTrue(refused.contains("cmux: no socket"))
+        XCTAssertEqual(refused, "Nothing was sent: the session did not resume. The answers stay staged.")
+        XCTAssertEqual(raw, "cmux: no socket")
     }
 
     func testTimelineDecodesEveryKind() throws {
@@ -250,17 +253,20 @@ final class HubDecisionsSourceTests: XCTestCase {
         """#.utf8))
         XCTAssertEqual(item.revision, 2)
         XCTAssertEqual(HubInboxModel.notWaitingSentence(number: 26, item: item),
-                       "DECISION 26 is not waiting: it was answered (b) as a separate draft pr).")
+                       "Decision 26 is not waiting: it was answered (b) as a separate draft pr).")
         XCTAssertEqual(HubInboxModel.notWaitingSentence(number: 26, item: nil),
-                       "DECISION 26 is not in the decision log any more.")
+                       "Decision 26 is not in the decision log any more.")
     }
 
     func testARefusedWriteSaysTheCLIsSentence() {
         let stdout = Data(#"{"error":"DECISION 4 changed: the agent posted a new text since you read it."}"#.utf8)
-        XCTAssertEqual(HubInboxModel.refusal(ProcessCapture(status: 1, stdout: stdout, stderr: Data())),
-                       "DECISION 4 changed: the agent posted a new text since you read it.")
-        XCTAssertEqual(HubInboxModel.refusal(ProcessCapture(status: 2, stdout: Data(), stderr: Data("boom\n".utf8))),
-                       "exited 2: boom")
+        let refused = HubInboxModel.refusal(ProcessCapture(status: 1, stdout: stdout, stderr: Data()))
+        XCTAssertEqual(refused.text, "DECISION 4 changed: the agent posted a new text since you read it.")
+        XCTAssertNil(refused.raw)
+        // A bare exit: one plain sentence, and the exit status with stderr behind Details, uncut (F10).
+        let failed = HubInboxModel.refusal(ProcessCapture(status: 2, stdout: Data(), stderr: Data("boom\n".utf8)))
+        XCTAssertEqual(failed.text, "the decision log refused the change. Try again.")
+        XCTAssertEqual(failed.raw, "tools exited 2: boom")
     }
 }
 
@@ -268,12 +274,20 @@ final class InboxDeliveryRecordTests: XCTestCase {
     func testTheLineNamesTheRoute() throws {
         let decode = { (json: String) in try JSONDecoder().decode(InboxDeliveryRecord.self, from: Data(json.utf8)) }
         let pane = try decode(#"{"route":"cmux","target":"work · agent","at":"2026-03-01T10:00:00.000Z"}"#)
-        XCTAssertTrue(pane.line.hasPrefix("sent "))
+        XCTAssertTrue(pane.line.hasPrefix("Sent "))
         XCTAssertTrue(pane.line.hasSuffix("to cmux pane work · agent"))
         XCTAssertFalse(pane.isQueued)
-        XCTAssertTrue(try decode(#"{"route":"codex","target":"w1","at":"2026-03-01T10:00:00.000Z"}"#).line.contains("into codex worker w1"))
+        XCTAssertTrue(try decode(#"{"route":"codex","target":"w1","at":"2026-03-01T10:00:00.000Z"}"#).line.hasSuffix("to Codex worker w1"))
+        XCTAssertTrue(try decode(#"{"route":"codex","target":"codex worker w2","at":"2026-03-01T10:00:00.000Z"}"#).line.hasSuffix("to Codex worker w2"))
         let queued = try decode(#"{"route":"queued","target":"no cmux pane runs this session","at":"2026-03-01T10:00:00.000Z"}"#)
         XCTAssertTrue(queued.isQueued)
-        XCTAssertTrue(queued.line.contains(": no cmux pane runs this session"))
+        XCTAssertTrue(queued.line.hasPrefix("Waiting to send since "))
+        XCTAssertTrue(queued.line.hasSuffix(": no cmux pane runs this session."))
+        // A Claude session's own channel delivered it: "Sent", never "queued … when the decisions hook is on" (F7).
+        let peer = try decode(#"{"route":"claude-peer","target":"original Claude session","at":"2026-03-01T10:00:00.000Z"}"#)
+        XCTAssertFalse(peer.isQueued)
+        XCTAssertTrue(peer.line.hasPrefix("Sent "))
+        XCTAssertTrue(peer.line.hasSuffix("to original Claude session"))
+        XCTAssertFalse(peer.line.contains("hook"))
     }
 }

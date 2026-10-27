@@ -60,7 +60,7 @@ final class HubQuestionSeamTests: XCTestCase {
         XCTAssertEqual(item.status, "answered")
         XCTAssertFalse(item.isOpen)
         XCTAssertEqual(item.option, "a")
-        XCTAssertTrue(item.delivery?.line.hasPrefix("queued") == true)
+        XCTAssertTrue(item.delivery?.line.hasPrefix("Waiting to send") == true, item.delivery?.line ?? "")
     }
 
     /// A row's unsent pick and note come from the store (`draftOption`, `draft`), so the pane, the
@@ -86,7 +86,7 @@ final class HubQuestionSeamTests: XCTestCase {
         let json = #"{"route":"prompt","at":"2026-09-24T21:46:01.366Z"}"#
         let record = try JSONDecoder().decode(InboxDeliveryRecord.self, from: Data(json.utf8))
         XCTAssertFalse(record.isQueued)
-        XCTAssertTrue(record.line.hasPrefix("sent "))
+        XCTAssertTrue(record.line.hasPrefix("Sent "))
         XCTAssertTrue(record.line.hasSuffix("with the session's next prompt"))
     }
 
