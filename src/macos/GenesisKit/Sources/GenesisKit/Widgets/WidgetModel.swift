@@ -112,6 +112,9 @@ public final class WidgetModel: ObservableObject {
     /// Called once, with the first complete snapshot, when decisions are staged and not sent: a pick staged before the
     /// widget restarted waited unseen (DECISION 26, 2026-10-26). The coordinator shows the staged reminder.
     public var stagedAtStart: (([WidgetInboxItem]) -> Void)?
+    /// The popup's time ran out on a decision staged in it while "Closing with staged decisions" is "keep": the popup
+    /// closes and the coordinator shows the staged reminder, so the pick is not left behind unseen (D159, 2026-10-27).
+    public var stagedLeftInPopup: (([WidgetInboxItem]) -> Void)?
     private var stagedStartChecked = false
     public func session(forKey key: String) -> WidgetSession? { sessionIndex[key] }
     @Published public var moduleSelections: [String: String] = [:]
@@ -970,6 +973,37 @@ public final class WidgetModel: ObservableObject {
         if queue != peekQueue { peekQueue = queue }
     }
 
+    /// The popup's time ran out with a decision staged in it: it does not just go away (D159, 2026-10-27: staged in
+    /// the popup at 01:08:32, the popup closed 7 s later, and the answer was never sent). "Closing with staged
+    /// decisions" decides, as for the panel: "send" sends them and the popup shows the result; "keep" closes it and
+    /// shows the staged reminder; "ask" (the default) keeps the popup with its Send now and looks again after its
+    /// time. Returns whether the end was handled here.
+    func holdPeekForStaged(on surface: WidgetSurfaceID) -> Bool {
+        guard let shown = peekItem else { return false }
+        let inPopup = Set(([shown] + peekQueue).map(\.sourceId))
+        // A send from the popup is under way: its result shows here (`showPeekOutcome`).
+        if !inPopup.isDisjoint(with: sendingDecisionIDs) {
+            schedulePeekEnd(on: surface)
+            return true
+        }
+        let staged = stagedForLeave.filter { inPopup.contains($0.sourceId) }
+        guard !staged.isEmpty else { return false }
+        switch snapshot?.state.preferences.stagedOnLeave ?? "ask" {
+        case "send":
+            PerfLog.mark("widget.peek staged send=\(staged.count) id=\(shown.id)")
+            schedulePeekEnd(on: surface)
+            sendStaged(staged.map(\.sourceId), known: staged)
+        case "keep":
+            PerfLog.mark("widget.peek staged remind=\(staged.count) id=\(shown.id)")
+            endPeek(advance: false)
+            stagedLeftInPopup?(stagedForLeave)
+        default:
+            PerfLog.mark("widget.peek staged held=\(staged.count) id=\(shown.id)")
+            schedulePeekEnd(on: surface)
+        }
+        return true
+    }
+
     /// Starts the popup's countdown again. It ends the popup only while the pointer is off it; with 0 seconds the
     /// popup stays until it is closed.
     private func schedulePeekEnd(on surface: WidgetSurfaceID) {
@@ -980,6 +1014,7 @@ public final class WidgetModel: ObservableObject {
         peekTask = Task { [weak self] in
             do { try await Task.sleep(for: .seconds(seconds)) } catch { return }
             guard let self, self.peekItem == item, !self.pointerInside.contains(surface.key) else { return }
+            if self.holdPeekForStaged(on: surface) { return }
             self.endPeek()
         }
     }
@@ -1238,7 +1273,8 @@ public final class WidgetModel: ObservableObject {
         railActivitySessions = snapshot?.state.preferences.railOrder == "stable"
             ? railActive : railActive.sorted(by: Self.previewOrder(inbox: inboxSessions, sort: previewSort))
         inboxOverviewItems = Self.overviewItems(value.sessions)
-        reconcileStaged(value.staged ?? value.sessions.flatMap { $0.items ?? [] })
+        let listed = value.sessions.flatMap { $0.items ?? [] }
+        reconcileStaged(value.staged ?? listed, listed: listed)
         if value.complete, !stagedStartChecked {
             stagedStartChecked = true
             if !stagedItems.isEmpty { stagedAtStart?(stagedItems) }
@@ -1426,6 +1462,14 @@ public final class WidgetModel: ObservableObject {
     public var stagedItems: [WidgetInboxItem] { stagedRows.filter { !heldDecisionIDs.contains($0.sourceId) } }
     /// Picks staged or cleared here that the next snapshot has not shown yet, by decision id ("" is a cleared pick).
     @Published var pendingStage: [String: String] = [:]
+    /// When each `pendingStage` entry was asked for (epoch ms): `reconcileStaged` drops it once its row changed after
+    /// that, whatever the row now holds, or after `pendingStageLifetime`, so a pick another surface replaced or a
+    /// decision sent elsewhere stops showing the old pick (it stayed until the widget restarted).
+    var pendingStageAt: [String: Double] = [:]
+    /// The item each pending pick was made on, so a leave or a popup's end right after the click still knows it.
+    var pendingStageItems: [String: WidgetInboxItem] = [:]
+    /// When the hub confirmed each pending pick was written (epoch ms): a row written after it is another surface's.
+    var pendingStageDone: [String: Double] = [:]
     /// Decisions whose send runs now, so their Send now says Sending… and a second press cannot send them twice.
     @Published public var sendingDecisionIDs: Set<String> = []
     /// The question about staged decisions before the panel closes (`requestCollapse`).

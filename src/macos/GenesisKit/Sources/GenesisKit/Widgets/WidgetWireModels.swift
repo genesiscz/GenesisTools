@@ -488,6 +488,9 @@ public struct WidgetInboxItem: Codable, Equatable, Sendable {
     public var option: String? = nil
     public var answer: String? = nil
     public var answeredVia: String? = nil
+    /// A decision row's last write (epoch ms): `reconcileStaged` drops an optimistic pick once the row changed after
+    /// the pick was asked for, whatever the row now holds. Nil from an older hub.
+    public var updatedAt: Double? = nil
     public var isStaged: Bool { kind == "decision" && needsAnswer && (draftOption != nil || draft != nil) }
     public var isAnsweredElsewhere: Bool { kind == "decision" && !needsAnswer && answeredVia != nil }
 }

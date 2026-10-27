@@ -6,6 +6,28 @@ import Foundation
 /// click or Return stages or sends, one request shape goes to the hub's `send-staged` and `resend-answers` actions
 /// (`src/hub/lib/widget/actions.ts`, also `tools hub widget call`), and one outcome words what arrived.
 public enum DecisionAnswering {
+    /// The letters a click on `letter` stages over `current`: with ⇧ (`adding`) the letter joins the set or leaves it,
+    /// a plain click picks it alone, and a click on the only picked letter clears the pick. Sorted ("ac"), nil for
+    /// none. The hub's Inbox uses the same rule (`InboxDecisionCard.toggled`); the widget used to replace "ac" by "a".
+    public static func nextPick(_ current: String?, _ letter: String, adding: Bool) -> String? {
+        var set = Set((current ?? "").map(String.init))
+        if adding {
+            if set.contains(letter) { set.remove(letter) } else { set.insert(letter) }
+        } else {
+            set = set == [letter] ? [] : [letter]
+        }
+        let next = set.sorted().joined()
+        return next.isEmpty ? nil : next
+    }
+
+    /// A staged answer in words for a sentence: "pick b)", "pick a) c) and note", "note".
+    public static func pickWords(option: String?, note: String?) -> String {
+        let letters = (option ?? "").map { "\($0))" }.joined(separator: " ")
+        let hasNote = !(note ?? "").trimmingCharacters(in: .whitespacesAndNewlines).isEmpty
+        if letters.isEmpty { return "note" }
+        return hasNote ? "pick \(letters) and note" : "pick \(letters)"
+    }
+
     /// Whether an action stages: `stagesByDefault`, turned around while ⌘ is down and `swaps` is on.
     public static func stages(_ stagesByDefault: Bool, command: Bool, swaps: Bool) -> Bool {
         stagesByDefault != (swaps && command)
