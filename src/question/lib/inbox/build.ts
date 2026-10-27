@@ -186,6 +186,24 @@ export interface InboxSession {
  */
 export const INBOX_STALE_MS = 72 * 60 * 60 * 1000;
 
+/**
+ * Whether a session's waiting items count (the widget's badges, the hub's header): the session worked, or asked the
+ * newest of them, within `INBOX_STALE_MS`. Per session, so every waiting item of a counted session counts. The one
+ * rule both surfaces count with; the widget used to ask it per item by the row's last update, so a stage on an old
+ * decision counted it again there and nowhere else.
+ */
+export function inboxSessionFresh({
+    activityAt,
+    newestAskAt,
+    now,
+}: {
+    activityAt: number;
+    newestAskAt: number;
+    now: number;
+}): boolean {
+    return Math.max(activityAt, newestAskAt) >= now - INBOX_STALE_MS;
+}
+
 /** The session fields the inbox shows; a subset of `AgentSessionRow`. */
 export interface InboxSessionInfo {
     provider: string;
@@ -586,7 +604,6 @@ export function buildInbox({ sessions, scans, rows, forms, now = Date.now() }: B
 
         entry.items.sort((a, b) => a.at.localeCompare(b.at));
         const lastAt = entry.items.reduce((latest, item) => (item.at > latest ? item.at : latest), "");
-        const newest = Math.max(entry.activityAt, Date.parse(lastAt) || 0);
         result.push({
             sessionId: entry.sessionId,
             provider: entry.info.provider ?? null,
@@ -600,7 +617,7 @@ export function buildInbox({ sessions, scans, rows, forms, now = Date.now() }: B
             waiting: entry.items.filter((item) => item.kind === "form" || isOpen(item.status)).length,
             drafted: entry.items.filter((item) => item.kind === "decision" && hasDraft(item)).length,
             queued: entry.items.filter((item) => item.kind === "decision" && item.status === "answered").length,
-            stale: newest < now - INBOX_STALE_MS,
+            stale: !inboxSessionFresh({ activityAt: entry.activityAt, newestAskAt: Date.parse(lastAt) || 0, now }),
             reply: entry.reply,
             items: entry.items,
         });
