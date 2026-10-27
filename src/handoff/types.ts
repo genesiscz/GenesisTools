@@ -160,7 +160,7 @@ export type HandoffEvent =
           refs?: string[];
           /** Moves the handoff to this project (a resolved name). */
           project?: string;
-          /** The project the handoff was under when the move was asked for, kept so the history reads from → to. */
+          /** The project before the attempted move, derived at fold time for the public history. */
           fromProject?: string | null;
       })
     | (HandoffEventBase & { ev: "finish"; force?: boolean })

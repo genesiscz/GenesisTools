@@ -439,12 +439,15 @@ export function postHandoff(input: PostHandoffInput, deps: HandoffDeps = {}): Po
         // no target harness, or Claude. A Codex or Grok target would get a session its own paste
         // text tells to stop.
         const targetAgent = handoff.target?.agent;
+        const targetCwd =
+            named === null || named.project === by.project ? (named?.launchCwd ?? launchCwd(by)) : named.launchCwd;
         const runLink =
-            targetAgent === undefined || canonicalAgent(targetAgent) === "claude"
+            (targetAgent === undefined || canonicalAgent(targetAgent) === "claude") &&
+            (named === null || targetCwd !== null)
                 ? mintHandoffLaunch({
                       name: handoff.name ?? handoff.id,
                       prompt: pasteAgentText(handoff.id),
-                      cwd: named?.launchCwd ?? launchCwd(by),
+                      cwd: targetCwd,
                       deps,
                   })
                 : null;
@@ -1415,7 +1418,7 @@ function parseAction(
                     ...(description !== undefined ? { description } : {}),
                     ...(target !== undefined ? { target } : {}),
                     ...(refs !== undefined ? { refs } : {}),
-                    ...(project !== undefined ? { project, fromProject: handoff.project } : {}),
+                    ...(project !== undefined ? { project } : {}),
                 },
             };
         }
