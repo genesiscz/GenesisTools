@@ -36,6 +36,10 @@ export interface OpenHubOptions {
     repo?: string;
     /** Opens the Worktrees mode on this checkout folder. */
     worktree?: string;
+    /** Opens the Inbox at this decision or todo card (`d_3_<session>`). */
+    decision?: string;
+    /** Opens the Inbox at this pending form (`ask_…`). */
+    question?: string;
     tab?: HubTab;
     /** The session list filter, which also searches every project's history. */
     filter?: string;
@@ -130,6 +134,15 @@ export function hubArgs(options: OpenHubOptions): string[] {
 
     if (options.tab) {
         args.push("--tab", options.tab);
+    }
+
+    for (const [flag, value] of [
+        ["--decision", options.decision],
+        ["--question", options.question],
+    ] as const) {
+        if (value) {
+            args.push(flag, value);
+        }
     }
 
     for (const [flag, value] of [

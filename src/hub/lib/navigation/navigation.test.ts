@@ -4,6 +4,7 @@ import * as fs from "node:fs";
 import { existsSync, mkdirSync, mkdtempSync, readdirSync, readFileSync, rmSync } from "node:fs";
 import { homedir, tmpdir } from "node:os";
 import { join, resolve } from "node:path";
+import { HUB_LINK_KEYS } from "@genesiscz/utils/browser-router/router-link";
 import { clearDatabaseReadSnapshots } from "@genesiscz/utils/database/read-snapshot";
 import { openHubDb } from "../data-db";
 import { hubArgs, hubUrl, worktreeTarget } from "../open";
@@ -133,6 +134,21 @@ describe("what tools hub nav open names", () => {
             "--worktree",
             "cleanup-blocked",
         ]);
+    });
+
+    // The app keeps only the keys it knows (Host/HubLink.swift): a key the CLI writes and the app drops, or the other
+    // way round, is a place a link silently loses.
+    it("writes the same link keys the app reads", () => {
+        const swift = readFileSync(
+            join(import.meta.dir, "../../../macos/GenesisTools/Sources/Host/HubLink.swift"),
+            "utf8"
+        );
+        const block = /linkKeys: Set<String> = \[([\s\S]*?)\]/.exec(swift)?.[1] ?? "";
+        const appKeys = [...block.matchAll(/"([a-z]+)"/g)].map((match) => match[1]).sort();
+        expect(appKeys.length).toBeGreaterThan(10);
+        const written: string[] = [...HUB_LINK_KEYS].sort();
+        expect(written).toEqual(appKeys);
+        expect(hubArgs({ decision: "d_3_s1" })).toEqual(["--hub", "--decision", "d_3_s1"]);
     });
 
     // The app resolves a relative path against its own folder (`/`): `tools hub open --worktree .` opened nothing.
