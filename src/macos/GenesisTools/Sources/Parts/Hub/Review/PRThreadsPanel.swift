@@ -584,13 +584,18 @@ struct PRThreadsList: View {
         }
     }
 
+    /// The file "This file" filters by: the one the diff counts as current.
+    private var thisFileName: String {
+        model.repoPath(of: model.selectedID).map { ($0 as NSString).lastPathComponent } ?? "no file"
+    }
+
     /// What the list shows when no thread passes the filters.
     private var emptyThreads: some View {
         VStack(spacing: 6) {
             Image(systemName: store.payload == nil ? "bubble.left.and.bubble.right" : "checkmark.bubble")
                 .font(.system(size: 20))
                 .foregroundColor(ReviewPalette.dim)
-            Text(store.payload == nil ? "No threads loaded yet." : showClosed || onlyThisFile ? "No thread matches these filters." : model.proposal?.drafts.isEmpty == false ? "No open PR threads." : "No open threads.")
+            Text(store.payload == nil ? "No threads loaded yet." : onlyThisFile ? "No \(showClosed ? "" : "open ")thread on \(thisFileName)." : showClosed ? "No thread matches these filters." : model.proposal?.drafts.isEmpty == false ? "No open PR threads." : "No open threads.")
                 .font(.system(size: 12))
                 .foregroundColor(ReviewPalette.dim)
         }
@@ -635,7 +640,9 @@ struct PRThreadsList: View {
     private func toolbar(all: [PRThread], placed: [String: PRThreadPlacement], shown: [PRThread], files: Int) -> some View {
         let openCount = all.filter { Self.isOpen($0, placed[$0.id]) }.count
         let fixable = shown.filter { !$0.resolved && !$0.isMyDraft && !model.selectedThreads.contains($0.id) }.map(\.id)
-        let summary = "\(shown.count) \(shown.count == 1 ? "thread" : "threads") in \(files) \(files == 1 ? "file" : "files")"
+        let threads = "\(shown.count) \(shown.count == 1 ? "thread" : "threads")"
+        // "This file" follows the file the diff counts as current (the topmost one while scrolling), so name it.
+        let summary = onlyThisFile ? "\(threads) on \(thisFileName)" : "\(threads) in \(files) \(files == 1 ? "file" : "files")"
         VStack(alignment: .leading, spacing: 6) {
             HStack(spacing: 6) {
                 PRFilterChip(title: "Open", count: openCount, on: !showClosed,
@@ -644,11 +651,11 @@ struct PRThreadsList: View {
                              tooltip: "Also the resolved threads and the outdated ones") { showClosed = true }
                 Rectangle().fill(ReviewPalette.hairline).frame(width: 1, height: 14)
                 PRFilterChip(title: "This file", symbol: "doc.text", on: onlyThisFile,
-                             tooltip: "Show only the threads on the file open in the diff") { onlyThisFile.toggle() }
+                             tooltip: "Show only the threads on the current file of the diff (the one selected, or the topmost while you scroll)") { onlyThisFile.toggle() }
                 Spacer(minLength: 0)
                 if !compact {
                     selectForFix(fixable)
-                    Text(verbatim: summary).foregroundColor(ReviewPalette.dim).fixedSize()
+                    Text(verbatim: summary).foregroundColor(ReviewPalette.dim).lineLimit(1).truncationMode(.middle)
                 }
             }
             if compact {
