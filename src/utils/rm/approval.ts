@@ -53,7 +53,7 @@ function showDialog(prompt: ApprovalPrompt): boolean {
 
     const body = `${prompt.title}\n\n${shown.join("\n")}`;
     const script =
-        `display dialog ${appleScriptString(body)} with title "tools rm" ` +
+        `display dialog ${appleScriptString(body)} with title "Confirm deletion" ` +
         `buttons {"Cancel", "Approve"} default button "Cancel" cancel button "Cancel" with icon caution giving up after 600`;
     const proc = Bun.spawnSync(["osascript", "-e", script], { stdout: "pipe", stderr: "pipe" });
     const answer = new TextDecoder().decode(proc.stdout);

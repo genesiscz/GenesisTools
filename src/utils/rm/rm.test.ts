@@ -60,7 +60,7 @@ function file(path: string, content = "x"): string {
 }
 
 function git(cwd: string, ...args: string[]): void {
-    const proc = Bun.spawnSync(["git", "-C", cwd, ...args], { stdout: "pipe", stderr: "pipe" });
+    const proc = Bun.spawnSync(["git", "-C", cwd, ...args], { stdout: "pipe", stderr: "pipe", env: process.env });
 
     if (proc.exitCode !== 0) {
         throw new Error(`git ${args.join(" ")}: ${proc.stderr.toString()}`);

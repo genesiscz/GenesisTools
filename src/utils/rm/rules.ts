@@ -13,6 +13,7 @@ import {
     isSameOrInside,
     pathSegments,
     realOrSelf,
+    sharedTempRoot,
     VOLUME_TRASH_DIR,
 } from "./paths";
 import { matchPreset, presetsFor } from "./presets";
@@ -171,7 +172,7 @@ export function hardDenyReason(target: RmTarget, ctx: Pick<RmRuleContext, "confi
     const trashRoot = realOrSelf(ctx.config.trashRoot);
 
     if (isSameOrInside(trashRoot, p) || isInside(p, trashRoot) || basename(p) === VOLUME_TRASH_DIR) {
-        return "the trash itself (tools rm drain empties it)";
+        return "the trash itself (the drain empties it)";
     }
 
     for (const raw of [...builtinProtected(ctx.home), ...ctx.config.protect]) {
@@ -190,7 +191,9 @@ export function hardDenyReason(target: RmTarget, ctx: Pick<RmRuleContext, "confi
 }
 
 /** Where agents keep per-session scratch: `<root>/<project>/<session id>/`. */
-export const SESSION_SCRATCH_ROOT = "/tmp/cc";
+export function sessionScratchRoot(): string {
+    return join(sharedTempRoot(), "cc");
+}
 
 /** The session's own scratch folder, `/tmp/cc/<project>/<session id>/`. */
 function inSessionScratch(target: RmTarget, caller: RmCaller, root: string): boolean {
@@ -503,7 +506,7 @@ export function defaultRuleContext(config: RmConfig, caller: RmCaller, cwd: stri
         home: homedir(),
         presets: presetsFor(config),
         ownFiles: sessionOwnFiles(caller),
-        scratchRoot: SESSION_SCRATCH_ROOT,
+        scratchRoot: sessionScratchRoot(),
         git: probeGit,
         nestedRepos: (target) => findNestedRepos(target),
     };
