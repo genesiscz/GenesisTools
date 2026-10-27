@@ -195,6 +195,10 @@ final class ClickyAudio {
         previewSelection.clear()
     }
 
+    /// Randomized pitch for a pack: every bundled manifest says 0, so the switch did nothing while a pack played.
+    /// ±3% is under half a semitone: the recording keeps its character and a repeated key stops sounding identical.
+    static let packPitchVariation: Float = 0.03
+
     @discardableResult
     func playSelected(keyCode: UInt16, release: Bool, preview: Bool, preferences: ClickyPreferences, pan: Float) throws -> Bool {
         guard let reference = activeReference, let bank = banks.last(where: { $0.reference == reference }) else { return false }
@@ -202,14 +206,16 @@ final class ClickyAudio {
         if preview {
             choice = previewSelection.next(playback: bank.playback, keyCode: keyCode, release: release)
         } else {
-            choice = liveSelection.next(playback: bank.playback, keyCode: keyCode, release: release)
+            choice = liveSelection.next(
+                playback: bank.playback, keyCode: keyCode, release: release, randomize: preferences.randomizedPitch)
         }
         guard let choice, !release || preferences.releaseSounds, bank.buffers[choice.filename] != nil else { return true }
         let gain = bank.playback.gain * (release ? bank.playback.keyupGain : 1)
         let filename = choice.filename
         // Looked up when it plays: a start that changed the output rate converts the bank first.
         try schedule({ [weak self] in self?.banks.last(where: { $0.reference == reference })?.buffers[filename] },
-                     preferences: preferences, pan: pan, gain: gain, pitchVariation: bank.playback.pitchVariation)
+                     preferences: preferences, pan: pan, gain: gain,
+                     pitchVariation: max(bank.playback.pitchVariation, Self.packPitchVariation))
         return true
     }
 

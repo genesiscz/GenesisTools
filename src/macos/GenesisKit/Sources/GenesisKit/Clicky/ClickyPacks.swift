@@ -141,14 +141,20 @@ struct ClickySampleChoice: Equatable, Sendable {
 
 struct ClickyPackSelectionState {
     private var counters: [String: Int] = [:]
+    private var lastRandom: [String: Int] = [:]
     private var held: [UInt16: ClickySampleChoice] = [:]
 
     mutating func clear() {
         counters.removeAll(keepingCapacity: true)
+        lastRandom.removeAll(keepingCapacity: true)
         held.removeAll(keepingCapacity: true)
     }
 
-    mutating func next(playback: ClickyPackPlayback, keyCode: UInt16, release: Bool) -> ClickySampleChoice? {
+    /// `randomize` picks any press variant but the one just played (Randomized pitch on), so a held-key repeat or a
+    /// run of one key never walks the same fixed order; off, the variants play in turn.
+    mutating func next(playback: ClickyPackPlayback, keyCode: UInt16, release: Bool, randomize: Bool = false)
+        -> ClickySampleChoice?
+    {
         if release {
             guard let press = held.removeValue(forKey: keyCode),
                 let variants = playback.categories[press.category], !variants.release.isEmpty
@@ -159,8 +165,17 @@ struct ClickyPackSelectionState {
         }
         let category = playback.category(for: keyCode)
         guard let variants = playback.categories[category], !variants.press.isEmpty else { return nil }
-        let index = (counters[category] ?? 0) % variants.press.count
-        counters[category] = (index + 1) % variants.press.count
+        let count = variants.press.count
+        let index: Int
+        if randomize, count > 1 {
+            let last = lastRandom[category]
+            let pick = Int.random(in: 0..<(last == nil ? count : count - 1))
+            index = last.map { pick >= $0 ? pick + 1 : pick } ?? pick
+            lastRandom[category] = index
+        } else {
+            index = (counters[category] ?? 0) % count
+            counters[category] = (index + 1) % count
+        }
         let choice = ClickySampleChoice(
             filename: variants.press[index], category: category, variant: index, release: false)
         held[keyCode] = choice
@@ -283,7 +298,7 @@ actor ClickyPackLoader {
                 }
                 samples[file.filename] = cached
             } else {
-                let frames = try Self.decodePCM16(data, expectedFrames: file.frames)
+                let frames = ClickySampleTrim.trimmed(try Self.decodePCM16(data, expectedFrames: file.frames))
                 decodedFrameCount += frames.count
                 let sample = ClickyPreparedSample(sha256: hash, frames: frames)
                 byHash[hash] = sample
@@ -455,5 +470,48 @@ final class ClickyPackDirectory {
         }
         guard result.count == info.st_size else { throw ClickyPackError.invalid("Pack file changed while reading: \(name)") }
         return result
+    }
+}
+
+/// Cleans a pack recording when it loads. Measured 2026-10-27 over the 110 bundled packs: 17 of the 20 press samples
+/// of `unicae-kc1000` hold a second key hit 70 to 130 ms after the first (the source cut 200 ms of a typing take), so
+/// one press played "click … click", and they start with a median 15 ms of room noise before the hit. This cuts the
+/// lead-in to 2 ms before the onset, cuts the sample where a second hit begins, and fades the cut ends. A clean sample
+/// (one hit, no lead-in) comes back unchanged.
+enum ClickySampleTrim {
+    static let window = 120  // 2.5 ms at 48 kHz
+    static let leadIn = 96  // 2 ms kept before the onset
+    static let fade = 240  // 5 ms
+
+    static func trimmed(_ frames: [Float]) -> [Float] {
+        let windows = frames.count / window
+        guard windows >= 4 else { return frames }
+        let rms: [Float] = (0..<windows).map { index in
+            let slice = frames[(index * window)..<((index + 1) * window)]
+            return (slice.reduce(0) { $0 + $1 * $1 } / Float(window)).squareRoot()
+        }
+        guard let peak = rms.max(), peak > 0, let peakAt = rms.firstIndex(of: peak) else { return frames }
+        let db = rms.map { 20 * log10(max($0, 1e-9) / peak) }
+        let onset = db.firstIndex { $0 > -20 } ?? 0
+        var start = max(0, onset * window - leadIn)
+        if start < fade { start = 0 }
+        var end = frames.count
+        var quietest = peakAt
+        for index in (peakAt + 1)..<windows {
+            if db[index] < db[quietest] { quietest = index }
+            if index - peakAt >= 4, db[index] > -15, db[index] - db[quietest] >= 12 {
+                end = quietest * window
+                break
+            }
+        }
+        guard start > 0 || end < frames.count, end - start > 2 * fade else { return frames }
+        var out = Array(frames[start..<end])
+        if start > 0 {
+            for index in 0..<min(48, out.count) { out[index] *= Float(index) / 48 }
+        }
+        if end < frames.count {
+            for index in 0..<fade { out[out.count - 1 - index] *= Float(index) / Float(fade) }
+        }
+        return out
     }
 }

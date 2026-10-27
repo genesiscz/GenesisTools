@@ -275,7 +275,7 @@ private struct ClickySettingsPageContent: View {
                     value: $model.preferences.repeatSounds)
             }
             Text(
-                "All seven sounds are synthesized locally at 48 kHz. Headphones make the stereo positioning easier to hear."
+                "Built-in sounds are synthesized locally at the output's own rate. Randomized pitch also varies pack sounds by up to 3% and shuffles their recorded takes. Headphones make the stereo positioning easier to hear."
             )
             .font(.system(size: 11)).foregroundStyle(.secondary).frame(maxWidth: .infinity, alignment: .leading)
         }
