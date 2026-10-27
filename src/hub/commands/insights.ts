@@ -204,6 +204,7 @@ interface HandoffFlags {
     copy?: boolean;
     post?: boolean;
     owner?: boolean;
+    project?: string;
     json?: boolean;
 }
 
@@ -368,6 +369,10 @@ export function registerInsightsCommands(program: Command): void {
         .option("--copy", "also copy the markdown to the clipboard")
         .option("--post", "also post it to the handoff store (handoff_post): open items become its tasks")
         .option("--owner", "with --post: post as the human owner in the session's folder (the hub does)")
+        .option(
+            "--project <name|path>",
+            "with --post: the project the handoff is for, a name or a repository path (default: the poster's folder)"
+        )
         .option("--json", "machine-readable output")
         .action(async (session: string, opts: HandoffFlags) => {
             let range: HandoffRange;
@@ -395,7 +400,12 @@ export function registerInsightsCommands(program: Command): void {
                 }
 
                 const posted = opts.post
-                    ? postSessionHandoff(draft, { owner: opts.owner, cwd: opts.cwd, branch: opts.branch })
+                    ? postSessionHandoff(draft, {
+                          owner: opts.owner,
+                          cwd: opts.cwd,
+                          branch: opts.branch,
+                          project: opts.project,
+                      })
                     : null;
                 const handoff = posted
                     ? { id: posted.handoff.id, name: posted.handoff.name ?? null, paste: posted.paste._agent }
