@@ -17,6 +17,7 @@ import { readVolumeInfo, scanPartners, scanWithC, scanWithCFfi } from "./lib/eng
 import { diffScans, humanBytes, renderDiff, renderHuman, renderPartners, renderTree, renderVolume } from "./lib/format";
 import { registerIndexCommands } from "./lib/index/commands";
 import { durationToCutoff, intOpt } from "./lib/options";
+import { registerSizeCommand } from "./lib/size-command";
 import type { ClonesizeResult, Engine, ScanOptions } from "./lib/types";
 import { detectWorktreeExcludes } from "./lib/worktrees";
 
@@ -535,5 +536,6 @@ program
 
 registerIndexCommands(program);
 registerCloudCommands(program);
+registerSizeCommand(program);
 
 await runTool(program, { tool: "du" });
