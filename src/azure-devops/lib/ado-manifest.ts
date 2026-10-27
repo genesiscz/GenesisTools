@@ -21,11 +21,61 @@ export interface AdoManifest {
 }
 
 const IDENTIFIER = /^[A-Za-z_$][\w$]*$/;
+const RESERVED_BINDINGS = new Set([
+    "await",
+    "break",
+    "case",
+    "catch",
+    "class",
+    "const",
+    "continue",
+    "debugger",
+    "default",
+    "delete",
+    "do",
+    "else",
+    "enum",
+    "export",
+    "extends",
+    "false",
+    "finally",
+    "for",
+    "function",
+    "if",
+    "import",
+    "in",
+    "instanceof",
+    "new",
+    "null",
+    "return",
+    "super",
+    "switch",
+    "this",
+    "throw",
+    "true",
+    "try",
+    "typeof",
+    "var",
+    "void",
+    "while",
+    "with",
+    "yield",
+    "implements",
+    "interface",
+    "let",
+    "package",
+    "private",
+    "protected",
+    "public",
+    "static",
+    "eval",
+    "arguments",
+]);
 const TS_EXPORT = /export const [A-Za-z_$][\w$]* = /;
 const TS_SUFFIX = " as const;";
 
 export function isIdentifier(name: string): boolean {
-    return IDENTIFIER.test(name);
+    return IDENTIFIER.test(name) && !RESERVED_BINDINGS.has(name);
 }
 
 export function renderManifestJson(manifest: AdoManifest): string {

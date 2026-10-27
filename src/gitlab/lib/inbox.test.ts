@@ -25,6 +25,7 @@ import {
     renderInboxText,
     writeInboxState,
 } from "@app/gitlab/lib/inbox";
+import { SafeJSON } from "@genesiscz/utils/json";
 
 const SINCE = "2026-10-20T10:00:00Z";
 const MR_URL = `${FAKE_HOST}/acme/widgets/-/merge_requests`;
@@ -221,6 +222,19 @@ describe("the state file", () => {
         writeFileSync(path, "[1, 2]");
 
         expect(() => readInboxState(path)).toThrow("is not an inbox state file");
+    });
+
+    test("a malformed saved check fails instead of discarding its mark", () => {
+        const path = join(dir, "bad-check.json");
+        for (const check of [
+            { lastCheckedAt: SINCE },
+            { lastCheckedAt: "not a date", mrs: {} },
+            { lastCheckedAt: SINCE, mrs: { "4242!7": "bad" } },
+            { lastCheckedAt: SINCE, mrs: { "4242!7": -1 } },
+        ]) {
+            writeFileSync(path, SafeJSON.stringify({ checks: { k: check } }));
+            expect(() => readInboxState(path)).toThrow('invalid check "k"');
+        }
     });
 });
 

@@ -54,7 +54,13 @@ export function mrKey(projectId: number, iid: number): string {
 }
 
 function isCheck(value: unknown): value is InboxCheck {
-    return isJsonObject(value) && typeof value.lastCheckedAt === "string" && isJsonObject(value.mrs);
+    return (
+        isJsonObject(value) &&
+        typeof value.lastCheckedAt === "string" &&
+        Number.isFinite(Date.parse(value.lastCheckedAt)) &&
+        isJsonObject(value.mrs) &&
+        Object.values(value.mrs).every((id) => typeof id === "number" && Number.isSafeInteger(id) && id >= 0)
+    );
 }
 
 /** The saved checks; a missing file is no check yet. A file that does not parse is an error, never a silent reset. */
@@ -80,9 +86,10 @@ export function readInboxState(path: string): InboxState {
 
     const checks: Record<string, InboxCheck> = {};
     for (const [key, check] of Object.entries(raw.checks)) {
-        if (isCheck(check)) {
-            checks[key] = check;
+        if (!isCheck(check)) {
+            throw new Error(`${path} has an invalid check ${SafeJSON.stringify(key)}; repair it or move the file away`);
         }
+        checks[key] = check;
     }
 
     return { checks };

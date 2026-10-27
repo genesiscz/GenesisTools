@@ -1223,7 +1223,7 @@ export class Api {
      * Get all queries from the project (flat list)
      * Recursively fetches queries from all folders
      */
-    async getAllQueries(): Promise<QueryInfo[]> {
+    async getAllQueries(options: { strict?: boolean } = {}): Promise<QueryInfo[]> {
         logger.debug("[api] Fetching all queries from project");
         const queries: QueryInfo[] = [];
 
@@ -1258,8 +1258,11 @@ export class Api {
                                 await processNode(child, path);
                             }
                         }
-                    } catch {
-                        // Skip folders we can't access
+                    } catch (error) {
+                        if (options.strict) {
+                            throw error;
+                        }
+                        // Skip folders we can't access in the interactive query listing.
                     }
                 }
             } else {
