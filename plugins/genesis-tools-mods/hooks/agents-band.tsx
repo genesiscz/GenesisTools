@@ -121,10 +121,11 @@ export const agentsBand: Feature = {
         });
         await refreshAgentDetails(host);
     },
-    beforeTool(_host, e) {
+    beforeTool(host, e) {
         if (!startsWorkers && typeof e.command === "string" && SPAWNS_WORKERS.test(e.command)) {
             startsWorkers = true;
             workersAt = 0;
+            void rememberStartsWorkers(host, true);
         }
 
         if (e.agentId !== undefined) {
@@ -191,6 +192,27 @@ export function workersOf(stdout: string, sessionId: string): SessionWorker[] {
     );
 }
 
+/**
+ * Whether a session started a worker, kept across reloads in `$.store` under one key for the last 200 sessions: every
+ * reload of the mods grepped the whole transcript again (113 greps in 53 sessions on 2026-10-27).
+ */
+const STARTS_WORKERS_KEY = "agents.startsWorkers";
+
+async function rememberedStartsWorkers(host: Host): Promise<boolean | undefined> {
+    const held = await host.storeGet(STARTS_WORKERS_KEY).catch(() => undefined);
+    const value = isRecord(held) ? held[await host.sessionId()] : undefined;
+
+    return typeof value === "boolean" ? value : undefined;
+}
+
+async function rememberStartsWorkers(host: Host, value: boolean): Promise<void> {
+    const held = await host.storeGet(STARTS_WORKERS_KEY).catch(() => undefined);
+    const sessionId = await host.sessionId();
+    const others = Object.entries(isRecord(held) ? held : {}).filter(([id]) => id !== sessionId);
+    const next = Object.fromEntries([...others.slice(-199), [sessionId, value]]);
+    await host.storeSet(STARTS_WORKERS_KEY, next).catch(() => undefined);
+}
+
 /** Reads the session's workers from a timer; a failed or timed-out read keeps the last list. */
 async function loadWorkers(host: Host): Promise<void> {
     const startedAt = Date.now();
@@ -201,6 +223,10 @@ async function loadWorkers(host: Host): Promise<void> {
 
     // Until the read below answers, no other tick starts one.
     workersAt = startedAt + WORKERS_EVERY_MS;
+
+    if (startsWorkers === undefined) {
+        startsWorkers = await rememberedStartsWorkers(host);
+    }
 
     if (startsWorkers === undefined) {
         const dir = await sessionDirOf(host);
@@ -216,6 +242,7 @@ async function loadWorkers(host: Host): Promise<void> {
 
         if (found?.exitCode === 0 || found?.exitCode === 1) {
             startsWorkers = found.exitCode === 0;
+            await rememberStartsWorkers(host, startsWorkers);
         }
     }
 
