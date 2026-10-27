@@ -3,6 +3,8 @@
 import { runTool } from "@genesiscz/utils/cli";
 import { toolCommand } from "@genesiscz/utils/cli/tool-command";
 import { Command } from "commander";
+import { registerAuditCommands } from "./commands/audit";
+import { registerProfileCommands } from "./commands/profiles";
 import { registerRemoveCommand } from "./commands/remove";
 import { registerRequestCommands } from "./commands/requests";
 import { registerRootCommands } from "./commands/roots";
@@ -23,6 +25,8 @@ registerSettingsCommands(program);
 registerRequestCommands(program);
 registerRootCommands(program);
 registerTrashCommands(program);
+registerProfileCommands(program);
+registerAuditCommands(program);
 
 if (import.meta.main) {
     await runTool(program, { tool: "rm" });

@@ -1,3 +1,4 @@
+import { existsSync, readdirSync, rmdirSync } from "node:fs";
 import { resolve } from "node:path";
 import { formatBytes } from "@genesiscz/utils/format";
 import { out } from "@genesiscz/utils/logger";
@@ -11,12 +12,22 @@ import {
     measureBytes,
     moveToTrash,
     resolveTarget,
+    returnAside,
     saveRmConfig,
     saveRmRequest,
 } from "@genesiscz/utils/rm";
 import type { Command } from "commander";
 import pc from "picocolors";
 import { printRequestHint, requirePerson, runContext, shown } from "../lib/run";
+
+/** An aside batch folder that the decision emptied; a non-empty one (something kept) stays. */
+function removeEmptyAsideDir(dir: string | undefined): void {
+    if (!dir || !existsSync(dir) || readdirSync(dir).length > 0) {
+        return;
+    }
+
+    rmdirSync(dir);
+}
 
 export function registerRequestCommands(program: Command): void {
     program
@@ -51,6 +62,11 @@ export function registerRequestCommands(program: Command): void {
 
                 for (const target of request.targets) {
                     out.println(`  ${target.path} ${pc.dim(`(${target.rule}: ${target.reason})`)}`);
+
+                    if (target.stored) {
+                        const size = target.bytes === undefined ? "" : `, ${formatBytes(target.bytes)}`;
+                        out.println(pc.dim(`    waits aside at ${target.stored}${size}`));
+                    }
                 }
             }
         });
@@ -96,12 +112,17 @@ export function registerRequestCommands(program: Command): void {
                 return;
             }
 
-            const targets = request.targets.map((t) => resolveTarget(t.path, request.cwd));
-            const blocked = targets.filter((t) => hardDenyReason(t, ctx.rules) !== null);
-            const open = targets.filter((t) => !blocked.includes(t));
+            // An aside item is approved where it waits (its stored copy); the original path is what gets recorded.
+            const entries = request.targets.map((t) => ({
+                wanted: t,
+                target: resolveTarget(t.stored ?? t.path, request.cwd),
+            }));
+            const blocked = entries.filter((e) => hardDenyReason(e.target, ctx.rules) !== null);
+            const openEntries = entries.filter((e) => !blocked.includes(e));
+            const open = openEntries.map((e) => e.target);
 
-            for (const target of blocked) {
-                out.println(pc.red(`refuse ${target.path}: ${hardDenyReason(target, ctx.rules)}`));
+            for (const entry of blocked) {
+                out.println(pc.red(`refuse ${entry.wanted.path}: ${hardDenyReason(entry.target, ctx.rules)}`));
             }
 
             if (open.length === 0) {
@@ -112,10 +133,11 @@ export function registerRequestCommands(program: Command): void {
             const who = request.caller
                 ? `${request.caller.agent} session ${request.caller.sessionId?.slice(0, 8) ?? "?"}`
                 : "an agent";
-            const lines = open.map((t) => {
-                const size = request.kind === "delete" ? `  ${formatBytes(measureBytes(t.path))}` : "";
-                const why = request.targets.find((r) => r.path === t.path)?.reason ?? "";
-                return `${shown(t.path, ctx.cwd)}${size}  (${why})`;
+            const lines = openEntries.map(({ wanted, target }) => {
+                const bytes = wanted.bytes ?? measureBytes(target.path);
+                const size = request.kind === "delete" ? `  ${formatBytes(bytes)}` : "";
+                const where = wanted.stored ? ", moved aside" : "";
+                return `${shown(wanted.path, ctx.cwd)}${size}  (${wanted.reason}${where})`;
             });
 
             if (request.reason) {
@@ -137,7 +159,7 @@ export function registerRequestCommands(program: Command): void {
                     addedAt: new Date().toISOString(),
                     via: `request:${id}`,
                 }));
-                saveRmConfig({ ...ctx.config, roots: [...ctx.config.roots, ...roots] });
+                saveRmConfig({ ...ctx.base, roots: [...ctx.base.roots, ...roots] });
 
                 for (const root of roots) {
                     appendRmLedger({
@@ -152,9 +174,15 @@ export function registerRequestCommands(program: Command): void {
                 out.println(pc.green(`Trusted ${roots.map((r) => r.path).join(", ")}.`));
             } else {
                 const batch = moveToTrash(
-                    open.map((target) => ({ target, rule: `approved ${id}` })),
+                    openEntries.map(({ wanted, target }) => ({
+                        target,
+                        rule: `approved ${id}`,
+                        original: wanted.path,
+                        bytes: wanted.bytes,
+                    })),
                     { config: ctx.config, caller: request.caller, graceMinutes: ctx.config.grace.otherMinutes }
                 );
+                removeEmptyAsideDir(request.asideDir);
                 out.println(pc.green(`Moved ${batch?.items.length ?? 0} item(s) to the trash.`));
 
                 if (batch) {
@@ -187,8 +215,23 @@ export function registerRequestCommands(program: Command): void {
                 return;
             }
 
+            const back = returnAside(request.targets, ctx.caller, id);
+
+            for (const path of back.returned) {
+                out.println(pc.green(`put back ${path}`));
+            }
+
+            for (const kept of back.kept) {
+                out.println(pc.yellow(`not put back ${kept.path}: ${kept.reason}`));
+            }
+
+            if (back.kept.length === 0) {
+                removeEmptyAsideDir(request.asideDir);
+            }
+
             saveRmRequest({ ...request, status: "denied", decidedAt: new Date().toISOString(), decidedVia: "cli" });
             appendRmLedger({ action: "deny", requestId: id, caller: ctx.caller, path: resolve(request.cwd) });
             out.println(`Request ${id} denied.`);
+            process.exitCode = back.kept.length > 0 ? 1 : 0;
         });
 }

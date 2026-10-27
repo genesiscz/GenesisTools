@@ -1,5 +1,8 @@
+import { userInfo } from "node:os";
 import { getAgentRuntimeContext } from "@genesiscz/utils/agent/runtime";
 import { spawnToolDetached } from "@genesiscz/utils/cli";
+import { failureCaller } from "@genesiscz/utils/cli/failures/caller";
+import { env } from "@genesiscz/utils/env";
 import { logger } from "@genesiscz/utils/logger";
 import type { RmConfig } from "./config";
 import { isInside } from "./paths";
@@ -15,10 +18,12 @@ import {
 import { listBatches, type TrashPaths, trashHasEntries } from "./trash";
 
 export * from "./approval";
+export * from "./aside";
 export * from "./config";
 export * from "./ledger";
 export * from "./paths";
 export * from "./presets";
+export * from "./profiles";
 export * from "./requests";
 export * from "./rules";
 export * from "./trash";
@@ -28,10 +33,23 @@ export interface RmPlanItem {
     verdict: RmVerdict;
 }
 
-/** The caller as the agent runtime sees it: which agent, which session, whether it runs inside one at all. */
+/**
+ * The caller as the agent runtime sees it: which agent, session and project, the session's title and model (read
+ * from its transcript), and the operating-system user. A run outside any agent is a person.
+ */
 export function rmCallerFromRuntime(): RmCaller {
-    const runtime = getAgentRuntimeContext();
-    return { agent: runtime.agent, sessionId: runtime.sessionId, isInAgent: runtime.isInAgent };
+    const processEnv = env.getProcessEnv();
+    const runtime = getAgentRuntimeContext({}, processEnv);
+    const details = runtime.isInAgent ? failureCaller({ context: runtime, processEnv }) : null;
+    return {
+        agent: runtime.agent,
+        sessionId: runtime.sessionId,
+        isInAgent: runtime.isInAgent,
+        sessionTitle: runtime.sessionTitle,
+        model: details?.model ?? null,
+        project: runtime.project,
+        user: userInfo().username,
+    };
 }
 
 /**

@@ -4,14 +4,14 @@
 import { SHELL_RULES, type ShellMatch, type ShellRule } from "@genesiscz/utils/shell/rules";
 import { commandTokenIndex, commandWord, originalSlice, splitPipeline, tokenize } from "@genesiscz/utils/shell/scan";
 
-/** The `tools rm` verbs that let a request through, trust a folder, or move the trash: a person's to run. */
+/** The `tools rm` verbs that let a request through, trust a folder, or change settings: a person's to run. */
 const RM_USER_VERB =
-    /(?:^|[\s;&|(`'"])(?:\S*\/)?tools\s+rm\s+(?:approve|roots\s+add|config\s+set)\b|[\\/]rm[\\/]index\.ts\s+(?:approve|roots\s+add|config\s+set)\b/;
+    /(?:^|[\s;&|(])(?:\S*\/)?tools\s+rm\s+(?:approve|roots\s+add|config\s+set|profile\s+(?:set|remove))\b|[\\/]rm[\\/]index\.ts\s+(?:approve|roots\s+add|config\s+set|profile\s+(?:set|remove))\b/;
 
 export const rmUserVerbs: ShellRule = {
     id: "rm-user-verbs",
     kind: "destructive",
-    title: "tools rm approve, roots add and config set are the user's to run, never an agent's",
+    title: "tools rm approve, roots add, config set and profile set/remove are the user's to run, never an agent's",
     severity: "block",
     why:
         "`tools rm` lets an agent delete presets, its own scratch and its own files; anything else becomes a request " +
@@ -24,14 +24,22 @@ export const rmUserVerbs: ShellRule = {
         "Martin, 2026-10-27: agents delete their own things freely, and anything more is confirmed by the user with " +
         "a command the agent cannot run.",
     detect(scan): ShellMatch | null {
-        const match = RM_USER_VERB.exec(scan.command);
+        // The scanned statements, not the raw command: quoted text is blanked there (except a body the shell runs,
+        // such as bash -c '...'), so a script or a message that only mentions the verb is not blocked.
+        for (const statements of scan.units) {
+            for (const statement of statements) {
+                const match = RM_USER_VERB.exec(statement.text);
 
-        if (!match) {
-            return null;
+                if (!match) {
+                    continue;
+                }
+
+                const lead = match[0].length - match[0].trimStart().length;
+                return { matched: match[0].trim(), index: statement.start + match.index + lead };
+            }
         }
 
-        const index = match.index + (match[0].length - match[0].trimStart().length);
-        return { matched: match[0].trim(), index };
+        return null;
     },
 };
 

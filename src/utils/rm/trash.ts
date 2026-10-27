@@ -31,6 +31,8 @@ export interface TrashItem {
     stored: string;
     kind: RmTargetKind;
     rule: string;
+    /** Allocated bytes, measured right after the move. */
+    bytes?: number;
 }
 
 /** One `tools rm` run's moved-aside items. The record lives in `~/.genesis-tools/rm/batches/<id>.json`. */
@@ -54,7 +56,7 @@ export function defaultTrashPaths(): TrashPaths {
     return { batchesDir: rmDataDir("batches"), lockPath: rmDataDir("drainer.lock") };
 }
 
-function newBatchId(now: Date): string {
+export function newBatchId(now: Date = new Date()): string {
     const stamp = now.toISOString().replace(/[-:]/g, "").replace("T", "-").slice(0, 15);
     return `${stamp}-${process.pid}-${randomBytes(2).toString("hex")}`;
 }
@@ -114,6 +116,10 @@ export function assertInsideTrash(path: string, config: RmConfig, level: "item" 
 export interface MoveRequest {
     target: RmTarget;
     rule: string;
+    /** The path to record and restore to, when `target` is not where the item came from (an aside copy). */
+    original?: string;
+    /** A size already measured (an aside copy), so the move does not walk the tree again. */
+    bytes?: number;
 }
 
 export interface MoveOptions {
@@ -163,13 +169,17 @@ export function moveToTrash(requests: readonly MoveRequest[], options: MoveOptio
             renameSync(request.target.path, stored);
         }
 
-        batch.items.push({ original: request.target.path, stored, kind: request.target.kind, rule: request.rule });
+        const original = request.original ?? request.target.path;
+        const bytes = request.bytes ?? measureBytes(stored);
+        batch.items.push({ original, stored, kind: request.target.kind, rule: request.rule, bytes });
         writeBatch(batch, paths);
         appendRmLedger({
             action: "move",
-            path: request.target.path,
+            path: original,
+            stored,
             batchId: batch.id,
             rule: request.rule,
+            bytes,
             caller: options.caller,
         });
         logger.debug({ path: request.target.path, stored, batch: batch.id }, "rm: moved aside");
@@ -308,7 +318,14 @@ async function drainClaimed(
         present.map(async (item) => {
             const elapsed = createStopwatch();
             const size = await deleteStored(item.stored, config, "item");
-            appendRmLedger({ action: "drain", path: item.original, batchId: batch.id, rule: item.rule, bytes: size });
+            appendRmLedger({
+                action: "drain",
+                path: item.original,
+                batchId: batch.id,
+                rule: item.rule,
+                bytes: size,
+                caller: batch.caller,
+            });
             onItem?.({ path: item.original, bytes: size, elapsed: elapsed() });
             return size;
         })

@@ -19,25 +19,34 @@ import {
     createRmRequest,
     defaultRmConfig,
     drainDue,
+    effectiveConfig,
     evaluateTarget,
+    filterRmLedger,
     findNestedRepos,
     listBatches,
     listRmRequests,
     loadRmRequest,
+    moveAside,
     moveToTrash,
     parseRmConfig,
+    pendingAsideDirs,
+    pendingAsideFor,
     planRemoval,
     probeGit,
     RM_REQUEST_TTL_MS,
     type RmCaller,
     type RmConfig,
+    type RmLedgerEntry,
     type RmRuleContext,
     resolveTarget,
     restoreBatch,
+    returnAside,
     runDrainer,
+    saveRmRequest,
     scanPresets,
     sweepOrphans,
     type TrashPaths,
+    totalRmLedger,
     trashItemName,
 } from "./index";
 
@@ -75,7 +84,8 @@ function ctx(overrides: Partial<RmRuleContext> = {}): RmRuleContext {
         home: dir("home"),
         presets: BUILTIN_PRESETS,
         ownFiles: new Set(),
-        scratchRoot: dir("cc"),
+        scratchRoots: [dir("cc")],
+        asidePending: () => null,
         git: probeGit,
         nestedRepos: (target) => findNestedRepos(target),
         ...overrides,
@@ -381,5 +391,93 @@ describe("config", () => {
         expect(parseRmConfig({ trashRoot: "/Users/someone" }).trashRoot).toBe(defaultRmConfig().trashRoot);
         expect(parseRmConfig({ trashRoot: "/Volumes/x/GenesisTools/rm" }).trashRoot).toBe("/Volumes/x/GenesisTools/rm");
         expect(parseRmConfig({ grace: { otherMinutes: -5 } }).grace.otherMinutes).toBe(60);
+    });
+});
+
+describe("aside", () => {
+    test("moves a path aside, the pending batch is refused to everyone, deny puts it back", () => {
+        const requestsDir = dir("aside-requests");
+        const src = file(join(dir("aside-src"), "draft.md"), "work");
+        const target = resolveTarget(src, base);
+        const verdict = { kind: "ask" as const, rule: "git-tracked", reason: "tracked" };
+        const aside = moveAside([{ target, verdict }], AGENT, "b1", dir("cc", "proj", "sess-1111", "rm-aside"));
+
+        expect(aside.moved).toHaveLength(1);
+        expect(existsSync(src)).toBe(false);
+        expect(aside.moved[0]?.bytes).toBeGreaterThan(0);
+
+        const request = createRmRequest(
+            { kind: "delete", caller: AGENT, cwd: base, reason: null, targets: aside.moved, asideDir: aside.dir },
+            requestsDir
+        );
+        const pending = pendingAsideDirs(requestsDir);
+        const c = ctx({ asidePending: (t) => pendingAsideFor(t.canonical, pending) });
+
+        // The aside folder sits in the session's scratch, yet the pending request wins over the scratch rule.
+        expect(verdictOf(aside.dir, c)).toEqual({ kind: "deny", rule: "aside-pending" });
+        expect(verdictOf(dir("cc", "proj", "sess-1111"), c)).toEqual({ kind: "deny", rule: "aside-pending" });
+        expect(verdictOf(aside.moved[0]?.stored ?? "", c)).toEqual({ kind: "deny", rule: "aside-pending" });
+        expect(loadRmRequest(request.id, requestsDir, new Date(Date.now() + RM_REQUEST_TTL_MS * 3))?.status).toBe(
+            "pending"
+        );
+
+        const back = returnAside(aside.moved, AGENT, request.id);
+
+        expect(back.returned).toEqual([src]);
+        expect(existsSync(src)).toBe(true);
+        saveRmRequest({ ...request, status: "denied" }, requestsDir);
+        expect(pendingAsideDirs(requestsDir)).toEqual([]);
+    });
+});
+
+describe("profiles", () => {
+    test("matching profiles apply in order: scalars replace, lists add", () => {
+        const withProfiles: RmConfig = {
+            ...config,
+            protect: ["/base"],
+            profiles: [
+                { name: "codex", match: { agent: "codex" }, askAction: "request", protect: ["/codex"] },
+                { name: "claude", match: { agent: "claude-code" }, askAction: "request", protect: ["/claude"] },
+                { name: "one-session", match: { session: "sess-11" }, askAction: "aside", allowOwnFiles: false },
+                { name: "people", match: { agent: "person" }, allowSessionScratch: false },
+            ],
+        };
+        const agent = effectiveConfig(withProfiles, AGENT, base);
+        const person = effectiveConfig(withProfiles, { ...AGENT, isInAgent: false, sessionId: null }, base);
+
+        expect(agent.applied).toEqual(["claude", "one-session"]);
+        expect(agent.config.askAction).toBe("aside");
+        expect(agent.config.allowOwnFiles).toBe(false);
+        expect(agent.config.protect).toEqual(["/base", "/claude"]);
+        expect(person.applied).toEqual(["people"]);
+        expect(person.config.allowSessionScratch).toBe(false);
+    });
+
+    test("a profile that turns the scratch rule off makes the session's scratch ask", () => {
+        const mine = dir("cc", "proj", "sess-1111", "probe2");
+        const c = ctx({ config: { ...config, allowSessionScratch: false } });
+
+        expect(verdictOf(mine, c)).toEqual({ kind: "ask", rule: "default" });
+    });
+});
+
+describe("audit log", () => {
+    test("totals moved, aside and reclaimed bytes per agent, and filters by session", () => {
+        const codex: RmCaller = { agent: "codex", sessionId: "cdx-9", isInAgent: true };
+        const at = new Date().toISOString();
+        const entries: RmLedgerEntry[] = [
+            { at, action: "move", bytes: 100, caller: AGENT },
+            { at, action: "drain", bytes: 100, caller: AGENT },
+            { at, action: "aside", bytes: 40, caller: codex },
+            { at, action: "refuse", caller: codex },
+            { at: "2020-01-01T00:00:00.000Z", action: "move", bytes: 5, caller: codex },
+        ];
+        const totals = totalRmLedger(filterRmLedger(entries, { since: new Date(Date.now() - 60_000) }), "agent");
+
+        expect(totals).toEqual([
+            { key: "claude-code", moved: 100, aside: 0, reclaimed: 100, items: 1, refused: 0, requests: 0 },
+            { key: "codex", moved: 0, aside: 40, reclaimed: 0, items: 1, refused: 1, requests: 0 },
+        ]);
+        expect(filterRmLedger(entries, { session: "cdx" })).toHaveLength(3);
     });
 });
