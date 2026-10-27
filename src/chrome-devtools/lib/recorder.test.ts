@@ -7,6 +7,8 @@ import { CdpDeadlineError } from "./cdp.ts";
 import {
     armThenRelease,
     claimRecorderPidfile,
+    connectBrowser,
+    createRecorderTargetController,
     enableRecordingDomains,
     extractDataReceived,
     healthIsDead,
@@ -314,6 +316,63 @@ describe("claimRecorderPidfile (single-winner atomic claim)", () => {
         } finally {
             rmSync(dir, { recursive: true, force: true });
         }
+    });
+});
+
+describe("browser connection cancellation", () => {
+    test("aborts a stalled version fetch", async () => {
+        const controller = new AbortController();
+        let observed: AbortSignal | null | undefined;
+        const pending = connectBrowser(9222, {
+            signal: controller.signal,
+            fetcher: async (_input, init) => {
+                observed = init?.signal;
+                return new Promise<Response>((_resolve, reject) => {
+                    init?.signal?.addEventListener("abort", () => reject(new Error("aborted")), { once: true });
+                });
+            },
+        });
+        controller.abort();
+        await expect(pending).rejects.toThrow("aborted");
+        expect(observed).toBe(controller.signal);
+    });
+});
+
+describe("recording target events", () => {
+    test("arms an in-scope blank popup before release and ignores unrelated popups", () => {
+        const sent: string[] = [];
+        const controller = createRecorderTargetController({
+            conn: {
+                send: async (method, _params, sessionId) => {
+                    sent.push(`${sessionId}:${method}`);
+                    return {};
+                },
+            },
+            channels: new Set(["net"]),
+            match: "app.example.com",
+        });
+        controller.onTargetEvent("Target.attachedToTarget", {
+            sessionId: "opener-session",
+            targetInfo: { targetId: "opener", type: "page", url: "https://app.example.com/" },
+        });
+        controller.onTargetEvent("Target.attachedToTarget", {
+            sessionId: "popup-session",
+            targetInfo: { targetId: "popup", type: "page", url: "", openerId: "opener" },
+        });
+        controller.onTargetEvent("Target.attachedToTarget", {
+            sessionId: "other-session",
+            targetInfo: { targetId: "other", type: "page", url: "", openerId: "unrelated" },
+        });
+        expect(sent.indexOf("popup-session:Network.enable")).toBeLessThan(
+            sent.indexOf("popup-session:Runtime.runIfWaitingForDebugger")
+        );
+        expect(sent).toContain("popup-session:Network.enable");
+        expect(sent).not.toContain("other-session:Network.enable");
+        expect(sent).toContain("other-session:Runtime.runIfWaitingForDebugger");
+        controller.onTargetEvent("Target.targetInfoChanged", {
+            targetInfo: { targetId: "other", type: "page", url: "https://app.example.com/" },
+        });
+        expect(sent).toContain("other-session:Network.enable");
     });
 });
 
