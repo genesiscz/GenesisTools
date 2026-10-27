@@ -374,6 +374,8 @@ export function compactionFromSse(sse: string): {
     let summary = "";
     let completedText = "";
     let messageText = "";
+    let completed = false;
+    let failed = false;
 
     for (const line of sse.split("\n")) {
         if (!line.startsWith("data: ")) {
@@ -387,12 +389,12 @@ export function compactionFromSse(sse: string): {
                 continue;
             }
 
-            if (
-                event.type === "response.output_item.done" &&
-                isObject(event.item) &&
-                event.item.type === "compaction"
-            ) {
+            if (event.type === "response.output_item.done" && isUsableCompaction(event.item)) {
                 item = event.item;
+            }
+
+            if (event.type === "response.failed" || event.type === "response.incomplete" || event.type === "error") {
+                failed = true;
             }
 
             if (event.type === "response.output_item.done" && isObject(event.item) && event.item.type === "message") {
@@ -411,6 +413,12 @@ export function compactionFromSse(sse: string): {
             }
 
             if (event.type === "response.completed" && isObject(event.response)) {
+                completed = true;
+
+                if (!item && Array.isArray(event.response.output)) {
+                    item = event.response.output.find(isUsableCompaction);
+                }
+
                 if (isObject(event.response.usage)) {
                     usage = event.response.usage;
                 }
@@ -432,7 +440,19 @@ export function compactionFromSse(sse: string): {
     }
 
     const readable = (summary || completedText || messageText).trim();
-    return { item, usage, ...(readable ? { summary: readable } : {}) };
+    // The item replaces the whole conversation, so only a finished response may install it: a stream that failed,
+    // stopped early or ended before response.completed leaves the caller on its written-summary or restore-error path.
+    const finished = completed && !failed;
+    return { ...(finished && item ? { item } : {}), usage, ...(readable ? { summary: readable } : {}) };
+}
+
+function isUsableCompaction(value: unknown): value is Record<string, unknown> {
+    return (
+        isObject(value) &&
+        value.type === "compaction" &&
+        typeof value.encrypted_content === "string" &&
+        value.encrypted_content.length > 0
+    );
 }
 
 /** Deletes compaction records no request has used for `retentionDays` (the proxy's session retention). */

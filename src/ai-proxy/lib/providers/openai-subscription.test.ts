@@ -1046,6 +1046,40 @@ describe("compaction dispatch", () => {
         expect(compactionFromSse(completedOnly).summary).toBe("Earlier work.");
     });
 
+    const frame = (event: Record<string, unknown>) => `data: ${SafeJSON.stringify(event)}\n\n`;
+    const compactionDone = (item: Record<string, unknown>) => frame({ type: "response.output_item.done", item });
+    const completed = frame({ type: "response.completed", response: { usage: { input_tokens: 1 } } });
+
+    it("installs a compaction item only from a finished response", async () => {
+        expect(compactionFromSse(await whamCompactionResponse("ENC").text()).item?.encrypted_content).toBe("ENC");
+        const fromOutput = frame({
+            type: "response.completed",
+            response: { output: [{ type: "compaction", encrypted_content: "ENC-OUT" }] },
+        });
+        expect(compactionFromSse(fromOutput).item?.encrypted_content).toBe("ENC-OUT");
+    });
+
+    it("refuses a malformed compaction item", () => {
+        expect(compactionFromSse(compactionDone({ type: "compaction" }) + completed).item).toBeUndefined();
+        expect(
+            compactionFromSse(compactionDone({ type: "compaction", encrypted_content: "" }) + completed).item
+        ).toBeUndefined();
+    });
+
+    it("refuses a compaction item from a stream that ended before response.completed", () => {
+        expect(
+            compactionFromSse(compactionDone({ type: "compaction", encrypted_content: "ENC" })).item
+        ).toBeUndefined();
+    });
+
+    it("refuses a compaction item when the response failed or stopped early", () => {
+        const item = compactionDone({ type: "compaction", encrypted_content: "ENC" });
+
+        for (const type of ["response.failed", "response.incomplete", "error"]) {
+            expect(compactionFromSse(item + frame({ type, response: {} }) + completed).item).toBeUndefined();
+        }
+    });
+
     it("sends keepalives and aborts a stalled preparation at its deadline", async () => {
         const { compactionDispatch } = await import("./openai-subscription");
         let aborted = false;
@@ -1721,7 +1755,7 @@ describe("native /v1/messages route: reasoning carried in gtr1 envelopes", () =>
             new Response(USAGE_LIMIT_BODY, { status: 429 })) as typeof fetch;
         const limited = await send(turn, { sessionId: "s-1" });
         expect(limited.status).toBe(400);
-        expect(await limited.text()).toContain("tools ai-proxy session s-1 use --codex <account>");
+        expect(await limited.text()).toContain("tools ai-proxy session s-1 use --codex '<account>'");
 
         const overloaded =
             'event: response.created\ndata: {"type":"response.created","response":{"id":"r1"}}\n\n' +
@@ -1842,7 +1876,7 @@ describe("native /v1/messages route: reasoning carried in gtr1 envelopes", () =>
         );
 
         expect(response.status).toBe(400);
-        expect(await response.text()).toContain("tools ai-proxy session s-1 use --codex <account>");
+        expect(await response.text()).toContain("tools ai-proxy session s-1 use --codex '<account>'");
     });
 
     it("uses the readable summary when cross-login recompaction fails", async () => {
