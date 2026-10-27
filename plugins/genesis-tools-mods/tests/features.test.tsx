@@ -1775,6 +1775,7 @@ test("indexed transcript reads retry a missing file and an incomplete scan at th
                           file: { path: "fixture", ino: 1 },
                           offset: reads === 2 ? 20 : 100,
                           asks: [{ number: 42, row: "row" }],
+                          issues: reads === 2 ? ["skipped oversized row"] : [],
                           calls: [],
                       };
             return {
@@ -1787,10 +1788,10 @@ test("indexed transcript reads retry a missing file and an incomplete scan at th
         },
     };
 
-    await findRows(host, [42], []);
-    await findRows(host, [42], []);
-    expect(jumpRowOf({ decision: 42 })).toBeUndefined();
-    await findRows(host, [42], []);
+    await findRows(host, [42, 43], []);
+    await findRows(host, [42, 43], []);
+    expect(jumpRowOf({ decision: 42 })).toBe("row");
+    await findRows(host, [42, 43], []);
     expect(jumpRowOf({ decision: 42 })).toBe("row");
     expect(reads).toBe(3);
     forgetAnswers();

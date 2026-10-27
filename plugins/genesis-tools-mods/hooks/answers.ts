@@ -640,8 +640,6 @@ async function rowsFromIndex(
         !isRecord(parsed) ||
         !isRecord(parsed.file) ||
         typeof parsed.offset !== "number" ||
-        parsed.offset < size ||
-        (Array.isArray(parsed.issues) && parsed.issues.length > 0) ||
         ("isStdoutTruncated" in done && done.isStdoutTruncated) ||
         !Array.isArray(parsed.asks) ||
         !Array.isArray(parsed.calls)
@@ -681,7 +679,9 @@ async function rowsFromIndex(
     }
 
     indexedCalls = calls;
-    rowsSize = size;
+    if (parsed.offset >= size && (!Array.isArray(parsed.issues) || parsed.issues.length === 0)) {
+        rowsSize = size;
+    }
     await logMod(host, "answers", { event: "rows", scanned: parsed.scanned, asks: askRows.size, calls: calls.length });
     return true;
 }
