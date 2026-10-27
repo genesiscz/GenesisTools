@@ -630,6 +630,7 @@ describe("gh PR list and view", () => {
                 baseRefOid: "base",
                 mergeable: "CONFLICTING",
                 mergeStateStatus: "DIRTY",
+                mergeCommit: { oid: "landed" },
             })
         );
         expect(detail).toMatchObject({
@@ -659,6 +660,7 @@ describe("gh PR list and view", () => {
             baseSha: "base",
             mergeable: "conflicting",
             mergeStatus: "DIRTY",
+            mergedSha: "landed",
             webUrls: { files: "https://github.com/o/r/pull/15/files" },
         });
         expect(detail.checks).toEqual([
@@ -686,6 +688,8 @@ const GL_MRS = SafeJSON.stringify([
         sha: "s9",
         has_conflicts: false,
         detailed_merge_status: "not_approved",
+        merge_commit_sha: "merged",
+        squash_commit_sha: "squashed",
     },
 ]);
 
@@ -844,6 +848,7 @@ describe("GitLab MR list and view", () => {
             reviewDecision: "REVIEW_REQUIRED",
             mergeable: "mergeable",
             mergeStatus: "not_approved",
+            mergedSha: "squashed",
             commits: [],
             checks: [{ name: "pipeline 5 (feature/y)", status: "running", url: null }],
             webUrls: { files: "https://gitlab.internal.example/g/p/-/merge_requests/9/diffs" },

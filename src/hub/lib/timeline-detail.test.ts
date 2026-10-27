@@ -109,6 +109,7 @@ function prDetail(root: string): HubPrDetail {
         baseSha: null,
         mergeable: "mergeable",
         mergeStatus: null,
+        mergedSha: null,
         checks: [
             { name: "CI / test", status: "failed", url: "https://github.com/acme/app/actions/runs/1" },
             { name: "CI / lint", status: "success", url: null },
