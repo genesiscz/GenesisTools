@@ -563,8 +563,8 @@ public final class WidgetModel: ObservableObject {
     }
     /// The decision whose own answer field holds the draft (its toolbar open, the reply composer parked).
     @Published public var ownAnswerCardID: String?
-    /// The card the composer's × dropped from the reply, by session: a follow-up does not name it (`replyToCard`).
-    @Published public var replyToDropped: [String: String] = [:]
+    /// Sessions whose current follow-up omits its reply reference (`replyToCard`).
+    @Published public var replyToDropped: Set<String> = []
     /// A decision whose own answer field takes the keyboard as soon as its card shows it (the alert's "Write my own
     /// answer" opens the panel first, so the field is not there yet when it is asked for).
     @Published public var ownAnswerFocusRequest: String?
@@ -1591,8 +1591,7 @@ public final class WidgetModel: ObservableObject {
                 return
             }
             // A cached card window cannot prove absence. Wait for this exact successful targeted lookup.
-            guard snapshot?.selectedKey == pending.sessionKey, snapshot?.decisionLookup == pending.token,
-                  error == nil else { return }
+            guard snapshot?.selectedKey == pending.sessionKey, snapshot?.decisionLookup == pending.token else { return }
             pendingDecision = nil
             let number = Self.decisionNumber(pending.id)
             PerfLog.mark("widget.decision-reveal chat \(pending.id)")
@@ -1636,12 +1635,10 @@ public final class WidgetModel: ObservableObject {
         return parts.count >= 2 && parts[0] == "d" ? Int(parts[1]) : nil
     }
 
-    /// The first turn that asks DECISION `number` ("DECISION 17" never matches "DECISION 172"); the agent's own turn
-    /// before a user turn that only quotes it.
+    /// Find an assistant's decision heading, not a later acknowledgement or a user's quotation.
     nonisolated static func firstTurnAsking(_ number: Int, in turns: [TranscriptTurn]) -> TranscriptTurn? {
-        let pattern = "DECISION[ \\t]+\(number)(?![0-9])"
-        let asking = turns.filter { $0.text.range(of: pattern, options: .regularExpression) != nil }
-        return asking.first { $0.role == "assistant" } ?? asking.first
+        let pattern = "(?m)^[ \\t]*(?:#{1,6}[ \\t]+)?(?:\\*\\*)?(?:❓[ \\t]*)?DECISION[ \\t]+\(number)(?![0-9])"
+        return turns.first { $0.role == "assistant" && $0.text.range(of: pattern, options: .regularExpression) != nil }
     }
 
     /// The inbox filter hides a card of this kind (`LiveWidgetView.filtered`).
@@ -2548,7 +2545,7 @@ public final class WidgetModel: ObservableObject {
             // on the hub; a new revision makes it skip itself.
             draftRevisions[selectedKey, default: 0] += 1
             composerGeneration += 1
-            replyToDropped[selectedKey] = nil
+            replyToDropped.remove(selectedKey)
             submittedAssets.formUnion(submitted.assetIds)
             if let card, answering || choice != nil { submittedCards.insert(card.id) }
             let sentKey = selectedKey

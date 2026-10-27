@@ -169,7 +169,7 @@ export function widgetTitle(text: string | null | undefined): string | undefined
 }
 export interface WidgetSources {
     sessions(refresh: boolean): Promise<AgentSessionRow[]>;
-    decisions(): DecisionRecord[] | { rows: DecisionRecord[]; complete: boolean };
+    decisions(): DecisionRecord[] | { rows: DecisionRecord[]; complete: boolean; missing?: boolean };
     forms(session?: string): AskForm[];
     answers(session?: string): QaRow[];
     /** The newest `limit` answers of each session in one read (the warm sessions); else `answers` per session. */
@@ -1652,7 +1652,10 @@ export async function widgetSnapshot({
         changes,
         errors,
         selectedKey: selectedKey ?? null,
-        ...(decisionLookup && !errors.some((error) => error.startsWith("decisions:"))
+        ...(decisionLookup &&
+        !Array.isArray(decisionRead) &&
+        (decisionRead.complete || decisionRead.missing === true) &&
+        !errors.some((error) => error.startsWith("decisions:"))
             ? { decisionLookup: decisionLookup.token }
             : {}),
         ...(warmKeys.length > 0 ? { warmKeys } : {}),

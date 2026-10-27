@@ -4519,6 +4519,11 @@ test("a decision link reaches the widget at once, before a slow full refresh fin
             state.showDecision = { id: "d_1_old", at: oldAt };
         });
         const emitted: { at?: number; selectedKey?: string }[] = [];
+        let expectedAt: number | undefined;
+        let fastPublished!: () => void;
+        const fastPublishedPromise = new Promise<void>((resolve) => {
+            fastPublished = resolve;
+        });
         let pick: ((key: string) => void) | undefined;
         let slowStarted!: () => void;
         const slowStartedPromise = new Promise<void>((resolve) => {
@@ -4542,6 +4547,9 @@ test("a decision link reaches the widget at once, before a slow full refresh fin
             signal: controller.signal,
             emit: (snapshot) => {
                 emitted.push({ at: snapshot.state.showDecision?.at, selectedKey: snapshot.selectedKey ?? undefined });
+                if (expectedAt !== undefined && snapshot.state.showDecision?.at === expectedAt) {
+                    fastPublished();
+                }
                 if (snapshot.selectedKey === "refresh-2") {
                     stalePublished();
                 }
@@ -4591,13 +4599,11 @@ test("a decision link reaches the widget at once, before a slow full refresh fin
             pick?.("local:codex:fixture:");
             await withTimeout(slowStartedPromise, 3000);
             const at = Date.now();
+            expectedAt = at;
             await mutateWidgetState(directory, (state) => {
                 state.showDecision = { id: "d_7_fixture-session", at };
             });
-            const deadline = Date.now() + 3000;
-            while (!emitted.some((entry) => entry.at === at) && Date.now() < deadline) {
-                await Bun.sleep(20);
-            }
+            await withTimeout(fastPublishedPromise, 3000);
             const fast = emitted.find((entry) => entry.at === at);
             expect(fast).toBeDefined();
             // It rode on the first snapshot: the slow rebuild had not returned yet.
@@ -4635,7 +4641,7 @@ test("a targeted decision lookup retains an old card outside the selected window
         state: "acknowledged" as const,
         createdTs: new Date(1_700_000_000_000 + index * 1000).toISOString(),
     }));
-    const sources: WidgetSources = { ...emptySources, decisions: () => rows };
+    const sources: WidgetSources = { ...emptySources, decisions: () => ({ rows, complete: true }) };
     const roster = await widgetSnapshot({ root: directory, sources });
     const key = roster.sessions.find((entry) => entry.target.sessionId === "fixture-window")!.key;
     const plain = await widgetSnapshot({ root: directory, selectedKey: key, sources });
@@ -4656,6 +4662,28 @@ test("a targeted decision lookup retains an old card outside the selected window
     });
     expect(absent.decisionLookup).toBe("request-2");
     expect(absent.cards.some((card) => card.sourceId === "d_999_fixture-window")).toBe(false);
+    const partial = await widgetSnapshot({
+        root: directory,
+        selectedKey: key,
+        sources: { ...sources, decisions: () => ({ rows, complete: false }) },
+        decisionLookup: { id: rows[0].id, token: "partial" },
+    });
+    expect(partial.decisionLookup).toBeUndefined();
+    expect(partial.cards.some((card) => card.sourceId === rows[0].id)).toBe(true);
+    const missing = await widgetSnapshot({
+        root: directory,
+        selectedKey: key,
+        sources: { ...sources, decisions: () => ({ rows: [], complete: false, missing: true }) },
+        decisionLookup: { id: rows[0].id, token: "missing" },
+    });
+    expect(missing.decisionLookup).toBe("missing");
+    const unknown = await widgetSnapshot({
+        root: directory,
+        selectedKey: key,
+        sources: { ...sources, decisions: () => [] },
+        decisionLookup: { id: rows[0].id, token: "unknown" },
+    });
+    expect(unknown.decisionLookup).toBeUndefined();
     const failed = await widgetSnapshot({
         root: directory,
         selectedKey: key,
