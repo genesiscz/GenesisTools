@@ -253,7 +253,8 @@ public final class WidgetCoordinator: NSObject, NSWindowDelegate {
     }
 
     /// A decision link (`tools hub widget show-decision`): its popup, as a new decision shows, staying until closed.
-    /// A decision the inbox does not list (answered, or its session is not on the roster) opens its session instead.
+    /// A decision the inbox does not list (answered, or asked only in chat) opens its session at that card, scrolled
+    /// to and flashed, or at the chat turn that asked it (`WidgetModel.openDecision`).
     func showDecision(_ id: String) {
         let items = (model.snapshot?.notifications?.sessions ?? []).flatMap { $0.items ?? [] }
             + (model.snapshot?.notifications?.staged ?? [])

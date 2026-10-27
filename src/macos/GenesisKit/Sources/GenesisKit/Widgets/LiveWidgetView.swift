@@ -241,6 +241,16 @@ public struct LiveWidgetView: View {
                         // kept for the much shorter inbox, drew its rows over the header (Martin, 2026-10-23). The
                         // session list keeps its place when Up and Down pick another session in it.
                         .id(section == "Sessions" ? section : section + "|" + model.selectedKey)
+                        // A decision link brings its card or chat turn to the middle of the list; on appear too, since
+                        // the link usually switches the tab or the session, which makes this a new scroll view.
+                        .task(id: model.revealScroll) {
+                            guard let target = model.revealScroll else { return }
+                            ScrollViewPositioning.scroll(reader, to: target.rowID, anchor: .center)
+                            // Done once its passes ran, so showing the tab again later does not pull the list back.
+                            // A scroll view replaced meanwhile cancels this, and its successor scrolls instead.
+                            do { try await Task.sleep(for: .seconds(0.5)) } catch { return }
+                            if model.revealScroll == target { model.revealScroll = nil }
+                        }
                         .onChange(of: WidgetOutgoingPosition(session: model.selectedKey, messageID: model.outgoing.last?.id)) { previous, next in
                             guard section == "Inbox", previous.session == next.session, let id = next.messageID,
                                   Self.followsOutgoing(model.outgoing.last) else { return }
@@ -601,6 +611,8 @@ public struct LiveWidgetView: View {
         .background(Color.white.opacity(open ? 0.055 : 0.03), in: RoundedRectangle(cornerRadius: 11))
         .overlay(RoundedRectangle(cornerRadius: 11)
             .strokeBorder(waiting ? Color.orange.opacity(0.28) : staged ? SessionPalette.blue.opacity(0.3) : .clear, lineWidth: 1))
+        .attentionPulse(trigger: model.revealTrigger("card-" + card.id), style: model.revealStyle,
+                        since: model.revealStart("card-" + card.id))
     }
 
     /// A card whose pick or note is staged, here or in the snapshot.
@@ -965,6 +977,8 @@ public struct LiveWidgetView: View {
                             .background(
                                 turn.role == "user" ? Color.blue.opacity(0.16) : Color.white.opacity(0.04),
                                 in: RoundedRectangle(cornerRadius: 11))
+                            .attentionPulse(trigger: model.revealTrigger(item.id), style: model.revealStyle,
+                                            since: model.revealStart(item.id))
                     }
                 case .card(let card):
                     VStack(alignment: .leading, spacing: 6) {

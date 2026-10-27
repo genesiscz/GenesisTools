@@ -18,6 +18,7 @@ public final class WidgetModel: ObservableObject {
             sessionRoster.update(snapshot?.sessions ?? [])
             updateInbox(snapshot?.notifications ?? .empty)
             takeShowDecision(snapshot?.state.showDecision)
+            resolveDecisionReveal()
         }
     }
     /// Called for each new `state.showDecision` (a decision link while the widget runs). The first snapshot only
@@ -1436,6 +1437,8 @@ public final class WidgetModel: ObservableObject {
 
     /// Opens a decision's card by its id (`d_<n>_<session>`), in its own session when that is another one: the
     /// "Superseded by" link. The card arrives with that session's snapshot, so the selection is set after `select`.
+    /// Once the session's cards are known, the card is shown open, scrolled to and flashed (`resolveDecisionReveal`);
+    /// a decision the log does not have shows where the chat asked it.
     public func openDecision(id: String, sessionKey: String?) {
         guard let sessionKey else {
             notice = "That decision's session is not in the widget."
@@ -1445,6 +1448,130 @@ public final class WidgetModel: ObservableObject {
         section = "Inbox"
         foldedCardIDs.remove("decision:" + id)
         selectedCardID = "decision:" + id
+        chatDecision = nil
+        pendingDecision = (id: id, sessionKey: sessionKey)
+        resolveDecisionReveal()
+    }
+
+    /// A decision link waiting for its session's cards: its id and session.
+    private var pendingDecision: (id: String, sessionKey: String)?
+    /// A decision link whose decision the log does not list: the Conversation tab looks for where the chat asked it.
+    @Published public internal(set) var chatDecision: WidgetChatDecision?
+    /// The row a decision link scrolls to, with a count so the same row asked twice scrolls again.
+    @Published public internal(set) var revealScroll: WidgetRevealScroll?
+    /// One flash counter per revealed row, so revealing one row never flashes another (ux ledger, 2026-10-27).
+    @Published public private(set) var revealCounts: [String: Int] = [:]
+    private var revealStarts: [String: Date] = [:]
+    /// The transcript identity whose load finished, so an empty list in the middle of a reload is not read as "the
+    /// chat does not have it".
+    private var settledTranscript: String?
+
+    /// The flash trigger and start of one revealed row (`"card-" + card id` or `"turn:" + turn id`).
+    public func revealTrigger(_ rowID: String) -> Int { revealCounts[rowID] ?? 0 }
+    public func revealStart(_ rowID: String) -> Date? { revealStarts[rowID] }
+
+    /// The border flash of a revealed row, as long as the alert flash setting (`alertFlashSeconds`).
+    var revealStyle: AttentionPulseStyle {
+        var style = AttentionPulseStyle.borderFlash(color: .orange, cornerRadius: 11)
+        style.duration = WidgetAlerts.flashSeconds(snapshot?.state.preferences)
+        style.period = 0.8
+        style.fadeIn = 0.18
+        style.fadeOut = 0.3
+        return style
+    }
+
+    /// Scrolls the panel to `rowID` and flashes its border (no flash when the flash setting is 0).
+    func reveal(_ rowID: String) {
+        let count = (revealCounts[rowID] ?? 0) + 1
+        if WidgetAlerts.flashSeconds(snapshot?.state.preferences) > 0 {
+            revealStarts[rowID] = Date()
+            revealCounts[rowID] = count
+        }
+        revealScroll = WidgetRevealScroll(rowID: rowID, count: count)
+    }
+
+    /// Finishes a decision link once the facts are in: the card when the session lists it, else the chat.
+    func resolveDecisionReveal() {
+        if let pending = pendingDecision {
+            guard selectedKey == pending.sessionKey else {
+                pendingDecision = nil
+                return
+            }
+            let cardID = "decision:" + pending.id
+            if cards.contains(where: { $0.id == cardID }) {
+                pendingDecision = nil
+                section = "Inbox"
+                // "Messages" hides decisions; the chosen filter stays until the reader picks another.
+                if Self.filteredOut(kind: "decision", by: inboxFilter) {
+                    inboxFilter = "all"
+                    inboxFilterPicked = true
+                }
+                foldedCardIDs.remove(cardID)
+                selectedCardID = cardID
+                PerfLog.mark("widget.decision-reveal card \(pending.id)")
+                reveal("card-" + cardID)
+                return
+            }
+            // Only a snapshot that names this session has its whole list; a cached list can predate the decision.
+            guard snapshot?.selectedKey == pending.sessionKey, error == nil else { return }
+            pendingDecision = nil
+            let number = Self.decisionNumber(pending.id)
+            PerfLog.mark("widget.decision-reveal chat \(pending.id)")
+            chatDecision = WidgetChatDecision(id: pending.id, number: number, sessionKey: pending.sessionKey)
+            section = "Conversation"
+            postNote("Decision \(number.map(String.init) ?? "") was asked only in chat and is not in the decision log. "
+                     + "Showing the chat.")
+        }
+        guard let chat = chatDecision, !chat.settled, selectedKey == chat.sessionKey, section == "Conversation",
+              let followed = followedTranscript, settledTranscript == followed, !transcriptLoading else { return }
+        chatDecision?.settled = true
+        if let number = chat.number, let turn = Self.firstTurnAsking(number, in: transcript) {
+            chatDecision?.turnID = turn.id
+            reveal("turn:" + turn.id)
+            return
+        }
+        // Older than the loaded turns, or no transcript: the session's own terminal finds it.
+        chatDecision?.terminal = true
+        postNote("Decision \(chat.number.map(String.init) ?? "") was asked only in chat and is not in the decision log, "
+                 + "and not in the recent chat either. Showing it in its terminal.")
+        guard let number = chat.number, let sessionId = sessionIndex[chat.sessionKey]?.target.sessionId else { return }
+        let bridge = bridge
+        Task { [weak self] in
+            do {
+                let result = try await bridge.run(
+                    subcommand: "claude", args: ["cmux", "find", "--decision", String(number), "--", sessionId],
+                    timeoutSeconds: 60)
+                PerfLog.mark("widget.decision-reveal terminal exit=\(result.exitCode)")
+                if result.exitCode != 0 {
+                    self?.fail("The terminal could not show Decision \(number).", detail: result.stderr)
+                }
+            } catch {
+                self?.fail("The terminal could not show Decision \(number).", detail: error.localizedDescription)
+            }
+        }
+    }
+
+    /// The number in a decision id (`d_<n>_<session>`).
+    nonisolated static func decisionNumber(_ id: String) -> Int? {
+        let parts = id.split(separator: "_", maxSplits: 2)
+        return parts.count >= 2 && parts[0] == "d" ? Int(parts[1]) : nil
+    }
+
+    /// The first turn that asks DECISION `number` ("DECISION 17" never matches "DECISION 172"); the agent's own turn
+    /// before a user turn that only quotes it.
+    nonisolated static func firstTurnAsking(_ number: Int, in turns: [TranscriptTurn]) -> TranscriptTurn? {
+        let pattern = "DECISION[ \\t]+\(number)(?![0-9])"
+        let asking = turns.filter { $0.text.range(of: pattern, options: .regularExpression) != nil }
+        return asking.first { $0.role == "assistant" } ?? asking.first
+    }
+
+    /// The inbox filter hides a card of this kind (`LiveWidgetView.filtered`).
+    nonisolated static func filteredOut(kind: String, by filter: String) -> Bool {
+        switch filter {
+        case "inbox": return ["decision", "todo"].contains(kind)
+        case "decisions": return !["decision", "todo"].contains(kind)
+        default: return false
+        }
     }
 
     /// "Mark all read": every answer up to now is read, and older questions, decisions and results stop counting in
@@ -1571,6 +1698,8 @@ public final class WidgetModel: ObservableObject {
     /// session's newest one); with `ownAnswer` its own answer field takes the keyboard, holding a staged note.
     public func openAlert(_ item: WidgetInboxItem, on surface: WidgetSurfaceID, ownAnswer: Bool = false) {
         openInboxItem(item, on: surface)
+        // The card the popup opened flashes, so the eye finds it in the session's list.
+        reveal("card-" + item.id)
         guard ownAnswer, !stopping else { return }
         ownAnswerCardID = item.id
         ownAnswerFocusRequest = item.id
@@ -2808,6 +2937,8 @@ public final class WidgetModel: ObservableObject {
         guard session.target.provider != "unknown" else {
             transcriptError =
                 "This source has no live transcript. Its questions, answers and attachments remain in this timeline."
+            settledTranscript = identity
+            resolveDecisionReveal()
             return
         }
         let key = session.key
@@ -2815,7 +2946,11 @@ public final class WidgetModel: ObservableObject {
         transcriptTask = Task { [weak self] in
             guard let self else { return }
             defer {
-                if self.followedTranscript == identity { self.transcriptLoading = false }
+                if self.followedTranscript == identity {
+                    self.transcriptLoading = false
+                    self.settledTranscript = identity
+                    self.resolveDecisionReveal()
+                }
             }
             do {
                 let envelope = try await self.transcriptCache.value(for: self.transcriptQuery(session))
@@ -3010,4 +3145,25 @@ public struct WidgetCmuxRequest: Equatable, Sendable {
 public struct WidgetChoiceFocus: Equatable, Sendable {
     public let cardID: String
     public let choiceID: String
+}
+
+/// The row a decision link scrolls the session panel to (`WidgetModel.reveal`): `"card-" + card id` in the inbox,
+/// `"turn:" + turn id` in the conversation. `count` makes a second link to the same row scroll again.
+public struct WidgetRevealScroll: Equatable, Sendable {
+    public let rowID: String
+    public let count: Int
+}
+
+/// A decision link to a decision the log does not list (asked only in a chat reply): the Conversation tab shows the
+/// turn that asked it, or, when that turn is older than the loaded ones, the session's terminal does.
+public struct WidgetChatDecision: Equatable, Sendable {
+    public let id: String
+    public let number: Int?
+    public let sessionKey: String
+    /// The transcript was searched once it loaded.
+    public var settled = false
+    /// The turn that asked it, when the loaded conversation has it.
+    public var turnID: String?
+    /// The loaded conversation lacks it, so `tools claude cmux find --decision` ran.
+    public var terminal = false
 }
