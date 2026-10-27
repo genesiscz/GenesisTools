@@ -49,9 +49,10 @@ export function seriesRetentionCutoffMs(now: Date): number {
 /**
  * 2: entries gained `id`, without which cross-file dedup cannot work. 6: grok's recorded cost
  * stopped being its list price and Claude's one-hour cache writes got their own rate, so every
- * cached `costUsd` was computed under the old rules.
+ * cached `costUsd` was computed under the old rules. 7: GPT-6.1 Terra got catalog prices, and a
+ * Terra entry cached before them holds a $0 cost.
  */
-const CACHE_VERSION = 6;
+const CACHE_VERSION = 7;
 
 /** Same bound as the monitor: duplicates of one event sit adjacent in a transcript. */
 const RECENT_ID_WINDOW = 50;
