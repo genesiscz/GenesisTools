@@ -80,6 +80,9 @@ public struct ClickyPreferences: Codable, Equatable {
     /// stops it. Never is the default: paused, the engine used 0.007% CPU over 60 s, held no sleep assertion and no
     /// Smart Routing session (running: 2.2% CPU, a coreaudiod PreventUserIdleSystemSleep, and a session), 2026-10-27.
     public var releaseOutputSeconds = 0
+    /// Seconds the engine keeps running after the last click before it pauses. 30 s by default: a pause in typing
+    /// shorter than that no longer claims Bluetooth headphones again on the next key.
+    public var pauseAfterSeconds = 30
 
     public init() {}
 
@@ -117,6 +120,7 @@ public struct ClickyPreferences: Codable, Equatable {
         try read(.delayAcceptedUIDs, into: &delayAcceptedUIDs)
         try read(.muteOnBluetooth, into: &muteOnBluetooth)
         try read(.releaseOutputSeconds, into: &releaseOutputSeconds)
+        try read(.pauseAfterSeconds, into: &pauseAfterSeconds)
     }
 
     public mutating func normalize() {
@@ -127,6 +131,7 @@ public struct ClickyPreferences: Codable, Equatable {
         delayWarningMilliseconds = min(5000, max(20, delayWarningMilliseconds))
         delayPromptSeconds = min(300, max(0, delayPromptSeconds))
         releaseOutputSeconds = releaseOutputSeconds <= 0 ? 0 : min(3600, max(3, releaseOutputSeconds))
+        pauseAfterSeconds = min(600, max(1, pauseAfterSeconds))
     }
 
     public func isQuiet(at date: Date, calendar: Calendar = .current) -> Bool {
