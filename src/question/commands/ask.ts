@@ -524,9 +524,14 @@ export function registerAskCommand(program: Command): void {
             ) => {
                 if (isDecisionId(id)) {
                     const { file, events } = decisionFiles();
-                    const [row] = await updateDecisions(file, events, {
-                        updates: [{ id, state: "answered", answer: opts.text, option: opts.option }],
-                    });
+                    // The user's own answer from the CLI: queued for `tools question send` (`answeredVia: inbox`).
+                    const [row] = await updateDecisions(
+                        file,
+                        events,
+                        { updates: [{ id, state: "answered", answer: opts.text, option: opts.option }] },
+                        undefined,
+                        { actor: "user" }
+                    );
                     out.result(SafeJSON.stringify(row, null, 2));
                     process.exit(0);
                 }

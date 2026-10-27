@@ -21,7 +21,7 @@ import {
     staleTaskInstalled,
     uninstallStaleTask,
 } from "../lib/decisions/stale";
-import { type DecisionKind, updateDecisions } from "../lib/decisions/store";
+import { type DecisionKind, repairDecisionLog, updateDecisions } from "../lib/decisions/store";
 
 export function readStdinJson(): unknown {
     return SafeJSON.parse(readFileSync(0, "utf8"), { strict: true });
@@ -179,7 +179,23 @@ export function registerDecisionCommands(program: Command): void {
         )
         .action(async () => {
             const { file, events } = decisionFiles();
-            out.result({ updated: await updateDecisions(file, events, asBatch(readStdinJson())), events });
+            // The agents' CLI door, like question_update: an answered or sent is recorded as acknowledged.
+            const updated = await updateDecisions(file, events, asBatch(readStdinJson()), undefined, {
+                actor: "agent",
+            });
+            out.result({ updated, events });
+        });
+
+    program
+        .command("repair")
+        .description(
+            "Repair the decision log: chat answers agents recorded as answered (no delivery) become acknowledged, so no send delivers them again; drafted rows with nothing staged become open. Reports only, unless --apply"
+        )
+        .option("--apply", "Write the repair (back up decisions.jsonl and events.jsonl first)")
+        .action(async (options: { apply?: boolean }) => {
+            const { file, events } = decisionFiles();
+            const repair = await repairDecisionLog({ file, events, apply: options.apply === true });
+            out.result({ applied: options.apply === true, ...repair });
         });
 
     program

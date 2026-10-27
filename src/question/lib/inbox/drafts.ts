@@ -2,6 +2,7 @@ import { type DeliverDeps, resolveDeliveryTarget } from "../decisions/deliver";
 import { decisionLines, dueDecisions, optionLetters } from "../decisions/read";
 import { type SendResult, sendAnsweredDecisions } from "../decisions/send";
 import {
+    awaitsDelivery,
     type DecisionRecord,
     type HarvestedDecision,
     harvestDecisions,
@@ -210,7 +211,14 @@ export function stagedSendText(rows: DecisionRecord[], session: string): string 
     const due = dueDecisions(
         rows
             .filter((row) => row.sessionId === session && kindOf(row) === "decision")
-            .map((row) => (isDrafted(row) ? { ...row, state: "answered" as const, ...promotedDraft(row) } : row))
+            .flatMap((row) => {
+                if (isDrafted(row)) {
+                    return [{ ...row, state: "answered" as const, ...promotedDraft(row) }];
+                }
+
+                // A chat answer an agent recorded as `answered` is not waiting to go out (`awaitsDelivery`).
+                return awaitsDelivery(row) ? [row] : [];
+            })
     );
 
     return due.length > 0 ? decisionLines(due) : undefined;
@@ -257,9 +265,13 @@ export async function sendDrafts(
     }
 
     if (drafted.length > 0) {
-        await updateDecisions(deps.file, deps.events, {
-            updates: drafted.map((row) => ({ id: row.id, state: "answered" as const, ...promotedDraft(row) })),
-        });
+        await updateDecisions(
+            deps.file,
+            deps.events,
+            { updates: drafted.map((row) => ({ id: row.id, state: "answered" as const, ...promotedDraft(row) })) },
+            undefined,
+            { actor: "user" }
+        );
     }
 
     // A just-resumed session boots for a few seconds: wait, bounded, for its pane to be live.

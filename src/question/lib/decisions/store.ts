@@ -236,6 +236,51 @@ export interface PromptReceipt {
     token: string;
 }
 
+/**
+ * Who asks for an update. `agent`: the doors agents write through (`question_update`, `tools question update`); an
+ * agent records what happened and never queues or sends an answer (`agentPatch`). `user` (the store's default): the
+ * inbox's own answer and send paths, the widget and the hub, which deliver what they move to `answered`. Every caller
+ * of `updateDecisions` was classified on 2026-10-27; a new agent-facing door passes `actor: "agent"`.
+ */
+export type DecisionActor = "agent" | "user";
+
+/**
+ * An answered decision a whole-session send may deliver: one the inbox answered (`answeredVia: "inbox"`), or one an
+ * earlier send already tried (`delivery`). An `answered` row with neither is a chat answer an agent recorded through
+ * the old protocol (2026-10-27: 91 of them in 15 sessions), and sending it would type the user's own words back into
+ * the session a second time.
+ */
+export function awaitsDelivery(row: DecisionRecord): boolean {
+    return (
+        kindOf(row) === "decision" &&
+        row.state === "answered" &&
+        (row.delivery !== undefined || row.answeredVia === "inbox")
+    );
+}
+
+/**
+ * An agent's `answered` or `sent`: the agent has the answer (the user gave it in chat, or a send reached it), and
+ * only a send may queue or deliver one. It lands as `acknowledged`, which delivers nothing, with a comment that says
+ * so. Other patches pass unchanged.
+ */
+function agentPatch(row: DecisionRecord, patch: DecisionPatch): DecisionPatch {
+    if (kindOf(row) !== "decision" || (patch.state !== "answered" && patch.state !== "sent")) {
+        return patch;
+    }
+
+    const asked = patch.state;
+    const done = row.state === "acknowledged" || row.state === "implemented";
+    const note = `Recorded as acknowledged: an agent asked for ${asked}, and only a send queues or delivers an answer.`;
+    logger.info({ id: row.id, from: row.state, asked }, "[decisions] an agent's answered or sent became acknowledged");
+    const { state: _state, ...rest } = patch;
+
+    return {
+        ...rest,
+        ...(done ? {} : { state: "acknowledged" as const }),
+        comment: [patch.comment?.trim(), note].filter(Boolean).join(" "),
+    };
+}
+
 export function promptReserved(row: DecisionRecord): boolean {
     return (row.promptReservation?.expiresAt ?? 0) > Date.now();
 }
@@ -261,7 +306,7 @@ export async function reservePromptDecisions({
             (row) =>
                 row.sessionId === session &&
                 kindOf(row) === "decision" &&
-                (!selected || selected.has(row.id)) &&
+                (selected ? selected.has(row.id) : awaitsDelivery(row)) &&
                 row.state === "answered" &&
                 !row.delivery?.queueId &&
                 (row.promptReservation?.expiresAt ?? 0) <= now &&
@@ -725,7 +770,98 @@ function patched(
         delete next.draftOption;
     }
 
+    // Nothing staged any more (an unstage, a cleared pick): plain `open` again, whichever surface cleared it. The
+    // widget's unstage used to leave `drafted` with empty fields, which every list then showed as staged.
+    if (next.state === "drafted" && !next.draftOption && !next.draft?.trim()) {
+        next.state = "open";
+        delete next.draft;
+        delete next.draftOption;
+    }
+
     return next;
+}
+
+export interface DecisionLogRepair {
+    /** Chat answers agents recorded as `answered`, now `acknowledged`. */
+    acknowledged: string[];
+    /** `drafted` rows with nothing staged, now `open`. */
+    reopened: string[];
+}
+
+/**
+ * Repairs two shapes old code left in the log; `apply: false` only reports them.
+ * - A chat answer an agent recorded as `answered` (no delivery, not answered in the inbox, `awaitsDelivery` false):
+ *   it read as "waiting to send" with Send again, and a whole-session send typed it back into the session. It moves
+ *   to `acknowledged` with its option and answer, `answeredVia: agent`, and a comment.
+ * - A `drafted` row with nothing staged: back to `open`.
+ * Nothing else changes, and every move is an event.
+ */
+export async function repairDecisionLog({
+    file,
+    events,
+    apply,
+    now = () => new Date().toISOString(),
+}: {
+    file: string;
+    events: string;
+    apply: boolean;
+    now?: () => string;
+}): Promise<DecisionLogRepair> {
+    return withDecisionsLock(file, () => {
+        const rows = readDecisions(file);
+        const ts = now();
+        const repair: DecisionLogRepair = { acknowledged: [], reopened: [] };
+        const next = rows.map((row): DecisionRecord => {
+            if (kindOf(row) !== "decision") {
+                return row;
+            }
+
+            const chatAnswer =
+                row.state === "answered" &&
+                !awaitsDelivery(row) &&
+                !promptReserved(row) &&
+                (Boolean(row.option) || Boolean(row.answer?.trim()));
+
+            if (chatAnswer) {
+                repair.acknowledged.push(row.id);
+                return {
+                    ...row,
+                    state: "acknowledged",
+                    answeredVia: row.answeredVia ?? "agent",
+                    answeredTs: row.answeredTs ?? row.updatedTs,
+                    updatedTs: ts,
+                    comments: [
+                        ...(row.comments ?? []),
+                        "Repaired: an agent recorded this chat answer as answered, which read as waiting to be sent. It is acknowledged; nothing sends it again.",
+                    ],
+                };
+            }
+
+            if (row.state === "drafted" && !row.draftOption && !row.draft?.trim()) {
+                repair.reopened.push(row.id);
+                const reopened: DecisionRecord = { ...row, state: "open", updatedTs: ts };
+                delete reopened.draft;
+                delete reopened.draftOption;
+                return reopened;
+            }
+
+            return row;
+        });
+
+        if (apply && repair.acknowledged.length + repair.reopened.length > 0) {
+            rewrite(file, next);
+
+            for (const id of repair.acknowledged) {
+                appendEvent(events, { ev: "repaired", id, ts, state: "acknowledged" });
+            }
+
+            for (const id of repair.reopened) {
+                appendEvent(events, { ev: "repaired", id, ts, state: "open" });
+            }
+        }
+
+        return repair;
+    });
 }
 
 /** Throws unless `target` names another stored decision and `next` is (becoming) superseded. */
@@ -755,10 +891,11 @@ export async function updateDecision(
     events: string,
     id: string,
     payload: unknown,
-    now = () => new Date().toISOString()
+    now = () => new Date().toISOString(),
+    { actor = "user" }: { actor?: DecisionActor } = {}
 ): Promise<DecisionRecord> {
     const patch = parseDecisionInput(decisionPatchSchema, payload, "decision update");
-    const [row] = await applyUpdates({ file, events, updates: [{ ...patch, id }], now });
+    const [row] = await applyUpdates({ file, events, updates: [{ ...patch, id }], now, actor });
 
     if (!row) {
         throw new Error(`no decision ${id}`);
@@ -775,10 +912,11 @@ export async function updateDecisions(
     file: string,
     events: string,
     payload: unknown,
-    now = () => new Date().toISOString()
+    now = () => new Date().toISOString(),
+    { actor = "user" }: { actor?: DecisionActor } = {}
 ): Promise<DecisionRecord[]> {
     const { updates } = parseDecisionInput(decisionBatchUpdateSchema, payload, "question update");
-    return applyUpdates({ file, events, updates, now });
+    return applyUpdates({ file, events, updates, now, actor });
 }
 
 export interface TodoUpdateSnapshot {
@@ -998,6 +1136,7 @@ function applyUpdates({
     signal,
     beforeUpdate,
     answeredVia,
+    actor = "user",
 }: {
     file: string;
     events: string;
@@ -1007,6 +1146,8 @@ function applyUpdates({
     beforeUpdate?: (row: DecisionRecord) => void;
     /** Who recorded a chat answer, in place of `agent`; never reachable from `question_update`. */
     answeredVia?: AnsweredVia;
+    /** `agent` updates never queue or send an answer (`agentPatch`); see `DecisionActor`. */
+    actor?: DecisionActor;
 }): Promise<DecisionRecord[]> {
     signal?.throwIfAborted();
     return withDecisionsLock(file, () => {
@@ -1023,7 +1164,7 @@ function applyUpdates({
             }
 
             beforeUpdate?.(row);
-            const next = patched(row, patch, ts, byId);
+            const next = patched(row, actor === "agent" ? agentPatch(row, patch) : patch, ts, byId);
 
             if (answeredVia && next.answeredVia === "agent") {
                 next.answeredVia = answeredVia;
