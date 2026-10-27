@@ -1434,3 +1434,12 @@ construction (checked on `src/du`: 1036 KiB both ways). `--max-cache-age <s>` se
 within that age from `~/.genesis-tools/du/cache/sizes/`. The genesis-tools-mods Session files row uses it for the
 worktree sizes, which one session walked every 5 minutes at 3 to 17 s each on a full, loaded disk. Measured with
 load 33: a first answer 0.23 s for two small folders, a cached one 0.19 s (the Bun start).
+
+
+## 2026-10-27 22:15 — Size wrapper failure and relative-path cache checks
+
+The C and Bun scan engines are unchanged. This repair changes only the system-du wrapper and its cache rules, so the native scan benchmark is not repeated. No CPU or scan-speed improvement is claimed.
+
+A generated two-file fixture totals 132 KiB with the actual system `du -sk`. The corrected wrapper returns the same 132 KiB for a relative argument. A second call with the absolute argument returns the same value from the shared cache. Both calls together invoke the real measurement process once. The fixture and cache use a session-owned temporary root.
+
+Two regressions fail against the old production source. The corrected checks reject failed, empty and malformed output, accept a genuine zero, retry a failure, and share the relative and absolute cache entry. All 152 scoped du tests pass. All 63 plugin tests also pass. Separate synthetic transcript checks execute the real shell fallback for oversized-row reload, chunk boundaries, UTF-8 bytes and truncated output. They do not read real transcripts.

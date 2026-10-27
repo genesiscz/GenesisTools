@@ -12,8 +12,10 @@ import {
     answersFrom,
     answersOf,
     callFor,
+    findRows,
     firstAsks,
     forgetAnswers,
+    jumpRowOf,
     mergedAnswer,
     pollAnswers,
     questionCalls,
@@ -89,7 +91,7 @@ import {
     stallNow,
     stallSentence,
 } from "../hooks/stall";
-import { lockedToSession, samePath, sessionTotalKb, statusOf } from "../hooks/tmp-usage";
+import { lockedToSession, samePath, sessionTotalKb, statusOf, worktreeSize } from "../hooks/tmp-usage";
 
 /** A Mac where every GenesisTools link opens, on an invented link host. */
 const ALL_LINKS: GenesisProbe = {
@@ -1606,6 +1608,239 @@ test("stall catcher: a stop with nothing pending shows the row, a pending task d
     forgetSettings();
 });
 
+test("older CLI fallback skips an oversized row across a reload and reaches the next call", async () => {
+    forgetAgentDetails();
+    forgetAnswers();
+    forgetGenesisProbe();
+    const base = checkoutHost();
+    const at = Date.parse("2020-01-01T00:00:00.000Z");
+    const row = JSON.stringify({
+        type: "assistant",
+        timestamp: new Date(at).toISOString(),
+        message: {
+            content: [
+                { type: "tool_use", id: "after-large-row", name: "Bash", input: { command: "tools question ask" } },
+            ],
+        },
+    });
+    const events: string[] = [];
+    const skipped: string[] = [];
+    const done = (stdout: string, exitCode = 0, stderr = "") => ({
+        stdout,
+        stderr,
+        exitCode,
+        isStdoutTruncated: false,
+        isStderrTruncated: false,
+    });
+    const host: Host = {
+        ...base,
+        async stat(path) {
+            return path.endsWith(".jsonl")
+                ? { kind: "file", size: 1_048_800, mtimeMs: 1, isLink: false }
+                : base.stat(path);
+        },
+        async append(_path, line) {
+            events.push(line);
+        },
+        async run(argv) {
+            if (argv[1] === "genesis-tools") {
+                return done(JSON.stringify({ links: {}, router: {} }));
+            }
+
+            if (argv[1] === "question") {
+                return done("", 1, "unknown command");
+            }
+
+            if (argv[2]?.includes("__SKIP_BYTES__")) {
+                skipped.push(argv[5] ?? "");
+                return done(skipped.length === 1 ? "__SKIP_BYTES__1048576:0\n" : "__SKIP_BYTES__124:1\n");
+            }
+
+            return done(skipped.length === 2 ? `${row}\n__SEARCH_BYTES__100\n` : "__SEARCH_BYTES__0\n");
+        },
+    };
+    const entry = {
+        id: "large-entry",
+        at: at + 1_000,
+        tag: "question" as const,
+        title: "",
+        text: "",
+        isUnread: false,
+        images: [],
+    };
+    let reloaded = false;
+
+    for (let i = 0; i < 20 && !jumpRowOf({ entry: entry.id }); i++) {
+        await findRows(host, [], [entry]);
+
+        if (skipped.length === 1 && !reloaded) {
+            forgetAnswers();
+            reloaded = true;
+        }
+    }
+
+    expect(jumpRowOf({ entry: entry.id })).toBe("after-large-row");
+    expect(skipped).toEqual(["1", "1048577"]);
+    expect(events.some((line) => line.includes("search-coverage-gap"))).toBe(true);
+    forgetAnswers();
+    forgetGenesisProbe();
+});
+
+test("older CLI fallback retries truncated output and matches old entries before pruning calls", async () => {
+    forgetAgentDetails();
+    forgetAnswers();
+    forgetGenesisProbe();
+    const base = checkoutHost();
+    const at = Date.parse("2020-01-01T00:00:00.000Z");
+    const row = JSON.stringify({
+        type: "assistant",
+        timestamp: new Date(at).toISOString(),
+        message: {
+            content: [{ type: "tool_use", id: "old-call", name: "Bash", input: { command: "tools question ask" } }],
+        },
+    });
+    const starts: string[] = [];
+    let searches = 0;
+    const result = (stdout: string, exitCode = 0, isStdoutTruncated = false, stderr = "") => ({
+        stdout,
+        stderr,
+        exitCode,
+        isStdoutTruncated,
+        isStderrTruncated: false,
+    });
+    const host: Host = {
+        ...base,
+        async stat(path) {
+            return path.endsWith(".jsonl") ? { kind: "file", size: 100, mtimeMs: 1, isLink: false } : base.stat(path);
+        },
+        async run(argv) {
+            if (argv[1] === "genesis-tools") {
+                return result(JSON.stringify({ links: {}, router: {} }));
+            }
+
+            if (argv[1] === "question") {
+                return result("", 1, false, "unknown command");
+            }
+
+            starts.push(argv[5] ?? "");
+            searches++;
+            return result(`${row}\n__SEARCH_BYTES__${searches === 1 ? 100 : 50}\n`, 0, searches === 1);
+        },
+    };
+    const entry = {
+        id: "old-entry",
+        at: at + 1_000,
+        tag: "question" as const,
+        title: "",
+        text: "",
+        isUnread: false,
+        images: [],
+    };
+
+    await findRows(host, [], [entry]);
+    expect(jumpRowOf({ entry: entry.id })).toBeUndefined();
+    await findRows(host, [], [entry]);
+    expect(jumpRowOf({ entry: entry.id })).toBe("old-call");
+    expect(starts).toEqual(["1", "1"]);
+    forgetAnswers();
+    forgetGenesisProbe();
+});
+
+test("indexed transcript calls match an entry added after an unchanged transcript", async () => {
+    forgetAgentDetails();
+    forgetAnswers();
+    forgetGenesisProbe();
+    const base = checkoutHost();
+    const at = Date.parse("2020-01-01T00:00:00.000Z");
+    let indexReads = 0;
+    const host: Host = {
+        ...base,
+        async stat(path) {
+            return path.endsWith(".jsonl") ? { kind: "file", size: 100, mtimeMs: 1, isLink: false } : base.stat(path);
+        },
+        async run(argv) {
+            const value =
+                argv[1] === "genesis-tools"
+                    ? { links: {}, router: {} }
+                    : { asks: [{ number: 42, row: "ask-row" }], calls: [{ id: "old-call", at }] };
+
+            if (argv[1] === "question") {
+                indexReads++;
+            }
+
+            return {
+                stdout: JSON.stringify(value),
+                stderr: "",
+                exitCode: 0,
+                isStdoutTruncated: false,
+                isStderrTruncated: false,
+            };
+        },
+    };
+    const entry = {
+        id: "old-entry",
+        at: at + 1_000,
+        tag: "question" as const,
+        title: "",
+        text: "",
+        isUnread: false,
+        images: [],
+    };
+
+    await findRows(host, [42], []);
+    await findRows(host, [], [entry]);
+    expect(jumpRowOf({ entry: entry.id })).toBe("old-call");
+    expect(indexReads).toBe(1);
+    forgetAnswers();
+    forgetGenesisProbe();
+});
+
+test("older CLI fallback continues at the last complete byte across chunks", async () => {
+    forgetAgentDetails();
+    forgetAnswers();
+    forgetGenesisProbe();
+    const base = checkoutHost();
+    const starts: string[] = [];
+    const result = (stdout: string, exitCode = 0, stderr = "") => ({
+        stdout,
+        stderr,
+        exitCode,
+        isStdoutTruncated: false,
+        isStderrTruncated: false,
+    });
+    const row = JSON.stringify({
+        type: "assistant",
+        uuid: "ask-row",
+        message: { content: [{ type: "text", text: "❓ DECISION 42" }] },
+    });
+    const host: Host = {
+        ...base,
+        async stat(path) {
+            return path.endsWith(".jsonl") ? { kind: "file", size: 100, mtimeMs: 1, isLink: false } : base.stat(path);
+        },
+        async run(argv) {
+            if (argv[1] === "genesis-tools") {
+                return result(JSON.stringify({ links: {}, router: {} }));
+            }
+
+            if (argv[1] === "question") {
+                return result("", 1, "unknown command");
+            }
+
+            starts.push(argv[5] ?? "");
+            return result(starts.length === 1 ? "__SEARCH_BYTES__50\n" : `${row}\n__SEARCH_BYTES__50\n`);
+        },
+    };
+
+    await findRows(host, [42], []);
+    expect(jumpRowOf({ decision: 42 })).toBeUndefined();
+    await findRows(host, [42], []);
+    expect(jumpRowOf({ decision: 42 })).toBe("ask-row");
+    expect(starts).toEqual(["1", "51"]);
+    forgetAnswers();
+    forgetGenesisProbe();
+});
+
 test("session files: worktrees locked to the session, their state, and the total without double counts", async () => {
     expect(samePath("/private/tmp/cc/p/s/worktrees/a/")).toBe("/tmp/cc/p/s/worktrees/a");
     const porcelain = [
@@ -1628,6 +1863,70 @@ test("session files: worktrees locked to the session, their state, and the total
             worktrees: [tree("/work/.claude/worktrees/agent-1", 3000), tree("/tmp/cc/p/s/worktrees/w", 100)],
         })
     ).toBe(3412);
+});
+
+test("session files: a failed worktree measurement retries and a successful one stays cached", async () => {
+    forgetGenesisProbe();
+    const base = checkoutHost();
+    const path = "/work/measurement-retry";
+    let walks = 0;
+    const done = (stdout: string, exitCode = 0) => ({
+        stdout,
+        stderr: "",
+        exitCode,
+        isStdoutTruncated: false,
+        isStderrTruncated: false,
+    });
+    const host: Host = {
+        ...base,
+        async run(argv) {
+            if (argv[1] === "genesis-tools") {
+                return done(JSON.stringify({ router: { linkHost: "links.example.test" }, links: {} }));
+            }
+
+            walks++;
+            return walks === 1 ? done("", 1) : done(JSON.stringify({ [path]: 123 }));
+        },
+    };
+
+    expect(await worktreeSize(host, path, "clean")).toBeNull();
+    expect(await worktreeSize(host, path, "clean")).toBe(123);
+    expect(await worktreeSize(host, path, "clean")).toBe(123);
+    expect(walks).toBe(2);
+    forgetGenesisProbe();
+});
+
+test("session files: failed fallback du output does not become a cached zero", async () => {
+    forgetGenesisProbe();
+    const base = checkoutHost();
+    let walks = 0;
+    const done = (stdout: string, exitCode: number) => ({
+        stdout,
+        stderr: "",
+        exitCode,
+        isStdoutTruncated: false,
+        isStderrTruncated: false,
+    });
+    const host: Host = {
+        ...base,
+        async exists() {
+            return true;
+        },
+        async run(argv) {
+            if (argv[1] === "genesis-tools") {
+                return done("", 127);
+            }
+
+            walks++;
+            return walks === 1 ? done("", 1) : done("456\t/work/fallback\n", 0);
+        },
+    };
+
+    expect(await worktreeSize(host, "/work/fallback", "clean")).toBeNull();
+    expect(await worktreeSize(host, "/work/fallback", "clean")).toBe(456);
+    expect(await worktreeSize(host, "/work/fallback", "clean")).toBe(456);
+    expect(walks).toBe(2);
+    forgetGenesisProbe();
 });
 
 test("mods settings: a value equal to the file's shipped copy follows today's default, as the CLI reads it", async () => {

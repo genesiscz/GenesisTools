@@ -11,9 +11,46 @@ import { afterAll, describe, expect, it } from "bun:test";
 import { execFileSync } from "node:child_process";
 import { mkdirSync, mkdtempSync, readdirSync, readFileSync, rmSync, writeFileSync } from "node:fs";
 import { tmpdir } from "node:os";
-import { join } from "node:path";
+import { join, resolve } from "node:path";
 import { scanWithCFfi } from "./engine";
+import { folderKb } from "./size-command";
 import type { ClonesizeResult } from "./types";
+
+describe("du size command", () => {
+    it("does not cache failed, empty, or malformed output and accepts zero", async () => {
+        for (const result of [
+            { code: 1, stdout: "12\tpartial\n", stderr: "failed" },
+            { code: 0, stdout: "", stderr: "" },
+            { code: 0, stdout: "NaN\tpath\n", stderr: "" },
+        ]) {
+            const path = `du-size-${crypto.randomUUID()}`;
+            let calls = 0;
+            const run = async () => {
+                calls++;
+                return calls === 1 ? result : { code: 0, stdout: "0\tpath\n", stderr: "" };
+            };
+
+            expect(await folderKb({ path, maxCacheAgeSeconds: 60, run })).toEqual({ value: null, hit: false });
+            expect(await folderKb({ path, maxCacheAgeSeconds: 60, run })).toEqual({ value: 0, hit: false });
+            expect(await folderKb({ path, maxCacheAgeSeconds: 60, run })).toEqual({ value: 0, hit: true });
+            expect(calls).toBe(2);
+        }
+    });
+
+    it("resolves relative paths before measuring and caching", async () => {
+        const path = `du-size-${crypto.randomUUID()}`;
+        const absolute = resolve(path);
+        const commands: string[][] = [];
+        const run = async (argv: string[]) => {
+            commands.push(argv);
+            return { code: 0, stdout: "42\tpath\n", stderr: "" };
+        };
+
+        expect(await folderKb({ path, maxCacheAgeSeconds: 60, run })).toEqual({ value: 42, hit: false });
+        expect(await folderKb({ path: absolute, maxCacheAgeSeconds: 60, run })).toEqual({ value: 42, hit: true });
+        expect(commands).toEqual([["du", "-sk", absolute]]);
+    });
+});
 
 const isDarwin = process.platform === "darwin";
 const CLONE_MB = 4;
