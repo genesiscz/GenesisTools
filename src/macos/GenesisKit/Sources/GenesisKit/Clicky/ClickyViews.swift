@@ -265,6 +265,19 @@ private struct ClickySettingsPageContent: View {
                 setting(
                     "Randomized pitch", detail: "Small variations keep repeated keys from sounding identical.",
                     value: $model.preferences.randomizedPitch)
+                NativeSettingsRow(
+                    "Pitch range",
+                    detail: "How far each sound may move up or down. Small values keep a recording's character, large ones sound playful."
+                ) {
+                    HStack(spacing: 8) {
+                        Slider(value: $model.preferences.pitchRange, in: ClickyPreferences.pitchRangeLimits)
+                            .frame(width: 140).accessibilityLabel("Pitch range")
+                            .accessibilityValue(String(format: "plus or minus %.1f percent", model.preferences.pitchRange * 100))
+                        Text(String(format: "±%.1f%%", model.preferences.pitchRange * 100)).monospacedDigit()
+                            .font(.system(size: 11)).frame(width: 44, alignment: .trailing)
+                    }
+                }
+                .disabled(!model.preferences.randomizedPitch)
                 Divider()
                 setting(
                     "Spatial audio", detail: "Pan sounds left and right with the physical keyboard layout.",
@@ -275,7 +288,7 @@ private struct ClickySettingsPageContent: View {
                     value: $model.preferences.repeatSounds)
             }
             Text(
-                "Built-in sounds are synthesized locally at the output's own rate. Randomized pitch also varies pack sounds by up to 3% and shuffles their recorded takes. Headphones make the stereo positioning easier to hear."
+                "Built-in sounds are synthesized locally at the output's own rate. Randomized pitch also shuffles a pack's recorded takes. Headphones make the stereo positioning easier to hear."
             )
             .font(.system(size: 11)).foregroundStyle(.secondary).frame(maxWidth: .infinity, alignment: .leading)
         }

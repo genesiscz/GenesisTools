@@ -45,6 +45,10 @@ public struct ClickyPreferences: Codable, Equatable {
     public var volume: Double = 0.45
     public var releaseSounds = true
     public var randomizedPitch = true
+    /// How far Randomized pitch moves each sound, as a fraction either way (0.04 = ±4%), for the built-in sounds and
+    /// packs alike. 4% sits between the old 5% of the built-in sounds and the 3% packs got first.
+    public var pitchRange: Double = 0.04
+    public static let pitchRangeLimits: ClosedRange<Double> = 0.005...0.15
     public var spatialAudio = true
     public var repeatSounds = false
     public var quietHours = false
@@ -91,6 +95,8 @@ public struct ClickyPreferences: Codable, Equatable {
         try read(.volume, into: &volume)
         try read(.releaseSounds, into: &releaseSounds)
         try read(.randomizedPitch, into: &randomizedPitch)
+        try read(.pitchRange, into: &pitchRange)
+        pitchRange = min(max(pitchRange, Self.pitchRangeLimits.lowerBound), Self.pitchRangeLimits.upperBound)
         try read(.spatialAudio, into: &spatialAudio)
         try read(.repeatSounds, into: &repeatSounds)
         try read(.quietHours, into: &quietHours)
