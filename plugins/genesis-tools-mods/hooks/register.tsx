@@ -864,7 +864,8 @@ export const register: Register = (on) => {
             stopIdleTimer();
         }
 
-        if (result.skip === undefined) {
+        // A precompute only prepares a summary and keeps the context, so the cache and the hook history stay valid.
+        if (result.skip === undefined && e.trigger !== "precompute") {
             for (const feature of liveFeatures()) {
                 await isolated(host, "compacted", () => feature.compacted?.(host, e.agentId));
             }
