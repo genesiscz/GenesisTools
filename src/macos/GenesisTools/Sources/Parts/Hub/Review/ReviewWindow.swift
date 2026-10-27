@@ -1110,6 +1110,12 @@ final class ReviewModel: ObservableObject {
         if let pending = pendingRevealPath, let file = file(atPath: pending) {
             pendingRevealPath = nil
             selectedID = file.id
+        } else if let pending = pendingRevealPath, cachedFolders.isEmpty {
+            // Every root answered fresh and none holds the file (a link's reveal= naming a file the PR does not
+            // change): say so, instead of keeping the reveal waiting in silence on the first file.
+            pendingRevealPath = nil
+            notice = Self.noChangeNotice(pending)
+            HubPerf.log("review.reveal \(pending) has no change in this scope")
         }
         if selectedID == nil || !files.contains(where: { $0.id == selectedID }) {
             selectedID = files.first?.id
