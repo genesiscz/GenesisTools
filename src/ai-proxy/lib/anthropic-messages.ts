@@ -1,5 +1,11 @@
 import type { ProviderRequestContext, ProxyProvider } from "@app/ai-proxy/lib/providers/types";
 import { safeStreamControllerError } from "@app/ai-proxy/lib/safe-stream-controller";
+import {
+    applyCompactionDrops,
+    compactionRecoveryMessage,
+    findUnrecoverableCompaction,
+} from "@app/ai-proxy/lib/sessions/codex-compaction";
+import { noteBlockedCompaction, readSessionRecord } from "@app/ai-proxy/lib/sessions/records";
 import { withSseKeepalive } from "@app/ai-proxy/lib/sse-keepalive";
 import { normalizeAnthropicToOpenAI } from "@app/ai-proxy/lib/translators/formats/anthropic/normalize";
 import {
@@ -616,6 +622,25 @@ export async function anthropicMessagesPipeline({
     }
 
     const wantsStream = parsed.stream === true;
+    const record = recordId ? readSessionRecord(recordId) : undefined;
+
+    if (record?.droppedCompactions?.length) {
+        parsed.messages = applyCompactionDrops(parsed.messages, record.droppedCompactions);
+        bodyText = SafeJSON.stringify(parsed);
+    }
+
+    const blocked = findUnrecoverableCompaction(parsed.messages);
+
+    if ((provider.id !== "openai-subscription" || !provider.messages) && blocked) {
+        const recorded = recordId ? await noteBlockedCompaction(recordId, blocked) : undefined;
+        const failure = errorResponse(400, compactionRecoveryMessage(recorded?.id, blocked));
+        return {
+            ...pipelineResult(failure.clone(), undefined, startedAt),
+            openAiBodyText: bodyText,
+            clientResponseBody: failure.text(),
+        };
+    }
+
     const promptCacheKey = resolvePromptCacheKey({
         policy: cacheKeyPolicy,
         claudeSessionId: claudeSessionIdFromMetadata(parsed.metadata),

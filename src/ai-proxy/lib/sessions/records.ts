@@ -21,6 +21,10 @@ import { atomicWriteFileSync, isJsonObject } from "@genesiscz/utils/storage/atom
 export const SESSION_KEY_PREFIX = "gts_";
 export const SESSION_RECORD_FILE_MODE = 0o600;
 export const SESSION_DIR_MODE = 0o700;
+
+export function isCompactionId(id: string): boolean {
+    return /^gtc1\.[0-9a-f]{8}-[0-9a-f]{4}-[0-9a-f]{4}-[0-9a-f]{4}-[0-9a-f]{12}$/.test(id);
+}
 /** Closed records stay for stats this long unless `sessionRetentionDays` says otherwise. */
 export const DEFAULT_SESSION_RETENTION_DAYS = 30;
 
@@ -78,6 +82,10 @@ export interface AiProxySessionRecord {
     agents?: string[];
     moves: SessionMove[];
     meteredConfirmed: MeteredConfirmation[];
+    /** Exact compaction IDs this session encountered without a recoverable summary. */
+    blockedCompactions?: string[];
+    /** Explicitly acknowledged loss of context, scoped to this session and marker. */
+    droppedCompactions?: string[];
 }
 
 export type NewSessionRecord = Omit<
@@ -168,7 +176,13 @@ function isSessionRecord(value: unknown): value is AiProxySessionRecord {
         typeof value.keyHash === "string" &&
         typeof value.createdAt === "string" &&
         Array.isArray(value.moves) &&
-        Array.isArray(value.meteredConfirmed)
+        Array.isArray(value.meteredConfirmed) &&
+        (value.blockedCompactions === undefined ||
+            (Array.isArray(value.blockedCompactions) &&
+                value.blockedCompactions.every((id) => typeof id === "string" && isCompactionId(id)))) &&
+        (value.droppedCompactions === undefined ||
+            (Array.isArray(value.droppedCompactions) &&
+                value.droppedCompactions.every((id) => typeof id === "string" && isCompactionId(id))))
     );
 }
 
@@ -353,6 +367,59 @@ export function updateSessionRecord({
         writeSessionRecord(record);
         return record;
     });
+}
+
+export async function noteBlockedCompaction(
+    sessionId: string,
+    marker: string
+): Promise<AiProxySessionRecord | undefined> {
+    if (!isCompactionId(marker)) {
+        throw new Error("Invalid compaction ID");
+    }
+
+    return whenSessionRecordFree(() =>
+        updateSessionRecord({
+            id: sessionId,
+            change: (record) => {
+                record.blockedCompactions ??= [];
+
+                if (!record.blockedCompactions.includes(marker)) {
+                    record.blockedCompactions.push(marker);
+                }
+            },
+        })
+    );
+}
+
+export async function acknowledgeCompactionDrop({
+    sessionId,
+    marker,
+    acknowledged,
+}: {
+    sessionId: string;
+    marker: string;
+    acknowledged: boolean;
+}): Promise<AiProxySessionRecord | undefined> {
+    if (!acknowledged || !isCompactionId(marker)) {
+        throw new Error("A valid compaction ID and explicit context-loss acknowledgement are required");
+    }
+
+    return whenSessionRecordFree(() =>
+        updateSessionRecord({
+            id: sessionId,
+            change: (record) => {
+                if (!record.blockedCompactions?.includes(marker)) {
+                    throw new Error("This session has not reported that compaction ID as blocked");
+                }
+
+                record.droppedCompactions ??= [];
+
+                if (!record.droppedCompactions.includes(marker)) {
+                    record.droppedCompactions.push(marker);
+                }
+            },
+        })
+    );
 }
 
 export function closeSessionRecord({

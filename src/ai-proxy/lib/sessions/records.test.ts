@@ -2,6 +2,7 @@ import { afterEach, beforeEach, describe, expect, it } from "bun:test";
 import { existsSync, mkdirSync, mkdtempSync, readFileSync, statSync, writeFileSync } from "node:fs";
 import { tmpdir } from "node:os";
 import { join } from "node:path";
+import { runSessionCompaction } from "@app/ai-proxy/commands/session-use";
 import { matchesSessionPrefix, sinceToMs } from "@app/ai-proxy/commands/sessions";
 import {
     clientProviderDenial,
@@ -10,16 +11,19 @@ import {
     routeDenial,
     sessionKeyRejection,
 } from "@app/ai-proxy/lib/clients";
+import { loadCompaction, restoreCompaction } from "@app/ai-proxy/lib/sessions/codex-compaction";
 import {
     _resetSessionKeyIndexForTest,
     _sessionKeyIndexScansForTest,
     type AiProxySessionRecord,
+    acknowledgeCompactionDrop,
     closeSessionRecord,
     createSessionRecord,
     hashSessionKey,
     isSessionRecordBusy,
     listSessionRecords,
     newSessionKey,
+    noteBlockedCompaction,
     noteSessionRequest,
     openSessionRecord,
     readSessionRecord,
@@ -32,7 +36,7 @@ import {
 } from "@app/ai-proxy/lib/sessions/records";
 import { requestTagsFor } from "@app/ai-proxy/lib/sessions/tags";
 import { requestRow, requestRows, statsByAgent } from "@app/ai-proxy/lib/sessions/view";
-import { resetAiProxyStorage } from "@app/ai-proxy/lib/storage";
+import { getAiProxyStorage, resetAiProxyStorage } from "@app/ai-proxy/lib/storage";
 import type { AiProxyAccountConfig, AiProxyConfig } from "@app/ai-proxy/lib/types";
 import type { UsageRequestRecord } from "@app/ai-proxy/lib/usage/types";
 import { compressBytes } from "@genesiscz/utils/compress/zstd";
@@ -92,6 +96,73 @@ afterEach(() => {
 });
 
 describe("session records", () => {
+    it("requires explicit acknowledgement for the exact blocked compaction and session", async () => {
+        const otherSession = "5f6a7b8c-9d0e-4f1a-8b2c-3d4e5f6a7b8c";
+        const marker = `gtc1.${crypto.randomUUID()}`;
+        const otherMarker = `gtc1.${crypto.randomUUID()}`;
+        newSession();
+        newSession({ id: otherSession });
+        await noteBlockedCompaction(SESSION, marker);
+
+        await expect(acknowledgeCompactionDrop({ sessionId: SESSION, marker, acknowledged: false })).rejects.toThrow();
+        await expect(
+            acknowledgeCompactionDrop({ sessionId: SESSION, marker: otherMarker, acknowledged: true })
+        ).rejects.toThrow();
+        await expect(
+            acknowledgeCompactionDrop({ sessionId: otherSession, marker, acknowledged: true })
+        ).rejects.toThrow();
+        expect(readSessionRecord(SESSION)?.droppedCompactions).toBeUndefined();
+
+        await acknowledgeCompactionDrop({ sessionId: SESSION, marker, acknowledged: true });
+        expect(readSessionRecord(SESSION)?.droppedCompactions).toEqual([marker]);
+        expect(readSessionRecord(otherSession)?.droppedCompactions).toBeUndefined();
+    });
+
+    it("requires the CLI acknowledgement before recording a compaction drop", async () => {
+        const marker = `gtc1.${crypto.randomUUID()}`;
+        const oldExitCode = process.exitCode;
+        newSession();
+        await noteBlockedCompaction(SESSION, marker);
+
+        try {
+            await runSessionCompaction(SESSION, "compaction-drop", { marker });
+            expect(process.exitCode).toBe(1);
+            expect(readSessionRecord(SESSION)?.droppedCompactions).toBeUndefined();
+            process.exitCode = 0;
+            await runSessionCompaction(SESSION, "compaction-drop", { marker, acknowledgeContextLoss: true });
+            expect(readSessionRecord(SESSION)?.droppedCompactions).toEqual([marker]);
+        } finally {
+            process.exitCode = oldExitCode;
+        }
+    });
+
+    it("restores the matching compaction record and preserves an unreadable predecessor", () => {
+        const marker = `gtc1.${crypto.randomUUID()}`;
+        const other = `gtc1.${crypto.randomUUID()}`;
+        const dir = join(getAiProxyStorage().getBaseDir(), "compactions");
+        const source = join(getAiProxyStorage().getBaseDir(), "saved-record.json");
+        mkdirSync(dir, { recursive: true });
+        writeFileSync(
+            source,
+            SafeJSON.stringify({
+                id: marker,
+                model: "test-model",
+                createdAt: new Date().toISOString(),
+                items: {},
+                history: [],
+            })
+        );
+        const destination = join(dir, `${marker}.json`);
+        writeFileSync(destination, "unreadable original");
+
+        expect(() => restoreCompaction(other, source)).toThrow();
+        const result = restoreCompaction(marker, source);
+        expect(result.backup).toBeDefined();
+        expect(readFileSync(result.backup ?? "", "utf8")).toBe("unreadable original");
+        expect(loadCompaction(marker)?.id).toBe(marker);
+        expect(statSync(destination).mode & 0o777).toBe(0o600);
+    });
+
     it("writes the record 0600 in a 0700 folder, with the key's hash and never the key", () => {
         const { record, key } = newSession({ cwd: "/work/project" });
         const path = join(sessionsDir(), `${SESSION}.json`);

@@ -1,4 +1,6 @@
 import { describe, expect, it } from "bun:test";
+import { compactionNote } from "@app/ai-proxy/lib/sessions/codex-compaction";
+import { acknowledgeCompactionDrop, createSessionRecord, readSessionRecord } from "@app/ai-proxy/lib/sessions/records";
 import { SafeJSON } from "@genesiscz/utils/json";
 import { anthropicBodyToOpenAiBody, anthropicMessagesPipeline, countAnthropicInputTokens } from "./anthropic-messages";
 import type { OpenAiModel, ProxyProvider } from "./providers/types";
@@ -321,6 +323,139 @@ describe("anthropicMessagesPipeline: the conversation's cache key", () => {
 });
 
 describe("anthropicMessagesPipeline", () => {
+    it("blocks legacy marker-only compactions on other providers but forwards readable fallbacks", async () => {
+        const provider = fakeProvider(
+            () =>
+                new Response(
+                    SafeJSON.stringify({
+                        id: "chatcmpl-1",
+                        choices: [
+                            { index: 0, message: { role: "assistant", content: "hello" }, finish_reason: "stop" },
+                        ],
+                    }),
+                    { headers: { "Content-Type": "application/json" } }
+                )
+        );
+        const id = `gtc1.${crypto.randomUUID()}`;
+        const body = (content: string) =>
+            SafeJSON.stringify({
+                model: PROXY_MODEL,
+                max_tokens: 32,
+                messages: [{ role: "user", content }],
+            });
+        const missing = await anthropicMessagesPipeline({
+            provider,
+            upstreamModel: UPSTREAM_MODEL,
+            proxyModel: PROXY_MODEL,
+            req: request(),
+            bodyText: body(compactionNote(id)),
+        });
+
+        expect(missing.response.status).toBe(400);
+        expect(provider.seen).toHaveLength(0);
+        const message = await missing.response.text();
+        expect(message).toContain("no readable context");
+        expect(message).toContain("start a new session with a readable handoff");
+
+        const withFallback = await anthropicMessagesPipeline({
+            provider,
+            upstreamModel: UPSTREAM_MODEL,
+            proxyModel: PROXY_MODEL,
+            req: request(),
+            bodyText: body(compactionNote(id, "Earlier work is on shelf 12.")),
+        });
+        expect(withFallback.response.status).toBe(200);
+        expect(provider.seen).toHaveLength(1);
+        expect(provider.seen[0]?.bodyText).toContain("Earlier work is on shelf 12.");
+    });
+
+    it("continues only the session that explicitly acknowledged its blocked marker", async () => {
+        const session = crypto.randomUUID();
+        const other = crypto.randomUUID();
+        const id = `gtc1.${crypto.randomUUID()}`;
+        createSessionRecord({ id: session });
+        createSessionRecord({ id: other });
+        const provider = fakeProvider(
+            () =>
+                new Response(
+                    SafeJSON.stringify({
+                        id: "chatcmpl-1",
+                        choices: [
+                            { index: 0, message: { role: "assistant", content: "hello" }, finish_reason: "stop" },
+                        ],
+                    }),
+                    { headers: { "Content-Type": "application/json" } }
+                )
+        );
+        const bodyText = SafeJSON.stringify({
+            model: PROXY_MODEL,
+            max_tokens: 32,
+            messages: [{ role: "user", content: `${compactionNote(id)}\nContinue.` }],
+        });
+        const call = (recordId: string) =>
+            anthropicMessagesPipeline({
+                provider,
+                upstreamModel: UPSTREAM_MODEL,
+                proxyModel: PROXY_MODEL,
+                req: request(),
+                bodyText,
+                recordId,
+            });
+
+        const blocked = await call(session);
+        expect(blocked.response.status).toBe(400);
+        const error = await blocked.response.text();
+        expect(error).toContain(`compaction-drop --marker ${id} --acknowledge-context-loss`);
+        expect(error).toContain(`compaction-restore --marker ${id} --from`);
+        expect((await call(session)).response.status).toBe(400);
+        expect(readSessionRecord(session)?.droppedCompactions).toBeUndefined();
+
+        await acknowledgeCompactionDrop({ sessionId: session, marker: id, acknowledged: true });
+        const continued = await call(session);
+        expect(continued.response.status).toBe(200);
+        expect(provider.seen[0]?.bodyText).toContain("Earlier compacted context was explicitly dropped by the user");
+        expect(provider.seen[0]?.bodyText).not.toContain(`[codex-compaction ${id}]`);
+        expect((await call(other)).response.status).toBe(400);
+    });
+
+    it("does not treat quoted markers in user text, tool results, or assistant messages as compaction notes", async () => {
+        const provider = fakeProvider(
+            () =>
+                new Response(
+                    SafeJSON.stringify({
+                        id: "chatcmpl-1",
+                        choices: [
+                            { index: 0, message: { role: "assistant", content: "hello" }, finish_reason: "stop" },
+                        ],
+                    }),
+                    { headers: { "Content-Type": "application/json" } }
+                )
+        );
+        const id = `gtc1.${crypto.randomUUID()}`;
+        const bodyText = SafeJSON.stringify({
+            model: PROXY_MODEL,
+            max_tokens: 32,
+            messages: [
+                { role: "assistant", content: compactionNote(id) },
+                {
+                    role: "user",
+                    content: [{ type: "tool_result", tool_use_id: "tool_1", content: compactionNote(id) }],
+                },
+                { role: "user", content: `The log mentions [codex-compaction ${id}].` },
+            ],
+        });
+        const result = await anthropicMessagesPipeline({
+            provider,
+            upstreamModel: UPSTREAM_MODEL,
+            proxyModel: PROXY_MODEL,
+            req: request(),
+            bodyText,
+        });
+
+        expect(result.response.status).toBe(200);
+        expect(provider.seen).toHaveLength(1);
+    });
+
     it("translates a non-streaming answer into an Anthropic message", async () => {
         const provider = fakeProvider(
             () =>

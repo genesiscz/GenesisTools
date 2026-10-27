@@ -42,13 +42,16 @@ import {
 } from "@app/ai-proxy/lib/server-tools/web-search";
 import {
     compactionFromSse,
+    compactionMarkers,
     compactionNote,
+    compactionRecoveryMessage,
     expandCompactionMarkers,
+    hasCompactionFallback,
     loadCompaction,
     newCompactionId,
     saveCompaction,
 } from "@app/ai-proxy/lib/sessions/codex-compaction";
-import { loginAccountName } from "@app/ai-proxy/lib/sessions/records";
+import { loginAccountName, noteBlockedCompaction } from "@app/ai-proxy/lib/sessions/records";
 import { compactionSettings } from "@app/ai-proxy/lib/sessions/settings";
 import {
     anthropicToResponses,
@@ -106,6 +109,222 @@ import { isObject } from "@genesiscz/utils/object";
  */
 const MODALITY_CACHE_TTL_MS = 10 * 60_000;
 
+class CompactionRestoreError extends Error {
+    constructor(
+        readonly marker: string,
+        readonly permanent: boolean,
+        message: string,
+        readonly missingId: string = marker,
+        readonly upstreamResponse?: Response
+    ) {
+        super(message);
+    }
+}
+
+/** Read a compaction stream with the same 120-second idle limit as response capture. */
+export async function readCompactionText(response: Response, idleMs = 120_000): Promise<string> {
+    if (!response.body) {
+        return "";
+    }
+
+    const reader = response.body.getReader();
+    const decoder = new TextDecoder();
+    let text = "";
+
+    try {
+        while (true) {
+            let timer: ReturnType<typeof setTimeout> | undefined;
+            const idle = new Promise<never>((_resolve, reject) => {
+                timer = setTimeout(() => reject(new Error("Compaction upstream stream timed out.")), idleMs);
+            });
+            let chunk: Awaited<ReturnType<typeof reader.read>>;
+
+            try {
+                chunk = await Promise.race([reader.read(), idle]);
+            } finally {
+                clearTimeout(timer);
+            }
+
+            if (chunk.done) {
+                return text + decoder.decode();
+            }
+
+            text += decoder.decode(chunk.value, { stream: true });
+        }
+    } catch (error) {
+        // An upstream that already failed rejects cancel() with the same error; the throw below reports it once.
+        await reader.cancel(error).catch(() => undefined);
+        throw error;
+    }
+}
+
+function inputHasFallback(input: unknown[], id: string): boolean {
+    return input.some(
+        (item) =>
+            isObject(item) &&
+            Array.isArray(item.content) &&
+            item.content.some(
+                (part) => isObject(part) && typeof part.text === "string" && hasCompactionFallback(part.text, id)
+            )
+    );
+}
+
+/** Bound compaction preparation and send SSE pings while the provider is still preparing a response. */
+export async function compactionDispatch({
+    signal,
+    stream,
+    run,
+    timeoutMs = 900_000,
+    pingMs = 15_000,
+}: {
+    signal: AbortSignal;
+    stream: boolean;
+    run: (signal: AbortSignal) => Promise<Response>;
+    timeoutMs?: number;
+    pingMs?: number;
+}): Promise<Response> {
+    const abort = new AbortController();
+    let timedOut = false;
+    const timer = setTimeout(() => {
+        timedOut = true;
+        abort.abort();
+    }, timeoutMs);
+    const onClientAbort = () => abort.abort(signal.reason);
+    signal.addEventListener("abort", onClientAbort, { once: true });
+
+    if (signal.aborted) {
+        onClientAbort();
+    }
+
+    const stopped = new Promise<Response>((resolve) => {
+        const finish = () =>
+            resolve(jsonError(timedOut ? 504 : 499, timedOut ? "Compaction timed out." : "Client cancelled."));
+
+        if (abort.signal.aborted) {
+            finish();
+        } else {
+            abort.signal.addEventListener("abort", finish, { once: true });
+        }
+    });
+    const pending = abort.signal.aborted ? stopped : Promise.race([run(abort.signal), stopped]);
+    const cleanup = () => {
+        clearTimeout(timer);
+        signal.removeEventListener("abort", onClientAbort);
+    };
+
+    if (!stream) {
+        try {
+            return await pending;
+        } finally {
+            cleanup();
+        }
+    }
+
+    // Keep a real HTTP status when preparation finishes before the first keepalive.
+    let firstPing: ReturnType<typeof setTimeout> | undefined;
+    let early: Response | undefined;
+    try {
+        early = await Promise.race([
+            pending,
+            new Promise<undefined>((resolve) => {
+                firstPing = setTimeout(() => resolve(undefined), pingMs);
+            }),
+        ]);
+    } catch (error) {
+        cleanup();
+        throw error;
+    } finally {
+        clearTimeout(firstPing);
+    }
+
+    if (early) {
+        clearTimeout(timer);
+
+        if (!early.body) {
+            cleanup();
+            return early;
+        }
+
+        const source = early.body.getReader();
+        const body = new ReadableStream<Uint8Array>({
+            async pull(controller) {
+                try {
+                    const chunk = await source.read();
+
+                    if (chunk.done) {
+                        cleanup();
+                        controller.close();
+                    } else {
+                        controller.enqueue(chunk.value);
+                    }
+                } catch (error) {
+                    cleanup();
+                    controller.error(error);
+                }
+            },
+            cancel(reason) {
+                abort.abort(reason);
+                cleanup();
+                return source.cancel(reason).catch(() => undefined);
+            },
+        });
+        return new Response(body, { status: early.status, statusText: early.statusText, headers: early.headers });
+    }
+
+    const encoder = new TextEncoder();
+    let reader: ReadableStreamDefaultReader<Uint8Array> | undefined;
+    let cancelled = false;
+    const body = new ReadableStream<Uint8Array>({
+        start(controller) {
+            controller.enqueue(encoder.encode(": keepalive\n\n"));
+            const ping = setInterval(() => controller.enqueue(encoder.encode(": keepalive\n\n")), pingMs);
+            void (async () => {
+                try {
+                    const response = await pending;
+                    clearTimeout(timer);
+
+                    if (!response.ok) {
+                        const error = await toAnthropicErrorResponse(response);
+                        controller.enqueue(encoder.encode(`event: error\ndata: ${await error.text()}\n\n`));
+                    } else if (response.body) {
+                        reader = response.body.getReader();
+
+                        while (!cancelled) {
+                            const chunk = await reader.read();
+
+                            if (chunk.done) {
+                                break;
+                            }
+
+                            controller.enqueue(chunk.value);
+                        }
+                    }
+                } catch (error) {
+                    if (!cancelled) {
+                        const payload = { type: "error", error: { type: "api_error", message: String(error) } };
+                        controller.enqueue(encoder.encode(`event: error\ndata: ${SafeJSON.stringify(payload)}\n\n`));
+                    }
+                } finally {
+                    clearInterval(ping);
+                    cleanup();
+
+                    if (!cancelled) {
+                        controller.close();
+                    }
+                }
+            })();
+        },
+        cancel(reason) {
+            cancelled = true;
+            abort.abort(reason);
+            cleanup();
+            void reader?.cancel(reason).catch(() => undefined);
+        },
+    });
+
+    return new Response(body, { headers: { "Content-Type": "text/event-stream", "Cache-Control": "no-cache" } });
+}
+
 /** Who gets an account failure: the Anthropic route's client (Claude Code) gets the status it acts on. */
 interface FailureClient {
     anthropic: boolean;
@@ -144,7 +363,36 @@ export class OpenAiSubscriptionProvider implements ProxyProvider {
         this.accountFingerprint = accountConfigFingerprint(account);
 
         if (env.aiProxy.getCodexMessagesRoute() === "responses") {
-            this.messages = (req, model, bodyText, context) => this.nativeMessages(req, model, bodyText, context);
+            this.messages = (req, model, bodyText, context) => {
+                let parsed: unknown;
+                try {
+                    parsed = SafeJSON.parse(bodyText, { strict: true });
+                } catch (error) {
+                    logger.debug({ error }, "ai-proxy: could not inspect the messages body for compaction");
+                    return this.nativeMessages(req, model, bodyText, context);
+                }
+
+                if (!isObject(parsed) || !isClaudeCodeCompactionTurn(parsed)) {
+                    return this.nativeMessages(req, model, bodyText, context);
+                }
+
+                return compactionDispatch({
+                    signal: req.signal,
+                    stream: parsed.stream === true,
+                    run: (signal) =>
+                        this.nativeMessages(
+                            new Request(req.url, {
+                                method: req.method,
+                                headers: req.headers,
+                                ...(req.method === "GET" || req.method === "HEAD" ? {} : { body: bodyText }),
+                                signal,
+                            }),
+                            model,
+                            bodyText,
+                            context
+                        ),
+                });
+            };
         }
     }
 
@@ -467,12 +715,91 @@ export class OpenAiSubscriptionProvider implements ProxyProvider {
         };
         const rawInput = Array.isArray(responsesBody.input) ? responsesBody.input : [];
         const template = responsesBody;
-        responsesBody = {
-            ...responsesBody,
-            input: await expandCompactionMarkers(rawInput, (id) =>
-                this.compactionItem({ id, req, model, template, accountHash: stamp.accountHash, client })
-            ),
-        };
+        if (compactionMarkers(rawInput).length > 0) {
+            let expanded = rawInput;
+            try {
+                const restored = await compactionDispatch({
+                    signal: req.signal,
+                    stream: false,
+                    timeoutMs: 120_000,
+                    run: async (signal) => {
+                        const restoreReq = new Request(req.url, {
+                            method: req.method,
+                            headers: req.headers,
+                            ...(req.method === "GET" || req.method === "HEAD" ? {} : { body: bodyText }),
+                            signal,
+                        });
+                        expanded = await expandCompactionMarkers(rawInput, async (id) => {
+                            try {
+                                return await this.compactionItem({
+                                    id,
+                                    req: restoreReq,
+                                    model,
+                                    template,
+                                    accountHash: stamp.accountHash,
+                                    client,
+                                });
+                            } catch (error) {
+                                if (
+                                    error instanceof CompactionRestoreError &&
+                                    !signal.aborted &&
+                                    inputHasFallback(rawInput, id)
+                                ) {
+                                    logger.warn({ error, id }, "ai-proxy: using the readable compaction fallback");
+                                    return undefined;
+                                }
+
+                                if (error instanceof CompactionRestoreError) {
+                                    throw new CompactionRestoreError(
+                                        id,
+                                        error.permanent,
+                                        error.message,
+                                        error.missingId,
+                                        error.upstreamResponse
+                                    );
+                                }
+
+                                throw error;
+                            }
+                        });
+                        return new Response(null, { status: 204 });
+                    },
+                });
+
+                if (!restored.ok) {
+                    return toAnthropicErrorResponse(restored);
+                }
+
+                responsesBody = { ...responsesBody, input: expanded };
+            } catch (error) {
+                if (!(error instanceof CompactionRestoreError)) {
+                    throw error;
+                }
+
+                if (error.upstreamResponse) {
+                    return toAnthropicErrorResponse(error.upstreamResponse);
+                }
+
+                if (!error.permanent) {
+                    return toAnthropicErrorResponse(jsonError(503, error.message));
+                }
+
+                const session = context?.sessionId
+                    ? await noteBlockedCompaction(context.sessionId, error.marker)
+                    : undefined;
+
+                if (session && error.missingId !== error.marker) {
+                    await noteBlockedCompaction(session.id, error.missingId);
+                }
+
+                return toAnthropicErrorResponse(
+                    jsonError(
+                        400,
+                        `${error.message} ${compactionRecoveryMessage(session?.id, error.marker, error.missingId)}`
+                    )
+                );
+            }
+        }
 
         if (nativeCompaction) {
             return this.compactNatively({
@@ -612,7 +939,7 @@ export class OpenAiSubscriptionProvider implements ProxyProvider {
             { ...input.responsesBody, input: [...sent, { type: "compaction_trigger" }], stream: true },
             client
         );
-        const { item, usage } = response.ok ? compactionFromSse(await response.text()) : {};
+        const { item, usage, summary } = response.ok ? compactionFromSse(await readCompactionText(response)) : {};
 
         if (!item) {
             logger.warn(
@@ -620,6 +947,11 @@ export class OpenAiSubscriptionProvider implements ProxyProvider {
                 "ai-proxy: Codex native compaction gave no compaction item; writing the text summary instead"
             );
             return this.nativeMessages(req, model, input.bodyText, input.context, true);
+        }
+
+        // Native compaction can return only an encrypted item. Do not issue another model request for a summary.
+        if (req.signal.aborted) {
+            return toAnthropicErrorResponse(jsonError(499, "Compaction was cancelled."));
         }
 
         const servedBy = client.servedIdentity;
@@ -640,7 +972,7 @@ export class OpenAiSubscriptionProvider implements ProxyProvider {
             type: "message",
             role: "assistant",
             model,
-            content: [{ type: "text", text: compactionNote(id) }],
+            content: [{ type: "text", text: compactionNote(id, summary) }],
             stop_reason: "end_turn",
             stop_sequence: null,
             usage: {
@@ -668,12 +1000,16 @@ export class OpenAiSubscriptionProvider implements ProxyProvider {
         template: Record<string, unknown>;
         accountHash: string;
         client: FailureClient;
-    }): Promise<Record<string, unknown> | undefined> {
+        ancestors?: ReadonlySet<string>;
+    }): Promise<Record<string, unknown>> {
+        if (input.ancestors?.has(input.id)) {
+            throw new CompactionRestoreError(input.id, true, `Compaction history contains a cycle at ${input.id}.`);
+        }
+
         const record = loadCompaction(input.id);
 
         if (!record) {
-            logger.warn({ id: input.id }, "ai-proxy: a compaction marker has no record; the turn keeps the note only");
-            return undefined;
+            throw new CompactionRestoreError(input.id, true, `Compaction record ${input.id} is missing or unreadable.`);
         }
 
         const held = record.items[input.accountHash];
@@ -682,23 +1018,47 @@ export class OpenAiSubscriptionProvider implements ProxyProvider {
             return held;
         }
 
+        const ancestors = new Set(input.ancestors);
+        ancestors.add(input.id);
         const history = await expandCompactionMarkers(record.history, (id) =>
-            id === input.id ? Promise.resolve(undefined) : this.compactionItem({ ...input, id })
+            this.compactionItem({ ...input, id, ancestors })
         );
+        const cleanHistory = history.filter((item) => !isObject(item) || item.type !== "reasoning");
         const response = await this.respond(
             input.req,
             input.model,
-            { ...input.template, input: [...history, { type: "compaction_trigger" }], stream: true },
+            { ...input.template, input: [...cleanHistory, { type: "compaction_trigger" }], stream: true },
             input.client
         );
-        const { item } = response.ok ? compactionFromSse(await response.text()) : {};
+        if (!response.ok) {
+            throw new CompactionRestoreError(
+                input.id,
+                false,
+                `Could not restore compaction ${input.id}.`,
+                input.id,
+                response
+            );
+        }
+
+        let item: Record<string, unknown> | undefined;
+        try {
+            item = response.ok ? compactionFromSse(await readCompactionText(response)).item : undefined;
+        } catch (error) {
+            logger.warn({ error, id: input.id }, "ai-proxy: could not read the recompaction stream");
+            throw new CompactionRestoreError(input.id, false, `Could not read compaction ${input.id} for this login.`);
+        }
 
         if (!item) {
-            logger.warn(
-                { id: input.id, status: response.status },
-                "ai-proxy: compacting a saved history for another login failed; the turn keeps the note only"
+            logger.warn({ id: input.id, status: response.status }, "ai-proxy: recompacting saved history failed");
+            throw new CompactionRestoreError(
+                input.id,
+                false,
+                `Could not restore compaction ${input.id} for this login.`
             );
-            return undefined;
+        }
+
+        if (input.req.signal.aborted) {
+            throw new CompactionRestoreError(input.id, false, `Compaction ${input.id} was cancelled.`);
         }
 
         saveCompaction({ ...record, items: { ...record.items, [input.accountHash]: item } });

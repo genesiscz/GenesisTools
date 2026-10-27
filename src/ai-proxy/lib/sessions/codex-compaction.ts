@@ -1,4 +1,5 @@
 import {
+    copyFileSync,
     existsSync,
     mkdirSync,
     readdirSync,
@@ -6,13 +7,16 @@ import {
     statSync,
     unlinkSync,
     utimesSync,
-    writeFileSync,
 } from "node:fs";
 import { join } from "node:path";
+import { isCompactionId } from "@app/ai-proxy/lib/sessions/records";
 import { getAiProxyStorage } from "@app/ai-proxy/lib/storage";
+import { toolCommand } from "@genesiscz/utils/cli/tool-command";
 import { SafeJSON } from "@genesiscz/utils/json";
 import { logger } from "@genesiscz/utils/logger";
 import { isObject } from "@genesiscz/utils/object";
+import { withPathArbitrationSync } from "@genesiscz/utils/process/path-arbitration";
+import { atomicWriteFileSync } from "@genesiscz/utils/storage/atomic-file";
 
 /**
  * Codex's own way to compact (codex-rs `compact_remote_v2`): the turn's Responses request with one extra input item,
@@ -57,13 +61,41 @@ function compactionDir(): string {
 }
 
 function recordPath(id: string): string {
+    if (!isCompactionId(id)) {
+        throw new Error("Invalid compaction ID");
+    }
+
     return join(compactionDir(), `${id}.json`);
 }
 
 export function saveCompaction(record: CompactionRecord): void {
     mkdirSync(compactionDir(), { recursive: true, mode: 0o700 });
     // The history is the conversation itself: readable by this user only, like the proxy's transcripts.
-    writeFileSync(recordPath(record.id), SafeJSON.stringify(record), { mode: 0o600 });
+    const path = recordPath(record.id);
+    withPathArbitrationSync(path, () => atomicWriteFileSync(path, SafeJSON.stringify(record), { mode: 0o600 }));
+}
+
+export function restoreCompaction(id: string, from: string): { backup?: string } {
+    const path = recordPath(id);
+    const raw = readFileSync(from, "utf8");
+    const value: unknown = SafeJSON.parse(raw, { strict: true });
+
+    if (!isCompactionRecord(value) || value.id !== id) {
+        throw new Error("The supplied file is not the requested compaction record");
+    }
+
+    mkdirSync(compactionDir(), { recursive: true, mode: 0o700 });
+    return withPathArbitrationSync(path, () => {
+        let backup: string | undefined;
+
+        if (existsSync(path)) {
+            backup = `${path}.${crypto.randomUUID()}.bak`;
+            copyFileSync(path, backup);
+        }
+
+        atomicWriteFileSync(path, raw, { mode: 0o600 });
+        return { backup };
+    });
 }
 
 export function loadCompaction(id: string): CompactionRecord | undefined {
@@ -92,12 +124,165 @@ export function loadCompaction(id: string): CompactionRecord | undefined {
 }
 
 /** The summary text Claude Code keeps: what happened, and the marker the proxy swaps for the item. */
-export function compactionNote(id: string): string {
-    return [
+export function compactionNote(id: string, fallback?: string): string {
+    const marker = [
         "Codex compacted the earlier conversation on its server, the way the Codex CLI does. The summary is encrypted and",
         "ai-proxy restores it into every later request; this note is only its placeholder.",
         `[codex-compaction ${id}]`,
     ].join("\n");
+
+    return fallback?.trim()
+        ? `[codex-compaction-fallback ${id}]\n${fallback.trim()}\n[/codex-compaction-fallback ${id}]\n` +
+              fallbackNote(id)
+        : marker;
+}
+
+function fallbackNote(id: string): string {
+    return `The proxy can restore the encrypted Codex item; otherwise use the readable summary above.\n[codex-compaction ${id}]`;
+}
+
+function compactionNoteIds(text: string): string[] {
+    return [...text.matchAll(new RegExp(MARKER, "g"))]
+        .map((match) => match[1])
+        .filter(
+            (id): id is string =>
+                typeof id === "string" &&
+                isCompactionId(id) &&
+                (text.includes(compactionNote(id)) || text.includes(fallbackNote(id)))
+        );
+}
+
+/** A readable fallback must be present in the same text as its marker. */
+export function hasCompactionFallback(text: string, id: string): boolean {
+    const start = `[codex-compaction-fallback ${id}]`;
+    const end = `[/codex-compaction-fallback ${id}]`;
+    const first = text.indexOf(start);
+    const last = text.indexOf(end, first + start.length);
+
+    return first >= 0 && last > first + start.length && text.slice(first + start.length, last).trim().length > 0;
+}
+
+/** Inspect user text, not tool results or assistant text, for actual compaction notes without a fallback. */
+export function findUnrecoverableCompaction(messages: unknown): string | undefined {
+    if (!Array.isArray(messages)) {
+        return undefined;
+    }
+
+    for (const message of messages) {
+        if (!isObject(message) || message.role !== "user") {
+            continue;
+        }
+
+        const content = message.content;
+        const texts =
+            typeof content === "string"
+                ? [content]
+                : Array.isArray(content)
+                  ? content.flatMap((part) =>
+                        isObject(part) && part.type === "text" && typeof part.text === "string" ? [part.text] : []
+                    )
+                  : [];
+
+        for (const text of texts) {
+            const id = compactionNoteIds(text).find((marker) => !hasCompactionFallback(text, marker));
+
+            if (id) {
+                return id;
+            }
+        }
+    }
+
+    return undefined;
+}
+
+/** Replace only the exact session-approved note; never touch quoted tool results. */
+export function compactionRecoveryMessage(sessionId: string | undefined, marker: string, missingId = marker): string {
+    const lost = `Compaction ${marker} has no readable context, so the proxy stops here rather than continue without it.`;
+
+    if (!sessionId) {
+        return `${lost} Put the record ${missingId}.json back into ai-proxy/compactions/, or start a new session with a readable handoff.`;
+    }
+
+    const restore = toolCommand(
+        "ai-proxy session",
+        sessionId,
+        "compaction-restore",
+        "--marker",
+        missingId,
+        "--from",
+        "<record-file>"
+    );
+    const drop = toolCommand(
+        "ai-proxy session",
+        sessionId,
+        "compaction-drop",
+        "--marker",
+        marker,
+        "--acknowledge-context-loss"
+    );
+    return (
+        `${lost} To restore the saved record: ${restore}. ` +
+        `To continue without it: ${drop}, ` +
+        "then send the missing context in your next message. " +
+        'To avoid this when you switch providers, set claudeSessions.compaction.mode to "summary" first.'
+    );
+}
+
+export function applyCompactionDrops(messages: unknown, approved: readonly string[]): unknown {
+    if (!Array.isArray(messages) || approved.length === 0) {
+        return messages;
+    }
+
+    const replaceText = (text: string): string => {
+        let result = text;
+
+        for (const id of compactionNoteIds(text)) {
+            if (approved.includes(id)) {
+                result =
+                    `${stripCompactionNote(result, id)}\n[Earlier compacted context was explicitly dropped by the user: ${id}.]`.trim();
+            }
+        }
+
+        return result;
+    };
+
+    return messages.map((message) => {
+        if (!isObject(message) || message.role !== "user") {
+            return message;
+        }
+
+        if (typeof message.content === "string") {
+            return { ...message, content: replaceText(message.content) };
+        }
+
+        if (!Array.isArray(message.content)) {
+            return message;
+        }
+
+        return {
+            ...message,
+            content: message.content.map((part) =>
+                isObject(part) && part.type === "text" && typeof part.text === "string"
+                    ? { ...part, text: replaceText(part.text) }
+                    : part
+            ),
+        };
+    });
+}
+
+function stripCompactionNote(text: string, id: string): string {
+    if (hasCompactionFallback(text, id)) {
+        const start = text.indexOf(`[codex-compaction-fallback ${id}]`);
+        const close = `[/codex-compaction-fallback ${id}]`;
+        const end = text.indexOf(close, start) + close.length;
+        text = text.slice(0, start) + text.slice(end);
+    }
+
+    return text
+        .replace(compactionNote(id), "")
+        .replace(fallbackNote(id), "")
+        .replace(`[codex-compaction ${id}]`, "")
+        .trim();
 }
 
 export function newCompactionId(): string {
@@ -115,15 +300,18 @@ export function compactionMarkers(input: unknown[]): Array<{ index: number; id: 
     const found: Array<{ index: number; id: string }> = [];
 
     input.forEach((item, index) => {
-        if (!isObject(item) || item.type === "compaction") {
+        if (!isObject(item) || item.role !== "user") {
             return;
         }
 
         for (const part of textParts(item)) {
-            const match = typeof part.text === "string" ? part.text.match(MARKER) : null;
+            const id =
+                part.type === "input_text" && typeof part.text === "string"
+                    ? compactionNoteIds(part.text)[0]
+                    : undefined;
 
-            if (match?.[1]) {
-                found.push({ index, id: match[1] });
+            if (id) {
+                found.push({ index, id });
                 return;
             }
         }
@@ -163,7 +351,7 @@ export async function expandCompactionMarkers(
                 ...message,
                 content: textParts(message).map((part) =>
                     typeof part.text === "string" && MARKER.test(part.text)
-                        ? { ...part, text: part.text.replace(compactionNote(id), "").replace(MARKER, "").trim() }
+                        ? { ...part, text: stripCompactionNote(part.text, id) }
                         : part
                 ),
             };
@@ -179,9 +367,13 @@ export async function expandCompactionMarkers(
 export function compactionFromSse(sse: string): {
     item?: Record<string, unknown>;
     usage?: Record<string, unknown>;
+    summary?: string;
 } {
     let item: Record<string, unknown> | undefined;
     let usage: Record<string, unknown> | undefined;
+    let summary = "";
+    let completedText = "";
+    let messageText = "";
 
     for (const line of sse.split("\n")) {
         if (!line.startsWith("data: ")) {
@@ -203,15 +395,44 @@ export function compactionFromSse(sse: string): {
                 item = event.item;
             }
 
-            if (event.type === "response.completed" && isObject(event.response) && isObject(event.response.usage)) {
-                usage = event.response.usage;
+            if (event.type === "response.output_item.done" && isObject(event.item) && event.item.type === "message") {
+                messageText += textParts(event.item)
+                    .filter((part) => part.type === "output_text" && typeof part.text === "string")
+                    .map((part) => String(part.text))
+                    .join("");
+            }
+
+            if (event.type === "response.output_text.delta" && typeof event.delta === "string") {
+                summary += event.delta;
+            }
+
+            if (event.type === "response.output_text.done" && typeof event.text === "string") {
+                completedText += event.text;
+            }
+
+            if (event.type === "response.completed" && isObject(event.response)) {
+                if (isObject(event.response.usage)) {
+                    usage = event.response.usage;
+                }
+
+                if (!messageText && Array.isArray(event.response.output)) {
+                    messageText = event.response.output
+                        .filter(
+                            (entry): entry is Record<string, unknown> => isObject(entry) && entry.type === "message"
+                        )
+                        .flatMap(textParts)
+                        .filter((part) => part.type === "output_text" && typeof part.text === "string")
+                        .map((part) => String(part.text))
+                        .join("");
+                }
             }
         } catch (error) {
             logger.debug({ error }, "ai-proxy: a compaction stream frame is not JSON");
         }
     }
 
-    return { item, usage };
+    const readable = (summary || completedText || messageText).trim();
+    return { item, usage, ...(readable ? { summary: readable } : {}) };
 }
 
 /** Deletes compaction records no request has used for `retentionDays` (the proxy's session retention). */
@@ -222,13 +443,46 @@ export function sweepCompactions(retentionDays: number, now = Date.now()): strin
         return [];
     }
 
+    const files = readdirSync(dir).filter((name) => name.endsWith(".json"));
+    const fileNames = new Set(files);
+    const cutoff = now - retentionDays * 86_400_000;
+    const retained = new Set(files.filter((name) => statSync(join(dir, name)).mtimeMs >= cutoff));
+    const pending = [...retained];
+
+    while (pending.length > 0) {
+        const name = pending.pop();
+
+        if (!name) {
+            continue;
+        }
+
+        try {
+            const record: unknown = SafeJSON.parse(readFileSync(join(dir, name), "utf8"), { strict: true });
+
+            if (!isCompactionRecord(record)) {
+                logger.warn({ name }, "ai-proxy: cannot sweep with an unreadable retained compaction");
+                return [];
+            }
+
+            for (const { id } of compactionMarkers(record.history)) {
+                const dependency = `${id}.json`;
+
+                if (!retained.has(dependency) && fileNames.has(dependency)) {
+                    retained.add(dependency);
+                    pending.push(dependency);
+                }
+            }
+        } catch (error) {
+            logger.warn({ error, name }, "ai-proxy: cannot sweep with an unreadable retained compaction");
+            return [];
+        }
+    }
+
     const pruned: string[] = [];
 
-    for (const name of readdirSync(dir)) {
-        const path = join(dir, name);
-
-        if (name.endsWith(".json") && now - statSync(path).mtimeMs > retentionDays * 86_400_000) {
-            unlinkSync(path);
+    for (const name of files) {
+        if (!retained.has(name)) {
+            unlinkSync(join(dir, name));
             pruned.push(name);
         }
     }

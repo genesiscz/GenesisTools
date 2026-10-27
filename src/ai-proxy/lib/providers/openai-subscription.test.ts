@@ -1,10 +1,18 @@
 import { afterEach, beforeEach, describe, expect, it, mock } from "bun:test";
-import { mkdtempSync, readFileSync, writeFileSync } from "node:fs";
+import { mkdtempSync, readFileSync, utimesSync, writeFileSync } from "node:fs";
 import { tmpdir } from "node:os";
 import { join } from "node:path";
 import { resetCooldowns } from "@app/ai-proxy/lib/providers/cooldown";
-import { compactionNote, loadCompaction, saveCompaction } from "@app/ai-proxy/lib/sessions/codex-compaction";
+import {
+    compactionFromSse,
+    compactionNote,
+    loadCompaction,
+    saveCompaction,
+    sweepCompactions,
+} from "@app/ai-proxy/lib/sessions/codex-compaction";
+import { createSessionRecord, readSessionRecord } from "@app/ai-proxy/lib/sessions/records";
 import { setClaudeSessionSettings } from "@app/ai-proxy/lib/sessions/settings";
+import { getAiProxyStorage } from "@app/ai-proxy/lib/storage";
 import {
     CLAUDE_CODE_COMPACTION_MARK,
     isClaudeCodeModelProbe,
@@ -99,9 +107,13 @@ function whamStreamResponse(): Response {
 }
 
 /** WHAM's answer to a `compaction_trigger`: one compaction item, and the usage of the cached prefix. */
-function whamCompactionResponse(encrypted: string): Response {
+function whamCompactionResponse(encrypted: string, summary?: string): Response {
     const item = { type: "compaction", id: "cmp_1", encrypted_content: encrypted };
+    const readable = summary
+        ? `event: response.output_text.delta\ndata: ${SafeJSON.stringify({ type: "response.output_text.delta", delta: summary })}\n\n`
+        : "";
     const sse =
+        readable +
         `event: response.output_item.done\ndata: ${SafeJSON.stringify({ type: "response.output_item.done", item })}\n\n` +
         `event: response.completed\ndata: ${SafeJSON.stringify({
             type: "response.completed",
@@ -1012,6 +1024,156 @@ describe("OpenAiSubscriptionProvider", () => {
     });
 });
 
+describe("compaction dispatch", () => {
+    it("keeps native readable text without fabricating it from an encrypted item", async () => {
+        const encryptedOnly = await whamCompactionResponse("opaque").text();
+        const doneOnly = `data: ${SafeJSON.stringify({ type: "response.output_text.done", text: "Earlier work." })}\n\n`;
+        const both = `data: ${SafeJSON.stringify({ type: "response.output_text.delta", delta: "Earlier work." })}\n\n${doneOnly}`;
+        const messageOnly = `data: ${SafeJSON.stringify({
+            type: "response.output_item.done",
+            item: { type: "message", content: [{ type: "output_text", text: "Earlier work." }] },
+        })}\n\n`;
+
+        const completedOnly = `data: ${SafeJSON.stringify({
+            type: "response.completed",
+            response: { output: [{ type: "message", content: [{ type: "output_text", text: "Earlier work." }] }] },
+        })}\n\n`;
+
+        expect(compactionFromSse(encryptedOnly).summary).toBeUndefined();
+        expect(compactionFromSse(doneOnly).summary).toBe("Earlier work.");
+        expect(compactionFromSse(both).summary).toBe("Earlier work.");
+        expect(compactionFromSse(messageOnly).summary).toBe("Earlier work.");
+        expect(compactionFromSse(completedOnly).summary).toBe("Earlier work.");
+    });
+
+    it("sends keepalives and aborts a stalled preparation at its deadline", async () => {
+        const { compactionDispatch } = await import("./openai-subscription");
+        let aborted = false;
+        const response = await compactionDispatch({
+            signal: new AbortController().signal,
+            stream: true,
+            timeoutMs: 100,
+            pingMs: 10,
+            run: (signal) =>
+                new Promise<Response>((_resolve, reject) => {
+                    signal.addEventListener(
+                        "abort",
+                        () => {
+                            aborted = true;
+                            reject(new Error("aborted"));
+                        },
+                        { once: true }
+                    );
+                }),
+        });
+        const text = await response.text();
+
+        expect(text).toContain(": keepalive");
+        expect(text).toContain("event: error");
+        expect(text).toContain("Compaction timed out");
+        expect(aborted).toBe(true);
+    });
+
+    it("cancels a compaction body that stops sending data", async () => {
+        const { readCompactionText } = await import("./openai-subscription");
+        let cancelled = false;
+        const response = new Response(
+            new ReadableStream<Uint8Array>({
+                start(controller) {
+                    controller.enqueue(new TextEncoder().encode("data: first\n\n"));
+                },
+                cancel() {
+                    cancelled = true;
+                },
+            })
+        );
+
+        await expect(readCompactionText(response, 100)).rejects.toThrow("Compaction upstream stream timed out");
+        expect(cancelled).toBe(true);
+    });
+
+    it("bounds a stalled body after upstream headers", async () => {
+        const { compactionDispatch } = await import("./openai-subscription");
+        let aborted = false;
+        const response = await compactionDispatch({
+            signal: new AbortController().signal,
+            stream: false,
+            timeoutMs: 100,
+            run: async (signal) => {
+                const upstream = new Response(
+                    new ReadableStream<Uint8Array>({
+                        start(controller) {
+                            signal.addEventListener(
+                                "abort",
+                                () => {
+                                    aborted = true;
+                                    controller.error(new Error("aborted"));
+                                },
+                                { once: true }
+                            );
+                        },
+                    })
+                );
+                await upstream.text();
+                return new Response("unexpected");
+            },
+        });
+
+        expect(response.status).toBe(504);
+        expect(await response.text()).toContain("Compaction timed out");
+        expect(aborted).toBe(true);
+    });
+
+    it("cancels stalled upstream preparation when the client stops reading", async () => {
+        const { compactionDispatch } = await import("./openai-subscription");
+        let aborted = false;
+        const response = await compactionDispatch({
+            signal: new AbortController().signal,
+            stream: true,
+            pingMs: 10,
+            run: (signal) =>
+                new Promise<Response>((_resolve, reject) => {
+                    signal.addEventListener(
+                        "abort",
+                        () => {
+                            aborted = true;
+                            reject(new Error("cancelled"));
+                        },
+                        { once: true }
+                    );
+                }),
+        });
+
+        await response.body?.cancel();
+        expect(aborted).toBe(true);
+    });
+
+    it("preserves early HTTP failures before the first keepalive", async () => {
+        const { compactionDispatch } = await import("./openai-subscription");
+
+        for (const status of [400, 503, 529]) {
+            const response = await compactionDispatch({
+                signal: new AbortController().signal,
+                stream: true,
+                run: async () => new Response("failure", { status }),
+            });
+            expect(response.status).toBe(status);
+            expect(await response.text()).toBe("failure");
+        }
+    });
+
+    it("forwards a healthy prepared stream", async () => {
+        const { compactionDispatch } = await import("./openai-subscription");
+        const response = await compactionDispatch({
+            signal: new AbortController().signal,
+            stream: true,
+            run: async () => new Response("event: message_stop\ndata: {}\n\n"),
+        });
+
+        expect(await response.text()).toContain("event: message_stop");
+    });
+});
+
 describe("native /v1/messages route: reasoning carried in gtr1 envelopes", () => {
     const fixture = readFileSync(join(import.meta.dir, "fixtures", "wham-reasoning-parallel-tools.sse"), "utf8");
     const sseResponse = (text: string) =>
@@ -1035,7 +1197,8 @@ describe("native /v1/messages route: reasoning carried in gtr1 envelopes", () =>
 
     async function send(
         body: Record<string, unknown>,
-        context?: { promptCacheKey?: { key: string; source: "claude-session" } }
+        context?: { promptCacheKey?: { key: string; source: "claude-session" }; sessionId?: string },
+        signal?: AbortSignal
     ): Promise<Response> {
         const { OpenAiSubscriptionProvider } = await import("./openai-subscription");
         const provider = await OpenAiSubscriptionProvider.create(account);
@@ -1047,7 +1210,7 @@ describe("native /v1/messages route: reasoning carried in gtr1 envelopes", () =>
         }
 
         return messages(
-            new Request("http://localhost/v1/messages", { method: "POST", body: bodyText }),
+            new Request("http://localhost/v1/messages", { method: "POST", body: bodyText, signal }),
             "gpt-6.1-sol",
             bodyText,
             context
@@ -1074,7 +1237,8 @@ describe("native /v1/messages route: reasoning carried in gtr1 envelopes", () =>
     }
 
     it("a recorded WHAM stream: thinking first with one gtr1 signature, text, four tool calls with .done-only arguments, never thinking last", async () => {
-        globalThis.fetch = (async () => sseResponse(fixture)) as unknown as typeof fetch;
+        globalThis.fetch = (async (_url: RequestInfo | URL, _init?: RequestInit) =>
+            sseResponse(fixture)) as typeof fetch;
         const response = await send({
             model: "gpt-6.1-sol",
             stream: true,
@@ -1124,7 +1288,8 @@ describe("native /v1/messages route: reasoning carried in gtr1 envelopes", () =>
     });
 
     it("the next turn replays the item whole, before its tool call, with the conversation's cache key; foreign signatures go silently", async () => {
-        globalThis.fetch = (async () => sseResponse(fixture)) as unknown as typeof fetch;
+        globalThis.fetch = (async (_url: RequestInfo | URL, _init?: RequestInit) =>
+            sseResponse(fixture)) as typeof fetch;
         const { signature, thinking } = turnOneThinking(
             await (
                 await send({ model: "gpt-6.1-sol", stream: true, messages: [{ role: "user", content: "q" }] })
@@ -1314,7 +1479,9 @@ describe("native /v1/messages route: reasoning carried in gtr1 envelopes", () =>
             })
         ).text();
 
+        expect(sent).toHaveLength(1);
         expect(sent[0]?.tool_choice).toBe("none");
+        expect(SafeJSON.stringify(sent[0]?.input)).not.toContain("compaction_trigger");
         // The summary keeps the session's effort (another effort misses the cache) and is asked for a length, at the
         // end of the input so the cached prefix stays.
         expect((sent[0]?.reasoning as Record<string, unknown> | undefined)?.effort).toBe("xhigh");
@@ -1350,6 +1517,63 @@ describe("native /v1/messages route: reasoning carried in gtr1 envelopes", () =>
         expect(SafeJSON.stringify(sent[0]?.input)).not.toContain("words");
     });
 
+    it("cancels stalled native compaction and cross-login recompaction when the client disconnects", async () => {
+        for (const crossLogin of [false, true]) {
+            let upstreamSignal: AbortSignal | undefined;
+            let started: () => void = () => {};
+            const upstreamStarted = new Promise<void>((resolve) => {
+                started = resolve;
+            });
+            globalThis.fetch = (async (_url: RequestInfo | URL, init?: RequestInit) => {
+                upstreamSignal = init?.signal ?? undefined;
+                const signal = upstreamSignal;
+                started();
+                return new Response(
+                    new ReadableStream<Uint8Array>({
+                        start(controller) {
+                            signal?.addEventListener("abort", () => controller.error(new Error("cancelled")), {
+                                once: true,
+                            });
+                        },
+                    }),
+                    { headers: { "Content-Type": "text/event-stream" } }
+                );
+            }) as typeof fetch;
+            const id = `gtc1.${crypto.randomUUID()}`;
+
+            if (crossLogin) {
+                saveCompaction({
+                    id,
+                    model: "gpt-6.1-sol",
+                    createdAt: new Date().toISOString(),
+                    items: { otherlgn: { type: "compaction", encrypted_content: "old" } },
+                    history: [{ role: "user", content: [{ type: "input_text", text: "earlier" }] }],
+                });
+            }
+
+            const client = new AbortController();
+            const pending = send(
+                {
+                    model: "gpt-6.1-sol",
+                    stream: true,
+                    messages: [
+                        {
+                            role: "user",
+                            content: crossLogin ? compactionNote(id) : `${CLAUDE_CODE_COMPACTION_MARK}\nSummarize.`,
+                        },
+                    ],
+                },
+                undefined,
+                client.signal
+            );
+            await upstreamStarted;
+            client.abort();
+            const response = await pending;
+            expect(upstreamSignal?.aborted).toBe(true);
+            await response.body?.cancel();
+        }
+    });
+
     it("a native compaction sends the turn plus compaction_trigger at the session's effort, and a marker comes back", async () => {
         const sent: Array<Record<string, unknown>> = [];
         globalThis.fetch = (async (_url: RequestInfo | URL, init?: RequestInit) => {
@@ -1378,6 +1602,8 @@ describe("native /v1/messages route: reasoning carried in gtr1 envelopes", () =>
         const id = note.match(/\[codex-compaction (gtc1\.[0-9a-f-]{36})\]/)?.[1];
         expect(id).toBeDefined();
         expect(reply.usage).toEqual({ input_tokens: 20, cache_read_input_tokens: 380, output_tokens: 50 });
+        expect(sent).toHaveLength(1);
+        expect(note).not.toContain("codex-compaction-fallback");
 
         // The next turn carries Claude Code's summary message; the proxy puts the item back in front of it.
         await (
@@ -1391,6 +1617,26 @@ describe("native /v1/messages route: reasoning carried in gtr1 envelopes", () =>
         expect(next[0]).toEqual({ type: "compaction", id: "cmp_1", encrypted_content: "ENC-A" });
         expect(SafeJSON.stringify(next)).not.toContain("codex-compaction");
         expect(SafeJSON.stringify(next)).toContain("Go on.");
+    });
+
+    it("keeps readable text supplied by native compaction without a second model request", async () => {
+        let requests = 0;
+        globalThis.fetch = (async (_url: RequestInfo | URL, _init?: RequestInit) => {
+            requests++;
+            return whamCompactionResponse("ENC-A", "The earlier answer is on shelf 12.");
+        }) as typeof fetch;
+        const reply = await (
+            await send({
+                model: "gpt-6.1-sol",
+                stream: false,
+                messages: [{ role: "user", content: `${CLAUDE_CODE_COMPACTION_MARK}\nSummarize.` }],
+            })
+        ).json();
+        const note = String(reply.content?.[0]?.text ?? "");
+
+        expect(requests).toBe(1);
+        expect(note).toContain("The earlier answer is on shelf 12.");
+        expect(note).toContain("codex-compaction-fallback");
     });
 
     it("a marker from another login compacts the saved history again there, once", async () => {
@@ -1407,7 +1653,10 @@ describe("native /v1/messages route: reasoning carried in gtr1 envelopes", () =>
             model: "gpt-6.1-sol",
             createdAt: new Date().toISOString(),
             items: { otherlgn: { type: "compaction", id: "cmp_other", encrypted_content: "ENC-OTHER" } },
-            history: [{ role: "user", content: [{ type: "input_text", text: "the earlier work" }] }],
+            history: [
+                { role: "user", content: [{ type: "input_text", text: "the earlier work" }] },
+                { type: "reasoning", id: "rs_old", encrypted_content: "old-login-reasoning", summary: [] },
+            ],
         });
         const turn = {
             model: "gpt-6.1-sol",
@@ -1421,12 +1670,233 @@ describe("native /v1/messages route: reasoning carried in gtr1 envelopes", () =>
 
         expect(triggers.length).toBe(1);
         expect(SafeJSON.stringify(triggers[0]?.input)).toContain("the earlier work");
+        expect(SafeJSON.stringify(triggers[0]?.input)).not.toContain("old-login-reasoning");
         const turns = sent.filter((body) => !SafeJSON.stringify(body.input).includes("compaction_trigger"));
         expect(turns.map((body) => (body.input as Array<Record<string, unknown>>)[0]?.encrypted_content)).toEqual([
             "ENC-HERE",
             "ENC-HERE",
         ]);
         expect(loadCompaction(id)?.items.otherlgn?.encrypted_content).toBe("ENC-OTHER");
+    });
+
+    it("does not restore quoted markers or a compaction note inside a tool result", async () => {
+        let requests = 0;
+        globalThis.fetch = (async (_url: RequestInfo | URL, _init?: RequestInit) => {
+            requests++;
+            return whamStreamResponse();
+        }) as typeof fetch;
+        const id = `gtc1.${crypto.randomUUID()}`;
+        const response = await send({
+            model: "gpt-6.1-sol",
+            stream: true,
+            messages: [
+                {
+                    role: "user",
+                    content: [{ type: "tool_result", tool_use_id: "tool_1", content: compactionNote(id) }],
+                },
+                { role: "user", content: `The log mentions [codex-compaction ${id}].` },
+            ],
+        });
+
+        expect(response.status).toBe(200);
+        await response.text();
+        expect(requests).toBe(1);
+    });
+
+    it("preserves usage-limit and overload HTTP statuses on ordinary post-compaction turns", async () => {
+        const id = `gtc1.${crypto.randomUUID()}`;
+        saveCompaction({
+            id,
+            model: "gpt-6.1-sol",
+            createdAt: new Date().toISOString(),
+            items: { [accountHash8("codex")]: { type: "compaction", encrypted_content: "held" } },
+            history: [{ role: "user", content: [{ type: "input_text", text: "earlier" }] }],
+        });
+        const turn = {
+            model: "gpt-6.1-sol",
+            stream: true,
+            messages: [{ role: "user", content: `${compactionNote(id)}\nGo on.` }],
+        };
+        globalThis.fetch = (async (_url: RequestInfo | URL, _init?: RequestInit) =>
+            new Response(USAGE_LIMIT_BODY, { status: 429 })) as typeof fetch;
+        const limited = await send(turn, { sessionId: "s-1" });
+        expect(limited.status).toBe(400);
+        expect(await limited.text()).toContain("tools ai-proxy session s-1 use --codex <account>");
+
+        const overloaded =
+            'event: response.created\ndata: {"type":"response.created","response":{"id":"r1"}}\n\n' +
+            'event: response.failed\ndata: {"type":"response.failed","response":{"error":{"code":"server_is_overloaded","message":"busy"}}}\n\n';
+        globalThis.fetch = (async (_url: RequestInfo | URL, _init?: RequestInit) =>
+            new Response(overloaded, {
+                status: 200,
+                headers: { "content-type": "text/event-stream" },
+            })) as typeof fetch;
+        const busy = await send(turn);
+        expect(busy.status).toBe(529);
+        expect(await busy.text()).toContain("overloaded_error");
+    });
+
+    it("refuses to continue when a compaction record is missing", async () => {
+        let requests = 0;
+        globalThis.fetch = (async (_url: RequestInfo | URL, _init?: RequestInit) => {
+            requests++;
+            return whamStreamResponse();
+        }) as typeof fetch;
+        const id = `gtc1.${crypto.randomUUID()}`;
+        const response = await send({
+            model: "gpt-6.1-sol",
+            stream: true,
+            messages: [{ role: "user", content: `Summary:\n${compactionNote(id)}\n\nGo on.` }],
+        });
+
+        expect(response.status).toBe(400);
+        const errorBody = await response.text();
+        expect(errorBody).toContain(`Compaction record ${id} is missing or unreadable`);
+        expect(errorBody).toContain("start a new session with a readable handoff");
+        expect(requests).toBe(0);
+    });
+
+    it("offers record restore and explicit loss acknowledgement for the blocked session", async () => {
+        const sessionId = crypto.randomUUID();
+        const id = `gtc1.${crypto.randomUUID()}`;
+        createSessionRecord({ id: sessionId });
+        const response = await send(
+            {
+                model: "gpt-6.1-sol",
+                stream: true,
+                messages: [{ role: "user", content: compactionNote(id) }],
+            },
+            { sessionId }
+        );
+
+        expect(response.status).toBe(400);
+        const message = await response.text();
+        expect(message).toContain(`session ${sessionId} compaction-restore --marker ${id} --from`);
+        expect(message).toContain(`session ${sessionId} compaction-drop --marker ${id} --acknowledge-context-loss`);
+        expect(readSessionRecord(sessionId)?.blockedCompactions).toContain(id);
+        expect(readSessionRecord(sessionId)?.droppedCompactions).toBeUndefined();
+    });
+
+    it("uses the readable summary when a compaction record is missing", async () => {
+        const sent: Array<Record<string, unknown>> = [];
+        globalThis.fetch = (async (_url: RequestInfo | URL, init?: RequestInit) => {
+            sent.push(SafeJSON.parse(String(init?.body)) as Record<string, unknown>);
+            return whamStreamResponse();
+        }) as typeof fetch;
+        const id = `gtc1.${crypto.randomUUID()}`;
+        const response = await send({
+            model: "gpt-6.1-sol",
+            stream: true,
+            messages: [{ role: "user", content: compactionNote(id, "Shelf 12 holds the answer.") }],
+        });
+
+        expect(response.status).toBe(200);
+        await response.text();
+        expect(SafeJSON.stringify(sent[0]?.input)).toContain("Shelf 12 holds the answer.");
+    });
+
+    it("refuses to continue when another login cannot recompact the saved history", async () => {
+        let requests = 0;
+        globalThis.fetch = (async (_url: RequestInfo | URL, _init?: RequestInit) => {
+            requests++;
+            return whamStreamResponse();
+        }) as typeof fetch;
+        const id = `gtc1.${crypto.randomUUID()}`;
+        saveCompaction({
+            id,
+            model: "gpt-6.1-sol",
+            createdAt: new Date().toISOString(),
+            items: { otherlgn: { type: "compaction", encrypted_content: "old" } },
+            history: [{ role: "user", content: [{ type: "input_text", text: "earlier" }] }],
+        });
+        const response = await send({
+            model: "gpt-6.1-sol",
+            stream: true,
+            messages: [{ role: "user", content: compactionNote(id) }],
+        });
+
+        expect(response.status).toBe(503);
+        const errorBody = await response.text();
+        expect(errorBody).toContain(`Could not restore compaction ${id}`);
+        expect(requests).toBe(1);
+    });
+
+    it("preserves transient upstream failures while restoring on another login", async () => {
+        const id = `gtc1.${crypto.randomUUID()}`;
+        saveCompaction({
+            id,
+            model: "gpt-6.1-sol",
+            createdAt: new Date().toISOString(),
+            items: { otherlgn: { type: "compaction", encrypted_content: "old" } },
+            history: [{ role: "user", content: [{ type: "input_text", text: "earlier" }] }],
+        });
+        globalThis.fetch = (async (_url: RequestInfo | URL, _init?: RequestInit) =>
+            new Response(USAGE_LIMIT_BODY, { status: 429 })) as typeof fetch;
+        const response = await send(
+            {
+                model: "gpt-6.1-sol",
+                stream: true,
+                messages: [{ role: "user", content: compactionNote(id) }],
+            },
+            { sessionId: "s-1" }
+        );
+
+        expect(response.status).toBe(400);
+        expect(await response.text()).toContain("tools ai-proxy session s-1 use --codex <account>");
+    });
+
+    it("uses the readable summary when cross-login recompaction fails", async () => {
+        const sent: Array<Record<string, unknown>> = [];
+        globalThis.fetch = (async (_url: RequestInfo | URL, init?: RequestInit) => {
+            sent.push(SafeJSON.parse(String(init?.body)) as Record<string, unknown>);
+            return whamStreamResponse();
+        }) as typeof fetch;
+        const id = `gtc1.${crypto.randomUUID()}`;
+        saveCompaction({
+            id,
+            model: "gpt-6.1-sol",
+            createdAt: new Date().toISOString(),
+            items: { otherlgn: { type: "compaction", encrypted_content: "old" } },
+            history: [{ role: "user", content: [{ type: "input_text", text: "earlier" }] }],
+        });
+        const response = await send({
+            model: "gpt-6.1-sol",
+            stream: true,
+            messages: [{ role: "user", content: compactionNote(id, "Earlier work is on shelf 12.") }],
+        });
+
+        expect(response.status).toBe(200);
+        await response.text();
+        expect(sent).toHaveLength(2);
+        expect(SafeJSON.stringify(sent[1]?.input)).toContain("Earlier work is on shelf 12.");
+    });
+
+    it("retains old ancestor records of active compactions", () => {
+        const ancestor = `gtc1.${crypto.randomUUID()}`;
+        const child = `gtc1.${crypto.randomUUID()}`;
+        const unrelated = `gtc1.${crypto.randomUUID()}`;
+        const record = (id: string, history: unknown[]) => ({
+            id,
+            model: "gpt-6.1-sol",
+            createdAt: new Date().toISOString(),
+            items: {},
+            history,
+        });
+        saveCompaction(record(ancestor, [{ role: "user", content: [{ type: "input_text", text: "earlier" }] }]));
+        saveCompaction(
+            record(child, [{ role: "user", content: [{ type: "input_text", text: compactionNote(ancestor) }] }])
+        );
+        saveCompaction(record(unrelated, []));
+        const dir = join(getAiProxyStorage().getBaseDir(), "compactions");
+        const old = new Date(Date.now() - 3 * 86_400_000);
+        utimesSync(join(dir, `${ancestor}.json`), old, old);
+        utimesSync(join(dir, `${unrelated}.json`), old, old);
+
+        const pruned = sweepCompactions(1);
+
+        expect(pruned).toContain(`${unrelated}.json`);
+        expect(pruned).not.toContain(`${ancestor}.json`);
+        expect(loadCompaction(ancestor)?.history).toHaveLength(1);
     });
 
     it("a native compaction with no compaction item writes the text summary instead", async () => {
@@ -1477,7 +1947,7 @@ describe("account failures on the Anthropic route (Claude Code)", () => {
     };
 
     async function send(upstream: () => Response, sessionId?: string) {
-        globalThis.fetch = (async () => upstream()) as unknown as typeof fetch;
+        globalThis.fetch = (async (_url: RequestInfo | URL, _init?: RequestInit) => upstream()) as typeof fetch;
         const { OpenAiSubscriptionProvider } = await import("./openai-subscription");
         const provider = await OpenAiSubscriptionProvider.create(account);
         const bodyText = SafeJSON.stringify(body);
