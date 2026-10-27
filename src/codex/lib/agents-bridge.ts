@@ -293,7 +293,7 @@ export class AgentsBridge {
     private asMail(control: Extract<CodexControl, { op: "steer" }>, event: MessageFeedEvent): CodexControl {
         const from = event.from_agent_name ?? event.from_agent_id;
         const reply = event.message_id
-            ? ` Reply with: ${toolCommand("agents message", "--from", this.agentName, "--reply", String(event.message_id), "--body", "'<text>'", "--session", this.session)}`
+            ? ` Reply with: ${toolCommand("agents message", "--from", this.agentName, "--reply", String(event.message_id), "--body", "<text>", "--session", this.session)}`
             : "";
         return {
             ...control,

@@ -315,7 +315,7 @@ describe("toolCommand", () => {
 
     test("quotes an argument that contains a space", () => {
         expect(toolCommand("macos permissions open", "--pane", "full disk")).toBe(
-            'tools macos permissions open --pane "full disk"'
+            "tools macos permissions open --pane 'full disk'"
         );
     });
 });

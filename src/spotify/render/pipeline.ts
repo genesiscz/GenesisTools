@@ -11,9 +11,7 @@ export function renderDoctor(r: DoctorReport): void {
         // both as required made the first step look like it needed a browser harvest first.
         line("no profiles configured. Start with:");
         line(
-            pc.gray(
-                `  ${toolCommand("spotify profile add", "me", "--history", "<export", "dir>", "[--data", "<harvest", "dir>]")}`
-            )
+            pc.gray(`  ${toolCommand("spotify profile add", "me", "--history", "<export dir>")} [--data <harvest dir>]`)
         );
         line(pc.gray("  The history export alone is enough; --data adds the harvested library."));
 
