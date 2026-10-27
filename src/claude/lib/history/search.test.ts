@@ -239,6 +239,7 @@ function reader(overrides: Partial<Reader> = {}): Reader {
         parserVersion: "test",
         readBackward: noBackwardRead,
         readTurnBoundary: async () => null,
+        readForward: async () => ({ rows: [], file: null, endOffset: 0, issues: [] }),
         roots: () => [root],
         discover: async () => ({ sources: [], issues: [], completeRoots: [root] }),
         read: async () => {

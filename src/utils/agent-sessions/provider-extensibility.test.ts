@@ -49,6 +49,7 @@ test("a registered fourth provider supports listing, content, detail and unavail
             parserVersion: "1",
             readBackward: noBackwardRead,
             readTurnBoundary: async () => null,
+            readForward: async () => ({ rows: [], file: null, endOffset: 0, issues: [] }),
             roots: () => [root],
             discover: async (roots, options) => {
                 const discovered = await discoverClaudeHistorySources(roots, options);

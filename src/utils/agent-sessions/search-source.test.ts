@@ -91,6 +91,7 @@ function reader(records: HistorySourceRecord[]): NativeSessionReader<string> {
         parserVersion: "fixture-v1",
         readBackward: noBackwardRead,
         readTurnBoundary: async () => null,
+        readForward: async () => ({ rows: [], file: null, endOffset: 0, issues: [] }),
         roots: () => [SOURCE.root],
         discover: async () => ({ sources: [SOURCE], issues: [], completeRoots: [SOURCE.root] }),
         read: async () => {
