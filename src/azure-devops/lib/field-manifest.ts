@@ -240,8 +240,22 @@ function matchesLabel(label: string, query: FieldQuery["label"]): boolean {
         : new RegExp(query.source, query.flags).test(label);
 }
 
+type FieldLookupManifest = Omit<AdoFieldManifest, "types"> & {
+    types: Readonly<
+        Record<
+            string,
+            {
+                states: readonly AdoStateEntry[];
+                fields: Readonly<
+                    Record<string, Omit<AdoFieldEntry, "allowedValues"> & { allowedValues: readonly string[] }>
+                >;
+            }
+        >
+    >;
+};
+
 /** Every field that matches, one entry per reference name. */
-export function findFields(manifest: AdoFieldManifest, query: FieldQuery): FieldMatch[] {
+export function findFields(manifest: FieldLookupManifest, query: FieldQuery): FieldMatch[] {
     const matches = new Map<string, FieldMatch>();
     const value = query.value?.toLowerCase();
 
@@ -271,7 +285,7 @@ export function findFields(manifest: AdoFieldManifest, query: FieldQuery): Field
                 name: field.name,
                 type: field.type,
                 isIdentity: field.isIdentity,
-                allowedValues: field.allowedValues,
+                allowedValues: [...field.allowedValues],
                 types: [typeName],
             });
         }
@@ -281,7 +295,7 @@ export function findFields(manifest: AdoFieldManifest, query: FieldQuery): Field
 }
 
 /** The one field that matches, or undefined. Throws when the query matches more than one reference name. */
-export function findField(manifest: AdoFieldManifest, query: FieldQuery): FieldMatch | undefined {
+export function findField(manifest: FieldLookupManifest, query: FieldQuery): FieldMatch | undefined {
     const matches = findFields(manifest, query);
 
     if (matches.length > 1) {

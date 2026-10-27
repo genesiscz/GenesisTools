@@ -235,7 +235,7 @@ export const MANIFEST_KINDS: ManifestKind[] = [
         description: "Every shared saved query by its folder path, with its id (My Queries are left out)",
         usesTypes: false,
         fetch: async ({ api }) => {
-            const queries = (await api.getAllQueries()).filter(
+            const queries = (await api.getAllQueries({ strict: true })).filter(
                 (query) => !query.isFolder && !query.path.startsWith("My Queries/")
             );
             return { queries: sortedRecord(queries.map((query) => [query.path, query.id])) };
