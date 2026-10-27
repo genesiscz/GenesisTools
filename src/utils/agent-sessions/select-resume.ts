@@ -173,8 +173,25 @@ export async function selectResumeSession(
  * this very tab (which now runs this command), has no tab to focus: on 2026-10-27 a session quit and resumed in the
  * same tab was offered as "1 running in cmux".
  */
-export function runsElsewhere(entry: RunningCmuxSession, here = env.device.getCmuxSurfaceId()): boolean {
-    return entry.surfaceId !== here && isProcessAlive(entry.pid);
+export function runsElsewhere(
+    entry: RunningCmuxSession,
+    here = env.device.getCmuxSurfaceId(),
+    state: (pid: number) => string | null = processState
+): boolean {
+    // The cmux tree reports surface UUIDs in lower case, CMUX_SURFACE_ID in upper case (2026-10-27).
+    if (here && entry.surfaceId.toLowerCase() === here.toLowerCase()) {
+        return false;
+    }
+
+    // A job stopped with Ctrl-Z (state T) is no session to focus: its tab shows the shell again.
+    return isProcessAlive(entry.pid) && !state(entry.pid)?.startsWith("T");
+}
+
+/** `ps -o stat=` of one pid (`S+`, `T`, …), or null when ps cannot tell. */
+function processState(pid: number): string | null {
+    const run = Bun.spawnSync(["ps", "-o", "stat=", "-p", String(pid)], { stdout: "pipe", stderr: "pipe" });
+
+    return run.exitCode === 0 ? run.stdout.toString().trim() || null : null;
 }
 
 /** The running sessions are an offer on top of the resume, never a reason it fails. */
