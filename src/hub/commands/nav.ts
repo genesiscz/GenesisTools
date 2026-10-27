@@ -22,7 +22,7 @@ import {
     type NavTarget,
     normalizeTarget,
 } from "../lib/navigation/types";
-import { HUB_MODES, HUB_TABS, hubUrl, openHub } from "../lib/open";
+import { HUB_MODES, HUB_TABS, hubPrintUrl, openHub } from "../lib/open";
 
 const { log } = logger.scoped("hub:nav");
 
@@ -162,7 +162,7 @@ async function navOpen(input: string | undefined, flags: NavOpenFlags): Promise<
     };
 
     if (flags.printUrl) {
-        out.println(hubUrl(link));
+        out.println(hubPrintUrl(link));
         return;
     }
 

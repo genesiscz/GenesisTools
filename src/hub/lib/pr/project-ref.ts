@@ -93,6 +93,35 @@ export async function resolveHubPrRef(
     };
 }
 
+/** The checkout of the one project `name` names (`owner/repo`, `group/sub/app`, or the end of one), or why there is none. */
+export async function projectCheckout(
+    name: string,
+    { source = liveCheckouts }: { source?: () => Promise<CheckoutSource> } = {}
+): Promise<{ root: string } | { problem: string }> {
+    let roots: string[] = [];
+    let checkouts: LocalCheckout[] = [];
+
+    try {
+        ({ roots, checkouts } = await source());
+    } catch (err) {
+        log.warn({ err, name }, "hub: could not list the local checkouts");
+        return { problem: `could not list the checkouts under the repo roots: ${err}` };
+    }
+
+    const found = checkoutOf(name, checkouts);
+
+    if ("root" in found) {
+        return found;
+    }
+
+    return {
+        problem:
+            found.projects.length > 1
+                ? `${name} names ${found.projects.length} projects (${found.projects.join(", ")}); use the whole path`
+                : `no checkout of ${name} under the repo roots (${roots.join(", ")})`,
+    };
+}
+
 /**
  * The best checkout of the one project `name` names: its whole web path (with or without the host), else
  * the end of one (`daf-fe` for `group/daf/daf-fe`). Letter case does not matter, as on the forges.

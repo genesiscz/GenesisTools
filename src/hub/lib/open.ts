@@ -1,15 +1,16 @@
 import { spawnSync } from "node:child_process";
 import { resolve } from "node:path";
 import { appStatus, buildApp } from "@app/macos/lib/permissions/app";
-import { HUB_LINK_KEYS, schemeLink } from "@genesiscz/utils/browser-router/router-link";
+import { HUB_LINK_KEYS, routerLink, schemeLink } from "@genesiscz/utils/browser-router/router-link";
 import { logger } from "@genesiscz/utils/logger";
 import { genesisAppBundlePath } from "@genesiscz/utils/macos/genesis-app";
 import { genesisAppBuildHint } from "@genesiscz/utils/macos/xcode";
+import { expandTilde } from "@genesiscz/utils/paths";
 import { hubStatus } from "./proposal";
 
 export const HUB_MODES = ["sessions", "worktrees", "prs", "inbox", "timeline", "agents"] as const;
 export type HubMode = (typeof HUB_MODES)[number];
-export const HUB_TABS = ["transcript", "changes", "decisions"] as const;
+export const HUB_TABS = ["transcript", "changes", "files", "decisions"] as const;
 export type HubTab = (typeof HUB_TABS)[number];
 
 export interface OpenHubOptions {
@@ -82,6 +83,15 @@ function repoTarget(repo: string): string {
     return /^\.{1,2}(?:[/\\]|$)/.test(repo) ? resolve(repo) : repo;
 }
 
+/**
+ * A worktree flag as the app compares it: `cleanup` and `cleanup-blocked` stay; a path is made absolute against the
+ * caller's folder (the app's own folder is `/`), with `~` expanded and a trailing slash gone. The app resolves symlinks
+ * and the checkout's top folder itself (`/tmp` is `/private/tmp` to git).
+ */
+export function worktreeTarget(worktree: string): string {
+    return worktree === "cleanup" || worktree === "cleanup-blocked" ? worktree : resolve(expandTilde(worktree));
+}
+
 /** The `GenesisTools --hub` arguments for these options (see Sources/Hub/HubWindow.swift). */
 export function hubArgs(options: OpenHubOptions): string[] {
     const args = ["--hub"];
@@ -115,7 +125,7 @@ export function hubArgs(options: OpenHubOptions): string[] {
     }
 
     if (options.worktree) {
-        args.push("--worktree", options.worktree);
+        args.push("--worktree", worktreeTarget(options.worktree));
     }
 
     if (options.tab) {
@@ -175,13 +185,37 @@ export function hubArgs(options: OpenHubOptions): string[] {
  */
 export function hubUrl(options: Pick<OpenHubOptions, (typeof HUB_LINK_KEYS)[number]>): string {
     // The link itself is built in the router utils, beside its https twin, so the two cannot drift.
-    return schemeLink({
+    return schemeLink({ preset: "genesis-hub", action: "open", data: hubLinkData(options) });
+}
+
+/**
+ * The link to print for a place (`--print-url`): the https link where the router serves `/hub` on this Mac, as the
+ * agents' rule writes it, else the app's own `genesis-tools://hub?…` (`hubUrl`).
+ */
+export function hubPrintUrl(options: Pick<OpenHubOptions, (typeof HUB_LINK_KEYS)[number]>): string {
+    const data = hubLinkData(options);
+    return routerLink({
         preset: "genesis-hub",
         action: "open",
-        data: Object.fromEntries(
-            HUB_LINK_KEYS.map((key) => [key, key === "repo" && options.repo ? repoTarget(options.repo) : options[key]])
-        ),
-    });
+        data,
+        fallback: () => schemeLink({ preset: "genesis-hub", action: "open", data }),
+    }).result;
+}
+
+function hubLinkData(
+    options: Pick<OpenHubOptions, (typeof HUB_LINK_KEYS)[number]>
+): Record<string, string | undefined> {
+    return Object.fromEntries(
+        HUB_LINK_KEYS.map((key) => {
+            const value = options[key];
+
+            if (key === "repo" && value) {
+                return [key, repoTarget(value)];
+            }
+
+            return [key, key === "worktree" && value ? worktreeTarget(value) : value];
+        })
+    );
 }
 
 /** Why the installed app cannot serve the hub as it is, or undefined when it can. */

@@ -1341,6 +1341,124 @@ async function listGlab({
     return { prs: prs.slice(0, limit), error, warnings };
 }
 
+/** A PR or MR the host associates with a commit (`prsOfCommit`). */
+export interface CommitPr {
+    number: number;
+    title: string;
+    state: PrState;
+    url: string;
+    /** The PR's head now; the commit may have left it since (a force-push keeps the association). */
+    headSha: string | null;
+    /** GitHub's base commit; GitLab names only the target branch. */
+    baseSha: string | null;
+    baseBranch: string | null;
+    /** The commit that landed a merged PR (a squash or merge commit). */
+    mergedSha: string | null;
+}
+
+export interface CommitPrsResult {
+    prs: CommitPr[];
+    /** False when the host does not have the commit (GitHub 422, GitLab 404): it is not pushed. */
+    pushed: boolean;
+    error: string | null;
+}
+
+/**
+ * The PRs or MRs the host associates with a commit: GitHub `commits/{sha}/pulls`, GitLab
+ * `repository/commits/{sha}/merge_requests`. `gh pr list --search <sha>` and `glab mr list --search` are no substitute:
+ * GitLab's searches titles and descriptions only (`68ae94353c` found no MR, the API found !6958).
+ */
+export async function prsOfCommit({
+    project,
+    sha,
+    cwd = process.cwd(),
+    runner = spawnRunner,
+}: {
+    project: ProjectRef;
+    sha: string;
+    cwd?: string;
+    runner?: CommandRunner;
+}): Promise<CommitPrsResult> {
+    const blocked = await unreachable(project, runner);
+
+    if (blocked) {
+        return { prs: [], pushed: false, error: blocked };
+    }
+
+    const cmd =
+        project.kind === "github"
+            ? ghApi(project, `repos/${project.path}/commits/${sha}/pulls`)
+            : glabApi(project, `${glabProject(project)}/repository/commits/${sha}/merge_requests`);
+    const res = await run({ cmd, cwd, runner });
+
+    if (res.error) {
+        // The host answers an unknown commit with 422 (GitHub) or 404 (GitLab): a commit nobody pushed.
+        if (/\b(422|404)\b|no commit found|commit not found/i.test(res.error)) {
+            log.debug({ project: project.path, sha }, "prs of commit: the host has no such commit");
+            return { prs: [], pushed: false, error: null };
+        }
+
+        return { prs: [], pushed: false, error: res.error };
+    }
+
+    try {
+        const prs = records(parseJson(res.stdout, project.kind === "github" ? "gh" : "glab")).flatMap((row) =>
+            project.kind === "github" ? ghCommitPr(row) : glabCommitPr(row)
+        );
+        log.debug({ project: project.path, sha, prs: prs.map((pr) => pr.number) }, "prs of commit");
+        return { prs, pushed: true, error: null };
+    } catch (err) {
+        return { prs: [], pushed: true, error: errorText(err) };
+    }
+}
+
+function ghCommitPr(row: Record<string, unknown>): CommitPr[] {
+    const number = num(row.number);
+    const url = str(row.html_url);
+
+    if (number === null || !url) {
+        return [];
+    }
+
+    const head = isRecord(row.head) ? row.head : {};
+    const base = isRecord(row.base) ? row.base : {};
+    const merged = str(row.merged_at) !== null;
+    return [
+        {
+            number,
+            title: str(row.title) ?? "",
+            state: merged ? "MERGED" : str(row.state) === "open" ? "OPEN" : "CLOSED",
+            url,
+            headSha: str(head.sha),
+            baseSha: str(base.sha),
+            baseBranch: str(base.ref),
+            mergedSha: merged ? str(row.merge_commit_sha) : null,
+        },
+    ];
+}
+
+function glabCommitPr(row: Record<string, unknown>): CommitPr[] {
+    const number = num(row.iid);
+    const url = str(row.web_url);
+
+    if (number === null || !url) {
+        return [];
+    }
+
+    return [
+        {
+            number,
+            title: str(row.title) ?? "",
+            state: glabState(str(row.state) ?? ""),
+            url,
+            headSha: str(row.sha),
+            baseSha: null,
+            baseBranch: str(row.target_branch),
+            mergedSha: str(row.squash_commit_sha) ?? str(row.merge_commit_sha),
+        },
+    ];
+}
+
 /** One PR/MR with body, commits, checks and merge state. Read-only. */
 export async function viewPr({
     project,
