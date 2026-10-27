@@ -53,6 +53,21 @@ describe("formatWorkItemMarkdown", () => {
         expect(md).not.toContain("\\*");
     });
 
+    test("keeps indentation and trailing whitespace in a Markdown description", () => {
+        const description = "    first()\n    second()\n\n";
+
+        expect(formatWorkItemMarkdown(item({ description }))).toContain(`## Description\n\n${description}`);
+        expect(formatWorkItemMarkdown(item({ description }), new Map())).toContain(`## Description\n\n${description}`);
+    });
+
+    test("keeps Markdown autolinks and the lines that follow them", () => {
+        for (const link of ["<https://example.com>", "<alice@example.com>"]) {
+            const description = `${link}\n\n- First\n- Second`;
+
+            expect(formatWorkItemMarkdown(item({ description }))).toContain(`## Description\n\n${description}`);
+        }
+    });
+
     test("keeps a Markdown description with inline HTML line for line", () => {
         const description = "## Odkazy\n\n- First\n\n<details><summary>Rozdíl</summary>\n\nText.\n\n</details>";
         const md = formatWorkItemMarkdown(item({ description }));

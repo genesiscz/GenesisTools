@@ -31,14 +31,11 @@ export function commentMarkdown(comment: Comment, imageMap?: Map<string, string>
  * does not return `multilineFieldsFormat`.
  */
 export function descriptionMarkdown(description: string, imageMap?: Map<string, string>): string {
-    if (/^\s*<[a-z]/i.test(description)) {
+    if (/^\s*<[a-z][a-z0-9-]*(?:\s[^<>]*?)?\s*\/?>/i.test(description)) {
         return htmlToMarkdown(imageMap ? rewriteImageUrls(description, imageMap) : description);
     }
 
-    const text = imageMap
-        ? rewriteImageSources(rewriteMarkdownImageUrls(description, imageMap), imageMap)
-        : description;
-    return text.trim();
+    return imageMap ? rewriteImageSources(rewriteMarkdownImageUrls(description, imageMap), imageMap) : description;
 }
 
 /**
