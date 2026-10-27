@@ -92,6 +92,7 @@ const CODEX_PROMPT = [
     "",
     "- Do the task in your brief yourself. Never spawn agents or workflows.",
     "- Change files only when the brief asks for changes. Never commit, push or merge unless the brief says so.",
+    "- A file the brief names as your output (a report, notes or a patch at a given path) is the brief's deliverable: write it. Claude Code's rule against report files covers reports nobody asked for, and on 2026-10-27 eight review agents stopped as blocked instead of writing the report their brief named.",
     "",
     "Final message: a first line `STATUS: done`, `STATUS: blocked` or `STATUS: failed`, then a short summary, the files you changed, and the checks you ran with their results.",
 ].join("\n");
