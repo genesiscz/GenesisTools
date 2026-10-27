@@ -2443,3 +2443,63 @@ describe("background compaction (Codex async_compaction for Claude Code)", () =>
         expect(events().find((event) => event.kind === "retry")).toBeDefined();
     });
 });
+
+describe("background compaction matching", () => {
+    const settings = { enabled: true, startAt: 0.8, refreshFraction: 0.15, maxTailFraction: 0.4 };
+
+    async function result(prefix: unknown[]) {
+        const { prefixHash } = await import("@app/ai-proxy/lib/sessions/background-compaction");
+        return {
+            item: { type: "compaction", encrypted_content: "E" },
+            accountHash: "loginaaa",
+            prefixLength: prefix.length,
+            prefixHash: prefixHash(prefix),
+            prefix,
+            contextTokens: 100,
+            startedAt: 0,
+            readyAt: 0,
+        };
+    }
+
+    it("names each reason a background result cannot answer the turn", async () => {
+        const { matchBackground } = await import("@app/ai-proxy/lib/sessions/background-compaction");
+        const prefix = [{ role: "user", content: [{ type: "input_text", text: "a" }] }];
+        const done = await result(prefix);
+        const tail = [{ role: "assistant", content: [{ type: "output_text", text: "b" }] }];
+        const base = { result: done, point: 1000, tailTokens: () => 10, settings };
+
+        expect(matchBackground({ ...base, rawInput: [...prefix, ...tail], accountHash: "loginaaa" })).toEqual({
+            use: true,
+            tail,
+        });
+        expect(matchBackground({ ...base, rawInput: [...prefix, ...tail], accountHash: "loginbbb" })).toEqual({
+            use: false,
+            reason: "login_changed",
+        });
+        expect(matchBackground({ ...base, rawInput: tail, accountHash: "loginaaa" })).toEqual({
+            use: false,
+            reason: "history_changed",
+        });
+        expect(
+            matchBackground({ ...base, tailTokens: () => 401, rawInput: [...prefix, ...tail], accountHash: "loginaaa" })
+        ).toEqual({ use: false, reason: "tail_too_large" });
+    });
+
+    it("starts once per growth step and never while a run is in flight", async () => {
+        const { resetBackgroundForTests, shouldStartBackground, trackBackground } = await import(
+            "@app/ai-proxy/lib/sessions/background-compaction"
+        );
+        resetBackgroundForTests();
+        const at = (contextTokens: number) => shouldStartBackground({ key: "k", contextTokens, point: 1000, settings });
+
+        expect(at(799)).toBe(false);
+        expect(at(800)).toBe(true);
+        let finish: (value: undefined) => void = () => {};
+        trackBackground("k", 800, new Promise((resolve) => (finish = resolve)));
+        expect(at(990)).toBe(false);
+        finish(undefined);
+        await Bun.sleep(1);
+        expect(at(900)).toBe(false);
+        expect(at(950)).toBe(true);
+    });
+});
