@@ -229,6 +229,21 @@ enum HubCommitLookup {
         let title: String
         /// For a range: the parent of its first commit, so the diff shows every commit of it.
         var base: String? = nil
+        /// What holds the commit when `root`'s own branch does not (`holding(_:in:)`).
+        var holder: Holder = .row
+    }
+
+    /// Which branch holds a `repo=` link's commit. The link opens under a checkout's row, and the row names that
+    /// checkout's branch, which is wrong for a commit of another branch ("worktree app develop · commit d0a41ccc89"
+    /// for a commit only an MR's branch has).
+    enum Holder: Equatable {
+        /// The checkout's HEAD holds it, so its row names the right branch.
+        case row
+        /// A branch no checkout has: `display` as the hub says it (`origin/feat/x` when only the remote has it),
+        /// `head` as a PR names its head branch (`feat/x`).
+        case branch(display: String, head: String)
+        /// No branch holds it: only a PR's ref, a stash or the reflog keeps it.
+        case none
     }
 
     enum Outcome: Equatable {
@@ -291,7 +306,8 @@ enum HubCommitLookup {
         }
         let first = String(line[..<separator])
         guard let to else {
-            return .found(Found(root: root, sha: first, title: String(line[line.index(after: separator)...])))
+            let held = holding(first, in: root)
+            return .found(Found(root: held.root, sha: first, title: String(line[line.index(after: separator)...]), holder: held.holder))
         }
         guard let last = WorktreeDiscovery.git(root, ["rev-parse", "--verify", "--quiet", "\(to)^{commit}"])?.trimmed, !last.isEmpty else {
             return .failed("Commit \(to) is not in \(place) (fetch it first)")
@@ -307,7 +323,62 @@ enum HubCommitLookup {
         }
         let count = WorktreeDiscovery.git(root, ["rev-list", "--count", base == emptyTree ? newer : "\(base)..\(newer)"])?.trimmed ?? "?"
         let label = "\(older.prefix(10))..\(newer.prefix(10)) (\(count) commits)"
-        return .found(Found(root: root, sha: newer, title: label, base: base))
+        let held = holding(newer, in: root)
+        return .found(Found(root: held.root, sha: newer, title: label, base: base, holder: held.holder))
+    }
+
+    /// Where the commit `sha` of the checkout at `root` lives: that checkout while its HEAD holds it; else the linked
+    /// worktree whose HEAD holds it (the nearest one), whose row then names the right branch; else the checkout, with
+    /// the branch that holds it (the nearest of the six newest; a local branch before a remote one). Runs git.
+    static func holding(_ sha: String, in root: String) -> (root: String, holder: Holder) {
+        if WorktreeDiscovery.git(root, ["merge-base", "--is-ancestor", sha, "HEAD"]) != nil {
+            return (root, .row)
+        }
+        let distance = { (head: String) -> Int? in
+            guard WorktreeDiscovery.git(root, ["merge-base", "--is-ancestor", sha, head]) != nil else { return nil }
+            return WorktreeDiscovery.git(root, ["rev-list", "--count", "\(sha)..\(head)"]).flatMap { Int($0.trimmed) }
+        }
+        let own = WorktreeCleanup.normalizedPath(root)
+        var nearest: (path: String, distance: Int)?
+        for block in (WorktreeDiscovery.git(root, ["worktree", "list", "--porcelain"]) ?? "").components(separatedBy: "\n\n") {
+            let lines = block.split(separator: "\n").map(String.init)
+            guard let path = lines.first(where: { $0.hasPrefix("worktree ") }).map({ String($0.dropFirst(9)) }),
+                  let head = lines.first(where: { $0.hasPrefix("HEAD ") }).map({ String($0.dropFirst(5)) }),
+                  WorktreeCleanup.normalizedPath(path) != own, FileManager.default.fileExists(atPath: path),
+                  let steps = distance(head) else { continue }
+            if nearest.map({ steps < $0.distance }) ?? true {
+                nearest = (path, steps)
+            }
+        }
+        if let nearest {
+            return (nearest.path, .row)
+        }
+        for space in ["refs/heads", "refs/remotes"] {
+            let refs = (WorktreeDiscovery.git(root, ["for-each-ref", "--contains", sha, "--sort=-committerdate", "--format=%(refname)", space]) ?? "")
+                .split(separator: "\n").map(String.init).filter { !$0.hasSuffix("/HEAD") }
+            // The branch the commit was made on, not a later one that merged it: the fewest commits past it.
+            let ranked = refs.prefix(6).compactMap { ref in distance(ref).map { (ref, $0) } }
+            guard let ref = ranked.min(by: { $0.1 < $1.1 })?.0 ?? refs.first else { continue }
+            let display = String(ref.dropFirst(space.count + 1))
+            let head = space == "refs/remotes" ? display.split(separator: "/", maxSplits: 1).last.map(String.init) ?? display : display
+            return (root, .branch(display: display, head: head))
+        }
+        return (root, .none)
+    }
+
+    /// The words for what holds a link's commit, in its History title and its notice: the open PR whose head branch
+    /// it is (from the hub's PR list) with that branch, the branch, or "no branch"; nil when the checkout's row names it.
+    static func holderLabel(_ found: Found, prs: [HubPR]) -> String? {
+        switch found.holder {
+        case .row:
+            return nil
+        case .none:
+            return "no branch"
+        case .branch(let display, let head):
+            let root = WorktreeCleanup.normalizedPath(found.root)
+            let pr = prs.first { $0.headBranch == head && $0.repoRoot.map(WorktreeCleanup.normalizedPath) == root }
+            return pr.map { "\(display) (PR \($0.label))" } ?? display
+        }
     }
 
     /// The first parent of `sha` in the checkout at `root`, the base of a range that starts at `sha`: git's empty
@@ -360,7 +431,15 @@ extension HubModel {
         guard commitLinkRequest == request else { return }
         switch outcome {
         case .found(let found):
-            showCommit(repo: found.root, sha: found.sha, title: found.title, base: found.base, link: commitLinkRaw)
+            let holder = HubCommitLookup.holderLabel(found, prs: prs.prs)
+            showCommit(repo: found.root, sha: found.sha, title: found.title, base: found.base, link: commitLinkRaw, holder: holder)
+            if let holder {
+                // The row says the checkout's branch, so the screen says where the commit really is.
+                let branch = worktrees.first { $0.path == found.root }?.branch
+                let text = "Commit \(found.sha.prefix(10)) is on \(holder)" + (branch.map { ", not on \($0), the branch of this checkout" } ?? "")
+                HubPerf.log("hub.commitLink \(text)")
+                post(text, .warning)
+            }
         case .failed(let message):
             HubPerf.log("hub.commitLink \(message)")
             notice = message

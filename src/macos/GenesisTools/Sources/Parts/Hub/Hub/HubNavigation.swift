@@ -70,6 +70,9 @@ struct HubShownCommit: Equatable {
     let repo: String
     /// One sha or `<from>..<to>`, as the link wrote it.
     let commit: String
+    /// What holds the commit when the checkout's branch does not (`HubCommitLookup.holderLabel`): the History title
+    /// names it instead of the row's branch.
+    var holder: String? = nil
 }
 
 /// A place an agent or a link asked for, with who and why, until the hub shows it. Matched against what the hub
