@@ -17,6 +17,7 @@ import {
 } from "./reply-text";
 import { DECISION_STATES } from "./schema";
 import {
+    awaitsDelivery,
     type DecisionKind,
     type DecisionRecord,
     type DecisionState,
@@ -290,8 +291,12 @@ export async function sendSessionDecisions({
     emit: (text: string, numbers: number[]) => unknown;
 }): Promise<SentDecisions> {
     const selected = selectedIds ? new Set(selectedIds) : undefined;
+    // Without ids: only the answers waiting to go out, never a chat answer an agent recorded as `answered`.
     const rows = readDecisions(file).filter(
-        (row) => row.sessionId === session && kindOf(row) === "decision" && (!selected || selected.has(row.id))
+        (row) =>
+            row.sessionId === session &&
+            kindOf(row) === "decision" &&
+            (selected ? selected.has(row.id) : awaitsDelivery(row))
     );
     const due = deliverDecisions(rows, () => undefined);
     const ids = rows.filter((row) => due.numbers.includes(row.number)).map((row) => row.id);

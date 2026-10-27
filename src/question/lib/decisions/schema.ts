@@ -121,7 +121,8 @@ export const decisionPatchSchema = z.object({
         .describe(
             "The next legal state. Decisions move forward; completed or dismissed TODOs may explicitly reopen. " +
                 "acknowledged straight from open or drafted records an answer the user gave in chat (needs option " +
-                "or answer); nothing is delivered. superseded (decisions only) needs supersededBy or comment."
+                "or answer); nothing is delivered. superseded (decisions only) needs supersededBy or comment. " +
+                "answered and sent are the inbox's send states: an agent's answered or sent is recorded as acknowledged."
         ),
     answer: z.string().optional().describe("The answer text, or a copy of an answer the user gave in chat."),
     option: z

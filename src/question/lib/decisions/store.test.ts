@@ -23,6 +23,7 @@ import { readJsonlRows } from "@genesiscz/utils/jsonl";
 import { withFileLock } from "@genesiscz/utils/storage/file-lock";
 import { answerGitWithoutSpawning } from "@genesiscz/utils/test/no-git";
 import { z } from "zod";
+import { stagedSendText } from "../inbox/drafts";
 import { chatAnswers } from "./chat-answers";
 import { DeliveryUnknownError, deliverToSession, resolveDeliveryTarget } from "./deliver";
 import { livePaneTargets, noPaneTargets } from "./deliver.fixtures";
@@ -44,6 +45,7 @@ import {
 import { DECISION_STATES, decisionUpdateInputSchema, postDecisionsInputSchema } from "./schema";
 import { sendAnsweredDecisions } from "./send";
 import {
+    awaitsDelivery,
     createTodo,
     type DecisionRecord,
     harvestDecisions,
@@ -53,6 +55,7 @@ import {
     readDecisions,
     readDecisionsWithIntegrity,
     recordChatAnswers,
+    repairDecisionLog,
     updateDecision,
     updateDecisions,
     updateTodo,
@@ -1952,7 +1955,9 @@ test("decision dry-run applies the same selected-kind filter as delivery", async
     // Existing files may contain legacy answered TODO rows, even though current transitions reject them.
     writeFileSync(
         file,
-        `${[decision, todo].map((row) => SafeJSON.stringify({ ...row, state: "answered", option: "a" })).join("\n")}\n`
+        `${[decision, todo]
+            .map((row) => SafeJSON.stringify({ ...row, state: "answered", option: "a", answeredVia: "inbox" }))
+            .join("\n")}\n`
     );
     const files = { file, events };
     const preview = await sendAnsweredDecisions({ session: "test-session", files, dryRun: true });
@@ -1989,7 +1994,7 @@ test("a lost receipt stamps only the decisions this send claimed, never one rese
         file,
         `${[
             { ...reserved, state: "answered", option: "a", delivery: reservation },
-            { ...open, state: "answered", option: "a" },
+            { ...open, state: "answered", option: "a", answeredVia: "inbox" },
         ]
             .map((row) => SafeJSON.stringify(row))
             .join("\n")}\n`
@@ -2922,5 +2927,99 @@ describe("chatAnswers", () => {
 
         expect(found.unambiguous).toMatchObject([{ number: 4, answer: "call it Atlas" }]);
         expect(found.unambiguous[0]?.option).toBeUndefined();
+    });
+});
+
+describe("chat answers an agent records are never sent again (F2)", () => {
+    test("an agent's answered or sent lands as acknowledged; the inbox's own answer still waits to go out", async () => {
+        const { file, events } = scratch();
+        await postDecisions(file, events, {
+            sessionId: "abc",
+            decisions: [
+                { prompt: "one", options: ["keep", "drop"] },
+                { prompt: "two", options: ["a", "b"] },
+            ],
+        });
+
+        const [agent] = await updateDecisions(
+            file,
+            events,
+            { updates: [{ id: "d_1_abc", state: "answered", option: "b", answer: "drop it" }] },
+            undefined,
+            { actor: "agent" }
+        );
+        expect(agent).toMatchObject({ state: "acknowledged", option: "b", answer: "drop it", answeredVia: "agent" });
+        expect(agent?.comments?.at(-1)).toContain("an agent asked for answered");
+        expect(awaitsDelivery(agent as DecisionRecord)).toBe(false);
+
+        // Negative control: the user's path (the store's default actor) still queues the answer for a send.
+        const [user] = await updateDecisions(file, events, {
+            updates: [{ id: "d_2_abc", state: "answered", option: "a" }],
+        });
+        expect(user).toMatchObject({ state: "answered", answeredVia: "inbox" });
+        expect(awaitsDelivery(user as DecisionRecord)).toBe(true);
+        expect(stagedSendText(readDecisions(file), "abc")).toBe("DECISION 2: a) a");
+    });
+
+    test("an old-shape chat answer (answered, no answeredVia, no delivery) is left out of every whole-session send", () => {
+        const chat: DecisionRecord = { ...foreignRow("abc", 1), state: "answered", option: "a" };
+        const inbox: DecisionRecord = { ...foreignRow("abc", 2), state: "answered", option: "a", answeredVia: "inbox" };
+
+        expect(awaitsDelivery(chat)).toBe(false);
+        expect(awaitsDelivery(inbox)).toBe(true);
+        expect(stagedSendText([chat, inbox], "abc")).toBe("DECISION 2: a) a");
+        expect(stagedSendText([chat], "abc")).toBeUndefined();
+    });
+
+    test("the repair reports first, then acknowledges old chat answers and reopens empty drafts, keeping history", async () => {
+        const { file, events } = scratch();
+        const rows: DecisionRecord[] = [
+            { ...foreignRow("abc", 1), state: "answered", option: "a", answer: "yes" },
+            { ...foreignRow("abc", 2), state: "answered", option: "a", answeredVia: "inbox" },
+            {
+                ...foreignRow("abc", 3),
+                state: "answered",
+                option: "a",
+                delivery: { route: "cmux", uncertain: true, at: "2026-01-01T00:00:00.000Z" },
+            },
+            { ...foreignRow("abc", 4), state: "drafted", draft: "", draftOption: "" },
+            { ...foreignRow("abc", 5), state: "drafted", draftOption: "a" },
+        ];
+        writeFileSync(file, `${rows.map((row) => SafeJSON.stringify(row)).join("\n")}\n`);
+        const before = readFileSync(file, "utf8");
+
+        const dry = await repairDecisionLog({ file, events, apply: false });
+        expect(dry).toEqual({ acknowledged: ["d_1_abc"], reopened: ["d_4_abc"] });
+        expect(readFileSync(file, "utf8")).toBe(before);
+        expect(existsSync(events)).toBe(false);
+
+        const applied = await repairDecisionLog({ file, events, apply: true, now: () => "2026-01-02T00:00:00.000Z" });
+        expect(applied).toEqual(dry);
+        const after = readDecisions(file);
+        expect(after.map((row) => row.state)).toEqual(["acknowledged", "answered", "answered", "open", "drafted"]);
+        expect(after[0]).toMatchObject({
+            option: "a",
+            answer: "yes",
+            answeredVia: "agent",
+            answeredTs: "2026-01-01T00:00:00.000Z",
+            updatedTs: "2026-01-02T00:00:00.000Z",
+        });
+        expect(after[0]?.comments?.at(-1)).toContain("nothing sends it again");
+        expect(after[3]?.draftOption).toBeUndefined();
+        expect(readFileSync(events, "utf8").trim().split("\n")).toHaveLength(2);
+
+        expect(await repairDecisionLog({ file, events, apply: true })).toEqual({ acknowledged: [], reopened: [] });
+    });
+
+    test("unstaging a pick leaves the decision open, not an empty drafted row", async () => {
+        const { file, events } = scratch();
+        await postDecisions(file, events, { sessionId: "abc", decisions: [{ prompt: "one", options: ["a", "b"] }] });
+        await updateDecision(file, events, "d_1_abc", { state: "drafted", draftOption: "a" });
+
+        const row = await updateDecision(file, events, "d_1_abc", { draft: "", draftOption: "" });
+
+        expect(row.state).toBe("open");
+        expect(row.draftOption).toBeUndefined();
+        expect(row.draft).toBeUndefined();
     });
 });

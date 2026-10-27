@@ -2,7 +2,13 @@ import { loadHooksConfig } from "@app/agents/lib/hooks/config";
 import type { DeliverDeps } from "@app/question/lib/decisions/deliver";
 import { decisionFiles } from "@app/question/lib/decisions/read";
 import { sendAnsweredDecisions } from "@app/question/lib/decisions/send";
-import { type DecisionRecord, kindOf, readDecisions, updateDecisions } from "@app/question/lib/decisions/store";
+import {
+    awaitsDelivery,
+    type DecisionRecord,
+    kindOf,
+    readDecisions,
+    updateDecisions,
+} from "@app/question/lib/decisions/store";
 import { answerInboxDecisions, type InboxAnswerResult } from "@app/question/lib/inbox/answer";
 import { waitingBlock } from "@app/question/lib/inbox/load";
 import { logger } from "@genesiscz/utils/logger";
@@ -151,7 +157,8 @@ export async function resendAnsweredDecisions({
     const bySession = new Map<string, DecisionRecord[]>();
 
     for (const row of readDecisions(files.file)) {
-        if (wanted.has(row.id) && kindOf(row) === "decision" && row.state === "answered") {
+        // Only an answer that waits to go out: a chat answer an agent recorded as `answered` is never sent back.
+        if (wanted.has(row.id) && awaitsDelivery(row)) {
             bySession.set(row.sessionId, [...(bySession.get(row.sessionId) ?? []), row]);
         }
     }

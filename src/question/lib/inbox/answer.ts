@@ -202,7 +202,8 @@ export async function answerInboxDecisions(
             ...(item.text ? { answer: item.text } : {}),
         };
     });
-    await updateDecisions(deps.file, deps.events, { updates });
+    // The inbox's own answer: it is delivered right below, so it may move to `answered` (an agent's update may not).
+    await updateDecisions(deps.file, deps.events, { updates }, undefined, { actor: "user" });
 
     const sent = await sendAnsweredDecisions({
         ids: updates.map((update) => update.id),

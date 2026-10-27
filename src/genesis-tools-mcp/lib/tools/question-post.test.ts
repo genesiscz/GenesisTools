@@ -348,14 +348,16 @@ describe("question_post decisions and question_update", () => {
         ).rejects.toThrow(/no decision d_9_sess-1/);
         expect(handleQuestionPoll({ ids: ["d_1_sess-1"] }, logDeps)).toContain("d_1_sess-1 [open]");
 
+        // An agent's door: its "answered" is the chat answer it got, recorded as acknowledged, never queued for a send.
         const updated = SafeJSON.parse(
             await handleQuestionUpdate({ updates: [{ id: "d_1_sess-1", state: "answered", option: "b" }] }, logDeps)
-        ) as { updated: Array<{ state: string }> };
-        expect(updated.updated.map((row) => row.state)).toEqual(["answered"]);
+        ) as { updated: Array<{ state: string; option?: string; answeredVia?: string; comments?: string[] }> };
+        expect(updated.updated.map((row) => row.state)).toEqual(["acknowledged"]);
+        expect(updated.updated[0]).toMatchObject({ option: "b", answeredVia: "agent" });
+        expect(updated.updated[0]?.comments?.at(-1)).toContain("only a send queues or delivers an answer");
 
         const polled = handleQuestionPoll({}, logDeps);
-        expect(polled).toContain("Answered decisions not yet acknowledged");
-        expect(polled).toContain('"option": "b"');
+        expect(polled).not.toContain("Answered decisions not yet acknowledged");
         expect(handleQuestionPoll({ ids: ["d_2_sess-1", "d_7_sess-1"] }, logDeps)).toContain("d_7_sess-1 [unknown]");
     });
 });
@@ -832,7 +834,7 @@ describe("question_post inline tokens and superseding", () => {
             );
 
         await expect(post({ type: "decision", promptMarkdown: "Q2?", supersedes: "d_1_sess-t" })).rejects.toThrow(
-            "cannot supersede d_1_sess-t: it is answered"
+            "cannot supersede d_1_sess-t: it is acknowledged"
         );
         await expect(post({ type: "decision", promptMarkdown: "Q3?", supersedes: "t_1_sess-t" })).rejects.toThrow(
             "it is a todo, and the new item is a decision"
