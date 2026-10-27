@@ -10,7 +10,9 @@
 //
 // The session's codex and grok workers (`tools codex spawn`, `tools grok spawn`) are not Claude Code subagents, so
 // `$.agent.list()` never has them. They come from `tools hub agents --session <id> --json` on the band's timer, at
-// most every 20 s, and show as rows of their own.
+// most every 30 s, and show as rows of their own. Only a session that ran `tools codex spawn` or `tools grok spawn`
+// (its transcript says so, or a Bash call did it since) asks at all: on 2026-10-27 every open session asked, and 40
+// sessions started 14 `tools hub` processes per 10 s on a Mac already at load 300.
 import type { AgentInfo, AgentSpawnInput, AgentSpawnResult, ElementTable, RenderElement } from "claude-code";
 import type { SpawnedAgents } from "../types";
 import { genesisProbe } from "./genesis";
@@ -62,7 +64,10 @@ export interface SessionWorker {
 
 let workers: SessionWorker[] = [];
 let workersAt = 0;
-const WORKERS_EVERY_MS = 20_000;
+const WORKERS_EVERY_MS = 30_000;
+const SPAWNS_WORKERS = /\btools (codex|grok) spawn\b/;
+/** Whether this session started a worker; undefined until its transcript was read. */
+let startsWorkers: boolean | undefined;
 
 interface Recent {
     label: string;
@@ -114,6 +119,11 @@ export const agentsBand: Feature = {
         await refreshAgentDetails(host);
     },
     beforeTool(_host, e) {
+        if (!startsWorkers && typeof e.command === "string" && SPAWNS_WORKERS.test(e.command)) {
+            startsWorkers = true;
+            workersAt = 0;
+        }
+
         if (e.agentId !== undefined) {
             const before = activity.get(e.agentId);
             const now = Date.now();
@@ -185,6 +195,27 @@ async function loadWorkers(host: Host): Promise<void> {
     }
 
     workersAt = Date.now();
+
+    if (startsWorkers === undefined) {
+        const dir = await sessionDirOf(host);
+        // A Bash call's own `command` field, not a skill or a reply that only names the command. grep exits 0 on a
+        // match and 1 on none; anything else (a timeout, no transcript yet) asks again later.
+        const found = dir
+            ? await host
+                  .run(["grep", "-qE", '"command":"[^"]*tools (codex|grok) spawn', `${dir}.jsonl`], {
+                      timeoutMs: 10_000,
+                  })
+                  .catch(() => undefined)
+            : undefined;
+
+        if (found?.exitCode === 0 || found?.exitCode === 1) {
+            startsWorkers = found.exitCode === 0;
+        }
+    }
+
+    if (!startsWorkers) {
+        return;
+    }
 
     if (!(await genesisProbe(host)).tools) {
         workers = [];
@@ -645,6 +676,7 @@ export function forgetAgentDetails(): void {
     refreshing = undefined;
     workers = [];
     workersAt = 0;
+    startsWorkers = undefined;
     sessionDir = undefined;
     expanded = null;
     selected = undefined;
