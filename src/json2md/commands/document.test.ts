@@ -172,6 +172,48 @@ describe("json2md init/build never trigger Bun's auto-installer", () => {
 // The verbs take everything host-specific from the environment, so a program that ships them without the link check
 // and the hints (another repo that copies json2md) passes its own and gets its own stamp.
 describe("json2md document environment", () => {
+    test("dry-run reports metadata removal on a clean document without writing it", async () => {
+        const dir = mkdtempSync(join(tmpdir(), "json2md-dry-merge-"));
+        const documentFile = join(import.meta.dir, "../../utils/json2md/document-file.ts");
+        const modulePath = join(dir, "doc.ts");
+        const outPath = join(dir, "doc.md");
+        await Bun.write(join(dir, "doc.json"), "{}");
+        await Bun.write(
+            modulePath,
+            `import { defineDocument } from ${SafeJSON.stringify(documentFile)};\nexport default defineDocument({ data: "./doc.json", options: { frontmatter: { title: "Notes" } }, render: () => [{ p: "Body" }] });\n`
+        );
+        const env: DocumentEnvironment = {
+            hints: () => ({}),
+            unresolvedImporterDir: async () => null,
+            reportUnresolved: () => undefined,
+            scaffoldSpecifier: "@host/json2md",
+        };
+        const infos = spyOn(out.log, "info").mockImplementation(() => undefined);
+        const run = async (...flags: string[]) => {
+            const program = new Command();
+            registerDocumentCommands(program, env);
+            await program.parseAsync(["node", "json2md", "build", modulePath, ...flags], { from: "node" });
+        };
+
+        try {
+            await run();
+            infos.mockClear();
+            await run("--dry-run", "--no-merge-frontmatter");
+            expect(infos.mock.calls.map((call) => String(call[0])).join("\n")).toContain("is already up to date");
+
+            const withSessions = (await Bun.file(outPath).text()).replace("\n---\n", "\nsessions: [one]\n---\n");
+            await Bun.write(outPath, withSessions);
+            infos.mockClear();
+            await run("--dry-run", "--no-merge-frontmatter");
+            const output = infos.mock.calls.map((call) => String(call[0])).join("\n");
+            expect(output).toContain("would be written");
+            expect(output).not.toContain("is already up to date");
+            expect(await Bun.file(outPath).text()).toBe(withSessions);
+        } finally {
+            infos.mockRestore();
+        }
+    });
+
     test("build stamps the environment's command and asks it, not the package link, whether imports resolve", async () => {
         const dir = mkdtempSync(join(tmpdir(), "json2md-env-"));
         const documentFile = join(import.meta.dir, "../../utils/json2md/document-file.ts");

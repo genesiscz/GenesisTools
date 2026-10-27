@@ -298,7 +298,8 @@ export function keepFrontmatterKeys(source: string, keep: ReadonlySet<string>): 
     }
 
     if (keep.size === 0) {
-        return source.replace(FRONTMATTER_RE, "");
+        // Remove exactly the closing delimiter and its newline, not whitespace in the body.
+        return source.slice(span.end).replace(/^\r?\n---[ \t]*(?:\r?\n|$)/, "");
     }
 
     const kept = span.entries.filter((entry) => entry.key === null || keep.has(entry.key));
