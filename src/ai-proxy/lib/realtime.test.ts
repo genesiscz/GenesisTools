@@ -1,13 +1,14 @@
-import { afterAll, beforeAll, describe, expect, it } from "bun:test";
+import { afterAll, beforeAll, describe, expect, it, spyOn } from "bun:test";
 import { existsSync, mkdirSync, mkdtempSync, readFileSync } from "node:fs";
 import { tmpdir } from "node:os";
 import { join } from "node:path";
 import { getAiProxyConfigStore, resetAiProxyConfigStore } from "@app/ai-proxy/lib/config-store";
-import { createRuntime, startAiProxyServer } from "@app/ai-proxy/lib/server";
+import { createRuntime, logRequestFailure, startAiProxyServer } from "@app/ai-proxy/lib/server";
 import { getAiProxyStorage, resetAiProxyStorage } from "@app/ai-proxy/lib/storage";
 import type { AiProxyConfig } from "@app/ai-proxy/lib/types";
 import { env } from "@genesiscz/utils/env";
 import { SafeJSON } from "@genesiscz/utils/json";
+import { logger } from "@genesiscz/utils/logger";
 
 // Integration: real proxy server + mock upstream realtime WS (xAI credits are
 // exhausted, so live verification is pending — see REALTIME.md). The mock
@@ -512,5 +513,32 @@ describe("audio transcriptions", () => {
         expect(seen.model).toBeNull();
         expect(seen.language).toBe("en");
         expect(seen.fileBytes).toBe(4);
+    });
+});
+
+describe("a request that threw", () => {
+    it("is a 499 at debug when the client hung up, and a warning with its status otherwise", () => {
+        const warn = spyOn(logger, "warn");
+        const debug = spyOn(logger, "debug");
+        const gone = new AbortController();
+        gone.abort();
+        const err = new DOMException("The connection was closed.", "AbortError");
+
+        logRequestFailure({
+            req: new Request("http://x/v1/messages", { signal: gone.signal }),
+            err,
+            status: 502,
+            fields: {},
+        });
+        expect(warn).not.toHaveBeenCalled();
+        expect(debug).toHaveBeenCalledWith(
+            expect.objectContaining({ status: 499 }),
+            "ai-proxy: the client closed the request"
+        );
+
+        logRequestFailure({ req: new Request("http://x/v1/messages"), err, status: 502, fields: {} });
+        expect(warn).toHaveBeenCalledWith(expect.objectContaining({ status: 502 }), "ai-proxy: request failed");
+        warn.mockRestore();
+        debug.mockRestore();
     });
 });
