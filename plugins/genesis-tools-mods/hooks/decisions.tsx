@@ -10,7 +10,9 @@
 // The session's own messages count too, so the sidebar works without the `tools` CLI and before the log has a new
 // decision: a first ask is a `❓ DECISION N` that is not a link (a repeat is `[❓ DECISION N](…)`), its options are
 // the `a)` lines under it, and a later user message answers it (`D16: a)`, `D16 b)`, `16 a)`, `D16: own words`) or a
-// later assistant message says it replaces it.
+// later assistant message says it replaces it. That is for an ask the log does not have. Whether a LOGGED decision
+// was answered in chat is the log's to say (`answeredVia`, written by the decision Stop hook from the transcript), so
+// the sidebar, the widget and the hub show the same state.
 import type { ElementTable, RenderElement } from "claude-code";
 import type { DecisionOption, OpenDecision, OpenDecisions, StagedDecisions } from "../types";
 import {
@@ -41,8 +43,8 @@ import {
 } from "./sidebar";
 
 export const DECISIONS_PANE = "genesis-decisions";
-/** What the session's messages say: the decisions still open there, and the numbers a user message answered. */
-let chat: { open: OpenDecisions; answered: Set<number> } = { open: [], answered: new Set() };
+/** What the session's messages say: the decisions still open there. */
+let chat: { open: OpenDecisions } = { open: [] };
 /** Rows opened or closed against `mods.decisions.expand`. */
 const flipped = new Set<number>();
 /** The answered, done and closed decisions shown or folded against `mods.decisions.history`. */
@@ -145,13 +147,9 @@ export function openDecisions(messages: readonly { role: string; text: string }[
     return chatDecisions(messages).open;
 }
 
-/** The open decisions of the messages, and every number a user message answered (asked here or before a compaction). */
-export function chatDecisions(messages: readonly { role: string; text: string }[]): {
-    open: OpenDecisions;
-    answered: Set<number>;
-} {
+/** The decisions the messages asked that no later message answered or replaced. */
+export function chatDecisions(messages: readonly { role: string; text: string }[]): { open: OpenDecisions } {
     const asked = new Map<number, OpenDecision>();
-    const answered = new Set<number>();
 
     for (const message of messages) {
         if (message.role === "assistant") {
@@ -170,11 +168,10 @@ export function chatDecisions(messages: readonly { role: string; text: string }[
 
         for (const n of answersIn(message.text)) {
             asked.delete(n);
-            answered.add(n);
         }
     }
 
-    return { open: [...asked.values()].sort((a, b) => a.n - b.n), answered };
+    return { open: [...asked.values()].sort((a, b) => a.n - b.n) };
 }
 
 /** The message `[send]` submits: one `D<n>: <answer>` line per staged decision, in number order. */
@@ -190,11 +187,13 @@ export interface ShownDecision {
     n: number;
     title: string;
     prompt: string;
-    status: DecisionStatus | "chat-answered";
+    status: DecisionStatus;
     options: { letter: string; text: string }[];
     recommended?: string;
     option?: string;
     answer?: string;
+    /** Who stored the answer: `agent` and `automatic_heuristic` mean the user answered in the chat. */
+    answeredVia?: string;
     /** The staged answer the store holds (state `drafted`): picked letters and a note. */
     draftOption?: string;
     draft?: string;
@@ -208,30 +207,31 @@ export function stagedText(decision: Pick<ShownDecision, "draftOption" | "draft"
     return [letters, decision.draft?.trim() ?? ""].filter(Boolean).join(" ");
 }
 
-/**
- * The log's decisions, plus the chat's open ones it lacks, by number. A decision the log still has waiting that a
- * user message already answered reads `chat-answered`: the agent has the answer and has not recorded it yet.
- */
-export function shownDecisions(
-    logged: readonly ShownDecision[],
-    fromChat: { open: OpenDecisions; answered: ReadonlySet<number> }
-): ShownDecision[] {
-    const numbers = new Set(logged.map((decision) => decision.n));
-    const merged = logged.map((decision) =>
-        (decision.status === "waiting" || decision.status === "drafted") && fromChat.answered.has(decision.n)
-            ? { ...decision, status: "chat-answered" as const }
-            : decision
+/** Whether the user answered this decision in the chat, as the decision log records it. */
+export function answeredInChat(decision: Pick<ShownDecision, "status" | "answeredVia">): boolean {
+    return (
+        (decision.status === "acknowledged" || decision.status === "implemented") &&
+        (decision.answeredVia === "agent" || decision.answeredVia === "automatic_heuristic")
     );
+}
+
+/**
+ * The log's decisions as it has them, plus the chat's open asks it lacks, by number. A logged decision answered in
+ * the chat is the log's to say (`answeredInChat`): the sidebar used to read that from the messages itself and showed
+ * "answered in chat" while the widget and the hub still showed the decision waiting.
+ */
+export function shownDecisions(logged: readonly ShownDecision[], fromChat: { open: OpenDecisions }): ShownDecision[] {
+    const numbers = new Set(logged.map((decision) => decision.n));
     const asked = fromChat.open
         .filter((decision) => !numbers.has(decision.n))
         .map((decision) => ({ ...decision, prompt: "", status: "waiting" as const }));
 
-    return [...merged, ...asked].sort((a, b) => a.n - b.n);
+    return [...logged, ...asked].sort((a, b) => a.n - b.n);
 }
 
 const GROUPS: { title: string; statuses: ShownDecision["status"][] }[] = [
     { title: "Waiting for you", statuses: ["waiting", "drafted"] },
-    { title: "Answered", statuses: ["chat-answered", "answered", "sent", "acknowledged"] },
+    { title: "Answered", statuses: ["answered", "sent", "acknowledged"] },
     { title: "Done", statuses: ["implemented"] },
     { title: "Closed", statuses: ["superseded", "dismissed"] },
 ];
@@ -360,12 +360,13 @@ function tailOf(decision: ShownDecision): { text: string; color?: string } {
         case "drafted":
             // The whole answer is in the field below; a long one here took the row and squeezed the title.
             return { text: `staged ${cut(stagedText(decision), 24)}`, color: "cyan" };
-        case "chat-answered":
-            return { text: "answered in chat", color: "green" };
         case "answered":
         case "sent":
         case "acknowledged":
-            return { text: `${picked}${decision.status}${ago}`, color: "green" };
+            return {
+                text: `${picked}${answeredInChat(decision) ? "answered in chat" : decision.status}${ago}`,
+                color: "green",
+            };
         case "implemented":
             return { text: `${picked}done${ago}` };
         case "superseded":

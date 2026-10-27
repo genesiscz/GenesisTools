@@ -3,7 +3,13 @@ import type { TranscriptTurn } from "@genesiscz/utils/ai/transcripts/types";
 import { looksLikeDump, whySentence } from "../decisions/delivery-text";
 import { parseDecisionBlocks } from "../decisions/read";
 import { findRefs } from "../decisions/reply-text";
-import { type DecisionDelivery, type DecisionRecord, type HarvestedDecision, kindOf } from "../decisions/store";
+import {
+    type AnsweredVia,
+    type DecisionDelivery,
+    type DecisionRecord,
+    type HarvestedDecision,
+    kindOf,
+} from "../decisions/store";
 import type { AskForm } from "../pending/types";
 
 /**
@@ -67,6 +73,12 @@ export interface InboxDecision {
     /** The chosen letters once answered. */
     option: string | null;
     answer: string | null;
+    /**
+     * Who stored the answer: `inbox` (the user's send), `agent` (the agent recorded the user's chat answer) or
+     * `automatic_heuristic` (the decision Stop hook read it from the chat). The decision log is the one place that
+     * says a decision was answered in chat; every surface reads it from here.
+     */
+    answeredVia: AnsweredVia | null;
     /** `transcript`: read from the session's last reply only. `store`: a posted or harvested row. */
     source: "transcript" | "store";
     at: string;
@@ -378,6 +390,7 @@ function fromRecord(row: DecisionRecord): InboxDecision {
         status: STATUS[row.state],
         option: row.option ?? null,
         answer: row.answer ?? null,
+        answeredVia: row.answeredVia ?? null,
         source: "store",
         at: row.createdTs ?? row.updatedTs,
         context: row.context ?? row.reasoning ?? null,
@@ -416,6 +429,7 @@ function fromBlock(sessionId: string, block: HarvestedDecision, at: string): Inb
         status: "waiting",
         option: null,
         answer: null,
+        answeredVia: null,
         source: "transcript",
         at,
         context: block.context ?? null,
