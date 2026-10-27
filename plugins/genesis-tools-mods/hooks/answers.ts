@@ -670,16 +670,16 @@ async function rowsFromIndex(
         .map((call) => ({ id: text(call.id), at: typeof call.at === "number" ? call.at : 0 }))
         .filter((call) => call.id);
 
-    if (parsed.offset >= size && (!Array.isArray(parsed.issues) || parsed.issues.length === 0)) {
-        for (const entry of entries) {
-            const call = entryRows.has(entry.id) ? undefined : callFor(entry.at, calls);
+    for (const entry of entries) {
+        const call = entryRows.has(entry.id) ? undefined : callFor(entry.at, calls);
 
-            if (call) {
-                entryRows.set(entry.id, call);
-            }
+        if (call) {
+            entryRows.set(entry.id, call);
         }
+    }
 
-        indexedCalls = calls;
+    indexedCalls = calls;
+    if (parsed.offset >= size && (!Array.isArray(parsed.issues) || parsed.issues.length === 0)) {
         rowsSize = size;
     }
     await logReading(host, "answers", {

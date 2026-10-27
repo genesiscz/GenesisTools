@@ -31,8 +31,8 @@ const { log } = logger.scoped("question-inbox");
  * gets the full answer. A write during the read leaves a newer identity than the stored one, so the next call reads.
  */
 
-/** v1: the first cursor. Bump when the answer's shape or an input changes, so an old snapshot is never trusted. */
-const CURSOR_VERSION = 1;
+/** v2 invalidates snapshots that did not account for expiring prompt reservations. */
+const CURSOR_VERSION = 2;
 /** Snapshots kept per session: one per caller that holds a cursor (the mods, the hub, the widget), with room. */
 const KEEP = 8;
 
