@@ -8,7 +8,7 @@ import { out } from "@genesiscz/utils/logger";
 import * as paths from "@genesiscz/utils/paths";
 import type { TableSelectOptions } from "@genesiscz/utils/prompts/clack/table-select";
 import { stripAnsi } from "@genesiscz/utils/string";
-import { chooseResume, selectResumeSession } from "./select-resume";
+import { chooseResume, runsElsewhere, selectResumeSession } from "./select-resume";
 import { HISTORY_SECTION, type ResumeRow, RUNNING_SECTION } from "./session-display";
 import type { AgentSession, AgentSessionAdapter } from "./types";
 
@@ -404,7 +404,7 @@ describe("sessions already running in a cmux tab", () => {
         sessionId,
         title,
         cwd,
-        pid: 4242,
+        pid: process.pid,
         surfaceId: `surface-uuid-${sessionId}`,
         surfaceRef: `surface:${sessionId.length}`,
     });
@@ -506,6 +506,23 @@ describe("sessions already running in a cmux tab", () => {
         expect(choice).toEqual({ action: "focus", running: tab("elsewhere", "acme-conventions", "/other/repo") });
         expect(shown[0].rows.map((row) => row.value.display.name)).toEqual(["acme-conventions"]);
         expect(shown[0].rows[0].value.display.projectName).toBe("repo");
+    });
+
+    test("a scanned session that quit since, or runs in this very tab, is not offered as running", async () => {
+        const only = session("only", "invoice");
+        const quit = { ...tab("quit", "invoice quit"), pid: 2 ** 30 };
+        const choice = await chooseResume({
+            adapter: adapter([only]),
+            query: "invoice",
+            interactive: true,
+            running: async () => [quit, tab("here", "invoice here")],
+            stillRunning: (entry) => runsElsewhere(entry, "surface-uuid-here"),
+            pick: picker(() => 0).pick,
+        });
+
+        // Nothing still runs elsewhere, so the lone history match is resumed without a picker.
+        expect(choice).toEqual({ action: "resume", session: only });
+        expect(runsElsewhere(tab("there", "x"), "surface-uuid-here")).toBe(true);
     });
 
     test("without a terminal the running sessions are never read", async () => {

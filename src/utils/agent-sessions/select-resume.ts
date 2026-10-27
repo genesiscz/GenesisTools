@@ -2,8 +2,10 @@ import { basename } from "node:path";
 import * as p from "@clack/prompts";
 import type { RunningCmuxSession } from "@genesiscz/utils/ai/active-sessions";
 import { isInteractive } from "@genesiscz/utils/cli";
+import { env } from "@genesiscz/utils/env";
 import { logger } from "@genesiscz/utils/logger";
 import { canonicalPath } from "@genesiscz/utils/paths";
+import { isProcessAlive } from "@genesiscz/utils/process-alive";
 import { profiler } from "@genesiscz/utils/profile";
 import { type TableSelectOptions, tableSelect } from "@genesiscz/utils/prompts/clack/table-select";
 import {
@@ -124,6 +126,8 @@ interface SelectResumeOptions {
      * history search: the process scan and the cmux tree cost about 2 s, which the search mostly hides.
      */
     running?: () => Promise<RunningCmuxSession[]>;
+    /** Whether a scanned session still runs in another tab, asked again as the picker opens. Only tests replace it. */
+    stillRunning?: (entry: RunningCmuxSession) => boolean;
     /** The table picker. Only tests replace it. */
     pick?: <T>(opts: TableSelectOptions<T>) => Promise<T | null>;
 }
@@ -162,6 +166,15 @@ export async function selectResumeSession(
     const choice = await chooseResume(options);
 
     return choice?.action === "resume" ? choice.session : undefined;
+}
+
+/**
+ * The scan starts beside the history search, seconds before the picker opens. A session that quit since, or one in
+ * this very tab (which now runs this command), has no tab to focus: on 2026-10-27 a session quit and resumed in the
+ * same tab was offered as "1 running in cmux".
+ */
+export function runsElsewhere(entry: RunningCmuxSession, here = env.device.getCmuxSurfaceId()): boolean {
+    return entry.surfaceId !== here && isProcessAlive(entry.pid);
 }
 
 /** The running sessions are an offer on top of the resume, never a reason it fails. */
@@ -299,7 +312,7 @@ async function resolveResume(
     }
 
     matches = preferHomeCopies(matches, options.preferredHome);
-    const allRunning = (await runningScan) ?? [];
+    const allRunning = ((await runningScan) ?? []).filter(options.stillRunning ?? ((entry) => runsElsewhere(entry)));
     const running = runningResumeHits(allRunning, trimmed);
 
     if (!matches.length && !running.length) {
