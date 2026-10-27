@@ -207,6 +207,23 @@ describe("hub server", () => {
         await drained;
     });
 
+    it("a drain answers a call in flight with draining at once, and sends nothing more for it", async () => {
+        const { socketPath, handle } = await start();
+        const client = await connect(socketPath);
+        client.send({ id: 7, op: "call", argv: ["slow"] });
+        await Bun.sleep(50);
+        servers.splice(servers.indexOf(handle), 1);
+        const drained = handle.drain("test");
+        const answer = await Promise.race([
+            client.next(),
+            Bun.sleep(1000).then(() => ({ timedOut: "no answer within 1 s; the drain waits for the door" })),
+        ]);
+        expect(answer).toEqual({ id: 7, ok: false, code: "draining" });
+        await drained;
+        const late = await Promise.race([client.next(), Bun.sleep(100).then(() => null)]);
+        expect(late).toBeNull();
+    });
+
     it("runs each call under its own trace id, across awaits, and drops one that is not a plain id", async () => {
         const { socketPath } = await start();
         const client = await connect(socketPath);

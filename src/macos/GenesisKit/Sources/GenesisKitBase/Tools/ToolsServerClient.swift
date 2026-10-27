@@ -54,6 +54,12 @@ public final class ToolsServerClient: @unchecked Sendable {
     public static func startHubServer(binaryPath: String) {
         guard ToolsBridge.isExecutableFile(binaryPath) else { return }
 
+        let claimPath = defaultSocketPath() + ".starting"
+        guard HubServerStartClaim.take(path: claimPath) else {
+            PerfSpans.log("hub server start skipped: another face started one moments ago")
+            return
+        }
+
         let plan = ToolsBridge.launchPlan(binaryPath: binaryPath, argv: ["hub", "serve"])
         let process = Process()
         process.executableURL = plan.executable
@@ -69,8 +75,10 @@ public final class ToolsServerClient: @unchecked Sendable {
         }
         do {
             try process.run()
+            HubServerStartClaim.record(pid: process.processIdentifier, path: claimPath)
             PerfSpans.log("hub server started pid=\(process.processIdentifier)")
         } catch {
+            unlink(claimPath)
             PerfSpans.log("hub server cannot start: \(error.localizedDescription)")
         }
     }
@@ -516,4 +524,59 @@ private final class Once: @unchecked Sendable {
 
 private final class ResultBox: @unchecked Sendable {
     var value: ToolsRunResult?
+}
+
+/// One start of `tools hub serve` for every face on this Mac. The face that finds no server first creates
+/// `<socket>.starting` (exclusively) and writes the pid it started into it; a face that finds a claim younger than
+/// `window`, whose pid is not known to be dead, skips its own start and its calls run as processes until the server
+/// listens. At the 2026-10-27 03:46 install the hub and the widget each started a server, and one exited at once.
+package enum HubServerStartClaim {
+    package static let window: TimeInterval = 20
+
+    /// True when the caller may start the server now; the claim is then its own until `window` passes.
+    package static func take(path: String, now: Date = Date(), isAlive: (pid_t) -> Bool = processExists) -> Bool {
+        if create(path, now: now) { return true }
+
+        if let claim = read(path), now.timeIntervalSince(claim.at) < window, claim.pid.map(isAlive) ?? true {
+            return false
+        }
+
+        // A stale claim: its time passed, or the server it started is gone.
+        unlink(path)
+        return create(path, now: now)
+    }
+
+    /// Names the process the claim started, so a server that died at once frees the claim before `window` ends.
+    package static func record(pid: pid_t, path: String, at: Date = Date()) {
+        write("\(at.timeIntervalSince1970)\n\(pid)\n", to: path, flags: O_WRONLY | O_TRUNC)
+    }
+
+    package static func processExists(_ pid: pid_t) -> Bool {
+        kill(pid, 0) == 0 || errno == EPERM
+    }
+
+    private static func create(_ path: String, now: Date) -> Bool {
+        if write("\(now.timeIntervalSince1970)\n", to: path, flags: O_WRONLY | O_CREAT | O_EXCL) { return true }
+        guard errno == ENOENT else { return false }
+
+        try? FileManager.default.createDirectory(atPath: (path as NSString).deletingLastPathComponent,
+                                                 withIntermediateDirectories: true)
+        return write("\(now.timeIntervalSince1970)\n", to: path, flags: O_WRONLY | O_CREAT | O_EXCL)
+    }
+
+    private static func read(_ path: String) -> (at: Date, pid: pid_t?)? {
+        guard let text = try? String(contentsOfFile: path, encoding: .utf8) else { return nil }
+        let lines = text.split(separator: "\n").map(String.init)
+        guard let seconds = lines.first.flatMap(Double.init) else { return nil }
+        return (Date(timeIntervalSince1970: seconds), lines.count > 1 ? pid_t(lines[1]) : nil)
+    }
+
+    @discardableResult
+    private static func write(_ text: String, to path: String, flags: Int32) -> Bool {
+        let fd = open(path, flags, 0o600)
+        guard fd >= 0 else { return false }
+        defer { close(fd) }
+        let bytes = Array(text.utf8)
+        return Darwin.write(fd, bytes, bytes.count) == bytes.count
+    }
 }

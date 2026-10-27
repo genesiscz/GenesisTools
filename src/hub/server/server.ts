@@ -169,6 +169,17 @@ async function startHubServerOwned(options: HubServerOptions): Promise<HubServer
         }
     };
 
+    // A server going away answers every pending call "draining" now and stops its door, so the client runs its own
+    // process at once instead of waiting up to DRAIN_DEADLINE_MS for an answer that never comes: when an install
+    // ended the server, the hub's first calls waited 0.9 to 6.9 s before their processes (2026-10-27 03:46).
+    const answerInFlight = (connection: Connection): void => {
+        for (const [id, controller] of connection.calls) {
+            connection.calls.delete(id);
+            send(connection, { id, ok: false, code: "draining" });
+            controller.abort();
+        }
+    };
+
     const track = <T>(promise: Promise<T>): Promise<T> => {
         inFlight.add(promise);
         promise.finally(() => inFlight.delete(promise)).catch(() => undefined);
@@ -213,6 +224,11 @@ async function startHubServerOwned(options: HubServerOptions): Promise<HubServer
                 result = { stdout: "", stderr: `${error instanceof Error ? error.message : String(error)}\n`, exit: 1 };
             } finally {
                 clearTimeout(timer);
+            }
+
+            // A drain answers the call at once and takes it out (`answerInFlight`): its result has no reader then.
+            const owed = connection.calls.get(id) === controller;
+            if (owed) {
                 connection.calls.delete(id);
             }
 
@@ -232,6 +248,10 @@ async function startHubServerOwned(options: HubServerOptions): Promise<HubServer
                 },
                 "hub server call"
             );
+            if (!owed) {
+                return;
+            }
+
             send(connection, {
                 id,
                 ok: true,
@@ -438,6 +458,8 @@ async function startHubServerOwned(options: HubServerOptions): Promise<HubServer
                 for (const controller of connection.subscriptions.values()) {
                     controller.abort();
                 }
+
+                answerInFlight(connection);
             }
 
             let deadline: ReturnType<typeof setTimeout> | undefined;
