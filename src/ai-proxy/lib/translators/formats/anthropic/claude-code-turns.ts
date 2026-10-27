@@ -29,6 +29,36 @@ export function isClaudeCodeCompactionTurn(body: { messages?: unknown }): boolea
     return isObject(last) && last.role === "user" && textOf(last.content).includes(CLAUDE_CODE_COMPACTION_MARK);
 }
 
+/** The compaction turn without Claude Code's summary prompt: the text blocks carrying it go, and an empty message too. */
+export function withoutCompactionPrompt(body: Record<string, unknown>): Record<string, unknown> {
+    const messages = Array.isArray(body.messages) ? body.messages : [];
+    const last = messages.at(-1);
+
+    if (!isObject(last)) {
+        return body;
+    }
+
+    const content =
+        typeof last.content === "string"
+            ? []
+            : Array.isArray(last.content)
+              ? last.content.filter(
+                    (block) =>
+                        !(
+                            isObject(block) &&
+                            block.type === "text" &&
+                            typeof block.text === "string" &&
+                            block.text.includes(CLAUDE_CODE_COMPACTION_MARK)
+                        )
+                )
+              : [];
+
+    return {
+        ...body,
+        messages: content.length > 0 ? [...messages.slice(0, -1), { ...last, content }] : messages.slice(0, -1),
+    };
+}
+
 /**
  * The compaction turn with a length limit added to its last user message, at the end so the cached prefix stays
  * whole. A Codex model unasked wrote 15K to 26K tokens of summary, 6 to 8 minutes of output (2026-10-27).

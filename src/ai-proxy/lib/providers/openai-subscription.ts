@@ -32,6 +32,7 @@ import {
     braveSearchFn,
     type EmulationOutcome,
     emulateWebSearch,
+    messageToAnthropicSse,
     nativeTranslationLoss,
     nativeWebSearch,
     parseWebSearchServerTool,
@@ -39,6 +40,14 @@ import {
     type WebSearchServerTool,
     webSearchResponse,
 } from "@app/ai-proxy/lib/server-tools/web-search";
+import {
+    compactionFromSse,
+    compactionNote,
+    expandCompactionMarkers,
+    loadCompaction,
+    newCompactionId,
+    saveCompaction,
+} from "@app/ai-proxy/lib/sessions/codex-compaction";
 import { loginAccountName } from "@app/ai-proxy/lib/sessions/records";
 import { compactionSettings } from "@app/ai-proxy/lib/sessions/settings";
 import {
@@ -50,6 +59,7 @@ import {
     isClaudeCodeCompactionTurn,
     limitCompactionSummary,
     sessionAgentModelWins,
+    withoutCompactionPrompt,
 } from "@app/ai-proxy/lib/translators/formats/anthropic/claude-code-turns";
 import { ensureToolRequiredArrays } from "@app/ai-proxy/lib/translators/formats/anthropic/ensure-tool-required";
 import { toAnthropicErrorResponse } from "@app/ai-proxy/lib/translators/formats/anthropic/error-envelope";
@@ -336,7 +346,9 @@ export class OpenAiSubscriptionProvider implements ProxyProvider {
         req: Request,
         model: string,
         bodyText: string,
-        context?: ProviderRequestContext
+        context?: ProviderRequestContext,
+        /** Set when a native compaction failed: this run writes Claude Code's text summary instead. */
+        writtenCompaction = false
     ): Promise<Response> {
         let parsed: Record<string, unknown>;
         try {
@@ -371,7 +383,13 @@ export class OpenAiSubscriptionProvider implements ProxyProvider {
         };
         const replay = { kept: [] as string[], dropped: {} as Partial<Record<EnvelopeRejection | "dead", number>> };
         const compaction = isClaudeCodeCompactionTurn(parsed);
-        const summaryWords = compaction ? compactionSettings().words : undefined;
+        const nativeCompaction = compaction && !writtenCompaction && compactionSettings().mode === "native";
+        const summaryWords = compaction && !nativeCompaction ? compactionSettings().words : undefined;
+
+        if (nativeCompaction) {
+            // The server compacts what came before; Claude Code's summary prompt would only end the cached prefix.
+            parsed = withoutCompactionPrompt(parsed);
+        }
 
         if (summaryWords) {
             parsed = limitCompactionSummary(parsed, summaryWords);
@@ -401,7 +419,7 @@ export class OpenAiSubscriptionProvider implements ProxyProvider {
 
         // Claude Code forbids tools in its compaction prompt in words only; a Codex model may still call one, which
         // Claude Code refuses, and three refused compactions end the session.
-        if (compaction) {
+        if (compaction && !nativeCompaction) {
             responsesBody.tool_choice = "none";
         }
 
@@ -418,7 +436,7 @@ export class OpenAiSubscriptionProvider implements ProxyProvider {
                 : "";
         // A compaction turn writes a summary of what is already known: the session's xhigh only made it slower (6 to 8
         // minutes per compaction on 2026-10-27), so it runs at the compaction effort when the model has that effort.
-        const compactionEffort = compaction ? compactionSettings().effort : undefined;
+        const compactionEffort = compaction && !nativeCompaction ? compactionSettings().effort : undefined;
         const effort =
             compactionEffort && (!catalog || catalog.efforts.includes(compactionEffort))
                 ? compactionEffort
@@ -442,6 +460,34 @@ export class OpenAiSubscriptionProvider implements ProxyProvider {
             "ai-proxy: codex /v1/messages reasoning replay"
         );
 
+        // A Claude Code client gets an account failure at the status it acts on, with this session's switch command.
+        const client: FailureClient = {
+            anthropic: true,
+            ...(context?.sessionId ? { sessionId: context.sessionId } : {}),
+        };
+        const rawInput = Array.isArray(responsesBody.input) ? responsesBody.input : [];
+        const template = responsesBody;
+        responsesBody = {
+            ...responsesBody,
+            input: await expandCompactionMarkers(rawInput, (id) =>
+                this.compactionItem({ id, req, model, template, accountHash: stamp.accountHash, client })
+            ),
+        };
+
+        if (nativeCompaction) {
+            return this.compactNatively({
+                req,
+                model,
+                bodyText,
+                context,
+                parsed,
+                responsesBody,
+                rawInput,
+                stamp,
+                client,
+            });
+        }
+
         // The recall quest's mode B: the turn goes up without the reasoning carried from earlier turns.
         if (env.aiProxy.getReasoningReplay() === "drop" && replay.kept.length > 0) {
             logger.info(
@@ -451,11 +497,6 @@ export class OpenAiSubscriptionProvider implements ProxyProvider {
             responsesBody = stripReasoningInput(responsesBody);
         }
 
-        // A Claude Code client gets an account failure at the status it acts on, with this session's switch command.
-        const client: FailureClient = {
-            anthropic: true,
-            ...(context?.sessionId ? { sessionId: context.sessionId } : {}),
-        };
         let response = await this.respond(req, model, responsesBody, client);
 
         if (!response.ok) {
@@ -545,6 +586,128 @@ export class OpenAiSubscriptionProvider implements ProxyProvider {
             ),
             { status: 200, headers: { "Content-Type": "application/json" } }
         );
+    }
+
+    /**
+     * Claude Code's compaction turn, compacted the Codex way: the turn's request plus `compaction_trigger`, at the
+     * session's effort, so the cached prefix holds. Claude Code gets a note with a marker; the item and the history it
+     * compacted go to disk for the later turns. Any failure writes the text summary instead, as before.
+     */
+    private async compactNatively(input: {
+        req: Request;
+        model: string;
+        bodyText: string;
+        context: ProviderRequestContext | undefined;
+        parsed: Record<string, unknown>;
+        responsesBody: Record<string, unknown>;
+        rawInput: unknown[];
+        stamp: ReasoningEnvelopeStamp;
+        client: FailureClient;
+    }): Promise<Response> {
+        const { req, model, client } = input;
+        const sent = Array.isArray(input.responsesBody.input) ? input.responsesBody.input : [];
+        const response = await this.respond(
+            req,
+            model,
+            { ...input.responsesBody, input: [...sent, { type: "compaction_trigger" }], stream: true },
+            client
+        );
+        const { item, usage } = response.ok ? compactionFromSse(await response.text()) : {};
+
+        if (!item) {
+            logger.warn(
+                { model, status: response.status },
+                "ai-proxy: Codex native compaction gave no compaction item; writing the text summary instead"
+            );
+            return this.nativeMessages(req, model, input.bodyText, input.context, true);
+        }
+
+        const servedBy = client.servedIdentity;
+        const accountHash = servedBy ? accountHash8(servedBy) : input.stamp.accountHash;
+        const id = newCompactionId();
+        saveCompaction({
+            id,
+            model: input.stamp.model,
+            createdAt: new Date().toISOString(),
+            items: { [accountHash]: item },
+            history: input.rawInput,
+        });
+        const inputTokens = typeof usage?.input_tokens === "number" ? usage.input_tokens : 0;
+        const details = isObject(usage?.input_tokens_details) ? usage.input_tokens_details : {};
+        const cached = typeof details.cached_tokens === "number" ? details.cached_tokens : 0;
+        const reply = {
+            id: `msg_${randomUUID().replaceAll("-", "")}`,
+            type: "message",
+            role: "assistant",
+            model,
+            content: [{ type: "text", text: compactionNote(id) }],
+            stop_reason: "end_turn",
+            stop_sequence: null,
+            usage: {
+                input_tokens: Math.max(0, inputTokens - cached),
+                cache_read_input_tokens: cached,
+                output_tokens: typeof usage?.output_tokens === "number" ? usage.output_tokens : 0,
+            },
+        };
+        logger.info({ model, id, inputTokens, cached }, "ai-proxy: Codex native compaction for Claude Code");
+
+        return input.parsed.stream === true
+            ? new Response(messageToAnthropicSse(reply), { headers: { "Content-Type": "text/event-stream" } })
+            : new Response(SafeJSON.stringify(reply), { headers: { "Content-Type": "application/json" } });
+    }
+
+    /**
+     * The compaction item behind a marker, for this login. Another login cannot read an item, so the first request it
+     * serves after a switch compacts the saved history once more there (one uncached read, which the switch costs
+     * anyway) and keeps that item too.
+     */
+    private async compactionItem(input: {
+        id: string;
+        req: Request;
+        model: string;
+        template: Record<string, unknown>;
+        accountHash: string;
+        client: FailureClient;
+    }): Promise<Record<string, unknown> | undefined> {
+        const record = loadCompaction(input.id);
+
+        if (!record) {
+            logger.warn({ id: input.id }, "ai-proxy: a compaction marker has no record; the turn keeps the note only");
+            return undefined;
+        }
+
+        const held = record.items[input.accountHash];
+
+        if (held) {
+            return held;
+        }
+
+        const history = await expandCompactionMarkers(record.history, (id) =>
+            id === input.id ? Promise.resolve(undefined) : this.compactionItem({ ...input, id })
+        );
+        const response = await this.respond(
+            input.req,
+            input.model,
+            { ...input.template, input: [...history, { type: "compaction_trigger" }], stream: true },
+            input.client
+        );
+        const { item } = response.ok ? compactionFromSse(await response.text()) : {};
+
+        if (!item) {
+            logger.warn(
+                { id: input.id, status: response.status },
+                "ai-proxy: compacting a saved history for another login failed; the turn keeps the note only"
+            );
+            return undefined;
+        }
+
+        saveCompaction({ ...record, items: { ...record.items, [input.accountHash]: item } });
+        logger.info(
+            { id: input.id, model: input.model },
+            "ai-proxy: compacted a saved history again for another login"
+        );
+
+        return item;
     }
 
     /**

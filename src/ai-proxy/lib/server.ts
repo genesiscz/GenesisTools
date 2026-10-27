@@ -17,8 +17,13 @@ import type { ProxyProvider } from "@app/ai-proxy/lib/providers/types";
 import { handleRealtimeClientSecrets, handleRealtimeUpgrade, realtimeWebsocket } from "@app/ai-proxy/lib/realtime";
 import { applyReasoningEffortToBody, findInvalidImageDataPayload } from "@app/ai-proxy/lib/rewrite-upstream-body";
 import { messageToAnthropicSse } from "@app/ai-proxy/lib/server-tools/web-search";
+import { sweepCompactions } from "@app/ai-proxy/lib/sessions/codex-compaction";
 import { sessionPickerModels } from "@app/ai-proxy/lib/sessions/picker-models";
-import { noteSessionRequest, sweepSessionRecords } from "@app/ai-proxy/lib/sessions/records";
+import {
+    DEFAULT_SESSION_RETENTION_DAYS,
+    noteSessionRequest,
+    sweepSessionRecords,
+} from "@app/ai-proxy/lib/sessions/records";
 import { resolveSessionRoute, sessionPinnedRoute } from "@app/ai-proxy/lib/sessions/routing";
 import { setClaudeSessionSettings } from "@app/ai-proxy/lib/sessions/settings";
 import { requestTagsFor } from "@app/ai-proxy/lib/sessions/tags";
@@ -370,6 +375,7 @@ export function startAiProxyServer(runtime: AiProxyRuntime) {
 
     try {
         sweepSessionRecords({ retentionDays: runtime.config.sessionRetentionDays });
+        sweepCompactions(runtime.config.sessionRetentionDays ?? DEFAULT_SESSION_RETENTION_DAYS);
     } catch (err) {
         logger.warn({ err }, "ai-proxy: session sweep failed; records stay as they are");
     }

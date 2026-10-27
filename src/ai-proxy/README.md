@@ -143,6 +143,13 @@ Supported values: `minimal`, `low`, `medium`, `high`, `xhigh`, `max`, `ultra`. E
 - **Per-model overrides** go in `config.json` as `codexModels.<slug>`: `window`, `usablePercent`,
   `compactPercent`, `defaultEffort`. The proxy uses `defaultEffort`; `tools claude codex` uses the rest.
 - **Claude Code on Codex** reads `config.json` `claudeSessions` (every field optional, read on each request):
+  - `compaction.mode`: default `"native"`, Codex's own server-side compaction: the turn's request plus a
+    `compaction_trigger` item, at the session's effort on its cached prefix. Claude Code keeps a short note with a
+    `[codex-compaction gtc1.<id>]` marker; the proxy keeps the encrypted item and the compacted history in
+    `ai-proxy/compactions/<id>.json` and puts the item back in front of the marker on every later request. Another
+    Codex login cannot read the item, so its first request compacts the saved history once more there. A Claude
+    model sees the note only. `"summary"`: the model writes Claude Code's text summary (`effort`, `words` below),
+    which is also the fallback when a native compaction returns no item.
   - `compaction.effort`: the effort of Claude Code's compaction turn, default `"session"` (the session's own).
     Each effort level has its own prompt cache, so another effort re-reads the whole context uncached (428K tokens on
     2026-10-27); set one only when speed matters more than the cache.

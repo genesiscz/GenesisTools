@@ -3,6 +3,7 @@ import { mkdtempSync, readFileSync, writeFileSync } from "node:fs";
 import { tmpdir } from "node:os";
 import { join } from "node:path";
 import { resetCooldowns } from "@app/ai-proxy/lib/providers/cooldown";
+import { compactionNote, loadCompaction, saveCompaction } from "@app/ai-proxy/lib/sessions/codex-compaction";
 import { setClaudeSessionSettings } from "@app/ai-proxy/lib/sessions/settings";
 import {
     CLAUDE_CODE_COMPACTION_MARK,
@@ -95,6 +96,19 @@ function whamStreamResponse(): Response {
     });
 
     return new Response(stream, { status: 200, headers: { "content-type": "text/event-stream" } });
+}
+
+/** WHAM's answer to a `compaction_trigger`: one compaction item, and the usage of the cached prefix. */
+function whamCompactionResponse(encrypted: string): Response {
+    const item = { type: "compaction", id: "cmp_1", encrypted_content: encrypted };
+    const sse =
+        `event: response.output_item.done\ndata: ${SafeJSON.stringify({ type: "response.output_item.done", item })}\n\n` +
+        `event: response.completed\ndata: ${SafeJSON.stringify({
+            type: "response.completed",
+            response: { usage: { input_tokens: 400, input_tokens_details: { cached_tokens: 380 }, output_tokens: 50 } },
+        })}\n\n`;
+
+    return new Response(sse, { status: 200, headers: { "content-type": "text/event-stream" } });
 }
 
 const realFetch = globalThis.fetch;
@@ -1282,12 +1296,13 @@ describe("native /v1/messages route: reasoning carried in gtr1 envelopes", () =>
         expect(signatures.every((signature) => signature.split(".")[2] === accountHash8("backup"))).toBe(true);
     });
 
-    it("Claude Code's compaction turn goes out with tool_choice none", async () => {
+    it("a written-summary compaction goes out with tool_choice none", async () => {
         const sent: Array<Record<string, unknown>> = [];
         globalThis.fetch = (async (_url: RequestInfo | URL, init?: RequestInit) => {
             sent.push(SafeJSON.parse(String(init?.body)) as Record<string, unknown>);
             return whamStreamResponse();
         }) as typeof fetch;
+        setClaudeSessionSettings({ compaction: { mode: "summary" } });
         await (
             await send({
                 model: "gpt-6.1-sol",
@@ -1305,6 +1320,7 @@ describe("native /v1/messages route: reasoning carried in gtr1 envelopes", () =>
         expect((sent[0]?.reasoning as Record<string, unknown> | undefined)?.effort).toBe("xhigh");
         const input = (sent[0]?.input ?? []) as Array<Record<string, unknown>>;
         expect(SafeJSON.stringify(input.at(-1))).toContain("under 5000 words");
+        setClaudeSessionSettings(undefined);
         // WHAM treats a tool without `strict` as strict, and the model then fills every optional field.
         expect(sent[0]?.tools).toEqual([expect.objectContaining({ type: "function", name: "Read", strict: false })]);
     });
@@ -1315,7 +1331,7 @@ describe("native /v1/messages route: reasoning carried in gtr1 envelopes", () =>
             sent.push(SafeJSON.parse(String(init?.body)) as Record<string, unknown>);
             return whamStreamResponse();
         }) as typeof fetch;
-        setClaudeSessionSettings({ compaction: { effort: "low", words: 0 } });
+        setClaudeSessionSettings({ compaction: { mode: "summary", effort: "low", words: 0 } });
 
         try {
             await (
@@ -1332,6 +1348,105 @@ describe("native /v1/messages route: reasoning carried in gtr1 envelopes", () =>
 
         expect((sent[0]?.reasoning as Record<string, unknown> | undefined)?.effort).toBe("low");
         expect(SafeJSON.stringify(sent[0]?.input)).not.toContain("words");
+    });
+
+    it("a native compaction sends the turn plus compaction_trigger at the session's effort, and a marker comes back", async () => {
+        const sent: Array<Record<string, unknown>> = [];
+        globalThis.fetch = (async (_url: RequestInfo | URL, init?: RequestInit) => {
+            sent.push(SafeJSON.parse(String(init?.body)) as Record<string, unknown>);
+            return sent.length === 1 ? whamCompactionResponse("ENC-A") : whamStreamResponse();
+        }) as typeof fetch;
+        const history = [
+            { role: "user", content: "Which shelf holds line 12?" },
+            { role: "assistant", content: "Shelf 12." },
+        ];
+        const reply = await (
+            await send({
+                model: "gpt-6.1-sol",
+                stream: false,
+                output_config: { effort: "xhigh" },
+                messages: [...history, { role: "user", content: `${CLAUDE_CODE_COMPACTION_MARK}\n\nSummarize.` }],
+            })
+        ).json();
+        const input = (sent[0]?.input ?? []) as Array<Record<string, unknown>>;
+
+        expect(input.at(-1)).toEqual({ type: "compaction_trigger" });
+        expect(SafeJSON.stringify(input)).not.toContain(CLAUDE_CODE_COMPACTION_MARK);
+        expect((sent[0]?.reasoning as Record<string, unknown> | undefined)?.effort).toBe("xhigh");
+        expect(sent[0]?.tool_choice).toBeUndefined();
+        const note = String(reply.content?.[0]?.text ?? "");
+        const id = note.match(/\[codex-compaction (gtc1\.[0-9a-f-]{36})\]/)?.[1];
+        expect(id).toBeDefined();
+        expect(reply.usage).toEqual({ input_tokens: 20, cache_read_input_tokens: 380, output_tokens: 50 });
+
+        // The next turn carries Claude Code's summary message; the proxy puts the item back in front of it.
+        await (
+            await send({
+                model: "gpt-6.1-sol",
+                stream: true,
+                messages: [{ role: "user", content: `This session is being continued.\n\n${note}\n\nGo on.` }],
+            })
+        ).text();
+        const next = (sent[1]?.input ?? []) as Array<Record<string, unknown>>;
+        expect(next[0]).toEqual({ type: "compaction", id: "cmp_1", encrypted_content: "ENC-A" });
+        expect(SafeJSON.stringify(next)).not.toContain("codex-compaction");
+        expect(SafeJSON.stringify(next)).toContain("Go on.");
+    });
+
+    it("a marker from another login compacts the saved history again there, once", async () => {
+        const sent: Array<Record<string, unknown>> = [];
+        globalThis.fetch = (async (_url: RequestInfo | URL, init?: RequestInit) => {
+            sent.push(SafeJSON.parse(String(init?.body)) as Record<string, unknown>);
+            return SafeJSON.stringify(init?.body).includes("compaction_trigger")
+                ? whamCompactionResponse("ENC-HERE")
+                : whamStreamResponse();
+        }) as typeof fetch;
+        const id = `gtc1.${crypto.randomUUID()}`;
+        saveCompaction({
+            id,
+            model: "gpt-6.1-sol",
+            createdAt: new Date().toISOString(),
+            items: { otherlgn: { type: "compaction", id: "cmp_other", encrypted_content: "ENC-OTHER" } },
+            history: [{ role: "user", content: [{ type: "input_text", text: "the earlier work" }] }],
+        });
+        const turn = {
+            model: "gpt-6.1-sol",
+            stream: true,
+            messages: [{ role: "user", content: `Summary:\n${compactionNote(id)}\n\nGo on.` }],
+        };
+
+        await (await send(turn)).text();
+        await (await send(turn)).text();
+        const triggers = sent.filter((body) => SafeJSON.stringify(body.input).includes("compaction_trigger"));
+
+        expect(triggers.length).toBe(1);
+        expect(SafeJSON.stringify(triggers[0]?.input)).toContain("the earlier work");
+        const turns = sent.filter((body) => !SafeJSON.stringify(body.input).includes("compaction_trigger"));
+        expect(turns.map((body) => (body.input as Array<Record<string, unknown>>)[0]?.encrypted_content)).toEqual([
+            "ENC-HERE",
+            "ENC-HERE",
+        ]);
+        expect(loadCompaction(id)?.items.otherlgn?.encrypted_content).toBe("ENC-OTHER");
+    });
+
+    it("a native compaction with no compaction item writes the text summary instead", async () => {
+        const sent: Array<Record<string, unknown>> = [];
+        globalThis.fetch = (async (_url: RequestInfo | URL, init?: RequestInit) => {
+            sent.push(SafeJSON.parse(String(init?.body)) as Record<string, unknown>);
+            return whamStreamResponse();
+        }) as typeof fetch;
+
+        await (
+            await send({
+                model: "gpt-6.1-sol",
+                stream: true,
+                messages: [{ role: "user", content: `${CLAUDE_CODE_COMPACTION_MARK}\n\nSummarize.` }],
+            })
+        ).text();
+
+        expect(sent.length).toBe(2);
+        expect(sent[1]?.tool_choice).toBe("none");
+        expect(SafeJSON.stringify(sent[1]?.input)).toContain("under 5000 words");
     });
 
     it("Claude Code's /effort applies without an :effort suffix, and the suffix wins over it", async () => {
