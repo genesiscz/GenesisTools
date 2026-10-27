@@ -235,7 +235,7 @@ describe("the shared settings model guard (a /model pick must not become every s
             [
                 "codex/gpt-6-astra",
                 "grok/grok-4.6",
-                "claude-codex/gpt-6-astra",
+                "codex-claude/gpt-6-astra",
                 "opus",
                 "claude-opus-5-5[1m]",
                 undefined,

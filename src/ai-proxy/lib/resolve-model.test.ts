@@ -245,8 +245,8 @@ describe("resolveSessionRoute", () => {
         expect(route.effortSource).toBeUndefined();
     });
 
-    it("routes the /model picker's claude-codex/<id> like codex/<id>, and lists the picker ids Claude Code keeps", () => {
-        const route = routeOf("claude-codex/gpt-6.1-sol");
+    it("routes the /model picker's codex-claude/<id> like codex/<id>, and lists the picker ids Claude Code keeps", () => {
+        const route = routeOf("codex-claude/gpt-6.1-sol");
 
         expect(route.accountName).toBe("side-codex");
         expect(route.upstreamId).toBe("gpt-6.1-sol");
@@ -257,7 +257,9 @@ describe("resolveSessionRoute", () => {
         expect(picker.data.length).toBeGreaterThan(0);
         // Claude Code 2.1.310 drops a gateway model whose id names neither claude nor anthropic.
         expect(picker.data.every((model) => /(claude|anthropic)/i.test(model.id))).toBe(true);
-        expect(picker.data.map((model) => model.id)).toContain("claude-codex/gpt-6.1-sol");
+        // Claude Code takes CLAUDE_CODE_MAX_CONTEXT_TOKENS only for an id that does not start with claude-.
+        expect(picker.data.some((model) => /^claude-/i.test(model.id))).toBe(false);
+        expect(picker.data.map((model) => model.id)).toContain("codex-claude/gpt-6.1-sol");
         expect(picker.data.every((model) => routeOf(model.id).accountName === "side-codex")).toBe(true);
     });
 

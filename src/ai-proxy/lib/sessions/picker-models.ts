@@ -1,4 +1,4 @@
-import { PICKER_ID_PREFIX } from "@app/ai-proxy/lib/sessions/routing";
+import { PICKER_ID_SUFFIX } from "@app/ai-proxy/lib/sessions/routing";
 import type { CodexModelInfo } from "@genesiscz/utils/ai/openai/codex-models";
 
 export interface PickerModel {
@@ -19,14 +19,14 @@ export interface PickerModelList {
 /**
  * What a session's Claude Code reads from `/v1/models` for its `/model` picker (the launcher sets
  * `CLAUDE_CODE_ENABLE_GATEWAY_MODEL_DISCOVERY`): Anthropic's list shape with each Codex model under the id the
- * picker keeps (`PICKER_ID_PREFIX`). The picker's own effort control sets `output_config.effort`, which the proxy
+ * picker keeps (`PICKER_ID_SUFFIX`). The picker's own effort control sets `output_config.effort`, which the proxy
  * honours for an id without an effort suffix.
  */
 export function sessionPickerModels(models: CodexModelInfo[]): PickerModelList {
     const data = models.map(
         (model): PickerModel => ({
             type: "model",
-            id: `${PICKER_ID_PREFIX}codex/${model.slug}`,
+            id: `codex${PICKER_ID_SUFFIX}/${model.slug}`,
             display_name: `${model.displayName} (Codex)`,
             description: [
                 "Codex subscription",
