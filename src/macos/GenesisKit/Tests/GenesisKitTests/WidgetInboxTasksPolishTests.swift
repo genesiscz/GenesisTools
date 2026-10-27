@@ -1328,6 +1328,193 @@ final class WidgetStagingTests: XCTestCase {
         XCTAssertTrue(model.stagedForLeave.isEmpty, "a discard is not a note-only stage")
     }
 
+    func testOlderStageCompletionCannotClearOrAcknowledgeANewerNote() async throws {
+        for firstFails in [true, false] {
+            let model = StagingFixture.model()
+            defer { model.stop() }
+            model.receive([try snapshot(draftOption: nil)])
+            model.select(key)
+            let card = try XCTUnwrap(model.cards.first)
+            let firstStarted = expectation(description: "first stage started")
+            let secondStarted = expectation(description: "second stage started")
+            let finished = expectation(description: "stages finished")
+            var first: CheckedContinuation<WidgetJSON, Error>?
+            var second: CheckedContinuation<WidgetJSON, Error>?
+            var calls = 0
+            model.actionRunner = { request in
+                guard case .object(let fields) = request, fields["action"] == "ledger" else { return ["ok": true] }
+                calls += 1
+                return try await withCheckedThrowingContinuation { continuation in
+                    if calls == 1 { first = continuation; firstStarted.fulfill() }
+                    else { second = continuation; secondStarted.fulfill() }
+                }
+            }
+            model.setText("first note")
+            model.saveDraft(card)
+            await fulfillment(of: [firstStarted], timeout: 1)
+            model.setText("newer note")
+            model.saveDraft(card)
+            if firstFails {
+                try XCTUnwrap(first).resume(throwing: ToolsBridgeError.refused("fixture refusal"))
+            } else {
+                try XCTUnwrap(first).resume(returning: ["ok": true])
+            }
+            await fulfillment(of: [secondStarted], timeout: 1)
+            XCTAssertEqual(model.stagedForLeave.first?.draft, "newer note", "the later stage stays visible")
+            XCTAssertNil(model.pendingStageDone[card.sourceId], "the earlier success cannot acknowledge the later write")
+            model.expanded = .right
+            model.requestCollapse()
+            XCTAssertTrue(model.stagedLeavePrompt, "an immediate leave still sees the pending note")
+            model.afterMutations { finished.fulfill() }
+            try XCTUnwrap(second).resume(returning: ["ok": true])
+            await fulfillment(of: [finished], timeout: 1)
+            XCTAssertNotNil(model.pendingStageDone[card.sourceId], "the matching success acknowledges the note")
+        }
+    }
+
+    func testOptionStageCarriesPendingNoteAfterTheEarlierWriteFails() async throws {
+        for note in ["keep this note", ""] {
+            let model = StagingFixture.model()
+            defer { model.stop() }
+            model.receive([try snapshot(draftOption: nil, draft: "stored note")])
+            model.select(key)
+            let card = try XCTUnwrap(model.cards.first)
+            let firstStarted = expectation(description: "note write started")
+            let secondStarted = expectation(description: "option write started")
+            let finished = expectation(description: "option write completed")
+            var first: CheckedContinuation<WidgetJSON, Error>?
+            var second: CheckedContinuation<WidgetJSON, Error>?
+            var writes: [[String: WidgetJSON]] = []
+            model.actionRunner = { request in
+                guard case .object(let fields) = request, fields["action"] == "ledger" else { return ["ok": true] }
+                writes.append(fields)
+                return try await withCheckedThrowingContinuation { continuation in
+                    if writes.count == 1 { first = continuation; firstStarted.fulfill() }
+                    else { second = continuation; secondStarted.fulfill() }
+                }
+            }
+            model.setText(note)
+            model.saveDraft(card)
+            await fulfillment(of: [firstStarted], timeout: 1)
+            model.choose(card, option: "a")
+            try XCTUnwrap(first).resume(throwing: ToolsBridgeError.refused("fixture refusal"))
+            await fulfillment(of: [secondStarted], timeout: 1)
+            XCTAssertEqual(writes[1]["draftOption"], .string("a"))
+            XCTAssertEqual(writes[1]["draft"], .string(note), "the option write retries the pending note or clear")
+            model.afterMutations { finished.fulfill() }
+            try XCTUnwrap(second).resume(returning: ["ok": true])
+            await fulfillment(of: [finished], timeout: 1)
+            XCTAssertEqual(model.stagedForLeave.first?.draft, note)
+        }
+    }
+
+    func testConfirmedSnapshotBeforeSendStageCompletionStillSends() async throws {
+        let model = StagingFixture.model()
+        defer { model.stop() }
+        model.receive([try snapshot(draftOption: nil, decisionClick: "send")])
+        model.select(key)
+        let item = try XCTUnwrap(model.inboxOverviewItems.first)
+        let started = expectation(description: "stage started")
+        let sent = expectation(description: "matching stage sent")
+        var held: CheckedContinuation<WidgetJSON, Never>?
+        model.actionRunner = { request in
+            guard case .object(let fields) = request else { return ["ok": true] }
+            if fields["action"] == "send-staged" { sent.fulfill(); return ["sent": 1, "failed": 0] }
+            guard fields["action"] == "ledger" else { return ["ok": true] }
+            return await withCheckedContinuation { continuation in
+                held = continuation
+                started.fulfill()
+            }
+        }
+        model.choose(item, option: "a")
+        await fulfillment(of: [started], timeout: 1)
+        var confirmed = item
+        confirmed.draftOption = "a"
+        model.reconcileStaged([confirmed])
+        XCTAssertNil(model.pendingStage[item.sourceId])
+        try XCTUnwrap(held).resume(returning: ["ok": true])
+        await fulfillment(of: [sent], timeout: 1)
+    }
+
+    func testOlderSendAtOnceDoesNotSendANewerNote() async throws {
+        for fromCard in [false, true] {
+            let model = StagingFixture.model()
+            defer { model.stop() }
+            model.receive([try snapshot(draftOption: nil, decisionClick: "send")])
+            model.select(key)
+            let item = try XCTUnwrap(model.inboxOverviewItems.first)
+            let card = try XCTUnwrap(model.cards.first)
+            let firstStarted = expectation(description: "send-at-once stage started")
+            let secondStarted = expectation(description: "newer stage started")
+            let finished = expectation(description: "newer stage finished")
+            let explicitlySent = expectation(description: "newer note sent by explicit action")
+            var first: CheckedContinuation<WidgetJSON, Never>?
+            var second: CheckedContinuation<WidgetJSON, Never>?
+            var calls = 0
+            var sent = false
+            model.actionRunner = { request in
+                guard case .object(let fields) = request else { return ["ok": true] }
+                if fields["action"] == "send-staged" {
+                    sent = true
+                    explicitlySent.fulfill()
+                    return ["sent": 1, "failed": 0]
+                }
+                guard fields["action"] == "ledger" else { return ["ok": true] }
+                calls += 1
+                return await withCheckedContinuation { continuation in
+                    if calls == 1 { first = continuation; firstStarted.fulfill() }
+                    else { second = continuation; secondStarted.fulfill() }
+                }
+            }
+            if fromCard { model.choose(card, option: "a") } else { model.choose(item, option: "a") }
+            await fulfillment(of: [firstStarted], timeout: 1)
+            model.setText("newer note")
+            model.saveDraft(card)
+            try XCTUnwrap(first).resume(returning: ["ok": true])
+            await fulfillment(of: [secondStarted], timeout: 1)
+            XCTAssertEqual(model.stagedForLeave.first?.draft, "newer note")
+            model.afterMutations { finished.fulfill() }
+            try XCTUnwrap(second).resume(returning: ["ok": true])
+            await fulfillment(of: [finished], timeout: 1)
+            XCTAssertFalse(sent, "the earlier send must not deliver the later staged note")
+            XCTAssertEqual(model.stagedForLeave.first?.draft, "newer note")
+            model.sendStaged([card.sourceId], known: model.stagedForLeave)
+            await fulfillment(of: [explicitlySent], timeout: 1)
+        }
+    }
+
+    func testFailedOlderDiscardCannotClearANewerNote() async throws {
+        let model = StagingFixture.model()
+        defer { model.stop() }
+        model.receive([try snapshot(draftOption: "a")])
+        model.select(key)
+        let card = try XCTUnwrap(model.cards.first)
+        let discardStarted = expectation(description: "discard started")
+        let stageStarted = expectation(description: "later stage started")
+        let finished = expectation(description: "later stage finished")
+        var discard: CheckedContinuation<WidgetJSON, Error>?
+        var stage: CheckedContinuation<WidgetJSON, Error>?
+        model.actionRunner = { request in
+            guard case .object(let fields) = request, case .string(let action) = fields["action"],
+                  action == "unstage" || action == "ledger" else { return ["ok": true] }
+            return try await withCheckedThrowingContinuation { continuation in
+                if action == "unstage" { discard = continuation; discardStarted.fulfill() }
+                else { stage = continuation; stageStarted.fulfill() }
+            }
+        }
+        model.discardStaged([card.sourceId])
+        await fulfillment(of: [discardStarted], timeout: 1)
+        model.setText("newer note")
+        model.saveDraft(card)
+        try XCTUnwrap(discard).resume(throwing: ToolsBridgeError.refused("fixture refusal"))
+        await fulfillment(of: [stageStarted], timeout: 1)
+        XCTAssertEqual(model.stagedForLeave.first?.draft, "newer note")
+        model.afterMutations { finished.fulfill() }
+        try XCTUnwrap(stage).resume(returning: ["ok": true])
+        await fulfillment(of: [finished], timeout: 1)
+        XCTAssertNotNil(model.pendingStageDone[card.sourceId])
+    }
+
     func testPopupRefreshAndExplicitCloseRespectStagedPolicy() async throws {
         let model = StagingFixture.model()
         defer { model.stop() }

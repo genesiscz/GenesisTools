@@ -85,9 +85,10 @@ extension WidgetModel {
         let adding = NSEvent.modifierFlags.contains(.shift)
         guard clickStagesNow || adding else {
             stage(id: item.sourceId, sessionId: session.target.sessionId, revision: revision, option: option,
-                  item: item, completed: { [weak self] in
-                      self?.pendingStage[item.sourceId] = nil
-                      self?.deliverDecisions([item], action: .sendStaged)
+                  item: item, completed: { [weak self] version in
+                      guard let self, self.canSendStaged(item.sourceId, version: version) else { return }
+                      self.clearPendingStage(item.sourceId, version: version)
+                      self.deliverDecisions([item], action: .sendStaged)
                   })
             return
         }
@@ -106,10 +107,9 @@ extension WidgetModel {
         let typed = draft.text
         stage(id: card.sourceId, sessionId: selected.target.sessionId, revision: revision,
               option: option ?? stagedOption(card.sourceId, stored: card.draftOption), note: note, item: item,
-              completed: { [weak self] in
-                  guard let self else { return }
-                  self.pendingStage[card.sourceId] = nil
-                  self.pendingStageNotes[card.sourceId] = nil
+              completed: { [weak self] version in
+                  guard let self, self.canSendStaged(card.sourceId, version: version) else { return }
+                  self.clearPendingStage(card.sourceId, version: version)
                   if note != nil, self.selectedKey == key, self.draft.text == typed {
                       self.setText("")
                       if self.ownAnswerCardID == card.id { self.ownAnswerCardID = nil }
@@ -128,7 +128,7 @@ extension WidgetModel {
         let text = typed.trimmingCharacters(in: .whitespacesAndNewlines)
         stage(id: card.sourceId, sessionId: selected.target.sessionId, revision: revision,
               option: stagedOption(card.sourceId, stored: card.draftOption), note: text, item: Self.inboxItem(card),
-              completed: { [weak self] in
+              completed: { [weak self] _ in
                   guard let self else { return }
                   self.draftSavedAt[card.id] = Date()
                   // Only the text that was saved: a session switch or new typing keeps the composer as it is.
@@ -173,21 +173,30 @@ extension WidgetModel {
 
     private func stage(
         id: String, sessionId: String, revision: Int, option: String?, note: String? = nil,
-        item: WidgetInboxItem? = nil, completed: (() -> Void)? = nil
+        item: WidgetInboxItem? = nil, completed: ((UUID) -> Void)? = nil
     ) {
         sendCloseRevision += 1
-        markPending(id, option ?? "", item: item, note: note)
+        // An option-only write keeps a locally pending note even if the earlier note write is refused.
+        let stagedNote = note ?? pendingStageNotes[id]
+        let version = markPending(id, option ?? "", item: item, note: stagedNote)
+        pendingStagesInFlight.insert(version)
         var fields: [String: WidgetJSON] = [
             "action": "ledger", "id": .string(id), "sessionId": .string(sessionId),
             "expectedRevision": .number(Double(revision)), "state": "drafted", "draftOption": .string(option ?? ""),
         ]
-        if let note { fields["draft"] = .string(note) }
+        if let stagedNote { fields["draft"] = .string(stagedNote) }
         action(.object(fields), failed: { [weak self] in
-            self?.pendingStage[id] = nil
-            self?.pendingStageNotes[id] = nil
+            self?.pendingStagesInFlight.remove(version)
+            self?.clearPendingStage(id, version: version)
         }, completed: { [weak self] in
-            self?.pendingStageDone[id] = Date().timeIntervalSince1970 * 1000
-            completed?()
+            if self?.pendingStageVersions[id] == version {
+                self?.pendingStageDone[id] = Date().timeIntervalSince1970 * 1000
+            }
+            completed?(version)
+            self?.pendingStagesInFlight.remove(version)
+            if self?.pendingStage[id] == nil, self?.pendingStageVersions[id] == version {
+                self?.pendingStageVersions[id] = nil
+            }
         })
     }
 
@@ -200,12 +209,32 @@ extension WidgetModel {
     nonisolated static let pendingStageUnansweredLifetime: TimeInterval = 60
 
     /// A pick or a clear (`""`) made here, shown at once until a snapshot shows the decision log has it.
-    func markPending(_ id: String, _ option: String, item: WidgetInboxItem? = nil, note: String? = nil) {
+    @discardableResult
+    func markPending(_ id: String, _ option: String, item: WidgetInboxItem? = nil, note: String? = nil) -> UUID {
+        let version = UUID()
+        pendingStageVersions[id] = version
         pendingStage[id] = option
         if let note { pendingStageNotes[id] = note }
         pendingStageAt[id] = Date().timeIntervalSince1970 * 1000
         pendingStageDone[id] = nil
         if let item { pendingStageItems[id] = item }
+        return version
+    }
+
+    private func clearPendingStage(_ id: String, version: UUID) {
+        guard pendingStageVersions[id] == version else { return }
+        pendingStage[id] = nil
+        pendingStageNotes[id] = nil
+        pendingStageVersions[id] = nil
+    }
+
+    /// A later edit has its own staged intent; an older send must not send that edit instead.
+    private func canSendStaged(_ id: String, version: UUID) -> Bool {
+        guard pendingStageVersions[id] == version else {
+            postNote("This decision changed. Review it before sending.")
+            return false
+        }
+        return true
     }
 
     /// The staged items as the snapshot shows them, and the picks staged here that it now shows. `listed`: every
@@ -237,6 +266,9 @@ extension WidgetModel {
         pendingStageDone = pendingStageDone.filter { pendingStage[$0.key] != nil }
         pendingStageItems = pendingStageItems.filter { pendingStage[$0.key] != nil }
         pendingStageNotes = pendingStageNotes.filter { pendingStage[$0.key] != nil }
+        pendingStageVersions = pendingStageVersions.filter {
+            pendingStage[$0.key] != nil || pendingStagesInFlight.contains($0.value)
+        }
     }
 
     /// A staged pick the agent's new text cleared (a revision drops the staged pick, since it was made on the old
@@ -402,12 +434,13 @@ extension WidgetModel {
     public func discardStaged(_ ids: [String], completed: (() -> Void)? = nil) {
         guard !ids.isEmpty else { return }
         sendCloseRevision += 1
+        var versions: [String: UUID] = [:]
         for id in ids {
             pendingStageNotes[id] = nil
-            markPending(id, "")
+            versions[id] = markPending(id, "")
         }
         action(["action": "unstage", "ids": .array(ids.map { .string($0) })], failed: { [weak self] in
-            for id in ids { self?.pendingStage[id] = nil }
+            for (id, version) in versions { self?.clearPendingStage(id, version: version) }
             completed?()
         }, completed: completed)
     }
