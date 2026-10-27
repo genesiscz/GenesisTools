@@ -743,7 +743,8 @@ final class HubInboxModel: ObservableObject {
             writeErrorDetail: writeErrorDetails[item.id],
             preferences: preferences,
             noteFocusRequest: noteFocusTarget == item.id ? noteFocusCount : nil,
-            hubSession: hubSession
+            hubSession: hubSession,
+            keyCard: keyCardID == item.id
         )
     }
 
@@ -1979,6 +1980,9 @@ struct InboxCardState: Equatable {
     var noteFocusRequest: Int?
     /// The hub's row of the card's session, for "Open in transcript"; nil when the hub's list does not hold it.
     var hubSession: HubSession?
+    /// The card the main list's keys act on, whether or not the list has the keyboard now: its controls stay live,
+    /// so the keyboard can reach them (F1).
+    var keyCard = false
 }
 
 /// One decision, with the context that led to it: the findings, the code it points at, each option
@@ -2027,12 +2031,18 @@ struct InboxDecisionCard: View, Equatable {
     @State private var showAsk = false
     @State private var showReply = false
     @State private var showsDeliveryDetails = false
+    /// The pointer is on the card.
+    @State private var hovering = false
     @FocusState private var noteFocused: Bool
     /// ⌘F: when the current match is in this card's folded context, the context unfolds by itself.
     @Environment(\.panelFindHighlight) private var highlight
     @GenReduceMotion private var reduceMotion
 
     private var writing: Bool { state.writing }
+    /// The card's options and footer are buttons with hover styles and tooltips only while the pointer is on it, it
+    /// is the key card, or its note has the keyboard; otherwise the same labels, which VoiceOver still presses
+    /// (`restingButton`). Each control is a responder that SwiftUI walks per changed accessibility node (F1).
+    private var live: Bool { hovering || state.keyCard || noteFocused }
     private var sessionSending: Bool { state.sessionSending }
     private var pickable: Bool { item.isOpen && session.sessionId != nil }
     private var letters: String { state.letters }
@@ -2112,6 +2122,11 @@ struct InboxDecisionCard: View, Equatable {
         // The main list's key card: the system's focus colour, as the widget's keyboard option draws it.
         .overlay(RoundedRectangle(cornerRadius: 11).strokeBorder(keyed ? Color(nsColor: .keyboardFocusIndicatorColor) : .clear,
                                                                  lineWidth: 1.5).allowsHitTesting(false))
+        .onHover { inside in
+            if hovering != inside { hovering = inside }
+        }
+        // A card that scrolls out from under a still pointer gets no exit event (`RowButtonStyle` does the same).
+        .onDisappear { hovering = false }
         .findRow(item.id, cornerRadius: 11)
         .onAppear {
             if !noteSeeded {
@@ -2167,11 +2182,11 @@ struct InboxDecisionCard: View, Equatable {
             if let confidence = item.confidence {
                 // Was a raw "[medium]" beside the title.
                 Badge("\(confidence.capitalized) confidence", color: Self.confidenceColor(confidence), look: .filled)
-                    .instantTooltip("How sure the agent is of its recommended option")
+                    .liveTooltip(live, "How sure the agent is of its recommended option")
             }
             if staged {
                 Badge("Staged", color: SessionPalette.blue, look: .filled)
-                    .instantTooltip("Picked and not sent yet: Send now sends it, or Send all staged with the others")
+                    .liveTooltip(live, "Picked and not sent yet: Send now sends it, or Send all staged with the others")
             }
             Spacer(minLength: 8)
             if item.isOpen {
@@ -2208,7 +2223,7 @@ struct InboxDecisionCard: View, Equatable {
 
     private func askRow(_ ask: String) -> some View {
         VStack(alignment: .leading, spacing: 2) {
-            Button {
+            LiveButton(live: live, tooltip: "The prompt that led to this reply", pressable: true) {
                 let opening = !showAsk
                 GenMotion.perform(expanding: opening, reduceMotion: reduceMotion) { showAsk = opening }
             } label: {
@@ -2220,8 +2235,6 @@ struct InboxDecisionCard: View, Equatable {
                 }
                 .foregroundColor(ReviewPalette.dim)
             }
-            .buttonStyle(.genHoverPlain())
-            .instantTooltip("The prompt that led to this reply")
             if showAsk, let full = session.reply?.askFull {
                 Text(verbatim: full)
                     .font(.system(size: 11.5))
@@ -2240,11 +2253,12 @@ struct InboxDecisionCard: View, Equatable {
                 Text("Context").font(.system(size: 10.5, weight: .semibold)).foregroundColor(ReviewPalette.dim)
                 Spacer()
                 if contextOverflows || showContext {
-                    Button(contextRevealed ? "Show less" : "Show all") {
+                    LiveButton(live: live, tooltip: nil, pressable: true) {
                         let revealing = !contextRevealed
                         GenMotion.perform(expanding: revealing, reduceMotion: reduceMotion) { showContext = revealing }
+                    } label: {
+                        Text(contextRevealed ? "Show less" : "Show all")
                     }
-                        .buttonStyle(.genHoverPlain())
                         .font(.system(size: 10.5))
                         .foregroundColor(ReviewPalette.renamed)
                 }
@@ -2283,7 +2297,7 @@ struct InboxDecisionCard: View, Equatable {
         VStack(alignment: .leading, spacing: 6) {
             Text("Code").font(.system(size: 10.5, weight: .semibold)).foregroundColor(ReviewPalette.dim)
             ForEach(Array(item.excerptRefs.enumerated()), id: \.offset) { index, ref in
-                InboxExcerptCard(ref: ref, cwd: session.cwd, field: "ref:\(index)")
+                InboxExcerptCard(ref: ref, cwd: session.cwd, field: "ref:\(index)", live: live)
             }
         }
     }
@@ -2411,51 +2425,58 @@ struct InboxDecisionCard: View, Equatable {
                     .fixedSize()
                     .disabled(sessionSending || writing)
                     .instantTooltip(sessionSending ? "This session's send is running" : "Send this staged decision alone, without the others")
-                    Button("Unstage") {
+                    LiveButton(live: live, tooltip: "Take the pick and the note off the staged list; the note stays here",
+                               enabled: !(sessionSending || writing), pressable: true) {
                         inbox.unstage(item, in: session, keeping: note)
                         noteDirty = !note.isEmpty
+                    } label: {
+                        Text("Unstage")
                     }
-                    .buttonStyle(.genHoverPlain())
                     .font(.system(size: 11.5))
                     .foregroundColor(ReviewPalette.renamed)
-                    .disabled(sessionSending || writing)
-                    .instantTooltip("Take the pick and the note off the staged list; the note stays here")
                 }
                 if writing {
                     ProgressView().controlSize(.small)
                 }
                 Spacer(minLength: 6)
                 if session.reply != nil {
-                    Button("Open the whole reply") { showReply = true }
-                        .buttonStyle(.genHoverPlain())
+                    LiveButton(live: live, tooltip: nil, pressable: true) { showReply = true } label: {
+                        Text("Open the whole reply")
+                    }
                         .font(.system(size: 11))
                         .foregroundColor(ReviewPalette.renamed)
                 }
                 if let hubSession = state.hubSession {
-                    Button("Open in transcript") {
+                    LiveButton(live: live, tooltip: "Open the session and search the transcript for this decision",
+                               pressable: true) {
                         model.transcriptQuery = "DECISION \(item.number ?? 0)"
                         model.openSession(hubSession)
+                    } label: {
+                        Text("Open in transcript")
                     }
-                    .buttonStyle(.genHoverPlain())
                     .font(.system(size: 11))
                     .foregroundColor(ReviewPalette.renamed)
-                    .instantTooltip("Open the session and search the transcript for this decision")
                 }
                 // The routine destructive action: quiet, last, apart from the send (P13).
                 if item.isOpen, state.heldDismiss {
-                    Button("Dismissed · Undo") { inbox.undoDismiss(item) }
-                        .buttonStyle(.genHoverPlain())
+                    LiveButton(live: live, tooltip: "Keep this decision; nothing was written yet", pressable: true) {
+                        inbox.undoDismiss(item)
+                    } label: {
+                        Text("Dismissed · Undo")
+                    }
                         .font(.system(size: 11))
                         .foregroundColor(ReviewPalette.renamed)
                         .padding(.leading, 8)
-                        .instantTooltip("Keep this decision; nothing was written yet")
                 } else if item.isOpen {
-                    Button("Dismiss") { inbox.dismiss(item, in: session) }
-                        .buttonStyle(.genHoverPlain())
+                    LiveButton(live: live, tooltip: "Drop this decision without sending an answer; Undo stays for a few seconds",
+                               pressable: true) {
+                        inbox.dismiss(item, in: session)
+                    } label: {
+                        Text("Dismiss")
+                    }
                         .font(.system(size: 11))
                         .foregroundColor(ReviewPalette.dim)
                         .padding(.leading, 8)
-                        .instantTooltip("Drop this decision without sending an answer; Undo stays for a few seconds")
                 }
             }
         }
@@ -2470,62 +2491,69 @@ struct InboxDecisionCard: View, Equatable {
         let stages = DecisionAnswering.clickStages(preferences, command: false)
         let recommended = choice.recommended == true || item.recommended == choice.id
         let shape = RoundedRectangle(cornerRadius: 8)
-        return Button {
+        // A second pick while the session's send runs would race it (P14).
+        let enabled = pickable && !sessionSending
+        let choose = {
             let flags = NSApp.currentEvent?.modifierFlags ?? NSEvent.modifierFlags
             inbox.choose(item, in: session, letter: choice.id, note: noteDirty ? note : nil,
                          shift: flags.contains(.shift), command: flags.contains(.command))
             noteDirty = false
-        } label: {
-            HStack(alignment: .top, spacing: 9) {
-                // A staged letter is the widget's blue, never the green of "answered" (F2); the deep send blue keeps
-                // the white letter at 4.5:1.
-                Text(verbatim: "\(choice.id))")
-                    .font(.system(size: 12.5, weight: .bold, design: .monospaced))
-                    .foregroundColor(stagedPick ? .white : answered ? .black : Color.white.opacity(0.85))
-                    .frame(width: 26, height: 21)
-                    .background(RoundedRectangle(cornerRadius: 5).fill(
-                        stagedPick ? GenPrimaryButtonStyle.blue : answered ? ReviewPalette.added : Color.white.opacity(0.08)))
-                VStack(alignment: .leading, spacing: 2) {
-                    HStack(alignment: .firstTextBaseline, spacing: 6) {
-                        FindText(inlineMarkdown(choice.shownLabel), field: "choice:\(choice.id)")
-                            .font(.system(size: 12.5))
-                            .foregroundColor(Color.white.opacity(item.isOpen || picked ? 0.92 : 0.55))
-                            .frame(maxWidth: .infinity, alignment: .leading)
-                        if recommended {
-                            Badge("Recommended", color: ReviewPalette.added, look: .filled)
-                        }
-                        if stagedPick {
-                            Text("Staged")
-                                .font(.system(size: 11, weight: .semibold))
-                                .foregroundColor(SessionPalette.blue)
-                        }
+        }
+        let label = HStack(alignment: .top, spacing: 9) {
+            // A staged letter is the widget's blue, never the green of "answered" (F2); the deep send blue keeps
+            // the white letter at 4.5:1.
+            Text(verbatim: "\(choice.id))")
+                .font(.system(size: 12.5, weight: .bold, design: .monospaced))
+                .foregroundColor(stagedPick ? .white : answered ? .black : Color.white.opacity(0.85))
+                .frame(width: 26, height: 21)
+                .background(RoundedRectangle(cornerRadius: 5).fill(
+                    stagedPick ? GenPrimaryButtonStyle.blue : answered ? ReviewPalette.added : Color.white.opacity(0.08)))
+            VStack(alignment: .leading, spacing: 2) {
+                HStack(alignment: .firstTextBaseline, spacing: 6) {
+                    FindText(inlineMarkdown(choice.shownLabel), field: "choice:\(choice.id)")
+                        .font(.system(size: 12.5))
+                        .foregroundColor(Color.white.opacity(item.isOpen || picked ? 0.92 : 0.55))
+                        .frame(maxWidth: .infinity, alignment: .leading)
+                    if recommended {
+                        Badge("Recommended", color: ReviewPalette.added, look: .filled)
                     }
-                    if let rationale = choice.rationale, !rationale.isEmpty {
-                        FindText(inlineMarkdown(rationale), field: "rationale:\(choice.id)")
-                            .font(.system(size: 11))
-                            .foregroundColor(ReviewPalette.dim)
-                            .frame(maxWidth: .infinity, alignment: .leading)
+                    if stagedPick {
+                        Text("Staged")
+                            .font(.system(size: 11, weight: .semibold))
+                            .foregroundColor(SessionPalette.blue)
                     }
                 }
+                if let rationale = choice.rationale, !rationale.isEmpty {
+                    FindText(inlineMarkdown(rationale), field: "rationale:\(choice.id)")
+                        .font(.system(size: 11))
+                        .foregroundColor(ReviewPalette.dim)
+                        .frame(maxWidth: .infinity, alignment: .leading)
+                }
             }
-            .padding(.vertical, 4)
-            .padding(.horizontal, 6)
-            .background(stagedPick ? SessionPalette.blue.opacity(0.16) : Color.clear, in: shape)
-            .overlay(shape.strokeBorder(stagedPick ? SessionPalette.blue.opacity(0.7) : .clear, lineWidth: 1))
-            .contentShape(shape)
         }
-        // The kit's row button: a soft fill in the row's own frame, not the white outline (P1).
-        .buttonStyle(RowButtonStyle(cornerRadius: 8))
-        // A second pick while the session's send runs would race it (P14).
-        .disabled(!pickable || sessionSending)
+        .padding(.vertical, 4)
+        .padding(.horizontal, 6)
+        .background(stagedPick ? SessionPalette.blue.opacity(0.16) : Color.clear, in: shape)
+        .overlay(shape.strokeBorder(stagedPick ? SessionPalette.blue.opacity(0.7) : .clear, lineWidth: 1))
+        .contentShape(shape)
+        return Group {
+            if live {
+                Button(action: choose) { label }
+                    // The kit's row button: a soft fill in the row's own frame, not the white outline (P1).
+                    .buttonStyle(RowButtonStyle(cornerRadius: 8))
+                    .disabled(!enabled)
+                    .instantTooltip(!item.isOpen
+                        ? "This decision is closed: \(statusPhrase)"
+                        : sessionSending ? "This session's send is running"
+                        : DecisionAnswering.optionTooltip(choice.id, recommended: recommended, stages: stages, picked: stagedPick,
+                                                          swaps: preferences?.decisionCommandSwaps ?? true,
+                                                          key: index < 9 ? index + 1 : nil))
+            } else {
+                label.restingButton(enabled: enabled, action: choose)
+            }
+        }
         .accessibilityValue(stagedPick ? "Staged" : answered ? "Chosen" : "")
         .accessibilityAddTraits(picked ? .isSelected : [])
-        .instantTooltip(!item.isOpen
-            ? "This decision is closed: \(statusPhrase)"
-            : sessionSending ? "This session's send is running"
-            : DecisionAnswering.optionTooltip(choice.id, recommended: recommended, stages: stages, picked: stagedPick,
-                                              swaps: preferences?.decisionCommandSwaps ?? true,
-                                              key: index < 9 ? index + 1 : nil))
     }
 
     /// Toggles one letter in a pick string. Plain click replaces the set; ⇧-click adds or removes.
@@ -2546,6 +2574,8 @@ private struct InboxExcerptCard: View {
     let cwd: String?
     /// The ⌘F field key of this excerpt's path (`ref:<index>`).
     let field: String
+    /// Its card is live: the path is a button with a tooltip only then (F1).
+    let live: Bool
 
     private var displayPath: String {
         ref.line.map { "\(ref.path):\($0)" } ?? ref.path
@@ -2570,15 +2600,16 @@ private struct InboxExcerptCard: View {
                     Label(note.label, systemImage: "questionmark.folder")
                         .font(.system(size: 10.5))
                         .foregroundColor(ReviewPalette.dim)
-                        .instantTooltip(note.detail)
+                        .liveTooltip(live, note.detail)
                 } else {
-                    Button { PathOpener.cursor(absolute, line: ref.line ?? 1) } label: {
+                    LiveButton(live: live, tooltip: "Open \(absolute)\(ref.line.map { ":\($0)" } ?? "") in Cursor",
+                               pressable: true) {
+                        PathOpener.cursor(absolute, line: ref.line ?? 1)
+                    } label: {
                         FindText(displayPath, field: field)
                             .font(.system(size: 11, design: .monospaced))
                             .foregroundColor(Color(red: 0.55, green: 0.7, blue: 1))
                     }
-                    .buttonStyle(.genHoverPlain())
-                    .instantTooltip("Open \(absolute)\(ref.line.map { ":\($0)" } ?? "") in Cursor")
                     Spacer()
                 }
             }
