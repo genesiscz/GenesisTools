@@ -646,12 +646,17 @@ export function createRecorderTargetController(opts: {
         return false;
     };
 
-    const shouldRecord = (
-        method: string,
-        params: Record<string, unknown>,
-        sessionId: string | undefined,
-        url: string
-    ): boolean => {
+    const shouldRecord = ({
+        method,
+        params,
+        sessionId,
+        url,
+    }: {
+        method: string;
+        params: Record<string, unknown>;
+        sessionId: string | undefined;
+        url: string;
+    }): boolean => {
         const requestId = typeof params.requestId === "string" ? params.requestId : undefined;
         if (sessionId && requestId && method === "Network.requestWillBeSent" && pendingPopups.delete(sessionId)) {
             firstRequests.set(sessionId, requestId);
@@ -777,7 +782,7 @@ export async function runRecorder(opts: RunRecorderOpts): Promise<void> {
                 ""
         );
 
-        if (!shouldRecord(method, params, sessionId, url)) {
+        if (!shouldRecord({ method, params, sessionId, url })) {
             return;
         }
 
