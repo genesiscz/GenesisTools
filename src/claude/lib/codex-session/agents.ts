@@ -121,6 +121,24 @@ function codexWorkerPrompt(codexAccount: string | undefined): string {
     ].join("\n");
 }
 
+/**
+ * The note ccx appends to the lead's system prompt. On 2026-10-27 a review loop lead followed its skills to
+ * `tools codex spawn --write ask` workers: 833 of its 1,635 wake-ups were worker approvals and messages, and five
+ * hours went by. Here the native agents already are Codex, inside the session, with no approvals to relay.
+ */
+export function leadPrompt(agents: Record<string, SessionAgentDefinition>): string {
+    const codex = Object.entries(agents)
+        .filter(([name, agent]) => agent.model.startsWith("codex/") && name !== "codex-worker")
+        .map(([name, agent]) => `${name} (${agent.model.slice("codex/".length)}, effort ${agent.effort ?? "default"})`);
+
+    return [
+        "This Claude Code session runs on Codex through ai-proxy.",
+        `Its subagents ${codex.join(", ")} are Codex models. When a skill or brief asks for a Codex, Sol, Terra, Luna or Astra worker, start that subagent with the Agent tool (subagent_type, and effort to raise it, for example effort "xhigh"), not \`${toolCommand("codex spawn")}\` or the handoff-to skill.`,
+        "A native subagent needs no approvals from you and reports back once, when it finishes. A `tools codex spawn` worker started with --write ask makes you approve its commands one by one.",
+        "Use the codex-worker subagent only when the work must run in the Codex CLI's own sandbox.",
+    ].join("\n");
+}
+
 /** The Claude Code id of a Claude model by its catalog alias, with `[1m]` where the model needs the suffix for its 1M window (P5). */
 function claudeModelId(alias: string): string | undefined {
     const model = CLAUDE_MODELS.find((item) => item.aliases?.includes(alias));
