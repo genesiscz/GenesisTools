@@ -7,10 +7,48 @@ export function callerAgentName(caller: RmCaller): string {
     return caller.isInAgent ? caller.agent : "person";
 }
 
+/**
+ * Profiles shipped with tools rm. They apply before the user's own, so a user profile can override them, and each
+ * can be turned off with `tools rm config set disable-profile <name>`.
+ */
+export const BUILTIN_PROFILES: readonly RmProfile[] = [
+    {
+        name: "person",
+        builtin: true,
+        match: { agent: "person" },
+        // A person at a terminal confirms by typing; without a terminal the paths stay where they are, since no agent
+        // is in the way that an aside move would protect them from.
+        askAction: "request",
+        note: "a run outside any agent leaves what needs confirmation in place",
+    },
+    {
+        name: "workers",
+        builtin: true,
+        match: { agent: "codex,grok" },
+        // Codex and Grok often run as unsupervised workers: their deletions keep a longer undo window.
+        grace: { otherMinutes: 240 },
+        note: "codex and grok workers: 4 h to undo instead of 1 h",
+    },
+];
+
+/** The profiles that can apply, in order: the built-in ones not turned off, then the user's. */
+export function profilesFor(config: Pick<RmConfig, "profiles" | "disabledProfiles">): RmProfile[] {
+    const off = new Set(config.disabledProfiles);
+    const own = new Set(config.profiles.map((p) => p.name));
+    // A user profile with a built-in's name replaces it.
+    return [...BUILTIN_PROFILES.filter((p) => !off.has(p.name) && !own.has(p.name)), ...config.profiles];
+}
+
 export function profileMatches(profile: RmProfile, caller: RmCaller, cwd: string): boolean {
     const { agent, session, project, cwd: folder } = profile.match;
 
-    if (agent && agent !== callerAgentName(caller)) {
+    if (
+        agent &&
+        !agent
+            .split(",")
+            .map((a) => a.trim())
+            .includes(callerAgentName(caller))
+    ) {
         return false;
     }
 
@@ -44,7 +82,7 @@ export function effectiveConfig(base: RmConfig, caller: RmCaller, cwd: string): 
     const applied: string[] = [];
     let config: RmConfig = base;
 
-    for (const profile of base.profiles) {
+    for (const profile of profilesFor(base)) {
         if (!profileMatches(profile, caller, cwd)) {
             continue;
         }

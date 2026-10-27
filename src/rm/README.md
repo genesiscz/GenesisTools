@@ -23,7 +23,8 @@ tools rm profiles                   # settings per agent, session or project, an
 tools rm approve <id>
 tools rm roots add <dir> [--note "<why>"]
 tools rm config set <key> <value>   # ask-action, aside-unsaved, session-scratch, own-files, grace-preset,
-                                    # grace-other, trash-root, disable-preset, enable-preset
+                                    # grace-other, trash-root, disable-preset, enable-preset,
+                                    # disable-profile, enable-profile
 tools rm profile set <name> --agent codex --ask-action request [...]
 tools rm profile remove <name>
 ```
@@ -36,25 +37,28 @@ The first rule that answers decides.
 
 1. **hard-deny** (refuse, no approval can override): a missing path, `/`, system folders, volume roots, the home
    folder and anything directly in it, the current folder and its parents, the trash itself, and protected paths
-   (agent transcripts, the history index, keychains, Mail, Messages, iCloud and cloud folders, plus `protect` in
-   the config) and every folder that holds one.
+   (agent transcripts, the history index, keychains, Mail, Messages, iCloud and cloud folders; secrets in `~/.ssh`,
+   `~/.gnupg`, `~/.aws`, `~/.kube`, `~/.password-store` and the GenesisTools vault and AI config; virtual-machine
+   disks of OrbStack, Docker Desktop, colima, lima and minikube; plus `protect` in the config) and every folder that
+   holds one.
 2. **aside-pending** (refuse): a path that is, holds, or sits in an aside folder whose request still waits. The
    aside folder lives in the session's scratch, so without this rule the scratch rule would let the agent delete it.
 3. **registered-worktree** (refuse): a linked worktree git still lists. Use `git worktree remove`, which refuses
    uncommitted work.
-4. **git-tracked** (ask): files git tracks. Prefer `git rm`.
-5. **unsaved-clone** (ask): a clone with uncommitted changes or commits on no remote.
-6. **session-scratch** (allow): inside the calling session's `/tmp/cc/<project>/<session id>/` (or the agent's own
+4. **git-history** (ask): a `.git` folder, even in the session's scratch: its history and unpushed commits go with it.
+5. **git-tracked** (ask): files git tracks. Prefer `git rm`.
+6. **unsaved-clone** (ask): a clone with uncommitted changes or commits on no remote.
+7. **session-scratch** (allow): inside the calling session's `/tmp/cc/<project>/<session id>/` (or the agent's own
    folder, such as `/tmp/codex/...`). A profile can turn it off (`allowSessionScratch`).
-7. **own-files** (allow): a file the calling Claude session wrote (its modified-file journal) that git does not track.
+8. **own-files** (allow): a file the calling Claude session wrote (its modified-file journal) that git does not track.
    A profile can turn it off (`allowOwnFiles`).
-8. **git-untracked** (ask): untracked files git does not ignore, which may be new work.
-9. **nested-repos** (ask): a folder that holds git repositories.
-10. **preset** (allow): a folder a build or install recreates, next to the file that proves it: `node_modules` next to
+9. **git-untracked** (ask): untracked files git does not ignore, which may be new work.
+10. **nested-repos** (ask): a folder that holds git repositories.
+11. **preset** (allow): a folder a build or install recreates, next to the file that proves it: `node_modules` next to
    `package.json`, `dist`/`build`/`.next`/`.turbo`/... next to `package.json`, `.build` next to `Package.swift`,
    `target` next to `Cargo.toml`, Gradle and CMake output, Python caches, Pods, Xcode DerivedData and more.
-11. **root** (allow): inside a folder the user trusts (`tools rm roots add`).
-12. **default** (ask).
+12. **root** (allow): inside a folder the user trusts (`tools rm roots add`).
+13. **default** (ask).
 
 A person at a terminal (not inside an agent) gets a typed confirmation for an ask instead of a request.
 
@@ -78,6 +82,13 @@ session id prefix, project, folder; every field given must match, `person` match
 overrides: `askAction`, `asideUnsaved`, `allowSessionScratch`, `allowOwnFiles`, `grace`, plus lists that add to the
 base config: `disabledPresets`, `roots`, `protect`. Matching profiles apply in order. The trash root cannot be
 changed by a profile. `tools rm profiles` lists them and prints the settings in force for the caller.
+
+Two profiles ship built in and apply before your own (`tools rm config set disable-profile <name>` turns one off; a
+profile of your own with the same name replaces it):
+
+- `person`: a run outside any agent leaves what needs confirmation in place. You confirm by typing at a terminal, and
+  no agent is in the way that an aside move would keep the paths from.
+- `workers`: Codex and Grok, which often run as unsupervised workers, get a 4-hour undo window instead of 1 hour.
 
 ```bash
 tools rm profile set codex-careful --agent codex --ask-action request --no-own-files
@@ -117,8 +128,16 @@ In Claude Code, run `! tools rm approve <id>` from the prompt.
 - The deletion code only deletes inside a trash root, at batch or item depth (`assertInsideTrash`), so a bug that
   builds a wrong path deletes nothing.
 
+## Opt-in cache presets
+
+These are safe to delete (the next install refills them), but another install or a running app may be reading one, so
+each is off until `tools rm config set enable-preset <id>`: `bun-cache`, `npm-cache`, `pnpm-store`, `yarn-cache`,
+`homebrew-cache`, and `user-caches` (each app's folder in `~/Library/Caches`; quit the app first). `tools rm presets`
+marks them. Then `tools rm preset bun-cache` empties that cache.
+
 ## Configuration
 
 `~/.genesis-tools/rm/config.json` holds `askAction`, `asideUnsaved`, `allowSessionScratch`, `allowOwnFiles`,
-`roots`, `protect`, `grace`, `trashRoot`, `disabledPresets`, `profiles` and `customPresets` (`{ "id", "description", "names": ["*.cache"], "markers": ["package.json"] }`). Edit it with the
+`roots`, `protect`, `grace`, `trashRoot`, `disabledPresets`, `enabledPresets`, `profiles`, `disabledProfiles` and
+`customPresets` (`{ "id", "description", "names": ["*.cache"], "markers": ["package.json"] }`). Edit it with the
 commands above. A custom preset widens what agents may delete, so add one by hand only.

@@ -128,6 +128,21 @@ function builtinProtected(home: string): string[] {
         join(home, "Library", "Messages"),
         join(home, "Library", "Mobile Documents"),
         join(home, "Library", "CloudStorage"),
+        // Secrets: keys and credentials no rebuild returns.
+        join(home, ".ssh"),
+        join(home, ".gnupg"),
+        join(home, ".aws"),
+        join(home, ".kube"),
+        join(home, ".password-store"),
+        genesisToolsDir("security"),
+        genesisToolsDir("ai"),
+        // Virtual-machine disks: containers' volumes live there with no snapshot.
+        join(home, ".orbstack"),
+        join(home, "Library", "Group Containers", "HUX3Z3SN6R.dev.orbstack"),
+        join(home, "Library", "Containers", "com.docker.docker"),
+        join(home, ".colima"),
+        join(home, ".minikube"),
+        join(home, ".lima"),
     ];
 }
 
@@ -257,6 +272,17 @@ export const RM_RULES: readonly RmRule[] = [
                   }
                 : null;
         },
+    },
+    {
+        id: "git-history",
+        evaluate: (target) =>
+            basename(target.path) === ".git"
+                ? {
+                      kind: "ask",
+                      rule: "git-history",
+                      reason: "a repository's .git folder: its history and every unpushed commit go with it",
+                  }
+                : null,
     },
     {
         id: "git-tracked",

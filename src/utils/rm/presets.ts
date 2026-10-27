@@ -91,9 +91,68 @@ export const BUILTIN_PRESETS: readonly RmPreset[] = [
     },
 ];
 
-export function presetsFor(config: Pick<RmConfig, "disabledPresets" | "customPresets">): RmPreset[] {
+/**
+ * Shared package and app caches: safe to delete (the next install refills them), but another install or a running
+ * app may be reading one, so each is off until the user enables it.
+ */
+export const OPT_IN_PRESETS: readonly RmPreset[] = [
+    {
+        id: "bun-cache",
+        description: "bun's global package cache (the next bun install refills it)",
+        names: [],
+        within: join(homedir(), ".bun", "install", "cache"),
+        optIn: true,
+    },
+    {
+        id: "npm-cache",
+        description: "npm's content cache",
+        names: [],
+        within: join(homedir(), ".npm", "_cacache"),
+        optIn: true,
+    },
+    {
+        id: "pnpm-store",
+        description: "pnpm's content-addressed store",
+        names: [],
+        within: join(homedir(), "Library", "pnpm", "store"),
+        optIn: true,
+    },
+    {
+        id: "yarn-cache",
+        description: "yarn's package cache",
+        names: [],
+        within: join(homedir(), "Library", "Caches", "Yarn"),
+        optIn: true,
+    },
+    {
+        id: "homebrew-cache",
+        description: "downloaded Homebrew bottles and sources",
+        names: [],
+        within: join(homedir(), "Library", "Caches", "Homebrew"),
+        optIn: true,
+    },
+    {
+        id: "user-caches",
+        description: "each app's folder in ~/Library/Caches (apps rebuild them; quit the app first)",
+        names: [],
+        within: join(homedir(), "Library", "Caches"),
+        optIn: true,
+    },
+];
+
+export function presetsFor(
+    config: Pick<RmConfig, "disabledPresets" | "customPresets"> & Partial<Pick<RmConfig, "enabledPresets">>
+): RmPreset[] {
     const disabled = new Set(config.disabledPresets);
-    return [...BUILTIN_PRESETS, ...config.customPresets].filter((preset) => !disabled.has(preset.id));
+    const enabled = new Set(config.enabledPresets ?? []);
+    return [...BUILTIN_PRESETS, ...OPT_IN_PRESETS, ...config.customPresets].filter(
+        (preset) => !disabled.has(preset.id) && (!preset.optIn || enabled.has(preset.id))
+    );
+}
+
+/** Every preset tools rm knows, enabled or not. */
+export function allPresets(config: Pick<RmConfig, "customPresets">): RmPreset[] {
+    return [...BUILTIN_PRESETS, ...OPT_IN_PRESETS, ...config.customPresets];
 }
 
 function globToRegExp(glob: string): RegExp {
