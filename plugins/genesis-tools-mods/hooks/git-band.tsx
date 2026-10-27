@@ -25,6 +25,7 @@ import {
     folderSuggestions,
     headOf,
     hideCheckout,
+    isBranchName,
     noteToolCall,
     pickRoots,
     removeAdded,
@@ -352,7 +353,9 @@ async function rowPrs(
         ? { ...own, own: true, tracked: tracked.includes(own.number), hidden: hidden.includes(own.number) }
         : null;
     const prs = [mine, ...others].filter((pr): pr is BandPr => pr !== null);
-    const names = (at.touch?.branches ?? []).filter((name) => name !== at.branch).slice(0, EARLIER_PRS);
+    const names = (at.touch?.branches ?? [])
+        .filter((name) => name !== at.branch && isBranchName(name))
+        .slice(0, EARLIER_PRS);
     const earlier = await Promise.all(names.map((name) => prOf(host, { root: at.cwd, which: name, tracked: false })));
 
     earlier.forEach((pr, index) => {

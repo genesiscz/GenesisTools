@@ -150,7 +150,24 @@ function resolveIn(value: string, dir: string | undefined, home: string | undefi
 function branchOf(ref: string): string | undefined {
     const name = ref.replace(/^\+/, "").replace(/^refs\/heads\//, "");
 
-    return !name || name === "HEAD" || name.startsWith("refs/") || name.startsWith("-") ? undefined : name;
+    return name === "HEAD" || name.startsWith("refs/") || !isBranchName(name) ? undefined : name;
+}
+
+/**
+ * A name git could take as a branch (the common subset of `git check-ref-format`). Shell words parsed from a command
+ * (`2>&1`, `>`, `$br`) are not: each was looked up as a PR by every session every 2 minutes (2026-10-27).
+ */
+export function isBranchName(name: string): boolean {
+    return (
+        /^[A-Za-z0-9._/+@#-]+$/.test(name) &&
+        !name.startsWith("-") &&
+        !name.startsWith("/") &&
+        !name.endsWith("/") &&
+        !name.endsWith(".lock") &&
+        !name.includes("..") &&
+        !name.includes("//") &&
+        /[A-Za-z]/.test(name)
+    );
 }
 
 /** The branches a git command makes or pushes: `switch -c x`, `checkout -b x`, `push origin x` or `HEAD:x`. */
@@ -506,7 +523,7 @@ export async function headOf(host: Host, root: string): Promise<{ repo: string; 
 function withBranches(first: readonly (string | undefined)[], before: readonly string[] = []): string[] {
     const names = first.filter((name): name is string => name !== undefined);
 
-    return [...new Set([...names, ...before])].slice(0, KEEP_BRANCHES);
+    return [...new Set([...names, ...before])].filter(isBranchName).slice(0, KEEP_BRANCHES);
 }
 
 /**
