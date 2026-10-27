@@ -30,7 +30,7 @@ import {
     setIdleDueAt,
 } from "./idle";
 import { inbox, inboxChip } from "./inbox";
-import { appendLinkedPullRequestNote, linksStep, rememberToolPaths } from "./links";
+import { appendLinkedPullRequestNote, linksStep, rememberToolPaths, takeLinkedPullRequestNote } from "./links";
 import { startLiveClock } from "./live";
 import {
     type CallSection,
@@ -655,6 +655,16 @@ export const register: Register = (on) => {
 
             afterTools({ host, event: e, features: FEATURES });
 
+            // The PR numbers the links mod linked in the message that asked for this call: the model reads which
+            // repository each went to with this result, while the turn still runs, not only after it ends.
+            if (e.agentId === undefined && e.tool_use_id !== undefined && result.deny === undefined) {
+                const note = takeLinkedPullRequestNote();
+
+                if (note) {
+                    return { ...result, context: [...(result.context ?? []), note] };
+                }
+            }
+
             return result;
         } finally {
             for (const end of ends) {
@@ -718,7 +728,7 @@ export const register: Register = (on) => {
         if (e.agentId === undefined) {
             stopIdleTimer();
 
-            // The model reads which PR numbers the links mod linked for it, so it can correct a wrong repository.
+            // PR numbers of the turn's last message, which no tool result followed: the model reads them next turn.
             await appendLinkedPullRequestNote((text) =>
                 $.session.append({ message: { type: "user", content: [{ type: "text", text }] } })
             ).catch((error) =>

@@ -8,20 +8,25 @@
 // the PR that holds it when `tools hub link` names one (`commit-links.ts`), in GitHub and GitLab checkouts alike, and a
 // hub link the reply built by hand gets its `&amp;` undone and its problems logged as `bad-hub-link`. A PR number links
 // in the repository the reply means (`pr-repos.ts`): one written at it, the same number linked before, the nearest
-// repository the reply names, and only then the session checkout's.
+// repository the reply names (a URL, a path, or a known repository's name as a plain word), and only then the session
+// checkout's. A session that works in two or more checkouts gets no silent guess: the title the reply wrote after the
+// number picks the repository whose PR has it, and with no such evidence the number stays text.
 import type { HookStream, TurnStepChunk, TurnStepInput, TurnStepResult } from "claude-code";
+import { sessionCheckouts } from "./checkouts";
 import { COMMIT, checkHubLink, commitLink, type ForgeProject, forgeProject } from "./commit-links";
 import { decisionLink, encodePath, finderLink, type GenesisProbe, genesisProbe, mdLink } from "./genesis";
 import {
     mentionsIn,
+    namesIn,
     projectNamed,
     projectOfPath,
     QUALIFIED_PR,
     type RepoMention,
     sameOwner,
     sessionRepos,
+    titleMatches,
 } from "./pr-repos";
-import { type Host, isRecord, logMod } from "./shared";
+import { agentsDir, type Host, isRecord, logMod } from "./shared";
 
 const DOC = new Set(["md", "mdx", "json", "jsonl", "yaml", "yml", "toml", "log", "txt", "csv"]);
 const CODE = new Set([
@@ -94,6 +99,10 @@ export interface LinkContext {
     linked: Map<number, ForgeProject>;
     /** The projects the session's earlier messages named whole. */
     named: ForgeProject[];
+    /** The projects of the checkouts the session's tool calls wrote to or changed git state in. */
+    worked: ForgeProject[];
+    /** The sentence of the current line a position falls in, set by `linkLine`. */
+    sentenceAt?: (at: number) => number;
     /** What this reply named in the lines above the current one, in order. */
     above: RepoMention[];
     /** What the current line names. */
@@ -219,14 +228,51 @@ async function resolve(
     return { reason: "not on disk" };
 }
 
-const pullRequests = new Map<string, { title: string; url: string } | null>();
+type PullRequest = { title: string; url: string };
+
+/** How long an answer is shared: a PR's title and URL rarely change; a number that is no PR yet may become one. */
+const PR_FOUND_TTL_MS = 6 * 60 * 60_000;
+const PR_MISSING_TTL_MS = 10 * 60_000;
+const PR_MISSING_TTL_S = String(PR_MISSING_TTL_MS / 1000);
+
+const pullRequests = new Map<string, { at: number; pr: PullRequest | null }>();
+
+/** Forgets the PR answers this module holds (tests); the shared files stay. */
+export function forgetPullRequests(): void {
+    pullRequests.clear();
+}
 
 /** The PR numbers the mod linked since the last note to the model, keyed `<repo>#<n>`. */
-const linkedPullRequests = new Map<string, { token: string; repo: string; why: string; url: string }>();
+type LinkedPullRequest = { token: string; repo: string; why: string; url: string };
+const linkedPullRequests = new Map<string, LinkedPullRequest>();
+
+function pullRequestNote(pending: readonly LinkedPullRequest[]): string {
+    return [
+        "The genesis-tools-mods links mod linked these PR numbers in your last message:",
+        ...pending.map((pr) => `- ${pr.token} -> ${pr.url}, in ${pr.repo}: ${pr.why}`),
+        "It picks a number's repository in this order: one written at the number (owner/repo#123), the same number linked before, the nearest repository your reply names (a GitHub URL, a hub link, a path in a checkout, or a repository's name as a plain word), and last the remote of the session's checkout. In a session that works in several checkouts, a bare number with none of these is linked only when the title you wrote after it matches that repository's PR. If a number belongs to another repository, tell the user in your next reply that the link was added automatically and is wrong, and give the correct link. Write owner/repo#123 to choose the repository yourself; a PR you write as a full markdown link is never changed.",
+    ].join("\n");
+}
+
+/**
+ * The pending PR attribution as context for the main loop's next tool result, so the model reads it in the same turn
+ * as the message that holds the links; the entries are taken. Undefined when nothing is pending.
+ */
+export function takeLinkedPullRequestNote(): string | undefined {
+    if (linkedPullRequests.size === 0) {
+        return undefined;
+    }
+
+    const note = pullRequestNote([...linkedPullRequests.values()]);
+    linkedPullRequests.clear();
+
+    return note;
+}
 
 /**
  * Append the pending PR attribution, acknowledging only entries still matching the successful snapshot. A failed
- * append leaves the entries for a later turn, and links recorded during the append are never cleared by it.
+ * append leaves the entries for a later turn, and links recorded during the append are never cleared by it. The turn's
+ * end uses it for links of a last message, which no tool result follows.
  */
 export async function appendLinkedPullRequestNote(append: (note: string) => Promise<unknown>): Promise<void> {
     if (linkedPullRequests.size === 0) {
@@ -234,14 +280,7 @@ export async function appendLinkedPullRequestNote(append: (note: string) => Prom
     }
 
     const pending = [...linkedPullRequests.entries()];
-    const rows = pending.map(([, pr]) => `- ${pr.token} -> ${pr.url}, in ${pr.repo}: ${pr.why}`);
-
-    const note = [
-        "The genesis-tools-mods links mod linked these PR numbers:",
-        ...rows,
-        "It picks a number's repository in this order: one written at the number (owner/repo#123), the same number linked before, the nearest repository your reply names (a GitHub URL, a hub link, a path in a checkout), and last the remote of the session's checkout. If a number belongs to another repository, tell the user in your next reply that the link was added automatically and is wrong, and give the correct link. Write owner/repo#123 to choose the repository yourself; a PR you write as a full markdown link is never changed.",
-    ].join("\n");
-    await append(note);
+    await append(pullRequestNote(pending.map(([, pr]) => pr)));
 
     for (const [key, pr] of pending) {
         if (linkedPullRequests.get(key) === pr) {
@@ -256,9 +295,26 @@ function githubHost(ctx: LinkContext): string {
 
 /** Every project the session and this reply named whole, and the session checkout's. */
 function knownProjects(ctx: LinkContext): ForgeProject[] {
-    const named = [...ctx.named, ...[...ctx.above, ...ctx.line].flatMap((m) => (m.project ? [m.project] : []))];
+    const named = [
+        ...ctx.named,
+        ...ctx.worked,
+        ...[...ctx.above, ...ctx.line].flatMap((m) => (m.project ? [m.project] : [])),
+    ];
 
     return ctx.project ? [...named, ctx.project] : named;
+}
+
+/** The GitHub projects the session works in: its checkout's and each one its tool calls changed, once each. */
+function workedProjects(ctx: LinkContext): ForgeProject[] {
+    const seen = new Map<string, ForgeProject>();
+
+    for (const project of ctx.project ? [ctx.project, ...ctx.worked] : ctx.worked) {
+        if (project.kind === "github") {
+            seen.set(`${project.host}/${project.path}`.toLowerCase(), project);
+        }
+    }
+
+    return [...seen.values()];
 }
 
 /** The project a mention names: whole, by a name without its owner, or by a path inside a checkout. */
@@ -276,12 +332,13 @@ async function mentionProject(ctx: LinkContext, mention: RepoMention): Promise<F
 
 /**
  * The GitHub repository a bare `#n` at `at` of the current line means, and why; undefined when the reply names a
- * GitLab project there, or nothing names a GitHub one (`pr-repos.ts`).
+ * GitLab project there, nothing names a GitHub one, or the session works in several and no evidence picks one
+ * (`pr-repos.ts`). `after`: the text right after the number, where a reply writes the PR's title.
  */
 async function prRepo(
     ctx: LinkContext,
     n: number,
-    at: number
+    { at, after }: { at: number; after: string }
 ): Promise<{ project: ForgeProject; why: string } | undefined> {
     const earlier = [...ctx.above].reverse();
 
@@ -299,7 +356,11 @@ async function prRepo(
         return { project: before, why: `the session linked #${n} there before` };
     }
 
-    const nearest = [...ctx.line].sort((a, b) => Math.abs(a.start - at) - Math.abs(b.start - at));
+    // The nearest mention of the same sentence first, then the nearest of the rest of the line.
+    const sentence = ctx.sentenceAt?.(at);
+    const distance = (m: RepoMention) =>
+        (ctx.sentenceAt && ctx.sentenceAt(m.start) !== sentence ? 1_000_000 : 0) + Math.abs(m.start - at);
+    const nearest = [...ctx.line].sort((a, b) => distance(a) - distance(b));
 
     for (const mention of [...nearest, ...earlier]) {
         const project = await mentionProject(ctx, mention);
@@ -309,14 +370,50 @@ async function prRepo(
         }
     }
 
-    return ctx.project?.kind === "github" ? { project: ctx.project, why: "the session's checkout" } : undefined;
+    const candidates = workedProjects(ctx);
+
+    if (candidates.length < 2) {
+        return ctx.project?.kind === "github" ? { project: ctx.project, why: "the session's checkout" } : undefined;
+    }
+
+    // Several checkouts and no word of the reply picks one: the PR lookup is the evidence.
+    const written = /^ \(([^\n]+)/.exec(after)?.[1];
+    const found: { project: ForgeProject; pr: PullRequest }[] = [];
+
+    for (const project of candidates) {
+        const pr = await pullRequest(ctx, project, String(n));
+
+        if (pr) {
+            found.push({ project, pr });
+        }
+    }
+
+    const titled = written ? found.filter((hit) => titleMatches(written, hit.pr.title)) : [];
+
+    if (titled.length === 1 && titled[0]) {
+        return { project: titled[0].project, why: "its title there matches the title the reply wrote" };
+    }
+
+    if (!written && found.length === 1 && found[0]) {
+        return { project: found[0].project, why: "the only repository the session works in with that PR" };
+    }
+
+    ctx.log.push({
+        kind: "pr-unsure",
+        token: `#${n}`,
+        candidates: candidates.map((project) => project.path),
+        withPr: found.map((hit) => hit.project.path),
+        titleWritten: Boolean(written),
+    });
+
+    return undefined;
 }
 
 /** The repository and number a PR token (`#12`, `web#12`, `acme/web#12`) means, and why. */
 async function prTarget(
     ctx: LinkContext,
     token: string,
-    at: number
+    { at, after }: { at: number; after: string }
 ): Promise<{ project: ForgeProject; number: string; why: string } | undefined> {
     const [, owner, name, written] = new RegExp(`^${QUALIFIED_PR.source}$`).exec(token) ?? [];
 
@@ -329,55 +426,101 @@ async function prTarget(
     }
 
     const n = token.slice(1);
-    const found = await prRepo(ctx, Number(n), at);
+    const found = await prRepo(ctx, Number(n), { at, after });
 
     return found ? { ...found, number: n } : undefined;
 }
 
-/** The PR's title and URL from `gh`, kept for the session; null for a number that is no PR of that repository. */
-async function pullRequest(
-    ctx: LinkContext,
-    project: ForgeProject,
-    n: string
-): Promise<{ title: string; url: string } | null> {
+function freshPullRequest(held: unknown, key: string): { at: number; pr: PullRequest | null } | undefined {
+    if (!isRecord(held) || held.key !== key || typeof held.at !== "number") {
+        return undefined;
+    }
+
+    const pr =
+        isRecord(held.pr) && typeof held.pr.title === "string" && typeof held.pr.url === "string"
+            ? { title: held.pr.title, url: held.pr.url }
+            : held.pr === null
+              ? null
+              : undefined;
+
+    if (pr === undefined || Date.now() - held.at >= (pr ? PR_FOUND_TTL_MS : PR_MISSING_TTL_MS)) {
+        return undefined;
+    }
+
+    return { at: held.at, pr };
+}
+
+/**
+ * The PR's title and URL from `tools github pr` or `gh`; null for a number that is no PR of that repository. Every
+ * session on this Mac shares the answer through `<agents>/mods-state/pull-requests/<host_owner_repo_n>.json`: a PR for 6 hours, a number
+ * with no PR for 10 minutes. A failed `gh` (network, auth, timeout) is neither kept nor shared.
+ */
+async function pullRequest(ctx: LinkContext, project: ForgeProject, n: string): Promise<PullRequest | null> {
     if (project.kind !== "github") {
         return null;
     }
 
     const repo = project.host === "github.com" ? project.path : `${project.host}/${project.path}`;
-    const key = `${repo}#${n}`;
-    const held = pullRequests.get(key);
+    const key = `${project.host}/${project.path}#${n}`;
+    const inMemory = freshPullRequest(pullRequests.has(key) ? { key, ...pullRequests.get(key) } : undefined, key);
 
-    if (held !== undefined) {
-        return held;
+    if (inMemory) {
+        return inMemory.pr;
     }
 
-    const run = await ctx.host
-        .run(["gh", "pr", "view", n, "--repo", repo, "--json", "title,url"], { timeoutMs: 8_000 })
-        .catch(() => undefined);
+    const dir = await agentsDir(ctx.host);
+    const file = dir ? `${dir}/mods-state/pull-requests/${key.replace(/[^\w.-]+/g, "_")}.json` : undefined;
+    const text = file ? await ctx.host.read(file).catch(() => undefined) : undefined;
+    let shared: { at: number; pr: PullRequest | null } | undefined;
+
+    try {
+        shared = freshPullRequest(text ? JSON.parse(text) : undefined, key);
+    } catch {
+        // A file another session is writing: ask gh.
+    }
+
+    if (shared) {
+        pullRequests.set(key, shared);
+        return shared.pr;
+    }
+
+    // With the GenesisTools CLI, `tools github pr --include` answers from the cache every tool on this Mac shares
+    // (asked for at most the miss TTL, since this file already keeps a found PR longer); without it, gh.
+    const argv = ctx.probe.tools
+        ? ["tools", "github", "pr", n, "--repo", repo, "--include", "title,url", "--max-cache-age", PR_MISSING_TTL_S]
+        : ["gh", "pr", "view", n, "--repo", repo, "--json", "title,url"];
+    const run = await ctx.host.run(argv, { timeoutMs: 15_000 }).catch(() => undefined);
 
     // A run that timed out, could not start, or failed for another reason than "no such PR" (network, auth) is
     // asked again on the next reply instead of keeping the number unlinked for the whole session.
     if (
         !run ||
-        (run.exitCode !== 0 && !/no pull requests? found|could not resolve to a pull ?request/i.test(run.stderr))
+        (run.exitCode !== 0 &&
+            (ctx.probe.tools || !/no pull requests? found|could not resolve to a pull ?request/i.test(run.stderr)))
     ) {
         return null;
     }
 
-    let found: { title: string; url: string } | null = null;
+    let found: PullRequest | null = null;
 
     try {
-        const parsed: unknown = run.exitCode === 0 ? JSON.parse(run.stdout) : undefined;
+        const answer: unknown = run.exitCode === 0 ? JSON.parse(run.stdout) : undefined;
+        // `tools github pr --include` prints `{ pr }`, with `pr: null` for a number that is no PR.
+        const parsed: unknown = ctx.probe.tools && isRecord(answer) ? answer.pr : answer;
 
         if (isRecord(parsed) && typeof parsed.title === "string" && typeof parsed.url === "string") {
             found = { title: parsed.title.replace(/^Draft: /, ""), url: parsed.url };
         }
     } catch {
-        found = null;
+        return null;
     }
 
-    pullRequests.set(key, found);
+    const at = Date.now();
+    pullRequests.set(key, { at, pr: found });
+
+    if (file) {
+        await ctx.host.write(file, JSON.stringify({ key, at, pr: found })).catch(() => undefined);
+    }
 
     return found;
 }
@@ -457,7 +600,7 @@ async function linkPlain(ctx: LinkContext, text: string, offset: number): Promis
         let end = hit.end;
 
         if (hit.kind === "pr") {
-            const target = await prTarget(ctx, hit.token, offset + hit.start);
+            const target = await prTarget(ctx, hit.token, { at: offset + hit.start, after: text.slice(end) });
             const pr = target ? await pullRequest(ctx, target.project, target.number) : null;
 
             if (target && pr) {
@@ -542,7 +685,10 @@ async function linkPlain(ctx: LinkContext, text: string, offset: number): Promis
 export async function linkLine(ctx: LinkContext, line: string): Promise<string> {
     let out = "";
     let at = 0;
-    ctx.line = mentionsIn(line, githubHost(ctx));
+    const known = knownProjects({ ...ctx, line: [] });
+    ctx.line = [...mentionsIn(line, githubHost(ctx)), ...namesIn(line, known)].sort((a, b) => a.start - b.start);
+    const ends = [...line.matchAll(/[.!?;](?=\s|$)/g)].map((match) => match.index ?? 0);
+    ctx.sentenceAt = (at) => ends.filter((end) => end < at).length;
 
     for (const match of line.matchAll(PROTECTED)) {
         const start = match.index ?? 0;
@@ -581,8 +727,8 @@ export async function linkLine(ctx: LinkContext, line: string): Promise<string> 
     }
 
     out += await linkPlain(ctx, line.slice(at), at);
-    // The next lines of the reply look up to what this one named.
-    ctx.above.push(...ctx.line);
+    // The next lines of the reply look up to what this one named; a plain repository name speaks for its line alone.
+    ctx.above.push(...ctx.line.filter((mention) => !mention.byName));
 
     return out;
 }
@@ -620,6 +766,17 @@ async function contextOf(host: Host, messageCount: number): Promise<LinkContext>
         messages.map((message) => message.text),
         project?.kind === "github" ? project.host : "github.com"
     );
+    // The checkouts the git band already keeps for this session; each root's origin is read once per module load.
+    const touches = await sessionCheckouts(host).catch(() => []);
+    const worked: ForgeProject[] = [];
+
+    for (const touch of touches.slice(0, 8)) {
+        const touched = await projectOfPath(host, touch.root, home);
+
+        if (touched) {
+            worked.push(touched);
+        }
+    }
 
     return {
         host,
@@ -630,6 +787,7 @@ async function contextOf(host: Host, messageCount: number): Promise<LinkContext>
         project,
         linked,
         named,
+        worked,
         above: [],
         line: [],
         sessionId,

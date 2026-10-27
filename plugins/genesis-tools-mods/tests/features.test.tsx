@@ -70,10 +70,16 @@ import {
 import { dedupeEntry, ledgerOf, tokensText } from "../hooks/hook-ledger";
 import { idleDueAt, publishIdleDue, setIdleDueAt } from "../hooks/idle";
 import { inbox } from "../hooks/inbox";
-import { appendLinkedPullRequestNote, linkLine, targetFor } from "../hooks/links";
+import {
+    appendLinkedPullRequestNote,
+    forgetPullRequests,
+    linkLine,
+    takeLinkedPullRequestNote,
+    targetFor,
+} from "../hooks/links";
 import { forgetLive, liveAgo, liveDue, liveLeft, liveSince } from "../hooks/live";
 import { bareDescription } from "../hooks/model-label";
-import { forgetRepoMentions, sessionRepos, urlProject } from "../hooks/pr-repos";
+import { forgetRepoMentions, namesIn, sessionRepos, titleMatches, urlProject } from "../hooks/pr-repos";
 import { modsSettings } from "../hooks/settings";
 import { afterTools, forgetSettings, type Host, isRecord } from "../hooks/shared";
 import { toolLabel } from "../hooks/spinner";
@@ -96,6 +102,8 @@ const ALL_LINKS: GenesisProbe = {
     linkHost: "links.example.test",
     opens: { md: true, finder: true, hub: true, "claude-find": true },
 };
+/** Every link opens, and PR titles come from gh: no GenesisTools CLI. */
+const GH_ONLY: GenesisProbe = { ...ALL_LINKS, tools: false };
 /** A Mac with neither the GenesisTools CLI nor its app. */
 const NO_LINKS: GenesisProbe = {
     tools: false,
@@ -949,11 +957,12 @@ test("links: a bare PR number is linked in the folder's repository, and the mode
         project: { kind: "github" as const, host: "github.com", path: "acme/api" },
         linked: new Map(),
         named: [],
+        worked: [],
         above: [],
         line: [],
         sessionId: "s1",
         askedBefore: new Set<number>(),
-        probe: ALL_LINKS,
+        probe: GH_ONLY,
         log: [],
     };
 
@@ -1000,11 +1009,12 @@ test("links: failed attribution retries without titles and preserves links recor
         project: { kind: "github" as const, host: "github.com", path: "acme/api" },
         linked: new Map(),
         named: [],
+        worked: [],
         above: [],
         line: [],
         sessionId: "s1",
         askedBefore: new Set<number>(),
-        probe: ALL_LINKS,
+        probe: GH_ONLY,
         log: [],
     };
     await linkLine(ctx, "#902\n");
@@ -1111,11 +1121,12 @@ test("links: a bare PR number takes the repository the reply means, not only the
         // An earlier message of the session linked #11 in acme/tools.
         linked: new Map([[11, { kind: "github" as const, host: "github.com", path: "acme/tools" }]]),
         named: [],
+        worked: [],
         above: [],
         line: [],
         sessionId: "s1",
         askedBefore: new Set<number>(),
-        probe: ALL_LINKS,
+        probe: GH_ONLY,
         log: [],
     });
     const one = reply();
@@ -1172,6 +1183,198 @@ test("links: a bare PR number takes the repository the reply means, not only the
         "#13 -> https://github.com/acme/web/pull/13, in acme/web: the nearest repository the reply names"
     );
     expect(note).toContain("#14 -> https://github.com/acme/api/pull/14, in acme/api: the session's checkout");
+});
+
+/** A session working in two checkouts, acme/Toolbox (its folder) and acme/Playground; titles per `repo#n`. */
+function twoCheckouts(titles: Record<string, string>, probe: GenesisProbe) {
+    const asked: string[][] = [];
+    const files = new Map<string, string>();
+    const done = (stdout: string, exitCode = 0) => ({
+        exitCode,
+        stdout,
+        stderr: exitCode === 0 ? "" : "no pull requests found",
+        isStdoutTruncated: false,
+        isStderrTruncated: false,
+    });
+    const host: Host = {
+        ...checkoutHost(),
+        async read(path) {
+            const text = files.get(path);
+
+            if (text === undefined) {
+                throw new Error(`ENOENT ${path}`);
+            }
+
+            return text;
+        },
+        async write(path, text) {
+            files.set(path, text);
+        },
+        async run(argv) {
+            asked.push([...argv]);
+            const tools = argv[0] === "tools";
+            const n = tools ? argv[3] : argv[3];
+            const repo = argv[5];
+            const title = titles[`${repo}#${n}`];
+            const pr = title ? { title, url: `https://github.com/${repo}/pull/${n}` } : null;
+
+            if (tools) {
+                return done(JSON.stringify({ pr }));
+            }
+
+            return pr ? done(JSON.stringify(pr)) : done("", 1);
+        },
+    };
+    const ctx = {
+        host,
+        home: "/home/test",
+        cwd: "/work/toolbox",
+        root: "/work/toolbox",
+        repo: "acme/Toolbox",
+        project: { kind: "github" as const, host: "github.com", path: "acme/Toolbox" },
+        linked: new Map(),
+        named: [],
+        worked: [{ kind: "github" as const, host: "github.com", path: "acme/Playground" }],
+        above: [],
+        line: [],
+        sessionId: "s1",
+        askedBefore: new Set<number>(),
+        probe,
+        log: [] as Record<string, unknown>[],
+    };
+
+    return { ctx, asked, files };
+}
+
+test("links: a repository's plain name picks it in a two-checkout session, as in the 2026-10-27 screenshot", async () => {
+    forgetPullRequests();
+    takeLinkedPullRequestNote();
+    const { ctx, asked } = twoCheckouts(
+        {
+            "acme/Playground#102": "fix(tools): replace prompts with clack searchSelect",
+            "acme/Toolbox#102": "feat(hub): another change",
+        },
+        ALL_LINKS
+    );
+
+    expect(
+        await linkLine(
+            ctx,
+            "Playground is pushed, and its one fix is in #102 (fix(tools): replace prompts with ...).\n"
+        )
+    ).toBe(
+        "Playground is pushed, and its one fix is in [#102](https://github.com/acme/Playground/pull/102) (fix(tools): replace prompts with ...).\n"
+    );
+    // The CLI's shared cache answered, asked for at most 10 minutes old; the Toolbox PR was never needed.
+    expect(asked).toEqual([
+        [
+            "tools",
+            "github",
+            "pr",
+            "102",
+            "--repo",
+            "acme/Playground",
+            "--include",
+            "title,url",
+            "--max-cache-age",
+            "600",
+        ],
+    ]);
+    // The note waits for the next tool result, and is taken once.
+    expect(takeLinkedPullRequestNote()).toContain(
+        "- #102 -> https://github.com/acme/Playground/pull/102, in acme/Playground: the nearest repository the reply names"
+    );
+    expect(takeLinkedPullRequestNote()).toBeUndefined();
+});
+
+test("links: in a two-checkout session the written title decides, and no evidence leaves the number as text", async () => {
+    forgetPullRequests();
+    takeLinkedPullRequestNote();
+    const { ctx } = twoCheckouts(
+        {
+            "acme/Playground#103": "fix(tools): replace prompts with clack searchSelect",
+            "acme/Toolbox#103": "feat(hub): another change",
+            "acme/Playground#104": "one",
+            "acme/Toolbox#104": "two",
+            "acme/Toolbox#105": "five",
+        },
+        GH_ONLY
+    );
+
+    expect(await linkLine(ctx, "The fix is in #103 (fix(tools): replace prompts with clack…).\n")).toBe(
+        "The fix is in [#103](https://github.com/acme/Playground/pull/103) (fix(tools): replace prompts with clack…).\n"
+    );
+    // Both repositories have a #104 and the reply wrote no title: unsure, so not linked.
+    expect(await linkLine(ctx, "Then #104 lands.\n")).toBe("Then #104 lands.\n");
+    expect(ctx.log).toContainEqual({
+        kind: "pr-unsure",
+        token: "#104",
+        candidates: ["acme/Toolbox", "acme/Playground"],
+        withPr: ["acme/Toolbox", "acme/Playground"],
+        titleWritten: false,
+    });
+    // Only one of them has a #105.
+    expect(await linkLine(ctx, "And #105.\n")).toBe("And [#105 (five)](https://github.com/acme/Toolbox/pull/105).\n");
+    const note = takeLinkedPullRequestNote() ?? "";
+    expect(note).toContain("#103 -> https://github.com/acme/Playground/pull/103, in acme/Playground: its title there");
+    expect(note).toContain("#105 -> https://github.com/acme/Toolbox/pull/105, in acme/Toolbox: the only repository");
+});
+
+test("links: a one-checkout session links a bare number in its checkout as before, and names count as words", async () => {
+    forgetPullRequests();
+    takeLinkedPullRequestNote();
+    const { ctx } = twoCheckouts({ "acme/Toolbox#106": "six", "acme/Playground#106": "other six" }, GH_ONLY);
+    const one = { ...ctx, worked: [] };
+
+    expect(await linkLine(one, "#106 alone.\n")).toBe(
+        "[#106 (six)](https://github.com/acme/Toolbox/pull/106) alone.\n"
+    );
+    expect(takeLinkedPullRequestNote()).toContain("in acme/Toolbox: the session's checkout");
+
+    const known = [
+        { kind: "github" as const, host: "github.com", path: "acme/Playground" },
+        { kind: "github" as const, host: "github.com", path: "acme/Toolbox" },
+    ];
+    // A word, not a path, a URL, another word or another case.
+    expect(namesIn("Playground and /x/Playground/y and PlaygroundX and playground", known)).toEqual([
+        { start: 0, project: known[0], byName: true },
+    ]);
+    expect(titleMatches("fix(tools): replace prompts with ...", "fix(tools): replace prompts with clack")).toBe(true);
+    expect(titleMatches("feat(hub): another", "fix(tools): replace")).toBe(false);
+    expect(titleMatches("fix", "fix(tools): replace")).toBe(false);
+});
+
+test("links: PR answers are shared through one file per owner/repo#n, a PR for hours and a missing one briefly", async () => {
+    forgetPullRequests();
+    takeLinkedPullRequestNote();
+    const { ctx, asked, files } = twoCheckouts({ "acme/Toolbox#107": "seven" }, GH_ONLY);
+    const one = { ...ctx, worked: [] };
+
+    await linkLine(one, "#107 and #108.\n");
+    expect(asked).toHaveLength(2);
+    const found = files.get(
+        "/home/test/.genesis-tools/agents/mods-state/pull-requests/github.com_acme_Toolbox_107.json"
+    );
+    const missing = files.get(
+        "/home/test/.genesis-tools/agents/mods-state/pull-requests/github.com_acme_Toolbox_108.json"
+    );
+    expect(JSON.parse(found ?? "{}").pr).toEqual({ title: "seven", url: "https://github.com/acme/Toolbox/pull/107" });
+    expect(JSON.parse(missing ?? "{}").pr).toBeNull();
+
+    // Another session (a fresh module) reads the files and starts no process.
+    forgetPullRequests();
+    await linkLine(one, "#107 and #108.\n");
+    expect(asked).toHaveLength(2);
+
+    // A missing PR is asked again after 10 minutes, a found one is still served.
+    const old = Date.now() - 11 * 60_000;
+    for (const [path, text] of files) {
+        files.set(path, JSON.stringify({ ...JSON.parse(text), at: old }));
+    }
+    forgetPullRequests();
+    await linkLine(one, "#107 and #108.\n");
+    expect(asked.map((argv) => argv[3])).toEqual(["107", "108", "108"]);
+    takeLinkedPullRequestNote();
 });
 
 test("links: what a session's messages and URLs name as repositories", () => {
@@ -1321,16 +1524,18 @@ function machine({
             return answer(remote);
         }
 
-        if (
-            (/^gh pr view 42 --repo [\w./-]+ --json title,url$/.test(argv) || argv.endsWith("cat-file -t abc1234f")) &&
-            timeouts > 0
-        ) {
+        // With the GenesisTools CLI the mod asks `tools github pr --include`, which prints `{ pr }`.
+        const viaTools = /^tools github pr 42 --repo [\w./-]+ --include title,url --max-cache-age 600$/.test(argv);
+        const pr42 = viaTools || /^gh pr view 42 --repo [\w./-]+ --json title,url$/.test(argv);
+
+        if ((pr42 || argv.endsWith("cat-file -t abc1234f")) && timeouts > 0) {
             timeouts--;
             throw new Error("$.process.run(gh) is still running after 8000 ms");
         }
 
-        if (/^gh pr view 42 --repo [\w./-]+ --json title,url$/.test(argv)) {
-            return answer(JSON.stringify({ title, url: "https://github.com/acme/widgets/pull/42" }));
+        if (pr42) {
+            const pr = { title, url: "https://github.com/acme/widgets/pull/42" };
+            return answer(JSON.stringify(viaTools ? { pr } : pr));
         }
 
         if (/cat-file -t (abc1234f|def5678a|0123456789abcdef0123456789abcdef01234567)$/.test(argv)) {
