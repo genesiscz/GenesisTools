@@ -377,6 +377,75 @@ final class HubLogicTests: XCTestCase {
         XCTAssertNil(PRsModel.projectRoot("", in: projects))
     }
 
+    /// A `repo=` link opens under a checkout's row, which names that checkout's branch: a commit of another branch
+    /// opens in the worktree that has it, else the place names the branch or the PR that holds it.
+    func testACommitLinkNamesTheBranchOrPRThatHoldsIt() throws {
+        let folder = FileManager.default.temporaryDirectory.appendingPathComponent("hub-commit-holder-\(UUID().uuidString)")
+        try FileManager.default.createDirectory(at: folder, withIntermediateDirectories: true)
+        defer { try? FileManager.default.removeItem(at: folder) }
+        let path = folder.appendingPathComponent("app").path
+        let identity = ["-c", "user.name=Fixture", "-c", "user.email=fixture@example.com", "-c", "core.hooksPath=/dev/null",
+                        "-c", "commit.gpgsign=false"]
+        let git = { (args: [String]) -> String? in WorktreeDiscovery.git(path, args) }
+        let commit = { (subject: String) throws -> String in
+            XCTAssertNotNil(git(identity + ["commit", "-q", "--allow-empty", "-m", subject]))
+            return try XCTUnwrap(git(["rev-parse", "HEAD"])?.trimmed)
+        }
+        try FileManager.default.createDirectory(atPath: path, withIntermediateDirectories: true)
+        XCTAssertNotNil(git(["init", "-q", "-b", "main"]))
+        let base = try commit("base")
+        let root = try XCTUnwrap(git(["rev-parse", "--show-toplevel"])?.trimmed)
+
+        // On the checkout's own branch: its row is right.
+        guard case .found(let own) = HubCommitLookup.resolve(repo: path, sha: base, known: []) else { return XCTFail("base") }
+        XCTAssertEqual(own.holder, .row)
+        XCTAssertNil(HubCommitLookup.holderLabel(own, prs: []))
+
+        // A branch nothing has checked out: the place names it, and its PR when the hub lists one.
+        XCTAssertNotNil(git(["checkout", "-q", "-b", "feat/x"]))
+        let feature = try commit("on the feature")
+        XCTAssertNotNil(git(["checkout", "-q", "main"]))
+        guard case .found(let onBranch) = HubCommitLookup.resolve(repo: path, sha: String(feature.prefix(9)), known: []) else {
+            return XCTFail("feature")
+        }
+        XCTAssertEqual(onBranch, HubCommitLookup.Found(root: root, sha: feature, title: "on the feature",
+                                                       holder: .branch(display: "feat/x", head: "feat/x")))
+        XCTAssertEqual(HubCommitLookup.holderLabel(onBranch, prs: []), "feat/x")
+        let json = """
+        {"repo":"app","repoRoot":"\(path)","origin":{"kind":"github","host":"h","web":"https://github.com/acme/app"},
+         "number":12,"title":"t","state":"OPEN","draft":false,"author":"alice","headBranch":"feat/x","baseBranch":"main",
+         "url":"https://github.com/acme/app/pull/12","labels":[],"reviewers":[],"headSha":null,"crossRepository":false,"headRepo":null}
+        """
+        let pr = try JSONDecoder().decode(HubPR.self, from: Data(json.utf8))
+        XCTAssertEqual(HubCommitLookup.holderLabel(onBranch, prs: [pr]), "feat/x (PR #12)")
+
+        // Only a remote has it: the remote's name, and the PR's head branch without it.
+        XCTAssertNotNil(git(["checkout", "-q", "-b", "feat/y"]))
+        let remote = try commit("only on the remote")
+        XCTAssertNotNil(git(["checkout", "-q", "main"]))
+        XCTAssertNotNil(git(["update-ref", "refs/remotes/origin/feat/y", remote]))
+        XCTAssertNotNil(git(["branch", "-q", "-D", "feat/y"]))
+        XCTAssertEqual(HubCommitLookup.holding(remote, in: root).holder, .branch(display: "origin/feat/y", head: "feat/y"))
+
+        // No branch at all (a deleted branch's commit the object store still has).
+        XCTAssertNotNil(git(["checkout", "-q", "-b", "gone"]))
+        let orphan = try commit("on a deleted branch")
+        XCTAssertNotNil(git(["checkout", "-q", "main"]))
+        XCTAssertNotNil(git(["branch", "-q", "-D", "gone"]))
+        guard case .found(let nowhere) = HubCommitLookup.resolve(repo: path, sha: orphan, known: []) else { return XCTFail("orphan") }
+        XCTAssertEqual(nowhere.holder, HubCommitLookup.Holder.none)
+        XCTAssertEqual(HubCommitLookup.holderLabel(nowhere, prs: []), "no branch")
+
+        // A linked worktree has the branch checked out: the link opens in that worktree, whose row names it.
+        let worktree = folder.appendingPathComponent("app-feat").path
+        XCTAssertNotNil(git(["worktree", "add", "-q", worktree, "feat/x"]))
+        guard case .found(let inWorktree) = HubCommitLookup.resolve(repo: path, sha: feature, known: []) else {
+            return XCTFail("worktree")
+        }
+        XCTAssertEqual(WorktreeCleanup.normalizedPath(inWorktree.root), WorktreeCleanup.normalizedPath(worktree))
+        XCTAssertEqual(inWorktree.holder, .row)
+    }
+
     func testACommitLinkResolvesItsCheckoutAndSubjectFromGit() throws {
         let folder = FileManager.default.temporaryDirectory.appendingPathComponent("hub-commit-link-\(UUID().uuidString)")
         try FileManager.default.createDirectory(at: folder, withIntermediateDirectories: true)

@@ -1093,12 +1093,17 @@ final class HubModel: ObservableObject {
         }
     }
 
-    /// A place's title with the commit shown in it: "PR #563 Fix it · commit 0751d8a971".
+    /// A place's title with the commit shown in it: "PR #563 Fix it · commit 0751d8a971". A commit of a branch the
+    /// checkout's row does not name says what holds it: "app feat/x (PR #12) · commit 0751d8a971".
     @MainActor
     func navTitle(_ target: HubNavTarget) -> String {
         guard let place = target.place else { return HubNavRequest(HubRequest(target.arguments))?.title ?? "Hub" }
-        let name = navTitle(place)
+        var name = navTitle(place)
         guard let commit = target["commit"] else { return name }
+        if place.mode == .worktrees, let shown = shownCommit, shown.repo == place.selection, shown.commit == commit,
+           let holder = shown.holder {
+            name = "\(worktrees.first { $0.path == shown.repo }?.repo ?? (shown.repo as NSString).lastPathComponent) \(holder)"
+        }
         return "\(name) · commit \(commit.split(separator: ".").filter { !$0.isEmpty }.map { String($0.prefix(10)) }.joined(separator: ".."))"
     }
 
@@ -1281,11 +1286,11 @@ final class HubModel: ObservableObject {
     /// `--repo` + `--commit` link. The checkout is selected before the mode opens, so a first walk of
     /// the worktrees includes it; a launch that has not settled yet opens the mode when it settles.
     @MainActor
-    func showCommit(repo: String, sha: String, title: String, base: String? = nil, link: String? = nil) {
+    func showCommit(repo: String, sha: String, title: String, base: String? = nil, link: String? = nil, holder: String? = nil) {
         cancelSessionNavigation()
         commitLinkRequest = UUID()
         selectedWorktree = repo
-        shownCommit = HubShownCommit(repo: repo, commit: link ?? String(sha.prefix(12)))
+        shownCommit = HubShownCommit(repo: repo, commit: link ?? String(sha.prefix(12)), holder: holder)
         notice = nil
         if didSettleLaunch || initialMode != .worktrees {
             setMode(.worktrees)
