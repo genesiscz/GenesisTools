@@ -9,7 +9,7 @@
  * the recording misses the transition.
  */
 
-import { existsSync, mkdirSync, readdirSync, statSync } from "node:fs";
+import { existsSync, mkdirSync, readdirSync, readFileSync, statSync } from "node:fs";
 import { join } from "node:path";
 import { abortableSleep } from "@genesiscz/utils/async";
 import { withInterrupt } from "@genesiscz/utils/cli/interrupt";
@@ -352,7 +352,9 @@ export async function runCapturePlanWithSignal({
     }
 
     if (plan.focus) {
-        const f = nativeControls ? await nativeControls.focus(plan.focus) : focusWindow(plan.focus);
+        const f = nativeControls
+            ? await nativeControls.focus(plan.focus, { preRecording: true })
+            : focusWindow(plan.focus);
         if (!f.ok) {
             if (nativeControls) {
                 throw new CaptureRunError(`Native focus failed: ${f.detail}`);
@@ -423,6 +425,17 @@ export async function runCapturePlanWithSignal({
     }
     // non-null: the retry block above throws when no attempt produced a dir
     const sessionDir = attempt.sessionDir!;
+    if (nativeControls && cap.mode === "isolated" && !signal.aborted) {
+        try {
+            nativeControls.setRecordedWindowIds(
+                SafeJSON.parse(readFileSync(join(sessionDir, "selected-windows.json"), "utf8"))
+            );
+        } catch (error) {
+            throw new CaptureRunError(
+                `Cannot read the recorder's selected windows: ${error instanceof Error ? error.message : String(error)}`
+            );
+        }
+    }
     if (attempt.sessionDir && !signal.aborted) {
         onRecording?.();
     }
