@@ -36,16 +36,53 @@ enum HubSource {
 
     static let bridge = ToolsBridge(binaryPath: ToolsBridge.defaultBinaryPath(), server: server)
 
+    /// How long a list fetch may take. `SessionListClient.fetch` (kept verbatim from Genesis) kills at 60 s; under load
+    /// the rebuild took 44 to 74 s, so the killed fallback threw its work away and the next refresh started it again
+    /// (2026-10-26: six `process-timeout` calls in 20 minutes, no list update for 9 minutes).
+    static let sessionListTimeout = 300
+
+    /// The session list, through the resident server first. Asks for the same hours while one runs share it, so the
+    /// launch load and the minute refresh never rebuild the list twice at once.
     static func sessions(hours: Int) async throws -> [HubSession] {
-        let span = HubPerf.begin("sessions.list", "hours=\(hours)", awaits: true)
-        defer { span.end() }
-        return try await SessionListClient.fetch(using: bridge, hours: hours).rows
+        try await SessionListFlights.shared.rows(hours: hours) {
+            let span = HubPerf.begin("sessions.list", "hours=\(hours)", awaits: true)
+            defer { span.end() }
+            let result = try await bridge.run(
+                subcommand: SessionListClient.subcommand, args: SessionListClient.arguments(hours: hours),
+                timeoutSeconds: sessionListTimeout)
+            guard result.exitCode == 0 else {
+                throw ToolsBridgeError.refused(
+                    "usage sessions failed (exit \(result.exitCode)): \(MonitorJSON.preview(result.stderr))")
+            }
+            do {
+                return try SessionListClient.decode(Data(result.stdout.utf8)).rows
+            } catch {
+                throw ToolsBridgeError.refused(
+                    "tools ai usage sessions returned unreadable output — "
+                        + MonitorJSON.failureDetail(error, stdout: result.stdout, stderr: result.stderr))
+            }
+        }
     }
 
     static func transcript(_ session: HubSession, limit: Int) async throws -> TranscriptEnvelope {
         let span = HubPerf.begin("transcript.fetch", "limit=\(limit)", awaits: true)
         defer { span.end() }
         return try await SessionTranscriptClient.fetch(using: bridge, sessionId: session.sessionId, limit: limit)
+    }
+}
+
+/// One session list fetch per window of hours at a time; a second ask while one runs gets the same rows.
+actor SessionListFlights {
+    static let shared = SessionListFlights()
+    private var running: [Int: Task<[HubSession], Error>] = [:]
+
+    func rows(hours: Int, fetch: @escaping @Sendable () async throws -> [HubSession]) async throws -> [HubSession] {
+        if let task = running[hours] { return try await task.value }
+        // Not a child of the caller: a caller that goes away leaves the fetch to finish for the next ask.
+        let task = Task { try await fetch() }
+        running[hours] = task
+        defer { running[hours] = nil }
+        return try await task.value
     }
 }
 
@@ -234,33 +271,9 @@ enum HubSpend {
     }
 }
 
-/// Starts `tools hub serve` once, detached from any call: it outlives the call that found no server, exits by
-/// itself after 10 minutes with no connection, and restarts when its code changes (src/hub/server/server.ts).
-/// It runs through the same `tools` launcher chain as every per-call child, so its macOS privacy identity is
-/// GenesisTools.app, as before.
+/// Starts `tools hub serve` with the hub's own `tools` (`ToolsServerClient.startHubServer`).
 enum HubServerStarter {
     static func start() {
-        let binary = HubSource.bridge.binaryPath
-        guard ToolsBridge.isExecutableFile(binary) else { return }
-
-        let plan = ToolsBridge.launchPlan(binaryPath: binary, argv: ["hub", "serve"])
-        let process = Process()
-        process.executableURL = plan.executable
-        process.arguments = plan.arguments
-        process.currentDirectoryURL = plan.workingDirectory
-        process.environment = ToolsBridge.scrubbedEnvironment()
-        process.qualityOfService = .utility
-        process.standardInput = FileHandle.nullDevice
-        process.standardOutput = FileHandle.nullDevice
-        process.standardError = FileHandle.nullDevice
-        process.terminationHandler = { finished in
-            HubPerf.log("hub server pid=\(finished.processIdentifier) exited \(finished.terminationStatus)")
-        }
-        do {
-            try process.run()
-            HubPerf.log("hub server started pid=\(process.processIdentifier)")
-        } catch {
-            HubPerf.log("hub server cannot start: \(error.localizedDescription)")
-        }
+        ToolsServerClient.startHubServer(binaryPath: HubSource.bridge.binaryPath)
     }
 }
