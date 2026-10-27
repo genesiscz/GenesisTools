@@ -19,9 +19,12 @@ describe("sessionAgents", () => {
         const agents = sessionAgents({ codexModel });
 
         expect(Object.keys(agents)).toEqual(["sol", "sol-xhigh", "sol6", "astra", "terra", "luna", "codex-worker"]);
-        expect(agents.sol.model).toBe("codex/gpt-6.1-sol:high");
-        expect(agents.terra.model).toBe("codex/gpt-6.1-terra:high");
-        expect(agents["sol-xhigh"].model).toBe("codex/gpt-6.1-sol:xhigh");
+        expect(agents.sol.model).toBe("codex/gpt-6.1-sol");
+        expect(agents.sol.effort).toBe("high");
+        expect(agents.terra.model).toBe("codex/gpt-6.1-terra");
+        expect(agents.terra.effort).toBe("high");
+        expect(agents["sol-xhigh"].model).toBe("codex/gpt-6.1-sol");
+        expect(agents["sol-xhigh"].effort).toBe("xhigh");
         expect(agents.sol.autoCompactWindow).toBe(codexModel("gpt-6.1-sol")?.usableTokens);
         // A 272K model gets its own window, not the main loop's.
         expect(agents.luna.autoCompactWindow).toBe(codexModel("gpt-6-luna")?.usableTokens);
@@ -77,7 +80,8 @@ describe("writeAgentFiles", () => {
 
         expect(files).toHaveLength(Object.keys(agents).length);
         expect(sol).toStartWith('---\nname: "sol"\n');
-        expect(sol).toContain('model: "codex/gpt-6.1-sol:high"');
+        expect(sol).toContain('model: "codex/gpt-6.1-sol"');
+        expect(sol).toContain('effort: "high"');
         expect(sol).toContain("disallowedTools: Agent");
     });
 
