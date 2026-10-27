@@ -1,11 +1,15 @@
-import { afterEach, expect, spyOn, test } from "bun:test";
+import { afterEach, describe, expect, spyOn, test } from "bun:test";
 import { mkdtempSync, realpathSync, symlinkSync } from "node:fs";
 import { tmpdir } from "node:os";
 import { join } from "node:path";
+import type { RunningCmuxSession } from "@genesiscz/utils/ai/active-sessions";
 import { SafeJSON } from "@genesiscz/utils/json";
 import { out } from "@genesiscz/utils/logger";
 import * as paths from "@genesiscz/utils/paths";
-import { selectResumeSession } from "./select-resume";
+import type { TableSelectOptions } from "@genesiscz/utils/prompts/clack/table-select";
+import { stripAnsi } from "@genesiscz/utils/string";
+import { chooseResume, selectResumeSession } from "./select-resume";
+import { HISTORY_SECTION, type ResumeRow, RUNNING_SECTION } from "./session-display";
 import type { AgentSession, AgentSessionAdapter } from "./types";
 
 /**
@@ -393,4 +397,148 @@ test("a home is canonicalized once per DISTINCT home, not twice per indexed sess
     } finally {
         canonical.mockRestore();
     }
+});
+
+describe("sessions already running in a cmux tab", () => {
+    const tab = (sessionId: string, title: string | null, cwd = "/project"): RunningCmuxSession => ({
+        sessionId,
+        title,
+        cwd,
+        pid: 4242,
+        surfaceId: `surface-uuid-${sessionId}`,
+        surfaceRef: `surface:${sessionId.length}`,
+    });
+
+    /** A picker that records what it was shown and picks the row `choose` names. */
+    function picker(choose: (rows: TableSelectOptions<ResumeRow>["rows"]) => number) {
+        const shown: Array<TableSelectOptions<ResumeRow>> = [];
+        const pick = async <T>(opts: TableSelectOptions<T>): Promise<T | null> => {
+            const resumeOpts = opts as unknown as TableSelectOptions<ResumeRow>;
+            shown.push(resumeOpts);
+            return (opts.rows[choose(resumeOpts.rows)]?.value ?? null) as T | null;
+        };
+
+        return { shown, pick };
+    }
+
+    test("a running match sits on top in its own section, and picking it focuses instead of resuming", async () => {
+        const live = session("live", "invoice live");
+        const { shown, pick } = picker(() => 0);
+        const choice = await chooseResume({
+            adapter: adapter([live, session("old", "invoice old")]),
+            query: "invoice",
+            interactive: true,
+            running: async () => [tab("live", "invoice live")],
+            pick,
+        });
+
+        expect(choice).toEqual({ action: "focus", running: tab("live", "invoice live") });
+        const rows = shown[0].rows;
+        expect(rows.map((row) => [row.section, row.value.action, row.value.display.sessionId])).toEqual([
+            [RUNNING_SECTION, "focus", "live"],
+            [HISTORY_SECTION, "resume", "live"],
+            [HISTORY_SECTION, "resume", "old"],
+        ]);
+        // The history copy of a running session says where the first one runs.
+        expect(stripAnsi(rows[1].detail?.[0] ?? "")).toContain("Already running in cmux surface:4");
+    });
+
+    test("a running session that only mentions the query in its transcript stays in history, with a note", async () => {
+        const named = session("named", "invoice run");
+        const mentions = session("mentions", "billing");
+        const { shown, pick } = picker(() => 0);
+        await chooseResume({
+            adapter: adapter([named], [mentions]),
+            query: "invoice",
+            interactive: true,
+            running: async () => [tab("named", "invoice run"), tab("mentions", "billing")],
+            pick,
+        });
+
+        const rows = shown[0].rows;
+        expect(rows.map((row) => [row.value.action, row.value.display.sessionId])).toEqual([
+            ["focus", "named"],
+            ["resume", "named"],
+            ["resume", "mentions"],
+        ]);
+        expect(stripAnsi(rows[2].detail?.[0] ?? "")).toContain("Already running in cmux");
+    });
+
+    test("a history row of a running session still resumes it", async () => {
+        const live = session("live", "invoice live");
+        const { pick } = picker((rows) => rows.findIndex((row) => row.value.action === "resume"));
+        const choice = await chooseResume({
+            adapter: adapter([live, session("old", "invoice old")]),
+            query: "invoice",
+            interactive: true,
+            running: async () => [tab("live", "invoice live")],
+            pick,
+        });
+
+        expect(choice).toEqual({ action: "resume", session: live });
+    });
+
+    test("a lone match that already runs opens the picker instead of resuming a second copy", async () => {
+        const live = session("live", "invoice live");
+        const { shown, pick } = picker(() => 0);
+        const choice = await chooseResume({
+            adapter: adapter([live]),
+            query: "invoice",
+            interactive: true,
+            running: async () => [tab("live", "invoice live")],
+            pick,
+        });
+
+        expect(shown.length).toBe(1);
+        expect(choice?.action).toBe("focus");
+    });
+
+    test("a running session whose name holds the query is offered even outside the history matches", async () => {
+        const { shown, pick } = picker(() => 0);
+        const choice = await chooseResume({
+            adapter: adapter([session("here", "unrelated")]),
+            query: "Conventions",
+            interactive: true,
+            running: async () => [tab("elsewhere", "col-tools-conventions", "/other/repo"), tab("x", "nothing")],
+            pick,
+        });
+
+        expect(choice).toEqual({ action: "focus", running: tab("elsewhere", "col-tools-conventions", "/other/repo") });
+        expect(shown[0].rows.map((row) => row.value.display.name)).toEqual(["col-tools-conventions"]);
+        expect(shown[0].rows[0].value.display.projectName).toBe("repo");
+    });
+
+    test("without a terminal the running sessions are never read", async () => {
+        let reads = 0;
+        const only = session("only", "invoice");
+        const choice = await chooseResume({
+            adapter: adapter([only]),
+            query: "invoice",
+            interactive: false,
+            running: async () => {
+                reads++;
+                return [tab("only", "invoice")];
+            },
+        });
+
+        expect(choice).toEqual({ action: "resume", session: only });
+        expect(reads).toBe(0);
+    });
+
+    test("a failed running scan leaves the history resume working", async () => {
+        const only = session("only", "invoice");
+        const choice = await chooseResume({
+            adapter: adapter([only]),
+            query: "invoice",
+            interactive: true,
+            running: async () => {
+                throw new Error("cmux is not running");
+            },
+            pick: async () => {
+                throw new Error("a lone match with nothing running must not open the picker");
+            },
+        });
+
+        expect(choice).toEqual({ action: "resume", session: only });
+    });
 });

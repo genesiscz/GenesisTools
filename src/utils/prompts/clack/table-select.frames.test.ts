@@ -222,3 +222,43 @@ describe("a terminal that reports no size falls back instead of rendering nothin
         expect(terminalSize()).toEqual({ columns: 133, rows: 42 });
     });
 });
+
+describe("section headings", () => {
+    function sectioned(running: number, history: number): TableSelectOptions<number> {
+        const base = options(running + history);
+
+        return {
+            ...base,
+            rows: base.rows.map((row, index) => ({ ...row, section: index < running ? "Running" : "History" })),
+        };
+    }
+
+    test("each run of rows gets one heading, above its first row", () => {
+        const lines = frame(sectioned(2, 3), 0, { columns: 120, rows: 40 }).map(stripAnsi);
+        const running = lines.findIndex((line) => line.includes("Running"));
+        const history = lines.findIndex((line) => line.includes("History"));
+
+        expect(lines.filter((line) => line.includes("Running")).length).toBe(1);
+        expect(lines.filter((line) => line.includes("History")).length).toBe(1);
+        expect(lines[running + 1]).toContain("session-0");
+        expect(lines[history - 1]).toContain("session-1");
+        expect(lines[history + 1]).toContain("session-2");
+    });
+
+    test("a scrolled list repeats the heading of its first visible row and stays inside the screen", () => {
+        const size = { columns: 120, rows: 12 };
+        const lines = frame(sectioned(2, 30), 25, size).map(stripAnsi);
+
+        expect(lines.length).toBeLessThanOrEqual(size.rows - 1);
+        expect(lines.some((line) => line.includes("Running"))).toBe(false);
+        expect(lines.filter((line) => line.includes("History")).length).toBe(1);
+        expect(lines.some((line) => line.includes("❯") && line.includes("session-25"))).toBe(true);
+    });
+
+    test("rows with no section draw no heading", () => {
+        const lines = frame(options(3), 0, { columns: 120, rows: 40 });
+
+        // The two title lines, the column header, three rows and the closing bar.
+        expect(lines.length).toBe(2 + 1 + 3 + 1);
+    });
+});

@@ -8,11 +8,13 @@ import {
     tmuxMissHint,
 } from "@app/claude/lib/cmux/resolve";
 import * as p from "@clack/prompts";
+import type { RunningCmuxSession } from "@genesiscz/utils/ai/active-sessions";
 import { isInteractive, suggestCommand } from "@genesiscz/utils/cli";
 import { runCmuxOk } from "@genesiscz/utils/cmux/lib/cli";
 import { focusCmuxPane, focusCmuxSurface } from "@genesiscz/utils/cmux/lib/controls";
 import { type CmuxIdentity, identifyCmux } from "@genesiscz/utils/cmux/lib/place";
 import { isCmuxNotFound } from "@genesiscz/utils/cmux/lib/socket";
+import { type CmuxTree, fetchCmuxTree } from "@genesiscz/utils/cmux/tree";
 import { SafeJSON } from "@genesiscz/utils/json";
 import { logger, out } from "@genesiscz/utils/logger";
 import { createBoxTable, renderCliHeader, truncateDisplay } from "@genesiscz/utils/table";
@@ -124,6 +126,80 @@ export async function focusTarget(target: FocusTarget): Promise<string | undefin
     }
 
     return windowId;
+}
+
+/** The tab a running session was found in, placed in its window, workspace and pane, or null when it closed. */
+export function runningTarget(tree: CmuxTree, running: RunningCmuxSession): FocusTarget | null {
+    const surfaceId = running.surfaceId.toLowerCase();
+
+    for (const window of tree.windows) {
+        for (const workspace of window.workspaces) {
+            for (const pane of workspace.panes) {
+                const surface = pane.surfaces.find((candidate) => candidate.id.toLowerCase() === surfaceId);
+
+                if (surface) {
+                    return {
+                        workspaceId: workspace.id,
+                        workspaceName: workspace.name,
+                        paneId: pane.id,
+                        paneTitle: pane.title,
+                        ...(pane.cwd ? { cwd: pane.cwd } : {}),
+                        windowId: window.id,
+                        surfaceId: surface.id,
+                        sessionIds: [running.sessionId],
+                        matchedOn: "running",
+                        score: 100,
+                        active: pane.active,
+                    };
+                }
+            }
+        }
+    }
+
+    return null;
+}
+
+/**
+ * Focus the cmux tab where a running session's process was found (the resume picker's running rows), and raise
+ * the app. The same raise as `tools claude cmux focus`, but on the tab the process scan proved, not on a fresh
+ * text match: the hook journal can name an older tab. The tab is placed again in a fresh tree, because the picker
+ * may have stayed open while it closed. Returns false, with the reason printed, when nothing was focused.
+ */
+export async function focusRunningSession(
+    running: RunningCmuxSession,
+    deps: { fetchTree?: () => Promise<CmuxTree>; focus?: typeof focusTarget; activate?: typeof activateApp } = {}
+): Promise<boolean> {
+    const tree = await (deps.fetchTree ?? fetchCmuxTree)();
+    const label = running.surfaceRef ?? running.surfaceId;
+
+    if (!tree.available) {
+        out.error(pc.red(`cmux is not reachable: ${tree.error ?? "no answer"}`));
+        return false;
+    }
+
+    const target = runningTarget(tree, running);
+
+    if (!target) {
+        out.error(
+            pc.red(`The cmux tab ${label} closed; session ${running.sessionId.slice(0, 8)} no longer runs there.`)
+        );
+        out.printlnErr(pc.dim("  Run the same command again to resume it here."));
+        return false;
+    }
+
+    log.debug({ sessionId: running.sessionId, surfaceId: target.surfaceId }, "focusing the running session's tab");
+    await (deps.focus ?? focusTarget)(target);
+    const activated = await (deps.activate ?? activateApp)();
+    out.printlnErr(
+        `${pc.green("✔")} ${pc.bold(target.workspaceName)} ${pc.dim(label)} ${pc.magenta(running.sessionId.slice(0, 8))} ` +
+            pc.dim(`(${describeMatch(target)}; nothing was resumed)`)
+    );
+
+    if (!activated) {
+        out.printlnErr(pc.dim("  The tab is focused, but the cmux app could not be raised. Switch to it by hand."));
+    }
+
+    return true;
 }
 
 function renderTargets(targets: FocusTarget[]): void {

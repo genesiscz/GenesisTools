@@ -1,10 +1,12 @@
 import { existsSync } from "node:fs";
 import { resolve } from "node:path";
 import { pickLaunchAccount } from "@app/ai/lib/accounts/pick-launch-account";
+import { focusRunningSession } from "@app/claude/commands/cmux/focus";
 import { formatHistoryMarkdown } from "@genesiscz/utils/agent-sessions/format-history";
 import { createNativeHistoryAdapter } from "@genesiscz/utils/agent-sessions/native-adapter";
-import { selectResumeSession } from "@genesiscz/utils/agent-sessions/select-resume";
+import { chooseResume } from "@genesiscz/utils/agent-sessions/select-resume";
 import type { AgentSession, AgentSessionAdapter } from "@genesiscz/utils/agent-sessions/types";
+import { type AgentWhoSource, listRunningCmuxSessions, sessionsFromAdapter } from "@genesiscz/utils/ai/active-sessions";
 import type { AccountEntry } from "@genesiscz/utils/ai/config/schema";
 import { logger, out } from "@genesiscz/utils/logger";
 import pc from "picocolors";
@@ -54,6 +56,16 @@ const defaultDeps: AgentLaunchDeps = {
 
 export function adapterOf(spec: AgentToolSpec): AgentSessionAdapter {
     return spec.adapter?.() ?? createNativeHistoryAdapter({ kind: spec.alias, provider: spec.provider });
+}
+
+/** The agent's part of `who`, or undefined for an agent that declares no process scan. */
+export function agentWhoSource(spec: AgentToolSpec): AgentWhoSource | undefined {
+    if (!spec.processScan) {
+        return undefined;
+    }
+
+    // The session names come from the agent's history adapter unless its plugin reads them itself.
+    return { activeSessions: () => sessionsFromAdapter(adapterOf(spec)), ...spec.processScan, alias: spec.alias };
 }
 
 /**
@@ -113,13 +125,27 @@ export async function launchAgent(
             return;
         }
 
+        const who = agentWhoSource(spec);
+
         try {
-            session = await selectResumeSession({
+            const choice = await chooseResume({
                 adapter: scope.adapter,
                 query: query as string,
                 filters,
                 ...(scope.preferredHome === undefined ? {} : { preferredHome: scope.preferredHome }),
+                ...(who ? { running: () => listRunningCmuxSessions(who) } : {}),
             });
+
+            if (choice?.action === "focus") {
+                // The session already runs in that tab: going there is the whole command, and nothing launches.
+                if (!(await focusRunningSession(choice.running))) {
+                    process.exitCode = 1;
+                }
+
+                return;
+            }
+
+            session = choice?.session;
         } catch (error) {
             logger.debug({ error, query, alias: spec.alias }, "[agent] resume query did not resolve");
             out.error(error instanceof Error ? error.message : String(error));

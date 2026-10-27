@@ -95,6 +95,12 @@ export interface TableSelectRow<T> {
     detail?: string[];
     /** Cells to render while focused; defaults to accent() on the first cell. */
     cellsFocused?: string[];
+    /**
+     * A heading drawn above the first row of each run of rows that share it. Keep the rows of one section
+     * together: a heading is drawn again wherever the section changes. The first visible row of a scrolled list
+     * repeats its heading, so the user always sees which section the rows belong to.
+     */
+    section?: string;
 }
 
 export interface TableSelectOptions<T> {
@@ -165,6 +171,11 @@ export function terminalSize(): FrameSize {
     // frame line is then truncated to a single `…`. `search-multiselect.ts`, the shape this file
     // follows, uses `||` and is immune.
     return { columns: process.stdout.columns || 80, rows: process.stdout.rows || 24 };
+}
+
+/** How many section headings the rows draw: one per run of rows that share a `section`. */
+function headingCount<T>(rows: TableSelectRow<T>[]): number {
+    return rows.filter((row, i) => row.section && row.section !== rows[i - 1]?.section).length;
 }
 
 /** Which slice of the option list to draw, so `cursor` is always inside it. */
@@ -243,7 +254,9 @@ export function renderFrame<T>(
         detailRows = 0;
     }
 
-    const capacity = Math.max(1, budget - chrome - detailRows);
+    // A heading takes a line of its own. Every run is reserved, not only the visible ones: a visible run is
+    // one of them, so the frame can never grow past the screen whichever slice is drawn.
+    const capacity = Math.max(1, budget - chrome - detailRows - headingCount(opts.rows));
     const hidden = capacity < opts.rows.length;
     const view = windowAround(opts.rows.length, cursor, hidden ? Math.max(1, capacity - 1) : capacity);
     const lines: string[] = [title];
@@ -273,6 +286,11 @@ export function renderFrame<T>(
 
     for (let i = view.start; i < view.end; i++) {
         const row = opts.rows[i];
+
+        if (row.section && (i === view.start || row.section !== opts.rows[i - 1]?.section)) {
+            lines.push(`${BAR}  ${pc.bold(row.section)}`);
+        }
+
         const focused = i === cursor;
         const pointer = focused ? pc.cyan("❯") : " ";
         const badge = hasBadges ? `${row.badge ?? " "} ` : "";

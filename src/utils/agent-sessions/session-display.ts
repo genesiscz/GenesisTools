@@ -1,3 +1,4 @@
+import type { RunningCmuxSession } from "@genesiscz/utils/ai/active-sessions";
 import { cleanPromptText } from "@genesiscz/utils/ai/transcripts/clean-text";
 import { formatClock, formatRelativeTime } from "@genesiscz/utils/format";
 import { out } from "@genesiscz/utils/logger";
@@ -295,6 +296,86 @@ export function buildSessionTableOpts(
             };
         }),
         formatSubmitted: (row) => row.value.name,
+    };
+}
+
+/** A row of the resume picker: focus the cmux tab a session already runs in, or resume a session from history. */
+export type ResumeRow =
+    | { action: "focus"; running: RunningCmuxSession; display: SessionDisplayItem }
+    | { action: "resume"; display: SessionDisplayItem };
+
+export const RUNNING_SECTION = "Running in cmux: Enter focuses its tab, nothing is resumed";
+export const HISTORY_SECTION = "Resume from history";
+
+function surfaceLabel(running: RunningCmuxSession): string {
+    return running.surfaceRef ?? running.surfaceId.slice(0, 8);
+}
+
+/**
+ * The resume picker with the sessions that already run in a cmux tab on top, in a section of their own. The
+ * history rows below stay as they were, so a running session also keeps its history row: that row resumes a
+ * second copy, which is sometimes wanted (the first one is stuck), and its detail says where the first one runs.
+ */
+export function buildResumeTableOpts({
+    running,
+    history,
+    elsewhere = [],
+    message,
+    query,
+}: {
+    /** The running sessions offered on top, each with its row. */
+    running: Array<{ running: RunningCmuxSession; display: SessionDisplayItem }>;
+    history: SessionDisplayItem[];
+    /** Every running session, so a history row of one that is not on top still says where it runs. */
+    elsewhere?: RunningCmuxSession[];
+    message: string;
+    query?: string;
+}): TableSelectOptions<ResumeRow> {
+    // One table over both parts, so the columns line up across the sections.
+    const base = buildSessionTableOpts([...running.map((entry) => entry.display), ...history], { message, query });
+    const runningById = new Map(
+        [...elsewhere, ...running.map((entry) => entry.running)].map((entry) => [entry.sessionId, entry])
+    );
+
+    return {
+        message: base.message,
+        hint: base.hint,
+        columns: base.columns,
+        rows: base.rows.map((row, i): TableSelectOptions<ResumeRow>["rows"][number] => {
+            const entry = running[i];
+
+            if (entry) {
+                return {
+                    ...row,
+                    value: { action: "focus", running: entry.running, display: entry.display },
+                    section: RUNNING_SECTION,
+                    badge: formatSessionBadge("cache", true),
+                    cells: [...row.cells.slice(0, -1), pc.green("live")],
+                    detail: [
+                        pc.green(`Running in cmux ${surfaceLabel(entry.running)} (pid ${entry.running.pid})`),
+                        ...(row.detail ?? []),
+                    ],
+                };
+            }
+
+            const first = runningById.get(row.value.sessionId);
+
+            return {
+                ...row,
+                value: { action: "resume", display: row.value },
+                ...(running.length > 0 ? { section: HISTORY_SECTION } : {}),
+                detail: first
+                    ? [
+                          pc.yellow(`Already running in cmux ${surfaceLabel(first)}: this row resumes a second copy`),
+                          ...(row.detail ?? []),
+                      ]
+                    : row.detail,
+            };
+        }),
+        formatSubmitted: (row) =>
+            row.value.action === "focus"
+                ? `Focus ${row.value.display.name} (${surfaceLabel(row.value.running)})`
+                : row.value.display.name,
     };
 }
 
