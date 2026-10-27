@@ -2212,14 +2212,21 @@ export function TimeSeries({
         );
     };
 
+    const displayedTime = (t: number, rows: ReturnType<typeof seriesRows>) => {
+        // A shared snapped point names the time; mixed points and step values use the pointer.
+        const snapped = new Set(rows.filter((r) => r.v !== null).map((r) => r.at));
+        const first = snapped.values().next().value;
+        return snapped.size === 1 && first != null ? first : t;
+    };
+
     const timeBody = (t: number, scope: string | null) => {
         const rows = seriesRows(t, scope);
         const pinT = pin?.kind === "time" && hover?.region === "panel" ? pin.t : null;
         const pinRows = pinT !== null ? seriesRows(pinT, scope) : null;
         const mi = nearestMarker(t);
-        // When every value is a snapped point (bars of one bucket), the header names that point's time, not the pointer's.
-        const snapped = new Set(rows.filter((r) => r.v !== null).map((r) => r.at));
-        const shownT = snapped.size === 1 && [...snapped][0] !== null ? ([...snapped][0] as number) : t;
+        const shownT = displayedTime(t, rows);
+        const shownPinT =
+            pinT !== null && pin?.kind === "time" ? displayedTime(pinT, seriesRows(pinT, pin.panel)) : null;
 
         return (
             <div>
@@ -2227,9 +2234,9 @@ export function TimeSeries({
                     <span className="whitespace-nowrap font-mono text-[0.72rem] text-ink">
                         {formatTime(shownT, timeZone, "full")}
                     </span>
-                    {pinT !== null && Math.abs(pinT - t) > msPerPx ? (
+                    {shownPinT !== null && Math.abs(shownPinT - shownT) > msPerPx ? (
                         <span className="font-mono text-[0.7rem] text-accent">
-                            {formatDurationShort(t - pinT)} from pin
+                            {formatDurationShort(shownT - shownPinT)} from pin
                         </span>
                     ) : null}
                 </div>
