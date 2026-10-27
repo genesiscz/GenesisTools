@@ -14,8 +14,16 @@ import { resolveIncludes } from "@genesiscz/utils/markdown/includes";
 import { hasTransclusionTokens, type TransclusionRegistry } from "@genesiscz/utils/transclude";
 import TOML from "@iarna/toml";
 import { Json2mdError } from "./errors";
+import { carryFrontmatterKeys } from "./frontmatter";
 import { type DocumentOptions, json2md } from "./index";
-import { type CheckResult, checkMarkdown, hashData, stampMarkdown, stripStamp } from "./integrity";
+import {
+    type CheckResult,
+    checkMarkdown,
+    hashData,
+    ownedFrontmatterKeys,
+    stampMarkdown,
+    stripStamp,
+} from "./integrity";
 import type { BlockInput } from "./types";
 import { localTimestamp } from "./value";
 
@@ -256,6 +264,8 @@ export type WriteOutcome = "written" | "unchanged" | "refused";
 export interface WriteResult extends BuildResult {
     outcome: WriteOutcome;
     check: CheckResult | null;
+    /** Front matter keys kept from the file this build replaced, because another tool wrote them. */
+    carried: string[];
 }
 
 export interface WriteOptions extends DocumentHints {
@@ -263,6 +273,11 @@ export interface WriteOptions extends DocumentHints {
     force?: boolean;
     /** Render and compare, but do not write. */
     dryRun?: boolean;
+    /**
+     * Keep the YAML front matter keys of the existing file that the document does not set (default true), such as
+     * the vault's `sessions:` list. A key the document sets is always the document's. `false` drops them.
+     */
+    mergeFrontmatter?: boolean;
 }
 
 /**
@@ -286,7 +301,7 @@ export async function writeDocument<T>(
             await Bun.write(built.outPath, built.markdown);
         }
 
-        return { ...built, outcome: options.dryRun ? "unchanged" : "written", check: null };
+        return { ...built, outcome: options.dryRun ? "unchanged" : "written", check: null, carried: [] };
     }
 
     const current = await existing.text();
@@ -299,23 +314,33 @@ export async function writeDocument<T>(
     const check = checkMarkdown({ current, regenerated: pinned.markdown, sourceHash: pinned.sourceHash });
 
     if (check.verdict === "clean") {
-        return { ...pinned, outcome: "unchanged", check };
+        return { ...pinned, outcome: "unchanged", check, carried: [] };
     }
 
     // Only `stale` is known to be safe. `unstamped` cannot rule out a hand edit (a hand-written
     // file at the output path, or an `unstamped: true` document a person keeps editing), and
     // `unsupported` is a newer format this build would downgrade. Both need `--force`.
     if (check.verdict !== "stale" && !options.force) {
-        return { ...pinned, outcome: "refused", check };
+        return { ...pinned, outcome: "refused", check, carried: [] };
     }
 
     const fresh = await buildDocument(modulePath, definition, hintsOf(options));
+    // The stamp's key list says what the generator wrote last time, so a key the document stopped setting is
+    // dropped rather than carried as if another tool had added it.
+    const { markdown, carried } =
+        options.mergeFrontmatter === false
+            ? { markdown: fresh.markdown, carried: [] }
+            : carryFrontmatterKeys(
+                  fresh.markdown,
+                  current,
+                  ownedFrontmatterKeys(check.stamp, pinned.markdown) ?? new Set()
+              );
 
     if (!options.dryRun) {
-        await Bun.write(fresh.outPath, fresh.markdown);
+        await Bun.write(fresh.outPath, markdown);
     }
 
-    return { ...fresh, outcome: options.dryRun ? "unchanged" : "written", check };
+    return { ...fresh, markdown, outcome: options.dryRun ? "unchanged" : "written", check, carried };
 }
 
 export interface DocumentCheck extends CheckResult {

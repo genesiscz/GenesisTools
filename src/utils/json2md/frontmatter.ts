@@ -180,3 +180,122 @@ export function splitFrontmatter(source: string): {
 
     return { raw: match[2]!, format: text.startsWith("{") ? "json" : "yaml", body };
 }
+
+/** One top-level entry of a YAML front matter block: its key, and its lines (the key line and its block). */
+interface YamlEntry {
+    /** Null for comments or blank lines before the first key. */
+    key: string | null;
+    lines: string[];
+}
+
+/** A top-level YAML key at column 0: plain, double-quoted or single-quoted, then a colon. */
+const TOP_LEVEL_KEY = /^(?:"((?:[^"\\]|\\.)*)"|'((?:[^']|'')*)'|([^\s#'"\-?:,[\]{}&*!|>%@`][^:#]*?))[ \t]*:(?:[ \t]|$)/;
+
+/**
+ * The top-level entries of YAML front matter text, read by lines rather than parsed: a key starts at column 0,
+ * and every line that does not start a key (an indented block, a `- ` item, a comment, a blank line) belongs to
+ * the entry above it. That is all carrying an entry needs, and it keeps each entry's text byte for byte.
+ */
+function yamlEntries(raw: string): YamlEntry[] {
+    const entries: YamlEntry[] = [];
+
+    for (const line of raw.split("\n")) {
+        const match = line.match(TOP_LEVEL_KEY);
+
+        if (match) {
+            entries.push({ key: match[1] ?? match[2] ?? (match[3] ?? "").trim(), lines: [line] });
+            continue;
+        }
+
+        const last = entries.at(-1);
+
+        if (last) {
+            last.lines.push(line);
+        } else {
+            entries.push({ key: null, lines: [line] });
+        }
+    }
+
+    return entries;
+}
+
+/** Where a document's YAML front matter text sits, or null when it has none (JSON and TOML are not read). */
+function yamlSpan(source: string): { start: number; end: number; entries: YamlEntry[] } | null {
+    const match = source.match(FRONTMATTER_RE);
+
+    if (!match || splitFrontmatter(source).format !== "yaml") {
+        return null;
+    }
+
+    const start = source.indexOf("\n") + 1;
+    const end = start + match[2]!.length;
+
+    return { start, end, entries: yamlEntries(source.slice(start, end)) };
+}
+
+/** The top-level keys of a document's YAML front matter, or null when it has none. */
+export function yamlFrontmatterKeys(source: string): string[] | null {
+    const span = yamlSpan(source);
+
+    if (!span) {
+        return null;
+    }
+
+    return span.entries.flatMap((entry) => (entry.key === null ? [] : [entry.key]));
+}
+
+/**
+ * The document with only the listed top-level front matter keys kept, every other byte unchanged. It undoes
+ * {@link carryFrontmatterKeys}, so the text a generator wrote can be hashed while keys another tool added to the
+ * block stay out of the hash.
+ */
+export function keepFrontmatterKeys(source: string, keep: ReadonlySet<string>): string {
+    const span = yamlSpan(source);
+
+    if (!span) {
+        return source;
+    }
+
+    const kept = span.entries.filter((entry) => entry.key === null || keep.has(entry.key));
+
+    if (kept.length === span.entries.length) {
+        return source;
+    }
+
+    return `${source.slice(0, span.start)}${kept.flatMap((entry) => entry.lines).join("\n")}${source.slice(span.end)}`;
+}
+
+/**
+ * The generated document with the existing file's front matter entries that the generator does not own appended
+ * to its block, each byte for byte. A key the generated block sets is the generator's, and so is every key in
+ * `owned` (the keys it wrote last time, so a key the document stopped setting goes away). Nothing is carried when
+ * either side has no YAML front matter.
+ */
+export function carryFrontmatterKeys(
+    generated: string,
+    existing: string,
+    owned: ReadonlySet<string> = new Set()
+): { markdown: string; carried: string[] } {
+    const target = yamlSpan(generated);
+    const source = yamlSpan(existing);
+
+    if (!target || !source) {
+        return { markdown: generated, carried: [] };
+    }
+
+    const generatorKeys = new Set([...owned, ...(yamlFrontmatterKeys(generated) ?? [])]);
+    const carried = source.entries.filter(
+        (entry): entry is YamlEntry & { key: string } => entry.key !== null && !generatorKeys.has(entry.key)
+    );
+
+    if (carried.length === 0) {
+        return { markdown: generated, carried: [] };
+    }
+
+    const block = [generated.slice(target.start, target.end), ...carried.flatMap((entry) => entry.lines)].join("\n");
+
+    return {
+        markdown: `${generated.slice(0, target.start)}${block}${generated.slice(target.end)}`,
+        carried: carried.map((entry) => entry.key),
+    };
+}

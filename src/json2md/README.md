@@ -138,6 +138,15 @@ On `hand-edited`, `check` prints the diff and the four places the edit could bel
 `.json`, the `.ts` render function, a file that is not generated, or `--force` if it was a
 mistake.
 
+### Front matter other tools add
+
+Another tool may add a key to a generated file's YAML front matter, for example the vault's
+`sessions:` list. That is not a hand edit. The stamp lists the keys the document wrote
+(`frontmatter=title,date,tags`), and only those keys count toward the content hash. `build` keeps
+every other top-level key, byte for byte, at the end of the block. A key the document sets always
+takes the document's value, and a key the document stopped setting is removed. Pass
+`--no-merge-frontmatter` to drop the other keys. JSON and TOML front matter are not merged.
+
 ---
 
 ## Library

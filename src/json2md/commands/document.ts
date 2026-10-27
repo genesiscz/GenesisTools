@@ -190,7 +190,11 @@ function registerBuild(program: Command, env: DocumentEnvironment): void {
         .argument("<files...>", "document modules (.ts) that default-export defineDocument(...)")
         .option("--force", "overwrite even when the markdown was edited by hand")
         .option("--dry-run", "render and report, but write nothing")
-        .action(async (files: string[], flags: { force?: boolean; dryRun?: boolean }) => {
+        .option(
+            "--no-merge-frontmatter",
+            "drop the front matter keys the document does not set (kept by default, e.g. a vault's sessions: list)"
+        )
+        .action(async (files: string[], flags: { force?: boolean; dryRun?: boolean; mergeFrontmatter?: boolean }) => {
             let refused = 0;
 
             for (const file of files) {
@@ -207,6 +211,7 @@ function registerBuild(program: Command, env: DocumentEnvironment): void {
                 const result = await writeDocument(modulePath, definition, {
                     force: flags.force,
                     dryRun: flags.dryRun,
+                    mergeFrontmatter: flags.mergeFrontmatter !== false,
                     ...env.hints(),
                 });
 
@@ -243,6 +248,10 @@ function registerBuild(program: Command, env: DocumentEnvironment): void {
                 }
 
                 out.log.success(`${shortPath(result.outPath)} written from ${shortPath(result.dataPath)}.`);
+
+                if (result.carried.length > 0) {
+                    out.log.info(`Kept front matter the document does not set: ${result.carried.join(", ")}.`);
+                }
             }
 
             if (refused > 0) {
