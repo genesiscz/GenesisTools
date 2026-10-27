@@ -1,8 +1,7 @@
 import { type DeliverDeps, resolveDeliveryTarget } from "../decisions/deliver";
-import { decisionLines, dueDecisions, optionLetters } from "../decisions/read";
+import { optionLetters } from "../decisions/read";
 import { type SendResult, sendAnsweredDecisions } from "../decisions/send";
 import {
-    awaitsDelivery,
     type DecisionRecord,
     type HarvestedDecision,
     harvestDecisions,
@@ -13,6 +12,9 @@ import {
     staleRevisionError,
     updateDecisions,
 } from "../decisions/store";
+import { isDrafted, promotedDraft } from "./staged";
+
+export { stagedSendText } from "./staged";
 
 /**
  * Pick, then send. A click on an option MARKS it as the user's draft; it is not answered or
@@ -155,15 +157,6 @@ export async function dismissDecision(
     return updated;
 }
 
-/** A drafted decision the send would promote: an unsent pick or note on an open row. */
-function isDrafted(row: DecisionRecord): boolean {
-    return (
-        kindOf(row) === "decision" &&
-        (row.state === "open" || row.state === "drafted") &&
-        (Boolean(row.draftOption) || Boolean(row.draft?.trim()))
-    );
-}
-
 export interface SendDraftsInput {
     session: string;
     provider?: string;
@@ -187,36 +180,6 @@ export interface SendDraftsInput {
 
 /** Polled once a second while waiting for a resumed session's pane; the deadline is a count, not a clock. */
 const WAIT_STEP_MS = 1_000;
-
-/** What a send turns a draft into: the pick becomes the option, the note the answer. */
-function promotedDraft(row: DecisionRecord): Pick<DecisionRecord, "option" | "answer"> {
-    return {
-        ...(row.draftOption ? { option: optionLetters(row.draftOption).join("") } : {}),
-        ...(row.draft?.trim() ? { answer: row.draft.trim() } : {}),
-    };
-}
-
-/**
- * The message the session's next `sendDrafts` submits, from the rows as they stand: its drafts promoted as the send
- * promotes them, plus answers already waiting to go out, in the send's own format (`deliverDecisions`). The mods
- * Decisions sidebar shows it above its `[send]`, so what it shows is what goes out. `undefined` when nothing would.
- */
-export function stagedSendText(rows: DecisionRecord[], session: string): string | undefined {
-    const due = dueDecisions(
-        rows
-            .filter((row) => row.sessionId === session && kindOf(row) === "decision")
-            .flatMap((row) => {
-                if (isDrafted(row)) {
-                    return [{ ...row, state: "answered" as const, ...promotedDraft(row) }];
-                }
-
-                // A chat answer an agent recorded as `answered` is not waiting to go out (`awaitsDelivery`).
-                return awaitsDelivery(row) ? [row] : [];
-            })
-    );
-
-    return due.length > 0 ? decisionLines(due) : undefined;
-}
 
 /**
  * Sends every drafted answer of one session as ONE message. The drafts are promoted to `answered`
