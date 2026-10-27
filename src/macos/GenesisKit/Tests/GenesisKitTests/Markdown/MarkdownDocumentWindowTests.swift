@@ -33,7 +33,7 @@ final class MarkdownDocumentWindowTests: XCTestCase {
     /// neither the note's folder nor the vault root holds it, so it was "Nothing found" and showed no hover.
     @MainActor
     func testANoteNamedOnlyByItsNameIsFoundAnywhereInTheVaultNearestFirst() async throws {
-        let notes = ["Clients/Acme/Acme-Overview.md", "Archive/Acme-Overview.md", "Clients/Acme/Design/Figma.md"]
+        let notes = ["Clients/Acme/Acme-Overview.md", "Archive/Acme-Overview.md", "Acme-Overview.md", "Clients/Acme/Design/Figma.md"]
         let index = VaultFileIndex(root: URL(fileURLWithPath: "/vault")) { _ in
             .init(paths: [], attachmentFolder: nil, notes: notes)
         }
@@ -47,10 +47,12 @@ final class MarkdownDocumentWindowTests: XCTestCase {
             "Acme-Overview#Current frames", folder: folder, vaultRoot: "/vault", index: index, exists: present.contains))
         XCTAssertEqual(found.url.path, "/vault/Clients/Acme/Acme-Overview.md", "the note nearest the linking note wins")
         XCTAssertEqual(found.fragment, "Current frames")
+        XCTAssertEqual(MarkdownDocumentLinks.resolve("Acme-Overview.md", folder: folder, vaultRoot: "/vault",
+            index: index, exists: present.contains)?.path, "/vault/Clients/Acme/Acme-Overview.md")
         XCTAssertEqual(MarkdownDocumentLinks.resolve("archive/acme-overview", folder: folder, vaultRoot: "/vault",
             index: index, exists: present.contains)?.path, "/vault/Archive/Acme-Overview.md", "a path tail picks one")
-        XCTAssertNil(MarkdownDocumentLinks.resolve("Acme-Overview", folder: folder, vaultRoot: "/vault",
-            exists: present.contains), "without the index only the folder and the vault root are tried")
+        XCTAssertEqual(MarkdownDocumentLinks.resolve("Acme-Overview", folder: folder, vaultRoot: "/vault",
+            exists: present.contains)?.path, "/vault/Acme-Overview.md", "without the index the root is the fallback")
         XCTAssertNil(MarkdownDocumentLinks.resolve("Missing", folder: folder, vaultRoot: "/vault",
             index: index, exists: present.contains))
     }

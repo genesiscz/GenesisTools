@@ -512,15 +512,39 @@ final class MarkdownSplitViewTests: XCTestCase {
         try await Task.sleep(nanoseconds: 600_000_000)
         XCTAssertEqual(Double(editorTopNumber() ?? -100), Double(target), accuracy: 2, "the editor did not follow the page")
 
+        // Count the actual top-line queries in the article, with an active-scroll positive control.
+        _ = try await page.evaluateJavaScript(
+            "(function(){var art=document.getElementById('gn-article'), query=art.querySelectorAll;"
+            + "window.__syncMeasurements=0;art.querySelectorAll=function(selector){"
+            + "if(selector==='[data-line]')window.__syncMeasurements++;return query.call(this,selector);};return true;})()")
+
+        // A scrollbar gesture can last longer than the input timeout.
+        _ = try await page.evaluateJavaScript("window.dispatchEvent(new MouseEvent('mousedown',{buttons:1}));true")
+        try await Task.sleep(nanoseconds: 800_000_000)
+        let dragTarget = source.substring(to: source.range(of: "Paragraph 100 of").location).components(separatedBy: "\n").count - 1
+        _ = try await page.evaluateJavaScript(
+            "(function(){var p=document.querySelectorAll('#gn-article p')[100];"
+            + "var sc=document.scrollingElement||document.documentElement;"
+            + "sc.scrollTop=sc.scrollTop+p.getBoundingClientRect().top-12;})();"
+            + "window.dispatchEvent(new Event('scroll'));true")
+        try await Task.sleep(nanoseconds: 600_000_000)
+        XCTAssertEqual(Double(editorTopNumber() ?? -100), Double(dragTarget), accuracy: 2, "a sustained drag stopped syncing")
+        let activeMeasurements = try await page.evaluateJavaScript("window.__syncMeasurements") as? Int ?? 0
+        XCTAssertGreaterThan(activeMeasurements, 0, "the active scroll must measure top lines")
+        _ = try await page.evaluateJavaScript("window.dispatchEvent(new MouseEvent('mouseup'));true")
+
         // Paused: the page scrolls alone, and the editor stays.
         model.splitScrollSync = false
         try await Task.sleep(nanoseconds: 300_000_000)
+        _ = try await page.evaluateJavaScript("window.__syncMeasurements=0;true")
         _ = try await page.evaluateJavaScript(
             "window.dispatchEvent(new WheelEvent('wheel',{deltaY:400}));"
             + "(document.scrollingElement||document.documentElement).scrollTop=0;"
             + "window.dispatchEvent(new Event('scroll'));true")
         try await Task.sleep(nanoseconds: 600_000_000)
-        XCTAssertEqual(Double(editorTopNumber() ?? -100), Double(target), accuracy: 2, "a paused sync still moved the editor")
+        XCTAssertEqual(Double(editorTopNumber() ?? -100), Double(dragTarget), accuracy: 2, "a paused sync still moved the editor")
+        let pausedMeasurements = try await page.evaluateJavaScript("window.__syncMeasurements") as? Int ?? -1
+        XCTAssertEqual(pausedMeasurements, 0, "paused mode must not measure top lines")
     }
 
     /// A probe over a real note (`MARKDOWN_SYNC_NOTE=<path>`): prints the editor's and the page's top line at

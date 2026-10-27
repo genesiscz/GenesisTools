@@ -998,6 +998,7 @@ private struct MarkdownDocumentPane: View {
     @State private var editorTop: Int?
     /// This pane's links, as one anchor of the hover preview.
     @State private var linkHoverOwner = UUID()
+    @State private var linkHoverGeneration = 0
 
     var body: some View {
         let _ = RenderProbe.hit("md.pane")
@@ -1047,7 +1048,15 @@ private struct MarkdownDocumentPane: View {
             if let target = model.lineTarget { follow(target.line, always: true) }
         }
         // A link preview waiting on this pane's page has no anchor once the pane is gone.
-        .onDisappear { MarkdownHoverPreviewController.shared.exit(owner: linkHoverOwner) }
+        .onDisappear {
+            linkHoverGeneration += 1
+            MarkdownHoverPreviewController.shared.exit(owner: linkHoverOwner)
+        }
+        .onReceive(NotificationCenter.default.publisher(for: .markdownSplitSyncChanged)) { notification in
+            if let enabled = notification.object as? Bool, model.splitScrollSync != enabled {
+                model.splitScrollSync = enabled
+            }
+        }
     }
 
     /// The file's path under "File is gone" or "Not a text file": a click opens it in its default app, its folder in
@@ -1381,10 +1390,16 @@ private struct MarkdownDocumentPane: View {
     /// The pointer on a link in the page: the note or file it points at previews next to the link, as a
     /// tab does. A web address, a heading in this note or a folder shows nothing.
     private func previewLink(_ hover: MarkdownLinkHover?) {
+        linkHoverGeneration += 1
+        let generation = linkHoverGeneration
         let controller = MarkdownHoverPreviewController.shared
         guard let hover,
               let url = MarkdownHoverTarget.url(
-                  forLink: hover.href, folder: doc.folder, text: doc.displayText, vaultRoot: GenesisKit.host?.markdownVaultRoot
+                  forLink: hover.href, folder: doc.folder, text: doc.displayText, vaultRoot: GenesisKit.host?.markdownVaultRoot,
+                  onIndexReady: {
+                      guard linkHoverGeneration == generation else { return }
+                      previewLink(hover)
+                  }
               ),
               let web = model.webProxy.web,
               let anchor = MarkdownHoverPlacement.screenRect(ofTopLeft: hover.rect, in: web)

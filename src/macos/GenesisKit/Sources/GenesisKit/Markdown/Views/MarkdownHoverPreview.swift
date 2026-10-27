@@ -141,7 +141,8 @@ enum MarkdownHoverTarget {
     /// wikilinks against the vault, `:20` line suffixes), or the picture it points at. nil for a web address
     /// or any other scheme, a heading in the same note, a folder, a missing file, and a file the viewer
     /// cannot show that is no picture either.
-    static func url(forLink href: String, folder: URL, text: String, vaultRoot: String?) -> URL? {
+    static func url(forLink href: String, folder: URL, text: String, vaultRoot: String?,
+                    index suppliedIndex: VaultFileIndex? = nil, onIndexReady: (() -> Void)? = nil) -> URL? {
         var target = href.trimmingCharacters(in: .whitespacesAndNewlines)
         // A link the page resolved against its own base (`a.href`) still names a path in the vault.
         let pageBase = "\(MarkdownWebView.assetScheme)://asset/"
@@ -159,10 +160,10 @@ enum MarkdownHoverTarget {
             return nil
         }
         if target.hasPrefix("#") { return nil }
-        let index = MarkdownDocumentLinks.vaultIndex(vaultRoot)
+        let index = suppliedIndex ?? MarkdownDocumentLinks.vaultIndex(vaultRoot)
         guard let (url, fragment) = MarkdownDocumentLinks.locate(target, folder: folder, vaultRoot: vaultRoot, index: index) else {
-            // A bare note name needs the vault scan; start it so the next hover over this link has an answer.
-            index?.refreshIfNeeded {}
+            // The current hover can retry when the shared scan publishes its snapshot.
+            index?.refreshIfNeeded { onIndexReady?() }
             return nil
         }
         switch MarkdownLinkRoute.decide(url, fragment: fragment) {
