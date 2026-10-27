@@ -174,7 +174,7 @@ export async function watchWidget({
                         onImagesDeferred: () => void requestRefresh(),
                     })
                 );
-                const fingerprint = SafeJSON.stringify(snapshot);
+                const fingerprint = SafeJSON.stringify(snapshot, { strict: true });
                 if (fingerprint !== last && !signal.aborted) {
                     last = fingerprint;
                     if (prof.enabled && snapshot.notifications?.complete) {
