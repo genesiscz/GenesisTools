@@ -29,7 +29,7 @@ import {
     setIdleDueAt,
 } from "./idle";
 import { inbox, inboxChip } from "./inbox";
-import { linksStep, rememberToolPaths, takeLinkedPullRequestNote } from "./links";
+import { appendLinkedPullRequestNote, linksStep, rememberToolPaths } from "./links";
 import { startLiveClock } from "./live";
 import {
     type CallSection,
@@ -625,13 +625,13 @@ export const register: Register = (on) => {
             stopIdleTimer();
 
             // The model reads which PR numbers the links mod linked for it, so it can correct a wrong repository.
-            const linked = takeLinkedPullRequestNote();
-
-            if (linked) {
-                await $.session
-                    .append({ message: { type: "user", content: [{ type: "text", text: linked }] } })
-                    .catch(() => undefined);
-            }
+            await appendLinkedPullRequestNote((text) =>
+                $.session.append({ message: { type: "user", content: [{ type: "text", text }] } })
+            ).catch((error) =>
+                logMod(host, "links", { event: "attribution-append-failed", error: String(error) }).catch(
+                    () => undefined
+                )
+            );
 
             const settings = idleCompactSettings(await readHooksFile(host, await agentsDir(host)));
 

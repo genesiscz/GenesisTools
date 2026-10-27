@@ -199,27 +199,32 @@ async function resolve(
 const pullRequests = new Map<string, { title: string; url: string } | null>();
 
 /** The PR numbers the mod linked since the last note to the model, keyed `<repo>#<n>`. */
-const linkedPullRequests = new Map<string, { token: string; repo: string; title: string; url: string }>();
+const linkedPullRequests = new Map<string, { token: string; repo: string; url: string }>();
 
 /**
- * A note for the model about the PR numbers the mod linked in its reply, or undefined when it linked none; taking it
- * clears the list. The mod picks the repository of the session's folder, so a number the reply meant in another
- * repository gets a wrong link and a wrong title, and only the model can see that.
+ * Append the pending PR attribution, acknowledging only entries still matching the successful snapshot. A failed
+ * append leaves the entries for a later turn, and links recorded during the append are never cleared by it.
  */
-export function takeLinkedPullRequestNote(): string | undefined {
+export async function appendLinkedPullRequestNote(append: (note: string) => Promise<unknown>): Promise<void> {
     if (linkedPullRequests.size === 0) {
-        return undefined;
+        return;
     }
 
-    const rows = [...linkedPullRequests.values()].map((pr) => `- ${pr.token} -> ${pr.url} (${pr.title})`);
-    const repos = [...new Set([...linkedPullRequests.values()].map((pr) => pr.repo))].join(", ");
-    linkedPullRequests.clear();
+    const pending = [...linkedPullRequests.entries()];
+    const rows = pending.map(([, pr]) => `- ${pr.token} -> ${pr.url} (repository ${pr.repo})`);
 
-    return [
-        `The genesis-tools-mods links mod changed your last reply: it linked these bare PR numbers to ${repos}, the GitHub repository of the session's folder, and added the title GitHub gives there:`,
+    const note = [
+        "The genesis-tools-mods links mod linked these bare PR numbers to the GitHub repository of the session's folder:",
         ...rows,
-        "The mod cannot see which repository you meant. If a number belongs to another repository, or the title is not the PR you meant, tell the user in your next reply that the link was added automatically and is wrong, and give the correct link. A PR you write as a full markdown link is never changed.",
+        "The mod cannot see which repository you meant. If a number belongs to another repository, tell the user in your next reply that the link was added automatically and is wrong, and give the correct link. A PR you write as a full markdown link is never changed.",
     ].join("\n");
+    await append(note);
+
+    for (const [key, pr] of pending) {
+        if (linkedPullRequests.get(key) === pr) {
+            linkedPullRequests.delete(key);
+        }
+    }
 }
 
 /** The PR's title and URL from `gh`, kept for the session; null for a number that is no PR of this repository. */
@@ -330,7 +335,6 @@ async function linkPlain(ctx: LinkContext, text: string): Promise<string> {
                 linkedPullRequests.set(`${ctx.repo}${hit.token}`, {
                     token: hit.token,
                     repo: ctx.repo ?? "",
-                    title: pr.title,
                     url: pr.url,
                 });
             }
