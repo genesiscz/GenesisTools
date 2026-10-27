@@ -1196,6 +1196,68 @@ describe("front matter another tool adds", () => {
         expect((await checkDocument(modulePath, definition)).verdict).toBe("clean");
     });
 
+    test("no-merge removes extra keys from a clean document and dry-run leaves it intact", async () => {
+        const { modulePath } = await scratchDoc([1]);
+        const definition = documentWith({ title: "Notes" });
+        const first = await writeDocument(modulePath, definition);
+        const withSessions = addSessions(await Bun.file(first.outPath).text());
+        await Bun.write(first.outPath, withSessions);
+
+        const preview = await writeDocument(modulePath, definition, { mergeFrontmatter: false, dryRun: true });
+        expect(preview.outcome).toBe("unchanged");
+        expect(preview.markdown).not.toContain("sessions:");
+        expect(await Bun.file(first.outPath).text()).toBe(withSessions);
+
+        const removed = await writeDocument(modulePath, definition, { mergeFrontmatter: false });
+        expect(removed.outcome).toBe("written");
+        expect(await Bun.file(first.outPath).text()).not.toContain("sessions:");
+        expect((await writeDocument(modulePath, definition, { mergeFrontmatter: false })).outcome).toBe("unchanged");
+    });
+
+    test("quoted YAML key spellings compare by their decoded identity", () => {
+        const generated = '---\nsessions: fresh\n"it\'s": fresh\n---\nbody\n';
+        const existing = "---\n\"sess\\u0069ons\": old\n'it''s': old\nextra: kept\n---\nbody\n";
+        const result = carryFrontmatterKeys(generated, existing);
+
+        expect(yamlFrontmatterKeys(existing)).toEqual(["sessions", "it's", "extra"]);
+        expect(result.carried).toEqual(["extra"]);
+        expect(result.markdown).not.toContain("old");
+        expect(result.markdown).toContain("extra: kept");
+    });
+
+    test("an untouched legacy stamp permits removal of a generator-owned key", async () => {
+        const { modulePath } = await scratchDoc([1]);
+        const first = await writeDocument(modulePath, documentWith({ title: "Notes", ado: 4242 }));
+        const legacy = (await Bun.file(first.outPath).text()).replace(/ frontmatter=\S+/, "");
+        await Bun.write(first.outPath, legacy);
+
+        const next = documentWith({ title: "Notes" });
+        expect((await checkDocument(modulePath, next)).verdict).toBe("stale");
+        const rebuilt = await writeDocument(modulePath, next);
+        expect(rebuilt.outcome).toBe("written");
+        expect(await Bun.file(first.outPath).text()).not.toContain("ado:");
+    });
+
+    test("external metadata survives removal of the last generated key and stays clean", async () => {
+        const { modulePath, dataPath } = await scratchDoc([1]);
+        const first = await writeDocument(modulePath, documentWith({ title: "Notes" }));
+        await Bun.write(first.outPath, addSessions(await Bun.file(first.outPath).text()));
+        const next = documentWith({});
+        const rebuilt = await writeDocument(modulePath, next);
+        const text = await Bun.file(first.outPath).text();
+
+        expect(rebuilt.outcome).toBe("written");
+        expect(rebuilt.carried).toEqual(["sessions"]);
+        expect(text).toContain("sessions:");
+        expect(text).not.toContain("title: Notes");
+        expect((await checkDocument(modulePath, next)).verdict).toBe("clean");
+        expect((await writeDocument(modulePath, next)).outcome).toBe("unchanged");
+        await Bun.write(dataPath, SafeJSONStringify({ items: [{ id: 2 }] }));
+        const again = await writeDocument(modulePath, next);
+        expect(again.outcome).toBe("written");
+        expect(await Bun.file(first.outPath).text()).toContain("sessions:");
+    });
+
     test("carrying is undone exactly by keeping the generator's keys", () => {
         const generated = "---\ntitle: Notes\ntags:\n  - vault\n---\n\n# Notes\n";
         const existing = "---\ntitle: Old\nsessions:\n  - claude:1a2b3c4d\n# a comment\n---\n\nold body\n";

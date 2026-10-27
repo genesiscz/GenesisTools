@@ -191,6 +191,41 @@ interface YamlEntry {
 /** A top-level YAML key at column 0: plain, double-quoted or single-quoted, then a colon. */
 const TOP_LEVEL_KEY = /^(?:"((?:[^"\\]|\\.)*)"|'((?:[^']|'')*)'|([^\s#'"\-?:,[\]{}&*!|>%@`][^:#]*?))[ \t]*:(?:[ \t]|$)/;
 
+const YAML_ESCAPES: Record<string, string> = {
+    "0": "\0",
+    a: "\x07",
+    b: "\b",
+    t: "\t",
+    "\t": "\t",
+    n: "\n",
+    v: "\v",
+    f: "\f",
+    r: "\r",
+    e: "\x1b",
+    " ": " ",
+    '"': '"',
+    "/": "/",
+    "\\": "\\",
+    N: "\u0085",
+    _: " ",
+    L: " ",
+    P: " ",
+};
+
+/** Decode key identity without changing the original lines that carry it. */
+function yamlDoubleQuotedKey(key: string): string {
+    return key.replace(/\\(?:[0abtnvfre "/\\N_LP\t]|x[\da-fA-F]{2}|u[\da-fA-F]{4}|U[\da-fA-F]{8})/g, (escaped) => {
+        const kind = escaped[1]!;
+
+        if (kind === "x" || kind === "u" || kind === "U") {
+            const value = Number.parseInt(escaped.slice(2), 16);
+            return value <= 0x10ffff ? String.fromCodePoint(value) : escaped;
+        }
+
+        return YAML_ESCAPES[kind] ?? escaped;
+    });
+}
+
 /**
  * The top-level entries of YAML front matter text, read by lines rather than parsed: a key starts at column 0,
  * and every line that does not start a key (an indented block, a `- ` item, a comment, a blank line) belongs to
@@ -203,7 +238,13 @@ function yamlEntries(raw: string): YamlEntry[] {
         const match = line.match(TOP_LEVEL_KEY);
 
         if (match) {
-            entries.push({ key: match[1] ?? match[2] ?? (match[3] ?? "").trim(), lines: [line] });
+            const key =
+                match[1] !== undefined
+                    ? yamlDoubleQuotedKey(match[1])
+                    : match[2] !== undefined
+                      ? match[2].replace(/''/g, "'")
+                      : (match[3] ?? "").trim();
+            entries.push({ key, lines: [line] });
             continue;
         }
 
@@ -256,6 +297,10 @@ export function keepFrontmatterKeys(source: string, keep: ReadonlySet<string>): 
         return source;
     }
 
+    if (keep.size === 0) {
+        return source.replace(FRONTMATTER_RE, "");
+    }
+
     const kept = span.entries.filter((entry) => entry.key === null || keep.has(entry.key));
 
     if (kept.length === span.entries.length) {
@@ -268,8 +313,8 @@ export function keepFrontmatterKeys(source: string, keep: ReadonlySet<string>): 
 /**
  * The generated document with the existing file's front matter entries that the generator does not own appended
  * to its block, each byte for byte. A key the generated block sets is the generator's, and so is every key in
- * `owned` (the keys it wrote last time, so a key the document stopped setting goes away). Nothing is carried when
- * either side has no YAML front matter.
+ * `owned` (the keys it wrote last time, so a key the document stopped setting goes away). If the generated
+ * document has no front matter, a YAML block is created for the carried entries.
  */
 export function carryFrontmatterKeys(
     generated: string,
@@ -279,7 +324,7 @@ export function carryFrontmatterKeys(
     const target = yamlSpan(generated);
     const source = yamlSpan(existing);
 
-    if (!target || !source) {
+    if (!source || (!target && splitFrontmatter(generated).format !== null)) {
         return { markdown: generated, carried: [] };
     }
 
@@ -292,10 +337,10 @@ export function carryFrontmatterKeys(
         return { markdown: generated, carried: [] };
     }
 
-    const block = [generated.slice(target.start, target.end), ...carried.flatMap((entry) => entry.lines)].join("\n");
+    const carriedLines = carried.flatMap((entry) => entry.lines);
+    const markdown = target
+        ? `${generated.slice(0, target.start)}${[generated.slice(target.start, target.end), ...carriedLines].join("\n")}${generated.slice(target.end)}`
+        : `---\n${carriedLines.join("\n")}\n---\n${generated}`;
 
-    return {
-        markdown: `${generated.slice(0, target.start)}${block}${generated.slice(target.end)}`,
-        carried: carried.map((entry) => entry.key),
-    };
+    return { markdown, carried: carried.map((entry) => entry.key) };
 }

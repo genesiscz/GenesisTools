@@ -76,7 +76,7 @@ function formatAttributes(stamp: Stamp): string {
         parts.push(`command=${encodeURIComponent(stamp.command)}`);
     }
 
-    if (stamp.frontmatter?.length) {
+    if (stamp.frontmatter !== undefined) {
         parts.push(`frontmatter=${stamp.frontmatter.map(encodeURIComponent).join(",")}`);
     }
 
@@ -93,12 +93,12 @@ function formatAttributes(stamp: Stamp): string {
  */
 export function stampMarkdown(body: string, meta: Omit<Stamp, "version" | "content" | "frontmatter"> = {}): string {
     const written = `${stripStamp(body).body.replace(/\s*$/, "")}\n`;
-    const frontmatter = yamlFrontmatterKeys(written);
+    const frontmatter = yamlFrontmatterKeys(written) ?? [];
     const stamp: Stamp = {
         version: STAMP_VERSION,
         content: hashText(written),
         ...meta,
-        ...(frontmatter?.length ? { frontmatter } : {}),
+        frontmatter,
     };
 
     return `${written}\n<!-- json2md:stamp ${formatAttributes(stamp)} -->\n`;
@@ -219,7 +219,8 @@ export function checkMarkdown(input: CheckInput): CheckResult {
 
     // A key another tool added to the front matter is not a hand edit of what the generator wrote.
     const owned = ownedFrontmatterKeys(stamp, input.regenerated);
-    const generatedPart = owned ? keepFrontmatterKeys(body, owned) : body;
+    const legacyUnchanged = stamp.frontmatter === undefined && hashText(body) === stamp.content;
+    const generatedPart = owned && !legacyUnchanged ? keepFrontmatterKeys(body, owned) : body;
     const actual = hashText(generatedPart);
     const dataChanged = Boolean(input.sourceHash && stamp.source && input.sourceHash !== stamp.source);
 
