@@ -50,8 +50,11 @@ import {
     estimateTokens,
     matchBackground,
     prefixHash,
+    setPendingNotice,
     shouldStartBackground,
+    takePendingNotice,
     trackBackground,
+    withUserReminder,
 } from "@app/ai-proxy/lib/sessions/background-compaction";
 import {
     compactionFromSse,
@@ -411,8 +414,7 @@ export function backgroundWasteNotice(
 
     return (
         `Proxy notice: the compaction ai-proxy prepared in the background at ${at} could not be used, because ` +
-        `${WASTE_REASONS[reason]}. This compaction read the whole context again (${Math.round(durationMs / 1000)} s). ` +
-        "Tell the user this in one sentence in your next reply, once."
+        `${WASTE_REASONS[reason]}. This compaction read the whole context again (${Math.round(durationMs / 1000)} s).`
     );
 }
 
@@ -1011,6 +1013,12 @@ export class OpenAiSubscriptionProvider implements ProxyProvider {
             });
         }
 
+        const pending = threadKey ? takePendingNotice(threadKey) : undefined;
+
+        if (pending && Array.isArray(responsesBody.input)) {
+            responsesBody = { ...responsesBody, input: withUserReminder(responsesBody.input, pending) };
+        }
+
         // A turn near the compaction point starts the background compaction of what it sends, once its usage is in.
         const sentBody = responsesBody;
         const onUsage =
@@ -1205,6 +1213,13 @@ export class OpenAiSubscriptionProvider implements ProxyProvider {
 
         if (input.threadKey) {
             clearBackground(input.threadKey);
+
+            if (notice) {
+                setPendingNotice(
+                    input.threadKey,
+                    `${notice} Start your next reply with one sentence that tells the user this.`
+                );
+            }
         }
 
         recordCompactionEvent({ ...input.eventBase, kind: "done", mode: "native", id, durationMs, ...tokens });
