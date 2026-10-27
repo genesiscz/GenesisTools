@@ -485,7 +485,7 @@ public final class ClickyModel: ObservableObject {
             refreshOutput()
         }
         audio?.idleRelease = TimeInterval(preferences.releaseOutputSeconds)
-        if preferences.silentOnBluetooth, !previous.silentOnBluetooth, silencedByBluetooth {
+        if preferences.muteOnBluetooth, !previous.muteOnBluetooth, silencedByBluetooth {
             audio?.stop()
         }
         refreshContext()
@@ -495,7 +495,7 @@ public final class ClickyModel: ObservableObject {
 
     /// Keys make no sound while the output is Bluetooth and the setting says so; a preview in Settings still plays.
     var silencedByBluetooth: Bool {
-        preferences.silentOnBluetooth && output?.effective?.isBluetooth == true
+        preferences.muteOnBluetooth && output?.effective?.isBluetooth == true
     }
 
     private func makeAudio() {

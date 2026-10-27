@@ -17,7 +17,7 @@ struct ClickyOutputCard: View {
             NativeSettingsToggle(
                 "Silent on Bluetooth headphones",
                 detail: "Typing makes no sound while Clicky plays on a Bluetooth device. Each sound start claims the headphones for this Mac, which can pull AirPods away from your iPhone. The play buttons here still sound.",
-                identifier: "clicky.output.silentOnBluetooth", isOn: $model.preferences.silentOnBluetooth)
+                identifier: "clicky.output.muteOnBluetooth", isOn: $model.preferences.muteOnBluetooth)
             NativeSettingsPicker(
                 "Release the output after",
                 detail: "The sound engine pauses 3 seconds after the last click: no CPU, no sleep block. It stops after this long, and the next click then waits for the output to start again.",
