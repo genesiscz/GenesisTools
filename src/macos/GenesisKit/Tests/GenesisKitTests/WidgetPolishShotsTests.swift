@@ -285,10 +285,14 @@ final class WidgetPolishShotsTests: XCTestCase {
 
     /// The reply composer is a reply, as its "Reply to …" says, even with a decision open; a "Send at once" option
     /// goes alone and leaves a reply being typed where it is; the number keys answer only a decision on screen.
-    func testTheReplyComposerStaysAReplyBesideAnOpenDecision() throws {
+    func testTheReplyComposerStaysAReplyBesideAnOpenDecision() async throws {
         let model = try model(panelBackground: nil, cards: [Self.manifestCard(key + "0")], decisionClick: "send")
         defer { model.stop() }
-        model.actionRunner = { _ in ["ok": true] }
+        var actions: [WidgetJSON] = []
+        model.actionRunner = { value in
+            actions.append(value)
+            return ["ok": true]
+        }
         let decision = try XCTUnwrap(model.cards.first)
         model.openCard(decision)
         XCTAssertEqual(model.answerCardOnScreen?.id, decision.id, "the open decision takes the number keys")
@@ -308,14 +312,23 @@ final class WidgetPolishShotsTests: XCTestCase {
         model.choose(decision, option: "b")
         XCTAssertEqual(model.draft.text, "Also rebase it first", "an option click leaves a reply being typed")
         model.send()
-        // Both land in the same millisecond, so their journal names do not order them.
+        try await Task.sleep(for: .milliseconds(300))
+        // The option goes the decision's own way, staged and then sent staged as Send now does (decision audit F8,
+        // 2026-10-27: the outbox dropped a staged note); the reply goes through the outbox as a reply.
         let payloads = try queuedPayloads()
-        XCTAssertEqual(payloads.compactMap { $0["kind"] as? String }.sorted(), ["decision", "followup"])
-        let answer = try XCTUnwrap(payloads.first { $0["kind"] as? String == "decision" })
-        let reply = try XCTUnwrap(payloads.first { $0["kind"] as? String == "followup" })
-        XCTAssertEqual(answer["option"] as? String, "b")
-        XCTAssertEqual(answer["text"] as? String, "", "the option went alone")
-        XCTAssertEqual(reply["text"] as? String, "Also rebase it first", "the reply went as a reply")
+        XCTAssertEqual(payloads.compactMap { $0["kind"] as? String }, ["followup"])
+        XCTAssertEqual(payloads.first?["text"] as? String, "Also rebase it first", "the reply went as a reply")
+        let stage = actions.first { value in
+            if case .object(let fields) = value { return fields["action"] == "ledger" }
+            return false
+        }
+        guard case .object(let fields) = try XCTUnwrap(stage, "the option was staged") else { return XCTFail("no object") }
+        XCTAssertEqual(fields["draftOption"], .string("b"))
+        XCTAssertNil(fields["draft"], "the option went alone: the reply is not its note")
+        XCTAssertTrue(actions.contains { value in
+            if case .object(let fields) = value { return fields["action"] == "send-staged" }
+            return false
+        }, "and was sent")
     }
 
     func testOpeningAnAlertRevealsAFilteredDecision() throws {

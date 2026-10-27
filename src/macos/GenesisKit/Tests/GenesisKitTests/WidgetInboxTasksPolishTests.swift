@@ -1100,7 +1100,8 @@ private enum StagingFixture {
     static let key = "local:codex:fixture-staged:"
 
     /// `stagedOnly`: the decision is not among the session's listed items (past its eight), only in the staged list.
-    static func snapshot(draftOption: String?, decisionClick: String = "stage", stagedOnly: Bool = false) throws -> String {
+    static func snapshot(draftOption: String?, decisionClick: String = "stage", stagedOnly: Bool = false,
+                         stagedOnLeave: String = "ask", draft: String? = nil) throws -> String {
         var item: [String: Any] = ["id": "decision:d1", "sourceId": "d1", "kind": "decision", "key": key, "at": 1,
                                    "needsAnswer": true, "title": "Keep it?", "number": 7, "options": ["keep", "drop"],
                                    "revision": 1]
@@ -1111,6 +1112,7 @@ private enum StagingFixture {
                                                ["id": "b", "title": "drop", "recommended": false]],
                                    "attachments": [], "refs": [], "read": true]
         if let draftOption { item["draftOption"] = draftOption; card["draftOption"] = draftOption }
+        if let draft { item["draft"] = draft; card["draft"] = draft; card["status"] = "drafted" }
         let session: [String: Any] = ["key": key, "target": ["hostId": "local", "provider": "codex",
             "sessionId": "fixture-staged", "sourceHome": "", "cwd": "/fixture"], "title": "Staged fixture",
             "project": "Fixture", "activityAt": 0, "status": "waiting", "pinned": true, "visible": true, "hiddenByFilter": false]
@@ -1121,7 +1123,7 @@ private enum StagingFixture {
         let data = try JSONSerialization.data(withJSONObject: ["version": 1, "state": ["version": 1, "revision": 0,
             "selectedKey": key, "preferences": ["excludedKeys": [], "projects": [], "sessions": [], "showChanges": false,
                 "placement": "both", "side": "right", "quietSeconds": 15, "voiceProvider": "openai", "voiceLanguage": "en",
-                "decisionClick": decisionClick],
+                "decisionClick": decisionClick, "stagedOnLeave": stagedOnLeave],
             "assets": [:], "drafts": [:], "outgoing": []], "sessions": [session], "cards": [card],
             "manifests": [:], "errors": [], "selectedKey": key, "notifications": notifications])
         return String(decoding: data, as: UTF8.self)
@@ -1141,8 +1143,10 @@ private enum StagingFixture {
 final class WidgetStagingTests: XCTestCase {
     private let key = StagingFixture.key
 
-    private func snapshot(draftOption: String?, decisionClick: String = "stage", stagedOnly: Bool = false) throws -> String {
-        try StagingFixture.snapshot(draftOption: draftOption, decisionClick: decisionClick, stagedOnly: stagedOnly)
+    private func snapshot(draftOption: String?, decisionClick: String = "stage", stagedOnly: Bool = false,
+                          stagedOnLeave: String = "ask", draft: String? = nil) throws -> String {
+        try StagingFixture.snapshot(draftOption: draftOption, decisionClick: decisionClick, stagedOnly: stagedOnly,
+                                    stagedOnLeave: stagedOnLeave, draft: draft)
     }
 
     private func names(_ actions: [WidgetJSON]) -> [String] {
@@ -1194,6 +1198,116 @@ final class WidgetStagingTests: XCTestCase {
         XCTAssertNil(model.expanded, "and closes once every answer was delivered")
         XCTAssertEqual(names(actions).last, "send-staged")
         XCTAssertEqual(WidgetModel.stagedSummary(model.stagedItems), "1 decision will be sent to 1 session")
+    }
+
+    /// Decision audit F8: the session card's send at once and the own answer's ⌘-Return stage first and then
+    /// send-staged, as Send now does, so the staged note or pick goes with the answer instead of being dropped.
+    func testSendAtOnceAndTheOwnAnswerSendStageFirstThenSendStaged() async throws {
+        let model = StagingFixture.model()
+        defer { model.stop() }
+        var actions: [WidgetJSON] = []
+        model.actionRunner = { value in
+            actions.append(value)
+            return ["sent": 1, "failed": 0]
+        }
+        model.receive([try snapshot(draftOption: "b", decisionClick: "send", draft: "because X")])
+        model.select(key)
+        let card = try XCTUnwrap(model.cards.first)
+
+        func answering() -> [WidgetJSON] { actions.filter { names([$0]) != ["selection"] } }
+        model.choose(card, option: "a")
+        try await Task.sleep(for: .milliseconds(300))
+        XCTAssertEqual(names(answering()), ["ledger", "send-staged"], "stage, then send-staged; never the outbox")
+        guard case .object(let pick) = try XCTUnwrap(answering().first) else { return XCTFail("not an object") }
+        XCTAssertEqual(pick["draftOption"], .string("a"))
+        XCTAssertNil(pick["draft"], "the staged note stays and goes with the pick")
+
+        actions = []
+        model.openOwnAnswer(card)
+        model.setText("only for -fe")
+        model.returnInOwnAnswer(command: true)
+        try await Task.sleep(for: .milliseconds(300))
+        XCTAssertEqual(names(answering()), ["ledger", "send-staged"])
+        guard case .object(let own) = try XCTUnwrap(answering().first) else { return XCTFail("not an object") }
+        XCTAssertEqual(own["draft"], .string("only for -fe"))
+        XCTAssertEqual(own["draftOption"], .string("b"), "the staged pick goes with the typed words")
+        XCTAssertEqual(model.draft.text, "", "the words left the composer once the hub had them")
+    }
+
+    /// Decision audit F10: a pick shown here gives way once its row is written after the pick landed, whatever the
+    /// row holds, and a pick no snapshot confirms expires; it used to stay until the widget restarted.
+    func testAPendingPickGivesWayToANewerRowAndExpires() throws {
+        let model = StagingFixture.model()
+        defer { model.stop() }
+        model.markPending("d1", "a")
+        model.pendingStageDone["d1"] = 1_000
+        let row = WidgetInboxItem(id: "decision:d1", sourceId: "d1", kind: "decision", key: key, at: 1,
+                                  needsAnswer: true, number: 7, revision: 1, draftOption: "b", updatedAt: 500)
+        model.reconcileStaged([row])
+        XCTAssertEqual(model.stagedOption("d1", stored: "b"), "a", "a row from before the pick does not replace it")
+        var newer = row
+        newer.updatedAt = 2_000
+        model.reconcileStaged([newer])
+        XCTAssertEqual(model.stagedOption("d1", stored: "b"), "b", "a row written after the pick landed is the truth")
+
+        model.markPending("d1", "a")
+        model.pendingStageAt["d1"] = Date().timeIntervalSince1970 * 1000 - 20_000
+        model.reconcileStaged([])
+        XCTAssertNil(model.pendingStage["d1"], "a pick no snapshot confirmed in time stops showing")
+        XCTAssertTrue(model.pendingStageAt.isEmpty && model.pendingStageItems.isEmpty)
+    }
+
+    /// Decision audit F16: Esc right after a pick, before any snapshot lists it, still asks about it.
+    func testLeavingRightAfterAPickAsksAboutIt() throws {
+        let model = StagingFixture.model()
+        defer { model.stop() }
+        model.actionRunner = { _ in [:] }
+        model.receive([try snapshot(draftOption: nil)])
+        model.select(key)
+        model.choose(try XCTUnwrap(model.cards.first), option: "a")
+        XCTAssertEqual(model.stagedItems, [], "no snapshot listed the pick yet")
+        XCTAssertEqual(model.stagedForLeave.map(\.sourceId), ["d1"])
+        model.expanded = .right
+        model.requestCollapse()
+        XCTAssertTrue(model.stagedLeavePrompt, "the leave question asks about the pick made a moment ago")
+    }
+
+    /// Decision audit F11: ⇧ adds a letter or takes it out, a plain click picks one alone, as in the hub.
+    func testThePickRuleKeepsSeveralLetters() {
+        XCTAssertEqual(DecisionAnswering.nextPick("ac", "b", adding: true), "abc")
+        XCTAssertEqual(DecisionAnswering.nextPick("ac", "a", adding: true), "c")
+        XCTAssertNil(DecisionAnswering.nextPick("a", "a", adding: true))
+        XCTAssertEqual(DecisionAnswering.nextPick("ac", "b", adding: false), "b")
+        XCTAssertEqual(DecisionAnswering.nextPick("ac", "a", adding: false), "a", "a plain click picks that letter alone")
+        XCTAssertNil(DecisionAnswering.nextPick("a", "a", adding: false), "a click on the only pick clears it")
+        XCTAssertEqual(DecisionAnswering.pickWords(option: "ac", note: "why"), "pick a) c) and note")
+    }
+
+    /// Decision audit F3 (D159, 2026-10-27): the popup's time running out does not take a pick staged in it away.
+    /// "ask" keeps the popup until nothing is staged in it; "keep" closes it and shows the staged reminder.
+    func testAPopupWithAStagedPickOutlivesItsTime() async throws {
+        let model = StagingFixture.model()
+        defer { model.stop() }
+        model.actionRunner = { _ in ["unstaged": 1] }
+        model.receive([try snapshot(draftOption: "a")])
+        let item = try XCTUnwrap(model.stagedItems.first)
+        let side = WidgetSurfaceID(edge: .right)
+        model.showPeek(item, on: side, seconds: 0.05)
+        try await Task.sleep(for: .milliseconds(300))
+        XCTAssertEqual(model.peekItem?.sourceId, "d1", "the popup stays with its Send now")
+        model.discardStaged(["d1"])
+        try await Task.sleep(for: .milliseconds(300))
+        XCTAssertNil(model.peekItem, "with nothing staged in it, its time ends it")
+
+        let kept = StagingFixture.model()
+        defer { kept.stop() }
+        var reminded: [String] = []
+        kept.stagedLeftInPopup = { items in reminded = items.map(\.sourceId) }
+        kept.receive([try snapshot(draftOption: "a", stagedOnLeave: "keep")])
+        kept.showPeek(try XCTUnwrap(kept.stagedItems.first), on: side, seconds: 0.05)
+        try await Task.sleep(for: .milliseconds(300))
+        XCTAssertNil(kept.peekItem, "\"keep\" closes the popup")
+        XCTAssertEqual(reminded, ["d1"], "and the staged reminder lists the pick")
     }
 
     func testNewInteractionCancelsTheDeliveredSendClose() async throws {
@@ -1464,13 +1578,15 @@ final class WidgetStagingTests: XCTestCase {
         model.select(key)
         model.choose(try XCTUnwrap(model.cards.first), option: "b")
         try await Task.sleep(for: .milliseconds(200))
-        XCTAssertFalse(names(actions).contains("ledger"), "the send setting does not stage")
+        // Since decision audit F8 (2026-10-27) a send at once stages the pick and sends it staged, as Send now does:
+        // the outbox it used before dropped the staged note.
+        XCTAssertEqual(names(actions).filter { $0 != "selection" }, ["ledger", "send-staged"])
         XCTAssertNil(model.pendingStage["d1"])
     }
 
     /// Several decision rows can be open at once: a click on one row's option answers that row's decision, not the
-    /// one selected last.
-    func testTheSendSettingAnswersTheClickedDecisionNotTheSelectedOne() throws {
+    /// one selected last. It goes stage, then send-staged (decision audit F8), both for the clicked decision.
+    func testTheSendSettingAnswersTheClickedDecisionNotTheSelectedOne() async throws {
         let root = FileManager.default.temporaryDirectory.appendingPathComponent("staging-send-\(UUID())")
         let journal = root.appendingPathComponent("native-submissions")
         try FileManager.default.createDirectory(at: journal, withIntermediateDirectories: true)
@@ -1480,7 +1596,8 @@ final class WidgetStagingTests: XCTestCase {
             appearance: NativeSettingsAppearance(defaults: defaults, notificationNamespace: "staging." + UUID().uuidString,
                                                  observeExternalChanges: false))
         defer { model.stop() }
-        model.actionRunner = { _ in ["ok": true] }
+        var actions: [WidgetJSON] = []
+        model.actionRunner = { value in actions.append(value); return ["sent": 1, "failed": 0] }
         var fixture = try XCTUnwrap(JSONSerialization.jsonObject(
             with: Data(try snapshot(draftOption: nil, decisionClick: "send").utf8)) as? [String: Any])
         var cards = try XCTUnwrap(fixture["cards"] as? [[String: Any]])
@@ -1495,12 +1612,14 @@ final class WidgetStagingTests: XCTestCase {
         model.selectedCardID = "decision:d2"
 
         model.choose(try XCTUnwrap(model.cards.first { $0.sourceId == "d1" }), option: "b")
-        let file = try XCTUnwrap(try FileManager.default.contentsOfDirectory(at: journal, includingPropertiesForKeys: nil)
-            .first { $0.pathExtension == "json" }, "the answer is queued")
-        let request = try XCTUnwrap(JSONSerialization.jsonObject(with: Data(contentsOf: file)) as? [String: Any])
-        let payload = try XCTUnwrap(request["payload"] as? [String: Any])
-        XCTAssertEqual(payload["id"] as? String, "d1")
-        XCTAssertEqual(payload["option"] as? String, "b")
+        try await Task.sleep(for: .milliseconds(300))
+        let answering = actions.filter { names([$0]) != ["selection"] }
+        XCTAssertEqual(names(answering), ["ledger", "send-staged"])
+        guard case .object(let stage) = try XCTUnwrap(answering.first),
+              case .object(let send) = try XCTUnwrap(answering.last) else { return XCTFail("not objects") }
+        XCTAssertEqual(stage["id"], .string("d1"))
+        XCTAssertEqual(stage["draftOption"], .string("b"))
+        XCTAssertEqual(send["ids"], .array([.string("d1")]))
     }
 
     func testTheSendSettingAnswersAtOnceFromTheInboxOfEverySession() async throws {

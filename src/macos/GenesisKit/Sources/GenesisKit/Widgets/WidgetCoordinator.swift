@@ -202,6 +202,7 @@ public final class WidgetCoordinator: NSObject, NSWindowDelegate {
         model.inboxArrived = { [weak self] items in self?.alert(items) }
         model.decisionsAnsweredElsewhere = { [weak self] items in self?.alertAnswered(items) }
         model.stagedAtStart = { [weak self] items in self?.remindStaged(items) }
+        model.stagedLeftInPopup = { [weak self] items in self?.remindStaged(items) }
         model.decisionRequested = { [weak self] id in self?.showDecision(id) }
     }
 
