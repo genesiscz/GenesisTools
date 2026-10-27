@@ -1004,6 +1004,22 @@ public final class WidgetModel: ObservableObject {
         presentationChanged?()
     }
 
+    /// Decisions `ids` were sent: they leave the popup, which shows the next alert or closes. The popup holds the
+    /// decision it opened with, and a decision answered here is in no later snapshot list, so it read as unanswered
+    /// after a successful send (Martin, 2026-10-27: "i confirmed it after staging and it doesnt seem like").
+    func dropSentFromPeek(_ ids: Set<String>) {
+        let queue = peekQueue.filter { !ids.contains($0.sourceId) }
+        if queue != peekQueue { peekQueue = queue }
+        guard let shown = peekItem, ids.contains(shown.sourceId) else { return }
+        PerfLog.mark("widget.peek sent id=\(shown.id) waiting=\(peekQueue.count)")
+        if peekQueue.isEmpty {
+            dismissPeek(all: true)
+            return
+        }
+        peekItem = peekQueue.removeFirst()
+        presentationChanged?()
+    }
+
     /// The popup's close button, Esc and VoiceOver's escape: the popup ends without opening anything. In the
     /// one-after-another mode it shows the next alert instead, unless `all`; a click elsewhere closes all of them.
     public func dismissPeek(all: Bool = false) {

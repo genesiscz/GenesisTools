@@ -771,6 +771,12 @@ final class WidgetInteractionTests: XCTestCase {
         XCTAssertEqual(value.stagedOption("d_1_s", stored: value.peekItem?.draftOption), "a")
         value.reconcileStaged([item(2, pick: "b")])
         XCTAssertNil(value.peekItem?.draftOption, "an unstaged decision reads as waiting again")
+
+        value.dropSentFromPeek(["d_1_s"])
+        XCTAssertEqual(value.peekItem?.sourceId, "d_2_s", "a sent decision leaves the popup for the next alert")
+        XCTAssertEqual(value.peekQueue, [])
+        value.dropSentFromPeek(["d_2_s"])
+        XCTAssertNil(value.peekItem, "the popup closes once its last decision was sent")
     }
 
     /// Several alerts in one popup (Alerts → Several at once), a popup that stays until it is closed, and a pointer
