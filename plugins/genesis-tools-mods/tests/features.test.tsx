@@ -1117,19 +1117,23 @@ function machine({
     });
 }
 
-function processLogMachine(on: On, options: { failCwd?: boolean; failSession?: boolean; holdAppends?: boolean } = {}) {
+function processLogMachine(
+    on: On,
+    options: { failCwd?: boolean; failSession?: boolean; holdAppends?: boolean; holdWrites?: boolean } = {}
+) {
     forgetSettings();
     forgetCheckouts();
     forgetGenesisProbe();
     const clock = mock.clock(on);
     mock.store(on);
     let failEnvironment = false;
+    let hideHome = false;
     on("env.get", async (_$, e) => {
         if (failEnvironment) {
             return { deny: "environment unavailable" };
         }
 
-        return { value: e.name === "HOME" ? "/home/test" : undefined };
+        return { value: !hideHome && e.name === "HOME" ? "/home/test" : undefined };
     });
     on("session.id", async () => {
         if (options.failSession) {
@@ -1162,11 +1166,24 @@ function processLogMachine(on: On, options: { failCwd?: boolean; failSession?: b
     const barrier = new Promise<void>((resolve) => {
         release = resolve;
     });
+    let releaseWrite = () => {};
+    const writeBarrier = new Promise<void>((resolve) => {
+        releaseWrite = resolve;
+    });
+    let markWriteStarted = () => {};
+    const writeStarted = new Promise<void>((resolve) => {
+        markWriteStarted = resolve;
+    });
     let appends = 0;
     on("process.run", async (_$, e) => {
         calls.push([...e.argv]);
         const path = e.argv.at(-1) ?? "";
         if (path.includes("/mods-log/processes-")) {
+            markWriteStarted();
+            if (options.holdWrites) {
+                await writeBarrier;
+            }
+
             writes.push(e.init?.stdin ?? "");
         } else if (path.endsWith("/mods-log/git.jsonl")) {
             appends++;
@@ -1189,6 +1206,11 @@ function processLogMachine(on: On, options: { failCwd?: boolean; failSession?: b
         calls,
         appends: () => appends,
         release,
+        writeStarted,
+        releaseWrite,
+        hideHome: () => {
+            hideHome = true;
+        },
         failEnvironment: () => {
             failEnvironment = true;
         },
@@ -1231,6 +1253,28 @@ test("process log: idle timer flushes the append batch", async ($, on) => {
     const machine = processLogMachine(on);
     await $.command.run(gitCommand);
     await machine.clock.advance(10_000);
+    expect(processLogRows(machine.writes).some((row) => Array.isArray(row.argv) && row.argv[0] === "/bin/sh")).toBe(
+        true
+    );
+});
+
+test("process log: session end waits for an in-flight timer writer", async ($, on) => {
+    const machine = processLogMachine(on, { holdWrites: true });
+    await $.command.run(gitCommand);
+    const advancing = machine.clock.advance(10_000);
+    await machine.writeStarted;
+    // The timer has already selected its destination; avoid a second shutdown write masking the race.
+    machine.hideHome();
+    let ended = false;
+    const ending = $.session.end({ reason: "other", sessionId: "sess-log", resume: { id: "sess-log" } }).then(() => {
+        ended = true;
+    });
+    await machine.clock.settle();
+    const endedBeforeWrite = ended;
+    machine.releaseWrite();
+    await Promise.all([advancing, ending]);
+    expect(endedBeforeWrite).toBe(false);
+    expect(ended).toBe(true);
     expect(processLogRows(machine.writes).some((row) => Array.isArray(row.argv) && row.argv[0] === "/bin/sh")).toBe(
         true
     );
