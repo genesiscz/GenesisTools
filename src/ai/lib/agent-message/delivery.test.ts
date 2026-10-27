@@ -69,8 +69,8 @@ test("an ambiguous query fails with each candidate's exact command", () => {
     } catch (error) {
         expect(error).toBeInstanceOf(MessageError);
         expect((error as MessageError).suggestions).toEqual([
-            'tools claude message aaaa1111-0000-4000-8000-000000000001 "<text>"',
-            'tools claude message aaaa2222-0000-4000-8000-000000000002 "<text>"',
+            "tools claude message aaaa1111-0000-4000-8000-000000000001 '<text>'",
+            "tools claude message aaaa2222-0000-4000-8000-000000000002 '<text>'",
         ]);
     }
 });

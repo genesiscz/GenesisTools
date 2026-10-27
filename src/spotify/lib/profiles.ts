@@ -153,7 +153,7 @@ export function getProfile(name?: string): Profile {
 
         throw new Error(
             `no profile "${want}". Known: ${known}. Add one with:\n` +
-                `  ${toolCommand("spotify profile add", want, "--history", "<dir>", "[--data", "<dir>]")}`
+                `  ${toolCommand("spotify profile add", want, "--history", "<dir>")} [--data <dir>]`
         );
     }
 

@@ -2,6 +2,8 @@ import { describe, expect, test } from "bun:test";
 import { mkdtempSync, readdirSync, rmSync } from "node:fs";
 import { tmpdir } from "node:os";
 import { join } from "node:path";
+import { toolCommand } from "@genesiscz/utils/cli/tool-command";
+import { json2mdBuild } from "@genesiscz/utils/genesis-tools/tools/hints";
 import { shellCommandLine, shellQuote, shellWord } from "./quote";
 
 /**
@@ -23,6 +25,18 @@ async function argvFrom(command: string): Promise<string[]> {
     // element is always "". Dropping only that one keeps an EMPTY argument visible.
     return stdout.split("\n").slice(0, -1);
 }
+
+describe("tool command shell arguments", () => {
+    test("toolCommand arguments with special characters, spaces, quotes and empty values round-trip literally", async () => {
+        const args = ["--flag", "plain", "report(2026).ts", "doc $(printf INJECTED).ts", "it's.md", "", "*.ts"];
+        expect(await argvFrom(toolCommand("json2md check", ...args))).toEqual(["tools", "json2md", "check", ...args]);
+    });
+
+    test("json2mdBuild paths with shell substitutions round-trip literally", async () => {
+        const path = "doc $(printf INJECTED).ts";
+        expect(await argvFrom(json2mdBuild(path))).toEqual(["tools", "json2md", "build", path]);
+    });
+});
 
 describe("shellQuote", () => {
     test("a path with spaces survives as ONE argument", async () => {

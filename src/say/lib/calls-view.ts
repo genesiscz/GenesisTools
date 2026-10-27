@@ -369,7 +369,7 @@ export async function showCallLogs(opts: LogsOptions): Promise<void> {
     renderCliSection("Next");
     renderCliKeyRow("Detail", pc.dim(toolCommand("say logs", "-n", "5", "--full")));
     renderCliKeyRow("Attention", pc.dim(toolCommand("say logs", "--attention")));
-    renderCliKeyRow("Search", pc.dim(toolCommand("say logs", "--grep", '"deploy"', "--since", "7d")));
+    renderCliKeyRow("Search", pc.dim(toolCommand("say logs", "--grep", "deploy", "--since", "7d")));
     renderCliKeyRow("Jump", pc.dim(toolCommand("claude cmux focus", "<session>")));
     renderCliKeyRow("Stats", pc.dim(toolCommand("say stats")));
     out.println();

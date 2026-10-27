@@ -191,7 +191,7 @@ export function pickClaudeSession(query: string, sessions: readonly ClaudeLiveSe
         if (hits.length > 1) {
             throw new MessageError(
                 `"${query}" matches ${hits.length} running Claude sessions:\n${hits.map((hit) => `  ${describe(hit)}`).join("\n")}`,
-                hits.map((hit) => toolCommand("claude message", hit.sessionId, '"<text>"'))
+                hits.map((hit) => toolCommand("claude message", hit.sessionId, "<text>"))
             );
         }
     }
@@ -263,7 +263,7 @@ export function claudeMessageDriver(
                                   .slice(0, 5)
                                   .map(
                                       (session) =>
-                                          `${toolCommand("claude message", session.sessionId, '"<text>"')}   # ${session.name ?? ""}`
+                                          `${toolCommand("claude message", session.sessionId, "<text>")}   # ${session.name ?? ""}`
                                   )
                             : []
                     );

@@ -13,7 +13,7 @@ import type { CmdToolVerb, TransclusionHints } from "@genesiscz/utils/transclude
 
 /** The command json2md writes into a document's stamp, so a reader can rebuild it. */
 export function json2mdBuild(portable: string): string {
-    return `${toolCommand("json2md build")} ${portable}`;
+    return toolCommand("json2md build", portable);
 }
 
 /**

@@ -266,9 +266,17 @@ describe("collectInbox against a fake GitLab", () => {
                     created_at: at,
                 },
             ])
-            .get(project, (request) =>
-                request.query.get("author_username") === "me" ? [listed(1, "me")] : [listed(2, "alice")]
-            )
+            .get(project, (request) => {
+                const updatedAfter = request.query.get("updated_after");
+                const item = request.query.get("author_username") === "me" ? listed(1, "me") : listed(2, "alice");
+                if (request.query.get("state") === "opened" && item.state !== "opened") {
+                    return [];
+                }
+                if (updatedAfter && Date.parse(item.updated_at) <= Date.parse(updatedAfter)) {
+                    return [];
+                }
+                return [item];
+            })
             .get("/users/99/events", [
                 {
                     project_id: FAKE_PROJECT_ID,
@@ -346,6 +354,11 @@ describe("collectInbox against a fake GitLab", () => {
         expect(value.second.seen.find((a) => a.mr.iid === 1)?.waiting).toHaveLength(1);
         expect(value.second.seen.find((a) => a.mr.iid === 3)?.todos).toHaveLength(1);
         expect(value.second.otherTodos).toHaveLength(1);
+        const lists = fake.calls("GET", `/projects/${FAKE_PROJECT_ID}/merge_requests`);
+        expect(lists.filter((call) => call.query.get("updated_after") === "2026-10-22T00:00:00Z")).toHaveLength(2);
+        expect(
+            lists.filter((call) => call.query.get("state") === "opened" && !call.query.has("updated_after"))
+        ).toHaveLength(4);
     });
 
     test("a failed request is reported and the rest is still read", async () => {

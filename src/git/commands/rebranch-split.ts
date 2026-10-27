@@ -119,7 +119,7 @@ async function runPlan(opts: PlanOptions): Promise<number> {
         say(line);
     }
 
-    const groupArgs = opts.groups.flatMap((g) => ["--groups", `'${g}'`]);
+    const groupArgs = opts.groups.flatMap((g) => ["--groups", g]);
     say("");
     say(pc.bold("Next:"));
     say(`  ${toolCommand("git rebranch plan", ...groupArgs, "--base", base.ref, "--json")} > plan.json`);
