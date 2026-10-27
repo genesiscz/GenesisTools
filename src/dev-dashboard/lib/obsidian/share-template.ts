@@ -69,8 +69,61 @@ body {
 }
 
 main {
-    max-width: 780px;
+    position: relative;
+    max-width: var(--dd-share-width, 780px);
     margin: 0 auto;
+}
+
+/* The reading width, as in the Genesis Markdown viewer: drag a grip in the body
+   padding on either side, double-click or Enter to reset. Each reader's width is
+   kept in their own browser. */
+.dd-share-grip {
+    position: absolute;
+    top: 0;
+    bottom: 0;
+    width: 16px;
+    cursor: col-resize;
+    opacity: 0;
+    touch-action: none;
+    transition: opacity 150ms;
+}
+
+.dd-share-grip::after {
+    content: "";
+    position: absolute;
+    top: 0;
+    bottom: 0;
+    left: 6px;
+    width: 3px;
+    border-radius: 2px;
+    background: var(--dd-border-strong, var(--dd-border));
+}
+
+.dd-share-grip-l { left: -22px; }
+.dd-share-grip-r { right: -22px; }
+
+main:hover > .dd-share-grip,
+.dd-share-grip.dd-share-grip-active,
+.dd-share-grip:focus-visible {
+    opacity: 1;
+}
+
+.dd-share-grip:hover::after,
+.dd-share-grip.dd-share-grip-active::after,
+.dd-share-grip:focus-visible::after {
+    background: var(--dd-accent);
+}
+
+.dd-share-grip:focus-visible { outline: none; }
+
+body.dd-share-resizing {
+    cursor: col-resize;
+    user-select: none;
+    -webkit-user-select: none;
+}
+
+@media (pointer: coarse) {
+    .dd-share-grip { display: none; }
 }
 
 article {
@@ -740,6 +793,111 @@ function buildViewToggleScript({
 </script>`;
 }
 
+function buildWidthScript(): string {
+    return `<script>
+(function () {
+    var KEY = "dd-share:reading-width";
+    var MIN = 420;
+    var main = document.querySelector("main");
+    if (!main) {
+        return;
+    }
+
+    var root = document.documentElement.style;
+    function apply(px) {
+        if (px && px >= MIN) {
+            root.setProperty("--dd-share-width", Math.round(px) + "px");
+        } else {
+            root.removeProperty("--dd-share-width");
+        }
+    }
+    function save(px) {
+        try {
+            if (px) {
+                localStorage.setItem(KEY, String(Math.round(px)));
+            } else {
+                localStorage.removeItem(KEY);
+            }
+        } catch (e) {
+            // Storage can be off (private mode); the width then lasts for this page only.
+        }
+    }
+    function clamp(px) {
+        var maxW = Math.max(MIN, document.body.clientWidth - 60);
+        return Math.round(Math.max(MIN, Math.min(maxW, px)));
+    }
+    try {
+        apply(Number(localStorage.getItem(KEY)) || 0);
+    } catch (e) {
+        // No storage: the default width.
+    }
+
+    ["l", "r"].forEach(function (side) {
+        var sign = side === "r" ? 1 : -1;
+        var grip = document.createElement("div");
+        grip.className = "dd-share-grip dd-share-grip-" + side;
+        grip.setAttribute("role", "separator");
+        grip.setAttribute("aria-orientation", "vertical");
+        grip.setAttribute("aria-label", "Reading width");
+        grip.setAttribute("aria-keyshortcuts", "ArrowLeft ArrowRight Enter");
+        grip.title = "Drag to resize, double-click to reset";
+        grip.tabIndex = 0;
+        main.appendChild(grip);
+
+        grip.addEventListener("pointerdown", function (e) {
+            if (e.button !== 0) {
+                return;
+            }
+            e.preventDefault();
+            grip.setPointerCapture(e.pointerId);
+            var startX = e.clientX;
+            var startW = main.getBoundingClientRect().width;
+            var w = startW;
+            grip.classList.add("dd-share-grip-active");
+            document.body.classList.add("dd-share-resizing");
+            function move(ev) {
+                // The column is centred, so one edge moving by dx widens it by 2 * dx.
+                w = clamp(startW + sign * (ev.clientX - startX) * 2);
+                apply(w);
+            }
+            function up() {
+                grip.removeEventListener("pointermove", move);
+                grip.removeEventListener("pointerup", up);
+                grip.removeEventListener("pointercancel", up);
+                grip.classList.remove("dd-share-grip-active");
+                document.body.classList.remove("dd-share-resizing");
+                save(w);
+            }
+            grip.addEventListener("pointermove", move);
+            grip.addEventListener("pointerup", up);
+            grip.addEventListener("pointercancel", up);
+        });
+        grip.addEventListener("dblclick", function (e) {
+            e.preventDefault();
+            apply(0);
+            save(0);
+        });
+        grip.addEventListener("keydown", function (e) {
+            if (e.key === "Enter") {
+                e.preventDefault();
+                apply(0);
+                save(0);
+                return;
+            }
+            if (e.key !== "ArrowLeft" && e.key !== "ArrowRight") {
+                return;
+            }
+            e.preventDefault();
+            var dx = (e.key === "ArrowRight" ? 1 : -1) * (e.shiftKey ? 60 : 20);
+            var w = clamp(main.getBoundingClientRect().width + sign * dx * 2);
+            apply(w);
+            save(w);
+        });
+    });
+})();
+</script>`;
+}
+
 function buildAssetPanelScript(): string {
     return `<script>
 (function () {
@@ -958,6 +1116,7 @@ export function renderSharePage(options: ShareTemplateOptions): string {
 
     bodyExtras.push(buildViewToggleScript({ downloadName, contentType, labels }));
     bodyExtras.push(buildAssetPanelScript());
+    bodyExtras.push(buildWidthScript());
 
     const sourceLine = sourcePath ? `<span class="dd-share-source">${escapeHtml(sourcePath)}</span>` : "";
 
