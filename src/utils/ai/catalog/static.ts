@@ -585,6 +585,45 @@ const OPENAI_ENTRIES: CatalogEntry[] = apiEntries(
             vision: true,
         },
         {
+            id: "gpt-6.1-terra",
+            displayName: "GPT-6.1 Terra",
+            contextWindow: 1_050_000,
+            thinking: "reasoning",
+            // Verified 2026-10-27: https://developers.openai.com/api/docs/models/gpt-6.1-terra (released 2026-10-26).
+            // Half of 6.1 Sol's rates; the whole request bills 2x input and cache, 1.5x output above 272K input.
+            pricing: {
+                inputPer1M: 1,
+                outputPer1M: 5,
+                cachedReadPer1M: 0.05,
+                cachedCreatePer1M: 1.25,
+                rules: [
+                    {
+                        ctxFrom: 272_001,
+                        inputPer1M: 2,
+                        outputPer1M: 7.5,
+                        cachedReadPer1M: 0.1,
+                        cachedCreatePer1M: 2.5,
+                    },
+                    {
+                        serviceTier: "priority",
+                        inputPer1M: 2,
+                        outputPer1M: 10,
+                        cachedReadPer1M: 0.1,
+                        cachedCreatePer1M: 2.5,
+                    },
+                    {
+                        serviceTier: "priority",
+                        ctxFrom: 272_001,
+                        inputPer1M: 4,
+                        outputPer1M: 15,
+                        cachedReadPer1M: 0.2,
+                        cachedCreatePer1M: 5,
+                    },
+                ],
+            },
+            vision: true,
+        },
+        {
             id: "gpt-6.1-sol",
             displayName: "GPT-6.1 Sol",
             contextWindow: 1_050_000,
