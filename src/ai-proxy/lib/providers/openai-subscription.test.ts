@@ -1385,7 +1385,7 @@ describe("account failures on the Anthropic route (Claude Code)", () => {
         expect(res.status).toBe(400);
         expect(json.type).toBe("error");
         expect(json.error.message).toContain("hit its usage limit");
-        expect(json.error.message).toContain("tools ai-proxy session s-1 use --codex <account>");
+        expect(json.error.message).toContain("tools ai-proxy session s-1 use --codex '<account>'");
     });
 
     it("a short rate limit stays a 429 with its Retry-After, for Claude Code's own backoff", async () => {
