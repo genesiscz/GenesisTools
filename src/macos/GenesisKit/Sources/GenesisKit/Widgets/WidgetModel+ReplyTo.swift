@@ -22,13 +22,16 @@ extension WidgetModel {
 
     /// The card the next follow-up names: `replyToCandidate`, unless the composer's × dropped it for this message.
     public var replyToCard: WidgetCard? {
-        guard let card = replyToCandidate, replyToDropped[selectedKey] != card.id else { return nil }
-        return card
+        guard !replyToDropped.contains(selectedKey) else { return nil }
+        return replyToCandidate
     }
 
     /// The composer's ×: the next follow-up names nothing; with `false` it names the card again.
     public func dropReplyTo(_ dropped: Bool = true) {
-        guard let card = replyToCandidate else { return }
-        replyToDropped[selectedKey] = dropped ? card.id : nil
+        if dropped {
+            replyToDropped.insert(selectedKey)
+        } else {
+            replyToDropped.remove(selectedKey)
+        }
     }
 }

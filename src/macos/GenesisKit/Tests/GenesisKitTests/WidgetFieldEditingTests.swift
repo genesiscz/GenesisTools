@@ -34,8 +34,8 @@ final class WidgetFieldEditingTests: XCTestCase {
         }
     }
 
-    private func line(revision: Int, key: String, text: String) -> String {
-        let encoded = String(decoding: try! JSONEncoder().encode(text), as: UTF8.self)
+    private func line(revision: Int, key: String, text: String) throws -> String {
+        let encoded = try XCTUnwrap(String(data: JSONEncoder().encode(text), encoding: .utf8))
         return #"{"version":1,"state":{"version":1,"revision":\#(revision),"preferences":{"excludedKeys":[],"projects":[],"sessions":[],"showChanges":true,"placement":"both","side":"right","quietSeconds":15,"voiceProvider":"xai","voiceLanguage":""},"assets":{},"drafts":{"\#(key)":{"text":\#(encoded),"assetIds":[]}},"outgoing":[]},"sessions":[],"cards":[],"manifests":{},"errors":[]}"#
     }
 
@@ -60,31 +60,31 @@ final class WidgetFieldEditingTests: XCTestCase {
         // Longer than the 350 ms save debounce, as the real 3 s is.
         model.draftOwnership.quietPeriod = 1
         model.selectedKey = "chosen"
-        model.receive([line(revision: 10, key: "chosen", text: "a) but")])
+        model.receive([try line(revision: 10, key: "chosen", text: "a) but")])
         XCTAssertEqual(model.draft.text, "a) but", "an idle field shows the stored draft")
 
         // Martin's sequence: a save lands, he types on, and a snapshot read before the save arrives late.
         model.setText("a) but explain")
         try await until(store.texts["chosen"] == "a) but explain", "the debounced save landed")
         model.setText("a) but explain - when we build")
-        model.receive([line(revision: 10, key: "chosen", text: "a) but")])
+        model.receive([try line(revision: 10, key: "chosen", text: "a) but")])
         XCTAssertEqual(model.draft.text, "a) but explain - when we build", "typing owns the field")
 
         // Saved and idle: the late snapshot read before the save still never writes the field.
         try await until(store.texts["chosen"] == "a) but explain - when we build", "the second save landed")
         try await Task.sleep(for: .milliseconds(1_100))
-        model.receive([line(revision: 10, key: "chosen", text: "a) but")])
+        model.receive([try line(revision: 10, key: "chosen", text: "a) but")])
         XCTAssertEqual(model.draft.text, "a) but explain - when we build", "a snapshot older than the save is ignored")
-        model.receive([line(revision: store.revision, key: "chosen", text: "a) but explain - when we build")])
+        model.receive([try line(revision: store.revision, key: "chosen", text: "a) but explain - when we build")])
         XCTAssertEqual(model.draft.text, "a) but explain - when we build", "the echo of the save changes nothing")
 
         // Another surface sends the draft: the idle field follows.
-        model.receive([line(revision: store.revision + 1, key: "chosen", text: "")])
+        model.receive([try line(revision: store.revision + 1, key: "chosen", text: "")])
         XCTAssertEqual(model.draft.text, "", "an external change applies to an idle field")
 
         // With the keyboard in the field nothing writes into it, and leaving the field shows the newest stored text.
         model.draftFieldFocus("reply", focused: true)
-        model.receive([line(revision: store.revision + 2, key: "chosen", text: "from the hub")])
+        model.receive([try line(revision: store.revision + 2, key: "chosen", text: "from the hub")])
         XCTAssertEqual(model.draft.text, "", "a focused field owns its text")
         model.draftFieldFocus("reply", focused: false)
         XCTAssertEqual(model.draft.text, "from the hub", "leaving the field applies what changed meanwhile")
@@ -92,7 +92,7 @@ final class WidgetFieldEditingTests: XCTestCase {
         // A snapshot that arrives during the typing hold applies once the hold runs out.
         model.setText("typed")
         try await until(store.texts["chosen"] == "typed", "the third save landed")
-        model.receive([line(revision: store.revision + 1, key: "chosen", text: "answered elsewhere")])
+        model.receive([try line(revision: store.revision + 1, key: "chosen", text: "answered elsewhere")])
         XCTAssertEqual(model.draft.text, "typed", "inside the typing hold")
         try await until(model.draft.text == "answered elsewhere", "after the hold the newest stored text shows")
     }
@@ -126,16 +126,16 @@ final class WidgetFieldEditingTests: XCTestCase {
         model.actionRunner = { _ in ["ok": true] }
         model.draftOwnership.quietPeriod = 0
         model.selectedKey = "chosen"
-        model.receive([line(revision: 10, key: "chosen", text: "old")])
+        model.receive([try line(revision: 10, key: "chosen", text: "old")])
         model.setText("new")
         try await until(!model.draftOwnership.isUnsaved("chosen"), "the save returned")
-        model.receive([line(revision: 11, key: "chosen", text: "old")])
+        model.receive([try line(revision: 11, key: "chosen", text: "old")])
         XCTAssertEqual(model.draft.text, "new", "a newer pre-save snapshot is still held")
         try Data(#"{"revision":12}"#.utf8).write(to: root.appendingPathComponent("state.json"))
         try await until(model.draftOwnership.accepts("chosen", revision: 12, now: Date()), "the actual revision is read")
-        model.receive([line(revision: 11, key: "chosen", text: "old")])
+        model.receive([try line(revision: 11, key: "chosen", text: "old")])
         XCTAssertEqual(model.draft.text, "new")
-        model.receive([line(revision: 12, key: "chosen", text: "new")])
+        model.receive([try line(revision: 12, key: "chosen", text: "new")])
         XCTAssertEqual(model.draft.text, "new")
     }
 

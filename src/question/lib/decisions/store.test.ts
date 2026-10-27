@@ -110,7 +110,7 @@ describe("decision store", () => {
         const file = join(dir, "decisions.jsonl");
         const row = foreignRow("fixture", 1);
         expect(readJsonlRows(file)).toEqual({ rows: [], skipped: 0, missing: true });
-        expect(readDecisionsWithIntegrity(file)).toEqual({ rows: [], complete: false });
+        expect(readDecisionsWithIntegrity(file)).toEqual({ rows: [], complete: false, missing: true });
         expect(readDecisions(file)).toEqual([]);
         writeFileSync(file, "");
         expect(readJsonlRows(file)).toEqual({ rows: [], skipped: 0 });

@@ -1643,7 +1643,11 @@ export function readDecisions(file: string): DecisionRecord[] {
 }
 
 /** The same decision read, including whether the file was missing or any torn or invalid row was skipped. */
-export function readDecisionsWithIntegrity(file: string): { rows: DecisionRecord[]; complete: boolean } {
+export function readDecisionsWithIntegrity(file: string): {
+    rows: DecisionRecord[];
+    complete: boolean;
+    missing?: true;
+} {
     const { rows, skipped, missing } = readJsonlRows<unknown>(file);
     const valid = rows.filter(isStoredDecision);
     const malformed = rows.length - valid.length;
@@ -1652,7 +1656,11 @@ export function readDecisionsWithIntegrity(file: string): { rows: DecisionRecord
         logger.warn({ file, skipped, malformed }, "[decisions] skipped unreadable lines in the decision log");
     }
 
-    return { rows: valid, complete: !missing && skipped === 0 && malformed === 0 };
+    return {
+        rows: valid,
+        complete: !missing && skipped === 0 && malformed === 0,
+        ...(missing ? { missing: true } : {}),
+    };
 }
 
 function isStoredDecision(value: unknown): value is DecisionRecord {

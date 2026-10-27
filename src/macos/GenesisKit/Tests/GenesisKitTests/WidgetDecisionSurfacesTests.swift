@@ -13,9 +13,9 @@ final class WidgetDecisionSurfacesTests: XCTestCase {
     private let key = "local:claude:fixture-decisions:"
 
     private func model(preferences extra: [String: Any] = [:], cards: [[String: Any]] = [],
-                       staged: [[String: Any]] = []) throws -> WidgetModel {
+                       staged: [[String: Any]] = [], stateDirectory: URL? = nil) throws -> WidgetModel {
         let defaults = try XCTUnwrap(UserDefaults(suiteName: "widget.decisions." + UUID().uuidString))
-        let state = FileManager.default.temporaryDirectory.appendingPathComponent("widget-decisions-" + UUID().uuidString)
+        let state = stateDirectory ?? FileManager.default.temporaryDirectory.appendingPathComponent("widget-decisions-" + UUID().uuidString)
         try FileManager.default.createDirectory(at: state.appendingPathComponent("native-submissions"),
                                                 withIntermediateDirectories: true)
         // A tools stand-in that answers every call with an empty JSON object, so no startup call shows an error, and
@@ -107,7 +107,9 @@ final class WidgetDecisionSurfacesTests: XCTestCase {
             "status": "unread", "choices": [], "attachments": [], "refs": [], "read": false]
         let cards = [Self.card(key + "0", number: 4), answer]
 
-        let model = try model(cards: cards)
+        let state = FileManager.default.temporaryDirectory.appendingPathComponent("widget-reply-" + UUID().uuidString)
+        let model = try model(cards: cards, stateDirectory: state)
+        defer { model.stop() }
         XCTAssertEqual(model.replyNames, "selected-or-newest")
         XCTAssertEqual(model.replyToCard?.id, "answer:a1", "with nothing selected, the agent's newest item")
         let excerpt = WidgetReplyTo(card: try XCTUnwrap(model.replyToCard))
@@ -131,6 +133,25 @@ final class WidgetDecisionSurfacesTests: XCTestCase {
         XCTAssertEqual(model.replyToCandidate?.id, "decision:d4", "and the composer still says what it dropped")
         model.dropReplyTo(false)
         XCTAssertEqual(model.replyToCard?.id, "decision:d4")
+
+        model.selectedCardID = nil
+        model.dropReplyTo()
+        var newer = answer
+        newer["id"] = "answer:a2"
+        newer["sourceId"] = "a2"
+        newer["at"] = Date().timeIntervalSince1970 * 1000 + 1000
+        try receiveLookup(model, cards: cards + [newer], token: nil)
+        XCTAssertEqual(model.replyToCandidate?.id, "answer:a2")
+        XCTAssertNil(model.replyToCard, "a new card does not undo the opt-out")
+        model.setText("A follow-up")
+        model.send()
+        let journal = state.appendingPathComponent("native-submissions")
+        let files = try FileManager.default.contentsOfDirectory(at: journal, includingPropertiesForKeys: nil)
+            .filter { $0.pathExtension == "json" }
+        let request = try XCTUnwrap(JSONSerialization.jsonObject(with: Data(contentsOf: XCTUnwrap(files.first))) as? [String: Any])
+        let payload = try XCTUnwrap(request["payload"] as? [String: Any])
+        XCTAssertNil(payload["replyTo"], "the sent follow-up preserves the opt-out")
+        XCTAssertNotNil(model.replyToCard, "the next composition restores reply naming")
 
         let selectedOnly = try self.model(preferences: ["replyNames": "selected"], cards: cards)
         XCTAssertNil(selectedOnly.replyToCard, "the selected card only: nothing selected names nothing")
@@ -237,8 +258,10 @@ final class WidgetDecisionSurfacesTests: XCTestCase {
         model.openDecision(id: "d_172_fixture-0", sessionKey: key + "0")
         XCTAssertNil(model.chatDecision, "a cached snapshot is not evidence of absence")
         let token = try XCTUnwrap(model.pendingDecision?.token)
+        model.fail("An unrelated draft save failed")
         try receiveLookup(model, cards: [Self.card(key + "0", number: 10)], token: token)
 
+        XCTAssertEqual(model.error, "An unrelated draft save failed")
         XCTAssertEqual(model.section, "Conversation")
         XCTAssertEqual(model.chatDecision?.number, 172)
         XCTAssertEqual(model.chatDecision?.id, "d_172_fixture-0")
@@ -252,6 +275,10 @@ final class WidgetDecisionSurfacesTests: XCTestCase {
                      TranscriptTurn(id: "t4", role: "assistant", text: "Recorded DECISION 172.")]
         XCTAssertEqual(WidgetModel.firstTurnAsking(172, in: turns)?.id, "t2", "the first asking turn, never 1720")
         XCTAssertNil(WidgetModel.firstTurnAsking(17, in: turns))
+        XCTAssertNil(WidgetModel.firstTurnAsking(172, in: Array(turns.suffix(2))),
+                     "a user quote and assistant acknowledgement do not identify the asking turn")
+        XCTAssertEqual(WidgetModel.firstTurnAsking(172, in: [TranscriptTurn(
+            id: "heading", role: "assistant", text: "## ❓ DECISION 172\nChoose one")])?.id, "heading")
         XCTAssertEqual(WidgetModel.decisionNumber("d_172_a1523c66-103f"), 172)
         XCTAssertNil(WidgetModel.decisionNumber("d10"))
     }
