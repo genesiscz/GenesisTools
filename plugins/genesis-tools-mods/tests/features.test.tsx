@@ -32,6 +32,7 @@ import {
 } from "../hooks/checkouts";
 import { COMMIT, checkHubLink, forgeProject, forgetCommitLinks } from "../hooks/commit-links";
 import {
+    answeredInChat,
     chatDecisions,
     decisions,
     editAnswer,
@@ -191,14 +192,19 @@ test("decisions sidebar: the log's states, chat asks the log lacks, and a chat a
     ]);
     const shown = shownDecisions(logged?.decisions ?? [], chat);
 
+    // A chat answer to a logged decision is the log's to record (the decision Stop hook): until then it waits, as in
+    // the widget and the hub. A chat-only ask the chat answered is gone.
     expect(shown.map((d) => [d.n, d.status])).toEqual([
         [1, "implemented"],
-        [2, "chat-answered"],
+        [2, "waiting"],
         [3, "waiting"],
         [4, "drafted"],
         [5, "waiting"],
     ]);
     expect(shown[4]?.options.map((o) => o.letter)).toEqual(["a", "b"]);
+    expect(answeredInChat({ status: "acknowledged", answeredVia: "automatic_heuristic" })).toBe(true);
+    expect(answeredInChat({ status: "acknowledged", answeredVia: "inbox" })).toBe(false);
+    expect(answeredInChat({ status: "waiting", answeredVia: "agent" })).toBe(false);
 });
 
 test("jump to: a decision's first ask is its first unlinked ask in the transcript; an entry's row is the call before it", async () => {

@@ -34,6 +34,11 @@ export interface LoggedDecision {
     /** The letter picked, and the answer in words. */
     option?: string;
     answer?: string;
+    /**
+     * Who stored the answer (`inbox`, `agent`, `automatic_heuristic`). The decision log is the one place that says a
+     * decision was answered in chat: the decision Stop hook records the user's chat answers there.
+     */
+    answeredVia?: string;
     /** A staged answer not sent yet (state `drafted`): the picked letters and a note. The store owns staging. */
     draftOption?: string;
     draft?: string;
@@ -197,6 +202,7 @@ export function answersFrom(stdout: string, at = Date.now()): SessionAnswers | u
                 ...(text(item.recommended) ? { recommended: text(item.recommended) } : {}),
                 ...(text(item.option) ? { option: text(item.option) } : {}),
                 ...(text(item.answer) ? { answer: text(item.answer) } : {}),
+                ...(text(item.answeredVia) ? { answeredVia: text(item.answeredVia) } : {}),
                 ...(text(item.draftOption) ? { draftOption: text(item.draftOption) } : {}),
                 ...(text(item.draft) ? { draft: text(item.draft) } : {}),
                 at: timeOf(item.at),
