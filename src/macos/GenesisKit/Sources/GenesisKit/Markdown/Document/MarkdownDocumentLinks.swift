@@ -71,14 +71,12 @@ public enum MarkdownDocumentLinks {
                 if exists(md.path) { return md }
             }
             // Keep a literal non-note file at the root ahead of note-name lookup.
-            if !ext.isEmpty, ext != "md", let vaultRoot {
+            if ext != "md", let vaultRoot {
                 let literal = URL(fileURLWithPath: vaultRoot).appendingPathComponent(target).standardizedFileURL
                 if exists(literal.path) { return literal }
             }
             guard index.isReady else { return nil }
-            let base = index.root.standardizedFileURL.path
-            let here = folder.standardizedFileURL.path
-            let near = here.hasPrefix(base + "/") ? String(here.dropFirst(base.count + 1)) : ""
+            let near = index.relativeFolder(folder)
             for path in index.notes(named: target, near: near) {
                 let url = index.root.appendingPathComponent(path).standardizedFileURL
                 if exists(url.path) { return url }
@@ -95,9 +93,7 @@ public enum MarkdownDocumentLinks {
         // `[[Overview]]` in `Project/Design/Figma.md` names `Project/Overview.md`: Obsidian finds a note by its
         // name (or a path tail) anywhere in the vault, the nearest one first.
         guard let index, !target.hasPrefix("../"), !target.hasPrefix("./") else { return nil }
-        let base = index.root.standardizedFileURL.path
-        let here = folder.standardizedFileURL.path
-        let near = here.hasPrefix(base + "/") ? String(here.dropFirst(base.count + 1)) : ""
+        let near = index.relativeFolder(folder)
         for path in index.notes(named: target, near: near) {
             let url = index.root.appendingPathComponent(path).standardizedFileURL
             if exists(url.path) { return url }

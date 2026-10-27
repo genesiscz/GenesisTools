@@ -206,6 +206,7 @@ final class VaultFileIndex {
     private var loading = false
     private var completions: [() -> Void] = []
     private let scan: @Sendable (URL) -> Snapshot
+    private let caseSensitive: Bool
 
     private static var shared: [String: VaultFileIndex] = [:]
 
@@ -217,9 +218,25 @@ final class VaultFileIndex {
         return index
     }
 
-    init(root: URL, scan: @escaping @Sendable (URL) -> Snapshot = VaultFileIndex.scan) {
+    init(root: URL, caseSensitive: Bool? = nil, scan: @escaping @Sendable (URL) -> Snapshot = VaultFileIndex.scan) {
         self.root = root
+        self.caseSensitive = caseSensitive
+            ?? (try? root.resourceValues(forKeys: [.volumeSupportsCaseSensitiveNamesKey]).volumeSupportsCaseSensitiveNames)
+            ?? true
         self.scan = scan
+    }
+
+    private func sameFolder(_ left: Substring, _ right: Substring) -> Bool {
+        caseSensitive ? left == right : left.lowercased() == right.lowercased()
+    }
+
+    /// A folder under this index's root, with the volume's case rules applied to the prefix.
+    func relativeFolder(_ folder: URL) -> String {
+        let rootParts = root.standardizedFileURL.path.split(separator: "/")
+        let parts = folder.standardizedFileURL.path.split(separator: "/")
+        guard parts.count >= rootParts.count,
+              zip(rootParts, parts).allSatisfy({ sameFolder($0.0, $0.1) }) else { return "" }
+        return parts.dropFirst(rootParts.count).joined(separator: "/")
     }
 
     var attachmentFolder: String? { snapshot.attachmentFolder }
@@ -271,7 +288,7 @@ final class VaultFileIndex {
         if !needle.hasSuffix(".md") { needle += ".md" }
         let here = folder.split(separator: "/")
         func shared(_ path: String) -> Int {
-            zip(path.split(separator: "/").dropLast(), here).prefix { $0 == $1 }.count
+            zip(path.split(separator: "/").dropLast(), here).prefix { sameFolder($0.0, $0.1) }.count
         }
         return snapshot.notes
             .filter { $0.lowercased() == needle || $0.lowercased().hasSuffix("/" + needle) }

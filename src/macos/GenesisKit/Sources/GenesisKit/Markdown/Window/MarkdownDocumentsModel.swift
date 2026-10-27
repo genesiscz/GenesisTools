@@ -32,9 +32,11 @@ private let markdownSelectedKey = "markdownWindow.selected"
 @MainActor
 final class MarkdownDocumentsModel: ObservableObject {
     @Published private(set) var docs: [MarkdownDocument] = []
+    private var followGeneration = 0
     @Published var selectedId: String? {
         didSet {
             guard selectedId != oldValue else { return }
+            followGeneration &+= 1
             revisionRequest += 1
             if let selectedId, !navigatingHistory { history.visit(selectedId) }
         }
@@ -67,6 +69,7 @@ final class MarkdownDocumentsModel: ObservableObject {
     @Published var splitScrollSync = true {
         didSet { defaults.set(splitScrollSync, forKey: markdownSplitSyncKey) }
     }
+    private var splitSyncWatch: AnyCancellable?
     // These three read and write the model's OWN defaults, not
     // `UserDefaults.standard`. A property initializer cannot see `self`, so
     // they are loaded in `init` instead — reaching for the standard suite
@@ -357,7 +360,7 @@ final class MarkdownDocumentsModel: ObservableObject {
 
     /// The tabs and the selected tab survive a relaunch, so the viewer comes
     /// back the way it was closed. Files that vanished meanwhile are dropped.
-    init(defaults: UserDefaults = .standard) {
+    init(defaults: UserDefaults = .standard, notificationCenter: NotificationCenter = .default) {
         self.defaults = defaults
         let paths = defaults.stringArray(forKey: markdownTabsKey) ?? []
         docs = paths
@@ -380,6 +383,15 @@ final class MarkdownDocumentsModel: ObservableObject {
         filesRoot = defaults.string(forKey: markdownFilesRootKey) ?? ""
         filesWidth = MarkdownSidebarWidth.clamped(defaults.double(forKey: markdownFilesWidthKey))
         gitWidth = MarkdownSidebarWidth.clamped(defaults.double(forKey: markdownGitWidthKey), fallback: MarkdownSidebarWidth.gitStandard)
+        // The model outlives its document panes, including while the window has no open document.
+        splitSyncWatch = notificationCenter.publisher(for: .markdownSplitSyncChanged)
+            .receive(on: DispatchQueue.main)
+            .sink { [weak self] notification in
+                MainActor.assumeIsolated {
+                    guard let self, let enabled = notification.object as? Bool, self.splitScrollSync != enabled else { return }
+                    self.splitScrollSync = enabled
+                }
+            }
     }
 
     var mode: MarkdownViewMode {
@@ -1138,7 +1150,9 @@ final class MarkdownDocumentsModel: ObservableObject {
     /// ends here, and a note is untrusted: a scheme URL leaves only through
     /// `MarkdownWebView.externalURL`, a `file:` URL is a local path like any
     /// other, and a local target opens only when it is a document.
-    func follow(_ ref: String, from doc: MarkdownDocument, scanned: Bool = false) {
+    func follow(_ ref: String, from doc: MarkdownDocument, scanned: Bool = false, indexOverride: VaultFileIndex? = nil) {
+        if !scanned { followGeneration &+= 1 }
+        let generation = followGeneration
         var target = ref.trimmingCharacters(in: .whitespacesAndNewlines)
         // `[text][label]` points at a definition further down the file.
         if !MarkdownDocumentLinks.hasScheme(target), MarkdownWebView.externalURL(target) == nil,
@@ -1165,14 +1179,17 @@ final class MarkdownDocumentsModel: ObservableObject {
             if let fragment = MarkdownDocumentLinks.fragment(of: target) { scrollTarget = fragment }
             return
         }
-        let vaultRoot = GenesisKit.host?.markdownVaultRoot
-        let index = MarkdownDocumentLinks.vaultIndex(vaultRoot)
+        let vaultRoot = indexOverride?.root.path ?? GenesisKit.host?.markdownVaultRoot
+        let index = indexOverride ?? MarkdownDocumentLinks.vaultIndex(vaultRoot)
         guard let (url, fragment) = MarkdownDocumentLinks.locate(
             target, folder: doc.folder, vaultRoot: vaultRoot, index: index
         ) else {
             // A note named only by its name is found by the vault scan: a miss before a fresh scan is no answer yet.
             if !scanned, let index, index.isStale() {
-                index.refreshIfNeeded { [weak self] in self?.follow(ref, from: doc, scanned: true) }
+                index.refreshIfNeeded { [weak self] in
+                    guard let self, self.followGeneration == generation, self.selected?.id == doc.id else { return }
+                    self.follow(ref, from: doc, scanned: true, indexOverride: indexOverride)
+                }
                 return
             }
             GenesisKit.log("markdown: link \(target) resolves to nothing")

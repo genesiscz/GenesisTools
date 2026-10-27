@@ -1052,11 +1052,6 @@ private struct MarkdownDocumentPane: View {
             linkHoverGeneration += 1
             MarkdownHoverPreviewController.shared.exit(owner: linkHoverOwner)
         }
-        .onReceive(NotificationCenter.default.publisher(for: .markdownSplitSyncChanged)) { notification in
-            if let enabled = notification.object as? Bool, model.splitScrollSync != enabled {
-                model.splitScrollSync = enabled
-            }
-        }
     }
 
     /// The file's path under "File is gone" or "Not a text file": a click opens it in its default app, its folder in
@@ -1425,7 +1420,7 @@ private struct MarkdownDocumentPane: View {
     /// The reader scrolled the preview: the editor puts the same line at its top. The page keeps its own place, so
     /// the last line sent to it is dropped; a later render must not pull the page back there.
     private func followPreview(_ bodyLine: Int) {
-        let line = bodyLine + MarkdownFrontmatter.bodyLineOffset(in: doc.displayText)
+        let line = bodyLine == 0 ? 0 : bodyLine + MarkdownFrontmatter.bodyLineOffset(in: doc.displayText)
         editorTop = line
         syncLine = nil
         syncTokens += 1
