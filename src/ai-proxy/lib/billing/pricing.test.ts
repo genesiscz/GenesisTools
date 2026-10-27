@@ -20,6 +20,11 @@ describe("estimateCostUsd", () => {
             expect(estimateCostUsd(model, { prompt_tokens: 100_000, completion_tokens: 100_000 })).toBeCloseTo(1.2, 10);
             expect(estimateCostUsd(model, million)).toBeCloseTo(4 + 15, 10);
         }
+        expect(estimateCostUsd("gpt-6.1-terra", { prompt_tokens: 100_000, completion_tokens: 100_000 })).toBeCloseTo(
+            0.6,
+            10
+        );
+        expect(estimateCostUsd("gpt-6.1-terra", million)).toBeCloseTo(2 + 7.5, 10);
         expect(estimateCostUsd("gpt-6-luna", { prompt_tokens: 100_000, completion_tokens: 100_000 })).toBeCloseTo(
             0.06,
             10
