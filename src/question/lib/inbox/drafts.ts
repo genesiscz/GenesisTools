@@ -27,6 +27,24 @@ export interface DraftInput {
     text?: string;
     provider?: string;
     cwd?: string;
+    /**
+     * The revision of the text the user picked on. A pick made on text the agent has since re-posted is refused
+     * (`staleRevisionError`), as the widget's own stage is.
+     */
+    expectedRevision?: number;
+}
+
+/** The refusal for a pick or dismiss made on text the agent has since re-posted, in the words a surface shows. */
+export function staleRevisionError(number: number): Error {
+    return new Error(
+        `DECISION ${number} changed: the agent posted a new text since you read it. Read it again and pick again.`
+    );
+}
+
+function checkRevision(row: DecisionRecord, number: number, expected: number | undefined): void {
+    if (expected !== undefined && expected !== (row.revision ?? 1)) {
+        throw staleRevisionError(number);
+    }
 }
 
 export interface DraftDeps {
@@ -88,6 +106,7 @@ export async function draftDecision(input: DraftInput, deps: DraftDeps) {
         throw new Error(`DECISION ${input.number} is already ${row.state}`);
     }
 
+    checkRevision(row, input.number, input.expectedRevision);
     const option = normalize(input.option);
     const draftOption = option ?? row.draftOption ?? "";
     const draft = input.text !== undefined ? input.text : (row.draft ?? "");
@@ -114,7 +133,7 @@ export async function draftDecision(input: DraftInput, deps: DraftDeps) {
 
 /** Drops a decision that no longer matters (a scratch probe) without sending anything. */
 export async function dismissDecision(
-    { session, number }: { session: string; number: number },
+    { session, number, expectedRevision }: { session: string; number: number; expectedRevision?: number },
     deps: Pick<DraftDeps, "file" | "events">
 ) {
     const rows = readDecisions(deps.file);
@@ -133,6 +152,7 @@ export async function dismissDecision(
         throw new Error(`DECISION ${number} is already ${row.state}`);
     }
 
+    checkRevision(row, number, expectedRevision);
     const [updated] = await updateDecisions(deps.file, deps.events, {
         updates: [{ id: row.id, state: "dismissed" }],
     });
@@ -285,7 +305,8 @@ export async function sendDrafts(
             text: answered.map((row) => row.number).join(", "),
             numbers: [],
             channel: "resume",
-            delivered: true,
+            // The pane never came up: nothing was typed. The answers wait, stamped with the place it resumed.
+            delivered: false,
             target: input.recordResumeTarget,
             dryRun: false,
             promoted: drafted.map((row) => row.number),

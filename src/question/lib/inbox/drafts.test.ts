@@ -89,6 +89,31 @@ describe("draftDecision", () => {
 
         await expect(draftDecision({ session: "s", number: 1, option: "c" }, deps)).rejects.toThrow("options a-b");
     });
+
+    test("a pick or a dismiss on text the agent re-posted since is refused; on the current text it lands", async () => {
+        const { file, events } = scratch();
+        const [posted] = await postDecisions(file, events, {
+            sessionId: "s",
+            decisions: [{ prompt: "Keep?", options: ["keep", "drop"] }],
+        });
+        await postDecisions(file, events, {
+            sessionId: "s",
+            decisions: [{ prompt: "Keep the cache?", options: ["keep", "drop"], supersedes: posted?.id }],
+        });
+        const deps = { file, events, block: async () => block() };
+
+        await expect(
+            draftDecision({ session: "s", number: 1, option: "a", expectedRevision: 1 }, deps)
+        ).rejects.toThrow("DECISION 1 changed");
+        await expect(dismissDecision({ session: "s", number: 1, expectedRevision: 1 }, deps)).rejects.toThrow(
+            "DECISION 1 changed"
+        );
+        expect(await draftDecision({ session: "s", number: 1, option: "a", expectedRevision: 2 }, deps)).toMatchObject({
+            state: "drafted",
+            draftOption: "a",
+            revision: 2,
+        });
+    });
 });
 
 describe("dismissDecision", () => {
@@ -335,7 +360,7 @@ describe("sendDrafts", () => {
             }
         );
 
-        expect(result).toMatchObject({ channel: "resume", delivered: true, target: "cmux · new workspace" });
+        expect(result).toMatchObject({ channel: "resume", delivered: false, target: "cmux · new workspace" });
         const [row] = readDecisions(file);
         expect(row).toMatchObject({ state: "answered", delivery: { route: "resume", target: "cmux · new workspace" } });
     });

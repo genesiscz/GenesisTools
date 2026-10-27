@@ -1,3 +1,4 @@
+import { loadHooksConfig } from "@app/agents/lib/hooks/config";
 import type { DeliverDeps } from "@app/question/lib/decisions/deliver";
 import { decisionFiles } from "@app/question/lib/decisions/read";
 import { sendAnsweredDecisions } from "@app/question/lib/decisions/send";
@@ -14,13 +15,32 @@ export interface StagedTarget {
 }
 
 export interface StagedSendResult {
-    /** One entry per session, in the order the sessions first appear in `ids`. */
-    sessions: Array<{ session: string; numbers: number[]; result?: InboxAnswerResult; error?: string }>;
+    /**
+     * One entry per session, in the order the sessions first appear in `ids`. `deliversLater`: answers no receiver
+     * took still reach the session by themselves (the decisions hook injects queued answers at its next prompt, or a
+     * session-queue entry was saved); false means only a later send delivers them.
+     */
+    sessions: Array<{
+        session: string;
+        numbers: number[];
+        result?: InboxAnswerResult;
+        error?: string;
+        deliversLater?: boolean;
+    }>;
     /** Answers a receiver took. */
     sent: number;
     /** Answers stored and waiting for the session's next prompt: no receiver took them. */
     queued: number;
     failed: number;
+}
+
+/**
+ * Whether an answer no receiver took reaches its session by itself: a saved session-queue entry is consumed by the
+ * session, and the decisions hook (`decisions.injectAnswers`) puts queued answers into its next prompt. Without
+ * either, only a later send delivers it, and the widget must not say "it waits for the next prompt".
+ */
+function deliversLater(queueId: string | undefined): boolean {
+    return queueId !== undefined || loadHooksConfig().decisions.injectAnswers === true;
 }
 
 /**
@@ -87,7 +107,12 @@ export async function sendStagedDecisions({
                 },
                 { ...files, block: waitingBlock, deliver }
             );
-            result.sessions.push({ session, numbers, result: sent });
+            result.sessions.push({
+                session,
+                numbers,
+                result: sent,
+                ...(sent.delivered ? {} : { deliversLater: deliversLater(sent.queueId) }),
+            });
             logger.info(
                 { session, numbers, delivered: sent.delivered, provider },
                 sent.delivered ? "widget send-staged: delivered" : "widget send-staged: queued for the next prompt"
@@ -144,6 +169,7 @@ export async function resendAnsweredDecisions({
                 session,
                 numbers,
                 result: { session, text: "", channel: "queued", delivered: false, detail },
+                deliversLater: true,
             });
             result.queued += rows.length;
             continue;
@@ -174,6 +200,7 @@ export async function resendAnsweredDecisions({
                     ...(sent.target ? { target: sent.target } : {}),
                     ...(sent.error ? { error: sent.error } : {}),
                 },
+                ...(delivered ? {} : { deliversLater: deliversLater(sent.queueId) }),
             });
 
             if (delivered) {
