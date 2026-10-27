@@ -743,6 +743,13 @@ describe("decision kinds, batch updates, harvest and staleness", () => {
         expect(decisionLine({ ...row, option: "a", answer: "a.ts" })).toBe("DECISION 4: a) a.ts");
         expect(decisionLine({ ...row, option: "c", answer: "C:\\work\\repo" })).toBe("DECISION 4: c) C:\\work\\repo");
         expect(decisionLine({ ...row, answer: undefined })).toBe("DECISION 4: b) build");
+        expect(deliverDecisions([{ ...row, answer: "b)" }], () => undefined).text).toBe("DECISION 4: b) build");
+        expect(decisionLine({ ...row, answer: " b) " })).toBe("DECISION 4: b) build");
+        expect(decisionLine({ ...row, answer: "b)", options: ["keep", "b) build", "path"] })).toBe(
+            "DECISION 4: b) build"
+        );
+        expect(decisionLine({ ...row, answer: "b)", options: [] })).toBe("DECISION 4: b)");
+        expect(decisionLine({ ...row, option: "ab", answer: "b)" })).toBe("DECISION 4: a) b) b)");
     });
 
     test("an option the agent lettered itself is not lettered twice", () => {
