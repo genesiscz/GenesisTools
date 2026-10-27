@@ -438,6 +438,12 @@ async function flushProcessLog($: EngineInterface): Promise<void> {
     });
 }
 
+function trackProcessLog(promise: Promise<void>): void {
+    const pending = promise.catch(() => undefined);
+    processLog.pending.add(pending);
+    void pending.then(() => processLog.pending.delete(pending));
+}
+
 async function finishProcessLog($: EngineInterface): Promise<void> {
     await Promise.all([...processLog.pending]);
     await flushProcessLog($).catch(() => undefined);
@@ -472,7 +478,7 @@ async function logProcess(
         await flushProcessLog($);
     } else if (!processLog.timer) {
         processLog.timer = $.clock.after(10_000, () => {
-            void flushProcessLog($).catch(() => undefined);
+            trackProcessLog(flushProcessLog($));
         });
     }
 }
@@ -500,9 +506,7 @@ function hostOf($: EngineInterface): Host {
                       .catch(() => ({ cwd: null, cwdSource: "unknown", requestedCwd: init?.cwd })),
         };
         const record = (outcome: { exitCode?: number; error?: string }) => {
-            const pending = logProcess($, argv, started, outcome).catch(() => undefined);
-            processLog.pending.add(pending);
-            void pending.then(() => processLog.pending.delete(pending));
+            trackProcessLog(logProcess($, argv, started, outcome));
         };
 
         try {
