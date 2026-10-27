@@ -19,7 +19,7 @@ import { toolCommand } from "@genesiscz/utils/cli/tool-command";
 import { SafeJSON } from "@genesiscz/utils/json";
 
 /** The model aliases P3 names; any catalog id works too. */
-export const SESSION_MODEL_ALIASES = ["sol", "sol6", "astra", "luna"] as const;
+export const SESSION_MODEL_ALIASES = ["sol", "sol6", "astra", "terra", "luna"] as const;
 export const DEFAULT_SESSION_MODEL = "sol";
 /** switcheroo's `ccx` runs its main loop at high unless asked, and the generated subagents run at high. */
 export const DEFAULT_SESSION_EFFORT = "high";

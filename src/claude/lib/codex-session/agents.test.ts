@@ -18,8 +18,9 @@ describe("sessionAgents", () => {
     it("lists the Codex agents with their own windows, the codex-worker, and no Claude agent without a Claude account", () => {
         const agents = sessionAgents({ codexModel });
 
-        expect(Object.keys(agents)).toEqual(["sol", "sol-xhigh", "sol6", "astra", "luna", "codex-worker"]);
+        expect(Object.keys(agents)).toEqual(["sol", "sol-xhigh", "sol6", "astra", "terra", "luna", "codex-worker"]);
         expect(agents.sol.model).toBe("codex/gpt-6.1-sol:high");
+        expect(agents.terra.model).toBe("codex/gpt-6.1-terra:high");
         expect(agents["sol-xhigh"].model).toBe("codex/gpt-6.1-sol:xhigh");
         expect(agents.sol.autoCompactWindow).toBe(codexModel("gpt-6.1-sol")?.usableTokens);
         // A 272K model gets its own window, not the main loop's.

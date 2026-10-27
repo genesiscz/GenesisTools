@@ -45,8 +45,10 @@ describe("model and effort", () => {
 
         expect(isError(sol) ? sol.error : sol.slug).toBe("gpt-6.1-sol");
         expect(isError(astra) ? astra.error : astra.slug).toBe("gpt-6-astra");
+        const terra = resolveSessionModel("terra", codexModel);
+        expect(isError(terra) ? terra.error : terra.slug).toBe("gpt-6.1-terra");
         expect(resolveSessionModel("gpt-9-nope", codexModel)).toEqual({
-            error: expect.stringContaining("sol, sol6, astra, luna"),
+            error: expect.stringContaining("sol, sol6, astra, terra, luna"),
         });
     });
 
