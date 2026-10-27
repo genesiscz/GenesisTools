@@ -718,8 +718,9 @@ final class WidgetInteractionTests: XCTestCase {
         XCTAssertEqual(value.peekItem, waiting, "an older hub cannot prove settlement")
         begin()
         value.updateInbox(summary(["waiting"], complete: true))
+        XCTAssertEqual(value.peekItem, waiting, "the pending decision omitted by the capped overview is promoted")
         value.dismissPeek()
-        XCTAssertEqual(value.peekItem, waiting, "a pending decision omitted by the capped overview survives")
+        XCTAssertNil(value.peekItem, "explicit dismissal closes the promoted alert")
         begin()
         value.updateInbox(summary([], complete: true))
         value.dismissPeek()
@@ -731,6 +732,86 @@ final class WidgetInteractionTests: XCTestCase {
         let newWire = #"{"unread":0,"needsAnswer":0,"complete":true,"truncated":false,"sessions":[],"pendingDecisionIDs":["waiting"]}"#
         let new = try JSONDecoder().decode(WidgetInboxSummary.self, from: Data(newWire.utf8))
         XCTAssertEqual(new.pendingDecisionIDs, ["waiting"])
+    }
+
+    @MainActor
+    func testListedDecisionUsesOnlyNewerCompleteAuthoritativeSnapshots() {
+        let defaults = UserDefaults(suiteName: "widget-tests." + UUID().uuidString)!
+        let value = model(defaults: defaults)
+        defer { value.stop() }
+        let side = WidgetSurfaceID(edge: .right)
+        let first = WidgetInboxItem(id: "decision:first", sourceId: "first", kind: "decision", key: "k",
+                                    at: 1, needsAnswer: true)
+        let waiting = WidgetInboxItem(id: "decision:waiting", sourceId: "waiting", kind: "decision", key: "k",
+                                      at: 2, needsAnswer: true)
+        func summary(_ ids: [String]?, complete: Bool) -> WidgetInboxSummary {
+            var result = WidgetInboxSummary(unread: 0, needsAnswer: 0, complete: complete, truncated: true, sessions: [])
+            result.pendingDecisionIDs = ids
+            return result
+        }
+        func begin() {
+            value.collapse()
+            value.showPeek(first, on: side, seconds: 0, many: .list)
+            value.showPeek(waiting, on: side, seconds: 0, many: .list)
+        }
+        value.updateInbox(summary([], complete: true))
+        begin()
+        value.showWaitingPeek(waiting)
+        XCTAssertEqual(value.peekItem, waiting, "an older snapshot cannot settle the alert")
+        begin()
+        value.updateInbox(summary([], complete: false))
+        value.showWaitingPeek(waiting)
+        XCTAssertEqual(value.peekItem, waiting, "an incomplete snapshot cannot settle the alert")
+        begin()
+        value.updateInbox(summary(nil, complete: true))
+        value.showWaitingPeek(waiting)
+        XCTAssertEqual(value.peekItem, waiting, "an older hub cannot prove settlement")
+        begin()
+        value.updateInbox(summary(["waiting"], complete: true))
+        value.showWaitingPeek(waiting)
+        XCTAssertEqual(value.peekItem, waiting, "a pending alert can still be selected")
+        begin()
+        value.updateInbox(summary(["first"], complete: true))
+        value.showWaitingPeek(waiting)
+        XCTAssertEqual(value.peekItem, first, "a settled alert is not shown again")
+        XCTAssertTrue(value.peekQueue.isEmpty, "the settled row is removed")
+        begin()
+        value.updateInbox(summary(["waiting"], complete: true))
+        XCTAssertEqual(value.peekItem, waiting, "a settled displayed alert promotes the pending listed alert")
+        XCTAssertTrue(value.peekQueue.isEmpty, "the settled displayed alert does not return to the list")
+        begin()
+        value.updateInbox(summary([], complete: true))
+        XCTAssertNil(value.peekItem, "the popup closes when both decisions settle")
+    }
+
+    @MainActor
+    func testSettledSnapshotKeepsInFlightSendAndDisplayedOutcome() {
+        for snapshotFirst in [true, false] {
+            for delivered in [true, false] {
+                let defaults = UserDefaults(suiteName: "widget-tests." + UUID().uuidString)!
+                let value = model(defaults: defaults)
+                defer { value.stop() }
+                let item = WidgetInboxItem(id: "decision:sending", sourceId: "sending", kind: "decision", key: "k",
+                                           at: 1, needsAnswer: true)
+                value.showPeek(item, on: WidgetSurfaceID(edge: .right), seconds: 0)
+                value.sendingDecisionIDs.insert(item.sourceId)
+                var summary = WidgetInboxSummary(unread: 0, needsAnswer: 0, complete: true, truncated: false, sessions: [])
+                summary.pendingDecisionIDs = []
+                if snapshotFirst {
+                    value.updateInbox(summary)
+                    XCTAssertEqual(value.peekItem?.sourceId, item.sourceId, "the in-flight send retains its popup")
+                    XCTAssertNil(value.peekOutcome)
+                }
+                value.sendingDecisionIDs.remove(item.sourceId)
+                value.showPeekOutcome(WidgetPeekOutcome(text: "Result", tone: delivered ? .success : .warning,
+                                                       sendAgain: delivered ? [] : [item]),
+                                      sent: [item.sourceId], delivered: delivered)
+                value.updateInbox(summary)
+                XCTAssertEqual(value.peekItem?.sourceId, item.sourceId, "a displayed result survives settlement")
+                XCTAssertEqual(value.peekOutcome?.tone, delivered ? .success : .warning)
+                XCTAssertEqual(value.peekOutcome?.sendAgain.map(\.sourceId), delivered ? [] : [item.sourceId])
+            }
+        }
     }
 
     @MainActor
