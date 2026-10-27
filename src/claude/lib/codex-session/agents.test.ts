@@ -5,6 +5,7 @@ import { join } from "node:path";
 import {
     agentsArgs,
     claudeCodexConfigRoot,
+    leadPrompt,
     sessionAgents,
     writeAgentFiles,
 } from "@app/claude/lib/codex-session/agents";
@@ -13,6 +14,18 @@ import { SafeJSON } from "@genesiscz/utils/json";
 
 const catalog = mergeCodexModelRecords({ cache: [] });
 const codexModel = (slug: string): CodexModelInfo | undefined => catalog.get(slug);
+
+describe("leadPrompt", () => {
+    it("names the Codex subagents with their models and sends Codex work to them, not to tools codex spawn", () => {
+        const text = leadPrompt(sessionAgents({ codexModel }));
+
+        expect(text).toContain("sol (gpt-6.1-sol, effort high)");
+        expect(text).toContain("luna (gpt-6-luna, effort high)");
+        expect(text).not.toContain("codex-worker (");
+        expect(text).toContain("with the Agent tool");
+        expect(text).toContain("codex spawn");
+    });
+});
 
 describe("sessionAgents", () => {
     it("lists the Codex agents with their own windows, the codex-worker, and no Claude agent without a Claude account", () => {

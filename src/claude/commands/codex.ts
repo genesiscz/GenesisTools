@@ -28,6 +28,7 @@ import type { AiProxyConfig } from "@app/ai-proxy/lib/types";
 import {
     agentsArgs,
     claudeCodexConfigRoot,
+    leadPrompt,
     sessionAgents,
     writeAgentFiles,
 } from "@app/claude/lib/codex-session/agents";
@@ -404,6 +405,7 @@ export async function runCodexSession(
             CLAUDE_CODE_AUTO_COMPACT_WINDOW: String(model.info.window),
             CLAUDE_AUTOCOMPACT_PCT_OVERRIDE: String(compact.percent),
         },
+        leadPrompt: leadPrompt(agents),
         passthrough,
     });
 

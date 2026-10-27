@@ -194,6 +194,7 @@ describe("environment and arguments", () => {
                 effort: "high",
                 agents,
                 settingsEnv,
+                leadPrompt: "lead note",
                 passthrough: ["-p", "hi"],
             })
         ).toEqual([
@@ -205,6 +206,8 @@ describe("environment and arguments", () => {
             "{}",
             "--settings",
             '{"env":{"CLAUDE_CODE_AUTO_COMPACT_WINDOW":"475000"}}',
+            "--append-system-prompt",
+            "lead note",
             "-p",
             "hi",
         ]);
@@ -215,9 +218,10 @@ describe("environment and arguments", () => {
                 effort: "high",
                 agents: [],
                 settingsEnv,
-                passthrough: ["--effort", "low", "--settings", "{}"],
+                leadPrompt: "lead note",
+                passthrough: ["--effort", "low", "--settings", "{}", "--append-system-prompt", "mine"],
             })
-        ).toEqual(["--resume", "s1", "--effort", "low", "--settings", "{}"]);
+        ).toEqual(["--resume", "s1", "--effort", "low", "--settings", "{}", "--append-system-prompt", "mine"]);
     });
 });
 

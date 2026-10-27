@@ -200,15 +200,19 @@ export function sessionArgs(input: {
     effort: string;
     agents: string[];
     settingsEnv: Record<string, string>;
+    /** Appended to the lead's system prompt, unless the user passes their own `--append-system-prompt`. */
+    leadPrompt: string;
     passthrough: string[];
 }): string[] {
     const ownSettings = input.passthrough.some((arg) => arg === "--settings" || arg.startsWith("--settings="));
+    const ownPrompt = input.passthrough.some((arg) => arg.startsWith("--append-system-prompt"));
 
     return [
         ...(input.resume ? ["--resume", input.sessionId] : ["--session-id", input.sessionId]),
         ...(passthroughSets(input.passthrough, "--effort") ? [] : ["--effort", input.effort]),
         ...input.agents,
         ...(ownSettings ? [] : ["--settings", SafeJSON.stringify({ env: input.settingsEnv })]),
+        ...(ownPrompt ? [] : ["--append-system-prompt", input.leadPrompt]),
         ...input.passthrough,
     ];
 }
