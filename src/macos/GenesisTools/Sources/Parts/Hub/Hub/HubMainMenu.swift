@@ -193,17 +193,17 @@ struct HubMenuCommand {
 enum HubMenuCommands {
     static let file: [HubMenuCommand] = [
         HubMenuCommand(title: "New Agent Session", id: "hub.file.newSession", run: { hub in
-            if let path = hub.paletteContext.currentPath { hub.runPalette(.newSession(path), toggleGlass: toggleGlass) }
-        }, enabled: { $0.paletteContext.currentPath != nil }),
+            if let path = hub.paletteCurrentPath { hub.runPalette(.newSession(path), toggleGlass: toggleGlass) }
+        }, enabled: { $0.paletteCurrentPath != nil }),
         HubMenuCommand(title: "New Handoff…", id: "hub.file.handoff", run: { overlay($0, "--handoff") },
                        enabled: { $0.selectedID != nil }),
         HubMenuCommand(title: "Prompt Library…", id: HubKeymap.promptLibrary, run: { overlay($0, "--prompts") }),
         HubMenuCommand(title: "Open Project in Cursor", id: "hub.file.cursor", run: { hub in
-            if let path = hub.paletteContext.currentPath { hub.runPalette(.openCursor(path), toggleGlass: toggleGlass) }
-        }, enabled: { $0.paletteContext.currentPath != nil }, separated: true),
+            if let path = hub.paletteCurrentPath { hub.runPalette(.openCursor(path), toggleGlass: toggleGlass) }
+        }, enabled: { $0.paletteCurrentPath != nil }, separated: true),
         HubMenuCommand(title: "Open Project in cmux", id: "hub.file.terminal", run: { hub in
-            if let path = hub.paletteContext.currentPath { hub.runPalette(.openTerminal(path), toggleGlass: toggleGlass) }
-        }, enabled: { $0.paletteContext.currentPath != nil }),
+            if let path = hub.paletteCurrentPath { hub.runPalette(.openTerminal(path), toggleGlass: toggleGlass) }
+        }, enabled: { $0.paletteCurrentPath != nil }),
     ]
 
     static let find: [HubMenuCommand] = [
