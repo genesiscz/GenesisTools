@@ -100,8 +100,12 @@ struct HubLocalCommits: Equatable {
     }
 
     /// `ends` are the link's normalized shas, `head` the PR's pushed head and `pushed` the shas the forge lists for it.
-    /// Runs git, so never on the main thread.
-    nonisolated static func resolve(ends: [String], repo: String, head: String, pushed: Set<String> = []) -> Result<HubLocalCommits, Miss> {
+    /// `bases` are the PR's base candidates, best first (the recorded base commit, the fetched base, `origin/<base>`):
+    /// the first that names a commit here decides membership by ancestry, because the forge's list can stop early
+    /// (gh listed 100 commits of a 252-commit PR, and GitHub's REST API lists 250 at most). Runs git, so never on the
+    /// main thread.
+    nonisolated static func resolve(ends: [String], repo: String, head: String, bases: [String] = [],
+                                    pushed: Set<String> = []) -> Result<HubLocalCommits, Miss> {
         var full: [String] = []
         for end in ends {
             guard let sha = git(repo, ["rev-parse", "--verify", "--quiet", end + "^{commit}"])?
@@ -114,8 +118,16 @@ struct HubLocalCommits: Equatable {
             guard isAncestor(last, of: first, repo: repo) else { return .failure(.unrelated) }
             swap(&first, &last)
         }
-        guard isAncestor(head, of: last, repo: repo),
-              pushed.contains(first) || isAncestor(head, of: first, repo: repo) else {
+        // One of the PR's own commits, listed or not: the head has it and the base does not.
+        let base = bases.lazy.compactMap { candidate in
+            git(repo, ["rev-parse", "--verify", "--quiet", candidate + "^{commit}"])?.trimmingCharacters(in: .whitespacesAndNewlines)
+        }.first { !$0.isEmpty }
+        let inPR = { (sha: String) -> Bool in
+            guard let base else { return false }
+            return isAncestor(sha, of: head, repo: repo) && !isAncestor(sha, of: base, repo: repo)
+        }
+        guard inPR(last) || isAncestor(head, of: last, repo: repo),
+              pushed.contains(first) || inPR(first) || isAncestor(head, of: first, repo: repo) else {
             return .failure(.offBranch)
         }
         let span = Int(git(repo, ["rev-list", "--count", "--ancestry-path", first + ".." + last])?
@@ -128,6 +140,55 @@ struct HubLocalCommits: Equatable {
         let title = git(repo, ["log", "-1", "--format=%s", last])?.trimmingCharacters(in: .whitespacesAndNewlines) ?? ""
         return .success(HubLocalCommits(first: first, last: full.count > 1 ? last : nil, count: span + 1,
                                         unpushed: unpushed, title: title))
+    }
+
+    /// What a link still shows when the PR no longer holds its commits: the branch was rewritten (a rebase, a reword,
+    /// a regroup, a force-push), and the old commits stay in the checkout until git collects them.
+    enum Rewritten: Equatable {
+        /// The PR's own commits with the same subject (and author): the link's commits in their current form.
+        case successors(first: HubPRDetail.Commit, last: HubPRDetail.Commit?)
+        /// No such commit: the link's own commits from the checkout, one commit, or a range from `base` (the parent of
+        /// its older end) to its newer end.
+        case own(first: String, last: String?, title: String, base: String?)
+    }
+
+    /// The commit of `commits` with this subject: the only one, else the only one by this author; nil when none or
+    /// several match. GitLab names a commit's author by name, GitHub by login when it can, so a single subject match
+    /// wins whatever its author says.
+    nonisolated static func successor(subject: String, author: String, in commits: [HubPRDetail.Commit]) -> HubPRDetail.Commit? {
+        let same = commits.filter { $0.title == subject }
+        if same.count == 1 { return same[0] }
+        let byAuthor = same.filter { candidate in
+            [candidate.author, candidate.authorLogin].contains { $0?.caseInsensitiveCompare(author) == .orderedSame }
+        }
+        return byAuthor.count == 1 ? byAuthor[0] : nil
+    }
+
+    /// The `ends` of a link the PR does not hold, as `Rewritten`: their successors in `commits` when every end has one,
+    /// else their own diff from the checkout at `repo`. Nil when an end is not in the checkout, or a range's ends are on
+    /// two lines (no diff runs between them). Runs git, so never on the main thread.
+    nonisolated static func rewritten(ends: [String], repo: String, in commits: [HubPRDetail.Commit]) -> Rewritten? {
+        var found: [(sha: String, subject: String, author: String)] = []
+        for end in ends {
+            guard let line = git(repo, ["show", "-s", "--format=%H%x00%s%x00%an", end + "^{commit}", "--"])?
+                .trimmingCharacters(in: .whitespacesAndNewlines) else { return nil }
+            let parts = line.components(separatedBy: "\0")
+            guard parts.count == 3 else { return nil }
+            found.append((parts[0], parts[1], parts[2]))
+        }
+        guard let one = found.first else { return nil }
+        let successors = found.map { successor(subject: $0.subject, author: $0.author, in: commits) }
+        if successors.allSatisfy({ $0 != nil }), let first = successors[0] {
+            return .successors(first: first, last: successors.count > 1 ? successors[1] : nil)
+        }
+        guard found.count > 1 else {
+            return .own(first: one.sha, last: nil, title: one.subject, base: nil)
+        }
+        let other = found[1]
+        let ordered = one.sha == other.sha || isAncestor(one.sha, of: other.sha, repo: repo) ? (one, other)
+            : isAncestor(other.sha, of: one.sha, repo: repo) ? (other, one) : nil
+        guard let (older, newer) = ordered, let base = HubCommitLookup.parent(of: older.sha, in: repo) else { return nil }
+        return .own(first: older.sha, last: newer.sha, title: newer.subject, base: base)
     }
 
     nonisolated private static func isAncestor(_ older: String, of newer: String, repo: String) -> Bool {

@@ -93,6 +93,11 @@ export interface PrDetail extends PrSummary {
     mergeStatus: string | null;
     /** The commit that landed a merged PR on its base (a squash or merge commit); null while it is open. */
     mergedSha: string | null;
+    /**
+     * How many commits the host counts for the PR, null when it did not say. More than `commits.length` when the
+     * host's list stops early: GitHub lists at most 250 commits of a PR.
+     */
+    commitsTotal: number | null;
     checks: PrCheck[];
     webUrls: { pr: string; files: string; commits: string; checks: string };
 }
@@ -115,6 +120,8 @@ const PR_QUERY_TIMEOUT_MS = 30_000;
 const GLAB_MAX_PER_PAGE = 100;
 /** GraphQL's page ceiling for one connection. */
 const GH_MAX_PAGE = 100;
+/** `gh pr view --json commits` lists a PR's first 100 commits and stops there (measured on a 252-commit PR). */
+const GH_VIEW_COMMIT_CAP = 100;
 /** How many GraphQL pages one date range may walk before it stops with a warning. */
 const GH_MAX_UPDATED_PAGES = 10;
 
@@ -690,6 +697,8 @@ export function parseGhPrView(json: string): PrDetail {
         mergeable: ghMergeable(str(row.mergeable)),
         mergeStatus: str(row.mergeStateStatus),
         mergedSha: isRecord(row.mergeCommit) ? str(row.mergeCommit.oid) : null,
+        // gh stops at the first 100 commits and gives no count: `viewPr` asks the REST API when the list is full.
+        commitsTotal: records(row.commits).length < GH_VIEW_COMMIT_CAP ? records(row.commits).length : null,
         checks: records(row.statusCheckRollup).map((check) => {
             const name = str(check.name) ?? str(check.context) ?? "check";
             const workflow = str(check.workflowName);
@@ -703,8 +712,84 @@ export function parseGhPrView(json: string): PrDetail {
     };
 }
 
+/** The REST API's commit rows (`GET /pulls/{n}/commits`, every page back to back) as a PR's commits, oldest first. */
+export function parseGhRestCommits(json: string): PrCommit[] {
+    return records(parseJsonPages(json, "gh commits")).map((row) => {
+        const commit = isRecord(row.commit) ? row.commit : {};
+        const gitAuthor = isRecord(commit.author) ? commit.author : {};
+        const committer = isRecord(commit.committer) ? commit.committer : {};
+        const [title = "", ...rest] = (str(commit.message) ?? "").split("\n");
+        const linked = login(row.author);
+        return {
+            sha: str(row.sha) ?? "",
+            title,
+            author: linked ?? str(gitAuthor.name),
+            authorLogin: linked,
+            date: str(committer.date) ?? str(gitAuthor.date),
+            body: rest.join("\n").trim() || null,
+        };
+    });
+}
+
 function ghRepoArg(project: ProjectRef): string {
     return `${project.host}/${project.path}`;
+}
+
+function ghApi(project: ProjectRef, endpoint: string, ...flags: string[]): string[] {
+    return ["gh", "api", "--hostname", project.host, endpoint, ...flags];
+}
+
+/**
+ * A PR whose gh list is full (100): every commit the REST API lists (it stops at 250) and the host's count, so a
+ * commit after the 100th still belongs to the PR. A failed read keeps gh's list and says so in `warnings`.
+ */
+async function completeGhCommits({
+    pr,
+    project,
+    number,
+    cwd,
+    runner,
+    warnings,
+}: {
+    pr: PrDetail;
+    project: ProjectRef;
+    number: number;
+    cwd: string;
+    runner: CommandRunner;
+    warnings: string[];
+}): Promise<PrDetail> {
+    if (pr.commits.length < GH_VIEW_COMMIT_CAP) {
+        return pr;
+    }
+
+    const endpoint = `repos/${project.path}/pulls/${number}`;
+    const [listed, counted] = await Promise.all([
+        run({ cmd: ghApi(project, `${endpoint}/commits?per_page=100`, "--paginate"), cwd, runner }),
+        run({ cmd: ghApi(project, endpoint, "--jq", ".commits"), cwd, runner }),
+    ]);
+    let commits = pr.commits;
+
+    if (listed.error) {
+        warnings.push(`commits: ${listed.error}`);
+    } else {
+        const all = parseGhRestCommits(listed.stdout);
+
+        if (all.length > commits.length) {
+            commits = all;
+        }
+    }
+
+    const total = counted.error ? null : Number.parseInt(counted.stdout.trim(), 10);
+
+    if (counted.error) {
+        warnings.push(`commit count: ${counted.error}`);
+    }
+
+    log.debug(
+        { project: project.path, number, listed: commits.length, total },
+        "pr view: gh listed 100 commits, read the rest from the REST API"
+    );
+    return { ...pr, commits, commitsTotal: total !== null && Number.isFinite(total) ? total : null };
 }
 
 // ---------------------------------------------------------------------------
@@ -875,6 +960,8 @@ export function parseGlabMrView({
         mergeable: glabMergeable(row),
         mergeStatus: str(row.detailed_merge_status) ?? str(row.merge_status),
         mergedSha: str(row.squash_commit_sha) ?? str(row.merge_commit_sha),
+        // Every page is read, so the list is the count; without the list the count is unknown.
+        commitsTotal: commits ? parseJsonPages(commits, "glab commits").length : null,
         checks: pipelineRows.map((pipeline) => ({
             name: `pipeline ${num(pipeline.id) ?? "?"}${str(pipeline.ref) ? ` (${str(pipeline.ref)})` : ""}`,
             status: glabPipelineStatus(pipeline.status),
@@ -1290,9 +1377,19 @@ export async function viewPr({
                 runner,
             });
 
-            return res.error
-                ? { pr: null, error: res.error, warnings }
-                : { pr: parseGhPrView(res.stdout), error: null, warnings };
+            if (res.error) {
+                return { pr: null, error: res.error, warnings };
+            }
+
+            const pr = await completeGhCommits({
+                pr: parseGhPrView(res.stdout),
+                project,
+                number,
+                cwd,
+                runner,
+                warnings,
+            });
+            return { pr, error: null, warnings };
         }
 
         const base = `${glabProject(project)}/merge_requests/${number}`;
