@@ -1573,6 +1573,10 @@ public final class WidgetModel: ObservableObject {
     public var stagedItems: [WidgetInboxItem] { stagedRows.filter { !heldDecisionIDs.contains($0.sourceId) } }
     /// Picks staged or cleared here that the next snapshot has not shown yet, by decision id ("" is a cleared pick).
     @Published var pendingStage: [String: String] = [:]
+    /// Identifies the newest local mutation, so an older completion cannot erase it.
+    var pendingStageVersions: [String: UUID] = [:]
+    /// Keeps the version of an in-flight stage until its completion, even if a snapshot confirms it first.
+    var pendingStagesInFlight: Set<UUID> = []
     /// When each `pendingStage` entry was asked for (epoch ms): `reconcileStaged` drops it once its row changed after
     /// that, whatever the row now holds, or after `pendingStageLifetime`, so a pick another surface replaced or a
     /// decision sent elsewhere stops showing the old pick (it stayed until the widget restarted).
