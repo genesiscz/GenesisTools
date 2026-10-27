@@ -59,6 +59,18 @@ let ownRoot: string | undefined;
 let turnedOn: GitBandSwitch = null;
 
 const GH_TTL_MS = 2 * 60_000;
+const GH_TTL_S = String(GH_TTL_MS / 1000);
+
+/** The `checks` array of a `tools github pr --include checks` answer, as `gh pr checks --json` prints it. */
+function checksText(stdout: string): string {
+    try {
+        const answer: unknown = JSON.parse(stdout);
+
+        return isRecord(answer) && Array.isArray(answer.checks) ? JSON.stringify(answer.checks) : "";
+    } catch {
+        return "";
+    }
+}
 const EVERY_MS = 3 * 60_000;
 /** The earlier branches of a checkout whose PRs a row looks up, the last first. */
 const EARLIER_PRS = 3;
@@ -220,21 +232,20 @@ async function prOf(
         return held.pr ? { ...held.pr, tracked } : null;
     }
 
-    const argv = [
-        "gh",
-        "pr",
-        "view",
-        ...(which ? [which] : []),
-        "--json",
-        "number,title,url,state,isDraft,statusCheckRollup",
-    ];
-    // Every session that shows this checkout asks the same, so one answer serves them all for the TTL.
+    // With the GenesisTools CLI, `tools github pr --include` answers from a cache every tool on the Mac shares;
+    // without it, gh. Either way the plugin's own shared file serves every session for the TTL without a process.
+    const viaTools = (await genesisProbe(host)).tools && (which || ask.branch);
+    const fields = "number,title,url,state,isDraft,statusCheckRollup";
+    const argv = viaTools
+        ? ["tools", "github", "pr", which || String(ask.branch), "--include", fields, "--max-cache-age", GH_TTL_S]
+        : ["gh", "pr", "view", ...(which ? [which] : []), "--json", fields];
     const viewed = await sharedRun(host, { argv, cwd: root, ttlMs: GH_TTL_MS, timeoutMs: 15_000 });
     const text = viewed?.exitCode === 0 ? viewed.stdout : undefined;
     let pr: BandPr | null = null;
 
     try {
-        const parsed: unknown = text ? JSON.parse(text) : undefined;
+        const answer: unknown = text ? JSON.parse(text) : undefined;
+        const parsed: unknown = viaTools && isRecord(answer) ? answer.pr : answer;
 
         if (isRecord(parsed) && typeof parsed.number === "number") {
             pr = {
@@ -258,12 +269,14 @@ async function prOf(
     // and counts a re-run once. It exits 1 with a failed check and 8 with a pending one, so its exit code says nothing.
     if (pr && (pr.failed > 0 || pr.pending > 0)) {
         const done = await sharedRun(host, {
-            argv: ["gh", "pr", "checks", String(pr.number), "--json", "name,description,link,bucket"],
+            argv: viaTools
+                ? ["tools", "github", "pr", String(pr.number), "--include", "checks", "--max-cache-age", GH_TTL_S]
+                : ["gh", "pr", "checks", String(pr.number), "--json", "name,description,link,bucket"],
             cwd: root,
             ttlMs: GH_TTL_MS,
             timeoutMs: 15_000,
         });
-        const checks = done ? prChecksOf(done.stdout) : undefined;
+        const checks = done ? prChecksOf(viaTools ? checksText(done.stdout) : done.stdout) : undefined;
 
         if (checks) {
             pr = { ...pr, ...countChecks(checks), checks };
@@ -384,8 +397,27 @@ async function goneRow(host: Host, root: string, touch: Touch): Promise<GitBand 
  * One checkout's row: undefined when git cannot read it this time (the last row stays), null when its folder is gone
  * and there is nothing left to show.
  */
-async function readRow(host: Host, root: string, why: GitBand["why"]): Promise<GitBand | null | undefined> {
-    const status = await run(host, ["git", "status", "--porcelain", "--branch"], root);
+/**
+ * The git answers of a timer's refresh are shared by every session that shows the checkout for this long; a refresh
+ * after this session's own tool call or a press asks git and shares its answer. A shared hit starts no process: on
+ * 2026-10-27, 26 sessions ran 3047 `git status` and 2420 `git diff` in two hours, mostly for the same checkouts, and a
+ * `tools git status` would cost a Bun start (0.2-0.4 s on that Mac) for the 0.15-0.4 s git itself takes.
+ */
+const SHARED_GIT_MS = 30_000;
+
+async function gitText(host: Host, argv: string[], root: string, shared: boolean): Promise<string | undefined> {
+    const done = await sharedRun(host, { argv, cwd: root, ttlMs: shared ? SHARED_GIT_MS : 0, timeoutMs: 15_000 });
+
+    return done?.exitCode === 0 ? done.stdout : undefined;
+}
+
+async function readRow(
+    host: Host,
+    root: string,
+    why: GitBand["why"],
+    shared: boolean
+): Promise<GitBand | null | undefined> {
+    const status = await gitText(host, ["git", "status", "--porcelain", "--branch"], root, shared);
     const earlier = (await settingsOf(host)).git.earlier === "show";
     const touch = earlier ? (await sessionCheckouts(host)).find((held) => held.root === root) : undefined;
 
@@ -397,7 +429,7 @@ async function readRow(host: Host, root: string, why: GitBand["why"]): Promise<G
         return touch ? goneRow(host, root, touch) : null;
     }
 
-    const numstat = parseNumstat((await run(host, ["git", "diff", "--numstat", "HEAD"], root)) ?? "");
+    const numstat = parseNumstat((await gitText(host, ["git", "diff", "--numstat", "HEAD"], root, shared)) ?? "");
     const state = parseStatus(status);
     const prs = await rowPrs(host, { cwd: root, root, which: "", branch: state.branch, touch });
     const { repo } = await headOf(host, root);
@@ -408,7 +440,8 @@ async function readRow(host: Host, root: string, why: GitBand["why"]): Promise<G
 async function refreshNow(host: Host, why: string): Promise<void> {
     const started = Date.now();
     const roots = await bandRoots(host);
-    const read = await Promise.all(roots.map(({ root, why }) => readRow(host, root, why)));
+    const shared = why === "timer" || why === "start";
+    const read = await Promise.all(roots.map((at) => readRow(host, at.root, at.why, shared)));
     // A checkout git could not read this time keeps its last row; one whose folder is gone with nothing to show goes.
     const next = roots
         .map(({ root }, index) => {

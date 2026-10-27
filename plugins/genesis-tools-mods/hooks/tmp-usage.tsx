@@ -9,6 +9,7 @@
 import type { ElementTable, RenderElement } from "claude-code";
 import type { SessionWorktree, TmpReading, TmpUsage } from "../types";
 import { sessionDirOf } from "./agents-band";
+import { genesisProbe } from "./genesis";
 import { liveAgo } from "./live";
 import { bareDescription } from "./model-label";
 import { type Feature, type Host, isRecord, logMod, paceAfter, settingsOf } from "./shared";
@@ -31,6 +32,22 @@ async function folderKb(host: Host, path: string): Promise<number | null> {
     return (await host.exists(path)) ? kbOf(host, ["du", "-sk", path], 0) : 0;
 }
 
+/** `tools du size <path> --max-cache-age <s>`: the size another caller measured within the age, or a new walk. */
+async function sharedKb(host: Host, path: string, maxAgeS: number): Promise<number | null> {
+    const done = await host
+        .run(["tools", "du", "size", path, "--max-cache-age", String(maxAgeS)], { timeoutMs: 120_000 })
+        .catch(() => undefined);
+
+    try {
+        const sizes: unknown = done?.exitCode === 0 ? JSON.parse(done.stdout) : undefined;
+        const kb = isRecord(sizes) ? sizes[path] : undefined;
+
+        return typeof kb === "number" ? kb : null;
+    } catch {
+        return null;
+    }
+}
+
 /** A worktree's last size, the git status it was measured at, and when `du` may walk it again. */
 const worktreeKb = new Map<string, { kb: number | null; status: string; nextAt: number }>();
 const WORKTREE_EVERY_MS = 30 * 60_000;
@@ -48,7 +65,9 @@ async function worktreeSize(host: Host, path: string, status: string): Promise<n
         return held.kb;
     }
 
-    const kb = await folderKb(host, path);
+    // `tools du size` shares one answer with every caller on the Mac; a changed status asks for a fresh walk.
+    const maxAge = held && held.status !== status ? 0 : WORKTREE_EVERY_MS / 1000;
+    const kb = (await genesisProbe(host)).tools ? await sharedKb(host, path, maxAge) : await folderKb(host, path);
     worktreeKb.set(path, { kb, status, nextAt: paceAfter(WORKTREE_EVERY_MS, startedAt) });
 
     return kb;
