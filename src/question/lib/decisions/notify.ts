@@ -1,6 +1,7 @@
 import { logger } from "@genesiscz/utils/logger";
 import { dispatchNotification } from "@genesiscz/utils/notifications";
 import { hubItemClickCommand } from "../hub-link";
+import { decisionNotificationId } from "./banners";
 import { type DecisionRecord, kindOf } from "./store";
 
 const log = logger.child({ component: "question:decision-notify" });
@@ -24,11 +25,6 @@ export function needsHuman(row: DecisionRecord): boolean {
     }
 
     return target === "human";
-}
-
-/** Stable per first row, so a later retraction can find the banner. `isSafeNotificationId` accepts it. */
-export function decisionNotificationId(row: Pick<DecisionRecord, "id">): string {
-    return `qa-decision-${row.id}`;
 }
 
 function label(row: DecisionRecord): string {

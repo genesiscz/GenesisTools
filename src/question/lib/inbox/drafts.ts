@@ -10,6 +10,7 @@ import {
     type PromptReceipt,
     readDecisions,
     recordDelivery,
+    staleRevisionError,
     updateDecisions,
 } from "../decisions/store";
 
@@ -33,13 +34,6 @@ export interface DraftInput {
      * (`staleRevisionError`), as the widget's own stage is.
      */
     expectedRevision?: number;
-}
-
-/** The refusal for a pick or dismiss made on text the agent has since re-posted, in the words a surface shows. */
-export function staleRevisionError(number: number): Error {
-    return new Error(
-        `DECISION ${number} changed: the agent posted a new text since you read it. Read it again and pick again.`
-    );
 }
 
 function checkRevision(row: DecisionRecord, number: number, expected: number | undefined): void {

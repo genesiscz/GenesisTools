@@ -18,6 +18,7 @@ import { atomicWriteFileSync } from "@genesiscz/utils/storage/atomic-file";
 import { withFileLock } from "@genesiscz/utils/storage/file-lock";
 import { isTestProcess } from "@genesiscz/utils/test-process";
 import type { z } from "zod";
+import { retractDecisionBanners } from "./banners";
 import {
     type ANSWERED_VIA,
     type DECISION_KINDS,
@@ -503,8 +504,19 @@ export async function postDecisions(
                     sessionId,
                     revised,
                 });
+                // The staged pick was made on the old text, so it goes with the old version; say so on the row.
+                const pick = [...(row.draftOption ?? "")].map((letter) => `${letter})`).join(" ");
+                const dropped = [pick, row.draft?.trim() ? "note" : ""].filter(Boolean).join(" and ");
                 const next: DecisionRecord = {
                     ...withoutVersioned(row),
+                    ...(dropped
+                        ? {
+                              comments: [
+                                  ...(row.comments ?? []),
+                                  `The agent posted a new text (revision ${(row.revision ?? 1) + 1}), so the staged ${dropped} on the earlier text was cleared; it is kept in that version. Pick again.`,
+                              ],
+                          }
+                        : {}),
                     ...content,
                     ...context,
                     // The provider is half of the item's session identity, which a revision keeps. The delivery pane
@@ -695,7 +707,7 @@ function patched(
     stored: ReadonlyMap<string, DecisionRecord>
 ): DecisionRecord {
     if (patch.expectedRevision !== undefined && patch.expectedRevision !== (row.revision ?? 1)) {
-        throw new Error(`stale decision revision: ${row.id}`);
+        throw staleRevisionError(row.number);
     }
 
     if (patch.state && !canMove(row, patch.state)) {
@@ -862,6 +874,17 @@ export async function repairDecisionLog({
 
         return repair;
     });
+}
+
+/**
+ * The refusal for a write made on text the agent has since re-posted (`expectedRevision`), in the words every surface
+ * shows: the widget's stage, the hub's and the sidebar's draft, an inbox answer. It used to read "stale decision
+ * revision: d_…", which the widget showed as it was.
+ */
+export function staleRevisionError(number: number): Error {
+    return new Error(
+        `DECISION ${number} changed: the agent posted a new text since you read it. Read it again and pick again.`
+    );
 }
 
 /** Throws unless `target` names another stored decision and `next` is (becoming) superseded. */
@@ -1150,10 +1173,13 @@ function applyUpdates({
     actor?: DecisionActor;
 }): Promise<DecisionRecord[]> {
     signal?.throwIfAborted();
-    return withDecisionsLock(file, () => {
+    // Decisions this write moved out of waiting: their banners go once the write is done (`retractDecisionBanners`).
+    let closed: string[] = [];
+    const written = withDecisionsLock(file, () => {
         signal?.throwIfAborted();
         const rows = readDecisions(file);
         const byId = new Map(rows.map((row) => [row.id, row]));
+        const before = new Map(byId);
         const ts = now();
 
         for (const { id, ...patch } of updates) {
@@ -1186,6 +1212,14 @@ function applyUpdates({
             appendEvent(events, { ev: "updated", id: row.id, ts, state: row.state });
         }
 
+        closed = result
+            .filter((row) => SUPERSEDABLE.has(before.get(row.id)?.state ?? "open") && !SUPERSEDABLE.has(row.state))
+            .map((row) => row.id);
+        return result;
+    });
+
+    return written.then((result) => {
+        retractDecisionBanners(closed);
         return result;
     });
 }

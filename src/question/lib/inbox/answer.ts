@@ -8,6 +8,7 @@ import {
     harvestDecisions,
     kindOf,
     readDecisions,
+    staleRevisionError,
     updateDecisions,
 } from "../decisions/store";
 import { type AskDeps, answerAskForm, checkAskAnswer } from "../pending/ask";
@@ -102,7 +103,7 @@ async function checkAnswer(
             answer.expectedRevision < 1 ||
             answer.expectedRevision !== (row?.revision ?? 1))
     ) {
-        throw new Error(`stale decision revision: ${row?.id ?? answer.number}`);
+        throw staleRevisionError(answer.number);
     }
 
     const block = row ? null : await deps.block(session, answer.number);
