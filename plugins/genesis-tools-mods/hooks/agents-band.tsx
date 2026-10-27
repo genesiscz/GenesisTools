@@ -432,7 +432,13 @@ export async function factsOf(host: Host, list: readonly AgentInfo[]): Promise<A
             description: known?.description ?? bareDescription(agent.description),
             age,
             startedAt: at,
-            late: BUSY.has(agent.status) && age !== undefined && age > all.agentsBand.warnMinutes * 60_000,
+            // "waiting" is an agent parked on its own background work; Claude Code can leave a finished agent in it
+            // (2026-10-27: an agent done for 40 minutes stayed red), so only a working agent can be late.
+            late:
+                agent.status !== "waiting" &&
+                BUSY.has(agent.status) &&
+                age !== undefined &&
+                age > all.agentsBand.warnMinutes * 60_000,
             seen: activity.get(agent.id),
         };
     });
