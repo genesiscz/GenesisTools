@@ -87,8 +87,12 @@ final class ClickyOutputTests: XCTestCase {
         XCTAssertTrue(decoded.delayWarning)
         XCTAssertEqual(decoded.delayWarningMilliseconds, 150)
         XCTAssertEqual(decoded.delayPromptSeconds, 45)
+        XCTAssertTrue(decoded.silentOnBluetooth)
+        XCTAssertEqual(decoded.releaseOutputSeconds, 0)
         var changed = decoded
         changed.delayPromptSeconds = 0
+        changed.silentOnBluetooth = false
+        changed.releaseOutputSeconds = 600
         changed.outputRules = [ClickyOutputRule(whenUID: "a", whenName: "A", playOnUID: "b", playOnName: "B")]
         let again = try JSONDecoder().decode(ClickyPreferences.self, from: JSONEncoder().encode(changed))
         XCTAssertEqual(again, changed)

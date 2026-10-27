@@ -484,13 +484,23 @@ public final class ClickyModel: ObservableObject {
             || previous.delayWarningMilliseconds != preferences.delayWarningMilliseconds {
             refreshOutput()
         }
+        audio?.idleRelease = TimeInterval(preferences.releaseOutputSeconds)
+        if preferences.silentOnBluetooth, !previous.silentOnBluetooth, silencedByBluetooth {
+            audio?.stop()
+        }
         refreshContext()
     }
 
     // MARK: - Output
 
+    /// Keys make no sound while the output is Bluetooth and the setting says so; a preview in Settings still plays.
+    var silencedByBluetooth: Bool {
+        preferences.silentOnBluetooth && output?.effective?.isBluetooth == true
+    }
+
     private func makeAudio() {
         audio = ClickyAudio()
+        audio?.idleRelease = TimeInterval(preferences.releaseOutputSeconds)
         audio?.setOutput(output?.effective?.id)
     }
 
@@ -678,6 +688,13 @@ public final class ClickyModel: ObservableObject {
     }
 
     private func playSelected(keyCode: UInt16, release: Bool, preview: Bool, pan: Float) {
+        if !preview, silencedByBluetooth {
+            if preferences.visualizer && (!release || preferences.releaseSounds) {
+                lastPan = pan
+                pulse &+= 1
+            }
+            return
+        }
         if audio == nil { makeAudio() }
         do {
             let imported = try audio?.playSelected(keyCode: keyCode, release: release, preview: preview,

@@ -384,6 +384,56 @@ final class ClickyTests: XCTestCase {
         XCTAssertEqual(signatures.count, 7)
     }
 
+    /// The sounds are computed at the output's own rate: same length in time, and on a 44.1 kHz output the same power as
+    /// the 48 kHz sound the mixer used to resample (the old path, built here by hand), with no resampler on the way.
+    @MainActor
+    func testSoundsRenderAtTheOutputRateAndMatchTheResampledSound() throws {
+        for rate in [24_000.0, 44_100.0] {
+            let down = ClickySynthesis.samples(profile: .basalt, release: false, variant: 1, sampleRate: rate)
+            XCTAssertEqual(down.count, Int(rate * 0.11))
+            XCTAssertTrue(down.allSatisfy { $0.isFinite && abs($0) <= 1 })
+        }
+        let rate = 44_100.0
+        let output = try XCTUnwrap(AVAudioFormat(standardFormatWithSampleRate: rate, channels: 2))
+        func power(_ engine: AVAudioEngine) throws -> Double {
+            let buffer = try XCTUnwrap(AVAudioPCMBuffer(pcmFormat: output, frameCapacity: 8192))
+            XCTAssertEqual(try engine.renderOffline(8192, to: buffer), .success)
+            let left = UnsafeBufferPointer(start: buffer.floatChannelData![0], count: Int(buffer.frameLength))
+            return left.prefix(Int(rate * 0.11)).reduce(0) { $0 + Double($1 * $1) }
+        }
+        let engine = AVAudioEngine()
+        try engine.enableManualRenderingMode(.offline, format: output, maximumFrameCount: 8192)
+        let audio = ClickyAudio(engine: engine)
+        defer { audio.stop() }
+        var preferences = ClickyPreferences()
+        preferences.volume = 1
+        preferences.randomizedPitch = false
+        preferences.spatialAudio = false
+        try audio.play(profile: .basalt, release: false, preferences: preferences, pan: 0)
+        let native = try power(engine)
+
+        let old = AVAudioEngine()
+        try old.enableManualRenderingMode(.offline, format: output, maximumFrameCount: 8192)
+        let source = try XCTUnwrap(AVAudioFormat(standardFormatWithSampleRate: ClickySynthesis.sampleRate, channels: 1))
+        let player = AVAudioPlayerNode()
+        let varispeed = AVAudioUnitVarispeed()
+        old.attach(player)
+        old.attach(varispeed)
+        old.connect(player, to: varispeed, format: source)
+        old.connect(varispeed, to: old.mainMixerNode, format: source)
+        try old.start()
+        let samples = ClickySynthesis.samples(profile: .basalt, release: false, variant: 1)
+        let buffer = try XCTUnwrap(AVAudioPCMBuffer(pcmFormat: source, frameCapacity: AVAudioFrameCount(samples.count)))
+        buffer.frameLength = buffer.frameCapacity
+        samples.withUnsafeBufferPointer { buffer.floatChannelData![0].update(from: $0.baseAddress!, count: samples.count) }
+        player.scheduleBuffer(buffer)
+        player.play()
+        let resampled = try power(old)
+        old.stop()
+        XCTAssertGreaterThan(native, 0)
+        XCTAssertEqual(native, resampled, accuracy: resampled * 0.03)
+    }
+
     @MainActor
     func testRenderedAudioActuallyPansAndRespectsVolume() throws {
         func render(pan: Float, volume: Double, spatial: Bool = true) throws -> (Double, Double) {
