@@ -250,6 +250,18 @@ final class ReviewSessionStateTests: XCTestCase {
         XCTAssertEqual(HubPlace.resumed(["--session", "old"], place: place), ["--session", "old"], "without --resume the file is ignored")
     }
 
+    /// The relaunch passes the old hub's argv on: a link's `--repo … --commit …` and its history flags must not ride
+    /// along, or every later rebuild opens that commit over the saved place (an Inbox resume landed on a worktree
+    /// commit, 2026-10-27 01:58). Window flags stay.
+    func testResumeDropsALinksCommitAndHistoryFlags() {
+        let place = HubPlace(mode: "inbox", selection: HubModel.wholeList, tab: nil)
+        let argv = ["--repo", "/tmp/gt/app", "--commit", "69b8b1707d", "--file", "a.ts", "--actor", "link", "--note", "n",
+                    "--from", "s1", "--nav", "e1", "--width", "1400", "--set", "hub.glass=true", "--no-activate", "--mode",
+                    "prs", "--pr", "o/r#4", "--resume"]
+        XCTAssertEqual(HubPlace.resumed(argv, place: place),
+                       ["--width", "1400", "--set", "hub.glass=true", "--no-activate", "--mode", "inbox"])
+    }
+
     func testTheHubPlaceAndTheWindowStateFollowASandboxedHome() {
         let sandbox = FileManager.default.temporaryDirectory.appendingPathComponent("review-home-\(UUID().uuidString.prefix(8))").path
         let previous = ProcessInfo.processInfo.environment["GENESIS_TOOLS_HOME"]
