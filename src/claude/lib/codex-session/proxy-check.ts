@@ -22,10 +22,13 @@ export async function sessionKeyProblem(input: {
             method: "POST",
             headers: { Authorization: `Bearer ${input.key}`, "Content-Type": "application/json" },
             body: SafeJSON.stringify({ model: input.model, messages: [{ role: "user", content: "ping" }] }),
-            signal: AbortSignal.timeout(input.timeoutMs ?? 3000),
+            // A busy proxy answered count_tokens after more than 3 s on 2026-10-27 (load average 300 and up).
+            signal: AbortSignal.timeout(input.timeoutMs ?? 5000),
         });
     } catch (error) {
-        logger.warn({ error, url }, "[codex] the session key check got no answer; starting anyway");
+        // The message only: the whole DOMException printed 25 lines of error codes over the launch (2026-10-27).
+        const reason = error instanceof Error ? error.message : String(error);
+        logger.warn({ url, reason }, "[codex] the session key check got no answer; starting anyway");
         return undefined;
     }
 
