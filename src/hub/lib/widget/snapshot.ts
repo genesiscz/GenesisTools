@@ -8,7 +8,7 @@ import {
     kindOf,
     readDecisionsWithIntegrity,
 } from "@app/question/lib/decisions/store";
-import { INBOX_STALE_MS } from "@app/question/lib/inbox/build";
+import { INBOX_STALE_MS, inboxSessionFresh } from "@app/question/lib/inbox/build";
 import { renderFormAnswer } from "@app/question/lib/pending/render";
 import { listFormsSnapshot, PENDING_MIGRATIONS } from "@app/question/lib/pending/store";
 import type { AskForm, AskItem } from "@app/question/lib/pending/types";
@@ -243,6 +243,11 @@ export interface WidgetInboxItem {
     options?: string[];
     recommended?: string;
     revision?: number;
+    /**
+     * A decision row's last write (epoch ms): the widget drops its optimistic pick once the row changed after the
+     * pick was asked for, whatever the row now holds (another surface's pick, a revision).
+     */
+    updatedAt?: number;
     /** A decision's unsent pick and note (`drafted`); see `WidgetCard.draftOption`. */
     draftOption?: string;
     draft?: string;
@@ -1028,6 +1033,9 @@ export async function widgetSnapshot({
             live.add(session.key);
         }
     }
+    /** Per session, its newest waiting decision's ask: with the session's activity, `inboxSessionFresh` (the hub's rule). */
+    const newestAsk = new Map<string, number>();
+    const waitingIn = new Set<WidgetSession>();
     for (const decision of decisions) {
         const session =
             findSession(decision.sessionId, decision.provider) ??
@@ -1035,13 +1043,19 @@ export async function widgetSnapshot({
                 targetOf({ ...decision, sessionId: decision.sessionId }, decision.id),
                 decision.sessionTitle ?? decision.sessionId,
                 decision.project ?? decision.cwd ?? "",
-                timeOf(decision.updatedTs)
+                // A session outside the roster has no known activity: its decision's ask stands for it, as in the
+                // hub. Its last update would let a stage on an old decision count the session as active again.
+                askedTimeOf(decision)
             );
-        if (
-            kindOf(decision) === "decision" &&
-            ["open", "drafted"].includes(decision.state) &&
-            inboxFresh(session, timeOf(decision.updatedTs))
-        ) {
+        if (kindOf(decision) === "decision" && ["open", "drafted"].includes(decision.state)) {
+            newestAsk.set(session.key, Math.max(newestAsk.get(session.key) ?? 0, askedTimeOf(decision)));
+            waitingIn.add(session);
+        }
+    }
+    const decisionsCount = (session: WidgetSession) =>
+        inboxSessionFresh({ activityAt: session.activityAt, newestAskAt: newestAsk.get(session.key) ?? 0, now });
+    for (const session of waitingIn) {
+        if (decisionsCount(session)) {
             session.status = "waiting";
         }
     }
@@ -1176,15 +1190,17 @@ export async function widgetSnapshot({
             options: row.options,
             ...(row.recommended ? { recommended: row.recommended } : {}),
             revision: row.revision ?? 1,
+            updatedAt: timeOf(row.updatedTs),
             ...stagedOf(row),
         };
         // A staged pick is unsent input: it stays in `staged` after "Mark all read" and in a quiet session.
         if (item.draftOption || item.draft) {
             staged.push(item);
         }
-        // "Mark all read" compares the time it was asked: staging an older decision updates the row, and must not
-        // count it as new again. A recent update still keeps the decision fresh in a quiet session.
-        if (item.at > (state.inboxClearedAt ?? 0) && inboxFresh(session, timeOf(row.updatedTs))) {
+        // Freshness is the hub's rule (`inboxSessionFresh`, per session by the newest ask), so the badge and the hub's
+        // header count the same decisions. "Mark all read" is the widget's own mark and compares the time it was
+        // asked: staging an older decision updates the row, and must not count it as new again.
+        if (item.at > (state.inboxClearedAt ?? 0) && decisionsCount(session)) {
             pendingDecisions += 1;
             putInbox(session, item, 1);
         }

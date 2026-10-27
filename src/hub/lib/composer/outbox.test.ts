@@ -17,6 +17,7 @@ import {
     readDecisionsWithIntegrity,
     updateDecisions,
 } from "@app/question/lib/decisions/store";
+import { buildInbox } from "@app/question/lib/inbox/build";
 import { sendInboxMessage } from "@app/question/lib/message";
 import { postAskForm } from "@app/question/lib/pending/ask";
 import { MAX_ANSWER_IMAGE_BYTES } from "@app/question/lib/pending/form";
@@ -678,8 +679,9 @@ describe("widget source and delivery contracts", () => {
 
         expect(await unstageDecisions({ ids: [a3.id, a1.id], files })).toBe(1);
         const after = readDecisions(files.file).find((entry) => entry.id === a3.id);
-        expect(after?.state).toBe("drafted");
-        expect(after?.draftOption ?? "").toBe("");
+        // Nothing staged any more: open again, as every other surface's clear leaves it (F14, 2026-10-27).
+        expect(after?.state).toBe("open");
+        expect(after?.draftOption).toBeUndefined();
         expect(after && isStaged(after)).toBe(false);
     });
 
@@ -5822,4 +5824,45 @@ describe("widget agent result", () => {
             expect(await lastAssistantTextOf(resolved, size)).toBe("Final highlights.");
         });
     }
+});
+
+test("the widget's badge and the hub's Inbox count the same waiting decisions (one freshness rule)", async () => {
+    const directory = await root();
+    const now = Date.now();
+    const iso = (ms: number) => new Date(ms).toISOString();
+    const day = 86_400_000;
+    const row = (sessionId: string, askedAt: number, updatedAt: number, state: "open" | "drafted") => ({
+        id: `d_1_${sessionId}`,
+        sessionId,
+        number: 1,
+        prompt: "Keep it?",
+        options: ["yes", "no"],
+        state,
+        ...(state === "drafted" ? { draftOption: "a" } : {}),
+        provider: "codex",
+        createdTs: iso(askedAt),
+        updatedTs: iso(updatedAt),
+    });
+    // Asked five days ago and staged a minute ago: the stage is no new activity, so neither surface counts it.
+    // Asked a day ago: both count it.
+    const rows = [
+        row("quiet-session", now - 5 * day, now - 60_000, "drafted"),
+        row("recent-session", now - day, now - day, "open"),
+    ];
+    const sources: WidgetSources = {
+        sessions: async () => [],
+        decisions: () => rows,
+        forms: () => [],
+        answers: () => [],
+        agents: async () => ({ generatedAt: "", parents: [], orphans: [] }),
+    };
+
+    const snapshot = await widgetSnapshot({ root: directory, sources, now });
+    const hub = buildInbox({ sessions: [], scans: new Map(), rows, forms: [], now });
+    const hubWaiting = hub.filter((session) => !session.stale).reduce((sum, session) => sum + session.waiting, 0);
+
+    expect(snapshot.notifications?.needsAnswer).toBe(1);
+    expect(hubWaiting).toBe(1);
+    // The staged pick stays listed for sending either way.
+    expect(snapshot.notifications?.staged.map((item) => item.sourceId)).toEqual(["d_1_quiet-session"]);
 });
