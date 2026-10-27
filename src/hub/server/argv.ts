@@ -40,6 +40,18 @@ export function parseArgv(argv: readonly string[], shape: ArgvShape): ParsedArgv
             continue;
         }
 
+        // `--flag=value`, as commander takes it: the value may start with "-" (a title, a note, a JSON target).
+        const equals = token.startsWith("--") ? token.indexOf("=") : -1;
+        if (equals > 0) {
+            const name = token.slice(0, equals);
+            if (shape.flags[name] !== "value" || flags.has(name)) {
+                return null;
+            }
+
+            flags.set(name, token.slice(equals + 1));
+            continue;
+        }
+
         const kind = shape.flags[token];
         if (!kind || flags.has(token)) {
             return null;

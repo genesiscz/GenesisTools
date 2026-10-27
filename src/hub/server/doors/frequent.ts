@@ -1,12 +1,15 @@
 import { asResult } from "@genesiscz/utils/cli/result";
 import { resolveMaxCacheAge } from "@genesiscz/utils/storage/cache-flag";
+import { currentTraceId } from "@genesiscz/utils/trace";
 import { parseArgv, stringFlag, wholeNumber } from "../argv";
+import { type SessionRowsJob, SessionRowsRunner } from "../session-rows";
 import { type CallDoor, failed, ok } from "./types";
 
 /** `hub forecast --json`: when each AI account's windows run out (recorded snapshots only, never fetches). */
 export const forecastDoor: CallDoor<true> = {
     kind: "call",
     name: "hub forecast --json",
+    command: ["hub", "forecast"],
     match(argv) {
         const parsed = parseArgv(argv, { command: ["hub", "forecast"], positionals: 0, flags: { "--json": "bool" } });
         return parsed?.flags.get("--json") === true ? true : null;
@@ -30,6 +33,7 @@ export const forecastDoor: CallDoor<true> = {
 export const procsDoor: CallDoor<true> = {
     kind: "call",
     name: "hub procs --json",
+    command: ["hub", "procs"],
     match(argv) {
         const parsed = parseArgv(argv, { command: ["hub", "procs"], positionals: 0, flags: { "--json": "bool" } });
         return parsed?.flags.get("--json") === true ? true : null;
@@ -50,6 +54,7 @@ export const procsDoor: CallDoor<true> = {
 export const stuckDoor: CallDoor<string[]> = {
     kind: "call",
     name: "hub stuck check --json",
+    command: ["hub", "stuck", "check"],
     match(argv) {
         // `--session` is variadic in the CLI, so the hub puts it last; this door takes exactly that shape.
         const head = ["hub", "stuck", "check", "--json", "--session"];
@@ -81,6 +86,7 @@ type InboxArgs = { session: string } | { hours: number };
 export const inboxDoor: CallDoor<InboxArgs> = {
     kind: "call",
     name: "question inbox --json",
+    command: ["question", "inbox"],
     match(argv) {
         const parsed = parseArgv(argv, {
             command: ["question", "inbox"],
@@ -130,6 +136,7 @@ interface RepoArgs {
 export const repoDoor: CallDoor<RepoArgs> = {
     kind: "call",
     name: "hub repo",
+    command: ["hub", "repo"],
     match(argv) {
         if (argv[0] !== "hub" || argv[1] !== "repo") {
             return null;
@@ -190,18 +197,17 @@ export const repoDoor: CallDoor<RepoArgs> = {
     },
 };
 
+const sessionRows = new SessionRowsRunner();
+
 /**
  * `ai usage sessions --json [--hours N] [--min N] [--limit N] [--fresh]`: the session list the hub and
- * Genesis.app poll. A `--provider` list stays a process (its enum errors print from the CLI).
+ * Genesis.app poll. A `--provider` list stays a process (its enum errors print from the CLI). The rebuild runs on a
+ * worker thread (`SessionRowsRunner`), so the other doors keep answering while it walks the transcripts.
  */
-export const usageSessionsDoor: CallDoor<{
-    listing: Record<string, number>;
-    fresh: boolean;
-    cacheWrite: boolean;
-    liveLocations: boolean;
-}> = {
+export const usageSessionsDoor: CallDoor<SessionRowsJob> = {
     kind: "call",
     name: "ai usage sessions --json",
+    command: ["ai", "usage", "sessions"],
     match(argv) {
         const parsed = parseArgv(argv, {
             command: ["ai", "usage", "sessions"],
@@ -245,16 +251,64 @@ export const usageSessionsDoor: CallDoor<{
             liveLocations: parsed.flags.get("--journal-only") !== true,
         };
     },
-    async run({ listing, fresh, cacheWrite, liveLocations }, { signal }) {
+    async run(job, { signal }) {
         try {
             signal.throwIfAborted();
-            const { sessionRowsJson } = await import("@app/ai/lib/sessions/rows-cache");
-            const { listAgentSessionRows } = await import("@app/ai/lib/sessions/agent-session-rows");
-            return ok(
-                asResult(
-                    await sessionRowsJson(listing, { fresh, cacheWrite, liveLocations, listRows: listAgentSessionRows })
-                )
-            );
+            return ok(await sessionRows.run(job, currentTraceId()));
+        } catch (error) {
+            return failed(error);
+        }
+    },
+};
+
+interface ProposalListArgs {
+    pr?: { provider: "github" | "gitlab"; host: string; project: string; number: number };
+}
+
+/**
+ * `hub proposal list --json [--provider P --host H --project X --number N]`: the review window asks it for its PR on
+ * every open (one file read, behind a 0.35 s process start before this door). The four PR flags go together; any
+ * other shape stays a process, which prints the CLI's error.
+ */
+export const proposalListDoor: CallDoor<ProposalListArgs> = {
+    kind: "call",
+    name: "hub proposal list --json",
+    command: ["hub", "proposal", "list"],
+    match(argv) {
+        const parsed = parseArgv(argv, {
+            command: ["hub", "proposal", "list"],
+            positionals: 0,
+            flags: {
+                "--json": "bool",
+                "--provider": "value",
+                "--host": "value",
+                "--project": "value",
+                "--number": "value",
+            },
+        });
+        if (parsed?.flags.get("--json") !== true) {
+            return null;
+        }
+
+        const provider = stringFlag(parsed, "--provider");
+        const host = stringFlag(parsed, "--host");
+        const project = stringFlag(parsed, "--project");
+        const number = parsed.flags.has("--number") ? wholeNumber(parsed.flags.get("--number")) : undefined;
+        if ([provider, host, project, number].every((value) => value === undefined)) {
+            return {};
+        }
+
+        if ((provider !== "github" && provider !== "gitlab") || !host || !project || !number) {
+            return null;
+        }
+
+        return { pr: { provider, host, project, number } };
+    },
+    async run({ pr }, { signal }) {
+        try {
+            signal.throwIfAborted();
+            const { listProposals, listProposalsFor, proposalListRows } = await import("../../lib/proposal");
+            return ok(asResult(proposalListRows(pr ? listProposalsFor(pr) : listProposals())));
         } catch (error) {
             return failed(error);
         }
