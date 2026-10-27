@@ -271,7 +271,7 @@ enum HubCommitLookup {
                 }
             }
             // With no holder, the checkout of that path, else a clone of the same name, still answers, so the miss
-            // names where the commit was looked for ("not in ~/…/col-tools, fetch it first"), not "no checkout".
+            // names where the commit was looked for ("not in ~/…/app-tools, fetch it first"), not "no checkout".
             let clone = sameNamed(text, in: projects).first { FileManager.default.fileExists(atPath: $0.root) }?.root
             guard let root = found ?? PRsModel.projectRoot(text, in: projects) ?? clone else {
                 return .failed("No checkout of \(text) under the repo roots, so commit \(sha) cannot open")
@@ -338,7 +338,7 @@ enum HubCommitLookup {
         sameNamed(repo, in: projects).first { holds($0.root, shas) }?.root
     }
 
-    /// The projects whose web path ends in the same name as `repo`'s (`col-tools` for `group/col/col-tools`).
+    /// The projects whose web path ends in the same name as `repo`'s (`app-tools` for `group/team/app-tools`).
     static func sameNamed(_ repo: String, in projects: [HubPRProject]) -> [HubPRProject] {
         let name = { (path: String) -> String in
             var last = path.lowercased().split(separator: "/").last.map(String.init) ?? ""
