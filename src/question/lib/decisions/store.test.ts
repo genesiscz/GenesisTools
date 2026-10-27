@@ -758,6 +758,18 @@ describe("decision kinds, batch updates, harvest and staleness", () => {
         expect(decisionLine({ ...literal, option: "a" })).toBe("DECISION 23: a)   a.ts");
     });
 
+    test("markdown treats generated option letters as literal characters", () => {
+        const options = Array.from({ length: 65480 }, () => "ordinary");
+        options[0] = "a) run it";
+        options[27] = "(keep)";
+        options[65479] = "(wrap target";
+
+        const markdown = decisionsMarkdown([{ ...foreignRow("abc", 23), options }]);
+        expect(markdown).toContain("- a) run it");
+        expect(markdown).toContain("- |) (keep)");
+        expect(markdown).toContain("- () (wrap target");
+    });
+
     for (const [option, label] of [
         ["a", "a.ts"],
         ["c", "C:\\work\\repo"],

@@ -233,7 +233,8 @@ export function optionLetters(option: string | undefined | null): string[] {
  * the line's own pick prefix does not repeat it: "b) b) build it first" reached a session on 2026-10-26.
  */
 function optionLabel(label: string, letter: string): string {
-    const prefix = new RegExp(`^\\s*\\(?${letter}[).:](?:\\s+|$)`, "i");
+    const escapedLetter = letter.replace(/[.*+?^${}()|[\]\\]/g, "\\$&");
+    const prefix = new RegExp(`^\\s*\\(?${escapedLetter}[).:](?:\\s+|$)`, "i");
     return label.replace(prefix, "");
 }
 
