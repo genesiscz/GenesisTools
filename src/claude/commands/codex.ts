@@ -418,6 +418,10 @@ export async function runCodexSession(
     // A /model pick in this session would become every other session's default through the shared settings.
     const modelGuard = configDir ? undefined : guardSharedModel();
     let code: number;
+    // Claude Code owns the terminal until it exits: a warning printed meanwhile draws over its screen (2026-10-27,
+    // the model guard's). The day log still gets every line.
+    const consoleLevel = logger.level;
+    logger.level = "silent";
 
     try {
         code = await spawnClaude(args, launchEnv, (pid) => {
@@ -429,6 +433,7 @@ export async function runCodexSession(
             ).catch((err) => logger.warn({ err, session: sessionId }, "[codex] could not record the Claude Code pid"));
         });
     } finally {
+        logger.level = consoleLevel;
         // Also when the spawn throws: an open record would count as a live session on its login.
         modelGuard?.stop();
         await whenSessionRecordFree(() => closeSessionRecord(sessionId, "exited"));
