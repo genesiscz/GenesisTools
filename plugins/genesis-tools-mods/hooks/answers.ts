@@ -150,6 +150,9 @@ export function forgetAnswers(): void {
     askRows.clear();
     entryRows.clear();
     searchedSize = -1;
+    searchedOffset = 0;
+    searchedTranscript = undefined;
+    recentCalls = [];
 }
 
 function isStatus(value: string): value is DecisionStatus {
@@ -432,45 +435,147 @@ async function stampOf(host: Host): Promise<{ own: string; lines: number }> {
 
 /** The transcript's size at the last search: a search that found nothing new waits for the transcript to grow. */
 let searchedSize = -1;
+/** Bytes of the transcript already searched: the next search reads only what was appended after them. */
+let searchedOffset = 0;
+let searchedTranscript: string | undefined;
+/** Question tool calls of the last ENTRY_WINDOW_MS, kept so an entry logged after its call's search still finds it. */
+let recentCalls: { id: string; at: number }[] = [];
+/**
+ * Where each transcript's search stopped and what it found, kept in the mods store so a mods reload (every save of a
+ * mod file reloads every session) does not grep a 500 MB transcript again: on 2026-10-27, 26 sessions ran 150 full
+ * greps of 6 to 9 s each in 90 minutes.
+ */
+const SEARCH_STORE_KEY = "answers.search";
+const SEARCH_STORE_KEEP = 100;
+
+interface SearchMark {
+    offset: number;
+    asks: [number, string][];
+    entries: [string, string][];
+    at: number;
+}
+
+async function restoreSearch(host: Host, transcript: string): Promise<void> {
+    searchedTranscript = transcript;
+    searchedOffset = 0;
+    recentCalls = [];
+    const all = await host.storeGet(SEARCH_STORE_KEY).catch(() => undefined);
+    const mark = isRecord(all) ? all[transcript] : undefined;
+
+    if (
+        !isRecord(mark) ||
+        typeof mark.offset !== "number" ||
+        !Array.isArray(mark.asks) ||
+        !Array.isArray(mark.entries)
+    ) {
+        return;
+    }
+
+    searchedOffset = mark.offset;
+
+    for (const pair of mark.asks) {
+        if (
+            Array.isArray(pair) &&
+            typeof pair[0] === "number" &&
+            typeof pair[1] === "string" &&
+            !askRows.has(pair[0])
+        ) {
+            askRows.set(pair[0], pair[1]);
+        }
+    }
+
+    for (const pair of mark.entries) {
+        if (
+            Array.isArray(pair) &&
+            typeof pair[0] === "string" &&
+            typeof pair[1] === "string" &&
+            !entryRows.has(pair[0])
+        ) {
+            entryRows.set(pair[0], pair[1]);
+        }
+    }
+}
+
+async function saveSearch(host: Host, transcript: string): Promise<void> {
+    const all = await host.storeGet(SEARCH_STORE_KEY).catch(() => undefined);
+    const kept = Object.entries(isRecord(all) ? all : {})
+        .map(([path, mark]) => ({ path, mark, at: isRecord(mark) && typeof mark.at === "number" ? mark.at : -1 }))
+        .filter((held) => held.path !== transcript && held.at >= 0)
+        .sort((x, y) => y.at - x.at)
+        .slice(0, SEARCH_STORE_KEEP - 1)
+        .map((held): [string, unknown] => [held.path, held.mark]);
+    const mark: SearchMark = { offset: searchedOffset, asks: [...askRows], entries: [...entryRows], at: Date.now() };
+
+    await host
+        .storeSet(SEARCH_STORE_KEY, Object.fromEntries([...kept, [transcript, mark]]))
+        .catch(async (error: unknown) => {
+            await logMod(host, "answers", { event: "search-save-failed", error: String(error) });
+        });
+}
 
 /**
  * Finds the rows not found yet, for these decision numbers (the log's and the chat's) and entries: one `grep` over
- * the transcript for the assistant lines that could hold them.
+ * the bytes appended to the transcript since the last search, for the assistant lines that could hold them.
  */
 async function findRows(host: Host, numbers: readonly number[], entries: readonly LoggedEntry[]): Promise<void> {
-    const missing = numbers.some((n) => !askRows.has(n)) || entries.some((entry) => !entryRows.has(entry.id));
     const dir = await sessionDirOf(host);
 
-    if (!missing || !dir) {
+    if (!dir) {
         return;
     }
 
     const transcript = `${dir}.jsonl`;
-    const size = (await host.stat(transcript).catch(() => undefined))?.size ?? -1;
 
-    if (size === searchedSize) {
+    if (transcript !== searchedTranscript) {
+        await restoreSearch(host, transcript);
+    }
+
+    const missing = numbers.some((n) => !askRows.has(n)) || entries.some((entry) => !entryRows.has(entry.id));
+
+    if (!missing) {
         return;
     }
 
+    const size = (await host.stat(transcript).catch(() => undefined))?.size ?? -1;
+
+    if (size < 0 || size === searchedSize || size === searchedOffset) {
+        return;
+    }
+
+    if (size < searchedOffset) {
+        searchedOffset = 0;
+    }
+
+    const from = searchedOffset;
+    // `tail -c +N` starts at byte N (1-based). The last line prints 1 when the searched bytes end on a line break,
+    // so a search that stopped inside a line being written starts at the same place next time.
     const found = await host
         .run(
             [
                 "/bin/sh",
                 "-c",
-                'grep -F -e "DECISION" -e "mcp__genesis-tools__" -e "tools question" "$1" | grep -F \'"type":"assistant"\'',
+                'tail -c +"$2" "$1" | head -c "$3" | grep -F -e "DECISION" -e "mcp__genesis-tools__" -e "tools question" | grep -F \'"type":"assistant"\'; tail -c +"$4" "$1" | head -c 1 | wc -l | tr -d " "',
                 "sh",
                 transcript,
+                String(from + 1),
+                String(size - from),
+                String(size),
             ],
             { timeoutMs: 15_000 }
         )
         .catch(() => undefined);
 
-    if (!found || found.exitCode > 1) {
+    if (!found || found.exitCode !== 0) {
         return;
     }
 
-    searchedSize = size;
     const lines = found.stdout.split("\n").filter(Boolean);
+    const endsOnBreak = lines.pop() === "1";
+    searchedSize = size;
+
+    if (endsOnBreak) {
+        searchedOffset = size;
+    }
 
     for (const [n, uuid] of firstAsks(lines)) {
         if (!askRows.has(n)) {
@@ -478,15 +583,22 @@ async function findRows(host: Host, numbers: readonly number[], entries: readonl
         }
     }
 
-    const calls = questionCalls(lines);
+    const known = new Set(recentCalls.map((call) => call.id));
+    const newest = Math.max(Date.now(), ...entries.map((entry) => entry.at));
+    recentCalls = [...recentCalls, ...questionCalls(lines).filter((call) => !known.has(call.id))].filter(
+        (call) => call.at >= newest - 2 * ENTRY_WINDOW_MS
+    );
 
     for (const entry of entries) {
-        const call = entryRows.has(entry.id) ? undefined : callFor(entry.at, calls);
+        const call = entryRows.has(entry.id) ? undefined : callFor(entry.at, recentCalls);
 
         if (call) {
             entryRows.set(entry.id, call);
         }
     }
+
+    await logMod(host, "answers", { event: "search", from, to: size, lines: lines.length });
+    await saveSearch(host, transcript);
 }
 
 /** Finds the first asks of decisions the chat knows and the log may not: called after the chat was read. */
