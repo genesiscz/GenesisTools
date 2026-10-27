@@ -37,7 +37,10 @@ import { batchPsInfo } from "@genesiscz/utils/process/ps";
 import { isProcessAlive } from "@genesiscz/utils/process-alive";
 import { isTestProcess } from "@genesiscz/utils/test-process";
 import { workerSourceHome } from "@genesiscz/utils/worker/delivery";
+import { DeliveryUnknownError, NotDeliveredError } from "./delivery-errors";
 import { deliverySentence } from "./delivery-text";
+
+export { DeliveryUnknownError, NotDeliveredError };
 
 const { log } = logger.scoped("question-deliver");
 
@@ -206,22 +209,6 @@ export interface DeliverDeps {
     findTargets?: (sessionId: string, opts: { skipRecorded?: boolean }) => Promise<SessionTargetsResult>;
     /** The panes that exist right now, to check a recorded ref against. */
     snapshot?: () => Promise<CmuxLiveSnapshot>;
-}
-
-/** The transport was attempted but its receipt was lost; never put it back on an automatic send queue. */
-export class DeliveryUnknownError extends Error {
-    constructor(message: string) {
-        super(message);
-        this.name = "DeliveryUnknownError";
-    }
-}
-
-/** A delivery that did not reach the agent. The send puts the batch back to `answered`. */
-export class NotDeliveredError extends Error {
-    constructor(readonly result: DeliveryResult) {
-        super(`not delivered (${result.channel}): ${result.error ?? "no route"}`);
-        this.name = "NotDeliveredError";
-    }
 }
 
 function codexWorkerFor(sessionId: string, sourceHome?: string): string | null {

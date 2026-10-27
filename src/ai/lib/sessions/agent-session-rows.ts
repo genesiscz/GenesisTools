@@ -110,12 +110,7 @@ export interface AgentSessionRowsOptions {
 
 const ALL: readonly AccountProviderAlias[] = ["claude", "codex", "grok"];
 
-/**
- * How stale a polled who/where listing may be (the inbox, the hub timeline and worktrees). They
- * poll every 20 to 30 s beside the Genesis session list, so within this window one refresh by any
- * of them serves the rest, and a new session shows up at most this late.
- */
-export const POLLED_LISTING_REUSE_MS = 30_000;
+export { POLLED_LISTING_REUSE_MS } from "./listing-reuse";
 
 function titleOf(record: {
     customTitle: string | null;

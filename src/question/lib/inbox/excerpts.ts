@@ -1,6 +1,6 @@
 import { execFileSync } from "node:child_process";
-import { readFileSync, statSync } from "node:fs";
-import { isAbsolute, resolve } from "node:path";
+import { existsSync, readFileSync, statSync } from "node:fs";
+import { dirname, isAbsolute, join, resolve } from "node:path";
 import { findProjectRoot } from "@genesiscz/utils/fs/project-root";
 import { checkoutsAt } from "@genesiscz/utils/git/local-checkouts";
 import { logger } from "@genesiscz/utils/logger";
@@ -109,6 +109,51 @@ const realDeps: ReadDeps = {
     roots: sessionRoots,
     files: listFiles,
 };
+
+/** What a traced read reports: each path before it is read, and a lookup it cannot re-check cheaply. */
+export interface ExcerptTrace {
+    probe: (path: string) => void;
+    cannotProve: (reason: string) => void;
+}
+
+/**
+ * The real reads, each reported to `trace` first (the inbox cursor re-checks them). The roots depend on the `.git`
+ * markers from the session folder up to its checkout root, so those are reported too; a search of a checkout's file
+ * list depends on every file in it and cannot be re-checked.
+ */
+export function tracedReadDeps(trace: ExcerptTrace): ReadDeps {
+    return {
+        read: (path) => {
+            trace.probe(path);
+            return realDeps.read(path);
+        },
+        isFile: (path) => {
+            trace.probe(path);
+            return realDeps.isFile(path);
+        },
+        roots: (cwd) => {
+            let dir = resolve(cwd);
+
+            for (;;) {
+                const marker = join(dir, ".git");
+                trace.probe(marker);
+                const parent = dirname(dir);
+
+                if (existsSync(marker) || parent === dir) {
+                    break;
+                }
+
+                dir = parent;
+            }
+
+            return realDeps.roots(cwd);
+        },
+        files: (root) => {
+            trace.cannotProve(`a ref was looked up in the file list of ${root}`);
+            return realDeps.files(root);
+        },
+    };
+}
 
 /** Where a ref points: the file, or the folders that were searched and how many files matched there. */
 interface RefLocation {

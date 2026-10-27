@@ -1,28 +1,15 @@
 import { runTool } from "@genesiscz/utils/cli";
+import { registerRequestedTrees, requestedCommandFromArgv } from "@genesiscz/utils/cli/lazy-registrars";
 import { Command } from "commander";
-import { registerAskCommand } from "./commands/ask";
-import { registerConfigCommand } from "./commands/config";
-import { registerDecisionCommands } from "./commands/decisions";
-import { registerInboxCommand } from "./commands/inbox";
-import { registerLogCommand } from "./commands/log";
-import { registerMessageCommand } from "./commands/message";
-import { registerRecordCommand } from "./commands/record";
-import { registerShowCommand } from "./commands/show";
-import { registerTailCommand } from "./commands/tail";
-import { registerTokensCommand } from "./commands/tokens";
+import { QUESTION_REGISTRARS } from "./registrars";
 
 const program = new Command();
 program.name("question").description("Ask the user a blocking question, and capture & review Q→A mid-session");
-registerAskCommand(program);
-registerDecisionCommands(program);
-registerShowCommand(program);
-registerTokensCommand(program);
-registerInboxCommand(program);
-registerRecordCommand(program);
-registerMessageCommand(program);
-registerLogCommand(program);
-registerTailCommand(program);
-registerConfigCommand(program);
+await registerRequestedTrees({
+    program,
+    registrars: QUESTION_REGISTRARS,
+    requested: requestedCommandFromArgv(process.argv),
+});
 // Bare `tools question` → help (not a live tail; tail is Phase 1c).
 if (process.argv.slice(2).length === 0) {
     program.outputHelp();

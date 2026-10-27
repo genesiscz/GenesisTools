@@ -1,11 +1,7 @@
 import { statSync } from "node:fs";
 import { loadHooksConfig } from "@app/agents/lib/hooks/config";
-import {
-    type AgentSessionRow,
-    type AgentSessionRowsOptions,
-    listAgentSessionRows,
-    POLLED_LISTING_REUSE_MS,
-} from "@app/ai/lib/sessions/agent-session-rows";
+import type { AgentSessionRow, AgentSessionRowsOptions } from "@app/ai/lib/sessions/agent-session-rows";
+import { POLLED_LISTING_REUSE_MS } from "@app/ai/lib/sessions/listing-reuse";
 import { readCachedSessionCwd } from "@genesiscz/utils/agent-sessions/cached-title";
 import { transcriptEnvelope } from "@genesiscz/utils/ai/transcripts/load";
 import { type ResolvedTranscript, resolveTranscript } from "@genesiscz/utils/ai/transcripts/resolve";
@@ -23,7 +19,6 @@ import {
     kindOf,
     readDecisions,
 } from "../decisions/store";
-import { listPendingForms } from "../pending/ask";
 import { listFormsSnapshot } from "../pending/store";
 import type { AskForm } from "../pending/types";
 import { type QaRow, queryEntriesSnapshot } from "../read-model";
@@ -37,8 +32,9 @@ import {
     sessionDecisions,
     type TranscriptScan,
 } from "./build";
-import { stagedSendText } from "./drafts";
-import { fillExcerpts } from "./excerpts";
+import { fillExcerpts, tracedReadDeps } from "./excerpts";
+import type { InboxTrace } from "./session-cursor";
+import { stagedSendText } from "./staged";
 
 const { log } = logger.scoped("question-inbox");
 
@@ -73,7 +69,7 @@ export interface InboxDeps {
         found: HarvestedDecision[];
         at: string | null;
     }) => Promise<number>;
-    forms: () => AskForm[];
+    forms: () => AskForm[] | Promise<AskForm[]>;
     readCache: () => Promise<ScanCache | null>;
     writeCache: (cache: ScanCache) => Promise<void>;
 }
@@ -83,7 +79,12 @@ function storage(): Storage {
 }
 
 export const realInboxDeps: InboxDeps = {
-    sessions: (hours) => listAgentSessionRows({ hours, withUsage: false, maxDiscoveryAgeMs: POLLED_LISTING_REUSE_MS }),
+    sessions: async (hours) =>
+        (await import("@app/ai/lib/sessions/agent-session-rows")).listAgentSessionRows({
+            hours,
+            withUsage: false,
+            maxDiscoveryAgeMs: POLLED_LISTING_REUSE_MS,
+        }),
     tail: async (row) => {
         const resolved: ResolvedTranscript = {
             provider: row.provider,
@@ -119,7 +120,7 @@ export const realInboxDeps: InboxDeps = {
         );
         return stored.length;
     },
-    forms: () => listPendingForms({}, 200),
+    forms: async () => (await import("../pending/ask")).listPendingForms({}, 200),
     readCache: () => storage().getCacheFile<ScanCache>(CACHE_KEY, "7 days"),
     writeCache: (cache) => storage().putCacheFile(CACHE_KEY, cache, "7 days"),
 };
@@ -178,9 +179,19 @@ async function harvestListed({
     return stored;
 }
 
+/** Where a session's transcript is when the caller knows it, and what a cursor records of the read. */
+export interface ScanOptions {
+    /** The transcript file; skips the lookup by id, a walk of every project folder (about 30 ms). */
+    transcript?: { path: string; provider: ResolvedTranscript["provider"] };
+    trace?: InboxTrace;
+}
+
 /** What the session's last reply asks, read fresh from its transcript. */
-async function scanSession(session: string): Promise<TranscriptScan | null> {
-    const resolved = await resolveTranscript(session);
+async function scanSession(session: string, { transcript, trace }: ScanOptions = {}): Promise<TranscriptScan | null> {
+    const resolved: ResolvedTranscript = transcript
+        ? { provider: transcript.provider, source: "native", sessionId: session, filePath: transcript.path }
+        : await resolveTranscript(session);
+    trace?.probe(resolved.filePath);
     return scanTurns((await transcriptEnvelope(resolved, { limit: TAIL_TURNS })).turns);
 }
 
@@ -197,7 +208,7 @@ export async function waitingBlock(
     let found: TranscriptScan | null;
 
     try {
-        found = await scan(session);
+        found = await scan(session, {});
     } catch (error) {
         log.debug({ error, session, number }, "waiting block: the session's transcript cannot be read");
         return null;
@@ -231,7 +242,8 @@ export function lookupListing(hours: number): AgentSessionRowsOptions {
  */
 export async function lookupSessionCwd(
     session: string,
-    list: (hours: number) => Promise<AgentSessionRow[]> = (hours) => listAgentSessionRows(lookupListing(hours))
+    list: (hours: number) => Promise<AgentSessionRow[]> = async (hours) =>
+        (await import("@app/ai/lib/sessions/agent-session-rows")).listAgentSessionRows(lookupListing(hours))
 ): Promise<string | null> {
     const cached = readCachedSessionCwd({ sessionId: session });
 
@@ -266,14 +278,26 @@ export async function loadSessionDecisions(
         rows = realInboxDeps.rows,
         scan = scanSession,
         sessionCwd = lookupSessionCwd,
-    }: { rows?: () => DecisionRecord[]; scan?: typeof scanSession; sessionCwd?: typeof lookupSessionCwd } = {}
+        transcript,
+        trace,
+    }: {
+        rows?: () => DecisionRecord[];
+        scan?: typeof scanSession;
+        sessionCwd?: typeof lookupSessionCwd;
+    } & ScanOptions = {}
 ): Promise<InboxDecision[]> {
     let found: TranscriptScan | null = null;
 
     try {
-        found = await scan(session);
+        found = await scan(session, { ...(transcript ? { transcript } : {}), ...(trace ? { trace } : {}) });
     } catch (error) {
         log.debug({ error, session }, "session decisions: transcript not readable, stored rows only");
+        trace?.cannotProve("the transcript could not be read");
+    }
+
+    if (found && found.at === null && found.blocks.length > 0) {
+        // A block with no time of its own is stamped with the clock (`sessionDecisions`).
+        trace?.cannotProve("a reply block has no time of its own");
     }
 
     const stored = rows();
@@ -284,8 +308,14 @@ export async function loadSessionDecisions(
     // The session listing is asked only when a reference needs a folder and no stored row has one.
     const needsFolder = decisions.some((item) => item.refs.length > 0);
     const storedCwd = stored.find((row) => row.sessionId === session && row.cwd)?.cwd;
-    const cwd = storedCwd || (needsFolder ? await sessionCwd(session) : null) || undefined;
-    return withExcerpts(decisions, cwd);
+    const looked = !storedCwd && needsFolder;
+
+    if (looked) {
+        trace?.cannotProve("the session folder came from the session listing");
+    }
+
+    const cwd = storedCwd || (looked ? await sessionCwd(session) : null) || undefined;
+    return withExcerpts(decisions, cwd, trace);
 }
 
 /** How many of a session's newest Q→A entries `loadSessionInbox` returns. */
@@ -326,13 +356,20 @@ export async function loadSessionInbox(
                 dbPath: toolDataDir("question", "qa.db"),
                 opts: { sessionId: id, limit: SESSION_ENTRIES },
             }),
-        decisions = (id: string, stored: DecisionRecord[]) => loadSessionDecisions(id, { rows: () => stored }),
+        transcript,
+        trace,
+        decisions = (id: string, stored: DecisionRecord[]) =>
+            loadSessionDecisions(id, {
+                rows: () => stored,
+                ...(transcript ? { transcript } : {}),
+                ...(trace ? { trace } : {}),
+            }),
     }: {
         rows?: () => DecisionRecord[];
         forms?: (session: string) => AskForm[];
         entries?: (session: string) => QaRow[];
         decisions?: (session: string, stored: DecisionRecord[]) => Promise<InboxDecision[]>;
-    } = {}
+    } & ScanOptions = {}
 ): Promise<SessionInbox> {
     const stored = rows();
     const todos = stored
@@ -360,8 +397,9 @@ export async function loadSessionInbox(
 }
 
 /** Reads each decision's `file:line` references from disk (bounded), off the hub's hot path. */
-function withExcerpts(decisions: InboxDecision[], cwd: string | undefined): InboxDecision[] {
-    return decisions.map((item) => ({ ...item, refs: fillExcerpts(item.refs, cwd) }));
+function withExcerpts(decisions: InboxDecision[], cwd: string | undefined, trace?: InboxTrace): InboxDecision[] {
+    const deps = trace ? tracedReadDeps(trace) : undefined;
+    return decisions.map((item) => ({ ...item, refs: fillExcerpts(item.refs, cwd, deps) }));
 }
 
 export interface InboxResult {
@@ -425,7 +463,7 @@ export async function loadInbox({
     const listed = deps.rows();
     const harvested = await harvestListed({ sessions, scans, rows: listed, deps });
     const rows = harvested > 0 ? deps.rows() : listed;
-    const inbox = buildInbox({ sessions, scans, rows, forms: deps.forms() }).map((session) => ({
+    const inbox = buildInbox({ sessions, scans, rows, forms: await deps.forms() }).map((session) => ({
         ...session,
         items: session.items.map((item) =>
             item.kind === "decision" ? { ...item, refs: fillExcerpts(item.refs, session.cwd ?? undefined) } : item

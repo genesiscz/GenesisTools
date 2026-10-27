@@ -7,7 +7,7 @@ import type { Command } from "commander";
 import pc from "picocolors";
 import { messageNote } from "../lib/inbox-guidance";
 import { sendInboxMessage } from "../lib/message";
-import { collect } from "./ask";
+import { collect } from "./options";
 
 export function registerMessageCommand(program: Command): void {
     program

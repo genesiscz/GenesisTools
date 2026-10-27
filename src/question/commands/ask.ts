@@ -30,6 +30,7 @@ import {
 import { summarizeForm } from "../lib/pending/render";
 import { type AskAnswer, type AskForm, DEFAULT_WAIT_BUDGET_MS, type WaiterStatus } from "../lib/pending/types";
 import { prepareQuestionItems, questionTokenRegistry, transclusionReport } from "../lib/transclude";
+import { collect } from "./options";
 
 const { log } = logger.scoped("question-ask");
 
@@ -76,9 +77,6 @@ function splitList(value: string): string[] {
 }
 
 /** Commander accumulator for a repeatable flag; also used by `inbox.ts`'s `--image`. */
-export function collect(value: string, previous: string[] = []): string[] {
-    return [...previous, value];
-}
 
 const ASK_HELP_HINT = `Run ${toolCommand("question ask")} --help for the item shape.`;
 

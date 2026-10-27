@@ -1,11 +1,9 @@
-import { join } from "node:path";
 import { gatherHarnessPoster } from "@genesiscz/utils/agent/runtime";
 import { routerLink } from "@genesiscz/utils/browser-router/router-link";
 import { toolCommand } from "@genesiscz/utils/cli/tool-command";
 import { json2md } from "@genesiscz/utils/json2md";
-import { genesisToolsDir } from "@genesiscz/utils/storage/root";
 import { isTestProcess } from "@genesiscz/utils/test-process";
-import { DeliveryUnknownError, NotDeliveredError } from "./deliver";
+import { DeliveryUnknownError, NotDeliveredError } from "./delivery-errors";
 import {
     boundContext,
     cleanBlock,
@@ -43,12 +41,7 @@ export function currentHarnessSession(): string | null {
     return poster.sessionId;
 }
 
-export function decisionFiles(root = genesisToolsDir("question", "decisions")): {
-    file: string;
-    events: string;
-} {
-    return { file: join(root, "decisions.jsonl"), events: join(root, "events.jsonl") };
-}
+export { decisionFiles } from "./paths";
 
 export interface DecisionSessionView {
     sessionId: string;
