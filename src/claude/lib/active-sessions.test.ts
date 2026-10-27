@@ -3,6 +3,7 @@ import { runWho } from "@app/ai/lib/accounts/run-who";
 import { registerWhoCommand } from "@app/claude/commands/who";
 import { CODEX_HELPER_KINDS, classifyCodexArgs, codexResumeIdFromArgs } from "@app/codex/lib/process-scan";
 import { grokResumeIdFromArgs } from "@app/grok/lib/process-scan";
+import { chooseResume } from "@genesiscz/utils/agent-sessions/select-resume";
 import type { AgentSearchFilters, AgentSession } from "@genesiscz/utils/agent-sessions/types";
 import type { ActiveAgentProcess } from "@genesiscz/utils/ai/active-processes";
 import * as processScan from "@genesiscz/utils/ai/active-processes";
@@ -12,6 +13,7 @@ import {
     countSessionInstances,
     invertSurfaceTtys,
     listActiveAgentSessions,
+    listRunningCmuxSessions,
     parseCmuxTreeTtys,
     sessionsFromAdapter,
     withoutHelpers,
@@ -602,6 +604,90 @@ describe("Claude who JSON contract", () => {
             }
         );
     }
+});
+
+describe("running session resume selection", () => {
+    test("an ineligible first instance does not hide another live tab", async () => {
+        const sessionId = "11111111-1111-4111-8111-111111111111";
+        const processRow: ActiveAgentProcess = {
+            pid: 101,
+            ppid: 99,
+            tty: "ttys001",
+            startedAt: 1_700_000_000_000,
+            cpuTime: "0:00.01",
+            args: `codex resume ${sessionId}`,
+            kind: "tui",
+            account: "work",
+            proxyTarget: null,
+            cwd: "/repo/fixture",
+        };
+        const scan = spyOn(processScan, "listActiveAgentProcesses").mockResolvedValue([
+            processRow,
+            { ...processRow, pid: 102, tty: "ttys002" },
+            { ...processRow, pid: 103, tty: "ttys003" },
+        ]);
+        const refs = spyOn(journalRefs, "loadAllSessionCmuxRefs").mockReturnValue(new Map());
+        const source = {
+            alias: "codex" as const,
+            classify: classifyCodexArgs,
+            resumeIdFromArgs: codexResumeIdFromArgs,
+        };
+        const history: AgentSession = {
+            kind: "codex",
+            sessionId,
+            title: "invoice",
+            cwd: processRow.cwd ?? "",
+            mtime: new Date(0),
+            filePath: "/fixture/session.jsonl",
+        };
+        let rowCount = 0;
+
+        try {
+            const choice = await chooseResume({
+                adapter: { kind: "codex", list: async () => [history], search: async () => [] },
+                query: sessionId,
+                interactive: true,
+                running: () =>
+                    listRunningCmuxSessions(source, {
+                        runner: async () =>
+                            SafeJSON.stringify({
+                                windows: [
+                                    {
+                                        workspaces: [
+                                            {
+                                                panes: [
+                                                    {
+                                                        surfaces: [
+                                                            { id: "surface-one", ref: "surface:1", tty: "ttys001" },
+                                                            { id: "surface-two", ref: "surface:2", tty: "ttys002" },
+                                                            { id: "surface-three", ref: "surface:3", tty: "ttys003" },
+                                                        ],
+                                                    },
+                                                ],
+                                            },
+                                        ],
+                                    },
+                                ],
+                            }),
+                    }),
+                stillRunning: (entry) => entry.pid !== 101,
+                pick: async (opts) => {
+                    rowCount = opts.rows.length;
+                    return opts.rows[0]?.value ?? null;
+                },
+            });
+
+            expect(choice?.action).toBe("focus");
+            if (choice?.action !== "focus") {
+                throw new Error("expected a running session");
+            }
+            expect([102, 103]).toContain(choice.running.pid);
+            expect(rowCount).toBe(2);
+        } finally {
+            refs.mockRestore();
+            scan.mockRestore();
+        }
+    });
 });
 
 describe("helper processes cannot claim live sessions", () => {

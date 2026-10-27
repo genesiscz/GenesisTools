@@ -530,6 +530,34 @@ describe("sessions already running in a cmux tab", () => {
         expect(runsElsewhere(tab("there", "x"), "surface-uuid-here", () => "S+")).toBe(true);
     });
 
+    test("a full native ID finds an unindexed running session but never a text mention", async () => {
+        const id = "11111111-1111-4111-8111-111111111111";
+        const live = tab(id, "live");
+        const unrelated = tab("other", id);
+        const { shown, pick } = picker(() => 0);
+        const choice = await chooseResume({
+            adapter: adapter([], [session("unrelated", id)]),
+            query: id.toUpperCase(),
+            interactive: true,
+            running: async () => [unrelated, live],
+            stillRunning: () => true,
+            pick,
+        });
+
+        expect(choice).toEqual({ action: "focus", running: live });
+        expect(shown[0].rows.map((row) => row.value.display.sessionId)).toEqual([id]);
+        await expect(
+            chooseResume({
+                adapter: adapter([], [session("unrelated", id)]),
+                query: id,
+                interactive: true,
+                running: async () => [unrelated],
+                stillRunning: () => true,
+                pick,
+            })
+        ).rejects.toThrow("No codex session has native ID");
+    });
+
     test("without a terminal the running sessions are never read", async () => {
         let reads = 0;
         const only = session("only", "invoice");

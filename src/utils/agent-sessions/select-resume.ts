@@ -300,13 +300,10 @@ async function resolveResume(
             session.sourceKey === trimmed ||
             session.filePath === trimmed
     );
-    if (fullNativeId && !matches.length) {
-        throw new Error(`No ${adapter.kind} session has native ID "${query}"`);
-    }
-    if (!matches.length) {
+    if (!fullNativeId && !matches.length) {
         matches = sessions.filter((session) => session.sessionId.toLowerCase().startsWith(normalized));
     }
-    if (!matches.length) {
+    if (!fullNativeId && !matches.length) {
         matches = sessions.filter((session) =>
             `${session.title}\n${session.summary ?? ""}`.toLowerCase().includes(normalized)
         );
@@ -315,7 +312,7 @@ async function resolveResume(
     // A metadata hit does NOT stand in for the content pass unless it IDENTIFIES the session.
     // Gating on `matches.length` instead meant a single weak title hit both suppressed the search
     // AND, being the only match, was returned with no picker and no ambiguity error.
-    if (!matches.some((session) => identifiesSession(session, trimmed))) {
+    if (!fullNativeId && !matches.some((session) => identifiesSession(session, trimmed))) {
         // `scope` lifts the limit so exact identity resolution can enumerate everything; the
         // full-text fallback must not inherit that, or it hydrates the whole corpus.
         // `candidatesOnly`: the picker needs which sessions mention the query, which ripgrep
@@ -328,10 +325,17 @@ async function resolveResume(
     }
 
     matches = preferHomeCopies(matches, options.preferredHome);
-    const allRunning = ((await runningScan) ?? []).filter(options.stillRunning ?? ((entry) => runsElsewhere(entry)));
-    const running = runningResumeHits(allRunning, trimmed);
+    const eligible = ((await runningScan) ?? []).filter(options.stillRunning ?? ((entry) => runsElsewhere(entry)));
+    const allRunning = [...new Map(eligible.map((entry) => [entry.sessionId.toLowerCase(), entry])).values()];
+    const running = fullNativeId
+        ? allRunning.filter((entry) => entry.sessionId.toLowerCase() === normalized)
+        : runningResumeHits(allRunning, trimmed);
 
     if (!matches.length && !running.length) {
+        if (fullNativeId) {
+            throw new Error(`No ${adapter.kind} session has native ID "${query}"`);
+        }
+
         throw new Error(`No ${adapter.kind} session matches "${query}" in this project scope`);
     }
     // A lone match is resumed without asking, unless it already runs: then the picker offers its tab first.
