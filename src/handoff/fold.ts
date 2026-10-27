@@ -243,7 +243,7 @@ export function applyHandoffEvent(
             tasks,
             postedBy: actorOf(event.by),
             postedByContext: event.by,
-            project: event.by.project,
+            project: event.project ?? event.by.project,
             claimedBy: [],
             comments: [],
             attachments: [],
@@ -659,6 +659,10 @@ export function applyHandoffEvent(
 
             if (event.refs !== undefined) {
                 next.refs = event.refs;
+            }
+
+            if (event.project !== undefined) {
+                next.project = event.project;
             }
 
             return { state: next, outcome: { applied: true } };

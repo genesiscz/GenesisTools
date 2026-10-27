@@ -515,6 +515,8 @@ export function postSessionHandoff(
         owner?: boolean;
         cwd?: string | null;
         branch?: string | null;
+        /** The project the handoff is for: a name or a repository path (handoff_post `project`). */
+        project?: string;
         /** The handoff log and database (tests). */
         store?: Pick<HandoffDeps, "base" | "dbPath">;
     } = {}
@@ -524,7 +526,13 @@ export function postSessionHandoff(
             ? draft.openItems.map((text) => ({ text }))
             : [{ text: "Continue the session's work from the handoff notes", acceptanceCriteria: "The goal is met" }];
     const response = postHandoff(
-        { title: draft.title, description: draft.markdown, tasks, refs: [draft.sessionId] },
+        {
+            title: draft.title,
+            description: draft.markdown,
+            tasks,
+            refs: [draft.sessionId],
+            ...(options.project !== undefined ? { project: options.project } : {}),
+        },
         {
             ...options.store,
             ...(options.owner

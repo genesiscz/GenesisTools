@@ -111,7 +111,12 @@ function eventDetail(event: HandoffPublicEvent): string | null {
         case "modify_handoff": {
             const title = str(field(event, "title"));
             const description = str(field(event, "description"));
+            const project = str(field(event, "project"));
             const parts: string[] = [];
+
+            if (project !== undefined) {
+                parts.push(`project: ${str(field(event, "fromProject")) ?? "(none)"} → ${project}`);
+            }
 
             if (title !== undefined) {
                 parts.push(`title: ${title}`);

@@ -94,6 +94,8 @@ function describe(event: HandoffEvent): string {
             return oneLine(event.text, 220);
         case "add_tasks":
             return `${event.tasks.length} task(s)`;
+        case "modify_handoff":
+            return event.project !== undefined ? `project ${event.fromProject ?? "(none)"} → ${event.project}` : "";
         default:
             return "";
     }

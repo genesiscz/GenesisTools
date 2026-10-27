@@ -154,6 +154,7 @@ export function handoffRoutes(): RouteDef[] {
                         tasks?: HandoffTaskInput[];
                         target?: HandoffTarget;
                         refs?: string[];
+                        project?: string;
                     }>();
                     const res = postHandoff(
                         {
@@ -163,6 +164,7 @@ export function handoffRoutes(): RouteDef[] {
                             tasks: body.tasks ?? [],
                             target: body.target,
                             refs: body.refs,
+                            project: body.project,
                         },
                         deps
                     );

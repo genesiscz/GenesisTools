@@ -1,6 +1,7 @@
 import { describe, expect, test } from "bun:test";
-import { writeFileSync } from "node:fs";
-import { join } from "node:path";
+import { mkdirSync, mkdtempSync, writeFileSync } from "node:fs";
+import { tmpdir } from "node:os";
+import { basename, join } from "node:path";
 import { DASHBOARD_ACTOR, executeHandoffActions, getHandoff, launchCwd, listHandoffs, postHandoff } from "./executor";
 import { byFor, freshEnv } from "./test-utils";
 
@@ -703,5 +704,100 @@ describe("fold redesign (G5/G8/G11)", () => {
         expect(bTry.results[0].ok).toBe(false);
         expect(posted.handoff.claimedBy?.length ?? 0).toBe(0);
         expect(bTry.handoff.claimedBy).toHaveLength(0);
+    });
+});
+
+describe("handoff project (a handoff names the project it is for)", () => {
+    const tasks = [{ text: "one" }];
+
+    test("a project name wins over the poster's folder, which postedByContext keeps", () => {
+        const env = freshEnv();
+        const res = postHandoff({ title: "For col-tools", tasks, project: "col-tools" }, env.depsFor(A));
+
+        expect(res.handoff.project).toBe("col-tools");
+        expect(res.handoff.postedByContext.project).toBe("TestProj");
+        expect(res.handoff.postedByContext.cwd).toBe("/tmp/test");
+        expect(listHandoffs({ project: "col-tools" }, env.depsFor(A)).handoffs.map((h) => h.id)).toEqual([
+            res.handoff.id,
+        ]);
+        expect(listHandoffs({ project: "TestProj" }, env.depsFor(A)).handoffs).toHaveLength(0);
+    });
+
+    test("a repository path resolves to its project: a folder outside git by its name, a subfolder by its repo", () => {
+        const env = freshEnv();
+        const plain = join(mkdtempSync(join(tmpdir(), "handoff-project-")), "col-tools");
+        mkdirSync(plain);
+        const outside = postHandoff({ title: "Plain folder", tasks, project: plain }, env.depsFor(A));
+        const fromRoot = postHandoff({ title: "Repo root", tasks, project: process.cwd() }, env.depsFor(A));
+        const fromSub = postHandoff(
+            { title: "Repo subfolder", tasks, project: join(process.cwd(), "src", "handoff") },
+            env.depsFor(A)
+        );
+
+        expect(outside.handoff.project).toBe(basename(plain));
+        expect(fromRoot.handoff.project).not.toBe("TestProj");
+        expect(fromSub.handoff.project).toBe(fromRoot.handoff.project);
+        expect(outside.handoff.postedByContext.cwd).toBe("/tmp/test");
+    });
+
+    test("without project the poster's folder names it; a path that is not a folder is refused", () => {
+        const env = freshEnv();
+        const res = postHandoff({ title: "Default", tasks }, env.depsFor(A));
+
+        expect(res.handoff.project).toBe("TestProj");
+        expect(() =>
+            postHandoff({ title: "Typo", tasks, project: join(tmpdir(), "no-such-folder-x9") }, env.depsFor(A))
+        ).toThrow(/is not a folder/);
+        expect(() => postHandoff({ title: "Blank", tasks, project: "  " }, env.depsFor(A))).toThrow(
+            /project name or a repository path/
+        );
+    });
+
+    test("modify_handoff moves the project, records from → to in the events, and stays a poster verb", () => {
+        const env = freshEnv();
+        const posted = postHandoff({ title: "Filed wrong", tasks }, env.depsFor(A));
+
+        const stranger = executeHandoffActions(
+            { id: posted.handoff.id, actions: [{ action: "modify_handoff", project: "col-tools" }] },
+            env.depsFor(B)
+        );
+        expect(stranger.results[0].ok).toBe(false);
+        expect(stranger.handoff.project).toBe("TestProj");
+
+        const moved = executeHandoffActions(
+            { id: posted.handoff.id, actions: [{ action: "modify_handoff", project: "col-tools" }] },
+            env.depsFor(A)
+        );
+        expect(moved.results[0].ok).toBe(true);
+        expect(moved.handoff.project).toBe("col-tools");
+        expect(moved.handoff.postedByContext.project).toBe("TestProj");
+        expect(listHandoffs({ project: "col-tools" }, env.depsFor(A)).handoffs.map((h) => h.id)).toEqual([
+            posted.handoff.id,
+        ]);
+
+        const trace = getHandoff({ id: posted.handoff.id, include: ["events"] }, env.depsFor(A));
+        // Newest first: the poster's applied move, then the stranger's refused one.
+        const moves = "events" in trace ? trace.events.filter((e) => e.ev === "modify_handoff") : [];
+        expect(
+            moves.map((e) => [
+                "fromProject" in e ? e.fromProject : undefined,
+                "project" in e ? e.project : undefined,
+                e.outcome?.applied,
+            ])
+        ).toEqual([
+            ["TestProj", "col-tools", true],
+            ["TestProj", "col-tools", false],
+        ]);
+
+        const typo = executeHandoffActions(
+            {
+                id: posted.handoff.id,
+                actions: [{ action: "modify_handoff", project: join(tmpdir(), "no-such-folder-x9") }],
+            },
+            env.depsFor(A)
+        );
+        expect(typo.results[0].ok).toBe(false);
+        expect(typo.results[0].error).toContain("is not a folder");
+        expect(typo.handoff.project).toBe("col-tools");
     });
 });
