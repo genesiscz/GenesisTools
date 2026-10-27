@@ -1,6 +1,7 @@
 import { createHash } from "node:crypto";
 import type { BackgroundCompactionSettings } from "@app/ai-proxy/lib/sessions/settings";
 import { SafeJSON } from "@genesiscz/utils/json";
+import { isObject } from "@genesiscz/utils/object";
 
 /**
  * Background compaction, the proxy's copy of Codex's `async_compaction` (codex-rs, off by default there in 2026-10):
@@ -164,7 +165,44 @@ export function estimateTokens(items: unknown[]): number {
     return Math.ceil((SafeJSON.stringify(items) ?? "").length / 4);
 }
 
+/**
+ * What the agent must tell the user after a wasted background run, sent once with the thread's next turn. A line in
+ * the compaction summary alone was ignored in the live test of 2026-10-28 (the agent answered only the question).
+ */
+const pendingNotices = new Map<string, string>();
+
+export function setPendingNotice(key: string, notice: string): void {
+    pendingNotices.set(key, notice);
+}
+
+export function takePendingNotice(key: string): string | undefined {
+    const notice = pendingNotices.get(key);
+    pendingNotices.delete(key);
+    return notice;
+}
+
+/** The input with one reminder added to its last user message: the newest part, so the cached prefix stays whole. */
+export function withUserReminder(input: unknown[], text: string): unknown[] {
+    const at = input.findLastIndex((item) => isObject(item) && item.role === "user");
+    const message = input[at];
+
+    if (!isObject(message)) {
+        return input;
+    }
+
+    const reminder = { type: "input_text", text: `<system-reminder>\n${text}\n</system-reminder>` };
+    const content =
+        typeof message.content === "string"
+            ? [{ type: "input_text", text: message.content }, reminder]
+            : Array.isArray(message.content)
+              ? [...message.content, reminder]
+              : [reminder];
+
+    return input.map((item, index) => (index === at ? { ...message, content } : item));
+}
+
 /** Tests start clean. */
 export function resetBackgroundForTests(): void {
     threads.clear();
+    pendingNotices.clear();
 }

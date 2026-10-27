@@ -2393,6 +2393,12 @@ describe("background compaction (Codex async_compaction for Claude Code)", () =>
         expect(reply).toContain("the conversation before it changed");
         const wasted = events().find((event) => event.kind === "background-wasted");
         expect(wasted?.reason).toBe("history_changed");
+
+        // The next turn carries a one-time reminder to tell the user; the turn after it does not.
+        await send({ messages: [{ role: "user", content: "Go on." }] }, sessionId);
+        expect(SafeJSON.stringify(sent.at(-1)?.input)).toContain("Start your next reply with one sentence");
+        await send({ messages: [{ role: "user", content: "Go on." }] }, sessionId);
+        expect(SafeJSON.stringify(sent.at(-1)?.input)).not.toContain("Start your next reply");
     });
 
     it("does not start a background run below the start fraction or outside a ccx session", async () => {
