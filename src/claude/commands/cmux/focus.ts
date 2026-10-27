@@ -117,7 +117,7 @@ export async function focusTarget(target: FocusTarget): Promise<string | undefin
         try {
             await focusCmuxSurface({ surfaceId: target.surfaceId });
         } catch (err) {
-            if (!target.paneId) {
+            if (!target.paneId || target.matchedOn === "running") {
                 throw err;
             }
             log.warn({ err, surfaceId: target.surfaceId }, "could not focus the matched surface");

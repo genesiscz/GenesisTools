@@ -574,6 +574,29 @@ describe("focusRunningSession", () => {
         expect(activated).toBe(1);
     });
 
+    test("a running tab refusal or timeout never reports success or activates the app", async () => {
+        const { focusRunningSession } = await import("@app/claude/commands/cmux/focus");
+
+        for (const surfaceId of [REFUSED_SURFACE, TIMEOUT_SURFACE]) {
+            events = [];
+            let activated = false;
+            const attempt = focusRunningSession(
+                { ...running, surfaceId },
+                {
+                    fetchTree: async () => tree([surfaceId]),
+                    activate: async () => {
+                        activated = true;
+                        return true;
+                    },
+                }
+            );
+
+            await expect(attempt).rejects.toThrow();
+            expect(events).toContain(`focus-surface ${surfaceId}`);
+            expect(activated).toBe(false);
+        }
+    });
+
     test("a tab that closed while the picker was open focuses nothing", async () => {
         const { focusRunningSession } = await import("@app/claude/commands/cmux/focus");
         const focused = await focusRunningSession(running, {

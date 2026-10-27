@@ -453,22 +453,23 @@ export interface RunningCmuxSession {
 }
 
 /**
- * This agent's sessions that run in a cmux tab now, one entry per session. A process whose session is not
- * resolved, or that runs outside cmux, is left out: there is no tab to focus for it.
+ * This agent's processes that run in a cmux tab now. A process whose session is not resolved, or that runs
+ * outside cmux, is left out: there is no tab to focus for it. Keep duplicate session IDs until the caller
+ * filters processes that have stopped, exited, or run in the caller's tab.
  */
 export async function listRunningCmuxSessions(
     source: AgentWhoSource,
     deps: { runner?: (cmd: string[]) => Promise<string> } = {}
 ): Promise<RunningCmuxSession[]> {
     const entries = withoutHelpers(source, await listActiveAgentSessions(source, { ...deps, tails: false }));
-    const running = new Map<string, RunningCmuxSession>();
+    const running: RunningCmuxSession[] = [];
 
     for (const entry of entries) {
-        if (!entry.sessionId || !entry.surfaceId || running.has(entry.sessionId)) {
+        if (!entry.sessionId || !entry.surfaceId) {
             continue;
         }
 
-        running.set(entry.sessionId, {
+        running.push({
             sessionId: entry.sessionId,
             title: entry.sessionTitle,
             cwd: entry.cwd,
@@ -479,10 +480,10 @@ export async function listRunningCmuxSessions(
     }
 
     logger.debug(
-        { alias: source.alias, processes: entries.length, running: running.size },
+        { alias: source.alias, processes: entries.length, running: running.length },
         "[who] running cmux sessions"
     );
-    return [...running.values()];
+    return running;
 }
 
 /** The processes `who` lists without `--all`: no helper kinds and no table-decided helpers. */
