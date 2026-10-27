@@ -128,7 +128,14 @@ public struct LiveWidgetView: View {
             if let notice = model.notice {
                 VStack(alignment: .leading, spacing: 4) {
                     HStack(alignment: .top) {
-                        Text(notice).font(.caption).foregroundStyle(.secondary)
+                        // The tone the sender stored: "Not delivered …" is a warning, not a grey caption like "Inbox
+                        // marked read" (UX audit F22).
+                        if let symbol = WidgetToneLook.symbol(model.noticeTone) {
+                            Image(systemName: symbol).font(.caption).foregroundStyle(WidgetToneLook.color(model.noticeTone))
+                                .accessibilityHidden(true)
+                        }
+                        Text(notice).font(.caption)
+                            .foregroundStyle(model.noticeTone == .warning ? AnyShapeStyle(.primary) : AnyShapeStyle(.secondary))
                             .fixedSize(horizontal: false, vertical: true)
                         Spacer()
                         if let action = model.noticeAction {
@@ -446,7 +453,7 @@ public struct LiveWidgetView: View {
     }
 
     private func inboxSummary(_ entry: WidgetInboxSession) -> String {
-        [entry.needsAnswer > 0 ? "\(entry.needsAnswer) need your answer" : nil,
+        [entry.needsAnswer > 0 ? WidgetWords.waiting(entry.needsAnswer) : nil,
          entry.unread > 0 ? "\(entry.unread) unread" : nil].compactMap { $0 }.joined(separator: " · ")
     }
 
@@ -510,7 +517,7 @@ public struct LiveWidgetView: View {
         let waiting = cards.filter(\.needsAnswer).count
         let unread = cards.filter { !$0.read && !$0.needsAnswer }.count
         return [cards.count == 1 ? "1 item" : "\(cards.count) items",
-                waiting > 0 ? "\(waiting) need your answer" : nil,
+                waiting > 0 ? WidgetWords.waiting(waiting) : nil,
                 unread > 0 ? "\(unread) unread" : nil].compactMap { $0 }.joined(separator: " · ")
     }
 
@@ -551,7 +558,7 @@ public struct LiveWidgetView: View {
                         // A one-question form's title is its prompt, which the open card does not repeat: open, it
                         // shows whole and as Markdown, the way the form drew it.
                         let isPrompt = Self.asksOneQuestion(card)
-                        (isPrompt ? Text(.init(card.title)) : Text(card.numberedTitle))
+                        (isPrompt ? Text(.init(card.title)) : Text(WidgetWords.numbered(card.title, number: card.number)))
                             .font(.system(size: 12.5, weight: open ? .semibold : .medium))
                             .lineLimit(open ? (isPrompt ? nil : 4) : 2).fixedSize(horizontal: false, vertical: true)
                         if !open, let preview = Self.previewLine(card.body) {
@@ -559,7 +566,7 @@ public struct LiveWidgetView: View {
                         }
                         HStack(spacing: 4) {
                             Text(staged ? "Staged: " + WidgetStagedText.line(WidgetModel.inboxItem(card),
-                                    option: model.stagedOption(card.sourceId, stored: card.draftOption))
+                                    option: model.shownStagedOption(card.sourceId, stored: card.draftOption))
                                  : Self.kindLabel(card)).lineLimit(1)
                             Text("·")
                             LiveAgo(date: Date(timeIntervalSince1970: card.at / 1000), style: .brief)
@@ -577,7 +584,7 @@ public struct LiveWidgetView: View {
                 .contentShape(Rectangle())
             }
             .buttonStyle(RowButtonStyle(cornerRadius: 11))
-            .accessibilityLabel((staged ? "Staged" : Self.kindLabel(card)) + ": " + card.numberedTitle)
+            .accessibilityLabel((staged ? "Staged" : Self.kindLabel(card)) + ": " + WidgetWords.numbered(card.title, number: card.number))
             .accessibilityValue(open ? "Expanded" : "Collapsed")
             .accessibilityIdentifier("widget.inbox.row." + card.id)
             if open {
@@ -595,7 +602,8 @@ public struct LiveWidgetView: View {
     /// A card whose pick or note is staged, here or in the snapshot.
     private func staged(_ card: WidgetCard) -> Bool {
         card.kind == "decision" && card.needsAnswer
-            && (model.stagedOption(card.sourceId, stored: card.draftOption) != nil || card.draft != nil)
+            && (model.shownStagedOption(card.sourceId, stored: card.draftOption) != nil
+                || model.shownStagedNote(card.sourceId, card.draft) != nil)
     }
 
     /// One option of a decision: the key badge, "a)" and the text, Staged, the recommended mark and the focus ring.
@@ -667,9 +675,9 @@ public struct LiveWidgetView: View {
                         .buttonStyle(.borderedProminent).pointerCursor(!model.cardPending)
                         .disabled(model.importing > 0 || model.cardPending)
                 } else {
-                    let staged = model.stagedOption(card.sourceId, stored: card.draftOption)
+                    let staged = model.shownStagedOption(card.sourceId, stored: card.draftOption)
                     ForEach(Array(card.choices.enumerated()), id: \.element.id) { index, choice in
-                        let picked = staged == choice.id
+                        let picked = staged?.contains(choice.id) ?? false
                         let key = Self.choiceKey(index)
                         let focused = model.choiceFocus == WidgetChoiceFocus(cardID: card.id, choiceID: choice.id)
                         optionRow(card, choice: choice, index: index, key: key, picked: picked, focused: focused)
@@ -679,12 +687,13 @@ public struct LiveWidgetView: View {
             }
             // Under the options, beside the buttons that act on it: at the top of the card it pushed the options and
             // the buttons down under the pointer.
-            if let saved = model.draftSavedAt[card.id] ?? (card.draft != nil ? Date(timeIntervalSince1970: card.at / 1000) : nil),
-               card.kind == "decision", card.needsAnswer {
+            let note = model.shownStagedNote(card.sourceId, card.draft)
+            if let saved = model.draftSavedAt[card.id] ?? (note != nil ? Date(timeIntervalSince1970: card.at / 1000) : nil),
+               card.kind == "decision", card.needsAnswer, !model.heldDecisionIDs.contains(card.sourceId) {
                 HStack(spacing: 4) {
                     Image(systemName: "checkmark.circle.fill").foregroundStyle(SessionPalette.blue)
                     // "Staged", as the option badge and the hub say: a note that waits to be sent with the others.
-                    Text(card.draft.map { "Note staged: " + $0 } ?? "Note staged").lineLimit(2)
+                    Text(note.map { "Note staged: " + $0 } ?? "Note staged").lineLimit(2)
                     if model.draftSavedAt[card.id] != nil {
                         Text("·")
                         LiveAgo(date: saved, style: .brief)
@@ -699,13 +708,14 @@ public struct LiveWidgetView: View {
                     Button("Mark complete") { holdMove(card, to: "implemented") }
                     Button("Dismiss") { holdMove(card, to: "dismissed") }
                 } else if card.kind == "decision" && card.needsAnswer {
-                    // Dismiss keeps its place; Send now and Unstage come after it while a pick or a note waits.
-                    Button("Dismiss") { holdMove(card, to: "dismissed") }
+                    // Send now is the card's one primary action while a pick or a note waits; Dismiss is quiet and
+                    // sits at the right edge, so it never moves when staging adds the buttons before it (UX audit P13).
                     if staged(card) {
                         let sending = model.sendingDecisionIDs.contains(card.sourceId)
                         Button(sending ? "Sending…" : "Send now") {
                             model.sendStaged([card.sourceId], known: [WidgetModel.inboxItem(card)])
                         }
+                        .buttonStyle(.genPrimary())
                         .disabled(sending)
                         .instantTooltip("Sends this staged decision alone, without the others.")
                         Button("Unstage") { model.unstage(card) }
@@ -725,6 +735,11 @@ public struct LiveWidgetView: View {
                     Button("New agent with context…") { model.destination("new") }
                 }
                 Spacer(minLength: 0)
+                if card.kind == "decision" && card.needsAnswer {
+                    Button("Dismiss") { holdMove(card, to: "dismissed") }
+                        .foregroundStyle(.secondary)
+                        .instantTooltip("Drops the decision without an answer. Undo brings it back.")
+                }
                 IconButton(systemName: model.reading ? "stop.fill" : "speaker.wave.2",
                            tooltip: model.reading ? "Stop reading" : "Read aloud", action: model.toggleRead)
                     .accessibilityLabel(model.reading ? "Stop reading" : "Read aloud")
@@ -806,13 +821,13 @@ public struct LiveWidgetView: View {
     }
 
     static func kindLabel(_ card: WidgetCard) -> String {
-        if card.needsAnswer { return "Needs your answer" }
+        if card.needsAnswer { return "Waiting for your answer" }
         switch card.kind {
         case "answer": return card.read ? "Answer" : "New answer"
         case "result": return card.read ? "Agent result" : "New agent result"
         case "todo": return "Task · " + WidgetTask.label(for: card.status)
         case "decision":
-            if let replacement = card.supersededBy { return "Decision · Superseded by DECISION \(replacement.number)" }
+            if let replacement = card.supersededBy { return "Decision · Superseded by " + WidgetWords.decision(replacement.number) }
             if let option = card.option, !option.isEmpty, ["acknowledged", "implemented", "sent", "answered"].contains(card.status) {
                 return "Decision · Answered \(option) · " + statusPhrase(card.status, kind: card.kind)
             }
@@ -823,7 +838,7 @@ public struct LiveWidgetView: View {
     }
 
     /// One phrase for each state of the decision log and the question forms, the same in every tab and row.
-    static func statusPhrase(_ status: String, kind: String) -> String {
+    public static func statusPhrase(_ status: String, kind: String) -> String {
         if kind == "todo" { return WidgetTask.label(for: status) }
         switch status {
         case "open", "pending": return "Waiting for your answer"
@@ -950,7 +965,8 @@ public struct LiveWidgetView: View {
                 case .card(let card):
                     VStack(alignment: .leading, spacing: 6) {
                         Text(Self.kindLabel(card)).font(.system(size: 11)).foregroundStyle(SessionPalette.secondary)
-                        Text(card.numberedTitle).font(.system(size: 12, weight: .semibold)).textSelection(.enabled)
+                        Text(WidgetWords.numbered(card.title, number: card.number)).font(.system(size: 12, weight: .semibold))
+                            .textSelection(.enabled)
                         if !card.body.isEmpty {
                             WidgetMarkdown(text: card.body)
                         }
@@ -1196,7 +1212,7 @@ public struct LiveWidgetView: View {
         let focused = ownAnswer == nil ? editing : ownAnswerFocused
         let fieldHeight = ownAnswer == nil ? composerFieldHeight : ownAnswerFieldHeight
         let shownText = open && parked == nil ? model.draft.text : ""
-        let placeholder = parked.map { "Answering DECISION \($0.number ?? 0) in its card" }
+        let placeholder = parked.map { "Answering " + WidgetWords.decision($0.number) + " in its card" }
             ?? (ownAnswer == nil ? "Reply to " + (model.selected?.target.provider.capitalized ?? "agent") + "…"
                 : "Write my own answer…")
         let shape = RoundedRectangle(cornerRadius: 13)
@@ -1323,7 +1339,7 @@ public struct LiveWidgetView: View {
                     Task { @MainActor in editing = true }
                 }
                 .buttonStyle(.genHoverPlain()).font(.system(size: 11))
-                .instantTooltip("Takes the text back from DECISION \(parked.number ?? 0)'s answer field into this reply box")
+                .instantTooltip("Takes the text back from " + WidgetWords.decision(parked.number) + "'s answer field into this reply box")
             } else if let card = ownAnswer {
                 // Its full width first: the key hint shortens itself, the button never wraps.
                 Button("Stage note") { model.saveDraft(card) }
@@ -1343,20 +1359,36 @@ public struct LiveWidgetView: View {
     private var composerKeys: some View {
         let paste = WidgetKeymap.label(WidgetKeymap.paste)
         let close = WidgetKeymap.label(WidgetKeymap.collapse)
-        let stagesOnReturn = model.ownAnswerCard != nil && model.ownAnswerReturnStages
-        let base = stagesOnReturn ? "↩ stage · ⌘↩ send · ⌥↩ new line" : "↩ send · ⌥↩ new line"
-        let media = paste.isEmpty ? base : base + " · \(paste) media"
+        let keys = Self.ownAnswerKeys(ownAnswer: model.ownAnswerCard != nil, returnStages: model.ownAnswerReturnStages,
+                                      commandSwaps: model.snapshot?.state.preferences.decisionCommandSwaps ?? true)
+        let media = paste.isEmpty ? keys.hint : keys.hint + " · \(paste) media"
         return ViewThatFits(in: .horizontal) {
             Text(close.isEmpty ? media : media + " · \(close) close")
             Text(media)
-            Text(base)
-            Text(stagesOnReturn ? "↩ stage · ⌘↩ send" : "↩ send")
+            Text(keys.hint)
+            Text(keys.short)
         }
         .font(.system(size: 11)).foregroundStyle(SessionPalette.secondary).lineLimit(1)
         .layoutPriority(1)
         .accessibilityElement(children: .ignore)
-        .accessibilityLabel(stagesOnReturn ? "Return stages the note. Command Return sends it. Option Return adds a new line."
-                            : "Return sends. Option Return adds a new line.")
+        .accessibilityLabel(keys.spoken)
+    }
+
+    /// The keys of a composer, as its hint, its shortest hint and VoiceOver's sentence. A decision's own answer follows
+    /// "Return in an own answer" and "⌘ does the other"; the hint named only Return's key while ⌘-Return did the other
+    /// (UX audit P9). The hub's Inbox note shows the same words.
+    public static func ownAnswerKeys(ownAnswer: Bool, returnStages: Bool, commandSwaps: Bool)
+        -> (hint: String, short: String, spoken: String)
+    {
+        guard ownAnswer else {
+            return ("↩ send · ⌥↩ new line", "↩ send", "Return sends. Option Return adds a new line.")
+        }
+        let first = returnStages ? "↩ stage" : "↩ send"
+        let other = commandSwaps ? (returnStages ? " · ⌘↩ send" : " · ⌘↩ stage") : ""
+        let spoken = (returnStages ? "Return stages the note." : "Return sends the answer.")
+            + (commandSwaps ? (returnStages ? " Command Return sends it." : " Command Return stages it as a note.") : "")
+            + " Option Return adds a new line."
+        return (first + other + " · ⌥↩ new line", first + other, spoken)
     }
 
     /// The microphone: Stop while a dictation runs; otherwise a menu of the two modes when the setting asks, else the
@@ -1654,8 +1686,27 @@ final class WidgetContentFit {
     var scheduled = false
 }
 
+/// The look of a note's tone (`WidgetNoticeTone`), the same in the panel's note line and the alert popup's outcome.
+enum WidgetToneLook {
+    static func symbol(_ tone: WidgetNoticeTone) -> String? {
+        switch tone {
+        case .success: return "checkmark.circle.fill"
+        case .warning: return "exclamationmark.triangle.fill"
+        case .info: return nil
+        }
+    }
+
+    static func color(_ tone: WidgetNoticeTone) -> Color {
+        switch tone {
+        case .success: return .green
+        case .warning: return .orange
+        case .info: return SessionPalette.secondary
+        }
+    }
+}
+
 /// The full reasons behind a widget note, as `NoticePill` shows its own behind "Details".
-private struct WidgetNoticeDetails: View {
+struct WidgetNoticeDetails: View {
     let text: String
     @Environment(\.accessibilityReduceMotion) private var reduceMotion
     @State private var showsMore = false

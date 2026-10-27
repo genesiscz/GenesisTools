@@ -79,7 +79,7 @@ struct AgentWidgetPreview: View {
                         HStack(spacing: 4) {
                             WidgetInboxCount(count: model.inbox.needsAnswer, needsAnswer: true,
                                 pulse: model.waitingPulse, reduceMotion: model.effectiveReduceMotion, complete: model.inbox.complete)
-                            Text("need you").font(.system(size: 10))
+                            Text("waiting").font(.system(size: 10))
                         }
                     }.buttonStyle(.genHoverPlain()).instantTooltip("Every inbox item that waits for your answer")
                 }

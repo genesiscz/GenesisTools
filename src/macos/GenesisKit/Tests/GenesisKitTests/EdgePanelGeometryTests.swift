@@ -1142,7 +1142,7 @@ final class WidgetVisibilityTests: XCTestCase {
         let superseded = try XCTUnwrap(model.cards.first { $0.number == 7 })
         var opened: [String] = []
         var seen = try read("superseded", WidgetDecisionOutcome(card: superseded) { opened.append($0.id) })
-        XCTAssertTrue(seen.contains("Superseded by DECISION 8"), "read: \(seen)")
+        XCTAssertTrue(seen.contains("Superseded by Decision 8"), "read: \(seen)")
         XCTAssertTrue(seen.contains("Answer recorded by the agent"), "read: \(seen)")
         XCTAssertTrue(seen.contains("Keep the current one"), "the picked option is named: \(seen)")
         XCTAssertTrue(seen.contains("Replaced by a narrower question."), "read: \(seen)")
@@ -1173,7 +1173,7 @@ final class WidgetVisibilityTests: XCTestCase {
             title: "T", body: "", status: "superseded", choices: [], attachments: [], refs: [], read: true)
         card.supersededBy = .init(id: "d_12_s", number: 12, sessionKey: "k", title: "Newer")
         XCTAssertFalse(card.needsAnswer)
-        XCTAssertEqual(LiveWidgetView.kindLabel(card), "Decision · Superseded by DECISION 12")
+        XCTAssertEqual(LiveWidgetView.kindLabel(card), "Decision · Superseded by Decision 12")
         card.supersededBy = nil
         card.status = "acknowledged"
         card.option = "a"

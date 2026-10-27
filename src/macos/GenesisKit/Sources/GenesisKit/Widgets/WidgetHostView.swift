@@ -559,9 +559,14 @@ struct WidgetPeekView: View {
         VStack(alignment: .leading, spacing: 0) {
             VStack(alignment: .leading, spacing: 8) {
                 header
-                if !options.isEmpty { optionList }
-                if item.isAnsweredElsewhere { answeredBody }
-                if isReminder { stagedBody }
+                if let outcome = model.peekOutcome {
+                    // What the send from this popup did, read where it was sent (UX audit F5).
+                    outcomeBlock(outcome)
+                } else {
+                    if !options.isEmpty { optionList }
+                    if item.isAnsweredElsewhere { answeredBody }
+                    if isReminder { stagedBody }
+                }
                 if model.peekMany == .list, !model.peekQueue.isEmpty { waitingList }
             }
             .fixedSize(horizontal: false, vertical: true)
@@ -597,6 +602,12 @@ struct WidgetPeekView: View {
         measured(contentHeight + Self.footerGap + footerHeight + 2 * Self.padding)
     }
 
+    /// The first line. After a send from the staged reminder it no longer says "Staged, not sent" in orange over the
+    /// outcome of that send.
+    private var kicker: String {
+        isReminder && model.peekOutcome != nil ? "Staged decisions" : WidgetAlerts.kicker(item)
+    }
+
     /// The staged reminder (`WidgetCoordinator.remindStaged`): it lists the staged decisions, not one item.
     private var isReminder: Bool { item.kind == "staged" }
 
@@ -623,8 +634,8 @@ struct WidgetPeekView: View {
             VStack(alignment: .leading, spacing: 5) {
                 HStack(spacing: 6) {
                     Image(systemName: Self.mark(item).symbol).foregroundStyle(Self.mark(item).tint)
-                    Text(WidgetAlerts.kicker(item)).font(.system(size: 11, weight: .semibold))
-                        .foregroundStyle(item.needsAnswer || item.isAnsweredElsewhere || isReminder
+                    Text(kicker).font(.system(size: 11, weight: .semibold))
+                        .foregroundStyle((item.needsAnswer || item.isAnsweredElsewhere || isReminder) && model.peekOutcome == nil
                                          ? Self.mark(item).tint : .secondary)
                     Spacer(minLength: 0)
                     if queued > 0 {
@@ -650,24 +661,24 @@ struct WidgetPeekView: View {
         }
         .buttonStyle(RowButtonStyle(cornerRadius: WidgetOptionLabel.cornerRadius))
         .instantTooltip(openTitle)
-        .accessibilityLabel(WidgetAlerts.kicker(item) + ": " + title)
+        .accessibilityLabel(kicker + ": " + title)
         .accessibilityHint(openTitle)
         .accessibilityIdentifier("widget.peek.open")
     }
 
     /// The decision's options as the inbox draws them: a click stages one (or sends it, by the Decision click
-    /// setting) without opening anything, and the row says Staged at once. A send opens the decision in its session,
-    /// so its result is read where it went.
+    /// setting) without opening anything, and the row says Staged at once. A send shows its outcome here.
     private var optionList: some View {
         VStack(alignment: .leading, spacing: 5) {
             ForEach(Array(options.prefix(Self.shownOptions).enumerated()), id: \.offset) { index, option in
-                WidgetItemOptionButton(model: model, item: item, index: index, option: option) {
-                    if !model.clickStagesNow { open() }
-                }
+                // A pick sent at once stays in the popup, which shows its outcome (`peekOutcome`); it used to expand
+                // the whole panel to its session by itself (UX audit P11).
+                WidgetItemOptionButton(model: model, item: item, index: index, option: option)
             }
             if options.count > Self.shownOptions {
-                Text("\(options.count - Self.shownOptions) more in its session").font(.system(size: 11))
-                    .foregroundStyle(.secondary).padding(.leading, 8)
+                // A count opens what it counts (UX audit P5): the decision in its session, with every option.
+                moreButton("\(options.count - Self.shownOptions) more in its session",
+                           tooltip: "Opens the decision in its session with all its options") { open() }
             }
         }
     }
@@ -719,8 +730,11 @@ struct WidgetPeekView: View {
                 .accessibilityHint("Shows it here")
             }
             if waiting.count > Self.shownWaiting {
-                Text("\(waiting.count - Self.shownWaiting) more in the inbox").font(.system(size: 11))
-                    .foregroundStyle(.secondary).padding(.leading, 8)
+                moreButton("\(waiting.count - Self.shownWaiting) more in the inbox",
+                           tooltip: "Opens the inbox of every session") {
+                    guard let surface = model.hoveredSurface else { return }
+                    model.toggleInboxOverview(on: surface)
+                }
             }
         }
         .accessibilityElement(children: .contain)
@@ -733,65 +747,121 @@ struct WidgetPeekView: View {
         return VStack(alignment: .leading, spacing: 3) {
             ForEach(staged.prefix(Self.shownWaiting + 1), id: \.id) { row in
                 HStack(spacing: 6) {
-                    Text(row.number.map { "Decision \($0)" } ?? "Decision").font(.system(size: 11, weight: .semibold))
-                        .foregroundStyle(.orange)
+                    // Blue: staged reads blue on every surface; orange is "waiting for your answer" (F2).
+                    Text(WidgetWords.decision(row.number)).font(.system(size: 11, weight: .semibold))
+                        .foregroundStyle(SessionPalette.blue)
                     Text(row.title ?? "").font(.system(size: 11)).lineLimit(1).truncationMode(.tail)
                     Spacer(minLength: 4)
-                    Text(model.stagedOption(row.sourceId, stored: row.draftOption).map { "\($0))" } ?? "note")
+                    Text(model.shownStagedOption(row.sourceId, stored: row.draftOption)
+                        .map { $0.map { "\($0))" }.joined(separator: " ") } ?? "note")
                         .font(.system(size: 11, weight: .medium)).foregroundStyle(.secondary)
                 }
                 .padding(.horizontal, 8)
+                .accessibilityElement(children: .combine)
             }
             if staged.count > Self.shownWaiting + 1 {
-                Text("\(staged.count - Self.shownWaiting - 1) more in the inbox").font(.system(size: 11))
-                    .foregroundStyle(.secondary).padding(.leading, 8)
+                moreButton("\(staged.count - Self.shownWaiting - 1) more staged",
+                           tooltip: "Opens the staged decisions in the inbox") { open() }
             }
         }
-        .accessibilityElement(children: .combine)
+        .accessibilityElement(children: .contain)
         .accessibilityIdentifier("widget.peek.staged")
+    }
+
+    /// The outcome of a send from this popup: delivered (green), or not delivered with the reason (orange), its hub
+    /// details behind Details. The model keeps it for Close after send, then the popup moves on.
+    private func outcomeBlock(_ outcome: WidgetPeekOutcome) -> some View {
+        let tint = WidgetToneLook.color(outcome.tone)
+        return VStack(alignment: .leading, spacing: 6) {
+            HStack(alignment: .top, spacing: 7) {
+                Image(systemName: WidgetToneLook.symbol(outcome.tone) ?? "info.circle")
+                    .foregroundStyle(tint).padding(.top, 1).accessibilityHidden(true)
+                Text(outcome.text).font(.system(size: 12)).fixedSize(horizontal: false, vertical: true)
+            }
+            if let detail = outcome.detail, !detail.isEmpty {
+                WidgetNoticeDetails(text: detail)
+            }
+        }
+        .padding(8).frame(maxWidth: .infinity, alignment: .leading)
+        .background(tint.opacity(0.12), in: RoundedRectangle(cornerRadius: WidgetOptionLabel.cornerRadius))
+        .accessibilityElement(children: .combine)
+        .accessibilityIdentifier("widget.peek.outcome")
+    }
+
+    /// "2 more in its session": a quiet link-like button, since a count opens what it counts.
+    private func moreButton(_ title: String, tooltip: String, action: @escaping () -> Void) -> some View {
+        Button(action: action) {
+            HStack(spacing: 3) {
+                Text(title)
+                Image(systemName: "chevron.right").font(.system(size: 8.5, weight: .semibold))
+            }
+            .font(.system(size: 11)).foregroundStyle(.secondary)
+        }
+        .buttonStyle(.genHover())
+        .padding(.leading, 2)
+        .instantTooltip(tooltip)
     }
 
     /// The decision's staged pick or note, here or in the snapshot.
     private var staged: Bool {
-        model.stagedOption(item.sourceId, stored: item.draftOption) != nil || item.draft != nil
+        model.shownStagedOption(item.sourceId, stored: item.draftOption) != nil
+            || model.shownStagedNote(item.sourceId, item.draft) != nil
     }
 
     /// Real buttons where "Click to answer" was a hint: the own answer, then Send now while a pick waits, else Open.
     private var footer: some View {
         HStack(spacing: 6) {
-            if !options.isEmpty {
-                Button { open(ownAnswer: true) } label: {
-                    ViewThatFits(in: .horizontal) {
-                        Label("Write my own answer", systemImage: "square.and.pencil")
-                        Label("Own answer", systemImage: "square.and.pencil")
-                    }
+            if let outcome = model.peekOutcome {
+                Spacer(minLength: 0)
+                if !outcome.sendAgain.isEmpty {
+                    let sending = outcome.sendAgain.allSatisfy { model.sendingDecisionIDs.contains($0.sourceId) }
+                    Button(sending ? "Sending…" : "Send again") { model.resendAnswers(outcome.sendAgain) }
+                        .buttonStyle(.genPrimary())
+                        .disabled(sending)
+                        .instantTooltip("Sends the answers again now, instead of with the session's next prompt")
+                        .accessibilityIdentifier("widget.peek.sendAgain")
                 }
-                .instantTooltip("Opens it in its session with the answer field ready to type")
-                .accessibilityIdentifier("widget.peek.ownAnswer")
-            }
-            Spacer(minLength: 0)
-            if isReminder {
-                let ids = model.stagedItems.map(\.sourceId)
-                let sending = !ids.isEmpty && ids.allSatisfy { model.sendingDecisionIDs.contains($0) }
-                Button("Show them") { open() }
-                    .instantTooltip("Opens the staged decisions in the inbox")
-                Button(sending ? "Sending…" : "Send now") { model.sendStaged(ids) }
-                    .buttonStyle(.genHover(accent: SessionPalette.blue))
-                    .disabled(ids.isEmpty || sending)
-                    .instantTooltip("Sends every staged decision now, one message per session")
-                    .accessibilityIdentifier("widget.peek.sendStaged")
-            } else if staged {
-                let sending = model.sendingDecisionIDs.contains(item.sourceId)
-                Button(sending ? "Sending…" : "Send now") { model.sendStaged([item.sourceId], known: [item]) }
-                    .buttonStyle(.genHover(accent: SessionPalette.blue))
-                    .disabled(sending)
-                    .instantTooltip("Sends this staged decision alone, without the others.")
+                Button(isReminder ? "Show them" : "Open in its session") { open() }
             } else {
-                Button(openTitle) { open() }
+                footerButtons
             }
         }
         .buttonStyle(.genHover()).font(.system(size: 11.5)).lineLimit(1)
         .padding(.horizontal, 2)
+    }
+
+    /// The footer while nothing was sent from the popup: the own answer, then Send now while a pick waits, else Open.
+    @ViewBuilder private var footerButtons: some View {
+        if !options.isEmpty {
+            Button { open(ownAnswer: true) } label: {
+                ViewThatFits(in: .horizontal) {
+                    Label("Write my own answer", systemImage: "square.and.pencil")
+                    Label("Own answer", systemImage: "square.and.pencil")
+                }
+            }
+            .instantTooltip("Opens it in its session with the answer field ready to type")
+            .accessibilityIdentifier("widget.peek.ownAnswer")
+        }
+        Spacer(minLength: 0)
+        if isReminder {
+            let ids = model.stagedItems.map(\.sourceId)
+            let sending = !ids.isEmpty && ids.allSatisfy { model.sendingDecisionIDs.contains($0) }
+            Button("Show them") { open() }
+                .instantTooltip("Opens the staged decisions in the inbox")
+            Button(sending ? "Sending…" : "Send now") { model.sendStaged(ids) }
+                .buttonStyle(.genPrimary())
+                .disabled(ids.isEmpty || sending)
+                .instantTooltip("Sends every staged decision now, one message per session")
+                .accessibilityIdentifier("widget.peek.sendStaged")
+        } else if staged {
+            let sending = model.sendingDecisionIDs.contains(item.sourceId)
+            Button(sending ? "Sending…" : "Send now") { model.sendStaged([item.sourceId], known: [item]) }
+                .buttonStyle(.genPrimary())
+                .disabled(sending)
+                .instantTooltip("Sends this staged decision alone, without the others.")
+        } else {
+            Button(openTitle) { open() }
+        }
     }
 
     private var popupAttention: AttentionPulseStyle {
@@ -840,7 +910,7 @@ struct AgentWidgetModuleView: View {
                 Text(model.selected?.title ?? "Your agent inbox").font(.system(size: 13, weight: .semibold))
                     .lineLimit(2)
                 if let card = model.card {
-                    Text(card.numberedTitle).font(.system(size: 12)).lineLimit(3)
+                    Text(WidgetWords.numbered(card.title, number: card.number)).font(.system(size: 12)).lineLimit(3)
                     if !card.body.isEmpty {
                         Text(card.body).font(.system(size: 11)).foregroundStyle(.secondary).lineLimit(3)
                     }

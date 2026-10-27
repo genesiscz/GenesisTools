@@ -18,7 +18,7 @@ struct WidgetDecisionOutcome: View {
                     HStack(alignment: .top, spacing: 6) {
                         Image(systemName: "arrow.uturn.right").font(.system(size: 10.5, weight: .semibold))
                             .padding(.top, 2)
-                        Text("Superseded by DECISION \(replacement.number)" + (replacement.title.map { ": " + $0 } ?? ""))
+                        Text("Superseded by " + WidgetWords.decision(replacement.number) + (replacement.title.map { ": " + $0 } ?? ""))
                             .font(.system(size: 12, weight: .medium)).lineLimit(2).multilineTextAlignment(.leading)
                         Spacer(minLength: 0)
                         Image(systemName: "chevron.right").font(.system(size: 9, weight: .semibold)).padding(.top, 3)
@@ -29,7 +29,7 @@ struct WidgetDecisionOutcome: View {
                 .buttonStyle(RowButtonStyle(cornerRadius: 8))
                 .disabled(replacement.sessionKey == nil)
                 .instantTooltip(replacement.sessionKey == nil
-                    ? "That decision's session is not in the widget" : "Open DECISION \(replacement.number)")
+                    ? "That decision's session is not in the widget" : "Open " + WidgetWords.decision(replacement.number))
             } else if card.status == "superseded" {
                 Label("Superseded", systemImage: "arrow.uturn.right").font(.system(size: 11, weight: .medium))
                     .foregroundStyle(.secondary)
