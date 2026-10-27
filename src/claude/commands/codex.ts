@@ -383,7 +383,9 @@ export async function runCodexSession(
               }
             : {}),
         smallCodexModel: `codex/${resolveOpenAiSubModel("luna")}:low`,
-        maxContextTokens: model.info.usableTokens,
+        // The model's whole window: Codex's own 95% `usablePercent` left compaction at about 408K of 500K
+        // (2026-10-27); Claude Code keeps its own output reserve inside the window and compacts at `compact.percent`.
+        maxContextTokens: model.info.window,
         compactPercent: compact.percent,
         accountLabel: [`codex:${codex.label}`, ...(claude ? [`claude:${claude.label}`] : [])].join("+"),
     });
@@ -398,8 +400,8 @@ export async function runCodexSession(
         effort: effort.effort,
         agents: agentArgs,
         settingsEnv: {
-            CLAUDE_CODE_MAX_CONTEXT_TOKENS: String(model.info.usableTokens),
-            CLAUDE_CODE_AUTO_COMPACT_WINDOW: String(model.info.usableTokens),
+            CLAUDE_CODE_MAX_CONTEXT_TOKENS: String(model.info.window),
+            CLAUDE_CODE_AUTO_COMPACT_WINDOW: String(model.info.window),
             CLAUDE_AUTOCOMPACT_PCT_OVERRIDE: String(compact.percent),
         },
         passthrough,
@@ -408,7 +410,7 @@ export async function runCodexSession(
     out.printlnErr(
         pc.dim(
             `${reopened ? "Resuming" : "Starting"} Claude Code on ${pc.magenta(`codex/${model.slug}`)} at ${effort.effort}, ` +
-                `window ${Math.round(model.info.usableTokens / 1000)}k, compact at ${compact.percent}%, session ${sessionId}` +
+                `window ${Math.round(model.info.window / 1000)}k, compact at ${compact.percent}%, session ${sessionId}` +
                 (configDir ? `, config ${configDir}` : "")
         )
     );

@@ -119,7 +119,7 @@ export interface SessionEnvInput {
     claude?: { haiku: string; sonnet?: string; opus: string; subscriptionType?: string };
     /** The small-model slot without a Claude account. */
     smallCodexModel: string;
-    /** Window × usable percent, plain digits. */
+    /** The model's whole window, plain digits. */
     maxContextTokens: number;
     compactPercent: number;
     /** `codex:<account>+claude:<account>` for `tools claude who` and the statusline. */
