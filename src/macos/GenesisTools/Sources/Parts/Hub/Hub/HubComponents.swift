@@ -526,9 +526,13 @@ struct SidebarReveal: ViewModifier {
             prefs.collapsed.remove(group)
             HubPerf.log("sidebar.reveal \(prefs.key): opened \(group) for \(selection)")
         }
-        // The row exists only after the opened group's next layout.
+        // The row exists only after the opened group's next layout. The scroll lands at once: an animated scrollTo in a
+        // lazy stack with pinned section headers places its rows again on every frame of the glide, and on 2026-10-27
+        // 04:12 the Worktrees list never stopped (56 s, the hub killed; lazy placement and pinned headers in the sample).
         DispatchQueue.main.async {
-            withAnimation(.easeInOut(duration: 0.2)) { proxy.scrollTo(selection, anchor: anchor) }
+            var instant = Transaction()
+            instant.disablesAnimations = true
+            withTransaction(instant) { proxy.scrollTo(selection, anchor: anchor) }
         }
     }
 }

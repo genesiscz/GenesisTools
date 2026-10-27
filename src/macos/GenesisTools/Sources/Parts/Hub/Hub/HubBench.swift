@@ -43,7 +43,8 @@ enum HubDefaults {
 ///   main thread's whole awake time in that window, the SwiftUI update and every layout after it);
 /// - `activity`: Activity mode (`--mode timeline`) only, the rail's kind and project filters clicked;
 /// - `inbox`, `inbox.back`: the mode switch to the Inbox and back (by default in Activity mode only);
-/// - `open` (opt-in): sessions opened one after another, with how far the transcript sits from its latest turn.
+/// - `open` (opt-in): sessions opened one after another, with how far the transcript sits from its latest turn;
+/// - `follow` (opt-in): the Files list following a fast diff scroll file by file, then a quiet settle window.
 ///
 /// `GENESIS_HUB_BENCH_AX=1` adds an accessibility client (`HubBenchAccessibilityClient`), which the
 /// live hub always has; the click scenarios measured 2 to 18 times higher with it (2026-09-25).
@@ -112,6 +113,12 @@ enum HubBench {
     @MainActor
     static func run(window: NSWindow, model: HubModel, output: String) {
         active = true
+        // A main thread that wedges (a layout that never settles) ends the run with exit 70 and says so, instead of
+        // sitting until the run's deadline, whose timer cannot fire on a wedged main thread either.
+        HangWatch.onWedge = { seconds in
+            FileHandle.standardError.write(Data("hub bench: the main thread is wedged (\(Int(seconds)) s); exiting 70\n".utf8))
+            exit(70)
+        }
         probes = [:]
         let runner = Runner(window: window, output: output, model: model)
         current = runner
@@ -183,6 +190,8 @@ enum HubBench {
             if only.contains("panes"), model.mode == .sessions, model.panes.contains(.transcript) { addPaneToggle() }
             if only.contains("settle"), model.mode == .sessions, model.panes.contains(.transcript) { addSettleWatch() }
             if only.contains("wheel"), model.mode == .sessions, model.panes.contains(.transcript) { addWheelUp() }
+            if only.contains("follow") { addFileFollow() }
+            if only.contains("reveal"), model.mode == .worktrees { addSidebarReveal() }
             PerfLog.mark("hub.bench start: \(steps.count) steps, panes \(model.panes.map(\.rawValue).joined(separator: ","))")
             guard ProcessInfo.processInfo.environment["GENESIS_HUB_BENCH_AX"] == "1" else {
                 tick()
@@ -255,6 +264,52 @@ enum HubBench {
                 steps.append(Step(scenario: "inbox", action: { model.setMode(.inbox) }, delay: 1.5))
                 steps.append(Step(scenario: "inbox.back", action: { model.setMode(from) }, delay: 1.5))
             }
+        }
+
+        /// `follow` (opt-in): the diff scrolled fast through every file and back, as the page reports it (`focusFile`:
+        /// the selection and the Files list's scroll target move to the file on top), 60 ms apart; then
+        /// `follow.settle`, two seconds without input, whose busy time should be near 0. A Files list that keeps placing
+        /// its rows spins there (the Worktrees wedge of 2026-10-27 04:12, 56 s, ended by a kill); a wedge never ends its
+        /// step, so the run's own deadline reports it as a partial run. `GENESIS_HUB_BENCH_FOLLOW_STEPS` (default 150).
+        private func addFileFollow() {
+            let model = model
+            let review: @MainActor () -> ReviewModel? = { model.mode == .prs ? model.prs.review : model.review }
+            order += ["follow", "follow.settle"]
+            PerfLog.mark("hub.bench follow: \(review()?.files.count ?? 0) files")
+            let count = ProcessInfo.processInfo.environment["GENESIS_HUB_BENCH_FOLLOW_STEPS"].flatMap(Int.init) ?? 150
+            for step in 0..<count {
+                steps.append(Step(scenario: "follow", action: {
+                    guard let current = review(), !current.files.isEmpty else { return }
+                    let total = current.files.count
+                    let position = step % (2 * total)
+                    let id = current.files[position < total ? position : 2 * total - 1 - position].id
+                    current.selectedID = id
+                    current.sidebarScrollTarget = id
+                }, delay: 0.06))
+            }
+            steps.append(Step(scenario: "follow.settle", action: {}, delay: 2.0))
+        }
+
+        /// `reveal` (opt-in, Worktrees mode): the selection jumps between worktrees at both ends of the sidebar, 0.4 s
+        /// apart, so `SidebarReveal` scrolls the list to each, as a link or a commit click does; then `reveal.settle`, two
+        /// quiet seconds whose busy time should be near 0. Only the selection moves: no review loads. The 56 s Worktrees
+        /// wedge of 2026-10-27 04:12 spun in this list's lazy placement (pinned section headers, an animated scroll).
+        /// `GENESIS_HUB_BENCH_REVEAL_STEPS` (default 24), `GENESIS_HUB_BENCH_REVEAL_DELAY` (seconds, default 0.4).
+        private func addSidebarReveal() {
+            let model = model
+            order += ["reveal", "reveal.settle"]
+            PerfLog.mark("hub.bench reveal: \(model.worktrees.count) worktrees")
+            let count = ProcessInfo.processInfo.environment["GENESIS_HUB_BENCH_REVEAL_STEPS"].flatMap(Int.init) ?? 24
+            let delay = ProcessInfo.processInfo.environment["GENESIS_HUB_BENCH_REVEAL_DELAY"].flatMap(Double.init) ?? 0.4
+            for step in 0..<count {
+                steps.append(Step(scenario: "reveal", action: {
+                    let rows = model.worktrees
+                    guard !rows.isEmpty else { return }
+                    let offset = (step / 2) % rows.count
+                    model.selectedWorktree = rows[step % 2 == 0 ? offset : rows.count - 1 - offset].path
+                }, delay: delay))
+            }
+            steps.append(Step(scenario: "reveal.settle", action: {}, delay: 2.0))
         }
 
         private func jitter() -> CGFloat {
