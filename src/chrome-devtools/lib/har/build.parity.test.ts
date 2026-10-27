@@ -164,3 +164,91 @@ describe("sessionId extension (not in upstream)", () => {
         expect(new Set(har.log.entries.map((e) => e.pageref)).size).toBe(2);
     });
 });
+
+describe("redirect hops keep their raw response headers (not in upstream)", () => {
+    const sessionId = "tab-a";
+    const frameId = "F1";
+    const response = (url: string, status: number, headers: Record<string, string>) => ({
+        url,
+        protocol: "h2",
+        status,
+        statusText: "",
+        mimeType: "text/html",
+        headers,
+        encodedDataLength: 100,
+        connectionId: 1,
+        timing: { ...TIMING, requestTime: 3000.1 },
+    });
+    const request = (url: string, timestamp: number, redirectResponse?: ReturnType<typeof response>) => ({
+        method: "Network.requestWillBeSent",
+        params: {
+            requestId: "r1",
+            frameId,
+            timestamp,
+            wallTime: 1700000200 + (timestamp - 3000),
+            type: "Document",
+            initiator: { type: "other" },
+            request: { method: "POST", url, headers: {} },
+            ...(redirectResponse ? { redirectResponse } : {}),
+        },
+        sessionId,
+    });
+    const extra = (statusCode: number, headers: Record<string, string>) => ({
+        method: "Network.responseReceivedExtraInfo",
+        params: { requestId: "r1", statusCode, headers, blockedCookies: [] },
+        sessionId,
+    });
+    // redirectResponse carries no Set-Cookie; only the extra info has it, like Chrome sends it.
+    const hop302 = response("https://idp.example.com/login", 302, { location: "https://app.example.com/" });
+    const extra302 = extra(302, { location: "https://app.example.com/", "set-cookie": "TGC=abc; Path=/cas" });
+    const extra200 = extra(200, { "content-type": "text/html" });
+    const final = {
+        method: "Network.responseReceived",
+        params: {
+            requestId: "r1",
+            frameId,
+            timestamp: 3000.6,
+            response: response("https://app.example.com/", 200, { "content-type": "text/html" }),
+        },
+        sessionId,
+    };
+    const finished = {
+        method: "Network.loadingFinished",
+        params: { requestId: "r1", timestamp: 3000.7, encodedDataLength: 100 },
+        sessionId,
+    };
+    const start = { method: "Page.frameStartedLoading", params: { frameId }, sessionId };
+
+    const orders: Record<string, unknown[]> = {
+        "extra info before the redirect": [
+            start,
+            request("https://idp.example.com/login", 3000),
+            extra302,
+            request("https://app.example.com/", 3000.4, hop302),
+            extra200,
+            final,
+            finished,
+        ],
+        "extra info after the redirect": [
+            start,
+            request("https://idp.example.com/login", 3000),
+            request("https://app.example.com/", 3000.4, hop302),
+            extra302,
+            final,
+            extra200,
+            finished,
+        ],
+    };
+
+    for (const [name, messages] of Object.entries(orders)) {
+        test(`${name}: the 302 entry has Set-Cookie and the 200 entry does not`, () => {
+            const har = harFromMessages(messages as CdpMessage[]);
+            const hop = har.log.entries.find((e) => e.response?.status === 302);
+            const last = har.log.entries.find((e) => e.response?.status === 200);
+            expect(hop?.response?.headers.map((h) => h.name.toLowerCase())).toContain("set-cookie");
+            expect(hop?.response?.cookies.map((c) => c.name)).toEqual(["TGC"]);
+            expect(last?.response?.headers.map((h) => h.name.toLowerCase())).not.toContain("set-cookie");
+            expect(last?.response?.cookies).toEqual([]);
+        });
+    }
+});

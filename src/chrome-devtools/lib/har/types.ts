@@ -128,6 +128,10 @@ export interface HarEntry {
     extraResponseInfo?: { headers: HarNameValue[]; blockedCookies?: CdpBlockedCookie[] };
     /** Session-scoped match key — the GenesisTools extension over upstream (multi-tab safety). */
     __key: string;
+    /** `__key` before any redirect suffix: every hop of one requestId shares it. */
+    __baseKey: string;
+    /** The hop already took its `responseReceivedExtraInfo` headers. */
+    __extraApplied?: boolean;
     __frameId?: string;
     __requestWillBeSentTime?: number;
     __wallTime?: number;
@@ -249,6 +253,8 @@ export interface CdpResponseReceivedParams {
 
 export interface CdpResponseReceivedExtraInfoParams {
     requestId: string;
+    /** The hop's status: it tells a redirect's raw headers from the final response's. */
+    statusCode?: number;
     headers?: CdpHeaders;
     blockedCookies?: CdpBlockedCookie[];
 }
