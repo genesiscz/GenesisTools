@@ -171,7 +171,11 @@ enum HubMarkdownExport {
 /// A child still running after `runCapturing`'s 60 s default is killed, and the call throws.
 enum ToolsCLIRunner {
     static func run(_ args: [String]) throws -> Data {
-        let result = try capture(args)
+        try output(of: capture(args), args)
+    }
+
+    /// A capture's stdout, or the error `run` throws for a nonzero exit.
+    static func output(of result: ProcessCapture, _ args: [String]) throws -> Data {
         if result.status != 0 {
             let message = String(decoding: result.stderr, as: UTF8.self)
             throw ReviewError.git("tools \(args.first ?? "") exited \(result.status): \(message.trimmed.suffix(300))")
@@ -199,6 +203,52 @@ enum ToolsCLIRunner {
             }
         }
 
+        return try processCapture(args, timeout: timeout, traceId: traceId, started: started)
+    }
+
+    /// `capture` that its task can stop: a server call is cancelled there, and a running process is terminated (the
+    /// `tools` wrapper passes the signal to the tool). A cancelled task throws `CancellationError`, never a capture.
+    static func captureCancellable(_ args: [String], timeout: TimeInterval = 60) async throws -> ProcessCapture {
+        let traceId = ToolsCallTrace.newId()
+        let started = Date()
+        if let server = HubSource.server {
+            let start = CFAbsoluteTimeGetCurrent()
+            let result = await server.call(argv: args, timeoutSeconds: Int(timeout), traceId: traceId)
+            try Task.checkCancellation()
+            if let result {
+                PerfLog.since("hub.srv.\(args.prefix(3).joined(separator: "."))", start)
+                ToolsCallTrace.record(
+                    traceId: traceId, via: "server", argv: args, started: started,
+                    exit: result.exitCode, outBytes: result.stdout.utf8.count, stderr: result.stderr
+                )
+                return ProcessCapture(status: result.exitCode, stdout: Data(result.stdout.utf8), stderr: Data(result.stderr.utf8))
+            }
+        }
+
+        return try await runCancellable { handle in
+            try processCapture(args, timeout: timeout, traceId: traceId, started: started, handle: handle)
+        }
+    }
+
+    /// Runs `work` off the main thread; a cancel of the calling task stops the process `work` hands its handle,
+    /// and the call throws `CancellationError` once `work` returned.
+    static func runCancellable<T: Sendable>(_ work: @escaping @Sendable (ProcessCancelHandle) throws -> T) async throws -> T {
+        let handle = ProcessCancelHandle()
+        let value = try await withTaskCancellationHandler {
+            try await withCheckedThrowingContinuation { (continuation: CheckedContinuation<T, Error>) in
+                DispatchQueue.global(qos: .userInitiated).async {
+                    continuation.resume(with: Result { try work(handle) })
+                }
+            }
+        } onCancel: {
+            handle.cancel()
+        }
+        try Task.checkCancellation()
+        return value
+    }
+
+    private static func processCapture(_ args: [String], timeout: TimeInterval, traceId: String, started: Date,
+                                       handle: ProcessCancelHandle? = nil) throws -> ProcessCapture {
         let span = HubPerf.begin("tools.\(args.prefix(3).joined(separator: "."))")
         defer { span.end() }
         // Said plainly, as ToolsBridge.run says it: a missing path reached the hub as Cocoa's "The file tools doesn't exist".
@@ -220,9 +270,9 @@ enum ToolsCLIRunner {
         }
         process.environment = environment
         do {
-            let capture = try process.runCapturing(timeout: timeout)
+            let capture = try process.runCapturing(timeout: timeout, afterStart: handle.map { handle in { handle.adopt(process) } })
             ToolsCallTrace.record(
-                traceId: traceId, via: "process", argv: args, started: started,
+                traceId: traceId, via: handle?.cancelled == true ? "process-cancelled" : "process", argv: args, started: started,
                 exit: capture.status, outBytes: capture.stdout.count, stderr: String(decoding: capture.stderr.suffix(400), as: UTF8.self)
             )
             return capture
@@ -232,6 +282,31 @@ enum ToolsCLIRunner {
             )
             throw ReviewError.git("tools \(args.prefix(3).joined(separator: " ")) did not exit within \(Int(timeout.seconds)) s and was killed")
         }
+    }
+}
+
+/// The running child of a cancellable capture. A cancel before the child started terminates it as soon as it does.
+final class ProcessCancelHandle: @unchecked Sendable {
+    private let lock = NSLock()
+    private var process: Process?
+    private var _cancelled = false
+
+    var cancelled: Bool { lock.withLock { _cancelled } }
+
+    func adopt(_ process: Process) {
+        let stop = lock.withLock { () -> Bool in
+            self.process = process
+            return _cancelled
+        }
+        if stop { process.terminate() }
+    }
+
+    func cancel() {
+        let running = lock.withLock { () -> Process? in
+            _cancelled = true
+            return process
+        }
+        if let running, running.isRunning { running.terminate() }
     }
 }
 
