@@ -124,6 +124,26 @@ private final class FakeServer: @unchecked Sendable {
 }
 
 final class ToolsServerClientTests: XCTestCase {
+    /// Two faces that find no server at once start one: the second sees the first one's fresh claim.
+    func testAServerStartClaimLetsOneFaceStartAndFreesWhenStaleOrItsServerDied() {
+        let folder = NSTemporaryDirectory() + "gk-claim-\(UUID().uuidString.prefix(8))"
+        let path = folder + "/hub.sock.starting"
+        defer { try? FileManager.default.removeItem(atPath: folder) }
+        let now = Date()
+
+        XCTAssertTrue(HubServerStartClaim.take(path: path, now: now), "the first face starts (the folder is made)")
+        XCTAssertFalse(HubServerStartClaim.take(path: path, now: now.addingTimeInterval(1)),
+                       "a second face within the window skips its start")
+
+        HubServerStartClaim.record(pid: 4242, path: path, at: now)
+        XCTAssertFalse(HubServerStartClaim.take(path: path, now: now.addingTimeInterval(2), isAlive: { _ in true }),
+                       "the started server is alive")
+        XCTAssertTrue(HubServerStartClaim.take(path: path, now: now.addingTimeInterval(3), isAlive: { _ in false }),
+                      "the started server died: the claim is free at once")
+        XCTAssertTrue(HubServerStartClaim.take(path: path, now: now.addingTimeInterval(4 + HubServerStartClaim.window)),
+                      "a claim older than the window is stale")
+    }
+
     func testNoServerAnswersNilAndStartsOneOnce() async {
         let starts = Counter()
         let client = ToolsServerClient(socketPath: NSTemporaryDirectory() + "gk-none-\(UUID().uuidString.prefix(8)).sock") {
