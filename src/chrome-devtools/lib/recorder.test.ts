@@ -423,27 +423,39 @@ describe("recording target events", () => {
 
         const params = { requestId: "first" };
         expect(
-            controller.shouldRecord("Network.requestWillBeSent", params, "popup-session", "https://idp.example.com/")
+            controller.shouldRecord({
+                method: "Network.requestWillBeSent",
+                params,
+                sessionId: "popup-session",
+                url: "https://idp.example.com/",
+            })
         ).toBe(true);
         expect(
-            controller.shouldRecord("Network.responseReceived", params, "popup-session", "https://idp.example.com/")
+            controller.shouldRecord({
+                method: "Network.responseReceived",
+                params,
+                sessionId: "popup-session",
+                url: "https://idp.example.com/",
+            })
         ).toBe(true);
-        expect(controller.shouldRecord("Network.loadingFinished", params, "popup-session", "")).toBe(true);
         expect(
-            controller.shouldRecord(
-                "Network.requestWillBeSent",
-                { requestId: "later" },
-                "popup-session",
-                "https://idp.example.com/"
-            )
+            controller.shouldRecord({ method: "Network.loadingFinished", params, sessionId: "popup-session", url: "" })
+        ).toBe(true);
+        expect(
+            controller.shouldRecord({
+                method: "Network.requestWillBeSent",
+                params: { requestId: "later" },
+                sessionId: "popup-session",
+                url: "https://idp.example.com/",
+            })
         ).toBe(false);
         expect(
-            controller.shouldRecord(
-                "Network.requestWillBeSent",
-                { requestId: "normal" },
-                "opener-session",
-                "https://app.example.com/"
-            )
+            controller.shouldRecord({
+                method: "Network.requestWillBeSent",
+                params: { requestId: "normal" },
+                sessionId: "opener-session",
+                url: "https://app.example.com/",
+            })
         ).toBe(true);
 
         controller.onTargetEvent("Target.targetInfoChanged", {
