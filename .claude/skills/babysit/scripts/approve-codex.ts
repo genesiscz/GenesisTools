@@ -780,9 +780,24 @@ function withoutHeredocBodies(command: string): string {
     return command.replace(/<<-?\s*(['"]?)([A-Za-z0-9_]+)\1([^\n]*)\n[\s\S]*?\n\2(?=\n|$)/g, "<<$1$2$1$3");
 }
 
-/** A ritual a worker must not run (the brief says so); the driver refuses it by itself instead of asking the lead. */
+/** Refuse only a literal `tools say` invocation. Ambiguous shell syntax stays with the lead. */
 export function ritualCommand(request: { command?: unknown }): boolean {
-    return typeof request.command === "string" && /\btools\s+say\b/.test(scannedCommand(request.command));
+    if (typeof request.command !== "string" || request.command.includes("\\")) {
+        return false;
+    }
+
+    const segments = chainSegments(innerCommand(request.command));
+    if (!segments) {
+        return false;
+    }
+    return segments.some((segment) => {
+        const parsed = strictShellWords(segment);
+        if (!parsed?.length) {
+            return false;
+        }
+        const words = SHELL_KEYWORDS.has(parsed[0]) ? parsed.slice(1) : parsed;
+        return (words[0] === "tools" || words[0] === "./tools") && words[1] === "say";
+    });
 }
 
 export function deniedCommand(command: string): boolean {
@@ -1094,6 +1109,9 @@ export async function watchApprovals({
         try {
             if (status.success && !status.timedOut) {
                 meta = SafeJSON.parse(status.stdout, { strict: true });
+                if (!meta || typeof meta !== "object" || Array.isArray(meta)) {
+                    throw new Error("status must be an object");
+                }
                 statusFailures = 0;
             } else {
                 statusFailures += 1;
@@ -1103,6 +1121,8 @@ export async function watchApprovals({
                 );
             }
         } catch (error) {
+            meta = null;
+            statusFailures += 1;
             console.error("[approver] invalid status: " + String(error));
         }
 
@@ -1133,9 +1153,7 @@ export async function watchApprovals({
             if (seen.has(id) || (failures.get(id) ?? 0) >= 3 || now() >= deadline) {
                 continue;
             }
-            const shown = String(request.detail ?? "")
-                .replace(/\s+/g, " ")
-                .slice(0, 200);
+            const shown = String(request.detail ?? "");
             if (ritualCommand(request)) {
                 let acknowledged = false;
                 try {
@@ -1266,27 +1284,59 @@ function setTrust(runPath: string, level: Trust, name?: string): string {
 }
 
 /** Every worker's waiting requests; all require an explicit lead decision. */
-async function listPending(runPath: string): Promise<void> {
+export async function listPending({
+    runPath,
+    exec = execTool,
+}: {
+    runPath: string;
+    exec?: typeof execTool;
+}): Promise<void> {
     const card = readCard(runPath);
     let waiting = 0;
     for (const raw of card.prs) {
         const entry = withRunFolders(raw, runPath);
-        const status = await execTool(["codex", "status", "--name", entry.name, "--json"], { timeout: 30_000 });
-        if (!status.success) {
+        const status = await exec(["codex", "status", "--name", entry.name, "--json"], { timeout: 30_000 });
+        if (!status.success || status.timedOut) {
             console.log(`${entry.name}: status failed (exit ${status.exitCode})`);
             continue;
         }
 
-        const meta = SafeJSON.parse(status.stdout, { strict: true }) as {
-            pendingApprovals?: Record<string, ApprovalRequest>;
-        };
+        let pending: object = {};
+        try {
+            const meta: unknown = SafeJSON.parse(status.stdout, { strict: true });
+            if (!meta || typeof meta !== "object" || Array.isArray(meta)) {
+                throw new Error("status must be an object");
+            }
+            const value = "pendingApprovals" in meta ? meta.pendingApprovals : undefined;
+            if (value != null) {
+                if (typeof value !== "object" || Array.isArray(value)) {
+                    throw new Error("pendingApprovals must be an object");
+                }
+                pending = value;
+            }
+        } catch (error) {
+            console.log(`${entry.name}: invalid status JSON: ${String(error)}`);
+            continue;
+        }
         const level = entry.trust ?? card.trust ?? DEFAULT_TRUST;
         const noBuilds = card.noBuilds === true;
-        for (const [id, request] of Object.entries(meta.pendingApprovals ?? {})) {
+        for (const [id, value] of Object.entries(pending)) {
+            const rawRequest: unknown = value;
+            if (!rawRequest || typeof rawRequest !== "object" || Array.isArray(rawRequest)) {
+                console.log(`${entry.name} #${id}: invalid approval request`);
+                continue;
+            }
+            const request: ApprovalRequest = {
+                method: "method" in rawRequest && typeof rawRequest.method === "string" ? rawRequest.method : undefined,
+                detail: "detail" in rawRequest ? rawRequest.detail : undefined,
+                command: "command" in rawRequest ? rawRequest.command : undefined,
+                cwd: "cwd" in rawRequest ? rawRequest.cwd : undefined,
+                paths: "paths" in rawRequest ? rawRequest.paths : undefined,
+            };
             waiting += 1;
             const { label } = decide(entry, request, level, noBuilds);
             console.log(
-                `${entry.name} #${id} NEEDS LEAD (sandbox authority unavailable; manual approval required): ${label.replace(/\s+/g, " ").slice(0, 160)}`
+                `${entry.name} #${id} NEEDS LEAD (sandbox authority unavailable; manual approval required): ${label}`
             );
         }
     }
@@ -1332,7 +1382,7 @@ async function main(): Promise<void> {
             process.exit(2);
         }
 
-        await listPending(runPath);
+        await listPending({ runPath });
         return;
     }
 

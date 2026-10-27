@@ -4,7 +4,9 @@ import { recordWorkerTurnCost, type WorkerCostRow } from "@app/ai-spend/lib/work
 import { withTimeout } from "@genesiscz/utils/async";
 import { type CodexFinishedTurn, CodexTurnCostTracker } from "@genesiscz/utils/codex/turn-cost";
 import { codexTurnOutcome } from "@genesiscz/utils/codex/turn-outcome";
+import { SafeJSON } from "@genesiscz/utils/json";
 import { logger } from "@genesiscz/utils/logger";
+import { shellCommandLine } from "@genesiscz/utils/shell/quote";
 import { buildWorkerContract, type ReviewEffort } from "@genesiscz/utils/worker/contract";
 import { WorkerDeliveryRejectedError, workerSourceHome } from "@genesiscz/utils/worker/delivery";
 import type {
@@ -347,7 +349,7 @@ export class CodexSessionRuntime {
                 method: request.method,
                 detail,
                 paths: this.approvalPaths(request),
-                command: commandRequest && typeof params.command === "string" ? params.command : undefined,
+                command: commandRequest ? approvalCommand(params.command) : undefined,
                 cwd: commandRequest && typeof params.cwd === "string" ? params.cwd : undefined,
                 requestedAt: new Date().toISOString(),
             },
@@ -797,12 +799,34 @@ function approvalResponse(method: string, approved: boolean): { decision: string
     return { decision: approved ? "accept" : "decline" };
 }
 
+function approvalCommand(value: unknown): string | undefined {
+    if (typeof value === "string") {
+        return value;
+    }
+
+    if (Array.isArray(value)) {
+        if (value.every((word): word is string => typeof word === "string")) {
+            return value.length ? shellCommandLine(value) : "[]";
+        }
+
+        return `invalid command: ${SafeJSON.stringify(value)}`;
+    }
+
+    return undefined;
+}
+
 function approvalDetail(params: unknown): string {
     if (!isRecord(params)) {
         return "Codex requested approval";
     }
 
-    for (const key of ["reason", "command", "grantRoot", "itemId"]) {
+    const command = approvalCommand(params.command);
+    const reason = typeof params.reason === "string" ? params.reason : "";
+    if (command) {
+        return reason ? `${reason}: ${command}` : command;
+    }
+
+    for (const key of ["reason", "grantRoot", "itemId"]) {
         if (typeof params[key] === "string" && params[key]) {
             return params[key];
         }
