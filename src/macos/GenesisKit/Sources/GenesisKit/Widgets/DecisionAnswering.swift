@@ -178,14 +178,38 @@ public struct WidgetDecisionSendOutcome {
 }
 
 /// The widget's preferences as its `state.json` holds them, for a surface outside the widget that follows the same
-/// settings (the hub's Inbox: Decision click, ⌘ does the other, Return in an own answer). Read again only after the
-/// file changed; an unreadable file keeps the last good read, and nil means the defaults.
+/// settings (the hub's Inbox: Decision click, ⌘ does the other, Return in an own answer). The parsed preferences are
+/// kept only while the file's identity (inode, size, modification and change times, taken before the read) is the
+/// same, so a newer write is always read; an unreadable file keeps the last good read, and nil means the defaults.
 public final class WidgetPreferencesFile: @unchecked Sendable {
     public static let shared = WidgetPreferencesFile()
 
+    struct Identity: Equatable {
+        var inode: UInt64
+        var size: Int64
+        var modified: timespec
+        var changed: timespec
+
+        static func == (a: Identity, b: Identity) -> Bool {
+            a.inode == b.inode && a.size == b.size && a.modified.tv_sec == b.modified.tv_sec
+                && a.modified.tv_nsec == b.modified.tv_nsec && a.changed.tv_sec == b.changed.tv_sec
+                && a.changed.tv_nsec == b.changed.tv_nsec
+        }
+
+        init?(path: String) {
+            var info = stat()
+            guard stat(path, &info) == 0 else { return nil }
+            inode = UInt64(info.st_ino)
+            size = Int64(info.st_size)
+            modified = info.st_mtimespec
+            changed = info.st_ctimespec
+        }
+    }
+
     private let path: String
+    // Guards `cached`: the hub reads from a background load and from a click on the main thread.
     private let lock = NSLock()
-    private var cached: (stamp: Date, preferences: WidgetPreferences)?
+    private var cached: (identity: Identity, preferences: WidgetPreferences)?
 
     /// `path`: a `state.json`; nil is the widget's own (`$GENESIS_TOOLS_HOME/.genesis-tools/hub/widget/state.json`).
     public init(path: String? = nil) {
@@ -193,15 +217,15 @@ public final class WidgetPreferencesFile: @unchecked Sendable {
     }
 
     public func current() -> WidgetPreferences? {
-        let stamp = (try? FileManager.default.attributesOfItem(atPath: path))?[.modificationDate] as? Date
+        let identity = Identity(path: path)
         lock.lock()
         defer { lock.unlock() }
-        if let cached, let stamp, cached.stamp == stamp { return cached.preferences }
+        if let cached, let identity, cached.identity == identity { return cached.preferences }
         struct Stored: Decodable { let preferences: WidgetPreferences }
         do {
             let preferences = try JSONDecoder().decode(Stored.self, from: Data(contentsOf: URL(fileURLWithPath: path)))
                 .preferences
-            if let stamp { cached = (stamp, preferences) }
+            if let identity { cached = (identity, preferences) }
             return preferences
         } catch {
             PerfLog.mark("widget.preferences unreadable at \(path): \(error.localizedDescription)")
