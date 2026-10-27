@@ -104,7 +104,9 @@ export type FocusMatchKind =
     /** The session runs in a tmux pane that is on screen in the tmux session this pane's client shows. */
     | "tmux"
     /** As `tmux`, but the session's tmux pane is in another window or pane of that tmux session. */
-    | "tmux-hidden";
+    | "tmux-hidden"
+    /** The session's own process runs on this tab's tty (the resume picker's running rows). */
+    | "running";
 
 export interface FindFocusOptions {
     /** Pane to leave out of the search, normally the one this process runs in. */
@@ -505,7 +507,8 @@ function ownsSession(target: FocusTarget): boolean {
         target.matchedOn === "resume-prefix" ||
         target.matchedOn === "title-id" ||
         target.matchedOn === "session-name" ||
-        target.matchedOn === "tmux"
+        target.matchedOn === "tmux" ||
+        target.matchedOn === "running"
     );
 }
 
@@ -537,5 +540,7 @@ export function describeMatch(target: FocusTarget): string {
             return `via tmux ${target.tmux?.session ?? "session"}`;
         case "tmux-hidden":
             return `via tmux ${target.tmux?.session ?? "session"} (its pane ${target.tmux?.pane ?? ""} is not on screen)`;
+        case "running":
+            return "its process runs in this tab";
     }
 }

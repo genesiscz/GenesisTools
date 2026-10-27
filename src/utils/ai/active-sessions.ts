@@ -351,7 +351,8 @@ async function readCmuxContext(
 
 export async function listActiveAgentSessions(
     source: AgentWhoSource,
-    deps: { runner?: (cmd: string[]) => Promise<string> } = {}
+    /** `tails: false` skips reading each session's last message and turn clock, for a caller that shows neither. */
+    deps: { runner?: (cmd: string[]) => Promise<string>; tails?: boolean } = {}
 ): Promise<ActiveAgentSession[]> {
     const scanned = await listActiveAgentProcesses({ alias: source.alias, classify: source.classify });
 
@@ -392,7 +393,7 @@ export async function listActiveAgentSessions(
         (id): id is string => id !== null
     );
     await Promise.all(
-        resolved.map(async (sessionId) => {
+        (deps.tails === false ? [] : resolved).map(async (sessionId) => {
             const facts = factsById.get(sessionId);
 
             if (facts && source.tail) {
@@ -438,6 +439,50 @@ export async function listActiveAgentSessions(
             lastActivityAt: tail?.lastActivityAt ?? null,
         };
     });
+}
+
+/** A session of this agent that runs right now in a cmux tab: what the resume picker offers to focus. */
+export interface RunningCmuxSession {
+    sessionId: string;
+    title: string | null;
+    cwd: string | null;
+    pid: number;
+    /** The tab, by UUID, and its `surface:N` for display. */
+    surfaceId: string;
+    surfaceRef: string | null;
+}
+
+/**
+ * This agent's sessions that run in a cmux tab now, one entry per session. A process whose session is not
+ * resolved, or that runs outside cmux, is left out: there is no tab to focus for it.
+ */
+export async function listRunningCmuxSessions(
+    source: AgentWhoSource,
+    deps: { runner?: (cmd: string[]) => Promise<string> } = {}
+): Promise<RunningCmuxSession[]> {
+    const entries = withoutHelpers(source, await listActiveAgentSessions(source, { ...deps, tails: false }));
+    const running = new Map<string, RunningCmuxSession>();
+
+    for (const entry of entries) {
+        if (!entry.sessionId || !entry.surfaceId || running.has(entry.sessionId)) {
+            continue;
+        }
+
+        running.set(entry.sessionId, {
+            sessionId: entry.sessionId,
+            title: entry.sessionTitle,
+            cwd: entry.cwd,
+            pid: entry.pid,
+            surfaceId: entry.surfaceId,
+            surfaceRef: entry.surfaceRef,
+        });
+    }
+
+    logger.debug(
+        { alias: source.alias, processes: entries.length, running: running.size },
+        "[who] running cmux sessions"
+    );
+    return [...running.values()];
 }
 
 /** The processes `who` lists without `--all`: no helper kinds and no table-decided helpers. */

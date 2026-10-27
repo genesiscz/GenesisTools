@@ -1,12 +1,11 @@
 import { registerAccountLoginCommand } from "@app/ai/commands/accounts/login";
 import { registerWarmupCommand } from "@app/ai/commands/warmup";
 import { registerAgentHistoryCommand } from "@genesiscz/utils/agent-sessions/history-cli";
-import { sessionsFromAdapter } from "@genesiscz/utils/ai/active-sessions";
 import { isTurnProvider } from "@genesiscz/utils/ai/transcripts/turn-state";
 import type { Command } from "commander";
 import { registerProviderUsageCommand } from "../usage/provider-usage";
 import { registerAgentCmuxCommand } from "./cmux";
-import { adapterOf } from "./launch";
+import { agentWhoSource } from "./launch";
 import { registerAgentMessageCommand } from "./message";
 import { registerAgentResumeCommand, registerAgentRunCommand } from "./run";
 import { type AgentToolSpec, type SharedVerb, toolName } from "./spec";
@@ -76,17 +75,11 @@ export function registerAgentTool(program: Command, spec: AgentToolSpec): void {
     });
 
     shared("who", () => {
-        if (!spec.processScan) {
-            return;
-        }
+        const who = agentWhoSource(spec);
 
-        // The session names come from the agent's history adapter unless its plugin reads them itself.
-        registerAgentWhoCommand(program, {
-            activeSessions: () => sessionsFromAdapter(adapterOf(spec)),
-            ...spec.processScan,
-            alias: spec.alias,
-            tool,
-        });
+        if (who) {
+            registerAgentWhoCommand(program, { ...who, tool });
+        }
     });
 
     shared("history", () => {

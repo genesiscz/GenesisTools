@@ -1,10 +1,12 @@
 import { existsSync } from "node:fs";
 import { homedir } from "node:os";
 import { join } from "node:path";
+import { focusRunningSession } from "@app/claude/commands/cmux/focus";
+import { CLAUDE_WHO_SOURCE } from "@app/claude/lib/active-sessions";
 import * as p from "@clack/prompts";
 import { warnUnresolvedIdentities } from "@genesiscz/utils/agent-sessions/history-cli";
 import { createClaudeAdapter } from "@genesiscz/utils/agent-sessions/native-adapter";
-import { selectResumeSession } from "@genesiscz/utils/agent-sessions/select-resume";
+import { chooseResume } from "@genesiscz/utils/agent-sessions/select-resume";
 import {
     buildSessionTableOpts,
     displayProjectName,
@@ -13,6 +15,7 @@ import {
     toSessionDisplay,
 } from "@genesiscz/utils/agent-sessions/session-display";
 import type { AgentSessionAdapter } from "@genesiscz/utils/agent-sessions/types";
+import { listRunningCmuxSessions } from "@genesiscz/utils/ai/active-sessions";
 import { findClaudeCommand } from "@genesiscz/utils/claude";
 import { isInteractive } from "@genesiscz/utils/cli";
 import { toolCommand } from "@genesiscz/utils/cli/tool-command";
@@ -379,9 +382,9 @@ export async function pickSessionForResume(
         // A short listing is annoying; a session resume cannot find is the one that costs an
         // evening, because the user knows the conversation exists.
         await warnUnresolvedIdentities(adapter, "claude");
-        // The search spinner belongs to `selectResumeSession`: it must stop before the picker
-        // opens, and only that function knows when.
-        const session = await selectResumeSession({
+        // The search spinner belongs to `chooseResume`: it must stop before the picker opens, and
+        // only that function knows when.
+        const choice = await chooseResume({
             adapter,
             query,
             filters: {
@@ -392,13 +395,21 @@ export async function pickSessionForResume(
             },
             ...(opts.interactive === undefined ? {} : { interactive: opts.interactive }),
             preferredHome: effectiveClaudeHome(),
+            running: () => listRunningCmuxSessions(CLAUDE_WHO_SOURCE),
         });
 
-        if (!session) {
+        if (!choice) {
             throw new Error("Cancelled");
         }
 
-        const selected = toSessionDisplay(session);
+        if (choice.action === "focus") {
+            // The session already runs in that tab: going there is the whole command, and nothing launches here.
+            const focused = await focusRunningSession(choice.running);
+            await out.flush();
+            process.exit(focused ? 0 : 1);
+        }
+
+        const selected = toSessionDisplay(choice.session);
         // Name what was picked, the way the listing path already does for a lone candidate. "1
         // matching session" plus a bare id gave the user no chance to notice a resume that landed
         // somewhere unexpected — which matters most on the content pass, where the match is not
