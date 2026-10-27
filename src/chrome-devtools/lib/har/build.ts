@@ -19,6 +19,16 @@
  * Sessionless single-page input behaves exactly like upstream; the parity
  * test (`build.parity.test.ts`) pins that against the real npm package.
  *
+ * 5. A redirect hop takes the raw headers of its own `responseReceivedExtraInfo`
+ *    (matched by requestId and status code, in either event order), Set-Cookie
+ *    and response cookies included. Upstream builds a hop from
+ *    `redirectResponse` only, whose headers omit Set-Cookie, so a 302 that set
+ *    or cleared a cookie looked like it set none. A buffered extra info is used
+ *    once, so a later hop never takes an earlier hop's headers. A final
+ *    response whose `response.headers` lack Set-Cookie also takes its cookies
+ *    from the raw headers (golden iframe-not-attached.har.json differs from
+ *    upstream by exactly that one `__cfduid` cookie).
+ *
  * Inherited upstream limitation, kept for parity: blocked response cookies are
  * filtered by NAME only (lib/entry-from-response.ts) — when one response sets
  * the same cookie name for two paths and CDP blocks only one, both leave the
@@ -29,8 +39,8 @@ import { randomUUID } from "node:crypto";
 import { format, parse } from "node:url";
 import { SafeJSON } from "@genesiscz/utils/json";
 import { logger } from "@genesiscz/utils/logger";
-import { formatCookie, parseRequestCookies } from "./cookies.ts";
-import { entryFromResponse } from "./entry-from-response.ts";
+import { formatCookie, parseRequestCookies, parseResponseCookies } from "./cookies.ts";
+import { entryFromResponse, withoutBlockedCookies } from "./entry-from-response.ts";
 import { finalizeEntry } from "./finalize-entry.ts";
 import { getHeaderValue, parseHeaders } from "./headers.ts";
 import type {
@@ -71,6 +81,20 @@ function deleteInternalProperties<T extends object>(o: T): T {
     return o;
 }
 
+/** Puts a hop's raw response headers (Set-Cookie included) onto its entry. */
+function applyResponseExtraInfo(entry: HarEntry, params: CdpResponseReceivedExtraInfoParams): void {
+    entry.__extraApplied = true;
+    if (!params.headers || !entry.response) {
+        return;
+    }
+
+    entry.response.headers = parseHeaders(params.headers);
+    const setCookie = getHeaderValue(params.headers, "Set-Cookie");
+    if (setCookie && entry.response.cookies.length === 0) {
+        entry.response.cookies = withoutBlockedCookies(parseResponseCookies(setCookie), params.blockedCookies ?? []);
+    }
+}
+
 function addFromFirstRequest(page: HarPage, params: CdpRequestWillBeSentParams): void {
     if (!page.__timestamp) {
         page.__wallTime = params.wallTime;
@@ -97,6 +121,29 @@ export function harFromMessages(messages: CdpMessage[], options?: HarBuildOption
     const lastPageBySession = new Map<string, HarPage>();
 
     const findEntry = (key: string): HarEntry | undefined => entries.find((entry) => entry.__key === key);
+
+    const statusMatches = (entry: HarEntry, params: CdpResponseReceivedExtraInfoParams): boolean =>
+        params.statusCode === undefined || entry.response?.status === params.statusCode;
+
+    /** Applies the oldest buffered extra info of this hop's status, and uses it up. */
+    const takeBufferedExtraInfo = (entry: HarEntry, key: string): void => {
+        const index = responseReceivedExtraInfos.findIndex(
+            (buffered) => buffered.key === key && statusMatches(entry, buffered.params)
+        );
+        if (index === -1) {
+            return;
+        }
+
+        const [buffered] = responseReceivedExtraInfos.splice(index, 1);
+        applyResponseExtraInfo(entry, buffered.params);
+    };
+
+    /** A hop that has its response but still waits for its extra info (a redirect hop has a renamed `__key`). */
+    const hopAwaitingExtraInfo = (key: string, params: CdpResponseReceivedExtraInfoParams): HarEntry | undefined =>
+        [...entries, ...entriesWithoutPage].find(
+            (entry) =>
+                entry.__baseKey === key && entry.response && !entry.__extraApplied && statusMatches(entry, params)
+        );
 
     /** Deviation 4: session-scoped page attribution. Sessionless falls back to upstream's `pages.at(-1)`. */
     const pageForRequest = (sessionId: string | undefined, frameId: string | undefined): HarPage | undefined => {
@@ -133,6 +180,7 @@ export function harFromMessages(messages: CdpMessage[], options?: HarBuildOption
             previousEntry.__key += "r";
             previousEntry._requestId += "r";
             entryFromResponse(previousEntry, params.redirectResponse, page ?? ({ pageTimings: {} } as HarPage), opts);
+            takeBufferedExtraInfo(previousEntry, key);
         } else {
             log.debug({ requestId: params.requestId }, "no original request for redirect response");
         }
@@ -252,6 +300,7 @@ export function harFromMessages(messages: CdpMessage[], options?: HarBuildOption
                     __requestWillBeSentTime: params.timestamp,
                     __wallTime: params.wallTime,
                     __key: key,
+                    __baseKey: key,
                     _requestId: params.requestId,
                     __frameId: params.frameId,
                     _initialPriority: request.initialPriority,
@@ -387,6 +436,12 @@ export function harFromMessages(messages: CdpMessage[], options?: HarBuildOption
                     continue;
                 }
 
+                const hop = hopAwaitingExtraInfo(key, params);
+                if (hop) {
+                    applyResponseExtraInfo(hop, params);
+                    continue;
+                }
+
                 const entry = findEntry(key) ?? entriesWithoutPage.find((e) => e.__key === key);
                 if (!entry) {
                     responseReceivedExtraInfos.push({ key, params });
@@ -403,10 +458,8 @@ export function harFromMessages(messages: CdpMessage[], options?: HarBuildOption
                     continue;
                 }
 
-                if (params.headers) {
-                    entry.response.headers = parseHeaders(params.headers);
-                }
-
+                // The entry's response belongs to another hop (another status): keep it for the hop to come.
+                responseReceivedExtraInfos.push({ key, params });
                 break;
             }
 
@@ -438,10 +491,7 @@ export function harFromMessages(messages: CdpMessage[], options?: HarBuildOption
 
                 entryFromResponse(entry, params.response, page, opts);
 
-                const extraInfo = responseReceivedExtraInfos.find((buffered) => buffered.key === key);
-                if (extraInfo?.params.headers && entry.response) {
-                    entry.response.headers = parseHeaders(extraInfo.params.headers);
-                }
+                takeBufferedExtraInfo(entry, key);
 
                 break;
             }
