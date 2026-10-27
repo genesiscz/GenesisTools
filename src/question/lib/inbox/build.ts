@@ -85,6 +85,11 @@ export interface InboxDecision {
     draft: string | null;
     /** Where the last send took the answer: cmux pane, codex worker, resume, or queued (with why). */
     delivery: InboxDeliveryView | null;
+    /**
+     * The posted text's revision (1 until the agent re-posts it with `supersedes`). A pick sends it back as
+     * `--expected-revision`, so a pick made on text the agent has since changed is refused, as in the widget.
+     */
+    revision: number;
 }
 
 export interface InboxQuestion {
@@ -155,6 +160,8 @@ export interface InboxSession {
     cwd: string | null;
     branch: string | null;
     account: string | null;
+    /** The account home the session runs under (`AgentSessionRow.sourceHome`); null when the list does not know it. */
+    sourceHome: string | null;
     /** When the newest item was asked. */
     lastAt: string;
     /** Items still needing an answer (waiting or drafted). */
@@ -188,6 +195,7 @@ export interface InboxSessionInfo {
     project: string | null;
     gitBranch?: string | null;
     account: string | null;
+    sourceHome?: string;
     mtime: number;
 }
 
@@ -373,6 +381,7 @@ function fromRecord(row: DecisionRecord): InboxDecision {
         draftOption: row.draftOption || null,
         draft: row.draft || null,
         delivery: inboxDelivery(row.delivery),
+        revision: row.revision ?? 1,
     };
 }
 
@@ -408,6 +417,7 @@ function fromBlock(sessionId: string, block: HarvestedDecision, at: string): Inb
         draftOption: null,
         draft: null,
         delivery: null,
+        revision: 1,
     };
 }
 
@@ -507,6 +517,7 @@ export function buildInbox({ sessions, scans, rows, forms, now = Date.now() }: B
                           cwd: info.cwd || null,
                           branch: info.gitBranch ?? null,
                           account: info.account,
+                          sourceHome: info.sourceHome ?? null,
                       }
                     : {},
                 activityAt: info?.mtime ?? 0,
@@ -584,6 +595,7 @@ export function buildInbox({ sessions, scans, rows, forms, now = Date.now() }: B
             cwd: entry.info.cwd ?? null,
             branch: entry.info.branch ?? null,
             account: entry.info.account ?? null,
+            sourceHome: entry.info.sourceHome ?? null,
             lastAt,
             waiting: entry.items.filter((item) => item.kind === "form" || isOpen(item.status)).length,
             drafted: entry.items.filter((item) => item.kind === "decision" && hasDraft(item)).length,

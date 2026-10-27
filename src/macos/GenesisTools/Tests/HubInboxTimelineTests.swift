@@ -234,6 +234,33 @@ final class HubDecisionsSourceTests: XCTestCase {
         let skipped = InboxDelivery.outcome(WidgetDecisionSendOutcome(["sessions": [], "sent": 0, "queued": 0, "failed": 0],
                                                                       titles: [:]), ids: ["d_4_s1"], resend: false)
         XCTAssertEqual(skipped.summary, "These decisions are no longer staged, so nothing was sent.")
+        // A Mac without the decisions hook: nothing delivers a queued answer by itself, so the note must not promise it.
+        let stuck = InboxDelivery.outcome(WidgetDecisionSendOutcome(["sent": 0, "queued": 1, "failed": 0, "sessions": [
+            ["session": "s1", "numbers": [4], "deliversLater": false,
+             "result": ["delivered": false, "detail": "no cmux pane runs this session"]],
+        ]], titles: ["s1": "gt-fixes"]), ids: ["d_4_s1"], resend: false)
+        XCTAssertEqual(stuck.summary, "Not delivered to gt-fixes: No cmux pane runs this session. "
+                       + "Nothing sends them by itself: Send again once the session is open.")
+    }
+
+    func testANotWaitingDecisionSaysWhatBecameOfIt() throws {
+        let item = try JSONDecoder().decode(InboxItem.self, from: Data(#"""
+        {"kind":"decision","id":"d_26_s1","number":26,"status":"acknowledged","option":"b",
+         "answer":"as a separate draft pr","at":"2026-10-27T00:41:00.000Z","revision":2}
+        """#.utf8))
+        XCTAssertEqual(item.revision, 2)
+        XCTAssertEqual(HubInboxModel.notWaitingSentence(number: 26, item: item),
+                       "DECISION 26 is not waiting: it was answered (b) as a separate draft pr).")
+        XCTAssertEqual(HubInboxModel.notWaitingSentence(number: 26, item: nil),
+                       "DECISION 26 is not in the decision log any more.")
+    }
+
+    func testARefusedWriteSaysTheCLIsSentence() {
+        let stdout = Data(#"{"error":"DECISION 4 changed: the agent posted a new text since you read it."}"#.utf8)
+        XCTAssertEqual(HubInboxModel.refusal(ProcessCapture(status: 1, stdout: stdout, stderr: Data())),
+                       "DECISION 4 changed: the agent posted a new text since you read it.")
+        XCTAssertEqual(HubInboxModel.refusal(ProcessCapture(status: 2, stdout: Data(), stderr: Data("boom\n".utf8))),
+                       "exited 2: boom")
     }
 }
 

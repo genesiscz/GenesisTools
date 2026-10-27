@@ -148,6 +148,9 @@ struct InboxItem: Decodable, Identifiable, Hashable {
     let draftOption: String?
     let draft: String?
     let delivery: InboxDeliveryRecord?
+    /// The posted text's revision; a pick or a dismiss sends it back so a pick on text the agent has since re-posted
+    /// is refused (`--expected-revision`, src/question/lib/inbox/drafts.ts). Nil for a form.
+    var revision: Int? = nil
 
     var isForm: Bool { kind == "form" }
     var isOpen: Bool { status == "waiting" || status == "drafted" }
@@ -238,6 +241,8 @@ struct InboxSession: Decodable, Identifiable, Hashable {
     let stale: Bool?
     let reply: InboxReply?
     let items: [InboxItem]
+    /// The account home the session runs under, so a send reaches the receiver of that home (the widget sends it too).
+    var sourceHome: String? = nil
 
     /// Listed only for its queued answers: nothing here waits for the user.
     var isQueuedOnly: Bool { waiting == 0 && (queued ?? 0) > 0 }
@@ -330,7 +335,8 @@ struct InboxDelivery: Decodable, Equatable {
         switch channel {
         case "cmux": return "Sent to \(target ?? "the session's cmux pane")"
         case "codex": return "Steered into \(target ?? "the codex worker")"
-        case "resume": return "Resumed at \(target ?? "a new pane"); the answer reaches it on its first prompt"
+        // The resumed pane never came up in time: the answers are stored, and nothing types them by itself.
+        case "resume": return "Resumed at \(target ?? "a new pane"), but its pane was not up yet. The answers are kept: send them again once it is open."
         case "form": return "Answered; the waiting agent receives it"
         case "dry-run": return "Dry run: \(text ?? "")"
         // A Claude session's own message channel (`claude-peer`) and any later route: it says where the answer went.
@@ -454,6 +460,14 @@ final class HubInboxModel: ObservableObject {
     @Published var noteFocusID: String?
     /// Work waiting for an item's draft writes to land: a send at once waits for its pick.
     private var afterWrites: [String: [() -> Void]] = [:]
+    /// The letters a click staged a moment ago, by item id, shown until the reload after its write (the widget's
+    /// `pendingStage`): a second ⇧-click builds on them instead of on the last load.
+    @Published private(set) var pendingLetters: [String: String] = [:]
+    /// Staged ids whose send waits for the session's running send to end, by session id.
+    private var queuedSends: [String: [String]] = [:]
+    /// Dismisses held for their Undo, by item id: the write happens when the hold ends (the widget's Dismiss).
+    @Published private(set) var heldDismiss: Set<String> = []
+    private var dismissTasks: [String: Task<Void, Never>] = [:]
 
     /// The badge count (mode switch, header): items of sessions that moved in the last three days.
     var waitingCount: Int { sessions.reduce(0) { $0 + $1.countedWaiting } }
@@ -496,6 +510,9 @@ final class HubInboxModel: ObservableObject {
                     }
                     switch result {
                     case .success(let envelope):
+                        // A pick the reload now shows (or that another surface changed meanwhile) is the store's.
+                        self.pendingLetters = self.pendingLetters.filter { self.writing.contains($0.key)
+                            || self.pendingWrites[$0.key] != nil }
                         // An unchanged Inbox (the usual reload on a mode switch) redraws nothing.
                         if self.sessions != envelope.sessions {
                             HubMainBusy.measure("inbox.render")
@@ -542,6 +559,7 @@ final class HubInboxModel: ObservableObject {
             guard let session = sessions.first(where: { $0.items.contains { $0.id == id } }) else {
                 HubPerf.log("inbox.reveal: \(id) is not waiting in the Inbox")
                 revealMissing = "That decision is not waiting any more (already answered, or withdrawn)"
+                explainNotWaiting(id)
                 return
             }
             selectedID = session.id
@@ -550,16 +568,62 @@ final class HubInboxModel: ObservableObject {
         }
     }
 
+    /// Says what became of a decision a banner or a link asked for that the Inbox no longer lists: its state and the
+    /// answer it took, read from the session's decisions (`tools question inbox --session <id> --json`).
+    private func explainNotWaiting(_ id: String) {
+        let parts = id.split(separator: "_", maxSplits: 2)
+        guard parts.count == 3, parts[0] == "d", let number = Int(parts[1]) else { return }
+        let sessionId = String(parts[2])
+        DispatchQueue.global(qos: .userInitiated).async {
+            let found = try? JSONDecoder().decode(SessionDecisionsEnvelope.self, from: ToolsCLIRunner.run(
+                ["question", "inbox", "--session", sessionId, "--json"]))
+            let item = found?.decisions.first { $0.id == id }
+            DispatchQueue.main.async { [weak self] in
+                MainActor.assumeIsolated {
+                    guard let self, self.revealMissing != nil else { return }
+                    self.revealMissing = Self.notWaitingSentence(number: number, item: item)
+                }
+            }
+        }
+    }
+
+    /// "DECISION 26 is not waiting: it was answered (b) as a separate draft pr)."
+    nonisolated static func notWaitingSentence(number: Int, item: InboxItem?) -> String {
+        guard let item else { return "DECISION \(number) is not in the decision log any more." }
+        let state: String
+        switch item.status {
+        case "acknowledged", "implemented": state = "it was answered"
+        case "answered": state = "its answer waits to be sent"
+        case "sent": state = "its answer was sent"
+        case "dismissed": state = "it was dismissed"
+        case "superseded": state = "a later decision replaced it"
+        default: state = "it is \(item.status)"
+        }
+        let picks = (item.option ?? "").map { "\($0))" }.joined(separator: " ")
+        let words = [picks, item.answer?.trimmed ?? ""].filter { !$0.isEmpty }.joined(separator: " ")
+        return "DECISION \(number) is not waiting: \(state)" + (words.isEmpty ? "." : " (\(words.prefix(160))).")
+    }
+
     /// Marks (or clears) a decision's pick and note: it is staged. Pass the whole letters string (`"a"`, `"ac"`, or
-    /// `""` to clear the pick); `text` is the note. `then` runs once the write landed (a send at once).
+    /// `""` to clear the pick); `text` is the note, nil to keep the stored one. `then` runs once the write landed (a
+    /// send at once). The item's revision goes along, so a pick on text the agent has since changed is refused.
     func draft(_ item: InboxItem, in session: InboxSession, option: String?, text: String?, then: (() -> Void)? = nil) {
         guard let sessionId = session.sessionId, let number = item.number else { return }
         var args = ["question", "inbox", "draft", "--session", sessionId, "--decision", String(number)]
-        if let option { args += ["--option", option] }
+        if let option {
+            args += ["--option", option]
+            pendingLetters[item.id] = option
+        }
         if let text { args += ["--text", text] }
         if let provider = session.provider { args += ["--provider", provider] }
         if let cwd = session.cwd, !cwd.isEmpty { args += ["--cwd", cwd] }
+        if let revision = item.revision { args += ["--expected-revision", String(revision)] }
         write(args, item: item, then: then)
+    }
+
+    /// The letters a card shows as staged: a click's a moment ago, else the last load's.
+    func letters(_ item: InboxItem) -> String {
+        pendingLetters[item.id] ?? item.draftOption ?? ""
     }
 
     /// The widget's settings as they are now: a click follows a change made since the last load.
@@ -572,8 +636,10 @@ final class HubInboxModel: ObservableObject {
     /// A click on a decision option, as the widget answers one (`DecisionAnswering.clickStages`): it stages the pick (a
     /// click on the staged letter clears it) or sends it at once, and ⌘ does the other while "⌘ does the other" is on.
     /// ⇧-click adds or removes another letter, staged.
-    func choose(_ item: InboxItem, in session: InboxSession, letter: String, note: String, shift: Bool, command: Bool) {
-        let plan = Self.clickPlan(letters: item.draftOption ?? "", letter: letter, shift: shift,
+    /// `note`: the card's note when the user changed it since it was saved, else nil, so a click never writes back a
+    /// stale copy over a note staged in the widget or the session's sidebar.
+    func choose(_ item: InboxItem, in session: InboxSession, letter: String, note: String?, shift: Bool, command: Bool) {
+        let plan = Self.clickPlan(letters: letters(item), letter: letter, shift: shift,
                                   stages: DecisionAnswering.clickStages(freshPreferences(), command: command))
         draft(item, in: session, option: plan.option, text: note,
               then: plan.send ? { [weak self] in self?.sendStaged([item.id], in: session) } : nil)
@@ -599,10 +665,27 @@ final class HubInboxModel: ObservableObject {
         draft(item, in: session, option: nil, text: note) { [weak self] in self?.sendStaged([item.id], in: session) }
     }
 
-    /// Drops a decision that no longer matters, without sending anything.
+    /// Drops a decision that no longer matters, without sending anything. The write waits for the Undo window the
+    /// widget's Dismiss has (`WidgetModel.undoSeconds`); meanwhile no send takes the decision.
     func dismiss(_ item: InboxItem, in session: InboxSession) {
-        guard let sessionId = session.sessionId, let number = item.number else { return }
-        write(["question", "inbox", "dismiss", "--session", sessionId, "--decision", String(number)], item: item)
+        guard let sessionId = session.sessionId, let number = item.number, !heldDismiss.contains(item.id) else { return }
+        var args = ["question", "inbox", "dismiss", "--session", sessionId, "--decision", String(number)]
+        if let revision = item.revision { args += ["--expected-revision", String(revision)] }
+        heldDismiss.insert(item.id)
+        let seconds = WidgetModel.undoSeconds(freshPreferences())
+        dismissTasks[item.id] = Task { [weak self] in
+            do { try await Task.sleep(for: .seconds(seconds)) } catch { return }
+            guard let self, self.heldDismiss.contains(item.id) else { return }
+            self.heldDismiss.remove(item.id)
+            self.dismissTasks[item.id] = nil
+            self.write(args, item: item)
+        }
+    }
+
+    /// Undo of a held Dismiss: nothing was written, the decision waits as before.
+    func undoDismiss(_ item: InboxItem) {
+        dismissTasks.removeValue(forKey: item.id)?.cancel()
+        heldDismiss.remove(item.id)
     }
 
     /// A draft or dismiss write: run it, then reload so the stored pick shows. No delivery banner;
@@ -625,8 +708,7 @@ final class HubInboxModel: ObservableObject {
             let failure: String?
             do {
                 let capture = try ToolsCLIRunner.capture(args)
-                failure = capture.status == 0 ? nil
-                    : "exited \(capture.status): \(String(decoding: capture.stderr, as: UTF8.self).trimmed.suffix(200))"
+                failure = capture.status == 0 ? nil : Self.refusal(capture)
             } catch {
                 failure = "\(error)"
             }
@@ -640,6 +722,7 @@ final class HubInboxModel: ObservableObject {
                         self.writeErrors[item.id] = "Not saved: \(failure)"
                         // A send waiting on this pick must not send what was stored before it.
                         self.afterWrites[item.id] = nil
+                        self.pendingLetters[item.id] = nil
                     } else {
                         self.writeGeneration += 1
                     }
@@ -653,6 +736,17 @@ final class HubInboxModel: ObservableObject {
                 }
             }
         }
+    }
+
+    /// Why a `tools question inbox` write was refused: the `{ "error" }` it prints on stdout, else its stderr. The
+    /// stdout one is the sentence ("DECISION 4 changed: …"); stderr is often empty.
+    nonisolated static func refusal(_ capture: ProcessCapture) -> String {
+        struct Refusal: Decodable { let error: String }
+        if let refusal = try? JSONDecoder().decode(Refusal.self, from: capture.stdout), !refusal.error.isEmpty {
+            return refusal.error
+        }
+        let stderr = String(decoding: capture.stderr, as: UTF8.self).trimmed
+        return "exited \(capture.status)" + (stderr.isEmpty ? "" : ": \(stderr.suffix(200))")
     }
 
     /// A note-only draft (`--text`, no `--option`) that waits behind a pick keeps that pick's letters:
@@ -751,7 +845,7 @@ final class HubInboxModel: ObservableObject {
         // A live target: the widget's own send (`send-staged`), worded as the widget words it. A resumed session
         // waits for its new pane below, which only `inbox send` does.
         guard resumeTarget != nil else {
-            sendStaged(session.draftedItems.map(\.id), in: session)
+            sendStaged(session.draftedItems.map(\.id).filter { !heldDismiss.contains($0) }, in: session)
             return
         }
         sendingSessions.insert(sessionId)
@@ -788,10 +882,16 @@ final class HubInboxModel: ObservableObject {
     /// `send-staged` action: one message per session), or sends answered ones again (`resend-answers`, Send again).
     /// The result reads as the widget's note: delivered, waiting for the session's next prompt, or failed.
     func sendStaged(_ ids: [String], in session: InboxSession, action: DecisionAnswering.SendAction = .sendStaged) {
-        guard let sessionId = session.sessionId, !ids.isEmpty, !sendingSessions.contains(sessionId) else { return }
+        guard let sessionId = session.sessionId, !ids.isEmpty else { return }
+        guard !sendingSessions.contains(sessionId) else {
+            // A send at once while another send of the session runs: it goes next, never silently nowhere.
+            if action == .sendStaged { queuedSends[sessionId, default: []].append(contentsOf: ids) }
+            return
+        }
         sendingSessions.insert(sessionId)
         sessionResults[sessionId] = nil
-        let target = DecisionAnswering.Target(provider: session.provider ?? "", cwd: session.cwd ?? "")
+        let target = DecisionAnswering.Target(provider: session.provider ?? "", sourceHome: session.sourceHome ?? "",
+                                              cwd: session.cwd ?? "")
         let request = DecisionAnswering.sendRequest(action, ids: ids, targets: [sessionId: target])
         let titles = [sessionId: session.displayTitle]
         HubPerf.log("inbox.\(action.rawValue) \(ids.count) to \(sessionId.prefix(8))")
@@ -806,6 +906,9 @@ final class HubInboxModel: ObservableObject {
                     self.sessionResults[sessionId] = delivery
                     self.writeGeneration += 1
                     self.load()
+                    if let next = self.queuedSends.removeValue(forKey: sessionId), !next.isEmpty {
+                        self.sendStaged(Array(Set(next)).sorted(), in: session)
+                    }
                 }
             }
         }
@@ -1505,6 +1608,8 @@ struct InboxDecisionCard: View {
     let item: InboxItem
     @State private var note = ""
     @State private var noteSeeded = false
+    /// The note was changed here since the store last held it: only then does a click send it along.
+    @State private var noteDirty = false
     @State private var showContext = false
     /// The context is taller than its folded height: only then does it fade at the cut and offer "Show all".
     @State private var contextOverflows = false
@@ -1520,7 +1625,7 @@ struct InboxDecisionCard: View {
 
     private var writing: Bool { inbox.writing.contains(item.id) }
     private var pickable: Bool { item.isOpen && session.sessionId != nil }
-    private var letters: String { item.draftOption ?? "" }
+    private var letters: String { inbox.letters(item) }
     private var contextRevealed: Bool {
         showContext || (highlight?.current?.row == item.id && highlight?.current?.field == "context")
     }
@@ -1581,6 +1686,14 @@ struct InboxDecisionCard: View {
             if !noteSeeded {
                 note = item.draft ?? ""
                 noteSeeded = true
+            }
+        }
+        // A note staged in the widget or the session's sidebar shows here, unless one is being written here.
+        .onChange(of: item.draft) { _, stored in
+            if stored ?? "" == note {
+                noteDirty = false
+            } else if !noteFocused, !noteDirty {
+                note = stored ?? ""
             }
         }
         .sheet(isPresented: $showReply) {
@@ -1738,7 +1851,9 @@ struct InboxDecisionCard: View {
                 return .handled
             }
             .onChange(of: note) { _, value in
-                guard noteSeeded, pickable else { return }
+                // The stored note itself (its seeding, a re-seed after another surface staged one) is no edit.
+                guard noteSeeded, pickable, value != (item.draft ?? "") else { return }
+                noteDirty = true
                 saveTask?.cancel()
                 saveTask = Task {
                     try? await Task.sleep(nanoseconds: 600_000_000)
@@ -1788,7 +1903,13 @@ struct InboxDecisionCard: View {
                 }
             }
             Spacer(minLength: 6)
-            if item.isOpen {
+            if item.isOpen, inbox.heldDismiss.contains(item.id) {
+                Button("Dismissed · Undo") { inbox.undoDismiss(item) }
+                    .buttonStyle(.genHoverPlain())
+                    .font(.system(size: 11))
+                    .foregroundColor(ReviewPalette.renamed)
+                    .instantTooltip("Keep this decision; nothing was written yet")
+            } else if item.isOpen {
                 Button("Dismiss") { inbox.dismiss(item, in: session) }
                     .buttonStyle(.genHoverPlain())
                     .font(.system(size: 11))
@@ -1821,8 +1942,8 @@ struct InboxDecisionCard: View {
         return Button {
             let flags = NSApp.currentEvent?.modifierFlags ?? NSEvent.modifierFlags
             saveTask?.cancel()
-            inbox.choose(item, in: session, letter: choice.id, note: note, shift: flags.contains(.shift),
-                         command: flags.contains(.command))
+            inbox.choose(item, in: session, letter: choice.id, note: noteDirty ? note : nil,
+                         shift: flags.contains(.shift), command: flags.contains(.command))
         } label: {
             HStack(alignment: .top, spacing: 9) {
                 Text(verbatim: "\(choice.id))")

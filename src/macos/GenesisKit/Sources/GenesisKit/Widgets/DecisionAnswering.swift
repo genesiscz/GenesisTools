@@ -82,9 +82,11 @@ public struct WidgetDecisionSendOutcome {
     public var sent = 0
     public var queued = 0
     public var failed = 0
-    /// Sessions whose answers no receiver took: the session id, its title, the reason as one sentence, and the hub's
-    /// own words (for Details and the log).
-    public var waiting: [(session: String, title: String, reason: String, detail: String?)] = []
+    /// Sessions whose answers no receiver took: the session id, its title, the reason as one sentence, the hub's own
+    /// words (for Details and the log), and whether anything delivers them later by itself (the decisions hook that
+    /// injects queued answers, or a saved session-queue entry). A hub that does not say is read as "it does", the old
+    /// wording.
+    public var waiting: [(session: String, title: String, reason: String, detail: String?, later: Bool)] = []
     /// The hub's own words for each session whose send threw, as "<title>: <error>".
     public var failures: [String] = []
 
@@ -113,7 +115,8 @@ public struct WidgetDecisionSendOutcome {
             guard case .object(let answer) = entry["result"], answer["delivered"] != .bool(true) else { continue }
             var detail: String?
             if case .string(let text) = answer["detail"], !text.isEmpty { detail = text }
-            waiting.append((session, title, Self.sentence(for: detail), detail))
+            let later = entry["deliversLater"].map { $0 == .bool(true) } ?? true
+            waiting.append((session, title, Self.sentence(for: detail), detail, later))
         }
     }
 
@@ -158,13 +161,19 @@ public struct WidgetDecisionSendOutcome {
         var parts: [String] = []
         if sent > 0 { parts.append(Plural.count(sent, "decision") + " delivered.") }
         if let first = waiting.first {
+            // "Waits for its next prompt" only while something will deliver them then; on a Mac without the decisions
+            // hook (`decisions.injectAnswers` off) nothing does, and the sentence promised a delivery that never came.
+            let later = waiting.allSatisfy(\.later)
             if waiting.count == 1 {
-                parts.append("Not delivered to \(first.title): \(first.reason) The answers wait for its next prompt.")
+                parts.append("Not delivered to \(first.title): \(first.reason) "
+                             + (later ? "The answers wait for its next prompt."
+                                      : "Nothing sends them by itself: Send again once the session is open."))
             } else {
                 // One reason for all of them is worth saying; several differ per session and live behind Details.
                 let why = Set(waiting.map(\.reason)).count == 1 ? first.reason + " " : ""
                 parts.append("Not delivered to \(Plural.count(waiting.count, "session")): \(why)"
-                             + "The answers wait for each session's next prompt.")
+                             + (later ? "The answers wait for each session's next prompt."
+                                      : "Nothing sends them by itself: Send again once the sessions are open."))
             }
         }
         if queued > 0, waiting.isEmpty {
