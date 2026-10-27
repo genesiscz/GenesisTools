@@ -575,6 +575,12 @@ final class ReviewModel: ObservableObject {
     private var watchers: [RepoWatcher] = []
     private var started = false
     private var loadInFlight = false
+    /// The commit list, worktrees and base candidates read refs only, so they are read again only after a ref moved
+    /// (or the scope, its range or base changed, or the reader asked). A working-tree change reloads the diff alone:
+    /// before, every file event of a busy checkout also ran `log`, `worktree list`, `for-each-ref` (120 to 140 ms on a
+    /// big repository), `symbolic-ref` and `remote` again with the same answer.
+    private var refsStale = true
+    private var refsReadFor: String?
     private var reloadAgain = false
     /// Root folders whose files changed since the last load started; the next load reads only these.
     private var pendingLoads: Set<String> = []
@@ -686,8 +692,11 @@ final class ReviewModel: ObservableObject {
             root.repo.map { repo in
                 let layout = repositoryLayouts[root.folder] ?? ReviewRepositoryLayout(root: repo,
                     gitDirectory: repo.appendingPathComponent(".git"), commonDirectory: repo.appendingPathComponent(".git"))
-                return RepoWatcher(layout: layout) { [weak self] in
+                return RepoWatcher(layout: layout) { [weak self] movedRefs in
                     guard let self, self.scope.followsWorkingTree else { return }
+                    if movedRefs { self.refsStale = true }
+                    // Names the trigger of the load that follows in the perf log.
+                    HubPerf.log("review.watch \(movedRefs ? "ref" : "file") event in \(root.folder), reloading \(self.scope.title)")
                     self.reload(folders: [root.folder])
                 }
             }
@@ -881,6 +890,7 @@ final class ReviewModel: ObservableObject {
 
     /// Loads every shown root again (a new scope, new roots, the refresh button).
     func reload() {
+        refsStale = true
         reload(folders: Set(roots.filter(\.shown).map(\.folder)))
     }
 
@@ -917,6 +927,12 @@ final class ReviewModel: ObservableObject {
         default: onlyPrimary = false
         }
         let loadsPrimary = jobs.contains { $0.repo.path == primary.path }
+        let refsKey = "\(primary.path)|\(commitRange)|\(preferredBase ?? "")"
+        let readsRefs = loadsPrimary && (refsStale || refsReadFor != refsKey)
+        if readsRefs {
+            refsStale = false
+            refsReadFor = refsKey
+        }
         let namesRoot = roots.count > 1
         let seeds = jobs.filter { job in
             !freshFolders.contains(job.folder) && (!onlyPrimary || job.repo.path == primary.path)
@@ -948,9 +964,9 @@ final class ReviewModel: ObservableObject {
                 lock.unlock()
             }
             let primarySource = GitWorkingTreeSource(repo: primary, preferredBase: preferredBase)
-            let commits = loadsPrimary ? primarySource.commits(range: commitRange) : nil
-            let checkouts = loadsPrimary ? primarySource.worktrees() : nil
-            let candidates = loadsPrimary ? primarySource.baseCandidates() : nil
+            let commits = readsRefs ? primarySource.commits(range: commitRange) : nil
+            let checkouts = readsRefs ? primarySource.worktrees() : nil
+            let candidates = readsRefs ? primarySource.baseCandidates() : nil
             DispatchQueue.main.async { [weak self] in
                 guard let self else { return }
                 if let commits {
@@ -3615,10 +3631,11 @@ private final class RepoWatcherBox {
 
 private final class RepoWatcher {
     private var stream: FSEventStreamRef?
-    private let onChange: () -> Void
+    /// True when the batch held an event that can move a ref (`ReviewRepositoryLayout.movesRefs`).
+    private let onChange: (Bool) -> Void
     private let layout: ReviewRepositoryLayout
 
-    init(layout: ReviewRepositoryLayout, onChange: @escaping () -> Void) {
+    init(layout: ReviewRepositoryLayout, onChange: @escaping (Bool) -> Void) {
         self.layout = layout
         self.onChange = onChange
         var context = FSEventStreamContext(
@@ -3634,9 +3651,10 @@ private final class RepoWatcher {
         )
         let callback: FSEventStreamCallback = { _, info, count, paths, _, _ in
             guard let info, let watcher = Unmanaged<RepoWatcherBox>.fromOpaque(info).takeUnretainedValue().watcher else { return }
-            let list = unsafeBitCast(paths, to: NSArray.self) as? [String] ?? []
-            if list.prefix(count).contains(where: watcher.matters) {
-                watcher.onChange()
+            let list = Array((unsafeBitCast(paths, to: NSArray.self) as? [String] ?? []).prefix(count))
+            let movedRefs = list.contains(where: watcher.movesRefs)
+            if movedRefs || list.contains(where: watcher.matters) {
+                watcher.onChange(movedRefs)
             }
         }
         stream = FSEventStreamCreate(
@@ -3664,6 +3682,10 @@ private final class RepoWatcher {
 
     private func matters(_ path: String) -> Bool {
         layout.matters(path)
+    }
+
+    private func movesRefs(_ path: String) -> Bool {
+        layout.movesRefs(path)
     }
 }
 
