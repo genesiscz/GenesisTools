@@ -5,6 +5,7 @@ import { isInteractive } from "@genesiscz/utils/cli";
 import { env } from "@genesiscz/utils/env";
 import { logger } from "@genesiscz/utils/logger";
 import { canonicalPath } from "@genesiscz/utils/paths";
+import { readProcessRow } from "@genesiscz/utils/process/libproc-table";
 import { isProcessAlive } from "@genesiscz/utils/process-alive";
 import { profiler } from "@genesiscz/utils/profile";
 import { type TableSelectOptions, tableSelect } from "@genesiscz/utils/prompts/clack/table-select";
@@ -187,11 +188,9 @@ export function runsElsewhere(
     return isProcessAlive(entry.pid) && !state(entry.pid)?.startsWith("T");
 }
 
-/** `ps -o stat=` of one pid (`S+`, `T`, …), or null when ps cannot tell. */
+/** The kernel's state letter of one pid (S live, T stopped, Z zombie), or null when it cannot be read. */
 function processState(pid: number): string | null {
-    const run = Bun.spawnSync(["ps", "-o", "stat=", "-p", String(pid)], { stdout: "pipe", stderr: "pipe" });
-
-    return run.exitCode === 0 ? run.stdout.toString().trim() || null : null;
+    return readProcessRow(pid)?.state ?? null;
 }
 
 /** The running sessions are an offer on top of the resume, never a reason it fails. */
