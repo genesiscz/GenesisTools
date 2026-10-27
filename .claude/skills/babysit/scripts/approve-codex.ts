@@ -4,9 +4,9 @@
  * lead because accepting one can authorize an unsandboxed retry. Run-card trust, builds, scope and roots are advisory;
  * they never enable automatic acceptance. Known rituals are denied by the driver, with denial failures reported.
  * NEEDS LEAD lines go to `<run dir>/needs-lead.log`; a request still waiting after 3 minutes is repeated every
- * 10 minutes. The monitor runs until the session closes or a failure prevents safe monitoring.
+ * 10 minutes. The monitor stops on session closure, failure, or a finite safety deadline (12 hours by default).
  *
- * Usage: bun .claude/skills/babysit/scripts/approve-codex.ts --run <run.json> --name <codex session>
+ * Usage: bun .claude/skills/babysit/scripts/approve-codex.ts --run <run.json> --name <codex session> [--timeout-ms <ms>]
  *        bun .claude/skills/babysit/scripts/approve-codex.ts trust <strict|routine|all> --run <run.json> [--name <worker>]
  *        bun .claude/skills/babysit/scripts/approve-codex.ts builds <allow|deny> --run <run.json>
  *        bun .claude/skills/babysit/scripts/approve-codex.ts pending --run <run.json>
@@ -1035,16 +1035,26 @@ function briefDecision(entry: RunEntry, request: ApprovalRequest): { ok: boolean
     return { ok: isCommand && sameCwd && command !== null && allowedCommand(entry, command), label: detail };
 }
 
+// Preserve the complete text while preventing control characters from forging feed lines or terminal output.
+function approvalDisplay(value: string): string {
+    // biome-ignore lint/suspicious/noControlCharactersInRegex: This matcher escapes control characters in untrusted output.
+    const controls = /[\u0000-\u001f\u007f-\u009f\u200b-\u200f\u2028-\u202e\u2066-\u2069\ufeff]/g;
+    return value
+        .replace(/\\/g, "\\\\")
+        .replace(controls, (char) => `\\u${char.charCodeAt(0).toString(16).padStart(4, "0")}`);
+}
+
 const STATUS_FAILURE_LIMIT = 10;
 const REMIND_AFTER_MS = 180_000;
 const REMIND_EVERY_MS = 600_000;
+const WATCH_TIMEOUT_MS = 12 * 60 * 60 * 1000;
 
 export async function watchApprovals({
     entry,
     exec = execTool,
     now = Date.now,
     sleep = Bun.sleep,
-    timeoutMs = Number.POSITIVE_INFINITY,
+    timeoutMs = WATCH_TIMEOUT_MS,
     pollMs = 1500,
     trust = () => "strict",
     noBuilds = () => false,
@@ -1056,7 +1066,7 @@ export async function watchApprovals({
     exec?: typeof execTool;
     now?: () => number;
     sleep?: (ms: number) => Promise<unknown>;
-    /** The driver stops here; by default it runs until the worker's session closes. */
+    /** The driver stops at this deadline even if the worker remains active. */
     timeoutMs?: number;
     pollMs?: number;
     /** Read on every poll, so the lead can switch it on a running driver. The CLI reads it from the run card. */
@@ -1068,10 +1078,14 @@ export async function watchApprovals({
     remindAfterMs?: number;
     remindEveryMs?: number;
 }): Promise<void> {
+    if (!Number.isFinite(timeoutMs) || timeoutMs <= 0) {
+        throw new Error("timeoutMs must be a finite positive number");
+    }
+
     const seen = new Set<string>();
     const failures = new Map<string, number>();
     /** Requests waiting on the lead: when they were asked and last repeated. */
-    const asked = new Map<string, { since: number; reminded: number; shown: string }>();
+    const asked = new Map<string, { since: number; reminded: number; shown: string; invalid?: boolean }>();
     const deadline = now() + timeoutMs;
     const ask = (line: string) => {
         console.log(line);
@@ -1104,7 +1118,7 @@ export async function watchApprovals({
             status?: string;
             writePolicy?: string;
             sandbox?: string;
-            pendingApprovals?: Record<string, ApprovalRequest>;
+            pendingApprovals?: Record<string, unknown>;
         } | null = null;
         try {
             if (status.success && !status.timedOut) {
@@ -1112,22 +1126,26 @@ export async function watchApprovals({
                 if (!meta || typeof meta !== "object" || Array.isArray(meta)) {
                     throw new Error("status must be an object");
                 }
+                const pending = meta.pendingApprovals;
+                if (pending !== undefined && (!pending || typeof pending !== "object" || Array.isArray(pending))) {
+                    throw new Error("pendingApprovals must be an object");
+                }
                 statusFailures = 0;
             } else {
                 statusFailures += 1;
-                const said = (status.stderr.trim() || status.stdout.trim() || "no output").replace(/\s+/g, " ");
+                const said = approvalDisplay(status.stderr.trim() || status.stdout.trim() || "no output");
                 console.error(
-                    `[approver] status failed (exit ${status.exitCode}${status.timedOut ? ", timed out" : ""}): ${said.slice(0, 200)}`
+                    `[approver] status failed (exit ${status.exitCode}${status.timedOut ? ", timed out" : ""}): [escaped output] ${said.slice(0, 200)}`
                 );
             }
         } catch (error) {
             meta = null;
             statusFailures += 1;
-            console.error("[approver] invalid status: " + String(error));
+            console.error("[approver] invalid status (escaped error): " + approvalDisplay(String(error)));
         }
 
         if (statusFailures >= STATUS_FAILURE_LIMIT) {
-            const line = `[approver] NEEDS LEAD: codex status failed ${statusFailures} times in a row for ${entry.name}; stopped`;
+            const line = `[approver] NEEDS LEAD: codex status failed ${statusFailures} times in a row for ${approvalDisplay(entry.name)}; stopped (escaped identifier)`;
             console.error(line);
             feed(line);
             return;
@@ -1137,42 +1155,72 @@ export async function watchApprovals({
             meta &&
             ((meta.writePolicy && meta.writePolicy !== "ask") || (meta.sandbox && meta.sandbox !== "workspace-write"))
         ) {
-            const line = `[approver] NEEDS LEAD: ${entry.name} is not an ask/workspace-write worker; driver stopped`;
+            const line = `[approver] NEEDS LEAD: ${approvalDisplay(entry.name)} is not an ask/workspace-write worker; driver stopped (escaped identifier)`;
             console.error(line);
             feed(line);
             return;
         }
 
         if (meta?.status === "closed") {
-            console.log("[approver] session " + entry.name + " closed");
+            console.log("[approver] session " + approvalDisplay(entry.name) + " closed (escaped identifier)");
+            return;
+        }
+
+        if (meta?.status === "failed") {
+            const line = `[approver] NEEDS LEAD: ${approvalDisplay(entry.name)} failed; driver stopped (escaped identifier)`;
+            console.error(line);
+            feed(line);
             return;
         }
 
         const pending = meta?.pendingApprovals ?? {};
-        for (const [id, request] of Object.entries(pending)) {
+        for (const [id, value] of Object.entries(pending)) {
             if (seen.has(id) || (failures.get(id) ?? 0) >= 3 || now() >= deadline) {
                 continue;
             }
-            const shown = String(request.detail ?? "");
+            const shownId = approvalDisplay(id);
+            if (
+                !value ||
+                typeof value !== "object" ||
+                Array.isArray(value) ||
+                ("detail" in value && value.detail != null && typeof value.detail !== "string")
+            ) {
+                if (!asked.has(id)) {
+                    const message = "invalid approval request in codex status; manual inspection required";
+                    asked.set(id, { since: now(), reminded: now(), shown: message, invalid: true });
+                    ask(`[approver] NEEDS LEAD #${shownId} (escaped identifier): ${message}`);
+                }
+                continue;
+            }
+            if (asked.get(id)?.invalid) {
+                asked.delete(id);
+            }
+            const request: ApprovalRequest = {
+                detail: "detail" in value && typeof value.detail === "string" ? value.detail : undefined,
+                command: "command" in value ? value.command : undefined,
+            };
+            const shown = `[escaped detail, not a pasteable command] ${approvalDisplay(request.detail ?? "")}`;
             if (ritualCommand(request)) {
                 let acknowledged = false;
                 try {
                     const refused = await exec(["codex", "deny", "--name", entry.name, "--request", id], options());
                     acknowledged = refused.success && !refused.timedOut;
                 } catch (error) {
-                    console.error(`[approver] denial failed #${id}: ${String(error)}`);
+                    console.error(
+                        `[approver] denial failed #${shownId} (escaped identifier): ${approvalDisplay(String(error))}`
+                    );
                 }
                 if (acknowledged) {
                     seen.add(id);
                     asked.delete(id);
-                    console.log(`[approver] refused #${id}: ${shown}`);
+                    console.log(`[approver] refused #${shownId} (escaped identifier): ${shown}`);
                 } else {
                     const count = (failures.get(id) ?? 0) + 1;
                     failures.set(id, count);
                     if (count >= 3) {
                         const message = `denial failed 3 times: ${shown}`;
                         asked.set(id, { since: now(), reminded: now(), shown: message });
-                        ask(`[approver] NEEDS LEAD #${id}: ${message}`);
+                        ask(`[approver] NEEDS LEAD #${shownId} (escaped identifier): ${message}`);
                     }
                 }
                 continue;
@@ -1182,7 +1230,7 @@ export async function watchApprovals({
             if (!asked.has(id)) {
                 const reason = `sandbox authority unavailable; manual approval required: ${shown}`;
                 asked.set(id, { since: now(), reminded: now(), shown: reason });
-                ask(`[approver] NEEDS LEAD #${id} ${reason}`);
+                ask(`[approver] NEEDS LEAD #${shownId} (escaped identifier) ${reason}`);
             }
         }
 
@@ -1196,13 +1244,17 @@ export async function watchApprovals({
             const wait = info.reminded === info.since ? remindAfterMs : remindEveryMs;
             if (now() - info.reminded >= wait) {
                 info.reminded = now();
-                ask(`[approver] STILL WAITING #${id} ${Math.round((now() - info.since) / 60_000)}m ${info.shown}`);
+                ask(
+                    `[approver] STILL WAITING #${approvalDisplay(id)} (escaped identifier) ${Math.round((now() - info.since) / 60_000)}m ${info.shown}`
+                );
             }
         }
 
         await sleep(Math.min(pollMs, Math.max(0, deadline - now())));
     }
-    console.error("[approver] watch deadline reached for " + entry.name);
+    const line = `[approver] NEEDS LEAD: watch deadline reached for ${approvalDisplay(entry.name)}; re-arm the driver (escaped identifier)`;
+    console.error(line);
+    feed(line);
 }
 
 const readCard = (runPath: string) => SafeJSON.parse(readFileSync(runPath, "utf8"), { strict: true }) as RunCard;
@@ -1223,7 +1275,7 @@ function policyReader(runPath: string, name: string): () => { trust: Trust; noBu
             }
         } catch (error) {
             // A card caught mid-write parses on the next poll; the last policy holds until then.
-            console.error(`[approver] could not read the run card: ${String(error)}`);
+            console.error(`[approver] could not read the run card (escaped error): ${approvalDisplay(String(error))}`);
         }
 
         return policy;
@@ -1270,7 +1322,9 @@ function setTrust(runPath: string, level: Trust, name?: string): string {
         if (name) {
             const entry = card.prs.find((pr) => pr.name === name);
             if (!entry) {
-                throw new Error(`no entry named ${name} in ${runPath}`);
+                throw new Error(
+                    `no entry named ${approvalDisplay(name)} in ${approvalDisplay(runPath)} (escaped values)`
+                );
             }
             entry.trust = level;
         } else {
@@ -1280,7 +1334,9 @@ function setTrust(runPath: string, level: Trust, name?: string): string {
             }
         }
     });
-    return name ? `${name} advisory trust is ${level}` : `every worker's advisory trust is ${level}`;
+    return name
+        ? `${approvalDisplay(name)} advisory trust is ${level} (escaped identifier)`
+        : `every worker's advisory trust is ${level}`;
 }
 
 /** Every worker's waiting requests; all require an explicit lead decision. */
@@ -1297,7 +1353,7 @@ export async function listPending({
         const entry = withRunFolders(raw, runPath);
         const status = await exec(["codex", "status", "--name", entry.name, "--json"], { timeout: 30_000 });
         if (!status.success || status.timedOut) {
-            console.log(`${entry.name}: status failed (exit ${status.exitCode})`);
+            console.log(`${approvalDisplay(entry.name)}: status failed (exit ${status.exitCode}; escaped identifier)`);
             continue;
         }
 
@@ -1315,20 +1371,29 @@ export async function listPending({
                 pending = value;
             }
         } catch (error) {
-            console.log(`${entry.name}: invalid status JSON: ${String(error)}`);
+            console.log(
+                `${approvalDisplay(entry.name)}: invalid status JSON (escaped identifier and error): ${approvalDisplay(String(error))}`
+            );
             continue;
         }
         const level = entry.trust ?? card.trust ?? DEFAULT_TRUST;
         const noBuilds = card.noBuilds === true;
         for (const [id, value] of Object.entries(pending)) {
             const rawRequest: unknown = value;
-            if (!rawRequest || typeof rawRequest !== "object" || Array.isArray(rawRequest)) {
-                console.log(`${entry.name} #${id}: invalid approval request`);
+            if (
+                !rawRequest ||
+                typeof rawRequest !== "object" ||
+                Array.isArray(rawRequest) ||
+                ("detail" in rawRequest && rawRequest.detail != null && typeof rawRequest.detail !== "string")
+            ) {
+                console.log(
+                    `${approvalDisplay(entry.name)} #${approvalDisplay(id)}: invalid approval request (escaped identifiers)`
+                );
                 continue;
             }
             const request: ApprovalRequest = {
                 method: "method" in rawRequest && typeof rawRequest.method === "string" ? rawRequest.method : undefined,
-                detail: "detail" in rawRequest ? rawRequest.detail : undefined,
+                detail: "detail" in rawRequest && typeof rawRequest.detail === "string" ? rawRequest.detail : undefined,
                 command: "command" in rawRequest ? rawRequest.command : undefined,
                 cwd: "cwd" in rawRequest ? rawRequest.cwd : undefined,
                 paths: "paths" in rawRequest ? rawRequest.paths : undefined,
@@ -1336,7 +1401,7 @@ export async function listPending({
             waiting += 1;
             const { label } = decide(entry, request, level, noBuilds);
             console.log(
-                `${entry.name} #${id} NEEDS LEAD (sandbox authority unavailable; manual approval required): ${label}`
+                `${approvalDisplay(entry.name)} #${approvalDisplay(id)} NEEDS LEAD (escaped identifiers; sandbox authority unavailable; manual approval required): [escaped detail, not a pasteable command] ${approvalDisplay(label)}`
             );
         }
     }
@@ -1391,10 +1456,17 @@ async function main(): Promise<void> {
         process.exit(2);
     }
 
+    const timeoutArg = flag("--timeout-ms");
+    const timeoutMs = timeoutArg === undefined ? WATCH_TIMEOUT_MS : Number(timeoutArg);
+    if ((args.includes("--timeout-ms") && timeoutArg === undefined) || !Number.isFinite(timeoutMs) || timeoutMs <= 0) {
+        console.error("--timeout-ms must be a finite positive number");
+        process.exit(2);
+    }
+
     const entry = readCard(runPath).prs.find((pr) => pr.name === name);
 
     if (!entry) {
-        console.error(`no entry named ${name} in ${runPath}`);
+        console.error(`no entry named ${approvalDisplay(name)} in ${approvalDisplay(runPath)} (escaped values)`);
         process.exit(2);
     }
 
@@ -1402,11 +1474,15 @@ async function main(): Promise<void> {
     const policy = policyReader(runPath, name);
     await watchApprovals({
         entry: withRunFolders(entry, runPath),
+        timeoutMs,
         trust: () => policy().trust,
         noBuilds: () => policy().noBuilds,
         feed: (line) => {
             const time = new Date().toLocaleTimeString("en-GB", { hour: "2-digit", minute: "2-digit" });
-            appendFileSync(feedPath, `${time} ${name} ${line.replace(/^\[approver\] /, "")}\n`);
+            appendFileSync(
+                feedPath,
+                `${time} ${approvalDisplay(name)} (escaped identifier) ${line.replace(/^\[approver\] /, "")}\n`
+            );
         },
     });
 }

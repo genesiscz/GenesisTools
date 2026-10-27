@@ -186,7 +186,7 @@ describe("trust levels", () => {
                 feed: (line) => fed.push(line),
             });
             expect(denied).toEqual(["r"]);
-            expect(fed).toEqual([]);
+            expect(fed).toEqual([expect.stringContaining("watch deadline reached")]);
         } finally {
             output.mockRestore();
         }
@@ -1302,6 +1302,270 @@ test("malformed successful status is bounded and reported, while valid status re
     }
 });
 
+test("lead notices escape untrusted fields without truncation or automatic approval", async () => {
+    const newline = String.fromCharCode(10);
+    const escapeCharacter = String.fromCharCode(27);
+    const bidi = String.fromCharCode(0x202e);
+    const id = `request${newline}FORGED`;
+    const detail = `normal\\path${newline}FORGED${escapeCharacter}[2J${bidi}end ${"x".repeat(300)}`;
+    const feed: string[] = [];
+    const output = spyOn(console, "log").mockImplementation(() => {});
+    const errors = spyOn(console, "error").mockImplementation(() => {});
+    let time = 0;
+    const exec: typeof execTool = async (args) => {
+        if (args[1] === "approve" || args[1] === "deny") {
+            throw new Error("an ambiguous request must remain manual");
+        }
+        return {
+            success: true,
+            exitCode: 0,
+            stdout: SafeJSON.stringify({
+                pendingApprovals: { [id]: { method: "execCommandApproval", command: "cat a", detail } },
+            }),
+            stderr: "",
+        };
+    };
+    try {
+        await watchApprovals({
+            entry,
+            exec,
+            now: () => time,
+            sleep: async (ms) => {
+                time += ms;
+            },
+            timeoutMs: 60,
+            pollMs: 20,
+            feed: (line) => feed.push(line),
+        });
+        expect(feed).toHaveLength(2);
+        expect(feed[1]).toContain("watch deadline reached");
+        expect(feed[0]).toContain("request\\u000aFORGED (escaped identifier)");
+        expect(feed[0]).toContain("[escaped detail, not a pasteable command]");
+        expect(feed[0]).toContain("normal\\\\path\\u000aFORGED\\u001b[2J\\u202eend");
+        expect(feed[0]).toEndWith("x".repeat(300));
+        expect(feed[0]).not.toContain(newline);
+        expect(feed[0]).not.toContain(escapeCharacter);
+        expect(feed[0]).not.toContain(bidi);
+    } finally {
+        output.mockRestore();
+        errors.mockRestore();
+    }
+});
+
+test("malformed nested requests are reported without hiding valid requests", async () => {
+    const badValues: unknown[] = [null, 4, [], { detail: { toString: 0 } }];
+    const output = spyOn(console, "log").mockImplementation(() => {});
+    const errors = spyOn(console, "error").mockImplementation(() => {});
+    try {
+        for (const bad of badValues) {
+            let time = 0;
+            let calls = 0;
+            const feed: string[] = [];
+            const exec: typeof execTool = async (args) => {
+                if (args[1] !== "status") {
+                    throw new Error("requests must remain manual");
+                }
+                calls++;
+                const pendingApprovals = {
+                    broken: bad,
+                    good: { method: "execCommandApproval", command: "cat a", detail: "normal command" },
+                };
+                return {
+                    success: true,
+                    exitCode: 0,
+                    stdout: SafeJSON.stringify(calls === 2 ? { status: "closed" } : { pendingApprovals }),
+                    stderr: "",
+                };
+            };
+            await watchApprovals({
+                entry,
+                exec,
+                now: () => time,
+                sleep: async (ms) => {
+                    time += ms;
+                },
+                timeoutMs: 1_000,
+                pollMs: 5,
+                feed: (line) => feed.push(line),
+            });
+            expect(
+                feed.some((line) => line.includes("NEEDS LEAD #broken") && line.includes("invalid approval request"))
+            ).toBe(true);
+            expect(feed.some((line) => line.includes("NEEDS LEAD #good") && line.includes("normal command"))).toBe(
+                true
+            );
+        }
+        let time = 0;
+        let calls = 0;
+        const feed: string[] = [];
+        const corrected: typeof execTool = async (args) => {
+            if (args[1] !== "status") {
+                throw new Error("the watcher must not approve");
+            }
+            calls++;
+            const value =
+                calls === 1
+                    ? { pendingApprovals: { r: null } }
+                    : calls === 2
+                      ? { pendingApprovals: { r: { command: "cat a", detail: "corrected request" } } }
+                      : { status: "closed" };
+            return { success: true, exitCode: 0, stdout: SafeJSON.stringify(value), stderr: "" };
+        };
+        await watchApprovals({
+            entry,
+            exec: corrected,
+            now: () => time,
+            sleep: async (ms) => {
+                time += ms;
+            },
+            timeoutMs: 1_000,
+            pollMs: 5,
+            feed: (line) => feed.push(line),
+        });
+        expect(feed.some((line) => line.includes("invalid approval request"))).toBe(true);
+        expect(feed.some((line) => line.includes("corrected request"))).toBe(true);
+        time = 0;
+        calls = 0;
+        feed.length = 0;
+        const exec: typeof execTool = async (args) => {
+            if (args[1] !== "status") {
+                throw new Error("the watcher must not approve");
+            }
+            calls++;
+            const value =
+                calls <= 9 || (calls > 10 && calls <= 19)
+                    ? { pendingApprovals: [] }
+                    : calls === 10
+                      ? {}
+                      : { status: "closed" };
+            return { success: true, exitCode: 0, stdout: SafeJSON.stringify(value), stderr: "" };
+        };
+        await watchApprovals({
+            entry,
+            exec,
+            now: () => time,
+            sleep: async (ms) => {
+                time += ms;
+            },
+            timeoutMs: 1_000,
+            pollMs: 5,
+            feed: (line) => feed.push(line),
+        });
+        expect(calls).toBe(20);
+        expect(feed).toEqual([]);
+    } finally {
+        output.mockRestore();
+        errors.mockRestore();
+    }
+});
+
+test("failed workers and the safety deadline notify the lead and stop", async () => {
+    const output = spyOn(console, "log").mockImplementation(() => {});
+    const errors = spyOn(console, "error").mockImplementation(() => {});
+    try {
+        let time = 0;
+        let calls = 0;
+        const feed: string[] = [];
+        const failed: typeof execTool = async (args) => {
+            if (args[1] !== "status") {
+                throw new Error("failed workers must not be approved");
+            }
+            calls++;
+            return {
+                success: true,
+                exitCode: 0,
+                stdout: '{"status":"failed","pendingApprovals":{"r":{"detail":"pending"}}}',
+                stderr: "",
+            };
+        };
+        await watchApprovals({
+            entry,
+            exec: failed,
+            now: () => time,
+            sleep: async (ms) => {
+                time += ms;
+            },
+            timeoutMs: 100,
+            pollMs: 5,
+            feed: (line) => feed.push(line),
+        });
+        expect(calls).toBe(1);
+        expect(feed).toEqual([expect.stringContaining("failed; driver stopped")]);
+
+        time = 0;
+        calls = 0;
+        feed.length = 0;
+        const active: typeof execTool = async (args) => {
+            if (args[1] !== "status") {
+                throw new Error("the watcher must not approve");
+            }
+            calls++;
+            return { success: true, exitCode: 0, stdout: "{}", stderr: "" };
+        };
+        await watchApprovals({
+            entry,
+            exec: active,
+            now: () => time,
+            sleep: async (ms) => {
+                time += ms;
+            },
+            timeoutMs: 15,
+            pollMs: 5,
+            feed: (line) => feed.push(line),
+        });
+        expect(calls).toBe(3);
+        expect(feed).toEqual([expect.stringContaining("watch deadline reached")]);
+    } finally {
+        output.mockRestore();
+        errors.mockRestore();
+    }
+});
+
+test("pending listing isolates malformed detail and escapes names, ids and full detail", async () => {
+    const dir = fs.mkdtempSync(join(tmpdir(), "babysit-pending-escaped-"));
+    const runPath = join(dir, "run.json");
+    const newline = String.fromCharCode(10);
+    const escapeCharacter = String.fromCharCode(27);
+    const bidi = String.fromCharCode(0x202e);
+    const name = `worker${newline}FORGED`;
+    const id = `r${newline}FORGED`;
+    fs.writeFileSync(runPath, SafeJSON.stringify({ prs: [{ ...entry, name }] }));
+    const messages: string[] = [];
+    const output = spyOn(console, "log").mockImplementation((line) => messages.push(String(line)));
+    const exec: typeof execTool = async () => ({
+        success: true,
+        exitCode: 0,
+        stderr: "",
+        stdout: SafeJSON.stringify({
+            pendingApprovals: {
+                broken: { detail: { toString: 0 } },
+                [id]: { detail: `plain\\path${newline}${escapeCharacter}${bidi}end ${"x".repeat(300)}` },
+            },
+        }),
+    });
+    try {
+        await listPending({ runPath, exec });
+        expect(messages.some((line) => line.includes("worker\\u000aFORGED #broken: invalid approval request"))).toBe(
+            true
+        );
+        expect(
+            messages.some(
+                (line) =>
+                    line.includes("worker\\u000aFORGED #r\\u000aFORGED NEEDS LEAD") &&
+                    line.includes("[escaped detail, not a pasteable command]") &&
+                    line.includes("plain\\\\path\\u000a\\u001b\\u202eend") &&
+                    line.endsWith("x".repeat(300))
+            )
+        ).toBe(true);
+        expect(
+            messages.every((line) => !line.includes(newline) && !line.includes(escapeCharacter) && !line.includes(bidi))
+        ).toBe(true);
+        expect(messages.at(-1)).toBe("1 waiting request(s) across 1 worker(s)");
+    } finally {
+        output.mockRestore();
+    }
+});
+
 test("a status that keeps failing names the exit and the output, then hands over to the lead", async () => {
     const messages: string[] = [];
     const output = spyOn(console, "log").mockImplementation((value) => messages.push(String(value)));
@@ -1325,10 +1589,10 @@ test("a status that keeps failing names the exit and the output, then hands over
             timeoutMs: 1_000,
             pollMs: 5,
         });
-        expect(messages[0]).toBe("[approver] status failed (exit 1): no session named fixture");
+        expect(messages[0]).toBe("[approver] status failed (exit 1): [escaped output] no session named fixture");
         expect(messages.filter((line) => line.startsWith("[approver] status failed"))).toHaveLength(10);
         expect(messages.at(-1)).toBe(
-            "[approver] NEEDS LEAD: codex status failed 10 times in a row for fixture; stopped"
+            "[approver] NEEDS LEAD: codex status failed 10 times in a row for fixture; stopped (escaped identifier)"
         );
         expect(time).toBe(45);
     } finally {
