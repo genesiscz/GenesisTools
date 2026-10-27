@@ -134,7 +134,7 @@ export function leadPrompt(agents: Record<string, SessionAgentDefinition>): stri
     return [
         "This Claude Code session runs on Codex through ai-proxy.",
         `Its subagents ${codex.join(", ")} are Codex models. When a skill or brief asks for a Codex, Sol, Terra, Luna or Astra worker, start that subagent with the Agent tool (subagent_type, and effort to raise it, for example effort "xhigh"), not \`${toolCommand("codex spawn")}\` or the handoff-to skill.`,
-        "A native subagent needs no approvals from you and reports back once, when it finishes. A `tools codex spawn` worker started with --write ask makes you approve its commands one by one.",
+        `A native subagent needs no approvals from you and reports back once, when it finishes. A \`${toolCommand("codex spawn")}\` worker started with --write ask makes you approve its commands one by one.`,
         "Use the codex-worker subagent only when the work must run in the Codex CLI's own sandbox.",
     ].join("\n");
 }
