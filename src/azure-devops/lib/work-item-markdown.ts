@@ -26,6 +26,21 @@ export function commentMarkdown(comment: Comment, imageMap?: Map<string, string>
 }
 
 /**
+ * The description as markdown. A Markdown-format field holds no HTML tag and is used as is: the HTML converter
+ * would collapse its line breaks into one line. The batch read does not return `multilineFieldsFormat`.
+ */
+export function descriptionMarkdown(description: string, imageMap?: Map<string, string>): string {
+    if (/<\/?[a-z!]/i.test(description)) {
+        return htmlToMarkdown(imageMap ? rewriteImageUrls(description, imageMap) : description);
+    }
+
+    const text = imageMap
+        ? rewriteImageSources(rewriteMarkdownImageUrls(description, imageMap), imageMap)
+        : description;
+    return text.trim();
+}
+
+/**
  * Markdown body for a work item: saved `.md` file and `tools azure-devops wi -f md` stdout.
  * Converts ADO HTML description and comments (headings, lists, images) rather than dumping tags.
  */
@@ -52,8 +67,7 @@ export function formatWorkItemMarkdown(item: WorkItemFull, imageMap?: Map<string
         lines.push("");
         lines.push("## Description");
         lines.push("");
-        const descHtml = imageMap ? rewriteImageUrls(item.description, imageMap) : item.description;
-        lines.push(htmlToMarkdown(descHtml));
+        lines.push(descriptionMarkdown(item.description, imageMap));
     }
 
     if (item.relations && item.relations.length > 0) {
