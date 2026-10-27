@@ -156,7 +156,11 @@ public struct LiveWidgetView: View {
             }
             if let error = model.error {
                 // One sentence; the raw text (a process's stderr) only behind Details.
-                NoticePill(text: error, more: model.errorDetail, tone: .error) { model.error = nil }
+                // Reconnect restarts the widget's link to the hub: the one next step every failed call has.
+                NoticePill(text: error, more: model.errorDetail, tone: .error,
+                           fixes: [.button("Reconnect", symbol: "arrow.clockwise") { model.error = nil; model.start() }]) {
+                    model.error = nil
+                }
                     .accessibilityIdentifier("widget.error")
             }
             if model.connectionLost && model.snapshot != nil {
@@ -1730,6 +1734,26 @@ struct WidgetNoticeDetails: View {
                     .fixedSize(horizontal: false, vertical: true)
                     .transition(.genReveal)
             }
+        }
+    }
+}
+
+/// A failed widget call in the words the panel shows: one sentence of what happened and what to do, and the
+/// machine's own text for Details. A bad answer from `tools` showed Foundation's "The data couldn't be read because it
+/// isn't in the correct format." as the whole error (UX audit 2026-10-27).
+enum WidgetErrorText {
+    static func words(for error: Error) -> (text: String, detail: String?) {
+        switch error {
+        case is DecodingError:
+            return ("The widget could not read the hub's answer. Try again, or reconnect.", String(describing: error))
+        case ToolsBridgeError.timeout(let seconds):
+            return ("The hub did not answer within \(seconds) seconds. Try again, or reconnect.", nil)
+        case let bridge as ToolsBridgeError:
+            // A missing tools command and a refusal already say what happened in a sentence of their own.
+            return (bridge.description, nil)
+        default:
+            return ("The widget's call to the hub failed. Try again, or reconnect.",
+                    error.localizedDescription + "\n" + String(describing: error))
         }
     }
 }

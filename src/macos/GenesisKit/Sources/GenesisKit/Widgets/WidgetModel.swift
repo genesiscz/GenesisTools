@@ -2789,8 +2789,10 @@ public final class WidgetModel: ObservableObject {
         }
     }
 
+    /// One sentence on screen, the error's own text behind Details (`WidgetErrorText`).
     func report(_ error: Error) {
-        self.error = error.localizedDescription
+        let words = WidgetErrorText.words(for: error)
+        fail(words.text, detail: words.detail)
         PerfLog.mark("widget.error \(error.localizedDescription)")
     }
 }
