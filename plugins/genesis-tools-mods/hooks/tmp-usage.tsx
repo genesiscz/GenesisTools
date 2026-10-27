@@ -37,7 +37,7 @@ const WORKTREE_EVERY_MS = 30 * 60_000;
 
 /**
  * A worktree's size, walked again only when its git status changed or 30 minutes passed (ten times the walk's length
- * when that is longer). `du` on a 5-6 GB col-fe worktree took 3 to 17 s on a full disk (2026-10-27), and one session
+ * when that is longer). `du` on a 5-6 GB web app worktree took 3 to 17 s on a full disk (2026-10-27), and one session
  * walked eight of them every 5 minutes.
  */
 async function worktreeSize(host: Host, path: string, status: string): Promise<number | null> {
