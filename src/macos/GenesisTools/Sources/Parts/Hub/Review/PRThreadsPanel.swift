@@ -437,7 +437,7 @@ struct PRThreadsList: View {
     }
 
     private func visible(_ threads: [PRThread], _ placements: [String: PRThreadPlacement]) -> [PRThread] {
-        let selectedPath = model.repoPath(of: model.selectedID)
+        let selectedPath = thisFilePath
         return threads
             .filter { showClosed || Self.isOpen($0, placements[$0.id]) }
             .filter { !onlyThisFile || $0.path == selectedPath }
@@ -584,9 +584,13 @@ struct PRThreadsList: View {
         }
     }
 
-    /// The file "This file" filters by: the one the diff counts as current.
+    /// The file "This file" filters by: the topmost one on screen, or the selected one before the diff reports it.
+    private var thisFilePath: String? {
+        model.repoPath(of: model.fileInViewID) ?? model.repoPath(of: model.selectedID)
+    }
+
     private var thisFileName: String {
-        model.repoPath(of: model.selectedID).map { ($0 as NSString).lastPathComponent } ?? "no file"
+        thisFilePath.map { ($0 as NSString).lastPathComponent } ?? "no file"
     }
 
     /// What the list shows when no thread passes the filters.
@@ -651,7 +655,7 @@ struct PRThreadsList: View {
                              tooltip: "Also the resolved threads and the outdated ones") { showClosed = true }
                 Rectangle().fill(ReviewPalette.hairline).frame(width: 1, height: 14)
                 PRFilterChip(title: "This file", symbol: "doc.text", on: onlyThisFile,
-                             tooltip: "Show only the threads on the current file of the diff (the one selected, or the topmost while you scroll)") { onlyThisFile.toggle() }
+                             tooltip: "Show only the threads on the file at the top of the diff") { onlyThisFile.toggle() }
                 Spacer(minLength: 0)
                 if !compact {
                     selectForFix(fixable)

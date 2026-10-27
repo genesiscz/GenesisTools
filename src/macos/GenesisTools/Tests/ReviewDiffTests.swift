@@ -287,6 +287,7 @@ final class ReviewPageSeamTests: XCTestCase {
         // fixToggle posts the bare thread id (threadIdOf strips live: / thread:)
         XCTAssertEqual(event(["type": "thread.select", "id": "PRRT_1", "selected": true]), .threadSelect(id: "PRRT_1", selected: true))
         XCTAssertEqual(event(["type": "focusFile", "fileId": "f3"]), .focusFile("f3"))
+        XCTAssertEqual(event(["type": "fileInView", "fileId": "f4"]), .fileInView("f4"))
         for key in ["j", "k", "r", "e", "x", "f", "n", "p", "s"] {
             XCTAssertNotNil(event(["type": "key", "key": key]), "main.ts reviewKeys has \(key)")
         }
