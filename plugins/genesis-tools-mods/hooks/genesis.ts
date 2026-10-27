@@ -63,7 +63,8 @@ export function probeOf(stdout: string): GenesisProbe | undefined {
 /** Undefined when the run was cut off (the hook that started it was replaced), which says nothing about this Mac. */
 async function runProbe(host: Host): Promise<GenesisProbe | undefined> {
     try {
-        const run = await host.run(["tools", "genesis-tools", "probe", "--json"], { timeoutMs: 20_000 });
+        // The probe answers in about 0.3 s and bounds each of its own lookups at 2 s; 5 s is the most it may take.
+        const run = await host.run(["tools", "genesis-tools", "probe", "--json"], { timeoutMs: 5_000 });
 
         if (run.exitCode === 0) {
             // A GenesisTools from before the probe (2026-10-23) prints help: its CLI runs, its links stay unknown.
@@ -80,7 +81,13 @@ async function runProbe(host: Host): Promise<GenesisProbe | undefined> {
         }
 
         // No `tools` on PATH: the spawn itself fails.
-        return NOTHING;
+        if (/ENOENT|not found|cannot start/i.test(String(error))) {
+            return NOTHING;
+        }
+
+        // A run past its deadline (a busy Mac) says nothing about this Mac either: the next caller asks again,
+        // instead of every link and `tools` control staying off for 30 minutes.
+        return undefined;
     }
 }
 
