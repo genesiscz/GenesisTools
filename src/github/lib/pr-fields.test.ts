@@ -42,6 +42,30 @@ describe("readPrFields", () => {
         expect(calls.filter((cmd) => cmd[0] === "gh")).toHaveLength(2);
     });
 
+    test("retries failed checks and keeps a URL's repository", async () => {
+        const url = `https://github.com/example/other/pull/${Date.now()}`;
+        const calls: string[][] = [];
+        let failed = true;
+        const run: CommandRunner = async (cmd) => {
+            calls.push(cmd);
+            if (cmd[0] === "git") {
+                return { code: 0, stdout: "git@github.com:example/local.git", stderr: "" };
+            }
+            if (cmd[2] === "view") {
+                return { code: 0, stdout: '{"number":42}', stderr: "" };
+            }
+            if (failed) {
+                failed = false;
+                return { code: 1, stdout: "", stderr: "network failure" };
+            }
+            return { code: 8, stdout: '[{"name":"ci","bucket":"pending"}]', stderr: "" };
+        };
+        const args = { input: url, fields: ["checks"], cwd: "/work/local", maxCacheAgeSeconds: 60, run };
+        await expect(readPrFields(args)).rejects.toThrow("network failure");
+        expect((await readPrFields(args)).value.checks).toEqual([{ name: "ci", bucket: "pending" }]);
+        expect(calls.filter((cmd) => cmd[2] === "checks").map((cmd) => cmd[3])).toEqual([url, url]);
+    });
+
     test("a branch with no PR answers pr: null; another gh failure throws", async () => {
         const calls: string[][] = [];
 

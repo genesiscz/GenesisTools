@@ -288,6 +288,11 @@ export async function loadSessionInbox(
     } & ScanOptions = {}
 ): Promise<SessionInbox> {
     const stored = rows();
+
+    if (stored.some((row) => row.sessionId === session && (row.promptReservation?.expiresAt ?? 0) > Date.now())) {
+        trace?.cannotProve("a prompt reservation can expire without a file change");
+    }
+
     const todos = stored
         .filter((row) => row.sessionId === session && kindOf(row) === "todo")
         .map((row) => ({

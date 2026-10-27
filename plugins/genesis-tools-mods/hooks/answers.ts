@@ -636,7 +636,16 @@ async function rowsFromIndex(
         parsed = undefined;
     }
 
-    if (!isRecord(parsed) || !Array.isArray(parsed.asks) || !Array.isArray(parsed.calls)) {
+    if (
+        !isRecord(parsed) ||
+        !isRecord(parsed.file) ||
+        typeof parsed.offset !== "number" ||
+        parsed.offset < size ||
+        (Array.isArray(parsed.issues) && parsed.issues.length > 0) ||
+        ("isStdoutTruncated" in done && done.isStdoutTruncated) ||
+        !Array.isArray(parsed.asks) ||
+        !Array.isArray(parsed.calls)
+    ) {
         if (/unknown command/.test(done.stderr)) {
             rowsUnsupported = true;
         }
