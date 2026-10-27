@@ -253,6 +253,7 @@ extension WidgetModel {
                     self.session(forKey: item.key).map { outcome.queuedSessions.contains($0.target.sessionId) } ?? false
                 }
                 PerfLog.mark("widget.decision-send \(action) result: \(text)")
+                if outcome.failed == 0 { self.dropSentFromPeek(ids) }
                 if outcome.delivered {
                     postNote(text)
                     // Only the panel this send left from: one the user opened again meanwhile stays open. It folds
