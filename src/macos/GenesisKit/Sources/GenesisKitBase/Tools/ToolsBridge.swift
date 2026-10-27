@@ -73,11 +73,12 @@ public struct ToolsBridge: Sendable {
 
     public var binaryPath: String { resolveBinaryPath() }
 
+    /// `server` nil asks `ToolsServerClient.shared`, the app's resident server, when the app set one.
     public init(binaryPath: String, outputSink: OutputSink? = nil, server: ToolsServerClient? = nil) {
         let captured = binaryPath
         self.resolveBinaryPath = { captured }
         self.outputSink = outputSink
-        self.server = server
+        self.server = server ?? ToolsServerClient.shared
     }
 
     public init(
@@ -87,7 +88,7 @@ public struct ToolsBridge: Sendable {
     ) {
         self.resolveBinaryPath = resolveBinaryPath
         self.outputSink = outputSink
-        self.server = server
+        self.server = server ?? ToolsServerClient.shared
     }
 
     public var binaryExists: Bool {

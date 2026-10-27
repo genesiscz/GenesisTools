@@ -43,6 +43,38 @@ public final class ToolsServerClient: @unchecked Sendable {
         home.appendingPathComponent(".genesis-tools/hub/server/hub.sock").path
     }
 
+    /// The server a `ToolsBridge` built without one asks first. An app sets it once at launch, before it builds a
+    /// bridge (the widget face, for its `tools hub widget …` calls); nil, the default, keeps those bridges processes.
+    nonisolated(unsafe) public static var shared: ToolsServerClient?
+
+    /// Starts `tools hub serve` once, detached from any call: it outlives the call that found no server, exits by
+    /// itself after 10 minutes with no connection, and restarts when its code changes (src/hub/server/server.ts).
+    /// It runs through the same `tools` launcher chain as every per-call child, so its macOS privacy identity is
+    /// GenesisTools.app, as before.
+    public static func startHubServer(binaryPath: String) {
+        guard ToolsBridge.isExecutableFile(binaryPath) else { return }
+
+        let plan = ToolsBridge.launchPlan(binaryPath: binaryPath, argv: ["hub", "serve"])
+        let process = Process()
+        process.executableURL = plan.executable
+        process.arguments = plan.arguments
+        process.currentDirectoryURL = plan.workingDirectory
+        process.environment = ToolsBridge.scrubbedEnvironment()
+        process.qualityOfService = .utility
+        process.standardInput = FileHandle.nullDevice
+        process.standardOutput = FileHandle.nullDevice
+        process.standardError = FileHandle.nullDevice
+        process.terminationHandler = { finished in
+            PerfSpans.log("hub server pid=\(finished.processIdentifier) exited \(finished.terminationStatus)")
+        }
+        do {
+            try process.run()
+            PerfSpans.log("hub server started pid=\(process.processIdentifier)")
+        } catch {
+            PerfSpans.log("hub server cannot start: \(error.localizedDescription)")
+        }
+    }
+
     private struct StreamHandlers {
         let onLines: @MainActor ([String]) -> Void
         let onEnd: @MainActor (End) -> Void
@@ -64,6 +96,10 @@ public final class ToolsServerClient: @unchecked Sendable {
     private var streams: [Int: StreamHandlers] = [:]
     private var lastStart: Date?
     private var connectedAt: Date?
+    /// The argv prefixes this server named as having no door (`noDoor` in an `unsupported` answer): an argv under one
+    /// goes straight to the process, without waiting in the server's queue for the same answer. Kept for one
+    /// connection only, since the next server may have doors this one lacks.
+    private var noDoor: [[String]] = []
 
     public init(
         socketPath: String = ToolsServerClient.defaultSocketPath(),
@@ -179,6 +215,7 @@ public final class ToolsServerClient: @unchecked Sendable {
         onCall: ((ToolsRunResult?) -> Void)? = nil,
         stream: StreamHandlers? = nil
     ) -> Int? {
+        if lock.withLock({ noDoor.contains { argv.starts(with: $0) } }) { return nil }
         guard connectIfNeeded() else { return nil }
 
         let id: Int = lock.withLock {
@@ -321,11 +358,19 @@ public final class ToolsServerClient: @unchecked Sendable {
         }
 
         for line in lines.push(chunk[0..<count]) {
-            handle(line)
+            handle(line, connection: connection)
         }
     }
 
-    private func handle(_ line: Data) {
+    /// Remembers the door-less prefix of a refusal, for the connection that gave it.
+    private func rememberNoDoor(_ object: [String: Any], connection: Int) {
+        guard let prefix = object["noDoor"] as? [String], !prefix.isEmpty else { return }
+        lock.withLock {
+            if generation == connection, fd >= 0, !noDoor.contains(prefix) { noDoor.append(prefix) }
+        }
+    }
+
+    private func handle(_ line: Data, connection: Int) {
         guard let object = try? JSONSerialization.jsonObject(with: line) as? [String: Any],
               let id = object["id"] as? Int
         else {
@@ -357,6 +402,7 @@ public final class ToolsServerClient: @unchecked Sendable {
 
         if let callback = lock.withLock({ calls.removeValue(forKey: id) }) {
             guard object["ok"] as? Bool == true else {
+                rememberNoDoor(object, connection: connection)
                 callback(nil)
                 return
             }
@@ -372,6 +418,7 @@ public final class ToolsServerClient: @unchecked Sendable {
 
         // A subscribe the server refused (unsupported, draining): end it so the caller starts the process.
         if object["ok"] as? Bool == false, let handlers = lock.withLock({ streams.removeValue(forKey: id) }) {
+            rememberNoDoor(object, connection: connection)
             let end = End(exit: 1, stderr: "", reason: object["code"] as? String ?? "unsupported")
             DispatchQueue.main.async { MainActor.assumeIsolated { handlers.onEnd(end) } }
         }
@@ -389,6 +436,7 @@ public final class ToolsServerClient: @unchecked Sendable {
             streams.removeAll()
             source = nil
             fd = -1
+            noDoor.removeAll()
             // A server that served for a while and then went away (a restart after a code change, the memory
             // cap) may be replaced at once. One that dies right after connecting keeps the start throttle.
             if let connectedAt, Date().timeIntervalSince(connectedAt) > 30 { lastStart = nil }
