@@ -491,8 +491,26 @@ export function sweepSessionRecords(
     for (const record of listSessionRecords()) {
         if (record.closedAt) {
             if (now - Date.parse(record.closedAt) > retentionMs) {
-                unlinkSync(recordPath(record.id));
-                result.pruned.push(record.id);
+                try {
+                    withRecordLock(record.id, () => {
+                        const current = readSessionRecord(record.id);
+
+                        if (
+                            current?.keyHash === record.keyHash &&
+                            current.closedAt &&
+                            now - Date.parse(current.closedAt) > retentionMs
+                        ) {
+                            unlinkSync(recordPath(record.id));
+                            result.pruned.push(record.id);
+                        }
+                    });
+                } catch (error) {
+                    if (!isSessionRecordBusy(error)) {
+                        throw error;
+                    }
+
+                    logger.debug({ session: record.id }, "ai-proxy: session record busy, the next sweep prunes it");
+                }
             }
 
             continue;

@@ -18,6 +18,7 @@ import {
     createSessionRecord,
     hashSessionKey,
     isSessionRecordBusy,
+    listSessionRecords,
     newSessionKey,
     noteSessionRequest,
     openSessionRecord,
@@ -394,6 +395,57 @@ describe("sweepSessionRecords", () => {
         expect(sweepSessionRecords({ retentionDays: 30 }).pruned).toEqual([SESSION]);
         expect(existsSync(join(sessionsDir(), `${SESSION}.json`))).toBe(false);
         expect(readSessionRecord("young")).toBeDefined();
+    });
+
+    it("does not prune a session reopened after the sweep took its snapshot", () => {
+        newSession();
+        createSessionRecord({ id: "other" });
+        const [first, second] = listSessionRecords();
+        updateSessionRecord({
+            id: first.id,
+            change: (record) => {
+                record.launcherPid = 111;
+            },
+        });
+        updateSessionRecord({
+            id: second.id,
+            change: (record) => {
+                record.closedAt = new Date(Date.now() - 31 * 86_400_000).toISOString();
+            },
+        });
+        let reopenedKey = "";
+        const result = sweepSessionRecords({
+            retentionDays: 30,
+            probe: {
+                alive: () => {
+                    reopenedKey = openSessionRecord({ id: second.id }).key;
+                    return true;
+                },
+                startMs: () => null,
+            },
+        });
+
+        expect(reopenedKey).not.toBe("");
+        expect(result.pruned).not.toContain(second.id);
+        expect(resolveSessionKey(reopenedKey).state).toBe("open");
+    });
+
+    it("skips pruning a locked record and prunes it on the next sweep", () => {
+        newSession();
+        updateSessionRecord({
+            id: SESSION,
+            change: (record) => {
+                record.closedAt = new Date(Date.now() - 31 * 86_400_000).toISOString();
+            },
+        });
+        const path = join(sessionsDir(), `${SESSION}.json`);
+
+        withPathArbitrationSync(path, () => {
+            expect(sweepSessionRecords({ retentionDays: 30 }).pruned).toEqual([]);
+            expect(readSessionRecord(SESSION)).toBeDefined();
+        });
+        expect(sweepSessionRecords({ retentionDays: 30 }).pruned).toEqual([SESSION]);
+        expect(readSessionRecord(SESSION)).toBeUndefined();
     });
 });
 
