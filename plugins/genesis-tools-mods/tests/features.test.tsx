@@ -1584,6 +1584,188 @@ function machine({
     });
 }
 
+function processLogMachine(on: On, options: { failCwd?: boolean; failSession?: boolean; holdAppends?: boolean } = {}) {
+    forgetSettings();
+    forgetCheckouts();
+    forgetGenesisProbe();
+    const clock = mock.clock(on);
+    mock.store(on);
+    let failEnvironment = false;
+    on("env.get", async (_$, e) => {
+        if (failEnvironment) {
+            return { deny: "environment unavailable" };
+        }
+
+        return { value: e.name === "HOME" ? "/home/test" : undefined };
+    });
+    on("session.id", async () => {
+        if (options.failSession) {
+            return { deny: "session unavailable" };
+        }
+
+        return { value: "sess-log" };
+    });
+    on("session.cwd", async () => {
+        if (options.failCwd) {
+            return { deny: "cwd unavailable" };
+        }
+
+        return { value: "/repo" };
+    });
+    on("fs.read", async (_$, e) => {
+        if (e.path.endsWith("/agents/hooks.json")) {
+            return { value: JSON.stringify({ mods: { git: { enabled: true, expand: "all" } } }) };
+        }
+
+        throw new Error("no file");
+    });
+    on("fs.exists", async () => ({ value: true }));
+    on("fs.stat", async () => ({ value: { kind: "dir", size: 0, mtimeMs: 0, isLink: false } }));
+    on("ui.panes", async () => ({ value: [] }));
+    on("session.end", async (_$, e) => ({ sessionId: e.sessionId }));
+    const writes: string[] = [];
+    const calls: string[][] = [];
+    let release = () => {};
+    const barrier = new Promise<void>((resolve) => {
+        release = resolve;
+    });
+    let appends = 0;
+    on("process.run", async (_$, e) => {
+        calls.push([...e.argv]);
+        const path = e.argv.at(-1) ?? "";
+        if (path.includes("/mods-log/processes-")) {
+            writes.push(e.init?.stdin ?? "");
+        } else if (path.endsWith("/mods-log/git.jsonl")) {
+            appends++;
+            if (options.holdAppends) {
+                await barrier;
+            }
+        }
+
+        const stdout = e.argv.includes("--show-toplevel")
+            ? "/repo\n"
+            : e.argv.includes("--porcelain")
+              ? "## main\n"
+              : "";
+        return { value: { exitCode: 0, stdout, stderr: "", isStdoutTruncated: false, isStderrTruncated: false } };
+    });
+
+    return {
+        clock,
+        writes,
+        calls,
+        appends: () => appends,
+        release,
+        failEnvironment: () => {
+            failEnvironment = true;
+        },
+    };
+}
+
+const gitCommand = {
+    command: "mod-git",
+    args: "off",
+    origin: { kind: "composer" } as const,
+    presentation: { isFullscreen: false, columns: 100 },
+};
+
+function processLogRows(writes: string[]): Record<string, unknown>[] {
+    return writes
+        .flatMap((batch) =>
+            batch
+                .trim()
+                .split("\n")
+                .map((line) => JSON.parse(line))
+        )
+        .filter(isRecord);
+}
+
+test("process log: session end flushes a final append batch", async ($, on) => {
+    const machine = processLogMachine(on);
+    await $.command.run(gitCommand);
+    await $.session.end({ reason: "other", sessionId: "sess-log", resume: { id: "sess-log" } });
+    const rows = processLogRows(machine.writes);
+    expect(
+        rows.some(
+            (row) => Array.isArray(row.argv) && row.argv.includes("/home/test/.genesis-tools/agents/mods-log/git.jsonl")
+        )
+    ).toBe(true);
+    expect(rows.some((row) => Array.isArray(row.argv) && row.argv[0] === "find")).toBe(true);
+    expect(rows.some((row) => row.cwd === "/repo" && row.cwdSource === "session")).toBe(true);
+});
+
+test("process log: idle timer flushes the append batch", async ($, on) => {
+    const machine = processLogMachine(on);
+    await $.command.run(gitCommand);
+    await machine.clock.advance(10_000);
+    expect(processLogRows(machine.writes).some((row) => Array.isArray(row.argv) && row.argv[0] === "/bin/sh")).toBe(
+        true
+    );
+});
+
+test("process log: Finder button logs the open process", async ($, on) => {
+    const machine = processLogMachine(on);
+    await $.command.run({ ...gitCommand, args: "refresh" });
+    const ui = await $.ui.mount({
+        plugin: "genesis-tools-mods",
+        surface: "terminal",
+        component: "Pane",
+        requestId: "mods-git",
+        props: {
+            title: "Git",
+            isFocused: true,
+            bodyColumns: 100,
+            placement: "inline",
+            scroll: { offset: 0, bodyRows: 30 },
+            view: {},
+        },
+    });
+    await ui.press({ key: "git-0-finder" });
+    await machine.clock.advance(10_000);
+    expect(machine.calls.some((argv) => argv[0] === "open" && argv[1] === "/repo")).toBe(true);
+    const rows = processLogRows(machine.writes);
+    expect(rows.some((row) => Array.isArray(row.argv) && row.argv[0] === "open" && row.argv[1] === "/repo")).toBe(true);
+    expect(rows.some((row) => row.cwd === "/repo" && row.cwdSource === "explicit-absolute")).toBe(true);
+    await ui.unmount();
+});
+
+test("process log: forty concurrent completions write two nonempty batches", async ($, on) => {
+    const machine = processLogMachine(on, { holdAppends: true });
+    const commands = Array.from({ length: 40 }, () => $.command.run(gitCommand));
+    await machine.clock.settle();
+    expect(machine.appends()).toBe(40);
+    machine.release();
+    await Promise.all(commands);
+    await machine.clock.advance(10_000);
+    const rows = processLogRows(machine.writes);
+    expect(machine.writes).toHaveLength(2);
+    expect(
+        rows.filter(
+            (row) => Array.isArray(row.argv) && row.argv.includes("/home/test/.genesis-tools/agents/mods-log/git.jsonl")
+        )
+    ).toHaveLength(40);
+});
+
+test("process log: unavailable metadata stays nonfatal and the folder is unknown", async ($, on) => {
+    const machine = processLogMachine(on, { failCwd: true, failSession: true });
+    const result = await $.command.run(gitCommand);
+    await machine.clock.advance(10_000);
+    expect(result.text).toContain("off");
+    expect(
+        processLogRows(machine.writes).some(
+            (row) => row.cwd === null && row.cwdSource === "unknown" && row.session === "unknown"
+        )
+    ).toBe(true);
+});
+
+test("process log: environment failures do not reject a command", async ($, on) => {
+    const machine = processLogMachine(on);
+    const result = await $.command.run(gitCommand);
+    machine.failEnvironment();
+    await machine.clock.advance(10_000);
+    expect(result.text).toContain("off");
+});
+
 test("the link fixer links what resolves, as the reply streams, and leaves the rest", async ($, on) => {
     machine({ on });
 
