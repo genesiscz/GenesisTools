@@ -5,10 +5,20 @@
  */
 
 import { toolCommand } from "@genesiscz/utils/cli/tool-command";
+import { logger } from "@genesiscz/utils/logger";
 import { artifactPath } from "./platform.ts";
+import { connectBrowser } from "./recorder.ts";
 import { browsersWithEmptyDebugFlag } from "./resolve-attach.ts";
+import { listPossiblyHeldPopups } from "./resume.ts";
 import { CAPTURE_CAP_BYTES } from "./segments.ts";
 import { collectStatus, type StatusReport } from "./status.ts";
+
+const { log } = logger.scoped("chrome-devtools:doctor");
+
+export interface HeldPopups {
+    port: number;
+    urls: string[];
+}
 
 export interface Finding {
     severity: "err" | "warn" | "info";
@@ -18,7 +28,11 @@ export interface Finding {
     fix?: string;
 }
 
-export function findingsFromStatus(report: StatusReport, emptyDebugFlag: string[]): Finding[] {
+export function findingsFromStatus(
+    report: StatusReport,
+    emptyDebugFlag: string[],
+    heldPopups: HeldPopups[] = []
+): Finding[] {
     const findings: Finding[] = [];
 
     for (const p of report.ports) {
@@ -103,11 +117,46 @@ export function findingsFromStatus(report: StatusReport, emptyDebugFlag: string[
         });
     }
 
+    for (const held of heldPopups) {
+        if (held.urls.length === 0) {
+            continue;
+        }
+
+        findings.push({
+            severity: "warn",
+            id: `held-popup-${held.port}`,
+            title: `port ${held.port}: ${held.urls.length} possibly held popup(s)`,
+            detail: 'A page with an empty URL and an opener: a debugger client may hold it, and its opener then shows "Debugger paused in another tab".',
+            fix: toolCommand("chrome-devtools resume", "--port", String(held.port)),
+        });
+    }
+
     return findings;
+}
+
+/** Read-only: Target.getTargets on each live endpoint; a port that does not answer is skipped. */
+async function findHeldPopups(report: StatusReport): Promise<HeldPopups[]> {
+    const live = report.ports.filter((p) => p.endpoint !== null);
+
+    return Promise.all(
+        live.map(async ({ port }): Promise<HeldPopups> => {
+            try {
+                const conn = await connectBrowser(port);
+                try {
+                    return { port, urls: (await listPossiblyHeldPopups(conn)).map((t) => t.url) };
+                } finally {
+                    conn.close();
+                }
+            } catch (err) {
+                log.debug({ err, port }, "held-popup check skipped");
+                return { port, urls: [] };
+            }
+        })
+    );
 }
 
 export async function diagnose(): Promise<Finding[]> {
     const report = await collectStatus();
 
-    return findingsFromStatus(report, browsersWithEmptyDebugFlag());
+    return findingsFromStatus(report, browsersWithEmptyDebugFlag(), await findHeldPopups(report));
 }

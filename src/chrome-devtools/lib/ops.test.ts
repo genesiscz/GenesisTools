@@ -2,9 +2,11 @@ import { afterEach, describe, expect, test } from "bun:test";
 import { existsSync, rmSync } from "node:fs";
 import { writePidFile } from "@genesiscz/utils/process/pidfile";
 import { processFixture } from "./__tests__/process-fixture";
+import type { CdpCallOptions, CdpEventListener } from "./cdp.ts";
 import { actionsFromFindings, clearStalePidfile, killRecorderPid, partitionForYes } from "./cleanup.ts";
 import { findingsFromStatus } from "./doctor.ts";
 import { ensureCaptureDir, recorderPidPath } from "./paths.ts";
+import { type ResumeConn, runResume, selectResumeTargets } from "./resume.ts";
 import { ancestorPids, type StatusReport } from "./status.ts";
 
 const emptySegments = { count: 0, bytes: 0, oldestMs: null, newestMs: null };
@@ -84,6 +86,135 @@ describe("findingsFromStatus (doctor is pure — it can never mutate)", () => {
 
     test("a clean report yields zero findings", () => {
         expect(findingsFromStatus({ ports: [], legacyFiles: [], orphans: [] }, [])).toEqual([]);
+    });
+
+    test("a possibly held popup suggests resume, and a port without one adds nothing", () => {
+        const findings = findingsFromStatus(
+            { ports: [], legacyFiles: [], orphans: [] },
+            [],
+            [
+                { port: 9278, urls: [""] },
+                { port: 9279, urls: [] },
+            ]
+        );
+
+        expect(findings.map((f) => f.id)).toEqual(["held-popup-9278"]);
+        expect(findings[0].fix).toContain("resume --port 9278");
+    });
+});
+
+interface FakeTarget {
+    targetId: string;
+    type: string;
+    url: string;
+    openerId?: string;
+    hangOn?: string;
+    urlAfterRun?: string;
+}
+
+/** A fake browser connection: each target answers like Chrome, except one method of a `hangOn` target never answers. */
+function fakeConn(targets: FakeTarget[]): { conn: ResumeConn; sent: string[] } {
+    const sent: string[] = [];
+    const bySession = new Map<string, FakeTarget>();
+    const released = new Set<string>();
+    const urlOf = (t: FakeTarget) => (released.has(t.targetId) && t.urlAfterRun ? t.urlAfterRun : t.url);
+    const never = (options: CdpCallOptions) =>
+        new Promise<unknown>((_, reject) => {
+            options.signal?.addEventListener("abort", () => reject(options.signal?.reason), { once: true });
+        });
+
+    const send = async (
+        method: string,
+        params: Record<string, unknown> = {},
+        sessionId?: string,
+        options: CdpCallOptions = {}
+    ): Promise<unknown> => {
+        const target = sessionId
+            ? bySession.get(sessionId)
+            : (targets.find((t) => t.targetId === params.targetId) ?? bySession.get(String(params.sessionId)));
+        sent.push(`${method}:${target?.targetId ?? ""}`);
+        if (target?.hangOn === method) {
+            return never(options);
+        }
+
+        switch (method) {
+            case "Target.getTargets":
+                return { targetInfos: targets.map((t) => ({ ...t, url: urlOf(t) })) };
+            case "Target.getTargetInfo":
+                return { targetInfo: target ? { ...target, url: urlOf(target) } : {} };
+            case "Target.attachToTarget": {
+                const sid = `s-${params.targetId}`;
+                if (target) {
+                    bySession.set(sid, target);
+                }
+
+                return { sessionId: sid };
+            }
+            case "Runtime.runIfWaitingForDebugger":
+                if (target) {
+                    released.add(target.targetId);
+                }
+
+                return {};
+            default:
+                return {};
+        }
+    };
+    const noop = (_fn: CdpEventListener) => undefined;
+
+    return { conn: { send, on: noop, off: noop }, sent };
+}
+
+describe("resume (releases held targets without hanging)", () => {
+    test("a target that never answers times out alone; the others are still released, within the deadline", async () => {
+        const { conn, sent } = fakeConn([
+            { targetId: "opener", type: "page", url: "http://127.0.0.1:8777/opener.html" },
+            {
+                targetId: "popup",
+                type: "page",
+                url: "",
+                openerId: "opener",
+                urlAfterRun: "http://127.0.0.1:8777/popup.html",
+            },
+            {
+                targetId: "frozen",
+                type: "page",
+                url: "https://frozen.example/",
+                hangOn: "Runtime.runIfWaitingForDebugger",
+            },
+            { targetId: "tools", type: "page", url: "devtools://devtools/bundled/inspector.html" },
+            { targetId: "sw", type: "service_worker", url: "https://frozen.example/sw.js" },
+        ]);
+        const perTargetMs = 300;
+        const started = Date.now();
+        const report = await runResume({ conn, perTargetMs });
+        const elapsed = Date.now() - started;
+
+        expect(elapsed).toBeLessThan(perTargetMs + 700);
+        expect(report.timedOut).toBe(true);
+        const byId = Object.fromEntries(report.records.map((r) => [r.targetId, r]));
+        expect(Object.keys(byId).sort()).toEqual(["frozen", "opener", "popup"]);
+        expect(byId.popup.outcome).toBe("released");
+        expect(byId.popup.urlAfter).toBe("http://127.0.0.1:8777/popup.html");
+        expect(byId.opener.outcome).toBe("ok");
+        expect(byId.frozen).toMatchObject({ outcome: "timeout", step: "run" });
+        expect(sent).toContain("Target.detachFromTarget:frozen");
+        expect(sent.some((m) => m.startsWith("Runtime.evaluate") || m.startsWith("Network."))).toBe(false);
+    });
+
+    test("--match keeps the matching tab and the blank popup it opened, nothing else", () => {
+        const picked = selectResumeTargets(
+            [
+                { targetId: "a", type: "page", url: "https://app.example/" },
+                { targetId: "p", type: "page", url: "", openerId: "a" },
+                { targetId: "b", type: "page", url: "https://other.example/" },
+                { targetId: "q", type: "page", url: "about:blank", openerId: "b" },
+                { targetId: "w", type: "worker", url: "https://app.example/w.js" },
+            ],
+            { match: "app.example" }
+        );
+
+        expect(picked.map((t) => t.targetId)).toEqual(["a", "p"]);
     });
 });
 

@@ -12,6 +12,7 @@ record  --match X|--all-tabs  the capture engine (one per port; --stop; --channe
 follow  --channels a,b        live view over the buffer (+ Monitor hints; rotation-aware)
 har     [--last 30m|--now]    DevTools-grade HAR from the buffer, or a live window with bodies
 status | doctor | cleanup     inventory (CPU/mem) | read-only diagnosis | guided fixes
+resume [--match X]            release tabs held by a debugger ("Debugger paused in another tab", blank popup)
 cookies --domain X [--json]   ALL cookies incl. httpOnly, every domain
 console --match X --reload    console messages incl. load-time ones (attaches first)
 eval '() => …'                run JS in the tab, JSON out (no value -> null, exit 0)
