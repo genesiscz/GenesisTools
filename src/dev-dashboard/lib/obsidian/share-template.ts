@@ -852,6 +852,7 @@ function buildWidthScript(): string {
             grip.setPointerCapture(e.pointerId);
             var startX = e.clientX;
             var startW = main.getBoundingClientRect().width;
+            var previous = root.getPropertyValue("--dd-share-width");
             var w = startW;
             grip.classList.add("dd-share-grip-active");
             document.body.classList.add("dd-share-resizing");
@@ -860,13 +861,21 @@ function buildWidthScript(): string {
                 w = clamp(startW + sign * (ev.clientX - startX) * 2);
                 apply(w);
             }
-            function up() {
+            function up(ev) {
                 grip.removeEventListener("pointermove", move);
                 grip.removeEventListener("pointerup", up);
                 grip.removeEventListener("pointercancel", up);
                 grip.classList.remove("dd-share-grip-active");
                 document.body.classList.remove("dd-share-resizing");
-                save(w);
+                if (ev.type === "pointercancel") {
+                    if (previous) {
+                        root.setProperty("--dd-share-width", previous);
+                    } else {
+                        root.removeProperty("--dd-share-width");
+                    }
+                } else {
+                    save(w);
+                }
             }
             grip.addEventListener("pointermove", move);
             grip.addEventListener("pointerup", up);
@@ -894,6 +903,22 @@ function buildWidthScript(): string {
             save(w);
         });
     });
+
+    function updateValues() {
+        var current = Math.round(main.getBoundingClientRect().width);
+        var maximum = Math.max(current, document.body.clientWidth - 60);
+        var minimum = Math.min(MIN, maximum);
+        main.querySelectorAll(".dd-share-grip").forEach(function (grip) {
+            grip.setAttribute("aria-valuemin", String(minimum));
+            grip.setAttribute("aria-valuemax", String(maximum));
+            grip.setAttribute("aria-valuenow", String(current));
+            grip.setAttribute("aria-valuetext", current + " pixels");
+        });
+    }
+    updateValues();
+    var observer = new ResizeObserver(updateValues);
+    observer.observe(main);
+    observer.observe(document.body);
 })();
 </script>`;
 }
