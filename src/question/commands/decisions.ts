@@ -5,6 +5,7 @@ import { SafeJSON } from "@genesiscz/utils/json";
 import { out } from "@genesiscz/utils/logger";
 import * as p from "@genesiscz/utils/prompts/p";
 import type { Command } from "commander";
+import { backfillChatAnswers } from "../lib/decisions/chat-reading";
 import {
     currentHarnessSession,
     DECISION_STATUSES,
@@ -184,6 +185,27 @@ export function registerDecisionCommands(program: Command): void {
                 actor: "agent",
             });
             out.result({ updated, events });
+        });
+
+    program
+        .command("chat-answers")
+        .description(
+            "Find the user's chat answers to a session's open decisions in its whole transcript (no byte cap), the backlog the decision Stop hook could not reach. Reports only, unless --apply"
+        )
+        .requiredOption("--session <id>", "The session whose open decisions to check")
+        .option("--transcript <path>", "The session's transcript, when its id does not find it")
+        .option("--provider <name>", "The transcript's provider (claude, codex, grok); with --transcript", "claude")
+        .option("--apply", "Store each unambiguous answer as acknowledged (answeredVia automatic_heuristic)")
+        .action(async (options: { session: string; transcript?: string; provider: string; apply?: boolean }) => {
+            const { file, events } = decisionFiles();
+            const result = await backfillChatAnswers({
+                session: options.session,
+                file,
+                events,
+                apply: options.apply === true,
+                ...(options.transcript ? { transcript: { kind: options.provider, path: options.transcript } } : {}),
+            });
+            out.result({ applied: options.apply === true, ...result });
         });
 
     program

@@ -251,6 +251,11 @@ export interface ReadBackwardOptions {
     includeBoundaryMessage?: boolean;
     /** At most this many bytes from the end (default `READ_BACKWARD_MAX_BYTES`). */
     maxBytes?: number;
+    /**
+     * Read only from this absolute byte offset to the end: an earlier read's `endOffset`, so each row is read once
+     * across reads. Reaching it is a clean end (no issue; `found` stays false unless `until` accepted an entry).
+     */
+    fromOffset?: number;
     signal?: AbortSignal;
 }
 
@@ -266,6 +271,16 @@ export interface BackwardRead {
     /** Whether `until` accepted an entry; false when the walk reached the start of the file or `maxBytes`. */
     found: boolean;
     issues: NativeSourceIssue[];
+    /**
+     * Where a later read's `fromOffset` starts: the source's length when this read began, or the start of its last row
+     * when that row was still being written. Absent when the reader cannot tell.
+     */
+    endOffset?: number;
+    /**
+     * Where the newest row with an assistant entry starts. A later read from here keeps the reply that a bare answer
+     * (`b)`) refers to, which a read from `endOffset` would cut off. Absent when the read held no assistant entry.
+     */
+    lastAssistantOffset?: number;
 }
 
 /**
