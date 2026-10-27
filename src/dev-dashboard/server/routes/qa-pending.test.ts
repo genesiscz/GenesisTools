@@ -1,5 +1,5 @@
 import { afterEach, beforeEach, describe, expect, it } from "bun:test";
-import { mkdtempSync, rmSync, writeFileSync } from "node:fs";
+import { mkdtempSync, readFileSync, rmSync, writeFileSync } from "node:fs";
 import { tmpdir } from "node:os";
 import { join } from "node:path";
 import { QA_ANSWER_MAX_CHARS } from "@app/dev-dashboard/lib/qa-clip";
@@ -348,10 +348,18 @@ describe("qa decision routes", () => {
 
     /** Every delivery the routes attempt; `runTool` never reaches a real `tools` binary. */
     let runs: string[][] = [];
+    /** The text of each `--prompt-file` a delivery wrote (a Codex steer), read while it still exists. */
+    let prompts: string[] = [];
     let runResult: ToolRun = { success: true, stdout: '{"sent":true}', stderr: "" };
     const fakeDeliver: DeliverDeps = {
         runTool: async (args) => {
             runs.push(args);
+            const promptFile = args.includes("--prompt-file") ? args[args.indexOf("--prompt-file") + 1] : undefined;
+
+            if (promptFile) {
+                prompts.push(readFileSync(promptFile, "utf8"));
+            }
+
             return runResult;
         },
         codexWorkerFor: () => null,
@@ -386,6 +394,7 @@ describe("qa decision routes", () => {
 
     beforeEach(() => {
         runs = [];
+        prompts = [];
         cache = null;
         runResult = { success: true, stdout: '{"sent":true}', stderr: "" };
     });
@@ -466,10 +475,15 @@ describe("qa decision routes", () => {
         expect(readDecisions(scratchFiles().file)).toEqual([]);
     });
 
+    /** What a send delivers for the reply's titled block: its title and ledger id, then the answer (`decisionLine`). */
+    const titled = (answerText: string) =>
+        ["Reply to: Keep the cache?", `Ledger decision 3 (d_3_${SESSION})`, answerText].join("\n");
+
     it("POST answer dryRun previews the message and writes nothing", async () => {
         const res = asJson(await answer({ session: SESSION, answers: [{ number: 3, option: "b" }], dryRun: true }));
 
-        expect(res.body).toMatchObject({ channel: "dry-run", delivered: false, text: "DECISION 3: b) drop it" });
+        // The preview is the text a real send delivers, so it follows the titled form a block with a title gets.
+        expect(res.body).toMatchObject({ channel: "dry-run", delivered: false, text: titled("b) drop it") });
         expect(runs).toEqual([]);
         expect(readDecisions(scratchFiles().file)).toEqual([]);
     });
@@ -481,7 +495,9 @@ describe("qa decision routes", () => {
 
         expect(res.status).toBe(200);
         expect(res.body).toMatchObject({ channel: "cmux", delivered: true });
-        expect(runs).toEqual([["claude", "cmux", "send", SESSION, "DECISION 3: b) stale", "--json"]]);
+        expect(runs).toEqual([
+            ["claude", "cmux", "send", "--json", "--paste", "--exact-session", "--", SESSION, titled("b) stale")],
+        ]);
         expect(readDecisions(scratchFiles().file)).toMatchObject([
             { id: `d_3_${SESSION}`, state: "sent", option: "b", harvested: true },
         ]);
@@ -531,7 +547,8 @@ describe("qa decision routes", () => {
 
     it("the session's provider from the body steers a codex thread whose rows name none, on answer and on send", async () => {
         await seedStored();
-        runResult = { success: true, stdout: "", stderr: "" };
+        // A steer counts as delivered only on the worker's input acknowledgement for a started turn.
+        runResult = { success: true, stdout: '{"queued":false,"turnId":"fixture-turn"}', stderr: "" };
         const routes = qaDecisionRoutes({
             files: scratchFiles,
             block: async () => null,
@@ -551,7 +568,8 @@ describe("qa decision routes", () => {
         const resent = asJson(await send.handler(makeCtx({ body: { session: "s-beta", provider: "codex" } })));
 
         expect(resent.body).toMatchObject({ channel: "codex", delivered: true, provider: "codex" });
-        expect(runs).toEqual([["codex", "steer", "--name", "w1", "--prompt", "DECISION 1: b) 4000"]]);
+        expect(runs).toEqual([["codex", "steer", "--name", "w1", "--json", "--prompt-file", expect.any(String)]]);
+        expect(prompts).toEqual(["DECISION 1: b) 4000"]);
 
         const [row] = await postDecisions(file, events, {
             sessionId: "s-beta",
@@ -566,6 +584,7 @@ describe("qa decision routes", () => {
         );
 
         expect(answered.body).toMatchObject({ channel: "codex", delivered: true });
-        expect(runs.at(-1)).toEqual(["codex", "steer", "--name", "w1", "--prompt", "DECISION 2: a) yes"]);
+        expect(runs.at(-1)).toEqual(["codex", "steer", "--name", "w1", "--json", "--prompt-file", expect.any(String)]);
+        expect(prompts.at(-1)).toBe("DECISION 2: a) yes");
     });
 });
