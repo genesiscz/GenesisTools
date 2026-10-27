@@ -14,6 +14,7 @@
  */
 
 import { createHash } from "node:crypto";
+import { keepFrontmatterKeys, yamlFrontmatterKeys } from "./frontmatter";
 import { stableStringify } from "./value";
 
 export const STAMP_VERSION = 1;
@@ -32,6 +33,11 @@ export interface Stamp {
     generated?: string;
     /** The exact command that regenerates this file. */
     command?: string;
+    /**
+     * The YAML front matter keys the generator wrote. Any other top-level key in the block was added by another
+     * tool (the vault's `sessions:` list): it stays out of the content hash, and a rebuild carries it over.
+     */
+    frontmatter?: string[];
 }
 
 export function hashText(value: string): string {
@@ -70,6 +76,10 @@ function formatAttributes(stamp: Stamp): string {
         parts.push(`command=${encodeURIComponent(stamp.command)}`);
     }
 
+    if (stamp.frontmatter?.length) {
+        parts.push(`frontmatter=${stamp.frontmatter.map(encodeURIComponent).join(",")}`);
+    }
+
     return parts.join(" ");
 }
 
@@ -81,9 +91,15 @@ function formatAttributes(stamp: Stamp): string {
  * body, a body without a final newline, or one ending in several, read as hand-edited straight
  * after generation, and every later build refused.
  */
-export function stampMarkdown(body: string, meta: Omit<Stamp, "version" | "content"> = {}): string {
+export function stampMarkdown(body: string, meta: Omit<Stamp, "version" | "content" | "frontmatter"> = {}): string {
     const written = `${stripStamp(body).body.replace(/\s*$/, "")}\n`;
-    const stamp: Stamp = { version: STAMP_VERSION, content: hashText(written), ...meta };
+    const frontmatter = yamlFrontmatterKeys(written);
+    const stamp: Stamp = {
+        version: STAMP_VERSION,
+        content: hashText(written),
+        ...meta,
+        ...(frontmatter?.length ? { frontmatter } : {}),
+    };
 
     return `${written}\n<!-- json2md:stamp ${formatAttributes(stamp)} -->\n`;
 }
@@ -125,6 +141,8 @@ export function stripStamp(markdown: string): { body: string; stamp: Stamp | nul
             stamp.generated = value.replace("T", " ");
         } else if (key === "command") {
             stamp.command = decodeURIComponent(value);
+        } else if (key === "frontmatter") {
+            stamp.frontmatter = value.split(",").filter(Boolean).map(decodeURIComponent);
         }
     }
 
@@ -162,6 +180,16 @@ export interface CheckResult {
 }
 
 /**
+ * The front matter keys the generator owns in a file: the ones its stamp lists, or for a stamp written before the
+ * list existed, the ones today's output sets. Null when neither says, and then the whole file is the generator's.
+ */
+export function ownedFrontmatterKeys(stamp: Stamp | null, regenerated?: string): Set<string> | null {
+    const keys = stamp?.frontmatter ?? (regenerated === undefined ? null : yamlFrontmatterKeys(regenerated));
+
+    return keys ? new Set(keys) : null;
+}
+
+/**
  * Decides which of the two drifts happened.
  *
  * 🛑 The hand-edited verdict is decided ONLY by the content hash, never by diffing against
@@ -189,7 +217,10 @@ export function checkMarkdown(input: CheckInput): CheckResult {
         };
     }
 
-    const actual = hashText(body);
+    // A key another tool added to the front matter is not a hand edit of what the generator wrote.
+    const owned = ownedFrontmatterKeys(stamp, input.regenerated);
+    const generatedPart = owned ? keepFrontmatterKeys(body, owned) : body;
+    const actual = hashText(generatedPart);
     const dataChanged = Boolean(input.sourceHash && stamp.source && input.sourceHash !== stamp.source);
 
     if (actual !== stamp.content) {
@@ -204,7 +235,7 @@ export function checkMarkdown(input: CheckInput): CheckResult {
 
     if (
         input.regenerated !== undefined &&
-        stripStamp(input.regenerated).body.replace(/\s*$/, "") !== body.replace(/\s*$/, "")
+        stripStamp(input.regenerated).body.replace(/\s*$/, "") !== generatedPart.replace(/\s*$/, "")
     ) {
         return {
             verdict: "stale",
