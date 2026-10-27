@@ -24,11 +24,15 @@ const CAPTURE_IDLE_MS = 120_000;
 async function readStreamToText(
     stream: ReadableStream<Uint8Array>,
     collector: TimelineCollector,
-    onIdle: (reason: string) => void
+    onIdle: (reason: string) => void,
+    clientGone: AbortSignal
 ): Promise<string> {
     const reader = stream.getReader();
     const decoder = new TextDecoder();
     let text = "";
+    const gone = new Promise<"gone">((resolve) => {
+        clientGone.addEventListener("abort", () => resolve("gone"), { once: true });
+    });
 
     while (true) {
         let timer: ReturnType<typeof setTimeout> | undefined;
@@ -36,8 +40,16 @@ async function readStreamToText(
             timer = setTimeout(() => resolve("idle"), CAPTURE_IDLE_MS);
         });
 
-        const next = await Promise.race([reader.read(), idle]);
+        const next = await Promise.race([reader.read(), idle, gone]);
         clearTimeout(timer);
+
+        if (next === "gone") {
+            onIdle("the client stopped reading");
+            await reader.cancel().catch(() => {
+                // the source is closing already; nothing to salvage
+            });
+            break;
+        }
 
         if (next === "idle") {
             onIdle(`upstream sent nothing for ${CAPTURE_IDLE_MS}ms and never closed the stream`);
@@ -87,12 +99,38 @@ export function captureResponseBody(response: Response, startedAt = performance.
 
     let idleReason: string | undefined;
     const [clientStream, captureStream] = response.body.tee();
-    const responseBody = readStreamToText(captureStream, collector, (reason) => {
-        idleReason = reason;
+    // A tee'd source closes only when BOTH branches cancel. Without this, a client that stopped (Claude Code stopping
+    // a subagent) left the capture branch reading, and the upstream request stayed open until it ended or the idle
+    // limit hit: 2026-10-27, a stopped Codex subagent held its WHAM request for 125 s.
+    const clientGone = new AbortController();
+    const clientReader = clientStream.getReader();
+    const forwarded = new ReadableStream<Uint8Array>({
+        async pull(controller) {
+            const next = await clientReader.read();
+
+            if (next.done) {
+                controller.close();
+                return;
+            }
+
+            controller.enqueue(next.value);
+        },
+        cancel(reason) {
+            clientGone.abort(reason);
+            return clientReader.cancel(reason);
+        },
     });
+    const responseBody = readStreamToText(
+        captureStream,
+        collector,
+        (reason) => {
+            idleReason = reason;
+        },
+        clientGone.signal
+    );
 
     return {
-        response: new Response(clientStream, {
+        response: new Response(forwarded, {
             status: response.status,
             statusText: response.statusText,
             headers: response.headers,
