@@ -52,6 +52,8 @@ package final class BrowserURLForwarder: NSObject {
     /// stacking a delivery's activation is undone to. Handing the focus back alone left this face's
     /// windows raised above every other app's (a genesis.tools/md click put the review window over Brave).
     private var stackBeforeDelivery: [Int] = []
+    /// Counts app switches, so a slow window list read for an older switch never overwrites a newer one.
+    private var stackGeneration = 0
 
     static func onScreenStack() -> [Int] {
         let list = CGWindowListCopyWindowInfo([.optionOnScreenOnly, .excludeDesktopElements], kCGNullWindowID) as? [[String: Any]] ?? []
@@ -98,10 +100,21 @@ package final class BrowserURLForwarder: NSObject {
             self?.lastOtherApp = app
             // A window face can still be older than a relay restarted after a crash. Only the relay itself
             // has no windows to restore; fallback faces keep their stacking even while a relay runs.
-            if RelayJournal.role == "relay" {
+            if RelayJournal.role == "relay" || !NSApp.windows.contains(where: \.isVisible) {
                 self?.stackBeforeDelivery = []
             } else {
-                self?.stackBeforeDelivery = Self.onScreenStack()
+                // The window list is the window server's answer: on the main thread it stalled every face for
+                // 0.55 to 0.6 s per app switch at load 600 (hang stacks 2026-10-27 19:06, 77 to 100% of the samples).
+                // It is read on a background queue; only the newest switch's answer is kept.
+                self?.stackGeneration += 1
+                let generation = self?.stackGeneration ?? 0
+                DispatchQueue.global(qos: .utility).async {
+                    let stack = Self.onScreenStack()
+                    DispatchQueue.main.async {
+                        guard let self, self.stackGeneration == generation else { return }
+                        self.stackBeforeDelivery = stack
+                    }
+                }
             }
             // The click's own action brought another app forward (Brave for an `open`): it keeps the focus.
             if let target = self?.focusReturn?.app, target.processIdentifier != app.processIdentifier {
