@@ -1239,22 +1239,32 @@ final class WidgetStagingTests: XCTestCase {
     func testAPendingPickGivesWayToANewerRowAndExpires() throws {
         let model = StagingFixture.model()
         defer { model.stop() }
+        let now = Date().timeIntervalSince1970 * 1000
         model.markPending("d1", "a")
-        model.pendingStageDone["d1"] = 1_000
+        model.pendingStageDone["d1"] = now - 1_000
         let row = WidgetInboxItem(id: "decision:d1", sourceId: "d1", kind: "decision", key: key, at: 1,
-                                  needsAnswer: true, number: 7, revision: 1, draftOption: "b", updatedAt: 500)
+                                  needsAnswer: true, number: 7, revision: 1, draftOption: "b", updatedAt: now - 1_500)
         model.reconcileStaged([row])
         XCTAssertEqual(model.stagedOption("d1", stored: "b"), "a", "a row from before the pick does not replace it")
         var newer = row
-        newer.updatedAt = 2_000
+        newer.updatedAt = now
         model.reconcileStaged([newer])
         XCTAssertEqual(model.stagedOption("d1", stored: "b"), "b", "a row written after the pick landed is the truth")
 
         model.markPending("d1", "a")
-        model.pendingStageAt["d1"] = Date().timeIntervalSince1970 * 1000 - 20_000
+        model.pendingStageAt["d1"] = now - 20_000
         model.reconcileStaged([])
-        XCTAssertNil(model.pendingStage["d1"], "a pick no snapshot confirmed in time stops showing")
+        XCTAssertEqual(model.pendingStage["d1"], "a",
+                       "a write the hub has not answered keeps its pick, so a slow hub does not make it go and come back")
+        model.pendingStageDone["d1"] = now - 20_000
+        model.reconcileStaged([])
+        XCTAssertNil(model.pendingStage["d1"], "a pick no snapshot confirmed in time after the hub took it stops showing")
         XCTAssertTrue(model.pendingStageAt.isEmpty && model.pendingStageItems.isEmpty)
+
+        model.markPending("d1", "a")
+        model.pendingStageAt["d1"] = now - 70_000
+        model.reconcileStaged([])
+        XCTAssertNil(model.pendingStage["d1"], "a write that never answered stops showing its pick after a minute")
     }
 
     /// Decision audit F16: Esc right after a pick, before any snapshot lists it, still asks about it.

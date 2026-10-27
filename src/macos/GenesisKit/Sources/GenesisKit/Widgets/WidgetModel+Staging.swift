@@ -196,9 +196,13 @@ extension WidgetModel {
         })
     }
 
-    /// How long a pick made here shows before a snapshot confirms it: a few snapshots' time. After it the snapshot
-    /// is the truth again, so a pick that never landed, or a decision sent elsewhere, stops showing it.
+    /// How long a pick made here shows after the hub took it, before a snapshot confirms it: a few snapshots' time.
+    /// After it the snapshot is the truth again, so a pick that never landed, or a decision sent elsewhere, stops
+    /// showing it. The clock starts when the hub answers: a write still queued behind others keeps its pick, which
+    /// went away and came back when the hub was slow.
     nonisolated static let pendingStageLifetime: TimeInterval = 15
+    /// The limit for a pick whose write never answered (a discard has no `pendingStageDone`).
+    nonisolated static let pendingStageUnansweredLifetime: TimeInterval = 60
 
     /// A pick or a clear (`""`) made here, shown at once until a snapshot shows the decision log has it.
     func markPending(_ id: String, _ option: String, item: WidgetInboxItem? = nil) {
@@ -225,7 +229,9 @@ extension WidgetModel {
             // no snapshot confirmed the pick in time.
             let confirmed = (row?.pick ?? "") == option
             let overtaken = pendingStageDone[id].map { done in (row?.at ?? 0) > done } ?? false
-            let expired = pendingStageAt[id].map { asked in now - asked > Self.pendingStageLifetime * 1000 } ?? false
+            let expired = pendingStageDone[id].map { done in now - done > Self.pendingStageLifetime * 1000 }
+                ?? pendingStageAt[id].map { asked in now - asked > Self.pendingStageUnansweredLifetime * 1000 }
+                ?? false
             if confirmed || overtaken || expired {
                 if !confirmed { PerfLog.mark("widget.staged pending dropped id=\(id) overtaken=\(overtaken)") }
                 pendingStage[id] = nil
@@ -250,8 +256,8 @@ extension WidgetModel {
         guard let (old, now) = revised.first else { return }
         let pick = DecisionAnswering.pickWords(option: old.draftOption, note: old.draft)
         PerfLog.mark("widget.staged cleared by revision id=\(old.sourceId) revision=\(now.revision ?? 0)")
-        postNote("DECISION \(now.number ?? old.number ?? 0) changed: the agent posted a new text, so your staged "
-            + "\(pick) was cleared. Read it and pick again.", tone: .warning)
+        postNote("\(WidgetWords.decision(now.number ?? old.number)) changed. The agent wrote new text, so your staged "
+            + "\(pick) is cleared. Read the decision again and pick.", tone: .warning)
     }
 
     /// "3 decisions will be sent to 2 sessions".

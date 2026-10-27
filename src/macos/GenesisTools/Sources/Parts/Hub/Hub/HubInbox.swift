@@ -2524,8 +2524,8 @@ struct InboxDecisionCard: View, Equatable {
             ? "This decision is closed: \(statusPhrase)"
             : sessionSending ? "This session's send is running"
             : DecisionAnswering.optionTooltip(choice.id, recommended: recommended, stages: stages, picked: stagedPick,
-                                              swaps: preferences?.decisionCommandSwaps ?? true)
-                + " · ⇧-click stages another letter" + (index < 9 ? " · key \(index + 1)" : ""))
+                                              swaps: preferences?.decisionCommandSwaps ?? true,
+                                              key: index < 9 ? index + 1 : nil))
     }
 
     /// Toggles one letter in a pick string. Plain click replaces the set; ⇧-click adds or removes.
