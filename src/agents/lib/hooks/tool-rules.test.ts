@@ -70,3 +70,19 @@ describe("rm-use-tools-rm", () => {
         }
     );
 });
+
+describe("rm-user-verbs and quoted text", () => {
+    it("blocks profile set and remove", () => {
+        expect(ids("tools rm profile set ci --agent codex")).toContain("rm-user-verbs");
+        expect(ids("tools rm profile remove ci")).toContain("rm-user-verbs");
+    });
+
+    it("does not block a command that only mentions a verb inside a quoted string", () => {
+        expect(ids(`git commit -m "document tools rm approve <id> for the user"`)).not.toContain("rm-user-verbs");
+        expect(ids(`bun -e 'console.log("tools rm approve x")'`)).not.toContain("rm-user-verbs");
+    });
+
+    it("still blocks the verb inside a body the shell runs", () => {
+        expect(ids(`bash -c "tools rm approve k7m2qd"`)).toContain("rm-user-verbs");
+    });
+});

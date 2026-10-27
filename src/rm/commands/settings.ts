@@ -1,10 +1,39 @@
 import { out } from "@genesiscz/utils/logger";
-import { BUILTIN_PRESETS, isTrashRootName, type RmConfig, rmConfigPath, saveRmConfig } from "@genesiscz/utils/rm";
+import {
+    BUILTIN_PRESETS,
+    isAskAction,
+    isTrashRootName,
+    type RmConfig,
+    rmConfigPath,
+    saveRmConfig,
+} from "@genesiscz/utils/rm";
 import type { Command } from "commander";
 import pc from "picocolors";
 import { minutesOption, requirePerson, runContext } from "../lib/run";
 
-const SETTINGS = ["grace-preset", "grace-other", "trash-root", "disable-preset", "enable-preset"] as const;
+const SETTINGS = [
+    "ask-action",
+    "aside-unsaved",
+    "session-scratch",
+    "own-files",
+    "grace-preset",
+    "grace-other",
+    "trash-root",
+    "disable-preset",
+    "enable-preset",
+] as const;
+
+function yesNo(value: string): boolean {
+    if (/^(yes|true|on|1)$/i.test(value)) {
+        return true;
+    }
+
+    if (/^(no|false|off|0)$/i.test(value)) {
+        return false;
+    }
+
+    throw new Error(`Not yes or no: ${value}`);
+}
 type Setting = (typeof SETTINGS)[number];
 
 function isSetting(key: string): key is Setting {
@@ -13,6 +42,18 @@ function isSetting(key: string): key is Setting {
 
 function apply(config: RmConfig, key: Setting, value: string): RmConfig {
     switch (key) {
+        case "ask-action":
+            if (!isAskAction(value)) {
+                throw new Error("ask-action takes aside or request.");
+            }
+
+            return { ...config, askAction: value };
+        case "aside-unsaved":
+            return { ...config, asideUnsaved: yesNo(value) };
+        case "session-scratch":
+            return { ...config, allowSessionScratch: yesNo(value) };
+        case "own-files":
+            return { ...config, allowOwnFiles: yesNo(value) };
         case "grace-preset":
             return { ...config, grace: { ...config.grace, presetMinutes: minutesOption(value) } };
         case "grace-other":
@@ -79,7 +120,7 @@ export function registerSettingsCommands(program: Command): void {
                 return;
             }
 
-            const next = apply(ctx.config, key, value);
+            const next = apply(ctx.base, key, value);
             const answer = await requirePerson(ctx, {
                 title: `Set ${key} to ${value}?`,
                 lines: [`${key} = ${value}`],

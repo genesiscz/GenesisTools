@@ -29,7 +29,44 @@ export interface RmPreset {
     within?: string;
 }
 
-export interface RmConfig {
+/** What happens to a path that needs the user: `aside` moves it into the session's aside folder, `request` leaves it. */
+export type RmAskAction = "aside" | "request";
+
+/** The settings a profile may change. Lists add to the base config; scalars replace it. */
+export interface RmPolicy {
+    askAction: RmAskAction;
+    /** Also move unsaved work aside (untracked files, clones with unpushed work), which /tmp loses on reboot. */
+    asideUnsaved: boolean;
+    /** The session-scratch rule: the caller's own /tmp scratch folder goes without asking. */
+    allowSessionScratch: boolean;
+    /** The own-files rule: files the caller's session wrote go without asking. */
+    allowOwnFiles: boolean;
+}
+
+/** Which callers a profile applies to. Every field that is set must match. */
+export interface RmProfileMatch {
+    /** `claude-code`, `codex`, `grok`, `copilot`, or `person` for a run outside any agent. */
+    agent?: string;
+    /** A session id or its prefix. */
+    session?: string;
+    /** The project folder name (the main checkout's). */
+    project?: string;
+    /** The run's folder, or a folder above it. */
+    cwd?: string;
+}
+
+/** Settings for some callers: one agent, one session, one project. Profiles that match apply in order. */
+export interface RmProfile extends Partial<RmPolicy> {
+    name: string;
+    match: RmProfileMatch;
+    grace?: Partial<RmConfig["grace"]>;
+    disabledPresets?: string[];
+    roots?: string[];
+    protect?: string[];
+    note?: string;
+}
+
+export interface RmConfig extends RmPolicy {
     roots: RmRoot[];
     /** Extra paths that are never deleted, nor any folder that contains one. */
     protect: string[];
@@ -38,6 +75,7 @@ export interface RmConfig {
     trashRoot: string;
     disabledPresets: string[];
     customPresets: RmPreset[];
+    profiles: RmProfile[];
 }
 
 export function rmDataDir(...segments: string[]): string {
@@ -56,6 +94,11 @@ export function defaultRmConfig(): RmConfig {
         trashRoot: defaultTrashRoot(),
         disabledPresets: [],
         customPresets: [],
+        profiles: [],
+        askAction: "aside",
+        asideUnsaved: false,
+        allowSessionScratch: true,
+        allowOwnFiles: true,
     };
 }
 
@@ -124,6 +167,48 @@ function parsePreset(value: unknown): RmPreset | null {
     };
 }
 
+function bool(value: unknown, fallback: boolean): boolean {
+    return typeof value === "boolean" ? value : fallback;
+}
+
+function optionalBool(value: unknown): boolean | undefined {
+    return typeof value === "boolean" ? value : undefined;
+}
+
+export function isAskAction(value: unknown): value is RmAskAction {
+    return value === "aside" || value === "request";
+}
+
+function optionalMinutes(value: unknown): number | undefined {
+    return typeof value === "number" && Number.isFinite(value) && value >= 0 ? value : undefined;
+}
+
+function parseProfile(value: unknown): RmProfile | null {
+    if (!isRecord(value) || typeof value.name !== "string" || !isRecord(value.match)) {
+        return null;
+    }
+
+    const m = value.match;
+    const text = (v: unknown): string | undefined => (typeof v === "string" && v ? v : undefined);
+    const grace = isRecord(value.grace) ? value.grace : null;
+
+    return {
+        name: value.name,
+        match: { agent: text(m.agent), session: text(m.session), project: text(m.project), cwd: text(m.cwd) },
+        askAction: isAskAction(value.askAction) ? value.askAction : undefined,
+        asideUnsaved: optionalBool(value.asideUnsaved),
+        allowSessionScratch: optionalBool(value.allowSessionScratch),
+        allowOwnFiles: optionalBool(value.allowOwnFiles),
+        grace: grace
+            ? { presetMinutes: optionalMinutes(grace.presetMinutes), otherMinutes: optionalMinutes(grace.otherMinutes) }
+            : undefined,
+        disabledPresets: Array.isArray(value.disabledPresets) ? strings(value.disabledPresets) : undefined,
+        roots: Array.isArray(value.roots) ? strings(value.roots) : undefined,
+        protect: Array.isArray(value.protect) ? strings(value.protect) : undefined,
+        note: text(value.note),
+    };
+}
+
 /**
  * A trash root must carry a `GenesisTools` folder in its path: the drain deletes everything inside the root, so a
  * root edited to `~` or `/` would turn it into a plain `rm -rf`. Any other value falls back to the default.
@@ -153,5 +238,12 @@ export function parseRmConfig(raw: unknown): RmConfig {
         customPresets: Array.isArray(raw.customPresets)
             ? raw.customPresets.map(parsePreset).filter((p): p is RmPreset => p !== null)
             : [],
+        profiles: Array.isArray(raw.profiles)
+            ? raw.profiles.map(parseProfile).filter((p): p is RmProfile => p !== null)
+            : [],
+        askAction: isAskAction(raw.askAction) ? raw.askAction : defaults.askAction,
+        asideUnsaved: bool(raw.asideUnsaved, defaults.asideUnsaved),
+        allowSessionScratch: bool(raw.allowSessionScratch, defaults.allowSessionScratch),
+        allowOwnFiles: bool(raw.allowOwnFiles, defaults.allowOwnFiles),
     };
 }

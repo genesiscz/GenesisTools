@@ -16,6 +16,10 @@ export interface RmRequestTarget {
     kind: RmTargetKind;
     rule: string;
     reason: string;
+    /** Where an aside move put it, while it waits for the user. */
+    stored?: string;
+    /** Its allocated size, measured after the aside move. */
+    bytes?: number;
 }
 
 /** What an agent asked the user to allow: deleting paths no rule allows, or trusting a folder as a root. */
@@ -31,6 +35,8 @@ export interface RmRequest {
     status: RmRequestStatus;
     decidedAt?: string;
     decidedVia?: string;
+    /** The aside folder holding the paths that were moved out of the way (no TTL: they wait for a decision). */
+    asideDir?: string;
 }
 
 /** A request older than this is expired: the user answers fresh asks, not yesterday's. */
@@ -56,7 +62,7 @@ export function saveRmRequest(request: RmRequest, dir = rmRequestsDir()): void {
 }
 
 export function createRmRequest(
-    input: Pick<RmRequest, "kind" | "caller" | "cwd" | "reason" | "targets">,
+    input: Pick<RmRequest, "kind" | "caller" | "cwd" | "reason" | "targets" | "asideDir">,
     dir = rmRequestsDir(),
     now = new Date()
 ): RmRequest {
@@ -107,7 +113,11 @@ export function loadRmRequest(id: string, dir = rmRequestsDir(), now = new Date(
             return null;
         }
 
-        if (parsed.status === "pending" && now.getTime() - Date.parse(parsed.createdAt) > RM_REQUEST_TTL_MS) {
+        if (
+            parsed.status === "pending" &&
+            !parsed.asideDir &&
+            now.getTime() - Date.parse(parsed.createdAt) > RM_REQUEST_TTL_MS
+        ) {
             return { ...parsed, status: "expired" };
         }
 

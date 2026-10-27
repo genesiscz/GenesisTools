@@ -56,7 +56,7 @@ export function registerRootCommands(program: Command): void {
             }
 
             const root = { path: target.canonical, note: flags.note, addedAt: new Date().toISOString(), via: "cli" };
-            saveRmConfig({ ...ctx.config, roots: [...ctx.config.roots.filter((r) => r.path !== root.path), root] });
+            saveRmConfig({ ...ctx.base, roots: [...ctx.base.roots.filter((r) => r.path !== root.path), root] });
             appendRmLedger({ action: "root-add", path: root.path, via: answer.via, caller: ctx.caller });
             out.println(pc.green(`Trusted ${root.path}.`));
         });
@@ -68,15 +68,15 @@ export function registerRootCommands(program: Command): void {
         .action((dir: string) => {
             const ctx = runContext();
             const path = realOrSelf(dir);
-            const kept = ctx.config.roots.filter((r) => r.path !== path && r.path !== dir);
+            const kept = ctx.base.roots.filter((r) => r.path !== path && r.path !== dir);
 
-            if (kept.length === ctx.config.roots.length) {
+            if (kept.length === ctx.base.roots.length) {
                 out.println(pc.yellow(`${path} is not a trusted root.`));
                 process.exitCode = 1;
                 return;
             }
 
-            saveRmConfig({ ...ctx.config, roots: kept });
+            saveRmConfig({ ...ctx.base, roots: kept });
             appendRmLedger({ action: "root-remove", path, caller: ctx.caller });
             out.println(`No longer trusted: ${path}.`);
         });

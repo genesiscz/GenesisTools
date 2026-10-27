@@ -5,6 +5,7 @@ import { SafeJSON } from "@genesiscz/utils/json";
 import { logger } from "@genesiscz/utils/logger";
 import { nativeHome } from "@genesiscz/utils/providers/session-paths";
 import { genesisToolsDir } from "@genesiscz/utils/storage/root";
+import { pendingAsideDirs, pendingAsideFor, sessionScratchRoots } from "./aside";
 import type { RmConfig, RmPreset } from "./config";
 import {
     canonicalPath,
@@ -13,7 +14,6 @@ import {
     isSameOrInside,
     pathSegments,
     realOrSelf,
-    sharedTempRoot,
     VOLUME_TRASH_DIR,
 } from "./paths";
 import { matchPreset, presetsFor } from "./presets";
@@ -44,6 +44,13 @@ export interface RmCaller {
     agent: string;
     sessionId: string | null;
     isInAgent: boolean;
+    sessionTitle?: string | null;
+    /** The model the session runs, read from its transcript when this machine has it. */
+    model?: string | null;
+    /** The project folder name (the main checkout's). */
+    project?: string | null;
+    /** The operating-system user that ran the command. */
+    user?: string;
 }
 
 export interface RmGitFacts {
@@ -66,7 +73,9 @@ export interface RmRuleContext {
     /** Files the calling session wrote, by absolute path. */
     ownFiles: ReadonlySet<string>;
     /** The per-session scratch root (`/tmp/cc`). */
-    scratchRoot: string;
+    scratchRoots: readonly string[];
+    /** The pending request whose aside folder the target is, holds, or sits in; null when none. */
+    asidePending: (target: RmTarget) => string | null;
     git: (target: RmTarget) => RmGitFacts;
     nestedRepos: (target: RmTarget) => string[];
 }
@@ -190,25 +199,22 @@ export function hardDenyReason(target: RmTarget, ctx: Pick<RmRuleContext, "confi
     return null;
 }
 
-/** Where agents keep per-session scratch: `<root>/<project>/<session id>/`. */
-export function sessionScratchRoot(): string {
-    return join(sharedTempRoot(), "cc");
-}
-
-/** The session's own scratch folder, `/tmp/cc/<project>/<session id>/`. */
-function inSessionScratch(target: RmTarget, caller: RmCaller, root: string): boolean {
+/** The session's own scratch folder, `<root>/<project>/<session id>/` under any of its scratch roots. */
+function inSessionScratch(target: RmTarget, caller: RmCaller, roots: readonly string[]): boolean {
     if (!caller.sessionId) {
         return false;
     }
 
-    const scratchRoot = realOrSelf(root);
+    return roots.some((root) => {
+        const scratchRoot = realOrSelf(root);
 
-    if (!isInside(target.canonical, scratchRoot)) {
-        return false;
-    }
+        if (!isInside(target.canonical, scratchRoot)) {
+            return false;
+        }
 
-    const parts = pathSegments(relative(scratchRoot, target.canonical));
-    return parts.length >= 2 && parts[1] === caller.sessionId;
+        const parts = pathSegments(relative(scratchRoot, target.canonical));
+        return parts.length >= 2 && parts[1] === caller.sessionId;
+    });
 }
 
 interface RmRule {
@@ -223,6 +229,20 @@ export const RM_RULES: readonly RmRule[] = [
         evaluate: (target, ctx) => {
             const reason = hardDenyReason(target, ctx);
             return reason ? { kind: "deny", rule: "hard-deny", reason } : null;
+        },
+    },
+    {
+        // Before session-scratch: the aside folder sits in the session's scratch, and deleting it would skip the user.
+        id: "aside-pending",
+        evaluate: (target, ctx) => {
+            const requestId = ctx.asidePending(target);
+            return requestId
+                ? {
+                      kind: "deny",
+                      rule: "aside-pending",
+                      reason: `holds paths moved aside for the user's decision (request ${requestId}): approve or deny it`,
+                  }
+                : null;
         },
     },
     {
@@ -261,14 +281,16 @@ export const RM_RULES: readonly RmRule[] = [
     {
         id: "session-scratch",
         evaluate: (target, ctx) =>
-            inSessionScratch(target, ctx.caller, ctx.scratchRoot)
-                ? { kind: "allow", rule: "session-scratch", reason: "inside this session's /tmp/cc scratch folder" }
+            ctx.config.allowSessionScratch && inSessionScratch(target, ctx.caller, ctx.scratchRoots)
+                ? { kind: "allow", rule: "session-scratch", reason: "inside this session's scratch folder" }
                 : null,
     },
     {
         id: "own-files",
         evaluate: (target, ctx) =>
-            target.kind === "file" && (ctx.ownFiles.has(target.path) || ctx.ownFiles.has(target.canonical))
+            ctx.config.allowOwnFiles &&
+            target.kind === "file" &&
+            (ctx.ownFiles.has(target.path) || ctx.ownFiles.has(target.canonical))
                 ? { kind: "allow", rule: "own-files", reason: "a file this session wrote, not tracked by git" }
                 : null,
     },
@@ -499,6 +521,7 @@ export function sessionOwnFiles(caller: RmCaller): Set<string> {
 }
 
 export function defaultRuleContext(config: RmConfig, caller: RmCaller, cwd: string): RmRuleContext {
+    const pending = pendingAsideDirs();
     return {
         config,
         caller,
@@ -506,7 +529,8 @@ export function defaultRuleContext(config: RmConfig, caller: RmCaller, cwd: stri
         home: homedir(),
         presets: presetsFor(config),
         ownFiles: sessionOwnFiles(caller),
-        scratchRoot: sessionScratchRoot(),
+        scratchRoots: sessionScratchRoots(caller),
+        asidePending: (target) => pendingAsideFor(target.canonical, pending),
         git: probeGit,
         nestedRepos: (target) => findNestedRepos(target),
     };

@@ -7,13 +7,16 @@ import {
     confirmByPerson,
     createRmRequest,
     defaultRuleContext,
+    effectiveConfig,
     graceMinutesFor,
     isInside,
     kickDrainer,
     listBatches,
     loadRmConfig,
     measureBytes,
+    moveAside,
     moveToTrash,
+    newBatchId,
     type RmCaller,
     type RmConfig,
     type RmPlanItem,
@@ -25,17 +28,23 @@ import {
 import pc from "picocolors";
 
 export interface RunContext {
+    /** The settings this caller runs under: the saved config with the matching profiles applied. */
     config: RmConfig;
+    /** The saved config itself; a command that changes settings writes this, never `config`. */
+    base: RmConfig;
+    /** The profiles that matched this caller, in order. */
+    profiles: string[];
     caller: RmCaller;
     rules: RmRuleContext;
     cwd: string;
 }
 
 export function runContext(): RunContext {
-    const config = loadRmConfig();
+    const base = loadRmConfig();
     const caller = rmCallerFromRuntime();
     const cwd = process.cwd();
-    return { config, caller, cwd, rules: defaultRuleContext(config, caller, cwd) };
+    const { config, applied } = effectiveConfig(base, caller, cwd);
+    return { config, base, profiles: applied, caller, cwd, rules: defaultRuleContext(config, caller, cwd) };
 }
 
 export function shown(path: string, cwd: string): string {
@@ -53,7 +62,12 @@ export interface ExecuteOptions {
     json?: boolean;
     reason?: string;
     keepMinutes?: number;
+    /** true: move what needs the user aside; false: leave it in place; undefined: the config's `askAction`. */
+    aside?: boolean;
 }
+
+/** Work that exists nowhere else: an aside move into /tmp would lose it on a reboot, so it stays put by default. */
+const UNSAVED_RULES = new Set(["git-untracked", "unsaved-clone", "nested-repos"]);
 
 export interface ExecuteResult {
     batches: TrashBatch[];
@@ -123,7 +137,7 @@ export async function executePlan(
     result.refused = refused.length;
 
     if (asked.length > 0) {
-        if (!ctx.caller.isInAgent && isInteractive()) {
+        if (!ctx.caller.isInAgent && isInteractive() && options.aside !== true) {
             const outcome = await confirmByPerson({
                 title: `Delete ${asked.length} path(s) that no rule allows?`,
                 lines: asked.map((item) => `${item.target.path}  (${item.verdict.reason})`),
@@ -142,23 +156,7 @@ export async function executePlan(
                 out.println(pc.yellow(`Kept ${asked.length} path(s): ${outcome.detail}.`));
             }
         } else {
-            const request = createRmRequest({
-                kind: "delete",
-                caller: ctx.caller,
-                cwd: ctx.cwd,
-                reason: options.reason ?? null,
-                targets: asked.map((item) => ({
-                    path: item.target.path,
-                    kind: item.target.kind,
-                    rule: item.verdict.rule,
-                    reason: item.verdict.reason,
-                })),
-            });
-            result.requestId = request.id;
-
-            if (!options.json) {
-                printRequestHint(request.id, asked.length);
-            }
+            result.requestId = requestForAsked(asked, ctx, options);
         }
     }
 
@@ -206,6 +204,60 @@ export async function executePlan(
         "rm: run finished"
     );
     return result;
+}
+
+/**
+ * Turns the paths that need the user into one request. With aside on, each path moves into the session's aside
+ * folder first, out of the agent's way; unsaved work (unless `asideUnsaved`) and paths on another volume stay put.
+ */
+function requestForAsked(asked: RmPlanItem[], ctx: RunContext, options: ExecuteOptions): string {
+    const asideOn = options.aside ?? ctx.config.askAction === "aside";
+    const asideable = asideOn
+        ? asked.filter((item) => ctx.config.asideUnsaved || !UNSAVED_RULES.has(item.verdict.rule))
+        : [];
+    const inPlace = asked.filter((item) => !asideable.includes(item));
+    const aside = asideable.length > 0 ? moveAside(asideable, ctx.caller, newBatchId()) : null;
+    const kept = [...inPlace, ...(aside?.kept.map((k) => k.input) ?? [])];
+    const request = createRmRequest({
+        kind: "delete",
+        caller: ctx.caller,
+        cwd: ctx.cwd,
+        reason: options.reason ?? null,
+        asideDir: aside && aside.moved.length > 0 ? aside.dir : undefined,
+        targets: [
+            ...(aside?.moved ?? []),
+            ...kept.map((item) => ({
+                path: item.target.path,
+                kind: item.target.kind,
+                rule: item.verdict.rule,
+                reason: item.verdict.reason,
+            })),
+        ],
+    });
+
+    if (!options.json) {
+        if (aside && aside.moved.length > 0) {
+            const bytes = aside.moved.reduce((sum, t) => sum + (t.bytes ?? 0), 0);
+            out.println(
+                pc.yellow(`Moved ${aside.moved.length} path(s) aside (${formatBytes(bytes)}) to ${aside.dir}.`)
+            );
+            out.println(pc.dim("  They wait there for the user: approve deletes them, deny puts them back."));
+        }
+
+        for (const k of aside?.kept ?? []) {
+            out.println(pc.dim(`  kept in place ${shown(k.input.target.path, ctx.cwd)}: ${k.reason}`));
+        }
+
+        for (const item of inPlace.filter((i) => asideOn && UNSAVED_RULES.has(i.verdict.rule))) {
+            out.println(
+                pc.dim(`  kept in place ${shown(item.target.path, ctx.cwd)}: unsaved work, /tmp loses it on reboot`)
+            );
+        }
+
+        printRequestHint(request.id, asked.length);
+    }
+
+    return request.id;
 }
 
 function summary(item: RmPlanItem): Record<string, string | undefined> {

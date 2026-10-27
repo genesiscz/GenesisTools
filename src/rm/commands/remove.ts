@@ -11,6 +11,7 @@ interface RemoveFlags {
     reason?: string;
     keep?: number;
     now?: boolean;
+    aside?: boolean;
 }
 
 function keepMinutes(flags: RemoveFlags): number | undefined {
@@ -23,7 +24,9 @@ function addRemoveFlags(command: Command): Command {
         .option("--json", "print the result as JSON")
         .option("--reason <text>", "why, recorded with a request for the user")
         .option("--keep <duration>", "how long the trash keeps it before the drain (30m, 2h, 1d)", minutesOption)
-        .option("--now", "no grace period: drain at once");
+        .option("--now", "no grace period: drain at once")
+        .option("--aside", "move what needs the user aside, into this session's rm-aside folder, until they decide")
+        .option("--no-aside", "leave what needs the user where it is");
 }
 
 export function registerRemoveCommand(program: Command): void {
