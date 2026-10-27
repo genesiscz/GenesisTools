@@ -725,6 +725,26 @@ describe("decision kinds, batch updates, harvest and staleness", () => {
         expect(decisionLine({ ...row, option: undefined })).toBe("DECISION 4: keep, and log it");
     });
 
+    test("a single selected option is not repeated in an explicit answer", () => {
+        const row = {
+            ...foreignRow("abc", 4),
+            options: ["keep", "build", "path"],
+            state: "answered" as const,
+            option: "b",
+            answer: "b) build it",
+        };
+
+        expect(deliverDecisions([row], () => undefined).text).toBe("DECISION 4: b) build it");
+        expect(decisionLine({ ...row, answer: "  B. build it  " })).toBe("DECISION 4: b) build it");
+        expect(decisionLine({ ...row, answer: "build it" })).toBe("DECISION 4: b) build it");
+        expect(decisionLine({ ...row, answer: "a) keep" })).toBe("DECISION 4: b) a) keep");
+        expect(decisionLine({ ...row, option: "ab", answer: "b) build it" })).toBe("DECISION 4: a) b) b) build it");
+        expect(decisionLine({ ...row, option: undefined })).toBe("DECISION 4: b) build it");
+        expect(decisionLine({ ...row, option: "a", answer: "a.ts" })).toBe("DECISION 4: a) a.ts");
+        expect(decisionLine({ ...row, option: "c", answer: "C:\\work\\repo" })).toBe("DECISION 4: c) C:\\work\\repo");
+        expect(decisionLine({ ...row, answer: undefined })).toBe("DECISION 4: b) build");
+    });
+
     test("an option the agent lettered itself is not lettered twice", () => {
         const row = {
             ...foreignRow("abc", 23),

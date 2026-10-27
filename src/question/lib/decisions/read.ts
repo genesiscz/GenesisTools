@@ -281,7 +281,12 @@ export function decisionLine(row: DecisionRecord): string {
             return label ? optionLabel(label, letter) : undefined;
         })
         .filter(Boolean);
-    const text = row.answer?.trim() || labels.join(" / ");
+    const explicitAnswer = row.answer?.trim();
+    const [singleLetter] = letters;
+    const text =
+        explicitAnswer && letters.length === 1 && singleLetter
+            ? optionLabel(explicitAnswer, singleLetter)
+            : explicitAnswer || labels.join(" / ");
     const picks = letters.map((letter) => `${letter}) `).join("");
 
     const answer = `${picks}${text}`.trimEnd();
