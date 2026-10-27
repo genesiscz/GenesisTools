@@ -156,6 +156,35 @@ final class ToolsServerClientTests: XCTestCase {
         XCTAssertEqual(client.callSync(argv: ["known"], timeout: 2)?.stdout, "hi\n")
     }
 
+    /// A refusal that names a door-less prefix sends every later argv under it straight to the process: the server
+    /// never sees it again on that connection, while an argv outside the prefix still goes to the server.
+    func testANoDoorPrefixSkipsTheServerForItsArgvs() async throws {
+        let asked = Counter()
+        let server = try FakeServer { request in
+            asked.increment()
+            let id = request["id"] as? Int ?? 0
+            let argv = request["argv"] as? [String] ?? []
+            if argv.first == "known" {
+                return [["id": id, "ok": true, "stdout": "hi\n", "stderr": "", "exit": 0, "ms": 3]]
+            }
+            return [["id": id, "ok": false, "code": "unsupported", "noDoor": ["other", "verb"]]]
+        }
+        defer { server.stop() }
+        let client = ToolsServerClient(socketPath: server.path)
+        let refused = await client.call(argv: ["other", "verb", "--json"], timeoutSeconds: 2)
+        XCTAssertNil(refused)
+        XCTAssertEqual(asked.value, 1)
+        let skipped = await client.call(argv: ["other", "verb", "x"], timeoutSeconds: 2)
+        XCTAssertNil(skipped)
+        XCTAssertNil(client.callSync(argv: ["other", "verb"], timeout: 2))
+        XCTAssertEqual(asked.value, 1, "an argv under a door-less prefix never reaches the server")
+        let other = await client.call(argv: ["other", "noun"], timeoutSeconds: 2)
+        XCTAssertNil(other)
+        XCTAssertEqual(asked.value, 2, "another argv still asks")
+        let known = await client.call(argv: ["known"], timeoutSeconds: 2)
+        XCTAssertEqual(known?.stdout, "hi\n")
+    }
+
     /// A line split across reads is joined, and the half line a dropped connection left behind never
     /// reaches the next connection's answer.
     func testAFragmentedAnswerAfterABrokenConnectionArrivesWhole() async throws {
