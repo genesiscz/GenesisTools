@@ -235,8 +235,10 @@ Three Monitors, all with `timeout_ms: 1800000`, each re-armed as the very next t
      switches never enables automatic acceptance; `pending` lists every request as needing a manual decision.
    - 🛑 **Watch the shared feed:** every NEEDS LEAD line goes to `<run dir>/needs-lead.log` with the reason manual
      approval is required. A request still waiting is repeated after 3 minutes and every 10 minutes thereafter.
-     After a session restart, `approve-codex.ts pending --run <run.json>` lists waiting requests. The driver runs
-     until the session closes or a status failure prevents safe monitoring.
+     After a session restart, `approve-codex.ts pending --run <run.json>` lists waiting requests. The driver stops when
+     the session closes or fails, repeated status checks fail, or its finite safety deadline expires. The default deadline is
+     12 hours. Use `--timeout-ms <ms>` to set another finite positive deadline. On expiry, the feed asks the lead to
+     re-arm the driver if the worker still needs monitoring.
 
 Two-way proof: once per new worker, send a ping on the bus (`--to grok_pr<N>` or `--to codex_<name>`) and see the
 reply arrive (Sol answered in 20 s, Grok in 59 s). Do it for every worker you spawn yourself.
