@@ -42,6 +42,17 @@ describe("formatWorkItemMarkdown", () => {
         expect(md).not.toContain("<img");
     });
 
+    // Regression test: a Markdown-format description was run through the HTML converter, which joined it into one line
+    test("keeps a Markdown description line for line", () => {
+        const description =
+            "1 Popis\n-------\n\n*   First rule.\n*   Second rule.\n\n1.1 Umístění\n------------\n\n*   Under the banners.";
+        const md = formatWorkItemMarkdown(item({ description }));
+
+        expect(md).toContain("1 Popis\n-------\n\n*   First rule.\n*   Second rule.");
+        expect(md).toContain("1.1 Umístění\n------------");
+        expect(md).not.toContain("\\*");
+    });
+
     test("converts HTML comments instead of dumping the tags", () => {
         const md = formatWorkItemMarkdown(
             item({
