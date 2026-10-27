@@ -29,7 +29,7 @@ import {
     setIdleDueAt,
 } from "./idle";
 import { inbox, inboxChip } from "./inbox";
-import { appendLinkedPullRequestNote, linksStep, rememberToolPaths } from "./links";
+import { appendLinkedPullRequestNote, linksStep, rememberToolPaths, takeLinkedPullRequestNote } from "./links";
 import { startLiveClock } from "./live";
 import {
     type CallSection,
@@ -737,6 +737,16 @@ export const register: Register = (on) => {
             const result = await next(e);
 
             afterTools({ host, event: e, features: liveFeatures() });
+
+            // The PR numbers the links mod linked in the message that asked for this call: the model reads which
+            // repository each went to with this result, while the turn still runs, not only after it ends.
+            if (e.agentId === undefined && e.tool_use_id !== undefined && result.deny === undefined) {
+                const note = takeLinkedPullRequestNote();
+
+                if (note) {
+                    return { ...result, context: [...(result.context ?? []), note] };
+                }
+            }
 
             return result;
         } finally {

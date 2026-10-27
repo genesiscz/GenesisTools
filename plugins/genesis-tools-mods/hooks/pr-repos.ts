@@ -4,7 +4,11 @@
 // the frontend at another, while the reply had linked `#900` to the frontend itself. The reply's words decide first: a
 // repository written at the number (`owner/repo#900`, `web#900`), the same number linked before (in this reply, then
 // in the session's earlier messages), the nearest repository the reply names (a forge URL, a hub link, a path inside a
-// checkout), and only then the remote of the session's checkout. Standalone, as every runtime plugin file.
+// checkout, or a known repository's name as a plain word in the same line), and only then the remote of the session's
+// checkout. On 2026-10-27 a session working in two checkouts wrote "GenesisPlayground is pushed, and its one fix is in
+// #102 (fix(tools): ...)", and #102 was linked in the other checkout's repository: so the plain name counts, and a
+// session in several checkouts with no such word links a number only when the title the reply wrote after it matches
+// that repository's PR. Standalone, as every runtime plugin file.
 import { type ForgeProject, forgeProject } from "./commit-links";
 import type { Host } from "./shared";
 
@@ -20,6 +24,8 @@ export interface RepoMention {
     path?: string;
     /** The PR, issue or MR number the link or the reference names. */
     number?: number;
+    /** Named by its repository name as a plain word: counts in its own line only. */
+    byName?: boolean;
 }
 
 const LINK_URL = /(?:https?|genesis-tools):\/\/[^\s)<>"'`\]]+/g;
@@ -139,6 +145,60 @@ export function mentionsIn(line: string, githubHost = "github.com"): RepoMention
     }
 
     return found.sort((a, b) => a.start - b.start);
+}
+
+/**
+ * The known projects a line names by their repository name alone, as a plain word ("GenesisPlayground is pushed").
+ * Case-sensitive and whole-word, and never inside a path or a URL (`/GenesisPlayground/`, `x/GenesisPlayground`),
+ * which `mentionsIn` reads itself. Only a name two known GitHub projects share is skipped.
+ */
+export function namesIn(line: string, known: readonly ForgeProject[]): RepoMention[] {
+    const byName = new Map<string, ForgeProject | null>();
+
+    for (const project of known) {
+        const name = project.kind === "github" ? project.path.split("/").pop() : undefined;
+
+        if (!name) {
+            continue;
+        }
+
+        const held = byName.get(name);
+        byName.set(name, held && held.path.toLowerCase() !== project.path.toLowerCase() ? null : project);
+    }
+
+    const found: RepoMention[] = [];
+
+    for (const [name, project] of byName) {
+        if (!project) {
+            continue;
+        }
+
+        const escaped = name.replace(/[.*+?^${}()|[\]\\]/g, "\\$&");
+
+        for (const match of line.matchAll(new RegExp(`(?<![\\w/.#@-])${escaped}(?![\\w/#-])`, "g"))) {
+            found.push({ start: match.index ?? 0, project, byName: true });
+        }
+    }
+
+    return found.sort((a, b) => a.start - b.start);
+}
+
+/**
+ * Whether the text a reply wrote after a PR number (`#102 (fix(tools): replace @inquirer…)`) is that PR's title: the
+ * first characters agree, up to an ellipsis the reply cut it at, and at least 8 of them.
+ */
+export function titleMatches(written: string, title: string): boolean {
+    const norm = (text: string) =>
+        text
+            .replace(/^Draft: /, "")
+            .replace(/\s+/g, " ")
+            .trim()
+            .toLowerCase();
+    const said = norm(written.split(/\.\.\.|…/)[0] ?? "");
+    const real = norm(title);
+    const k = Math.min(said.length, real.length, 40);
+
+    return k >= 8 && said.slice(0, k) === real.slice(0, k);
 }
 
 /**
