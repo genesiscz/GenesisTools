@@ -11,8 +11,12 @@ struct HubPlace: Codable, Equatable {
     var tab: String?
 
     static let resumeFlag = "--resume"
-    /// The flags that name a place, each with its value; `--resume` replaces them all.
-    static let placeFlags: Set<String> = ["--mode", "--session", "--agent", "--pr", "--reveal", "--worktree", "--tab"]
+    /// The flags that only set up the window, each with its value: a resume keeps these and `--no-activate`, and
+    /// drops every other flag, since each names a place (`--pr`, `--repo`, `--commit`, `--file`, …), says who asked
+    /// for it (`--actor`, `--note`, `--from`, `--nav`) or runs something once. A kept `--repo … --commit …` from an
+    /// old link was passed on by every later rebuild and opened that commit over the saved place (2026-10-26 19:28
+    /// to 10-27 01:58: an Inbox resume landed on a worktree commit).
+    static let windowFlags: Set<String> = ["--width", "--height", "--style", "--glass", "--panes", "--set"]
 
     /// Under `genesisHome()` (GENESIS_TOOLS_HOME), as the face records a rebuild reads beside it.
     static var url: URL {
@@ -53,8 +57,8 @@ struct HubPlace: Codable, Equatable {
         }
     }
 
-    /// `args` without `--resume`; with a saved place, also without the launch's place flags and with the
-    /// saved place's instead. No place (an older hub never wrote one) keeps the launch's own flags.
+    /// `args` without `--resume`; with a saved place, only the launch's window flags and the saved place's own.
+    /// No place (an older hub never wrote one) keeps the launch's own flags.
     static func resumed(_ args: [String], place: HubPlace?) -> [String] {
         guard args.contains(resumeFlag) else { return args }
         let rest = args.filter { $0 != resumeFlag }
@@ -62,11 +66,13 @@ struct HubPlace: Codable, Equatable {
         var kept: [String] = []
         var index = 0
         while index < rest.count {
-            if placeFlags.contains(rest[index]) {
+            let flag = rest[index]
+            if windowFlags.contains(flag), index + 1 < rest.count {
+                kept += [flag, rest[index + 1]]
                 index += 2
                 continue
             }
-            kept.append(rest[index])
+            if flag == "--no-activate" { kept.append(flag) }
             index += 1
         }
         return kept + place.arguments
