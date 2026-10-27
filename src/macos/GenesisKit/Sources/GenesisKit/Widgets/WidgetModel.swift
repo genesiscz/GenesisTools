@@ -950,11 +950,19 @@ public final class WidgetModel: ObservableObject {
     /// A row of the popup's list of later alerts: that alert takes the popup, and the one shown takes its row.
     public func showWaitingPeek(_ item: WidgetInboxItem) {
         guard let shown = peekItem, let index = peekQueue.firstIndex(where: { $0.id == item.id }) else { return }
+        let waiting = peekQueue[index]
+        if peekSettled(waiting) {
+            peekQueue.remove(at: index)
+            peekDurations[waiting.id] = nil
+            peekInboxGenerations[waiting.id] = nil
+            presentationChanged?()
+            return
+        }
         peekQueue[index] = shown
-        peekItem = item
-        peekSeconds = peekDurations[item.id] ?? 7
+        peekItem = waiting
+        peekSeconds = peekDurations[waiting.id] ?? 7
         if let surface = hoveredSurface { schedulePeekEnd(on: surface) }
-        PerfLog.mark("widget.peek swapped id=\(item.id) for=\(shown.id)")
+        PerfLog.mark("widget.peek swapped id=\(waiting.id) for=\(shown.id)")
         presentationChanged?()
     }
 
@@ -972,15 +980,19 @@ public final class WidgetModel: ObservableObject {
         }
     }
 
+    /// Only a newer complete snapshot with the uncapped decision list can prove settlement.
+    private func peekSettled(_ item: WidgetInboxItem) -> Bool {
+        guard item.kind == "decision", item.needsAnswer, inbox.complete,
+              inboxGeneration > (peekInboxGenerations[item.id] ?? inboxGeneration),
+              let pending = inbox.pendingDecisionIDs else { return false }
+        return !pending.contains(item.sourceId)
+    }
+
     /// The next queued alert that still applies: a decision answered in the meantime is skipped.
     private func nextQueuedPeek() -> WidgetInboxItem? {
         while !peekQueue.isEmpty {
             let next = peekQueue.removeFirst()
-            // Only a newer complete snapshot with the uncapped decision list can prove settlement. Older hubs,
-            // incomplete reads, or the capped and filtered overview cannot prove that an absent decision settled.
-            if next.kind == "decision", next.needsAnswer, inbox.complete,
-               inboxGeneration > (peekInboxGenerations[next.id] ?? inboxGeneration),
-               let pending = inbox.pendingDecisionIDs, !pending.contains(next.sourceId) {
+            if peekSettled(next) {
                 peekDurations[next.id] = nil
                 peekInboxGenerations[next.id] = nil
                 continue
@@ -1171,6 +1183,28 @@ public final class WidgetModel: ObservableObject {
         railActivitySessions = snapshot?.state.preferences.railOrder == "stable"
             ? railActive : railActive.sorted(by: Self.previewOrder(inbox: inboxSessions, sort: previewSort))
         inboxOverviewItems = Self.overviewItems(value.sessions)
+        // Remove settled alerts in both list and queue mode. A visible alert must not keep answer buttons either.
+        let settledWaiting = peekQueue.filter { peekSettled($0) }
+        if !settledWaiting.isEmpty {
+            let ids = Set(settledWaiting.map(\.id))
+            peekQueue.removeAll { ids.contains($0.id) }
+            for id in ids {
+                peekDurations[id] = nil
+                peekInboxGenerations[id] = nil
+            }
+            presentationChanged?()
+        }
+        if let shown = peekItem, peekSettled(shown) {
+            if peekMany == .list, let next = peekQueue.first {
+                showWaitingPeek(next)
+                peekQueue.removeAll { $0.id == shown.id }
+                peekDurations[shown.id] = nil
+                peekInboxGenerations[shown.id] = nil
+                presentationChanged?()
+            } else {
+                endPeek()
+            }
+        }
         reconcileStaged(value.staged ?? value.sessions.flatMap { $0.items ?? [] })
         if !inboxFilterPicked, let opening = snapshot?.state.preferences.inboxFilter, opening != inboxFilter {
             inboxFilter = opening
