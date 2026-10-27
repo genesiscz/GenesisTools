@@ -60,6 +60,7 @@ import {
     labelOf,
     middleCut,
     namesCheckouts,
+    onlyReads,
     parseNumstat,
     parseStatus,
     prChecksOf,
@@ -352,6 +353,13 @@ test("git band: status line and CI counts", async () => {
     expect(
         hubUrlOf(ALL_LINKS, { url: "https://gitlab.example.com/a/b/-/merge_requests/3", number: 3 })
     ).toBeUndefined();
+});
+
+test("git band: a shell command that only reads does not refresh the band", () => {
+    expect(onlyReads("cd /work/a && git status --porcelain | head -5")).toBe(true);
+    expect(onlyReads("git -C /work/a log --oneline -3; rg -n foo src")).toBe(true);
+    expect(onlyReads("git -C /work/a commit -m x")).toBe(false);
+    expect(onlyReads("bun scripts/fix.ts && git status")).toBe(false);
 });
 
 test("git band: the checkouts a command or an edit works in", async () => {

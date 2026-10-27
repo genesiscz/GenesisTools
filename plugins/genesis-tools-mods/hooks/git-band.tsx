@@ -16,7 +16,7 @@
 // made, pushed or worked on there and then switched away from keeps its PR in the row, and a worktree the session
 // removed keeps its row (`worktree removed`), with its branch and PRs read in the main checkout. A row is named by
 // `mods.git.name`: `Kalendora/enhancements` for a linked worktree (`repo-folder`), `Kalendora`, or `enhancements`.
-import type { ElementTable, RenderElement } from "claude-code";
+import type { ElementTable, RenderElement, ToolCallInput } from "claude-code";
 import type { BandCheck, BandPr, GitBand, GitBandRows, GitBandSwitch } from "../types";
 import {
     addCheckout,
@@ -78,6 +78,17 @@ const ghCache = new Map<string, { at: number; pr: BandPr | null }>();
 let refreshing: Promise<void> | undefined;
 let requestedRefresh = 0;
 let completedRefresh = 0;
+/** Checkouts a tool call changed since the last refresh: the next refresh asks git fresh for these only. */
+const changedRoots = new Set<string>();
+/** A tool call's refresh waiting for the gap below; the 5 s tick or the next tool call starts it. */
+let toolRefreshDue: "tool" | "checkout" | undefined;
+let lastToolRefreshAt = 0;
+/**
+ * One refresh after tool calls per this gap. On 2026-10-27 one session with subagents refreshed every row on each of
+ * its git commands, 219 times in 30 minutes (444 `git status` runs), because every subagent's call reaches this hook.
+ */
+const TOOL_REFRESH_GAP_MS = 10_000;
+const TOOLS_THAT_WRITE = new Set(["Edit", "MultiEdit", "Write", "NotebookEdit", "Bash"]);
 
 async function run(host: Host, argv: string[], cwd: string): Promise<string | undefined> {
     const done = await host.run(argv, { cwd, timeoutMs: 15_000 }).catch(() => undefined);
@@ -440,8 +451,12 @@ async function readRow(
 async function refreshNow(host: Host, why: string): Promise<void> {
     const started = Date.now();
     const roots = await bandRoots(host);
-    const shared = why === "timer" || why === "start";
-    const read = await Promise.all(roots.map((at) => readRow(host, at.root, at.why, shared)));
+    // A timer reads the answers other sessions share; a tool's refresh asks git fresh only for the checkouts it
+    // changed; a press or a command asks fresh for all.
+    const fresh = new Set(changedRoots);
+    changedRoots.clear();
+    const shared = (root: string) => why === "timer" || why === "start" || (why === "tool" && !fresh.has(root));
+    const read = await Promise.all(roots.map((at) => readRow(host, at.root, at.why, shared(at.root))));
     // A checkout git could not read this time keeps its last row; one whose folder is gone with nothing to show goes.
     const next = roots
         .map(({ root }, index) => {
@@ -491,6 +506,38 @@ export async function refresh(host: Host, why: string): Promise<void> {
         });
         await refreshing;
     }
+}
+
+const READ_ONLY_STEP =
+    /^(?:cd|ls|cat|head|tail|wc|rg|grep|find|fd|echo|pwd|which|date|stat|file|du|df|jq|sort|uniq|tr|cut|true|sed -n|git (?:status|log|diff|show|rev-parse|branch --show-current|blame|ls-files|remote -v)|gh (?:pr|issue|run) (?:view|list|checks|diff)|tools (?:ts|json) )\b/;
+
+/** Whether every step of a shell command only reads: `cd x && git status | head` does, `bun x.ts` might not. */
+export function onlyReads(command: string): boolean {
+    return command
+        .split(/&&|\|\||[;|\n]/)
+        .map((step) => step.trim().replace(/^git -C \S+ /, "git "))
+        .filter(Boolean)
+        .every((step) => READ_ONLY_STEP.test(step));
+}
+
+/** The shown checkouts a tool call can have changed: those holding a path it names, else the session's own. */
+function rootsOfCall(e: ToolCallInput, cwdRoot: string | undefined): string[] {
+    const text = JSON.stringify(e);
+    const named = rows.map((row) => row.root).filter((root) => text.includes(root));
+
+    return named.length > 0 ? named : cwdRoot ? [cwdRoot] : [];
+}
+
+/** Starts the waiting tool refresh once the gap since the last one has passed. */
+function runDueToolRefresh(host: Host): void {
+    if (!toolRefreshDue || Date.now() - lastToolRefreshAt < TOOL_REFRESH_GAP_MS) {
+        return;
+    }
+
+    const why = toolRefreshDue;
+    toolRefreshDue = undefined;
+    lastToolRefreshAt = Date.now();
+    backgroundRefresh(host, why);
 }
 
 function backgroundRefresh(host: Host, why: string): void {
@@ -613,6 +660,10 @@ export const gitBand: Feature = {
                 }
             });
         });
+        // A burst of tool calls makes one refresh, at most one per gap, the last one after the burst.
+        host.every(5_000, () => {
+            runDueToolRefresh(host);
+        });
 
         if (await isOn(host)) {
             backgroundRefresh(host, "start");
@@ -669,9 +720,17 @@ export const gitBand: Feature = {
         try {
             const moved = await noteToolCall(host, e);
 
-            if (moved || (e.tool === "Bash" && /(^|[\s;&|(])(git|gh)\s/.test(e.command))) {
-                backgroundRefresh(host, moved ? "checkout" : "tool");
+            // Read, Grep, Glob and the like, and a shell command that only reads, change nothing git shows.
+            if (!moved && (!TOOLS_THAT_WRITE.has(e.tool) || (e.tool === "Bash" && onlyReads(e.command)))) {
+                return;
             }
+
+            for (const root of rootsOfCall(e, ownRoot)) {
+                changedRoots.add(root);
+            }
+
+            toolRefreshDue = moved || toolRefreshDue === "checkout" ? "checkout" : "tool";
+            runDueToolRefresh(host);
         } catch (error) {
             await logMod(host, "git", { event: "checkout-failed", error: String(error) });
             host.toast(`Could not save or refresh this session's checkouts: ${String(error)}`);

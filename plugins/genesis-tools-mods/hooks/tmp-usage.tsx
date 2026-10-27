@@ -32,6 +32,31 @@ async function folderKb(host: Host, path: string): Promise<number | null> {
     return (await host.exists(path)) ? kbOf(host, ["du", "-sk", path], 0) : 0;
 }
 
+/**
+ * A folder of this session's own (scratch, task output), walked again only when its own entry list changed (its
+ * mtime) or after the 30-minute pace: every session walked both every 5 minutes, 280 `du` runs in 50 minutes.
+ */
+async function pacedKb(host: Host, path: string): Promise<number | null> {
+    const stat = await host.stat(path).catch(() => undefined);
+
+    if (!stat) {
+        return 0;
+    }
+
+    const held = folderKbs.get(path);
+    const startedAt = Date.now();
+    const mark = String(stat.mtimeMs);
+
+    if (held && held.mark === mark && startedAt < held.nextAt) {
+        return held.kb;
+    }
+
+    const kb = await folderKb(host, path);
+    folderKbs.set(path, { kb, mark, nextAt: paceAfter(WORKTREE_EVERY_MS, startedAt) });
+
+    return kb;
+}
+
 /** `tools du size <path> --max-cache-age <s>`: the size another caller measured within the age, or a new walk. */
 async function sharedKb(host: Host, path: string, maxAgeS: number): Promise<number | null> {
     const done = await host
@@ -50,6 +75,8 @@ async function sharedKb(host: Host, path: string, maxAgeS: number): Promise<numb
 
 /** A worktree's last size, the git status it was measured at, and when `du` may walk it again. */
 const worktreeKb = new Map<string, { kb: number | null; status: string; nextAt: number }>();
+/** The same for the session's own folders, keyed by the folder's mtime. */
+const folderKbs = new Map<string, { kb: number | null; mark: string; nextAt: number }>();
 const WORKTREE_EVERY_MS = 30 * 60_000;
 
 /**
@@ -209,8 +236,8 @@ async function measure(host: Host): Promise<void> {
     const tasks = uid && projectFolder ? `/tmp/claude-${uid}/${projectFolder}/${await host.sessionId()}` : "";
     const reading: TmpReading = {
         at: Date.now(),
-        scratch: { path: scratch, kb: await folderKb(host, scratch) },
-        tasks: { path: tasks, kb: tasks ? await folderKb(host, tasks) : 0 },
+        scratch: { path: scratch, kb: await pacedKb(host, scratch) },
+        tasks: { path: tasks, kb: tasks ? await pacedKb(host, tasks) : 0 },
         worktrees: await worktreesOf(host, scratch),
         freeKb: await kbOf(host, ["df", "-k", "/"], 3),
     };
