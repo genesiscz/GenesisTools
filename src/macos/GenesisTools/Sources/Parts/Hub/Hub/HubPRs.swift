@@ -806,9 +806,11 @@ final class PRsModel: ObservableObject {
         let lookup = beginRangeLookup()
         Task.detached(priority: .userInitiated) { [weak self] in
             let found = HubLocalCommits.resolve(ends: ends, repo: repo, head: head, bases: bases, pushed: pushed)
-            var rewritten: HubLocalCommits.Rewritten?
+            let rewritten: HubLocalCommits.Rewritten?
             if case .failure(let miss) = found, miss == .offBranch || miss == .unrelated {
                 rewritten = HubLocalCommits.rewritten(ends: ends, repo: repo, in: commits)
+            } else {
+                rewritten = nil
             }
             await MainActor.run {
                 guard let self, self.reviewPRID == shown.id, self.review === review else { return }
