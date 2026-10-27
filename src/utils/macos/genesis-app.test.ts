@@ -1,7 +1,7 @@
 import { describe, expect, it } from "bun:test";
 import { existsSync, mkdirSync, mkdtempSync, readFileSync, statSync, writeFileSync } from "node:fs";
 import { tmpdir } from "node:os";
-import { join } from "node:path";
+import { dirname, join } from "node:path";
 import { env } from "@genesiscz/utils/env";
 import { SafeJSON } from "@genesiscz/utils/json";
 import { buildPidRecord, serializePidRecord } from "@genesiscz/utils/process/pidfile";
@@ -21,6 +21,7 @@ import {
     nativeInboxRecord,
     nativeInboxState,
     nativeInboxStateFile,
+    runningWidgetRoot,
     widgetLockPaths,
     writeNativeInboxStateFile,
 } from "./native-inbox";
@@ -201,6 +202,26 @@ describe("nativeInboxState", () => {
         expect(inboxStateFromSignals({ ...off, platform: false, previewBundle: true, widgetRunning: true })).toBe(
             "none"
         );
+    });
+
+    it("selects the live widget data root, including Preview and explicit roots", async () => {
+        const home = mkdtempSync(join(tmpdir(), "widget-root-"));
+        await env.testing.withOverrides({ GENESIS_TOOLS_HOME: home }, () => {
+            const [normal, preview] = widgetLockPaths();
+            const live = new Set([preview]);
+            const deps = {
+                platform: "darwin",
+                exists: (path: string) => live.has(path),
+                liveWidgetLock: (path: string) => live.has(path),
+            };
+            expect(runningWidgetRoot({ deps })).toBe(dirname(preview));
+            expect(runningWidgetRoot({ root: dirname(normal), deps })).toBeUndefined();
+            live.add(normal);
+            expect(runningWidgetRoot({ deps })).toBe(dirname(normal));
+            expect(runningWidgetRoot({ root: dirname(preview), deps })).toBe(dirname(preview));
+            live.clear();
+            expect(runningWidgetRoot({ deps })).toBeUndefined();
+        });
     });
 
     it("reads the bundles, the staging key and the widget locks of this home", async () => {

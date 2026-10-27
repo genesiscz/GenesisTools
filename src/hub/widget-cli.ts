@@ -3,7 +3,7 @@ import { execToolInteractive, runTool } from "@genesiscz/utils/cli";
 import { withInterrupt } from "@genesiscz/utils/cli/interrupt";
 import { SafeJSON } from "@genesiscz/utils/json";
 import { logger, out } from "@genesiscz/utils/logger";
-import { readNativeInboxSignals } from "@genesiscz/utils/macos/native-inbox";
+import { runningWidgetRoot } from "@genesiscz/utils/macos/native-inbox";
 import { Command } from "commander";
 import { prepareWidgetAsset } from "./lib/composer/assets";
 import { widgetDispatcher } from "./lib/composer/dispatch";
@@ -59,8 +59,9 @@ widget
     .option("--at <at>", "where the link was clicked, passed to the chat fallback")
     .action(async (session: string, number: string, options: { at?: string }, command) => {
         const id = `d_${number}_${session}`;
-        if (readNativeInboxSignals().widgetRunning) {
-            await mutateWidgetState(command.optsWithGlobals().stateRoot, (state) => {
+        const root = runningWidgetRoot({ root: command.optsWithGlobals().stateRoot });
+        if (root) {
+            await mutateWidgetState(root, (state) => {
                 state.showDecision = { id, at: Date.now() };
             });
             logger.info({ id }, "show-decision: asked the running widget");

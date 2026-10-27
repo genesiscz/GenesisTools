@@ -199,6 +199,83 @@ final class HubInboxUXTests: XCTestCase {
         XCTAssertTrue(text.contains("Write my own answer"), text)
     }
 
+    @MainActor
+    func testNoteSurvivesRejectedWriteAndCardRecreation() async throws {
+        let inbox = HubInboxModel()
+        let item = try Self.decision(#"{"id":"d_4_s1","draft":"old","revision":1}"#)
+        let session = Self.session("s1", items: [item])
+        let settled = expectation(description: "rejected write settled")
+        inbox.captureWrite = { _ in ProcessCapture(status: 1, stdout: Data(#"{"error":"DECISION 4 changed"}"#.utf8), stderr: Data()) }
+        inbox.reloadAfterWrite = { settled.fulfill() }
+        inbox.noteTexts[item.id] = "unsaved note"
+        inbox.stageNote(item, in: session, note: "unsaved note")
+        await fulfillment(of: [settled], timeout: 2)
+        XCTAssertNotNil(inbox.writeErrors[item.id])
+        XCTAssertEqual(inbox.noteForCard(item), "unsaved note", "a recreated card uses the unsaved note")
+        XCTAssertEqual(inbox.noteTexts[item.id], "unsaved note", "the note remains dirty for retry")
+        XCTAssertEqual(inbox.cardState(for: item, in: session, hubSession: nil).noteAcknowledgement, 0,
+                       "a refused write cannot acknowledge the note")
+    }
+
+    @MainActor
+    func testOlderSuccessfulNoteWriteDoesNotClearANewerEdit() async throws {
+        let inbox = HubInboxModel()
+        let item = try Self.decision(#"{"id":"d_4_s1","draft":"old","revision":1}"#)
+        let session = Self.session("s1", items: [item])
+        let started = expectation(description: "write started")
+        let settled = expectation(description: "write settled")
+        let gate = DispatchSemaphore(value: 0)
+        inbox.captureWrite = { _ in
+            started.fulfill()
+            _ = gate.wait(timeout: .now() + 2)
+            return ProcessCapture(status: 0, stdout: Data(), stderr: Data())
+        }
+        inbox.reloadAfterWrite = { settled.fulfill() }
+        inbox.noteTexts[item.id] = "first"
+        inbox.stageNote(item, in: session, note: "first")
+        await fulfillment(of: [started], timeout: 1)
+        inbox.noteTexts[item.id] = "newer"
+        gate.signal()
+        await fulfillment(of: [settled], timeout: 2)
+        XCTAssertEqual(inbox.noteForCard(item), "newer", "the old success cannot acknowledge a later edit")
+        XCTAssertEqual(inbox.cardState(for: item, in: session, hubSession: nil).noteAcknowledgement, 0,
+                       "a success for an older note cannot acknowledge a newer edit")
+    }
+
+    @MainActor
+    func testSuccessfulMatchingNoteWriteClearsTheDirtyCopy() async throws {
+        let inbox = HubInboxModel()
+        let item = try Self.decision(#"{"id":"d_4_s1","draft":"old","revision":1}"#)
+        let session = Self.session("s1", items: [item])
+        let settled = expectation(description: "successful write settled")
+        inbox.captureWrite = { _ in ProcessCapture(status: 0, stdout: Data(), stderr: Data()) }
+        inbox.reloadAfterWrite = { settled.fulfill() }
+        inbox.noteTexts[item.id] = "saved"
+        inbox.stageNote(item, in: session, note: "saved")
+        await fulfillment(of: [settled], timeout: 2)
+        XCTAssertNil(inbox.writeErrors[item.id])
+        XCTAssertNil(inbox.noteTexts[item.id], "only a matching successful write acknowledges the note")
+        XCTAssertEqual(inbox.cardState(for: item, in: session, hubSession: nil).noteAcknowledgement, 1)
+    }
+
+    @MainActor
+    func testSavingTheSameStoredNoteAcknowledgesEachSuccessfulWrite() async throws {
+        let inbox = HubInboxModel()
+        let item = try Self.decision(#"{"id":"d_4_s1","draft":"same","revision":1}"#)
+        let session = Self.session("s1", items: [item])
+        inbox.captureWrite = { _ in ProcessCapture(status: 0, stdout: Data(), stderr: Data()) }
+        for expected in 1...2 {
+            let settled = expectation(description: "same note write \(expected) settled")
+            inbox.reloadAfterWrite = { settled.fulfill() }
+            inbox.stageNote(item, in: session, note: "same")
+            await fulfillment(of: [settled], timeout: 2)
+            XCTAssertNil(inbox.noteTexts[item.id])
+            XCTAssertEqual(item.draft, "same", "the stored draft value did not change")
+            XCTAssertEqual(inbox.cardState(for: item, in: session, hubSession: nil).noteAcknowledgement, expected,
+                           "the mounted card must observe each success even without a draft change")
+        }
+    }
+
     // MARK: - Fixtures
 
     static func decision(_ fields: String) throws -> InboxItem {

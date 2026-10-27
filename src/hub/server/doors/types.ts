@@ -1,5 +1,8 @@
 import type { CallResult } from "../protocol";
 
+/** A matched request whose contents require the ordinary CLI process. */
+export class DoorUnsupported extends Error {}
+
 /**
  * A door answers one CLI command inside the resident server. `match` returns null for any argv it
  * does not fully understand, so the client runs that argv as a process instead.

@@ -1,10 +1,11 @@
-import { readFileSync } from "node:fs";
+import { constants } from "node:fs";
+import { open } from "node:fs/promises";
 import { asResult } from "@genesiscz/utils/cli/result";
 import { SafeJSON } from "@genesiscz/utils/json";
 import { logger } from "@genesiscz/utils/logger";
 import { WIDGET_TASK_SCOPES, type WidgetTaskFilters } from "../../lib/widget/tasks";
 import { parseArgv, stringFlag, wholeNumber } from "../argv";
-import { type CallDoor, failed, ok } from "./types";
+import { type CallDoor, DoorUnsupported, failed, ok } from "./types";
 
 const { log } = logger.scoped("hub:server");
 
@@ -40,7 +41,9 @@ function actionOf(input: unknown): string | undefined {
  * action was a process, 0.36 s of CPU each, 145 in a day. The request file is read here, so an action this door does
  * not take still goes to the process. `--state-root` (the preview build's own state) stays a process too.
  */
-export const widgetCallDoor: CallDoor<unknown> = {
+const MAX_WIDGET_REQUEST_BYTES = 1024 * 1024;
+
+export const widgetCallDoor: CallDoor<string> = {
     kind: "call",
     name: "hub widget call",
     command: ["hub", "widget", "call"],
@@ -55,24 +58,56 @@ export const widgetCallDoor: CallDoor<unknown> = {
             return null;
         }
 
-        try {
-            // The widget writes plain JSON; a file the strict parse refuses goes to the process, which reads it leniently.
-            const input: unknown = SafeJSON.parse(readFileSync(path, "utf8"), { strict: true });
-            const action = actionOf(input);
-            return action && DOOR_ACTIONS.has(action) ? input : null;
-        } catch (error) {
-            // An unreadable request: the process prints the CLI's own error.
-            log.debug({ error, path }, "hub server: widget call request unreadable; the process answers");
-            return null;
-        }
+        return path;
     },
-    async run(input, { signal }) {
+    async run(path, { signal }) {
         try {
             signal.throwIfAborted();
+            // Nonblocking open prevents a FIFO with no writer from holding the server. Check the opened file, not
+            // the path, and bound reads even if the regular file grows after stat.
+            const file = await open(path, constants.O_RDONLY | constants.O_NONBLOCK | constants.O_NOFOLLOW);
+            let bytes: Buffer;
+            try {
+                const stat = await file.stat();
+                if (!stat.isFile() || stat.size > MAX_WIDGET_REQUEST_BYTES) {
+                    throw new Error("widget request must be a regular file no larger than 1 MiB");
+                }
+                const buffer = Buffer.alloc(MAX_WIDGET_REQUEST_BYTES + 1);
+                let used = 0;
+                while (used < buffer.length) {
+                    signal.throwIfAborted();
+                    const { bytesRead } = await file.read(buffer, used, buffer.length - used, null);
+                    if (bytesRead === 0) {
+                        break;
+                    }
+                    used += bytesRead;
+                }
+                if (used > MAX_WIDGET_REQUEST_BYTES) {
+                    throw new Error("widget request must be a regular file no larger than 1 MiB");
+                }
+                bytes = buffer.subarray(0, used);
+            } finally {
+                await file.close();
+            }
+            signal.throwIfAborted();
+            let input: unknown;
+            try {
+                input = SafeJSON.parse(bytes.toString("utf8"), { strict: true });
+            } catch (error) {
+                log.debug({ error, path }, "hub server: widget request needs the CLI parser");
+                throw new DoorUnsupported();
+            }
+            const action = actionOf(input);
+            if (!action || !DOOR_ACTIONS.has(action)) {
+                throw new DoorUnsupported();
+            }
             const { performWidgetAction } = await import("../../lib/widget/actions");
             const result = await performWidgetAction({ input, signal });
             return ok(asResult(result ?? { ok: true }));
         } catch (error) {
+            if (error instanceof DoorUnsupported) {
+                throw error;
+            }
             return failed(error);
         }
     },

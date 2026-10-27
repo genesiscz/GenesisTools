@@ -120,7 +120,15 @@ export async function draftDecision(input: DraftInput, deps: DraftDeps) {
     // The state moves only when it changes: `open` to `open` is no transition, and clearing an
     // untouched decision used to fail with "cannot move ... from open to open".
     const [updated] = await updateDecisions(deps.file, deps.events, {
-        updates: [{ id: row.id, ...(state === row.state ? {} : { state }), draftOption, draft }],
+        updates: [
+            {
+                id: row.id,
+                ...(state === row.state ? {} : { state }),
+                draftOption,
+                draft,
+                ...(input.expectedRevision !== undefined ? { expectedRevision: input.expectedRevision } : {}),
+            },
+        ],
     });
 
     return updated;
@@ -149,7 +157,7 @@ export async function dismissDecision(
 
     checkRevision(row, number, expectedRevision);
     const [updated] = await updateDecisions(deps.file, deps.events, {
-        updates: [{ id: row.id, state: "dismissed" }],
+        updates: [{ id: row.id, state: "dismissed", ...(expectedRevision !== undefined ? { expectedRevision } : {}) }],
     });
 
     return updated;

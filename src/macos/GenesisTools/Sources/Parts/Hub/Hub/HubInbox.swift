@@ -451,6 +451,9 @@ final class HubInboxModel: ObservableObject {
     private var pendingWrites: [String: [String]] = [:]
     /// The write running for each item, so a note queued behind a pick keeps that pick.
     private var runningWrites: [String: [String]] = [:]
+    /// The write runner and reload seam used by the inbox's existing write queue.
+    var captureWrite: @Sendable ([String]) throws -> ProcessCapture = { try ToolsCLIRunner.capture($0) }
+    var reloadAfterWrite: (() -> Void)?
     /// A load asked for while one ran (a write finished meanwhile). It runs when that one ends.
     private var reloadPending = false
     /// Sessions whose Send is running, by session id.
@@ -506,6 +509,10 @@ final class HubInboxModel: ObservableObject {
     /// Return, ⌘-Return, Stage note or an option click (UX audit 2026-10-27, F3: a pause in typing staged it and
     /// reloaded the whole Inbox).
     var noteTexts: [String: String] = [:]
+    /// A matching note write advances only that card's acknowledgement, even when the stored text did not change.
+    private var noteAcknowledgements: [String: Int] = [:]
+    /// A newly built lazy card restores an unsaved note before falling back to the ledger.
+    func noteForCard(_ item: InboxItem) -> String { noteTexts[item.id] ?? item.draft ?? "" }
     /// Images attached to a question form and not sent yet, by form id, then question id. Here, not in the lazy card:
     /// a card scrolled out of view deleted them (F11). Dropped with their files once the form is no longer listed.
     fileprivate var formImages: [String: [String: [QaAttachedImage]]] = [:]
@@ -755,6 +762,7 @@ final class HubInboxModel: ObservableObject {
             writeError: writeErrors[item.id],
             writeErrorDetail: writeErrorDetails[item.id],
             preferences: preferences,
+            noteAcknowledgement: noteAcknowledgements[item.id, default: 0],
             noteFocusRequest: noteFocusTarget == item.id ? noteFocusCount : nil,
             hubSession: hubSession,
             keyCard: keyCardID == item.id
@@ -778,7 +786,7 @@ final class HubInboxModel: ObservableObject {
                                   stages: DecisionAnswering.clickStages(freshPreferences(), command: command))
         keyCardID = item.id
         // The typed note goes along with the pick and is the staged one now.
-        if note != nil { noteTexts[item.id] = nil }
+        if let note { noteTexts[item.id] = note }
         draft(item, in: session, option: plan.option, text: note,
               then: plan.send ? { [weak self] in self?.sendStaged([item.id], in: session) } : nil)
     }
@@ -798,7 +806,7 @@ final class HubInboxModel: ObservableObject {
         if let hint = Self.emptyNoteHint(note: note, stored: item.draft, letters: letters(item), stages: stages) {
             return hint
         }
-        noteTexts[item.id] = nil
+        noteTexts[item.id] = note
         if stages {
             draft(item, in: session, option: nil, text: note)
         } else {
@@ -817,7 +825,7 @@ final class HubInboxModel: ObservableObject {
 
     /// The card's Stage note: the typed note is staged with the pick, nothing is sent.
     func stageNote(_ item: InboxItem, in session: InboxSession, note: String) {
-        noteTexts[item.id] = nil
+        noteTexts[item.id] = note
         draft(item, in: session, option: nil, text: note)
     }
 
@@ -827,7 +835,7 @@ final class HubInboxModel: ObservableObject {
             sendStaged([item.id], in: session)
             return
         }
-        noteTexts[item.id] = nil
+        noteTexts[item.id] = note
         draft(item, in: session, option: nil, text: note) { [weak self] in self?.sendStaged([item.id], in: session) }
     }
 
@@ -876,11 +884,12 @@ final class HubInboxModel: ObservableObject {
             writeErrors[item.id] = nil
             writeErrorDetails[item.id] = nil
         }
+        let captureWrite = captureWrite
         DispatchQueue.global(qos: .userInitiated).async {
             let span = HubPerf.begin("inbox.draft")
             let failure: (text: String, raw: String?)?
             do {
-                let capture = try ToolsCLIRunner.capture(args)
+                let capture = try captureWrite(args)
                 failure = capture.status == 0 ? nil : Self.refusal(capture)
             } catch {
                 failure = ("the hub could not run tools. Try again.", "\(error)")
@@ -898,13 +907,18 @@ final class HubInboxModel: ObservableObject {
                         self.afterWrites[item.id] = nil
                         self.pendingLetters[item.id] = nil
                     } else {
+                        if args.count > 2, args[2] == "draft", let index = args.firstIndex(of: "--text"),
+                           index + 1 < args.count, self.noteTexts[item.id] == args[index + 1] {
+                            self.noteTexts[item.id] = nil
+                            self.noteAcknowledgements[item.id, default: 0] += 1
+                        }
                         self.writeGeneration += 1
                     }
                     if let next = self.pendingWrites.removeValue(forKey: item.id) {
                         self.write(next, item: item, queued: true)
                     } else {
                         let waiting = self.afterWrites.removeValue(forKey: item.id) ?? []
-                        self.load()
+                        if let reload = self.reloadAfterWrite { reload() } else { self.load() }
                         waiting.forEach { $0() }
                     }
                 }
@@ -2041,6 +2055,8 @@ struct InboxCardState: Equatable {
     var writeError: String?
     var writeErrorDetail: String?
     var preferences: WidgetPreferences?
+    /// Changes only when the card's current note was successfully saved.
+    var noteAcknowledgement: Int
     /// The note-focus request's count while it names this card, nil otherwise: a change moves the keyboard into it.
     var noteFocusRequest: Int?
     /// The hub's row of the card's session, for "Open in transcript"; nil when the hub's list does not hold it.
@@ -2199,7 +2215,7 @@ struct InboxDecisionCard: View, Equatable {
         .onAppear {
             if !noteSeeded {
                 // A note typed here and not staged survives the lazy row and a reload (F3).
-                note = inbox.noteTexts[item.id] ?? item.draft ?? ""
+                note = inbox.noteForCard(item)
                 noteDirty = inbox.noteTexts[item.id] != nil
                 noteSeeded = true
             }
@@ -2211,6 +2227,10 @@ struct InboxDecisionCard: View, Equatable {
             } else if !noteFocused, !noteDirty {
                 note = stored ?? ""
             }
+        }
+        // A successful write can save the already-stored text, so item.draft need not change.
+        .onChange(of: state.noteAcknowledgement) { _, _ in
+            if inbox.noteTexts[item.id] == nil { noteDirty = false }
         }
         // Return on the main list's key card puts the keyboard into this note.
         .onChange(of: state.noteFocusRequest) { _, request in
@@ -2399,7 +2419,6 @@ struct InboxDecisionCard: View, Equatable {
                 if noteDirty, pickable, !note.trimmed.isEmpty {
                     Button("Stage note") {
                         inbox.stageNote(item, in: session, note: note)
-                        noteDirty = false
                     }
                     .buttonStyle(.genHoverPlain())
                     .font(.system(size: 11))
@@ -2490,8 +2509,6 @@ struct InboxDecisionCard: View, Equatable {
         if let hint = inbox.submitNote(item, in: session, note: note, command: command) {
             noteHint = hint
             GenAnnounce.post(hint)
-        } else {
-            noteDirty = false
         }
     }
 
@@ -2526,7 +2543,6 @@ struct InboxDecisionCard: View, Equatable {
                 if staged, pickable {
                     Button {
                         inbox.sendNow(item, in: session, note: noteDirty ? note : nil)
-                        noteDirty = false
                     } label: {
                         Label("Send now", systemImage: "paperplane.fill").font(.system(size: 12))
                     }
@@ -2606,7 +2622,6 @@ struct InboxDecisionCard: View, Equatable {
             let flags = NSApp.currentEvent?.modifierFlags ?? NSEvent.modifierFlags
             inbox.choose(item, in: session, letter: choice.id, note: noteDirty ? note : nil,
                          shift: flags.contains(.shift), command: flags.contains(.command))
-            noteDirty = false
         }
         let label = HStack(alignment: .top, spacing: 9) {
             // A staged letter is the widget's blue, never the green of "answered" (F2); the deep send blue keeps

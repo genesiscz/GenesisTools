@@ -95,6 +95,11 @@ public final class WidgetModel: ObservableObject {
     /// How the open popup takes another alert, and how long it stays while the pointer is not on it (0: until closed).
     public private(set) var peekMany: WidgetAlerts.PopupMany = .newest
     private(set) var peekSeconds: Double = 7
+    /// Duration and the inbox generation when each displayed or waiting alert arrived.
+    private var peekDurations: [String: Double] = [:]
+    private var peekInboxGenerations: [String: Int] = [:]
+    private var inboxGeneration = 0
+    private var peekOutcomeInboxGeneration = 0
     private var peekTask: Task<Void, Never>?
     /// The module a peek replaced on its surface (`previous`, nil when none was chosen) and the one it showed. The
     /// end of the peek puts `previous` back, unless the selection is no longer `shown`: the user picked a module.
@@ -549,7 +554,9 @@ public final class WidgetModel: ObservableObject {
     /// list. Only then do the number keys answer it; a key used to stage an option of a decision nobody could see.
     public var answerCardOnScreen: WidgetCard? {
         guard activeModuleID == "agents", !inboxOverview, section == "Inbox", stagedView == nil else { return nil }
-        return answerCard
+        guard let card = answerCard, LiveWidgetView.filtered([card], by: inboxFilter).contains(where: { $0.id == card.id })
+        else { return nil }
+        return card
     }
     /// The decision whose own answer field holds the draft (its toolbar open, the reply composer parked).
     @Published public var ownAnswerCardID: String?
@@ -746,6 +753,22 @@ public final class WidgetModel: ObservableObject {
         }
     }
 
+    /// Wait briefly for writes queued by stop, including a held staged discard. The app's quit deadline is 5 s.
+    func waitForShutdownMutations(timeout: Duration = .seconds(4)) async -> Bool {
+        guard let pending = mutationTask else { return true }
+        return await withCheckedContinuation { continuation in
+            let completion = WidgetShutdownCompletion(continuation)
+            Task { @MainActor in
+                await pending.value
+                completion.finish(true)
+            }
+            Task { @MainActor in
+                try? await Task.sleep(for: timeout)
+                completion.finish(false)
+            }
+        }
+    }
+
     func receive(_ lines: [String]) {
         for line in lines {
             do {
@@ -912,26 +935,39 @@ public final class WidgetModel: ObservableObject {
         // The same decision again (answered elsewhere while its alert is shown or waits): it takes that place.
         if let shown = peekItem, let peeked = hoveredSurface {
             if shown.sourceId == item.sourceId {
+                // A snapshot may report this decision answered while its send outcome is still being shown.
+                // Keep the outcome and its timer; updateInbox removes any independently settled resend controls.
+                if peekOutcome != nil { return }
                 peekItem = item
                 peekSeconds = seconds
+                peekDurations[item.id] = seconds
+                peekInboxGenerations[item.id] = inboxGeneration
                 PerfLog.mark("widget.peek replaced id=\(item.id) answered=\(item.isAnsweredElsewhere)")
                 schedulePeekEnd(on: peeked)
                 presentationChanged?()
                 return
             }
             if let index = peekQueue.firstIndex(where: { $0.sourceId == item.sourceId }) {
+                let previous = peekQueue[index]
+                peekDurations[previous.id] = nil
+                peekInboxGenerations[previous.id] = nil
                 peekQueue[index] = item
+                peekDurations[item.id] = seconds
+                peekInboxGenerations[item.id] = inboxGeneration
                 presentationChanged?()
                 return
             }
         }
         if let shown = peekItem, many != .newest, let peeked = hoveredSurface {
-            if shown.id != item.id, !peekQueue.contains(where: { $0.id == item.id }) { peekQueue.append(item) }
+            if shown.id != item.id, !peekQueue.contains(where: { $0.id == item.id }) {
+                peekQueue.append(item)
+                peekDurations[item.id] = seconds
+                peekInboxGenerations[item.id] = inboxGeneration
+            }
             peekMany = many
-            peekSeconds = seconds
             PerfLog.mark("widget.peek added id=\(item.id) mode=\(many.rawValue) waiting=\(peekQueue.count)")
             // A new row gives the list its full time again; a queue keeps the shown alert's own countdown.
-            if many == .list { schedulePeekEnd(on: peeked) }
+            if many == .list, peekOutcome == nil { schedulePeekEnd(on: peeked) }
             presentationChanged?()
             return
         }
@@ -945,6 +981,8 @@ public final class WidgetModel: ObservableObject {
         hoverTask?.cancel()
         peekItem = item
         peekQueue = []
+        peekDurations = [item.id: seconds]
+        peekInboxGenerations = [item.id: inboxGeneration]
         peekMany = many
         peekSeconds = seconds
         hoveredSurface = surface
@@ -1013,7 +1051,7 @@ public final class WidgetModel: ObservableObject {
         let seconds = peekSeconds
         peekTask = Task { [weak self] in
             do { try await Task.sleep(for: .seconds(seconds)) } catch { return }
-            guard let self, self.peekItem == item, !self.pointerInside.contains(surface.key) else { return }
+            guard let self, self.peekItem?.id == item.id, !self.pointerInside.contains(surface.key) else { return }
             if self.holdPeekForStaged(on: surface) { return }
             self.endPeek()
         }
@@ -1022,9 +1060,19 @@ public final class WidgetModel: ObservableObject {
     /// A row of the popup's list of later alerts: that alert takes the popup, and the one shown takes its row.
     public func showWaitingPeek(_ item: WidgetInboxItem) {
         guard let shown = peekItem, let index = peekQueue.firstIndex(where: { $0.id == item.id }) else { return }
+        let waiting = peekQueue[index]
+        if peekSettled(waiting) {
+            peekQueue.remove(at: index)
+            peekDurations[waiting.id] = nil
+            peekInboxGenerations[waiting.id] = nil
+            presentationChanged?()
+            return
+        }
         peekQueue[index] = shown
-        peekItem = item
-        PerfLog.mark("widget.peek swapped id=\(item.id) for=\(shown.id)")
+        peekItem = waiting
+        peekSeconds = peekDurations[waiting.id] ?? 7
+        if let surface = hoveredSurface { schedulePeekEnd(on: surface) }
+        PerfLog.mark("widget.peek swapped id=\(waiting.id) for=\(shown.id)")
         presentationChanged?()
     }
 
@@ -1037,11 +1085,16 @@ public final class WidgetModel: ObservableObject {
         guard let shown = peekItem, ids.contains(shown.sourceId) else { return }
         PerfLog.mark("widget.peek sent id=\(shown.id) waiting=\(peekQueue.count)")
         if peekQueue.isEmpty {
-            dismissPeek(all: true)
+            endPeek(advance: false)
             return
         }
         peekItem = peekQueue.removeFirst()
         presentationChanged?()
+    }
+
+    /// A snapshot must not close the popup before its in-flight send can show its result.
+    func keepSettledPeek(_ item: WidgetInboxItem) -> Bool {
+        peekOutcome != nil || sendingDecisionIDs.contains(item.sourceId)
     }
 
     /// A send started from the popup ended: the popup shows `outcome` instead of closing at once. `ids` are the
@@ -1055,6 +1108,7 @@ public final class WidgetModel: ObservableObject {
             return
         }
         peekOutcome = outcome
+        peekOutcomeInboxGeneration = inboxGeneration
         // The popup's own countdown would end it under the result.
         peekTask?.cancel()
         peekTask = nil
@@ -1066,7 +1120,7 @@ public final class WidgetModel: ObservableObject {
             guard let self, self.peekItem?.id == shown.id else { return }
             if shown.sourceId == WidgetAlerts.stagedReminderID {
                 if self.stagedItems.allSatisfy({ ids.contains($0.sourceId) }) {
-                    self.dismissPeek(all: true)
+                    self.endPeek(advance: false)
                 } else {
                     self.peekOutcome = nil
                 }
@@ -1080,6 +1134,7 @@ public final class WidgetModel: ObservableObject {
     /// one-after-another mode it shows the next alert instead, unless `all`; a click elsewhere closes all of them.
     public func dismissPeek(all: Bool = false) {
         guard let item = peekItem else { return }
+        if peekOutcome == nil, let surface = hoveredSurface, holdPeekForStaged(on: surface) { return }
         PerfLog.mark("widget.peek dismissed id=\(item.id) all=\(all)")
         hoverTask?.cancel()
         endPeek(advance: !all)
@@ -1090,22 +1145,39 @@ public final class WidgetModel: ObservableObject {
         }
     }
 
+    /// Only a newer complete snapshot with the uncapped decision list can prove settlement.
+    private func peekSettled(_ item: WidgetInboxItem) -> Bool {
+        guard item.kind == "decision", item.needsAnswer, inbox.complete,
+              inboxGeneration > (peekInboxGenerations[item.id] ?? inboxGeneration),
+              let pending = inbox.pendingDecisionIDs else { return false }
+        return !pending.contains(item.sourceId)
+    }
+
     /// The next queued alert that still applies: a decision answered in the meantime is skipped.
     private func nextQueuedPeek() -> WidgetInboxItem? {
         while !peekQueue.isEmpty {
             let next = peekQueue.removeFirst()
+            if peekSettled(next) {
+                peekDurations[next.id] = nil
+                peekInboxGenerations[next.id] = nil
+                continue
+            }
             guard let fresh = inboxOverviewItems.first(where: { $0.id == next.id }) else { return next }
+            if next.kind == "decision", next.needsAnswer { return fresh.needsAnswer ? fresh : next }
             if fresh.needsAnswer || !next.needsAnswer { return fresh }
         }
         return nil
     }
 
-    private func endPeek(advance: Bool = true) {
+    func endPeek(advance: Bool = true) {
         peekTask?.cancel()
         peekTask = nil
         guard let item = peekItem else { return }
         if advance, peekMany == .queue, let surface = hoveredSurface, let next = nextQueuedPeek() {
+            peekDurations[item.id] = nil
+            peekInboxGenerations[item.id] = nil
             peekItem = next
+            peekSeconds = peekDurations[next.id] ?? 7
             PerfLog.mark("widget.peek next id=\(next.id) after=\(item.id) waiting=\(peekQueue.count)")
             presentationChanged?()
             schedulePeekEnd(on: surface)
@@ -1113,6 +1185,8 @@ public final class WidgetModel: ObservableObject {
         }
         peekItem = nil
         peekQueue = []
+        peekDurations = [:]
+        peekInboxGenerations = [:]
         if expanded == nil, let surface = hoveredSurface, !pointerInside.contains(surface.key) {
             hoveredSurface = nil
         }
@@ -1136,6 +1210,7 @@ public final class WidgetModel: ObservableObject {
         pointerChanged?(surface, inside)
         if !inside { scheduleQuietReduction() }
         if !inside, peekItem != nil, hoveredSurface == surface {
+            if peekOutcome != nil { return }
             // The user moved onto the popup and away again: its countdown starts again, since "Preview stays" counts
             // the time the pointer is off it. It closed after 220 ms before, 2.5 s after it appeared (Martin,
             // 2026-10-26: "expands the widget for a few seconds then it disappears").
@@ -1209,6 +1284,7 @@ public final class WidgetModel: ObservableObject {
     }
 
     func updateInbox(_ value: WidgetInboxSummary) {
+        inboxGeneration += 1
         var arrived = false
         var arrivedKeys: Set<String> = []
         var arrivals: [WidgetInboxItem] = []
@@ -1273,6 +1349,38 @@ public final class WidgetModel: ObservableObject {
         railActivitySessions = snapshot?.state.preferences.railOrder == "stable"
             ? railActive : railActive.sorted(by: Self.previewOrder(inbox: inboxSessions, sort: previewSort))
         inboxOverviewItems = Self.overviewItems(value.sessions)
+        // Remove settled alerts in both list and queue mode. A visible alert must not keep answer buttons either.
+        let settledWaiting = peekQueue.filter { peekSettled($0) }
+        if !settledWaiting.isEmpty {
+            let ids = Set(settledWaiting.map(\.id))
+            peekQueue.removeAll { ids.contains($0.id) }
+            for id in ids {
+                peekDurations[id] = nil
+                peekInboxGenerations[id] = nil
+            }
+            presentationChanged?()
+        }
+        if let shown = peekItem, peekSettled(shown), !keepSettledPeek(shown) {
+            if peekMany == .list, let next = peekQueue.first {
+                showWaitingPeek(next)
+                peekQueue.removeAll { $0.id == shown.id }
+                peekDurations[shown.id] = nil
+                peekInboxGenerations[shown.id] = nil
+                presentationChanged?()
+            } else {
+                endPeek()
+            }
+        }
+        if let outcome = peekOutcome, value.complete, inboxGeneration > peekOutcomeInboxGeneration {
+            // Absence from pendingDecisionIDs is not enough: an answered decision can still need delivery.
+            // The explicit answered-elsewhere rows identify decisions already settled by another surface.
+            let answered = Set((value.answeredElsewhere ?? []).filter(\.isAnsweredElsewhere).map(\.sourceId))
+            let waiting = outcome.sendAgain.filter { !answered.contains($0.sourceId) }
+            if waiting != outcome.sendAgain {
+                peekOutcome = WidgetPeekOutcome(text: outcome.text, tone: outcome.tone, sendAgain: waiting,
+                                                detail: outcome.detail)
+            }
+        }
         let listed = value.sessions.flatMap { $0.items ?? [] }
         reconcileStaged(value.staged ?? listed, listed: listed)
         if value.complete, !stagedStartChecked {
@@ -1406,6 +1514,9 @@ public final class WidgetModel: ObservableObject {
             return
         }
         if sessionKey != selectedKey { select(sessionKey) }
+        inboxOverview = false
+        stagedView = nil
+        stagedLeavePrompt = false
         section = "Inbox"
         foldedCardIDs.remove("decision:" + id)
         selectedCardID = "decision:" + id
@@ -1468,6 +1579,8 @@ public final class WidgetModel: ObservableObject {
     var pendingStageAt: [String: Double] = [:]
     /// The item each pending pick was made on, so a leave or a popup's end right after the click still knows it.
     var pendingStageItems: [String: WidgetInboxItem] = [:]
+    /// Notes waiting for their stage write and snapshot, distinct from an empty pick used to clear a stage.
+    var pendingStageNotes: [String: String] = [:]
     /// When the hub confirmed each pending pick was written (epoch ms): a row written after it is another surface's.
     var pendingStageDone: [String: Double] = [:]
     /// Decisions whose send runs now, so their Send now says Sending… and a second press cannot send them twice.
@@ -1520,6 +1633,12 @@ public final class WidgetModel: ObservableObject {
         select(item.key)
         selectedCardID = item.id
         foldedCardIDs.remove(item.id)
+        // An explicit open must reveal its target even if the reader had picked the opposite filter.
+        let decisionLike = ["decision", "todo"].contains(item.kind)
+        if (inboxFilter == "inbox" && decisionLike) || (inboxFilter == "decisions" && !decisionLike) {
+            inboxFilterPicked = true
+            inboxFilter = "all"
+        }
         section = "Inbox"
         if let surface { openModule("agents", on: surface) }
         acknowledgeOpenedInbox()
@@ -2150,14 +2269,16 @@ public final class WidgetModel: ObservableObject {
         submit()
     }
 
-    /// Sends the draft (text and media) as the answer to `ownAnswerCard`, with no option picked.
+    /// Queues the draft as the answer, carrying a staged decision pick with a text-only answer.
     public func submitOwnAnswer() {
         guard let card = ownAnswerCard else { return }
         guard !draft.text.trimmingCharacters(in: .whitespacesAndNewlines).isEmpty || !draft.assetIds.isEmpty else {
             postNote("Write your answer or attach media first.")
             return
         }
-        submit(answering: true)
+        let option = card.kind == "decision" && card.needsAnswer && draft.assetIds.isEmpty
+            ? stagedOption(card.sourceId, stored: card.draftOption) : nil
+        submit(choice: option, answering: true)
         if submittedCards.contains(card.id) { ownAnswerCardID = nil }
     }
 
@@ -2936,6 +3057,17 @@ public struct WidgetListKey: Equatable, Sendable {
 
     /// ⌘↩: an `.open` with ⌘ held.
     public var isOpenAlt: Bool { kind == .open && alternate }
+}
+
+@MainActor
+private final class WidgetShutdownCompletion {
+    private var continuation: CheckedContinuation<Bool, Never>?
+    init(_ continuation: CheckedContinuation<Bool, Never>) { self.continuation = continuation }
+    func finish(_ completed: Bool) {
+        guard let continuation else { return }
+        self.continuation = nil
+        continuation.resume(returning: completed)
+    }
 }
 
 /// How the widget's note reads: plain, a success, or a warning (a send no receiver took, a refused write).
