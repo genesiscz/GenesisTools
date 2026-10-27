@@ -62,14 +62,31 @@ public enum DiffScope: Hashable {
     /// Whether a change on disk can change this diff. A commit, or a range whose ends are commit ids, is
     /// fixed: no file event moves it, so the window does not load it again for one (a PR's range was
     /// re-read about three times a minute all night while agents wrote in its repository, 2026-09-30).
-    /// A range on a name (`HEAD`, `origin/main`, a fallback base) moves with a commit or a fetch.
+    /// A range on a name (`HEAD`, `origin/main`, a fallback base) moves with a commit or a fetch. A commit's
+    /// parent (`<id>^`, the base of a range of picked commits) is fixed too: read as a name, it made the hub
+    /// re-read one five-commit range with 19 git processes every few seconds while an agent wrote in that
+    /// checkout (254 `spawn.storm` marks, 19,711 git children in one day, 2026-10-27).
     public var followsWorkingTree: Bool {
         switch self {
         case .commit, .compare: return false
         case .range(let base, let head, _, let fallbackBase):
-            return !(Self.isObjectID(base) && Self.isObjectID(head) && (fallbackBase.map(Self.isObjectID) ?? true))
+            return !(Self.isFixedRevision(base) && Self.isFixedRevision(head) && (fallbackBase.map(Self.isFixedRevision) ?? true))
         default: return true
         }
+    }
+
+    /// A commit id, or its ancestor by `^`, `^<n>` or `~<n>` steps (`abc1234^`, `abc1234~2^2`): no ref
+    /// update or file change moves it.
+    public static func isFixedRevision(_ revision: String) -> Bool {
+        guard let cut = revision.firstIndex(where: { $0 == "^" || $0 == "~" }) else { return isObjectID(revision) }
+        guard isObjectID(String(revision[..<cut])) else { return false }
+        var rest = revision[cut...]
+        while let step = rest.first {
+            guard step == "^" || step == "~" else { return false }
+            rest = rest.dropFirst()
+            rest = rest.drop(while: \.isNumber)
+        }
+        return true
     }
 
     /// A full or abbreviated commit id (7 to 64 hex digits), never a ref name.
@@ -168,6 +185,25 @@ public struct ReviewRepositoryLayout: Equatable {
         }
         guard path == root.path || path.hasPrefix(root.path + "/") else { return false }
         return !path.contains("/node_modules/") && !path.contains("/.build/")
+    }
+
+    /// An event that can move a ref (a commit, a checkout, a fetch, a branch made or deleted, a worktree added, removed
+    /// or switched): what the commit list, the worktrees and the base candidates read. The index and the working tree
+    /// change none of them.
+    public func movesRefs(_ event: String) -> Bool {
+        let path = URL(fileURLWithPath: event).standardizedFileURL.path
+        for directory in [gitDirectory.path, commonDirectory.path] {
+            if path == directory { return true }
+            if path.hasPrefix(directory + "/") {
+                let relative = String(path.dropFirst(directory.count + 1))
+                if relative == "worktrees" || relative.hasPrefix("worktrees/") {
+                    let parts = relative.split(separator: "/")
+                    return parts.count <= 2 || (parts.count == 3 && parts[2] == "HEAD")
+                }
+                return ["HEAD", "packed-refs", "refs"].contains(relative) || relative.hasPrefix("refs/")
+            }
+        }
+        return false
     }
 }
 
