@@ -1062,7 +1062,10 @@ final class WidgetTasksStoreTests: XCTestCase {
             return try self.data(args.contains("completed") ? [] : [source])
         })
         defer { store.stop() }
-        await loaded(store) { store.visibilityChanged(.compact) }
+        // The compact rail never draws the rows, so it reads nothing.
+        store.visibilityChanged(.compact)
+        XCTAssertEqual(calls, [], "A compact module must not read the ledger")
+        await loaded(store) { store.visibilityChanged(.preview) }
         XCTAssertEqual(calls, [["list", "--json", "--scope", "active", "--limit", "200"]])
         XCTAssertEqual(store.tasks.first?.sourceContext.project, "Fixture")
         for _ in 0..<1000 {
@@ -1084,6 +1087,17 @@ final class WidgetTasksStoreTests: XCTestCase {
         XCTAssertTrue(calls.last?.contains("codex:fixture") == true)
         await loaded(store) { store.sourceChanged() }
         XCTAssertEqual(calls.count, 5, "An event invalidates cached metadata")
+        // A burst of ledger writes is one reload at once and one after it, never one per write.
+        for _ in 0..<20 { store.sourceChanged() }
+        XCTAssertEqual(calls.count, 5, "Writes within a second of the last reload wait for the trailing one")
+        await loaded(store) {}
+        XCTAssertEqual(calls.count, 6, "The burst's last change gets its reload")
+        // Hidden: a change only drops the cache; the next showing reads the ledger once.
+        store.visibilityChanged(.compact)
+        store.sourceChanged()
+        XCTAssertEqual(calls.count, 6)
+        await loaded(store) { store.visibilityChanged(.expanded) }
+        XCTAssertEqual(calls.count, 7)
     }
 
     func testReadFailureIsExplicitAndRetryRecoversWithoutInventedTasks() async throws {
