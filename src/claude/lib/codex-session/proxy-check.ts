@@ -44,8 +44,8 @@ export async function sessionKeyProblem(input: {
     if (response.status === 401) {
         return (
             `The ai-proxy at ${input.baseUrl} answered this session's key with 401 (${detail ?? "no message"}). ` +
-            "It runs code from before session keys, so every request of this session would fail. " +
-            "Restart it; this also ends the requests its other clients have in flight:\n" +
+            "The proxy may run code from before session keys or use different authentication settings. " +
+            "Confirm which proxy is running before restarting it; a restart also ends its other clients' requests:\n" +
             `  ${toolCommand("ai-proxy down")} && ${toolCommand("ai-proxy up")}`
         );
     }
@@ -53,7 +53,7 @@ export async function sessionKeyProblem(input: {
     if (response.status === 403) {
         return (
             `The ai-proxy at ${input.baseUrl} answered this session's key with 403 (${detail ?? "no message"}). ` +
-            "It does not find the session record this launcher just wrote, so it reads another GENESIS_TOOLS_HOME."
+            "The key may be unknown, closed or replaced by another launch; the proxy may also use a different GENESIS_TOOLS_HOME."
         );
     }
 

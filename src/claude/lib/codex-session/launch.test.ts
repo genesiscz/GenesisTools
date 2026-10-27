@@ -350,18 +350,21 @@ describe("the session key check before Claude Code starts", () => {
         expect(problem).toBeUndefined();
     });
 
-    it("names the restart when the proxy is older than session keys (401)", async () => {
+    it("describes possible causes and the restart for a rejected key (401)", async () => {
         const problem = await check(() => refusal(401, "Invalid proxy API key"));
 
         expect(problem).toContain("401 (Invalid proxy API key)");
+        expect(problem).toContain("may run code from before session keys");
+        expect(problem).toContain("different authentication settings");
         expect(problem).toContain("tools ai-proxy down && tools ai-proxy up");
     });
 
-    it("names the other home when the proxy does not know the record (403)", async () => {
+    it("names possible causes when the session key is rejected (403)", async () => {
         const problem = await check(() => refusal(403, "unknown or closed session"));
 
         expect(problem).toContain("403 (unknown or closed session)");
-        expect(problem).toContain("GENESIS_TOOLS_HOME");
+        expect(problem).toContain("unknown, closed or replaced by another launch");
+        expect(problem).toContain("may also use a different GENESIS_TOOLS_HOME");
     });
 
     it("handles a failed response body while retaining the status", async () => {
