@@ -283,7 +283,7 @@ actor ClickyPackLoader {
             !licenceText.contains("\0")
         else { throw ClickyPackError.invalid("The pack licence must be nonempty UTF-8 text.") }
         var samples: [String: ClickyPreparedSample] = [:]
-        var byHash: [String: ClickyPreparedSample] = [:]
+        var byHash: [String: (sample: ClickyPreparedSample, originalFrames: Int)] = [:]
         var decodedFrameCount = 0
         for file in manifest.files {
             try Task.checkCancellation()
@@ -293,15 +293,15 @@ actor ClickyPackLoader {
                 throw ClickyPackError.invalid("Sample checksum mismatch: \(file.filename)")
             }
             if let cached = byHash[hash] {
-                guard cached.frames.count == file.frames else {
+                guard cached.originalFrames == file.frames else {
                     throw ClickyPackError.invalid("Sample frame count mismatch: \(file.filename)")
                 }
-                samples[file.filename] = cached
+                samples[file.filename] = cached.sample
             } else {
                 let frames = ClickySampleTrim.trimmed(try Self.decodePCM16(data, expectedFrames: file.frames))
                 decodedFrameCount += frames.count
                 let sample = ClickyPreparedSample(sha256: hash, frames: frames)
-                byHash[hash] = sample
+                byHash[hash] = (sample, file.frames)
                 samples[file.filename] = sample
             }
         }
@@ -490,16 +490,27 @@ enum ClickySampleTrim {
             let slice = frames[(index * window)..<((index + 1) * window)]
             return (slice.reduce(0) { $0 + $1 * $1 } / Float(window)).squareRoot()
         }
-        guard let peak = rms.max(), peak > 0, let peakAt = rms.firstIndex(of: peak) else { return frames }
+        guard let peak = rms.max(), peak > 0 else { return frames }
         let db = rms.map { 20 * log10(max($0, 1e-9) / peak) }
         let onset = db.firstIndex { $0 > -20 } ?? 0
         var start = max(0, onset * window - leadIn)
         if start < fade { start = 0 }
         var end = frames.count
-        var quietest = peakAt
-        for index in (peakAt + 1)..<windows {
+        var firstPeak = onset
+        var quietest = onset
+        var foundValley = false
+        for index in (onset + 1)..<windows {
+            if !foundValley {
+                if db[index] > db[firstPeak] {
+                    firstPeak = index
+                } else if db[firstPeak] - db[index] >= 6 {
+                    foundValley = true
+                    quietest = index
+                }
+                continue
+            }
             if db[index] < db[quietest] { quietest = index }
-            if index - peakAt >= 4, db[index] > -15, db[index] - db[quietest] >= 12 {
+            if index - firstPeak >= 4, db[index] > -15, db[index] - db[quietest] >= 12 {
                 end = quietest * window
                 break
             }

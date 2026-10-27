@@ -12,7 +12,7 @@ public enum ClickySynthesis {
         let duration = release ? 0.065 : 0.11
         let frames = Int(sampleRate * duration)
         var state = UInt64(variant + 1) &* 7919 &+ UInt64(ClickySwitch.allCases.firstIndex(of: profile)! + 1) * 104729
-        let frequency = profile.frequency * (release ? 1.65 : 1) * (1 + Double(variant - 1) * 0.024)
+        let frequency = profile.frequency * (release ? 1.65 : 1)
         let decay = profile.decay * (release ? 0.6 : 1)
         var lowNoise = 0.0
         return (0..<frames).map { frame in
@@ -165,6 +165,9 @@ final class ClickyAudio {
         let decodedFrames: Int
     }
     private var banks: [PackBank] = []
+    /// Changes whenever the cache changes, so a conversion in flight cannot replace a newer bank.
+    private var bankGeneration = 0
+    private let bankConverter: ([String: ClickyPreparedSample], AVAudioFormat) throws -> [String: AVAudioPCMBuffer]
     private var activeReference: ClickyPackReference?
     private var liveSelection = ClickyPackSelectionState()
     private var previewSelection = ClickyPackSelectionState()
@@ -185,6 +188,7 @@ final class ClickyAudio {
             banks.append(bank)
             if banks.count > 3 { banks.removeFirst(banks.count - 3) }
         }
+        bankGeneration += 1
         stop()
         activeReference = reference
     }
@@ -213,13 +217,19 @@ final class ClickyAudio {
         let gain = bank.playback.gain * (release ? bank.playback.keyupGain : 1)
         let filename = choice.filename
         // Looked up when it plays: a start that changed the output rate converts the bank first.
-        try schedule({ [weak self] in self?.banks.last(where: { $0.reference == reference })?.buffers[filename] },
+        try schedule({ [weak self] in self?.cachedBuffer(reference: reference, filename: filename) },
                      preferences: preferences, pan: pan, gain: gain)
         return true
     }
 
-    init(engine: AVAudioEngine = AVAudioEngine()) {
+    func cachedBuffer(reference: ClickyPackReference, filename: String) -> AVAudioPCMBuffer? {
+        banks.last(where: { $0.reference == reference })?.buffers[filename]
+    }
+
+    init(engine: AVAudioEngine = AVAudioEngine(),
+         bankConverter: @escaping ([String: ClickyPreparedSample], AVAudioFormat) throws -> [String: AVAudioPCMBuffer] = ClickyAudio.buffers) {
         self.engine = engine
+        self.bankConverter = bankConverter
         let voices = (0..<12).map { _ in (AVAudioPlayerNode(), AVAudioUnitVarispeed()) }
         self.voices = voices
         box = EngineBox(engine: engine, voices: voices)
@@ -266,7 +276,7 @@ final class ClickyAudio {
     }
 
     /// A pack's 48 kHz samples as buffers in `format`, converted once when the output runs at another rate.
-    static func buffers(_ samples: [String: ClickyPreparedSample], format: AVAudioFormat) throws -> [String: AVAudioPCMBuffer] {
+    nonisolated static func buffers(_ samples: [String: ClickyPreparedSample], format: AVAudioFormat) throws -> [String: AVAudioPCMBuffer] {
         var decoded: [String: AVAudioPCMBuffer] = [:]
         var unique: [String: AVAudioPCMBuffer] = [:]
         for (name, sample) in samples {
@@ -283,7 +293,7 @@ final class ClickyAudio {
         return decoded
     }
 
-    private static func convert(_ frames: [Float], to format: AVAudioFormat) -> AVAudioPCMBuffer? {
+    nonisolated private static func convert(_ frames: [Float], to format: AVAudioFormat) -> AVAudioPCMBuffer? {
         let source = Self.format(rate: ClickySynthesis.sampleRate)
         guard let input = AVAudioPCMBuffer(pcmFormat: source, frameCapacity: AVAudioFrameCount(max(1, frames.count))),
               let channel = input.floatChannelData?[0] else { return nil }
@@ -310,7 +320,44 @@ final class ClickyAudio {
         return status == .error ? nil : output
     }
 
-    /// The output runs at a new rate: every sound again at that rate, before the waiting click plays.
+    /// Prepare against a snapshot on the start queue. If a pack changes while it runs, discard the whole result
+    /// and prepare the new snapshot before publishing any buffers or playing the waiting click.
+    func prepareRate(_ next: AVAudioFormat, synthesized: [String: AVAudioPCMBuffer]?, completion: @escaping (Error?) -> Void) {
+        guard next.sampleRate != format.sampleRate else {
+            completion(nil)
+            return
+        }
+        let generation = bankGeneration
+        let snapshots = banks.map(\.samples)
+        let converter = bankConverter
+        startQueue.async { [weak self] in
+            let builtIn = synthesized ?? ClickyAudio.synthesize(next)
+            let converted = Result { try snapshots.map { try converter($0, next) } }
+            DispatchQueue.main.async {
+                MainActor.assumeIsolated {
+                    guard let self else { return }
+                    guard generation == self.bankGeneration else {
+                        self.prepareRate(next, synthesized: builtIn, completion: completion)
+                        return
+                    }
+                    switch converted {
+                    case .failure(let error):
+                        completion(error)
+                    case .success(let prepared):
+                        self.format = next
+                        self.buffers = builtIn
+                        for index in self.banks.indices {
+                            self.banks[index].buffers = prepared[index]
+                        }
+                        PerfLog.mark(String(format: "clicky.audio.rate %.0f Hz", next.sampleRate))
+                        completion(nil)
+                    }
+                }
+            }
+        }
+    }
+
+    /// Offline rendering starts synchronously and has no hardware to wake.
     private func adopt(_ next: AVAudioFormat, synthesized: [String: AVAudioPCMBuffer]?) {
         guard next.sampleRate != format.sampleRate else { return }
         format = next
@@ -372,36 +419,51 @@ final class ClickyAudio {
             DispatchQueue.main.async { [weak self] in
                 MainActor.assumeIsolated {
                     guard let self else { return }
-                    self.starting = false
-                    self.running = failure == nil
-                    self.paused = false
-                    if let started { self.adopt(started, synthesized: synthesized) }
-                    let completion = self.startState.complete()
-                    PerfLog.mark(String(format: "clicky.audio.start %.1fms off-main%@ at %.0f Hz", ms, resumed ? " (resume)" : "",
-                                        started?.sampleRate ?? rate)
-                        + (failure.map { " failed: \($0.localizedDescription)" } ?? ""))
-                    if self.configChangedWhileStarting {
-                        // The engine stopped during the start: start it again before the waiting click plays.
-                        self.configChangedWhileStarting = false
-                        if completion != .stop {
-                            self.running = false
+                    let finish: (Error?) -> Void = { [weak self] preparationError in
+                        guard let self else { return }
+                        self.starting = false
+                        // A successful engine start still needs to be stopped if buffer preparation fails.
+                        self.running = started != nil
+                        self.paused = false
+                        let error = failure ?? preparationError
+                        let completion = self.startState.complete()
+                        PerfLog.mark(String(format: "clicky.audio.start %.1fms off-main%@ at %.0f Hz", ms, resumed ? " (resume)" : "",
+                                            started?.sampleRate ?? rate)
+                            + (error.map { " failed: \($0.localizedDescription)" } ?? ""))
+                        if error != nil {
+                            self.configChangedWhileStarting = false
+                            self.pendingClick = nil
+                            self.stopVoices()
+                            return
+                        }
+                        if self.configChangedWhileStarting {
+                            // The engine stopped during the start: start it again before the waiting click plays.
+                            self.configChangedWhileStarting = false
+                            if completion != .stop {
+                                self.running = false
+                                self.startEngine()
+                                return
+                            }
+                        }
+                        if completion == .restart {
+                            self.stopVoices()
                             self.startEngine()
                             return
                         }
-                    }
-                    if completion == .restart {
-                        self.stopVoices()
-                        self.startEngine()
-                        return
-                    }
-                    if completion == .stop {
+                        if completion == .stop {
+                            self.pendingClick = nil
+                            self.stopVoices()
+                            return
+                        }
+                        let click = self.pendingClick
                         self.pendingClick = nil
-                        self.stopVoices()
-                        return
+                        click?()
                     }
-                    let click = self.pendingClick
-                    self.pendingClick = nil
-                    if failure == nil { click?() }
+                    if let started {
+                        self.prepareRate(started, synthesized: synthesized, completion: finish)
+                    } else {
+                        finish(nil)
+                    }
                 }
             }
         }

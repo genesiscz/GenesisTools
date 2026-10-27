@@ -403,6 +403,31 @@ final class ClickyTests: XCTestCase {
         XCTAssertEqual(signatures.count, 7)
     }
 
+    func testBuiltInVariantsKeepTheSameTonalPitch() {
+        let profile = ClickySwitch.basalt
+        func tonalSignal(_ variant: Int) -> [Double] {
+            let samples = ClickySynthesis.samples(profile: profile, release: false, variant: variant)
+            var state = UInt64(variant + 1) &* 7919 &+ UInt64(ClickySwitch.allCases.firstIndex(of: profile)! + 1) * 104729
+            var lowNoise = 0.0
+            return samples.prefix(1_000).enumerated().map { frame, sample in
+                state = state &* 6_364_136_223_846_793_005 &+ 1_442_695_040_888_963_407
+                let noise = Double(state >> 33) / Double(UInt32.max >> 1) * 2 - 1
+                lowNoise = lowNoise * 0.68 + noise * 0.32
+                let t = Double(frame) / ClickySynthesis.sampleRate
+                let attack = min(1, t / 0.0007)
+                let texture = lowNoise * exp(-t / (profile.decay * 0.5))
+                let click = noise * exp(-t / 0.0017)
+                return atanh(Double(sample) / 0.65) - (texture * 0.52 + click * 0.23) * attack
+            }
+        }
+        let center = tonalSignal(1)
+        for variant in [0, 2] {
+            for (actual, expected) in zip(tonalSignal(variant), center) {
+                XCTAssertEqual(actual, expected, accuracy: 0.000001)
+            }
+        }
+    }
+
     /// The sounds are computed at the output's own rate: same length in time, and on a 44.1 kHz output the same power as
     /// the 48 kHz sound the mixer used to resample (the old path, built here by hand), with no resampler on the way.
     @MainActor
@@ -1311,6 +1336,39 @@ final class ClickyPackTests: XCTestCase {
         XCTAssertEqual(prepared.playback.keyupGain, 0.75)
     }
 
+    func testDeduplicatedRecordingsKeepTheirOriginalFrameCountAfterTrimming() async throws {
+        var fixture = try Fixture()
+        defer { fixture.dispose() }
+        var frames = [Int16](repeating: 0, count: 4_800)
+        for index in 0..<1_200 {
+            let angle = Double(index) * 0.3
+            let envelope = exp(-Double(index) / 300.0)
+            let sample = 16_000.0 * sin(angle) * envelope
+            frames[1_200 + index] = Int16(sample)
+        }
+        let recording = Self.wav(frames)
+        let hash = ClickyPackLoader.sha256(recording)
+        var files = try XCTUnwrap(fixture.manifest["files"] as? [[String: Any]])
+        for index in files.indices {
+            let name = try XCTUnwrap(files[index]["filename"] as? String)
+            try recording.write(to: fixture.root.appendingPathComponent("fixture/\(name)"))
+            files[index]["sha256"] = hash
+            files[index]["frames"] = frames.count
+        }
+        fixture.manifest["files"] = files
+        try fixture.writeManifest()
+        let prepared = try await ClickyPackLoader().prepare(at: fixture.root, entry: fixture.entry)
+        let first = try XCTUnwrap(prepared.samples["press-a.wav"])
+        XCTAssertLessThan(first.frames.count, frames.count)
+        XCTAssertEqual(prepared.samples["press-b.wav"]?.frames, first.frames)
+        XCTAssertEqual(prepared.decodedFrameCount, first.frames.count)
+
+        files[1]["frames"] = frames.count - 1
+        fixture.manifest["files"] = files
+        try fixture.writeManifest()
+        await assertPrepareFails(fixture)
+    }
+
     func testPhysicalMappingsOverridesAndPairedReleaseVariants() async throws {
         var fixture = try Fixture()
         defer { fixture.dispose() }
@@ -1394,6 +1452,15 @@ final class ClickyPackTests: XCTestCase {
         XCTAssertLessThan(trimmed.count, 6_000 - 1_920 + ClickySampleTrim.leadIn)
         XCTAssertGreaterThan(trimmed.count, 1_200)
         XCTAssertEqual(trimmed.last ?? 1, 0, accuracy: 0.001)
+
+        var louderSecond = [Float](repeating: 0, count: 9_600)
+        for index in louderSecond.indices { louderSecond[index] = 0.01 * sin(Float(index) * 1.7) }
+        hit(&louderSecond, at: 1_920, amplitude: 0.6)
+        hit(&louderSecond, at: 6_000, amplitude: 0.8)
+        let reversed = ClickySampleTrim.trimmed(louderSecond)
+        XCTAssertLessThan(reversed.count, 6_000 - 1_920 + ClickySampleTrim.leadIn)
+        XCTAssertGreaterThan(reversed.count, 1_200)
+        XCTAssertEqual(reversed.last ?? 1, 0, accuracy: 0.001)
 
         var clean = [Float](repeating: 0, count: 4_800)
         hit(&clean, at: 0, amplitude: 0.8)
@@ -2119,6 +2186,93 @@ extension ClickyPackTests {
         let persisted = try JSONDecoder().decode([ClickyLibraryRecord].self, from: XCTUnwrap(defaults.data(forKey: "clicky.libraries.v1")))
         XCTAssertEqual(persisted.count, 32)
         XCTAssertNotNil(library.error)
+    }
+
+    @MainActor
+    func testRatePreparationRetriesWhenBanksChangeAndNeverAdoptsAnEvictedSnapshot() async throws {
+        let fixture = try Fixture()
+        defer { fixture.dispose() }
+        let base = try await ClickyPackLoader().prepare(at: fixture.root, entry: fixture.entry)
+        let started = expectation(description: "first bank conversion starts off the main thread")
+        let finished = expectation(description: "current bank generation is adopted")
+        let gate = DispatchSemaphore(value: 0)
+        defer { gate.signal() }
+        var conversions = 0 // Only the serial start queue touches this variable.
+        let audio = ClickyAudio(bankConverter: { samples, format in
+            XCTAssertFalse(Thread.isMainThread)
+            conversions += 1
+            let first = conversions == 1
+            if first {
+                started.fulfill()
+                XCTAssertEqual(gate.wait(timeout: .now() + 5), .success)
+            }
+            let buffer = AVAudioPCMBuffer(pcmFormat: format, frameCapacity: 1)!
+            buffer.frameLength = 1
+            buffer.floatChannelData![0][0] = first ? -1 : 1
+            return Dictionary(uniqueKeysWithValues: samples.keys.map { ($0, buffer) })
+        })
+        defer { audio.stop() }
+        func reference(_ id: String) -> ClickyPackReference {
+            ClickyPackReference(libraryID: "fixture-library", packID: id)
+        }
+        for id in ["alpha", "beta", "gamma"] {
+            try audio.install(reference: reference(id), pack: integrationPack(base, id: id))
+        }
+        let next = try XCTUnwrap(AVAudioFormat(standardFormatWithSampleRate: 44_100, channels: 1))
+        audio.prepareRate(next, synthesized: nil) { error in
+            XCTAssertNil(error)
+            finished.fulfill()
+        }
+        await fulfillment(of: [started], timeout: 2)
+        try audio.install(reference: reference("delta"), pack: integrationPack(base, id: "delta"))
+        try audio.install(reference: reference("gamma"),
+                          pack: integrationPack(base, id: "gamma", manifestHash: String(repeating: "d", count: 64)))
+        gate.signal()
+        await fulfillment(of: [finished], timeout: 5)
+        XCTAssertNil(audio.cachedBuffer(reference: reference("alpha"), filename: "press-a.wav"))
+        for id in ["beta", "gamma", "delta"] {
+            let buffer = try XCTUnwrap(audio.cachedBuffer(reference: reference(id), filename: "press-a.wav"))
+            XCTAssertEqual(buffer.format.sampleRate, 44_100)
+            XCTAssertEqual(buffer.floatChannelData![0][0], 1, "a result from the old generation must not be adopted")
+        }
+    }
+
+    @MainActor
+    func testRatePreparationFailureKeepsOldBuffersAndNormalRetryAdoptsTheNewRate() async throws {
+        let fixture = try Fixture()
+        defer { fixture.dispose() }
+        let base = try await ClickyPackLoader().prepare(at: fixture.root, entry: fixture.entry)
+        let references = ["alpha", "beta"].map { ClickyPackReference(libraryID: "fixture-library", packID: $0) }
+        var attempts = 0 // Only the serial start queue touches this variable.
+        let audio = ClickyAudio(bankConverter: { samples, format in
+            XCTAssertFalse(Thread.isMainThread)
+            attempts += 1
+            if attempts == 2 { throw ClickyPackError.invalid("fixture conversion failure") }
+            return try ClickyAudio.buffers(samples, format: format)
+        })
+        defer { audio.stop() }
+        for reference in references {
+            try audio.install(reference: reference, pack: integrationPack(base, id: reference.packID))
+        }
+        let next = try XCTUnwrap(AVAudioFormat(standardFormatWithSampleRate: 44_100, channels: 1))
+        let failed = expectation(description: "conversion failure is reported")
+        audio.prepareRate(next, synthesized: nil) { error in
+            XCTAssertNotNil(error)
+            failed.fulfill()
+        }
+        await fulfillment(of: [failed], timeout: 5)
+        for reference in references {
+            XCTAssertEqual(audio.cachedBuffer(reference: reference, filename: "press-a.wav")?.format.sampleRate, 48_000)
+        }
+        let finished = expectation(description: "normal retry adopts converted buffers")
+        audio.prepareRate(next, synthesized: nil) { error in
+            XCTAssertNil(error)
+            finished.fulfill()
+        }
+        await fulfillment(of: [finished], timeout: 5)
+        for reference in references {
+            XCTAssertEqual(audio.cachedBuffer(reference: reference, filename: "press-a.wav")?.format.sampleRate, 44_100)
+        }
     }
 
     @MainActor
