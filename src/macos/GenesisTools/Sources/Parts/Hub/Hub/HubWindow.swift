@@ -1926,7 +1926,7 @@ final class HubModel: ObservableObject {
         }
         if let worktree = request.worktree {
             setMode(.worktrees)
-            let wanted = WorktreeCleanup.selection(for: worktree)
+            let wanted = WorktreeCleanup.selection(for: worktree, in: worktrees)
             selectedWorktree = wanted
             MainActor.assumeIsolated { addWorktreesIfMissing(wanted) }
         }
