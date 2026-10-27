@@ -1,4 +1,5 @@
 import AppKit
+import Combine
 @testable import GenesisKit
 import SwiftUI
 import XCTest
@@ -21,6 +22,25 @@ final class MarkdownSettingsTests: XCTestCase {
         defer { window.close() }
         RunLoop.main.run(until: Date().addingTimeInterval(0.4))
         try shot(host, "markdown-settings-git.png")
+    }
+
+    func testSplitSyncSettingReachesAModelWithoutAnOpenDocument() async throws {
+        let domain = "md-sync-setting-\(UUID().uuidString)"
+        let defaults = try XCTUnwrap(UserDefaults(suiteName: domain))
+        defer { defaults.removePersistentDomain(forName: domain) }
+        let center = NotificationCenter()
+        let model = MarkdownDocumentsModel(defaults: defaults, notificationCenter: center)
+        XCTAssertTrue(model.docs.isEmpty)
+        XCTAssertTrue(model.splitScrollSync)
+        let changed = expectation(description: "model received the setting")
+        let watch = model.$splitScrollSync.dropFirst().sink { enabled in
+            if !enabled { changed.fulfill() }
+        }
+        center.post(name: .markdownSplitSyncChanged, object: false)
+        await fulfillment(of: [changed], timeout: 3)
+        XCTAssertFalse(model.splitScrollSync)
+        XCTAssertEqual(defaults.object(forKey: "markdownWindow.splitScrollSync") as? Bool, false)
+        withExtendedLifetime(watch) {}
     }
 
     func testTheGutterCardNamesTheSessionThatWroteTheHunk() throws {

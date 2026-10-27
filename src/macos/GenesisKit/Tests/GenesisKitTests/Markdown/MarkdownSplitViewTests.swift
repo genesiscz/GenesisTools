@@ -427,6 +427,7 @@ final class MarkdownSplitViewTests: XCTestCase {
     func testScrollingTheEditorInSplitViewScrollsThePreview() async throws {
         let folder = FileManager.default.temporaryDirectory.appendingPathComponent("md-split-sync-\(UUID().uuidString)")
         try FileManager.default.createDirectory(at: folder, withIntermediateDirectories: true)
+        defer { try? FileManager.default.removeItem(at: folder) }
         let note = folder.appendingPathComponent("long.md")
         let body = (0 ..< 200).map { "Paragraph \($0) of a long note." }.joined(separator: "\n\n")
         try "---\ntitle: Long\n---\n\n# Long\n\n\(body)\n".write(to: note, atomically: true, encoding: .utf8)
@@ -533,16 +534,24 @@ final class MarkdownSplitViewTests: XCTestCase {
         XCTAssertGreaterThan(activeMeasurements, 0, "the active scroll must measure top lines")
         _ = try await page.evaluateJavaScript("window.dispatchEvent(new MouseEvent('mouseup'));true")
 
+        // At the page top, the editor must show the frontmatter too.
+        _ = try await page.evaluateJavaScript(
+            "window.dispatchEvent(new WheelEvent('wheel',{deltaY:-400}));"
+            + "(document.scrollingElement||document.documentElement).scrollTop=0;"
+            + "window.dispatchEvent(new Event('scroll'));true")
+        try await Task.sleep(nanoseconds: 600_000_000)
+        XCTAssertEqual(editorTopNumber(), 0, "the editor did not return to the file top")
+
         // Paused: the page scrolls alone, and the editor stays.
         model.splitScrollSync = false
         try await Task.sleep(nanoseconds: 300_000_000)
         _ = try await page.evaluateJavaScript("window.__syncMeasurements=0;true")
         _ = try await page.evaluateJavaScript(
             "window.dispatchEvent(new WheelEvent('wheel',{deltaY:400}));"
-            + "(document.scrollingElement||document.documentElement).scrollTop=0;"
+            + "(document.scrollingElement||document.documentElement).scrollTop=3000;"
             + "window.dispatchEvent(new Event('scroll'));true")
         try await Task.sleep(nanoseconds: 600_000_000)
-        XCTAssertEqual(Double(editorTopNumber() ?? -100), Double(dragTarget), accuracy: 2, "a paused sync still moved the editor")
+        XCTAssertEqual(editorTopNumber(), 0, "a paused sync still moved the editor")
         let pausedMeasurements = try await page.evaluateJavaScript("window.__syncMeasurements") as? Int ?? -1
         XCTAssertEqual(pausedMeasurements, 0, "paused mode must not measure top lines")
     }

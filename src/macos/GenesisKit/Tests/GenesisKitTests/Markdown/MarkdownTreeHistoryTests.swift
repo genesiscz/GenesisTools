@@ -23,6 +23,37 @@ final class MarkdownTreeHistoryTests: XCTestCase {
         XCTAssertEqual(memo.rows(rows, keep: ["/vault/data.json"]).count, 5, "a new kept path is not served from the old answer")
     }
 
+    @MainActor
+    func testCombinedFiltersDistinguishHiddenChanges() {
+        let note = FileTreeRow(id: "/vault/plan.md", name: "plan.md", isFolder: false, depth: 0)
+        let image = FileTreeRow(id: "/vault/image.png", name: "image.png", isFolder: false, depth: 0)
+        let rows = [note, image]
+        let changed = GitTreeDecorations(files: [image.id: .modified])
+        let visible = FileTreeView.changedRows(MarkdownFileTreeView.noteRows(rows), changed)
+        XCTAssertTrue(visible.isEmpty)
+        XCTAssertEqual(MarkdownTreeEmpty.filtered(rows: rows, displayed: visible, notesOnly: true,
+                                                  changedOnly: true, git: changed), .hiddenChanges)
+        XCTAssertEqual(MarkdownTreeEmpty.filtered(rows: rows, displayed: [], notesOnly: true,
+                                                  changedOnly: true, git: GitTreeDecorations.none), .noChanges)
+        XCTAssertNil(MarkdownTreeEmpty.filtered(rows: rows, displayed: FileTreeView.changedRows(rows, changed),
+                                                notesOnly: false, changedOnly: true, git: changed))
+        XCTAssertNil(MarkdownTreeEmpty.filtered(rows: rows, displayed: rows, notesOnly: false,
+                                                changedOnly: false, git: changed))
+    }
+
+    func testHiddenNonNoteDoesNotAffectNoteRowFontDemand() {
+        let rows = [
+            FileTreeRow(id: "/vault/n.md", name: "n.md", isFolder: false, depth: 0),
+            FileTreeRow(id: "/vault/long.png", name: String(repeating: "x", count: 100) + ".png", isFolder: false, depth: 0),
+        ]
+        let fit = MarkdownTreeFit<FileTreeRow>()
+        let measure = MarkdownTreeMeasure(advance: { Double($0.count) }, tracking: { _ in 0 })
+        let notes = MarkdownFileTreeView.noteRows(rows)
+        let noteWidth = fit.demand(for: notes, measure: measure) { .init(row: $0) }.widest(atQuarters: 48)
+        let allWidth = fit.demand(for: rows, measure: measure) { .init(row: $0) }.widest(atQuarters: 48)
+        XCTAssertGreaterThan(allWidth, noteWidth)
+    }
+
     private func place(_ root: String, _ open: Set<String> = [], _ y: Double = 0) -> MarkdownTreePlace {
         MarkdownTreePlace(root: root, expanded: open, scrollY: y)
     }

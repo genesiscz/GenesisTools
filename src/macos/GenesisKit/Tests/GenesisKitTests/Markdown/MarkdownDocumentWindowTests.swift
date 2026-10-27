@@ -57,6 +57,45 @@ final class MarkdownDocumentWindowTests: XCTestCase {
             index: index, exists: present.contains))
     }
 
+    @MainActor
+    func testNoteRankingUsesTheVolumeCaseRulesForRootAndFolders() async {
+        let notes = ["X/Plan.md", "Clients/Acme/Plan.md"]
+        let insensitive = VaultFileIndex(root: URL(fileURLWithPath: "/vault"), caseSensitive: false) { _ in
+            .init(paths: [], attachmentFolder: nil, notes: notes)
+        }
+        let sensitive = VaultFileIndex(root: URL(fileURLWithPath: "/vault"), caseSensitive: true) { _ in
+            .init(paths: [], attachmentFolder: nil, notes: notes)
+        }
+        let insensitiveReady = expectation(description: "insensitive index ready")
+        let sensitiveReady = expectation(description: "sensitive index ready")
+        insensitive.refreshIfNeeded { insensitiveReady.fulfill() }
+        sensitive.refreshIfNeeded { sensitiveReady.fulfill() }
+        await fulfillment(of: [insensitiveReady, sensitiveReady], timeout: 3)
+        let folder = URL(fileURLWithPath: "/VAULT/clients/acme/design")
+        XCTAssertEqual(insensitive.relativeFolder(folder), "clients/acme/design")
+        XCTAssertEqual(insensitive.notes(named: "Plan", near: insensitive.relativeFolder(folder)).first, "Clients/Acme/Plan.md")
+        XCTAssertEqual(sensitive.relativeFolder(folder), "")
+        XCTAssertEqual(sensitive.notes(named: "Plan", near: "clients/acme/design").first, "X/Plan.md")
+        XCTAssertEqual(sensitive.notes(named: "Plan", near: "Clients/Acme/Design").first, "Clients/Acme/Plan.md")
+    }
+
+    @MainActor
+    func testExtensionlessRootFileWinsBeforeAnIndexedNote() async throws {
+        let notes = ["Clients/Acme/LICENSE.md"]
+        let index = VaultFileIndex(root: URL(fileURLWithPath: "/vault")) { _ in
+            .init(paths: [], attachmentFolder: nil, notes: notes)
+        }
+        let ready = expectation(description: "index ready")
+        index.refreshIfNeeded { ready.fulfill() }
+        await fulfillment(of: [ready], timeout: 3)
+        let present: Set<String> = ["/vault/LICENSE", "/vault/Clients/Acme/LICENSE.md"]
+        let folder = URL(fileURLWithPath: "/vault/Clients/Acme/Design")
+        XCTAssertEqual(MarkdownDocumentLinks.resolve("LICENSE", folder: folder, vaultRoot: "/vault",
+            index: index, exists: present.contains)?.path, "/vault/LICENSE")
+        XCTAssertEqual(MarkdownDocumentLinks.resolve("LICENSE.md", folder: folder, vaultRoot: "/vault",
+            index: index, exists: present.contains)?.path, "/vault/Clients/Acme/LICENSE.md")
+    }
+
     func testDottedNoteNamesFallBackToMarkdownAndKeepTheirHeading() throws {
         let folder = URL(fileURLWithPath: "/vault/notes")
         let files: Set<String> = ["/vault/notes/1234.analysis.md", "/vault/5678.analysis.md",
@@ -444,6 +483,37 @@ final class MarkdownHeadingLinkFollowTests: XCTestCase {
         XCTAssertNil(MarkdownDocumentLinks.lineNumber("Part two"))
         XCTAssertNil(MarkdownDocumentLinks.lineNumber("L0"))
         XCTAssertNil(MarkdownDocumentLinks.lineNumber(nil))
+    }
+
+    func testDeferredFollowDoesNotOverrideNewerNavigation() async throws {
+        let dir = FileManager.default.temporaryDirectory.appendingPathComponent("md-deferred-follow-\(UUID().uuidString)")
+        try FileManager.default.createDirectory(at: dir.appendingPathComponent("nested"), withIntermediateDirectories: true)
+        defer { try? FileManager.default.removeItem(at: dir) }
+        let source = dir.appendingPathComponent("source.md")
+        let newer = dir.appendingPathComponent("newer.md")
+        let delayed = dir.appendingPathComponent("nested/delayed.md")
+        for url in [source, newer, delayed] { try "# note".write(to: url, atomically: true, encoding: .utf8) }
+        let release = DispatchSemaphore(value: 0)
+        let index = VaultFileIndex(root: dir) { _ in
+            _ = release.wait(timeout: .now() + 5)
+            return .init(paths: [], attachmentFolder: nil, notes: ["nested/delayed.md"])
+        }
+        let domain = "md-deferred-follow-\(UUID().uuidString)"
+        let defaults = try XCTUnwrap(UserDefaults(suiteName: domain))
+        defer { defaults.removePersistentDomain(forName: domain) }
+        let model = MarkdownDocumentsModel(defaults: defaults)
+        model.open([source])
+        let doc = try XCTUnwrap(model.selected)
+        model.follow("delayed", from: doc, indexOverride: index)
+        let scanned = expectation(description: "scan finishes")
+        index.refreshIfNeeded { scanned.fulfill() }
+        model.follow("newer", from: doc, indexOverride: index)
+        release.signal()
+        await fulfillment(of: [scanned], timeout: 3)
+        XCTAssertEqual(model.selected?.url, newer)
+        model.select(doc.id)
+        model.follow("delayed", from: doc, indexOverride: index)
+        XCTAssertEqual(model.selected?.url, delayed, "the current link still opens after the scan")
     }
 
     /// `[[Other#Part two]]` opens the other note AND lands on the heading;

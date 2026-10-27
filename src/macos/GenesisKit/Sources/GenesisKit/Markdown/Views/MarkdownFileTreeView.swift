@@ -88,8 +88,8 @@ struct MarkdownFileTreeView: View {
             demand: results
                 ? hitFit.demand(for: search.hits) { MarkdownTreeDemand.Line(hit: $0) }
                 : gitMarks
-                    ? markedRowFit.demand(for: tree.rows) { MarkdownTreeDemand.Line(row: $0, gitMark: true) }
-                    : rowFit.demand(for: tree.rows) { MarkdownTreeDemand.Line(row: $0) },
+                    ? markedRowFit.demand(for: displayedRows) { MarkdownTreeDemand.Line(row: $0, gitMark: true) }
+                    : rowFit.demand(for: displayedRows) { MarkdownTreeDemand.Line(row: $0) },
             reserve: MarkdownTreeFont.scrollerReserve
         ))
     }
@@ -222,9 +222,8 @@ struct MarkdownFileTreeView: View {
     /// The empty state on screen: the folder has nothing, cannot be read, or the changed-files filter hides every row.
     private var shownEmpty: MarkdownTreeEmpty? {
         if tree.rows.isEmpty { return treeEmpty }
-        if changedOnly, gitMarks, displayedRows.isEmpty { return .noChanges }
-        if notesOnly, displayedRows.isEmpty { return .noNotes }
-        return nil
+        return MarkdownTreeEmpty.filtered(rows: tree.rows, displayed: displayedRows, notesOnly: notesOnly,
+                                          changedOnly: changedOnly, git: gitMarks ? gitTree.decorations : nil)
     }
 
     @ViewBuilder
@@ -253,8 +252,14 @@ struct MarkdownFileTreeView: View {
             EmptyState(symbol: "checkmark.circle", text: "No changed files",
                        detail: "Show only changed files is on, and nothing under \(name) differs from git.",
                        actionTitle: "Show all files",
-                       action: { changedOnly = false })
+                       action: { changedOnly = false; notesOnly = false })
                 .accessibilityIdentifier("markdown-files-no-changes")
+        case .hiddenChanges:
+            EmptyState(symbol: "doc.text", text: "Changed files are hidden",
+                       detail: "Show only notes hides the changed files in \(name).",
+                       actionTitle: "Show all files",
+                       action: { notesOnly = false; changedOnly = false })
+                .accessibilityIdentifier("markdown-files-hidden-changes")
         case .noNotes:
             EmptyState(symbol: "doc.text", text: "No notes in \(name)",
                        detail: "Only notes are listed, and this folder holds other files only.",
@@ -1299,8 +1304,21 @@ enum MarkdownTreeEmpty: Equatable, Sendable {
     case unreadable
     /// "Show only changed files" is on and nothing changed.
     case noChanges
+    /// Changes exist but the notes-only filter hides them.
+    case hiddenChanges
     /// "Show only notes" is on and the folder holds other files only.
     case noNotes
+
+    /// Distinguish hidden changes from a tree with no changes.
+    @MainActor
+    static func filtered(rows: [FileTreeRow], displayed: [FileTreeRow], notesOnly: Bool,
+                         changedOnly: Bool, git: GitTreeDecorations?) -> MarkdownTreeEmpty? {
+        guard displayed.isEmpty else { return nil }
+        if changedOnly, let git {
+            return notesOnly && !FileTreeView.changedRows(rows, git).isEmpty ? .hiddenChanges : .noChanges
+        }
+        return notesOnly ? .noNotes : nil
+    }
 
     /// Reads the folder once, off the main thread: an empty listing and a refused one are different answers.
     nonisolated static func check(_ path: String) -> MarkdownTreeEmpty {
