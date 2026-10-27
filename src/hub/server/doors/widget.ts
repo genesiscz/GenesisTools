@@ -56,7 +56,8 @@ export const widgetCallDoor: CallDoor<unknown> = {
         }
 
         try {
-            const input: unknown = SafeJSON.parse(readFileSync(path, "utf8"));
+            // The widget writes plain JSON; a file the strict parse refuses goes to the process, which reads it leniently.
+            const input: unknown = SafeJSON.parse(readFileSync(path, "utf8"), { strict: true });
             const action = actionOf(input);
             return action && DOOR_ACTIONS.has(action) ? input : null;
         } catch (error) {
