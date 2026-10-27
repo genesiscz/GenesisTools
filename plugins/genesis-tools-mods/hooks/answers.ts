@@ -39,6 +39,11 @@ export interface LoggedDecision {
      * decision was answered in chat: the decision Stop hook records the user's chat answers there.
      */
     answeredVia?: string;
+    /**
+     * The text's revision (1 until the agent re-posts it). A stage sends it, so a pick made on text the agent has
+     * since changed is refused with "DECISION N changed: …" instead of landing on the new text.
+     */
+    revision?: number;
     /** A staged answer not sent yet (state `drafted`): the picked letters and a note. The store owns staging. */
     draftOption?: string;
     draft?: string;
@@ -203,6 +208,7 @@ export function answersFrom(stdout: string, at = Date.now()): SessionAnswers | u
                 ...(text(item.option) ? { option: text(item.option) } : {}),
                 ...(text(item.answer) ? { answer: text(item.answer) } : {}),
                 ...(text(item.answeredVia) ? { answeredVia: text(item.answeredVia) } : {}),
+                ...(typeof item.revision === "number" ? { revision: item.revision } : {}),
                 ...(text(item.draftOption) ? { draftOption: text(item.draftOption) } : {}),
                 ...(text(item.draft) ? { draft: text(item.draft) } : {}),
                 at: timeOf(item.at),
@@ -652,6 +658,11 @@ export async function stageAnswer(
     { refresh = true }: { refresh?: boolean } = {}
 ): Promise<{ error?: string }> {
     const args = ["draft", "--decision", String(n)];
+    const revision = held?.decisions.find((decision) => decision.n === n)?.revision;
+
+    if (revision !== undefined) {
+        args.push("--expected-revision", String(revision));
+    }
 
     if (answer.option !== undefined) {
         args.push("--option", answer.option);

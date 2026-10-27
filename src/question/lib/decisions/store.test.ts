@@ -23,6 +23,7 @@ import { withFileLock } from "@genesiscz/utils/storage/file-lock";
 import { answerGitWithoutSpawning } from "@genesiscz/utils/test/no-git";
 import { z } from "zod";
 import { stagedSendText } from "../inbox/drafts";
+import { setDecisionBannerRemover } from "./banners";
 import { chatAnswers } from "./chat-answers";
 import { backfillChatAnswers } from "./chat-reading";
 import { DeliveryUnknownError, deliverToSession, resolveDeliveryTarget } from "./deliver";
@@ -1860,7 +1861,7 @@ test("revision preconditions are checked against rows re-read under the write lo
         await Bun.sleep(0);
         writeFileSync(file, SafeJSON.stringify({ ...row, prompt: "Changed?", revision: 2 }) + "\n");
     });
-    await expect(pending).rejects.toThrow("stale decision revision");
+    await expect(pending).rejects.toThrow("DECISION 1 changed: the agent posted a new text");
     expect(readDecisions(file)[0]).toMatchObject({ prompt: "Changed?", revision: 2, state: "open" });
     const accepted = await updateDecision(file, events, row.id, {
         state: "answered",
@@ -3055,5 +3056,63 @@ describe("chat answers read from where the last read stopped", () => {
             (await backfillChatAnswers({ session: "abc", file, events, apply: true, transcript, read })).open
         ).toEqual([]);
         expect(reads).toHaveLength(2);
+    });
+});
+
+describe("a revision and a staged pick (F12)", () => {
+    test("a supersede keeps the staged pick in the old version and says on the row that it was cleared", async () => {
+        const { file, events } = scratch();
+        const [row] = await postDecisions(file, events, {
+            sessionId: "abc",
+            decisions: [{ prompt: "Keep it?", options: ["yes", "no"] }],
+        });
+        await updateDecision(file, events, row.id, { state: "drafted", draftOption: "b", draft: "for now" });
+        const [revised] = await postDecisions(file, events, {
+            sessionId: "abc",
+            decisions: [{ prompt: "Keep it, as is?", options: ["yes", "no"], supersedes: row.id }],
+        });
+
+        expect(revised).toMatchObject({ id: row.id, state: "open", revision: 2 });
+        expect(revised.draftOption).toBeUndefined();
+        expect(revised.versions?.[0]).toMatchObject({ revision: 1, draftOption: "b", draft: "for now" });
+        expect(revised.comments?.at(-1)).toContain("the staged b) and note on the earlier text was cleared");
+        // A pick made on the old text is refused in words a surface shows.
+        await expect(
+            updateDecision(file, events, row.id, { state: "drafted", draftOption: "a", expectedRevision: 1 })
+        ).rejects.toThrow("DECISION 1 changed: the agent posted a new text since you read it.");
+    });
+});
+
+describe("decision banners (F13)", () => {
+    test("a write that moves a decision out of waiting retracts its banner; a write that keeps it waiting does not", async () => {
+        const { file, events } = scratch();
+        const removed: string[][] = [];
+        setDecisionBannerRemover(async (ids) => {
+            removed.push(ids);
+        });
+
+        try {
+            const [first, second] = await postDecisions(file, events, {
+                sessionId: "abc",
+                decisions: [
+                    { prompt: "one", options: ["a", "b"] },
+                    { prompt: "two", options: ["a", "b"] },
+                ],
+            });
+            await updateDecision(file, events, first.id, { state: "drafted", draftOption: "a" });
+            await updateDecision(file, events, second.id, { comment: "looked at it" });
+            expect(removed).toEqual([]);
+
+            await updateDecisions(
+                file,
+                events,
+                { updates: [{ id: first.id, state: "answered", option: "b" }] },
+                undefined,
+                { actor: "agent" }
+            );
+            expect(removed).toEqual([[`qa-decision-${first.id}`]]);
+        } finally {
+            setDecisionBannerRemover(undefined);
+        }
     });
 });

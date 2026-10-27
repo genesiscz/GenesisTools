@@ -1059,6 +1059,6 @@ test("a stale inbox card cannot answer a newer posted question", async () => {
                 },
             }
         )
-    ).rejects.toThrow("stale decision revision");
+    ).rejects.toThrow("changed: the agent posted a new text");
     expect(readDecisions(files.file)[0].state).toBe("open");
 });
