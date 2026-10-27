@@ -485,6 +485,7 @@ public final class ClickyModel: ObservableObject {
             refreshOutput()
         }
         audio?.idleRelease = TimeInterval(preferences.releaseOutputSeconds)
+        audio?.pauseAfter = TimeInterval(preferences.pauseAfterSeconds)
         if preferences.muteOnBluetooth, !previous.muteOnBluetooth, silencedByBluetooth {
             audio?.stop()
         }
@@ -501,6 +502,7 @@ public final class ClickyModel: ObservableObject {
     private func makeAudio() {
         audio = ClickyAudio()
         audio?.idleRelease = TimeInterval(preferences.releaseOutputSeconds)
+        audio?.pauseAfter = TimeInterval(preferences.pauseAfterSeconds)
         audio?.setOutput(output?.effective?.id)
     }
 

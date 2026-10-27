@@ -58,7 +58,7 @@ final class ClickyAudio {
     private let voices: [(AVAudioPlayerNode, AVAudioUnitVarispeed)]
     private var buffers: [String: AVAudioPCMBuffer] = [:]
     private var cursor = 0
-    /// 3 s after the last click the engine pauses: no render, the output unit kept.
+    /// `pauseAfter` after the last click the engine pauses: no render, the output unit kept.
     private var idlePause: DispatchWorkItem?
     /// `idleRelease` after the last click it stops and gives the output back.
     private var idleStop: DispatchWorkItem?
@@ -67,7 +67,11 @@ final class ClickyAudio {
     /// after a stop took 350 to 460 ms off-main, 711 times in one day, and each opened an audio session that Smart
     /// Routing counts as this Mac claiming the headphones; a resume from pause opens neither.
     var idleRelease: TimeInterval = 0
-    static let pauseAfter: TimeInterval = 3
+    /// How long the engine keeps running after the last click (the "Pause the sound engine after" setting). Each
+    /// resume from pause opens an audio session again, which Smart Routing counts as this Mac claiming Bluetooth
+    /// headphones: at 3 s, typing with pauses claimed the AirPods 22 times in 10 min (2026-10-27 17:57). Running, the
+    /// engine costs about 2% CPU and keeps the Mac from idle sleep.
+    var pauseAfter: TimeInterval = 30
     /// Paused by `pauseEngine`: a click resumes it with `start()`, which is quick and keeps the voices' wiring.
     private var paused = false
     /// The engine starts here, never on the main thread: the start ran inside the keyboard event tap and took 0.4 to
@@ -420,10 +424,10 @@ final class ClickyAudio {
             MainActor.assumeIsolated { self?.stopVoices() }
         }
         idlePause = pause
-        DispatchQueue.main.asyncAfter(deadline: .now() + Self.pauseAfter, execute: pause)
+        DispatchQueue.main.asyncAfter(deadline: .now() + pauseAfter, execute: pause)
         guard idleRelease > 0 else { return }
         idleStop = stop
-        DispatchQueue.main.asyncAfter(deadline: .now() + max(Self.pauseAfter, idleRelease), execute: stop)
+        DispatchQueue.main.asyncAfter(deadline: .now() + max(pauseAfter, idleRelease), execute: stop)
     }
 
     /// No render while idle; the output unit and the wiring stay, so the next click resumes quickly.

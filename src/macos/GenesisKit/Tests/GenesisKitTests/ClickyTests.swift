@@ -151,6 +151,14 @@ final class ClickyTests: XCTestCase {
         XCTAssertEqual(try JSONDecoder().decode(ClickyPreferences.self, from: encoded).pitchRange, 0.1)
     }
 
+    func testPauseAfterDefaultsToThirtySecondsAndIsClamped() throws {
+        let old = try JSONDecoder().decode(ClickyPreferences.self, from: Data(#"{"volume":0.5}"#.utf8))
+        XCTAssertEqual(old.pauseAfterSeconds, 30)
+        var wild = try JSONDecoder().decode(ClickyPreferences.self, from: Data(#"{"pauseAfterSeconds":99999}"#.utf8))
+        wild.normalize()
+        XCTAssertEqual(wild.pauseAfterSeconds, 600)
+    }
+
     func testPhysicalKeyChartIncludesFunctionKeysAndKeepsPositionsDistinct() {
         let keys = ClickyKeyLayout.rows.flatMap { $0 }
         XCTAssertEqual(Set(keys.map(\.code)).count, keys.count)
