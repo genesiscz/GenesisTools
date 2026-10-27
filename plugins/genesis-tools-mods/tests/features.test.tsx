@@ -14,6 +14,7 @@ import {
     callFor,
     firstAsks,
     forgetAnswers,
+    mergedAnswer,
     pollAnswers,
     questionCalls,
     refreshAnswers,
@@ -1885,6 +1886,97 @@ test("file links preserve reserved query characters, Unicode and markdown parent
     expect(md).not.toContain("(");
     expect(mdLink(NO_LINKS, target)).toBeUndefined();
     expect(finderLink(NO_LINKS, target)).toBeUndefined();
+});
+
+test("answers: a --since change is merged into the last answer; nothing changed keeps it; an old CLI is asked the old way", async () => {
+    forgetAnswers();
+    forgetGenesisProbe();
+    const decision = (number: number, status = "waiting") => ({
+        id: `d_${number}_sess-1`,
+        number,
+        title: `D${number}`,
+        prompt: "",
+        status,
+        choices: [],
+    });
+    const full = {
+        sessionId: "sess-1",
+        cursor: "c1-a",
+        full: true,
+        decisions: [decision(1), decision(2)],
+        todos: [],
+        entries: [{ id: "e1", ts: 1000, tag: "message", question: "Done", answerMd: "ok", readAt: null }],
+        forms: [],
+        staged: "DECISION 1: a)",
+    };
+    const none = { decisions: [], todos: [], entries: [], forms: [] };
+    const answers: Record<string, unknown>[] = [
+        full,
+        { sessionId: "sess-1", cursor: "c1-a", full: false, ...none, removed: none },
+        {
+            sessionId: "sess-1",
+            cursor: "c1-b",
+            full: false,
+            ...none,
+            decisions: [decision(2, "answered"), decision(3)],
+            removed: { ...none, decisions: ["d_1_sess-1"], entries: ["e1"] },
+            staged: null,
+        },
+    ];
+    const argvs: string[][] = [];
+    let refuses = false;
+    const base = checkoutHost();
+    const host: Host = {
+        ...base,
+        async run(argv, init) {
+            if (argv[1] === "genesis-tools") {
+                return {
+                    stdout: JSON.stringify({ links: {}, router: {} }),
+                    stderr: "",
+                    exitCode: 0,
+                    isStdoutTruncated: false,
+                    isStderrTruncated: false,
+                };
+            }
+
+            if (argv[1] === "question" && argv[2] === "inbox") {
+                argvs.push([...argv]);
+                const refused = refuses && argv.includes("--since");
+
+                return {
+                    stdout: refused ? "" : JSON.stringify(refuses ? { ...full, cursor: undefined } : answers.shift()),
+                    stderr: refused ? "error: unknown option '--since'" : "",
+                    exitCode: refused ? 1 : 0,
+                    isStdoutTruncated: false,
+                    isStderrTruncated: false,
+                };
+            }
+
+            return base.run(argv, init);
+        },
+    };
+
+    expect((await refreshAnswers(host, "start", true))?.decisions.map((d) => d.n)).toEqual([1, 2]);
+    expect(argvs[0]).not.toContain("--since");
+    expect((await refreshAnswers(host, "same", true))?.staged).toBe("DECISION 1: a)");
+    expect(argvs[1]?.slice(-2)).toEqual(["--since", "c1-a"]);
+
+    const changed = await refreshAnswers(host, "moved", true);
+
+    expect(argvs[2]?.slice(-2)).toEqual(["--since", "c1-a"]);
+    expect(changed?.decisions.map((d) => [d.n, d.status])).toEqual([
+        [2, "answered"],
+        [3, "waiting"],
+    ]);
+    expect(changed?.entries).toEqual([]);
+    expect(changed?.staged).toBeUndefined();
+
+    refuses = true;
+    expect((await refreshAnswers(host, "old cli", true))?.decisions.map((d) => d.n)).toEqual([1, 2]);
+    expect(argvs.slice(3).map((argv) => argv.includes("--since"))).toEqual([true, false]);
+    expect(mergedAnswer({ decisions: [] }, { full: true, decisions: [] })).toBeUndefined();
+    forgetAnswers();
+    forgetGenesisProbe();
 });
 
 test("sending staged answers acknowledges only after successful prompt submission", async () => {
