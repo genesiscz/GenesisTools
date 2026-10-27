@@ -226,6 +226,29 @@ final class HubNavigationTests: XCTestCase {
         XCTAssertNil(HubNavRequest(HubRequest(["--palette", "gt pr"])), "an overlay is no place")
         XCTAssertEqual(HubLink.arguments(fromLink: "genesis-tools://hub?pr=1&actor=agent&note=a%20b&from=s&nav=n&menu=Go"),
                        ["--pr", "1", "--actor", "agent", "--note", "a b", "--from", "s", "--nav", "n"])
+        // A link copied out of a task notification, whose XML escapes `&`: `amp;commit` is still the commit.
+        XCTAssertEqual(HubLink.arguments(fromLink: "genesis-tools://hub?repo=acme%2Fapp&amp;commit=abc1234&amp;menu=Go"),
+                       ["--repo", "acme/app", "--commit", "abc1234"])
+    }
+
+    /// A first launch opens the mode of the place it names; `--worktree` alone opened Sessions (2026-10-27).
+    func testALaunchOpensTheModeOfThePlaceItNames() {
+        XCTAssertEqual(HubRequest(["--worktree", "/work/app"]).launchMode, .worktrees)
+        XCTAssertEqual(HubRequest(["--worktree", "cleanup"]).launchMode, .worktrees)
+        XCTAssertEqual(HubRequest(["--repo", "acme/app", "--commit", "abc1234"]).launchMode, .worktrees)
+        XCTAssertEqual(HubRequest(["--pr", "acme/app#7", "--commit", "abc1234"]).launchMode, .prs)
+        XCTAssertEqual(HubRequest(["--session", "s", "--agent", "a"]).launchMode, .agents)
+        XCTAssertEqual(HubRequest(["--decision", "d_1_s"]).launchMode, .inbox)
+        XCTAssertEqual(HubRequest(["--session", "s"]).launchMode, .sessions)
+        XCTAssertEqual(HubRequest(["--mode", "timeline", "--worktree", "/work/app"]).launchMode, .timeline, "--mode wins")
+    }
+
+    /// What a request names and the hub cannot open is said, never dropped without a word.
+    func testARequestNamesWhatItCannotOpen() {
+        XCTAssertEqual(HubRequest(["--mode", "pr"]).problems, ["mode=pr is no hub mode (sessions, worktrees, prs, inbox, timeline, agents)"])
+        XCTAssertEqual(HubRequest(["--tab", "diff"]).problems, ["tab=diff is no hub tab (transcript, changes, files, decisions)"])
+        XCTAssertEqual(HubRequest(["--reveal", "a.swift"]).problems, ["reveal=a.swift opens a file in a PR's review: the link names no PR (pr=)"])
+        XCTAssertEqual(HubRequest(["--pr", "acme/app#7", "--reveal", "a.swift", "--mode", "prs", "--tab", "files"]).problems, [])
     }
 
     func testTheModelRecordsEachPickAndWalksBackAndForward() {
@@ -312,6 +335,9 @@ final class HubNavigationTests: XCTestCase {
         XCTAssertEqual(added.note, "later")
         XCTAssertEqual(added.target["pr"], "acme/app#9")
         XCTAssertNil(model.history.offset(of: "cli-id"), "in the list, not on the back or forward stack")
+        // A link the person clicked (no actor, so `link`) is their own move: it navigates.
+        XCTAssertTrue(model.apply(HubRequest(["--mode", "worktrees"])))
+        XCTAssertEqual(model.mode, .worktrees)
         // A person's own request still navigates.
         XCTAssertTrue(model.apply(HubRequest(["--mode", "prs", "--actor", "user"])))
         XCTAssertEqual(model.mode, .prs)

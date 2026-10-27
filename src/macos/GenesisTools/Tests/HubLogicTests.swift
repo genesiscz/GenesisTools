@@ -401,9 +401,20 @@ final class HubLogicTests: XCTestCase {
         let fork = [HubPRProject(project: "https://example.test/other/app", repo: "app", root: "/fixture/none", kind: "gitlab"),
                     HubPRProject(project: "https://example.test/me/app", repo: "app", root: path, kind: "gitlab")]
         XCTAssertEqual(HubCommitLookup.resolve(repo: "group/sub/app", sha: short, known: fork), found)
-        guard case .failed = HubCommitLookup.resolve(repo: "group/sub/app", sha: "0000000", known: fork) else {
+        guard case .failed(let unfetched) = HubCommitLookup.resolve(repo: "group/sub/app", sha: "0000000", known: fork, fetch: { fork }) else {
             return XCTFail("a same-name project without the commit is no match")
         }
+        XCTAssertTrue(unfetched.contains("is not in") && unfetched.contains("fetch it first"),
+                      "a clone of the same name answers where the commit was looked for: \(unfetched)")
+        // The hub's list is read once per run: a project it does not hold yet is asked for again before the miss.
+        let oldList = [HubPRProject(project: "https://example.test/other/tool", repo: "tool", root: "/fixture/none", kind: "github")]
+        var asked = 0
+        XCTAssertEqual(HubCommitLookup.resolve(repo: "acme/app", sha: short, known: oldList, fetch: { asked += 1; return projects }), found)
+        XCTAssertEqual(asked, 1)
+        guard case .failed(let none) = HubCommitLookup.resolve(repo: "acme/app", sha: short, known: oldList, fetch: { oldList }) else {
+            return XCTFail("no checkout in either list")
+        }
+        XCTAssertTrue(none.contains("No checkout of acme/app"), none)
         guard case .failed(let message) = HubCommitLookup.resolve(repo: path, sha: "0000000", known: []) else {
             return XCTFail("a commit the checkout lacks must be said")
         }
@@ -442,7 +453,7 @@ final class HubLogicTests: XCTestCase {
         }
         XCTAssertEqual(viaFork.root, root)
         // No checkout holds it: the miss names the upstream checkout, where the link pointed.
-        guard case .failed(let lacking) = HubCommitLookup.resolve(repo: "group/sub/app", sha: "0000000", known: upstream) else {
+        guard case .failed(let lacking) = HubCommitLookup.resolve(repo: "group/sub/app", sha: "0000000", known: upstream, fetch: { [] }) else {
             return XCTFail("a commit no checkout holds must be said")
         }
         XCTAssertTrue(lacking.contains("is not in"), lacking)
@@ -710,6 +721,37 @@ final class HubLogicTests: XCTestCase {
         XCTAssertTrue(model.notice?.isError == true)
         XCTAssertTrue(model.notice?.text.contains("so the whole PR shows") == true)
         XCTAssertEqual(model.notice?.ref, pending.ref)
+    }
+
+    /// A worktree a link names is compared as git lists it: `/tmp` is `/private/tmp`, `~` and a trailing slash are
+    /// gone, and a folder inside a worktree belongs to the deepest worktree that holds it.
+    func testAWorktreeLinkPathIsComparedAsGitListsIt() throws {
+        let folder = URL(fileURLWithPath: "/tmp").appendingPathComponent("hub-worktree-path-\(UUID().uuidString)")
+        try FileManager.default.createDirectory(at: folder, withIntermediateDirectories: true)
+        defer { try? FileManager.default.removeItem(at: folder) }
+        let real = "/private" + folder.path
+        XCTAssertEqual(WorktreeCleanup.normalizedPath(folder.path + "/"), real)
+        XCTAssertEqual(WorktreeCleanup.normalizedPath(folder.path + "/./sub/.."), real)
+        XCTAssertEqual(WorktreeCleanup.normalizedPath("~/no-such-folder-\(UUID().uuidString)/").hasPrefix(NSHomeDirectory() + "/no-such-folder-"), true)
+        XCTAssertEqual(WorktreeCleanup.selection(for: "cleanup"), WorktreeCleanup.selectionID)
+        let rows = [HubWorktree(path: "/work/app", repo: "app", commonDir: "/work/app/.git", branch: "main", isMain: true),
+                    HubWorktree(path: "/work/app/.claude/worktrees/x", repo: "app", commonDir: "/work/app/.git", branch: "x", isMain: false)]
+        XCTAssertEqual(WorktreeCleanup.owner(of: "/work/app/src", in: rows)?.path, "/work/app")
+        XCTAssertEqual(WorktreeCleanup.owner(of: "/work/app/.claude/worktrees/x/src", in: rows)?.path, "/work/app/.claude/worktrees/x")
+        XCTAssertNil(WorktreeCleanup.owner(of: "/work/application", in: rows))
+    }
+
+    /// A link to a merged PR by bare number widens the PR list to All for that link only: the next launch opens the
+    /// filter the person picked.
+    @MainActor
+    func testALinksWideningIsNotSavedAsTheFilter() throws {
+        let model = PRsModel()
+        model.state = "open"
+        XCTAssertTrue(model.widen(to: try XCTUnwrap(HubPRRef("7"))))
+        XCTAssertEqual(model.state, "all")
+        XCTAssertEqual(HubDefaults.store.string(forKey: "hub.prs.state"), "open")
+        model.state = "merged"
+        XCTAssertEqual(HubDefaults.store.string(forKey: "hub.prs.state"), "merged", "the person's own pick is saved")
     }
 
     /// GitHub lists 250 commits of a PR at most: the commits section says how many it left out.
