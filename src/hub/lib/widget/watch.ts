@@ -15,7 +15,12 @@ import { prepareWidgetAsset } from "../composer/assets";
 import { widgetDispatcher } from "../composer/dispatch";
 import { type OutboxDispatcher, processWidgetOutbox } from "../composer/engine";
 import { recoverWidgetOutbox } from "../composer/outbox";
-import { readWarmStartRoster, writeWidgetRosterCache } from "./roster-cache";
+import {
+    readWarmStartRoster,
+    WIDGET_ROSTER_CACHE_HEARTBEAT_MS,
+    widgetRosterFingerprint,
+    writeWidgetRosterCache,
+} from "./roster-cache";
 import {
     type WidgetRosterProvider,
     type WidgetRosterScope,
@@ -236,6 +241,8 @@ export async function watchWidget({
             };
             if (!dependencies.snapshot) {
                 let rosterReady = false;
+                /** The roster the last snapshot was built from, and when it was last written to the cache. */
+                let rosterShown: { fingerprint: string; failed: boolean; writtenAt: number } | undefined;
                 roster = new WidgetRosterReader({
                     changed: () => {
                         if (!rosterReady) {
@@ -245,6 +252,24 @@ export async function watchWidget({
                         // One-shot snapshots (the settings page) read this instead of rebuilding the tree cold.
                         if (roster && !roster.error && roster.agents.generatedAt) {
                             const { rows, agents } = roster;
+                            // A run that found the same sessions and agents (the safety read of an idle roster)
+                            // rebuilds no second snapshot and rewrites no 1.1 MB cache; the cache still gets a
+                            // heartbeat write so its readers see a live writer.
+                            const fingerprint = widgetRosterFingerprint({ rows, agents });
+                            const now = Date.now();
+                            const unchanged =
+                                rosterShown !== undefined &&
+                                !rosterShown.failed &&
+                                rosterShown.fingerprint === fingerprint;
+                            if (
+                                unchanged &&
+                                rosterShown &&
+                                now - rosterShown.writtenAt < WIDGET_ROSTER_CACHE_HEARTBEAT_MS
+                            ) {
+                                return;
+                            }
+
+                            rosterShown = { fingerprint, failed: false, writtenAt: now };
                             // Kept so shutdown waits for it inside the worker lock: one landing after a replacement
                             // watch took the lock would put this older roster over that watch's newer one. Writes
                             // run in order (roster-cache.ts), so the latest settles after every earlier one.
@@ -253,7 +278,15 @@ export async function watchWidget({
                                     logger.debug({ error }, "Widget roster cache not written");
                                 }
                             );
+                            if (unchanged) {
+                                return;
+                            }
+                        } else if (rosterShown) {
+                            // A failed run shows its error; the next good run rebuilds the snapshot even when its
+                            // roster equals the one before the failure.
+                            rosterShown = { ...rosterShown, failed: true };
                         }
+
                         void requestRefresh();
                     },
                 });
