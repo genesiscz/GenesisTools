@@ -23,7 +23,6 @@ import type {
 } from "./_generated/protocol";
 import type { CodexAccountBinding } from "./account";
 import type { RpcNotification, RpcServerRequest } from "./app-server-client";
-import { isOwnBusCommand, isReadOnlyCommand } from "./bus-approval";
 import type { CodexControl } from "./control";
 import { assignThreadToProject, type CodexProject, resolveProjectSelector } from "./desktop-project";
 import { markReviewShallow, recordReviewTurn } from "./review/controller";
@@ -334,24 +333,8 @@ export class CodexSessionRuntime {
             return approvalResponse(request.method, false);
         }
 
-        if (this.isOwnBusRequest(request)) {
-            this.store.appendEvent(this.meta.name, {
-                source: "daemon",
-                method: "approval/auto-accepted",
-                params: { reason: "the worker's own seeded bus command", detail: approvalDetail(request.params) },
-            });
-            return approvalResponse(request.method, true);
-        }
-
-        if (this.isReadOnlyRequest(request)) {
-            this.store.appendEvent(this.meta.name, {
-                source: "daemon",
-                method: "approval/auto-accepted",
-                params: { reason: "a read-only command", detail: approvalDetail(request.params) },
-            });
-            return approvalResponse(request.method, true);
-        }
-
+        // Even a prior approval for a seemingly read-only command can authorize an unsandboxed retry.
+        // Hold every ask request for an explicit lead decision; command text does not prove confinement.
         const requestId = String(request.id);
         const detail = this.describeApproval(request);
         const params = isRecord(request.params) ? request.params : {};
@@ -410,31 +393,6 @@ export class CodexSessionRuntime {
             lastEventAt: new Date().toISOString(),
             pendingApprovals: {},
         });
-    }
-
-    /** A command approval for this worker's own seeded `tools agents` command, from its own thread. */
-    private isOwnBusRequest(request: RpcServerRequest): boolean {
-        const command = isRecord(request.params) ? request.params.command : undefined;
-
-        return (
-            request.method === "item/commandExecution/requestApproval" &&
-            this.meta.agentsEnabled &&
-            typeof command === "string" &&
-            this.isOwnThreadEvent(request) &&
-            isOwnBusCommand(command, { agentName: this.meta.agentName, session: this.meta.rendezvousSession })
-        );
-    }
-
-    /** A command approval, from this worker's own thread, for a command that only reads (`isReadOnlyCommand`). */
-    private isReadOnlyRequest(request: RpcServerRequest): boolean {
-        const command = isRecord(request.params) ? request.params.command : undefined;
-
-        return (
-            request.method === "item/commandExecution/requestApproval" &&
-            typeof command === "string" &&
-            this.isOwnThreadEvent(request) &&
-            isReadOnlyCommand(command)
-        );
     }
 
     /** Keeps a file-change item's paths from its start to its end, for the approval asked in between. */

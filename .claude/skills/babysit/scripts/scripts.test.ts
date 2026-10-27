@@ -121,7 +121,10 @@ describe("trust levels", () => {
     });
 
     test("edits approves reads, fable-replace and scratch writes, and refuses every other command", () => {
-        for (const text of ["ls -d graft 2>/dev/null; sed -n 1,9p src/b.ts", "git diff --stat; rg -n foo src"]) {
+        for (const text of [
+            "ls -d graft 2>/dev/null; sed -n 1,9p src/b.ts",
+            "git diff --no-textconv --no-ext-diff --stat; rg -n foo src",
+        ]) {
             expect(decide(entry, command(text), "edits").ok).toBe(true);
         }
 
@@ -187,7 +190,7 @@ describe("trust levels", () => {
         }
     });
 
-    test("a waiting request is repeated, and a switch to a wider level releases it", async () => {
+    test("a waiting request repeats and a wider trust level never auto-approves it", async () => {
         const messages: string[] = [];
         const fed: string[] = [];
         const output = spyOn(console, "log").mockImplementation((value) => messages.push(String(value)));
@@ -224,10 +227,160 @@ describe("trust levels", () => {
             expect(fed[0]).toContain("NEEDS LEAD #w");
             expect(fed.filter((line) => line.includes("STILL WAITING #w"))).toHaveLength(1);
             expect(messages).toContain("[approver] trust is now routine");
-            expect(approved).toEqual(["w"]);
+            expect(approved).toEqual([]);
+            expect(fed[0]).toContain("sandbox authority unavailable; manual approval required");
         } finally {
             output.mockRestore();
         }
+    });
+});
+
+describe("approval policy regressions", () => {
+    const request = (command: string) => ({
+        method: "execCommandApproval",
+        command,
+        detail: command,
+        cwd: approvalRoot,
+    });
+
+    test("denied command spellings, cwd changes and edits reader arguments cannot bypass the driver", () => {
+        for (const command of [
+            "/bin/rm -rf src",
+            "/usr/bin/curl https://example.org",
+            "git --no-pager push origin HEAD",
+        ]) {
+            expect(decide(entry, request(command), "routine").ok).toBe(false);
+            expect(decide(entry, request(command), "all").ok).toBe(false);
+        }
+        expect(decide(entry, request("cd /tmp && printf x > outside.txt"), "routine").ok).toBe(false);
+        expect(decide(entry, request("if true; then cd /tmp; fi; printf x > outside.txt"), "routine").ok).toBe(false);
+        for (const command of [
+            "sed -n 'w /tmp/outside.txt' src/a.ts",
+            "sort -o /tmp/outside.txt src/a.ts",
+            "find . -fprint /tmp/outside.txt",
+            "if true; then bun scripts/test.ts src/a.test.ts; fi",
+        ]) {
+            expect(decide(entry, request(command), "edits").ok).toBe(false);
+        }
+        expect(decide(entry, request("sed -n 1,9p src/a.ts; rg foo src"), "edits").ok).toBe(true);
+        expect(decide(entry, request("printf x > src/a.ts"), "routine").ok).toBe(true);
+    });
+
+    test("build switch covers real package aliases without blocking a non-build check", () => {
+        for (const command of [
+            "bun run typecheck",
+            "bun run typecheck:all",
+            "bun run build:native",
+            "bun run build:app",
+            "bun scripts/ci/typecheck.ts",
+        ]) {
+            expect(decide(entry, request(command), "routine", true).ok).toBe(false);
+        }
+        expect(decide(entry, request("bun run lint:rules"), "routine", true).ok).toBe(true);
+    });
+
+    test("a build switch cannot auto-approve a waiting request", async () => {
+        let time = 0;
+        let blocked = true;
+        const approved: string[] = [];
+        const feed: string[] = [];
+        const exec: typeof execTool = async (args) => {
+            if (args[1] === "approve") {
+                approved.push(args[args.length - 1]);
+                return { success: true, exitCode: 0, stdout: "", stderr: "" };
+            }
+            return {
+                success: true,
+                exitCode: 0,
+                stdout: SafeJSON.stringify({
+                    pendingApprovals: approved.length ? {} : { b: request("bun run typecheck") },
+                }),
+                stderr: "",
+            };
+        };
+        await watchApprovals({
+            entry,
+            exec,
+            now: () => time,
+            sleep: async (ms) => {
+                time += ms;
+                if (time >= 100) {
+                    blocked = false;
+                }
+            },
+            timeoutMs: 250,
+            pollMs: 50,
+            trust: () => "routine",
+            noBuilds: () => blocked,
+            feed: (line) => feed.push(line),
+        });
+        expect(feed.some((line) => line.includes("NEEDS LEAD #b"))).toBe(true);
+        expect(approved).toEqual([]);
+        expect(feed[0]).toContain("sandbox authority unavailable; manual approval required");
+    });
+
+    test("card mutations fail closed under a held policy lock and preserve both fields on sequential updates", () => {
+        const dir = fs.mkdtempSync(join(tmpdir(), "babysit-policy-lock-"));
+        const cardPath = join(dir, "run.json");
+        fs.writeFileSync(cardPath, SafeJSON.stringify({ prs: [entry], trust: "routine", noBuilds: false }));
+        const script = join(import.meta.dir, "approve-codex.ts");
+        const run = (...args: string[]) =>
+            Bun.spawnSync([process.execPath, script, ...args, "--run", cardPath], {
+                stdout: "pipe",
+                stderr: "pipe",
+                env: process.env,
+            });
+        fs.mkdirSync(`${cardPath}.policy-lock`);
+        const blocked = run("builds", "deny");
+        expect(blocked.exitCode).not.toBe(0);
+        expect(SafeJSON.parse(fs.readFileSync(cardPath, "utf8"), { strict: true })).toMatchObject({
+            trust: "routine",
+            noBuilds: false,
+        });
+        fs.rmdirSync(`${cardPath}.policy-lock`);
+        expect(run("trust", "strict").exitCode).toBe(0);
+        expect(run("builds", "deny").exitCode).toBe(0);
+        expect(SafeJSON.parse(fs.readFileSync(cardPath, "utf8"), { strict: true })).toMatchObject({
+            trust: "strict",
+            noBuilds: true,
+        });
+    });
+
+    test("failed, timed-out and thrown denial escalates and repeats instead of disappearing", async () => {
+        let time = 0;
+        let attempts = 0;
+        const feed: string[] = [];
+        const exec: typeof execTool = async (args) => {
+            if (args[1] === "deny") {
+                attempts++;
+                if (attempts === 1) {
+                    throw new Error("failed");
+                }
+                return { success: attempts === 2, timedOut: attempts === 2, exitCode: 1, stdout: "", stderr: "failed" };
+            }
+            return {
+                success: true,
+                exitCode: 0,
+                stdout: SafeJSON.stringify({ pendingApprovals: { r: request("tools say done") } }),
+                stderr: "",
+            };
+        };
+        await watchApprovals({
+            entry,
+            exec,
+            now: () => time,
+            sleep: async (ms) => {
+                time += ms;
+            },
+            timeoutMs: 500,
+            pollMs: 50,
+            trust: () => "routine",
+            feed: (line) => feed.push(line),
+            remindAfterMs: 100,
+        });
+        expect(attempts).toBe(3);
+        expect(feed.some((line) => line.includes("NEEDS LEAD #r") && line.includes("denial failed"))).toBe(true);
+        expect(feed.some((line) => line.includes("STILL WAITING #r"))).toBe(true);
     });
 });
 
@@ -514,102 +667,103 @@ describe("brief approval boundary", () => {
     });
 });
 
-test("approval failures retry until acknowledged and the watch has a deadline", async () => {
-    const messages: string[] = [];
-    const output = spyOn(console, "log").mockImplementation((value) => messages.push(String(value)));
-    const errors = spyOn(console, "error").mockImplementation((value) => messages.push(String(value)));
+test("manual-only driver does not accept even trusted commands or file changes", async () => {
     let time = 0;
     let approvals = 0;
-    const pending = {
-        pendingApprovals: {
-            "request-1": {
-                method: "item/commandExecution/requestApproval",
-                detail: "bunx biome check src/a.ts",
-                command: "bunx biome check src/a.ts",
-                cwd: entry.cwd,
-            },
+    const feed: string[] = [];
+    const requests = {
+        read: { method: "item/commandExecution/requestApproval", detail: "cat a", command: "cat a", cwd: entry.cwd },
+        edit: { method: "item/fileChange/requestApproval", detail: "edit src/a.ts", paths: ["src/a.ts"] },
+        escalation: {
+            method: "item/commandExecution/requestApproval",
+            detail: "escalate",
+            command: "cat a",
+            cwd: entry.cwd,
+            additionalPermissions: { network: { enabled: true } },
         },
     };
     const exec: typeof execTool = async (args) => {
         if (args[1] === "approve") {
-            approvals += 1;
-            return {
-                success: approvals > 1,
-                exitCode: approvals > 1 ? 0 : 124,
-                stdout: "",
-                stderr: "temporary failure",
-                timedOut: approvals === 1,
-            };
+            approvals++;
         }
-        return { success: true, exitCode: 0, stdout: SafeJSON.stringify(pending), stderr: "" };
+        return {
+            success: true,
+            exitCode: 0,
+            stderr: "",
+            stdout: SafeJSON.stringify({ writePolicy: "ask", sandbox: "workspace-write", pendingApprovals: requests }),
+        };
     };
-    try {
-        await watchApprovals({
-            entry,
-            exec,
-            now: () => time,
-            sleep: async (ms) => {
-                time += ms;
-            },
-            timeoutMs: 20,
-            pollMs: 5,
-        });
-        expect(approvals).toBe(2);
-        expect(messages.filter((line) => line.includes("approved #request-1"))).toHaveLength(1);
-        expect(messages.some((line) => line.includes("approval failed #request-1"))).toBe(true);
-        expect(messages.at(-1)).toContain("watch deadline reached");
-        expect(time).toBe(20);
-    } finally {
-        output.mockRestore();
-        errors.mockRestore();
-    }
+    await watchApprovals({
+        entry,
+        exec,
+        now: () => time,
+        sleep: async (ms) => {
+            time += ms;
+        },
+        timeoutMs: 250,
+        pollMs: 50,
+        trust: () => "all",
+        feed: (line) => feed.push(line),
+        remindAfterMs: 100,
+    });
+    expect(approvals).toBe(0);
+    expect(feed.filter((line) => line.includes("NEEDS LEAD #"))).toHaveLength(3);
+    expect(
+        feed.filter((line) => line.includes("sandbox authority unavailable; manual approval required"))
+    ).toHaveLength(6);
+    expect(feed.filter((line) => line.includes("STILL WAITING #"))).toHaveLength(3);
 });
 
-test("persistent approval failure asks the lead after three attempts, without claiming success", async () => {
-    const messages: string[] = [];
-    const output = spyOn(console, "log").mockImplementation((value) => messages.push(String(value)));
-    const errors = spyOn(console, "error").mockImplementation((value) => messages.push(String(value)));
+test("changing every advisory trust level cannot enable automatic acceptance", async () => {
     let time = 0;
-    let attempts = 0;
+    let approvals = 0;
+    const levels = ["strict", "edits", "routine", "all"] as const;
     const exec: typeof execTool = async (args) => {
         if (args[1] === "approve") {
-            attempts += 1;
-            throw new Error("unavailable");
+            approvals++;
         }
         return {
             success: true,
             exitCode: 0,
             stderr: "",
             stdout: SafeJSON.stringify({
+                writePolicy: "ask",
+                sandbox: "workspace-write",
                 pendingApprovals: {
-                    r: {
-                        method: "execCommandApproval",
-                        detail: "bunx biome check src/a.ts",
-                        command: "bunx biome check src/a.ts",
-                        cwd: entry.cwd,
-                    },
+                    r: { method: "execCommandApproval", command: "cat a", cwd: entry.cwd, detail: "cat a" },
                 },
             }),
         };
     };
-    try {
-        await watchApprovals({
-            entry,
-            exec,
-            now: () => time,
-            sleep: async (ms) => {
-                time += ms;
-            },
-            timeoutMs: 20,
-            pollMs: 2,
-        });
-        expect(attempts).toBe(3);
-        expect(messages.some((line) => line.includes("NEEDS LEAD #r"))).toBe(true);
-        expect(messages.some((line) => line.includes("approved #"))).toBe(false);
-    } finally {
-        output.mockRestore();
-        errors.mockRestore();
-    }
+    await watchApprovals({
+        entry,
+        exec,
+        now: () => time,
+        sleep: async (ms) => {
+            time += ms;
+        },
+        timeoutMs: 400,
+        pollMs: 50,
+        trust: () => levels[Math.min(3, Math.floor(time / 100))] ?? "strict",
+    });
+    expect(approvals).toBe(0);
+});
+
+test("full access worker is not accepted by the driver", async () => {
+    const feed: string[] = [];
+    let calls = 0;
+    const exec: typeof execTool = async () => {
+        calls++;
+        return {
+            success: true,
+            exitCode: 0,
+            stderr: "",
+            stdout: SafeJSON.stringify({ writePolicy: "full", sandbox: "danger-full-access", pendingApprovals: {} }),
+        };
+    };
+    await watchApprovals({ entry, exec, feed: (line) => feed.push(line) });
+    expect(calls).toBe(1);
+    expect(feed).toEqual([expect.stringContaining("not an ask/workspace-write worker; driver stopped")]);
 });
 
 test("monitor drains large stderr, preserves its label, and returns failures", async () => {
