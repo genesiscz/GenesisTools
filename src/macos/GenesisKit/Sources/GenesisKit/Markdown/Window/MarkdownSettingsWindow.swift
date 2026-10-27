@@ -29,10 +29,22 @@ public final class MarkdownSettingsWindow: NSObject {
     }
 }
 
+extension Notification.Name {
+    static let markdownSplitSyncChanged = Notification.Name("markdownSplitSyncChanged")
+}
+
 struct MarkdownSettingsView: View {
     @ObservedObject var configuration: GenesisKitMarkdownConfiguration
+    @ObservedObject private var highlight = NativeSettingsHighlightCenter.shared
+    @AppStorage("markdown.config.treeNotesOnly") private var notesOnly = true
+    @AppStorage("markdownWindow.splitScrollSync") private var splitScrollSync = true
+
+    init(configuration: GenesisKitMarkdownConfiguration) {
+        self.configuration = configuration
+    }
 
     var body: some View {
+        ScrollViewReader { proxy in
         ScrollView {
             VStack(alignment: .leading, spacing: 14) {
                 MarkdownTabSettingsCard(configuration: configuration)
@@ -42,7 +54,16 @@ struct MarkdownSettingsView: View {
                     NativeSettingsToggle("Suggest links and tags while typing",
                                          detail: "The list of notes opens after [[ and the list of tags after #. Off: press Esc to open it.",
                                          identifier: "markdown.settings.completeWhileTyping", isOn: $configuration.completeWhileTyping)
+                    Divider()
+                    NativeSettingsToggle("Sync split scrolling", detail: "The editor and preview follow each other while scrolling.",
+                                         identifier: "markdown.settings.splitScrollSync", isOn: $splitScrollSync)
                 }
+                NativeSettingsCard("File sidebar", subtitle: "Choose which files the sidebar shows.") {
+                    NativeSettingsToggle("Show only notes", detail: "Hide other files while keeping folders visible.",
+                                         identifier: "markdown.settings.treeNotesOnly", isOn: $notesOnly)
+                }
+                .id("markdown-file-sidebar")
+                .nativeSettingsAnchor("markdown-file-sidebar")
                 NativeSettingsCard("Git", subtitle: "Shown for notes inside a git repository.") {
                     NativeSettingsToggle("Git integration",
                                          detail: "The file's state, the gutter, the Changes mode, the history and the tree marks.",
@@ -67,6 +88,16 @@ struct MarkdownSettingsView: View {
             .padding(20)
         }
         .frame(minWidth: 480, minHeight: 380)
+        .onAppear {
+            if highlight.anchor == "markdown-file-sidebar" { proxy.scrollTo("markdown-file-sidebar") }
+        }
+        .onChange(of: highlight.token) { _, _ in
+            if highlight.anchor == "markdown-file-sidebar" { proxy.scrollTo("markdown-file-sidebar") }
+        }
+        .onChange(of: splitScrollSync) { _, enabled in
+            NotificationCenter.default.post(name: .markdownSplitSyncChanged, object: enabled)
+        }
+        }
     }
 }
 

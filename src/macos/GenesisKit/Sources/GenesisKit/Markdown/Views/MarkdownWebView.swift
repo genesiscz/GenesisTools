@@ -280,6 +280,11 @@ struct MarkdownWebView: NSViewRepresentable {
             c.lastArticleWidth = articleWidth
             c.applyArticleWidth(articleWidth)
         }
+        let reverseSync = onTopLine != nil
+        if c.lastReverseSync != reverseSync {
+            c.lastReverseSync = reverseSync
+            c.eval("window.gnReverseSync(\(reverseSync))")
+        }
         // Before the render below: the code block bar is drawn by the page's fence renderer.
         let extrasNeedRender = c.syncPageExtras()
         if extrasNeedRender || c.lastMarkdown != markdown || c.lastMediaContext != mediaContext || c.lastLineNumbers != lineNumbers {
@@ -433,6 +438,7 @@ struct MarkdownWebView: NSViewRepresentable {
         var lastColumnResizable: Bool?
         var lastMagnifyKey: String?
         var lastSyncLine: MarkdownLineSync?
+        var lastReverseSync: Bool?
         var lastLineNumbers: Bool?
         var lastLineHighlight: LineHighlight?
         var lastGitMarks: [GitMark] = []
@@ -682,6 +688,8 @@ struct MarkdownWebView: NSViewRepresentable {
             if let w = lastArticleWidth {
                 applyArticleWidth(w)
             }
+            // A recycled or reloaded page receives the current reverse-sync state too.
+            eval("window.gnReverseSync(\(parent.onTopLine != nil))")
             // Before the render: the code block bar is part of it.
             applyPageExtras()
             if let p = pending { pending = nil; render(p) }
@@ -1508,9 +1516,16 @@ window.addEventListener('scroll',function(){gnPostScroll();window.requestAnimati
 // Split view, preview to editor: a scroll the reader made here (wheel, keys, the scroll bar) reports the body line
 // at the top, so the editor follows. A scroll the editor caused (`gnSyncLine`) clears the input time and stays quiet,
 // so the two panes never drive each other in a loop.
-var gnInputAt=0,gnTopFrame=0,gnLastTopLine=-1;
+var gnInputAt=0,gnTopFrame=0,gnLastTopLine=-1,gnReverseEnabled=false,gnDragging=false;
+window.gnReverseSync=function(on){
+  gnReverseEnabled=!!on;gnInputAt=0;gnDragging=false;gnLastTopLine=-1;
+  if(!on&&gnTopFrame){clearTimeout(gnTopFrame);gnTopFrame=0;}
+};
 ['wheel','keydown','mousedown','touchstart'].forEach(function(t){
-  window.addEventListener(t,function(){gnInputAt=Date.now();},{passive:true,capture:true});});
+  window.addEventListener(t,function(){if(gnReverseEnabled)gnInputAt=Date.now();},{passive:true,capture:true});});
+window.addEventListener('mousedown',function(){if(gnReverseEnabled)gnDragging=true;},{capture:true});
+window.addEventListener('mouseup',function(){gnDragging=false;},{capture:true});
+window.addEventListener('blur',function(){gnDragging=false;});
 // The inverse of `gnSyncLine`: the line of the block at the sync edge, interpolated to the next block.
 function gnTopLine(){
   var art=document.getElementById('gn-article');if(!art)return -1;
@@ -1530,7 +1545,7 @@ function gnTopLine(){
   return prev.line;
 }
 window.addEventListener('scroll',function(){
-  if(Date.now()-gnInputAt>600||gnTopFrame)return;
+  if(!gnReverseEnabled||(!gnDragging&&Date.now()-gnInputAt>600)||gnTopFrame)return;
   // A timer, not a frame: a page in a window that is not on screen gets no frames.
   gnTopFrame=setTimeout(function(){
     gnTopFrame=0;var n=gnTopLine();
@@ -2049,7 +2064,8 @@ window.gnWidth=function(px){var s=document.documentElement.style;if(px&&px>0)s.s
 // between interpolate, so a slow scroll in the editor is a slow scroll here.
 // `gnSyncGuard` keeps the scroll-spy from reporting a section during the jump.
 window.gnSyncLine=function(n){
-  gnInputAt=0;gnLastTopLine=n;
+  gnInputAt=0;gnDragging=false;gnLastTopLine=n;
+  if(gnTopFrame){clearTimeout(gnTopFrame);gnTopFrame=0;}
   var art=document.getElementById('gn-article');if(!art)return;
   var nodes=art.querySelectorAll('[data-line]');if(!nodes.length)return;
   var sc=document.scrollingElement||document.documentElement;

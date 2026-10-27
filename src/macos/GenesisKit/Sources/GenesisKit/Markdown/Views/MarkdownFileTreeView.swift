@@ -839,6 +839,21 @@ struct MarkdownFileTreeView: View {
                 ? "Showing only notes: click to show every file (pictures, JSON, code)"
                 : "Showing every file: click to show only notes")
 
+            Button {
+                MarkdownSettingsWindow.shared.show(nil)
+                NativeSettingsHighlightCenter.shared.request("markdown-file-sidebar")
+            } label: {
+                Image(systemName: "gearshape")
+                    .font(.system(size: 9, weight: .bold))
+                    .foregroundColor(model.theme.textMuted)
+                    .frame(width: 22, height: 22)
+                    .contentShape(Rectangle())
+            }
+            .buttonStyle(.genHoverPlain())
+            .accessibilityLabel("File sidebar settings")
+            .accessibilityIdentifier("markdown-files-settings")
+            .instantTooltip("File sidebar settings")
+
             if gitMarks {
                 Button {
                     changedOnly.toggle()

@@ -300,6 +300,23 @@ final class MarkdownChromeTests: XCTestCase {
         XCTAssertNil(target(""))
     }
 
+    func testPendingNameOnlyHoverRetriesAfterTheIndexScan() async throws {
+        let note = try file("Clients/Acme/Plan.md")
+        let folder = dir.appendingPathComponent("Clients/Acme/Design")
+        let release = DispatchSemaphore(value: 0)
+        let index = VaultFileIndex(root: dir) { _ in
+            _ = release.wait(timeout: .now() + 5)
+            return .init(paths: [], attachmentFolder: nil, notes: ["Clients/Acme/Plan.md"])
+        }
+        let ready = expectation(description: "hover can retry")
+        XCTAssertNil(MarkdownHoverTarget.url(forLink: "Plan", folder: folder, text: "", vaultRoot: dir.path,
+                                             index: index, onIndexReady: { ready.fulfill() }))
+        release.signal()
+        await fulfillment(of: [ready], timeout: 5)
+        XCTAssertEqual(MarkdownHoverTarget.url(forLink: "Plan", folder: folder, text: "", vaultRoot: dir.path,
+                                               index: index)?.path, note.path)
+    }
+
     func testTheControllerTracksTheAnchorAndRespectsTheSwitch() throws {
         let plan = try file("plan.md")
         let model = model()
