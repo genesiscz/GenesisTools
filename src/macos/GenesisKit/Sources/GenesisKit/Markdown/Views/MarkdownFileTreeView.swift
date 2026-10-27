@@ -50,6 +50,9 @@ struct MarkdownFileTreeView: View {
     @AppStorage("markdown.config.treeChangedOnly") private var changedOnly = false
     /// The tree lists folders and notes (markdown, canvas, base) only; off lists every file (pictures, JSON, code).
     @AppStorage("markdown.config.treeNotesOnly") private var notesOnly = true
+    /// The filtered rows, kept until the rows or the kept paths change: the body asks for them several times per
+    /// render, and a long folder is hundreds of extension checks each time.
+    @State private var noteRowsMemo = MarkdownNoteRowsMemo()
     @State private var hitFit = MarkdownTreeFit<FileTreeSearch.Hit>()
     @State private var rowPulse: FileTreePulse?
     /// The tree's AppKit scroll view, so a reveal can glide to a row SwiftUI has not laid out yet.
@@ -270,13 +273,17 @@ struct MarkdownFileTreeView: View {
     /// The rows on screen, in order: every row, or only the changed ones when the git filter is on.
     private var displayedRows: [FileTreeRow] {
         let git: GitTreeDecorations? = gitMarks ? gitTree.decorations : nil
-        let rows = notesOnly ? Self.noteRows(tree.rows) : tree.rows
+        let rows = notesOnly ? noteRowsMemo.rows(tree.rows, keep: Set([revealed, model.selected?.id].compactMap { $0 })) : tree.rows
         return git.map { changedOnly ? FileTreeView.changedRows(rows, $0) : rows } ?? rows
     }
 
-    /// Folders and notes (markdown, canvas, base): the "Notes only" filter.
-    nonisolated static func noteRows(_ rows: [FileTreeRow]) -> [FileTreeRow] {
-        rows.filter { $0.isFolder || FileTree.kind(for: URL(fileURLWithPath: $0.id), isDirectory: false) != .file }
+    /// Folders and notes (markdown, canvas, base): the "Notes only" filter. A path in `keep` (the revealed row, the
+    /// selected tab) stays, so "Show in Sidebar" on a picture or a JSON tab still finds its row.
+    nonisolated static func noteRows(_ rows: [FileTreeRow], keep: Set<String> = []) -> [FileTreeRow] {
+        rows.filter {
+            $0.isFolder || keep.contains($0.id)
+                || FileTree.kind(for: URL(fileURLWithPath: $0.id), isDirectory: false) != .file
+        }
     }
 
     /// Every file row carries the hover preview; a single click opens through `openFromTree`.
@@ -1043,6 +1050,21 @@ enum MarkdownSearchResultMenu {
         let leading = [PathMenuItem(id: "open", title: "Open", systemImage: "doc.text", run: open)]
         let verbs = PathMenu.entries(for: url, kind: .file, actions: actions, handlers: handlers, environment: environment ?? .system)
         return leading.map(PathMenuEntry.item) + (verbs.isEmpty ? [] : [.divider(id: "divider-leading")]) + verbs
+    }
+}
+
+/// The "Notes only" rows of the last tree rows asked for. A class, so a render that fills it does not render again.
+final class MarkdownNoteRowsMemo {
+    private var source: [FileTreeRow]?
+    private var kept: Set<String> = []
+    private var result: [FileTreeRow] = []
+
+    func rows(_ rows: [FileTreeRow], keep: Set<String>) -> [FileTreeRow] {
+        if rows == source, keep == kept { return result }
+        result = MarkdownFileTreeView.noteRows(rows, keep: keep)
+        source = rows
+        kept = keep
+        return result
     }
 }
 
