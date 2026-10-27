@@ -160,6 +160,7 @@ describe("environment and arguments", () => {
             CLAUDE_CODE_AUTO_COMPACT_WINDOW: "475000",
             CLAUDE_AUTOCOMPACT_PCT_OVERRIDE: "90",
             TOOLS_CLAUDE_ACCOUNT: "proxy:codex:work+claude:personal",
+            CLAUDE_CODE_ENABLE_GATEWAY_MODEL_DISCOVERY: "1",
         });
     });
 
@@ -178,6 +179,7 @@ describe("environment and arguments", () => {
         );
 
         expect(env.ANTHROPIC_DEFAULT_HAIKU_MODEL).toBe("codex/gpt-6-luna:low");
+        expect(env.CLAUDE_CODE_ENABLE_GATEWAY_MODEL_DISCOVERY).toBe("1");
         expect(env.ANTHROPIC_DEFAULT_OPUS_MODEL).toBeUndefined();
     });
 
@@ -230,8 +232,15 @@ describe("the shared settings model guard (a /model pick must not become every s
 
     it("knows which ids only a proxy session can run", () => {
         expect(
-            ["codex/gpt-6-astra", "grok/grok-4.6", "opus", "claude-opus-5-5[1m]", undefined].map(isSessionOnlyModel)
-        ).toEqual([true, true, false, false, false]);
+            [
+                "codex/gpt-6-astra",
+                "grok/grok-4.6",
+                "claude-codex/gpt-6-astra",
+                "opus",
+                "claude-opus-5-5[1m]",
+                undefined,
+            ].map(isSessionOnlyModel)
+        ).toEqual([true, true, true, false, false, false]);
     });
 
     it("puts back the launch model and changes nothing else, mode included; a Claude id stays", () => {

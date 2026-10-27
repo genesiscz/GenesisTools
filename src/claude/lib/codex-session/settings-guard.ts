@@ -23,9 +23,12 @@ import { logger } from "@genesiscz/utils/logger";
 import { isObject } from "@genesiscz/utils/object";
 import { nativeHome } from "@genesiscz/utils/providers/session-paths";
 
-/** A model id only a proxy session can run: `codex/…` and `grok/…` mean nothing to Anthropic's API. */
+/**
+ * A model id only a proxy session can run: `codex/…` and `grok/…`, also as the `/model` picker's `claude-codex/…`,
+ * mean nothing to Anthropic's API.
+ */
 export function isSessionOnlyModel(model: unknown): model is string {
-    return typeof model === "string" && /^(codex|grok)\//i.test(model.trim());
+    return typeof model === "string" && /^(claude-)?(codex|grok)\//i.test(model.trim());
 }
 
 /** The settings file every Claude Code on this machine shares (the config folder without CLAUDE_CONFIG_DIR). */
