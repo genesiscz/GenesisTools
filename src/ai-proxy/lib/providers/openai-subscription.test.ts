@@ -1293,10 +1293,16 @@ describe("native /v1/messages route: reasoning carried in gtr1 envelopes", () =>
                 stream: true,
                 tools: [{ name: "Read", description: "read", input_schema: { type: "object", properties: {} } }],
                 messages: [{ role: "user", content: `${CLAUDE_CODE_COMPACTION_MARK}\n\nSummarize the conversation.` }],
+                output_config: { effort: "xhigh" },
+                reasoning_effort: "xhigh",
             })
         ).text();
 
         expect(sent[0]?.tool_choice).toBe("none");
+        // The summary runs at low effort and is asked for a length, at the end of the input so the cache stays.
+        expect((sent[0]?.reasoning as Record<string, unknown> | undefined)?.effort).toBe("low");
+        const input = (sent[0]?.input ?? []) as Array<Record<string, unknown>>;
+        expect(SafeJSON.stringify(input.at(-1))).toContain("under 5000 words");
         // WHAM treats a tool without `strict` as strict, and the model then fills every optional field.
         expect(sent[0]?.tools).toEqual([expect.objectContaining({ type: "function", name: "Read", strict: false })]);
     });

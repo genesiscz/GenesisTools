@@ -47,6 +47,7 @@ import {
 import {
     CLAUDE_CODE_AGENT_TOOL,
     isClaudeCodeCompactionTurn,
+    limitCompactionSummary,
     sessionAgentModelWins,
 } from "@app/ai-proxy/lib/translators/formats/anthropic/claude-code-turns";
 import { ensureToolRequiredArrays } from "@app/ai-proxy/lib/translators/formats/anthropic/ensure-tool-required";
@@ -368,6 +369,13 @@ export class OpenAiSubscriptionProvider implements ProxyProvider {
             compHash: catalog?.compHash ?? "0",
         };
         const replay = { kept: [] as string[], dropped: {} as Partial<Record<EnvelopeRejection | "dead", number>> };
+        const compaction = isClaudeCodeCompactionTurn(parsed);
+        const summaryWords = compaction ? env.aiProxy.getCompactionWords() : undefined;
+
+        if (summaryWords) {
+            parsed = limitCompactionSummary(parsed, summaryWords);
+        }
+
         // System messages stay in place (`appendDeveloperMessage`): hoisted, they broke the prompt cache.
         let responsesBody = anthropicToResponses(ensureToolRequiredArrays(parsed), concreteModel, {
             // A Read of an image comes back as a tool result; WHAM takes it as input_image (codex-rs does the same).
@@ -392,7 +400,7 @@ export class OpenAiSubscriptionProvider implements ProxyProvider {
 
         // Claude Code forbids tools in its compaction prompt in words only; a Codex model may still call one, which
         // Claude Code refuses, and three refused compactions end the session.
-        if (isClaudeCodeCompactionTurn(parsed)) {
+        if (compaction) {
             responsesBody.tool_choice = "none";
         }
 
@@ -407,8 +415,15 @@ export class OpenAiSubscriptionProvider implements ProxyProvider {
             isObject(parsed.output_config) && typeof parsed.output_config.effort === "string"
                 ? parsed.output_config.effort.trim()
                 : "";
+        // A compaction turn writes a summary of what is already known: the session's xhigh only made it slower (6 to 8
+        // minutes per compaction on 2026-10-27), so it runs at the compaction effort when the model has that effort.
+        const compactionEffort = compaction ? env.aiProxy.getCompactionEffort() : undefined;
         const effort =
-            typeof responsesBody.reasoning_effort === "string" ? responsesBody.reasoning_effort : clientEffort;
+            compactionEffort && (!catalog || catalog.efforts.includes(compactionEffort))
+                ? compactionEffort
+                : typeof responsesBody.reasoning_effort === "string"
+                  ? responsesBody.reasoning_effort
+                  : clientEffort;
         delete responsesBody.reasoning_effort;
         responsesBody.reasoning = {
             ...reasoningOptions(catalog, this.account.openaiSub?.reasoningSummary),
