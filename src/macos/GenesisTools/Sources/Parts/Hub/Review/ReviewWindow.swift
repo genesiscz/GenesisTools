@@ -523,6 +523,9 @@ final class ReviewModel: ObservableObject {
         }
     }
     @Published var selectedID: String?
+    /// The topmost file on screen while the diff scrolls (the page's `fileInView`); "This file" in the PR threads
+    /// list follows it, since a scroll does not change the selection.
+    @Published var fileInViewID: String?
     @Published var options: DiffViewOptions
     @Published var error: String?
     @Published var loading = false
@@ -1836,6 +1839,10 @@ final class ReviewModel: ObservableObject {
             if selectedID != id, files.contains(where: { $0.id == id }) {
                 selectedID = id
                 sidebarScrollTarget = id
+            }
+        case .fileInView(let id):
+            if fileInViewID != id {
+                fileInViewID = id
             }
         case .threadSelect(let id, let selected):
             if selected {

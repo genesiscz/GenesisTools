@@ -3220,6 +3220,35 @@ host.addEventListener(
     { passive: true }
 );
 
+/** The file at the top of the viewport, posted when it changes, so the app's "This file" follows the scroll. */
+let fileInView: string | null = null;
+let fileInViewQueued = false;
+
+function reportFileInView(): void {
+    fileInViewQueued = false;
+    const edge = host.getBoundingClientRect().top + 1;
+    const items = viewer.getRenderedItems().map((item) => ({ id: item.id, box: item.element.getBoundingClientRect() }));
+    const covering = items.find((item) => item.box.top <= edge && item.box.bottom > edge);
+    const below = items.filter((item) => item.box.top > edge).sort((a, b) => a.box.top - b.box.top)[0];
+    const id = (covering ?? below)?.id ?? null;
+
+    if (id && id !== fileInView) {
+        fileInView = id;
+        post({ type: "fileInView", fileId: id });
+    }
+}
+
+host.addEventListener(
+    "scroll",
+    () => {
+        if (!fileInViewQueued) {
+            fileInViewQueued = true;
+            requestAnimationFrame(reportFileInView);
+        }
+    },
+    { passive: true }
+);
+
 host.addEventListener(
     "scroll",
     () => {
