@@ -931,9 +931,9 @@ public final class WidgetCoordinator: NSObject, NSWindowDelegate {
                            answering: model.answerCardOnScreen, list: model.keyboardList, controlFocused: controlFocused))
         {
         case .pass: return event
-        case .list(let key):
+        case .list(let key, let alternate):
             // Only a list that took the key swallows it; otherwise the scroll view under it still scrolls.
-            return model.moveInList(key, controlFocused: controlFocused) ? nil : event
+            return model.moveInList(key, controlFocused: controlFocused, alternate: alternate) ? nil : event
         case .collapse:
             // Esc in a decision's own answer field leaves the field, not the session (an empty one folds back); then
             // the leave question (Esc keeps the staged decisions), then the staged view, then the list.
@@ -963,7 +963,10 @@ public final class WidgetCoordinator: NSObject, NSWindowDelegate {
                 .comboBox, .slider, .incrementor].contains(role)
     }
 
-    enum PanelKey: Equatable { case pass, collapse, previous, next, choose(String), list(WidgetListKey.Kind) }
+    /// `list(_, alternate:)`: a list key; `alternate` is ⌘↩ ("openAlt"), the other of what Return does there.
+    enum PanelKey: Equatable {
+        case pass, collapse, previous, next, choose(String), list(WidgetListKey.Kind, alternate: Bool = false)
+    }
 
     struct PanelKeyContext {
         let previewOpen: Bool
@@ -1007,6 +1010,13 @@ public final class WidgetCoordinator: NSObject, NSWindowDelegate {
             if ids.contains(WidgetKeymap.listUp) { return .list(.up) }
             if ids.contains(WidgetKeymap.listDown) { return .list(.down) }
             if ids.contains(WidgetKeymap.listOpen) { return context.controlFocused ? .pass : .list(.open) }
+            // ⌘↩ ("openAlt"): Return's own binding with ⌘ held, so it follows a rebound Return.
+            if stroke.modifiers == [.command] {
+                let plain = KeyStroke(keyCode: stroke.keyCode, character: stroke.character, modifiers: [])
+                if WidgetKeymap.commandIDs(for: plain, in: [.window], keymap: keymap).contains(WidgetKeymap.listOpen) {
+                    return context.controlFocused ? .pass : .list(.open, alternate: true)
+                }
+            }
         }
         if let number = WidgetKeymap.choiceNumber(in: ids),
            let card = context.answering, number <= card.choices.count
