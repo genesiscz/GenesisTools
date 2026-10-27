@@ -21,3 +21,10 @@ export function setCodexModelOverrides(next: Record<string, CodexModelOverride> 
 export function codexModelInfo(slug: string, live: WhamModelRecord[] | null): CodexModelInfo | undefined {
     return mergeCodexModelRecords({ live, cache: readCodexModelsCache(), overrides }).get(slug);
 }
+
+/** The models the catalog lists (`visibility: "list"`), for a session's `/model` picker. */
+export function listedCodexModels(): CodexModelInfo[] {
+    return [...mergeCodexModelRecords({ cache: readCodexModelsCache(), overrides }).values()].filter(
+        (model) => model.visibility === "list"
+    );
+}

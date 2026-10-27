@@ -9,7 +9,7 @@ import {
     sessionKeyRejection,
     validateClients,
 } from "@app/ai-proxy/lib/clients";
-import { setCodexModelOverrides } from "@app/ai-proxy/lib/codex-catalog";
+import { listedCodexModels, setCodexModelOverrides } from "@app/ai-proxy/lib/codex-catalog";
 import { loadConfigFresh } from "@app/ai-proxy/lib/config";
 import { stripBasePath } from "@app/ai-proxy/lib/path-prefix";
 import { acquireProvider, buildProviderMap, providerUnavailableResponse } from "@app/ai-proxy/lib/providers/registry";
@@ -17,6 +17,7 @@ import type { ProxyProvider } from "@app/ai-proxy/lib/providers/types";
 import { handleRealtimeClientSecrets, handleRealtimeUpgrade, realtimeWebsocket } from "@app/ai-proxy/lib/realtime";
 import { applyReasoningEffortToBody, findInvalidImageDataPayload } from "@app/ai-proxy/lib/rewrite-upstream-body";
 import { messageToAnthropicSse } from "@app/ai-proxy/lib/server-tools/web-search";
+import { sessionPickerModels } from "@app/ai-proxy/lib/sessions/picker-models";
 import { noteSessionRequest, sweepSessionRecords } from "@app/ai-proxy/lib/sessions/records";
 import { resolveSessionRoute, sessionPinnedRoute } from "@app/ai-proxy/lib/sessions/routing";
 import { requestTagsFor } from "@app/ai-proxy/lib/sessions/tags";
@@ -410,6 +411,12 @@ export function startAiProxyServer(runtime: AiProxyRuntime) {
                         SafeJSON.stringify({ error: { message: "Invalid proxy API key", type: "auth_error" } }),
                         { status: 401, headers: { "Content-Type": "application/json" } }
                     );
+                }
+
+                if (client.session) {
+                    return new Response(SafeJSON.stringify(sessionPickerModels(listedCodexModels())), {
+                        headers: { "Content-Type": "application/json" },
+                    });
                 }
 
                 const models = await buildProxyModelCatalog(config.accounts);

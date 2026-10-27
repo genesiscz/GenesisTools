@@ -2,9 +2,11 @@ import { describe, expect, it } from "bun:test";
 import { resolveProxyRoute } from "@app/ai-proxy/lib/account-model-ref";
 import { sessionRouteDenial } from "@app/ai-proxy/lib/clients";
 import { parseProxyModelId, resolveModel } from "@app/ai-proxy/lib/resolve-model";
+import { sessionPickerModels } from "@app/ai-proxy/lib/sessions/picker-models";
 import { type AiProxySessionRecord, sessionProxyAccounts } from "@app/ai-proxy/lib/sessions/records";
 import { resolveSessionRoute, sessionPinnedRoute } from "@app/ai-proxy/lib/sessions/routing";
 import type { AiProxyAccountConfig } from "@app/ai-proxy/lib/types";
+import { mergeCodexModelRecords } from "@genesiscz/utils/ai/openai/codex-models";
 import { SafeJSON } from "@genesiscz/utils/json";
 
 function grokAccount(name: string): AiProxyAccountConfig {
@@ -241,6 +243,22 @@ describe("resolveSessionRoute", () => {
         expect(route.upstreamId).toBe("gpt-6.1-sol");
         expect(route.reasoningEffort).toBeUndefined();
         expect(route.effortSource).toBeUndefined();
+    });
+
+    it("routes the /model picker's claude-codex/<id> like codex/<id>, and lists the picker ids Claude Code keeps", () => {
+        const route = routeOf("claude-codex/gpt-6.1-sol");
+
+        expect(route.accountName).toBe("side-codex");
+        expect(route.upstreamId).toBe("gpt-6.1-sol");
+
+        const listed = mergeCodexModelRecords({ cache: [] });
+        const picker = sessionPickerModels([...listed.values()].filter((model) => model.visibility === "list"));
+
+        expect(picker.data.length).toBeGreaterThan(0);
+        // Claude Code 2.1.310 drops a gateway model whose id names neither claude nor anthropic.
+        expect(picker.data.every((model) => /(claude|anthropic)/i.test(model.id))).toBe(true);
+        expect(picker.data.map((model) => model.id)).toContain("claude-codex/gpt-6.1-sol");
+        expect(picker.data.every((model) => routeOf(model.id).accountName === "side-codex")).toBe(true);
     });
 
     it("pins every session route to its account, short form or full id, so a session never reaches a failover login", async () => {

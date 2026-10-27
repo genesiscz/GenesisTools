@@ -178,6 +178,8 @@ export function sessionEnv(
         CLAUDE_CODE_AUTO_COMPACT_WINDOW: String(Math.floor(input.maxContextTokens)),
         CLAUDE_AUTOCOMPACT_PCT_OVERRIDE: String(input.compactPercent),
         TOOLS_CLAUDE_ACCOUNT: `proxy:${input.accountLabel}`,
+        // `/model` lists the proxy's Codex models (`sessionPickerModels`), so a session switches without a relaunch.
+        CLAUDE_CODE_ENABLE_GATEWAY_MODEL_DISCOVERY: "1",
     };
 }
 
