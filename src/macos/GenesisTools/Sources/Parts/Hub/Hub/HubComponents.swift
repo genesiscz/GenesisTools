@@ -106,6 +106,57 @@ struct ExternalLink: View {
     }
 }
 
+/// A text-like button of a dense row or card (`genHoverPlain`, a tooltip) while its row is live; the bare label
+/// otherwise, drawn the same (the style adds no padding or background at rest, and dims a disabled label to 0.4).
+/// Every control is a responder, and with an accessibility client SwiftUI walks all of them once per accessibility
+/// node an update touches. `pressable` keeps the bare label a button to VoiceOver (`restingButton`).
+struct LiveButton<Label: View>: View {
+    let live: Bool
+    let tooltip: String?
+    var enabled = true
+    var pressable = false
+    let action: () -> Void
+    @ViewBuilder let label: () -> Label
+
+    var body: some View {
+        if live {
+            Button(action: action, label: label)
+                .buttonStyle(.genHoverPlain())
+                .disabled(!enabled)
+                .liveTooltip(true, tooltip)
+        } else if pressable {
+            label()
+                .opacity(enabled ? 1 : 0.4)
+                .restingButton(enabled: enabled, action: action)
+        } else {
+            label()
+        }
+    }
+}
+
+extension View {
+    /// `.instantTooltip` only while the row is live (`LiveButton`).
+    @ViewBuilder
+    func liveTooltip(_ live: Bool, _ text: String?) -> some View {
+        if live, let text {
+            instantTooltip(text)
+        } else {
+            self
+        }
+    }
+
+    /// A control at rest, drawn without its `Button`, hover sensor and tooltip: still a button to VoiceOver and the
+    /// accessibility clients, which press it through its default action.
+    func restingButton(enabled: Bool, action: @escaping () -> Void) -> some View {
+        disabled(!enabled)
+            .accessibilityElement(children: .combine)
+            .accessibilityAddTraits(.isButton)
+            .accessibilityAction {
+                if enabled { action() }
+            }
+    }
+}
+
 /// What `tools hub repo --json` says about a folder: checkout, branch, origin web pages, PR/MR.
 /// The TypeScript side owns remote parsing and host rules (src/review/lib/repo.ts,
 /// src/utils/git/origins/web.ts); Swift only reads the result.
