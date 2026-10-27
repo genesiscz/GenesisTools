@@ -210,6 +210,10 @@ extension WidgetModel {
     private func deliverDecisions(_ items: [WidgetInboxItem], action: DecisionAnswering.SendAction, thenClose: Bool = false) {
         let staged = action == .sendStaged
         let opened = openedAt
+        // Sent from the popup on screen (its Send now, or the staged reminder's): the popup shows the result.
+        let fromPeek = peekItem.map { shown in
+            items.contains { $0.sourceId == shown.sourceId } || shown.sourceId == WidgetAlerts.stagedReminderID
+        } ?? false
         let closeRevision = sendCloseRevision
         let draftAtSend = draft
         let ids = Set(items.map(\.sourceId))
@@ -242,9 +246,16 @@ extension WidgetModel {
                     self.session(forKey: item.key).map { outcome.queuedSessions.contains($0.target.sessionId) } ?? false
                 }
                 PerfLog.mark("widget.decision-send \(action.rawValue) result: \(text)")
-                if outcome.failed == 0 { self.dropSentFromPeek(ids) }
+                let tone: WidgetNoticeTone = outcome.delivered ? .success : .warning
+                if fromPeek {
+                    self.showPeekOutcome(WidgetPeekOutcome(text: text, tone: tone, sendAgain: waiting,
+                                                           detail: outcome.details),
+                                         sent: ids, delivered: outcome.delivered)
+                } else if outcome.failed == 0 {
+                    self.dropSentFromPeek(ids)
+                }
                 if outcome.delivered {
-                    postNote(text)
+                    postNote(text, tone: .success)
                     // Only the panel this send left from: one the user opened again meanwhile stays open. It folds
                     // after the note was readable: closing at once hid "delivered" and read as "Send did nothing"
                     // (Martin, 2026-10-25).
@@ -268,12 +279,17 @@ extension WidgetModel {
                     // The summary names one reason at most; every session's own reason stays behind Details.
                     postNote(text, action: waiting.isEmpty ? nil
                         : WidgetNoticeAction(title: "Send again") { [weak self] in self?.resendAnswers(waiting) },
-                        detail: outcome.details)
+                        detail: outcome.details, tone: .warning)
                 }
                 flashUnsent(waiting.isEmpty ? items : waiting)
             } catch {
                 if let sendingNote, self.notice == sendingNote { self.notice = nil }
                 PerfLog.mark("widget.decision-send \(action.rawValue) failed: \(error.localizedDescription)")
+                if fromPeek {
+                    self.showPeekOutcome(WidgetPeekOutcome(text: staged
+                        ? "Not sent: the hub refused it. It stays staged." : "Not sent again: the hub refused it.",
+                        tone: .warning, detail: error.localizedDescription), sent: ids, delivered: false)
+                }
                 fail(staged ? "The decisions could not be sent. They stay staged, so you can send them again."
                          : "The answers could not be sent again. They still wait for the session's next prompt.",
                      detail: error.localizedDescription)
@@ -292,13 +308,14 @@ extension WidgetModel {
     }
 
     /// Discards the picks and notes of the staged decisions `ids`; they still wait for an answer.
-    public func discardStaged(_ ids: [String]) {
+    public func discardStaged(_ ids: [String], completed: (() -> Void)? = nil) {
         guard !ids.isEmpty else { return }
         sendCloseRevision += 1
         for id in ids { pendingStage[id] = "" }
         action(["action": "unstage", "ids": .array(ids.map { .string($0) })], failed: { [weak self] in
             for id in ids { self?.pendingStage[id] = nil }
-        })
+            completed?()
+        }, completed: completed)
     }
 
     /// A close the user asked for (Esc, the close button, a click outside, the idle timer): with staged decisions it
@@ -333,10 +350,48 @@ extension WidgetModel {
             keptStaged.formUnion(ids)
             sendStaged(ids, thenClose: true)
             return
-        case "discard": discardStaged(ids)
+        case "discard": holdDiscard(ids)
         default: keptStaged = Set(ids)
         }
         collapse()
+    }
+
+    /// Discards the staged decisions `ids` after the Undo window (`undoSeconds`): until then they leave every send
+    /// (`heldDecisionIDs`) and `undoHeldDiscard` keeps them staged. A second hold sends the first one's discard now.
+    public func holdDiscard(_ ids: [String]) {
+        guard !ids.isEmpty else { return }
+        commitHeldDiscard()
+        heldDiscard = ids
+        heldDecisionIDs.formUnion(ids)
+        PerfLog.mark("widget.staged discard held \(ids.count)")
+        postNote(Plural.count(ids.count, "staged decision") + " discarded.",
+                 action: WidgetNoticeAction(title: "Undo") { [weak self] in self?.undoHeldDiscard() })
+        let seconds = undoSeconds
+        discardTask = Task { [weak self] in
+            do { try await Task.sleep(for: .seconds(seconds)) } catch { return }
+            self?.commitHeldDiscard()
+        }
+    }
+
+    /// Undo of a held Discard: the decisions stay staged as they were; nothing reached the decision log.
+    public func undoHeldDiscard() {
+        guard !heldDiscard.isEmpty else { return }
+        discardTask?.cancel()
+        discardTask = nil
+        heldDecisionIDs.subtract(heldDiscard)
+        PerfLog.mark("widget.staged discard undone \(heldDiscard.count)")
+        postNote(Plural.count(heldDiscard.count, "decision") + " kept staged.")
+        heldDiscard = []
+    }
+
+    /// Sends a held Discard to the decision log now (its window ended, another discard came, or the widget stops).
+    func commitHeldDiscard() {
+        discardTask?.cancel()
+        discardTask = nil
+        guard !heldDiscard.isEmpty else { return }
+        let ids = heldDiscard
+        heldDiscard = []
+        discardStaged(ids, completed: { [weak self] in self?.heldDecisionIDs.subtract(ids) })
     }
 }
 

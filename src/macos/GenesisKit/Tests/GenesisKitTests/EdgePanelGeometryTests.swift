@@ -634,6 +634,56 @@ final class WidgetInteractionTests: XCTestCase {
         XCTAssertNil(value.peekItem, "the popup closes once its last decision was sent")
     }
 
+    /// A send from the popup shows its result in the popup before it moves on; one no receiver took stays, with
+    /// Send again, until it is closed (ux audit F5).
+    @MainActor
+    func testASendFromThePopupShowsItsOutcomeThere() {
+        let domain = "widget-tests." + UUID().uuidString
+        let defaults = UserDefaults(suiteName: domain)!
+        defer { defaults.removePersistentDomain(forName: domain) }
+        let value = model(defaults: defaults)
+        defer { value.stop() }
+        let side = WidgetSurfaceID(edge: .right)
+        let item = WidgetInboxItem(id: "decision:d_1_s", sourceId: "d_1_s", kind: "decision", key: "local:claude:s:",
+                                   at: 1_000, needsAnswer: true, title: "Ship?", number: 1, revision: 1)
+        value.showPeek(item, on: side, seconds: 60, many: .list)
+        value.showPeekOutcome(WidgetPeekOutcome(text: "Not delivered to s.", tone: .warning, sendAgain: [item]),
+                              sent: ["d_1_s"], delivered: false)
+        XCTAssertEqual(value.peekItem?.sourceId, "d_1_s", "a send no receiver took stays in the popup")
+        XCTAssertEqual(value.peekOutcome?.tone, .warning)
+        XCTAssertEqual(value.peekOutcome?.sendAgain.map(\.sourceId), ["d_1_s"])
+        value.dismissPeek(all: true)
+        XCTAssertNil(value.peekOutcome, "the outcome leaves with its alert")
+    }
+
+    /// The leave question's Discard waits for its Undo: the decisions leave every send at once, Undo keeps them
+    /// staged, and only the end of the window writes the discard (ux audit F21).
+    @MainActor
+    func testADiscardWaitsForItsUndo() async throws {
+        let domain = "widget-tests." + UUID().uuidString
+        let defaults = UserDefaults(suiteName: domain)!
+        defer { defaults.removePersistentDomain(forName: domain) }
+        let value = model(defaults: defaults)
+        defer { value.stop() }
+        var calls: [WidgetJSON] = []
+        value.actionRunner = { request in
+            calls.append(request)
+            return ["unstaged": 1]
+        }
+        let staged = WidgetInboxItem(id: "decision:d_1_s", sourceId: "d_1_s", kind: "decision", key: "local:claude:s:",
+                                     at: 1_000, needsAnswer: true, number: 1, revision: 1, draftOption: "a")
+        value.reconcileStaged([staged])
+        value.holdDiscard(["d_1_s"])
+        XCTAssertEqual(value.stagedItems, [], "a held discard leaves every send at once")
+        value.undoHeldDiscard()
+        XCTAssertEqual(value.stagedItems.map(\.sourceId), ["d_1_s"], "Undo keeps it staged")
+        value.holdDiscard(["d_1_s"])
+        value.commitHeldDiscard()
+        try await Task.sleep(for: .milliseconds(50))
+        XCTAssertEqual(calls.count, 1, "only the end of the window writes, once")
+        if case .object(let fields) = calls.first { XCTAssertEqual(fields["action"], "unstage") } else { XCTFail() }
+    }
+
     /// Several alerts in one popup (Alerts → Several at once), a popup that stays until it is closed, and a pointer
     /// that leaves the popup: the countdown starts again instead of closing it 220 ms later.
     @MainActor

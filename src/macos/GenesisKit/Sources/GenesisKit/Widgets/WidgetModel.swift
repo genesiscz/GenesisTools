@@ -79,7 +79,16 @@ public final class WidgetModel: ObservableObject {
     @Published public var hoveredSurface: WidgetSurfaceID?
     /// A new inbox item the widget pops up by itself (an alert). The agents preview shows it until `showPeek`'s
     /// timer ends, or until the pointer leaves the panel when the user moved onto it.
-    @Published public private(set) var peekItem: WidgetInboxItem?
+    @Published public private(set) var peekItem: WidgetInboxItem? {
+        didSet {
+            // An outcome belongs to the alert it was sent from; the next alert starts without one.
+            if peekItem?.id != oldValue?.id, peekOutcome != nil { peekOutcome = nil }
+        }
+    }
+    /// What a send from the popup did (its Send now, or Send now in the staged reminder), shown in the popup itself:
+    /// the popup stays for `sendCloseSeconds` with it before it moves on, so the result is read where it was sent
+    /// (ux audit F5). Nil while nothing was sent from the popup on screen.
+    @Published public internal(set) var peekOutcome: WidgetPeekOutcome?
     /// Alerts that arrived while the popup was open, oldest first (Alerts → Several at once: listed or one after
     /// another). The newest-replaces mode keeps it empty.
     @Published public private(set) var peekQueue: [WidgetInboxItem] = []
@@ -231,6 +240,7 @@ public final class WidgetModel: ObservableObject {
             guard notice != oldValue else { return }
             noticeAction = nil
             noticeDetail = nil
+            noticeTone = .info
             // A hover that ended with the panel (it closed under the pointer) must not keep the next note forever.
             noticeHeld = false
             if let notice { GenAnnounce.post(notice) }
@@ -244,6 +254,9 @@ public final class WidgetModel: ObservableObject {
     /// The reasons behind `notice` (each session a queued send did not reach, and why), shown behind Details. A new
     /// note drops them.
     @Published public var noticeDetail: String?
+    /// How `notice` reads: a plain note, a success, or a warning (a send that reached nobody). A new note resets it to
+    /// `.info`; `postNote(_:tone:)` sets it (ux audit F22: "Not delivered" looked like a success).
+    @Published public internal(set) var noticeTone: WidgetNoticeTone = .info
     private var noticeFade: Task<Void, Never>?
     /// The pointer is on the note: its fade waits until the pointer leaves (ux checklist, Attention).
     private var noticeHeld = false
@@ -251,12 +264,14 @@ public final class WidgetModel: ObservableObject {
     /// Shows `text` as the widget's note, with an optional button (Undo, Send again). It is announced, and it fades
     /// after the note duration setting (`noteSeconds`, 6 s by default); a note with a button stays at least 10 s. A
     /// newer note replaces it and cancels its fade. Errors go to `error`, which never fades.
-    public func postNote(_ text: String, action: WidgetNoticeAction? = nil, detail: String? = nil) {
+    public func postNote(_ text: String, action: WidgetNoticeAction? = nil, detail: String? = nil,
+                         tone: WidgetNoticeTone = .info) {
         // The same text again does not change `notice`, so its didSet would neither announce nor restart the fade.
         if notice == text { GenAnnounce.post(text) }
         notice = text
         noticeAction = action
         noticeDetail = detail
+        noticeTone = tone
         scheduleNoticeFade()
     }
 
@@ -689,6 +704,8 @@ public final class WidgetModel: ObservableObject {
 
     public func stop() {
         sendCloseRevision += 1
+        // A Discard still in its Undo window is what the user chose: it goes out now, not never.
+        commitHeldDiscard()
         peekTask?.cancel()
         preferenceTask?.cancel()
         flushPreferences()
@@ -990,6 +1007,38 @@ public final class WidgetModel: ObservableObject {
         }
         peekItem = peekQueue.removeFirst()
         presentationChanged?()
+    }
+
+    /// A send started from the popup ended: the popup shows `outcome` instead of closing at once. `ids` are the
+    /// decisions sent. Delivered, it stays `sendCloseSeconds` (0: until closed), then moves on as a sent decision does
+    /// (`dropSentFromPeek`), and the staged reminder closes once nothing is staged any more. Not delivered or failed,
+    /// it stays until closed, with Send again for the answers no receiver took.
+    func showPeekOutcome(_ outcome: WidgetPeekOutcome, sent ids: Set<String>, delivered: Bool) {
+        guard let shown = peekItem,
+              ids.contains(shown.sourceId) || shown.sourceId == WidgetAlerts.stagedReminderID else {
+            if delivered { dropSentFromPeek(ids) }
+            return
+        }
+        peekOutcome = outcome
+        // The popup's own countdown would end it under the result.
+        peekTask?.cancel()
+        peekTask = nil
+        PerfLog.mark("widget.peek outcome id=\(shown.id) tone=\(outcome.tone.rawValue) delivered=\(delivered)")
+        let seconds = snapshot?.state.preferences.sendCloseSeconds ?? 2.5
+        guard delivered, seconds > 0 else { return }
+        peekTask = Task { [weak self] in
+            do { try await Task.sleep(for: .seconds(seconds)) } catch { return }
+            guard let self, self.peekItem?.id == shown.id else { return }
+            if shown.sourceId == WidgetAlerts.stagedReminderID {
+                if self.stagedItems.allSatisfy({ ids.contains($0.sourceId) }) {
+                    self.dismissPeek(all: true)
+                } else {
+                    self.peekOutcome = nil
+                }
+            } else {
+                self.dropSentFromPeek(ids)
+            }
+        }
     }
 
     /// The popup's close button, Esc and VoiceOver's escape: the popup ends without opening anything. In the
@@ -1385,6 +1434,10 @@ public final class WidgetModel: ObservableObject {
     @Published public var stagedView: String?
     /// The staged decisions the user kept at the last leave; the prompt asks again only for a newly staged one.
     var keptStaged: Set<String> = []
+    /// A Discard of staged decisions held for its Undo (the leave question's Discard; `holdDiscard`): the ids leave
+    /// every send at once (`heldDecisionIDs`), and the decision log hears of it when the Undo window ends.
+    @Published public internal(set) var heldDiscard: [String] = []
+    var discardTask: Task<Void, Never>?
     /// User edits and selections invalidate a send's pending automatic close, even if changed back afterwards.
     var sendCloseRevision = 0
     /// When this widget last saved a decision's draft, by card id, for the card's "Draft saved" line.
@@ -1593,11 +1646,12 @@ public final class WidgetModel: ObservableObject {
     /// Up, Down or Return in the list on screen. True when the list took the key; false lets it through (the scroll
     /// view then scrolls). The ends of a list stop the move; they do not wrap.
     @discardableResult
-    public func moveInList(_ kind: WidgetListKey.Kind, controlFocused: Bool = false) -> Bool {
+    /// `alternate`: ⌘ was held (⌘↩): the list does the other of what Return does, as ⌘-click does on an option.
+    public func moveInList(_ kind: WidgetListKey.Kind, controlFocused: Bool = false, alternate: Bool = false) -> Bool {
         guard keyboardList else { return false }
         if kind == .open, controlFocused { return false }
         if inboxOverview, kind == .open, !inboxOverviewHasFocus { return false }
-        listKey = WidgetListKey(kind: kind, serial: (listKey?.serial ?? 0) + 1)
+        listKey = WidgetListKey(kind: kind, serial: (listKey?.serial ?? 0) + 1, alternate: alternate)
         // The inbox of every session owns its filter, grouping and highlight (WidgetInboxOverview).
         if inboxOverview { return true }
         switch section {
@@ -2830,6 +2884,32 @@ public struct WidgetListKey: Equatable, Sendable {
     public enum Kind: Equatable, Sendable { case up, down, open }
     public let kind: Kind
     public let serial: Int
+    /// ⌘ was held with the key (⌘↩, "openAlt"): the list does the other of what Return does. A flag, not a fourth
+    /// `Kind`, so every exhaustive switch over `Kind` keeps compiling.
+    public var alternate: Bool = false
+
+    /// ⌘↩: an `.open` with ⌘ held.
+    public var isOpenAlt: Bool { kind == .open && alternate }
+}
+
+/// How the widget's note reads: plain, a success, or a warning (a send no receiver took, a refused write).
+public enum WidgetNoticeTone: String, Equatable, Sendable { case info, success, warning }
+
+/// What a send started from the alert popup did, for the popup to show before it moves on (`WidgetModel.peekOutcome`).
+public struct WidgetPeekOutcome: Equatable {
+    public let text: String
+    public let tone: WidgetNoticeTone
+    /// Answered decisions no receiver took, for the popup's Send again (`WidgetModel.resendAnswers`).
+    public let sendAgain: [WidgetInboxItem]
+    /// Hub details (each session's own reason), behind a Details disclosure.
+    public let detail: String?
+
+    public init(text: String, tone: WidgetNoticeTone, sendAgain: [WidgetInboxItem] = [], detail: String? = nil) {
+        self.text = text
+        self.tone = tone
+        self.sendAgain = sendAgain
+        self.detail = detail
+    }
 }
 
 /// Which session's cmux popover a row's accessibility action asked for, and in which list.
