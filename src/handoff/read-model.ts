@@ -533,8 +533,13 @@ export function applyHandoffBatch({ db, file, prevOffset, events, consumed, base
                 states.set(event.id, getHandoffById(db, event.id));
             }
 
-            const { state, outcome } = applyHandoffEvent(states.get(event.id) ?? null, event, { base });
+            const previous = states.get(event.id) ?? null;
+            const { state, outcome } = applyHandoffEvent(previous, event, { base });
             states.set(event.id, state);
+            const publicEvent =
+                event.ev === "modify_handoff" && event.project !== undefined
+                    ? { ...event, fromProject: previous?.project ?? null }
+                    : event;
 
             if (event.ev === "post" && !outcome.applied) {
                 log.error({ id: event.id, file }, "duplicate handoff post id — first wins, event skipped");
@@ -570,7 +575,7 @@ export function applyHandoffBatch({ db, file, prevOffset, events, consumed, base
                 event.id,
                 event.ts,
                 event.ev,
-                SafeJSON.stringify(toPublicEvent(event), { strict: true })
+                SafeJSON.stringify(toPublicEvent(publicEvent), { strict: true })
             );
         }
 

@@ -95,7 +95,8 @@ function describe(event: HandoffEvent): string {
         case "add_tasks":
             return `${event.tasks.length} task(s)`;
         case "modify_handoff":
-            return event.project !== undefined ? `project ${event.fromProject ?? "(none)"} → ${event.project}` : "";
+            // The raw log can contain a stale source project; the folded history has the authoritative source.
+            return event.project !== undefined ? `project → ${event.project}` : "";
         default:
             return "";
     }

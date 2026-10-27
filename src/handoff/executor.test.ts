@@ -3,7 +3,10 @@ import { mkdirSync, mkdtempSync, writeFileSync } from "node:fs";
 import { tmpdir } from "node:os";
 import { basename, join } from "node:path";
 import { DASHBOARD_ACTOR, executeHandoffActions, getHandoff, launchCwd, listHandoffs, postHandoff } from "./executor";
+import { appendHandoffEvents } from "./log-store";
+import { openHandoffModel, rebuildHandoffModel } from "./read-model";
 import { byFor, freshEnv } from "./test-utils";
+import { formatHandoffEvent } from "./watch";
 
 const A = byFor("session-a", "poster-a");
 const B = byFor("session-b", "worker-b");
@@ -710,6 +713,31 @@ describe("fold redesign (G5/G8/G11)", () => {
 describe("handoff project (a handoff names the project it is for)", () => {
     const tasks = [{ text: "one" }];
 
+    test("launch links never use the poster checkout for a different bare project", () => {
+        const env = freshEnv();
+        const seen: Array<string | null> = [];
+        const link = { url: "https://links.example.test/cmux/claude/run", markdown: "cmux-claude" };
+        const deps = {
+            ...env.depsFor(A),
+            linkFor: () => link,
+            mintLaunchLink: (input: { cwd: string | null }) => {
+                seen.push(input.cwd);
+                return link;
+            },
+        };
+        const different = postHandoff({ title: "Other", tasks, project: "acme-tools" }, deps);
+        const same = postHandoff({ title: "Same", tasks, project: "TestProj" }, deps);
+        const normal = postHandoff({ title: "Default", tasks }, deps);
+        const path = mkdtempSync(join(tmpdir(), "handoff-launch-"));
+        const namedPath = postHandoff({ title: "Path", tasks, project: path }, deps);
+
+        expect(different.paste.runLink).toBeUndefined();
+        expect(same.paste.runLink).toEqual(link);
+        expect(normal.paste.runLink).toEqual(link);
+        expect(namedPath.paste.runLink).toEqual(link);
+        expect(seen).toEqual(["/tmp/test", "/tmp/test", path]);
+    });
+
     test("a project name wins over the poster's folder, which postedByContext keeps", () => {
         const env = freshEnv();
         const res = postHandoff({ title: "For acme-tools", tasks, project: "acme-tools" }, env.depsFor(A));
@@ -751,6 +779,71 @@ describe("handoff project (a handoff names the project it is for)", () => {
         expect(() => postHandoff({ title: "Blank", tasks, project: "  " }, env.depsFor(A))).toThrow(
             /project name or a repository path/
         );
+    });
+
+    test("project history follows the folded state through a batch and rebuild", () => {
+        const env = freshEnv();
+        const posted = postHandoff({ title: "Moves", tasks }, env.depsFor(A));
+        const moved = executeHandoffActions(
+            {
+                id: posted.handoff.id,
+                actions: [
+                    { action: "modify_handoff", project: "project-b" },
+                    { action: "modify_handoff", project: "project-c" },
+                ],
+            },
+            env.depsFor(A)
+        );
+        expect(moved.results.map((result) => result.ok)).toEqual([true, true]);
+        expect(moved.handoff.project).toBe("project-c");
+        // A concurrent writer may append an event prepared against an older snapshot.
+        expect(
+            formatHandoffEvent(
+                {
+                    ev: "modify_handoff",
+                    ts: new Date().toISOString(),
+                    uid: "watch-stale-move",
+                    id: posted.handoff.id,
+                    by: A,
+                    project: "project-d",
+                    fromProject: "TestProj",
+                },
+                new Map()
+            )
+        ).toContain("project → project-d");
+        appendHandoffEvents(
+            [
+                {
+                    ev: "modify_handoff",
+                    ts: new Date().toISOString(),
+                    uid: "stale-project-move",
+                    id: posted.handoff.id,
+                    by: A,
+                    project: "project-d",
+                    fromProject: "TestProj",
+                },
+            ],
+            env.base
+        );
+
+        const assertHistory = () => {
+            const trace = getHandoff({ id: posted.handoff.id, include: ["events"] }, env.depsFor(A));
+            const moves = "events" in trace ? trace.events.filter((event) => event.ev === "modify_handoff") : [];
+            expect(moves).toHaveLength(3);
+            const previous = (project: string) =>
+                moves.find((event) => "project" in event && event.project === project);
+            expect(previous("project-b")).toMatchObject({ fromProject: "TestProj", outcome: { applied: true } });
+            expect(previous("project-c")).toMatchObject({ fromProject: "project-b", outcome: { applied: true } });
+            expect(previous("project-d")).toMatchObject({ fromProject: "project-c", outcome: { applied: true } });
+        };
+        assertHistory();
+        const db = openHandoffModel(env.dbPath);
+        try {
+            rebuildHandoffModel(db, env.base);
+        } finally {
+            db.close();
+        }
+        assertHistory();
     });
 
     test("modify_handoff moves the project, records from → to in the events, and stays a poster verb", () => {
