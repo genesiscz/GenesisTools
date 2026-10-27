@@ -11,11 +11,13 @@ import {
     type FailureClient,
     fileCompactionStore,
     inputHasFallback,
+    requestWithSignal,
 } from "@app/ai-proxy/lib/providers/codex/compaction-flow";
 import { execToolBridge } from "@app/ai-proxy/lib/providers/codex/exec/tool";
 import {
     buildWhamResponsesBody,
     contentHash,
+    hasCompactionInput,
     hasReasoningInput,
     nonStrictByDefault,
     reasoningOptions,
@@ -189,17 +191,7 @@ export class OpenAiSubscriptionProvider implements ProxyProvider {
                     signal: req.signal,
                     stream: parsed.stream === true,
                     run: (signal) =>
-                        this.nativeMessages(
-                            new Request(req.url, {
-                                method: req.method,
-                                headers: req.headers,
-                                ...(req.method === "GET" || req.method === "HEAD" ? {} : { body: bodyText }),
-                                signal,
-                            }),
-                            model,
-                            bodyText,
-                            context
-                        ),
+                        this.nativeMessages(requestWithSignal(req, bodyText, signal), model, bodyText, context),
                 });
             };
         }
@@ -641,12 +633,7 @@ export class OpenAiSubscriptionProvider implements ProxyProvider {
                     stream: false,
                     timeoutMs: 120_000,
                     run: async (signal) => {
-                        const restoreReq = new Request(req.url, {
-                            method: req.method,
-                            headers: req.headers,
-                            ...(req.method === "GET" || req.method === "HEAD" ? {} : { body: bodyText }),
-                            signal,
-                        });
+                        const restoreReq = requestWithSignal(req, bodyText, signal);
                         expanded = await expandCompactionMarkers(rawInput, async (id) => {
                             try {
                                 return await this.compaction.compactionItem({
@@ -1053,16 +1040,10 @@ export class OpenAiSubscriptionProvider implements ProxyProvider {
                     .map((record) => record.slug);
                 const hint = visionModels.length > 0 ? ` Vision-capable: ${visionModels.join(", ")}.` : "";
 
-                return new Response(
-                    SafeJSON.stringify({
-                        error: {
-                            message: `Model ${concreteModel} does not accept image input.${hint}`,
-                            type: "invalid_request_error",
-                            code: "unsupported_modality",
-                        },
-                    }),
-                    { status: 400, headers: { "Content-Type": "application/json" } }
-                );
+                return jsonError(400, `Model ${concreteModel} does not accept image input.${hint}`, {
+                    type: "invalid_request_error",
+                    code: "unsupported_modality",
+                });
             }
         }
 
@@ -1087,17 +1068,11 @@ export class OpenAiSubscriptionProvider implements ProxyProvider {
 
         if (effortError) {
             logger.info({ account: this.account.name, model: concreteModel, effortError }, "ai-proxy: effort refused");
-            return new Response(
-                SafeJSON.stringify({
-                    error: {
-                        message: effortError,
-                        type: "invalid_request_error",
-                        param: "reasoning.effort",
-                        code: "unsupported_effort",
-                    },
-                }),
-                { status: 400, headers: { "Content-Type": "application/json" } }
-            );
+            return jsonError(400, effortError, {
+                type: "invalid_request_error",
+                param: "reasoning.effort",
+                code: "unsupported_effort",
+            });
         }
 
         warnDroppedParamsOnce(dropped);
@@ -1114,6 +1089,9 @@ export class OpenAiSubscriptionProvider implements ProxyProvider {
             return failoverBodyText;
         };
 
+        // A compaction item in the body was expanded for the primary login, and a rebuilt one is saved as the primary's:
+        // another login cannot decrypt the first and would sign the second, so neither request fails over.
+        const primaryOnly = client?.primaryOnly === true || hasCompactionInput(whamBody);
         const started = performance.now();
         let upstream: Response | undefined;
         let servedBy: string | undefined;
@@ -1121,6 +1099,14 @@ export class OpenAiSubscriptionProvider implements ProxyProvider {
         const tried: string[] = [];
 
         for (const candidate of this.tokenCandidates()) {
+            if (primaryOnly && !candidate.primary) {
+                lastFailure ??= jsonError(
+                    503,
+                    "The Codex login that holds this compacted conversation is unavailable, and its compaction cannot move to another login."
+                );
+                continue;
+            }
+
             const coolingMs = this.failover ? cooldownRemainingMs(candidate.key) : 0;
             if (coolingMs > 0) {
                 logger.debug(
