@@ -1340,6 +1340,47 @@ final class ClickyPackTests: XCTestCase {
         XCTAssertEqual(release?.filename, "release-a.wav")
     }
 
+    func testRandomizedPackSelectionNeverRepeatsTheTakeJustPlayedAndReleaseFollowsThePress() async throws {
+        var fixture = try Fixture()
+        defer { fixture.dispose() }
+        var playback = try XCTUnwrap(fixture.manifest["playback"] as? [String: Any])
+        var categories = try XCTUnwrap(playback["categories"] as? [String: [String: [String]]])
+        categories["letter"] = ["press": ["press-a.wav", "press-b.wav"], "release": ["release-a.wav", "release-b.wav"]]
+        playback["categories"] = categories
+        fixture.manifest["playback"] = playback
+        try fixture.writeManifest()
+        let prepared = try await ClickyPackLoader().prepare(at: fixture.root, entry: fixture.entry)
+        var state = ClickyPackSelectionState()
+        var previous: Int?
+        for _ in 0..<40 {
+            let press = try XCTUnwrap(state.next(playback: prepared.playback, keyCode: 0, release: false, randomize: true))
+            XCTAssertNotEqual(press.variant, previous)
+            previous = press.variant
+        }
+        let release = try XCTUnwrap(state.next(playback: prepared.playback, keyCode: 0, release: true, randomize: true))
+        XCTAssertEqual(release.variant, previous)
+    }
+
+    func testTrimCutsALeadInAndASecondHitAndLeavesACleanSampleAlone() {
+        func hit(_ frames: inout [Float], at start: Int, amplitude: Float) {
+            for index in 0..<1_200 where start + index < frames.count {
+                frames[start + index] += amplitude * sin(Float(index) * 0.3) * exp(-Float(index) / 300)
+            }
+        }
+        var doubled = [Float](repeating: 0, count: 9_600)
+        for index in doubled.indices { doubled[index] = 0.01 * sin(Float(index) * 1.7) }
+        hit(&doubled, at: 1_920, amplitude: 0.8)
+        hit(&doubled, at: 6_000, amplitude: 0.6)
+        let trimmed = ClickySampleTrim.trimmed(doubled)
+        XCTAssertLessThan(trimmed.count, 6_000 - 1_920 + ClickySampleTrim.leadIn)
+        XCTAssertGreaterThan(trimmed.count, 1_200)
+        XCTAssertEqual(trimmed.last ?? 1, 0, accuracy: 0.001)
+
+        var clean = [Float](repeating: 0, count: 4_800)
+        hit(&clean, at: 0, amplitude: 0.8)
+        XCTAssertEqual(ClickySampleTrim.trimmed(clean), clean)
+    }
+
     func testCatalogueRejectsAmbiguousIdentityAndVersionsButRetainsUnavailableRows() async throws {
         let fixture = try Fixture()
         defer { fixture.dispose() }
@@ -2136,7 +2177,8 @@ extension ClickyPackTests {
         XCTAssertFalse(FileManager.default.fileExists(atPath: fixture.root.path))
         var preferences = ClickyPreferences()
         preferences.volume = 1
-        preferences.randomizedPitch = true
+        // Takes in turn: randomized pitch also shuffles a pack's takes, and this test names each take by its loudness.
+        preferences.randomizedPitch = false
         preferences.spatialAudio = false
         func render(_ key: UInt16, release: Bool) throws -> Double {
             XCTAssertTrue(try audio.playSelected(keyCode: key, release: release, preview: false, preferences: preferences, pan: 0))
