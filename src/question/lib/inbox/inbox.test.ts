@@ -11,7 +11,13 @@ import { type InboxCommandDeps, registerInboxCommand } from "../../commands/inbo
 import { paneMiss } from "../decisions/deliver";
 import { livePaneTargets } from "../decisions/deliver.fixtures";
 import { parseDecisionBlocks } from "../decisions/read";
-import { type DecisionRecord, postDecisions, readDecisions, updateDecision } from "../decisions/store";
+import {
+    type DecisionRecord,
+    harvestDecisions,
+    postDecisions,
+    readDecisions,
+    updateDecision,
+} from "../decisions/store";
 import { type AskDeps, getAskForm, postAskForm } from "../pending/ask";
 import type { AskForm } from "../pending/types";
 import { answerInboxDecision, answerInboxDecisions, answerInboxForm } from "./answer";
@@ -496,6 +502,46 @@ describe("loadInbox", () => {
         expect([first.scanned.read, second.scanned.fromCache, third.scanned.read]).toEqual([1, 1, 1]);
         const item = second.sessions[0]?.items[0];
         expect(item?.kind === "decision" ? item.number : null).toBe(3);
+    });
+
+    test("the blocks it lists that the log lacks are stored (harvestListed), so every surface reads the same rows", async () => {
+        const dir = mkdtempSync(join(tmpdir(), "gt-inbox-harvest-"));
+        const files = { file: join(dir, "decisions.jsonl"), events: join(dir, "events.jsonl") };
+        const row = { ...SESSION, provider: "claude", cwdShort: "app", model: null, filePath: "/tmp/gt-inbox/h.jsonl" };
+        const asks: { sessionId: string; numbers: number[]; at: string | null }[] = [];
+        const deps: InboxDeps = {
+            sessions: async () => [row as AgentSessionRow],
+            tail: async () => [turn("assistant", ASK)],
+            stat: () => ({ size: 1, mtimeMs: 1 }),
+            rows: () => readDecisions(files.file),
+            forms: () => [],
+            readCache: async () => null,
+            writeCache: async () => undefined,
+            harvest: async ({ sessionId, found, at }) => {
+                asks.push({ sessionId, numbers: found.map((block) => block.number), at });
+                return (await harvestDecisions(files.file, files.events, { sessionId, found })).length;
+            },
+        };
+
+        const first = await loadInbox({ deps });
+        const second = await loadInbox({ deps });
+
+        expect(asks.map((ask) => [ask.sessionId, ask.numbers])).toEqual([[SESSION.sessionId, [3]]]);
+        expect(readDecisions(files.file).map((stored) => [stored.number, stored.state, stored.harvested])).toEqual([
+            [3, "open", true],
+        ]);
+        const listed = (result: typeof first) => result.sessions[0]?.items.map((item) => [item.kind, item.source]);
+        expect(listed(first)).toEqual([["decision", "store"]]);
+        expect(listed(second)).toEqual([["decision", "store"]]);
+
+        // The agent's own post of that number later is the decision's next revision, not a clash.
+        const [posted] = await postDecisions(files.file, files.events, {
+            sessionId: SESSION.sessionId,
+            decisions: [{ number: 3, prompt: "Keep the cache, posted?", options: ["keep", "drop"] }],
+        });
+        expect(posted).toMatchObject({ number: 3, revision: 2, state: "open" });
+        expect(posted?.harvested).toBeUndefined();
+        expect(readDecisions(files.file)).toHaveLength(1);
     });
 });
 

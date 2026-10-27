@@ -72,6 +72,7 @@ export const SETTABLE_KEYS = [
     "decisions.maxBlocksPerSession",
     "decisions.harnesses",
     "decisions.harvest",
+    "decisions.harvestListed",
     "decisions.injectAnswers",
     "decisions.staleness.<warnAfterMinutes|alarmAfterMinutes|notify>",
     "agentsTalk.hint",
@@ -224,6 +225,9 @@ function withDecisions(next: HooksConfig, key: string, value: string): HooksConf
         }
         case "decisions.harvest":
             decisions.harvest = asBoolean(key, value);
+            return next;
+        case "decisions.harvestListed":
+            decisions.harvestListed = asBoolean(key, value);
             return next;
         case "decisions.injectAnswers":
             decisions.injectAnswers = asBoolean(key, value);
