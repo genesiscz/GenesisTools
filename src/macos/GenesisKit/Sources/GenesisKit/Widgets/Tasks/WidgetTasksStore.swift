@@ -27,6 +27,10 @@ public final class WidgetTasksStore: ObservableObject {
     private var watcher: DirectoryWatcher?
     private var watchedPath: String?
     private var visible = false
+    /// The decision log changes with every agent's decision, stage and answer, several times a second in a burst: the
+    /// list reloads at most once a second for it, and the burst's last change always gets its reload.
+    private var lastSourceReload = Date.distantPast
+    private var trailingReload: Task<Void, Never>?
     private var stopped = false
     private var refreshTask: Task<Void, Never>?
     private var reconcileTask: Task<Void, Never>?
@@ -66,11 +70,15 @@ public final class WidgetTasksStore: ObservableObject {
     /// The state to draw for `task`: the ticked one while its change is in flight.
     public func shownState(_ task: WidgetTask) -> String { pendingStates[task.id] ?? task.state }
 
+    /// The module's rows show in its preview and expanded panes only: the compact rail never draws them
+    /// (WidgetHostView's `content`), so a compact module reads nothing and its next showing reads the ledger.
     func visibilityChanged(_ presentation: WidgetModulePresentation?) {
         guard !stopped else { return }
-        visible = presentation != nil
+        visible = presentation.map { $0 != .compact } ?? false
         if visible { refresh() }
         else {
+            trailingReload?.cancel()
+            trailingReload = nil
             refreshID = nil
             refreshTask?.cancel()
             refreshTask = nil
@@ -191,7 +199,24 @@ public final class WidgetTasksStore: ObservableObject {
     func sourceChanged() {
         guard !stopped else { return }
         cache.removeAll(keepingCapacity: true)
-        if visible { refresh(force: true) }
+        guard visible else { return }
+        let wait = 1 - Date().timeIntervalSince(lastSourceReload)
+        if wait <= 0 {
+            trailingReload?.cancel()
+            trailingReload = nil
+            lastSourceReload = Date()
+            refresh(force: true)
+            return
+        }
+        guard trailingReload == nil else { return }
+        trailingReload = Task { [weak self] in
+            try? await Task.sleep(for: .seconds(wait))
+            guard let self, !Task.isCancelled else { return }
+            self.trailingReload = nil
+            guard !self.stopped, self.visible else { return }
+            self.lastSourceReload = Date()
+            self.refresh(force: true)
+        }
     }
 
     /// The row's checkbox: done, or open again. A row under "Just changed" goes back to the state it had before, so a
@@ -458,6 +483,8 @@ public final class WidgetTasksStore: ObservableObject {
     public func stop() {
         stopped = true
         visible = false
+        trailingReload?.cancel()
+        trailingReload = nil
         refreshID = nil
         refreshTask?.cancel()
         refreshTask = nil
