@@ -169,7 +169,8 @@ Supported values: `minimal`, `low`, `medium`, `high`, `xhigh`, `max`, `ultra`. E
     the item. A run in flight is awaited, never repeated. A new run starts when the context grew by `refreshFraction`
     (default `0.15`) of the compaction point. The result is not used when another login made it, when the history
     before it changed (a rewound or edited turn), or when more than `maxTailFraction` (default `0.4`) came after it;
-    the turn then compacts the normal way, and the summary tells the agent to say so to the user once. Set
+    the turn then compacts the normal way, the summary says why, and the next request carries a one-time reminder
+    so the agent tells the user in its next reply (`background-wasted` in the events). Set
     `enabled: false` to turn it off. Claude Code's own background compaction ("precomputed compaction") needs a server
     flag that was off on 2026-10-28; when it sends its compaction turn early, the same path answers it.
   - `lead.systemNote` and `subagents.systemNote`: `{ prepend, append, replace }` around the note `tools claude codex`
