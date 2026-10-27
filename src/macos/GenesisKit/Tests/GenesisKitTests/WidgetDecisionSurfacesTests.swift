@@ -133,6 +133,58 @@ final class WidgetDecisionSurfacesTests: XCTestCase {
                        "↩ send · ⌥↩ new line", "the reply composer sends on Return")
     }
 
+    /// A decision link to a card the session lists, answered and behind the Messages filter: the Inbox shows it open,
+    /// under a filter that has it, scrolled to and flashed (Martin, 2026-10-27: "it should expand the decision 172 so
+    /// i see it and highlight").
+    func testADecisionLinkOpensItsListedCardScrolledAndFlashed() throws {
+        let model = try model(cards: [Self.card(key + "0", number: 10, status: "acknowledged"),
+                                      Self.card(key + "0", number: 11)])
+        model.inboxFilter = "inbox"
+        model.section = "Conversation"
+
+        model.openDecision(id: "d10", sessionKey: key + "0")
+
+        XCTAssertEqual(model.section, "Inbox")
+        XCTAssertEqual(model.inboxFilter, "all", "Messages hides decisions, so the card was not on screen")
+        XCTAssertTrue(model.inboxFilterPicked, "the next snapshot must not put the filter back")
+        XCTAssertEqual(model.selectedCardID, "decision:d10")
+        XCTAssertFalse(model.foldedCardIDs.contains("decision:d10"))
+        XCTAssertEqual(model.revealScroll, WidgetRevealScroll(rowID: "card-decision:d10", count: 1))
+        XCTAssertEqual(model.revealTrigger("card-decision:d10"), 1)
+        XCTAssertNotNil(model.revealStart("card-decision:d10"))
+        XCTAssertEqual(model.revealTrigger("card-decision:d11"), 0, "only the linked card flashes")
+        XCTAssertNil(model.chatDecision)
+
+        model.inboxFilter = "decisions"
+        model.openDecision(id: "d10", sessionKey: key + "0")
+        XCTAssertEqual(model.inboxFilter, "decisions", "a filter that shows the card stays")
+        XCTAssertEqual(model.revealScroll?.count, 2, "a second link scrolls and flashes again")
+    }
+
+    /// A decision asked only in a chat reply is not in the log (Decision 172, 2026-10-27): the panel says why the Inbox
+    /// lacks it and shows the chat instead of an Inbox that silently lacks it.
+    func testADecisionLinkToAChatOnlyDecisionShowsTheChatAndSaysWhy() throws {
+        let model = try model(cards: [Self.card(key + "0", number: 10)])
+
+        model.openDecision(id: "d_172_fixture-0", sessionKey: key + "0")
+
+        XCTAssertEqual(model.section, "Conversation")
+        XCTAssertEqual(model.chatDecision?.number, 172)
+        XCTAssertEqual(model.chatDecision?.id, "d_172_fixture-0")
+        XCTAssertEqual(model.notice, "Decision 172 was asked only in chat and is not in the decision log. Showing the chat.")
+        XCTAssertNil(model.revealScroll, "nothing to scroll to before the chat has loaded")
+        XCTAssertEqual(model.selectedCardID, "decision:d_172_fixture-0")
+
+        let turns = [TranscriptTurn(id: "t1", role: "user", text: "what about DECISION 1720?"),
+                     TranscriptTurn(id: "t2", role: "assistant", text: "❓ DECISION 172\n**a)** keep it"),
+                     TranscriptTurn(id: "t3", role: "user", text: "DECISION 172 a)"),
+                     TranscriptTurn(id: "t4", role: "assistant", text: "Recorded DECISION 172.")]
+        XCTAssertEqual(WidgetModel.firstTurnAsking(172, in: turns)?.id, "t2", "the first asking turn, never 1720")
+        XCTAssertNil(WidgetModel.firstTurnAsking(17, in: turns))
+        XCTAssertEqual(WidgetModel.decisionNumber("d_172_a1523c66-103f"), 172)
+        XCTAssertNil(WidgetModel.decisionNumber("d10"))
+    }
+
     /// A bad answer from `tools` reads as one sentence with the decoder's own words behind Details, never Foundation's
     /// "The data couldn't be read because it isn't in the correct format." alone; the panel's error offers Reconnect.
     func testAFailedCallSaysWhatHappenedInOneSentence() throws {
