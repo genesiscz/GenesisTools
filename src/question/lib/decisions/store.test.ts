@@ -742,6 +742,22 @@ describe("decision kinds, batch updates, harvest and staleness", () => {
         );
     });
 
+    test("indented lettered options are not lettered twice, while literal labels stay intact", () => {
+        const row = {
+            ...foreignRow("abc", 23),
+            options: ["  a) run it", "\tB. later", "  C:\\work\\repo"],
+        };
+
+        expect(decisionsMarkdown([row])).toContain("- a) run it\n- b) later\n- c)   C:\\work\\repo");
+        expect(decisionLine({ ...row, option: "a" })).toBe("DECISION 23: a) run it");
+        expect(decisionLine({ ...row, option: "b" })).toBe("DECISION 23: b) later");
+        expect(decisionLine({ ...row, option: "c" })).toBe("DECISION 23: c)   C:\\work\\repo");
+
+        const literal = { ...row, options: ["  a.ts"] };
+        expect(decisionsMarkdown([literal])).toContain("- a)   a.ts");
+        expect(decisionLine({ ...literal, option: "a" })).toBe("DECISION 23: a)   a.ts");
+    });
+
     for (const [option, label] of [
         ["a", "a.ts"],
         ["c", "C:\\work\\repo"],
