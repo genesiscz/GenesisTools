@@ -1,5 +1,4 @@
 import { SafeJSON } from "@genesiscz/utils/json";
-import { SHELL_RULES } from "@genesiscz/utils/shell/rules";
 import {
     DECISION_CHAT_ANSWERS,
     DEFAULT_HOOKS_CONFIG,
@@ -21,6 +20,7 @@ import { FULL_DIFF_MODES } from "./diff/full";
 import { DIFF_THEMES, type DiffThemeName } from "./diff/theme";
 import { writeHooksFile } from "./hooks-file";
 import { type SubagentLinePlan, wireSubagentLine } from "./install";
+import { BUILT_IN_RULES } from "./tool-rules";
 
 const OUTCOMES: readonly HookOutcome[] = ["allow", "context", "warn", "block"];
 const HARNESSES: readonly HarnessName[] = ["claude", "codex", "grok"];
@@ -362,7 +362,7 @@ export interface RuleIdOptions {
 }
 
 function knownRuleIds(options: RuleIdOptions): ReadonlySet<string> {
-    return options.ruleIds ?? new Set(SHELL_RULES.map((rule) => rule.id));
+    return options.ruleIds ?? new Set(BUILT_IN_RULES.map((rule) => rule.id));
 }
 
 /** Applies one dotted key to a config, validating the key and the value. Pure. */

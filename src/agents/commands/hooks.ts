@@ -6,7 +6,6 @@ import { ui } from "@genesiscz/utils/cli/ui";
 import { formatLocalDateTimeStamp } from "@genesiscz/utils/date";
 import { SafeJSON } from "@genesiscz/utils/json";
 import { logger, out } from "@genesiscz/utils/logger";
-import { SHELL_RULES } from "@genesiscz/utils/shell/rules";
 import type { ShellRule } from "@genesiscz/utils/shell/rules/types";
 import { createBoxTable, renderCliHeader } from "@genesiscz/utils/table";
 import type { Command } from "commander";
@@ -64,6 +63,7 @@ import {
 } from "../lib/hooks/mods";
 import { nativeDiffForced, nativeDiffState, setNativeDiff } from "../lib/hooks/native-diff";
 import { SETTABLE_KEYS, type SetResult, setHooksConfig } from "../lib/hooks/set-config";
+import { BUILT_IN_RULES } from "../lib/hooks/tool-rules";
 import { writeJsonFile } from "../lib/hooks/write-json";
 import { registerRuleCommands, registerRulePicker, ruleState, shortPath } from "./hooks-rules";
 
@@ -269,7 +269,7 @@ export function registerHooksCommands(program: Command): void {
             table.push(["guard.enabled", String(config.guard.enabled)]);
             table.push([
                 "guard rules",
-                `${SHELL_RULES.length} built-in, ${set.rules.length - SHELL_RULES.length} custom`,
+                `${BUILT_IN_RULES.length} built-in, ${set.rules.length - BUILT_IN_RULES.length} custom`,
             ]);
             const overrides = ruleOverrides(config, set.rules);
 
