@@ -7,6 +7,7 @@ import { agentsDir, type Host, isRecord } from "./shared";
 export interface SharedRunResult {
     exitCode: number;
     stdout: string;
+    stderr: string;
 }
 
 /** FNV-1a, 32 bits: a file name for the key. The file holds the key itself, so a collision reads as a miss. */
@@ -47,7 +48,11 @@ export async function sharedRun(
                 typeof held.exitCode === "number" &&
                 typeof held.stdout === "string"
             ) {
-                return { exitCode: held.exitCode, stdout: held.stdout };
+                return {
+                    exitCode: held.exitCode,
+                    stdout: held.stdout,
+                    stderr: typeof held.stderr === "string" ? held.stderr : "",
+                };
             }
         } catch {
             // A file another session is writing: run the command.
@@ -61,9 +66,9 @@ export async function sharedRun(
     }
 
     if (path) {
-        const record = { key, at: Date.now(), exitCode: done.exitCode, stdout: done.stdout };
+        const record = { key, at: Date.now(), exitCode: done.exitCode, stdout: done.stdout, stderr: done.stderr };
         await host.write(path, JSON.stringify(record)).catch(() => undefined);
     }
 
-    return { exitCode: done.exitCode, stdout: done.stdout };
+    return { exitCode: done.exitCode, stdout: done.stdout, stderr: done.stderr };
 }

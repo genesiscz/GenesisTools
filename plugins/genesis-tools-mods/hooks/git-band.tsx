@@ -35,7 +35,7 @@ import {
 import { type GenesisProbe, genesisProbe, hubLink } from "./genesis";
 import { liveAgo } from "./live";
 import { type Feature, type Host, isRecord, logMod, settingsOf } from "./shared";
-import { sharedRun } from "./shared-run";
+import { type SharedRunResult, sharedRun } from "./shared-run";
 import {
     actionButton,
     buttonsWidth,
@@ -60,17 +60,13 @@ let ownRoot: string | undefined;
 let turnedOn: GitBandSwitch = null;
 
 const GH_TTL_MS = 2 * 60_000;
-const GH_TTL_S = String(GH_TTL_MS / 1000);
 
-/** The `checks` array of a `tools github pr --include checks` answer, as `gh pr checks --json` prints it. */
-function checksText(stdout: string): string {
-    try {
-        const answer: unknown = JSON.parse(stdout);
+/** gh's answer for a branch or number with no PR: exit 1 and this on stderr; an answer like any other. */
+const NO_PR = /no pull requests? found|could not resolve to a pull ?request/i;
 
-        return isRecord(answer) && Array.isArray(answer.checks) ? JSON.stringify(answer.checks) : "";
-    } catch {
-        return "";
-    }
+/** Whether gh answered, a PR or "no PR"; a network or auth failure is no answer. */
+function answered(done: SharedRunResult | undefined): done is SharedRunResult {
+    return done !== undefined && (done.exitCode === 0 || NO_PR.test(done.stderr));
 }
 const EVERY_MS = 3 * 60_000;
 /** The earlier branches of a checkout whose PRs a row looks up, the last first. */
@@ -92,10 +88,9 @@ function prTtl(pr: BandPr | null): number {
     return pr.state === "OPEN" ? GH_TTL_MS : GH_CLOSED_TTL_MS;
 }
 
-function parsedPr(text: string | undefined, viaTools: boolean, tracked: boolean): BandPr | null {
+function parsedPr(text: string | undefined, tracked: boolean): BandPr | null {
     try {
-        const answer: unknown = text ? JSON.parse(text) : undefined;
-        const parsed: unknown = viaTools && isRecord(answer) ? answer.pr : answer;
+        const parsed: unknown = text ? JSON.parse(text) : undefined;
 
         if (isRecord(parsed) && typeof parsed.number === "number") {
             return {
@@ -285,43 +280,39 @@ async function prOf(
         return held.pr ? { ...held.pr, tracked } : null;
     }
 
-    // With the GenesisTools CLI, `tools github pr --include` answers from a cache every tool on the Mac shares;
-    // without it, gh. Either way the plugin's own shared file serves every session for the TTL without a process.
-    const viaTools = (await genesisProbe(host)).tools && (which || ask.branch);
+    // gh itself, behind the plugin's shared file, which serves every session for the TTL without a process. Not
+    // `tools github pr --include`: the mods are its only caller with these fields, so its cache was always as old as
+    // this file's on a miss, and each miss paid a Bun start on top of gh (1.2-1.7 s against 0.9 s, 2026-10-27).
     const fields = "number,title,url,state,isDraft,statusCheckRollup";
-    const argv = viaTools
-        ? ["tools", "github", "pr", which || String(ask.branch), "--include", fields, "--max-cache-age", GH_TTL_S]
-        : ["gh", "pr", "view", ...(which ? [which] : []), "--json", fields];
+    const argv = ["gh", "pr", "view", ...(which ? [which] : []), "--json", fields];
     // The longest hold first; an answer that turns out to be an open PR is read again under the short one, which
     // reruns the command only when the shared file is older than that.
     const run = { argv, cwd: root, timeoutMs: 15_000 };
     let viewed = await sharedRun(host, { ...run, ttlMs: GH_CLOSED_TTL_MS });
-    let pr = viewed?.exitCode === 0 ? parsedPr(viewed.stdout, Boolean(viaTools), tracked) : null;
+    let pr = answered(viewed) ? parsedPr(viewed.stdout, tracked) : null;
 
-    if (!viewed || viewed.exitCode !== 0 || prTtl(pr) < GH_CLOSED_TTL_MS) {
-        viewed = await sharedRun(host, { ...run, ttlMs: viewed?.exitCode === 0 ? prTtl(pr) : GH_TTL_MS });
-        pr = viewed?.exitCode === 0 ? parsedPr(viewed.stdout, Boolean(viaTools), tracked) : null;
+    if (!answered(viewed) || prTtl(pr) < GH_CLOSED_TTL_MS) {
+        viewed = await sharedRun(host, { ...run, ttlMs: answered(viewed) ? prTtl(pr) : GH_TTL_MS });
+        pr = answered(viewed) ? parsedPr(viewed.stdout, tracked) : null;
     }
 
     // A PR with a check to look at gets `gh pr checks`, which says why a status failed (`Deployment was blocked`)
     // and counts a re-run once. It exits 1 with a failed check and 8 with a pending one, so its exit code says nothing.
     if (pr && (pr.failed > 0 || pr.pending > 0)) {
         const done = await sharedRun(host, {
-            argv: viaTools
-                ? ["tools", "github", "pr", String(pr.number), "--include", "checks", "--max-cache-age", GH_TTL_S]
-                : ["gh", "pr", "checks", String(pr.number), "--json", "name,description,link,bucket"],
+            argv: ["gh", "pr", "checks", String(pr.number), "--json", "name,description,link,bucket"],
             cwd: root,
             ttlMs: GH_TTL_MS,
             timeoutMs: 15_000,
         });
-        const checks = done ? prChecksOf(viaTools ? checksText(done.stdout) : done.stdout) : undefined;
+        const checks = done ? prChecksOf(done.stdout) : undefined;
 
         if (checks) {
             pr = { ...pr, ...countChecks(checks), checks };
         }
     }
 
-    ghCache.set(key, { at: Date.now(), ttlMs: viewed?.exitCode === 0 ? prTtl(pr) : GH_TTL_MS, pr });
+    ghCache.set(key, { at: Date.now(), ttlMs: answered(viewed) ? prTtl(pr) : GH_TTL_MS, pr });
 
     return pr;
 }
