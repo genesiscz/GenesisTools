@@ -779,6 +779,45 @@ test("genesis probe: a run cut off by a newer render is not remembered", async (
     forgetGenesisProbe();
 });
 
+test("genesis probe: a run past its 5 s deadline is asked again, a missing tools is remembered", async () => {
+    forgetGenesisProbe();
+    let calls = 0;
+    let deadline = 0;
+    const json = JSON.stringify({ router: { linkHost: "links.example.test" }, links: { hub: { opens: true } } });
+    const host: Host = {
+        ...checkoutHost(),
+        async run(_argv, init) {
+            calls += 1;
+            deadline = init?.timeoutMs ?? 0;
+
+            if (calls === 1) {
+                throw new Error("$.process.run(tools) is still running after 5000 ms");
+            }
+
+            return { exitCode: 0, stdout: json, stderr: "", isStdoutTruncated: false, isStderrTruncated: false };
+        },
+    };
+
+    expect((await genesisProbe(host)).tools).toBe(false);
+    expect((await genesisProbe(host)).opens.hub).toBe(true);
+    expect(calls).toBe(2);
+    expect(deadline).toBe(5_000);
+    forgetGenesisProbe();
+
+    const missing: Host = {
+        ...checkoutHost(),
+        async run() {
+            calls += 1;
+            throw new Error("spawn tools ENOENT");
+        },
+    };
+    calls = 0;
+    expect((await genesisProbe(missing)).tools).toBe(false);
+    expect((await genesisProbe(missing)).tools).toBe(false);
+    expect(calls).toBe(1);
+    forgetGenesisProbe();
+});
+
 test("live times: the text, and when it next changes", async () => {
     const now = 1_000_000;
 
