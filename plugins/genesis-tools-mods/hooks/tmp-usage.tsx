@@ -78,6 +78,17 @@ const worktreeKb = new Map<string, { kb: number | null; status: string; nextAt: 
 /** The same for the session's own folders, keyed by the folder's mtime. */
 const folderKbs = new Map<string, { kb: number | null; mark: string; nextAt: number }>();
 const WORKTREE_EVERY_MS = 30 * 60_000;
+/**
+ * At most one size refresh of an already measured worktree per this interval in a session, and each next refresh at a
+ * random point of 25 to 35 minutes: on 2026-10-27 one session walked its five col-fe worktrees back to back (6 s each)
+ * because all five expired together, and that minute was the Mac's spawn storm.
+ */
+const REFRESH_GAP_MS = 60_000;
+let lastRefreshAt = 0;
+
+function nextWorktreeAt(startedAt: number): number {
+    return paceAfter(WORKTREE_EVERY_MS * (0.83 + Math.random() * 0.34), startedAt);
+}
 
 /**
  * A worktree's size, walked again only when its git status changed or 30 minutes passed (ten times the walk's length
@@ -92,10 +103,19 @@ async function worktreeSize(host: Host, path: string, status: string): Promise<n
         return held.kb;
     }
 
+    // A first measure always runs; a refresh waits its turn, so a session's worktrees never walk in one burst.
+    if (held && startedAt - lastRefreshAt < REFRESH_GAP_MS) {
+        return held.kb;
+    }
+
+    if (held) {
+        lastRefreshAt = startedAt;
+    }
+
     // `tools du size` shares one answer with every caller on the Mac; a changed status asks for a fresh walk.
     const maxAge = held && held.status !== status ? 0 : WORKTREE_EVERY_MS / 1000;
     const kb = (await genesisProbe(host)).tools ? await sharedKb(host, path, maxAge) : await folderKb(host, path);
-    worktreeKb.set(path, { kb, status, nextAt: paceAfter(WORKTREE_EVERY_MS, startedAt) });
+    worktreeKb.set(path, { kb, status, nextAt: nextWorktreeAt(startedAt) });
 
     return kb;
 }
