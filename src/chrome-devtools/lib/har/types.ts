@@ -132,6 +132,7 @@ export interface HarEntry {
     __baseKey: string;
     /** The hop already took its `responseReceivedExtraInfo` headers. */
     __extraApplied?: boolean;
+    __expectsExtraInfo?: boolean;
     __frameId?: string;
     __requestWillBeSentTime?: number;
     __wallTime?: number;
@@ -213,6 +214,7 @@ export interface CdpRequestWillBeSentParams {
     renderBlockingBehavior?: string;
     initiator: CdpInitiator;
     redirectResponse?: CdpResponse;
+    redirectHasExtraInfo?: boolean;
     request: {
         method: string;
         url: string;

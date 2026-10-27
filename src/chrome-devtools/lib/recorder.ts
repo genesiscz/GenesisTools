@@ -23,7 +23,7 @@ import {
     serializePidRecord,
 } from "@genesiscz/utils/process/pidfile";
 import { isProcessAlive } from "@genesiscz/utils/process-alive";
-import { CdpDeadlineError, Conn } from "./cdp.ts";
+import { CdpDeadlineError, Conn, localDebuggerUrl } from "./cdp.ts";
 import type { CaptureChannel, RecordedEvent } from "./channels.ts";
 import { ensureCaptureDir, metaPath, recorderPidPath } from "./paths.ts";
 import { SegmentWriter } from "./segments.ts";
@@ -487,15 +487,14 @@ export async function connectBrowser(
         fetcher?: (url: string, init?: RequestInit) => Promise<Response>;
     }
 ): Promise<Conn> {
-    const v = (await (
-        await (opts?.fetcher ?? fetch)(`http://127.0.0.1:${port}/json/version`, {
-            signal: opts?.signal,
-        })
-    ).json()) as { webSocketDebuggerUrl: string };
+    const signal = opts?.signal ?? AbortSignal.timeout(10_000);
+    const v = (await (await (opts?.fetcher ?? fetch)(`http://127.0.0.1:${port}/json/version`, { signal })).json()) as {
+        webSocketDebuggerUrl: string;
+    };
 
-    const conn = new Conn(v.webSocketDebuggerUrl, opts);
+    const conn = new Conn(localDebuggerUrl(v, port), { ...opts, signal });
     try {
-        await conn.send("Browser.getVersion", {}, undefined, { signal: opts?.signal });
+        await conn.send("Browser.getVersion", {}, undefined, { signal });
         return conn;
     } catch (err) {
         conn.close();
@@ -513,6 +512,24 @@ export interface RunRecorderOpts {
 
 type RecorderTargetInfo = { url?: string; type?: string; targetId?: string; openerId?: string; sessionId?: string };
 
+function parseRecorderTargetInfo(value: unknown): RecorderTargetInfo {
+    const info: RecorderTargetInfo = {};
+    if (!value || typeof value !== "object") {
+        return info;
+    }
+
+    for (const [key, field] of Object.entries(value)) {
+        if (
+            typeof field === "string" &&
+            (key === "url" || key === "type" || key === "targetId" || key === "openerId" || key === "sessionId")
+        ) {
+            info[key] = field;
+        }
+    }
+
+    return info;
+}
+
 /** Tracks attached sessions separately from armed targets so a later URL change can arm a scoped tab. */
 export function createRecorderTargetController(opts: {
     conn: Pick<Conn, "send">;
@@ -523,6 +540,8 @@ export function createRecorderTargetController(opts: {
     const attachedTargets = new Map<string, string>();
     const sessions = new Map<string, string>();
     const scopedTargets = new Set<string>();
+    const pendingPopups = new Set<string>();
+    const firstRequests = new Map<string, string>();
 
     const enable = async (sessionId: string, info: RecorderTargetInfo) => {
         const { url = "", type, targetId, openerId } = info;
@@ -530,12 +549,14 @@ export function createRecorderTargetController(opts: {
             sessions.set(targetId, sessionId);
         }
 
-        if (!sessionId || !isArmableTarget({ type: type ?? "page", url, openerId })) {
-            return;
+        const armable = isArmableTarget({ type: type ?? "page", url, openerId });
+        const openerScoped = Boolean(opts.match && type === "page" && !url && openerId && scopedTargets.has(openerId));
+        const inScope = !opts.match || url.includes(opts.match) || openerScoped;
+        if (targetId && url && (!armable || !inScope)) {
+            scopedTargets.delete(targetId);
         }
 
-        const inScope = !opts.match || url.includes(opts.match) || (!url && !!openerId && scopedTargets.has(openerId));
-        if (!inScope) {
+        if (!sessionId || !armable || !inScope) {
             return;
         }
 
@@ -554,6 +575,10 @@ export function createRecorderTargetController(opts: {
         }
 
         enabled.add(sessionId);
+        if (openerScoped) {
+            pendingPopups.add(sessionId);
+        }
+
         const domains = ["Network.enable", "Page.enable"];
         if (opts.channels.has("console")) {
             domains.push("Runtime.enable", "Log.enable");
@@ -566,12 +591,14 @@ export function createRecorderTargetController(opts: {
         });
         if (!armed) {
             enabled.delete(sessionId);
+            pendingPopups.delete(sessionId);
+            firstRequests.delete(sessionId);
         }
     };
 
     const onTargetEvent = (method: string, params: Record<string, unknown>, sessionId?: string): boolean => {
         if (method === "Target.attachedToTarget") {
-            const info = (params.targetInfo ?? {}) as RecorderTargetInfo;
+            const info = parseRecorderTargetInfo(params.targetInfo);
             const sid = String(params.sessionId ?? sessionId ?? "");
             if (info.targetId && sid && !sessions.has(info.targetId)) {
                 sessions.set(info.targetId, sid);
@@ -586,7 +613,7 @@ export function createRecorderTargetController(opts: {
         }
 
         if (method === "Target.targetInfoChanged") {
-            const info = (params.targetInfo ?? params) as RecorderTargetInfo;
+            const info = parseRecorderTargetInfo(params.targetInfo ?? params);
             const sid = String(sessionId ?? info.sessionId ?? (info.targetId ? sessions.get(info.targetId) : "") ?? "");
             if (sid) {
                 void enable(sid, info);
@@ -598,6 +625,8 @@ export function createRecorderTargetController(opts: {
         if (method === "Target.detachedFromTarget") {
             const sid = String(params.sessionId ?? sessionId ?? "");
             enabled.delete(sid);
+            pendingPopups.delete(sid);
+            firstRequests.delete(sid);
             for (const [targetId, owner] of sessions) {
                 if (owner === sid) {
                     sessions.delete(targetId);
@@ -617,7 +646,26 @@ export function createRecorderTargetController(opts: {
         return false;
     };
 
-    return { enable, attachedTargets, onTargetEvent };
+    const shouldRecord = (
+        method: string,
+        params: Record<string, unknown>,
+        sessionId: string | undefined,
+        url: string
+    ): boolean => {
+        const requestId = typeof params.requestId === "string" ? params.requestId : undefined;
+        if (sessionId && requestId && method === "Network.requestWillBeSent" && pendingPopups.delete(sessionId)) {
+            firstRequests.set(sessionId, requestId);
+        }
+
+        const firstRequest = !!sessionId && !!requestId && firstRequests.get(sessionId) === requestId;
+        if (firstRequest && sessionId && (method === "Network.loadingFinished" || method === "Network.loadingFailed")) {
+            firstRequests.delete(sessionId);
+        }
+
+        return firstRequest || !opts.match || !url || url.includes(opts.match);
+    };
+
+    return { enable, attachedTargets, onTargetEvent, shouldRecord };
 }
 
 export async function runRecorder(opts: RunRecorderOpts): Promise<void> {
@@ -706,7 +754,11 @@ export async function runRecorder(opts: RunRecorderOpts): Promise<void> {
         writer.write(event);
     };
 
-    const { enable, attachedTargets, onTargetEvent } = createRecorderTargetController({ conn, channels, match });
+    const { enable, attachedTargets, onTargetEvent, shouldRecord } = createRecorderTargetController({
+        conn,
+        channels,
+        match,
+    });
 
     // Register listeners BEFORE setAutoAttach, or we miss Target.attachedToTarget for existing tabs.
     conn.on((method, params, sessionId) => {
@@ -725,7 +777,7 @@ export async function runRecorder(opts: RunRecorderOpts): Promise<void> {
                 ""
         );
 
-        if (match && url && !url.includes(match)) {
+        if (!shouldRecord(method, params, sessionId, url)) {
             return;
         }
 

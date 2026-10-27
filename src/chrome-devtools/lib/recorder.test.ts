@@ -3,7 +3,7 @@ import { existsSync, mkdtempSync, readFileSync, rmSync } from "node:fs";
 import { tmpdir } from "node:os";
 import { join } from "node:path";
 import { attemptStaleTakeover, writePidFile } from "@genesiscz/utils/process/pidfile";
-import { CdpDeadlineError } from "./cdp.ts";
+import { CdpDeadlineError, localDebuggerUrl } from "./cdp.ts";
 import {
     armThenRelease,
     claimRecorderPidfile,
@@ -320,6 +320,53 @@ describe("claimRecorderPidfile (single-winner atomic claim)", () => {
 });
 
 describe("browser connection cancellation", () => {
+    test("rejects remote and wrong-port debugger URLs before opening a socket", async () => {
+        const socket = globalThis.WebSocket;
+        let socketCalls = 0;
+        Object.defineProperty(globalThis, "WebSocket", {
+            configurable: true,
+            writable: true,
+            value: class {
+                constructor() {
+                    socketCalls++;
+                    throw new Error("Socket construction is forbidden in this negative test");
+                }
+            },
+        });
+        try {
+            for (const url of [
+                "ws://remote.example.com:9222/devtools/browser/x",
+                "ws://127.0.0.1:9223/devtools/browser/x",
+            ]) {
+                await expect(
+                    connectBrowser(9222, {
+                        fetcher: async () => Response.json({ webSocketDebuggerUrl: url }),
+                    })
+                ).rejects.toThrow("Refusing a debugger URL");
+            }
+            expect(socketCalls).toBe(0);
+        } finally {
+            Object.defineProperty(globalThis, "WebSocket", { configurable: true, writable: true, value: socket });
+        }
+
+        expect(localDebuggerUrl({ webSocketDebuggerUrl: "ws://127.0.0.1:9222/devtools/browser/x" }, 9222)).toBe(
+            "ws://127.0.0.1:9222/devtools/browser/x"
+        );
+    });
+
+    test("provides a deadline when the caller does not supply one", async () => {
+        let observed: AbortSignal | null | undefined;
+        await expect(
+            connectBrowser(9222, {
+                fetcher: async (_input, init) => {
+                    observed = init?.signal;
+                    throw new Error("fetch stopped");
+                },
+            })
+        ).rejects.toThrow("fetch stopped");
+        expect(observed).toBeInstanceOf(AbortSignal);
+    });
+
     test("aborts a stalled version fetch", async () => {
         const controller = new AbortController();
         let observed: AbortSignal | null | undefined;
@@ -373,6 +420,47 @@ describe("recording target events", () => {
             targetInfo: { targetId: "other", type: "page", url: "https://app.example.com/" },
         });
         expect(sent).toContain("other-session:Network.enable");
+
+        const params = { requestId: "first" };
+        expect(
+            controller.shouldRecord("Network.requestWillBeSent", params, "popup-session", "https://idp.example.com/")
+        ).toBe(true);
+        expect(
+            controller.shouldRecord("Network.responseReceived", params, "popup-session", "https://idp.example.com/")
+        ).toBe(true);
+        expect(controller.shouldRecord("Network.loadingFinished", params, "popup-session", "")).toBe(true);
+        expect(
+            controller.shouldRecord(
+                "Network.requestWillBeSent",
+                { requestId: "later" },
+                "popup-session",
+                "https://idp.example.com/"
+            )
+        ).toBe(false);
+        expect(
+            controller.shouldRecord(
+                "Network.requestWillBeSent",
+                { requestId: "normal" },
+                "opener-session",
+                "https://app.example.com/"
+            )
+        ).toBe(true);
+
+        controller.onTargetEvent("Target.targetInfoChanged", {
+            targetInfo: { targetId: "opener", type: "page", url: "https://unrelated.example.com/" },
+        });
+        controller.onTargetEvent("Target.attachedToTarget", {
+            sessionId: "new-popup",
+            targetInfo: { targetId: "new", type: "page", url: "", openerId: "opener" },
+        });
+        expect(sent).not.toContain("new-popup:Network.enable");
+        expect(sent).toContain("new-popup:Runtime.runIfWaitingForDebugger");
+
+        controller.onTargetEvent("Target.attachedToTarget", {
+            sessionId: "invalid",
+            targetInfo: { targetId: "invalid", type: "page", url: { invalid: true }, openerId: 42 },
+        });
+        expect(sent).not.toContain("invalid:Network.enable");
     });
 });
 

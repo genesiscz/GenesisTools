@@ -240,6 +240,34 @@ describe("redirect hops keep their raw response headers (not in upstream)", () =
         ],
     };
 
+    for (const beforeRedirect of [true, false]) {
+        test(`extra info skips a redirect that declares none, ${beforeRedirect ? "before" : "after"} the redirect`, () => {
+            const redirect = request("https://app.example.com/", 3000.4, hop302);
+            const markedRedirect = { ...redirect, params: { ...redirect.params, redirectHasExtraInfo: false } };
+            const raw = extra(302, { "set-cookie": "final=1; Path=/" });
+            const last = {
+                ...final,
+                params: { ...final.params, response: response("https://app.example.com/", 302, {}) },
+            };
+            const messages = [
+                start,
+                request("https://idp.example.com/login", 3000),
+                ...(beforeRedirect ? [raw, markedRedirect] : [markedRedirect, raw]),
+                last,
+                finished,
+            ];
+            const entries = harFromMessages(messages as CdpMessage[]).log.entries;
+            expect(
+                entries.find((entry) => entry.request.url === "https://idp.example.com/login")?.response?.cookies
+            ).toEqual([]);
+            expect(
+                entries
+                    .find((entry) => entry.request.url === "https://app.example.com/")
+                    ?.response?.cookies.map((c) => c.name)
+            ).toEqual(["final"]);
+        });
+    }
+
     for (const beforeResponse of [true, false]) {
         test(`cached 200 accepts 304 extra info ${beforeResponse ? "before" : "after"} the response`, () => {
             const raw = extra(304, { "x-cache": "revalidated" });

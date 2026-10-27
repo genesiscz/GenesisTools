@@ -143,11 +143,19 @@ export function harFromMessages(messages: CdpMessage[], options?: HarBuildOption
     const hopAwaitingExtraInfo = (key: string, params: CdpResponseReceivedExtraInfoParams): HarEntry | undefined =>
         entries.find(
             (entry) =>
-                entry.__baseKey === key && entry.response && !entry.__extraApplied && statusMatches(entry, params)
+                entry.__baseKey === key &&
+                entry.response &&
+                !entry.__extraApplied &&
+                entry.__expectsExtraInfo !== false &&
+                statusMatches(entry, params)
         ) ??
         entriesWithoutPage.find(
             (entry) =>
-                entry.__baseKey === key && entry.response && !entry.__extraApplied && statusMatches(entry, params)
+                entry.__baseKey === key &&
+                entry.response &&
+                !entry.__extraApplied &&
+                entry.__expectsExtraInfo !== false &&
+                statusMatches(entry, params)
         );
 
     /** Deviation 4: session-scoped page attribution. Sessionless falls back to upstream's `pages.at(-1)`. */
@@ -184,8 +192,15 @@ export function harFromMessages(messages: CdpMessage[], options?: HarBuildOption
         if (previousEntry && params.redirectResponse) {
             previousEntry.__key += "r";
             previousEntry._requestId += "r";
+            previousEntry.__expectsExtraInfo = params.redirectHasExtraInfo;
+            if (params.redirectHasExtraInfo === false) {
+                delete previousEntry.extraResponseInfo;
+            }
+
             entryFromResponse(previousEntry, params.redirectResponse, page ?? ({ pageTimings: {} } as HarPage), opts);
-            takeBufferedExtraInfo(previousEntry, key);
+            if (params.redirectHasExtraInfo !== false) {
+                takeBufferedExtraInfo(previousEntry, key);
+            }
         } else {
             log.debug({ requestId: params.requestId }, "no original request for redirect response");
         }
