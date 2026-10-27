@@ -1,4 +1,10 @@
-import { describe, expect, test } from "bun:test";
+import { describe, expect, spyOn, test } from "bun:test";
+import { existsSync, mkdtempSync, writeFileSync } from "node:fs";
+import { tmpdir } from "node:os";
+import { join } from "node:path";
+import { Api } from "@app/azure-devops/api";
+import { registerMaintenanceCommand } from "@app/azure-devops/commands/maintenance";
+import { getExplicitConfigPath, setConfigFlag } from "@app/azure-devops/config";
 import {
     diffManifestData,
     parseManifestText,
@@ -14,7 +20,15 @@ import {
     renderManifestJson,
     renderManifestTs,
 } from "@app/azure-devops/lib/field-manifest";
-import { buildWorkflow, flattenAreaPaths, kindOfManifest, renderGenericMd } from "@app/azure-devops/lib/manifest-kinds";
+import {
+    buildWorkflow,
+    flattenAreaPaths,
+    kindOfManifest,
+    manifestKind,
+    renderGenericMd,
+} from "@app/azure-devops/lib/manifest-kinds";
+import { SafeJSON } from "@genesiscz/utils/json";
+import { Command } from "commander";
 
 const MERGED = "Custom.0f1e2d3c-aaaa-bbbb-cccc-000000000001";
 const OWNER = "Custom.0f1e2d3c-aaaa-bbbb-cccc-000000000002";
@@ -79,10 +93,49 @@ describe("field manifest", () => {
         expect(ts).toContain("Generated, do not edit");
         expect(ts).toContain("export const AdoFields = {");
         expect(parseManifestFile(renderManifestTs(manifest, "SampleAdoFields"), "named.ts")).toEqual(manifest);
-        expect(() => renderManifestTs(manifest, "not-an-identifier")).toThrow("not a TypeScript identifier");
+        for (const name of ["not-an-identifier", "class", "default", "const", "await", "arguments"]) {
+            expect(() => renderManifestTs(manifest, name)).toThrow("not a TypeScript identifier");
+        }
         expect(parseManifestFile(ts, "fields.ts")).toEqual(manifest);
         expect(parseManifestFile(renderManifestJson(manifest), "fields.json")).toEqual(manifest);
         expect(() => parseManifestFile("export const OTHER = 1;", "other.ts")).toThrow('has no "export const <Name>');
+    });
+
+    test("maintenance fields rejects a reserved export name before writing a file", async () => {
+        const dir = mkdtempSync(join(tmpdir(), "ado-manifest-cli-"));
+        const config = join(dir, "config.json");
+        const target = join(dir, "fields.ts");
+        const previousConfig = getExplicitConfigPath();
+        const previousExitCode = process.exitCode;
+        const kind = manifestKind("fields");
+        if (!kind) {
+            throw new Error("fields manifest kind missing");
+        }
+        writeFileSync(
+            config,
+            SafeJSON.stringify({ org: "https://example.test", project: "Sample", projectId: "p", apiResource: "r" })
+        );
+        setConfigFlag(config);
+        const fetch = spyOn(kind, "fetch").mockImplementation(async () => {
+            throw new Error("unexpected manifest fetch");
+        });
+        const processLookup = spyOn(Api.prototype, "getProjectProcess").mockImplementation(async () => {
+            throw new Error("unexpected process lookup");
+        });
+        try {
+            const program = new Command().exitOverride();
+            registerMaintenanceCommand(program);
+            await program.parseAsync(["maintenance", "fields", "--name", "class", "--into", target], { from: "user" });
+            expect(process.exitCode).toBe(1);
+            expect(existsSync(target)).toBe(false);
+            expect(fetch).not.toHaveBeenCalled();
+            expect(processLookup).not.toHaveBeenCalled();
+        } finally {
+            fetch.mockRestore();
+            processLookup.mockRestore();
+            setConfigFlag(previousConfig ?? undefined);
+            process.exitCode = previousExitCode;
+        }
     });
 
     test("the check reports renamed labels, changed values and states, added fields, and ignores the meta", () => {
@@ -101,6 +154,28 @@ describe("field manifest", () => {
             'Bug: field System.Title "Title" added',
             `Task: field ${MERGED} label "Merge done" -> "Merge really done"`,
         ]);
+    });
+
+    test("lookups accept generated readonly manifests", () => {
+        const generated = {
+            meta: { org: "example", project: "sample", process: null, fetchedAt: "now", regenerate: "build" },
+            types: {
+                Task: {
+                    states: [{ name: "New", category: "Proposed" }],
+                    fields: {
+                        "Custom.Merged": {
+                            name: "Merged",
+                            type: "string",
+                            isIdentity: false,
+                            alwaysRequired: false,
+                            allowedValues: ["Yes", "No"],
+                        },
+                    },
+                },
+            },
+        } as const;
+        expect(findField(generated, { label: "Merged" })?.referenceName).toBe("Custom.Merged");
+        expect(findFields(generated, { value: "yes" })).toHaveLength(1);
     });
 
     test("global regex queries do not carry state between types or calls", () => {
@@ -142,6 +217,36 @@ describe("other manifest kinds", () => {
         fetchedAt: "2026-01-02 03:04",
         regenerate: "tools azure-devops maintenance sync --into generated",
     };
+
+    test("query manifests fail on a nested folder read error while ordinary listing remains tolerant", async () => {
+        const api = new Api({
+            org: "https://dev.azure.com/example",
+            project: "Sample",
+            projectId: "p",
+            apiResource: "r",
+        });
+        Reflect.set(api, "get", async (url: string) => {
+            if (url.includes("/queries/folder")) {
+                throw new Error("nested folder unavailable");
+            }
+            return {
+                value: [
+                    {
+                        id: "root",
+                        name: "Shared Queries",
+                        isFolder: true,
+                        children: [{ id: "folder", name: "Nested", isFolder: true, hasChildren: true }],
+                    },
+                ],
+            };
+        });
+        const kind = manifestKind("queries");
+        if (!kind) {
+            throw new Error("queries manifest kind missing");
+        }
+        expect(await api.getAllQueries()).toHaveLength(2);
+        await expect(kind.fetch({ api })).rejects.toThrow("nested folder unavailable");
+    });
 
     test("area nodes flatten to sorted WIQL area paths", () => {
         const root = {
