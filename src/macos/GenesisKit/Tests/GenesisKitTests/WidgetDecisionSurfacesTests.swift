@@ -205,12 +205,39 @@ final class WidgetDecisionSurfacesTests: XCTestCase {
         XCTAssertEqual(model.revealScroll?.count, 2, "a second link scrolls and flashes again")
     }
 
+    private func receiveLookup(_ model: WidgetModel, cards: [[String: Any]], token: String?) throws {
+        let snapshot = try XCTUnwrap(model.snapshot)
+        var value = try XCTUnwrap(JSONSerialization.jsonObject(with: JSONEncoder().encode(snapshot)) as? [String: Any])
+        value["cards"] = cards
+        value["decisionLookup"] = token
+        let data = try JSONSerialization.data(withJSONObject: value)
+        model.receive([String(decoding: data, as: UTF8.self)])
+    }
+
+    func testDecisionRevealWaitsForItsTargetedSnapshotRatherThanCachedCards() throws {
+        let model = try model(cards: [Self.card(key + "0", number: 10)])
+        model.openDecision(id: "d11", sessionKey: key + "0")
+        let token = try XCTUnwrap(model.pendingDecision?.token)
+        try receiveLookup(model, cards: [Self.card(key + "0", number: 10)], token: nil)
+        XCTAssertNil(model.chatDecision, "a fast-path snapshot cannot prove the new decision is absent")
+        XCTAssertNotNil(model.pendingDecision)
+        try receiveLookup(model, cards: [Self.card(key + "0", number: 10)], token: "older-request")
+        XCTAssertNotNil(model.pendingDecision, "a different completed lookup cannot settle this request")
+        try receiveLookup(model, cards: [Self.card(key + "0", number: 11, status: "acknowledged")], token: token)
+        XCTAssertNil(model.chatDecision)
+        XCTAssertEqual(model.revealScroll?.rowID, "card-decision:d11")
+        XCTAssertNil(model.pendingDecision)
+    }
+
     /// A decision asked only in a chat reply is not in the log (Decision 172, 2026-10-27): the panel says why the Inbox
     /// lacks it and shows the chat instead of an Inbox that silently lacks it.
     func testADecisionLinkToAChatOnlyDecisionShowsTheChatAndSaysWhy() throws {
         let model = try model(cards: [Self.card(key + "0", number: 10)])
 
         model.openDecision(id: "d_172_fixture-0", sessionKey: key + "0")
+        XCTAssertNil(model.chatDecision, "a cached snapshot is not evidence of absence")
+        let token = try XCTUnwrap(model.pendingDecision?.token)
+        try receiveLookup(model, cards: [Self.card(key + "0", number: 10)], token: token)
 
         XCTAssertEqual(model.section, "Conversation")
         XCTAssertEqual(model.chatDecision?.number, 172)

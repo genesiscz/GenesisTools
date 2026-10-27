@@ -113,7 +113,7 @@ import {
     recordVoiceNote,
     transcribeVoiceNote,
 } from "../widget/voice-notes";
-import { StdinLines, WARM_SESSIONS, watchWidget, widgetSelectionLine } from "../widget/watch";
+import { StdinLines, WARM_SESSIONS, watchWidget, widgetDecisionLine, widgetSelectionLine } from "../widget/watch";
 import { importWidgetAsset, reviseVideoAsset } from "./assets";
 import * as dispatchModule from "./dispatch";
 import { widgetDeliveryReceipt, widgetDispatcher } from "./dispatch";
@@ -4514,7 +4514,20 @@ test("a decision link reaches the widget at once, before a slow full refresh fin
     const directory = await root();
     await env.testing.withOverrides({ GENESIS_TOOLS_HOME: directory }, async () => {
         const controller = new AbortController();
+        const oldAt = Date.now() - 1000;
+        await mutateWidgetState(directory, (state) => {
+            state.showDecision = { id: "d_1_old", at: oldAt };
+        });
         const emitted: { at?: number; selectedKey?: string }[] = [];
+        let pick: ((key: string) => void) | undefined;
+        let slowStarted!: () => void;
+        const slowStartedPromise = new Promise<void>((resolve) => {
+            slowStarted = resolve;
+        });
+        let stalePublished!: () => void;
+        const stalePublishedPromise = new Promise<void>((resolve) => {
+            stalePublished = resolve;
+        });
         let firstSnapshot!: () => void;
         const started = new Promise<void>((resolve) => {
             firstSnapshot = resolve;
@@ -4529,7 +4542,16 @@ test("a decision link reaches the widget at once, before a slow full refresh fin
             signal: controller.signal,
             emit: (snapshot) => {
                 emitted.push({ at: snapshot.state.showDecision?.at, selectedKey: snapshot.selectedKey ?? undefined });
+                if (snapshot.selectedKey === "refresh-2") {
+                    stalePublished();
+                }
                 firstSnapshot();
+            },
+            selections: (listener) => {
+                pick = listener;
+                return () => {
+                    pick = undefined;
+                };
             },
             dependencies: {
                 inboxPaths: {
@@ -4539,14 +4561,16 @@ test("a decision link reaches the widget at once, before a slow full refresh fin
                 },
                 snapshot: async () => {
                     calls++;
+                    const state = await readWidgetState(directory);
                     if (calls > 1) {
-                        // Every refresh after the first stands in for a rebuild under heavy load.
+                        // This snapshot holds the old state while the fast path publishes a newer request.
+                        slowStarted();
                         await slow;
                     }
 
                     return {
                         version: 1,
-                        state: await readWidgetState(directory),
+                        state,
                         activity: [],
                         sessions: [],
                         cards: [],
@@ -4564,6 +4588,8 @@ test("a decision link reaches the widget at once, before a slow full refresh fin
         });
         try {
             await withTimeout(started, 3000);
+            pick?.("local:codex:fixture:");
+            await withTimeout(slowStartedPromise, 3000);
             const at = Date.now();
             await mutateWidgetState(directory, (state) => {
                 state.showDecision = { id: "d_7_fixture-session", at };
@@ -4576,12 +4602,72 @@ test("a decision link reaches the widget at once, before a slow full refresh fin
             expect(fast).toBeDefined();
             // It rode on the first snapshot: the slow rebuild had not returned yet.
             expect(fast?.selectedKey).toBe("refresh-1");
+            releaseSlow();
+            await withTimeout(stalePublishedPromise, 3000);
+            const fastIndex = emitted.findIndex((entry) => entry.at === at);
+            expect(emitted.slice(fastIndex).every((entry) => entry.at === at)).toBe(true);
         } finally {
             releaseSlow();
             controller.abort();
             await withTimeout(worker, 3000);
         }
     });
+});
+
+test("a targeted decision lookup retains an old card outside the selected window", async () => {
+    const directory = await root();
+    const file = join(directory, "decisions.jsonl");
+    const events = join(directory, "events.jsonl");
+    const [fixture] = await postDecisions(
+        file,
+        events,
+        {
+            sessionId: "fixture-window",
+            provider: "codex",
+            decisions: [{ prompt: "Old decision?", options: ["yes"] }],
+        },
+        { env: {} }
+    );
+    const rows = Array.from({ length: 102 }, (_, index) => ({
+        ...fixture,
+        id: `d_${index + 1}_fixture-window`,
+        number: index + 1,
+        state: "acknowledged" as const,
+        createdTs: new Date(1_700_000_000_000 + index * 1000).toISOString(),
+    }));
+    const sources: WidgetSources = { ...emptySources, decisions: () => rows };
+    const roster = await widgetSnapshot({ root: directory, sources });
+    const key = roster.sessions.find((entry) => entry.target.sessionId === "fixture-window")!.key;
+    const plain = await widgetSnapshot({ root: directory, selectedKey: key, sources });
+    expect(plain.cards.some((card) => card.sourceId === rows[0].id)).toBe(false);
+    const found = await widgetSnapshot({
+        root: directory,
+        selectedKey: key,
+        sources,
+        decisionLookup: { id: rows[0].id, token: "request-1" },
+    });
+    expect(found.decisionLookup).toBe("request-1");
+    expect(found.cards.some((card) => card.sourceId === rows[0].id)).toBe(true);
+    const absent = await widgetSnapshot({
+        root: directory,
+        selectedKey: key,
+        sources,
+        decisionLookup: { id: "d_999_fixture-window", token: "request-2" },
+    });
+    expect(absent.decisionLookup).toBe("request-2");
+    expect(absent.cards.some((card) => card.sourceId === "d_999_fixture-window")).toBe(false);
+    const failed = await widgetSnapshot({
+        root: directory,
+        selectedKey: key,
+        sources: {
+            ...sources,
+            decisions: () => {
+                throw new Error("fixture unavailable");
+            },
+        },
+        decisionLookup: { id: rows[0].id, token: "request-3" },
+    });
+    expect(failed.decisionLookup).toBeUndefined();
 });
 
 test("a snapshot carries the cards of the sessions that need you beside the selected one's", async () => {
@@ -4634,8 +4720,8 @@ test("a session picked on the watch's stdin is the next snapshot's selection, wi
     const directory = await root();
     await env.testing.withOverrides({ GENESIS_TOOLS_HOME: directory }, async () => {
         const controller = new AbortController();
-        const asked: { selectedKey?: string; warm?: number }[] = [];
-        let pick: ((key: string) => void) | undefined;
+        const asked: { selectedKey?: string; warm?: number; decisionLookup?: { id: string; token: string } }[] = [];
+        let pick: ((key: string, decision?: { id: string; token: string }) => void) | undefined;
         let ready!: () => void;
         const started = new Promise<void>((resolve) => {
             ready = resolve;
@@ -4662,7 +4748,11 @@ test("a session picked on the watch's stdin is the next snapshot's selection, wi
                 },
                 watchInbox: async () => ({ active: true, errorCount: 0, unsubscribe: async () => {} }),
                 snapshot: async (options) => {
-                    asked.push({ selectedKey: options?.selectedKey, warm: options?.warm });
+                    asked.push({
+                        selectedKey: options?.selectedKey,
+                        warm: options?.warm,
+                        ...(options?.decisionLookup ? { decisionLookup: options.decisionLookup } : {}),
+                    });
                     if (options?.selectedKey === "local:codex:picked:") {
                         picked();
                     }
@@ -4687,8 +4777,9 @@ test("a session picked on the watch's stdin is the next snapshot's selection, wi
         try {
             await withTimeout(started, 3000);
             expect(asked[0]).toEqual({ selectedKey: undefined, warm: WARM_SESSIONS });
-            pick?.("local:codex:picked:");
+            pick?.("local:codex:picked:", { id: "d_1_fixture", token: "lookup-1" });
             await withTimeout(pickedSnapshot, 3000);
+            expect(asked.at(-1)?.decisionLookup).toEqual({ id: "d_1_fixture", token: "lookup-1" });
         } finally {
             controller.abort();
             await withTimeout(worker, 3000);
@@ -4704,6 +4795,11 @@ test("the watch's stdin control lines: whole lines only, and only a select with 
     lines.push('ect":"local:claude:b:"}\n\n');
     lines.push('{"select":""}\nnot json\n{"other":1}\n');
     expect(keys).toEqual(["local:claude:a:", "local:claude:b:", undefined, undefined, undefined]);
+    expect(widgetDecisionLine('{"select":"key","decision":"d_1_fixture","token":"request"}')).toEqual({
+        id: "d_1_fixture",
+        token: "request",
+    });
+    expect(widgetDecisionLine('{"select":"key","decision":"d_1_fixture"}')).toBeUndefined();
 });
 
 test("a session queue directory that cannot be watched leaves the Widget running on its safety refresh", async () => {

@@ -58,7 +58,7 @@ export async function watchWidget({
      * The widget's picks as they happen (`{"select": key}` lines on stdin): the next snapshot names that session at
      * once, without waiting for the `selection` action to reach `state.json` (a process and a debounce, about 0.5 s).
      */
-    selections?: (listener: (key: string) => void) => () => void;
+    selections?: (listener: (key: string, decision?: { id: string; token: string }) => void) => () => void;
     dependencies?: {
         prepare?: typeof prepareWidgetAsset;
         snapshot?: typeof widgetSnapshot;
@@ -108,6 +108,7 @@ export async function watchWidget({
             const profiledInbox = new Map<string, { at: number; id: string }>();
             /** The widget's latest pick, until `state.json` names it too. */
             let picked: string | undefined;
+            let decisionLookup: { id: string; token: string } | undefined;
             /** The last snapshot sent, so a decision link can ride on it at once (`showDecisionNow`). */
             let lastSnapshot: Awaited<ReturnType<typeof widgetSnapshot>> | undefined;
             /**
@@ -125,7 +126,13 @@ export async function watchWidget({
                     return undefined;
                 });
                 const request = state?.showDecision;
-                if (!state || !request || request.at === lastSnapshot.state.showDecision?.at || signal.aborted) {
+                if (
+                    !state ||
+                    !request ||
+                    state.revision <= lastSnapshot.state.revision ||
+                    request.at === lastSnapshot.state.showDecision?.at ||
+                    signal.aborted
+                ) {
                     return;
                 }
                 lastSnapshot = { ...lastSnapshot, state };
@@ -193,11 +200,16 @@ export async function watchWidget({
                     readSnapshot({
                         root: directory,
                         selectedKey: selectedKey ?? picked,
+                        decisionLookup,
                         refresh: false,
                         warm: WARM_SESSIONS,
                         onImagesDeferred: () => void requestRefresh(),
                     })
                 );
+                // A state-only publication can finish while this snapshot is rebuilding its older card list.
+                if (lastSnapshot && lastSnapshot.state.revision > snapshot.state.revision) {
+                    snapshot.state = lastSnapshot.state;
+                }
                 const fingerprint = SafeJSON.stringify(snapshot, { strict: true });
                 if (fingerprint !== last && !signal.aborted) {
                     last = fingerprint;
@@ -332,8 +344,9 @@ export async function watchWidget({
                 },
                 { debounceMs: 180 }
             );
-            const stopSelections = selections?.((key) => {
+            const stopSelections = selections?.((key, decision) => {
                 picked = key;
+                decisionLookup = decision;
                 void requestRefresh();
             });
             let queueSubscription: WatcherSubscription | undefined;
@@ -556,6 +569,27 @@ export class StdinLines {
 }
 
 /** The session key of a `{"select": "<key>"}` control line from the widget, else undefined. */
+export function widgetDecisionLine(line: string): { id: string; token: string } | undefined {
+    try {
+        const value: unknown = SafeJSON.parse(line, { strict: true });
+        if (
+            value &&
+            typeof value === "object" &&
+            "decision" in value &&
+            "token" in value &&
+            typeof value.decision === "string" &&
+            value.decision &&
+            typeof value.token === "string" &&
+            value.token
+        ) {
+            return { id: value.decision, token: value.token };
+        }
+    } catch (error) {
+        logger.debug({ error }, "Widget decision control line ignored");
+    }
+    return undefined;
+}
+
 export function widgetSelectionLine(line: string): string | undefined {
     try {
         const value: unknown = SafeJSON.parse(line, { strict: true });

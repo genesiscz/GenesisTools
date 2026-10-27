@@ -24,7 +24,7 @@ import {
 } from "./lib/widget/shelf";
 import { discoverWidgetCatalog, widgetSnapshot } from "./lib/widget/snapshot";
 import { mutateWidgetState } from "./lib/widget/storage";
-import { StdinLines, watchWidget, widgetSelectionLine } from "./lib/widget/watch";
+import { StdinLines, watchWidget, widgetDecisionLine, widgetSelectionLine } from "./lib/widget/watch";
 import { registerWidgetTasks } from "./widget-tasks-cli";
 import { registerWidgetVoiceNotes } from "./widget-voice-notes-cli";
 
@@ -158,15 +158,20 @@ widget
                 const owner = new AbortController();
                 const abort = () => owner.abort();
                 signal.addEventListener("abort", abort, { once: true });
-                const selections = new Set<(key: string) => void>();
+                const selections = new Set<(key: string, decision?: { id: string; token: string }) => void>();
+                let pendingSelection: { key: string; decision?: { id: string; token: string } } | undefined;
                 const lines = new StdinLines((line) => {
                     const key = widgetSelectionLine(line);
                     if (!key) {
                         return;
                     }
 
+                    const decision = widgetDecisionLine(line);
+                    if (selections.size === 0) {
+                        pendingSelection = { key, decision };
+                    }
                     for (const listener of selections) {
-                        listener(key);
+                        listener(key, decision);
                     }
                 });
                 if (options.stopOnStdin) {
@@ -185,6 +190,11 @@ widget
                         emit: (snapshot) => out.print(`${SafeJSON.stringify(snapshot)}\n`),
                         selections: (listener) => {
                             selections.add(listener);
+                            if (pendingSelection) {
+                                const pending = pendingSelection;
+                                pendingSelection = undefined;
+                                listener(pending.key, pending.decision);
+                            }
                             return () => selections.delete(listener);
                         },
                     });
