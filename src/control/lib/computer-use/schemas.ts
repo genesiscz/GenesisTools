@@ -149,7 +149,7 @@ export const computerSchemas = {
                 .max(100)
                 .optional(),
             image: z.boolean().default(true),
-            element_limit: z.number().int().min(1).max(2000).default(100),
+            element_limit: z.number().int().min(1).max(4000).default(100),
             perception: z.enum(["ocr"]).optional(),
             timeout_ms: z.number().int().min(1).max(120000).optional(),
         })
@@ -219,7 +219,7 @@ export const computerSchemas = {
             ...point,
             direction: z.enum(["up", "down", "left", "right", "u", "d", "l", "r"]),
             pages: z.number().int().min(1).max(20).optional(),
-            pixels: z.number().int().min(1).max(10000).optional(),
+            pixels: z.number().int().min(1).max(100000).optional(),
             /** How long the scroll takes, like a trackpad swipe; 0 is one wheel event. Default: 0.25 to 1 s by distance. */
             seconds: z.union([z.literal(0), z.number().min(0.05).max(30)]).optional(),
             background: z.boolean().default(true),

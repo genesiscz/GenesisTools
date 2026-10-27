@@ -373,18 +373,22 @@ final class NativeRecorder: NSObject, SCStreamOutput, SCStreamDelegate {
         let height = CVPixelBufferGetHeight(pixelBuffer)
         let signature = FrameSignature(bgra: UnsafeRawPointer(base), width: width, height: height,
                                        bytesPerRow: CVPixelBufferGetBytesPerRow(pixelBuffer), stride: 4)
-        let decision = policy.consider(signature)
+        var candidate = policy
+        let decision = candidate.consider(signature)
         if let fps = rate.observe(kept: decision.moved) {
             applyRate(fps)
         }
 
-        guard decision.keep else { return }
+        guard decision.keep else {
+            policy = candidate
+            return
+        }
         let elapsed = CMTimeSubtract(timestamp, firstTimestamp ?? timestamp)
         let timestampMs = Int((CMTimeGetSeconds(elapsed) * 1000).rounded())
         // A full-size PNG takes longer to encode than a frame lasts (a retina window: 150 to 400 ms). Encoded here, it
         // held this queue, so the stream and the movie fell to about 6 fps (2026-10-26). The encoder has its own queue;
         // only the pixels are copied out here, because the stream reuses its few buffers.
-        guard pendingEncodes < Self.maxPendingEncodes else {
+        guard admitPNG(videoConfigured: options.videoOut != nil, pending: pendingEncodes, maximum: Self.maxPendingEncodes) else {
             encoderBehind += 1
             return
         }
@@ -393,14 +397,14 @@ final class NativeRecorder: NSObject, SCStreamOutput, SCStreamDelegate {
             warnings.append("frame at \(timestampMs) ms could not be rendered")
             return
         }
+        policy = candidate
         reservedFrames += 1
         let index = reservedFrames
         let file = String(format: "keep-%04d.png", index)
         let url = URL(fileURLWithPath: options.outDir).appendingPathComponent(file)
         let frame = KeptFrame(index: index, file: file, timestampMs: timestampMs, changePercent: decision.changePercent,
                               reason: decision.reason)
-        pendingEncodes += 1
-        encodeQueue.async { [self] in
+        let encode = {
             let failure: String?
             if let png = NSBitmapImageRep(cgImage: cgImage).representation(using: .png, properties: [:]) {
                 do {
@@ -412,12 +416,25 @@ final class NativeRecorder: NSObject, SCStreamOutput, SCStreamDelegate {
             } else {
                 failure = "frame at \(timestampMs) ms could not be encoded"
             }
-            queue.async { [self] in
-                pendingEncodes -= 1
-                if let failure {
-                    warnings.append(failure)
-                } else {
-                    kept.append(frame)
+            return failure
+        }
+        if options.videoOut == nil {
+            if let failure = encode() {
+                warnings.append(failure)
+            } else {
+                kept.append(frame)
+            }
+        } else {
+            pendingEncodes += 1
+            encodeQueue.async { [self] in
+                let failure = encode()
+                queue.async { [self] in
+                    pendingEncodes -= 1
+                    if let failure {
+                        warnings.append(failure)
+                    } else {
+                        kept.append(frame)
+                    }
                 }
             }
         }
@@ -429,8 +446,7 @@ final class NativeRecorder: NSObject, SCStreamOutput, SCStreamDelegate {
         encodeQueue.sync {}
         queue.sync {
             if encoderBehind > 0 {
-                warnings.append("\(encoderBehind) changed frames were not saved as PNG because the encoder fell behind; " +
-                                "the movie has every frame")
+                warnings.append("\(encoderBehind) changed frames were not saved as PNG because the encoder fell behind")
             }
         }
     }
@@ -677,10 +693,11 @@ func cmdCaptureScreen() {
         recorder.frameQueue.sync {}
         errorExit("recording never stopped: \(error.localizedDescription)")
     }
+    let stoppedAt = CMClockGetTime(CMClockGetHostTimeClock())
+    let durationMs = Int((Date().timeIntervalSince(started) * 1000).rounded())
     // Drain the frame and encode queues so the last kept frame is on disk before the sheet is built.
     recorder.drainFrames()
-    let durationMs = Int((Date().timeIntervalSince(started) * 1000).rounded())
-    recorder.finishVideo(stoppedAt: CMClockGetTime(CMClockGetHostTimeClock()))
+    recorder.finishVideo(stoppedAt: stoppedAt)
     if let failure = recorder.failure {
         errorExit("recording stopped early: \(failure.localizedDescription)")
     }

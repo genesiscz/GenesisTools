@@ -114,6 +114,11 @@ public struct KeepPolicy {
     }
 }
 
+/// PNG-only capture encodes synchronously, while a movie may discard stills under backpressure.
+public func admitPNG(videoConfigured: Bool, pending: Int, maximum: Int) -> Bool {
+    !videoConfigured || pending < maximum
+}
+
 /// Which rate the capture stream should ask for. ScreenCaptureKit caps delivery through
 /// `minimumFrameInterval`, so "idle" means asking for fewer frames while nothing moves — the
 /// point of `--idle-fps`, which is what a long recording of a mostly-still window costs.

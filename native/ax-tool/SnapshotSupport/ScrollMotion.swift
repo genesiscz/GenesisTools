@@ -16,6 +16,31 @@ public enum ScrollMotion {
     /// Events per second for a timed scroll: one per display frame.
     public static let framesPerSecond = 60.0
 
+    public static func interval(seconds: Double?, count: Int) -> Double {
+        guard count > 1 else { return 0 }
+        return (seconds ?? 0) / Double(count - 1)
+    }
+
+    public struct DeadlineExceeded: LocalizedError {
+        public let dispatched: Bool
+        public var errorDescription: String? { "Scroll deadline expired; inspect before retrying." }
+    }
+
+    public static func dispatch(count: Int, interval: Double, remaining: () -> TimeInterval?,
+                                sleep: (TimeInterval) -> Void, post: (Int) throws -> Void) throws {
+        for index in 0..<count {
+            if index > 0 && interval > 0 {
+                let available = remaining() ?? interval
+                guard available > 0 else { throw DeadlineExceeded(dispatched: index > 0) }
+                sleep(min(interval, available))
+            }
+            if let available = remaining(), available <= 0 {
+                throw DeadlineExceeded(dispatched: index > 0)
+            }
+            try post(index)
+        }
+    }
+
     /// The per-event deltas of one scroll: `total` pixels over `count` events, each a whole pixel, summing
     /// exactly to `total` (the rounding remainder is carried, never dropped). The sign follows `total`.
     public static func deltas(total: Int, count: Int, ease: ScrollEase) -> [Int32] {

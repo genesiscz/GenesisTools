@@ -1370,7 +1370,10 @@ export class ComputerUse {
     async scroll(input: ComputerCall<"scroll">) {
         const { options, signal } = parseCall("scroll", input);
         return this.perform({
-            input: options,
+            input: {
+                ...options,
+                timeout_ms: options.timeout_ms ?? Math.max(this.timeoutMs, ((options.seconds ?? 0) + 5) * 1000),
+            },
             build: (record) => {
                 if (options.pages !== undefined && options.pixels !== undefined) {
                     throw new ComputerUseError("INVALID_SCROLL", "Choose pages or pixels.");
