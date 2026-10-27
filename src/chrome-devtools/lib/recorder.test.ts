@@ -5,6 +5,7 @@ import { join } from "node:path";
 import { attemptStaleTakeover, writePidFile } from "@genesiscz/utils/process/pidfile";
 import { CdpDeadlineError } from "./cdp.ts";
 import {
+    armThenRelease,
     claimRecorderPidfile,
     enableRecordingDomains,
     extractDataReceived,
@@ -40,6 +41,8 @@ describe("isArmableTarget / pickArmTargets", () => {
         expect(isArmableTarget({ type: "iframe", url: "https://idp.example.com/login" })).toBe(true);
         expect(isArmableTarget({ type: "service_worker", url: "https://app.example.com/sw.js" })).toBe(false);
         expect(isArmableTarget({ type: "page", url: "devtools://devtools/x.html" })).toBe(false);
+        expect(isArmableTarget({ type: "page", url: "", openerId: "opener-tab" })).toBe(true);
+        expect(isArmableTarget({ type: "page", url: "" })).toBe(false);
         expect(
             pickArmTargets([
                 { targetId: "a", type: "page", url: "https://app.example.com" },
@@ -311,5 +314,39 @@ describe("claimRecorderPidfile (single-winner atomic claim)", () => {
         } finally {
             rmSync(dir, { recursive: true, force: true });
         }
+    });
+});
+
+describe("armThenRelease", () => {
+    test("a held popup (empty URL) is released after its first enable, even when the enable never answers", async () => {
+        const sent: string[] = [];
+        const never = new Promise<unknown>(() => {});
+        const send = (method: string) => {
+            sent.push(method);
+            return method === "Runtime.runIfWaitingForDebugger" ? Promise.resolve({}) : never;
+        };
+
+        armThenRelease({
+            arm: () =>
+                enableRecordingDomains({ send, domains: ["Network.enable", "Page.enable"], url: "" }).then(() => {}),
+            send,
+            sessionId: "popup",
+        });
+
+        expect(sent).toEqual(["Network.enable", "Runtime.runIfWaitingForDebugger"]);
+    });
+
+    test("a refused release is swallowed, and a session without an id is not released", async () => {
+        const sent: string[] = [];
+        const send = (method: string) => {
+            sent.push(method);
+            return Promise.reject(new Error("target closed"));
+        };
+
+        armThenRelease({ arm: async () => {}, send, sessionId: "gone" });
+        armThenRelease({ arm: async () => {}, send, sessionId: "" });
+        await Bun.sleep(0);
+
+        expect(sent).toEqual(["Runtime.runIfWaitingForDebugger"]);
     });
 });

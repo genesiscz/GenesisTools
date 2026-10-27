@@ -87,10 +87,16 @@ export function isArmableUrl(url: string): boolean {
     return u.startsWith("http:") || u.startsWith("https:") || u === "about:blank";
 }
 
-export function isArmableTarget(info: { type?: string; url?: string }): boolean {
+export function isArmableTarget(info: { type?: string; url?: string; openerId?: string }): boolean {
     const type = info.type ?? "";
     if (type !== "page" && type !== "iframe") {
         return false;
+    }
+
+    // A window.open() popup attaches with an empty URL before its first request; arm it then,
+    // or that request (often the one a login flow is about) leaves the recording.
+    if (type === "page" && !(info.url ?? "").trim() && info.openerId) {
+        return true;
     }
 
     return isArmableUrl(info.url ?? "");
@@ -122,6 +128,9 @@ const NET_METHODS = new Set([
     "Page.frameAttached",
     "Page.frameNavigated",
 ]);
+
+/** A release that does not answer in this time is dropped; the target is not ours to wait for. */
+const RELEASE_TIMEOUT_MS = 5000;
 
 const CONSOLE_METHODS = new Set(["Runtime.consoleAPICalled", "Runtime.exceptionThrown", "Log.entryAdded"]);
 
@@ -238,6 +247,34 @@ export function healthIsDead(fails: number): boolean {
  * tab answers nothing (a frozen or discarded background tab), so the remaining domains are skipped: each would
  * wait out the same 30 s deadline and log the same warning (17 tabs gave 68 lines and 2 minutes each).
  */
+/**
+ * Arms a freshly attached session, then releases it. Browser-level auto-attach makes Chrome hold every
+ * window.open() popup until the client sends Runtime.runIfWaitingForDebugger, even with
+ * waitForDebuggerOnStart:false (Chromium target_handler.cc, ShouldThrottlePopups). A held popup pauses its
+ * whole renderer, and its opener shows "Debugger paused in another tab" until the popup is released.
+ * `arm` sends its first enable synchronously, so that enable reaches the target before the release and the
+ * popup's first request is still recorded. The release never waits for the enables to answer, and it goes
+ * to every session, armable or not: a held popup reports an empty URL, which is not armable.
+ */
+export function armThenRelease({
+    arm,
+    send,
+    sessionId,
+}: {
+    arm: () => Promise<void>;
+    send: (method: string) => Promise<unknown>;
+    sessionId: string;
+}): void {
+    void arm();
+    if (!sessionId) {
+        return;
+    }
+
+    void send("Runtime.runIfWaitingForDebugger").catch((err: unknown) => {
+        log.debug({ err, sessionId }, "runIfWaitingForDebugger failed");
+    });
+}
+
 export async function enableRecordingDomains({
     send,
     domains,
@@ -556,8 +593,11 @@ export async function runRecorder(opts: RunRecorderOpts): Promise<void> {
         writer.write(event);
     };
 
-    const enable = async (sessionId: string, url: string, type?: string, targetId?: string) => {
-        if (!isArmableTarget({ type: type ?? "page", url })) {
+    const enable = async (
+        sessionId: string,
+        { url = "", type, targetId, openerId }: { url?: string; type?: string; targetId?: string; openerId?: string }
+    ) => {
+        if (!isArmableTarget({ type: type ?? "page", url, openerId })) {
             return;
         }
 
@@ -598,9 +638,18 @@ export async function runRecorder(opts: RunRecorderOpts): Promise<void> {
     // Register listeners BEFORE setAutoAttach, or we miss Target.attachedToTarget for existing tabs.
     conn.on((method, params, sessionId) => {
         if (method === "Target.attachedToTarget") {
-            const info = (params.targetInfo ?? {}) as { type?: string; url?: string; targetId?: string };
+            const info = (params.targetInfo ?? {}) as {
+                type?: string;
+                url?: string;
+                targetId?: string;
+                openerId?: string;
+            };
             const sid = String(params.sessionId ?? sessionId ?? "");
-            void enable(sid, info.url ?? "", info.type, info.targetId);
+            armThenRelease({
+                arm: () => enable(sid, info),
+                send: (release) => conn.send(release, {}, sid, { timeoutMs: RELEASE_TIMEOUT_MS }),
+                sessionId: sid,
+            });
 
             return;
         }
@@ -614,7 +663,7 @@ export async function runRecorder(opts: RunRecorderOpts): Promise<void> {
             };
             const sid = String(sessionId ?? info.sessionId ?? "");
             if (sid) {
-                void enable(sid, info.url ?? "", info.type, info.targetId);
+                void enable(sid, info);
             }
 
             return;
@@ -755,8 +804,13 @@ export async function runRecorder(opts: RunRecorderOpts): Promise<void> {
                 })) as {
                     sessionId?: string;
                 };
-                if (attached.sessionId) {
-                    await enable(attached.sessionId, t.url ?? "", t.type, t.targetId);
+                const sid = attached.sessionId;
+                if (sid) {
+                    armThenRelease({
+                        arm: () => enable(sid, t),
+                        send: (release) => conn.send(release, {}, sid, { timeoutMs: RELEASE_TIMEOUT_MS }),
+                        sessionId: sid,
+                    });
                 }
             } catch (err) {
                 log.warn({ err, url: t.url }, "attachToTarget failed");
