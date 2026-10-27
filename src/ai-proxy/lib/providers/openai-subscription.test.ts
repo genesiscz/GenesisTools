@@ -1653,6 +1653,62 @@ describe("native /v1/messages route: reasoning carried in gtr1 envelopes", () =>
         expect(SafeJSON.stringify(next)).toContain("Go on.");
     });
 
+    it("answers inside summary tags, and restores the note Claude Code keeps from inside them", async () => {
+        const sent: Array<Record<string, unknown>> = [];
+        globalThis.fetch = (async (_url: RequestInfo | URL, init?: RequestInit) => {
+            sent.push(SafeJSON.parse(String(init?.body)) as Record<string, unknown>);
+            return sent.length === 1 ? whamCompactionResponse("ENC-TAG") : whamStreamResponse();
+        }) as typeof fetch;
+        const reply = await (
+            await send({
+                model: "gpt-6.1-sol",
+                stream: false,
+                messages: [{ role: "user", content: `${CLAUDE_CODE_COMPACTION_MARK}\nSummarize.` }],
+            })
+        ).json();
+        const text = String(reply.content?.[0]?.text ?? "");
+        const inner = text.match(/^<summary>\n([\s\S]*)\n<\/summary>$/)?.[1];
+
+        expect(inner).toBeDefined();
+        await (
+            await send({
+                model: "gpt-6.1-sol",
+                stream: true,
+                messages: [
+                    { role: "user", content: `This session is being continued.\n\nSummary:\n${inner}\n\nGo on.` },
+                ],
+            })
+        ).text();
+        const next = (sent[1]?.input ?? []) as Array<Record<string, unknown>>;
+        expect(next[0]).toEqual({ type: "compaction", id: "cmp_1", encrypted_content: "ENC-TAG" });
+    });
+
+    it("compacts natively when Claude Code sends a system message after the compaction prompt", async () => {
+        const sent: Array<Record<string, unknown>> = [];
+        globalThis.fetch = (async (_url: RequestInfo | URL, init?: RequestInit) => {
+            sent.push(SafeJSON.parse(String(init?.body)) as Record<string, unknown>);
+            return whamCompactionResponse("ENC-SYS");
+        }) as typeof fetch;
+        const reply = await (
+            await send({
+                model: "gpt-6.1-sol",
+                stream: false,
+                messages: [
+                    { role: "user", content: "Which shelf?" },
+                    { role: "assistant", content: "Shelf 12." },
+                    { role: "user", content: [{ type: "text", text: `${CLAUDE_CODE_COMPACTION_MARK}\nSummarize.` }] },
+                    { role: "system", content: "<total_tokens>15000000 tokens left</total_tokens>" },
+                ],
+            })
+        ).json();
+        const input = (sent[0]?.input ?? []) as Array<Record<string, unknown>>;
+
+        expect(sent).toHaveLength(1);
+        expect(input.at(-1)).toEqual({ type: "compaction_trigger" });
+        expect(SafeJSON.stringify(input)).not.toContain(CLAUDE_CODE_COMPACTION_MARK);
+        expect(String(reply.content?.[0]?.text ?? "")).toContain("[codex-compaction gtc1.");
+    });
+
     it("keeps readable text supplied by native compaction without a second model request", async () => {
         let requests = 0;
         globalThis.fetch = (async (_url: RequestInfo | URL, _init?: RequestInit) => {

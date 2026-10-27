@@ -967,12 +967,14 @@ export class OpenAiSubscriptionProvider implements ProxyProvider {
         const inputTokens = typeof usage?.input_tokens === "number" ? usage.input_tokens : 0;
         const details = isObject(usage?.input_tokens_details) ? usage.input_tokens_details : {};
         const cached = typeof details.cached_tokens === "number" ? details.cached_tokens : 0;
+        // Claude Code 2.1.311 asks for the summary once more when the reply has no <summary> tag (one more full-context
+        // request, 155 s at 430K on 2026-10-27), and keeps only the text inside the tags, so the note goes in whole.
         const reply = {
             id: `msg_${randomUUID().replaceAll("-", "")}`,
             type: "message",
             role: "assistant",
             model,
-            content: [{ type: "text", text: compactionNote(id, summary) }],
+            content: [{ type: "text", text: `<summary>\n${compactionNote(id, summary)}\n</summary>` }],
             stop_reason: "end_turn",
             stop_sequence: null,
             usage: {

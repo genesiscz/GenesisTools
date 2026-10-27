@@ -23,66 +23,89 @@ function textOf(content: unknown): string {
         .join("\n");
 }
 
-/** A Claude Code compaction turn: the request ends on a user message carrying the compaction prompt. */
+/**
+ * Where Claude Code's compaction prompt sits: the last user message, with only `system` messages after it. Claude
+ * Code 2.1.312 sends a `role:system` token-budget note after the prompt (captured 2026-10-27), so the prompt is no
+ * longer the last message. -1 when the request is not a compaction turn.
+ */
+function compactionPromptIndex(messages: unknown[]): number {
+    for (let index = messages.length - 1; index >= 0; index--) {
+        const message = messages[index];
+
+        if (isObject(message) && message.role === "system") {
+            continue;
+        }
+
+        return isObject(message) &&
+            message.role === "user" &&
+            textOf(message.content).includes(CLAUDE_CODE_COMPACTION_MARK)
+            ? index
+            : -1;
+    }
+
+    return -1;
+}
+
+function messagesOf(body: { messages?: unknown }): unknown[] {
+    return Array.isArray(body.messages) ? body.messages : [];
+}
+
+/** A Claude Code compaction turn: its last user message carries the compaction prompt. */
 export function isClaudeCodeCompactionTurn(body: { messages?: unknown }): boolean {
-    const last = Array.isArray(body.messages) ? body.messages.at(-1) : undefined;
-    return isObject(last) && last.role === "user" && textOf(last.content).includes(CLAUDE_CODE_COMPACTION_MARK);
+    return compactionPromptIndex(messagesOf(body)) >= 0;
 }
 
 /** The compaction turn without Claude Code's summary prompt: the text blocks carrying it go, and an empty message too. */
 export function withoutCompactionPrompt(body: Record<string, unknown>): Record<string, unknown> {
-    const messages = Array.isArray(body.messages) ? body.messages : [];
-    const last = messages.at(-1);
+    const messages = messagesOf(body);
+    const index = compactionPromptIndex(messages);
+    const prompt = messages[index];
 
-    if (!isObject(last)) {
+    if (!isObject(prompt)) {
         return body;
     }
 
-    const content =
-        typeof last.content === "string"
-            ? []
-            : Array.isArray(last.content)
-              ? last.content.filter(
-                    (block) =>
-                        !(
-                            isObject(block) &&
-                            block.type === "text" &&
-                            typeof block.text === "string" &&
-                            block.text.includes(CLAUDE_CODE_COMPACTION_MARK)
-                        )
-                )
-              : [];
+    const content = Array.isArray(prompt.content)
+        ? prompt.content.filter(
+              (block) =>
+                  !(
+                      isObject(block) &&
+                      block.type === "text" &&
+                      typeof block.text === "string" &&
+                      block.text.includes(CLAUDE_CODE_COMPACTION_MARK)
+                  )
+          )
+        : [];
+    const kept = content.length > 0 ? [{ ...prompt, content }] : [];
 
-    return {
-        ...body,
-        messages: content.length > 0 ? [...messages.slice(0, -1), { ...last, content }] : messages.slice(0, -1),
-    };
+    return { ...body, messages: [...messages.slice(0, index), ...kept, ...messages.slice(index + 1)] };
 }
 
 /**
- * The compaction turn with a length limit added to its last user message, at the end so the cached prefix stays
+ * The compaction turn with a length limit added to the prompt's user message, at its end so the cached prefix stays
  * whole. A Codex model unasked wrote 15K to 26K tokens of summary, 6 to 8 minutes of output (2026-10-27).
  */
 export function limitCompactionSummary(body: Record<string, unknown>, words: number): Record<string, unknown> {
-    const messages = Array.isArray(body.messages) ? body.messages : [];
-    const last = messages.at(-1);
+    const messages = messagesOf(body);
+    const index = compactionPromptIndex(messages);
+    const prompt = messages[index];
 
-    if (!isObject(last)) {
+    if (!isObject(prompt)) {
         return body;
     }
 
     const limit = `Keep the whole summary under ${words} words. Prefer exact identifiers, file paths, commands, commit SHAs and open tasks over narration.`;
     const content =
-        typeof last.content === "string"
+        typeof prompt.content === "string"
             ? [
-                  { type: "text", text: last.content },
+                  { type: "text", text: prompt.content },
                   { type: "text", text: limit },
               ]
-            : Array.isArray(last.content)
-              ? [...last.content, { type: "text", text: limit }]
-              : last.content;
+            : Array.isArray(prompt.content)
+              ? [...prompt.content, { type: "text", text: limit }]
+              : prompt.content;
 
-    return { ...body, messages: [...messages.slice(0, -1), { ...last, content }] };
+    return { ...body, messages: messages.map((message, at) => (at === index ? { ...prompt, content } : message)) };
 }
 
 /**
