@@ -496,10 +496,26 @@ export async function postDecisions(
             });
             const content = contentOf(decision, excerpts[index]);
 
-            if (decision.supersedes) {
+            // A number the inbox or the Stop hook stored from the reply before the agent posted it: the agent's post
+            // is that decision's next revision, not a clash (`decisions.harvestListed`).
+            const harvested =
+                decision.supersedes === undefined && decision.number !== undefined
+                    ? existing.find(
+                          (row) =>
+                              row.harvested === true &&
+                              row.sessionId === sessionId &&
+                              kindOf(row) === kind &&
+                              row.number === decision.number &&
+                              SUPERSEDABLE.has(row.state) &&
+                              !revised.has(row.id)
+                      )
+                    : undefined;
+            const supersedes = decision.supersedes ?? harvested?.id;
+
+            if (supersedes) {
                 const row = supersede({
-                    target: byId.get(decision.supersedes),
-                    id: decision.supersedes,
+                    target: byId.get(supersedes),
+                    id: supersedes,
                     kind,
                     sessionId,
                     revised,
@@ -532,6 +548,11 @@ export async function postDecisions(
                     updatedTs: ts,
                 };
                 delete next.notified;
+
+                if (harvested) {
+                    delete next.harvested;
+                }
+
                 revised.set(next.id, next);
                 created.push(next);
                 continue;
