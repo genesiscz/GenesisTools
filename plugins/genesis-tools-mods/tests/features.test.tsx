@@ -30,6 +30,7 @@ import {
     sessionCheckouts,
     writtenFiles,
 } from "../hooks/checkouts";
+import { COMMIT, checkHubLink, forgeProject, forgetCommitLinks } from "../hooks/commit-links";
 import {
     chatDecisions,
     decisions,
@@ -890,6 +891,7 @@ test("links: a bare PR number is linked in the folder's repository, and the mode
         cwd: "/work/api",
         root: "/work/api",
         repo: "acme/api",
+        project: { kind: "github" as const, host: "github.com", path: "acme/api" },
         sessionId: "s1",
         askedBefore: new Set<number>(),
         probe: ALL_LINKS,
@@ -1017,13 +1019,20 @@ function machine({
     links = "all",
     remote = "git@github.com:acme/widgets.git\n",
     title = "feat: widgets",
+    hubLinkQuery,
+    more = [],
 }: {
     on: On;
     links?: "all" | "none";
     remote?: string;
     title?: string;
+    /** What `tools hub link --json` answers with as its `query`; omitted: it fails, as without the CLI's command. */
+    hubLinkQuery?: Record<string, string>;
+    /** More reply lines after the three fixed chunks. */
+    more?: string[];
 }): void {
     forgetGenesisProbe();
+    forgetCommitLinks();
     mock.env(on, { HOME: "/home/test" });
     const files: Record<string, "file" | "dir"> = {
         "/repo/src/a.ts": "file",
@@ -1089,8 +1098,12 @@ function machine({
             return answer(JSON.stringify({ title, url: "https://github.com/acme/widgets/pull/42" }));
         }
 
-        if (argv.endsWith("cat-file -t abc1234f")) {
+        if (/cat-file -t (abc1234f|def5678a|0123456789abcdef0123456789abcdef01234567)$/.test(argv)) {
             return answer("commit\n");
+        }
+
+        if (argv.startsWith("tools hub link ") && hubLinkQuery) {
+            return answer(JSON.stringify({ query: hubLinkQuery, link: "ignored: the mod builds its own" }));
         }
 
         if (argv.includes("/mods-log/")) {
@@ -1111,6 +1124,11 @@ function machine({
             index: 0,
             text: "Already [a](src/a.ts), https://b.c/src/a.ts#9, missing/x.ts, notes/plan.md, PR #42, #43",
         };
+
+        for (const line of more) {
+            yield { kind: "text", index: 0, text: `\n${line}` };
+        }
+
         yield { kind: "stop", stopReason: "end_turn", usage: null };
 
         return { turnId: "t1", index: 0, answer: "", toolUses: [], stopReason: "end_turn", usage: null };
@@ -1392,6 +1410,90 @@ test("PR titles stay inside their label and dotted GitHub repository names produ
     }
     expect(text).toContain("[#42 (x\\](https://attacker.example) \\[y\\\\z)](https://github.com/acme/widgets/pull/42)");
     expect(text).toContain("hub?repo=acme%2Fnext.js&commit=abc1234f");
+});
+
+test("the link fixer reads GitLab and SSH origins as their web path", () => {
+    expect(forgeProject("git@gitlab.apps.example:group/sub/app.git\n")).toEqual({
+        kind: "gitlab",
+        host: "gitlab.apps.example",
+        path: "group/sub/app",
+    });
+    expect(forgeProject("ssh://git@gitlab.example.com:2222/g/sub/p.git")?.path).toBe("g/sub/p");
+    expect(forgeProject("https://github.com/acme/next.js.git")).toEqual({
+        kind: "github",
+        host: "github.com",
+        path: "acme/next.js",
+    });
+    expect(forgeProject("git@github.com:acme/widgets")?.path).toBe("acme/widgets");
+    expect(forgeProject("https://dev.example.org/acme/widgets.git")).toBeUndefined();
+    expect(forgeProject("/local/bare.git")).toBeUndefined();
+});
+
+test("a commit is 7 to 40 hex characters, and a range is one token", () => {
+    const of = (text: string) => [...text.matchAll(COMMIT)].map((match) => match[0]);
+    expect(of("range efb5951c5a..efe2e40b4b here")).toEqual(["efb5951c5a..efe2e40b4b"]);
+    expect(of("full 69b8b1707d7a629d63f7dab6155f5163e5b42c11 sha")).toEqual([
+        "69b8b1707d7a629d63f7dab6155f5163e5b42c11",
+    ]);
+    expect(of("abc1234..main, deadbeef only letters, 1234567 only digits")).toEqual(["abc1234"]);
+    expect(of("a 41-character 69b8b1707d7a629d63f7dab6155f5163e5b42c11a run")).toEqual([]);
+});
+
+test("a hand-built hub link gets its &amp; fixed and its mangled PR named", () => {
+    expect(checkHubLink("https://genesis.tools/hub?repo=genesiscz%2FGenesisPlayground&amp;commit=61ff4fe5")).toEqual({
+        url: "https://genesis.tools/hub?repo=genesiscz%2FGenesisPlayground&commit=61ff4fe5",
+        problems: ["&amp; in the query: the app dropped the key after it"],
+    });
+    expect(
+        checkHubLink("https://genesis.tools/hub?pr=cprdigital%2Fprojects%2Fcol%2Fcol-fe%2190007555&commit=504f89faee")
+            ?.problems
+    ).toEqual(["pr=cprdigital/projects/col/col-fe!90007555: 90007555 is no PR number (a mangled %21 or %23?)"]);
+    expect(checkHubLink("genesis-tools://hub?pr=acme%2Fapp%237&commit=abc1234")?.problems).toEqual([]);
+    expect(checkHubLink("https://genesis.tools/hub?commit=abc1234")?.problems).toEqual([
+        "commit= without pr= or repo=: the hub cannot place it",
+    ]);
+    expect(checkHubLink("https://genesis.tools/md/open?path=/a.md")).toBeUndefined();
+});
+
+test("a GitLab checkout gets commit links, ranges link once, and tools hub link names the PR", async ($, on) => {
+    machine({
+        on,
+        remote: "git@gitlab.example.com:group/sub/app.git\n",
+        hubLinkQuery: { pr: "group/sub/app!12", commit: "abc1234f" },
+        more: [
+            "Range abc1234f..def5678a and full 0123456789abcdef0123456789abcdef01234567.",
+            "Copied [**abc1234f**](https://links.example.test/hub?repo=group%2Fsub%2Fapp&amp;commit=abc1234f) from a notification.",
+        ],
+    });
+    let text = "";
+
+    for await (const chunk of $.turn.step({ turnId: "t1", index: 0, model: "claude-haiku-5-5", messageCount: 1 })) {
+        text += chunk.kind === "text" ? chunk.text : "";
+    }
+
+    expect(text).toContain("[**abc1234f**](https://links.example.test/hub?pr=group%2Fsub%2Fapp!12&commit=abc1234f)");
+    expect(text).toContain(
+        "[abc1234f..def5678a](https://links.example.test/hub?pr=group%2Fsub%2Fapp!12&commit=abc1234f..def5678a)"
+    );
+    expect(text).toContain(
+        "[0123456789abcdef0123456789abcdef01234567](https://links.example.test/hub?pr=group%2Fsub%2Fapp!12&commit=0123456789abcdef0123456789abcdef01234567)"
+    );
+    expect(text).toContain(
+        "[**abc1234f**](https://links.example.test/hub?repo=group%2Fsub%2Fapp&commit=abc1234f) from"
+    );
+    // GitLab has no `gh pr view`: a bare #42 stays text there.
+    expect(text).toContain("PR #42, #43");
+});
+
+test("without tools hub link a commit keeps its project link", async ($, on) => {
+    machine({ on, remote: "git@gitlab.example.com:group/sub/app.git\n" });
+    let text = "";
+
+    for await (const chunk of $.turn.step({ turnId: "t1", index: 0, model: "claude-haiku-5-5", messageCount: 1 })) {
+        text += chunk.kind === "text" ? chunk.text : "";
+    }
+
+    expect(text).toContain("[**abc1234f**](https://links.example.test/hub?repo=group%2Fsub%2Fapp&commit=abc1234f)");
 });
 
 test("SSH origins retain dots in the repository name", async ($, on) => {
