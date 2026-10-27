@@ -671,9 +671,12 @@ struct WidgetPeekView: View {
     private var optionList: some View {
         VStack(alignment: .leading, spacing: 5) {
             ForEach(Array(options.prefix(Self.shownOptions).enumerated()), id: \.offset) { index, option in
-                // A pick sent at once stays in the popup, which shows its outcome (`peekOutcome`); it used to expand
-                // the whole panel to its session by itself (UX audit P11).
-                WidgetItemOptionButton(model: model, item: item, index: index, option: option)
+                // A pick sent at once stays in the popup, which shows its outcome (`peekOutcome`), or opens its session
+                // when "After a send" says so (UX audit P11: it expanded the whole panel by itself, with no setting).
+                // Read at the click, ⌘ included: a click that only stages never opens anything.
+                WidgetItemOptionButton(model: model, item: item, index: index, option: option) {
+                    if !model.clickStagesNow, Self.sendOpensSession(model.snapshot?.state.preferences) { open() }
+                }
             }
             if options.count > Self.shownOptions {
                 // A count opens what it counts (UX audit P5): the decision in its session, with every option.
@@ -855,13 +858,22 @@ struct WidgetPeekView: View {
                 .accessibilityIdentifier("widget.peek.sendStaged")
         } else if staged {
             let sending = model.sendingDecisionIDs.contains(item.sourceId)
-            Button(sending ? "Sending…" : "Send now") { model.sendStaged([item.sourceId], known: [item]) }
+            Button(sending ? "Sending…" : "Send now") {
+                model.sendStaged([item.sourceId], known: [item])
+                if Self.sendOpensSession(model.snapshot?.state.preferences) { open() }
+            }
                 .buttonStyle(.genPrimary())
                 .disabled(sending)
                 .instantTooltip("Sends this staged decision alone, without the others.")
         } else {
             Button(openTitle) { open() }
         }
+    }
+
+    /// Alerts → After a send (`popupSendOpens`): a pick sent from the popup leaves it for its session ("session"), or
+    /// the popup stays and shows the send's result ("stay", the default).
+    static func sendOpensSession(_ preferences: WidgetPreferences?) -> Bool {
+        preferences?.popupSendOpens == "session"
     }
 
     private var popupAttention: AttentionPulseStyle {

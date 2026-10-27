@@ -334,6 +334,8 @@ public struct WidgetPreferences: Codable, Equatable, Sendable {
     public var alertPopupClickAway: Bool?
     /// Another alert while the popup is open: "list" (default, listed under it), "queue" (after it) or "newest".
     public var alertPopupMany: String?
+    /// After a pick sent from the alert popup: "stay" (default, the popup shows its result) or "session" (opens it).
+    public var popupSendOpens: String?
     /// The alert sounds' volume in percent of the system volume. Default 100.
     public var alertVolume: Double?
     /// A decision answered outside the widget pops up with a sound (Automatic decisions). Default on.

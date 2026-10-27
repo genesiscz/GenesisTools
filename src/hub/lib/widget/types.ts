@@ -111,6 +111,8 @@ export const widgetPreferencesSchema = z.object({
     alertPopupClickAway: z.boolean().default(false),
     /** Another alert while the popup is open: listed under the first ("list"), shown after it ("queue"), or replacing it. */
     alertPopupMany: z.enum(["list", "queue", "newest"]).default("list"),
+    /** After a pick sent from the alert popup: stay in the popup with its result ("stay"), or open its session. */
+    popupSendOpens: z.enum(["stay", "session"]).default("stay"),
     /** The alert sounds' volume, in percent of the system volume. */
     alertVolume: z.number().int().min(0).max(100).default(100),
     /** A decision answered outside the widget (an agent recorded the chat answer, or a reply was read) pops up. */

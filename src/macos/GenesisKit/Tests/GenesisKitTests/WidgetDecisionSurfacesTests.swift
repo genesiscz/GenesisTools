@@ -129,6 +129,40 @@ final class WidgetDecisionSurfacesTests: XCTestCase {
                        "↩ send · ⌥↩ new line", "the reply composer sends on Return")
     }
 
+    /// A bad answer from `tools` reads as one sentence with the decoder's own words behind Details, never Foundation's
+    /// "The data couldn't be read because it isn't in the correct format." alone; the panel's error offers Reconnect.
+    func testAFailedCallSaysWhatHappenedInOneSentence() throws {
+        struct Row: Decodable { let n: Int }
+        var caught: Error?
+        do { _ = try JSONDecoder().decode(Row.self, from: Data(#"{"n":"x"}"#.utf8)) } catch { caught = error }
+        let decoding = try XCTUnwrap(caught)
+        let words = WidgetErrorText.words(for: decoding)
+        XCTAssertEqual(words.text, "The widget could not read the hub's answer. Try again, or reconnect.")
+        XCTAssertTrue(words.detail?.contains("n") == true, words.detail ?? "")
+        XCTAssertFalse(words.text.contains("correct format"))
+        XCTAssertEqual(WidgetErrorText.words(for: ToolsBridgeError.timeout(seconds: 20)).text,
+                       "The hub did not answer within 20 seconds. Try again, or reconnect.")
+        XCTAssertEqual(WidgetErrorText.words(for: ToolsBridgeError.refused("Decision 4 changed since you read it.")).text,
+                       "Decision 4 changed since you read it.", "a refusal keeps the CLI's own sentence")
+        let model = try model(staged: staged())
+        defer { model.stop() }
+        model.report(decoding)
+        XCTAssertEqual(model.error, words.text)
+        XCTAssertNotNil(model.errorDetail, "the raw words wait behind Details")
+    }
+
+    /// P11: a pick sent from the alert popup stays there unless Alerts → After a send says "Open its session".
+    func testAfterASendFollowsItsSetting() throws {
+        XCTAssertFalse(WidgetPeekView.sendOpensSession(nil), "the default stays in the popup")
+        let stay = try model()
+        defer { stay.stop() }
+        XCTAssertFalse(WidgetPeekView.sendOpensSession(stay.snapshot?.state.preferences))
+        let open = try model(preferences: ["popupSendOpens": "session"])
+        defer { open.stop() }
+        XCTAssertEqual(open.snapshot?.state.preferences.popupSendOpens, "session", "the hub's key reaches the widget")
+        XCTAssertTrue(WidgetPeekView.sendOpensSession(open.snapshot?.state.preferences))
+    }
+
     /// F21: Discard checked waits behind the model's Undo window, and while it waits no view reads those decisions as
     /// staged (the session card, the overview row, the alert's option).
     func testADiscardInItsUndoWindowNoLongerReadsAsStaged() throws {

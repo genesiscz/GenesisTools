@@ -374,6 +374,14 @@ private struct WidgetGeneralSettings: View {
                         }.labelsHidden().pickerStyle(.segmented).frame(width: 250, alignment: .trailing)
                             .accessibilityIdentifier("widget.alertPopupMany")
                     }
+                    Divider()
+                    NativeSettingsRow("After a send", detail: "After a pick sent from the alert popup: stay in the popup with its result, or open its session.") {
+                        Picker("After a send", selection: string("popupSendOpens", prefs?.popupSendOpens ?? "stay")) {
+                            Text("Stay").tag("stay")
+                            Text("Open its session").tag("session")
+                        }.labelsHidden().pickerStyle(.segmented).frame(width: 250, alignment: .trailing)
+                            .accessibilityIdentifier("widget.popupSendOpens")
+                    }
                 }
                 .disabled(!(prefs?.alertPopup ?? true))
                 Divider()
