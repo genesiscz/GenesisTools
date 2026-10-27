@@ -147,7 +147,7 @@ export const HANDOFF_POST_DESCRIPTION =
     "(claude | codex | grok | copilot) — a session on another harness gets a warning telling it not to work " +
     "the handoff; it never says who wrote it (that is postedBy). name is a readable slug the receiver can " +
     "fetch by (handoff_get { name }); omit it and it is derived from the title. project files the handoff " +
-    'under the project it is FOR — a project name ("col-tools") or a repository path (resolved to its ' +
+    'under the project it is FOR — a project name ("acme-tools") or a repository path (resolved to its ' +
     "project); omit it and the project of your working folder is used. Pass it whenever you write the " +
     "handoff for another project; postedByContext still records your real folder. Returns the handoff with " +
     "final task ids, an editId (edit credential for other sessions — your own session edits without it), and " +
@@ -265,7 +265,7 @@ export const HANDOFF_POST_INPUT_SCHEMA = {
         project: {
             type: "string",
             description:
-                "the project this handoff is FOR: a project name (e.g. col-tools) or a repository path, resolved to its project (a worktree names its main checkout). Wins over your working folder; default: the project of your working folder",
+                "the project this handoff is FOR: a project name (e.g. acme-tools) or a repository path, resolved to its project (a worktree names its main checkout). Wins over your working folder; default: the project of your working folder",
         },
     },
     required: ["title", "tasks"],
