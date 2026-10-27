@@ -414,9 +414,17 @@ export function startAiProxyServer(runtime: AiProxyRuntime) {
                 }
 
                 if (client.session) {
-                    return new Response(SafeJSON.stringify(sessionPickerModels(listedCodexModels())), {
-                        headers: { "Content-Type": "application/json" },
-                    });
+                    return new Response(
+                        SafeJSON.stringify(
+                            sessionPickerModels({
+                                models: listedCodexModels(),
+                                contextLimit: client.session.pickerContextTokens,
+                            })
+                        ),
+                        {
+                            headers: { "Content-Type": "application/json" },
+                        }
+                    );
                 }
 
                 const models = await buildProxyModelCatalog(config.accounts);

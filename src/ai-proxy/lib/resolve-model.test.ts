@@ -252,7 +252,22 @@ describe("resolveSessionRoute", () => {
         expect(route.upstreamId).toBe("gpt-6.1-sol");
 
         const listed = mergeCodexModelRecords({ cache: [] });
-        const picker = sessionPickerModels([...listed.values()].filter((model) => model.visibility === "list"));
+        const models = [...listed.values()].filter((model) => model.visibility === "list");
+        const picker = sessionPickerModels({ models, contextLimit: 475_000 });
+        expect(picker.data.map((model) => model.id)).not.toContain("codex-claude/gpt-6-astra");
+        expect(sessionPickerModels({ models, contextLimit: 258_400 }).data.map((model) => model.id)).toContain(
+            "codex-claude/gpt-6-astra"
+        );
+        expect(sessionPickerModels({ models }).data).toEqual([]);
+        const overridden = mergeCodexModelRecords({
+            cache: [],
+            overrides: { "gpt-6-astra": { window: 600_000, usablePercent: 80 } },
+        });
+        expect(
+            sessionPickerModels({ models: [...overridden.values()], contextLimit: 475_000 }).data.map(
+                (model) => model.id
+            )
+        ).toContain("codex-claude/gpt-6-astra");
 
         expect(picker.data.length).toBeGreaterThan(0);
         // Claude Code 2.1.310 drops a gateway model whose id names neither claude nor anthropic.

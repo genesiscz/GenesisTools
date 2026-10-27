@@ -503,7 +503,13 @@ export class OpenAiSubscriptionProvider implements ProxyProvider {
             }
 
             return new Response(
-                responsesSseToAnthropic(head.body, { model, signReasoning, label: "codex", toolInput }),
+                responsesSseToAnthropic(head.body, {
+                    model,
+                    signReasoning,
+                    label: "codex",
+                    toolInput,
+                    signal: req.signal,
+                }),
                 {
                     status: response.status,
                     headers: relayHeaders(response),

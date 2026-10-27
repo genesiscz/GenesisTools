@@ -88,7 +88,7 @@ Set a model explicitly; an Astra parent should not make every worker Astra.
 |---|---|---|
 | Mechanical extraction, formatting, simple lookups, or a fully specified small edit | `gpt-6-luna` | low |
 | Bounded repository exploration, tracing an established call path, or gathering evidence | `gpt-6-luna` | medium |
-| Visual reasoning, computer use, form filling, or drafting and revising text | `gpt-6.1-terra` | medium |
+| Visual reasoning, computer use, form filling, or drafting and revising internal text | `gpt-6.1-terra` | medium |
 | Normal implementation and reproducible debugging | `gpt-6.1-sol` | medium |
 | Code review of a PR or branch | `gpt-6.1-sol` | `--mode review --base <ref>`: high up to 15 files and 800 lines, xhigh above |
 | Difficult cross-system reasoning, ambiguous failures, or an evidence-backed escalation | `gpt-6-astra` | high |

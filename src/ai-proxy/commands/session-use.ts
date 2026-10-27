@@ -109,18 +109,21 @@ export async function runSessionUse(id: string, options: SessionUseOptions): Pro
 
     const at = new Date().toISOString();
     const updated = await whenSessionRecordFree(() =>
-        updateSessionRecord(record.id, (draft) => {
-            for (const { agent, choice } of choices) {
-                const from = currentLabel(draft, agent) ?? "none";
-                delete draft[SESSION_ACCOUNT_FIELD[agent]];
-                delete draft[SESSION_LOGIN_FIELD[agent]];
-                Object.assign(draft, recordFields(agent, choice, store));
-                draft.moves.push({ agent, from, to: choice.label, at });
+        updateSessionRecord({
+            id: record.id,
+            change: (draft) => {
+                for (const { agent, choice } of choices) {
+                    const from = currentLabel(draft, agent) ?? "none";
+                    delete draft[SESSION_ACCOUNT_FIELD[agent]];
+                    delete draft[SESSION_LOGIN_FIELD[agent]];
+                    Object.assign(draft, recordFields(agent, choice, store));
+                    draft.moves.push({ agent, from, to: choice.label, at });
 
-                if (choice.metered && !draft.meteredConfirmed.some((item) => item.account === choice.label)) {
-                    draft.meteredConfirmed.push({ account: choice.label, confirmedAt: at, how: "flag" });
+                    if (choice.metered && !draft.meteredConfirmed.some((item) => item.account === choice.label)) {
+                        draft.meteredConfirmed.push({ account: choice.label, confirmedAt: at, how: "flag" });
+                    }
                 }
-            }
+            },
         })
     );
 

@@ -33,7 +33,12 @@ export async function sessionKeyProblem(input: {
         return undefined;
     }
 
-    const detail = errorMessage(await response.text());
+    let detail: string | undefined;
+    try {
+        detail = errorMessage(await response.text());
+    } catch (error) {
+        logger.warn({ error, url, status: response.status }, "[codex] could not read the session key check response");
+    }
     logger.warn({ url, status: response.status, detail }, "[codex] the proxy refused the session key check");
 
     if (response.status === 401) {

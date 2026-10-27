@@ -1,4 +1,4 @@
-import { describe, expect, it } from "bun:test";
+import { describe, expect, it, spyOn } from "bun:test";
 import { chmodSync, mkdtempSync, readFileSync, statSync, writeFileSync } from "node:fs";
 import { tmpdir } from "node:os";
 import { dirname, join } from "node:path";
@@ -362,6 +362,35 @@ describe("the session key check before Claude Code starts", () => {
 
         expect(problem).toContain("403 (unknown or closed session)");
         expect(problem).toContain("GENESIS_TOOLS_HOME");
+    });
+
+    it("handles a failed response body while retaining the status", async () => {
+        const broken = (status: number) =>
+            new Response(
+                new ReadableStream({
+                    start(controller) {
+                        controller.error(new Error("body disconnected"));
+                    },
+                }),
+                { status }
+            );
+        const fetchSpy = spyOn(globalThis, "fetch");
+        try {
+            fetchSpy.mockResolvedValueOnce(broken(401));
+            expect(
+                await sessionKeyProblem({ baseUrl: "http://example.invalid", key: KEY, model: "codex/x" })
+            ).toContain("401 (no message)");
+            fetchSpy.mockResolvedValueOnce(broken(403));
+            expect(
+                await sessionKeyProblem({ baseUrl: "http://example.invalid", key: KEY, model: "codex/x" })
+            ).toContain("403 (no message)");
+            fetchSpy.mockResolvedValueOnce(broken(500));
+            expect(
+                await sessionKeyProblem({ baseUrl: "http://example.invalid", key: KEY, model: "codex/x" })
+            ).toBeUndefined();
+        } finally {
+            fetchSpy.mockRestore();
+        }
     });
 
     it("does not block the launch on another failure or no answer", async () => {

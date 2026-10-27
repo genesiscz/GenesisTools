@@ -70,6 +70,8 @@ export interface AiProxySessionRecord {
     model?: string;
     effort?: string;
     window?: number;
+    /** Effective launch context limit for picker filtering; absent when custom settings make it unknown. */
+    pickerContextTokens?: number;
     compactPercent?: number;
     cacheKeyPolicy?: PromptCacheKeyPolicy;
     /** The subagents the launcher defined with their own model (`--agents`); an Agent call's `model` cannot override them. */
@@ -330,15 +332,20 @@ export async function whenSessionRecordFree<T>(write: () => T, waitMs = 2_000): 
     }
 }
 
-/** Read, change and write one record under its lock; undefined when it does not exist. */
-export function updateSessionRecord(
-    id: string,
-    change: (record: AiProxySessionRecord) => void
-): AiProxySessionRecord | undefined {
+/** Read, change and write under the record lock; a supplied key hash also guards launch ownership. */
+export function updateSessionRecord({
+    id,
+    change,
+    expectedKeyHash,
+}: {
+    id: string;
+    change: (record: AiProxySessionRecord) => void;
+    expectedKeyHash?: string;
+}): AiProxySessionRecord | undefined {
     return withRecordLock(id, () => {
         const record = readSessionRecord(id);
 
-        if (!record) {
+        if (!record || (expectedKeyHash !== undefined && record.keyHash !== expectedKeyHash)) {
             return undefined;
         }
 
@@ -348,15 +355,24 @@ export function updateSessionRecord(
     });
 }
 
-export function closeSessionRecord(
-    id: string,
-    reason: SessionCloseReason = "exited"
-): AiProxySessionRecord | undefined {
-    return updateSessionRecord(id, (record) => {
-        if (!record.closedAt) {
-            record.closedAt = new Date().toISOString();
-            record.closeReason = reason;
-        }
+export function closeSessionRecord({
+    id,
+    reason = "exited",
+    expectedKeyHash,
+}: {
+    id: string;
+    reason?: SessionCloseReason;
+    expectedKeyHash?: string;
+}): AiProxySessionRecord | undefined {
+    return updateSessionRecord({
+        id,
+        expectedKeyHash,
+        change: (record) => {
+            if (!record.closedAt) {
+                record.closedAt = new Date().toISOString();
+                record.closeReason = reason;
+            }
+        },
     });
 }
 
@@ -502,8 +518,9 @@ export function sweepSessionRecords(
 
         if (reason) {
             try {
-                closeSessionRecord(record.id, reason);
-                result.closed.push({ id: record.id, reason });
+                if (closeSessionRecord({ id: record.id, reason, expectedKeyHash: record.keyHash })) {
+                    result.closed.push({ id: record.id, reason });
+                }
             } catch (error) {
                 if (!isSessionRecordBusy(error)) {
                     throw error;
@@ -582,7 +599,7 @@ function updateUnlessBusy(
     change: (record: AiProxySessionRecord) => void
 ): AiProxySessionRecord | undefined {
     try {
-        return updateSessionRecord(id, change);
+        return updateSessionRecord({ id, change });
     } catch (error) {
         if (!isSessionRecordBusy(error)) {
             throw error;
