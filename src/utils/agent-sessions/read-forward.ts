@@ -5,6 +5,7 @@ import type { JsonValue } from "./source-scan";
 import type { ForwardRead, ForwardRow, NativeHistoryEntry, NativeSourceIssue, ReadForwardOptions } from "./types";
 
 const CHUNK_BYTES = 8 * 1024 * 1024;
+const MAX_ROW_BYTES = 16 * 1024 * 1024;
 const NEWLINE = 0x0a;
 
 /** The start of every line in `data[0, end)` that contains one of `needles`, in file order. */
@@ -83,13 +84,20 @@ export function readJsonlForward(
 
         let position = from;
         let carry: Buffer = Buffer.alloc(0);
+        let oversizedStart: number | undefined;
+        const skipped = (start: number, end: number) => {
+            const message = `Oversized row at bytes ${start}-${end} exceeded ${MAX_ROW_BYTES} bytes; skipped`;
+            logger.warn({ path: options.path, from: start, to: end, maxRowBytes: MAX_ROW_BYTES }, message);
+            issues.push({ path: options.path, message });
+        };
 
         while (position < size) {
             if (options.signal?.aborted) {
-                const message = `Forward read aborted at byte ${position - carry.length} of ${size}`;
+                const endOffset = oversizedStart ?? position - carry.length;
+                const message = `Forward read aborted at byte ${endOffset} of ${size}`;
                 logger.warn({ path: options.path, position, size }, message);
                 issues.push({ path: options.path, message });
-                return { rows, file, endOffset: position - carry.length, issues };
+                return { rows, file, endOffset, issues };
             }
 
             const want = Math.min(CHUNK_BYTES, size - position);
@@ -100,20 +108,59 @@ export function readJsonlForward(
                 break;
             }
 
-            const data = carry.length > 0 ? Buffer.concat([carry, chunk.subarray(0, got)]) : chunk.subarray(0, got);
-            const base = position - carry.length;
+            let base = position - carry.length;
+            let part = chunk.subarray(0, got);
             position += got;
+
+            if (oversizedStart !== undefined) {
+                const newline = part.indexOf(NEWLINE);
+
+                if (newline === -1) {
+                    continue;
+                }
+
+                const next = base + newline + 1;
+                skipped(oversizedStart, next);
+                oversizedStart = undefined;
+                base = next;
+                part = part.subarray(newline + 1);
+            }
+
+            const data = carry.length > 0 ? Buffer.concat([carry, part]) : part;
             const lastNewline = data.lastIndexOf(NEWLINE);
 
             if (lastNewline === -1) {
-                carry = data;
+                if (data.length > MAX_ROW_BYTES) {
+                    oversizedStart = base;
+                    carry = Buffer.alloc(0);
+                } else {
+                    carry = data;
+                }
+
                 continue;
             }
 
             const end = lastNewline + 1;
+            const oversized = new Set<number>();
+
+            for (let start = 0; start < end; ) {
+                const lineEnd = data.indexOf(NEWLINE, start);
+
+                if (lineEnd - start > MAX_ROW_BYTES) {
+                    oversized.add(start);
+                    skipped(base + start, base + lineEnd + 1);
+                }
+
+                start = lineEnd + 1;
+            }
+
             const starts = needles.length > 0 ? matchingLineStarts(data, end, needles) : everyLineStart(data, end);
 
             for (const start of starts) {
+                if (oversized.has(start)) {
+                    continue;
+                }
+
                 const lineEnd = data.indexOf(NEWLINE, start);
                 const text = data.toString("utf8", start, lineEnd).trim();
 
@@ -141,9 +188,23 @@ export function readJsonlForward(
             }
 
             carry = Buffer.from(data.subarray(end));
+
+            if (carry.length > MAX_ROW_BYTES) {
+                oversizedStart = base + end;
+                carry = Buffer.alloc(0);
+            }
         }
 
-        return { rows, file, endOffset: position - carry.length, issues };
+        if (oversizedStart !== undefined) {
+            const message = `Incomplete oversized row at byte ${oversizedStart} exceeds ${MAX_ROW_BYTES} bytes; deferred`;
+            logger.warn(
+                { path: options.path, from: oversizedStart, to: position, maxRowBytes: MAX_ROW_BYTES },
+                message
+            );
+            issues.push({ path: options.path, message });
+        }
+
+        return { rows, file, endOffset: oversizedStart ?? position - carry.length, issues };
     } finally {
         closeSync(fd);
     }
