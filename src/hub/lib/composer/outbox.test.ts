@@ -4485,6 +4485,80 @@ test("incoming answer, Decision and pending-form writes wake the Widget without 
     });
 });
 
+test("a decision link reaches the widget at once, before a slow full refresh finishes", async () => {
+    const directory = await root();
+    await env.testing.withOverrides({ GENESIS_TOOLS_HOME: directory }, async () => {
+        const controller = new AbortController();
+        const emitted: { at?: number; selectedKey?: string }[] = [];
+        let firstSnapshot!: () => void;
+        const started = new Promise<void>((resolve) => {
+            firstSnapshot = resolve;
+        });
+        let releaseSlow!: () => void;
+        const slow = new Promise<void>((resolve) => {
+            releaseSlow = resolve;
+        });
+        let calls = 0;
+        const worker = watchWidget({
+            root: directory,
+            signal: controller.signal,
+            emit: (snapshot) => {
+                emitted.push({ at: snapshot.state.showDecision?.at, selectedKey: snapshot.selectedKey ?? undefined });
+                firstSnapshot();
+            },
+            dependencies: {
+                inboxPaths: {
+                    answerLog: join(directory, "question", "log"),
+                    database: join(directory, "question", "qa.db"),
+                    decisions: join(directory, "question", "decisions", "decisions.jsonl"),
+                },
+                snapshot: async () => {
+                    calls++;
+                    if (calls > 1) {
+                        // Every refresh after the first stands in for a rebuild under heavy load.
+                        await slow;
+                    }
+
+                    return {
+                        version: 1,
+                        state: await readWidgetState(directory),
+                        activity: [],
+                        sessions: [],
+                        cards: [],
+                        manifests: {},
+                        changes: null,
+                        errors: [],
+                        selectedKey: `refresh-${calls}`,
+                    };
+                },
+                dispatcher: {
+                    validate: async () => {},
+                    dispatch: async () => ({ delivered: true, channel: "fixture" }),
+                },
+            },
+        });
+        try {
+            await withTimeout(started, 3000);
+            const at = Date.now();
+            await mutateWidgetState(directory, (state) => {
+                state.showDecision = { id: "d_7_fixture-session", at };
+            });
+            const deadline = Date.now() + 3000;
+            while (!emitted.some((entry) => entry.at === at) && Date.now() < deadline) {
+                await Bun.sleep(20);
+            }
+            const fast = emitted.find((entry) => entry.at === at);
+            expect(fast).toBeDefined();
+            // It rode on the first snapshot: the slow rebuild had not returned yet.
+            expect(fast?.selectedKey).toBe("refresh-1");
+        } finally {
+            releaseSlow();
+            controller.abort();
+            await withTimeout(worker, 3000);
+        }
+    });
+});
+
 test("a snapshot carries the cards of the sessions that need you beside the selected one's", async () => {
     const directory = await root();
     const file = join(directory, "decisions.jsonl");
