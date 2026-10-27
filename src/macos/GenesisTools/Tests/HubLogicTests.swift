@@ -446,6 +446,18 @@ final class HubLogicTests: XCTestCase {
         XCTAssertEqual(inWorktree.holder, .row)
     }
 
+    /// `tools hub pr find --branch … --json`, read for the label a commit link's branch gets.
+    func testTheForgesAnswerForABranchBecomesItsPRLabel() {
+        let github = #"{"provider":"github","host":"github.com","project":"acme/app","number":475,"title":"t","state":"OPEN"}"#
+        let gitlab = #"{"provider":"gitlab","host":"gitlab.example.test","project":"group/app","number":12,"title":"t"}"#
+        let none = #"{"provider":null,"reason":"no PR has feat/x as its source branch","branch":"feat/x","repoPath":"/fixture/app"}"#
+        XCTAssertEqual(HubCommitLookup.branchPRLabel(Data(github.utf8)), "#475")
+        XCTAssertEqual(HubCommitLookup.branchPRLabel(Data(gitlab.utf8)), "!12")
+        XCTAssertNil(HubCommitLookup.branchPRLabel(Data(none.utf8)))
+        XCTAssertNil(HubCommitLookup.branchPRLabel(Data("not json".utf8)))
+        XCTAssertEqual(HubCommitLookup.holderLabel("origin/feat/x", pr: "#475"), "origin/feat/x (PR #475)")
+    }
+
     func testACommitLinkResolvesItsCheckoutAndSubjectFromGit() throws {
         let folder = FileManager.default.temporaryDirectory.appendingPathComponent("hub-commit-link-\(UUID().uuidString)")
         try FileManager.default.createDirectory(at: folder, withIntermediateDirectories: true)

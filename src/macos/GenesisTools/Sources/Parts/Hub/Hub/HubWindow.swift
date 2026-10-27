@@ -715,6 +715,8 @@ final class HubModel: ObservableObject {
     var readSessions: (Int) async throws -> [HubSession] = { try await HubSource.sessions(hours: $0) }
     var readSessionCache: (Int) async -> [HubSession]? = { await HubSessionListCache.read(hours: $0) }
     var writeSessionCache: ([HubSession], Int) -> Void = { HubSessionListCache.write($0, hours: $1) }
+    /// The PR of a branch of the checkout at a root, from the forge (`HubCommitLookup.branchPR`); runs off the main thread.
+    var findBranchPR: @Sendable (_ root: String, _ branch: String) -> String? = { HubCommitLookup.branchPR(root: $0, branch: $1) }
     var readTranscript: (HubSession, Int) async throws -> TranscriptEnvelope = { try await HubSource.transcript($0, limit: $1) }
     var readDecisions: (String) throws -> SessionDecisionsEnvelope = {
         try JSONDecoder().decode(SessionDecisionsEnvelope.self, from: ToolsCLIRunner.run(["question", "inbox", "--session", $0, "--json"]))
@@ -1105,6 +1107,23 @@ final class HubModel: ObservableObject {
             name = "\(worktrees.first { $0.path == shown.repo }?.repo ?? (shown.repo as NSString).lastPathComponent) \(holder)"
         }
         return "\(name) · commit \(commit.split(separator: ".").filter { !$0.isEmpty }.map { String($0.prefix(10)) }.joined(separator: ".."))"
+    }
+
+    /// Names what holds the shown commit once it is known (a branch's PR arrives from the forge after the place
+    /// showed the branch alone): the label, and the title of the place's History entry when it is recorded already.
+    /// False when the hub shows something else by now.
+    @MainActor
+    func nameCommitHolder(_ holder: String, for shown: HubShownCommit) -> Bool {
+        guard shownCommit == shown else { return false }
+        // A label is no navigation: a newer link's lookup still in flight keeps its turn.
+        let request = commitLinkRequest
+        shownCommit = HubShownCommit(repo: shown.repo, commit: shown.commit, holder: holder)
+        commitLinkRequest = request
+        let target = navTarget(navEntry)
+        if let id = history.currentID, history.entry(id)?.target == target {
+            persistNav(history.retitle(id, navTitle(target)))
+        }
+        return true
     }
 
     /// What a history entry shows, for the arrows' tooltips.

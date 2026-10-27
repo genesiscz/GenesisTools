@@ -377,8 +377,36 @@ enum HubCommitLookup {
         case .branch(let display, let head):
             let root = WorktreeCleanup.normalizedPath(found.root)
             let pr = prs.first { $0.headBranch == head && $0.repoRoot.map(WorktreeCleanup.normalizedPath) == root }
-            return pr.map { "\(display) (PR \($0.label))" } ?? display
+            return pr.map { holderLabel(display, pr: $0.label) } ?? display
         }
+    }
+
+    /// "feat/x (PR #12)": a branch with its PR, in the History title and the notice alike.
+    static func holderLabel(_ display: String, pr: String) -> String {
+        "\(display) (PR \(pr))"
+    }
+
+    /// The PR of `branch` in the project of the checkout at `root`, asked from the forge (`tools hub pr find
+    /// --branch`): `#12` or `!12`; nil when the branch has none or the forge cannot say. Runs a process, so off
+    /// the main thread. The hub's PR list shows one page per project, so an older branch's PR is not in it.
+    static func branchPR(root: String, branch: String) -> String? {
+        do {
+            return branchPRLabel(try ToolsCLIRunner.run(["hub", "pr", "find", "--repo", root, "--branch", branch, "--json"]))
+        } catch {
+            HubPerf.log("hub.commitLink no PR lookup for \(branch): \(error)")
+            return nil
+        }
+    }
+
+    /// `#12` (GitHub) or `!12` (GitLab) out of `tools hub pr find --json`; nil for `"provider": null`.
+    static func branchPRLabel(_ data: Data) -> String? {
+        struct Found: Decodable {
+            let provider: String?
+            let number: Int?
+        }
+        guard let found = try? JSONDecoder().decode(Found.self, from: data), let provider = found.provider,
+              let number = found.number else { return nil }
+        return provider == "gitlab" ? "!\(number)" : "#\(number)"
     }
 
     /// The first parent of `sha` in the checkout at `root`, the base of a range that starts at `sha`: git's empty
@@ -434,16 +462,35 @@ extension HubModel {
             let holder = HubCommitLookup.holderLabel(found, prs: prs.prs)
             showCommit(repo: found.root, sha: found.sha, title: found.title, base: found.base, link: commitLinkRaw, holder: holder)
             if let holder {
-                // The row says the checkout's branch, so the screen says where the commit really is.
-                let branch = worktrees.first { $0.path == found.root }?.branch
-                let text = "Commit \(found.sha.prefix(10)) is on \(holder)" + (branch.map { ", not on \($0), the branch of this checkout" } ?? "")
-                HubPerf.log("hub.commitLink \(text)")
-                post(text, .warning)
+                sayCommitHolder(holder, sha: found.sha, root: found.root)
+            }
+            // The PR list holds one page per project, so an older branch's PR may be missing: the forge is asked.
+            if case .branch(let display, let head) = found.holder, holder == display, let shown = shownCommit {
+                let find = findBranchPR, root = found.root
+                Task {
+                    let perf = HubPerf.begin("hub.commitLink.pr", "\(head)", awaits: true)
+                    let pr = await Task.detached(priority: .utility) { find(root, head) }.value
+                    perf.end(pr.map { "PR \($0)" } ?? "no PR")
+                    guard let pr else { return }
+                    let named = HubCommitLookup.holderLabel(display, pr: pr)
+                    if nameCommitHolder(named, for: shown) {
+                        sayCommitHolder(named, sha: found.sha, root: root)
+                    }
+                }
             }
         case .failed(let message):
             HubPerf.log("hub.commitLink \(message)")
             notice = message
         }
+    }
+
+    /// The row says the checkout's branch, so the screen says where a linked commit really is.
+    @MainActor
+    func sayCommitHolder(_ holder: String, sha: String, root: String) {
+        let branch = worktrees.first { $0.path == root }?.branch
+        let text = "Commit \(sha.prefix(10)) is on \(holder)" + (branch.map { ", not on \($0), the branch of this checkout" } ?? "")
+        HubPerf.log("hub.commitLink \(text)")
+        post(text, .warning)
     }
 
     /// `--commit` without `--pr` (a link's `repo=…&commit=…`): the commit in its project's Worktrees diff. The

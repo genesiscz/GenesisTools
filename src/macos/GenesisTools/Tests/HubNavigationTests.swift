@@ -96,6 +96,38 @@ final class HubNavigationTests: XCTestCase {
         XCTAssertEqual(model.review?.scope, .commit(sha: "abcdef0", title: "linked"))
     }
 
+    /// A commit link's branch whose PR is past the hub's one page of PRs: the forge names it off the main thread, and
+    /// the label, the History entry recorded meanwhile and the notice get the PR when it arrives.
+    @MainActor
+    func testACommitLinksBranchGetsItsPRFromTheForgeWhenThePRListLacksIt() async throws {
+        let model = isolatedModel()
+        let gate = DispatchSemaphore(value: 0)
+        let answered = expectation(description: "the forge is asked")
+        model.findBranchPR = { root, branch in
+            XCTAssertEqual(root, "/fixture/commit-holder")
+            XCTAssertEqual(branch, "feat/old")
+            gate.wait()
+            answered.fulfill()
+            return "#475"
+        }
+        model.apply(HubRequest(["--repo", "/fixture/commit-holder", "--commit", "abcdef0"]))
+        let request = model.commitLinkRequest
+        model.applyCommitLink(.found(.init(root: "/fixture/commit-holder", sha: "abcdef0", title: "linked",
+                                           holder: .branch(display: "origin/feat/old", head: "feat/old"))), request: request)
+        await drain()
+        XCTAssertEqual(model.shownCommit?.holder, "origin/feat/old")
+        XCTAssertEqual(model.history.current?.title, "commit-holder origin/feat/old · commit abcdef0")
+        XCTAssertEqual(model.headerNotice?.text, "Commit abcdef0 is on origin/feat/old")
+
+        gate.signal()
+        await fulfillment(of: [answered], timeout: 2)
+        await drain()
+        XCTAssertEqual(model.shownCommit?.holder, "origin/feat/old (PR #475)")
+        XCTAssertEqual(model.history.current?.title, "commit-holder origin/feat/old (PR #475) · commit abcdef0")
+        XCTAssertEqual(model.history.entries.count, 1, "the same entry, retitled")
+        XCTAssertEqual(model.headerNotice?.text, "Commit abcdef0 is on origin/feat/old (PR #475)")
+    }
+
     @MainActor
     func testCommitNavigationClearsASessionWaitingForTheRecentList() async throws {
         let model = isolatedModel()
