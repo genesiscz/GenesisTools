@@ -357,6 +357,7 @@ struct InboxDelivery: Decodable, Equatable {
         // The resumed pane never came up in time: the answers are stored, and nothing types them by itself.
         case "resume": return "Resumed at \(target ?? "a new pane"), but its pane was not up yet. The answers are kept: send them again once it is open."
         case "form": return "Answered; the waiting agent receives it"
+        case "cancelled": return "Send cancelled. Nothing more was sent, and the answers stay staged."
         case "dry-run": return "Dry run: \(text ?? "")"
         // A Claude session's own message channel (`claude-peer`) and any later route: it says where the answer went.
         case _ where delivered == true: return "Sent to \(target ?? "the session")"
@@ -366,8 +367,13 @@ struct InboxDelivery: Decodable, Equatable {
         }
     }
 
+    /// A send its Cancel stopped (F19): nothing more went out, and the answers are still staged.
+    static let cancelled = InboxDelivery(text: nil, channel: "cancelled", delivered: false, target: nil, error: nil,
+                                         raw: nil, detail: nil)
+
     var isError: Bool { error != nil }
-    var isQueued: Bool { error == nil && delivered != true }
+    var isCancelled: Bool { channel == "cancelled" }
+    var isQueued: Bool { error == nil && delivered != true && !isCancelled }
 }
 
 /// `tools question inbox target --json`: where a session's answers would go right now, and whether
@@ -449,6 +455,8 @@ final class HubInboxModel: ObservableObject {
     private var reloadPending = false
     /// Sessions whose Send is running, by session id.
     @Published private(set) var sendingSessions: Set<String> = []
+    /// The running stage of each session's send (the target lookup, the widget's send, a resumed send): Cancel stops it.
+    private var sendTasks: [String: Task<Void, Never>] = [:]
     /// The last Send result per session id (where the answers went, or why nothing did).
     @Published private(set) var sessionResults: [String: InboxDelivery] = [:]
     /// Set when a Send found no live target: the view shows the resume dialog for this session.
@@ -930,19 +938,40 @@ final class HubInboxModel: ObservableObject {
         sessionResults[sessionId] = nil
         var targetArgs = ["question", "inbox", "target", "--session", sessionId]
         if let provider = session.provider { targetArgs += ["--provider", provider] }
-        DispatchQueue.global(qos: .userInitiated).async {
+        sendTasks[sessionId] = Task { [weak self] in
             // A failed run or unreadable JSON is an error, never "no target known": a nil here once
             // fell through to a send that queued the answers silently.
-            let resolved = Result { try JSONDecoder().decode(InboxTargetResolution.self, from: ToolsCLIRunner.run(targetArgs)) }
-            DispatchQueue.main.async { [weak self] in
-                MainActor.assumeIsolated {
-                    guard let self else { return }
-                    self.queueHookOn = Self.queueHook(from: resolved)
-                    self.sendingSessions.remove(sessionId)
-                    self.run(Self.sendStep(resolved), for: session)
-                }
+            let resolved: Result<InboxTargetResolution, Error>
+            do {
+                let output = try ToolsCLIRunner.output(of: await ToolsCLIRunner.captureCancellable(targetArgs), targetArgs)
+                resolved = Result { try JSONDecoder().decode(InboxTargetResolution.self, from: output) }
+            } catch is CancellationError {
+                self?.endSend(sessionId, cancelled: true)
+                return
+            } catch {
+                resolved = .failure(error)
             }
+            guard let self else { return }
+            self.queueHookOn = Self.queueHook(from: resolved)
+            self.endSend(sessionId)
+            self.run(Self.sendStep(resolved), for: session)
         }
+    }
+
+    /// The slow-send line's Cancel (F19): the running stage of this session's send stops, its `tools` child is
+    /// terminated, and every answer stays staged; a send queued behind it is dropped too.
+    func cancelSend(_ session: InboxSession) {
+        guard let sessionId = session.sessionId, let task = sendTasks[sessionId] else { return }
+        queuedSends[sessionId] = nil
+        HubPerf.log("inbox.send.cancel \(sessionId.prefix(8))")
+        task.cancel()
+    }
+
+    /// A send stage ended: the session can send again, and a cancelled one says that nothing more went out.
+    private func endSend(_ sessionId: String, cancelled: Bool = false) {
+        sendingSessions.remove(sessionId)
+        sendTasks[sessionId] = nil
+        if cancelled { record(.cancelled, for: sessionId) }
     }
 
     /// What a Send or a resume leads to. The decisions are pure (`sendStep`, `resumeStep`) so tests
@@ -1015,29 +1044,27 @@ final class HubInboxModel: ObservableObject {
         var args = ["question", "inbox", "send", "--session", sessionId]
         if let provider = session.provider { args += ["--provider", provider] }
         if let resumeTarget { args += ["--resume-target", resumeTarget, "--wait-live", String(Self.resumeWaitSeconds)] }
-        DispatchQueue.global(qos: .userInitiated).async {
+        sendTasks[sessionId] = Task { [weak self] in
             let span = HubPerf.begin("inbox.send")
             let delivery: InboxDelivery
             do {
                 // The wait for a resumed pane sits inside the run: give it room beyond the default.
-                let capture = try ToolsCLIRunner.capture(args, timeout: TimeInterval(Self.resumeWaitSeconds + 60))
+                let capture = try await ToolsCLIRunner.captureCancellable(args, timeout: TimeInterval(Self.resumeWaitSeconds + 60))
                 delivery = (try? JSONDecoder().decode(InboxDelivery.self, from: capture.stdout))
                     ?? .failure("Nothing was sent: the send did not finish.",
                                 raw: "tools question inbox send exited \(capture.status): \(String(decoding: capture.stderr, as: UTF8.self).trimmed)")
+            } catch is CancellationError {
+                delivery = .cancelled
             } catch {
                 delivery = .failure("Nothing was sent: the hub could not run tools.", raw: "\(error)")
             }
             span.end(delivery.channel ?? "error")
-            DispatchQueue.main.async { [weak self] in
-                MainActor.assumeIsolated {
-                    guard let self else { return }
-                    self.sendingSessions.remove(sessionId)
-                    self.record(delivery, for: sessionId)
-                    if !delivery.isError {
-                        self.writeGeneration += 1
-                        self.load()
-                    }
-                }
+            guard let self else { return }
+            self.endSend(sessionId)
+            self.record(delivery, for: sessionId)
+            if !delivery.isError {
+                self.writeGeneration += 1
+                self.load()
             }
         }
     }
@@ -1059,21 +1086,17 @@ final class HubInboxModel: ObservableObject {
         let request = DecisionAnswering.sendRequest(action, ids: ids, targets: [sessionId: target])
         let titles = [sessionId: session.displayTitle]
         HubPerf.log("inbox.\(action.rawValue) \(ids.count) to \(sessionId.prefix(8))")
-        DispatchQueue.global(qos: .userInitiated).async {
+        sendTasks[sessionId] = Task { [weak self] in
             let span = HubPerf.begin("inbox.\(action.rawValue)")
-            let delivery = Self.callWidget(request, ids: ids, titles: titles, resend: action == .resendAnswers)
-            span.end(delivery.isError ? "failed" : delivery.isQueued ? "waiting" : "delivered")
-            DispatchQueue.main.async { [weak self] in
-                MainActor.assumeIsolated {
-                    guard let self else { return }
-                    self.sendingSessions.remove(sessionId)
-                    self.record(delivery, for: sessionId)
-                    self.writeGeneration += 1
-                    self.load()
-                    if let next = self.queuedSends.removeValue(forKey: sessionId), !next.isEmpty {
-                        self.sendStaged(Array(Set(next)).sorted(), in: session)
-                    }
-                }
+            let delivery = await Self.callWidget(request, ids: ids, titles: titles, resend: action == .resendAnswers)
+            span.end(delivery.isCancelled ? "cancelled" : delivery.isError ? "failed" : delivery.isQueued ? "waiting" : "delivered")
+            guard let self else { return }
+            self.endSend(sessionId)
+            self.record(delivery, for: sessionId)
+            self.writeGeneration += 1
+            self.load()
+            if let next = self.queuedSends.removeValue(forKey: sessionId), !next.isEmpty {
+                self.sendStaged(Array(Set(next)).sorted(), in: session)
             }
         }
     }
@@ -1110,19 +1133,22 @@ final class HubInboxModel: ObservableObject {
     }
 
     /// Runs one widget action through `tools hub widget call` and reads its answer with the widget's outcome.
-    nonisolated static func callWidget(_ request: WidgetJSON, ids: [String], titles: [String: String], resend: Bool) -> InboxDelivery {
+    nonisolated static func callWidget(_ request: WidgetJSON, ids: [String], titles: [String: String],
+                                       resend: Bool) async -> InboxDelivery {
         let file = FileManager.default.temporaryDirectory.appendingPathComponent("hub-inbox-send-\(UUID().uuidString).json")
         defer { try? FileManager.default.removeItem(at: file) }
         do {
             try JSONEncoder().encode(request).write(to: file)
-            // The send can wait on a busy receiver: room beyond the default.
-            let capture = try ToolsCLIRunner.capture(["hub", "widget", "call", "--input", file.path], timeout: 120)
+            // The send can wait on a busy receiver: room beyond the default. Cancel (F19) stops it.
+            let capture = try await ToolsCLIRunner.captureCancellable(["hub", "widget", "call", "--input", file.path], timeout: 120)
             guard capture.status == 0, let result = try? JSONDecoder().decode(WidgetJSON.self, from: capture.stdout) else {
                 let why = String(decoding: capture.stderr, as: UTF8.self).trimmed
                 return .failure("Nothing was sent: the widget's sender did not answer. The answers stay staged.",
                                 raw: "tools hub widget call exited \(capture.status): \(why)")
             }
             return .outcome(WidgetDecisionSendOutcome(result, titles: titles), ids: ids, resend: resend)
+        } catch is CancellationError {
+            return .cancelled
         } catch {
             return .failure("Nothing was sent: the hub could not run tools. The answers stay staged.", raw: "\(error)")
         }
@@ -1883,10 +1909,18 @@ struct InboxSendBar: View {
                     Spacer()
                 }
                 if slow {
-                    Text("Still waiting for \(session.displayTitle) to take the answers. The send gives up after two minutes, and the answers stay staged.")
-                        .font(.system(size: 11))
-                        .foregroundColor(ReviewPalette.dim)
-                        .fixedSize(horizontal: false, vertical: true)
+                    HStack(alignment: .firstTextBaseline, spacing: 8) {
+                        Text("Still waiting for \(session.displayTitle) to take the answers. The send gives up after two minutes, and the answers stay staged.")
+                            .font(.system(size: 11))
+                            .foregroundColor(ReviewPalette.dim)
+                            .fixedSize(horizontal: false, vertical: true)
+                        Button("Cancel") { inbox.cancelSend(session) }
+                            .buttonStyle(.genHoverPlain())
+                            .font(.system(size: 11))
+                            .foregroundColor(ReviewPalette.renamed)
+                            .fixedSize()
+                            .instantTooltip("Stop this send now; the answers stay staged")
+                    }
                 }
                 let preview = Self.preview(drafted)
                 if !preview.isEmpty && result == nil {
@@ -1943,9 +1977,11 @@ struct InboxDeliveryLine: View {
     @State private var showsDetails = false
 
     var body: some View {
-        let color = delivery.isError ? ReviewPalette.removed : delivery.isQueued ? ReviewPalette.modified : ReviewPalette.added
+        let color = delivery.isError ? ReviewPalette.removed : delivery.isCancelled ? ReviewPalette.dim
+            : delivery.isQueued ? ReviewPalette.modified : ReviewPalette.added
         HStack(alignment: .top, spacing: 7) {
-            Image(systemName: delivery.isError ? "exclamationmark.triangle.fill" : delivery.isQueued ? "tray.and.arrow.down" : "checkmark.circle.fill")
+            Image(systemName: delivery.isError ? "exclamationmark.triangle.fill" : delivery.isCancelled ? "xmark.circle"
+                : delivery.isQueued ? "tray.and.arrow.down" : "checkmark.circle.fill")
                 .foregroundColor(color)
             VStack(alignment: .leading, spacing: 2) {
                 Text(delivery.summary).foregroundColor(color)

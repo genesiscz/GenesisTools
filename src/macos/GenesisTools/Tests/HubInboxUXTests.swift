@@ -18,6 +18,36 @@ final class HubInboxUXTests: XCTestCase {
         XCTAssertEqual(DecisionsView.emptyText(filter: "all", hasAny: false), "No decisions recorded for this session.")
     }
 
+    /// F19: Cancel on a slow send stops its `tools` child at once instead of letting it run out its two minutes.
+    func testACancelledCaptureTerminatesItsChildAtOnce() async throws {
+        let process = Process()
+        process.executableURL = URL(fileURLWithPath: "/bin/sleep")
+        process.arguments = ["30"]
+        let started = Date()
+        let task = Task {
+            try await ToolsCLIRunner.runCancellable { handle in
+                try process.runCapturing(timeout: 60, afterStart: { handle.adopt(process) })
+            }
+        }
+        try await Task.sleep(for: .milliseconds(300))
+        task.cancel()
+        do {
+            _ = try await task.value
+            XCTFail("a cancelled capture returned instead of throwing")
+        } catch is CancellationError {}
+        XCTAssertFalse(process.isRunning, "the child still runs after its task was cancelled")
+        XCTAssertLessThan(Date().timeIntervalSince(started), 5, "the cancel waited for the child's own end")
+    }
+
+    /// F19: a cancelled send reads as cancelled, never as sent, waiting or failed, and keeps the answers staged.
+    func testACancelledSendSaysTheAnswersStayStaged() {
+        let delivery = InboxDelivery.cancelled
+        XCTAssertTrue(delivery.isCancelled)
+        XCTAssertFalse(delivery.isQueued, "a cancel is not \"Waiting to send\"")
+        XCTAssertFalse(delivery.isError)
+        XCTAssertEqual(delivery.summary, "Send cancelled. Nothing more was sent, and the answers stay staged.")
+    }
+
     /// F1: an option whose label already starts with its letter shows the letter once, in the badge only.
     func testAnOptionShowsItsLetterOnce() throws {
         let item = try Self.decision(#"{"choices":[{"id":"a","label":"a) Keep the cache"},{"id":"b","label":"Drop it"}]}"#)
