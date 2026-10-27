@@ -2,7 +2,6 @@ import type {
     ElementTable,
     EngineInterface,
     HookStream,
-    ProcessRunInit,
     Register,
     RenderElement,
     Timer,
@@ -389,10 +388,13 @@ function streamOf<C, R>(stage: AsyncGenerator<C, R>): HookStream<C, R> {
  * Every process a mod starts, one JSON line each in `<agents>/mods-log/processes-<day>.jsonl`: the command (each
  * argument cut at 120 characters), the folder, the function that asked (from the call stack), the session, the time
  * it took and the exit code. Martin, 2026-10-27: log all of them, to see what the sessions repeat and could share
- * from a cache. Lines are kept in memory and written together (every 20 lines, or by the first start 10 s after the
- * oldest), so the log itself does not double the spawns: an append is a `sh` process too.
+ * from a cache. Lines are written together after 20 completions or 10 seconds, so the log itself does not double
+ * the spawns: an append is a `sh` process too.
  */
-const processLog: { lines: string[]; since: number } = { lines: [], since: 0 };
+const processLog: { lines: string[]; timer?: Timer; pending: Set<Promise<void>> } = {
+    lines: [],
+    pending: new Set(),
+};
 
 /**
  * The function that asked for the process, read from the call stack. The engine loads the hook files as numbered
@@ -414,47 +416,65 @@ function callerFeature(): string {
     return names.join(" < ") || "unknown";
 }
 
-async function logProcess(
-    $: EngineInterface,
-    argv: readonly string[],
-    init: ProcessRunInit | undefined,
-    started: { at: number; feature: string },
-    outcome: { exitCode?: number; error?: string }
-): Promise<void> {
-    const now = Date.now();
-    processLog.lines.push(
-        JSON.stringify({
-            at: new Date(started.at).toISOString(),
-            session: await $.session.id(),
-            feature: started.feature,
-            argv: argv.map((arg) => (arg.length > 120 ? `${arg.slice(0, 120)}…` : arg)),
-            cwd: init?.cwd,
-            ms: now - started.at,
-            ...outcome,
-        })
-    );
-    if (processLog.lines.length === 1) {
-        processLog.since = now;
-    }
-
-    if (processLog.lines.length < 20 && now - processLog.since < 10_000) {
+async function flushProcessLog($: EngineInterface): Promise<void> {
+    processLog.timer?.cancel();
+    processLog.timer = undefined;
+    // Reserve the batch before any await, so concurrent completions cannot spawn empty writers.
+    const lines = processLog.lines.splice(0);
+    if (lines.length === 0) {
         return;
     }
 
     const home = (await $.env.get("GENESIS_TOOLS_HOME")) ?? (await $.env.get("HOME"));
-    const lines = processLog.lines.splice(0);
     if (!home) {
         return;
     }
 
-    const day = new Date(now).toISOString().slice(0, 10);
+    const day = new Date().toISOString().slice(0, 10);
     const path = `${home}/.genesis-tools/agents/mods-log/processes-${day}.jsonl`;
-    await $.process
-        .run(["/bin/sh", "-c", 'mkdir -p "$(dirname "$1")" && cat >> "$1"', "sh", path], {
-            stdin: `${lines.join("\n")}\n`,
-            timeoutMs: 5_000,
+    await $.process.run(["/bin/sh", "-c", 'mkdir -p "$(dirname "$1")" && cat >> "$1"', "sh", path], {
+        stdin: `${lines.join("\n")}\n`,
+        timeoutMs: 5_000,
+    });
+}
+
+async function finishProcessLog($: EngineInterface): Promise<void> {
+    await Promise.all([...processLog.pending]);
+    await flushProcessLog($).catch(() => undefined);
+}
+
+async function logProcess(
+    $: EngineInterface,
+    argv: readonly string[],
+    started: {
+        at: number;
+        feature: string;
+        session: Promise<string>;
+        directory: Promise<{ cwd: string | null; cwdSource: string; requestedCwd?: string }>;
+    },
+    outcome: { exitCode?: number; error?: string }
+): Promise<void> {
+    const ms = Date.now() - started.at;
+    const [session, directory] = await Promise.all([started.session, started.directory]);
+    processLog.lines.push(
+        JSON.stringify({
+            at: new Date(started.at).toISOString(),
+            session,
+            feature: started.feature,
+            argv: argv.map((arg) => (arg.length > 120 ? `${arg.slice(0, 120)}…` : arg)),
+            ...directory,
+            ms,
+            ...outcome,
         })
-        .catch(() => undefined);
+    );
+
+    if (processLog.lines.length >= 20) {
+        await flushProcessLog($);
+    } else if (!processLog.timer) {
+        processLog.timer = $.clock.after(10_000, () => {
+            void flushProcessLog($).catch(() => undefined);
+        });
+    }
 }
 
 /**
@@ -462,32 +482,51 @@ async function logProcess(
  * each closure spells the call it makes, so `claude plugin validate` reads every capability the plugin uses.
  */
 function hostOf($: EngineInterface): Host {
-    return {
-        run: async (argv, init) => {
-            // Read the stack now: after the first await only the engine's frames are left on it.
-            const started = { at: Date.now(), feature: callerFeature() };
-            try {
-                const done = await $.process.run(argv, init);
-                void logProcess($, argv, init, started, { exitCode: done.exitCode });
+    const run: Host["run"] = async (argv, init) => {
+        // Capture metadata before starting the process, without delaying or changing the process itself.
+        const started = {
+            at: Date.now(),
+            feature: callerFeature(),
+            session: $.session.id().catch(() => "unknown"),
+            directory: init?.cwd?.startsWith("/")
+                ? Promise.resolve({ cwd: init.cwd, cwdSource: "explicit-absolute" })
+                : $.session
+                      .cwd()
+                      .then((cwd) => ({
+                          cwd: init?.cwd === undefined ? cwd : `${cwd}/${init.cwd}`,
+                          cwdSource: init?.cwd === undefined ? "session" : "explicit-relative",
+                          requestedCwd: init?.cwd,
+                      }))
+                      .catch(() => ({ cwd: null, cwdSource: "unknown", requestedCwd: init?.cwd })),
+        };
+        const record = (outcome: { exitCode?: number; error?: string }) => {
+            const pending = logProcess($, argv, started, outcome).catch(() => undefined);
+            processLog.pending.add(pending);
+            void pending.then(() => processLog.pending.delete(pending));
+        };
 
-                return done;
-            } catch (error) {
-                void logProcess($, argv, init, started, { error: String(error).slice(0, 200) });
-                throw error;
-            }
-        },
+        try {
+            const done = await $.process.run(argv, init);
+            record({ exitCode: done.exitCode });
+
+            return done;
+        } catch (error) {
+            record({ error: String(error).slice(0, 200) });
+            throw error;
+        }
+    };
+
+    return {
+        run,
         read: (path) => $.fs.read(path),
         write: (path, text) => $.fs.write(path, text),
         // `$.fs.write` replaces a file and the engine has no append, so this is the one place an append runs `cat >>`
         // in `sh` (making the folder first). When `$.fs` gets an append, only these lines change.
         append: async (path, text) => {
-            const done = await $.process.run(
-                ["/bin/sh", "-c", 'mkdir -p "$(dirname "$1")" && cat >> "$1"', "sh", path],
-                {
-                    stdin: text,
-                    timeoutMs: 5_000,
-                }
-            );
+            const done = await run(["/bin/sh", "-c", 'mkdir -p "$(dirname "$1")" && cat >> "$1"', "sh", path], {
+                stdin: text,
+                timeoutMs: 5_000,
+            });
 
             if (done.exitCode !== 0) {
                 throw new Error(`append to ${path} failed (exit ${done.exitCode}): ${done.stderr.trim()}`);
@@ -514,7 +553,7 @@ function hostOf($: EngineInterface): Host {
         closePane: (id) => $.ui.close({ id }),
         copy: (text) => $.ui.copy({ text }),
         scroll: (requestId) => $.ui.scroll({ to: { requestId }, block: "start" }),
-        openUrl: (url) => $.process.run(["open", url], { timeoutMs: 10_000 }),
+        openUrl: (url) => run(["open", url], { timeoutMs: 10_000 }),
         toast: (text) => $.ui.toast(text),
         redraw: () => $.ui.invalidate("ui.render"),
     };
@@ -624,6 +663,7 @@ export const register: Register = (on) => {
 
     on("session.end", async ($, e, next) => {
         await markEnded(hostOf($));
+        await finishProcessLog($);
 
         return next(e);
     });
