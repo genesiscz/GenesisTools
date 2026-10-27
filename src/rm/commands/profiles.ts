@@ -1,6 +1,13 @@
 import { resolve } from "node:path";
 import { out } from "@genesiscz/utils/logger";
-import { appendRmLedger, callerAgentName, isAskAction, type RmProfile, saveRmConfig } from "@genesiscz/utils/rm";
+import {
+    appendRmLedger,
+    callerAgentName,
+    isAskAction,
+    profilesFor,
+    type RmProfile,
+    saveRmConfig,
+} from "@genesiscz/utils/rm";
 import type { Command } from "commander";
 import pc from "picocolors";
 import { minutesOption, requirePerson, runContext } from "../lib/run";
@@ -99,7 +106,8 @@ export function registerProfileCommands(program: Command): void {
 
             if (flags.json) {
                 out.result({
-                    profiles: ctx.base.profiles,
+                    profiles: profilesFor(ctx.base),
+                    disabledBuiltins: ctx.base.disabledProfiles,
                     applied: ctx.profiles,
                     caller: ctx.caller,
                     effective: ctx.config,
@@ -107,15 +115,26 @@ export function registerProfileCommands(program: Command): void {
                 return;
             }
 
-            if (ctx.base.profiles.length === 0) {
+            const shown = profilesFor(ctx.base);
+
+            for (const name of ctx.base.disabledProfiles) {
+                out.println(pc.dim(`${name} (built-in, turned off: tools rm config set enable-profile ${name})`));
+            }
+
+            if (shown.length === 0) {
                 out.println(
                     "No profiles. Add one with: tools rm profile set <name> --agent codex --ask-action request"
                 );
             }
 
-            for (const profile of ctx.base.profiles) {
+            for (const profile of shown) {
                 const on = ctx.profiles.includes(profile.name) ? pc.green(" (applies to you)") : "";
-                out.println(`${pc.bold(profile.name)}${on} ${pc.dim(describeMatch(profile))}`);
+                const kind = profile.builtin ? pc.cyan(" built-in") : "";
+                out.println(`${pc.bold(profile.name)}${kind}${on} ${pc.dim(describeMatch(profile))}`);
+
+                if (profile.note) {
+                    out.println(pc.dim(`  ${profile.note}`));
+                }
 
                 for (const line of describePolicy(profile)) {
                     out.println(`  ${line}`);

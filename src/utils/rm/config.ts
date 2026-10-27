@@ -27,6 +27,8 @@ export interface RmPreset {
     markers?: string[];
     parentNames?: string[];
     within?: string;
+    /** Off until `tools rm config set enable-preset <id>`: shared caches another install may be reading. */
+    optIn?: boolean;
 }
 
 /** What happens to a path that needs the user: `aside` moves it into the session's aside folder, `request` leaves it. */
@@ -45,7 +47,7 @@ export interface RmPolicy {
 
 /** Which callers a profile applies to. Every field that is set must match. */
 export interface RmProfileMatch {
-    /** `claude-code`, `codex`, `grok`, `copilot`, or `person` for a run outside any agent. */
+    /** `claude-code`, `codex`, `grok`, `copilot`, or `person` for a run outside any agent; a comma list matches any. */
     agent?: string;
     /** A session id or its prefix. */
     session?: string;
@@ -58,6 +60,8 @@ export interface RmProfileMatch {
 /** Settings for some callers: one agent, one session, one project. Profiles that match apply in order. */
 export interface RmProfile extends Partial<RmPolicy> {
     name: string;
+    /** Shipped with tools rm; turned off with `tools rm config set disable-profile <name>`. */
+    builtin?: boolean;
     match: RmProfileMatch;
     grace?: Partial<RmConfig["grace"]>;
     disabledPresets?: string[];
@@ -74,8 +78,12 @@ export interface RmConfig extends RmPolicy {
     grace: { presetMinutes: number; otherMinutes: number };
     trashRoot: string;
     disabledPresets: string[];
+    /** Opt-in presets the user turned on. */
+    enabledPresets: string[];
     customPresets: RmPreset[];
     profiles: RmProfile[];
+    /** Built-in profiles the user turned off, by name. */
+    disabledProfiles: string[];
 }
 
 export function rmDataDir(...segments: string[]): string {
@@ -93,8 +101,10 @@ export function defaultRmConfig(): RmConfig {
         grace: { presetMinutes: 0, otherMinutes: 60 },
         trashRoot: defaultTrashRoot(),
         disabledPresets: [],
+        enabledPresets: [],
         customPresets: [],
         profiles: [],
+        disabledProfiles: [],
         askAction: "aside",
         asideUnsaved: false,
         allowSessionScratch: true,
@@ -235,6 +245,8 @@ export function parseRmConfig(raw: unknown): RmConfig {
         },
         trashRoot: isTrashRootName(raw.trashRoot) ? raw.trashRoot : defaults.trashRoot,
         disabledPresets: strings(raw.disabledPresets),
+        enabledPresets: strings(raw.enabledPresets),
+        disabledProfiles: strings(raw.disabledProfiles),
         customPresets: Array.isArray(raw.customPresets)
             ? raw.customPresets.map(parsePreset).filter((p): p is RmPreset => p !== null)
             : [],

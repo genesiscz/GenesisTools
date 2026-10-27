@@ -1,8 +1,11 @@
 import { out } from "@genesiscz/utils/logger";
 import {
-    BUILTIN_PRESETS,
+    allPresets,
+    BUILTIN_PROFILES,
     isAskAction,
     isTrashRootName,
+    OPT_IN_PRESETS,
+    presetsFor,
     type RmConfig,
     rmConfigPath,
     saveRmConfig,
@@ -21,6 +24,8 @@ const SETTINGS = [
     "trash-root",
     "disable-preset",
     "enable-preset",
+    "disable-profile",
+    "enable-profile",
 ] as const;
 
 function yesNo(value: string): boolean {
@@ -67,7 +72,21 @@ function apply(config: RmConfig, key: Setting, value: string): RmConfig {
         case "disable-preset":
             return { ...config, disabledPresets: [...new Set([...config.disabledPresets, value])] };
         case "enable-preset":
-            return { ...config, disabledPresets: config.disabledPresets.filter((id) => id !== value) };
+            return {
+                ...config,
+                disabledPresets: config.disabledPresets.filter((id) => id !== value),
+                enabledPresets: OPT_IN_PRESETS.some((p) => p.id === value)
+                    ? [...new Set([...config.enabledPresets, value])]
+                    : config.enabledPresets,
+            };
+        case "disable-profile":
+            if (!BUILTIN_PROFILES.some((p) => p.name === value)) {
+                throw new Error(`No built-in profile ${value}; remove your own with tools rm profile remove.`);
+            }
+
+            return { ...config, disabledProfiles: [...new Set([...config.disabledProfiles, value])] };
+        case "enable-profile":
+            return { ...config, disabledProfiles: config.disabledProfiles.filter((name) => name !== value) };
     }
 }
 
@@ -78,15 +97,20 @@ export function registerSettingsCommands(program: Command): void {
         .option("--json", "print as JSON")
         .action((flags: { json?: boolean }) => {
             const { config } = runContext();
-            const all = [...BUILTIN_PRESETS, ...config.customPresets];
+            const all = allPresets(config);
+            const enabled = new Set(presetsFor(config).map((preset) => preset.id));
 
             if (flags.json) {
-                out.result(all.map((preset) => ({ ...preset, enabled: !config.disabledPresets.includes(preset.id) })));
+                out.result(all.map((preset) => ({ ...preset, enabled: enabled.has(preset.id) })));
                 return;
             }
 
             for (const preset of all) {
-                const off = config.disabledPresets.includes(preset.id) ? pc.red(" (disabled)") : "";
+                const off = enabled.has(preset.id)
+                    ? ""
+                    : preset.optIn && !config.disabledPresets.includes(preset.id)
+                      ? pc.yellow(` (opt-in: tools rm config set enable-preset ${preset.id})`)
+                      : pc.red(" (disabled)");
                 const names = preset.within ? `every folder in ${preset.within}` : preset.names.join(", ");
                 const markers = preset.markers ? ` next to ${preset.markers.join(" or ")}` : "";
                 const parents = preset.parentNames ? ` inside ${preset.parentNames.join(" or ")}` : "";

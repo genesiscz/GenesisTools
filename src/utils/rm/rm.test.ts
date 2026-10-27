@@ -32,6 +32,7 @@ import {
     pendingAsideDirs,
     pendingAsideFor,
     planRemoval,
+    presetsFor,
     probeGit,
     RM_REQUEST_TTL_MS,
     type RmCaller,
@@ -449,7 +450,7 @@ describe("profiles", () => {
         expect(agent.config.askAction).toBe("aside");
         expect(agent.config.allowOwnFiles).toBe(false);
         expect(agent.config.protect).toEqual(["/base", "/claude"]);
-        expect(person.applied).toEqual(["people"]);
+        expect(person.applied).toEqual(["person", "people"]);
         expect(person.config.allowSessionScratch).toBe(false);
     });
 
@@ -479,5 +480,49 @@ describe("audit log", () => {
             { key: "codex", moved: 0, aside: 40, reclaimed: 0, items: 1, refused: 1, requests: 0 },
         ]);
         expect(filterRmLedger(entries, { session: "cdx" })).toHaveLength(3);
+    });
+});
+
+describe("defaults", () => {
+    const codex: RmCaller = { agent: "codex", sessionId: "cdx-1", isInAgent: true };
+    const person: RmCaller = { agent: "unknown", sessionId: null, isInAgent: false };
+
+    test("built-in profiles: a person leaves paths in place, codex and grok get 4 h to undo, claude stays on aside", () => {
+        expect(effectiveConfig(config, person, base).config.askAction).toBe("request");
+        expect(effectiveConfig(config, codex, base).config.grace.otherMinutes).toBe(240);
+        expect(effectiveConfig(config, { ...codex, agent: "grok" }, base).applied).toEqual(["workers"]);
+
+        const claude = effectiveConfig(config, AGENT, base);
+
+        expect(claude.applied).toEqual([]);
+        expect(claude.config.askAction).toBe("aside");
+        expect(claude.config.grace.otherMinutes).toBe(60);
+    });
+
+    test("a built-in profile can be turned off, or replaced by a user profile of the same name", () => {
+        expect(effectiveConfig({ ...config, disabledProfiles: ["workers"] }, codex, base).applied).toEqual([]);
+
+        const replaced = effectiveConfig(
+            { ...config, profiles: [{ name: "workers", match: { agent: "codex" }, askAction: "request" }] },
+            codex,
+            base
+        );
+
+        expect(replaced.config.askAction).toBe("request");
+        expect(replaced.config.grace.otherMinutes).toBe(60);
+    });
+
+    test("cache presets are off until enabled", () => {
+        expect(presetsFor(config).some((p) => p.id === "bun-cache")).toBe(false);
+        expect(presetsFor({ ...config, enabledPresets: ["bun-cache"] }).some((p) => p.id === "bun-cache")).toBe(true);
+    });
+
+    test("secrets are refused and a .git folder needs the user, even in the session's scratch", () => {
+        const c = ctx();
+        const key = file(join(c.home, ".ssh", "id_test"), "key");
+        const repoGit = dir("cc", "proj", "sess-1111", "clone", ".git");
+
+        expect(verdictOf(key, c)).toEqual({ kind: "deny", rule: "hard-deny" });
+        expect(verdictOf(repoGit, c)).toEqual({ kind: "ask", rule: "git-history" });
     });
 });
