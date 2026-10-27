@@ -91,7 +91,7 @@ import {
 } from "../hooks/links";
 import { forgetLive, liveAgo, liveDue, liveLeft, liveSince } from "../hooks/live";
 import { bareDescription } from "../hooks/model-label";
-import { forgetRepoMentions, namesIn, sessionRepos, titleMatches, urlProject } from "../hooks/pr-repos";
+import { forgetRepoMentions, namesIn, projectOfPath, sessionRepos, titleMatches, urlProject } from "../hooks/pr-repos";
 import { modsSettings } from "../hooks/settings";
 import { afterTools, appendJsonl, flushModLogs, forgetSettings, type Host, isRecord } from "../hooks/shared";
 import { cliLacks, sharedRun, sharedRunClock, sharedRunFiles } from "../hooks/shared-run";
@@ -203,6 +203,61 @@ test("a failed du over several folders trusts none of its subtotals and asks eac
         ["du", "-sk", "/fixture/whole-r4"],
         ["du", "-sk", "/fixture/partial-r4"],
     ]);
+});
+
+test("links: a checkout lookup that timed out is asked again; a folder outside a checkout is remembered", async () => {
+    forgetRepoMentions();
+    const base = checkoutHost();
+    const asked: string[] = [];
+    let slow = true;
+    const answer = (stdout: string, exitCode = 0, stderr = "") => ({
+        stdout,
+        stderr,
+        exitCode,
+        isStdoutTruncated: false,
+        isStderrTruncated: false,
+    });
+    const host: Host = {
+        ...base,
+        async stat() {
+            return { kind: "dir", size: 0, mtimeMs: 0, isLink: false };
+        },
+        async run(argv) {
+            const dir = argv[2] ?? "";
+            asked.push(`${argv[3]} ${dir}`);
+
+            if (argv[3] === "rev-parse") {
+                if (dir === "/work/plain") {
+                    return answer("", 128, "fatal: not a git repository (or any of the parent directories): .git");
+                }
+
+                if (slow) {
+                    throw new Error("$.process.run(git) aborted");
+                }
+
+                return answer("/work/app\n");
+            }
+
+            return answer("git@github.com:acme/app.git\n");
+        },
+    };
+
+    try {
+        expect(await projectOfPath(host, "/work/app/src", "/home/test")).toBeUndefined();
+        slow = false;
+        expect((await projectOfPath(host, "/work/app/src", "/home/test"))?.path).toBe("acme/app");
+        expect((await projectOfPath(host, "/work/app/src", "/home/test"))?.path).toBe("acme/app");
+        expect(await projectOfPath(host, "/work/plain", "/home/test")).toBeUndefined();
+        expect(await projectOfPath(host, "/work/plain", "/home/test")).toBeUndefined();
+        expect(asked).toEqual([
+            "rev-parse /work/app/src",
+            "rev-parse /work/app/src",
+            "remote /work/app",
+            "rev-parse /work/plain",
+        ]);
+    } finally {
+        forgetRepoMentions();
+    }
 });
 
 test("project lookup retries nonzero results and caches a successful lookup", async () => {
@@ -554,6 +609,20 @@ test("git band: the checkouts a command or an edit works in", async () => {
         { dir: "/work/main", branches: [] },
     ]);
     expect(gitWrites("git -C /work/main push origin HEAD v1.0:refs/tags/v1.0", "/home/test")).toEqual([
+        { dir: "/work/main", branches: [] },
+    ]);
+    // A branch of digits is still a branch; a redirection or a variable is no branch.
+    expect(gitWrites("cd /work/main && git switch -c 12345 && git push origin 2026/10/30 2>&1", "/home/test")).toEqual([
+        { dir: "/work/main", branches: ["12345", "2026/10/30"] },
+    ]);
+    expect(gitWrites('git -C /work/main push origin "$br" 2>&1', "/home/test")).toEqual([
+        { dir: "/work/main", branches: [] },
+    ]);
+    // Letters beyond ASCII are a branch too; git's own forbidden forms are not.
+    expect(gitWrites("cd /work/main && git switch -c fix/číslo && git push origin 修正", "/home/test")).toEqual([
+        { dir: "/work/main", branches: ["fix/číslo", "修正"] },
+    ]);
+    expect(gitWrites("cd /work/main && git push origin a~1 b^ x@{1} .hidden y.lock", "/home/test")).toEqual([
         { dir: "/work/main", branches: [] },
     ]);
     expect(writtenFiles({ tool: "Edit", file_path: "/work/wt-a/x.ts" })).toEqual(["/work/wt-a/x.ts"]);
@@ -1495,6 +1564,56 @@ test("links: in a two-checkout session the written title decides, and no evidenc
     expect(note).not.toContain("#105 ->");
 });
 
+test("links: a failed lookup in one checkout leaves a title match in the other unproven", async () => {
+    forgetPullRequests();
+    takeLinkedPullRequestNote();
+    const { ctx } = twoCheckouts(
+        { "acme/Playground#110": "fix: the shared title", "acme/Toolbox#110": "fix: the shared title" },
+        GH_ONLY
+    );
+    const run = ctx.host.run;
+    ctx.host = {
+        ...ctx.host,
+        async run(argv, options) {
+            if (argv.includes("acme/Toolbox")) {
+                throw new Error("timed out");
+            }
+
+            return run(argv, options);
+        },
+    };
+
+    expect(await linkLine(ctx, "See #110 (fix: the shared title).\n")).toBe("See #110 (fix: the shared title).\n");
+    expect(ctx.log).toContainEqual(expect.objectContaining({ kind: "pr-unsure", lookupFailed: ["acme/Toolbox"] }));
+});
+
+test("links: a written title with a code span still decides, and a repository name inside it is not a pointer", async () => {
+    forgetPullRequests();
+    takeLinkedPullRequestNote();
+    const { ctx } = twoCheckouts(
+        {
+            "acme/Playground#111": "fix: update `widget` handling",
+            "acme/Toolbox#111": "feat: something else",
+            "acme/Toolbox#112": "fix: Playground integration",
+            "acme/Playground#112": "chore: unrelated",
+            "acme/Toolbox#113": "first",
+            "acme/Playground#113": "second",
+        },
+        GH_ONLY
+    );
+
+    expect(await linkLine(ctx, "Done in #111 (fix: update `widget` handling).\n")).toContain(
+        "[#111](https://github.com/acme/Playground/pull/111)"
+    );
+    expect(await linkLine(ctx, "Done in #112 (fix: Playground integration).\n")).toBe(
+        "Done in [#112](https://github.com/acme/Toolbox/pull/112) (fix: Playground integration).\n"
+    );
+    // No title matches, so the name in the parentheses picks the repository.
+    expect(await linkLine(ctx, "Done in #113 (in Playground).\n")).toBe(
+        "Done in [#113](https://github.com/acme/Playground/pull/113) (in Playground).\n"
+    );
+});
+
 test("links: a one-checkout session links a bare number in its checkout as before, and names count as words", async () => {
     forgetPullRequests();
     takeLinkedPullRequestNote();
@@ -2055,6 +2174,19 @@ test("the link fixer links what resolves, as the reply streams, and leaves the r
         ].join("\n")
     );
     expect(chunks.at(-1)?.kind).toBe("stop");
+});
+
+test("the link fixer leaves tilde-fenced and longer-fenced code as written", async ($, on) => {
+    const code = ["~~~", "src/a.ts", "```", "src/a.ts", "~~~", "````md", "src/a.ts", "```", "````"];
+    machine({ on, more: [...code, "src/a.ts"] });
+    let text = "";
+
+    for await (const chunk of $.turn.step({ turnId: "t1", index: 0, model: "claude-haiku-5-5", messageCount: 1 })) {
+        text += chunk.kind === "text" ? chunk.text : "";
+    }
+
+    // The fences close only on their own character and length; the line after the last one is linked again.
+    expect(text.split("\n").slice(-10)).toEqual([...code, "[src/a.ts](/repo/src/a.ts)"]);
 });
 
 test("without GenesisTools the link fixer writes no genesis.tools link", async ($, on) => {
@@ -3593,7 +3725,7 @@ test("a git refresh requested during a read waits for roots added or removed dur
                 };
             }
 
-            if (argv[0] === "git" && argv[1] === "status") {
+            if (argv[0] === "git" && argv.includes("status")) {
                 if (held) {
                     const pending = held;
                     held = undefined;
@@ -3657,6 +3789,126 @@ test("a git refresh requested during a read waits for roots added or removed dur
     expect(publications.at(-1)).toEqual(["/work/wt-a"]);
     forgetCheckouts();
     forgetSettings();
+});
+
+test("git band: the shared PR answer follows a branch switch, and an explicit refresh asks gh again", async () => {
+    forgetCheckouts();
+    forgetSettings();
+    const base = checkoutHost();
+    const files = new Map<string, string>([
+        [
+            "/home/test/.genesis-tools/agents/hooks.json",
+            JSON.stringify({ mods: { git: { enabled: true }, log: { readings: true } } }),
+        ],
+    ]);
+    let branch = "topic-a";
+    const prFor: Record<string, number> = { "topic-a": 11, "topic-b": 22 };
+    let ghRuns = 0;
+    const shown: number[][] = [];
+    const done = (stdout: string, exitCode = 0) => ({
+        stdout,
+        stderr: "",
+        exitCode,
+        isStdoutTruncated: false,
+        isStderrTruncated: false,
+    });
+    const host: Host = {
+        ...base,
+        async cwd() {
+            return "/work/pr-switch";
+        },
+        async sessionId() {
+            return "sess-pr-switch";
+        },
+        async read(path) {
+            const text = files.get(path);
+
+            if (text === undefined) {
+                throw new Error(`ENOENT ${path}`);
+            }
+
+            return text;
+        },
+        async write(path, text) {
+            files.set(path, text);
+        },
+        async run(argv) {
+            if (argv[0] === "git" && argv.includes("rev-parse")) {
+                return done("/work/pr-switch\n");
+            }
+
+            if (argv[0] === "git" && argv.includes("status")) {
+                return done(`## ${branch}\n`);
+            }
+
+            if (argv[0] === "git") {
+                return done("");
+            }
+
+            if (argv.slice(0, 3).join(" ") === "gh pr view") {
+                ghRuns++;
+                const number = prFor[branch];
+
+                return done(
+                    JSON.stringify({
+                        number,
+                        title: `PR ${number}`,
+                        url: `https://github.com/acme/widgets/pull/${number}`,
+                        state: "OPEN",
+                        isDraft: false,
+                        statusCheckRollup: [],
+                    })
+                );
+            }
+
+            return done("", 1);
+        },
+        async append(file, text) {
+            if (!file.endsWith("/mods-log/git.jsonl")) {
+                return;
+            }
+
+            for (const line of text.split("\n").filter(Boolean)) {
+                const record: unknown = JSON.parse(line);
+
+                if (isRecord(record) && record.event === "refresh" && Array.isArray(record.rows)) {
+                    shown.push(
+                        record.rows.flatMap((row) =>
+                            isRecord(row) && Array.isArray(row.prs)
+                                ? row.prs.flatMap((pr) => (isRecord(pr) && typeof pr.n === "number" ? [pr.n] : []))
+                                : []
+                        )
+                    );
+                }
+            }
+        },
+    };
+
+    try {
+        await refreshGit(host, "timer");
+        expect(shown.at(-1)).toEqual([11]);
+        expect(ghRuns).toBe(1);
+
+        // The same `gh pr view` argv on another branch: the shared answer of topic-a is not topic-b's.
+        branch = "topic-b";
+        await refreshGit(host, "command");
+        expect(shown.at(-1)).toEqual([22]);
+        expect(ghRuns).toBe(2);
+
+        // A PR made since: `/mod-git refresh` asks gh, though the shared answer is still young.
+        prFor["topic-b"] = 23;
+        await gitBand.commands?.[0]?.run(host, "refresh");
+        expect(shown.at(-1)).toEqual([23]);
+        expect(ghRuns).toBe(3);
+
+        // The next ordinary pass reads that answer again.
+        await refreshGit(host, "command");
+        expect(shown.at(-1)).toEqual([23]);
+        expect(ghRuns).toBe(3);
+    } finally {
+        forgetCheckouts();
+        forgetSettings();
+    }
 });
 
 test("sending clears only submitted unchanged field text and preserves unstaged or in-flight edits", async () => {

@@ -104,6 +104,8 @@ export interface LinkContext {
     worked: ForgeProject[];
     /** The sentence of the current line a position falls in, set by `linkLine`. */
     sentenceAt?: (at: number) => number;
+    /** The whole current line, set by `linkLine`: a written title can hold a code span or a URL that splits it. */
+    lineText?: string;
     /** What this reply named in the lines above the current one, in order. */
     above: RepoMention[];
     /** What the current line names. */
@@ -362,6 +364,17 @@ function* writtenTitles(after: string): Generator<string> {
     }
 }
 
+/** How far the written title after a number reaches (to its last possible closing parenthesis), 0 for none. */
+function writtenTitleSpan(after: string): number {
+    let span = 0;
+
+    for (const written of writtenTitles(after)) {
+        span = written.length + 3;
+    }
+
+    return span;
+}
+
 function writtenTitleMatches(after: string, title: string): boolean {
     for (const written of writtenTitles(after)) {
         if (titleMatches(written, title)) {
@@ -396,20 +409,42 @@ async function prRepo(
     const sentence = ctx.sentenceAt?.(at);
     const distance = (m: RepoMention) =>
         (ctx.sentenceAt && ctx.sentenceAt(m.start) !== sentence ? 1_000_000 : 0) + Math.abs(m.start - at);
+    // A repository name inside the title written after the number is part of that title, not a pointer to the
+    // repository: in a two-checkout session it counts only after the titles were compared.
+    const titleFrom = at + `#${n}`.length;
+    const titleTo = titleFrom + writtenTitleSpan(after);
+    const inTitle = (m: RepoMention) => m.byName === true && m.start >= titleFrom && m.start < titleTo;
     const nearest = [...ctx.line].sort((a, b) => distance(a) - distance(b));
+    const named = async (mentions: readonly RepoMention[]) => {
+        for (const mention of mentions) {
+            const project = await mentionProject(ctx, mention);
 
-    for (const mention of [...nearest, ...earlier]) {
-        const project = await mentionProject(ctx, mention);
-
-        if (project) {
-            return project.kind === "github" ? { project, why: "the nearest repository the reply names" } : undefined;
+            if (project) {
+                return project.kind === "github"
+                    ? { project, why: "the nearest repository the reply names" }
+                    : ("gitlab" as const);
+            }
         }
+
+        return undefined;
+    };
+    const outside = await named([...nearest.filter((m) => !inTitle(m)), ...earlier]);
+
+    if (outside) {
+        return outside === "gitlab" ? undefined : outside;
     }
 
     const candidates = workedProjects(ctx);
+    const titleNamed = async () => {
+        const found = await named(nearest.filter(inTitle));
+        return found === "gitlab" ? undefined : found;
+    };
 
     if (candidates.length < 2) {
-        return ctx.project?.kind === "github" ? { project: ctx.project, why: "the session's checkout" } : undefined;
+        return (
+            (await titleNamed()) ??
+            (ctx.project?.kind === "github" ? { project: ctx.project, why: "the session's checkout" } : undefined)
+        );
     }
 
     // Several checkouts and no word of the reply picks one: the PR lookup is the evidence.
@@ -417,11 +452,19 @@ async function prRepo(
         candidates.map(async (project) => ({ project, pr: await pullRequest(ctx, project, String(n)) }))
     );
     const found = looked.flatMap(({ project, pr }) => (pr ? [{ project, pr }] : []));
-
+    // A lookup that failed (network, auth, a timeout) is not "no such PR": its title could match too, so a unique
+    // match among the others proves nothing until it answers.
+    const unknown = looked.filter(({ pr }) => pr === undefined).map(({ project }) => project.path);
     const titled = found.filter((hit) => writtenTitleMatches(after, hit.pr.title));
 
-    if (titled.length === 1 && titled[0]) {
+    if (titled.length === 1 && titled[0] && unknown.length === 0) {
         return { project: titled[0].project, why: "its title there matches the title the reply wrote" };
+    }
+
+    const byTitleName = unknown.length === 0 && titled.length === 0 ? await titleNamed() : undefined;
+
+    if (byTitleName) {
+        return byTitleName;
     }
 
     ctx.log.push({
@@ -429,6 +472,7 @@ async function prRepo(
         token: `#${n}`,
         candidates: candidates.map((project) => project.path),
         withPr: found.map((hit) => hit.project.path),
+        ...(unknown.length > 0 ? { lookupFailed: unknown } : {}),
         titleWritten: !writtenTitles(after).next().done,
     });
 
@@ -479,9 +523,14 @@ function freshPullRequest(held: unknown, key: string): { at: number; pr: PullReq
 /**
  * The PR's title and URL from `tools github pr` or `gh`; null for a number that is no PR of that repository. Every
  * session on this Mac shares the answer through `<agents>/mods-state/pull-requests/<host_owner_repo_n>.json`: a PR for 6 hours, a number
- * with no PR for 10 minutes. A failed `gh` (network, auth, timeout) is neither kept nor shared.
+ * with no PR for 10 minutes. A failed `gh` (network, auth, timeout) is neither kept nor shared, and answers undefined,
+ * so a caller can tell "no such PR" (null) from "not known now".
  */
-async function pullRequest(ctx: LinkContext, project: ForgeProject, n: string): Promise<PullRequest | null> {
+async function pullRequest(
+    ctx: LinkContext,
+    project: ForgeProject,
+    n: string
+): Promise<PullRequest | null | undefined> {
     if (project.kind !== "github") {
         return null;
     }
@@ -532,7 +581,7 @@ async function pullRequest(ctx: LinkContext, project: ForgeProject, n: string): 
         (run.exitCode !== 0 &&
             (useTools || !/no pull requests? found|could not resolve to a pull ?request/i.test(run.stderr)))
     ) {
-        return null;
+        return undefined;
     }
 
     let found: PullRequest | null = null;
@@ -546,7 +595,7 @@ async function pullRequest(ctx: LinkContext, project: ForgeProject, n: string): 
             found = { title: parsed.title.replace(/^Draft: /, ""), url: parsed.url };
         }
     } catch {
-        return null;
+        return undefined;
     }
 
     const at = Date.now();
@@ -634,7 +683,8 @@ async function linkPlain(ctx: LinkContext, text: string, offset: number): Promis
         let end = hit.end;
 
         if (hit.kind === "pr") {
-            const target = await prTarget(ctx, hit.token, { at: offset + hit.start, after: text.slice(end) });
+            const after = ctx.lineText !== undefined ? ctx.lineText.slice(offset + end) : text.slice(end);
+            const target = await prTarget(ctx, hit.token, { at: offset + hit.start, after });
             const pr = target ? await pullRequest(ctx, target.project, target.number) : null;
 
             if (target && pr) {
@@ -723,6 +773,7 @@ export async function linkLine(ctx: LinkContext, line: string): Promise<string> 
     ctx.line = [...mentionsIn(line, githubHost(ctx)), ...namesIn(line, known)].sort((a, b) => a.start - b.start);
     const ends = [...line.matchAll(/[.!?;](?=\s|$)/g)].map((match) => match.index ?? 0);
     ctx.sentenceAt = (at) => ends.filter((end) => end < at).length;
+    ctx.lineText = line;
 
     for (const match of line.matchAll(PROTECTED)) {
         const start = match.index ?? 0;
@@ -827,7 +878,8 @@ async function contextOf(host: Host, messageCount: number): Promise<LinkContext>
     const touches = await sessionCheckouts(host).catch(() => []);
     const worked: ForgeProject[] = [];
 
-    for (const touch of touches.slice(0, 8)) {
+    // Every root the ledger keeps: a cut here could hide the one checkout of a second repository.
+    for (const touch of touches) {
         const touched = await projectOfPath(host, touch.root, home);
 
         if (touched) {
@@ -869,6 +921,18 @@ export function rememberToolPaths(input: unknown): void {
     }
 }
 
+/** A Markdown fence line: its run of three or more backticks or tildes, and whether nothing but spaces follows it. */
+function fenceOf(line: string): { run: string; bare: boolean } | undefined {
+    const match = /^\s*(`{3,}|~{3,})(.*)$/.exec(line.replace(/\r?\n$/, ""));
+
+    return match?.[1] ? { run: match[1], bare: !match[2]?.trim() } : undefined;
+}
+
+/** Whether a fence line closes the block `open` began: the same character, at least as long, and no info string. */
+function closes(fence: { run: string; bare: boolean }, open: string): boolean {
+    return fence.bare && fence.run[0] === open[0] && fence.run.length >= open.length;
+}
+
 /** The turn.step stage of the main loop: reply text passes line by line, each line linked (see `linkLine`). */
 export async function* linksStep(
     host: Host,
@@ -878,16 +942,20 @@ export async function* linksStep(
     {
         let ctx: LinkContext | undefined;
         const lines = new Map<number, string>();
-        const fenced = new Set<number>();
+        /** The fence each open code block began with, per text block: its character and length. */
+        const fenced = new Map<number, string>();
         let answer = "";
         let changed = false;
 
         async function* emit(index: number, line: string): AsyncGenerator<TurnStepChunk> {
-            if (/^\s*```/.test(line)) {
-                if (fenced.has(index)) {
-                    fenced.delete(index);
+            const fence = fenceOf(line);
+            const open = fenced.get(index);
+
+            if (fence && (open === undefined || closes(fence, open))) {
+                if (open === undefined) {
+                    fenced.set(index, fence.run);
                 } else {
-                    fenced.add(index);
+                    fenced.delete(index);
                 }
 
                 answer += line;
