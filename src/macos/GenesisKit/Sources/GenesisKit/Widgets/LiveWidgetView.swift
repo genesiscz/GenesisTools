@@ -1264,6 +1264,13 @@ public struct LiveWidgetView: View {
                         // answer showed its first line cut off at the top (Martin, 2026-10-26: "multilines suck").
                         .fixedSize(horizontal: false, vertical: true)
                         .focused(ownAnswer == nil ? $editing : $ownAnswerFocused)
+                        // A field with the keyboard owns its text: no snapshot writes into it (FieldTextOwnership).
+                        .onChange(of: focused, initial: true) { _, now in
+                            model.draftFieldFocus(ownAnswer.map { "own:" + $0.id } ?? "reply", focused: now)
+                        }
+                        .onDisappear {
+                            model.draftFieldFocus(ownAnswer.map { "own:" + $0.id } ?? "reply", focused: false)
+                        }
                         // A decision's own answer: Return stages the text as its note and ⌘-Return sends it, or the
                         // other way round (Settings: Return in an own answer). Option-Return stays a new line.
                         .onKeyPress(.return, phases: .down) { press in
