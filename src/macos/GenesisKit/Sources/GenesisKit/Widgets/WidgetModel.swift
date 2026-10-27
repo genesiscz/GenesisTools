@@ -1632,7 +1632,7 @@ public final class WidgetModel: ObservableObject {
 
     /// Find an assistant's decision heading, not a later acknowledgement or a user's quotation.
     nonisolated static func firstTurnAsking(_ number: Int, in turns: [TranscriptTurn]) -> TranscriptTurn? {
-        let pattern = "(?m)^[ \\t]*(?:#{1,6}[ \\t]+)?(?:\\*\\*)?(?:❓[ \\t]*)?DECISION[ \\t]+\(number)(?![0-9])"
+        let pattern = "(?m)^[ \\t]*(?:#{1,6}[ \\t]+)?(?:\\*\\*)?(?:❓[ \\t]*)?(?:\\*\\*)?DECISION[ \\t]+\(number)(?![0-9])"
         return turns.first { $0.role == "assistant" && $0.text.range(of: pattern, options: .regularExpression) != nil }
     }
 
