@@ -500,6 +500,12 @@ func captureIsolatedWindows(_ options: RecordOptions) {
         errorExit("selected app PID \(pid) has no visible shareable windows")
     }
     guard !selected.isEmpty, selected.count <= 16 else { errorExit("isolated capture requires 1 to 16 visible selected windows") }
+    do {
+        let selection = try JSONSerialization.data(withJSONObject: selected.map { Int($0.id) })
+        try selection.write(to: URL(fileURLWithPath: options.outDir).appendingPathComponent("selected-windows.json"), options: .atomic)
+    } catch {
+        errorExit("cannot write isolated window selection: \(error.localizedDescription)")
+    }
     var displayCanvas: CGRect?
     if options.selection.canvas == "display" {
         let index = options.screenIndex ?? 0

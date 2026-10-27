@@ -67,6 +67,11 @@ export class NativeCaptureControls {
     private readonly native: NativeBridge;
     private readonly identities = new Map<string, { pid: number; processLaunch: number }>();
     private binding: { key: string; windowId: number } | undefined;
+    private recordedWindowIds: number[] | undefined;
+    setRecordedWindowIds(ids: unknown): void {
+        this.recordedWindowIds = z.array(z.number().int().positive()).min(1).max(16).parse(ids);
+        this.binding = undefined;
+    }
     constructor(
         private readonly capture: CaptureSpec,
         options: { native?: NativeBridge } = {}
@@ -106,7 +111,13 @@ export class NativeCaptureControls {
             },
         });
     }
-    private async observe(options: { app: string; windowTitle?: string; action?: Action; image?: boolean }) {
+    private async observe(options: {
+        app: string;
+        windowTitle?: string;
+        action?: Action;
+        image?: boolean;
+        preRecordingFocus?: boolean;
+    }) {
         const key = SafeJSON.stringify({
             app: options.app,
             windowTitle: options.windowTitle,
@@ -116,7 +127,10 @@ export class NativeCaptureControls {
         try {
             if (
                 this.binding?.key === key &&
-                !(this.capture.mode === "isolated" && (this.capture.windowIds?.length ?? 0) > 1)
+                !(
+                    this.capture.mode === "isolated" &&
+                    (this.recordedWindowIds?.length ?? this.capture.windowIds?.length ?? 0) > 1
+                )
             ) {
                 // A dispatched action without a refreshed snapshot invalidates ComputerUse's rows.
                 // Reobserve the pinned window; the bridge retains and checks the app's launch identity.
@@ -152,7 +166,13 @@ export class NativeCaptureControls {
             throw error;
         }
     }
-    private async resolveWindow(options: { app: string; windowTitle?: string; action?: Action; image?: boolean }) {
+    private async resolveWindow(options: {
+        app: string;
+        windowTitle?: string;
+        action?: Action;
+        image?: boolean;
+        preRecordingFocus?: boolean;
+    }) {
         const { app, windowTitle, action } = options;
         if (this.capture.app === app && this.capture.windowId !== undefined) {
             return this.computer.get_app_state({
@@ -163,7 +183,7 @@ export class NativeCaptureControls {
             });
         }
         // Resolve only recorded windows belonging to this app; never choose the first match silently.
-        if (this.capture.mode === "isolated") {
+        if (this.capture.mode === "isolated" && !options.preRecordingFocus) {
             const listed = required(await this.native.run({ args: ["window", "--app", app], timeoutMs: 5000 }));
             const windows = z
                 .array(
@@ -177,7 +197,7 @@ export class NativeCaptureControls {
             if (windows.some((window) => window.window_id === undefined)) {
                 throw new Error("Cannot verify the recorded window IDs for this app.");
             }
-            const ids = (this.capture.windowIds ?? []).filter((id) =>
+            const ids = (this.recordedWindowIds ?? this.capture.windowIds ?? []).filter((id) =>
                 windows.some(
                     (window) =>
                         window.window_id === id &&
@@ -264,9 +284,12 @@ export class NativeCaptureControls {
             "Native capture requires one exact window. Set capture.windowId/windowIndex or an unambiguous windowTitle/AX identifier."
         );
     }
-    async focus(target: { app: string; windowTitle?: string }) {
+    async focus(target: { app: string; windowTitle?: string }, options: { preRecording?: boolean } = {}) {
         this.binding = undefined;
-        const state = await this.observe(target);
+        const state = await this.observe({
+            ...target,
+            preRecordingFocus: options.preRecording && Boolean(this.capture.apps?.length),
+        });
         const result = await this.computer.focus({ app: target.app, revision: state.revision });
         return { ok: result.ok, via: "ax-tool" as const, detail: result.error ?? "" };
     }

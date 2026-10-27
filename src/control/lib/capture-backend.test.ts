@@ -52,6 +52,8 @@ function captureFixture(
         isolated?: boolean;
         recordedWindow?: number;
         windows?: Array<{ id: number; target: boolean }>;
+        selectedApps?: boolean;
+        explicitIds?: number[];
         lateDuplicate?: boolean;
     } = {}
 ) {
@@ -105,7 +107,14 @@ function captureFixture(
     });
     const controls = new NativeCaptureControls(
         options.isolated
-            ? { mode: "isolated", windowIds: options.windows?.map((window) => window.id), duration: 5 }
+            ? {
+                  mode: "isolated",
+                  windowIds:
+                      options.explicitIds ??
+                      (options.selectedApps ? undefined : options.windows?.map((window) => window.id)),
+                  apps: options.selectedApps ? ["Fixture"] : undefined,
+                  duration: 5,
+              }
             : { mode: "window", app: "Fixture", windowId: options.recordedWindow, duration: 5 },
         {
             native: {
@@ -162,6 +171,39 @@ function captureFixture(
 }
 
 describe("native capture target binding", () => {
+    it("uses the recorder's pinned IDs for app-only, mixed and explicit selections", async () => {
+        for (const selection of [
+            { selectedApps: true },
+            { selectedApps: true, explicitIds: [10] },
+            { explicitIds: [10, 11] },
+        ]) {
+            const f = captureFixture({
+                isolated: true,
+                ...selection,
+                windows: [
+                    { id: 10, target: false },
+                    { id: 11, target: true },
+                    { id: 12, target: true },
+                ],
+            });
+            f.controls.setRecordedWindowIds([10, 11]);
+            expect((await f.controls.run({ do: "ax-press", axId: "save", app: "Fixture", atMs: 0 })).ok).toBe(true);
+            const observations = f.calls.filter((args) => args[0] === "see");
+            expect(observations.some((args) => args.includes("11"))).toBe(true);
+            expect(observations.some((args) => args.includes("12"))).toBe(false);
+            expect(f.calls.filter((args) => args[0] === "act")).toHaveLength(1);
+            f.controls.dispose();
+        }
+    });
+
+    it("allows app-selected focus before the recorder starts", async () => {
+        const f = captureFixture({ isolated: true, selectedApps: true, windows: [{ id: 10, target: true }] });
+        expect((await f.controls.focus({ app: "Fixture" }, { preRecording: true })).ok).toBe(true);
+        f.controls.setRecordedWindowIds([10]);
+        expect((await f.controls.run({ do: "ax-press", axId: "save", app: "Fixture", atMs: 0 })).ok).toBe(true);
+        f.controls.dispose();
+    });
+
     it("pins coordinate scrolls to the observed process and budgets their duration", async () => {
         const f = captureFixture({ recordedWindow: 10 });
         const action = {
