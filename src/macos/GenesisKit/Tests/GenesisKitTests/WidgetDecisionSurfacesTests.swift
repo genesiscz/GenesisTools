@@ -279,6 +279,12 @@ final class WidgetDecisionSurfacesTests: XCTestCase {
                      "a user quote and assistant acknowledgement do not identify the asking turn")
         XCTAssertEqual(WidgetModel.firstTurnAsking(172, in: [TranscriptTurn(
             id: "heading", role: "assistant", text: "## ❓ DECISION 172\nChoose one")])?.id, "heading")
+        XCTAssertEqual(WidgetModel.firstTurnAsking(172, in: [TranscriptTurn(
+            id: "bold", role: "assistant", text: "❓ **DECISION 172** — Choose one\n**a)** keep it")])?.id, "bold")
+        XCTAssertNil(WidgetModel.firstTurnAsking(17, in: [TranscriptTurn(
+            id: "bold", role: "assistant", text: "❓ **DECISION 172** — Choose one")]))
+        XCTAssertNil(WidgetModel.firstTurnAsking(172, in: [TranscriptTurn(
+            id: "quote", role: "user", text: "❓ **DECISION 172** — Choose one")]))
         XCTAssertEqual(WidgetModel.decisionNumber("d_172_a1523c66-103f"), 172)
         XCTAssertNil(WidgetModel.decisionNumber("d10"))
     }
