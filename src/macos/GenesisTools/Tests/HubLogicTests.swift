@@ -213,6 +213,79 @@ final class HubLogicTests: XCTestCase {
         guard case .failure(.offBranch) = HubLocalCommits.resolve(ends: [side], repo: repo, head: pushedHead) else {
             return XCTFail("a commit off the PR's line is refused")
         }
+
+        // A pushed commit the forge did not list (gh listed 100 of 252): between the PR's base and its head, it is one
+        // of the PR's own commits, read from the checkout with nothing unpushed.
+        let head = shas[4]
+        guard case .failure(.offBranch) = HubLocalCommits.resolve(ends: [shas[2]], repo: repo, head: head) else {
+            return XCTFail("without a base, an older pushed commit cannot be placed")
+        }
+        let listedPast = try HubLocalCommits.resolve(ends: [shas[2]], repo: repo, head: head, bases: ["origin/nope", shas[0]]).get()
+        XCTAssertEqual(listedPast, HubLocalCommits(first: shas[2], last: nil, count: 1, unpushed: 0, title: "commit 2"),
+                       "the first base that names a commit here decides")
+        let pastRange = try HubLocalCommits.resolve(ends: [shas[3], shas[1]], repo: repo, head: head, bases: [shas[0]]).get()
+        XCTAssertEqual(pastRange.first, shas[1])
+        XCTAssertEqual(pastRange.unpushed, 0)
+        guard case .failure(.offBranch) = HubLocalCommits.resolve(ends: [shas[0]], repo: repo, head: head, bases: [shas[0]]) else {
+            return XCTFail("the base's own commits are not the PR's")
+        }
+        guard case .failure(.offBranch) = HubLocalCommits.resolve(ends: [shas[2]], repo: repo, head: head, bases: ["origin/nope"]) else {
+            return XCTFail("a base that names no commit here proves nothing")
+        }
+    }
+
+    /// A link to a commit the PR held before its branch was rewritten (a rebase, a reword, a regroup): its current form
+    /// by subject, else the old commit from the checkout (2026-10-22: #58 c3e3ad830 opened the whole PR while #58 held
+    /// 4dbdd3869b with the same subject).
+    func testARewrittenCommitFindsItsSuccessorBySubjectElseShowsItself() throws {
+        let repo = FileManager.default.temporaryDirectory.appendingPathComponent("hub-rewritten-\(UUID().uuidString)").path
+        try FileManager.default.createDirectory(atPath: repo, withIntermediateDirectories: true)
+        defer { try? FileManager.default.removeItem(atPath: repo) }
+        func git(_ args: String...) throws -> String {
+            let process = Process()
+            process.executableURL = URL(fileURLWithPath: "/usr/bin/git")
+            process.arguments = ["-C", repo, "-c", "user.name=Alice Example", "-c", "user.email=alice@example.com",
+                                 "-c", "core.hooksPath=/dev/null", "-c", "commit.gpgsign=false"] + args
+            let out = Pipe()
+            process.standardOutput = out
+            try process.run()
+            let data = out.fileHandleForReading.readDataToEndOfFile()
+            process.waitUntilExit()
+            XCTAssertEqual(process.terminationStatus, 0, "git \(args.joined(separator: " "))")
+            return String(decoding: data, as: UTF8.self).trimmingCharacters(in: .whitespacesAndNewlines)
+        }
+        _ = try git("init", "-q", "-b", "main")
+        _ = try git("commit", "-q", "--allow-empty", "-m", "base")
+        _ = try git("commit", "-q", "--allow-empty", "-m", "feat: one")
+        let oldOne = try git("rev-parse", "HEAD")
+        _ = try git("commit", "-q", "--allow-empty", "-m", "feat: two")
+        let oldTwo = try git("rev-parse", "HEAD")
+        _ = try git("checkout", "-q", "-b", "side", "HEAD~2")
+        _ = try git("commit", "-q", "--allow-empty", "-m", "unrelated")
+        let unrelated = try git("rev-parse", "HEAD")
+        func commit(_ sha: String, _ title: String, _ author: String? = "alice") -> HubPRDetail.Commit {
+            HubPRDetail.Commit(sha: sha, title: title, author: author, authorLogin: nil, date: nil, body: nil)
+        }
+        let rewrittenList = [commit("1111111aaa", "feat: one"), commit("2222222bbb", "feat: two")]
+
+        XCTAssertEqual(HubLocalCommits.rewritten(ends: [String(oldOne.prefix(10))], repo: repo, in: rewrittenList),
+                       .successors(first: rewrittenList[0], last: nil))
+        XCTAssertEqual(HubLocalCommits.rewritten(ends: [oldOne, oldTwo], repo: repo, in: rewrittenList),
+                       .successors(first: rewrittenList[0], last: rewrittenList[1]))
+        XCTAssertEqual(HubLocalCommits.rewritten(ends: [oldTwo], repo: repo, in: [commit("3333333ccc", "feat: other")]),
+                       .own(first: oldTwo, last: nil, title: "feat: two", base: nil), "no successor: the commit itself")
+        let oldBase = try git("rev-parse", oldOne + "^")
+        XCTAssertEqual(HubLocalCommits.rewritten(ends: [oldTwo, oldOne], repo: repo, in: []),
+                       .own(first: oldOne, last: oldTwo, title: "feat: two", base: oldBase), "a range from the older end's parent")
+        XCTAssertNil(HubLocalCommits.rewritten(ends: [unrelated, oldTwo], repo: repo, in: []), "two lines make no diff")
+        XCTAssertNil(HubLocalCommits.rewritten(ends: ["0123456789"], repo: repo, in: rewrittenList), "a sha the checkout lacks")
+
+        // Two commits with the subject: the author decides, and a tie names none.
+        let twins = [commit("4444444ddd", "feat: one", "bob"), commit("5555555eee", "feat: one", "Alice Example")]
+        XCTAssertEqual(HubLocalCommits.successor(subject: "feat: one", author: "Alice Example", in: twins)?.sha, "5555555eee")
+        XCTAssertNil(HubLocalCommits.successor(subject: "feat: one", author: "carol", in: twins))
+        XCTAssertEqual(HubLocalCommits.successor(subject: "feat: one", author: "carol", in: [twins[0]])?.sha, "4444444ddd",
+                       "one subject match wins whatever author the forge names")
     }
 
     func testACommitRangeLinkShowsItsCommitsFromTheParentOfTheFirst() throws {
@@ -584,23 +657,67 @@ final class HubLogicTests: XCTestCase {
     }
 
     @MainActor
-    func testAMissingPRCommitReplacesThePreviousCommitScopeWithTheWholePR() throws {
+    private func rewrittenFixture() throws -> (HubPR, PRsModel, ReviewModel, PRCommitPick) {
         let json = """
         {"repo":"app","repoRoot":"/fixture/app","origin":{"kind":"github","host":"github.com","web":"https://github.com/acme/app"},
          "number":7,"title":"t","state":"OPEN","draft":false,"author":"alice","headBranch":"feature","baseBranch":"develop",
          "url":"https://github.com/acme/app/pull/7","labels":[],"reviewers":[],"headSha":"abcdef0123","crossRepository":false,"headRepo":null}
         """
         let pr = try JSONDecoder().decode(HubPR.self, from: Data(json.utf8))
-        let model = PRsModel()
         let review = ReviewModel(repo: URL(fileURLWithPath: "/fixture/app"), options: DiffViewOptions(), renderer: NullRenderer())
         review.scope = .commit(sha: "1111111", title: "previous")
-        let missing = PRCommitPick(ref: HubPRRef(project: "acme/app", number: 7), sha: "0000000", asked: Date())
+        return (pr, PRsModel(), review, PRCommitPick(ref: HubPRRef(project: "acme/app", number: 7), sha: "c3e3ad830", asked: Date()))
+    }
 
-        model.showMissingCommit(missing, in: pr, review: review)
+    /// The PR holds a commit with the old one's subject: that commit shows, and the note names both, as no error.
+    @MainActor
+    func testARewrittenPRCommitShowsItsSuccessorWithANoteNamingBoth() throws {
+        let (pr, model, review, pending) = try rewrittenFixture()
+        let successor = HubPRDetail.Commit(sha: "4dbdd3869b00", title: "feat: vouchers", author: nil, authorLogin: nil, date: nil, body: nil)
+
+        model.applyLocalLookup(.failure(.offBranch), rewritten: .successors(first: successor, last: nil), pending: pending,
+                               in: [successor], pr: pr, review: review)
+
+        XCTAssertEqual(review.scope, .commit(sha: successor.sha, title: successor.title))
+        let notice = try XCTUnwrap(model.notice)
+        XCTAssertFalse(notice.isError)
+        XCTAssertTrue(notice.text.contains("c3e3ad830") && notice.text.contains("4dbdd3869b"), notice.text)
+    }
+
+    /// No commit of the PR has its subject: the old commit's own diff from the checkout, as no error.
+    @MainActor
+    func testARewrittenPRCommitWithNoSuccessorShowsItsOwnDiff() throws {
+        let (pr, model, review, pending) = try rewrittenFixture()
+        let full = "c3e3ad8307c9a875bc8a93d90d3232184bb67f6a"
+
+        model.applyLocalLookup(.failure(.offBranch), rewritten: .own(first: full, last: nil, title: "feat: vouchers", base: nil),
+                               pending: pending, in: [], pr: pr, review: review)
+
+        XCTAssertEqual(review.scope, .commit(sha: full, title: "feat: vouchers"))
+        let notice = try XCTUnwrap(model.notice)
+        XCTAssertFalse(notice.isError)
+        XCTAssertTrue(notice.text.contains("this is the commit itself"), notice.text)
+    }
+
+    /// Only a sha the checkout lacks still shows the whole PR, replacing the commit on screen, with the error note.
+    @MainActor
+    func testAPRCommitTheCheckoutLacksShowsTheWholePRWithAnError() throws {
+        let (pr, model, review, pending) = try rewrittenFixture()
+
+        model.applyLocalLookup(.failure(.unknown("c3e3ad830")), rewritten: nil, pending: pending, in: [], pr: pr, review: review)
 
         XCTAssertEqual(review.scope, PRsModel.scope(pr, detail: nil))
+        XCTAssertTrue(model.notice?.isError == true)
         XCTAssertTrue(model.notice?.text.contains("so the whole PR shows") == true)
-        XCTAssertEqual(model.notice?.ref, missing.ref)
+        XCTAssertEqual(model.notice?.ref, pending.ref)
+    }
+
+    /// GitHub lists 250 commits of a PR at most: the commits section says how many it left out.
+    @MainActor
+    func testTheCommitsSectionSaysWhatTheForgeLeftOut() {
+        XCTAssertEqual(PRCommitsSection.title(listed: 250, total: 252), "Commits (the forge lists 250 of 252)")
+        XCTAssertEqual(PRCommitsSection.title(listed: 3, total: 3), "Commits")
+        XCTAssertEqual(PRCommitsSection.title(listed: 3, total: nil), "Commits")
     }
 
     /// A range link waits for a fresh detail when the cached one predates its newer end; when that detail

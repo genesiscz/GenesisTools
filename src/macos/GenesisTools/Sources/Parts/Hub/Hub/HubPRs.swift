@@ -205,6 +205,8 @@ struct HubPRDetail: Decodable, Equatable {
     /// The head this detail describes; a newer one than the list's row means a push since the list.
     let headSha: String?
     let commits: [Commit]?
+    /// How many commits the forge counts; more than `commits` when its list stops (GitHub lists at most 250).
+    var commitsTotal: Int? = nil
     let changedFiles: Int?
     let additions: Int?
     let deletions: Int?
@@ -777,10 +779,17 @@ final class PRsModel: ObservableObject {
         }
     }
 
-    /// A link's commit that the forge does not list may be one the PR's checkout has not pushed yet: look there before
-    /// saying the PR does not hold it. The diff then comes from the checkout, which the review reads anyway.
+    /// A link's commit that the forge does not list may be one the PR's checkout has not pushed yet, one past the end
+    /// of the forge's list, or one the PR held before its branch was rewritten: look in the checkout before saying the
+    /// PR does not hold it. The diff then comes from the checkout, which the review reads anyway.
     private func pickLocalCommits(_ pending: PRCommitPick, in shown: HubPR, commits: [HubPRDetail.Commit], review: ReviewModel) {
         pendingCommit = nil
+        // The commit that merged the PR is on its base, not on its line, and its subject often repeats one of the PR's:
+        // it is the whole PR (`showMissingCommit` says so), never a "rewritten" commit.
+        if pending.to == nil, let merged = details[shown.id]?.mergedSha, HubCommitSha.matches(pending.sha, merged) {
+            showMissingCommit(pending, in: shown, review: review)
+            return
+        }
         let repo = review.repo.path
         let ends = [pending.sha] + (pending.to.map { [$0] } ?? [])
         // The newest commit the forge lists stands in for an unknown pushed head; with neither, nothing can be checked.
@@ -789,22 +798,73 @@ final class PRsModel: ObservableObject {
             return
         }
         let pushed = Set(commits.map(\.sha))
+        let bases = [details[shown.id]?.baseSha, fetchedHead(shown)?.base, "origin/\(shown.baseBranch)"].compactMap { $0 }
         let lookup = beginRangeLookup()
         Task.detached(priority: .userInitiated) { [weak self] in
-            let found = HubLocalCommits.resolve(ends: ends, repo: repo, head: head, pushed: pushed)
+            let found = HubLocalCommits.resolve(ends: ends, repo: repo, head: head, bases: bases, pushed: pushed)
+            var rewritten: HubLocalCommits.Rewritten?
+            if case .failure(let miss) = found, miss == .offBranch || miss == .unrelated {
+                rewritten = HubLocalCommits.rewritten(ends: ends, repo: repo, in: commits)
+            }
             await MainActor.run {
                 guard let self, self.reviewPRID == shown.id, self.review === review else { return }
                 self.finishRangeLookup(lookup) {
-                    switch found {
-                    case .success(let local):
-                        self.showLocalCommits(local, pending: pending, in: commits, pr: shown, review: review)
-                    case .failure(.unknown(let sha)):
-                        self.showMissingCommit(pending, missing: sha, in: shown, review: review)
-                    case .failure(.unrelated), .failure(.offBranch):
-                        self.showMissingCommit(pending, missing: pending.to ?? pending.sha, in: shown, review: review)
-                    }
+                    self.applyLocalLookup(found, rewritten: rewritten, pending: pending, in: commits, pr: shown, review: review)
                 }
             }
+        }
+    }
+
+    /// What the checkout said about a link's commits the forge does not list: they continue the PR (unpushed, or past
+    /// the forge's list), they are the PR's old commits (`rewritten`), or the checkout lacks them, the only case that
+    /// shows the whole PR with an error.
+    func applyLocalLookup(_ found: Result<HubLocalCommits, HubLocalCommits.Miss>, rewritten: HubLocalCommits.Rewritten?,
+                          pending: PRCommitPick, in commits: [HubPRDetail.Commit], pr: HubPR, review: ReviewModel) {
+        switch found {
+        case .success(let local):
+            showLocalCommits(local, pending: pending, in: commits, pr: pr, review: review)
+        case .failure(.unknown(let sha)):
+            showMissingCommit(pending, missing: sha, in: pr, review: review)
+        case .failure(.unrelated), .failure(.offBranch):
+            if let rewritten {
+                showRewritten(rewritten, pending: pending, in: commits, pr: pr, review: review)
+            } else {
+                showMissingCommit(pending, missing: pending.to ?? pending.sha, in: pr, review: review)
+            }
+        }
+    }
+
+    /// A link's commits that the PR held before its branch was rewritten: their current form when the PR has commits
+    /// with the same subjects, else the old commits themselves from the checkout. Either way the note names what the
+    /// link asked for and what shows, and it is no error.
+    func showRewritten(_ rewritten: HubLocalCommits.Rewritten, pending: PRCommitPick, in commits: [HubPRDetail.Commit], pr: HubPR,
+                       review: ReviewModel) {
+        let asked = HubCommitSpan(from: pending.sha, to: pending.to).label
+        switch rewritten {
+        case .successors(let first, let last):
+            let now = last.map { "\(first.sha.prefix(10))..\($0.sha.prefix(10))" } ?? String(first.sha.prefix(10))
+            HubPerf.log("prs.commit \(pr.label) \(asked) rewritten as \(now)")
+            if let last {
+                showLinkedRange(first, last, in: commits, pr: pr, ref: pending.ref, review: review)
+            } else {
+                showLinkedCommit(first, prID: pr.id, review: review)
+            }
+            notice = PRNotice(ref: pending.ref, text: "\(asked) is not in \(pr.label) any more (its branch was rewritten); "
+                + "\(now) has the same subject now, so that shows", isError: false)
+        case .own(let first, let last, let title, let base):
+            HubPerf.log("prs.commit \(pr.label) \(asked) not in it now, its own diff")
+            HubDefaults.store.set(true, forKey: "hub.prs.showDiff")
+            linkedRange = nil
+            let scope: DiffScope
+            if let last {
+                scope = .range(base: base ?? "\(first)^", head: last, label: "\(first.prefix(7))..\(last.prefix(7)), not in \(pr.label)")
+            } else {
+                scope = .commit(sha: first, title: title)
+            }
+            if review.scope != scope { review.setScope(scope) }
+            let place = (review.repo.path as NSString).abbreviatingWithTildeInPath
+            notice = PRNotice(ref: pending.ref, text: "\(asked) is not among the commits of \(pr.label) now (its branch was rewritten "
+                + "or force-pushed), and no commit there has its subject; this is the commit itself, from \(place)", isError: false)
         }
     }
 
@@ -832,6 +892,9 @@ final class PRsModel: ObservableObject {
         if review.scope != scope { review.setScope(scope) }
         if local.unpushed > 0 {
             notice = PRNotice(ref: pending.ref, text: "\(Plural.count(local.unpushed, "commit")) of this link \(local.unpushed == 1 ? "is" : "are") not pushed yet; the diff comes from \((review.repo.path as NSString).abbreviatingWithTildeInPath)", isError: false)
+        } else if !commits.contains(where: { $0.sha == local.first }) {
+            // Pushed, and past the end of the forge's list (GitHub lists 250 commits of a PR at most).
+            notice = PRNotice(ref: pending.ref, text: "\(local.first.prefix(10)) is one of \(pr.label)'s commits past the \(Plural.count(commits.count, "commit")) the forge lists; the diff comes from \((review.repo.path as NSString).abbreviatingWithTildeInPath)", isError: false)
         }
     }
 
@@ -2366,7 +2429,7 @@ struct PRDetailView: View {
                 LazyVStack(alignment: .leading, spacing: 0) {
                     if let commits = detail?.commits, !commits.isEmpty {
                         if let review = prs.review {
-                            PRCommitsSection(prs: prs, review: review, pr: pr, commits: commits, folded: $foldCommits) {
+                            PRCommitsSection(prs: prs, review: review, pr: pr, commits: commits, total: detail?.commitsTotal, folded: $foldCommits) {
                                 showDiff = true
                             }
                         } else {
@@ -2556,8 +2619,16 @@ struct PRCommitsSection: View {
     @ObservedObject var review: ReviewModel
     let pr: HubPR
     let commits: [HubPRDetail.Commit]
+    /// The forge's count, when its list stops before the PR's last commit.
+    var total: Int? = nil
     @Binding var folded: Bool
     let revealDiff: () -> Void
+
+    /// "Commits", or what the list leaves out: a PR of 252 commits lists 250 on GitHub.
+    static func title(listed: Int, total: Int?) -> String {
+        guard let total, total > listed else { return "Commits" }
+        return "Commits (the forge lists \(listed) of \(total))"
+    }
 
     private var shownSha: String? {
         if case .commit(let sha, _) = review.scope { return sha }
@@ -2568,7 +2639,7 @@ struct PRCommitsSection: View {
         let shown = shownSha
         // A range link's commits, all marked.
         let range = PRsModel.rangeShas(review.scope, linked: prs.linkedRange)
-        PRSection(title: "Commits", count: commits.count, folded: $folded, flat: true, trailing: shown == nil && range.isEmpty ? nil : AnyView(
+        PRSection(title: Self.title(listed: commits.count, total: total), count: commits.count, folded: $folded, flat: true, trailing: shown == nil && range.isEmpty ? nil : AnyView(
             Button("Whole PR") { prs.showWholePR() }
                 .buttonStyle(.genHoverPlain())
                 .font(.system(size: 11.5))
