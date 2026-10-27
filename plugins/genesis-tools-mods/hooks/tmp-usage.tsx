@@ -97,6 +97,7 @@ function nextWorktreeAt(startedAt: number): number {
  * walked eight of them every 5 minutes.
  */
 export async function worktreeSize(host: Host, path: string, status: string): Promise<number | null> {
+    await restoreWorktreeKb(host);
     const held = worktreeKb.get(path);
     const startedAt = Date.now();
 
@@ -119,9 +120,45 @@ export async function worktreeSize(host: Host, path: string, status: string): Pr
 
     if (kb !== null) {
         worktreeKb.set(path, { kb, status, nextAt: nextWorktreeAt(startedAt) });
+        await host
+            .storeSet(WORKTREE_STORE_KEY, Object.fromEntries([...worktreeKb].slice(-WORKTREE_STORE_KEEP)))
+            .catch(() => undefined);
     }
 
     return kb;
+}
+
+/**
+ * The sizes survive a mods reload through the mods store. Every save of a mod file reloads all sessions, and each one
+ * then measured every worktree again in the same minute (23:24 on 2026-10-27: 28 walks, 33 s).
+ */
+const WORKTREE_STORE_KEY = "tmpUsage.worktreeKb";
+const WORKTREE_STORE_KEEP = 40;
+let worktreeKbRestored = false;
+
+async function restoreWorktreeKb(host: Host): Promise<void> {
+    if (worktreeKbRestored) {
+        return;
+    }
+
+    worktreeKbRestored = true;
+    const stored = await host.storeGet(WORKTREE_STORE_KEY).catch(() => undefined);
+
+    if (!isRecord(stored)) {
+        return;
+    }
+
+    for (const [path, entry] of Object.entries(stored)) {
+        if (
+            isRecord(entry) &&
+            typeof entry.kb === "number" &&
+            typeof entry.status === "string" &&
+            typeof entry.nextAt === "number" &&
+            !worktreeKb.has(path)
+        ) {
+            worktreeKb.set(path, { kb: entry.kb, status: entry.status, nextAt: entry.nextAt });
+        }
+    }
 }
 
 /** The main checkout's folder name, so every worktree of one repository shares its /tmp/cc project folder. */
