@@ -76,7 +76,7 @@ const CODEX_AGENTS: CodexAgentSpec[] = [
         name: "terra",
         alias: "terra",
         effort: "high",
-        use: "A fast, efficient model for visual reasoning, computer use, and clear writing, at half sol's price. Prefer sol for complex coding.",
+        use: "A fast, efficient model for visual reasoning, computer use, and internal writing, at half sol's price. Prefer sol for complex coding, and opus for user-facing copy.",
     },
     {
         name: "luna",

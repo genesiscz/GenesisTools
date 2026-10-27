@@ -8,7 +8,7 @@ Use the task routing in the parent skill. Pass `--model gpt-6-astra --effort hig
 for an Astra escalation, `--model gpt-6.1-sol --effort medium` for normal implementation,
 `--model gpt-6-luna --effort medium` for bounded exploration, or
 `--model gpt-6-luna --effort low` for mechanical work, or `--model gpt-6.1-terra --effort medium`
-for visual reasoning, computer use and writing at half Sol's price. `gpt-6-sol` and `gpt-5.6-terra` still
+for visual reasoning, computer use and internal writing at half Sol's price (not user-facing copy). `gpt-6-sol` and `gpt-5.6-terra` still
 work, but `gpt-6.1-sol` and `gpt-6.1-terra` are stronger for the same or a lower price, so do not pick them.
 `gpt-6.1-sol` takes `low` to `max` effort only: `none` and `minimal` return an error.
 
