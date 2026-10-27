@@ -1,18 +1,18 @@
 import { type DeliverDeps, resolveDeliveryTarget } from "../decisions/deliver";
-import { decisionLines, dueDecisions, optionLetters } from "../decisions/read";
+import { optionLetters } from "../decisions/read";
 import { type SendResult, sendAnsweredDecisions } from "../decisions/send";
 import {
-    awaitsDelivery,
-    type DecisionRecord,
     type HarvestedDecision,
     harvestDecisions,
     kindOf,
     type PromptReceipt,
     readDecisions,
     recordDelivery,
-    staleRevisionError,
     updateDecisions,
 } from "../decisions/store";
+import { isDrafted, promotedDraft } from "./staged";
+
+export { stagedSendText } from "./staged";
 
 /**
  * Pick, then send. A click on an option MARKS it as the user's draft; it is not answered or
@@ -29,17 +29,6 @@ export interface DraftInput {
     text?: string;
     provider?: string;
     cwd?: string;
-    /**
-     * The revision of the text the user picked on. A pick made on text the agent has since re-posted is refused
-     * (`staleRevisionError`), as the widget's own stage is.
-     */
-    expectedRevision?: number;
-}
-
-function checkRevision(row: DecisionRecord, number: number, expected: number | undefined): void {
-    if (expected !== undefined && expected !== (row.revision ?? 1)) {
-        throw staleRevisionError(number);
-    }
 }
 
 export interface DraftDeps {
@@ -101,7 +90,6 @@ export async function draftDecision(input: DraftInput, deps: DraftDeps) {
         throw new Error(`DECISION ${input.number} is already ${row.state}`);
     }
 
-    checkRevision(row, input.number, input.expectedRevision);
     const option = normalize(input.option);
     const draftOption = option ?? row.draftOption ?? "";
     const draft = input.text !== undefined ? input.text : (row.draft ?? "");
@@ -120,15 +108,7 @@ export async function draftDecision(input: DraftInput, deps: DraftDeps) {
     // The state moves only when it changes: `open` to `open` is no transition, and clearing an
     // untouched decision used to fail with "cannot move ... from open to open".
     const [updated] = await updateDecisions(deps.file, deps.events, {
-        updates: [
-            {
-                id: row.id,
-                ...(state === row.state ? {} : { state }),
-                draftOption,
-                draft,
-                ...(input.expectedRevision !== undefined ? { expectedRevision: input.expectedRevision } : {}),
-            },
-        ],
+        updates: [{ id: row.id, ...(state === row.state ? {} : { state }), draftOption, draft }],
     });
 
     return updated;
@@ -136,7 +116,7 @@ export async function draftDecision(input: DraftInput, deps: DraftDeps) {
 
 /** Drops a decision that no longer matters (a scratch probe) without sending anything. */
 export async function dismissDecision(
-    { session, number, expectedRevision }: { session: string; number: number; expectedRevision?: number },
+    { session, number }: { session: string; number: number },
     deps: Pick<DraftDeps, "file" | "events">
 ) {
     const rows = readDecisions(deps.file);
@@ -155,21 +135,11 @@ export async function dismissDecision(
         throw new Error(`DECISION ${number} is already ${row.state}`);
     }
 
-    checkRevision(row, number, expectedRevision);
     const [updated] = await updateDecisions(deps.file, deps.events, {
-        updates: [{ id: row.id, state: "dismissed", ...(expectedRevision !== undefined ? { expectedRevision } : {}) }],
+        updates: [{ id: row.id, state: "dismissed" }],
     });
 
     return updated;
-}
-
-/** A drafted decision the send would promote: an unsent pick or note on an open row. */
-function isDrafted(row: DecisionRecord): boolean {
-    return (
-        kindOf(row) === "decision" &&
-        (row.state === "open" || row.state === "drafted") &&
-        (Boolean(row.draftOption) || Boolean(row.draft?.trim()))
-    );
 }
 
 export interface SendDraftsInput {
@@ -195,36 +165,6 @@ export interface SendDraftsInput {
 
 /** Polled once a second while waiting for a resumed session's pane; the deadline is a count, not a clock. */
 const WAIT_STEP_MS = 1_000;
-
-/** What a send turns a draft into: the pick becomes the option, the note the answer. */
-function promotedDraft(row: DecisionRecord): Pick<DecisionRecord, "option" | "answer"> {
-    return {
-        ...(row.draftOption ? { option: optionLetters(row.draftOption).join("") } : {}),
-        ...(row.draft?.trim() ? { answer: row.draft.trim() } : {}),
-    };
-}
-
-/**
- * The message the session's next `sendDrafts` submits, from the rows as they stand: its drafts promoted as the send
- * promotes them, plus answers already waiting to go out, in the send's own format (`deliverDecisions`). The mods
- * Decisions sidebar shows it above its `[send]`, so what it shows is what goes out. `undefined` when nothing would.
- */
-export function stagedSendText(rows: DecisionRecord[], session: string): string | undefined {
-    const due = dueDecisions(
-        rows
-            .filter((row) => row.sessionId === session && kindOf(row) === "decision")
-            .flatMap((row) => {
-                if (isDrafted(row)) {
-                    return [{ ...row, state: "answered" as const, ...promotedDraft(row) }];
-                }
-
-                // A chat answer an agent recorded as `answered` is not waiting to go out (`awaitsDelivery`).
-                return awaitsDelivery(row) ? [row] : [];
-            })
-    );
-
-    return due.length > 0 ? decisionLines(due) : undefined;
-}
 
 /**
  * Sends every drafted answer of one session as ONE message. The drafts are promoted to `answered`
@@ -267,13 +207,9 @@ export async function sendDrafts(
     }
 
     if (drafted.length > 0) {
-        await updateDecisions(
-            deps.file,
-            deps.events,
-            { updates: drafted.map((row) => ({ id: row.id, state: "answered" as const, ...promotedDraft(row) })) },
-            undefined,
-            { actor: "user" }
-        );
+        await updateDecisions(deps.file, deps.events, {
+            updates: drafted.map((row) => ({ id: row.id, state: "answered" as const, ...promotedDraft(row) })),
+        });
     }
 
     // A just-resumed session boots for a few seconds: wait, bounded, for its pane to be live.
@@ -319,8 +255,7 @@ export async function sendDrafts(
             text: answered.map((row) => row.number).join(", "),
             numbers: [],
             channel: "resume",
-            // The pane never came up: nothing was typed. The answers wait, stamped with the place it resumed.
-            delivered: false,
+            delivered: true,
             target: input.recordResumeTarget,
             dryRun: false,
             promoted: drafted.map((row) => row.number),

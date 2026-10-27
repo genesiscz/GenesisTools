@@ -60,6 +60,7 @@ function createFixture(): {
         parserVersion: "fixture-v1",
         readBackward: noBackwardRead,
         readTurnBoundary: async () => null,
+        readForward: async () => ({ rows: [], file: null, endOffset: 0, issues: [] }),
         roots: () => [root],
         discover: async () => ({
             sources: state.sources,
@@ -411,6 +412,7 @@ test("selective refresh reuses full discovery, retains unselected sources, and l
         parserVersion: "fixture-v1",
         readBackward: noBackwardRead,
         readTurnBoundary: async () => null,
+        readForward: async () => ({ rows: [], file: null, endOffset: 0, issues: [] }),
         roots: () => [root],
         discover: async () => discovery,
         readMetadata: async (source): Promise<HistoryMetadataRead> => {

@@ -38,6 +38,7 @@ function fixture() {
         parserVersion: "fixture-v1",
         readBackward: noBackwardRead,
         readTurnBoundary: async () => null,
+        readForward: async () => ({ rows: [], file: null, endOffset: 0, issues: [] }),
         roots: () => [root],
         discover: async () => {
             state.discoveryCount++;

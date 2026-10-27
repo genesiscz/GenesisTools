@@ -4,6 +4,7 @@ import { stat } from "node:fs/promises";
 import { sep } from "node:path";
 import { flattenToolInput } from "@genesiscz/utils/agent-sessions/native-content";
 import { readJsonlBackward, readJsonlTurnBoundary } from "@genesiscz/utils/agent-sessions/read-backward";
+import { readJsonlForward } from "@genesiscz/utils/agent-sessions/read-forward";
 import type { JsonRecord, JsonValue } from "@genesiscz/utils/agent-sessions/source-scan";
 import { asRecord, blocksMetadata, scanJsonlRecords } from "@genesiscz/utils/agent-sessions/source-scan";
 import { isWrapperUserText } from "@genesiscz/utils/agent-sessions/user-text";
@@ -16,6 +17,7 @@ import { boundHistoryText, HISTORY_METADATA_LIMITS } from "../metadata";
 import type {
     BackwardRead,
     BoundedMetadataField,
+    ForwardRead,
     HistoryMetadataRead,
     HistoryReadOptions,
     HistoryRecordRead,
@@ -25,6 +27,7 @@ import type {
     NativeSessionSource,
     NativeSourceIssue,
     ReadBackwardOptions,
+    ReadForwardOptions,
     TurnBoundary,
 } from "../types";
 import {
@@ -240,6 +243,7 @@ function entry(options: {
     inputText?: string;
     searchText?: string;
     paths?: string[];
+    callId?: string;
 }): NativeHistoryEntry | undefined {
     if (!options.text && !options.searchText) {
         return;
@@ -252,6 +256,7 @@ function entry(options: {
         ...(options.tool ? { tool: options.tool } : {}),
         ...(options.toolEvent ? { toolEvent: options.toolEvent } : {}),
         ...(options.inputText ? { inputText: options.inputText } : {}),
+        ...(options.callId ? { callId: options.callId } : {}),
         paths: options.paths ?? [],
         commits: commitHashes(options.text),
         ...(options.timestamp ? { timestamp: options.timestamp } : {}),
@@ -392,6 +397,7 @@ function legacyEntries(row: JsonRecord, line: number, tools: ToolContext): Nativ
             tool: name,
             toolEvent: "call",
             paths,
+            callId: id,
         });
         return value ? [value] : [];
     }
@@ -1354,9 +1360,24 @@ export type CodexHistoryOperations = Pick<NativeSessionReader<"codex">, "parserV
     Required<
         Pick<
             NativeSessionReader<"codex">,
-            "readMetadata" | "scan" | "readRecords" | "readBackward" | "readTurnBoundary"
+            "readMetadata" | "scan" | "readRecords" | "readBackward" | "readTurnBoundary" | "readForward"
         >
     >;
+
+/** The rollout JSONL from an offset to its end. Its rows carry no id, so a row's key is `@<byte offset>`. */
+async function readCodexForward(
+    source: NativeSessionSource<"codex">,
+    options: ReadForwardOptions
+): Promise<ForwardRead> {
+    const tools: ToolContext = { names: new Map(), paths: new Map() };
+
+    return readJsonlForward({
+        ...options,
+        path: source.filePath,
+        rowKey: (_row, position) => `@${position}`,
+        rowEntries: (row, line) => legacyEntries(asRecord(row), line, tools),
+    });
+}
 
 /**
  * The rollout JSONL from its end. It holds every response item in both history modes (a paginated thread's projection
@@ -1417,5 +1438,6 @@ export function createCodexHistoryOperations(): CodexHistoryOperations {
         readRecords: readCodexRecords,
         readBackward: readCodexBackward,
         readTurnBoundary: readCodexTurnBoundary,
+        readForward: readCodexForward,
     };
 }

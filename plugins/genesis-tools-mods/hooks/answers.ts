@@ -1,15 +1,18 @@
 // What the answer MCP (`tools question`) holds for this session: its decisions in every state, its todos, the
 // messages and answers it recorded, and the forms it left pending. One `tools question inbox --session <id> --json
 // --all-items` call reads them all, and it runs only when the files behind it changed, a sidebar asks, or this
-// session just called a question tool: every running session reads it.
+// session just called a question tool: every running session reads it. The call passes the cursor of the last answer
+// (`--since`), kept in a file across mod reloads: when nothing changed the CLI answers so after a few `stat`s, and
+// otherwise it sends only the changed items, which are merged into the last answer.
 //
 // Also where each item was asked, for "jump to": the transcript row of a decision's first ask (an assistant text
 // with `❓ DECISION N` that is not a link) and the tool call that recorded an entry. A row's `requestId` is the
-// transcript entry's `uuid` (a text row) or the tool_use id (a tool row); `grep` finds them in the transcript.
+// transcript entry's `uuid` (a text row) or the tool_use id (a tool row). `tools question transcript-rows` finds
+// them from an index every caller shares; a CLI without that command falls back to a `grep` of the appended bytes.
 import type { ToolCallInput } from "claude-code";
 import { sessionDirOf } from "./agents-band";
 import { decisionLink, genesisProbe } from "./genesis";
-import { type Host, isRecord, logMod, settingsOf } from "./shared";
+import { agentsDir, type Host, isRecord, logMod, settingsOf } from "./shared";
 import { pressed } from "./sidebar";
 
 export type DecisionStatus =
@@ -118,6 +121,14 @@ const ENTRY_WINDOW_MS = 10 * 60_000;
 const FIRST_ASK = /(^|[^[])❓\s*\**\s*DECISION\s+(\d+)/gm;
 
 let held: SessionAnswers | undefined;
+/** The CLI's last answer as it printed it, and its cursor: the base a `--since` change is merged into. */
+let heldRaw: Record<string, unknown> | undefined;
+let heldCursor: string | undefined;
+/** The CLI refused `--since` / `--transcript` or `transcript-rows` (an older GenesisTools): use the old calls. */
+let cursorUnsupported = false;
+let rowsUnsupported = false;
+/** The transcript size at the last `transcript-rows` call: an unchanged transcript holds no new row. */
+let rowsSize = -1;
 /** What the last read saw: the hash of this session's lines in the shared logs. */
 let heldStamp: string | undefined;
 let lastReadAt = 0;
@@ -142,6 +153,11 @@ export function jumpRowOf(target: { decision: number } | { entry: string }): str
 /** Drops what was read: a test starts another session. */
 export function forgetAnswers(): void {
     held = undefined;
+    heldRaw = undefined;
+    heldCursor = undefined;
+    cursorUnsupported = false;
+    rowsUnsupported = false;
+    rowsSize = -1;
     heldStamp = undefined;
     lastReadAt = 0;
     seenFiles.clear();
@@ -188,6 +204,51 @@ export function answersFrom(stdout: string, at = Date.now()): SessionAnswers | u
         return undefined;
     }
 
+    return answersOfValue(parsed, at);
+}
+
+const LISTS = ["decisions", "todos", "entries", "forms"] as const;
+
+/**
+ * The CLI's last answer with a `--since` change applied: changed items replace the ones with their id, new ones are
+ * added, the ids under `removed` go, and `staged` is set or cleared when it is present. Undefined when `change` is not
+ * a change (`full` is not false) or names no list.
+ */
+export function mergedAnswer(
+    last: Record<string, unknown>,
+    change: Record<string, unknown>
+): Record<string, unknown> | undefined {
+    if (change.full !== false || !LISTS.every((list) => Array.isArray(change[list]))) {
+        return undefined;
+    }
+
+    const removed = isRecord(change.removed) ? change.removed : {};
+    const merged: Record<string, unknown> = { ...last, cursor: change.cursor };
+
+    for (const list of LISTS) {
+        const gone = new Set(Array.isArray(removed[list]) ? removed[list].map(String) : []);
+        const changed = (Array.isArray(change[list]) ? change[list] : []).filter(isRecord);
+        const byId = new Map(changed.map((item) => [String(item.id), item]));
+        const kept = (Array.isArray(last[list]) ? last[list] : [])
+            .filter(isRecord)
+            .filter((item) => !gone.has(String(item.id)))
+            .map((item) => byId.get(String(item.id)) ?? item);
+        const known = new Set(kept.map((item) => String(item.id)));
+        merged[list] = [...kept, ...changed.filter((item) => !known.has(String(item.id)))];
+    }
+
+    if ("staged" in change) {
+        if (typeof change.staged === "string" && change.staged) {
+            merged.staged = change.staged;
+        } else {
+            delete merged.staged;
+        }
+    }
+
+    return merged;
+}
+
+function answersOfValue(parsed: unknown, at: number): SessionAnswers | undefined {
     if (!isRecord(parsed) || !Array.isArray(parsed.decisions)) {
         return undefined;
     }
@@ -514,8 +575,75 @@ async function saveSearch(host: Host, transcript: string): Promise<void> {
 }
 
 /**
- * Finds the rows not found yet, for these decision numbers (the log's and the chat's) and entries: one `grep` over
- * the bytes appended to the transcript since the last search, for the assistant lines that could hold them.
+ * The rows from `tools question transcript-rows`: the index every caller on this Mac shares reads only what was
+ * appended since any of them last asked. True when it answered; false when this CLI has no such command (the caller
+ * then searches itself) or the call failed (the next poll asks again).
+ */
+async function rowsFromIndex(
+    host: Host,
+    transcript: string,
+    size: number,
+    entries: readonly LoggedEntry[]
+): Promise<boolean> {
+    if (size === rowsSize) {
+        return true;
+    }
+
+    const done = await host
+        .run(["tools", "question", "transcript-rows", "--transcript", transcript, "--json"], { timeoutMs: 60_000 })
+        .catch((error: unknown) => ({ exitCode: -1, stdout: "", stderr: String(error) }));
+    let parsed: unknown;
+
+    try {
+        parsed = done.exitCode === 0 ? JSON.parse(done.stdout) : undefined;
+    } catch {
+        parsed = undefined;
+    }
+
+    if (!isRecord(parsed) || !Array.isArray(parsed.asks) || !Array.isArray(parsed.calls)) {
+        if (/unknown command/.test(done.stderr)) {
+            rowsUnsupported = true;
+        }
+
+        await logMod(host, "answers", {
+            event: "rows-failed",
+            exit: done.exitCode,
+            fallback: rowsUnsupported,
+            stderr: done.stderr.slice(-200),
+        });
+        return false;
+    }
+
+    for (const ask of parsed.asks.filter(isRecord)) {
+        const n = Number(ask.number);
+
+        if (Number.isInteger(n) && typeof ask.row === "string" && !askRows.has(n)) {
+            askRows.set(n, ask.row);
+        }
+    }
+
+    const calls = parsed.calls
+        .filter(isRecord)
+        .map((call) => ({ id: text(call.id), at: typeof call.at === "number" ? call.at : 0 }))
+        .filter((call) => call.id);
+
+    for (const entry of entries) {
+        const call = entryRows.has(entry.id) ? undefined : callFor(entry.at, calls);
+
+        if (call) {
+            entryRows.set(entry.id, call);
+        }
+    }
+
+    rowsSize = size;
+    await logMod(host, "answers", { event: "rows", scanned: parsed.scanned, asks: askRows.size, calls: calls.length });
+    return true;
+}
+
+/**
+ * Finds the rows not found yet, for these decision numbers (the log's and the chat's) and entries: from the shared
+ * index (`tools question transcript-rows`), or with an older CLI one `grep` over the bytes appended to the transcript
+ * since the last search, for the assistant lines that could hold them.
  */
 async function findRows(host: Host, numbers: readonly number[], entries: readonly LoggedEntry[]): Promise<void> {
     const dir = await sessionDirOf(host);
@@ -538,7 +666,19 @@ async function findRows(host: Host, numbers: readonly number[], entries: readonl
 
     const size = (await host.stat(transcript).catch(() => undefined))?.size ?? -1;
 
-    if (size < 0 || size === searchedSize || size === searchedOffset) {
+    if (size < 0) {
+        return;
+    }
+
+    if (
+        !rowsUnsupported &&
+        (await genesisProbe(host)).tools &&
+        (await rowsFromIndex(host, transcript, size, entries))
+    ) {
+        return;
+    }
+
+    if (!rowsUnsupported || size === searchedSize || size === searchedOffset) {
         return;
     }
 
@@ -606,6 +746,107 @@ export async function findAskRows(host: Host, numbers: readonly number[]): Promi
     await findRows(host, numbers, held?.entries ?? []);
 }
 
+/** `<agents>/mods-state/answers/<session>.json`: the last answer and its cursor, so a mod reload asks `--since`. */
+async function inboxFile(host: Host, session: string): Promise<string | undefined> {
+    const dir = await agentsDir(host);
+
+    return dir ? `${dir}/mods-state/answers/${session.replace(/[^\w.-]/g, "_")}.json` : undefined;
+}
+
+async function restoreInbox(host: Host, session: string): Promise<void> {
+    const file = await inboxFile(host, session);
+    const text = file ? await host.read(file).catch(() => undefined) : undefined;
+
+    try {
+        const saved: unknown = text ? JSON.parse(text) : undefined;
+
+        if (isRecord(saved) && saved.session === session && typeof saved.cursor === "string" && isRecord(saved.raw)) {
+            heldRaw = saved.raw;
+            heldCursor = saved.cursor;
+        }
+    } catch {
+        // A file cut short by another write: read the whole answer once.
+    }
+}
+
+interface InboxRead {
+    /** The answer as the CLI would print it whole; absent when the read failed. */
+    raw?: Record<string, unknown>;
+    how: "full" | "change" | "unchanged" | "legacy" | "failed";
+    exit?: number;
+    stderr?: string;
+}
+
+/**
+ * One `tools question inbox` read: `--since` the last cursor when there is one, merged into the last answer. A CLI
+ * that refuses the flags is asked the old way from then on.
+ */
+async function readInbox(host: Host, session: string): Promise<InboxRead> {
+    const base = ["tools", "question", "inbox", "--session", session, "--json", "--all-items"];
+    const dir = cursorUnsupported ? undefined : await sessionDirOf(host);
+    const argv = cursorUnsupported
+        ? base
+        : [
+              ...base,
+              ...(dir ? ["--transcript", `${dir}.jsonl`] : []),
+              ...(heldRaw && heldCursor ? ["--since", heldCursor] : []),
+          ];
+    const run = (args: readonly string[]) =>
+        host
+            .run(args, { timeoutMs: 20_000 })
+            .catch((error: unknown) => ({ exitCode: -1, stdout: "", stderr: String(error) }));
+    let done = await run(argv);
+
+    if (!cursorUnsupported && done.exitCode !== 0 && /unknown option/.test(done.stderr)) {
+        cursorUnsupported = true;
+        await logMod(host, "answers", { event: "cursor-unsupported", stderr: done.stderr.slice(-200) });
+        done = await run(base);
+    }
+
+    let parsed: unknown;
+
+    try {
+        parsed = done.exitCode === 0 ? JSON.parse(done.stdout) : undefined;
+    } catch {
+        parsed = undefined;
+    }
+
+    if (!isRecord(parsed)) {
+        return { how: "failed", exit: done.exitCode, stderr: done.stderr.slice(-300) };
+    }
+
+    if (cursorUnsupported || typeof parsed.cursor !== "string") {
+        return { raw: parsed, how: "legacy" };
+    }
+
+    const merged = heldRaw ? mergedAnswer(heldRaw, parsed) : undefined;
+    const raw = merged ?? parsed;
+    const unchanged =
+        merged !== undefined &&
+        parsed.cursor === heldCursor &&
+        LISTS.every((list) => Array.isArray(parsed[list]) && parsed[list].length === 0);
+
+    if (parsed.full === false && !merged) {
+        // A change with nothing to merge it into: ask for the whole answer next time.
+        heldRaw = undefined;
+        heldCursor = undefined;
+        return { how: "failed", stderr: "a change arrived with no answer to merge it into" };
+    }
+
+    heldRaw = raw;
+    heldCursor = parsed.cursor;
+
+    if (!unchanged) {
+        const file = await inboxFile(host, session);
+
+        if (file) {
+            await host.write(file, JSON.stringify({ session, cursor: parsed.cursor, raw })).catch(() => undefined);
+        }
+    }
+
+    return { raw, how: unchanged ? "unchanged" : merged ? "change" : "full" };
+}
+
 /**
  * Reads the session's items again when `force`, or when the files behind them changed since the last read. Callers
  * share a read in flight. Without the `tools` CLI there is nothing to read, and the last read stays.
@@ -631,25 +872,23 @@ export function refreshAnswers(host: Host, why: string, force = false): Promise<
         }
 
         const session = await host.sessionId();
-        const done = await host
-            .run(["tools", "question", "inbox", "--session", session, "--json", "--all-items"], { timeoutMs: 20_000 })
-            .catch((error: unknown) => ({ exitCode: -1, stdout: "", stderr: String(error) }));
-        const read = done.exitCode === 0 ? answersFrom(done.stdout) : undefined;
+
+        if (!heldRaw && !cursorUnsupported) {
+            await restoreInbox(host, session);
+        }
+
+        const answer = await readInbox(host, session);
+        const read = answer.raw ? answersOfValue(answer.raw, Date.now()) : undefined;
 
         if (!read) {
-            await logMod(host, "answers", {
-                event: "read-failed",
-                why,
-                exit: done.exitCode,
-                stderr: done.stderr.slice(-300),
-            });
+            await logMod(host, "answers", { event: "read-failed", why, exit: answer.exit, stderr: answer.stderr });
             return held;
         }
 
         held = read;
         heldStamp = stamp.own;
         lastReadAt = Date.now();
-        await logMod(host, "answers", { event: "read", why, own: ownMoved, slow });
+        await logMod(host, "answers", { event: "read", why, own: ownMoved, slow, how: answer.how });
         await findRows(
             host,
             read.decisions.map((decision) => decision.n),

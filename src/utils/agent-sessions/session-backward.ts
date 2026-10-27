@@ -1,6 +1,6 @@
 import { logger } from "@genesiscz/utils/logger";
 import { resolveHistoryProvider } from "./provider";
-import type { BackwardRead, ReadBackwardOptions, TurnBoundary } from "./types";
+import type { BackwardRead, ForwardRead, ReadBackwardOptions, ReadForwardOptions, TurnBoundary } from "./types";
 
 /**
  * A session's newest entries, from the transcript a hook names (`transcript_path`), through its provider's reader
@@ -55,4 +55,29 @@ export async function readSessionTurnBoundary({
     }
 
     return reader.readTurnBoundary(source, options);
+}
+
+/**
+ * A session's rows from a byte offset to its end, through its provider's reader (`NativeSessionReader.readForward`):
+ * the door an incremental scan uses, so it reads only what was appended since its last `endOffset`.
+ */
+export async function readSessionForward({
+    kind,
+    transcriptPath,
+    ...options
+}: ReadForwardOptions & { kind: string; transcriptPath: string }): Promise<ForwardRead> {
+    const { reader } = resolveHistoryProvider(kind);
+    const found = await reader.discover(reader.roots(), { filePaths: [transcriptPath], signal: options.signal });
+    const source =
+        found.sources.find(
+            (candidate) => candidate.filePath === transcriptPath || candidate.dataPaths.includes(transcriptPath)
+        ) ?? found.sources[0];
+
+    if (!source) {
+        const message = `No ${kind} session source for this transcript`;
+        logger.warn({ path: transcriptPath, kind, issues: found.issues }, message);
+        return { rows: [], file: null, endOffset: 0, issues: [...found.issues, { path: transcriptPath, message }] };
+    }
+
+    return reader.readForward(source, options);
 }

@@ -3,6 +3,7 @@ import { basename, dirname, join } from "node:path";
 import { boundHistoryText, HISTORY_METADATA_LIMITS } from "@genesiscz/utils/agent-sessions/metadata";
 import { flattenToolInput } from "@genesiscz/utils/agent-sessions/native-content";
 import { readJsonlBackward, readJsonlTurnBoundary } from "@genesiscz/utils/agent-sessions/read-backward";
+import { readJsonlForward } from "@genesiscz/utils/agent-sessions/read-forward";
 import type { JsonRecord, JsonValue } from "@genesiscz/utils/agent-sessions/source-scan";
 import { asRecord, blocksMetadata, scanJsonlRecords } from "@genesiscz/utils/agent-sessions/source-scan";
 import { isWrapperUserText } from "@genesiscz/utils/agent-sessions/user-text";
@@ -12,6 +13,7 @@ import { profiler } from "@genesiscz/utils/profile";
 import type {
     BackwardRead,
     BoundedMetadataField,
+    ForwardRead,
     HistoryMetadataRead,
     HistoryReadOptions,
     HistoryRecordRead,
@@ -21,6 +23,7 @@ import type {
     NativeSessionSource,
     NativeSourceIssue,
     ReadBackwardOptions,
+    ReadForwardOptions,
     TurnBoundary,
 } from "../types";
 
@@ -193,6 +196,7 @@ function historyEntry(options: {
     inputText?: string;
     searchText?: string;
     paths?: string[];
+    callId?: string;
 }): NativeHistoryEntry | undefined {
     if (!options.text && !options.searchText) {
         return;
@@ -205,6 +209,7 @@ function historyEntry(options: {
         ...(options.tool ? { tool: options.tool } : {}),
         ...(options.toolEvent ? { toolEvent: options.toolEvent } : {}),
         ...(options.inputText ? { inputText: options.inputText } : {}),
+        ...(options.callId ? { callId: options.callId } : {}),
         paths: options.paths ?? [],
         commits: commitHashes(options.text),
         ...(options.timestamp ? { timestamp: options.timestamp } : {}),
@@ -274,6 +279,7 @@ function grokToolCallEntries(row: JsonRecord, line: number, tools: ToolContext):
             tool: name,
             toolEvent: "call",
             paths,
+            callId: id,
         });
 
         if (entry) {
@@ -352,6 +358,7 @@ function recordEntries(row: JsonRecord, line: number, tools: ToolContext): Nativ
                 tool: name,
                 toolEvent: "call",
                 paths,
+                callId: id,
             });
             if (entry) {
                 entries.push(entry);
@@ -711,8 +718,37 @@ async function readGrokMetadataUncounted(
 
 export type GrokHistoryOperations = Pick<NativeSessionReader<"grok">, "parserVersion"> &
     Required<
-        Pick<NativeSessionReader<"grok">, "readMetadata" | "scan" | "readRecords" | "readBackward" | "readTurnBoundary">
+        Pick<
+            NativeSessionReader<"grok">,
+            "readMetadata" | "scan" | "readRecords" | "readBackward" | "readTurnBoundary" | "readForward"
+        >
     >;
+
+/**
+ * The chat history JSONL from an offset to its end. Its rows carry no id, so a row's key is `@<byte offset>`; a
+ * session without a chat file reads as nothing, with an issue.
+ */
+async function readGrokForward(source: NativeSessionSource<"grok">, options: ReadForwardOptions): Promise<ForwardRead> {
+    const chat = preferredChatPath(source);
+
+    if (!chat) {
+        return {
+            rows: [],
+            file: null,
+            endOffset: 0,
+            issues: [{ path: source.filePath, message: "Chat source missing" }],
+        };
+    }
+
+    const tools: ToolContext = { names: new Map(), paths: new Map() };
+
+    return readJsonlForward({
+        ...options,
+        path: chat,
+        rowKey: (_row, position) => `@${position}`,
+        rowEntries: (row, line) => recordEntries(asRecord(row), line, tools),
+    });
+}
 
 /**
  * The chat history JSONL from its end. Its rows carry no timestamps, so a caller bounds the walk by content (a
@@ -768,5 +804,6 @@ export function createGrokHistoryOperations(): GrokHistoryOperations {
         readRecords: readGrokRecords,
         readBackward: readGrokBackward,
         readTurnBoundary: readGrokTurnBoundary,
+        readForward: readGrokForward,
     };
 }

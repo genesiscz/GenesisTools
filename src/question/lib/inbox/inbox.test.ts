@@ -10,6 +10,7 @@ import { Command } from "commander";
 import { type InboxCommandDeps, registerInboxCommand } from "../../commands/inbox";
 import { paneMiss } from "../decisions/deliver";
 import { livePaneTargets } from "../decisions/deliver.fixtures";
+import { decisionFiles } from "../decisions/paths";
 import { parseDecisionBlocks } from "../decisions/read";
 import {
     type DecisionRecord,
@@ -1107,4 +1108,104 @@ test("a stale inbox card cannot answer a newer posted question", async () => {
         )
     ).rejects.toThrow("changed: the agent posted a new text");
     expect(readDecisions(files.file)[0].state).toBe("open");
+});
+
+async function runInboxJson(argv: string[]): Promise<Record<string, unknown>> {
+    const program = new Command();
+    program.exitOverride();
+    registerInboxCommand(program);
+    const printed: string[] = [];
+    const write = process.stdout.write.bind(process.stdout);
+    process.stdout.write = ((chunk: string) => {
+        printed.push(String(chunk));
+        return true;
+    }) as typeof process.stdout.write;
+
+    try {
+        await program.parseAsync(["inbox", ...argv], { from: "user" });
+        await Bun.sleep(5);
+    } finally {
+        process.stdout.write = write;
+        process.exitCode = 0;
+    }
+
+    return SafeJSON.parse(printed.join("").trim(), { strict: true }) as Record<string, unknown>;
+}
+
+describe("inbox --session --all-items --since: the cursor", () => {
+    /** A session with one stored decision and a transcript whose last reply asks nothing. */
+    async function cursorSession(session: string): Promise<{ argv: string[] }> {
+        const dir = mkdtempSync(join(tmpdir(), "gt-inbox-cursor-"));
+        const transcript = join(dir, `${session}.jsonl`);
+        writeFileSync(
+            transcript,
+            [
+                {
+                    type: "user",
+                    uuid: "u1",
+                    timestamp: "2026-03-01T10:00:00.000Z",
+                    message: { role: "user", content: "go" },
+                },
+                {
+                    type: "assistant",
+                    uuid: "a1",
+                    timestamp: "2026-03-01T10:01:00.000Z",
+                    message: { role: "assistant", content: [{ type: "text", text: "Done." }] },
+                },
+            ]
+                .map((row) => SafeJSON.stringify(row, { strict: true }))
+                .join("\n") + "\n"
+        );
+        const { file, events } = decisionFiles();
+        await postDecisions(file, events, {
+            sessionId: session,
+            decisions: [{ prompt: "Keep the cache?", options: ["keep it", "drop it"] }],
+        });
+
+        return { argv: ["--session", session, "--json", "--all-items", "--transcript", transcript] };
+    }
+
+    test("a cursor whose inputs did not move answers that nothing changed", async () => {
+        const { argv } = await cursorSession("s-cursor-same");
+        const first = await runInboxJson(argv);
+        const again = await runInboxJson([...argv, "--since", String(first.cursor)]);
+
+        expect(first.full).toBe(true);
+        expect(first.decisions).toHaveLength(1);
+        expect(again).toMatchObject({
+            cursor: first.cursor,
+            full: false,
+            decisions: [],
+            todos: [],
+            entries: [],
+            forms: [],
+            removed: { decisions: [], todos: [], entries: [], forms: [] },
+        });
+    });
+
+    test("a decision posted after the cursor comes back alone, with a new cursor", async () => {
+        const { argv } = await cursorSession("s-cursor-moved");
+        const first = await runInboxJson(argv);
+        const { file, events } = decisionFiles();
+        await postDecisions(file, events, {
+            sessionId: "s-cursor-moved",
+            decisions: [{ prompt: "Ship on Friday?", options: ["yes", "no"] }],
+        });
+        const next = await runInboxJson([...argv, "--since", String(first.cursor)]);
+        const changed = next.decisions as { number: number }[];
+
+        expect(next.full).toBe(false);
+        expect(next.cursor).not.toBe(first.cursor);
+        expect(changed.map((item) => item.number)).toEqual([2]);
+        expect(next.removed).toEqual({ decisions: [], todos: [], entries: [], forms: [] });
+    });
+
+    test("an unknown cursor gets the whole answer", async () => {
+        const { argv } = await cursorSession("s-cursor-unknown");
+        const answer = await runInboxJson([...argv, "--since", "c1-0000"]);
+
+        expect(answer.full).toBe(true);
+        expect(answer.decisions).toHaveLength(1);
+        expect(typeof answer.cursor).toBe("string");
+    });
 });
