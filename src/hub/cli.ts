@@ -944,11 +944,12 @@ const PR_HELP = "this PR/MR instead of the branch's: its URL, or <repoPath>#<num
 pr.command("find")
     .description("The PR/MR whose source branch is the checked-out branch, or provider null with a reason; read-only")
     .option("--repo <path>", REPO_HELP, ".")
+    .option("--branch <name>", "this branch of the checkout's project instead of the checked-out one")
     .option("--json", "machine-readable output")
-    .action(async (opts: { repo: string; json?: boolean }) => {
+    .action(async (opts: { repo: string; branch?: string; json?: boolean }) => {
         await prVerb({
             json: opts.json,
-            run: () => findBranchPr({ repo: opts.repo }),
+            run: () => findBranchPr({ repo: opts.repo, branch: opts.branch }),
             human: (found) =>
                 found.provider === null
                     ? `No PR/MR: ${found.reason}`

@@ -73,6 +73,42 @@ describe("findBranchPr", () => {
         expect(notGit).toMatchObject({ provider: null, reason: "not a git checkout" });
     });
 
+    test("a named branch is looked up instead of the checked-out one, also from a detached checkout", async () => {
+        const calls: string[] = [];
+        const found = await findBranchPr({
+            repo: "/work/app",
+            branch: "feat/other",
+            runner: runnerAnswering(
+                [
+                    [
+                        /^gh pr list .*--head feat\/other /,
+                        [
+                            {
+                                number: 7,
+                                title: "Other work",
+                                state: "OPEN",
+                                isDraft: false,
+                                author: { login: "alice" },
+                                headRefName: "feat/other",
+                                baseRefName: "main",
+                                headRefOid: "head7",
+                                baseRefOid: "base7",
+                                url: "https://github.com/acme/web/pull/7",
+                                createdAt: "2026-01-01T00:00:00Z",
+                                updatedAt: "2026-01-02T00:00:00Z",
+                            },
+                        ],
+                    ],
+                ],
+                calls
+            ),
+            readFacts: async () => facts({ branch: null }),
+        });
+
+        expect(calls).toHaveLength(1);
+        expect(found).toMatchObject({ provider: "github", number: 7, title: "Other work", sourceBranch: "feat/other" });
+    });
+
     test("GitHub: the open PR of the branch wins over a newer merged one, with both shas", async () => {
         const calls: string[] = [];
         const row = (number: number, state: string, updatedAt: string) => ({

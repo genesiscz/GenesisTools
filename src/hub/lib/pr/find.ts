@@ -186,21 +186,25 @@ async function gitlabBaseSha({
 }
 
 /**
- * The PR/MR whose source branch is the branch checked out at `repo`: open wins over merged or closed,
- * then the newest. `provider: null` with a reason when there is none, or when the branch or the
+ * The PR/MR whose source branch is the branch checked out at `repo`, or `branch` when given (a branch no
+ * checkout has, such as the one a hub commit link found holding its commit): open wins over merged or
+ * closed, then the newest. `provider: null` with a reason when there is none, or when the branch or the
  * origin cannot have one. A host that cannot answer throws, because "unknown" is not "none". Read-only.
  */
 export async function findBranchPr({
     repo,
+    branch,
     runner = spawnRunner,
     readFacts = repoFacts,
 }: {
     repo: string;
+    branch?: string;
     runner?: CommandRunner;
     readFacts?: FactsReader;
 }): Promise<FindResult> {
     const repoPath = resolve(repo);
-    const facts = await readFacts({ path: repoPath });
+    const read = await readFacts({ path: repoPath });
+    const facts = branch ? { ...read, branch } : read;
     const none = (reason: string): FindResult => {
         log.debug({ repoPath, branch: facts.branch, reason }, "hub pr find: none");
         return { provider: null, reason, branch: facts.branch, repoPath };
