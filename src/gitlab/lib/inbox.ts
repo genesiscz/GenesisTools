@@ -169,13 +169,6 @@ export interface InboxPipeline {
     created_at?: string;
 }
 
-interface RawEvent {
-    project_id: number;
-    action_name: string;
-    created_at: string;
-    note?: { noteable_type?: string; noteable_iid?: number | null };
-}
-
 function projectOfUrl(webUrl: string): string {
     const path = webUrl.replace(/^https?:\/\/[^/]+\//, "");
     const cut = path.indexOf("/-/");
@@ -262,7 +255,7 @@ const SYSTEM_PATTERNS = {
 };
 
 function after(iso: string | undefined, since: string): boolean {
-    return Boolean(iso) && Date.parse(iso as string) > Date.parse(since);
+    return iso !== undefined && Date.parse(iso) > Date.parse(since);
 }
 
 function excerptOf(body: string | undefined): string {
@@ -393,16 +386,15 @@ export interface InboxResult {
     errors: string[];
 }
 
-/** GitLab raises these itself, in the MR author's name; every other to-do you raised yourself is not news. */
-const SYSTEM_TODOS = new Set(["build_failed", "unmergeable"]);
-
-/** A to-do is news when it arrived after the mark and someone else (or GitLab) raised it. */
-export function isTodoNews(todo: InboxTodo, opts: Pick<CollectOptions, "me" | "since">): boolean {
-    return after(todo.createdAt, opts.since) && (todo.author !== opts.me.username || SYSTEM_TODOS.has(todo.action));
+/** Pending to-dos remain actionable until GitLab marks them done, regardless of when they arrived. */
+export function isTodoNews(_todo: InboxTodo, _opts: Pick<CollectOptions, "me" | "since">): boolean {
+    return true;
 }
 
-function mrListPath(projectId: number | null, filter: string, since: string): string {
-    const query = `${filter}&state=all&updated_after=${encodeURIComponent(since)}&order_by=updated_at`;
+function mrListPath(projectId: number | null, filter: string, since?: string): string {
+    const query = since
+        ? `${filter}&state=all&updated_after=${encodeURIComponent(since)}&order_by=updated_at`
+        : `${filter}&state=opened&order_by=updated_at`;
 
     return projectId === null ? `/merge_requests?scope=all&${query}` : `/projects/${projectId}/merge_requests?${query}`;
 }
@@ -414,11 +406,7 @@ function shiftIsoDays(iso: string, days: number): string {
 /** MRs the user commented on in the look-back window, as `[projectId, iid]`. */
 async function commentedMrs(api: GitLabApi, opts: CollectOptions): Promise<Array<[number, number]>> {
     // `after` is an exclusive day, so one more day back keeps the first day of the window.
-    const events = (await getUserEvents(
-        api,
-        opts.me.id,
-        shiftIsoDays(opts.since, -opts.lookbackDays - 1)
-    )) as RawEvent[];
+    const events = await getUserEvents(api, opts.me.id, shiftIsoDays(opts.since, -opts.lookbackDays - 1));
     const keys = new Map<string, [number, number]>();
 
     for (const event of events) {
@@ -455,7 +443,7 @@ export async function collectInbox(api: GitLabApi, opts: CollectOptions): Promis
 
     report("reading pending to-dos and the merge requests updated since the mark");
     const todoPath = `/todos?state=pending${opts.projectId === null ? "" : `&project_id=${opts.projectId}`}`;
-    const [rawTodos, own, reviewed] = await Promise.all([
+    const [rawTodos, own, reviewed, openOwn, openReviewed] = await Promise.all([
         attempt("to-dos", () => restGetPaginated<RawTodo>(api, todoPath)),
         opts.role === "reviewer"
             ? Promise.resolve([])
@@ -467,11 +455,21 @@ export async function collectInbox(api: GitLabApi, opts: CollectOptions): Promis
             : attempt("MRs you review", () =>
                   restGetPaginated<RawListMr>(api, mrListPath(opts.projectId, `reviewer_username=${user}`, opts.since))
               ),
+        opts.role === "reviewer"
+            ? Promise.resolve([])
+            : attempt("open own MRs", () =>
+                  restGetPaginated<RawListMr>(api, mrListPath(opts.projectId, `author_username=${user}`))
+              ),
+        opts.role === "author"
+            ? Promise.resolve([])
+            : attempt("open reviewed MRs", () =>
+                  restGetPaginated<RawListMr>(api, mrListPath(opts.projectId, `reviewer_username=${user}`))
+              ),
     ]);
 
     const todos = (rawTodos ?? []).map(toInboxTodo).filter((todo) => isTodoNews(todo, opts));
     const mrs = new Map<string, InboxMr>();
-    for (const raw of [...(own ?? []), ...(reviewed ?? [])]) {
+    for (const raw of [...(own ?? []), ...(reviewed ?? []), ...(openOwn ?? []), ...(openReviewed ?? [])]) {
         mrs.set(mrKey(raw.project_id, raw.iid), toInboxMr(raw));
     }
 
@@ -496,7 +494,7 @@ export async function collectInbox(api: GitLabApi, opts: CollectOptions): Promis
         );
         const hasTodo = todos.some((t) => t.projectId === projectId && t.iid === iid);
 
-        if (raw && (hasTodo || after(raw.updated_at, opts.since))) {
+        if (raw && (hasTodo || raw.state === "opened" || after(raw.updated_at, opts.since))) {
             mrs.set(key, toInboxMr(raw));
         }
     });

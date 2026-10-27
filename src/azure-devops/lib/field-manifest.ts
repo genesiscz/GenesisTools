@@ -188,8 +188,12 @@ export function diffManifests(saved: AdoFieldManifest, live: AdoFieldManifest): 
                 drift.push(`${typeName}: field ${ref} label "${old.name}" -> "${now.name}"`);
             }
 
-            if (old.type !== now.type || old.isIdentity !== now.isIdentity) {
+            if (old.type !== now.type) {
                 drift.push(`${typeName}: field ${ref} type ${old.type} -> ${now.type}`);
+            }
+
+            if (old.isIdentity !== now.isIdentity) {
+                drift.push(`${typeName}: field ${ref} identity ${old.isIdentity} -> ${now.isIdentity}`);
             }
 
             if (old.alwaysRequired !== now.alwaysRequired) {
@@ -231,7 +235,9 @@ function matchesLabel(label: string, query: FieldQuery["label"]): boolean {
         return true;
     }
 
-    return typeof query === "string" ? label.toLowerCase() === query.toLowerCase() : query.test(label);
+    return typeof query === "string"
+        ? label.toLowerCase() === query.toLowerCase()
+        : new RegExp(query.source, query.flags).test(label);
 }
 
 /** Every field that matches, one entry per reference name. */

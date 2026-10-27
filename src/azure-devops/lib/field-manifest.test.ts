@@ -82,7 +82,7 @@ describe("field manifest", () => {
         expect(() => renderManifestTs(manifest, "not-an-identifier")).toThrow("not a TypeScript identifier");
         expect(parseManifestFile(ts, "fields.ts")).toEqual(manifest);
         expect(parseManifestFile(renderManifestJson(manifest), "fields.json")).toEqual(manifest);
-        expect(() => parseManifestFile("export const OTHER = 1;", "other.ts")).toThrow("no");
+        expect(() => parseManifestFile("export const OTHER = 1;", "other.ts")).toThrow('has no "export const <Name>');
     });
 
     test("the check reports renamed labels, changed values and states, added fields, and ignores the meta", () => {
@@ -101,6 +101,21 @@ describe("field manifest", () => {
             'Bug: field System.Title "Title" added',
             `Task: field ${MERGED} label "Merge done" -> "Merge really done"`,
         ]);
+    });
+
+    test("global regex queries do not carry state between types or calls", () => {
+        const query = /merge/gi;
+        const manifest = fixture();
+        expect(findField(manifest, { label: query })?.types).toEqual(["Bug", "Task"]);
+        expect(findField(manifest, { label: query })?.types).toEqual(["Bug", "Task"]);
+        expect(query.lastIndex).toBe(0);
+    });
+
+    test("identity drift names the changed flag", () => {
+        const saved = fixture();
+        const live = fixture();
+        live.types.Bug.fields[OWNER].isIdentity = false;
+        expect(diffManifests(saved, live)).toContain(`Bug: field ${OWNER} identity true -> false`);
     });
 
     test("findField finds a field by label or value across types and refuses an ambiguous query", () => {

@@ -16,6 +16,10 @@ export interface DocumentEnvironment {
     reportUnresolved(dir: string, severity: "warn" | "error"): void;
     /** The specifier `init` writes into a new document module's import line. */
     scaffoldSpecifier: string;
+    /** Optional command for checking a generated document. */
+    checkCommand?(modulePath: string): string;
+    /** Optional command for overwriting a hand-edited generated document. */
+    forceBuildCommand?(modulePath: string): string;
 }
 
 /** No hints, no resolve check: a document stamp carries no `command=` and every module loads as it is. */

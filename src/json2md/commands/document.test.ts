@@ -212,6 +212,24 @@ describe("json2md document environment", () => {
         }
     });
 
+    test("init scaffolds host-specific commands even when its package is unresolved", async () => {
+        const dir = mkdtempSync(join(tmpdir(), "json2md-init-env-"));
+        const env: DocumentEnvironment = {
+            hints: () => ({ rebuildCommand: (file) => `host build ${file}` }),
+            unresolvedImporterDir: async () => dir,
+            reportUnresolved: () => undefined,
+            scaffoldSpecifier: "@host/json2md",
+            checkCommand: (file) => `host check ${file}`,
+        };
+        const program = new Command();
+        registerDocumentCommands(program, env);
+        await program.parseAsync(["node", "json2md", "init", join(dir, "doc")], { from: "node" });
+        const source = await Bun.file(join(dir, "doc.ts")).text();
+        expect(source).toContain("host build doc.ts");
+        expect(source).toContain("host check doc.ts");
+        expect(source).not.toContain("tools json2md");
+    });
+
     test("the verbs import neither the package link nor the GenesisTools hints, only their environment does", async () => {
         const source = await Bun.file(join(import.meta.dir, "document.ts")).text();
         const imports = new Bun.Transpiler({ loader: "ts" }).scanImports(source).map((imported) => imported.path);

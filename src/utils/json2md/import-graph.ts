@@ -1,5 +1,5 @@
 import { existsSync, readFileSync } from "node:fs";
-import { dirname, join, resolve } from "node:path";
+import { dirname, isAbsolute, join, resolve } from "node:path";
 import { SafeJSON } from "@genesiscz/utils/json";
 import { logger } from "@genesiscz/utils/logger";
 
@@ -157,7 +157,7 @@ export async function importerDirsOf(entry: string, packages: readonly string[])
                 continue;
             }
 
-            if (!target.startsWith(".") && !target.startsWith("/")) {
+            if (!target.startsWith(".") && !isAbsolute(target)) {
                 continue;
             }
 

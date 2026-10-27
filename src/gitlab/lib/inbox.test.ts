@@ -181,12 +181,9 @@ describe("isTodoNews", () => {
     });
     const opts = { me: { id: 99, username: "me" }, since: SINCE };
 
-    test("an old to-do, and one you raised yourself, are not news; a GitLab-raised one in your name is", () => {
-        expect(isTodoNews(todo("review_requested", "bob", "2026-10-21T00:00:00Z"), opts)).toBe(true);
-        expect(isTodoNews(todo("review_requested", "bob", "2026-10-19T00:00:00Z"), opts)).toBe(false);
-        expect(isTodoNews(todo("mentioned", "me", "2026-10-21T00:00:00Z"), opts)).toBe(false);
-        expect(isTodoNews(todo("assigned", "me", "2026-10-21T00:00:00Z"), opts)).toBe(false);
-        expect(isTodoNews(todo("unmergeable", "me", "2026-10-21T00:00:00Z"), opts)).toBe(true);
+    test("pending to-dos remain visible across checks even if old or self-created", () => {
+        expect(isTodoNews(todo("review_requested", "bob", "2026-10-19T00:00:00Z"), opts)).toBe(true);
+        expect(isTodoNews(todo("marked", "me", "2026-10-19T00:00:00Z"), opts)).toBe(true);
     });
 });
 
@@ -285,10 +282,11 @@ describe("collectInbox against a fake GitLab", () => {
             .get(`${project}/1/discussions`, [single(note(10, "bob", at)), thread([note(11, "bob", at)])])
             .get(`${project}/1/pipelines`, [{ status: "failed", web_url: "https://ci/9", updated_at: at }])
             .get(`${project}/2/discussions`, [single(note(20, "alice", at, { system: true, body: "added 1 commit" }))])
-            .get(`${project}/3/discussions`, []);
+            .get(`${project}/3/discussions`, [])
+            .get(`${project}/4/discussions`, []);
     }
 
-    test("lists your MRs, MRs you review and to-do MRs; skips a commented MR with nothing since the mark", async () => {
+    test("lists your MRs, MRs you review and pending to-do MRs", async () => {
         const fake = fakeGitLab();
         const { value } = await scoped(fake, () =>
             collectInbox(api, {
@@ -320,7 +318,7 @@ describe("collectInbox against a fake GitLab", () => {
         // one waiting thread, one review request, one other to-do
         expect(report.waits).toBe(3);
         expect(fake.calls("GET", "/todos")[0]?.query.get("project_id")).toBe(String(FAKE_PROJECT_ID));
-        expect(fake.calls("GET", `/projects/${FAKE_PROJECT_ID}/merge_requests/4/discussions`)).toEqual([]);
+        expect(fake.calls("GET", `/projects/${FAKE_PROJECT_ID}/merge_requests/4/discussions`)).toHaveLength(1);
 
         const text = renderInboxText(report);
         expect(text).toContain("1 of your MRs and 2 MRs you review have new activity. 3 items wait for you.");
@@ -329,9 +327,30 @@ describe("collectInbox against a fake GitLab", () => {
         expect(text).toContain("📌 review requested by bob");
     });
 
+    test("open waiting threads and pending to-dos survive the next check", async () => {
+        const fake = fakeGitLab();
+        const { value } = await scoped(fake, async () => {
+            const base = {
+                me: { id: 99, username: "me" },
+                role: "all" as const,
+                projectId: FAKE_PROJECT_ID,
+                lookbackDays: 30,
+            };
+            const first = await collectInbox(api, { ...base, since: SINCE, marks: {} });
+            const mark = advanceCheck(undefined, "2026-10-22T00:00:00Z", first.seen);
+            const second = await collectInbox(api, { ...base, since: mark.lastCheckedAt, marks: mark.mrs });
+            return { first, second };
+        });
+        expect(value.first.errors).toEqual([]);
+        expect(value.second.errors).toEqual([]);
+        expect(value.second.seen.find((a) => a.mr.iid === 1)?.waiting).toHaveLength(1);
+        expect(value.second.seen.find((a) => a.mr.iid === 3)?.todos).toHaveLength(1);
+        expect(value.second.otherTodos).toHaveLength(1);
+    });
+
     test("a failed request is reported and the rest is still read", async () => {
         const fake = fakeGitLab().get(`/projects/${FAKE_PROJECT_ID}/merge_requests/2/discussions`, () =>
-            Response.json({ message: "boom" }, { status: 500 })
+            Response.json({ message: "boom" }, { status: 400 })
         );
         const { value } = await scoped(fake, () =>
             collectInbox(api, {
@@ -345,6 +364,6 @@ describe("collectInbox against a fake GitLab", () => {
         );
 
         expect(value.errors.some((e) => e.startsWith("!2 discussions"))).toBe(true);
-        expect(value.seen.map((a) => a.mr.iid).sort()).toEqual([1, 3]);
+        expect(value.seen.map((a) => a.mr.iid).sort()).toEqual([1, 3, 4]);
     });
 });

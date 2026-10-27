@@ -149,12 +149,22 @@ async function checkFiles(paths: string[], types: string[] | undefined): Promise
             continue;
         }
 
-        const live = await fetchManifest({
-            context,
-            kind,
-            types: types ?? (kind.usesTypes ? typesOf(saved) : undefined),
-            regenerate: saved.meta.regenerate,
-        });
+        let live: Manifest;
+        try {
+            live = await fetchManifest({
+                context,
+                kind,
+                types: types ?? (kind.usesTypes ? typesOf(saved) : undefined),
+                regenerate: saved.meta.regenerate,
+            });
+        } catch (error) {
+            logger.debug({ error, path }, "maintenance: live fetch failed");
+            out.error(
+                `${path}: could not read live ${kind.kind} data: ${error instanceof Error ? error.message : String(error)}`
+            );
+            drifted++;
+            continue;
+        }
         const drift = diffOfKind(kind, saved, live);
 
         if (drift.length === 0) {
@@ -260,14 +270,21 @@ export function registerMaintenanceCommand(program: Command): void {
 
     maintenance
         .command("sync")
-        .description("Write every manifest (or --only some) into one folder as ado-<kind>.generated.<ts|json>")
+        .description(
+            "Write default manifests (identities require --only) into one folder as ado-<kind>.generated.<ts|json>"
+        )
         .requiredOption("--into <dir>", "The folder to write into (created when missing)")
-        .option("--only <kinds>", `Comma-separated kinds: ${MANIFEST_KIND_NAMES.join(",")}`)
+        .option(
+            "--only <kinds>",
+            `Comma-separated kinds: ${MANIFEST_KIND_NAMES.join(",")} (identities requires explicit selection)`
+        )
         .option("--prefix <identifier>", "Put this in front of each export name, e.g. Sample gives SampleAdoFields")
         .option("--types <list>", "Work item types for the fields and workflow manifests (default: every enabled type)")
         .option("-f, --format <format>", "File format: ts|json", "ts")
         .action(async (options: SyncOptions) => {
-            const names = options.only ? splitList(options.only) : MANIFEST_KIND_NAMES;
+            const names = options.only
+                ? splitList(options.only)
+                : MANIFEST_KIND_NAMES.filter((name) => name !== "identities");
             const unknown = names.filter((name) => !manifestKind(name));
             const format = FILE_FORMATS.find((value) => value === options.format);
 
@@ -341,7 +358,7 @@ export function registerMaintenanceCommand(program: Command): void {
             const drifted = await checkFiles(files, options.types ? splitList(options.types) : undefined);
 
             if (drifted > 0) {
-                out.println(pc.red(`${drifted} of ${files.length} manifest(s) drifted.`));
+                out.println(pc.red(`${drifted} of ${files.length} manifest(s) drifted or could not be checked.`));
                 process.exitCode = 1;
             }
         });
