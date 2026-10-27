@@ -1046,6 +1046,40 @@ describe("compaction dispatch", () => {
         expect(compactionFromSse(completedOnly).summary).toBe("Earlier work.");
     });
 
+    const frame = (event: Record<string, unknown>) => `data: ${SafeJSON.stringify(event)}\n\n`;
+    const compactionDone = (item: Record<string, unknown>) => frame({ type: "response.output_item.done", item });
+    const completed = frame({ type: "response.completed", response: { usage: { input_tokens: 1 } } });
+
+    it("installs a compaction item only from a finished response", async () => {
+        expect(compactionFromSse(await whamCompactionResponse("ENC").text()).item?.encrypted_content).toBe("ENC");
+        const fromOutput = frame({
+            type: "response.completed",
+            response: { output: [{ type: "compaction", encrypted_content: "ENC-OUT" }] },
+        });
+        expect(compactionFromSse(fromOutput).item?.encrypted_content).toBe("ENC-OUT");
+    });
+
+    it("refuses a malformed compaction item", () => {
+        expect(compactionFromSse(compactionDone({ type: "compaction" }) + completed).item).toBeUndefined();
+        expect(
+            compactionFromSse(compactionDone({ type: "compaction", encrypted_content: "" }) + completed).item
+        ).toBeUndefined();
+    });
+
+    it("refuses a compaction item from a stream that ended before response.completed", () => {
+        expect(
+            compactionFromSse(compactionDone({ type: "compaction", encrypted_content: "ENC" })).item
+        ).toBeUndefined();
+    });
+
+    it("refuses a compaction item when the response failed or stopped early", () => {
+        const item = compactionDone({ type: "compaction", encrypted_content: "ENC" });
+
+        for (const type of ["response.failed", "response.incomplete", "error"]) {
+            expect(compactionFromSse(item + frame({ type, response: {} }) + completed).item).toBeUndefined();
+        }
+    });
+
     it("sends keepalives and aborts a stalled preparation at its deadline", async () => {
         const { compactionDispatch } = await import("./openai-subscription");
         let aborted = false;
