@@ -14,8 +14,10 @@ import {
     decide,
     fableReplaceCommand,
     innerCommand,
+    listPending,
     type RunEntry,
     readOnlyChain,
+    ritualCommand,
     watchApprovals,
 } from "./approve-codex";
 import { type ConflictPick, resolutionProblems, resolveConflictText } from "./conflicts";
@@ -188,6 +190,72 @@ describe("trust levels", () => {
         } finally {
             output.mockRestore();
         }
+    });
+
+    test("literal rituals are denied but quoted mentions and ambiguous commands go to the lead", async () => {
+        for (const text of [
+            "tools say done",
+            "./tools say done",
+            "true; tools say done",
+            "if true; then tools say done; fi",
+        ]) {
+            expect(ritualCommand({ command: text }), text).toBe(true);
+        }
+        for (const text of [
+            "rg 'tools say' .claude",
+            "printf '%s' 'tools say done'",
+            "tools say done > out.txt",
+            "printf x\\; tools say",
+        ]) {
+            expect(ritualCommand({ command: text }), text).toBe(false);
+        }
+
+        let time = 0;
+        const denied: string[] = [];
+        const feed: string[] = [];
+        const exec: typeof execTool = async (args) => {
+            if (args[1] === "deny") {
+                denied.push(args[args.length - 1]);
+                return { success: true, exitCode: 0, stdout: "", stderr: "" };
+            }
+            if (args[1] === "approve") {
+                throw new Error("manual-only monitor must not approve");
+            }
+            const pendingApprovals = {
+                search: {
+                    method: "execCommandApproval",
+                    command: "rg 'tools say' .claude",
+                    detail: "search ritual docs",
+                    cwd: entry.cwd,
+                },
+                ...(denied.length
+                    ? {}
+                    : {
+                          ritual: {
+                              method: "execCommandApproval",
+                              command: "tools say done",
+                              detail: "ritual",
+                              cwd: entry.cwd,
+                          },
+                      }),
+            };
+            return { success: true, exitCode: 0, stdout: SafeJSON.stringify({ pendingApprovals }), stderr: "" };
+        };
+        await watchApprovals({
+            entry,
+            exec,
+            now: () => time,
+            sleep: async (ms) => {
+                time += ms;
+            },
+            timeoutMs: 250,
+            pollMs: 50,
+            feed: (line) => feed.push(line),
+            remindAfterMs: 100,
+        });
+        expect(denied).toEqual(["ritual"]);
+        expect(feed.some((line) => line.includes("NEEDS LEAD #search"))).toBe(true);
+        expect(feed.some((line) => line.includes("STILL WAITING #search"))).toBe(true);
     });
 
     test("a waiting request repeats and a wider trust level never auto-approves it", async () => {
@@ -1129,6 +1197,109 @@ describe("conflict resolution helper", () => {
         expect(resolveVersionConflicts(git, conflictedFiles(git))).toBe(false);
         git(["cherry-pick", "--abort"]);
     });
+});
+
+test("pending listing continues past invalid JSON and nonobject status", async () => {
+    const dir = fs.mkdtempSync(join(tmpdir(), "babysit-pending-status-"));
+    const runPath = join(dir, "run.json");
+    fs.writeFileSync(
+        runPath,
+        SafeJSON.stringify({
+            prs: [
+                { ...entry, name: "bad-json" },
+                { ...entry, name: "not-object" },
+                { ...entry, name: "bad-pending" },
+                { ...entry, name: "good" },
+            ],
+        })
+    );
+    const messages: string[] = [];
+    const output = spyOn(console, "log").mockImplementation((line) => messages.push(String(line)));
+    const exec: typeof execTool = async (args) => {
+        const stdout =
+            args[3] === "bad-json"
+                ? "not json"
+                : args[3] === "not-object"
+                  ? "null"
+                  : args[3] === "bad-pending"
+                    ? '{"pendingApprovals":[]}'
+                    : SafeJSON.stringify({
+                          pendingApprovals: {
+                              broken: null,
+                              r: {
+                                  method: "execCommandApproval",
+                                  command: "cat a",
+                                  cwd: entry.cwd,
+                                  detail: `good request ${"x".repeat(300)} end`,
+                              },
+                          },
+                      });
+        return { success: true, exitCode: 0, stdout, stderr: "" };
+    };
+    try {
+        await listPending({ runPath, exec });
+        expect(messages.some((line) => line.includes("bad-json: invalid status JSON"))).toBe(true);
+        expect(messages.some((line) => line.includes("not-object: invalid status JSON"))).toBe(true);
+        expect(messages.some((line) => line.includes("bad-pending: invalid status JSON"))).toBe(true);
+        expect(messages.some((line) => line.includes("good #broken: invalid approval request"))).toBe(true);
+        expect(
+            messages.some((line) => line.includes("good #r NEEDS LEAD") && line.endsWith(`${"x".repeat(300)} end`))
+        ).toBe(true);
+        expect(messages.at(-1)).toBe("1 waiting request(s) across 4 worker(s)");
+    } finally {
+        output.mockRestore();
+    }
+});
+
+test("malformed successful status is bounded and reported, while valid status resets the failure count", async () => {
+    let time = 0;
+    let calls = 0;
+    const feed: string[] = [];
+    const output = spyOn(console, "error").mockImplementation(() => {});
+    const exec: typeof execTool = async () => {
+        calls++;
+        const stdout = calls % 2 ? "not json" : "null";
+        return { success: true, exitCode: 0, stdout, stderr: "" };
+    };
+    try {
+        await watchApprovals({
+            entry,
+            exec,
+            now: () => time,
+            sleep: async (ms) => {
+                time += ms;
+            },
+            timeoutMs: 1_000,
+            pollMs: 5,
+            feed: (line) => feed.push(line),
+        });
+        expect(calls).toBe(10);
+        expect(feed).toEqual([expect.stringContaining("status failed 10 times in a row")]);
+
+        time = 0;
+        calls = 0;
+        feed.length = 0;
+        const recovered: typeof execTool = async () => {
+            calls++;
+            const stdout = calls <= 9 ? "not json" : calls === 10 ? "{}" : calls <= 19 ? "null" : '{"status":"closed"}';
+            return { success: true, exitCode: 0, stdout, stderr: "" };
+        };
+        await watchApprovals({
+            entry,
+            exec: recovered,
+            now: () => time,
+            sleep: async (ms) => {
+                time += ms;
+            },
+            timeoutMs: 1_000,
+            pollMs: 5,
+            feed: (line) => feed.push(line),
+        });
+        expect(calls).toBe(20);
+        expect(feed).toEqual([]);
+    } finally {
+        output.mockRestore();
+    }
 });
 
 test("a status that keeps failing names the exit and the output, then hands over to the lead", async () => {

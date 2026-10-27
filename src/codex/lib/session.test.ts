@@ -596,7 +596,20 @@ describe("CodexSessionRuntime", () => {
                     legacy: false,
                 },
                 { method: "item/fileChange/requestApproval", params: { itemId: "file-1" }, legacy: false },
-                { method: "execCommandApproval", params: { command: ["cat", "README.md"], cwd: home }, legacy: true },
+                {
+                    method: "execCommandApproval",
+                    params: {
+                        callId: "call-1",
+                        conversationId: "thread-1",
+                        command: ["cat", "a file's name; $HOME"],
+                        cwd: home,
+                        parsedCmd: [],
+                        reason: "inspect file",
+                    },
+                    legacy: true,
+                },
+                { method: "execCommandApproval", params: { command: ["cat", 42], cwd: home }, legacy: true },
+                { method: "execCommandApproval", params: { command: [], cwd: home }, legacy: true },
                 { method: "applyPatchApproval", params: { fileChanges: {} }, legacy: true },
             ];
             for (const { method, params, legacy } of methods) {
@@ -609,7 +622,22 @@ describe("CodexSessionRuntime", () => {
                     });
                     await Bun.sleep(0);
                     expect(settled).toBe(false);
-                    expect(store.readMeta(meta.name)?.pendingApprovals[id]).toBeDefined();
+                    const record = store.readMeta(meta.name)?.pendingApprovals[id];
+                    expect(record).toBeDefined();
+                    if (method === "item/commandExecution/requestApproval") {
+                        expect(record?.command).toBe("cat README.md");
+                    }
+                    if (method === "execCommandApproval") {
+                        if ("reason" in params) {
+                            expect(record?.command).toBe("'cat' 'a file'\\''s name; $HOME'");
+                            expect(record?.detail).toContain("inspect file");
+                            expect(record?.detail).toContain("'cat' 'a file'\\''s name; $HOME'");
+                        } else if ("command" in params && Array.isArray(params.command) && params.command.length) {
+                            expect(record?.detail).toContain('invalid command: ["cat",42]');
+                        } else {
+                            expect(record?.detail).toBe("[]");
+                        }
+                    }
                     await runtime.execute({ op, requestId: id });
                     const decision =
                         op === "approve" ? (legacy ? "approved" : "accept") : legacy ? "denied" : "decline";
@@ -675,7 +703,7 @@ describe("CodexSessionRuntime", () => {
             await Bun.sleep(0);
             try {
                 expect(store.readMeta(meta.name)?.pendingApprovals["command-context"]).toMatchObject({
-                    detail: "bunx biome check src/a.ts",
+                    detail: "bunx biome check src/a.ts: touch outside.ts",
                     command: "touch outside.ts",
                     cwd: home,
                 });
