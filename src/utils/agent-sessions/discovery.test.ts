@@ -106,6 +106,48 @@ test.each(["claude", "codex", "grok"] as const)(
     }
 );
 
+test("a warm sub-agent walk checks its folders without a promise stat and finds the same files", async () => {
+    const root = realpathSync(mkdtempSync(join(tmpdir(), "gt-discovery-warm-stat-")));
+    const folders = [root];
+    for (let index = 0; index < 4; index++) {
+        const project = join(root, `project-${index}`);
+        const agents = join(project, ID_A, "subagents");
+        mkdirSync(agents, { recursive: true });
+        writeFileSync(
+            join(agents, `agent-a${index}.jsonl`),
+            line({ type: "user", sessionId: ID_A, message: { content: "fixture" } })
+        );
+        writeFileSync(
+            join(project, `${ID_B}.jsonl`),
+            line({ type: "user", sessionId: ID_B, message: { content: "fixture" } })
+        );
+        folders.push(project, join(project, ID_A), agents);
+    }
+    // A folder's listing is kept only once its mtime is two seconds old.
+    const past = new Date(Date.now() - 60_000);
+    for (const folder of folders) {
+        utimesSync(folder, past, past);
+    }
+
+    const cold = await discoverClaudeHistorySources([root], { agentsOnly: true });
+    const promiseStat = spyOn(fsPromises, "stat");
+    try {
+        const warm = await discoverClaudeHistorySources([root], { agentsOnly: true });
+        expect(warm.sources).toEqual(cold.sources);
+        expect(warm.sources.map((source) => basename(source.filePath)).sort()).toEqual([
+            "agent-a0.jsonl",
+            "agent-a1.jsonl",
+            "agent-a2.jsonl",
+            "agent-a3.jsonl",
+        ]);
+        // Each folder is checked with `statSync` (a quarter of the CPU); only the project indexes still go async.
+        const folderStats = promiseStat.mock.calls.filter(([path]) => !String(path).endsWith("sessions-index.json"));
+        expect(folderStats).toEqual([]);
+    } finally {
+        promiseStat.mockRestore();
+    }
+});
+
 test.each(["depth", "folder"] as const)("an in-root file rejected by %s does no discovery walk", async (filter) => {
     const root = realpathSync(mkdtempSync(join(tmpdir(), "gt-discovery-rejected-")));
     mkdirSync(join(root, "project", "deep"), { recursive: true });
