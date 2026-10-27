@@ -315,6 +315,7 @@ export async function runCodexSession(
         codexModel,
         ...(claude ? { claude: { fable: claude.hasFable } } : {}),
         ...(codexLogin ? { codexAccount: codexLogin } : {}),
+        settings: config.claudeSessions,
     });
     const configDir = opts.isolated ? join(claudeCodexConfigRoot(), sessionId) : undefined;
 
@@ -405,7 +406,7 @@ export async function runCodexSession(
             CLAUDE_CODE_AUTO_COMPACT_WINDOW: String(model.info.window),
             CLAUDE_AUTOCOMPACT_PCT_OVERRIDE: String(compact.percent),
         },
-        leadPrompt: leadPrompt(agents),
+        leadPrompt: leadPrompt(agents, config.claudeSessions),
         passthrough,
     });
 

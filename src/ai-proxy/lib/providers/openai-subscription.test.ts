@@ -3,6 +3,7 @@ import { mkdtempSync, readFileSync, writeFileSync } from "node:fs";
 import { tmpdir } from "node:os";
 import { join } from "node:path";
 import { resetCooldowns } from "@app/ai-proxy/lib/providers/cooldown";
+import { setClaudeSessionSettings } from "@app/ai-proxy/lib/sessions/settings";
 import {
     CLAUDE_CODE_COMPACTION_MARK,
     isClaudeCodeModelProbe,
@@ -1305,6 +1306,31 @@ describe("native /v1/messages route: reasoning carried in gtr1 envelopes", () =>
         expect(SafeJSON.stringify(input.at(-1))).toContain("under 5000 words");
         // WHAM treats a tool without `strict` as strict, and the model then fills every optional field.
         expect(sent[0]?.tools).toEqual([expect.objectContaining({ type: "function", name: "Read", strict: false })]);
+    });
+
+    it("claudeSessions.compaction in the config keeps the session's effort and drops the length", async () => {
+        const sent: Array<Record<string, unknown>> = [];
+        globalThis.fetch = (async (_url: RequestInfo | URL, init?: RequestInit) => {
+            sent.push(SafeJSON.parse(String(init?.body)) as Record<string, unknown>);
+            return whamStreamResponse();
+        }) as typeof fetch;
+        setClaudeSessionSettings({ compaction: { effort: "session", words: 0 } });
+
+        try {
+            await (
+                await send({
+                    model: "gpt-6.1-sol",
+                    stream: true,
+                    messages: [{ role: "user", content: `${CLAUDE_CODE_COMPACTION_MARK}\n\nSummarize.` }],
+                    output_config: { effort: "xhigh" },
+                })
+            ).text();
+        } finally {
+            setClaudeSessionSettings(undefined);
+        }
+
+        expect((sent[0]?.reasoning as Record<string, unknown> | undefined)?.effort).toBe("xhigh");
+        expect(SafeJSON.stringify(sent[0]?.input)).not.toContain("words");
     });
 
     it("Claude Code's /effort applies without an :effort suffix, and the suffix wins over it", async () => {

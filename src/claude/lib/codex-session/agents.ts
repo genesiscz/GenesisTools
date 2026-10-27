@@ -10,6 +10,8 @@
  */
 import { mkdirSync, writeFileSync } from "node:fs";
 import { isAbsolute, join, relative, resolve } from "node:path";
+import { withSystemNote } from "@app/ai-proxy/lib/sessions/settings";
+import type { ClaudeSessionsConfig } from "@app/ai-proxy/lib/types";
 import { CLAUDE_MODELS } from "@app/claude/lib/models";
 import type { CodexModelInfo } from "@genesiscz/utils/ai/openai/codex-models";
 import { resolveOpenAiSubModel } from "@genesiscz/utils/ai/openai/sub-models";
@@ -37,6 +39,22 @@ export interface SessionAgentsInput {
     claude?: { fable: boolean };
     /** The Codex login the `codex-worker` pins its worker to (`tools codex spawn -a`). */
     codexAccount?: string;
+    /** `claudeSessions` of the proxy config: the subagents' note and the skills nudge. */
+    settings?: ClaudeSessionsConfig;
+}
+
+/** Whether the lead names each subagent's skills: on unless `claudeSessions.subagents.skills.nudge` is false. */
+function skillsNudge(settings: ClaudeSessionsConfig | undefined): boolean {
+    return settings?.subagents?.skills?.nudge !== false;
+}
+
+/** The Codex subagents' system prompt: the built-in one, the configured note around it, and the skills rule. */
+function codexAgentPrompt(settings: ClaudeSessionsConfig | undefined): string {
+    const skills = skillsNudge(settings)
+        ? "\n\nSkills: load only the skills your brief names. A brief that names none needs none; do not load a skill to look around."
+        : "";
+
+    return withSystemNote(`${CODEX_PROMPT}${skills}`, settings?.subagents?.systemNote);
 }
 
 interface CodexAgentSpec {
@@ -126,17 +144,26 @@ function codexWorkerPrompt(codexAccount: string | undefined): string {
  * `tools codex spawn --write ask` workers: 833 of its 1,635 wake-ups were worker approvals and messages, and five
  * hours went by. Here the native agents already are Codex, inside the session, with no approvals to relay.
  */
-export function leadPrompt(agents: Record<string, SessionAgentDefinition>): string {
+export function leadPrompt(agents: Record<string, SessionAgentDefinition>, settings?: ClaudeSessionsConfig): string {
     const codex = Object.entries(agents)
         .filter(([name, agent]) => agent.model.startsWith("codex/") && name !== "codex-worker")
         .map(([name, agent]) => `${name} (${agent.model.slice("codex/".length)}, effort ${agent.effort ?? "default"})`);
 
-    return [
+    const lines = [
         "This Claude Code session runs on Codex through ai-proxy.",
         `Its subagents ${codex.join(", ")} are Codex models. When a skill or brief asks for a Codex, Sol, Terra, Luna or Astra worker, start that subagent with the Agent tool (subagent_type, and effort to raise it, for example effort "xhigh"), not \`${toolCommand("codex spawn")}\` or the handoff-to skill.`,
         `A native subagent needs no approvals from you and reports back once, when it finishes. A \`${toolCommand("codex spawn")}\` worker started with --write ask makes you approve its commands one by one.`,
         "Use the codex-worker subagent only when the work must run in the Codex CLI's own sandbox.",
-    ].join("\n");
+    ];
+
+    if (skillsNudge(settings)) {
+        const allowed = settings?.subagents?.skills?.allowed;
+        lines.push(
+            `Every subagent brief names the skills the subagent should load (or says "no skills"); a subagent loads only those, because each skill it loads costs its context.${allowed?.length ? ` Pick them from: ${allowed.join(", ")}.` : ""}`
+        );
+    }
+
+    return withSystemNote(lines.join("\n"), settings?.lead?.systemNote);
 }
 
 /** The Claude Code id of a Claude model by its catalog alias, with `[1m]` where the model needs the suffix for its 1M window (P5). */
@@ -165,7 +192,7 @@ export function sessionAgents(input: SessionAgentsInput): Record<string, Session
         const name = info?.displayName ?? slug;
         agents[spec.name] = {
             description: `Codex ${name} at ${spec.effort} effort. ${spec.use} Bills the session's Codex account.`,
-            prompt: CODEX_PROMPT,
+            prompt: codexAgentPrompt(input.settings),
             model: `codex/${slug}`,
             effort: spec.effort,
             disallowedTools: ["Agent"],
