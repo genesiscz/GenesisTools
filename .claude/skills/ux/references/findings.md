@@ -3,6 +3,28 @@
 Newest first. Each entry: date, symptom as the user saw it, cause, fix, commit. Generic lessons go to
 checklist.md or motion.md as well.
 
+- 2026-10-27 03:40 — **The hub Inbox and the widget's decision surfaces (UX audit F1 to F22, P1 to P14).**
+  - *A primary button's blue was picked by eye.* White on the first "send blue" measured 4.19:1, and
+    `SessionPalette.blue` as a fill 2.6:1. Fix: `GenPrimaryButtonStyle.blue` (0.12, 0.32, 0.80) with a test that
+    computes the contrast of the white label. Lesson: a fill under text gets a computed 4.5:1 assertion, never a look.
+  - *Typing a note staged the decision.* A 600 ms autosave after each pause wrote a staged note, showed "Send 1 answer"
+    mid-sentence and reloaded every session (306 to 432 ms of main thread per load). Fix: the note stays in the card and
+    in the model's `noteTexts`, and only Return, ⌘-Return, Stage note or a pick writes it. Rule: typing never writes
+    the store; staging is an explicit act.
+  - *One state, four words.* The same closed decision read "sent" in its header and "queued … when the decisions hook
+    is on" in its footer; "D22" beside "Decision 22"; "3 answers waiting" for three open questions. Fix: one vocabulary
+    in GenesisKit (`WidgetWords`, `LiveWidgetView.statusPhrase`) that the hub and the widget both call.
+  - *A flash trigger built from the selection.* The planned `focusedItemID == id ? focusRequest : 0` changes again when
+    the reveal clears and when another card is revealed, and `AttentionPulse` plays on every change, so the old card
+    would flash a second time. Fix: a reveal count per item (`revealCounts[id]`). Rule: an attention trigger changes
+    only for its own target. Caught in review, before it shipped.
+  - *An option label kept the agent's letter* ("a) a) keep it" on 176 of 201 options), because the row drew the badge
+    and the raw label. Fix: `InboxChoice.shownLabel` through `WidgetOptionText.text`, in the row and in ⌘F.
+  - *A failed widget call showed Foundation's own words* ("The data couldn't be read because it isn't in the correct
+    format.") as the whole error. Fix: `WidgetErrorText` maps the error to one sentence, the decoder's text goes behind
+    Details, and the error offers Reconnect.
+  - Commits **c69ce78bda** (widget), **68de680c8** (hub Inbox), **39de367d7** (After a send, the error text).
+
 - 2026-10-26 14:22 — **The decision alert and the own answer (Martin's screenshot of DECISION 15: "this is still ugly").**
   - *The alert read as an empty card.* A fill and a border inside the panel (a card in a card), options drawn as radio
     circles that took no click, and a faint "Click to answer" pinned under a band of nothing. Fix: no card in the
