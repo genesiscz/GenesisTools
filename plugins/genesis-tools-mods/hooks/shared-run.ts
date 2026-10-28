@@ -16,6 +16,9 @@ export interface SharedRunResult {
     stderr: string;
 }
 
+/** The clock the claims and answers are dated by; a test moves it, since the engine's `Date.now` is read-only. */
+export const sharedRunClock = { now: (): number => Date.now() };
+
 /** How long a session waits for another session's identical run before it runs the command itself. */
 const WAIT_MS = 10_000;
 const POLL_MS = 250;
@@ -59,7 +62,7 @@ async function readAnswer(
             isRecord(held) &&
             held.key === ask.key &&
             typeof held.at === "number" &&
-            Date.now() - held.at < ask.ttlMs &&
+            sharedRunClock.now() - held.at < ask.ttlMs &&
             held.at >= (ask.since ?? 0) &&
             typeof held.exitCode === "number" &&
             typeof held.stdout === "string"
@@ -115,8 +118,12 @@ async function answerOfClaimant(
 ): Promise<SharedRunResult | undefined> {
     let claim = await readClaim(host, ask.lockPath);
 
-    if (!claim || claim.until <= Date.now()) {
-        const mine: Claim = { token: ask.token, started: Date.now(), until: Date.now() + ask.timeoutMs };
+    if (!claim || claim.until <= sharedRunClock.now()) {
+        const mine: Claim = {
+            token: ask.token,
+            started: sharedRunClock.now(),
+            until: sharedRunClock.now() + ask.timeoutMs,
+        };
         await host.write(ask.lockPath, JSON.stringify(mine)).catch(() => undefined);
         claim = await readClaim(host, ask.lockPath);
 
@@ -129,9 +136,9 @@ async function answerOfClaimant(
         return undefined;
     }
 
-    const deadline = Math.min(claim.until, Date.now() + WAIT_MS);
+    const deadline = Math.min(claim.until, sharedRunClock.now() + WAIT_MS);
 
-    while (Date.now() < deadline) {
+    while (sharedRunClock.now() < deadline) {
         await host.sleep(POLL_MS);
         const answer = await readAnswer(host, { path: ask.path, key: ask.key, ttlMs: ask.ttlMs, since: claim.started });
 
@@ -141,7 +148,7 @@ async function answerOfClaimant(
 
         const now = await readClaim(host, ask.lockPath);
 
-        if (now?.token !== claim.token || now.until <= Date.now()) {
+        if (now?.token !== claim.token || now.until <= sharedRunClock.now()) {
             // The claimant finished without a usable answer, or gave up: run.
             return undefined;
         }
@@ -157,7 +164,7 @@ async function runShared(
     path: string | undefined
 ): Promise<SharedRunResult | undefined> {
     const lockPath = path?.replace(/\.json$/, ".lock.json");
-    const token = `${Date.now().toString(36)}-${Math.random().toString(36).slice(2)}`;
+    const token = `${sharedRunClock.now().toString(36)}-${Math.random().toString(36).slice(2)}`;
 
     if (path && lockPath && ask.ttlMs > 0) {
         const answer = await answerOfClaimant(host, {
@@ -177,7 +184,13 @@ async function runShared(
     const done = await host.run(ask.argv, { cwd: ask.cwd, timeoutMs: ask.timeoutMs }).catch(() => undefined);
 
     if (path && done) {
-        const record = { key, at: Date.now(), exitCode: done.exitCode, stdout: done.stdout, stderr: done.stderr };
+        const record = {
+            key,
+            at: sharedRunClock.now(),
+            exitCode: done.exitCode,
+            stdout: done.stdout,
+            stderr: done.stderr,
+        };
         await host.write(path, JSON.stringify(record)).catch(() => undefined);
     }
 

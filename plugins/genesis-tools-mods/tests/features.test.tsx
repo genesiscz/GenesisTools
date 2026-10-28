@@ -86,7 +86,7 @@ import { bareDescription } from "../hooks/model-label";
 import { forgetRepoMentions, namesIn, sessionRepos, titleMatches, urlProject } from "../hooks/pr-repos";
 import { modsSettings } from "../hooks/settings";
 import { afterTools, forgetSettings, type Host, isRecord } from "../hooks/shared";
-import { sharedRun, sharedRunFiles } from "../hooks/shared-run";
+import { sharedRun, sharedRunClock, sharedRunFiles } from "../hooks/shared-run";
 import { toolLabel } from "../hooks/spinner";
 import {
     checkStall,
@@ -3628,4 +3628,295 @@ test("a session nobody watches (-p, the SDK) starts no panel feature, and a watc
     await $.session.start({ cwd: "/repo", surface: "terminal", isInteractive: true });
     await machine.clock.settle();
     expect(panelRuns()).toBeGreaterThan(0);
+});
+
+const SHARED_DIR = "/home/test/.genesis-tools/agents";
+
+/** The answer file and the claim file of `SHARED_ASK` (or another ask). */
+function sharedFiles(ask: { argv: readonly string[]; cwd: string } = SHARED_ASK) {
+    const { key, path } = sharedRunFiles(SHARED_DIR, ask);
+
+    return { key, path: String(path), lockPath: String(path).replace(/\.json$/, ".lock.json") };
+}
+
+/**
+ * A host whose `sleep` moves a fake clock instead of waiting, with `sharedRunClock` on that clock: the 250 ms poll
+ * and the 10 s give-up are counted, not waited for. `onSleep` runs after each step, as another session would act.
+ */
+function fakeClockHost(files: Map<string, string>, onSleep: (now: number, sleeps: number) => void = () => {}) {
+    const realNow = sharedRunClock.now;
+    let now = realNow();
+    const sleeps: number[] = [];
+    const runs = { count: 0 };
+    const { host: base } = sharedRunHost(files, 0);
+    const host: Host = {
+        ...base,
+        async run() {
+            runs.count++;
+            return { exitCode: 0, stdout: "mine", stderr: "", isStdoutTruncated: false, isStderrTruncated: false };
+        },
+        sleep: async (ms) => {
+            sleeps.push(ms);
+            now += ms;
+            onSleep(now, sleeps.length);
+        },
+    };
+    sharedRunClock.now = () => now;
+
+    return {
+        host,
+        runs,
+        sleeps,
+        restore: () => {
+            sharedRunClock.now = realNow;
+        },
+        now: () => now,
+    };
+}
+
+test("shared run: a waiter polls every 250 ms and gives up after 10 s on a live claim, then runs itself", async () => {
+    const files = new Map<string, string>();
+    const clock = fakeClockHost(files);
+    const { lockPath } = sharedFiles();
+
+    try {
+        const started = sharedRunClock.now();
+        files.set(lockPath, JSON.stringify({ token: "other", started, until: started + 60_000 }));
+
+        expect((await sharedRun(clock.host, SHARED_ASK))?.stdout).toBe("mine");
+        expect(clock.sleeps.every((ms) => ms === 250)).toBe(true);
+        expect(clock.sleeps.length).toBe(40);
+        expect(clock.now() - started).toBe(10_000);
+        expect(clock.runs.count).toBe(1);
+    } finally {
+        clock.restore();
+    }
+});
+
+test("shared run: a claim that lapses before 10 s ends the wait at its own time", async () => {
+    const files = new Map<string, string>();
+    const clock = fakeClockHost(files);
+    const { lockPath } = sharedFiles();
+
+    try {
+        const started = sharedRunClock.now();
+        files.set(lockPath, JSON.stringify({ token: "other", started, until: started + 1_000 }));
+
+        expect((await sharedRun(clock.host, SHARED_ASK))?.stdout).toBe("mine");
+        expect(clock.sleeps.length).toBe(4);
+    } finally {
+        clock.restore();
+    }
+});
+
+test("shared run: the claimant's answer ends the wait at the next poll", async () => {
+    const files = new Map<string, string>();
+    const { key, path, lockPath } = sharedFiles();
+    const clock = fakeClockHost(files, (now, sleeps) => {
+        if (sleeps === 3) {
+            files.set(path, JSON.stringify({ key, at: now, exitCode: 0, stdout: "theirs", stderr: "" }));
+        }
+    });
+
+    try {
+        const started = sharedRunClock.now();
+        files.set(lockPath, JSON.stringify({ token: "other", started, until: started + 60_000 }));
+
+        expect((await sharedRun(clock.host, SHARED_ASK))?.stdout).toBe("theirs");
+        expect(clock.sleeps.length).toBe(3);
+        expect(clock.runs.count).toBe(0);
+    } finally {
+        clock.restore();
+    }
+});
+
+test("shared run: an answer older than the claim is not the claimant's answer, so the waiter keeps waiting", async () => {
+    const files = new Map<string, string>();
+    const { key, path, lockPath } = sharedFiles();
+    const clock = fakeClockHost(files, (now, sleeps) => {
+        if (sleeps === 2) {
+            // Written before the claim started, though still inside the ttl: an earlier run's answer.
+            files.set(path, JSON.stringify({ key, at: now - 5_000, exitCode: 0, stdout: "older", stderr: "" }));
+        }
+
+        if (sleeps === 5) {
+            files.set(lockPath, JSON.stringify({ token: "other", started: now - 2_000, until: 0 }));
+        }
+    });
+
+    try {
+        const started = sharedRunClock.now();
+        files.set(lockPath, JSON.stringify({ token: "other", started, until: started + 60_000 }));
+
+        expect((await sharedRun(clock.host, SHARED_ASK))?.stdout).toBe("mine");
+        expect(clock.runs.count).toBe(1);
+    } finally {
+        clock.restore();
+    }
+});
+
+test("shared run: ttl 0 never reads or writes a claim, even with a live one", async () => {
+    const files = new Map<string, string>();
+    const clock = fakeClockHost(files);
+    const { lockPath } = sharedFiles();
+
+    try {
+        const started = sharedRunClock.now();
+        const claim = JSON.stringify({ token: "other", started, until: started + 60_000 });
+        files.set(lockPath, claim);
+
+        expect((await sharedRun(clock.host, { ...SHARED_ASK, ttlMs: 0 }))?.stdout).toBe("mine");
+        expect(clock.sleeps).toEqual([]);
+        expect(files.get(lockPath)).toBe(claim);
+    } finally {
+        clock.restore();
+    }
+});
+
+test("shared run: two sessions writing a claim together both read the later one, and only its writer runs", async () => {
+    const files = new Map<string, string>();
+    const { key, path, lockPath } = sharedFiles();
+    const clock = fakeClockHost(files, (now, sleeps) => {
+        if (sleeps === 2) {
+            files.set(path, JSON.stringify({ key, at: now, exitCode: 0, stdout: "winner's", stderr: "" }));
+        }
+    });
+    const write = clock.host.write;
+    clock.host.write = async (target, text) => {
+        await write(target, text);
+
+        if (target === lockPath && !text.includes('"until":0')) {
+            // Another session's claim lands right after this one's.
+            files.set(
+                lockPath,
+                JSON.stringify({ token: "winner", started: sharedRunClock.now(), until: sharedRunClock.now() + 60_000 })
+            );
+        }
+    };
+
+    try {
+        expect((await sharedRun(clock.host, SHARED_ASK))?.stdout).toBe("winner's");
+        expect(clock.runs.count).toBe(0);
+    } finally {
+        clock.restore();
+    }
+});
+
+test("shared run: a garbled, empty or foreign claim file is no claim, so the session claims and runs", async () => {
+    for (const content of ["", "{not json", JSON.stringify({ token: 7 }), JSON.stringify(["a"])]) {
+        const files = new Map<string, string>();
+        const clock = fakeClockHost(files);
+        const { lockPath } = sharedFiles();
+        files.set(lockPath, content);
+
+        try {
+            expect((await sharedRun(clock.host, SHARED_ASK))?.stdout).toBe("mine");
+            expect(clock.sleeps).toEqual([]);
+            expect(clock.runs.count).toBe(1);
+            expect(JSON.parse(String(files.get(lockPath))).until).toBe(0);
+        } finally {
+            clock.restore();
+        }
+    }
+});
+
+test("shared run: a torn answer file or one for another key is a miss", async () => {
+    for (const answer of [
+        '{"key":"x","at":1',
+        JSON.stringify({ key: "another command", at: sharedRunClock.now(), exitCode: 0, stdout: "theirs", stderr: "" }),
+        JSON.stringify({ key: sharedFiles().key, at: sharedRunClock.now(), exitCode: "0", stdout: "theirs" }),
+    ]) {
+        const files = new Map<string, string>();
+        const clock = fakeClockHost(files);
+        files.set(sharedFiles().path, answer);
+
+        try {
+            expect((await sharedRun(clock.host, SHARED_ASK))?.stdout).toBe("mine");
+            expect(clock.runs.count).toBe(1);
+        } finally {
+            clock.restore();
+        }
+    }
+});
+
+test("shared run: the same argv in another folder never shares, and an old answer of the right key is a hit", async () => {
+    const files = new Map<string, string>();
+    const clock = fakeClockHost(files);
+    const other = { ...SHARED_ASK, cwd: "/work/wt-a" };
+    const { key, path } = sharedFiles();
+
+    try {
+        files.set(
+            path,
+            JSON.stringify({ key, at: sharedRunClock.now() - 30_000, exitCode: 0, stdout: "cached", stderr: "" })
+        );
+
+        expect((await sharedRun(clock.host, SHARED_ASK))?.stdout).toBe("cached");
+        expect((await sharedRun(clock.host, other))?.stdout).toBe("mine");
+        expect(clock.runs.count).toBe(1);
+        expect(sharedFiles(other).path).not.toBe(path);
+    } finally {
+        clock.restore();
+    }
+});
+
+test("shared run: a command that fails to start is not shared, and its claim is released", async () => {
+    const files = new Map<string, string>();
+    const clock = fakeClockHost(files);
+    const { path, lockPath } = sharedFiles();
+    clock.host.run = async () => {
+        throw new Error("spawn failed");
+    };
+
+    try {
+        expect(await sharedRun(clock.host, SHARED_ASK)).toBeUndefined();
+        expect(files.has(path)).toBe(false);
+        expect(JSON.parse(String(files.get(lockPath))).until).toBe(0);
+    } finally {
+        clock.restore();
+    }
+});
+
+test("shared run: a non-zero exit is shared with its error output, as gh's no-PR answer must be", async () => {
+    const files = new Map<string, string>();
+    const clock = fakeClockHost(files);
+    clock.host.run = async () => ({
+        exitCode: 1,
+        stdout: "",
+        stderr: 'no pull requests found for branch "x"',
+        isStdoutTruncated: false,
+        isStderrTruncated: false,
+    });
+
+    try {
+        await sharedRun(clock.host, SHARED_ASK);
+        clock.host.run = async () => {
+            throw new Error("must not run again");
+        };
+        const again = await sharedRun(clock.host, SHARED_ASK);
+
+        expect(again).toEqual({ exitCode: 1, stdout: "", stderr: 'no pull requests found for branch "x"' });
+    } finally {
+        clock.restore();
+    }
+});
+
+test("shared run: a host that cannot sleep never waits; it runs at once next to a live claim", async () => {
+    const files = new Map<string, string>();
+    const { host, runs } = sharedRunHost(files, 0);
+    const { lockPath } = sharedFiles();
+    const started = Date.now();
+    files.set(lockPath, JSON.stringify({ token: "other", started, until: started + 60_000 }));
+
+    expect((await sharedRun({ ...host, sleep: undefined }, SHARED_ASK))?.stdout).toBe("mine");
+    expect(runs.count).toBe(1);
+});
+
+test("shared run: ten callers in one session at once start one process and get the same answer", async () => {
+    const { host, runs } = sharedRunHost(new Map(), 20);
+
+    const answers = await Promise.all(Array.from({ length: 10 }, () => sharedRun(host, SHARED_ASK)));
+
+    expect(new Set(answers.map((answer) => answer?.stdout))).toEqual(new Set(["mine"]));
+    expect(runs.count).toBe(1);
 });
