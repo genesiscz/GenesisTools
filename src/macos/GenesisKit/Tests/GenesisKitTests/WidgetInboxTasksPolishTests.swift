@@ -786,7 +786,7 @@ final class WidgetInboxPolishTests: XCTestCase {
         XCTAssertEqual(LiveWidgetView.activityLine(delivered, number: 4, provider: "claude"),
                        .init(title: "Answer delivered", detail: "Decision 4 · Sent · through cmux"))
         XCTAssertEqual(LiveWidgetView.activityLine(delivered, number: nil, provider: "claude").detail,
-                       "Claude Code · Sent · through cmux", "without the card, the provider's name, never d_4_s")
+                       "Claude · Sent · through cmux", "without the card, the provider's name, never d_4_s")
         let failed = WidgetActivityEvent(id: "e2", sourceId: "d_4_s", at: 1, title: "Decision send_failed",
                                          body: "answered · something-new")
         XCTAssertEqual(LiveWidgetView.activityLine(failed, number: 4, provider: "codex"),

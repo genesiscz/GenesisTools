@@ -62,23 +62,13 @@ public struct WidgetSessionBrowser: View {
                     .frame(maxWidth: .infinity)
             } else {
                 ForEach(Array(groups.prefix(limit))) { group in
-                    let opened = isOpen(group)
                     // Every top-level session is the same row, with or without sub-agents; a chevron folds them.
                     VStack(alignment: .leading, spacing: 2) {
-                        WidgetSessionGroupRow(
-                            session: group.parent, subAgents: group.children.count, running: group.running,
-                            open: opened, selected: group.parent.key == model.selectedKey, unread: unread(group.parent),
-                            model: model,
-                            toggle: { toggle(group) }, select: { open(group.parent) }, pin: { pin(group.parent) })
-                            .equatable()
-                        if !group.children.isEmpty && opened {
+                        topRow(group)
+                        if !group.children.isEmpty && isOpen(group) {
                             LazyVStack(spacing: 2) {
                                 ForEach(group.children) { child in
-                                    WidgetSessionChildRow(
-                                        session: child.session, depth: child.depth + 1,
-                                        selected: child.session.key == model.selectedKey, unread: unread(child.session),
-                                        model: model, select: { open(child.session) }, pin: { pin(child.session) })
-                                        .equatable()
+                                    row(child.session, title: child.session.title, depth: child.depth + 1)
                                 }
                             }.transition(.genReveal)
                         }
@@ -142,170 +132,96 @@ public struct WidgetSessionBrowser: View {
         }
     }
 
-    /// The inbox items waiting in a session, read here once: the rows observe no model.
-    private func unread(_ session: WidgetSession) -> Int {
-        model.inboxFor(session.key).map { $0.unread + $0.needsAnswer } ?? 0
-    }
-
-    private func pin(_ session: WidgetSession) {
-        model.action(["action": "visibility", "key": .string(session.key), "pinned": .bool(!session.pinned)])
-    }
-
-    private func setProjects(_ projects: [String]) {
-        model.updatePreferences(["projects": .array(projects.map(WidgetJSON.string))])
-    }
-}
-
-/// A top-level session of the Sessions list, from values: its name, project, account and sub-agent count, the same for
-/// every session. Its controls (the row button, the chevron and pin, the badges' tooltips) exist only while the row is
-/// live (`liveRow`: hovered or selected); at rest it draws the same labels with no control, so a model publish
-/// re-renders only the rows whose values changed and an accessibility client walks no buttons of the 40+ rows at rest
-/// (swift skill, "Dense lists and accessibility clients"; the hub's PRs list measured step p95 540 → 54 ms,
-/// 2026-10-29). VoiceOver still presses every control (`restingButton`).
-struct WidgetSessionGroupRow: View, Equatable {
-    let session: WidgetSession
-    let subAgents: Int
-    let running: Int
-    /// Its sub-agents are shown.
-    let open: Bool
-    let selected: Bool
-    let unread: Int
-    /// Not observed by the row: the cmux button and the row's cmux accessibility action use it.
-    let model: WidgetModel
-    let toggle: () -> Void
-    let select: () -> Void
-    let pin: () -> Void
-
-    static func == (a: WidgetSessionGroupRow, b: WidgetSessionGroupRow) -> Bool {
-        a.session == b.session && a.subAgents == b.subAgents && a.running == b.running && a.open == b.open
-            && a.selected == b.selected && a.unread == b.unread
-    }
-
-    var body: some View {
-        let _ = RenderProbe.hit("widget.sessions.row.body")
-        HStack(alignment: .center, spacing: 2) {
-            if subAgents == 0 {
+    /// A top-level session: its name, project, account and sub-agent count, the same for every session.
+    private func topRow(_ group: WidgetAgentTree.Group) -> some View {
+        let session = group.parent
+        let selected = session.key == model.selectedKey
+        return WidgetHoverRow { hovering in HStack(alignment: .center, spacing: 2) {
+            if group.children.isEmpty {
                 Color.clear.frame(width: 22, height: 22)
             } else {
-                WidgetSessionChevron(open: open, subAgents: subAgents, title: session.title, key: session.key,
-                                     toggle: toggle)
+                Button { toggle(group) } label: {
+                    Image(systemName: "chevron.right").font(.system(size: 9, weight: .semibold))
+                        .foregroundStyle(.secondary).rotationEffect(.degrees(isOpen(group) ? 90 : 0))
+                        .frame(width: 16, height: 16).contentShape(Rectangle())
+                }
+                .buttonStyle(.genHoverIcon(diameter: 22))
+                .instantTooltip(isOpen(group) ? "Hide its sub-agents" : "Show its \(Plural.count(group.children.count, "sub-agent"))")
+                .accessibilityLabel((isOpen(group) ? "Hide sub-agents of " : "Show sub-agents of ") + session.title)
+                .accessibilityIdentifier("widget.sessions.group." + group.id)
             }
-            VStack(alignment: .leading, spacing: 3) {
-                AgentRosterGroupLabel(title: session.title, provider: session.target.provider,
-                    project: session.project, account: session.account,
-                    total: subAgents, running: running,
-                    live: session.status == "working" || running > 0,
-                    lastAt: Date(timeIntervalSince1970: session.activityAt / 1000),
-                    unread: unread)
+            Button { open(session) } label: {
+                VStack(alignment: .leading, spacing: 3) {
+                    AgentRosterGroupLabel(title: session.title, provider: session.target.provider,
+                        project: session.project, account: session.account,
+                        total: group.children.count, running: group.running,
+                        live: session.status == "working" || group.running > 0,
+                        lastAt: Date(timeIntervalSince1970: session.activityAt / 1000),
+                        unread: model.inboxFor(session.key).map { $0.unread + $0.needsAnswer } ?? 0)
+                }
+                .modifier(WidgetHiddenByFilterMark(hidden: session.hiddenByFilter))
+                .padding(.vertical, 7).padding(.horizontal, 4)
+                .frame(maxWidth: .infinity, alignment: .leading).contentShape(Rectangle())
             }
-            .modifier(WidgetHiddenByFilterMark(hidden: session.hiddenByFilter))
-            .padding(.vertical, 7).padding(.horizontal, 4)
-            .frame(maxWidth: .infinity, alignment: .leading).contentShape(Rectangle())
-            .rowButton(cornerRadius: 8) { select() }
+            .buttonStyle(RowButtonStyle(cornerRadius: 8))
             .accessibilityLabel("Open session " + session.title + ", " + session.visualStatus.label)
-            WidgetSessionTrailing(model: model, session: session, pin: pin)
-        }
+            trailing(session, hovering: hovering)
+        } }
         .padding(.horizontal, 4)
         .accessibilityAction(named: "Open cmux for " + session.title) { model.requestCmux(session.key, scope: "sessions") }
         .id(session.key)
         .background(selected ? Color.blue.opacity(0.13) : .clear, in: RoundedRectangle(cornerRadius: 10))
         .overlay(RoundedRectangle(cornerRadius: 10).strokeBorder(selected ? Color.blue.opacity(0.35) : .clear))
-        .liveRow(selected: selected)
-    }
-}
-
-/// A sub-agent (or a session shown under its parent) of the Sessions list, from values; live as
-/// `WidgetSessionGroupRow` is.
-struct WidgetSessionChildRow: View, Equatable {
-    let session: WidgetSession
-    let depth: Int
-    let selected: Bool
-    let unread: Int
-    /// Not observed by the row: the cmux button and the row's cmux accessibility action use it.
-    let model: WidgetModel
-    let select: () -> Void
-    let pin: () -> Void
-
-    static func == (a: WidgetSessionChildRow, b: WidgetSessionChildRow) -> Bool {
-        a.session == b.session && a.depth == b.depth && a.selected == b.selected && a.unread == b.unread
     }
 
-    var body: some View {
-        let _ = RenderProbe.hit("widget.sessions.row.body")
-        HStack(alignment: .center, spacing: 2) {
-            VStack(alignment: .leading, spacing: 3) {
-                AgentRosterRow(title: session.title, provider: session.target.provider, role: session.role ?? "lead",
-                    model: session.model, account: session.account,
-                    status: session.status == "waiting" ? "waiting" : session.agentStatus ?? session.status,
-                    startedAt: session.startedAt.map { Date(timeIntervalSince1970: $0 / 1000) },
-                    lastAt: Date(timeIntervalSince1970: session.activityAt / 1000),
-                    toolCalls: session.toolCalls ?? 0,
-                    unread: unread,
-                    selected: selected, showsRunningLabel: session.agentId == nil)
+    private func row(_ session: WidgetSession, title: String, depth: Int) -> some View {
+        let selected = session.key == model.selectedKey
+        return WidgetHoverRow { hovering in HStack(alignment: .center, spacing: 2) {
+            Button { open(session) } label: {
+                VStack(alignment: .leading, spacing: 3) {
+                    AgentRosterRow(title: title, provider: session.target.provider, role: session.role ?? "lead",
+                        model: session.model, account: session.account,
+                        status: session.status == "waiting" ? "waiting" : session.agentStatus ?? session.status,
+                        startedAt: session.startedAt.map { Date(timeIntervalSince1970: $0 / 1000) },
+                        lastAt: Date(timeIntervalSince1970: session.activityAt / 1000),
+                        toolCalls: session.toolCalls ?? 0,
+                        unread: model.inboxFor(session.key).map { $0.unread + $0.needsAnswer } ?? 0,
+                        selected: selected, showsRunningLabel: session.agentId == nil)
+                }
+                .modifier(WidgetHiddenByFilterMark(hidden: session.hiddenByFilter))
+                .padding(.vertical, 6).padding(.horizontal, 6)
+                .frame(maxWidth: .infinity, alignment: .leading).contentShape(Rectangle())
             }
-            .modifier(WidgetHiddenByFilterMark(hidden: session.hiddenByFilter))
-            .padding(.vertical, 6).padding(.horizontal, 6)
-            .frame(maxWidth: .infinity, alignment: .leading).contentShape(Rectangle())
-            .rowButton(cornerRadius: 8) { select() }
+            .buttonStyle(RowButtonStyle(cornerRadius: 8))
             .accessibilityLabel("Open session " + session.title + ", " + session.visualStatus.label)
-            WidgetSessionTrailing(model: model, session: session, pin: pin)
-        }
+            trailing(session, hovering: hovering)
+        } }
         .padding(.leading, CGFloat(min(depth, 4)) * 14).padding(.trailing, 4)
         .accessibilityAction(named: "Open cmux for " + session.title) { model.requestCmux(session.key, scope: "sessions") }
         .id(session.key)
         .background(selected ? Color.blue.opacity(0.13) : .clear, in: RoundedRectangle(cornerRadius: 10))
         .overlay(RoundedRectangle(cornerRadius: 10).strokeBorder(selected ? Color.blue.opacity(0.35) : .clear))
-        .liveRow(selected: selected)
     }
-}
 
-/// The fold chevron of a session with sub-agents: a `genHoverIcon` button with its tooltip while the row is live; at
-/// rest the same glyph in the style's 3 pt padding, which VoiceOver still presses. A view of its own because the row's
-/// body cannot read `rowLive`, and `LiveButton`'s plain style would drop the hover disc and the padding.
-private struct WidgetSessionChevron: View {
-    let open: Bool
-    let subAgents: Int
-    let title: String
-    let key: String
-    let toggle: () -> Void
-    @Environment(\.rowLive) private var live
-
-    var body: some View {
-        let glyph = Image(systemName: "chevron.right").font(.system(size: 9, weight: .semibold))
-            .foregroundStyle(.secondary).rotationEffect(.degrees(open ? 90 : 0))
-            .frame(width: 16, height: 16).contentShape(Rectangle())
-        Group {
-            if live {
-                Button(action: toggle) { glyph }
-                    .buttonStyle(.genHoverIcon(diameter: 22))
-                    .instantTooltip(open ? "Hide its sub-agents" : "Show its \(Plural.count(subAgents, "sub-agent"))")
-            } else {
-                glyph.padding(3)
-                    .restingButton(action: toggle)
-            }
-        }
-        .accessibilityLabel((open ? "Hide sub-agents of " : "Show sub-agents of ") + title)
-        .accessibilityIdentifier("widget.sessions.group." + key)
-    }
-}
-
-/// cmux and pin, inside the row's own box so its selection and hover cover them. Both are buttons only on the live
-/// (hovered or selected) row; at rest the pin glyph is drawn the same and VoiceOver still presses it.
-private struct WidgetSessionTrailing: View {
-    let model: WidgetModel
-    let session: WidgetSession
-    let pin: () -> Void
-
-    var body: some View {
+    /// cmux and pin, inside the row's own box so its selection and hover cover them. cmux is live only on the
+    /// hovered or selected row.
+    private func trailing(_ session: WidgetSession, hovering: Bool) -> some View {
         HStack(spacing: 0) {
-            WidgetCmuxButton(model: model, session: session, size: 10.5, requestScope: "sessions")
-            LiveButton(tooltip: session.pinned ? "Unpin from widget" : "Pin to widget", pressable: true, action: pin) {
+            WidgetCmuxButton(model: model, session: session, size: 10.5,
+                             live: hovering || session.key == model.selectedKey, requestScope: "sessions")
+            Button {
+                model.action(["action": "visibility", "key": .string(session.key), "pinned": .bool(!session.pinned)])
+            } label: {
                 Image(systemName: session.pinned ? "pin.fill" : "pin")
                     .font(.system(size: 10)).foregroundStyle(session.pinned ? Color.blue : .secondary)
                     .frame(width: 24, height: 24).contentShape(Rectangle())
-            }
-            .accessibilityLabel((session.pinned ? "Unpin " : "Pin ") + session.title)
+            }.buttonStyle(.genHoverPlain()).instantTooltip(session.pinned ? "Unpin from widget" : "Pin to widget")
+                .accessibilityLabel((session.pinned ? "Unpin " : "Pin ") + session.title)
         }
+    }
+
+    private func setProjects(_ projects: [String]) {
+        model.updatePreferences(["projects": .array(projects.map(WidgetJSON.string))])
     }
 }
 
