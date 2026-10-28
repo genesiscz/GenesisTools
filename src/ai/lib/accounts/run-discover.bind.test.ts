@@ -102,6 +102,10 @@ beforeEach(async () => {
         fakePlugin("openai-sub", {
             presentation: { displayName: "Codex", alias: "codex", limitOrder: [], prominentLimits: [] },
             logoutTargets: ["oauth", "authFile"],
+            loginFlags: [],
+            loginApps: [],
+            afterLogin: async () => {},
+            loginVariants: {},
             discoverHomes: async () => discovered,
         })
     );

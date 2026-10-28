@@ -13,11 +13,11 @@ import { providerAliasOf } from "@genesiscz/utils/ai/providers/aliases";
 import type { ProviderPlugin } from "@genesiscz/utils/ai/providers/plugin-types";
 import { registerBuiltInPlugins } from "@genesiscz/utils/ai/providers/plugins";
 import { clearPollGate } from "@genesiscz/utils/ai/usage-poll/poll-gate";
-import { clearInvalidGrant } from "@genesiscz/utils/claude/subscription-auth";
 import { isInteractive, suggestCommand } from "@genesiscz/utils/cli";
 import { out } from "@genesiscz/utils/logger";
 import { expandPath } from "@genesiscz/utils/paths";
 import pc from "picocolors";
+import { bindsCredentialFiles, defaultLoginAliases, ownFlags } from "./login-flags";
 import { resolveAccountsProvider } from "./select-provider";
 import { rollbackLoginOutcome, writeLoginOutcome } from "./write-outcome";
 
@@ -59,7 +59,11 @@ const defaultExternalRunner: ExternalLoginRunner = {
 };
 
 export interface RunLoginOptions {
-    codexBroker?: boolean;
+    /**
+     * Provider switches the command line set, by `LoginFlag.name`. The flow is handed only the ones its
+     * own provider declared in `loginFlags`.
+     */
+    providerFlags?: ReadonlySet<string>;
     /** Bind the provider's current native credential file without starting OAuth. */
     importNative?: boolean;
     /** Pinned by `tools claude login`; resolved from `--provider` otherwise. */
@@ -130,7 +134,7 @@ export async function runLogin(opts: RunLoginOptions): Promise<RunLoginResult> {
         opts.home !== undefined ? "--home" : undefined,
     ].filter((option) => option !== undefined);
 
-    if (fileOptions.length > 0 && !plugin.credential.fields.includes("authFile")) {
+    if (fileOptions.length > 0 && !bindsCredentialFiles(plugin)) {
         out.error(
             pc.red(
                 `${providerAliasOf(plugin.id)} does not support ${fileOptions.join(" or ")}: this provider cannot bind credential files.`
@@ -140,13 +144,19 @@ export async function runLogin(opts: RunLoginOptions): Promise<RunLoginResult> {
         return { ok: false };
     }
 
+    // A switch that spells out the default login (`LoginFlag.defaultLoginAlias`) is a login mode of
+    // its own, whichever provider declared it and whichever door it was typed on.
+    const aliases = defaultLoginAliases();
+    const defaultLoginTyped = aliases.some((name) => opts.providerFlags?.has(name) === true);
+
     if (
-        (opts.importNative && (fileOptions.length > 0 || opts.codexBroker)) ||
-        (opts.codexBroker && fileOptions.length > 0)
+        (opts.importNative && (fileOptions.length > 0 || defaultLoginTyped)) ||
+        (defaultLoginTyped && fileOptions.length > 0)
     ) {
+        const spelled = aliases.length === 0 ? "" : ` (${aliases.map((name) => `--${name}`).join(", ")})`;
         out.error(
             pc.red(
-                "Choose one login mode: default vault login (--broker), --import-native, or explicit --home/--auth-file."
+                `Choose one login mode: default vault login${spelled}, --import-native, or explicit --home/--auth-file.`
             )
         );
         process.exitCode = 1;
@@ -183,7 +193,7 @@ export async function runLogin(opts: RunLoginOptions): Promise<RunLoginResult> {
     const ctx: AccountFlowContext = {
         requestedName: opts.name,
         authorizationInteraction: opts.authorizationInteraction,
-        codexBroker: opts.codexBroker,
+        providerFlags: ownFlags(opts.providerFlags, features.loginFlags),
         home: opts.home === undefined ? undefined : expandPath(opts.home),
         authFile: importedAuthFile ?? (opts.authFile === undefined ? undefined : expandPath(opts.authFile)),
         interactive,
@@ -237,10 +247,6 @@ export async function runLogin(opts: RunLoginOptions): Promise<RunLoginResult> {
         out.println(pc.yellow(`Updating existing account "${name}"...`));
     }
 
-    // Only Anthropic ever made itself the default for `claude` and `ask`; adding
-    // the other providers there would silently retarget every `tools ask` call.
-    const anthropic = plugin.id === "anthropic-sub";
-
     let written: Awaited<ReturnType<typeof writeLoginOutcome>>;
 
     try {
@@ -252,8 +258,10 @@ export async function runLogin(opts: RunLoginOptions): Promise<RunLoginResult> {
             // A name nobody typed or confirmed: `--name` is explicit, and the prompt
             // above already asked before reusing an existing one.
             autoNamed: opts.name === undefined && !(opts.promptName === true && interactive),
-            apps: anthropic ? ["claude", "ask"] : undefined,
-            defaultForApps: anthropic ? ["claude", "ask"] : undefined,
+            // The provider decides which apps its logins join; a wrong entry there would
+            // silently retarget every `tools ask` call.
+            apps: [...features.loginApps],
+            defaultForApps: [...features.loginApps],
         });
     } catch (error) {
         // The write refused inside the lock because the account changed under this flow
@@ -274,13 +282,11 @@ export async function runLogin(opts: RunLoginOptions): Promise<RunLoginResult> {
         return { ok: false };
     }
 
-    if (anthropic) {
-        // A fresh grant retires the invalid-grant cooldown the dead one earned.
-        await clearInvalidGrant(name);
-    }
+    // State only the provider keeps about the dead grant, such as a refresh cooldown.
+    await features.afterLogin(written.account);
 
-    // Every provider, not just anthropic: a login has just repaired this account, so the
-    // next round must poll it instead of serving out a backoff earned while it was dead.
+    // Every provider: a login has just repaired this account, so the next round must poll
+    // it instead of serving out a backoff earned while it was dead.
     // Codex and grok also have the credential-stamp release inside the gate, but that only
     // fires once a poll stats the new file; clearing here is immediate and costs one write.
     await clearPollGate(plugin.id, name);

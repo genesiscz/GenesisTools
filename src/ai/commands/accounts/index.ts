@@ -4,11 +4,9 @@ import type { Command } from "commander";
 import { type LogoutFlags, logoutTargetsFromFlags } from "../../lib/accounts/logout-flags";
 import { runDiscover } from "../../lib/accounts/run-discover";
 import { runList } from "../../lib/accounts/run-list";
-import { runLoginLong } from "../../lib/accounts/run-login-long";
-import { runLoginSecondary } from "../../lib/accounts/run-login-secondary";
 import { runLogout } from "../../lib/accounts/run-logout";
 import { runShow } from "../../lib/accounts/run-show";
-import { registerAccountLoginCommand } from "./login";
+import { registerAccountLoginCommand, registerLoginVariantCommands } from "./login";
 
 const TOOL = "tools ai accounts";
 const PROVIDER_HELP = `Provider: ${ACCOUNT_PROVIDER_ALIASES.join(", ")} (plugin ids also accepted)`;
@@ -46,28 +44,8 @@ export function registerAccountsCommands(program: Command): void {
         });
 
     registerAccountLoginCommand(accounts, { tool: `${TOOL} login`, subcommand: ["accounts", "login"] });
-
-    accounts
-        .command("login-long [name]")
-        .description("Attach a long-lived token to an existing account (providers that have one)")
-        .option("--provider [value]", PROVIDER_HELP)
-        .option("--setup-token", "Skip the prompt and mint the token via the OAuth flow")
-        .action(async (name: string | undefined, opts: { provider?: string | true; setupToken?: boolean }) => {
-            await runLoginLong({ ...opts, name, tool: `${TOOL} login-long`, subcommand: ["accounts", "login-long"] });
-        });
-
-    accounts
-        .command("login-secondary [name]")
-        .description("Attach a second, isolated grant to an account (providers that have one)")
-        .option("--provider [value]", PROVIDER_HELP)
-        .action(async (name: string | undefined, opts: { provider?: string | true }) => {
-            await runLoginSecondary({
-                ...opts,
-                name,
-                tool: `${TOOL} login-secondary`,
-                subcommand: ["accounts", "login-secondary"],
-            });
-        });
+    // `login-long` and `login-secondary`, each while some provider declares that variant.
+    registerLoginVariantCommands(accounts, { tool: TOOL, subcommand: ["accounts"] });
 
     accounts
         .command("logout [name]")

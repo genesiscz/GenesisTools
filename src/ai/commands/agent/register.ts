@@ -1,4 +1,4 @@
-import { registerAccountLoginCommand } from "@app/ai/commands/accounts/login";
+import { registerAccountLoginCommand, registerLoginVariantCommands } from "@app/ai/commands/accounts/login";
 import { registerWarmupCommand } from "@app/ai/commands/warmup";
 import { registerAgentHistoryCommand } from "@genesiscz/utils/agent-sessions/history-cli";
 import { isTurnProvider } from "@genesiscz/utils/ai/transcripts/turn-state";
@@ -99,6 +99,8 @@ export function registerAgentTool(program: Command, spec: AgentToolSpec): void {
             subcommand: ["login"],
             ...(spec.help?.login === undefined ? {} : { description: spec.help.login }),
         });
+        // `login-long` / `login-secondary` for a provider that declares them; none of today's agents does.
+        registerLoginVariantCommands(program, { provider: spec.provider, tool, subcommand: [] });
     });
 
     shared("warmup", () => {

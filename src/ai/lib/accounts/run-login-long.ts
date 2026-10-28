@@ -1,29 +1,22 @@
 import { applyLongLivedToken } from "@app/claude/lib/long-lived-token";
 import * as p from "@clack/prompts";
 import { AiConfigStore } from "@genesiscz/utils/ai/config/AiConfigStore";
-import type { AccountFlowContext } from "@genesiscz/utils/ai/providers/account-features";
 import { providerAliasOf } from "@genesiscz/utils/ai/providers/aliases";
 import { registerBuiltInPlugins } from "@genesiscz/utils/ai/providers/plugins";
-import { isInteractive, suggestCommand } from "@genesiscz/utils/cli";
+import { isInteractive } from "@genesiscz/utils/cli";
 import { out } from "@genesiscz/utils/logger";
 import pc from "picocolors";
+import { ownFlags } from "./login-flags";
 import { resolveAccountName } from "./select-account";
 import { resolveAccountsProvider } from "./select-provider";
 import { siblingCommandOf } from "./tool-names";
 
-/**
- * Spec 4.1 widens `loginLong`'s context with `pastedToken` only, and
- * `--setup-token` ("mint instead of prompting me") is Anthropic's own switch. It
- * therefore rides on a declared context type rather than a cast; a provider that
- * does not know the field ignores it.
- */
-type LoginLongContext = AccountFlowContext & { pastedToken?: string; setupToken?: boolean };
-
 export interface RunLoginLongOptions {
-    /** Pinned by `tools claude login-long`; resolved from `--provider` otherwise. */
+    /** Pinned by a provider's own door; resolved from `--provider` otherwise. */
     provider?: string | true;
     name?: string;
-    setupToken?: boolean;
+    /** Provider switches the command line set; the flow is handed those its `long` variant declared. */
+    providerFlags?: ReadonlySet<string>;
     tool: string;
     subcommand?: string[];
 }
@@ -67,8 +60,9 @@ export async function runLoginLong(opts: RunLoginLongOptions): Promise<void> {
 
     const plugin = resolved.plugin;
     const alias = providerAliasOf(plugin.id);
+    const variant = plugin.accounts?.loginVariants.long;
 
-    if (!plugin.accounts?.loginLong) {
+    if (!variant) {
         out.error(pc.red(`${alias} has no login-long; use login.`));
         process.exitCode = 1;
         return;
@@ -123,14 +117,12 @@ export async function runLoginLong(opts: RunLoginLongOptions): Promise<void> {
         }
     }
 
-    const flowContext: LoginLongContext = {
+    const outcome = await variant.run({
         account,
         requestedName: account.name,
         interactive: true,
-        setupToken: opts.setupToken,
-    };
-
-    const outcome = await plugin.accounts.loginLong(flowContext);
+        providerFlags: ownFlags(opts.providerFlags, variant.flags),
+    });
 
     const token = outcome.credentials.longLivedToken;
 
@@ -151,9 +143,11 @@ export async function runLoginLong(opts: RunLoginLongOptions): Promise<void> {
         })
     );
 
+    const next = variant.nextStep(account);
+
     p.log.success(
         `Long-lived token saved to "${account.name}" (${maskToken(token)})` +
             `${expiresAt === undefined ? "" : `, valid until ${new Date(expiresAt).toLocaleString()}`}. ` +
-            `Launch Claude with: ${pc.cyan(suggestCommand("tools claude", { replaceCommand: ["start", account.name] }))}`
+            `${next.label}: ${pc.cyan(next.command)}`
     );
 }

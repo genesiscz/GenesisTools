@@ -112,6 +112,10 @@ beforeEach(async () => {
         inProcessPlugin("openai-sub", {
             presentation: { displayName: "Codex", alias: "codex", limitOrder: [], prominentLimits: [] },
             logoutTargets: ["oauth", "authFile"],
+            loginFlags: [],
+            loginApps: [],
+            afterLogin: async () => {},
+            loginVariants: {},
             async login(ctx) {
                 loginCalls.push(ctx.authFile ?? "no-auth-file");
                 loginCtx = { home: ctx.home, authFile: ctx.authFile };

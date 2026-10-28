@@ -2,12 +2,12 @@ import * as p from "@clack/prompts";
 import { orgMismatch, probeTokenOrg } from "@genesiscz/utils/claude/account-fingerprint";
 import { INFERENCE_SCOPE, ONE_YEAR_SECONDS } from "@genesiscz/utils/claude/auth";
 import { LONG_TOKEN_MIN_LENGTH, verifyLongLivedToken } from "@genesiscz/utils/claude/token-verify";
-import { isInteractive } from "@genesiscz/utils/cli";
+import { isInteractive, suggestCommand } from "@genesiscz/utils/cli";
 import { copyToClipboard } from "@genesiscz/utils/clipboard";
 import { out } from "@genesiscz/utils/logger";
 import pc from "picocolors";
 import type { AccountEntry } from "../../../config/schema";
-import type { AccountFlowContext, LoginOutcome } from "../../account-features";
+import type { AccountFlowContext, LoginFlag, LoginOutcome, LoginVariant } from "../../account-features";
 import { generateAuthUrl, presentAuthUrl, promptAndExchangeCode } from "./login";
 
 export const TOKEN_PREFIX = "sk-ant-oat";
@@ -308,7 +308,13 @@ async function promptForPastedToken(accountName: string): Promise<string> {
     return (token as string).trim();
 }
 
-export type LoginLongContext = AccountFlowContext & { pastedToken?: string; setupToken?: boolean };
+export type LoginLongContext = AccountFlowContext & { pastedToken?: string };
+
+/** "Mint instead of asking me": skips the paste-or-mint prompt. */
+export const SETUP_TOKEN_FLAG: LoginFlag = {
+    name: "setup-token",
+    description: "Skip the prompt and mint the token via the OAuth flow",
+};
 
 /**
  * Obtain a long-lived token and prove whose it is. Writes nothing: the CLI layer
@@ -332,7 +338,7 @@ export async function anthropicLoginLong(ctx: LoginLongContext): Promise<LoginOu
     let expiresAt: number | undefined;
 
     if (token === undefined) {
-        const method = ctx.setupToken ? "mint" : await askMethod();
+        const method = ctx.providerFlags?.has(SETUP_TOKEN_FLAG.name) ? "mint" : await askMethod();
 
         if (method === "mint") {
             const minted = await mintLongLivedToken(accountName, ctx.openUrl);
@@ -415,3 +421,13 @@ async function askMethod(): Promise<"mint" | "paste"> {
 
     return picked as "mint" | "paste";
 }
+
+/** `login-long`: the long-lived token a Claude Code launch can run on when the OAuth grant is dead. */
+export const anthropicLongLogin: LoginVariant<LoginLongContext> = {
+    flags: [SETUP_TOKEN_FLAG],
+    run: anthropicLoginLong,
+    nextStep: (account) => ({
+        label: "Launch Claude with",
+        command: suggestCommand("tools claude", { replaceCommand: ["start", account.name] }),
+    }),
+};

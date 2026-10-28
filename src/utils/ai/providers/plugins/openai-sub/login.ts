@@ -16,8 +16,19 @@ import {
     extractPlanType,
     writeCodexAuthJson,
 } from "../../../openai/codex-auth";
-import type { AccountFlowContext, LoginOutcome } from "../../account-features";
+import type { AccountFlowContext, LoginFlag, LoginOutcome } from "../../account-features";
 import { accountFieldsFrom } from "../../account-fields";
+
+/**
+ * `--broker` spelled the separate vault login before it became the default, and scripts typed it on
+ * every login door then. So it stays parseable everywhere, shown only where Codex can be the provider.
+ */
+export const BROKER_FLAG: LoginFlag = {
+    name: "broker",
+    description: "Codex compatibility alias for the default separate vault login",
+    defaultLoginAlias: true,
+    acceptedOnEveryDoor: true,
+};
 
 /** Native-file compatibility destination; ordinary named login never calls this resolver. */
 export function resolveCodexAuthDestination(ctx: AccountFlowContext): string {
@@ -36,7 +47,7 @@ export async function codexLogin(
     ctx: AccountFlowContext,
     startListener: StartCallbackListener = startCallbackListener
 ): Promise<LoginOutcome> {
-    if (ctx.codexBroker && (ctx.home || ctx.authFile)) {
+    if (ctx.providerFlags?.has(BROKER_FLAG.name) && (ctx.home || ctx.authFile)) {
         throw new Error("--broker cannot be combined with --home or --auth-file");
     }
 

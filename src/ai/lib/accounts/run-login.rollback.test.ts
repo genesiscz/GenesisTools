@@ -110,6 +110,10 @@ beforeEach(async () => {
         flowPlugin("openai-sub", {
             presentation: { displayName: "Codex", alias: "codex", limitOrder: [], prominentLimits: [] },
             logoutTargets: ["oauth"],
+            loginFlags: [],
+            loginApps: [],
+            afterLogin: async () => {},
+            loginVariants: {},
             async login() {
                 // The shape `codexLogin` returns once it has already replaced the
                 // vendor file: credentials, an identity, and the undo for that write.

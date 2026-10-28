@@ -36,6 +36,10 @@ mock.module("@genesiscz/utils/claude/subscription-auth", () => ({
 
         return { token: `token-${tokenCounter}`, account: { name }, refreshed: options?.forceRefresh === true };
     },
+    // The plugin's `afterLogin` imports it; no test here logs in, so it is never called.
+    clearInvalidGrant: async () => {
+        throw new Error("a usage test must never clear an invalid-grant cooldown");
+    },
 }));
 
 // The real module first, so an export this test does not stub (billingAnchor, nextRenewalDate) still exists.
