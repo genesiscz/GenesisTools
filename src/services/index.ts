@@ -362,8 +362,10 @@ idle.command("install")
             every: "every 15 minutes",
             retries: 0,
             // The reap itself takes about 0.2 s; without a bound, a run stalled behind a background-priority
-            // throttle held its slot for up to 20 min.
-            timeoutMs: 10_000,
+            // throttle held its slot for up to 20 min. 10 s was too tight: the task starts on the same 15-minute
+            // slots as hub-pr-notify and ai-usage-poll, and the process start alone then waited a median 1.9 s and up
+            // to 19.8 s (2026-10-28: 4 of 67 runs timed out, each a "retries exhausted" banner).
+            timeoutMs: 60_000,
             // The reaper notifies when it stops a server; a banner per 15-minute run is noise.
             notify: "failure",
             description: "Stop on-demand GenesisTools servers nobody used for a while",
