@@ -99,7 +99,18 @@ import {
     stallNow,
     stallSentence,
 } from "../hooks/stall";
-import { lockedToSession, samePath, sessionTotalKb, statusOf, worktreeMaxAgeS, worktreeSize } from "../hooks/tmp-usage";
+import {
+    changesSize,
+    lockedToSession,
+    markSizeStale,
+    samePath,
+    sessionTotalKb,
+    sizeAgeText,
+    statusOf,
+    takeDueStale,
+    worktreeMaxAgeS,
+    worktreeSize,
+} from "../hooks/tmp-usage";
 
 /** A Mac where every GenesisTools link opens, on an invented link host. */
 const ALL_LINKS: GenesisProbe = {
@@ -3919,4 +3930,96 @@ test("shared run: ten callers in one session at once start one process and get t
 
     expect(new Set(answers.map((answer) => answer?.stdout))).toEqual(new Set(["mine"]));
     expect(runs.count).toBe(1);
+});
+
+test("session files: the commands that move a folder's size trigger a walk, reads and plain words do not", () => {
+    for (const command of [
+        "bun install",
+        "cd /work/wt-a && bun i",
+        "npm ci",
+        "pnpm add react",
+        "yarn remove lodash",
+        "bun run build",
+        "npm run build",
+        "next build",
+        "swift build -c release",
+        "pod install",
+        "tsc -p .",
+        "make all",
+        "git worktree add /tmp/x main",
+        "git -C /work/wt-a checkout feature",
+        "git switch main",
+        "git clean -fdx",
+        "tools rm dist",
+        "rm -rf node_modules",
+        "mv build /tmp/old-build",
+        "tar -xzf a.tgz",
+        "unzip pack.zip",
+    ]) {
+        expect([command, changesSize(command)]).toEqual([command, true]);
+    }
+
+    for (const command of [
+        "git status --porcelain",
+        "bun scripts/test.ts src/a.test.ts",
+        "tsgo --noEmit -p .",
+        "bunx biome check src",
+        'git commit -m "next: build the install step"',
+        "rg -n mv src",
+        "ls -la",
+        "cat README.md",
+    ]) {
+        expect([command, changesSize(command)]).toEqual([command, false]);
+    }
+});
+
+test("session files: size-changing commands are debounced, so five in a row cause one walk 10 s after the last", () => {
+    const t = 1_000_000;
+    markSizeStale(["/work/debounce"], t);
+    expect(sizeAgeText("/work/debounce", t)).toBe("measuring…");
+    expect(takeDueStale(t + 5_000)).toBe(false);
+    markSizeStale(["/work/debounce"], t + 8_000);
+    expect(takeDueStale(t + 15_000)).toBe(false);
+    expect(takeDueStale(t + 18_000)).toBe(true);
+    expect(takeDueStale(t + 30_000)).toBe(false);
+});
+
+test("session files: after an install the worktree is walked at once, accepting only a size measured since", async () => {
+    forgetGenesisProbe();
+    const base = checkoutHost();
+    const path = "/work/after-install";
+    const asked: string[][] = [];
+    const host: Host = {
+        ...base,
+        async run(argv) {
+            if (argv[1] === "du") {
+                asked.push([...argv]);
+            }
+
+            const stdout =
+                argv[1] === "genesis-tools"
+                    ? JSON.stringify({ links: {}, router: {} })
+                    : JSON.stringify({ [path]: 900 });
+
+            return { stdout, stderr: "", exitCode: 0, isStdoutTruncated: false, isStderrTruncated: false };
+        },
+    };
+
+    try {
+        expect(await worktreeSize(host, path, "## main\n")).toBe(900);
+        asked.length = 0;
+        // Fresh and unchanged: no walk.
+        expect(await worktreeSize(host, path, "## main\n")).toBe(900);
+        expect(asked).toEqual([]);
+
+        markSizeStale([path], Date.now() - 12_000);
+        expect(takeDueStale()).toBe(true);
+        expect(await worktreeSize(host, path, "## main\n")).toBe(900);
+        expect(asked.length).toBe(1);
+        const maxAge = Number(asked[0]?.at(-1));
+        expect(maxAge >= 12 && maxAge <= 14).toBe(true);
+        expect(sizeAgeText(path)).not.toBe("measuring…");
+    } finally {
+        forgetGenesisProbe();
+    }
 });

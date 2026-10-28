@@ -20,6 +20,84 @@ let measuring: Promise<void> | undefined;
 const LOW_FREE_KB = 10 * 1024 * 1024;
 export const TMP_PANE = "mods-tmp";
 
+/**
+ * A shell command that moves a folder by more than an edit does: a package install or removal, a build, a worktree or
+ * branch move, a clean, a recursive removal or move, an archive extraction. No age can cover these: a walk at 12:00:00
+ * and `bun install` at 12:00:05 would show a size gigabytes too small for the whole age.
+ */
+const CHANGES_SIZE = new RegExp(
+    [
+        String.raw`\b(?:bun|npm|pnpm|yarn)\s+(?:install|i|ci|add|remove|rm|uninstall|update|upgrade)\b`,
+        String.raw`\b(?:bun|npm|pnpm|yarn)\s+(?:run\s+)?build\b`,
+        String.raw`\b(?:next|vite|expo|metro|swift|cargo)\s+build\b`,
+        String.raw`\bpod\s+install\b`,
+        String.raw`(?:^|[;&|(]\s*)(?:(?:tsc|tsgo)\b(?![^;&|]*--noEmit)|xcodebuild\b|make\b)`,
+        String.raw`\bgit\s+(?:-C\s+\S+\s+)?(?:worktree\s+(?:add|remove|prune)|clone|checkout|switch|clean|stash\s+pop)\b`,
+        String.raw`\btools\s+rm\b`,
+        String.raw`\brm\s+-\w*[rR]`,
+        String.raw`(?:^|[;&|(]\s*)mv\s`,
+        String.raw`\btar\s+-?\w*x|\b(?:unzip|ditto)\b`,
+    ].join("|")
+);
+
+export function changesSize(command: string): boolean {
+    return CHANGES_SIZE.test(command);
+}
+
+/** How long after the last size-changing command the walk waits, so five installs in a row cost one walk. */
+const TRIGGER_DEBOUNCE_MS = 10_000;
+/** Folders a size-changing command touched, with when the last such command ended; walked once the debounce passed. */
+const staleSince = new Map<string, number>();
+let staleDueAt = 0;
+/** Folders the next reading walks whatever their pace says: accept only a size measured after this time. */
+const forcedSince = new Map<string, number>();
+/** Folders waiting for or inside a triggered walk: the sidebar says "measuring…" instead of an old size. */
+const walking = new Set<string>();
+/** When each folder's size was measured. `isBound`: a shared answer at most that old, not an exact time. */
+const sizeAges = new Map<string, { at: number; isBound: boolean }>();
+
+/** Marks folders a size-changing command ran in; each new mark moves the walk 10 s further out. */
+export function markSizeStale(paths: readonly string[], at = Date.now()): void {
+    for (const path of paths) {
+        staleSince.set(path, at);
+        walking.add(path);
+    }
+
+    staleDueAt = at + TRIGGER_DEBOUNCE_MS;
+}
+
+/** Moves the marks whose debounce has passed to the next reading. True when there is a walk to run. */
+export function takeDueStale(now = Date.now()): boolean {
+    if (staleSince.size === 0 || now < staleDueAt) {
+        return false;
+    }
+
+    for (const [path, since] of staleSince) {
+        forcedSince.set(path, since);
+    }
+
+    staleSince.clear();
+
+    return true;
+}
+
+/** `12m ago`, `≤30m ago` for a shared answer, `measuring…` while a triggered walk is due; undefined before a reading. */
+export function sizeAgeText(path: string, now = Date.now()): string | undefined {
+    if (walking.has(path)) {
+        return "measuring…";
+    }
+
+    const age = sizeAges.get(path);
+
+    if (!age) {
+        return undefined;
+    }
+
+    const text = liveAgo(age.at, { unit: "minute", now });
+
+    return age.isBound ? `≤${text}` : text;
+}
+
 async function kbOf(host: Host, argv: string[], column: number): Promise<number | null> {
     const done = await host.run(argv, { timeoutMs: 60_000 }).catch(() => undefined);
     const lines = done?.stdout.trim().split("\n") ?? [];
@@ -50,18 +128,31 @@ async function pacedKb(host: Host, path: string): Promise<number | null> {
     const startedAt = Date.now();
     const mark = String(stat.mtimeMs);
 
-    if (held && held.mark === mark && startedAt < held.nextAt) {
+    if (held && held.mark === mark && startedAt < held.nextAt && !forcedSince.has(path)) {
         return held.kb;
     }
 
     const kb = await folderKb(host, path);
     folderKbs.set(path, { kb, mark, nextAt: paceAfter(SESSION_FOLDER_EVERY_MS, startedAt) });
+    forcedSince.delete(path);
+    walking.delete(path);
+    sizeAges.set(path, { at: startedAt, isBound: false });
 
     return kb;
 }
 
-/** `tools du size <path> --max-cache-age <s>`: the size another caller measured within the age, or a new walk. */
-async function sharedKb(host: Host, path: string, maxAgeS: number): Promise<number | null> {
+/**
+ * `tools du size <path> --max-cache-age <s>`: the size another caller measured within the age, or a new walk.
+ * `walked`: the answer took over a second, so it was this walk's (a shared answer takes about 140 ms).
+ */
+async function sharedKb(host: Host, path: string, maxAgeS: number): Promise<{ kb: number | null; walked: boolean }> {
+    const startedAt = Date.now();
+    const kb = await sharedKbOnly(host, path, maxAgeS);
+
+    return { kb, walked: Date.now() - startedAt > 1_000 };
+}
+
+async function sharedKbOnly(host: Host, path: string, maxAgeS: number): Promise<number | null> {
     const done = await host
         .run(["tools", "du", "size", path, "--max-cache-age", String(maxAgeS)], { timeoutMs: 120_000 })
         .catch(() => undefined);
@@ -116,13 +207,14 @@ export async function worktreeSize(host: Host, path: string, status: string): Pr
     await restoreWorktreeKb(host);
     const held = worktreeKb.get(path);
     const startedAt = Date.now();
+    const forced = forcedSince.get(path);
 
-    if (held && held.status === status && startedAt < held.nextAt) {
+    if (forced === undefined && held && held.status === status && startedAt < held.nextAt) {
         return held.kb;
     }
 
     // A first measure always runs; a refresh waits its turn, so a session's worktrees never walk in one burst.
-    if (held && startedAt - lastRefreshAt < REFRESH_GAP_MS) {
+    if (forced === undefined && held && startedAt - lastRefreshAt < REFRESH_GAP_MS) {
         return held.kb;
     }
 
@@ -130,10 +222,21 @@ export async function worktreeSize(host: Host, path: string, status: string): Pr
         lastRefreshAt = startedAt;
     }
 
-    const maxAge = worktreeMaxAgeS(held, status);
-    const kb = (await genesisProbe(host)).tools ? await sharedKb(host, path, maxAge) : await folderKb(host, path);
+    // After a size-changing command, only a walk made after it counts, this session's or another's.
+    const maxAge =
+        forced === undefined ? worktreeMaxAgeS(held, status) : Math.max(1, Math.ceil((startedAt - forced) / 1000));
+    const shared = (await genesisProbe(host)).tools
+        ? await sharedKb(host, path, maxAge)
+        : { kb: await folderKb(host, path), walked: true };
+    const kb = shared.kb;
+    forcedSince.delete(path);
+    walking.delete(path);
 
     if (kb !== null) {
+        sizeAges.set(
+            path,
+            shared.walked ? { at: startedAt, isBound: false } : { at: startedAt - maxAge * 1000, isBound: true }
+        );
         worktreeKb.set(path, { kb, status, nextAt: nextWorktreeAt(startedAt) });
         await host
             .storeSet(WORKTREE_STORE_KEY, Object.fromEntries([...worktreeKb].slice(-WORKTREE_STORE_KEEP)))
@@ -347,7 +450,29 @@ export const tmpUsage: Feature = {
         host.every(settings.minutes * 60_000, () => {
             void measureOnce(host);
         });
+        host.every(5_000, () => {
+            if (takeDueStale()) {
+                void measureOnce(host);
+            }
+        });
         void measureOnce(host);
+    },
+    async afterTool(host, e) {
+        if (e.tool !== "Bash" || !changesSize(e.command) || !usage) {
+            return;
+        }
+
+        // The folders the command names, else the one it ran in.
+        const known = [usage.scratch.path, ...usage.worktrees.map((tree) => tree.path)];
+        const text = JSON.stringify(e);
+        const named = known.filter((path) => text.includes(path));
+        const cwd = await host.cwd();
+        const touched = named.length > 0 ? named : known.filter((path) => cwd === path || cwd.startsWith(`${path}/`));
+
+        if (touched.length > 0) {
+            markSizeStale(touched);
+            host.redraw();
+        }
     },
     sidebars: [{ id: TMP_PANE, title: "Session files", draw: tmpPane }],
     commands: [
@@ -457,6 +582,7 @@ function folderLine(kit: Kit, key: string, label: string, path: string, kb: numb
             </Box>
             <Box flexGrow={1} />
             <Box flexShrink={0} marginLeft={1}>
+                {sizeAgeText(path) ? <Text dimColor>{`${sizeAgeText(path)} `}</Text> : null}
                 <Text bold>{sizeText(kb)}</Text>
             </Box>
         </Box>
