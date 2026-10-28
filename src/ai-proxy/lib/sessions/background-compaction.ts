@@ -1,6 +1,10 @@
 import { createHash } from "node:crypto";
+import { existsSync, mkdirSync, readFileSync, unlinkSync, writeFileSync } from "node:fs";
+import { join } from "node:path";
 import type { BackgroundCompactionSettings } from "@app/ai-proxy/lib/sessions/settings";
+import { getAiProxyStorage } from "@app/ai-proxy/lib/storage";
 import { SafeJSON } from "@genesiscz/utils/json";
+import { logger } from "@genesiscz/utils/logger";
 import { isObject } from "@genesiscz/utils/object";
 
 /**
@@ -89,7 +93,7 @@ export function shouldStartBackground(input: {
         return false;
     }
 
-    const state = threads.get(input.key);
+    const state = threadState(input.key);
 
     if (state?.inFlight) {
         return false;
@@ -100,16 +104,112 @@ export function shouldStartBackground(input: {
     );
 }
 
-/** Registers a run; its result replaces an older one when it finishes, unless the thread was cleared meanwhile. */
-export function trackBackground(key: string, contextTokens: number, run: Promise<BackgroundResult | undefined>): void {
-    const state: ThreadState = { ...threads.get(key), startedTokens: contextTokens };
+/** Why a finished run was never used. */
+export type BackgroundDiscard = "superseded";
+
+/**
+ * A ready run waits on disk too, so a proxy restart does not lose it (17 restarts in session 8cf9eff2; one lost run
+ * had read 363K tokens). One file per thread, removed when the run is used or cleared; older than a day is stale.
+ */
+const PERSISTED_MAX_AGE_MS = 24 * 60 * 60 * 1000;
+
+function persistedPath(key: string): string {
+    const name = createHash("sha256").update(key).digest("hex").slice(0, 32);
+    return join(getAiProxyStorage().getBaseDir(), "background", `${name}.json`);
+}
+
+/** Threads this process saved a run for. */
+const persistedKeys = new Set<string>();
+
+function persist(key: string, result: BackgroundResult): void {
+    const path = persistedPath(key);
+    persistedKeys.add(key);
+
+    try {
+        mkdirSync(join(path, ".."), { recursive: true, mode: 0o700 });
+        writeFileSync(path, SafeJSON.stringify({ key, result }), { mode: 0o600 });
+    } catch (error) {
+        logger.warn({ err: error, key }, "ai-proxy: could not save a background compaction; a restart loses it");
+    }
+}
+
+function readPersisted(key: string): BackgroundResult | undefined {
+    const path = persistedPath(key);
+
+    if (!existsSync(path)) {
+        return undefined;
+    }
+
+    try {
+        const saved = SafeJSON.parse(readFileSync(path, "utf8")) as { key?: string; result?: BackgroundResult };
+
+        if (saved.key !== key || !saved.result || Date.now() - saved.result.readyAt > PERSISTED_MAX_AGE_MS) {
+            return undefined;
+        }
+
+        return saved.result;
+    } catch (error) {
+        logger.warn({ err: error, key }, "ai-proxy: a saved background compaction could not be read");
+        return undefined;
+    }
+}
+
+/** The thread's state, loaded from its saved run when this process has none (after a restart). */
+function threadState(key: string): ThreadState | undefined {
+    const known = threads.get(key);
+
+    if (known) {
+        return known;
+    }
+
+    const saved = readPersisted(key);
+
+    if (!saved) {
+        return undefined;
+    }
+
+    const state: ThreadState = { result: saved, startedTokens: saved.contextTokens };
+    threads.set(key, state);
+    return state;
+}
+
+function forgetPersisted(key: string): void {
+    persistedKeys.delete(key);
+
+    try {
+        unlinkSync(persistedPath(key));
+    } catch {
+        // Nothing saved for this thread.
+    }
+}
+
+/**
+ * Tracks a run for a thread. `onDiscard` hears of a finished result that was never used: an older ready result that
+ * a newer one replaces, or a run that finished after a newer run took the thread over.
+ */
+export function trackBackground(
+    key: string,
+    contextTokens: number,
+    run: Promise<BackgroundResult | undefined>,
+    onDiscard?: (result: BackgroundResult, reason: BackgroundDiscard) => void
+): void {
+    const state: ThreadState = { ...threadState(key), startedTokens: contextTokens };
     const tracked = run.then((result) => {
-        if (threads.get(key) === state) {
+        const current = threads.get(key);
+
+        if (current === state) {
             state.inFlight = undefined;
 
             if (result) {
+                if (state.result) {
+                    onDiscard?.(state.result, "superseded");
+                }
+
                 state.result = result;
+                persist(key, result);
             }
+        } else if (result && current) {
+            onDiscard?.(result, "superseded");
         }
 
         return result;
@@ -124,12 +224,13 @@ export function backgroundInFlight(key: string): Promise<BackgroundResult | unde
 }
 
 export function backgroundResult(key: string): BackgroundResult | undefined {
-    return threads.get(key)?.result;
+    return threadState(key)?.result;
 }
 
 /** Forget a thread's result once a compaction consumed it or proved it stale. */
 export function clearBackground(key: string): void {
     threads.delete(key);
+    forgetPersisted(key);
 }
 
 export type BackgroundMatch =
@@ -213,6 +314,15 @@ export function withUserReminder(input: unknown[], text: string): unknown[] {
 
 /** Tests start clean. */
 export function resetBackgroundForTests(): void {
+    for (const key of [...persistedKeys]) {
+        forgetPersisted(key);
+    }
+
     threads.clear();
     pendingNotices.clear();
+}
+
+/** A proxy restart: the process forgets its threads, the saved runs stay. */
+export function forgetBackgroundInMemoryForTests(): void {
+    threads.clear();
 }
