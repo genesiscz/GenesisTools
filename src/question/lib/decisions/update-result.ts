@@ -67,7 +67,8 @@ export function updateResult(rows: DecisionRecord[], input: unknown, events: str
     const updated = rows.map((row) => {
         const entries = Object.entries(row).filter(([key, value]) => fields.has(key) && value !== undefined);
         const compact: Record<string, unknown> = Object.fromEntries(entries);
-        const asked = requested.find((update) => update.id === row.id)?.state;
+        // A batch may name one id twice; the stored row is the result of the last one.
+        const asked = requested.findLast((update) => update.id === row.id)?.state;
 
         // The store moved it elsewhere (an agent's answered becomes acknowledged) and said why in a comment.
         if (asked && asked !== row.state && row.comments?.length) {

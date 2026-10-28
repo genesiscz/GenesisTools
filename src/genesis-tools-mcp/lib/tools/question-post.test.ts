@@ -374,6 +374,21 @@ describe("question_post decisions and question_update", () => {
         expect(all.updated[0]).toHaveProperty("options");
         expect(all.events).toBeString();
 
+        // One id twice: the note follows the last requested state, which is the stored one.
+        const twice = SafeJSON.parse(
+            await handleQuestionUpdate(
+                {
+                    updates: [
+                        { id: "d_1_sess-1", comment: "first" },
+                        { id: "d_1_sess-1", state: "implemented" },
+                    ],
+                },
+                logDeps
+            )
+        ) as { updated: Array<Record<string, unknown>> };
+        expect(twice.updated.at(-1)?.state).toBe("implemented");
+        expect(twice.updated.at(-1)).not.toHaveProperty("note");
+
         const polled = handleQuestionPoll({}, logDeps);
         expect(polled).not.toContain("Answered decisions not yet acknowledged");
         expect(handleQuestionPoll({ ids: ["d_2_sess-1", "d_7_sess-1"] }, logDeps)).toContain("d_7_sess-1 [unknown]");
