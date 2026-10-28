@@ -23,6 +23,7 @@ import {
     uninstallStaleTask,
 } from "../lib/decisions/stale";
 import { type DecisionKind, repairDecisionLog, updateDecisions } from "../lib/decisions/store";
+import { updateResult } from "../lib/decisions/update-result";
 
 export function readStdinJson(): unknown {
     return SafeJSON.parse(readFileSync(0, "utf8"), { strict: true });
@@ -176,15 +177,16 @@ export function registerDecisionCommands(program: Command): void {
     program
         .command("update")
         .description(
-            "Update decisions and todos as one change. JSON on stdin: { updates: [{ id, state?, answer?, option?, draft?, commitRefs?, verdict?, comment?, supersededBy? }] }, an array of those, or one. Record a chat answer: state acknowledged with option or answer. Replace a decision: state superseded with supersededBy or comment"
+            'Update decisions and todos as one change. JSON on stdin: { updates: [{ id, state?, answer?, option?, draft?, commitRefs?, verdict?, comment?, supersededBy? }] }, an array of those, or one. Record a chat answer: state acknowledged with option or answer. Replace a decision: state superseded with supersededBy or comment. The reply is each item\'s id, number and state; include: [fields] or ["all"] adds more'
         )
         .action(async () => {
             const { file, events } = decisionFiles();
             // The agents' CLI door, like question_update: an answered or sent is recorded as acknowledged.
-            const updated = await updateDecisions(file, events, asBatch(readStdinJson()), undefined, {
+            const input = asBatch(readStdinJson());
+            const updated = await updateDecisions(file, events, input, undefined, {
                 actor: "agent",
             });
-            out.result({ updated, events });
+            out.result(updateResult(updated, input, events));
         });
 
     program

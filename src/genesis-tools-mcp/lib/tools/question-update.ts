@@ -1,11 +1,12 @@
 import { decisionFiles } from "@app/question/lib/decisions/read";
-import { DECISION_RECORD_RULE, decisionBatchUpdateSchema } from "@app/question/lib/decisions/schema";
+import { DECISION_RECORD_RULE } from "@app/question/lib/decisions/schema";
 import { updateDecisions } from "@app/question/lib/decisions/store";
+import { decisionBatchUpdateRequestSchema, updateResult } from "@app/question/lib/decisions/update-result";
 import { SafeJSON } from "@genesiscz/utils/json";
 import { z } from "zod";
 
 /** Generated from the same zod schema the store validates with. */
-export const QUESTION_UPDATE_INPUT_SCHEMA = z.toJSONSchema(decisionBatchUpdateSchema, { io: "input" });
+export const QUESTION_UPDATE_INPUT_SCHEMA = z.toJSONSchema(decisionBatchUpdateRequestSchema, { io: "input" });
 
 export const QUESTION_UPDATE_DESCRIPTION =
     "Update decisions and todos you posted with question_post (type decision|todo), several per call, as ONE " +
@@ -17,7 +18,8 @@ export const QUESTION_UPDATE_DESCRIPTION =
     "`supersededBy` (the id of the decision that replaces this one), `commitRefs`, `verdict`, `comment` (appended). " +
     "open or drafted → acknowledged needs `option` or `answer` and delivers nothing; superseded needs " +
     "`supersededBy` or `comment`. Mark a delivered answer `acknowledged` once you act on it and `implemented` with " +
-    `commitRefs when it is done. ${DECISION_RECORD_RULE}`;
+    "commitRefs when it is done. The reply names each item's id, number and new state; `include` asks for more " +
+    `fields. ${DECISION_RECORD_RULE}`;
 
 export async function handleQuestionUpdate(
     args: unknown,
@@ -26,5 +28,5 @@ export async function handleQuestionUpdate(
     const { file, events } = deps.decisionLog ?? decisionFiles();
     // An agent's door: its answered or sent is recorded as acknowledged (`DecisionActor`).
     const updated = await updateDecisions(file, events, args, undefined, { actor: "agent" });
-    return SafeJSON.stringify({ updated, events });
+    return SafeJSON.stringify(updateResult(updated, args, events));
 }
