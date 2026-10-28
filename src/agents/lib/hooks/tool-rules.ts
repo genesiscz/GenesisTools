@@ -1,6 +1,7 @@
 // Shell guard rules about GenesisTools' own commands. They sit here and not in src/utils/shell/rules, because those
 // modules are copied into another repo where `tools` names a different binary.
 
+import { toolCommand } from "@genesiscz/utils/cli/tool-command";
 import { SHELL_RULES, type ShellMatch, type ShellRule } from "@genesiscz/utils/shell/rules";
 import { commandTokenIndex, commandWord, originalSlice, splitPipeline, tokenize } from "@genesiscz/utils/shell/scan";
 
@@ -11,15 +12,15 @@ const RM_USER_VERB =
 export const rmUserVerbs: ShellRule = {
     id: "rm-user-verbs",
     kind: "destructive",
-    title: "tools rm approve, roots add, config set and profile set/remove are the user's to run, never an agent's",
+    title: `${toolCommand("rm")} approve, roots add, config set and profile set/remove are the user's to run, never an agent's`,
     severity: "block",
     why:
-        "`tools rm` lets an agent delete presets, its own scratch and its own files; anything else becomes a request " +
+        `\`${toolCommand("rm")}\` lets an agent delete presets, its own scratch and its own files; anything else becomes a request ` +
         "the USER confirms. `approve` deletes what the request names, `roots add` trusts a whole folder, and " +
         "`config set` moves the trash the drain empties, so an agent that ran them would approve itself. The verb " +
         "also asks for a typed code or a macOS dialog; this rule stops the call before it gets that far.",
-    wrong: "tools rm approve k7m2qd",
-    right: "tools rm requests",
+    wrong: `${toolCommand("rm")} approve k7m2qd`,
+    right: `${toolCommand("rm")} requests`,
     evidence:
         "Martin, 2026-10-27: agents delete their own things freely, and anything more is confirmed by the user with " +
         "a command the agent cannot run.",
@@ -47,18 +48,18 @@ export const rmUserVerbs: ShellRule = {
 export const rmUseToolsRm: ShellRule = {
     id: "rm-use-tools-rm",
     kind: "destructive",
-    title: "rm deletes with no undo and no check of what it deletes; tools rm moves it aside first",
+    title: `rm deletes with no undo and no check of what it deletes; ${toolCommand("rm")} moves it aside first`,
     severity: "block",
     why:
         "`rm -rf` on a wrong path (an empty variable, a typo, a worktree with uncommitted work) is gone for good. " +
-        "`tools rm` refuses system folders, home and the current folder, refuses tracked or uncommitted git work " +
+        `\`${toolCommand("rm")}\` refuses system folders, home and the current folder, refuses tracked or uncommitted git work ` +
         "unless the user confirms, moves what it deletes into a trash that drains in the background, and keeps a " +
-        "ledger, so `tools rm restore` can undo a mistake during the grace period.",
+        `ledger, so \`${toolCommand("rm")} restore\` can undo a mistake during the grace period.`,
     wrong: "rm -rf node_modules dist",
-    right: "tools rm node_modules dist",
+    right: `${toolCommand("rm")} node_modules dist`,
     evidence:
         "Martin's AGENTS.md bans rm (move aside instead), and the permission hook denied it with no replacement " +
-        "until tools rm (2026-10-27).",
+        `until ${toolCommand("rm")} (2026-10-27).`,
     detect(scan): ShellMatch | null {
         for (const statements of scan.units) {
             for (const statement of statements) {
@@ -88,7 +89,10 @@ export const rmUseToolsRm: ShellRule = {
 
                     const start = tokens[rmAt].start;
                     const matched = originalSlice(scan, start, element.start + element.text.length);
-                    const corrected = matched.replace(/^(?:\S*\/)?rm((?:\s+-\S+)*)(\s+--)?\s+/, "tools rm ");
+                    const corrected = matched.replace(
+                        /^(?:\S*\/)?rm((?:\s+-\S+)*)(\s+--)?\s+/,
+                        `${toolCommand("rm")} `
+                    );
                     const suggestion =
                         word === "rm" && corrected !== matched ? scan.command.replace(matched, corrected) : undefined;
                     return { matched, index: start, suggestion };

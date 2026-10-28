@@ -1,4 +1,5 @@
 import { resolve } from "node:path";
+import { toolCommand } from "@genesiscz/utils/cli";
 import { out } from "@genesiscz/utils/logger";
 import { planRemoval, presetsFor, scanPresets } from "@genesiscz/utils/rm";
 import type { Command } from "commander";
@@ -46,7 +47,9 @@ export function registerRemoveCommand(program: Command): void {
     addRemoveFlags(
         program
             .command("preset")
-            .description("find and delete the folders of one or more presets (see tools rm presets), or all")
+            .description(
+                `find and delete the folders of one or more presets (see ${toolCommand("rm")} presets), or all`
+            )
             .argument("<ids...>", "preset ids, or all")
             .option("--in <dir>", "folder to search (default: the current folder)")
             .option("--depth <n>", "how many folder levels to search", (v) => Number.parseInt(v, 10), 8)

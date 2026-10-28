@@ -1,3 +1,4 @@
+import { toolCommand } from "@genesiscz/utils/cli";
 import { out } from "@genesiscz/utils/logger";
 import { appendRmLedger, hardDenyReason, realOrSelf, resolveTarget, saveRmConfig } from "@genesiscz/utils/rm";
 import type { Command } from "commander";
@@ -20,7 +21,7 @@ export function registerRootCommands(program: Command): void {
             }
 
             if (config.roots.length === 0) {
-                out.println("No trusted roots. Add one with: tools rm roots add <dir>");
+                out.println(`No trusted roots. Add one with: ${toolCommand("rm")} roots add <dir>`);
                 return;
             }
 

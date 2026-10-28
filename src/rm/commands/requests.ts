@@ -1,5 +1,6 @@
 import { existsSync, readdirSync, rmdirSync } from "node:fs";
 import { resolve } from "node:path";
+import { toolCommand } from "@genesiscz/utils/cli";
 import { formatBytes } from "@genesiscz/utils/format";
 import { out } from "@genesiscz/utils/logger";
 import {
@@ -186,7 +187,7 @@ export function registerRequestCommands(program: Command): void {
                 out.println(pc.green(`Moved ${batch?.items.length ?? 0} item(s) to the trash.`));
 
                 if (batch) {
-                    out.println(pc.dim(`  undo: tools rm restore ${batch.id}`));
+                    out.println(pc.dim(`  undo: ${toolCommand("rm")} restore ${batch.id}`));
                 }
 
                 kickDrainer(ctx.config);

@@ -1,5 +1,5 @@
 import { relative } from "node:path";
-import { isInteractive } from "@genesiscz/utils/cli";
+import { isInteractive, toolCommand } from "@genesiscz/utils/cli";
 import { createStopwatch, formatBytes } from "@genesiscz/utils/format";
 import { logger, out } from "@genesiscz/utils/logger";
 import {
@@ -114,7 +114,11 @@ export async function executePlan(
         out.println(pc.dim(`Dry run: nothing moved. ${formatBytes(total)} would leave the disk.`));
 
         if (waiting.length > 0) {
-            out.println(pc.dim(`The trash holds ${waiting.length} batch(es) the drain will delete (tools rm trash).`));
+            out.println(
+                pc.dim(
+                    `The trash holds ${waiting.length} batch(es) the drain will delete (${toolCommand("rm")} trash).`
+                )
+            );
         }
 
         return result;
@@ -183,7 +187,7 @@ export async function executePlan(
                         ? "the drain deletes it now, in the background"
                         : `the drain deletes it in ${minutes} min`;
                 out.println(pc.green(`Moved ${batch.items.length} item(s) to the trash in ${elapsed()}; ${when}.`));
-                out.println(pc.dim(`  undo: tools rm restore ${batch.id}`));
+                out.println(pc.dim(`  undo: ${toolCommand("rm")} restore ${batch.id}`));
             }
         }
     }
@@ -273,9 +277,11 @@ function summary(item: RmPlanItem): Record<string, string | undefined> {
 
 export function printRequestHint(id: string, count: number): void {
     out.println(pc.yellow(`${count} path(s) need the user's confirmation (request ${id}).`));
-    out.println(`Ask the user to run:  ${pc.bold(`tools rm approve ${id}`)}`);
+    out.println(`Ask the user to run:  ${pc.bold(`${toolCommand("rm")} approve ${id}`)}`);
     out.println(
-        pc.dim(`  In Claude Code they can type: ! tools rm approve ${id}. It lists the paths and asks them to confirm.`)
+        pc.dim(
+            `  In Claude Code they can type: ! ${toolCommand("rm")} approve ${id}. It lists the paths and asks them to confirm.`
+        )
     );
 }
 
