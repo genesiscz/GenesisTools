@@ -317,6 +317,12 @@ export interface ClaudeSessionsConfig {
         /** The summary length the model is asked to stay under, in words. Default 5000; 0 asks for no limit. */
         words?: number;
         /**
+         * Default true: `tools claude codex` sets Claude Code's `promptCacheTtl` to "1h", the only way its idle
+         * compaction arms. Near the cache's end (54 minutes idle, over 200K context) Claude Code then compacts, and a
+         * ready background result answers it with no upstream request. Takes effect on launch or resume.
+         */
+        idle?: boolean;
+        /**
          * Native mode only: compact in the background before Claude Code asks (Codex's `async_compaction`), so its
          * compaction turn is answered at once. Each fraction is of the session's compaction point (window times
          * compact percent).

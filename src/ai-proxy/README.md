@@ -162,6 +162,9 @@ Supported values: `minimal`, `low`, `medium`, `high`, `xhigh`, `max`, `ultra`. E
     Each effort level has its own prompt cache, so another effort re-reads the whole context uncached (428K tokens on
     2026-10-27); set one only when speed matters more than the cache.
   - `compaction.words`: the summary length asked for, default `5000`; `0` asks for none.
+  - `compaction.idle` (default `true`): `tools claude codex` sets Claude Code's `promptCacheTtl` to `"1h"`. Claude Code
+    arms its idle compaction only after a main request that used the one-hour cache, and through the proxy it otherwise
+    asks for five minutes, so without this the idle compaction never runs. Takes effect on launch or resume.
   - `compaction.background` (native mode, `tools claude codex` sessions only): Codex's `async_compaction`. When a
     turn's context reaches `startAt` (default `0.8`) of the session's compaction point (window times compact percent),
     the proxy compacts that turn in the background. Claude Code's compaction turn (auto, `/compact`, or idle compaction
