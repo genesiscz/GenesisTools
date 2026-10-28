@@ -2,7 +2,7 @@ import * as p from "@clack/prompts";
 import { orgMismatch, probeTokenOrg } from "@genesiscz/utils/claude/account-fingerprint";
 import { INFERENCE_SCOPE, ONE_YEAR_SECONDS } from "@genesiscz/utils/claude/auth";
 import { LONG_TOKEN_MIN_LENGTH, verifyLongLivedToken } from "@genesiscz/utils/claude/token-verify";
-import { isInteractive, suggestCommand } from "@genesiscz/utils/cli";
+import { isInteractive } from "@genesiscz/utils/cli";
 import { copyToClipboard } from "@genesiscz/utils/clipboard";
 import { out } from "@genesiscz/utils/logger";
 import pc from "picocolors";
@@ -428,6 +428,7 @@ export const anthropicLongLogin: LoginVariant<LoginLongContext> = {
     run: anthropicLoginLong,
     nextStep: (account) => ({
         label: "Launch Claude with",
-        command: suggestCommand("tools claude", { replaceCommand: ["start", account.name] }),
+        tool: "claude",
+        replaceCommand: ["start", account.name],
     }),
 };

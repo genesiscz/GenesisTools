@@ -9,7 +9,7 @@ import pc from "picocolors";
 import { ownFlags } from "./login-flags";
 import { resolveAccountName } from "./select-account";
 import { resolveAccountsProvider } from "./select-provider";
-import { siblingCommandOf } from "./tool-names";
+import { nextStepCommand, siblingCommandOf } from "./tool-names";
 
 export interface RunLoginLongOptions {
     /** Pinned by a provider's own door; resolved from `--provider` otherwise. */
@@ -148,6 +148,6 @@ export async function runLoginLong(opts: RunLoginLongOptions): Promise<void> {
     p.log.success(
         `Long-lived token saved to "${account.name}" (${maskToken(token)})` +
             `${expiresAt === undefined ? "" : `, valid until ${new Date(expiresAt).toLocaleString()}`}. ` +
-            `${next.label}: ${pc.cyan(next.command)}`
+            `${next.label}: ${pc.cyan(nextStepCommand(next))}`
     );
 }

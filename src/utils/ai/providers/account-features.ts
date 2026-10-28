@@ -324,8 +324,22 @@ export interface LoginVariant<Context extends AccountFlowContext = AccountFlowCo
     readonly flags: readonly LoginFlag[];
     /** Obtain the credential and prove whose it is. Writes nothing: the core writes what it returns. */
     run(ctx: Context): Promise<LoginOutcome>;
-    /** The command that puts the saved credential to use, printed once it is written. */
-    nextStep(account: AccountEntry): { label: string; command: string };
+    /**
+     * The command that puts the saved credential to use, printed once it is written. It names the tool and its
+     * arguments, not the binary: the caller builds the command with `toolCommand()`, so a copy of this module in
+     * another repo names that repo's binary (lint-rules `no-tool-command-in-utils`).
+     */
+    nextStep(account: AccountEntry): LoginNextStep;
+}
+
+/** A tool command a login variant suggests: `tool` without the binary, and `suggestCommand`'s modifications. */
+export interface LoginNextStep {
+    label: string;
+    /** The tool and any leading words, e.g. `claude` or `cc run work`. */
+    tool: string;
+    /** Replace the subcommand (`start <name>`), or add flags to `tool`. */
+    replaceCommand?: string[];
+    add?: string[];
 }
 
 /**
