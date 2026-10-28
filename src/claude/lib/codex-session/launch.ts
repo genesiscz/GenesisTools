@@ -200,6 +200,11 @@ export function sessionArgs(input: {
     effort: string;
     agents: string[];
     settingsEnv: Record<string, string>;
+    /**
+     * Claude Code's `promptCacheTtl`. "1h" lets its idle compaction arm: it arms only after a main request that used
+     * the one-hour cache, and through the proxy Claude Code otherwise asks for the five-minute one (2026-10-28).
+     */
+    promptCacheTtl?: "1h";
     /** Appended to the lead's system prompt, unless the user passes their own `--append-system-prompt`. */
     leadPrompt: string;
     passthrough: string[];
@@ -211,7 +216,15 @@ export function sessionArgs(input: {
         ...(input.resume ? ["--resume", input.sessionId] : ["--session-id", input.sessionId]),
         ...(passthroughSets(input.passthrough, "--effort") ? [] : ["--effort", input.effort]),
         ...input.agents,
-        ...(ownSettings ? [] : ["--settings", SafeJSON.stringify({ env: input.settingsEnv })]),
+        ...(ownSettings
+            ? []
+            : [
+                  "--settings",
+                  SafeJSON.stringify({
+                      env: input.settingsEnv,
+                      ...(input.promptCacheTtl ? { promptCacheTtl: input.promptCacheTtl } : {}),
+                  }),
+              ]),
         ...(ownPrompt ? [] : ["--append-system-prompt", input.leadPrompt]),
         ...input.passthrough,
     ];

@@ -406,6 +406,7 @@ export async function runCodexSession(
             CLAUDE_CODE_AUTO_COMPACT_WINDOW: String(model.info.window),
             CLAUDE_AUTOCOMPACT_PCT_OVERRIDE: String(compact.percent),
         },
+        ...(config.claudeSessions?.compaction?.idle === false ? {} : { promptCacheTtl: "1h" as const }),
         leadPrompt: leadPrompt(agents, config.claudeSessions),
         passthrough,
     });
