@@ -1,4 +1,5 @@
 import { resolve } from "node:path";
+import { toolCommand } from "@genesiscz/utils/cli";
 import { out } from "@genesiscz/utils/logger";
 import {
     appendRmLedger,
@@ -118,12 +119,14 @@ export function registerProfileCommands(program: Command): void {
             const shown = profilesFor(ctx.base);
 
             for (const name of ctx.base.disabledProfiles) {
-                out.println(pc.dim(`${name} (built-in, turned off: tools rm config set enable-profile ${name})`));
+                out.println(
+                    pc.dim(`${name} (built-in, turned off: ${toolCommand("rm")} config set enable-profile ${name})`)
+                );
             }
 
             if (shown.length === 0) {
                 out.println(
-                    "No profiles. Add one with: tools rm profile set <name> --agent codex --ask-action request"
+                    `No profiles. Add one with: ${toolCommand("rm")} profile set <name> --agent codex --ask-action request`
                 );
             }
 
@@ -184,7 +187,7 @@ export function registerProfileCommands(program: Command): void {
             if (!flags.agent && !flags.session && !flags.project && !flags.cwd) {
                 out.println(
                     pc.red(
-                        "Give at least one of --agent, --session, --project, --cwd (tools rm config set changes everyone)."
+                        `Give at least one of --agent, --session, --project, --cwd (${toolCommand("rm")} config set changes everyone).`
                     )
                 );
                 process.exitCode = 1;
@@ -220,7 +223,7 @@ export function registerProfileCommands(program: Command): void {
             };
             const lines = [describeMatch(next), ...describePolicy(next)];
             const answer = await requirePerson(ctx, {
-                title: `Set the tools rm profile ${name}?`,
+                title: `Set the ${toolCommand("rm")} profile ${name}?`,
                 lines,
                 code: "profile",
             });
@@ -249,7 +252,7 @@ export function registerProfileCommands(program: Command): void {
             }
 
             const answer = await requirePerson(ctx, {
-                title: `Remove the tools rm profile ${name}?`,
+                title: `Remove the ${toolCommand("rm")} profile ${name}?`,
                 lines: [name],
                 code: "profile",
             });

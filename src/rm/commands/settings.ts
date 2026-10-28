@@ -1,3 +1,4 @@
+import { toolCommand } from "@genesiscz/utils/cli";
 import { out } from "@genesiscz/utils/logger";
 import {
     allPresets,
@@ -81,7 +82,9 @@ function apply(config: RmConfig, key: Setting, value: string): RmConfig {
             };
         case "disable-profile":
             if (!BUILTIN_PROFILES.some((p) => p.name === value)) {
-                throw new Error(`No built-in profile ${value}; remove your own with tools rm profile remove.`);
+                throw new Error(
+                    `No built-in profile ${value}; remove your own with ${toolCommand("rm")} profile remove.`
+                );
             }
 
             return { ...config, disabledProfiles: [...new Set([...config.disabledProfiles, value])] };
@@ -93,7 +96,7 @@ function apply(config: RmConfig, key: Setting, value: string): RmConfig {
 export function registerSettingsCommands(program: Command): void {
     program
         .command("presets")
-        .description("the folder kinds tools rm deletes without asking")
+        .description(`the folder kinds ${toolCommand("rm")} deletes without asking`)
         .option("--json", "print as JSON")
         .action((flags: { json?: boolean }) => {
             const { config } = runContext();
@@ -109,7 +112,7 @@ export function registerSettingsCommands(program: Command): void {
                 const off = enabled.has(preset.id)
                     ? ""
                     : preset.optIn && !config.disabledPresets.includes(preset.id)
-                      ? pc.yellow(` (opt-in: tools rm config set enable-preset ${preset.id})`)
+                      ? pc.yellow(` (opt-in: ${toolCommand("rm")} config set enable-preset ${preset.id})`)
                       : pc.red(" (disabled)");
                 const names = preset.within ? `every folder in ${preset.within}` : preset.names.join(", ");
                 const markers = preset.markers ? ` next to ${preset.markers.join(" or ")}` : "";
@@ -119,7 +122,7 @@ export function registerSettingsCommands(program: Command): void {
             }
         });
 
-    const config = program.command("config").description("tools rm settings (changing one needs a person)");
+    const config = program.command("config").description(`${toolCommand("rm")} settings (changing one needs a person)`);
 
     config
         .command("show", { isDefault: true })

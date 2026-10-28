@@ -1,3 +1,4 @@
+import { toolCommand } from "@genesiscz/utils/cli";
 import { createStopwatch, formatBytes } from "@genesiscz/utils/format";
 import { out } from "@genesiscz/utils/logger";
 import {
@@ -56,7 +57,7 @@ export function registerTrashCommands(program: Command): void {
     program
         .command("restore")
         .description("move a batch (or some of its paths) back where it was")
-        .argument("<batch>", "the batch id (tools rm trash lists them)")
+        .argument("<batch>", `the batch id (${toolCommand("rm")} trash lists them)`)
         .argument("[paths...]", "only these original paths")
         .action((id: string, paths: string[]) => {
             const ctx = runContext();
@@ -77,7 +78,10 @@ export function registerTrashCommands(program: Command): void {
         .command("drain")
         .description("delete what waits in the trash: the due batches, or all with --now")
         .option("--now", "every batch, also those still in their grace period")
-        .option("--background", "run as the background drainer until the trash is empty (tools rm starts it)")
+        .option(
+            "--background",
+            `run as the background drainer until the trash is empty (${toolCommand("rm")} starts it)`
+        )
         .action(async (flags: { now?: boolean; background?: boolean }) => {
             const { config } = runContext();
 
