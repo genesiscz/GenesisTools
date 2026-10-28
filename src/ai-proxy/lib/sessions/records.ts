@@ -642,7 +642,7 @@ export function noteSessionRequest(
 ): AiProxySessionRecord {
     if (record.forkPending && !record.claudeSessionId && claudeSessionId) {
         return (
-            updateUnlessBusy(record.id, (current) => {
+            updateUnlessBusy(record, (current) => {
                 current.claudeSessionId = claudeSessionId;
                 current.forkPending = false;
                 current.lastSeenAt = new Date(now).toISOString();
@@ -666,7 +666,7 @@ export function noteSessionRequest(
 
     if (now - lastSeen >= LAST_SEEN_WRITE_MS) {
         return (
-            updateUnlessBusy(record.id, (current) => {
+            updateUnlessBusy(record, (current) => {
                 current.lastSeenAt = new Date(now).toISOString();
             }) ?? record
         );
@@ -680,17 +680,17 @@ export function noteSessionRequest(
  * (lastSeenAt, the fork's id) are retried by the session's next request, so waiting in the proxy buys nothing.
  */
 function updateUnlessBusy(
-    id: string,
+    record: AiProxySessionRecord,
     change: (record: AiProxySessionRecord) => void
 ): AiProxySessionRecord | undefined {
     try {
-        return updateSessionRecord({ id, change });
+        return updateSessionRecord({ id: record.id, change, expectedKeyHash: record.keyHash });
     } catch (error) {
         if (!isSessionRecordBusy(error)) {
             throw error;
         }
 
-        logger.debug({ session: id }, "ai-proxy: session record busy, this request's write is skipped");
+        logger.debug({ session: record.id }, "ai-proxy: session record busy, this request's write is skipped");
         return undefined;
     }
 }

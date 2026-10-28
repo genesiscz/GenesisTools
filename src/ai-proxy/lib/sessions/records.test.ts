@@ -251,6 +251,21 @@ describe("session records", () => {
         expect(closeSessionRecord({ id: SESSION, reason: "exited", expectedKeyHash: newHash })?.closedAt).toBeDefined();
     });
 
+    it.each([false, true])(
+        "retains an authenticated request snapshot after key rotation (fork pending: %s)",
+        (forkPending) => {
+            const first = openSessionRecord({ id: SESSION, codexAccount: "work", forkPending });
+            const second = openSessionRecord({ id: SESSION, codexAccount: "side", forkPending });
+            const before = readSessionRecord(SESSION);
+            const forkId = forkPending ? "7b8c9d0e-1f2a-4b3c-8d4e-5f6a7b8c9d0e" : undefined;
+
+            expect(noteSessionRequest(first.record, forkId, Date.now() + 120_000)).toBe(first.record);
+            expect(readSessionRecord(SESSION)).toEqual(before);
+            expect(resolveSessionKey(second.key).state).toBe("open");
+            expect(readSessionRecord(SESSION)?.keyHash).toBe(hashSessionKey(second.key));
+        }
+    );
+
     it("rebuilds a reopened record from the new launch, so an account the launch left out is gone", () => {
         openSessionRecord({ id: SESSION, codexProxyAccount: "codex", claudeProxyAccount: "personal", model: "a" });
         updateSessionRecord({
