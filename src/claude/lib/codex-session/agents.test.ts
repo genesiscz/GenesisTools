@@ -27,6 +27,16 @@ describe("leadPrompt", () => {
         expect(text).toContain("names the skills the subagent should load");
     });
 
+    it("keeps one-off scripts inline and short commands in the foreground", () => {
+        const text = leadPrompt(sessionAgents({ codexModel }));
+
+        expect(text).toContain("Run one-off code inline");
+        expect(text).toContain(
+            "Write a script file only when you will run it again or it is longer than about 40 lines"
+        );
+        expect(text).toContain("in the foreground");
+    });
+
     it("takes the configured note and skills list, and the nudge can be turned off", () => {
         const settings = {
             global: { lead: { systemNote: { append: "Prefer terra for reviews." } } },
