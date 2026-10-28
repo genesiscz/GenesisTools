@@ -1,4 +1,5 @@
 import { proxyAccountRefOf } from "@app/ai-proxy/lib/account-refs";
+import { providerDefinition } from "@app/ai-proxy/lib/providers/registry";
 import type { EffortSource, ResolvedRoute } from "@app/ai-proxy/lib/types";
 import type { CallTimeline } from "@app/ai-proxy/lib/usage/call-timeline";
 import { recordClientUsage } from "@app/ai-proxy/lib/usage/client-ledger";
@@ -12,7 +13,6 @@ import type { PrefixDiff } from "@app/ai-proxy/lib/usage/prefix-diff";
 import { recordUsageRequest } from "@app/ai-proxy/lib/usage/store";
 import { writeTranscript } from "@app/ai-proxy/lib/usage/transcripts";
 import type { RequestTags } from "@app/ai-proxy/lib/usage/types";
-import { resolveAnthropicSubModel } from "@genesiscz/utils/ai/anthropic/models";
 import { refToId } from "@genesiscz/utils/ai/config/refs";
 import { logger } from "@genesiscz/utils/logger";
 
@@ -64,14 +64,11 @@ export function trackCompletedRequest(input: {
     const elapsedMs = Math.max(input.elapsedMs, input.timeline?.completedMs ?? 0);
     const ts = new Date().toISOString();
 
-    // "haiku"/"sonnet"/"opus"/"fable" are served as aliases and the rate table
-    // is exact-id, so booking the alias booked $0 (79 of 448 August requests).
-    // Resolve once here so the transcript, usage row and invoice all carry the
-    // concrete id. Unknown ids pass through the resolver unchanged.
+    // Resolved once here, so the transcript, the usage row and the invoice all carry the concrete id an alias names
+    // (the provider's `bookedId`). Unknown ids pass through unchanged.
     const upstreamModel =
-        input.route.account.provider === "anthropic-subscription"
-            ? resolveAnthropicSubModel(input.route.upstreamId)
-            : input.route.upstreamId;
+        providerDefinition(input.route.account.provider)?.models.bookedId(input.route.upstreamId) ??
+        input.route.upstreamId;
 
     const transcript = writeTranscript({
         ts,

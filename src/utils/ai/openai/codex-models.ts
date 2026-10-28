@@ -27,7 +27,7 @@ import {
 
 export type CodexCatalogSource = "live" | "cache" | "static" | "default" | "override";
 
-/** Per-model settings Martin may change in the ai-proxy config (`codexModels.<slug>`). */
+/** Per-model settings the ai-proxy config may change (`modelOverrides.codex.<slug>`). */
 export interface CodexModelOverride {
     /** Context window in tokens; replaces the catalog value. */
     window?: number;

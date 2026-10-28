@@ -1,4 +1,4 @@
-import { isProviderImplemented } from "@app/ai-proxy/lib/providers/registry";
+import { providerDefinition } from "@app/ai-proxy/lib/providers/registry";
 import type { AiProxyAccountConfig, ProxyModelMeta } from "@app/ai-proxy/lib/types";
 import { suggestCommand } from "@genesiscz/utils/cli";
 import { formatTokens } from "@genesiscz/utils/format";
@@ -104,13 +104,15 @@ export interface AccountListRow {
     modelCount: number;
 }
 
-/** Codex accounts only: `on → backup`, `off`, or `off (list: backup)` when a list waits unused. */
+/** An account that can fail over: `on → backup`, `off`, or `off (list: backup)` when a list waits unused. */
 function formatFailover(account: AiProxyAccountConfig): string {
-    if (account.provider !== "openai-subscription") {
+    const failover = providerDefinition(account.provider)?.failover;
+
+    if (!failover) {
         return pc.dim("—");
     }
 
-    const list = account.openaiSub?.failoverAccountNames ?? [];
+    const list = failover.accounts(account);
 
     if (account.failover) {
         return pc.green(list.length > 0 ? `on → ${list.join(", ")}` : "on");
@@ -124,16 +126,14 @@ function accountNote(account: AiProxyAccountConfig, modelCount: number): string 
         return "disabled in config";
     }
 
-    if (!isProviderImplemented(account.provider)) {
+    const definition = providerDefinition(account.provider);
+
+    if (!definition) {
         return "provider not wired for catalog/runtime yet";
     }
 
     if (modelCount === 0) {
-        if (account.provider === "xai-api-key") {
-            return "no models (check API key / GET /models)";
-        }
-
-        return "enabled but catalog empty";
+        return definition.models.emptyHint ?? "enabled but catalog empty";
     }
 
     return "—";

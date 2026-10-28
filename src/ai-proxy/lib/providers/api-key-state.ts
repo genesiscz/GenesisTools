@@ -9,6 +9,8 @@
 import { readdir, readFile } from "node:fs/promises";
 import { homedir } from "node:os";
 import { join } from "node:path";
+import { providerDefinition } from "@app/ai-proxy/lib/providers/registry";
+import { xaiApiKeyEnvName } from "@app/ai-proxy/lib/providers/xai-api-key.definition";
 import type { AiProxyAccountConfig } from "@app/ai-proxy/lib/types";
 import { env } from "@genesiscz/utils/env";
 import { logger } from "@genesiscz/utils/logger";
@@ -44,16 +46,15 @@ export function defaultApiKeyEnvName(account: AiProxyAccountConfig): string {
         return account.apiKeyEnv;
     }
 
-    if (account.provider === "openai") {
-        return "OPENAI_API_KEY";
+    const billing = providerDefinition(account.provider)?.billing;
+
+    if (billing?.plane === "api-key") {
+        return billing.envName();
     }
 
-    // Before the xAI fallback, or every openrouter error names the wrong variable.
-    if (account.provider === "openrouter") {
-        return "OPENROUTER_API_KEY";
-    }
-
-    return env.x.getApiEnvKey() ?? "XAI_API_KEY";
+    // An account with no key variable of its own (a subscription seat, an unknown provider) is told xAI's, as before
+    // the provider table; every caller asks about an api-key account.
+    return xaiApiKeyEnvName();
 }
 
 export function maskApiKey(key: string): string {

@@ -1,4 +1,5 @@
 import { describe, expect, it } from "bun:test";
+import type { AiProxyAccountConfig, AiProxyProviderType, UsageSummary } from "@app/ai-proxy/lib/types";
 import { snapshotFromUsage } from "@app/ai-proxy/lib/usage/billing-sync";
 
 describe("billing snapshot shape", () => {
@@ -47,5 +48,34 @@ describe("billing snapshot shape", () => {
 
         expect(snapshot?.copilot).toEqual({ plan: "individual", quotaRemaining: 10 });
         expect(snapshot?.fetchedAt).toEqual(expect.any(String));
+    });
+
+    it("keeps nothing for a provider whose usage is not stored, or for a read that lacks the provider's own details", () => {
+        const account = (provider: AiProxyProviderType): AiProxyAccountConfig => ({
+            name: "work",
+            provider,
+            providerSlug: "slug",
+            enabled: true,
+        });
+        const copilotRead: UsageSummary = {
+            accountName: "work",
+            provider: "github-copilot-subscription",
+            summary: "Copilot chat quota: 10 remaining",
+            details: { copilot: { plan: "individual", quotaRemaining: 10 } },
+        };
+        const xaiRead: UsageSummary = {
+            accountName: "work",
+            provider: "xai-api-key",
+            summary: "$1.00 spent",
+            details: { xai: { teamUsage: { total: 1 }, prepaidBalance: { total: 5 } } },
+        };
+
+        expect([
+            snapshotFromUsage(account("xai-api-key"), xaiRead),
+            snapshotFromUsage(account("grok-subscription"), copilotRead),
+            snapshotFromUsage(account("github-copilot-subscription"), xaiRead),
+            snapshotFromUsage(account("anthropic-subscription"), { summary: "seat" }),
+            snapshotFromUsage(account("openai-subscription"), copilotRead),
+        ]).toEqual([null, null, null, null, null]);
     });
 });

@@ -1,3 +1,4 @@
+import { providerDefinition } from "@app/ai-proxy/lib/providers/registry";
 import type { AiProxyAccountConfig } from "@app/ai-proxy/lib/types";
 import type { GithubCopilotTokenSource } from "@genesiscz/utils/ai/github-copilot/copilot-cli-auth";
 import pc from "picocolors";
@@ -38,51 +39,13 @@ export function formatGithubCopilotTokenSource(source: GithubCopilotTokenSource)
     }
 }
 
+/** The vendor's name; a provider this build does not know shows its slug. */
 export function providerTitleFor(account: AiProxyAccountConfig): string {
-    switch (account.provider) {
-        case "grok-subscription":
-            return "Grok";
-        case "github-copilot-subscription":
-            return "GitHub Copilot";
-        case "xai-api-key":
-            return "xAI API";
-        case "openrouter":
-            return "OpenRouter";
-        case "openai":
-            return "OpenAI API";
-        case "anthropic-subscription":
-            return "Claude subscription";
-        case "openai-subscription":
-            return "ChatGPT/Codex subscription";
-        default:
-            return account.providerSlug;
-    }
+    return providerDefinition(account.provider)?.title ?? account.providerSlug;
 }
 
 export function suggestedModelFor(account: AiProxyAccountConfig): string | undefined {
-    switch (account.provider) {
-        case "grok-subscription":
-            return `${account.name}/grok/grok-composer-2.5-fast`;
-        case "github-copilot-subscription":
-            return `${account.name}/github-copilot/claude-sonnet-4`;
-        case "xai-api-key":
-            return `${account.name}/${account.providerSlug}/grok-4.7`;
-        // Three segments plus the slash inside the OpenRouter id: the fully
-        // qualified form `resolve-model.ts` parses without ambiguity.
-        case "openrouter":
-            return `${account.name}/${account.providerSlug}/anthropic/claude-sonnet-5.5`;
-        case "openai":
-            return `${account.name}/${account.providerSlug}/gpt-6.1-sol`;
-        // The short alias, not a dated id: `listAnthropicSubProxyModels` always
-        // advertises `sonnet`/`opus`/`haiku`/`fable`, and they track the current
-        // dated model so a suggestion cannot rot.
-        case "anthropic-subscription":
-            return `${account.name}/${account.providerSlug}/sonnet`;
-        case "openai-subscription":
-            return `${account.name}/${account.providerSlug}/gpt-6.1-sol`;
-        default:
-            return undefined;
-    }
+    return providerDefinition(account.provider)?.suggestedModel(account);
 }
 
 function formatReportBlock(report: DetectedAccountReport): string {

@@ -59,6 +59,14 @@ describe("apiKeyStatus", () => {
         expect(defaultApiKeyEnvName({ ...account, apiKeyEnv: "MY_KEY" })).toBe("MY_KEY");
     });
 
+    it("names OpenRouter's own variable, and the xAI one for an account that has no key variable", () => {
+        env.testing.unset("XAI_API_KEY");
+        env.testing.unset("X_AI_API_KEY");
+
+        expect(defaultApiKeyEnvName({ ...account, provider: "openrouter" })).toBe("OPENROUTER_API_KEY");
+        expect(defaultApiKeyEnvName({ ...account, provider: "grok-subscription" })).toBe("XAI_API_KEY");
+    });
+
     it("names the legacy alias when that is the variable actually carrying the key", () => {
         // Reporting "XAI_API_KEY" here would send the user to a variable they
         // never set, while the guard spends the one they did.

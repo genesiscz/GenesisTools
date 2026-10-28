@@ -8,6 +8,7 @@ import { maskApiKey } from "@app/ai-proxy/lib/providers/api-key-state";
 import { AI_PROXY_CONFIG_FILE_MODE, getAiProxyStorage } from "@app/ai-proxy/lib/storage";
 import type {
     AiProxyConfig,
+    AiProxyModelOverrides,
     AiProxyPublicConfig,
     ClaudeCodeGlobalSettings,
     CodexInClaudeCodeSettings,
@@ -161,15 +162,33 @@ function migrateSessionsIn(
     return deepMerge(moved, current ?? {});
 }
 
+/**
+ * `codexModels` before 2026-10-28 was a flat key named after one provider. It moves into `modelOverrides.codex`,
+ * beside the place a `grok` catalog's overrides get. A model that `modelOverrides.codex` already sets wins field
+ * by field; the old key only fills gaps.
+ */
+function migrateModelOverrides(
+    legacy: AiProxyConfig["codexModels"],
+    current: AiProxyModelOverrides | undefined
+): AiProxyModelOverrides | undefined {
+    if (!legacy || Object.keys(legacy).length === 0) {
+        return current;
+    }
+
+    return deepMerge({ codex: legacy }, current ?? {});
+}
+
 function mergeConfig(existing: Partial<AiProxyConfig>): AiProxyConfig {
     const defaults = getDefaultConfig();
-    const { claudeSessions, ...rest } = existing;
+    const { claudeSessions, codexModels, ...rest } = existing;
     const sessionsIn = migrateSessionsIn(claudeSessions, existing.sessionsIn);
+    const modelOverrides = migrateModelOverrides(codexModels, existing.modelOverrides);
 
     const merged = {
         ...defaults,
         ...rest,
         ...(sessionsIn ? { sessionsIn } : {}),
+        ...(modelOverrides ? { modelOverrides } : {}),
         listen: { ...defaults.listen, ...existing.listen },
         translation: {
             ...defaults.translation,

@@ -1,20 +1,8 @@
 import { createHash } from "node:crypto";
 import { statSync } from "node:fs";
-import { resolveGithubCopilotDataDir, resolveGrokAuthPath } from "@app/ai-proxy/lib/account-config";
-import {
-    type CatalogOptions,
-    listAnthropicSubProxyModels,
-    listCopilotProxyModels,
-    listGrokProxyModels,
-    listOpenAiProxyModels,
-    listOpenAiSubProxyModels,
-    listOpenRouterProxyModels,
-    listXaiProxyModels,
-} from "@app/ai-proxy/lib/model-meta";
+import type { CatalogOptions } from "@app/ai-proxy/lib/model-meta";
+import { providerDefinition } from "@app/ai-proxy/lib/providers/registry";
 import type { AiProxyAccountConfig, ProxyModelMeta } from "@app/ai-proxy/lib/types";
-import { githubTokenPath } from "@genesiscz/utils/ai/github-copilot/paths";
-import { GROK_CLI_CHAT_PROXY_BASE_URL } from "@genesiscz/utils/ai/grok";
-import { CODEX_AUTH_PATH } from "@genesiscz/utils/ai/openai/codex-auth";
 import { concurrentMap } from "@genesiscz/utils/async";
 import { SafeJSON } from "@genesiscz/utils/json";
 import { logger } from "@genesiscz/utils/logger";
@@ -50,14 +38,7 @@ function fileGeneration(file: string): string {
 }
 
 function catalogKey(account: AiProxyAccountConfig, options?: CatalogOptions): string {
-    const auth =
-        account.provider === "openai-subscription"
-            ? fileGeneration(account.openaiSub?.codexAuthPath ?? CODEX_AUTH_PATH)
-            : account.provider === "grok-subscription"
-              ? fileGeneration(resolveGrokAuthPath(account))
-              : account.provider === "github-copilot-subscription"
-                ? fileGeneration(githubTokenPath(resolveGithubCopilotDataDir(account)))
-                : "";
+    const auth = (providerDefinition(account.provider)?.models.cacheFiles(account) ?? []).map(fileGeneration);
     return createHash("sha256")
         .update(
             SafeJSON.stringify([
@@ -118,35 +99,7 @@ export async function buildProxyModelCatalog(
     return enabled.flatMap((account) => loaded.get(account) ?? []);
 }
 
+/** The account's own provider lists its models; a provider this build does not know lists none. */
 async function accountCatalog(account: AiProxyAccountConfig, options?: CatalogOptions): Promise<ProxyModelMeta[]> {
-    const models: ProxyModelMeta[] = [];
-    if (account.provider === "grok-subscription") {
-        const baseUrl = account.baseUrl ?? GROK_CLI_CHAT_PROXY_BASE_URL;
-        models.push(...listGrokProxyModels(account, baseUrl));
-    }
-
-    if (account.provider === "github-copilot-subscription") {
-        models.push(...(await listCopilotProxyModels(account)));
-    }
-
-    if (account.provider === "anthropic-subscription") {
-        models.push(...(await listAnthropicSubProxyModels(account, options)));
-    }
-
-    if (account.provider === "openai-subscription") {
-        models.push(...(await listOpenAiSubProxyModels(account, options)));
-    }
-
-    if (account.provider === "xai-api-key") {
-        models.push(...(await listXaiProxyModels(account)));
-    }
-
-    if (account.provider === "openrouter") {
-        models.push(...(await listOpenRouterProxyModels(account)));
-    }
-
-    if (account.provider === "openai") {
-        models.push(...(await listOpenAiProxyModels(account)));
-    }
-    return models;
+    return (await providerDefinition(account.provider)?.models.list(account, options)) ?? [];
 }

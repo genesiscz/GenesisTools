@@ -209,7 +209,7 @@ export function listGrokProxyModels(account: AiProxyAccountConfig, baseUrl: stri
 function loadGrokCatalogRecords(account: AiProxyAccountConfig): GrokModelRecord[] | null {
     const catalog = loadCatalogFile();
     const entry = catalog?.accounts.find(
-        (item) => item.accountName === account.name && item.provider === "grok-subscription"
+        (item) => item.accountName === account.name && item.provider === account.provider
     );
 
     if (!entry) {
@@ -390,7 +390,7 @@ export async function listOpenAiSubProxyModels(
 function catalogCopilotRecords(account: AiProxyAccountConfig): CopilotModelRecord[] {
     const catalog = loadCatalogFile();
     const accountCatalog = catalog?.accounts.find(
-        (entry) => entry.accountName === account.name && entry.provider === "github-copilot-subscription"
+        (entry) => entry.accountName === account.name && entry.provider === account.provider
     );
 
     const pickerModels = Array.isArray(accountCatalog?.pickerModels)

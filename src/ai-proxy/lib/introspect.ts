@@ -1,5 +1,5 @@
-import { resolveGithubCopilotDataDir, resolveGrokAuthPath } from "@app/ai-proxy/lib/account-config";
 import { buildProxyModelCatalog } from "@app/ai-proxy/lib/catalog";
+import { providerDefinition } from "@app/ai-proxy/lib/providers/registry";
 import {
     buildPublicBaseUrl,
     buildPublicHealthUrl,
@@ -7,17 +7,8 @@ import {
     resolveTunnelName,
 } from "@app/ai-proxy/lib/public-url";
 import type { AiProxyConfig } from "@app/ai-proxy/lib/types";
-import { fetchCopilotUserInfo, formatCopilotUsageSummary, readGithubToken } from "@genesiscz/utils/ai/github-copilot";
-import { GITHUB_COPILOT_UPSTREAM_ENDPOINTS } from "@genesiscz/utils/ai/github-copilot/endpoints";
-import { COPILOT_GHO_TOKEN_SERVICE, githubTokenPath } from "@genesiscz/utils/ai/github-copilot/paths";
-import {
-    formatBillingSummary,
-    GROK_UPSTREAM_ENDPOINTS,
-    GrokSubscriptionClient,
-    getTokenPrefix,
-} from "@genesiscz/utils/ai/grok";
+import { GROK_UPSTREAM_ENDPOINTS, getTokenPrefix } from "@genesiscz/utils/ai/grok";
 import { toolCommand } from "@genesiscz/utils/cli/tool-command";
-import { logger } from "@genesiscz/utils/logger";
 
 export interface IntrospectOptions {
     section?: "accounts" | "endpoints" | "models" | "cursor" | "all";
@@ -81,59 +72,17 @@ export async function buildIntrospectText(config: AiProxyConfig, options?: Intro
             lines.push(`═══ Account: ${account.name}${account.label ? ` (${account.label})` : ""} ═══`);
             lines.push(`Provider:     ${account.provider} (slug: ${account.providerSlug})`);
 
-            if (account.provider === "grok-subscription") {
-                const authPath = resolveGrokAuthPath(account);
-                lines.push(`Upstream:     ${account.baseUrl ?? "https://cli-chat-proxy.grok.com/v1"}`);
-                lines.push(`Auth:         ${authPath}`);
+            const definition = providerDefinition(account.provider);
 
-                try {
-                    const client = await GrokSubscriptionClient.fromAuthFile(authPath);
-                    if (client) {
-                        const [settings, billing] = await Promise.all([client.getSettings(), client.getBilling()]);
-                        lines.push(`Tier:         ${settings.subscription_tier_display ?? "unknown"}`);
-                        lines.push(`Usage:        ${formatBillingSummary(billing)}`);
-                    }
-                } catch (err) {
-                    logger.warn(
-                        { err, account: account.name, authPath },
-                        "ai-proxy introspect: grok auth probe failed"
-                    );
-                    lines.push("Auth status:  unavailable");
-                }
-            }
-
-            if (account.provider === "github-copilot-subscription") {
-                const dataDir = resolveGithubCopilotDataDir(account);
-                lines.push(`Upstream:     ${account.baseUrl ?? "https://api.githubcopilot.com"}`);
-                lines.push(
-                    `Auth:         AuthStorage(${COPILOT_GHO_TOKEN_SERVICE}) — legacy ${githubTokenPath(dataDir)}`
-                );
-
-                try {
-                    const gho = await readGithubToken(dataDir);
-                    if (gho) {
-                        const raw = await fetchCopilotUserInfo(gho);
-                        const plan = typeof raw.copilot_plan === "string" ? raw.copilot_plan : "unknown";
-                        lines.push(`Tier:         ${plan}`);
-                        lines.push(`Usage:        ${formatCopilotUsageSummary(raw)}`);
-                    }
-                } catch (err) {
-                    logger.warn(
-                        { err, account: account.name, dataDir },
-                        "ai-proxy introspect: copilot auth probe failed"
-                    );
-                    lines.push("Auth status:  unavailable");
-                }
-            }
+            lines.push(...(definition ? await definition.introspect(account) : []));
 
             if (section === "all" || section === "endpoints") {
                 lines.push("");
                 lines.push("Upstream endpoints (subscription):");
 
-                const endpoints =
-                    account.provider === "github-copilot-subscription"
-                        ? GITHUB_COPILOT_UPSTREAM_ENDPOINTS
-                        : GROK_UPSTREAM_ENDPOINTS;
+                // A provider that lists none prints Grok's, as this command did before the provider table; the
+                // output is pinned by introspect.test.ts, so changing it is a decision of its own.
+                const endpoints = definition?.upstreamEndpoints ?? GROK_UPSTREAM_ENDPOINTS;
 
                 for (const endpoint of endpoints) {
                     lines.push(`  ${endpoint.method.padEnd(4)} ${endpoint.path}`);

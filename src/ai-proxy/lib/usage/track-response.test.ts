@@ -5,11 +5,16 @@ import { join } from "node:path";
 import type { AiProxyAccountConfig } from "@app/ai-proxy/lib/types";
 import { readClientLedger, setClientLedgerDirForTests } from "@app/ai-proxy/lib/usage/client-ledger";
 import type { UsageRequestRecord } from "@app/ai-proxy/lib/usage/types";
+import { resolveAnthropicSubModel } from "@genesiscz/utils/ai/anthropic/models";
 import { SafeJSON } from "@genesiscz/utils/json";
 
 const recordUsageRequest = mock((_record: UsageRequestRecord) => {});
 
+// Spread the real module: the provider registry, which books an alias as its model, reaches the store's other exports.
+const realStore = await import("@app/ai-proxy/lib/usage/store");
+
 mock.module("@app/ai-proxy/lib/usage/store", () => ({
+    ...realStore,
     recordUsageRequest,
 }));
 
@@ -180,5 +185,36 @@ describe("trackCompletedRequest", () => {
         expect(dropped.error).toBe(true);
         expect(dropped.failure).toContain("socket connection was closed");
         expect(dropped.status).toBe(200);
+    });
+
+    it("books a Claude subscription alias as its concrete model, and another provider's id as it was sent", () => {
+        recordUsageRequest.mockClear();
+
+        for (const [provider, upstreamId] of [
+            ["anthropic-subscription", "sonnet"],
+            ["openai-subscription", "sol"],
+        ] as const) {
+            trackCompletedRequest({
+                route: {
+                    accountName: "work",
+                    providerSlug: "slug",
+                    upstreamId,
+                    account: { name: "work", provider, providerSlug: "slug", enabled: true },
+                },
+                client: "alice",
+                proxyModel: `work/slug/${upstreamId}`,
+                path: "/v1/messages",
+                status: 200,
+                elapsedMs: 10,
+                bodyText: SafeJSON.stringify({ model: `work/slug/${upstreamId}`, stream: false }),
+                responseBody: SafeJSON.stringify({
+                    usage: { prompt_tokens: 1, completion_tokens: 1, total_tokens: 2 },
+                }),
+            });
+        }
+
+        const booked = recordUsageRequest.mock.calls.map(([record]) => (record as UsageRequestRecord).upstreamModel);
+        expect(booked).toEqual([resolveAnthropicSubModel("sonnet"), "sol"]);
+        expect(booked[0]).toStartWith("claude-sonnet-");
     });
 });

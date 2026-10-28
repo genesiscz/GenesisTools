@@ -9,10 +9,10 @@ import {
     OWNER_CLIENT_NAME,
     resolveClient,
     rollbackClientKey,
-    SUBSCRIPTION_PROVIDER_TYPES,
     validateClients,
 } from "@app/ai-proxy/lib/clients";
 import { getDefaultConfig } from "@app/ai-proxy/lib/config-store";
+import { isSubscriptionProvider } from "@app/ai-proxy/lib/providers/registry";
 import type { AiProxyClientConfig, AiProxyConfig } from "@app/ai-proxy/lib/types";
 import { env } from "@genesiscz/utils/env";
 import { _resetSecretsForTest, invalidateMasterKeyCache, secrets, secureRef } from "@genesiscz/utils/security";
@@ -63,7 +63,7 @@ describe("validateClients", () => {
     it("rejects allowedProviders containing a subscription type", () => {
         const problems = validateClients([{ ...good, allowedProviders: ["anthropic-subscription"] }]);
         expect(problems.some((p) => p.includes("subscription providers cannot be granted"))).toBe(true);
-        expect(SUBSCRIPTION_PROVIDER_TYPES.has("anthropic-subscription")).toBe(true);
+        expect(isSubscriptionProvider("anthropic-subscription")).toBe(true);
     });
 
     it("reports malformed name/key/allowedProviders instead of throwing", () => {

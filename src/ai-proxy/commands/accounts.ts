@@ -2,7 +2,12 @@ import { buildProxyModelCatalog } from "@app/ai-proxy/lib/catalog";
 import { loadConfig, saveConfig } from "@app/ai-proxy/lib/config";
 import { type AccountListRow, displayAccountsTable, displayAccountTestResult } from "@app/ai-proxy/lib/display";
 import { apiKeyStatus, defaultApiKeyEnvName, findEnvSourceFile } from "@app/ai-proxy/lib/providers/api-key-state";
-import { createProviderForInspection, isProviderImplemented } from "@app/ai-proxy/lib/providers/registry";
+import {
+    createProviderForInspection,
+    isApiKeyProvider,
+    isProviderImplemented,
+    providerDefinition,
+} from "@app/ai-proxy/lib/providers/registry";
 import type {
     AiProxyAccountConfig,
     AiProxyOpenRouterAccountConfig,
@@ -253,7 +258,8 @@ export async function runAccountsFailover(name: string, state: string | undefine
         return;
     }
 
-    const list = account.openaiSub?.failoverAccountNames ?? [];
+    const failover = providerDefinition(account.provider)?.failover;
+    const list = failover?.accounts(account) ?? [];
     const listText = list.length > 0 ? `failover list: ${list.join(", ")}` : "no failover list";
 
     if (state === undefined) {
@@ -267,7 +273,7 @@ export async function runAccountsFailover(name: string, state: string | undefine
         return;
     }
 
-    if (account.provider !== "openai-subscription") {
+    if (!failover) {
         out.log.error(`Only openai-subscription accounts fail over; "${name}" is ${account.provider}.`);
         process.exitCode = 1;
         return;
@@ -312,8 +318,6 @@ export async function runAccountsSetEnabled(name: string, enabled: boolean): Pro
     out.log.info(`Restart the proxy to apply: ${toolCommand("ai-proxy down")} && ${toolCommand("ai-proxy up")}`);
 }
 
-const API_KEY_PROVIDERS = new Set<AiProxyProviderType>(["xai-api-key", "openai", "openrouter"]);
-
 export async function runAccountsSetKey(name: string, key: string | undefined): Promise<void> {
     const config = await loadConfig();
     const account = config.accounts.find((item) => item.name === name);
@@ -324,7 +328,7 @@ export async function runAccountsSetKey(name: string, key: string | undefined): 
         return;
     }
 
-    if (!API_KEY_PROVIDERS.has(account.provider)) {
+    if (!isApiKeyProvider(account.provider)) {
         out.log.warn(`Account "${name}" is ${account.provider} — it authenticates via OAuth, not an API key.`);
         return;
     }
@@ -478,7 +482,7 @@ export async function runAccountsAllowEnv(
         return;
     }
 
-    if (!API_KEY_PROVIDERS.has(account.provider)) {
+    if (!isApiKeyProvider(account.provider)) {
         out.log.warn(`Account "${name}" is ${account.provider} — it authenticates via OAuth, not an API key.`);
         return;
     }

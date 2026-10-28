@@ -1,26 +1,11 @@
-import { resolveGithubCopilotDataDir, resolveGrokAuthPath } from "@app/ai-proxy/lib/account-config";
-import { catalogFilePath, loadCatalogFile } from "@app/ai-proxy/lib/catalog-file";
+import { catalogFilePath, loadCatalogFile, type ModelsCatalogFile } from "@app/ai-proxy/lib/catalog-file";
 import { loadConfig } from "@app/ai-proxy/lib/config";
-import { fetchCopilotModels, GithubCopilotApi, readGithubToken } from "@genesiscz/utils/ai/github-copilot";
-import { GITHUB_COPILOT_UPSTREAM_ENDPOINTS } from "@genesiscz/utils/ai/github-copilot/endpoints";
-import { COPILOT_INDIVIDUAL_API } from "@genesiscz/utils/ai/github-copilot/paths";
-import {
-    buildGrokModelCatalog,
-    GROK_UPSTREAM_ENDPOINTS,
-    GrokSubscriptionClient,
-    readGrokClientVersion,
-} from "@genesiscz/utils/ai/grok";
+import { providerDefinition } from "@app/ai-proxy/lib/providers/registry";
+import { readGrokClientVersion } from "@genesiscz/utils/ai/grok";
 import { SafeJSON } from "@genesiscz/utils/json";
 import { out } from "@genesiscz/utils/logger";
 
-type CatalogAccountEntry = {
-    accountName: string;
-    provider: string;
-    baseUrl: string;
-    pickerModels: unknown[];
-    probedModels: unknown[];
-    upstreamEndpoints: unknown[];
-};
+type CatalogAccountEntry = ModelsCatalogFile["accounts"][number];
 
 export async function runUpdateModelsCommand(options: {
     account?: string;
@@ -40,7 +25,7 @@ export async function runUpdateModelsCommand(options: {
             return false;
         }
 
-        return account.provider === "grok-subscription" || account.provider === "github-copilot-subscription";
+        return Boolean(providerDefinition(account.provider)?.models.catalogEntry);
     });
 
     if (accounts.length === 0) {
@@ -61,68 +46,28 @@ export async function runUpdateModelsCommand(options: {
     };
 
     for (const account of accounts) {
-        if (account.provider === "grok-subscription") {
-            try {
-                const authPath = resolveGrokAuthPath(account);
-                const client = await GrokSubscriptionClient.fromAuthFile(authPath);
+        const catalogEntry = providerDefinition(account.provider)?.models.catalogEntry;
 
-                if (!client) {
-                    out.log.warn(`Skipping ${account.name}: no auth at ${authPath}`);
-                    continue;
-                }
-
-                const catalog = await buildGrokModelCatalog(client, { probe: !options.noProbe });
-                // Never persist dead ids — proxy list and Cursor pickers only see working models.
-                const available = catalog.filter((model) => model.probeStatus !== "fail");
-                const dropped = catalog.length - available.length;
-                const pickerModels = available.filter((model) => model.source === "picker");
-                const probedModels = available.filter((model) => model.source !== "picker");
-
-                if (dropped > 0) {
-                    out.log.info(`${account.name}: dropped ${dropped} probe-fail model(s) from catalog`);
-                }
-
-                payload.accounts.push({
-                    accountName: account.name,
-                    provider: account.provider,
-                    baseUrl: account.baseUrl ?? "https://cli-chat-proxy.grok.com/v1",
-                    pickerModels,
-                    probedModels,
-                    upstreamEndpoints: GROK_UPSTREAM_ENDPOINTS,
-                });
-            } catch (err) {
-                const message = err instanceof Error ? err.message : String(err);
-                out.log.warn(`Skipping ${account.name}: ${message}`);
-            }
-
+        if (!catalogEntry) {
             continue;
         }
 
-        if (account.provider === "github-copilot-subscription") {
-            try {
-                const dataDir = resolveGithubCopilotDataDir(account);
-                if (!(await readGithubToken(dataDir))) {
-                    out.log.warn(`Skipping ${account.name}: no GitHub token at ${dataDir}`);
-                    continue;
-                }
+        try {
+            const result = await catalogEntry(account, { probe: !options.noProbe });
 
-                const client = new GithubCopilotApi({ dataDir, apiBaseUrl: account.baseUrl });
-                const models = await fetchCopilotModels(client);
-                const pickerModels = models.filter((model) => model.model_picker_enabled !== false);
-                const probedModels = models.filter((model) => model.model_picker_enabled === false);
-
-                payload.accounts.push({
-                    accountName: account.name,
-                    provider: account.provider,
-                    baseUrl: account.baseUrl ?? COPILOT_INDIVIDUAL_API,
-                    pickerModels,
-                    probedModels,
-                    upstreamEndpoints: [...GITHUB_COPILOT_UPSTREAM_ENDPOINTS],
-                });
-            } catch (err) {
-                const message = err instanceof Error ? err.message : String(err);
-                out.log.warn(`Skipping ${account.name}: ${message}`);
+            if ("skipped" in result) {
+                out.log.warn(`Skipping ${account.name}: ${result.skipped}`);
+                continue;
             }
+
+            if (result.dropped > 0) {
+                out.log.info(`${account.name}: dropped ${result.dropped} probe-fail model(s) from catalog`);
+            }
+
+            payload.accounts.push(result.entry);
+        } catch (err) {
+            const message = err instanceof Error ? err.message : String(err);
+            out.log.warn(`Skipping ${account.name}: ${message}`);
         }
     }
 

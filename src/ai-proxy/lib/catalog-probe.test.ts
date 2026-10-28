@@ -1,10 +1,16 @@
-import { afterEach, describe, expect, it, mock } from "bun:test";
-import type { AiProxyAccountConfig } from "@app/ai-proxy/lib/types";
+import { afterAll, afterEach, describe, expect, it, mock } from "bun:test";
+import { mkdirSync, mkdtempSync, rmSync, writeFileSync } from "node:fs";
+import { tmpdir } from "node:os";
+import { dirname, join } from "node:path";
+import type { AiProxyAccountConfig, ProxyModelMeta } from "@app/ai-proxy/lib/types";
 import * as anthropicModels from "@genesiscz/utils/ai/anthropic/models";
+import * as sharedCatalog from "@genesiscz/utils/ai/catalog";
+import { githubTokenPath } from "@genesiscz/utils/ai/github-copilot/paths";
+import type { CopilotModelRecord } from "@genesiscz/utils/ai/github-copilot/types";
 import * as subModels from "@genesiscz/utils/ai/openai/sub-models";
 import { SafeJSON } from "@genesiscz/utils/json";
 import { setupStorageSandbox } from "@genesiscz/utils/storage/test-sandbox";
-import { resetProxyCatalogCache } from "./catalog";
+import { catalogFilePath, resetProxyCatalogCache } from "./catalog";
 
 setupStorageSandbox();
 
@@ -85,6 +91,40 @@ mock.module("@genesiscz/utils/ai/openai/sub-models", () => ({
         return [{ slug: "codex-live", displayName: "Live", contextWindow: 400_000, visibility: "list" }];
     },
 }));
+
+/** The Copilot API answers this list; empty, the account falls back to its entry in the models catalog file. */
+const copilotLive: CopilotModelRecord[] = [];
+
+mock.module("@genesiscz/utils/ai/github-copilot/probe-models", () => ({
+    probeCopilotModels: async () => copilotLive,
+}));
+
+// OpenRouter's public feed, answered here instead of over the network.
+mock.module("@genesiscz/utils/ai/catalog", () => ({
+    ...sharedCatalog,
+    fetchOpenRouterCatalog: async () => ({
+        fetchedAt: "2026-10-28T00:00:00.000Z",
+        models: [
+            { id: "vendor/fixture-model", name: "Fixture", context_length: 1000, supported_parameters: ["tools"] },
+        ],
+    }),
+}));
+
+const scratch = mkdtempSync(join(tmpdir(), "gt-catalog-keys-"));
+
+afterAll(() => {
+    rmSync(scratch, { recursive: true, force: true });
+});
+
+function writeFile(path: string, content: string): string {
+    mkdirSync(dirname(path), { recursive: true });
+    writeFileSync(path, content);
+    return path;
+}
+
+function writeCatalogFile(accounts: unknown[]): void {
+    writeFile(catalogFilePath(), SafeJSON.stringify({ updatedAt: "2026-10-28T00:00:00.000Z", accounts }) ?? "{}");
+}
 
 const anthropic: AiProxyAccountConfig = {
     name: "work",
@@ -187,5 +227,192 @@ describe("buildProxyModelCatalog under probe", () => {
         await provider.getUsage();
 
         expect(spent).toEqual(["personal"]);
+    });
+});
+
+describe("buildProxyModelCatalog per provider type", () => {
+    function summary(
+        models: ProxyModelMeta[]
+    ): Record<string, { provider: string[]; baseUrl: string[]; plane: string[] }> {
+        const out: Record<string, { provider: string[]; baseUrl: string[]; plane: string[] }> = {};
+
+        for (const model of models) {
+            const row = out[model.accountName] ?? { provider: [], baseUrl: [], plane: [] };
+
+            for (const [key, value] of [
+                ["provider", model.provider],
+                ["baseUrl", model.baseUrl],
+                ["plane", model.billingPlane],
+            ] as const) {
+                if (!row[key].includes(value)) {
+                    row[key].push(value);
+                }
+            }
+
+            out[model.accountName] = row;
+        }
+
+        return out;
+    }
+
+    it("lists each account through its own provider's catalog", async () => {
+        const { buildProxyModelCatalog } = await import("./catalog");
+        writeCatalogFile([
+            {
+                accountName: "copilot",
+                provider: "github-copilot-subscription",
+                baseUrl: "https://api.githubcopilot.com",
+                pickerModels: [{ id: "fixture-copilot-model", name: "Fixture Copilot", source: "catalog" }],
+                probedModels: [],
+                upstreamEndpoints: [],
+            },
+            {
+                accountName: "copilot",
+                provider: "grok-subscription",
+                baseUrl: "https://grok.example.invalid/v1",
+                pickerModels: [{ id: "grok-entry-model", source: "catalog" }],
+                probedModels: [],
+                upstreamEndpoints: [],
+            },
+        ]);
+        const accounts: AiProxyAccountConfig[] = [
+            {
+                name: "grok",
+                provider: "grok-subscription",
+                providerSlug: "grok",
+                enabled: true,
+                baseUrl: "https://grok.example.invalid/v1",
+                grok: { authPath: join(scratch, "dispatch-grok", "auth.json") },
+            },
+            {
+                name: "copilot",
+                provider: "github-copilot-subscription",
+                providerSlug: "github-copilot",
+                enabled: true,
+                githubCopilot: { dataDir: join(scratch, "dispatch-copilot") },
+            },
+            { name: "xai", provider: "xai-api-key", providerSlug: "xai", enabled: true },
+            {
+                name: "router",
+                provider: "openrouter",
+                providerSlug: "openrouter",
+                enabled: true,
+                openrouter: { models: { include: ["*"], exclude: [] } },
+            },
+            { name: "openai", provider: "openai", providerSlug: "openai", enabled: true },
+            anthropic,
+            codex,
+        ];
+
+        const models = await buildProxyModelCatalog(accounts, { probe: true });
+
+        expect(summary(models)).toEqual({
+            grok: {
+                provider: ["grok-subscription"],
+                baseUrl: ["https://grok.example.invalid/v1"],
+                plane: ["subscription"],
+            },
+            copilot: {
+                provider: ["github-copilot-subscription"],
+                baseUrl: ["https://api.githubcopilot.com"],
+                plane: ["subscription"],
+            },
+            xai: { provider: ["xai-api-key"], baseUrl: ["https://api.x.ai/v1"], plane: ["api-key"] },
+            router: { provider: ["openrouter"], baseUrl: ["https://openrouter.ai/api/v1"], plane: ["api-key"] },
+            work: {
+                provider: ["anthropic-subscription"],
+                baseUrl: ["https://api.anthropic.com/v1"],
+                plane: ["subscription"],
+            },
+            personal: {
+                provider: ["openai-subscription"],
+                baseUrl: ["https://chatgpt.com/backend-api/wham"],
+                plane: ["subscription"],
+            },
+        });
+        expect(models.filter((model) => model.accountName === "copilot").map((model) => model.upstreamId)).toEqual([
+            "fixture-copilot-model",
+        ]);
+    });
+
+    it("rebuilds a Codex account's list when its auth file changes, and only then", async () => {
+        const { buildProxyModelCatalog } = await import("./catalog");
+        const authPath = writeFile(join(scratch, "codex-key", "auth.json"), "first");
+        const account: AiProxyAccountConfig = {
+            ...codex,
+            openaiSub: { accountName: "personal", codexAuthPath: authPath },
+        };
+
+        await buildProxyModelCatalog([account]);
+        await buildProxyModelCatalog([account]);
+        const beforeEdit = whamLiveCalls;
+        writeFile(authPath, "second, longer");
+        await buildProxyModelCatalog([account]);
+
+        expect([beforeEdit, whamLiveCalls]).toEqual([1, 2]);
+    });
+
+    it("rebuilds a Grok account's list when its auth file changes, not when only its picker cache does", async () => {
+        const { buildProxyModelCatalog } = await import("./catalog");
+        const home = join(scratch, "grok-key");
+        const authPath = writeFile(join(home, "auth.json"), "{}");
+        const picker = (window: number) =>
+            writeFile(
+                join(home, "models_cache.json"),
+                SafeJSON.stringify({
+                    models: { "grok-4.5": { info: { context_window: window, supported_in_api: true } } },
+                }) ?? "{}"
+            );
+        const account: AiProxyAccountConfig = {
+            name: "grok-keyed",
+            provider: "grok-subscription",
+            providerSlug: "grok",
+            enabled: true,
+            grok: { authPath },
+        };
+        const windowOf = async () =>
+            (await buildProxyModelCatalog([account])).find((model) => model.upstreamId === "grok-4.5")?.contextWindow;
+
+        picker(111);
+        const first = await windowOf();
+        picker(222);
+        const pickerOnly = await windowOf();
+        writeFile(authPath, '{"changed":true}');
+        const afterAuth = await windowOf();
+
+        expect([first, pickerOnly, afterAuth]).toEqual([111, 111, 222]);
+    });
+
+    it("rebuilds a Copilot account's list when its token file changes, not when only the catalog file does", async () => {
+        const { buildProxyModelCatalog } = await import("./catalog");
+        const dataDir = join(scratch, "copilot-key");
+        const account: AiProxyAccountConfig = {
+            name: "copilot-keyed",
+            provider: "github-copilot-subscription",
+            providerSlug: "github-copilot",
+            enabled: true,
+            githubCopilot: { dataDir },
+        };
+        const listed = (id: string) =>
+            writeCatalogFile([
+                {
+                    accountName: "copilot-keyed",
+                    provider: "github-copilot-subscription",
+                    baseUrl: "https://api.githubcopilot.com",
+                    pickerModels: [{ id, source: "catalog" }],
+                    probedModels: [],
+                    upstreamEndpoints: [],
+                },
+            ]);
+        const ids = async () => (await buildProxyModelCatalog([account])).map((model) => model.upstreamId);
+
+        listed("first-model");
+        const first = await ids();
+        listed("second-model");
+        const catalogOnly = await ids();
+        writeFile(githubTokenPath(dataDir), "gho_fixture");
+        const afterToken = await ids();
+
+        expect([first, catalogOnly, afterToken]).toEqual([["first-model"], ["first-model"], ["second-model"]]);
     });
 });

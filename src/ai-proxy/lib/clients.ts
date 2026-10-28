@@ -1,6 +1,7 @@
 import { createHash, timingSafeEqual } from "node:crypto";
 import { statSync } from "node:fs";
 import { extractBearerToken } from "@app/ai-proxy/lib/auth-middleware";
+import { isProviderImplemented, isSubscriptionProvider } from "@app/ai-proxy/lib/providers/registry";
 import {
     type AiProxySessionRecord,
     isSessionKey,
@@ -25,35 +26,6 @@ export const OWNER_CLIENT_NAME = "owner";
 export const SESSION_CLIENT_NAME = "session";
 
 const MIN_KEY_LENGTH = 16;
-
-/**
- * Provider types that bill a personal subscription (Claude Max, ChatGPT, Grok,
- * Copilot). Serving these to third parties is subscription resale — a ToS
- * violation — so ONLY the owner key (proxyApiKey) may ever route to them.
- * FROZEN: config cannot grant these to a client; validation rejects the attempt.
- */
-export const SUBSCRIPTION_PROVIDER_TYPES: ReadonlySet<AiProxyProviderType> = new Set([
-    "grok-subscription",
-    "github-copilot-subscription",
-    "anthropic-subscription",
-    "openai-subscription",
-]);
-
-/**
- * Every known provider type — catches allowedProviders typos at validation time.
- *
- * ⚠️ Membership here rather than in `SUBSCRIPTION_PROVIDER_TYPES` means an
- * omitted `allowedProviders` ("all non-subscription providers") grants every
- * existing client access to this provider's BILLED key. That is correct for a
- * metered api-key provider and is exactly why `monthlyCostCapUsd` exists; the
- * README says so under the openrouter section.
- */
-export const VALID_PROVIDER_TYPES: ReadonlySet<AiProxyProviderType> = new Set([
-    ...SUBSCRIPTION_PROVIDER_TYPES,
-    "xai-api-key",
-    "openai",
-    "openrouter",
-]);
 
 /**
  * Drops the vault key a failed `clients add` stored, under the config lock: only when no client
@@ -146,10 +118,14 @@ export function validateClients(clients: AiProxyClientConfig[] | undefined): str
         if (client.allowedProviders !== undefined && !Array.isArray(client.allowedProviders)) {
             problems.push(`client "${client.name}": allowedProviders must be an array`);
         } else {
+            // A subscription seat (Claude Max, ChatGPT, Grok, Copilot) served to a third party is resale, a ToS
+            // violation, so ONLY the owner key may route to one, and config cannot grant one to a client. An api-key
+            // provider is metered: an omitted `allowedProviders` grants every client its BILLED key, which is why
+            // `monthlyCostCapUsd` exists (the README says so under openrouter).
             for (const provider of client.allowedProviders ?? []) {
-                if (!VALID_PROVIDER_TYPES.has(provider)) {
+                if (!isProviderImplemented(provider)) {
                     problems.push(`client "${client.name}": unknown provider type "${provider}"`);
-                } else if (SUBSCRIPTION_PROVIDER_TYPES.has(provider)) {
+                } else if (isSubscriptionProvider(provider)) {
                     problems.push(
                         `client "${client.name}": subscription providers cannot be granted to clients (${provider})`
                     );
@@ -335,7 +311,7 @@ export function clientProviderDenial(client: ResolvedClient, providerType: AiPro
         return "a session key is checked against the accounts in its session record";
     }
 
-    if (SUBSCRIPTION_PROVIDER_TYPES.has(providerType)) {
+    if (isSubscriptionProvider(providerType)) {
         return `provider "${providerType}" bills a personal subscription and is owner-only`;
     }
 
@@ -366,7 +342,7 @@ export function sessionRouteDenial(record: AiProxySessionRecord, account: AiProx
         return `account "${account.name}" is not part of session ${record.id} (its accounts: ${allowed.join(", ") || "none"})`;
     }
 
-    if (SUBSCRIPTION_PROVIDER_TYPES.has(account.provider)) {
+    if (isSubscriptionProvider(account.provider)) {
         return null;
     }
 

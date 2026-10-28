@@ -1,5 +1,6 @@
 import { afterEach, beforeEach, describe, expect, it, mock } from "bun:test";
-import type { AiProxyAccountConfig } from "@app/ai-proxy/lib/types";
+import type { AiProxyAccountConfig, AiProxyProviderType, UsageSummary } from "@app/ai-proxy/lib/types";
+import type { AccountBillingSnapshot } from "@app/ai-proxy/lib/usage/types";
 import { stripAnsi } from "@genesiscz/utils/string";
 
 /**
@@ -27,14 +28,43 @@ const healthy: AiProxyAccountConfig = {
 
 const FAILURE = "No xAI API key found (checked config apiKey, XAI_API_KEY / X_AI_API_KEY).";
 
+let configAccounts: AiProxyAccountConfig[] = [broken, healthy];
+/** The accounts `createProvider` built, in order: one per live usage read and one per billing sync. */
+let built: string[] = [];
+/** The billing snapshots the command stored, by account. */
+let saved: [string, AccountBillingSnapshot][] = [];
+
 mock.module("@app/ai-proxy/lib/config", () => ({
     loadConfig: async () => ({
         listen: { host: "127.0.0.1", port: 8788 },
         proxyApiKey: "test-key-0123456789",
         translation: { cursorAgent: "off", thinking: "raw" },
-        accounts: [broken, healthy],
+        accounts: configAccounts,
     }),
 }));
+
+/** What each provider's own usage read carries besides its summary line. */
+function detailsFor(provider: AiProxyProviderType): UsageSummary["details"] {
+    if (provider === "grok-subscription") {
+        return {
+            grok: {
+                billing: {
+                    monthlyLimit: { val: 100 },
+                    used: { val: 42 },
+                    onDemandCap: { val: 0 },
+                    billingPeriodStart: "2026-06-01",
+                    billingPeriodEnd: "2026-07-01",
+                },
+            },
+        };
+    }
+
+    if (provider === "github-copilot-subscription") {
+        return { copilot: { plan: "individual", quotaRemaining: 10 } };
+    }
+
+    return undefined;
+}
 
 // Spread the real module: other importers in this graph need `buildProviderMap`
 // and friends, and a bare replacement makes them vanish.
@@ -43,6 +73,8 @@ const realRegistry = await import("@app/ai-proxy/lib/providers/registry");
 mock.module("@app/ai-proxy/lib/providers/registry", () => ({
     ...realRegistry,
     createProvider: async (account: AiProxyAccountConfig) => {
+        built.push(account.name);
+
         if (account.name === "broken") {
             throw new Error(FAILURE);
         }
@@ -57,6 +89,7 @@ mock.module("@app/ai-proxy/lib/providers/registry", () => ({
                 accountName: account.name,
                 provider: account.provider,
                 summary: "$1.2345 spent, limit $5.00",
+                details: detailsFor(account.provider),
             }),
         };
     },
@@ -64,6 +97,10 @@ mock.module("@app/ai-proxy/lib/providers/registry", () => ({
 
 mock.module("@app/ai-proxy/lib/usage/store", () => ({
     readBillingStore: () => ({ accounts: {} }),
+    billingSnapshotIsStale: () => true,
+    saveBillingSnapshot: (accountName: string, snapshot: AccountBillingSnapshot) => {
+        saved.push([accountName, snapshot]);
+    },
     getTodayUsageSummary: () => ({ requests: 0, total_tokens: 0, rate_limits: 0, estimated_requests: 0 }),
     readRecentRequestsForAccount: () => [],
     usageStorePaths: () => ({ billing: "billing.json", daily: "daily.json", requests: "requests.jsonl" }),
@@ -85,6 +122,9 @@ beforeEach(() => {
 
 afterEach(() => {
     process.stderr.write = realWrite;
+    configAccounts = [broken, healthy];
+    built = [];
+    saved = [];
 });
 
 function output(): string {
@@ -141,5 +181,60 @@ describe("runUsageCommand resilience", () => {
         expect(payload).toContain("broken");
         expect(payload).toContain("router");
         expect(payload).not.toContain("live usage unavailable");
+    });
+});
+
+describe("runUsageCommand per provider type", () => {
+    const everyType: AiProxyProviderType[] = [
+        "grok-subscription",
+        "github-copilot-subscription",
+        "xai-api-key",
+        "openai",
+        "openrouter",
+        "anthropic-subscription",
+        "openai-subscription",
+    ];
+
+    beforeEach(() => {
+        configAccounts = everyType.map((provider) => ({
+            name: provider,
+            provider,
+            providerSlug: "slug",
+            enabled: true,
+        }));
+    });
+
+    it("syncs a billing snapshot for Grok and Copilot only, also in json mode", async () => {
+        const realStdout = process.stdout.write.bind(process.stdout);
+        process.stdout.write = (() => true) as typeof process.stdout.write;
+
+        try {
+            await runUsageCommand({ json: true });
+        } finally {
+            process.stdout.write = realStdout;
+        }
+
+        expect(built).toEqual(["grok-subscription", "github-copilot-subscription"]);
+        expect(saved.map(([name, snapshot]) => [name, Object.keys(snapshot).sort()])).toEqual([
+            ["grok-subscription", ["fetchedAt", "grok", "summary", "tier"]],
+            ["github-copilot-subscription", ["copilot", "fetchedAt", "summary", "tier"]],
+        ]);
+    });
+
+    it("asks every provider type for its live usage", async () => {
+        await runUsageCommand({});
+
+        expect(built).toEqual([
+            "grok-subscription",
+            "grok-subscription",
+            "github-copilot-subscription",
+            "github-copilot-subscription",
+            "xai-api-key",
+            "openai",
+            "openrouter",
+            "anthropic-subscription",
+            "openai-subscription",
+        ]);
+        expect(output().match(/: \$1\.2345 spent, limit \$5\.00/g)).toHaveLength(7);
     });
 });

@@ -1,4 +1,4 @@
-import type { EffortSource, GrokUsageDetails, SubscriptionUsageDetails } from "@app/ai-proxy/lib/types";
+import type { EffortSource, GrokUsageDetails, UsageDetails } from "@app/ai-proxy/lib/types";
 import type { PrefixDiff } from "@app/ai-proxy/lib/usage/prefix-diff";
 import type { CopilotUsageSummary } from "@genesiscz/utils/ai/github-copilot/types";
 
@@ -127,4 +127,4 @@ export interface DailyUsageStore {
     days: Record<string, Record<string, DailyModelUsage>>;
 }
 
-export type { GrokUsageDetails, SubscriptionUsageDetails };
+export type { GrokUsageDetails, UsageDetails };

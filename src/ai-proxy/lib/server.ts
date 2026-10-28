@@ -9,7 +9,7 @@ import {
     sessionKeyRejection,
     validateClients,
 } from "@app/ai-proxy/lib/clients";
-import { listedCodexModels, setCodexModelOverrides } from "@app/ai-proxy/lib/codex-catalog";
+import { codexModelOverrides, listedCodexModels, setCodexModelOverrides } from "@app/ai-proxy/lib/codex-catalog";
 import { loadConfigFresh } from "@app/ai-proxy/lib/config";
 import { stripBasePath } from "@app/ai-proxy/lib/path-prefix";
 import { acquireProvider, buildProviderMap, providerUnavailableResponse } from "@app/ai-proxy/lib/providers/registry";
@@ -407,7 +407,7 @@ export function startAiProxyServer(runtime: AiProxyRuntime) {
             }
 
             const config = await loadConfigFresh();
-            setCodexModelOverrides(config.codexModels);
+            setCodexModelOverrides(codexModelOverrides(config));
 
             // An unknown or closed session key is refused before any route runs, and never forwarded anywhere.
             const sessionRejection = sessionKeyRejection(req);

@@ -5,6 +5,7 @@
  */
 import { existsSync } from "node:fs";
 import { join } from "node:path";
+import { providerDefinition } from "@app/ai-proxy/lib/providers/registry";
 import { splitReasoningEffortSuffix } from "@app/ai-proxy/lib/resolve-model";
 import { getAiProxyStorage } from "@app/ai-proxy/lib/storage";
 import { normalizeUsage } from "@app/ai-proxy/lib/usage/extract";
@@ -30,15 +31,8 @@ function isProxyAgent(value: string): value is ProxyAgent {
     return (PROXY_AGENTS as readonly string[]).includes(value);
 }
 
-const AGENT_BY_PROVIDER: Record<string, ProxyAgent> = {
-    "openai-subscription": "codex",
-    "anthropic-subscription": "claude",
-    "grok-subscription": "grok",
-    "xai-api-key": "grok",
-};
-
 export function agentOf(provider: string): ProxyAgent {
-    return AGENT_BY_PROVIDER[provider] ?? "other";
+    return providerDefinition(provider)?.agent ?? "other";
 }
 
 /**

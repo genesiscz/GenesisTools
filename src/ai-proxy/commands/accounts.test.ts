@@ -13,6 +13,7 @@ import {
 import { runSessionUse } from "@app/ai-proxy/commands/session-use";
 import { loadConfig, saveConfig } from "@app/ai-proxy/lib/config";
 import { resetAiProxyConfigStore } from "@app/ai-proxy/lib/config-store";
+import { agentLogins } from "@app/ai-proxy/lib/sessions/accounts";
 import { closeSessionRecord, createSessionRecord, readSessionRecord } from "@app/ai-proxy/lib/sessions/records";
 import { resetAiProxyStorage } from "@app/ai-proxy/lib/storage";
 import type { AiProxyAccountConfig } from "@app/ai-proxy/lib/types";
@@ -496,5 +497,45 @@ describe("codex accounts: one auth engine", () => {
             error: "no token",
         });
         expect(status.login).toBeUndefined();
+    });
+});
+
+describe("session logins per agent", () => {
+    afterEach(() => {
+        AiConfigStore.invalidate();
+    });
+
+    it("lists each agent's enabled logins from that agent's own AI-config provider", async () => {
+        const login = (name: string, provider: string, enabled = true) => ({
+            id: `acc_${name}`,
+            name,
+            provider,
+            enabled,
+            billing: { mode: provider === "xai" ? "metered" : "subscription" },
+            credentials: {},
+            useEnvApiKey: false,
+        });
+        const data = {
+            version: CONFIG_VERSION,
+            defaults: {},
+            accounts: [
+                login("codex-a", "openai-sub"),
+                login("codex-off", "openai-sub", false),
+                login("claude-a", "anthropic-sub"),
+                login("grok-a", "grok-sub"),
+                login("xai-key", "xai"),
+            ],
+        };
+        mkdirSync(join(tempDir, ".genesis-tools", "ai"), { recursive: true });
+        writeFileSync(join(tempDir, ".genesis-tools", "ai", "config.json"), SafeJSON.stringify(data, null, 2));
+        AiConfigStore.invalidate();
+        const store = await AiConfigStore.load();
+        const names = (agent: "codex" | "claude" | "grok") => agentLogins(store, agent).map((entry) => entry.name);
+
+        expect({ codex: names("codex"), claude: names("claude"), grok: names("grok") }).toEqual({
+            codex: ["codex-a"],
+            claude: ["claude-a"],
+            grok: ["grok-a"],
+        });
     });
 });

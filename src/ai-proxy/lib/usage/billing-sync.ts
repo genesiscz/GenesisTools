@@ -1,57 +1,29 @@
-import { buildProviderMap, providerKey } from "@app/ai-proxy/lib/providers/registry";
+import { buildProviderMap, providerDefinition, providerKey } from "@app/ai-proxy/lib/providers/registry";
 import type { ProxyProvider } from "@app/ai-proxy/lib/providers/types";
-import type { AiProxyAccountConfig, AiProxyConfig, SubscriptionUsageDetails } from "@app/ai-proxy/lib/types";
+import type { AiProxyAccountConfig, AiProxyConfig, UsageSummary } from "@app/ai-proxy/lib/types";
 import { billingSnapshotIsStale, readBillingStore, saveBillingSnapshot } from "@app/ai-proxy/lib/usage/store";
 import type { AccountBillingSnapshot } from "@app/ai-proxy/lib/usage/types";
 import { logger } from "@genesiscz/utils/logger";
 
 const syncInFlight = new Set<string>();
 
-const SUBSCRIPTION_PROVIDERS = new Set<AiProxyAccountConfig["provider"]>([
-    "grok-subscription",
-    "github-copilot-subscription",
-]);
+/** Whether the billing store keeps a copy of the provider's usage reads (`tools ai-proxy usage` shows it offline). */
+export function keepsBillingSnapshot(provider: string): boolean {
+    return Boolean(providerDefinition(provider)?.usage.snapshot);
+}
 
 export function snapshotFromUsage(
     account: AiProxyAccountConfig,
-    input: { tier?: string; summary: string; details?: SubscriptionUsageDetails }
+    input: Pick<UsageSummary, "tier" | "summary" | "details">
 ): AccountBillingSnapshot | null {
-    if (account.provider === "grok-subscription") {
-        const grok = input.details?.grok;
-        if (!grok?.billing) {
-            return null;
-        }
-
-        return {
-            fetchedAt: new Date().toISOString(),
-            tier: input.tier,
-            summary: input.summary,
-            grok,
-        };
-    }
-
-    if (account.provider === "github-copilot-subscription") {
-        const copilot = input.details?.copilot;
-        if (!copilot) {
-            return null;
-        }
-
-        return {
-            fetchedAt: new Date().toISOString(),
-            tier: input.tier,
-            summary: input.summary,
-            copilot,
-        };
-    }
-
-    return null;
+    return providerDefinition(account.provider)?.usage.snapshot?.(input) ?? null;
 }
 
 export async function maybeSyncBilling(
     account: AiProxyAccountConfig,
     providers: Map<string, ProxyProvider>
 ): Promise<void> {
-    if (!SUBSCRIPTION_PROVIDERS.has(account.provider)) {
+    if (!keepsBillingSnapshot(account.provider)) {
         return;
     }
 
@@ -106,12 +78,10 @@ export function scheduleBillingSync(account: AiProxyAccountConfig, providers: Ma
 }
 
 export async function syncBillingForConfig(config: AiProxyConfig): Promise<void> {
-    const providers = await buildProviderMap(config.accounts, (account) =>
-        SUBSCRIPTION_PROVIDERS.has(account.provider)
-    );
+    const providers = await buildProviderMap(config.accounts, (account) => keepsBillingSnapshot(account.provider));
 
     for (const account of config.accounts) {
-        if (!account.enabled || !SUBSCRIPTION_PROVIDERS.has(account.provider)) {
+        if (!account.enabled || !keepsBillingSnapshot(account.provider)) {
             continue;
         }
 

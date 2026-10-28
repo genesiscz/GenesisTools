@@ -2,6 +2,7 @@ import { randomUUID } from "node:crypto";
 import { mkdirSync } from "node:fs";
 import { join } from "node:path";
 import { resolveProxyAccountEntry } from "@app/ai-proxy/lib/account-refs";
+import { codexModelOverrides } from "@app/ai-proxy/lib/codex-catalog";
 import { loadConfigFresh } from "@app/ai-proxy/lib/config";
 import {
     agentAccounts,
@@ -239,7 +240,7 @@ export async function runCodexSession(
 
     // Another proxy (a second one for tests) is never started by the launcher: only the configured one is.
     const config = port === undefined ? loaded : { ...loaded, listen: { ...loaded.listen, port } };
-    const catalog = mergeCodexModelRecords({ cache: readCodexModelsCache(), overrides: config.codexModels ?? {} });
+    const catalog = mergeCodexModelRecords({ cache: readCodexModelsCache(), overrides: codexModelOverrides(config) });
     const codexModel = (slug: string) => catalog.get(slug);
     const model = resolveSessionModel(opts.model, codexModel);
 

@@ -175,6 +175,141 @@ describe("resolveProxyRoute with @account refs", () => {
     });
 });
 
+describe("@account refs, one per AI-config plugin the proxy serves", () => {
+    const SERVED = [
+        entry({ id: "acc_codex", name: "codex-login", provider: "openai-sub" }),
+        entry({ id: "acc_claude", name: "claude-login", provider: "anthropic-sub" }),
+        entry({
+            id: "acc_grok",
+            name: "grok-login",
+            provider: "grok-sub",
+            endpoint: "https://grok.example.invalid/v1",
+        }),
+        entry({ id: "acc_xai", name: "xai-key", provider: "xai", endpoint: "https://xai.example.invalid/v1" }),
+        entry({ id: "acc_openai", name: "openai-key", provider: "openai" }),
+        entry({ id: "acc_router", name: "router-key", provider: "openrouter" }),
+        entry({ id: "acc_copilot", name: "copilot-login", provider: "github-copilot" }),
+    ];
+
+    function servedDeps(): AccountRouteDeps {
+        return {
+            lookupAccount: (idOrName) => SERVED.find((item) => item.id === idOrName || item.name === idOrName),
+            resolveApiKey: async (account) => `key-for-${account.id}`,
+        };
+    }
+
+    async function accountFor(ref: string, accounts: AiProxyAccountConfig[] = []): Promise<AiProxyAccountConfig> {
+        return (await resolveProxyRoute(`${ref}:fixture-model`, accounts, servedDeps())).account;
+    }
+
+    it("builds each plugin's account with its provider, slug, login field or key", async () => {
+        const built = await Promise.all(
+            ["acc_codex", "acc_claude", "acc_grok", "acc_xai", "acc_openai", "acc_router"].map((id) =>
+                accountFor(`@account/${id}`)
+            )
+        );
+
+        expect(built).toEqual([
+            {
+                name: "account:codex-login",
+                label: "codex-login",
+                provider: "openai-subscription",
+                providerSlug: "codex",
+                enabled: true,
+                account: "@account/acc_codex",
+                openaiSub: { accountName: "codex-login" },
+            },
+            {
+                name: "account:claude-login",
+                label: "claude-login",
+                provider: "anthropic-subscription",
+                providerSlug: "claude-sub",
+                enabled: true,
+                account: "@account/acc_claude",
+                anthropicSub: { accountName: "claude-login" },
+            },
+            {
+                name: "account:grok-login",
+                label: "grok-login",
+                provider: "grok-subscription",
+                providerSlug: "grok",
+                enabled: true,
+                account: "@account/acc_grok",
+                grok: { accountName: "grok-login" },
+            },
+            {
+                name: "account:xai-key",
+                label: "xai-key",
+                provider: "xai-api-key",
+                providerSlug: "xai",
+                enabled: true,
+                account: "@account/acc_xai",
+                baseUrl: "https://xai.example.invalid/v1",
+                apiKey: "key-for-acc_xai",
+            },
+            {
+                name: "account:openai-key",
+                label: "openai-key",
+                provider: "openai",
+                providerSlug: "openai",
+                enabled: true,
+                account: "@account/acc_openai",
+                apiKey: "key-for-acc_openai",
+            },
+            {
+                name: "account:router-key",
+                label: "router-key",
+                provider: "openrouter",
+                providerSlug: "openrouter",
+                enabled: true,
+                account: "@account/acc_router",
+                apiKey: "key-for-acc_router",
+            },
+        ]);
+    });
+
+    it("refuses a plugin it cannot serve and names the ones it can, in order", async () => {
+        await expect(accountFor("@account/acc_copilot")).rejects.toThrow(
+            "No enabled account for model '@account/acc_copilot:fixture-model': the proxy cannot serve github-copilot accounts (supported: grok-sub, anthropic-sub, openai-sub, xai, openai, openrouter)."
+        );
+    });
+
+    it("binds a linked subscription entry that names no login to the referenced one, and keeps a named login", async () => {
+        const linked = (
+            name: string,
+            provider: AiProxyAccountConfig["provider"],
+            id: string,
+            extra: Partial<AiProxyAccountConfig> = {}
+        ): AiProxyAccountConfig => ({
+            name,
+            provider,
+            providerSlug: name,
+            enabled: true,
+            account: `@account/${id}`,
+            ...extra,
+        });
+
+        const codex = await accountFor("@account/acc_codex", [linked("codex", "openai-subscription", "acc_codex")]);
+        const claude = await accountFor("@account/acc_claude", [
+            linked("claude", "anthropic-subscription", "acc_claude", { anthropicSub: { accountName: "kept-login" } }),
+        ]);
+        const router = await accountFor("@account/acc_router", [linked("router", "openrouter", "acc_router")]);
+
+        expect([codex.openaiSub, claude.anthropicSub, router]).toEqual([
+            { accountName: "codex-login" },
+            { accountName: "kept-login" },
+            {
+                name: "router",
+                provider: "openrouter",
+                providerSlug: "router",
+                enabled: true,
+                account: "@account/acc_router",
+                apiKey: "key-for-acc_router",
+            },
+        ]);
+    });
+});
+
 describe("unsupportedCapabilityMessage", () => {
     it("tells a subscription account to name an api-key account", async () => {
         const route = await resolveProxyRoute("@account/acc_personal:grok-voice", [], deps());

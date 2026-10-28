@@ -3,6 +3,7 @@ import { statSync } from "node:fs";
 import { join } from "node:path";
 import { resolveProxyAccountEntry } from "@app/ai-proxy/lib/account-refs";
 import { defaultApiKeyEnvName } from "@app/ai-proxy/lib/providers/api-key-state";
+import { providerDefinition } from "@app/ai-proxy/lib/providers/registry";
 import type { AiProxyAccountConfig } from "@app/ai-proxy/lib/types";
 import { AiConfigStore } from "@genesiscz/utils/ai/config/AiConfigStore";
 import { copilotDataDir } from "@genesiscz/utils/ai/github-copilot/paths";
@@ -40,7 +41,13 @@ export interface AccountCredentialDescription {
  * platform API key, which does.
  */
 export function describeAccountCredential(account: AiProxyAccountConfig): AccountCredentialDescription {
-    if (account.provider === "xai-api-key" || account.provider === "openai" || account.provider === "openrouter") {
+    const definition = providerDefinition(account.provider);
+
+    if (!definition) {
+        return { source: "unknown", billed: false };
+    }
+
+    if (definition.billing.plane === "api-key") {
         const envName = defaultApiKeyEnvName(account);
         // Trimmed, because that is what the resolvers do: a whitespace-only
         // `apiKey` falls through to the env var, and this log must say so.
@@ -52,38 +59,12 @@ export function describeAccountCredential(account: AiProxyAccountConfig): Accoun
         };
     }
 
-    if (account.provider === "grok-subscription") {
-        return {
-            source: account.grok?.accountName
-                ? `ai config account "${account.grok.accountName}" (OAuth)`
-                : `OAuth ${resolveGrokAuthPath(account)}`,
-            billed: false,
-        };
-    }
+    const login = definition.login?.name(account);
 
-    if (account.provider === "github-copilot-subscription") {
-        return { source: `OAuth ${resolveGithubCopilotDataDir(account)}`, billed: false };
-    }
-
-    if (account.provider === "anthropic-subscription") {
-        return {
-            source: account.anthropicSub?.accountName
-                ? `ai config account "${account.anthropicSub.accountName}" (OAuth)`
-                : "OAuth (anthropic subscription)",
-            billed: false,
-        };
-    }
-
-    if (account.provider === "openai-subscription") {
-        return {
-            source: account.openaiSub?.accountName
-                ? `ai config account "${account.openaiSub.accountName}" (OAuth)`
-                : "OAuth (codex auth.json)",
-            billed: false,
-        };
-    }
-
-    return { source: "unknown", billed: false };
+    return {
+        source: login ? `ai config account "${login}" (OAuth)` : definition.billing.nativeSource(account),
+        billed: false,
+    };
 }
 
 export function accountConfigFingerprint(account: AiProxyAccountConfig): string {

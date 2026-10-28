@@ -1,8 +1,8 @@
 import { loadConfig } from "@app/ai-proxy/lib/config";
-import { createProvider, providerKey } from "@app/ai-proxy/lib/providers/registry";
+import { createProvider, isProviderImplemented, providerKey } from "@app/ai-proxy/lib/providers/registry";
 import type { ProxyProvider } from "@app/ai-proxy/lib/providers/types";
 import type { AiProxyAccountConfig, UsageSummary } from "@app/ai-proxy/lib/types";
-import { maybeSyncBilling } from "@app/ai-proxy/lib/usage/billing-sync";
+import { keepsBillingSnapshot, maybeSyncBilling } from "@app/ai-proxy/lib/usage/billing-sync";
 import {
     getModelUsageBreakdownSince,
     getTodayUsageSummary,
@@ -84,20 +84,12 @@ function billingSnapshot(snapshot?: AccountBillingSnapshot): UsageCommandResult[
 }
 
 async function fetchLiveUsage(account: AiProxyAccountConfig): Promise<UsageSummary | undefined> {
-    if (
-        account.provider === "grok-subscription" ||
-        account.provider === "github-copilot-subscription" ||
-        account.provider === "xai-api-key" ||
-        account.provider === "openrouter" ||
-        account.provider === "openai" ||
-        account.provider === "anthropic-subscription" ||
-        account.provider === "openai-subscription"
-    ) {
-        const provider = await createProvider(account);
-        return provider.getUsage();
+    if (!isProviderImplemented(account.provider)) {
+        return undefined;
     }
 
-    return undefined;
+    const provider = await createProvider(account);
+    return provider.getUsage();
 }
 
 /** A provider error is long (the xAI one carries a console URL); keep the row readable. */
@@ -122,7 +114,7 @@ async function liveUsageOrFailure(
     options: UsageCommandOptions
 ): Promise<{ live?: UsageSummary; failure?: string }> {
     try {
-        if (account.provider === "grok-subscription" || account.provider === "github-copilot-subscription") {
+        if (keepsBillingSnapshot(account.provider)) {
             const key = providerKey(account);
 
             if (!providers.has(key)) {

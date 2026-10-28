@@ -2,6 +2,7 @@ import { afterEach, describe, expect, it } from "bun:test";
 import { mkdirSync, mkdtempSync, readFileSync, rmSync, statSync, writeFileSync } from "node:fs";
 import { tmpdir } from "node:os";
 import { join } from "node:path";
+import { codexModelOverrides } from "@app/ai-proxy/lib/codex-catalog";
 import {
     AiProxyConfigStore,
     type ConfigPermissionOps,
@@ -398,5 +399,60 @@ describe("sessionsIn config migration", () => {
         } finally {
             rmSync(home, { recursive: true, force: true });
         }
+    });
+});
+
+describe("codexModels moves into modelOverrides.codex", () => {
+    it("loads an old config's codexModels as modelOverrides.codex, and the old key is gone", () => {
+        const config = parseConfigJson(
+            SafeJSON.stringify({ codexModels: { "model-a": { window: 400_000, compactPercent: 80 } } })
+        );
+
+        expect(config.modelOverrides).toEqual({ codex: { "model-a": { window: 400_000, compactPercent: 80 } } });
+        expect(Object.keys(config)).not.toContain("codexModels");
+    });
+
+    it("lets a model that modelOverrides.codex already sets win field by field, the old key only filling gaps", () => {
+        const config = parseConfigJson(
+            SafeJSON.stringify({
+                codexModels: { "model-a": { window: 1_000, compactPercent: 50 }, "model-b": { window: 2_000 } },
+                modelOverrides: { codex: { "model-a": { compactPercent: 80 } } },
+            })
+        );
+
+        expect(config.modelOverrides).toEqual({
+            codex: { "model-a": { window: 1_000, compactPercent: 80 }, "model-b": { window: 2_000 } },
+        });
+    });
+
+    it("loads a config already in the new shape unchanged", () => {
+        const overrides = { codex: { "model-a": { usablePercent: 90, defaultEffort: "high" } } };
+
+        expect(parseConfigJson(SafeJSON.stringify({ modelOverrides: overrides })).modelOverrides).toEqual(overrides);
+    });
+
+    it("changes nothing when a migrated config loads again", () => {
+        const once = parseConfigJson(SafeJSON.stringify({ codexModels: { "model-a": { window: 400_000 } } }));
+        const twice = parseConfigJson(SafeJSON.stringify(once));
+
+        // Only this migration's keys: the public block gains `cloudflared: {}` on a second load, before this change too.
+        expect([twice.modelOverrides, Object.keys(twice).includes("codexModels")]).toEqual([
+            { codex: { "model-a": { window: 400_000 } } },
+            false,
+        ]);
+    });
+
+    it("reads the overrides from either shape, so a config the loader has not migrated still works", () => {
+        const base = parseConfigJson(SafeJSON.stringify({}));
+
+        expect([
+            codexModelOverrides({ ...base, codexModels: { "model-a": { window: 1_000 } } }),
+            codexModelOverrides({
+                ...base,
+                codexModels: { "model-a": { window: 1_000, compactPercent: 50 } },
+                modelOverrides: { codex: { "model-a": { compactPercent: 80 } } },
+            }),
+            codexModelOverrides(base),
+        ]).toEqual([{ "model-a": { window: 1_000 } }, { "model-a": { window: 1_000, compactPercent: 80 } }, {}]);
     });
 });

@@ -682,4 +682,27 @@ describe("GrokSubscriptionProvider.create probe mode", () => {
         await expect(provider.getUsage()).rejects.toThrow();
         expect(grantCalls.length).toBeGreaterThan(0);
     });
+
+    it("the registry builds a Grok account for inspection in probe mode", async () => {
+        const { createProviderForInspection } = await import("@app/ai-proxy/lib/providers/registry");
+        const grantCalls: string[] = [];
+        stubFetchRefusingGrant(grantCalls);
+
+        const provider = await createProviderForInspection(accountFor(writeExpiredAuth()));
+
+        await expect(provider.getUsage()).rejects.toThrow(/Refusing to refresh the Grok token/);
+        expect(grantCalls).toEqual([]);
+    });
+
+    /** Negative control: the registry's serving build is not a probe. */
+    it("the registry builds a Grok account for serving without probe mode", async () => {
+        const { createProvider } = await import("@app/ai-proxy/lib/providers/registry");
+        const grantCalls: string[] = [];
+        stubFetchRefusingGrant(grantCalls);
+
+        const provider = await createProvider(accountFor(writeExpiredAuth()));
+
+        await expect(provider.getUsage()).rejects.toThrow();
+        expect(grantCalls.length).toBeGreaterThan(0);
+    });
 });

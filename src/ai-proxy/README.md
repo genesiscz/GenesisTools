@@ -140,8 +140,10 @@ Supported values: `minimal`, `low`, `medium`, `high`, `xhigh`, `max`, `ultra`. E
   gpt-6-sol as `max`). An effort the model does not list is a 400 that names the allowed ones. A Codex model the
   catalog does not know keeps the older fixed list, where `max` runs as `xhigh`. xAI and OpenRouter map `ultra` to
   `xhigh`, like `max`.
-- **Per-model overrides** go in `config.json` as `codexModels.<slug>`: `window`, `usablePercent`,
-  `compactPercent`, `defaultEffort`. The proxy uses `defaultEffort`; `tools claude codex` uses the rest.
+- **Per-model overrides** go in `config.json` as `modelOverrides.codex.<slug>`: `window`, `usablePercent`,
+  `compactPercent`, `defaultEffort`. The proxy uses `defaultEffort`; `tools claude codex` uses the rest. A
+  `codexModels` block from before 2026-10-28 moves there on load (a model `modelOverrides.codex` already sets keeps
+  its values), and the next save drops it.
 - **Claude Code sessions** read `config.json` `sessionsIn.claude` (every field is optional). It has two levels:
   `global` for Claude Code itself, and `providers.codex` / `providers.grok` for the provider of the session's models.
   A `claudeSessions` block from before 2026-10-28 moves there on load (`idle` and `lead` to `global`, the rest to
