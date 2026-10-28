@@ -108,32 +108,34 @@ async function kbOf(host: Host, argv: string[], column: number): Promise<number 
     return done?.exitCode === 0 && /^\d+$/.test(token) && Number.isFinite(value) ? value : null;
 }
 
-async function folderKb(host: Host, path: string): Promise<number | null> {
-    return (await host.exists(path)) ? kbOf(host, ["du", "-sk", path], 0) : 0;
+/** `du -sk <path>`, leaving out every folder named in `skip` (a basename mask, `du -I`). */
+async function folderKb(host: Host, path: string, skip: readonly string[] = []): Promise<number | null> {
+    const masks = skip.flatMap((name) => ["-I", name]);
+
+    return (await host.exists(path)) ? kbOf(host, ["du", "-sk", ...masks, path], 0) : 0;
 }
 
 /**
- * A folder of this session's own (scratch, task output), walked again only when its own entry list changed (its
- * mtime) or after 5 minutes. Before the mtime check every session walked both every 5 minutes (280 `du` runs in 50
- * minutes); the 5 minutes came back (2026-10-28) because a write deep inside the folder leaves its mtime as it was,
- * and the walk is small (8 ms p50).
+ * A folder of this session's own (scratch, task output), walked again after 5 minutes (ten times the walk's length
+ * when that is longer), or about 10 s after a command that changes its size (`markSizeStale`). Its mtime does not
+ * trigger a walk: a scratch folder that collects logs changes it on every write, and on 2026-10-28 that made 27 walks
+ * of one 1.4 GB scratch folder in 30 minutes (31 s). The worktrees inside it are left out (`skip`): the worktree rule
+ * measures them.
  */
-async function pacedKb(host: Host, path: string): Promise<number | null> {
-    const stat = await host.stat(path).catch(() => undefined);
-
-    if (!stat) {
+async function pacedKb(host: Host, path: string, skip: readonly string[] = []): Promise<number | null> {
+    if (!(await host.exists(path))) {
         return 0;
     }
 
     const held = folderKbs.get(path);
     const startedAt = Date.now();
-    const mark = String(stat.mtimeMs);
+    const mark = skip.join("\n");
 
     if (held && held.mark === mark && startedAt < held.nextAt && !forcedSince.has(path)) {
         return held.kb;
     }
 
-    const kb = await folderKb(host, path);
+    const kb = await folderKb(host, path, skip);
     folderKbs.set(path, { kb, mark, nextAt: paceAfter(SESSION_FOLDER_EVERY_MS, startedAt) });
     forcedSince.delete(path);
     walking.delete(path);
@@ -183,7 +185,7 @@ async function sharedKbOnly(host: Host, path: string, maxAgeS: number): Promise<
 
 /** A worktree's last size, the git status it was measured at, and when `du` may walk it again. */
 const worktreeKb = new Map<string, { kb: number | null; status: string; nextAt: number }>();
-/** The same for the session's own folders, keyed by the folder's mtime. */
+/** The same for the session's own folders, keyed by the worktree names left out of the walk. */
 const folderKbs = new Map<string, { kb: number | null; mark: string; nextAt: number }>();
 const WORKTREE_EVERY_MS = 30 * 60_000;
 const SESSION_FOLDER_EVERY_MS = 5 * 60_000;
@@ -334,16 +336,18 @@ export function statusOf(porcelain: string): { branch: string; changes: number }
     return { branch: branch || "?", changes: lines.filter((row) => !row.startsWith("## ")).length };
 }
 
-/** The session's whole share in KB: its scratch, its task output and every worktree outside the scratch folder. */
+function basename(path: string): string {
+    return path.slice(path.lastIndexOf("/") + 1);
+}
+
+/** The session's whole share in KB: its scratch (without its worktrees), its task output and every worktree. */
 export function sessionTotalKb(reading: Pick<TmpReading, "scratch" | "tasks" | "worktrees">): number | null {
     if (reading.scratch.kb === null) {
         return null;
     }
 
-    const inside = (path: string) => path.startsWith(`${reading.scratch.path}/`);
-    const outside = reading.worktrees.filter((tree) => !inside(tree.path));
-
-    return outside.reduce((sum, tree) => sum + (tree.kb ?? 0), reading.scratch.kb + (reading.tasks.kb ?? 0));
+    // The scratch walk leaves its worktrees out, so every worktree counts here once.
+    return reading.worktrees.reduce((sum, tree) => sum + (tree.kb ?? 0), reading.scratch.kb + (reading.tasks.kb ?? 0));
 }
 
 /** The worktrees this session's subagents got, from `<session>/subagents/*.meta.json`. */
@@ -429,11 +433,20 @@ async function measure(host: Host): Promise<void> {
     const projectFolder = sessionDir?.split("/").slice(-2, -1)[0];
     // lint-rules-ignore: Claude Code's own per-session task output folder, read only.
     const tasks = uid && projectFolder ? `/tmp/claude-${uid}/${projectFolder}/${await host.sessionId()}` : "";
+    const worktrees = await worktreesOf(host, scratch);
+    const inside = worktrees.filter((tree) => tree.path.startsWith(`${scratch}/`));
     const reading: TmpReading = {
         at: Date.now(),
-        scratch: { path: scratch, kb: await pacedKb(host, scratch) },
+        scratch: {
+            path: scratch,
+            kb: await pacedKb(
+                host,
+                scratch,
+                inside.map((tree) => basename(tree.path))
+            ),
+        },
         tasks: { path: tasks, kb: tasks ? await pacedKb(host, tasks) : 0 },
-        worktrees: await worktreesOf(host, scratch),
+        worktrees,
         freeKb: await kbOf(host, ["df", "-k", "/"], 3),
     };
 

@@ -659,6 +659,8 @@ const FEATURES: Feature[] = [
  * git status, gh pr view and du for a panel nobody saw.
  */
 let isWatched = true;
+/** How far a reloaded session spreads its features' first readings. */
+const RELOAD_SPREAD_MS = 30_000;
 
 /** The features this session runs: all of them when watched, else only those that act beyond drawing. */
 function liveFeatures(): Feature[] {
@@ -669,6 +671,10 @@ export const register: Register = (on) => {
     on("session.start", async ($, e, next) => {
         const host = hostOf($);
         isWatched = e.isInteractive;
+        // The mark survives a reload in the process environment, so a session that has it is reloading, not starting.
+        const isReload =
+            (await $.env.get("GENESIS_TOOLS_MODS_SESSION").catch(() => undefined)) ===
+            (await $.session.id().catch(() => ""));
         // A reload runs `session.start` again in the middle of a turn: mark the session at once, not at the next turn.
         await announceSession($);
         // Times drawn with `liveAgo` / `liveLeft` redraw when their text changes.
@@ -685,7 +691,23 @@ export const register: Register = (on) => {
                 });
             }
 
-            await feature.start?.(host);
+            if (!isReload) {
+                await feature.start?.(host);
+            }
+        }
+
+        // Every save of a mod file reloads all sessions at once, and each then took its first readings in the same
+        // second (02:21-02:51 on 2026-10-28: 300-480 processes in each reload minute, `tools question inbox` 10-20 at
+        // once). A reloaded session starts its features at a random point of the next 30 s instead.
+        if (isReload) {
+            const startAll = async () => {
+                for (const feature of liveFeatures()) {
+                    await feature.start?.(host);
+                }
+            };
+            $.clock.after(Math.round(Math.random() * RELOAD_SPREAD_MS), () => {
+                void startAll().catch(() => undefined);
+            });
         }
 
         return next(e);

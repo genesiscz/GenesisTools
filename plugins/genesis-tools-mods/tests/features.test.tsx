@@ -1643,7 +1643,14 @@ function machine({
 
 function processLogMachine(
     on: On,
-    options: { failCwd?: boolean; failSession?: boolean; holdAppends?: boolean; holdWrites?: boolean } = {}
+    options: {
+        failCwd?: boolean;
+        failSession?: boolean;
+        holdAppends?: boolean;
+        holdWrites?: boolean;
+        /** The session mark a previous load left in the process environment: this start is a reload. */
+        reloading?: boolean;
+    } = {}
 ) {
     forgetSettings();
     forgetCheckouts();
@@ -1655,6 +1662,10 @@ function processLogMachine(
     on("env.get", async (_$, e) => {
         if (failEnvironment) {
             return { deny: "environment unavailable" };
+        }
+
+        if (options.reloading && e.name === "GENESIS_TOOLS_MODS_SESSION") {
+            return { value: "sess-log" };
         }
 
         return { value: !hideHome && e.name === "HOME" ? "/home/test" : undefined };
@@ -2428,10 +2439,10 @@ test("session files: worktrees locked to the session, their state, and the total
         sessionTotalKb({
             scratch: { path: "/tmp/cc/p/s", kb: 400 },
             tasks: { path: "/tmp/claude-1/p/s", kb: 12 },
-            // The one inside the scratch folder is already in its 400.
+            // The scratch walk leaves out the worktree inside it, so that one counts on its own.
             worktrees: [tree("/work/.claude/worktrees/agent-1", 3000), tree("/tmp/cc/p/s/worktrees/w", 100)],
         })
-    ).toBe(3412);
+    ).toBe(3512);
 });
 
 test("session files: a failed worktree measurement retries and a successful one stays cached", async () => {
@@ -4090,4 +4101,19 @@ test("session files: after an install the worktree is walked at once, accepting 
     } finally {
         forgetGenesisProbe();
     }
+});
+
+test("a reloaded session starts its features at a random point of the next 30 s, not in the reload's second", async ($, on) => {
+    const machine = processLogMachine(on, { reloading: true });
+    on("session.start", async (_$, e) => ({ cwd: e.cwd }));
+    on("command.register", async (_$, e) => ({ value: { command: e.name } }));
+    const gitRuns = () => machine.calls.filter((argv) => argv[0] === "git" && argv.includes("--porcelain")).length;
+
+    await $.session.start({ cwd: "/repo", surface: "terminal", isInteractive: true });
+    await machine.clock.settle();
+    expect(gitRuns()).toBe(0);
+
+    await machine.clock.advance(30_000);
+    await machine.clock.settle();
+    expect(gitRuns()).toBeGreaterThan(0);
 });
