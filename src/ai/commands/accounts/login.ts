@@ -108,7 +108,7 @@ export function registerLoginVariantCommand(
     }
 
     const verb = LOGIN_VARIANT_VERBS[opts.variant];
-    const command = program.command(`${verb.verb} [name]`).description(opts.description ?? verb.description);
+    const command = program.command(`${verb.commandName} [name]`).description(opts.description ?? verb.description);
 
     if (!opts.provider) {
         command.option("--provider [value]", PROVIDER_HELP);
@@ -136,7 +136,7 @@ export function registerLoginVariantCommands(
     opts: { provider?: string; tool: string; subcommand: string[] }
 ): void {
     for (const variant of LOGIN_VARIANT_KEYS) {
-        const { verb } = LOGIN_VARIANT_VERBS[variant];
+        const { commandName: verb } = LOGIN_VARIANT_VERBS[variant];
 
         registerLoginVariantCommand(program, {
             variant,
