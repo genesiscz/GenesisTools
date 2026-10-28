@@ -197,6 +197,14 @@ extension WidgetModel {
         if draft.text.isEmpty, let note = card.draft, !note.isEmpty { setText(note) }
     }
 
+    /// The words a decision's own answer holds now, for a field that shows them without editing (the alert's compact
+    /// field): the session's draft while that decision holds it, else the text kept for it, else its staged note.
+    public func ownAnswerText(for item: WidgetInboxItem) -> String {
+        if ownAnswerCardID == item.id { return drafts[ownAnswerKey ?? item.key]?.text ?? "" }
+        if let kept = parkedAnswers[item.id], !kept.isEmpty { return kept }
+        return shownStagedNote(item.sourceId, item.draft) ?? ""
+    }
+
     /// The own answer holds nothing and nothing is being added to it, so losing the keyboard may fold it.
     public var ownAnswerIdle: Bool {
         draft.text.trimmingCharacters(in: .whitespacesAndNewlines).isEmpty && draft.assetIds.isEmpty && !voiceActive

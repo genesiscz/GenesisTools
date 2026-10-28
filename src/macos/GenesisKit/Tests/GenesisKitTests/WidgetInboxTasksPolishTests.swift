@@ -2406,15 +2406,82 @@ final class WidgetComposerClickTests: XCTestCase {
         XCTAssertLessThanOrEqual(editorInWindow.maxY, fieldInWindow.maxY + 2, "the first line is inside the field")
     }
 
+    /// Martin, 2026-10-28, of the alert popup: "'Write my own answer' can probably be just under the buttons as a smaller
+    /// compact version of the input - pls make sure its the same component with just different props". The popup of an
+    /// open decision shows the compact answer field under its options; a real click on it opens THAT decision's own
+    /// answer in its session, and what is typed there lands in that decision, not in another one or the reply box.
+    func testTheAlertsCompactAnswerFieldOpensThatDecisionsOwnAnswer() throws {
+        _ = NSApplication.shared
+        let model = StagingFixture.model()
+        defer { model.stop() }
+        model.actionRunner = { _ in ["ok": true] }
+        model.receive([try StagingFixture.snapshot(draftOption: nil, second: true)])
+        model.select(StagingFixture.key)
+        let first = try XCTUnwrap(model.cards.first { $0.id == "decision:d1" })
+        let second = try XCTUnwrap(model.cards.first { $0.id == "decision:d2" })
+        // The other decision holds the session's draft with words of its own when the alert of the first one comes.
+        model.openCard(second)
+        model.openOwnAnswer(second)
+        model.composerText(ownAnswer: second.id).wrappedValue = "ship it after the review"
+        let item = try XCTUnwrap(model.inboxFor(StagingFixture.key)?.pendingItem)
+        XCTAssertEqual(item.id, first.id)
+        XCTAssertEqual(model.ownAnswerText(for: item), "", "the alert's field shows none of the other decision's words")
+        model.hoveredSurface = WidgetSurfaceID(edge: .right)
+
+        FrameProbe.enabled = true
+        FrameProbe.reset()
+        defer { FrameProbe.enabled = false }
+        let popup = NSSize(width: 310, height: 300)
+        let window = hosted(AnyView(WidgetPeekView(model: model, item: item).padding(WidgetPeekView.inset)
+            .frame(width: popup.width, height: popup.height, alignment: .top)
+            .background(NativeThemePalette.graphiteBase).environment(\.colorScheme, .dark)), size: popup)
+        defer { window.orderOut(nil); window.close() }
+        pump(1.0)
+        if let folder = ProcessInfo.processInfo.environment["WIDGET_POLISH_SHOTS"], let host = window.contentView,
+           let shot = HostedShot.bitmap(host) {
+            try shot.representation(using: .png, properties: [:])?
+                .write(to: URL(fileURLWithPath: folder).appendingPathComponent("widget-alert-compact-answer.png"))
+        }
+        let field = try XCTUnwrap(FrameProbe.frames["widget.peek.ownAnswer"], "an open decision's alert shows the field")
+        XCTAssertLessThan(field.height, 36, "compact: one line")
+        XCTAssertNil(FrameProbe.frames["widget.ownAnswer.field"], "the popup holds no second editable field")
+        click(window, at: NSPoint(x: field.midX, y: popup.height - field.midY))
+
+        XCTAssertEqual(model.selectedCardID, first.id, "the click opens the alert's decision")
+        XCTAssertEqual(model.ownAnswerCard?.id, first.id, "its own answer holds the draft")
+        XCTAssertEqual(model.ownAnswerFocusRequest, first.id, "and its full field takes the keyboard when it shows")
+        XCTAssertEqual(model.draft.text, "", "it opens empty: the other decision's words stay with that decision")
+        model.composerText(ownAnswer: first.id).wrappedValue = "keep it, but only the CLI part"
+        XCTAssertEqual(model.draft.text, "keep it, but only the CLI part")
+        XCTAssertEqual(model.ownAnswerText(for: item), "keep it, but only the CLI part", "the compact field shows them")
+        XCTAssertEqual(model.composerText(ownAnswer: second.id).wrappedValue, "", "the other card's field is closed")
+        XCTAssertEqual(model.parkedAnswers[second.id], "ship it after the review", "and keeps its own words")
+        XCTAssertNil(model.parkedAnswers["reply:" + StagingFixture.key], "nothing went into the reply box")
+
+        // An alert without options (news) has no answer field; the same window with the decision had one (above).
+        FrameProbe.reset()
+        let news = WidgetInboxItem(id: "answer:n1", sourceId: "n1", kind: "answer", key: StagingFixture.key, at: 2,
+                                   needsAnswer: false, title: "The build finished")
+        let plain = hosted(AnyView(WidgetPeekView(model: model, item: news).frame(width: popup.width)), size: popup)
+        defer { plain.orderOut(nil); plain.close() }
+        pump(0.5)
+        XCTAssertNil(FrameProbe.frames["widget.peek.ownAnswer"], "news has no own answer field")
+    }
+
     private static let size = NSSize(width: 520, height: 700)
 
     /// The widget in a hidden window that takes the first click on any control.
     private func hostedWidget(_ model: WidgetModel) -> NSWindow {
-        let window = NSWindow(contentRect: NSRect(origin: .zero, size: Self.size), styleMask: [.borderless],
+        hosted(AnyView(LiveWidgetView(model: model, edge: .right, embedded: true)
+            .frame(width: Self.size.width, height: Self.size.height)), size: Self.size)
+    }
+
+    /// A view in a hidden window that takes the first click on any control.
+    private func hosted(_ view: AnyView, size: NSSize) -> NSWindow {
+        let window = NSWindow(contentRect: NSRect(origin: .zero, size: size), styleMask: [.borderless],
                               backing: .buffered, defer: false)
         window.isReleasedWhenClosed = false
-        window.contentView = FirstClickHost(rootView: AnyView(LiveWidgetView(model: model, edge: .right, embedded: true)
-            .frame(width: Self.size.width, height: Self.size.height)))
+        window.contentView = FirstClickHost(rootView: view)
         window.alphaValue = 0
         window.level = .init(rawValue: Int(CGWindowLevelForKey(.desktopWindow)) - 1)
         window.order(.below, relativeTo: 0)

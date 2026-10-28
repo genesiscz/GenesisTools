@@ -1205,103 +1205,58 @@ public struct LiveWidgetView: View {
     /// the answer. The own answer shows only its field until it holds the draft (`open`); then its media buttons,
     /// Stage note and Send reveal under the field, which stays where it was clicked. While a card holds the draft the
     /// reply composer keeps its place and its height, parked, with Reply instead to take the draft back: hidden, it
-    /// lifted the card 103 pt under the pointer that had just clicked it.
+    /// lifted the card 103 pt under the pointer that had just clicked it. Both are `WidgetAnswerField` in its full
+    /// style; the alert popup shows the same field compact.
     private func composer(ownAnswer: WidgetCard?) -> some View {
         let open = ownAnswer.map { model.ownAnswerCard?.id == $0.id } ?? true
         let parked = ownAnswer == nil ? model.ownAnswerCard : nil
-        let focused = ownAnswer == nil ? editing : ownAnswerFocused
-        let fieldKey = model.selectedKey
-        let fieldHeight = ownAnswer == nil ? composerFieldHeight : ownAnswerFieldHeight
         let shownText = open && parked == nil ? model.draft.text : ""
         let placeholder = parked.map { "Answering " + WidgetWords.decision($0.number) + " in its card" }
             ?? (ownAnswer == nil ? "Reply to " + (model.selected?.target.provider.capitalized ?? "agent") + "…"
                 : "Write my own answer…")
-        let shape = RoundedRectangle(cornerRadius: 13)
-        return VStack(alignment: .leading, spacing: 8) {
-            if open && parked == nil {
-                composerProgress
-            }
-            // Parked, the reply-to row stays (dim, inert): hidden, it took 24 pt out of the reply box and moved the own
-            // answer field up under the pointer that had just clicked it.
-            if ownAnswer == nil, let candidate = model.replyToCandidate {
-                replyingTo(candidate)
-                    .opacity(parked == nil ? 1 : 0.4)
-                    .allowsHitTesting(parked == nil)
-                    .accessibilityHidden(parked != nil)
-            }
-            // The own answer centres its one-line field on the send button it holds a place for, so the closed field
-            // does not sit low in its box; the reply composer keeps its send button at the foot of a long text.
-            HStack(alignment: ownAnswer == nil ? .bottom : .center, spacing: 8) {
-                if parked != nil {
-                    // Dim, with the arrow that says where the typing went; a disabled field's placeholder read as text.
-                    Label(placeholder, systemImage: "arrow.turn.right.down").font(.system(size: 12)).lineLimit(1)
-                        .foregroundStyle(.tertiary)
-                        .frame(maxWidth: .infinity, minHeight: max(fieldHeight, 16), alignment: .leading)
-                } else if panelMoving, !focused, fieldHeight > 0 {
-                    // While the panel's outline moves the composer rides its bottom edge; a drawn stand-in moves for
-                    // free, the AppKit field would lay out and rebuild the key view loop on every frame.
-                    Text(shownText.isEmpty ? placeholder : shownText)
-                        .font(.system(size: 12)).lineLimit(1...4)
-                        .foregroundStyle(shownText.isEmpty ? .tertiary : .primary)
-                        .frame(maxWidth: .infinity, minHeight: fieldHeight, maxHeight: fieldHeight, alignment: .topLeading)
-                } else {
-                    // One field in every state, so a click that opens the own answer keeps the keyboard in it.
-                    TextField(placeholder, text: model.composerText(ownAnswer: ownAnswer?.id), axis: .vertical)
-                        .textFieldStyle(.plain).font(.system(size: 12)).lineLimit(1...4)
-                        // Always as tall as its lines (up to four): squeezed to the send button's height, a two-line
-                        // answer showed its first line cut off at the top (Martin, 2026-10-26: "multilines suck").
-                        .fixedSize(horizontal: false, vertical: true)
-                        .focused(ownAnswer == nil ? $editing : $ownAnswerFocused)
-                        // A field with the keyboard owns its text: no snapshot writes into it (FieldTextOwnership).
-                        .onChange(of: focused, initial: true) { _, now in
-                            model.draftFieldFocus(ownAnswer.map { "own:" + $0.id } ?? "reply", focused: now, key: fieldKey)
-                        }
-                        .onChange(of: fieldKey) { _, key in
-                            if focused { model.draftFieldFocus(ownAnswer.map { "own:" + $0.id } ?? "reply", focused: true, key: key) }
-                        }
-                        .onDisappear {
-                            model.draftFieldFocus(ownAnswer.map { "own:" + $0.id } ?? "reply", focused: false, key: fieldKey)
-                        }
-                        // A decision's own answer: Return stages the text as its note and ⌘-Return sends it, or the
-                        // other way round (Settings: Return in an own answer). Option-Return stays a new line.
-                        .onKeyPress(.return, phases: .down) { press in
-                            guard ownAnswer != nil, !press.modifiers.contains(.option),
-                                  !press.modifiers.contains(.shift) else { return .ignored }
-                            model.returnInOwnAnswer(command: press.modifiers.contains(.command))
-                            return .handled
-                        }
-                        .onSubmit { model.send() }
-                        .accessibilityLabel(ownAnswer == nil ? "Reply to selected agent" : "Your own answer")
-                        .onGeometryChange(for: CGFloat.self, of: { $0.size.height.rounded() }) { height in
-                            if ownAnswer == nil { composerFieldHeight = height } else { ownAnswerFieldHeight = height }
-                        }
-                        .frameProbe(ownAnswer == nil ? "widget.composer.field" : "widget.ownAnswer.field")
+        let fieldName = ownAnswer.map { "own:" + $0.id } ?? "reply"
+        return WidgetAnswerField(
+            ownAnswerID: ownAnswer?.id,
+            placeholder: placeholder,
+            shownText: shownText,
+            text: model.composerText(ownAnswer: ownAnswer?.id),
+            focus: ownAnswer == nil ? $editing : $ownAnswerFocused,
+            focused: ownAnswer == nil ? editing : ownAnswerFocused,
+            parkedLabel: parked == nil ? nil : placeholder,
+            // Held in the layout while the own answer is closed, so the field does not move or rewrap as it opens.
+            sendShown: open,
+            sendDisabled: model.importing > 0 || parked != nil || (ownAnswer != nil && model.ownAnswerIdle),
+            sendTooltip: ownAnswer == nil ? "Send (Return)"
+                : "Send as your answer now (" + (model.ownAnswerReturnStages ? "⌘-Return" : "Return") + ")",
+            panelMoving: panelMoving,
+            fieldHeight: ownAnswer == nil ? $composerFieldHeight : $ownAnswerFieldHeight,
+            fieldKey: model.selectedKey,
+            onFocusChange: { now, key in model.draftFieldFocus(fieldName, focused: now, key: key) },
+            onReturn: ownAnswer == nil ? nil : { command in model.returnInOwnAnswer(command: command) },
+            onSubmit: { model.send() },
+            onSend: { model.send() },
+            activate: {
+                guard parked == nil else { return }
+                if ownAnswer == nil { editing = true } else { ownAnswerFocused = true }
+            },
+            above: {
+                if open && parked == nil {
+                    composerProgress
                 }
-                // Held in the layout while the own answer is closed, so the field does not move or rewrap as it opens.
-                Button {
-                    model.send()
-                } label: {
-                    Image(systemName: "arrow.up.circle.fill").font(.system(size: 23)).foregroundStyle(.blue)
-                }.buttonStyle(.genHoverIcon(accent: .blue, diameter: 28))
-                    .disabled(model.importing > 0 || parked != nil || (ownAnswer != nil && model.ownAnswerIdle))
-                    .instantTooltip(ownAnswer == nil ? "Send (Return)"
-                        : "Send as your answer now (" + (model.ownAnswerReturnStages ? "⌘-Return" : "Return") + ")")
-                    .accessibilityLabel(ownAnswer == nil ? "Send reply" : "Send your answer")
-                    .opacity(open ? 1 : 0).allowsHitTesting(open).accessibilityHidden(!open)
-            }
-            if open {
-                composerTools(ownAnswer: ownAnswer, parked: parked).transition(.genReveal)
-            }
-        }
-        .padding(11).background(.white.opacity(0.065), in: shape)
-        // The whole box is the field's target: a click beside the one-line field (or under it, in the padding) starts
-        // typing. The buttons inside keep their own clicks, because a child's gesture wins over this one.
-        .contentShape(shape)
-        .onTapGesture {
-            guard parked == nil else { return }
-            if ownAnswer == nil { editing = true } else { ownAnswerFocused = true }
-        }
-        .frameProbe(ownAnswer == nil ? "widget.composer" : "widget.ownAnswer.box")
+                // Parked, the reply-to row stays (dim, inert): hidden, it took 24 pt out of the reply box and moved the
+                // own answer field up under the pointer that had just clicked it.
+                if ownAnswer == nil, let candidate = model.replyToCandidate {
+                    replyingTo(candidate)
+                        .opacity(parked == nil ? 1 : 0.4)
+                        .allowsHitTesting(parked == nil)
+                        .accessibilityHidden(parked != nil)
+                }
+            },
+            below: {
+                if open {
+                    composerTools(ownAnswer: ownAnswer, parked: parked).transition(.genReveal)
+                }
+            })
     }
 
     /// What the reply will name ("Reply to: <title>", the `replyNames` setting), with × to leave it out of this message.
