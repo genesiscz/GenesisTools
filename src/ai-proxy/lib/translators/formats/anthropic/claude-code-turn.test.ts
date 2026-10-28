@@ -93,6 +93,33 @@ describe("one Claude Code request, read per version", () => {
         });
     });
 
+    it("2.1.312 /compact: the prompt joins the last user message, which gets a newline; both go", () => {
+        // Regression test: probe 4be59b08 on 2026-10-28 19:26 — the leftover newline made the history differ from the
+        // turn the background run had compacted, so the run was thrown away as history_changed.
+        const before = {
+            role: "user",
+            content: [
+                { type: "tool_result", tool_use_id: "call_1", content: "file text" },
+                { type: "text", text: "<system-reminder>rules</system-reminder>" },
+            ],
+        };
+        const compactTurn = {
+            role: "user",
+            content: [
+                { type: "tool_result", tool_use_id: "call_1", content: "file text" },
+                { type: "text", text: "<system-reminder>rules</system-reminder>\n" },
+                promptBlock,
+            ],
+        };
+        const note = { role: "system", content: "Note: a file was read before the summary." };
+
+        expect(observe({ metadata, messages: [...history, compactTurn, note] }).withoutPrompt).toEqual([
+            ...history,
+            before,
+            note,
+        ]);
+    });
+
     it("a prompt that a later assistant reply follows is missed, not a compaction turn", () => {
         const body = { messages: [...history, prompt, { role: "assistant", content: "Summary." }] };
         const observed = observe(body);

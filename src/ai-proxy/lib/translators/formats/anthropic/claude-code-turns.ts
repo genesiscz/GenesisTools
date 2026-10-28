@@ -173,16 +173,25 @@ export class ClaudeCodeTurn {
             return this.body;
         }
 
+        const isPrompt = (block: unknown) =>
+            isObject(block) &&
+            block.type === "text" &&
+            typeof block.text === "string" &&
+            block.text.includes(CLAUDE_CODE_COMPACTION_MARK);
+        // Claude Code 2.1.312's /compact joins the prompt to the last user message and ends the text block before it
+        // with a newline the earlier request did not have; that newline goes too, so the history matches that request.
         const content = Array.isArray(prompt.content)
-            ? prompt.content.filter(
-                  (block) =>
-                      !(
-                          isObject(block) &&
-                          block.type === "text" &&
-                          typeof block.text === "string" &&
-                          block.text.includes(CLAUDE_CODE_COMPACTION_MARK)
-                      )
-              )
+            ? prompt.content
+                  .map((block, at, blocks) =>
+                      isObject(block) &&
+                      block.type === "text" &&
+                      typeof block.text === "string" &&
+                      block.text.endsWith("\n") &&
+                      isPrompt(blocks[at + 1])
+                          ? { ...block, text: block.text.slice(0, -1) }
+                          : block
+                  )
+                  .filter((block) => !isPrompt(block))
             : [];
         const kept = content.length > 0 ? [{ ...prompt, content }] : [];
         const index = this.promptIndex;
