@@ -147,6 +147,7 @@ export async function executePlan(
                 lines: asked.map((item) => `${item.target.path}  (${item.verdict.reason})`),
                 code: "delete",
                 caller: ctx.caller,
+                approval: ctx.base.approval,
             });
 
             if (outcome.approved) {
@@ -290,7 +291,7 @@ export async function requirePerson(
     ctx: RunContext,
     prompt: { title: string; lines: string[]; code: string }
 ): Promise<{ approved: boolean; via: string }> {
-    const outcome = await confirmByPerson({ ...prompt, caller: ctx.caller });
+    const outcome = await confirmByPerson({ ...prompt, caller: ctx.caller, approval: ctx.base.approval });
 
     if (!outcome.approved) {
         out.println(pc.red(`Not confirmed: ${outcome.detail}.`));

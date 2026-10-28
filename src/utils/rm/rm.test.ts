@@ -13,6 +13,9 @@ import {
 import { tmpdir } from "node:os";
 import { join } from "node:path";
 import {
+    type AppApproval,
+    type ApprovalDeps,
+    appApprovalFromReply,
     assertInsideTrash,
     BUILTIN_PRESETS,
     confirmByPerson,
@@ -375,6 +378,7 @@ describe("requests and approval", () => {
                 calls.push("dialog");
                 return false;
             },
+            app: async () => ({ kind: "missing" as const, detail: "no app" }),
         };
         const prompt = { title: "t", lines: [], code: "abc" };
 
@@ -385,9 +389,100 @@ describe("requests and approval", () => {
         expect(calls).toEqual(["dialog", "typed"]);
         expect((await confirmByPerson({ ...prompt, caller: AGENT }, { ...deps, platform: "linux" })).via).toBe("none");
     });
+
+    describe("Touch ID through GenesisTools.app", () => {
+        const prompt = { title: "t", lines: ["/x"], code: "abc", caller: AGENT };
+
+        function depsWith(app: ApprovalDeps["app"], calls: string[]): ApprovalDeps {
+            return {
+                interactive: () => true,
+                platform: "darwin",
+                typed: async () => {
+                    calls.push("typed");
+                    return true;
+                },
+                dialog: () => {
+                    calls.push("dialog");
+                    return true;
+                },
+                app: async (asked) => {
+                    calls.push("app");
+                    return app(asked);
+                },
+            };
+        }
+
+        const allowed = async (): Promise<AppApproval> => ({
+            kind: "answered",
+            outcome: { approved: true, via: "touch-id", detail: "approved with Touch ID" },
+        });
+        const denied = async (): Promise<AppApproval> => ({
+            kind: "answered",
+            outcome: { approved: false, via: "touch-id", detail: "denied in the approval window" },
+        });
+        const missing = async (): Promise<AppApproval> => ({ kind: "missing", detail: "no app" });
+
+        test("auto asks the app first, and its answer is final", async () => {
+            const calls: string[] = [];
+
+            expect((await confirmByPerson(prompt, depsWith(allowed, calls))).via).toBe("touch-id");
+            expect((await confirmByPerson(prompt, depsWith(denied, calls))).approved).toBe(false);
+            expect(calls).toEqual(["app", "app"]);
+        });
+
+        test("auto falls back to the code only when there is no app to ask", async () => {
+            const calls: string[] = [];
+            const outcome = await confirmByPerson(prompt, depsWith(missing, calls));
+
+            expect(outcome.via).toBe("dialog");
+            expect(calls).toEqual(["app", "dialog"]);
+        });
+
+        test("touch-id refuses without the app, and code never asks it", async () => {
+            const calls: string[] = [];
+            const strict = await confirmByPerson({ ...prompt, approval: "touch-id" }, depsWith(missing, calls));
+            const linux = await confirmByPerson(
+                { ...prompt, approval: "touch-id" },
+                { ...depsWith(allowed, calls), platform: "linux" }
+            );
+            const code = await confirmByPerson({ ...prompt, approval: "code" }, depsWith(allowed, calls));
+
+            expect(strict.approved).toBe(false);
+            expect(linux.approved).toBe(false);
+            expect(code.via).toBe("dialog");
+            expect(calls).toEqual(["app", "dialog"]);
+        });
+
+        test("only an exact allow approves; a missing app or an old build is not an answer", () => {
+            const fail = (code: string) => ({ ok: false as const, error: { code, message: code } });
+
+            for (const code of ["unavailable", "method_unknown", "handshake"]) {
+                expect(appApprovalFromReply(fail(code)).kind).toBe("missing");
+            }
+
+            expect(appApprovalFromReply(fail("timeout"))).toEqual({
+                kind: "answered",
+                outcome: { approved: false, via: "touch-id", detail: "timeout: timeout" },
+            });
+            expect(appApprovalFromReply({ ok: true, result: { decision: "deny" } })).toMatchObject({
+                outcome: { approved: false },
+            });
+            expect(appApprovalFromReply({ ok: true, result: { decision: "allow", method: "password" } })).toMatchObject(
+                {
+                    outcome: { approved: true, via: "password" },
+                }
+            );
+        });
+    });
 });
 
 describe("config", () => {
+    test("approval defaults to auto and keeps only a known value", () => {
+        expect(defaultRmConfig().approval).toBe("auto");
+        expect(parseRmConfig({ approval: "touch-id" }).approval).toBe("touch-id");
+        expect(parseRmConfig({ approval: "face-id" }).approval).toBe("auto");
+    });
+
     test("a trash root without a GenesisTools folder falls back to the default", () => {
         expect(parseRmConfig({ trashRoot: "/Users/someone" }).trashRoot).toBe(defaultRmConfig().trashRoot);
         expect(parseRmConfig({ trashRoot: "/Volumes/x/GenesisTools/rm" }).trashRoot).toBe("/Volumes/x/GenesisTools/rm");
