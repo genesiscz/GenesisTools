@@ -26,7 +26,6 @@ export const anthropicSubscriptionDefinition: ProviderDefinition = {
         servesCatalogIds: false,
         emptyHint: null,
         catalogEntry: null,
-        facts: null,
     },
     usage: { snapshot: null },
     // No Responses upstream: chat completions is the only path.

@@ -24,7 +24,6 @@ export const xaiApiKeyDefinition: ProviderDefinition = {
         // The list comes from `GET /models` with the account's key, so an empty one points at the key.
         emptyHint: "no models (check API key / GET /models)",
         catalogEntry: null,
-        facts: null,
     },
     usage: { snapshot: null },
     routes: { chatViaResponses: true, reshapesChat: false, recoversCompaction: false },

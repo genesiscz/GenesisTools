@@ -17,7 +17,6 @@ export const openAiApiKeyDefinition: ProviderDefinition = {
         servesCatalogIds: false,
         emptyHint: null,
         catalogEntry: null,
-        facts: null,
     },
     usage: { snapshot: null },
     routes: { chatViaResponses: true, reshapesChat: false, recoversCompaction: false },
