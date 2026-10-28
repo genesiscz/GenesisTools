@@ -1,3 +1,4 @@
+import { loginProviderFor } from "@app/ai-proxy/lib/providers/registry";
 import { splitReasoningEffortSuffix } from "@app/ai-proxy/lib/resolve-model";
 import {
     type AiProxySessionRecord,
@@ -115,17 +116,15 @@ export function sessionPinnedRoute(route: ResolvedRoute): ResolvedRoute {
 
 /** The account the proxy builds for a login: the same shape a configured subscription account of that agent has. */
 export function loginAccount(agent: SessionAgent, login: string): AiProxyAccountConfig {
-    const base = { name: loginAccountName(login), enabled: true };
-    const shapes: Record<SessionAgent, AiProxyAccountConfig> = {
-        codex: { ...base, provider: "openai-subscription", providerSlug: "codex", openaiSub: { accountName: login } },
-        claude: {
-            ...base,
-            provider: "anthropic-subscription",
-            providerSlug: "claude-sub",
-            anthropicSub: { accountName: login },
-        },
-        grok: { ...base, provider: "grok-subscription", providerSlug: "grok", grok: { accountName: login } },
-    };
+    const provider = loginProviderFor(agent);
 
-    return shapes[agent];
+    return provider.login.bind(
+        {
+            name: loginAccountName(login),
+            enabled: true,
+            provider: provider.type,
+            providerSlug: provider.definition.defaultSlug,
+        },
+        login
+    );
 }

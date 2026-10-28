@@ -4,15 +4,17 @@ import {
     accountConfigFingerprint,
     describeAccountCredential,
 } from "@app/ai-proxy/lib/account-config";
-import { AnthropicSubscriptionProvider } from "@app/ai-proxy/lib/providers/anthropic-subscription";
-import { GithubCopilotSubscriptionProvider } from "@app/ai-proxy/lib/providers/github-copilot-subscription";
-import { GrokSubscriptionProvider } from "@app/ai-proxy/lib/providers/grok-subscription";
-import { OpenAiApiKeyProvider } from "@app/ai-proxy/lib/providers/openai-api-key";
-import { OpenAiSubscriptionProvider } from "@app/ai-proxy/lib/providers/openai-subscription";
-import { OpenRouterApiKeyProvider } from "@app/ai-proxy/lib/providers/openrouter-api-key";
+import { anthropicSubscriptionDefinition } from "@app/ai-proxy/lib/providers/anthropic-subscription.definition";
+import type { ProviderDefinition, ProviderLogin, ProxyPluginId } from "@app/ai-proxy/lib/providers/definition";
+import { githubCopilotSubscriptionDefinition } from "@app/ai-proxy/lib/providers/github-copilot-subscription.definition";
+import { grokSubscriptionDefinition } from "@app/ai-proxy/lib/providers/grok-subscription.definition";
+import { openAiApiKeyDefinition } from "@app/ai-proxy/lib/providers/openai-api-key.definition";
+import { openAiSubscriptionDefinition } from "@app/ai-proxy/lib/providers/openai-subscription.definition";
+import { openRouterApiKeyDefinition } from "@app/ai-proxy/lib/providers/openrouter-api-key.definition";
 import type { ProxyProvider } from "@app/ai-proxy/lib/providers/types";
-import { XaiApiKeyProvider } from "@app/ai-proxy/lib/providers/xai-api-key";
-import type { AiProxyAccountConfig } from "@app/ai-proxy/lib/types";
+import { xaiApiKeyDefinition } from "@app/ai-proxy/lib/providers/xai-api-key.definition";
+import type { SessionAgent } from "@app/ai-proxy/lib/sessions/records";
+import type { AiProxyAccountConfig, AiProxyProviderType } from "@app/ai-proxy/lib/types";
 import { SafeJSON } from "@genesiscz/utils/json";
 import { logger } from "@genesiscz/utils/logger";
 
@@ -29,16 +31,98 @@ export function routeProviderKey(route: {
     return `${providerKey({ name: route.accountName, providerSlug: route.providerSlug })}${route.providerKeySuffix ?? ""}`;
 }
 
-export function isProviderImplemented(provider: AiProxyAccountConfig["provider"]): boolean {
-    return (
-        provider === "grok-subscription" ||
-        provider === "github-copilot-subscription" ||
-        provider === "anthropic-subscription" ||
-        provider === "openai-subscription" ||
-        provider === "xai-api-key" ||
-        provider === "openai" ||
-        provider === "openrouter"
-    );
+/**
+ * One entry per provider type. The key type is the union, so a provider with no entry, or an entry for no provider,
+ * is a compile error: a new provider is its definition file plus one line here.
+ *
+ * Each entry is a getter, read when a caller asks and never while this module loads. The provider files reach modules
+ * that import this one back (the Copilot provider reaches `resolve-model.ts` through its translator), so a table
+ * that copied the definitions at load could read one before its file had run, depending on which module loaded first.
+ *
+ * The order is the order of `providerTypes()`: subscriptions first, so an error that lists the plugins the proxy
+ * serves names them as it always did (`grok-sub, anthropic-sub, openai-sub, xai, openai, openrouter`).
+ */
+export const PROVIDER_DEFINITIONS: Readonly<Record<AiProxyProviderType, ProviderDefinition>> = {
+    get "grok-subscription"() {
+        return grokSubscriptionDefinition;
+    },
+    get "github-copilot-subscription"() {
+        return githubCopilotSubscriptionDefinition;
+    },
+    get "anthropic-subscription"() {
+        return anthropicSubscriptionDefinition;
+    },
+    get "openai-subscription"() {
+        return openAiSubscriptionDefinition;
+    },
+    get "xai-api-key"() {
+        return xaiApiKeyDefinition;
+    },
+    get openai() {
+        return openAiApiKeyDefinition;
+    },
+    get openrouter() {
+        return openRouterApiKeyDefinition;
+    },
+};
+
+/** Narrows a provider name from the JSON config, which no type checks, to one this build implements. */
+export function isProviderImplemented(provider: string): provider is AiProxyProviderType {
+    return Object.hasOwn(PROVIDER_DEFINITIONS, provider);
+}
+
+/** The definition of a provider, or undefined for a name this build does not know (a hand-edited config). */
+export function providerDefinition(provider: string): ProviderDefinition | undefined {
+    return isProviderImplemented(provider) ? PROVIDER_DEFINITIONS[provider] : undefined;
+}
+
+export function providerTypes(): AiProxyProviderType[] {
+    return Object.keys(PROVIDER_DEFINITIONS).filter(isProviderImplemented);
+}
+
+/** A seat that bills a personal subscription: owner-only, because serving it to anybody else is resale. */
+export function isSubscriptionProvider(provider: string): boolean {
+    return providerDefinition(provider)?.billing.plane === "subscription";
+}
+
+/** Metered per token through an API key, which the account stores or reads from an env var. */
+export function isApiKeyProvider(provider: string): boolean {
+    return providerDefinition(provider)?.billing.plane === "api-key";
+}
+
+/** The proxy provider that serves the AI-config accounts of a `ProviderPlugin` (`openai-sub`, `xai`, ...). */
+export function providerForPlugin(
+    plugin: string
+): { type: AiProxyProviderType; definition: ProviderDefinition } | undefined {
+    const type = providerTypes().find((candidate) => PROVIDER_DEFINITIONS[candidate].plugin === plugin);
+
+    return type ? { type, definition: PROVIDER_DEFINITIONS[type] } : undefined;
+}
+
+/** Every plugin whose AI-config accounts the proxy serves, in table order. */
+export function servedPlugins(): ProxyPluginId[] {
+    return providerTypes().flatMap((type) => PROVIDER_DEFINITIONS[type].plugin ?? []);
+}
+
+/**
+ * The provider a session agent's logins run on: the one that serves the agent and names an AI-config login
+ * (`openai-subscription` for codex). An agent always has one; the table not giving it one is a programming error.
+ */
+export function loginProviderFor(agent: SessionAgent): {
+    type: AiProxyProviderType;
+    definition: ProviderDefinition;
+    login: ProviderLogin;
+    plugin: ProxyPluginId;
+} {
+    for (const type of providerTypes()) {
+        const definition = PROVIDER_DEFINITIONS[type];
+
+        if (definition.agent === agent && definition.login && definition.plugin) {
+            return { type, definition, login: definition.login, plugin: definition.plugin };
+        }
+    }
+
+    throw new Error(`ai-proxy: no provider serves the ${agent} agent's logins`);
 }
 
 export async function buildProviderMap(
@@ -66,44 +150,23 @@ export async function buildProviderMap(
     return providers;
 }
 
-export async function createProvider(account: AiProxyAccountConfig): Promise<ProxyProvider> {
-    if (account.provider === "grok-subscription") {
-        return GrokSubscriptionProvider.create({ account });
+function implemented(account: AiProxyAccountConfig): ProviderDefinition {
+    const definition = providerDefinition(account.provider);
+
+    if (!definition) {
+        throw new Error(`Provider not implemented yet: ${account.provider}`);
     }
 
-    if (account.provider === "github-copilot-subscription") {
-        return GithubCopilotSubscriptionProvider.create(account);
-    }
-
-    if (account.provider === "anthropic-subscription") {
-        return AnthropicSubscriptionProvider.create(account);
-    }
-
-    if (account.provider === "openai-subscription") {
-        return OpenAiSubscriptionProvider.create(account);
-    }
-
-    if (account.provider === "xai-api-key") {
-        return XaiApiKeyProvider.create(account);
-    }
-
-    if (account.provider === "openai") {
-        return OpenAiApiKeyProvider.create(account);
-    }
-
-    if (account.provider === "openrouter") {
-        return OpenRouterApiKeyProvider.create(account);
-    }
-
-    throw new Error(`Provider not implemented yet: ${account.provider}`);
+    return definition;
 }
 
-export async function createProviderForInspection(account: AiProxyAccountConfig): Promise<ProxyProvider> {
-    if (account.provider === "grok-subscription") {
-        return GrokSubscriptionProvider.create({ account, options: { probe: true } });
-    }
+export async function createProvider(account: AiProxyAccountConfig): Promise<ProxyProvider> {
+    return implemented(account).create(account);
+}
 
-    return createProvider(account);
+/** For a diagnostic (`accounts test`): the provider must not spend a single-use grant while it is inspected. */
+export async function createProviderForInspection(account: AiProxyAccountConfig): Promise<ProxyProvider> {
+    return implemented(account).create(account, { probe: true });
 }
 
 /**

@@ -1,3 +1,4 @@
+import { codexModelOverrides } from "@app/ai-proxy/lib/codex-catalog";
 import { loadConfig } from "@app/ai-proxy/lib/config";
 import { CodexAccountBinding } from "@genesiscz/utils/ai/openai/account-binding";
 import {
@@ -100,7 +101,7 @@ export function registerModelsCommand(program: Command): void {
             const catalog = mergeCodexModelRecords({
                 live,
                 cache: readCodexModelsCache(cachePath),
-                overrides: config.codexModels,
+                overrides: codexModelOverrides(config),
             });
             log.debug(
                 { account: options.account, live: live?.length ?? 0, cachePath, models: catalog.size },
@@ -168,7 +169,7 @@ export function registerModelsCommand(program: Command): void {
             out.println(table.toString());
             renderCliSection("Sources");
             out.println(
-                "live = WHAM /models (--account), cache = the Codex CLI's models_cache.json, static = the built-in table, default = codex-rs rule, override = ai-proxy config codexModels.<slug>"
+                "live = WHAM /models (--account), cache = the Codex CLI's models_cache.json, static = the built-in table, default = codex-rs rule, override = ai-proxy config modelOverrides.codex.<slug>"
             );
         });
 }

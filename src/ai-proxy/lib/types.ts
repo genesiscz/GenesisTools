@@ -276,6 +276,15 @@ export interface AiProxyRealtimeConfig {
     allowClientSecrets?: boolean;
 }
 
+/** Model overrides by the catalog that lists the model. A `grok` catalog gets its key beside `codex`. */
+export interface AiProxyModelOverrides {
+    /**
+     * Per Codex model (`gpt-6.1-sol`, …): window, usable and compact percents, default effort. They win over the
+     * live list, the Codex CLI cache and the static table (`@genesiscz/utils/ai/openai/codex-models`).
+     */
+    codex?: Record<string, CodexModelOverride>;
+}
+
 export interface AiProxyConfig {
     listen: AiProxyListenConfig;
     proxyApiKey: string;
@@ -285,9 +294,12 @@ export interface AiProxyConfig {
     realtime?: AiProxyRealtimeConfig;
     public?: AiProxyPublicConfig;
     accounts: AiProxyAccountConfig[];
+    /** Per model, by the catalog the model comes from: values that win over that catalog's own. */
+    modelOverrides?: AiProxyModelOverrides;
     /**
-     * Per Codex model (`gpt-6.1-sol`, …): window, usable and compact percents, default effort. They win over the
-     * live list, the Codex CLI cache and the static table (`@genesiscz/utils/ai/openai/codex-models`).
+     * @deprecated The shape before 2026-10-28, a flat key named after one provider. The loader moves it into
+     * `modelOverrides.codex` (`migrateModelOverrides` in `config-store.ts`); read the overrides through
+     * `codexModelOverrides(config)`, which accepts either shape.
      */
     codexModels?: Record<string, CodexModelOverride>;
     /** Closed session records (`sessions/<id>.json`) are deleted after this many days. Default 30. */
@@ -465,16 +477,17 @@ export interface XaiUsageDetails {
     prepaidBalance?: unknown;
 }
 
-export interface SubscriptionUsageDetails {
-    grok?: GrokUsageDetails;
-    copilot?: CopilotUsageSummary;
-    xai?: XaiUsageDetails;
-}
+/**
+ * What a usage read carries beyond its summary line: one variant per source, keyed by it, so a read holds one
+ * source's details and never a mix. The provider that reads it also says what of it the billing store keeps
+ * (`ProviderDefinition.usage`).
+ */
+export type UsageDetails = { grok: GrokUsageDetails } | { copilot: CopilotUsageSummary } | { xai: XaiUsageDetails };
 
 export interface UsageSummary {
     accountName: string;
     provider: AiProxyProviderType;
     tier?: string;
     summary: string;
-    details?: SubscriptionUsageDetails;
+    details?: UsageDetails;
 }

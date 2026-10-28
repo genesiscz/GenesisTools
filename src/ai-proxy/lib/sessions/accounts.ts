@@ -5,7 +5,7 @@
  * (`tools ai-proxy session <id> use`).
  */
 import { resolveProxyAccountEntry } from "@app/ai-proxy/lib/account-refs";
-import { SUBSCRIPTION_PROVIDER_TYPES } from "@app/ai-proxy/lib/clients";
+import { isSubscriptionProvider, loginProviderFor } from "@app/ai-proxy/lib/providers/registry";
 import { SESSION_ACCOUNT_FIELD, SESSION_LOGIN_FIELD, type SessionAgent } from "@app/ai-proxy/lib/sessions/records";
 import { agentOf } from "@app/ai-proxy/lib/sessions/view";
 import type { AiProxyAccountConfig } from "@app/ai-proxy/lib/types";
@@ -36,16 +36,10 @@ export interface SessionLogin {
     name: string;
 }
 
-/** The AI-config provider of each agent's logins. */
-const LOGIN_PROVIDER: Record<SessionAgent, string> = {
-    codex: "openai-sub",
-    claude: "anthropic-sub",
-    grok: "grok-sub",
-};
-
+/** The agent's logins: the AI-config accounts of the plugin its login provider serves. */
 export function agentLogins(store: AiConfigStore, agent: SessionAgent): SessionLogin[] {
     return store
-        .accounts({ provider: LOGIN_PROVIDER[agent], enabled: true })
+        .accounts({ provider: loginProviderFor(agent).plugin, enabled: true })
         .map((account) => ({ id: account.id, name: account.name }));
 }
 
@@ -55,7 +49,7 @@ export function agentAccounts(accounts: AiProxyAccountConfig[], agent: SessionAg
 }
 
 export function isMetered(account: AiProxyAccountConfig): boolean {
-    return !SUBSCRIPTION_PROVIDER_TYPES.has(account.provider);
+    return !isSubscriptionProvider(account.provider);
 }
 
 /** A named account: a configured proxy account by name first (it keeps its own settings), else a login. */

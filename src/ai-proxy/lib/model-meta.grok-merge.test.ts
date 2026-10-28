@@ -87,4 +87,30 @@ describe("listGrokProxyModels merge policy", () => {
         expect(byUpstream.get("grok-4.5")?.contextWindow).toBe(111);
         expect(b.find((model) => model.upstreamId === "grok-4.5")?.contextWindow).toBe(999);
     });
+
+    it("reads only the Grok entry of the models catalog, never another provider's entry for the same account name", async () => {
+        const { listGrokProxyModels } = await import("@app/ai-proxy/lib/model-meta");
+        const account = accountFor("account-c", grokHome("account-c", {}));
+        const windowOf = () =>
+            listGrokProxyModels(account, "https://example.invalid/v1").find((model) => model.upstreamId === "grok-4.6")
+                ?.contextWindow;
+
+        writeFileSync(catalogPath, SafeJSON.stringify({ accounts: [] }) ?? "{}");
+        const withoutEntry = windowOf();
+        writeFileSync(
+            catalogPath,
+            SafeJSON.stringify({
+                accounts: [
+                    {
+                        accountName: "account-c",
+                        provider: "github-copilot-subscription",
+                        probedModels: [{ id: "grok-4.6", context_window: 777, probeStatus: "ok" }],
+                    },
+                ],
+            }) ?? "{}"
+        );
+
+        expect(windowOf()).toBe(withoutEntry);
+        expect(withoutEntry).not.toBe(777);
+    });
 });

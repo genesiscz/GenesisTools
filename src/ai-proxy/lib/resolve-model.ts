@@ -1,4 +1,4 @@
-import { isProviderImplemented } from "@app/ai-proxy/lib/providers/registry";
+import { isProviderImplemented, providerDefinition } from "@app/ai-proxy/lib/providers/registry";
 import type { AiProxyAccountConfig, ReasoningEffort, ResolvedRoute } from "@app/ai-proxy/lib/types";
 import { openRouterModelSync } from "@genesiscz/utils/ai/catalog/openrouter";
 
@@ -142,7 +142,9 @@ function resolveCatalogGatedUpstreamModel(upstreamId: string, accounts: AiProxyA
         return undefined;
     }
 
-    const candidates = enabledImplementedAccounts(accounts).filter((account) => account.provider === "openrouter");
+    const candidates = enabledImplementedAccounts(accounts).filter(
+        (account) => providerDefinition(account.provider)?.models.servesCatalogIds
+    );
 
     return resolveFromAccountMatches(candidates, upstreamId, upstreamId);
 }

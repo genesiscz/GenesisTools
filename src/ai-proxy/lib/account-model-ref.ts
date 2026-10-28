@@ -1,8 +1,13 @@
 import { describeAccountCredential } from "@app/ai-proxy/lib/account-config";
 import { legacyAccountNameOf, proxyAccountRefOf } from "@app/ai-proxy/lib/account-refs";
-import { isProviderImplemented } from "@app/ai-proxy/lib/providers/registry";
+import {
+    isProviderImplemented,
+    providerDefinition,
+    providerForPlugin,
+    servedPlugins,
+} from "@app/ai-proxy/lib/providers/registry";
 import { resolveModel, splitReasoningEffortSuffix } from "@app/ai-proxy/lib/resolve-model";
-import type { AiProxyAccountConfig, AiProxyProviderType, ResolvedRoute } from "@app/ai-proxy/lib/types";
+import type { AiProxyAccountConfig, ResolvedRoute } from "@app/ai-proxy/lib/types";
 import { accountRef, accountRefIn, refToId } from "@genesiscz/utils/ai/config/refs";
 import type { AccountEntry } from "@genesiscz/utils/ai/config/schema";
 import { isGateOnly, isProxyEligible } from "@genesiscz/utils/ai/config/selectors";
@@ -10,19 +15,6 @@ import { toolCommand } from "@genesiscz/utils/cli/tool-command";
 import { logger } from "@genesiscz/utils/logger";
 
 const ACCOUNT_MODEL_PREFIX = "@account/";
-
-/**
- * How an AI-config account is served when no proxy account links to it. Only the
- * providers the proxy has an implementation for; anything else is refused by name.
- */
-const SYNTHESIZED: Record<string, { provider: AiProxyProviderType; providerSlug: string; apiKey: boolean }> = {
-    "grok-sub": { provider: "grok-subscription", providerSlug: "grok", apiKey: false },
-    "anthropic-sub": { provider: "anthropic-subscription", providerSlug: "claude-sub", apiKey: false },
-    "openai-sub": { provider: "openai-subscription", providerSlug: "codex", apiKey: false },
-    xai: { provider: "xai-api-key", providerSlug: "xai", apiKey: true },
-    openai: { provider: "openai", providerSlug: "openai", apiKey: true },
-    openrouter: { provider: "openrouter", providerSlug: "openrouter", apiKey: true },
-};
 
 export interface AccountModelRef {
     /** The part after `@account/`: an immutable id, or a name as `AiConfigStore.account` accepts. */
@@ -133,30 +125,32 @@ export async function resolveAccountModelRoute(
         };
     }
 
-    const shape = SYNTHESIZED[entry.provider];
+    // How an AI-config account is served when no proxy account links to it: by the provider its plugin names.
+    const served = providerForPlugin(entry.provider);
 
-    if (!shape) {
+    if (!served) {
         throw new Error(
-            `No enabled account for model '${proxyModelId}': the proxy cannot serve ${entry.provider} accounts (supported: ${Object.keys(SYNTHESIZED).join(", ")}).`
+            `No enabled account for model '${proxyModelId}': the proxy cannot serve ${entry.provider} accounts (supported: ${servedPlugins().join(", ")}).`
         );
     }
 
-    const account: AiProxyAccountConfig = {
+    const apiKey = served.definition.billing.plane === "api-key";
+    const base: AiProxyAccountConfig = {
         name: `account:${entry.name}`,
         label: entry.label ?? entry.name,
-        provider: shape.provider,
-        providerSlug: shape.providerSlug,
+        provider: served.type,
+        providerSlug: served.definition.defaultSlug,
         enabled: true,
         account: accountRef(entry.id),
-        ...(entry.endpoint && shape.apiKey ? { baseUrl: entry.endpoint } : {}),
-        ...(shape.provider === "grok-subscription" ? { grok: { accountName: entry.name } } : {}),
-        ...(shape.provider === "anthropic-subscription" ? { anthropicSub: { accountName: entry.name } } : {}),
-        ...(shape.provider === "openai-subscription" ? { openaiSub: { accountName: entry.name } } : {}),
-        ...(shape.apiKey ? { apiKey: await apiKeyFor(proxyModelId, entry, deps) } : {}),
+        ...(entry.endpoint && apiKey ? { baseUrl: entry.endpoint } : {}),
+    };
+    const account: AiProxyAccountConfig = {
+        ...(served.definition.login ? served.definition.login.bind(base, entry.name) : base),
+        ...(apiKey ? { apiKey: await apiKeyFor(proxyModelId, entry, deps) } : {}),
     };
 
     logger.debug(
-        { account: entry.id, provider: shape.provider },
+        { account: entry.id, provider: served.type },
         "ai-proxy: @account ref routed to an in-memory proxy account"
     );
 
@@ -180,20 +174,14 @@ async function boundToEntry(
     entry: AccountEntry,
     deps: AccountRouteDeps
 ): Promise<AiProxyAccountConfig> {
-    const shape = SYNTHESIZED[entry.provider];
-    const needsKey = shape?.apiKey === true && !linked.apiKey && !linked.apiKeyEnv;
+    const needsKey =
+        providerForPlugin(entry.provider)?.definition.billing.plane === "api-key" &&
+        !linked.apiKey &&
+        !linked.apiKeyEnv;
+    const login = providerDefinition(linked.provider)?.login;
 
     return {
-        ...linked,
-        ...(linked.provider === "grok-subscription" && !linked.grok?.accountName
-            ? { grok: { ...linked.grok, accountName: entry.name } }
-            : {}),
-        ...(linked.provider === "anthropic-subscription" && !linked.anthropicSub?.accountName
-            ? { anthropicSub: { ...linked.anthropicSub, accountName: entry.name } }
-            : {}),
-        ...(linked.provider === "openai-subscription" && !linked.openaiSub?.accountName
-            ? { openaiSub: { ...linked.openaiSub, accountName: entry.name } }
-            : {}),
+        ...(login && !login.name(linked) ? login.bind(linked, entry.name) : linked),
         ...(needsKey ? { apiKey: await apiKeyFor(proxyModelId, entry, deps) } : {}),
     };
 }
