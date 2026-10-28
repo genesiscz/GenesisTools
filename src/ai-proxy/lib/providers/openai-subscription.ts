@@ -4,6 +4,14 @@ import { codexModelInfo } from "@app/ai-proxy/lib/codex-catalog";
 import { captureUpstreamFailure } from "@app/ai-proxy/lib/debug-capture";
 import { clientAbortResponse } from "@app/ai-proxy/lib/providers/client-abort";
 import {
+    CodexCompactionFlow,
+    CompactionRestoreError,
+    compactionDispatch,
+    type FailureClient,
+    fileCompactionStore,
+    inputHasFallback,
+} from "@app/ai-proxy/lib/providers/codex/compaction-flow";
+import {
     buildWhamResponsesBody,
     contentHash,
     hasReasoningInput,
@@ -14,7 +22,6 @@ import {
 import {
     accumulateResponsesJson,
     jsonError,
-    readCompactionText,
     tapCompletedUsage,
     whamErrorResponse,
 } from "@app/ai-proxy/lib/providers/codex/wham-stream";
@@ -42,7 +49,6 @@ import {
     braveSearchFn,
     type EmulationOutcome,
     emulateWebSearch,
-    messageToAnthropicSse,
     nativeTranslationLoss,
     nativeWebSearch,
     parseWebSearchServerTool,
@@ -51,15 +57,7 @@ import {
     webSearchResponse,
 } from "@app/ai-proxy/lib/server-tools/web-search";
 import {
-    type BackgroundResult,
-    backgroundInFlight,
-    backgroundResult,
-    clearBackground,
     compactionPoint,
-    estimateTokens,
-    matchBackground,
-    prefixHash,
-    setPendingNotice,
     shouldStartBackground,
     takePendingNotice,
     trackBackground,
@@ -67,15 +65,9 @@ import {
 } from "@app/ai-proxy/lib/sessions/background-compaction";
 import { cacheResetNotice, cacheResetReason, shapeChange } from "@app/ai-proxy/lib/sessions/cache-shape";
 import {
-    compactionFromSse,
     compactionMarkers,
-    compactionNote,
     compactionRecoveryMessage,
     expandCompactionMarkers,
-    hasCompactionFallback,
-    loadCompaction,
-    newCompactionId,
-    saveCompaction,
 } from "@app/ai-proxy/lib/sessions/codex-compaction";
 import { type CompactionEvent, recordCompactionEvent } from "@app/ai-proxy/lib/sessions/compaction-events";
 import { loginAccountName, noteBlockedCompaction, readSessionRecord } from "@app/ai-proxy/lib/sessions/records";
@@ -133,265 +125,6 @@ import { isObject } from "@genesiscz/utils/object";
  */
 const MODALITY_CACHE_TTL_MS = 10 * 60_000;
 
-class CompactionRestoreError extends Error {
-    constructor(
-        readonly marker: string,
-        readonly permanent: boolean,
-        message: string,
-        readonly missingId: string = marker,
-        readonly upstreamResponse?: Response
-    ) {
-        super(message);
-    }
-}
-
-function inputHasFallback(input: unknown[], id: string): boolean {
-    return input.some(
-        (item) =>
-            isObject(item) &&
-            Array.isArray(item.content) &&
-            item.content.some(
-                (part) => isObject(part) && typeof part.text === "string" && hasCompactionFallback(part.text, id)
-            )
-    );
-}
-
-/** Bound compaction preparation and send SSE pings while the provider is still preparing a response. */
-export async function compactionDispatch({
-    signal,
-    stream,
-    run,
-    timeoutMs = 900_000,
-    pingMs = 15_000,
-}: {
-    signal: AbortSignal;
-    stream: boolean;
-    run: (signal: AbortSignal) => Promise<Response>;
-    timeoutMs?: number;
-    pingMs?: number;
-}): Promise<Response> {
-    const abort = new AbortController();
-    let timedOut = false;
-    const timer = setTimeout(() => {
-        timedOut = true;
-        abort.abort();
-    }, timeoutMs);
-    const onClientAbort = () => abort.abort(signal.reason);
-    signal.addEventListener("abort", onClientAbort, { once: true });
-
-    if (signal.aborted) {
-        onClientAbort();
-    }
-
-    const stopped = new Promise<Response>((resolve) => {
-        const finish = () =>
-            resolve(jsonError(timedOut ? 504 : 499, timedOut ? "Compaction timed out." : "Client cancelled."));
-
-        if (abort.signal.aborted) {
-            finish();
-        } else {
-            abort.signal.addEventListener("abort", finish, { once: true });
-        }
-    });
-    const pending = abort.signal.aborted ? stopped : Promise.race([run(abort.signal), stopped]);
-    const cleanup = () => {
-        clearTimeout(timer);
-        signal.removeEventListener("abort", onClientAbort);
-    };
-
-    if (!stream) {
-        try {
-            return await pending;
-        } finally {
-            cleanup();
-        }
-    }
-
-    // Keep a real HTTP status when preparation finishes before the first keepalive.
-    let firstPing: ReturnType<typeof setTimeout> | undefined;
-    let early: Response | undefined;
-    try {
-        early = await Promise.race([
-            pending,
-            new Promise<undefined>((resolve) => {
-                firstPing = setTimeout(() => resolve(undefined), pingMs);
-            }),
-        ]);
-    } catch (error) {
-        cleanup();
-        throw error;
-    } finally {
-        clearTimeout(firstPing);
-    }
-
-    if (early) {
-        clearTimeout(timer);
-
-        if (!early.body) {
-            cleanup();
-            return early;
-        }
-
-        const source = early.body.getReader();
-        const body = new ReadableStream<Uint8Array>({
-            async pull(controller) {
-                try {
-                    const chunk = await source.read();
-
-                    if (chunk.done) {
-                        cleanup();
-                        controller.close();
-                    } else {
-                        controller.enqueue(chunk.value);
-                    }
-                } catch (error) {
-                    cleanup();
-                    controller.error(error);
-                }
-            },
-            cancel(reason) {
-                abort.abort(reason);
-                cleanup();
-                return source.cancel(reason).catch(() => undefined);
-            },
-        });
-        return new Response(body, { status: early.status, statusText: early.statusText, headers: early.headers });
-    }
-
-    const encoder = new TextEncoder();
-    let reader: ReadableStreamDefaultReader<Uint8Array> | undefined;
-    let cancelled = false;
-    const body = new ReadableStream<Uint8Array>({
-        start(controller) {
-            controller.enqueue(encoder.encode(": keepalive\n\n"));
-            const ping = setInterval(() => controller.enqueue(encoder.encode(": keepalive\n\n")), pingMs);
-            void (async () => {
-                try {
-                    const response = await pending;
-                    clearTimeout(timer);
-
-                    if (!response.ok) {
-                        const error = await toAnthropicErrorResponse(response);
-                        controller.enqueue(encoder.encode(`event: error\ndata: ${await error.text()}\n\n`));
-                    } else if (response.body) {
-                        reader = response.body.getReader();
-
-                        while (!cancelled) {
-                            const chunk = await reader.read();
-
-                            if (chunk.done) {
-                                break;
-                            }
-
-                            controller.enqueue(chunk.value);
-                        }
-                    }
-                } catch (error) {
-                    if (!cancelled) {
-                        const payload = { type: "error", error: { type: "api_error", message: String(error) } };
-                        controller.enqueue(encoder.encode(`event: error\ndata: ${SafeJSON.stringify(payload)}\n\n`));
-                    }
-                } finally {
-                    clearInterval(ping);
-                    cleanup();
-
-                    if (!cancelled) {
-                        controller.close();
-                    }
-                }
-            })();
-        },
-        cancel(reason) {
-            cancelled = true;
-            abort.abort(reason);
-            cleanup();
-            void reader?.cancel(reason).catch(() => undefined);
-        },
-    });
-
-    return new Response(body, { headers: { "Content-Type": "text/event-stream", "Cache-Control": "no-cache" } });
-}
-
-/** A background compaction is a full-context request; past this it is abandoned (a native one took 155 s at 430K). */
-const BACKGROUND_COMPACTION_TIMEOUT_MS = 15 * 60_000;
-/** How the usage ledger names a background compaction's request. */
-export const BACKGROUND_COMPACTION_PATH = "/v1/messages#background-compaction";
-
-/** A Responses usage object as the token counts a compaction event and Claude Code's usage carry. */
-function usageTokens(usage: Record<string, unknown> | undefined): {
-    inputTokens?: number;
-    cachedTokens?: number;
-    outputTokens?: number;
-} {
-    const details = isObject(usage?.input_tokens_details) ? usage.input_tokens_details : {};
-
-    return {
-        ...(typeof usage?.input_tokens === "number" ? { inputTokens: usage.input_tokens } : {}),
-        ...(typeof details.cached_tokens === "number" ? { cachedTokens: details.cached_tokens } : {}),
-        ...(typeof usage?.output_tokens === "number" ? { outputTokens: usage.output_tokens } : {}),
-    };
-}
-
-/** Claude Code's answer to its compaction turn: one text block, as SSE or JSON like the request asked. */
-function compactionReply(input: {
-    model: string;
-    text: string;
-    tokens: { inputTokens?: number; cachedTokens?: number; outputTokens?: number };
-    stream: boolean;
-}): Response {
-    const { inputTokens = 0, cachedTokens = 0, outputTokens = 0 } = input.tokens;
-    const reply = {
-        id: `msg_${randomUUID().replaceAll("-", "")}`,
-        type: "message",
-        role: "assistant",
-        model: input.model,
-        content: [{ type: "text", text: input.text }],
-        stop_reason: "end_turn",
-        stop_sequence: null,
-        usage: {
-            input_tokens: Math.max(0, inputTokens - cachedTokens),
-            cache_read_input_tokens: cachedTokens,
-            output_tokens: outputTokens,
-        },
-    };
-
-    return input.stream
-        ? new Response(messageToAnthropicSse(reply), { headers: { "Content-Type": "text/event-stream" } })
-        : new Response(SafeJSON.stringify(reply), { headers: { "Content-Type": "application/json" } });
-}
-
-const WASTE_REASONS: Record<"login_changed" | "history_changed" | "tail_too_large", string> = {
-    login_changed: "another Codex login made it, and this login cannot read it",
-    history_changed: "the conversation before it changed (a rewound, edited or replaced turn)",
-    tail_too_large: "too much happened after it, so the next turns would have reached the limit again",
-};
-
-/**
- * The line the agent reads in its compaction summary when a background run went unused: one more full-context request
- * was spent. The agent tells the user once; the proxy log and `tools ai-proxy monitor` keep the details.
- */
-export function backgroundWasteNotice(
-    result: Pick<BackgroundResult, "readyAt">,
-    reason: keyof typeof WASTE_REASONS,
-    durationMs: number
-): string {
-    const at = new Date(result.readyAt).toTimeString().slice(0, 5);
-
-    return (
-        `Proxy notice: the compaction ai-proxy prepared in the background at ${at} could not be used, because ` +
-        `${WASTE_REASONS[reason]}. This compaction read the whole context again (${Math.round(durationMs / 1000)} s).`
-    );
-}
-
-/** Who gets an account failure: the Anthropic route's client (Claude Code) gets the status it acts on. */
-interface FailureClient {
-    anthropic: boolean;
-    /** The session record the request came from, for the switch command. */
-    sessionId?: string;
-    /** Filled by `respond`: the login that answered, which signs the reply's reasoning. */
-    servedIdentity?: string;
-}
-
 interface TokenCandidate {
     key: string;
     label: string;
@@ -416,9 +149,20 @@ export class OpenAiSubscriptionProvider implements ProxyProvider {
     /** Reasoning item ids the upstream refused to decrypt: never replayed again by this process. */
     private readonly deadReasoning = new Set<string>();
 
+    /** Claude Code's compaction on this provider's logins: native, background and the item per login. */
+    private readonly compaction: CodexCompactionFlow;
+
     constructor(account: AiProxyAccountConfig) {
         this.account = account;
         this.accountFingerprint = accountConfigFingerprint(account);
+        this.compaction = new CodexCompactionFlow({
+            upstream: (req, model, body, client) => this.respond(req, model, body, client),
+            writtenSummary: (req, model, bodyText, context) => this.nativeMessages(req, model, bodyText, context, true),
+            store: fileCompactionStore,
+            usage: recordUsageRequest,
+            account: account.name,
+            provider: this.id,
+        });
 
         if (env.aiProxy.getCodexMessagesRoute() === "responses") {
             this.messages = (req, model, bodyText, context) => {
@@ -860,7 +604,7 @@ export class OpenAiSubscriptionProvider implements ProxyProvider {
                         });
                         expanded = await expandCompactionMarkers(rawInput, async (id) => {
                             try {
-                                return await this.compactionItem({
+                                return await this.compaction.compactionItem({
                                     id,
                                     req: restoreReq,
                                     model,
@@ -937,7 +681,7 @@ export class OpenAiSubscriptionProvider implements ProxyProvider {
             let notice: ((durationMs: number) => string) | undefined;
 
             if (threadKey && point) {
-                const answered = await this.answerFromBackground({
+                const answered = await this.compaction.answerFromBackground({
                     key: threadKey,
                     point,
                     rawInput,
@@ -955,7 +699,7 @@ export class OpenAiSubscriptionProvider implements ProxyProvider {
                 notice = answered.notice;
             }
 
-            return this.compactNatively({
+            return this.compaction.compactNatively({
                 req,
                 model,
                 bodyText,
@@ -989,7 +733,7 @@ export class OpenAiSubscriptionProvider implements ProxyProvider {
                           trackBackground(
                               threadKey,
                               contextTokens,
-                              this.runBackgroundCompaction({
+                              this.compaction.runBackgroundCompaction({
                                   req,
                                   model,
                                   concreteModel,
@@ -1131,365 +875,6 @@ export class OpenAiSubscriptionProvider implements ProxyProvider {
             ),
             { status: 200, headers: { "Content-Type": "application/json" } }
         );
-    }
-
-    /**
-     * Claude Code's compaction turn, compacted the Codex way: the turn's request plus `compaction_trigger`, at the
-     * session's effort, so the cached prefix holds. Claude Code gets a note with a marker; the item and the history it
-     * compacted go to disk for the later turns. Any failure writes the text summary instead, as before.
-     */
-    private async compactNatively(input: {
-        req: Request;
-        model: string;
-        bodyText: string;
-        context: ProviderRequestContext | undefined;
-        parsed: Record<string, unknown>;
-        responsesBody: Record<string, unknown>;
-        rawInput: unknown[];
-        stamp: ReasoningEnvelopeStamp;
-        client: FailureClient;
-        eventBase: Omit<CompactionEvent, "ts" | "kind">;
-        startedAt: number;
-        /** Why a background result could not answer this turn, for the agent to tell the user. */
-        notice?: (durationMs: number) => string;
-        threadKey?: string;
-    }): Promise<Response> {
-        const { req, model, client } = input;
-        const sent = Array.isArray(input.responsesBody.input) ? input.responsesBody.input : [];
-        const response = await this.respond(
-            req,
-            model,
-            { ...input.responsesBody, input: [...sent, { type: "compaction_trigger" }], stream: true },
-            client
-        );
-        const { item, usage, summary } = response.ok ? compactionFromSse(await readCompactionText(response)) : {};
-
-        if (!item) {
-            recordCompactionEvent({
-                ...input.eventBase,
-                kind: "turn",
-                mode: "summary",
-                reason: `Codex native compaction gave no compaction item (HTTP ${response.status}); writing the text summary`,
-            });
-            return this.nativeMessages(req, model, input.bodyText, input.context, true);
-        }
-
-        // Native compaction can return only an encrypted item. Do not issue another model request for a summary.
-        if (req.signal.aborted) {
-            return toAnthropicErrorResponse(jsonError(499, "Compaction was cancelled."));
-        }
-
-        const servedBy = client.servedIdentity;
-        const accountHash = servedBy ? accountHash8(servedBy) : input.stamp.accountHash;
-        const id = newCompactionId();
-        saveCompaction({
-            id,
-            model: input.stamp.model,
-            createdAt: new Date().toISOString(),
-            items: { [accountHash]: item },
-            history: input.rawInput,
-        });
-        const durationMs = Date.now() - input.startedAt;
-        const tokens = usageTokens(usage);
-        const notice = input.notice?.(durationMs);
-
-        if (input.threadKey) {
-            clearBackground(input.threadKey);
-
-            if (notice) {
-                setPendingNotice(
-                    input.threadKey,
-                    `${notice} Start your next reply with one sentence that tells the user this.`
-                );
-            }
-        }
-
-        recordCompactionEvent({ ...input.eventBase, kind: "done", mode: "native", id, durationMs, ...tokens });
-
-        return compactionReply({
-            model,
-            text: `<summary>\n${compactionNote(id, summary)}${notice ? `\n${notice}` : ""}\n</summary>`,
-            tokens,
-            stream: input.parsed.stream === true,
-        });
-    }
-
-    /**
-     * A compaction turn answered from the background run of its thread, when that run can stand for it. A run in
-     * flight is awaited (the turn's keepalives are already running), like Codex does, instead of a second request.
-     */
-    private async answerFromBackground(input: {
-        key: string;
-        point: number;
-        rawInput: unknown[];
-        accountHash: string;
-        model: string;
-        stream: boolean;
-        eventBase: Omit<CompactionEvent, "ts" | "kind">;
-        startedAt: number;
-    }): Promise<{ response?: Response; notice?: (durationMs: number) => string }> {
-        await backgroundInFlight(input.key);
-        const result = backgroundResult(input.key);
-
-        if (!result) {
-            return {};
-        }
-
-        clearBackground(input.key);
-        const match = matchBackground({
-            result,
-            rawInput: input.rawInput,
-            accountHash: input.accountHash,
-            point: input.point,
-            tailTokens: estimateTokens,
-            settings: backgroundCompactionSettings(),
-        });
-
-        if (!match.use) {
-            recordCompactionEvent({
-                ...input.eventBase,
-                kind: "background-wasted",
-                reason: match.reason,
-                inputTokens: result.inputTokens,
-                cachedTokens: result.cachedTokens,
-                outputTokens: result.outputTokens,
-            });
-            return { notice: (durationMs) => backgroundWasteNotice(result, match.reason, durationMs) };
-        }
-
-        const id = newCompactionId();
-        saveCompaction({
-            id,
-            model: typeof input.eventBase.model === "string" ? input.eventBase.model : input.model,
-            createdAt: new Date().toISOString(),
-            items: { [result.accountHash]: result.item },
-            history: input.rawInput,
-            ...(match.tail.length > 0 ? { tail: { account: result.accountHash, items: match.tail } } : {}),
-        });
-        const durationMs = Date.now() - input.startedAt;
-        const tokens = {
-            inputTokens: result.inputTokens,
-            cachedTokens: result.cachedTokens,
-            outputTokens: result.outputTokens,
-        };
-        recordCompactionEvent({
-            ...input.eventBase,
-            kind: "background-used",
-            id,
-            durationMs,
-            tailItems: match.tail.length,
-            ...tokens,
-        });
-        recordCompactionEvent({ ...input.eventBase, kind: "done", mode: "background", id, durationMs, ...tokens });
-
-        return {
-            response: compactionReply({
-                model: input.model,
-                text: `<summary>\n${compactionNote(id)}\n</summary>`,
-                tokens,
-                stream: input.stream,
-            }),
-        };
-    }
-
-    /**
-     * Compacts what one turn sent, in the background: the same request plus `compaction_trigger`, at its effort and
-     * on its cached prefix, on a request of its own that the client's hang-up does not cancel. Never throws.
-     */
-    private async runBackgroundCompaction(input: {
-        req: Request;
-        model: string;
-        concreteModel: string;
-        body: Record<string, unknown>;
-        rawInput: unknown[];
-        stamp: ReasoningEnvelopeStamp;
-        contextTokens: number;
-        sessionId?: string;
-        eventBase: Omit<CompactionEvent, "ts" | "kind">;
-    }): Promise<BackgroundResult | undefined> {
-        const startedAt = Date.now();
-        const abort = new AbortController();
-        const timer = setTimeout(() => abort.abort(), BACKGROUND_COMPACTION_TIMEOUT_MS);
-        const client: FailureClient = { anthropic: true, ...(input.sessionId ? { sessionId: input.sessionId } : {}) };
-        const sent = Array.isArray(input.body.input) ? input.body.input : [];
-        recordCompactionEvent({ ...input.eventBase, kind: "background-start", inputTokens: input.contextTokens });
-
-        try {
-            const request = new Request(input.req.url, {
-                method: "POST",
-                headers: input.req.headers,
-                body: "{}",
-                signal: abort.signal,
-            });
-            const response = await this.respond(
-                request,
-                input.model,
-                { ...input.body, input: [...sent, { type: "compaction_trigger" }], stream: true },
-                client
-            );
-            const { item, usage } = response.ok ? compactionFromSse(await readCompactionText(response)) : {};
-            const tokens = usageTokens(usage);
-            this.recordBackgroundUsage({ ...input, status: response.status, startedAt, tokens });
-
-            if (!item) {
-                recordCompactionEvent({
-                    ...input.eventBase,
-                    kind: "background-failed",
-                    reason: `no compaction item (HTTP ${response.status})`,
-                    durationMs: Date.now() - startedAt,
-                    ...tokens,
-                });
-                return undefined;
-            }
-
-            const servedBy = client.servedIdentity;
-            const result: BackgroundResult = {
-                item,
-                accountHash: servedBy ? accountHash8(servedBy) : input.stamp.accountHash,
-                prefixLength: input.rawInput.length,
-                prefixHash: prefixHash(input.rawInput),
-                prefix: input.rawInput,
-                contextTokens: input.contextTokens,
-                startedAt,
-                readyAt: Date.now(),
-                ...tokens,
-            };
-            recordCompactionEvent({
-                ...input.eventBase,
-                kind: "background-ready",
-                durationMs: result.readyAt - startedAt,
-                ...tokens,
-            });
-
-            return result;
-        } catch (error) {
-            recordCompactionEvent({
-                ...input.eventBase,
-                kind: "background-failed",
-                reason: error instanceof Error ? error.message : String(error),
-                durationMs: Date.now() - startedAt,
-            });
-            return undefined;
-        } finally {
-            clearTimeout(timer);
-        }
-    }
-
-    /** The background request is real spend: it goes into the usage ledger like a client's request. */
-    private recordBackgroundUsage(input: {
-        model: string;
-        concreteModel: string;
-        sessionId?: string;
-        eventBase: Omit<CompactionEvent, "ts" | "kind">;
-        status: number;
-        startedAt: number;
-        tokens: { inputTokens?: number; cachedTokens?: number; outputTokens?: number };
-    }): void {
-        const { inputTokens = 0, cachedTokens = 0, outputTokens = 0 } = input.tokens;
-        const session = input.sessionId ?? input.eventBase.claudeSession;
-
-        try {
-            recordUsageRequest({
-                ts: new Date().toISOString(),
-                account: this.account.name,
-                provider: this.id,
-                proxyModel: input.model,
-                upstreamModel: input.concreteModel,
-                path: BACKGROUND_COMPACTION_PATH,
-                status: input.status,
-                elapsedMs: Date.now() - input.startedAt,
-                stream: true,
-                usage: {
-                    prompt_tokens: Math.max(0, inputTokens - cachedTokens),
-                    completion_tokens: outputTokens,
-                    total_tokens: inputTokens + outputTokens,
-                    cache_read_input_tokens: cachedTokens,
-                },
-                ...(session ? { tags: { session, label: "background-compaction" } } : {}),
-                compaction: true,
-            });
-        } catch (error) {
-            logger.warn({ error }, "ai-proxy: could not record the background compaction's usage");
-        }
-    }
-
-    /**
-     * The compaction item behind a marker, for this login. Another login cannot read an item, so the first request it
-     * serves after a switch compacts the saved history once more there (one uncached read, which the switch costs
-     * anyway) and keeps that item too.
-     */
-    private async compactionItem(input: {
-        id: string;
-        req: Request;
-        model: string;
-        template: Record<string, unknown>;
-        accountHash: string;
-        client: FailureClient;
-        ancestors?: ReadonlySet<string>;
-    }): Promise<unknown[]> {
-        if (input.ancestors?.has(input.id)) {
-            throw new CompactionRestoreError(input.id, true, `Compaction history contains a cycle at ${input.id}.`);
-        }
-
-        const record = loadCompaction(input.id);
-
-        if (!record) {
-            throw new CompactionRestoreError(input.id, true, `Compaction record ${input.id} is missing or unreadable.`);
-        }
-
-        const held = record.items[input.accountHash];
-
-        if (held) {
-            return record.tail?.account === input.accountHash ? [held, ...record.tail.items] : [held];
-        }
-
-        const ancestors = new Set(input.ancestors);
-        ancestors.add(input.id);
-        const history = await expandCompactionMarkers(record.history, (id) =>
-            this.compactionItem({ ...input, id, ancestors })
-        );
-        const cleanHistory = history.filter((item) => !isObject(item) || item.type !== "reasoning");
-        const response = await this.respond(
-            input.req,
-            input.model,
-            { ...input.template, input: [...cleanHistory, { type: "compaction_trigger" }], stream: true },
-            input.client
-        );
-        if (!response.ok) {
-            throw new CompactionRestoreError(
-                input.id,
-                false,
-                `Could not restore compaction ${input.id}.`,
-                input.id,
-                response
-            );
-        }
-
-        let item: Record<string, unknown> | undefined;
-        try {
-            item = response.ok ? compactionFromSse(await readCompactionText(response)).item : undefined;
-        } catch (error) {
-            logger.warn({ error, id: input.id }, "ai-proxy: could not read the recompaction stream");
-            throw new CompactionRestoreError(input.id, false, `Could not read compaction ${input.id} for this login.`);
-        }
-
-        if (!item) {
-            logger.warn({ id: input.id, status: response.status }, "ai-proxy: recompacting saved history failed");
-            throw new CompactionRestoreError(
-                input.id,
-                false,
-                `Could not restore compaction ${input.id} for this login.`
-            );
-        }
-
-        if (input.req.signal.aborted) {
-            throw new CompactionRestoreError(input.id, false, `Compaction ${input.id} was cancelled.`);
-        }
-
-        saveCompaction({ ...record, items: { ...record.items, [input.accountHash]: item } });
-        recordCompactionEvent({ kind: "recompacted", id: input.id, model: input.model, reason: "another Codex login" });
-
-        return [item];
     }
 
     /**

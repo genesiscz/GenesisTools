@@ -1081,7 +1081,7 @@ describe("compaction dispatch", () => {
     });
 
     it("sends keepalives and aborts a stalled preparation at its deadline", async () => {
-        const { compactionDispatch } = await import("./openai-subscription");
+        const { compactionDispatch } = await import("./codex/compaction-flow");
         let aborted = false;
         const response = await compactionDispatch({
             signal: new AbortController().signal,
@@ -1127,7 +1127,7 @@ describe("compaction dispatch", () => {
     });
 
     it("bounds a stalled body after upstream headers", async () => {
-        const { compactionDispatch } = await import("./openai-subscription");
+        const { compactionDispatch } = await import("./codex/compaction-flow");
         let aborted = false;
         const response = await compactionDispatch({
             signal: new AbortController().signal,
@@ -1159,7 +1159,7 @@ describe("compaction dispatch", () => {
     });
 
     it("cancels stalled upstream preparation when the client stops reading", async () => {
-        const { compactionDispatch } = await import("./openai-subscription");
+        const { compactionDispatch } = await import("./codex/compaction-flow");
         let aborted = false;
         const response = await compactionDispatch({
             signal: new AbortController().signal,
@@ -1183,7 +1183,7 @@ describe("compaction dispatch", () => {
     });
 
     it("preserves early HTTP failures before the first keepalive", async () => {
-        const { compactionDispatch } = await import("./openai-subscription");
+        const { compactionDispatch } = await import("./codex/compaction-flow");
 
         for (const status of [400, 503, 529]) {
             const response = await compactionDispatch({
@@ -1197,7 +1197,7 @@ describe("compaction dispatch", () => {
     });
 
     it("forwards a healthy prepared stream", async () => {
-        const { compactionDispatch } = await import("./openai-subscription");
+        const { compactionDispatch } = await import("./codex/compaction-flow");
         const response = await compactionDispatch({
             signal: new AbortController().signal,
             stream: true,
