@@ -27,7 +27,11 @@ public enum ScrollMotion {
     }
 
     public static func dispatch(count: Int, interval: Double, remaining: () -> TimeInterval?,
-                                sleep: (TimeInterval) -> Void, post: (Int) throws -> Void) throws {
+                                sleep: (TimeInterval) -> Void, cancel: () -> Void,
+                                post: (Int) throws -> Void) throws {
+        var posted = false
+        var complete = false
+        defer { if posted && !complete { cancel() } }
         for index in 0..<count {
             if index > 0 && interval > 0 {
                 let available = remaining() ?? interval
@@ -38,7 +42,9 @@ public enum ScrollMotion {
                 throw DeadlineExceeded(dispatched: index > 0)
             }
             try post(index)
+            posted = true
         }
+        complete = true
     }
 
     /// The per-event deltas of one scroll: `total` pixels over `count` events, each a whole pixel, summing

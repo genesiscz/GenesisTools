@@ -230,6 +230,35 @@ describe("native capture target binding", () => {
         f.controls.dispose();
     });
 
+    it("refuses a non-AX isolated target before walking ambiguous windows", async () => {
+        const f = captureFixture({
+            isolated: true,
+            windows: [
+                { id: 10, target: true },
+                { id: 11, target: false },
+            ],
+        });
+        const result = await f.controls.run({ do: "click", coords: { x: 10, y: 10 }, atMs: 0 });
+        expect(result.ok).toBe(false);
+        expect(f.calls.filter((args) => args[0] === "see")).toHaveLength(0);
+        f.controls.dispose();
+    });
+
+    it("reobserves an isolated match when a later candidate was observed last", async () => {
+        const f = captureFixture({
+            isolated: true,
+            windows: [
+                { id: 10, target: true },
+                { id: 11, target: false },
+            ],
+        });
+        expect((await f.controls.run({ do: "ax-press", axId: "save", app: "Fixture", atMs: 0 })).ok).toBe(true);
+        const seen = f.calls.filter((args) => args[0] === "see");
+        expect(seen).toHaveLength(3);
+        expect(seen.at(-1)).toContain("10");
+        f.controls.dispose();
+    });
+
     it("selects the unique isolated window and refuses duplicate targets", async () => {
         for (const duplicate of [false, true]) {
             const f = captureFixture({
@@ -246,6 +275,7 @@ describe("native capture target binding", () => {
             expect(acts).toHaveLength(duplicate ? 0 : 1);
             if (!duplicate) {
                 expect(f.calls.filter((args) => args[0] === "see").at(-1)).toContain("11");
+                expect(f.calls.filter((args) => args[0] === "see")).toHaveLength(2);
             }
             f.controls.dispose();
         }

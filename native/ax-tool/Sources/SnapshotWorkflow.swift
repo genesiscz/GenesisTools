@@ -1767,8 +1767,14 @@ func cmdAct(appName _: String) {
                 _ = try verifyPoint(point, pin: .element)
                 try admitVisualAction()
                 }, dispatch: {
+                    let cancellation = try factory.scroll(point: point, deltaX: 0, deltaY: 0)
+                    cancellation.setIntegerValueField(.scrollWheelEventIsContinuous, value: 1)
+                    cancellation.setIntegerValueField(.scrollWheelEventScrollPhase, value: 8)
                     try ScrollMotion.dispatch(count: events.count, interval: interval, remaining: workflowRemaining,
-                                              sleep: { Thread.sleep(forTimeInterval: $0) }) { index in
+                                              sleep: { Thread.sleep(forTimeInterval: $0) }, cancel: {
+                        do { try inputGate.post { cancellation.postToPid(pid) } }
+                        catch { FileHandle.standardError.write(Data("Scroll cancellation failed: \(error)\n".utf8)) }
+                    }) { index in
                         try inputGate.post { events[index].postToPid(pid) }
                     }
                 })

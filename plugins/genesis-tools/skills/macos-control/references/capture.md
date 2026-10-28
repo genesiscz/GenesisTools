@@ -155,8 +155,8 @@ recording can use one `computer-use run` script; not every adaptive action needs
 
 - Plan/native `duration` is **seconds**, bounded by the recorder (up to 180). Set it explicitly.
 - `activeFps`, `idleFps` and `threshold` control sampling. With `videoOut` (CLI `--video-out`) the movie is
-  recorded at 60 fps by default (up to 120) and never drops to the idle rate; without a movie the PNG sampling
-  stays at 8 fps. PNGs are encoded on their own queue, so a slow encode never lowers the movie's rate (before
+  recorded at 60 fps by default (up to 120) and keeps that rate unless an explicit `idleFps` overrides it.
+  Without a movie the PNG sampling stays at 8 fps. PNGs are encoded on their own queue, so a slow encode never lowers the movie's rate (before
   2026-10-26 it did: a retina window recorded at about 6 fps). You cannot demand an exact number of retained PNGs.
 - MP4 preserves the captured sequence; PNGs are selected by change threshold. Keep video for
   timing investigations and sample it locally if the contact sheet lacks detail. Read its frames with
