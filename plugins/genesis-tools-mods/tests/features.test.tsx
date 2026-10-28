@@ -86,7 +86,7 @@ import { bareDescription } from "../hooks/model-label";
 import { forgetRepoMentions, namesIn, sessionRepos, titleMatches, urlProject } from "../hooks/pr-repos";
 import { modsSettings } from "../hooks/settings";
 import { afterTools, forgetSettings, type Host, isRecord } from "../hooks/shared";
-import { sharedRun, sharedRunClock, sharedRunFiles } from "../hooks/shared-run";
+import { cliLacks, sharedRun, sharedRunClock, sharedRunFiles } from "../hooks/shared-run";
 import { toolLabel } from "../hooks/spinner";
 import {
     checkStall,
@@ -2496,6 +2496,74 @@ test("session files: failed fallback du output does not become a cached zero", a
     expect(await worktreeSize(host, "/work/fallback", "clean")).toBe(456);
     expect(walks).toBe(2);
     forgetGenesisProbe();
+});
+
+test("session files: a CLI without tools du size walks with du, and keeps doing so", async () => {
+    forgetGenesisProbe();
+    const base = checkoutHost();
+    const asked: string[] = [];
+    const done = (stdout: string, exitCode: number, stderr = "") => ({
+        stdout,
+        stderr,
+        exitCode,
+        isStdoutTruncated: false,
+        isStderrTruncated: false,
+    });
+    const host: Host = {
+        ...base,
+        async exists() {
+            return true;
+        },
+        async run(argv) {
+            if (argv[1] === "genesis-tools") {
+                return done(JSON.stringify({ router: { linkHost: "links.example.test" }, links: {} }), 0);
+            }
+
+            asked.push(argv.slice(0, 3).join(" "));
+            return argv[0] === "tools"
+                ? done("", 1, "error: unknown option '--max-cache-age'")
+                : done(`789\t${argv[2]}\n`, 0);
+        },
+    };
+
+    try {
+        expect(await worktreeSize(host, "/work/old-cli-a", "clean")).toBe(789);
+        expect(await worktreeSize(host, "/work/old-cli-b", "clean")).toBe(789);
+        expect(asked).toEqual(["tools du size", "du -sk /work/old-cli-a", "du -sk /work/old-cli-b"]);
+    } finally {
+        forgetGenesisProbe();
+    }
+});
+
+test("shared run: a cut-off stdout is neither returned nor shared", async () => {
+    const base = checkoutHost();
+    let runs = 0;
+    const host: Host = {
+        ...base,
+        async run() {
+            runs++;
+            return {
+                stdout: "## main\n M a",
+                stderr: "",
+                exitCode: 0,
+                isStdoutTruncated: true,
+                isStderrTruncated: false,
+            };
+        },
+    };
+    const ask = {
+        argv: ["git", "status", "--porcelain", "--branch"],
+        cwd: "/work/cut",
+        ttlMs: 30_000,
+        timeoutMs: 1_000,
+    };
+
+    expect(await sharedRun(host, ask)).toBeUndefined();
+    expect(await sharedRun(host, ask)).toBeUndefined();
+    expect(runs).toBe(2);
+    expect(cliLacks({ exitCode: 1, stderr: "error: unknown command 'size'" })).toBe(true);
+    expect(cliLacks({ exitCode: 1, stderr: "fatal: not a git repository" })).toBe(false);
+    expect(cliLacks({ exitCode: 0, stderr: "unknown option" })).toBe(false);
 });
 
 test("mods settings: a value equal to the file's shipped copy follows today's default, as the CLI reads it", async () => {

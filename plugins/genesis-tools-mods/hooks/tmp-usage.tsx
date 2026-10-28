@@ -13,6 +13,7 @@ import { genesisProbe } from "./genesis";
 import { liveAgo } from "./live";
 import { bareDescription } from "./model-label";
 import { type Feature, type Host, isRecord, logMod, paceAfter, settingsOf } from "./shared";
+import { cliLacks } from "./shared-run";
 import { actionButton, type Kit, line, type Pressable, plural, pressed, sidebarFrame } from "./sidebar";
 
 let usage: TmpUsage = null;
@@ -152,10 +153,23 @@ async function sharedKb(host: Host, path: string, maxAgeS: number): Promise<{ kb
     return { kb, walked: Date.now() - startedAt > 1_000 };
 }
 
+/**
+ * The probe of a CLI that turned out to have no `tools du size`: the session walks with `du` until the probe is read
+ * again (a new probe can be a newer CLI).
+ */
+let duSizeMissingIn: object | undefined;
+
 async function sharedKbOnly(host: Host, path: string, maxAgeS: number): Promise<number | null> {
     const done = await host
         .run(["tools", "du", "size", path, "--max-cache-age", String(maxAgeS)], { timeoutMs: 120_000 })
         .catch(() => undefined);
+
+    if (cliLacks(done)) {
+        duSizeMissingIn = await genesisProbe(host);
+        await logMod(host, "tmp", { event: "du-size-unsupported", stderr: done?.stderr.slice(-200) });
+
+        return folderKb(host, path);
+    }
 
     try {
         const sizes: unknown = done?.exitCode === 0 ? JSON.parse(done.stdout) : undefined;
@@ -225,9 +239,11 @@ export async function worktreeSize(host: Host, path: string, status: string): Pr
     // After a size-changing command, only a walk made after it counts, this session's or another's.
     const maxAge =
         forced === undefined ? worktreeMaxAgeS(held, status) : Math.max(1, Math.ceil((startedAt - forced) / 1000));
-    const shared = (await genesisProbe(host)).tools
-        ? await sharedKb(host, path, maxAge)
-        : { kb: await folderKb(host, path), walked: true };
+    const probe = await genesisProbe(host);
+    const shared =
+        probe.tools && probe !== duSizeMissingIn
+            ? await sharedKb(host, path, maxAge)
+            : { kb: await folderKb(host, path), walked: true };
     const kb = shared.kb;
     forcedSince.delete(path);
     walking.delete(path);
