@@ -379,7 +379,12 @@ export function stopHookVerdict(
         return { action: "off" };
     }
 
-    const missing = mentionedDecisions(reply).filter((number) => !postedNumbers.includes(number));
+    // Only a decision the reply ASKS counts: a marker line (`❓ DECISION 25`, `❓ DECISION 25 — title`), the form a
+    // hand-written ask and question_post's markdown both take. A mention inside a sentence ("❓ DECISION 25 belongs to
+    // another session") or the linked form of a later mention refers to a decision asked elsewhere, often by another
+    // session, and blocking on it sent mac-bottleneck back to post a second copy of another session's decision, twice.
+    const asked = [...new Set(parseDecisionBlocks(reply).map((block) => block.number))];
+    const missing = asked.filter((number) => !postedNumbers.includes(number));
 
     if (missing.length === 0) {
         return { action: "allow" };
