@@ -145,7 +145,7 @@ const ITEM_SCOPE = "test-client";
 
 describe("buildWhamResponsesBody", () => {
     it("extracts system→instructions, maps messages→input, forces stream", async () => {
-        const { buildWhamResponsesBody } = await import("./openai-subscription");
+        const { buildWhamResponsesBody } = await import("./codex/wham-body");
         const { body, dropped } = buildWhamResponsesBody(
             {
                 model: "codex/codex/gpt-5.5",
@@ -171,7 +171,7 @@ describe("buildWhamResponsesBody", () => {
     });
 
     it("maps chat function tools to flat Responses tools, not strict unless the client says so", async () => {
-        const { buildWhamResponsesBody } = await import("./openai-subscription");
+        const { buildWhamResponsesBody } = await import("./codex/wham-body");
         const { body } = buildWhamResponsesBody(
             {
                 messages: [{ role: "user", content: "go" }],
@@ -194,7 +194,7 @@ describe("buildWhamResponsesBody", () => {
     });
 
     it("records dropped sampling params and unsupported tool types", async () => {
-        const { buildWhamResponsesBody } = await import("./openai-subscription");
+        const { buildWhamResponsesBody } = await import("./codex/wham-body");
         const { body, dropped } = buildWhamResponsesBody(
             {
                 messages: [{ role: "user", content: "go" }],
@@ -215,7 +215,7 @@ describe("buildWhamResponsesBody", () => {
     });
 
     it("passes client reasoning through and clamps unknown efforts", async () => {
-        const { buildWhamResponsesBody } = await import("./openai-subscription");
+        const { buildWhamResponsesBody } = await import("./codex/wham-body");
 
         const passthrough = buildWhamResponsesBody(
             { messages: [{ role: "user", content: "x" }], reasoning: { effort: "high" } },
@@ -233,7 +233,7 @@ describe("buildWhamResponsesBody", () => {
     });
 
     it("honours defaultReasoningEffort config, including none=omit", async () => {
-        const { buildWhamResponsesBody } = await import("./openai-subscription");
+        const { buildWhamResponsesBody } = await import("./codex/wham-body");
 
         const highDefault = buildWhamResponsesBody({ messages: [{ role: "user", content: "x" }] }, "gpt-5.5", {
             defaultReasoningEffort: "high",
@@ -254,7 +254,7 @@ describe("buildWhamResponsesBody", () => {
     });
 
     it("honours a stamped top-level reasoning_effort from a model-id suffix", async () => {
-        const { buildWhamResponsesBody } = await import("./openai-subscription");
+        const { buildWhamResponsesBody } = await import("./codex/wham-body");
 
         // `account/openai/gpt-5.5:xhigh` reaches this function as a top-level
         // reasoning_effort; without reading it the suffix silently ran at the
@@ -294,7 +294,7 @@ describe("buildWhamResponsesBody", () => {
     });
 
     it("checks the effort against the model's catalog record instead of the fixed allowlist", async () => {
-        const { buildWhamResponsesBody } = await import("./openai-subscription");
+        const { buildWhamResponsesBody } = await import("./codex/wham-body");
         const { mergeCodexModelRecords } = await import("@genesiscz/utils/ai/openai/codex-models");
         const catalog = mergeCodexModelRecords({
             live: [
@@ -1109,7 +1109,7 @@ describe("compaction dispatch", () => {
     });
 
     it("cancels a compaction body that stops sending data", async () => {
-        const { readCompactionText } = await import("./openai-subscription");
+        const { readCompactionText } = await import("./codex/wham-stream");
         let cancelled = false;
         const response = new Response(
             new ReadableStream<Uint8Array>({
