@@ -1100,8 +1100,9 @@ private enum StagingFixture {
     static let key = "local:codex:fixture-staged:"
 
     /// `stagedOnly`: the decision is not among the session's listed items (past its eight), only in the staged list.
+    /// `second`: a second open decision (d2) in the same session.
     static func snapshot(draftOption: String?, decisionClick: String = "stage", stagedOnly: Bool = false,
-                         stagedOnLeave: String = "ask", draft: String? = nil) throws -> String {
+                         stagedOnLeave: String = "ask", draft: String? = nil, second: Bool = false) throws -> String {
         var item: [String: Any] = ["id": "decision:d1", "sourceId": "d1", "kind": "decision", "key": key, "at": 1,
                                    "needsAnswer": true, "title": "Keep it?", "number": 7, "options": ["keep", "drop"],
                                    "revision": 1]
@@ -1113,6 +1114,13 @@ private enum StagingFixture {
                                    "attachments": [], "refs": [], "read": true]
         if let draftOption { item["draftOption"] = draftOption; card["draftOption"] = draftOption }
         if let draft { item["draft"] = draft; card["draft"] = draft; card["status"] = "drafted" }
+        var cards = [card]
+        if second {
+            var other = card
+            other["id"] = "decision:d2"; other["sourceId"] = "d2"; other["number"] = 8; other["title"] = "Ship it?"
+            other["status"] = "open"; other["draftOption"] = nil; other["draft"] = nil
+            cards.append(other)
+        }
         let session: [String: Any] = ["key": key, "target": ["hostId": "local", "provider": "codex",
             "sessionId": "fixture-staged", "sourceHome": "", "cwd": "/fixture"], "title": "Staged fixture",
             "project": "Fixture", "activityAt": 0, "status": "waiting", "pinned": true, "visible": true, "hiddenByFilter": false]
@@ -1124,7 +1132,7 @@ private enum StagingFixture {
             "selectedKey": key, "preferences": ["excludedKeys": [], "projects": [], "sessions": [], "showChanges": false,
                 "placement": "both", "side": "right", "quietSeconds": 15, "voiceProvider": "openai", "voiceLanguage": "en",
                 "decisionClick": decisionClick, "stagedOnLeave": stagedOnLeave],
-            "assets": [:], "drafts": [:], "outgoing": []], "sessions": [session], "cards": [card],
+            "assets": [:], "drafts": [:], "outgoing": []], "sessions": [session], "cards": cards,
             "manifests": [:], "errors": [], "selectedKey": key, "notifications": notifications])
         return String(decoding: data, as: UTF8.self)
     }
@@ -1216,6 +1224,92 @@ final class WidgetStagingTests: XCTestCase {
         XCTAssertNil(model.expanded, "and closes once every answer was delivered")
         XCTAssertEqual(names(actions).last, "send-staged")
         XCTAssertEqual(WidgetModel.stagedSummary(model.stagedItems), "1 decision will be sent to 1 session")
+    }
+
+    /// Each decision's own answer keeps its own unsent words, and the reply box keeps its own: one draft per session
+    /// used to open the next decision with the words typed for another (Martin, 2026-10-28).
+    func testEachDecisionKeepsItsOwnAnswerText() throws {
+        let model = StagingFixture.model()
+        defer { model.stop() }
+        model.actionRunner = { _ in ["ok": true] }
+        model.receive([try StagingFixture.snapshot(draftOption: nil, second: true)])
+        model.select(key)
+        let first = try XCTUnwrap(model.cards.first { $0.sourceId == "d1" })
+        let second = try XCTUnwrap(model.cards.first { $0.sourceId == "d2" })
+
+        model.setText("a reply")
+        model.openOwnAnswer(first)
+        XCTAssertEqual(model.draft.text, "", "the reply stays in the reply box")
+        model.setText("for d1 only")
+        model.openOwnAnswer(second)
+        XCTAssertEqual(model.draft.text, "", "the next decision opens empty, not with d1's words")
+        model.setText("for d2")
+        model.openOwnAnswer(first)
+        XCTAssertEqual(model.draft.text, "for d1 only", "d1 gets its own words back")
+        model.selectedCardID = second.id
+        XCTAssertNil(model.ownAnswerCardID, "selecting another card closes the own answer")
+        XCTAssertEqual(model.draft.text, "a reply", "and the reply box shows its own text, not d1's")
+        model.openOwnAnswer(first)
+        model.takeOwnAnswerIntoReply()
+        XCTAssertEqual(model.draft.text, "a reply\nfor d1 only", "Reply instead moves the words into the reply box")
+        model.openOwnAnswer(second)
+        XCTAssertEqual(model.draft.text, "for d2")
+    }
+
+    /// A click beside the leave question, its Dismiss or its close button ends the question and keeps the panel open
+    /// with everything staged.
+    func testLeaveQuestionStayKeepsThePanelOpen() async throws {
+        let model = StagingFixture.model()
+        defer { model.stop() }
+        model.actionRunner = { _ in ["ok": true] }
+        model.receive([try snapshot(draftOption: "a")])
+        model.select(key)
+        model.expanded = .right
+        model.requestCollapse()
+        XCTAssertTrue(model.stagedLeavePrompt)
+        model.resolveStagedLeave("stay")
+        XCTAssertFalse(model.stagedLeavePrompt)
+        XCTAssertEqual(model.expanded, .right, "the panel stays open")
+        XCTAssertEqual(model.stagedItems.map(\.sourceId), ["d1"], "and the decision stays staged")
+        model.requestCollapse()
+        XCTAssertTrue(model.stagedLeavePrompt, "the next close asks again: stay answered nothing")
+    }
+
+    /// Return stages the note; Return again on the now empty field sends that staged decision to its session.
+    func testSecondReturnOnAnEmptyOwnAnswerSendsTheStagedDecision() async throws {
+        let model = StagingFixture.model()
+        defer { model.stop() }
+        var actions: [WidgetJSON] = []
+        model.actionRunner = { payload in
+            actions.append(payload)
+            return ["sent": 1, "failed": 0, "ok": true]
+        }
+        model.receive([try snapshot(draftOption: nil)])
+        model.select(key)
+        let card = try XCTUnwrap(model.cards.first)
+        model.openOwnAnswer(card)
+        model.setText("only after the tests")
+        model.returnInOwnAnswer(command: false)
+        try await Task.sleep(for: .milliseconds(300))
+        XCTAssertEqual(model.draft.text, "", "the first Return stages the note and empties the field")
+        XCTAssertFalse(names(actions).contains("send-staged"), "staging sends nothing")
+        model.returnInOwnAnswer(command: false)
+        try await Task.sleep(for: .milliseconds(300))
+        XCTAssertTrue(names(actions).contains("send-staged"), "the second Return sends the staged decision")
+    }
+
+    func testStagedChipNamesTheSessionsThatHoldTheDecisions() {
+        func item(_ id: String, _ key: String) -> WidgetInboxItem {
+            WidgetInboxItem(id: "decision:" + id, sourceId: id, kind: "decision", key: key, at: 1, needsAnswer: true)
+        }
+        let titles = ["k-report": "report-2026-09"]
+        let title: (String) -> String? = { titles[$0] }
+        XCTAssertEqual(WidgetStagedChip.summary([item("a", "k-here"), item("b", "k-report")], here: "k-here", title: title),
+                       "2 decisions staged (1 in this session, 1 to report-2026-09)")
+        XCTAssertEqual(WidgetStagedChip.summary([item("a", "k-report"), item("b", "k-report")], here: "k-here", title: title),
+                       "2 decisions staged (2 to report-2026-09)")
+        XCTAssertEqual(WidgetStagedChip.summary([item("a", "k-here")], here: "k-here", title: title),
+                       "1 decision staged in this session")
     }
 
     /// A direct option send keeps its staged note. An own answer queues its staged pick and typed text durably.
