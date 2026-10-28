@@ -36,6 +36,8 @@ export interface CompactionEvent {
     session?: string;
     /** Claude Code's own session id (metadata.user_id). */
     claudeSession?: string;
+    /** The background-compaction thread (system prompt hash): a turn and its compaction must share it. */
+    thread?: string;
     /** The `gtc1.` compaction id. */
     id?: string;
     model?: string;

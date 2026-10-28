@@ -136,6 +136,7 @@ export function formatEvent(event: CompactionEvent): string {
         (event.session ?? event.claudeSession ?? "-").slice(0, 8),
         event.model ?? "",
         event.mode ? `mode=${event.mode}` : "",
+        event.thread ? pc.dim(`thread=${event.thread}`) : "",
         event.id ?? "",
         seconds(event.durationMs),
         tokens,
