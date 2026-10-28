@@ -53,6 +53,20 @@ describe("resolvePromptCacheKey", () => {
         );
     });
 
+    it("content policy: a cache_control mark on the system prompt does not change the key", () => {
+        const system = (cache_control: unknown) => [{ type: "text", text: "You are terse.", cache_control }];
+        const keyFor = (cache_control: unknown) =>
+            resolvePromptCacheKey({ policy: "content", content: { ...content, system: system(cache_control) } })?.key;
+
+        expect(keyFor({ type: "ephemeral", ttl: "1h" })).toBe(keyFor({ type: "ephemeral" }));
+        expect(keyFor({ type: "ephemeral" })).toBe(
+            resolvePromptCacheKey({
+                policy: "content",
+                content: { ...content, system: [{ type: "text", text: "You are terse." }] },
+            })?.key
+        );
+    });
+
     it("sends a UUID: an id that is not one is mapped to a stable UUID-shaped hash", () => {
         expect(asCacheKey(SESSION.toUpperCase())).toBe(SESSION);
         expect(asCacheKey("not-a-uuid")).toMatch(UUID_SHAPE);

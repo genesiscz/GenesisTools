@@ -70,6 +70,26 @@ export function uuidFromHash(parts: unknown[]): string {
     return `${hash.slice(0, 8)}-${hash.slice(8, 12)}-${hash.slice(12, 16)}-${hash.slice(16, 20)}-${hash.slice(20, 32)}`;
 }
 
+/**
+ * The system prompt without its `cache_control` marks. Claude Code asks for a 1-hour TTL on some requests (idle
+ * compaction) and 5 minutes on others; the text is the same, so the key must be too (2026-10-28 parity audit: 4 of 4
+ * compaction requests got a new key in sessions whose main turns used the 1-hour TTL).
+ */
+function withoutCacheControl(system: unknown): unknown {
+    if (!Array.isArray(system)) {
+        return system;
+    }
+
+    return system.map((block) => {
+        if (!isObject(block) || !("cache_control" in block)) {
+            return block;
+        }
+
+        const { cache_control: _mark, ...rest } = block;
+        return rest;
+    });
+}
+
 /** A key the upstream accepts: a UUID as is, anything else mapped to a UUID-shaped hash of itself. */
 export function asCacheKey(value: string): string {
     return UUID.test(value) ? value.toLowerCase() : uuidFromHash([value]);
@@ -100,7 +120,10 @@ export function resolvePromptCacheKey({
 
     const contentKey = (): PromptCacheKey | undefined =>
         content
-            ? { key: uuidFromHash([content.model, content.system ?? "", content.first ?? ""]), source: "content" }
+            ? {
+                  key: uuidFromHash([content.model, withoutCacheControl(content.system) ?? "", content.first ?? ""]),
+                  source: "content",
+              }
             : undefined;
     const sessionKey = (): PromptCacheKey | undefined =>
         claudeSessionId ? { key: asCacheKey(claudeSessionId), source: "claude-session" } : undefined;
