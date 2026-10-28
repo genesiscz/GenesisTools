@@ -26,6 +26,9 @@ extension WidgetModel {
             return
         }
         let text = draft.text.trimmingCharacters(in: .whitespacesAndNewlines)
+        // Return again on the empty field, after Return staged the note: the staged decision goes to its session now
+        // (Martin, 2026-10-28: "if i enter to stage, then enter it again, it should probably send that one").
+        if text.isEmpty, sendStagedFromOwnAnswer(card) { return }
         if DecisionAnswering.returnStages(snapshot?.state.preferences, command: command) {
             guard !text.isEmpty else {
                 postNote("Write your answer first.")
@@ -35,6 +38,22 @@ extension WidgetModel {
         } else {
             submitOwnAnswer()
         }
+    }
+
+    /// An empty own answer of a staged decision sends that decision, as its Send now does. False when nothing is
+    /// staged on it, or media waits in the field (the media goes with a typed answer, never alone).
+    @discardableResult
+    func sendStagedFromOwnAnswer(_ card: WidgetCard) -> Bool {
+        let note = pendingStageNotes[card.sourceId] ?? card.draft
+        guard draft.assetIds.isEmpty, !heldDecisionIDs.contains(card.sourceId),
+              stagedOption(card.sourceId, stored: card.draftOption) != nil || note?.isEmpty == false else { return false }
+        PerfLog.mark("widget.own-answer send staged \(card.sourceId)")
+        // The note staged a moment ago is not in a snapshot yet; the item carries it, as the leave question's does.
+        var item = Self.inboxItem(card)
+        item.draft = note
+        item.draftOption = stagedOption(card.sourceId, stored: card.draftOption)
+        sendStaged([card.sourceId], known: [item])
+        return true
     }
 
     /// The pick a card shows as staged: the one staged here a moment ago, else the snapshot's.
@@ -134,6 +153,12 @@ extension WidgetModel {
                   // Only the text that was saved: a session switch or new typing keeps the composer as it is.
                   if !text.isEmpty, self.selectedKey == key, self.draft.text == typed { self.setText("") }
               })
+    }
+
+    /// The card behind an inbox item, for its text: the selected session's, else the one cached for its session; nil
+    /// while no snapshot of that session was read here.
+    func card(for item: WidgetInboxItem) -> WidgetCard? {
+        cards.first { $0.id == item.id } ?? sessionCache[item.key]?.cards.first { $0.id == item.id }
     }
 
     /// The own answer field of a decision takes the draft (its card becomes the selected, open one); with a staged note
@@ -314,9 +339,14 @@ extension WidgetModel {
                                  : "These decisions are no longer staged, so nothing was sent.")
             return
         }
-        // A second press while the first send runs: that send's note answers it.
+        // A second press while the first send runs: that send's note answers it. It says so too: a Send now that
+        // changed nothing read as a dead button (Martin, 2026-10-28: "the Send now in the quit dialog didnt send it").
         let fresh = chosen.filter { !sendingDecisionIDs.contains($0.sourceId) }
-        guard !fresh.isEmpty else { return }
+        guard !fresh.isEmpty else {
+            PerfLog.mark("widget.send-staged already sending: \(chosen.count) of \(ids.count) ids")
+            postNote("Still sending " + Plural.count(chosen.count, "decision") + "…")
+            return
+        }
         deliverDecisions(fresh, action: .sendStaged, thenClose: thenClose)
     }
 
@@ -488,9 +518,15 @@ extension WidgetModel {
         return listedItems + pending.sorted { $0.at < $1.at }
     }
 
-    /// The answer to the leave question: "send", "keep" or "discard". Keep and Discard close the panel at once;
-    /// Send closes it once the hub says every answer was delivered, and leaves it open with the reason otherwise.
+    /// The answer to the leave question: "send", "keep", "discard" or "stay". Keep and Discard close the panel at once;
+    /// Send closes it once the hub says every answer was delivered, and leaves it open with the reason otherwise. Stay
+    /// (a click beside the box, Dismiss, its close button) only ends the question: the panel stays as it was.
     public func resolveStagedLeave(_ choice: String) {
+        PerfLog.mark("widget.staged-leave \(choice): \(stagedForLeave.count) staged")
+        guard choice != "stay" else {
+            stagedLeavePrompt = false
+            return
+        }
         let items = stagedForLeave
         let ids = items.map(\.sourceId)
         stagedLeavePrompt = false

@@ -610,7 +610,10 @@ public struct LiveWidgetView: View {
         .clipShape(RoundedRectangle(cornerRadius: 11))
         .background(Color.white.opacity(open ? 0.055 : 0.03), in: RoundedRectangle(cornerRadius: 11))
         .overlay(RoundedRectangle(cornerRadius: 11)
-            .strokeBorder(waiting ? Color.orange.opacity(0.28) : staged ? SessionPalette.blue.opacity(0.3) : .clear, lineWidth: 1))
+            // A staged decision reads blue as clearly as a waiting one reads orange: at 0.3 the blue was lost on the
+            // dark card (Martin, 2026-10-28: "somehow marked as staged - the blue border probably?").
+            .strokeBorder(waiting ? Color.orange.opacity(0.28) : staged ? SessionPalette.blue.opacity(0.6) : .clear,
+                          lineWidth: staged ? 1.5 : 1))
         .attentionPulse(trigger: model.revealTrigger("card-" + card.id), style: model.revealStyle,
                         since: model.revealStart("card-" + card.id))
     }
@@ -738,6 +741,17 @@ public struct LiveWidgetView: View {
                             .disabled(sending)
                             .instantTooltip(card.draft == nil ? "Clears the staged pick."
                                 : "Clears the staged pick and puts the note back into the answer field.")
+                        // Every staged decision at once, this one included, from the card being read (Martin,
+                        // 2026-10-28). Only while another one is staged too: alone it is the same as Send now.
+                        let others = model.stagedForLeave.filter { $0.sourceId != card.sourceId }
+                        if !others.isEmpty {
+                            let all = [WidgetModel.inboxItem(card)] + others
+                            Button("Send now (all \(all.count))") {
+                                model.sendStaged(all.map(\.sourceId), known: all)
+                            }
+                            .disabled(sending)
+                            .instantTooltip("Sends this decision and the \(Plural.count(others.count, "other staged decision")) now, one message per session.")
+                        }
                     }
                 } else if card.kind == "decision" && card.status == "answered" {
                     // "Waiting to send": the answer waits for the session's next prompt; this sends it now.
@@ -1394,7 +1408,7 @@ public struct LiveWidgetView: View {
             Spacer(minLength: 8)
             if let parked {
                 Button("Reply instead") {
-                    GenMotion.perform(expanding: false, reduceMotion: reduceMotion) { model.ownAnswerCardID = nil }
+                    GenMotion.perform(expanding: false, reduceMotion: reduceMotion) { model.takeOwnAnswerIntoReply() }
                     // The field is enabled by that change; it takes the keyboard on the next pass.
                     Task { @MainActor in editing = true }
                 }

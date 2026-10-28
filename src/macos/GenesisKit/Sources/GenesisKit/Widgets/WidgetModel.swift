@@ -68,7 +68,14 @@ public final class WidgetModel: ObservableObject {
     /// The expanded agents pane shows the inbox entries of every session instead of one session (the inbox button).
     /// Opening a session ends it.
     @Published public var inboxOverview = false { didSet { if inboxOverview != oldValue { presentationChanged?() } } }
-    @Published public var selectedCardID: String? { didSet { presentationChanged?() } }
+    @Published public var selectedCardID: String? {
+        didSet {
+            presentationChanged?()
+            // Another card took the selection: the open own answer closes and keeps its words for its decision, so
+            // the reply box does not show them meanwhile.
+            if let own = ownAnswerCardID, selectedCardID != own { ownAnswerCardID = nil }
+        }
+    }
     @Published public var section = "Inbox" {
         didSet {
             resumeTranscript()
@@ -417,6 +424,7 @@ public final class WidgetModel: ObservableObject {
                 self.presentationChanged?()
             }
         }
+        parkedAnswers = defaults.dictionary(forKey: Self.parkedAnswersKey) as? [String: String] ?? [:]
         if let data = defaults.data(forKey: "widget.formDrafts") {
             do {
                 formAnswers = try JSONDecoder().decode(
@@ -562,7 +570,18 @@ public final class WidgetModel: ObservableObject {
         return card
     }
     /// The decision whose own answer field holds the draft (its toolbar open, the reply composer parked).
-    @Published public var ownAnswerCardID: String?
+    @Published public var ownAnswerCardID: String? { didSet { ownAnswerMoved(from: oldValue) } }
+    /// The session whose draft the open own answer holds.
+    var ownAnswerKey: String?
+    /// Text written but not staged or sent, for a field that does not hold the session's draft now: a decision's own
+    /// answer (by card id) or a session's reply box (`reply:<session key>`). Each decision keeps its own words; one
+    /// draft per session used to carry them into the next decision opened (Martin, 2026-10-28).
+    var parkedAnswers: [String: String] = [:]
+    /// "Reply instead": the own answer's text moves into the reply box instead of being kept for its decision.
+    private var carryDraftOnMove = false
+    static let parkedAnswersKey = "widget.parkedAnswers"
+    /// The parked texts kept across restarts; the oldest go first past this many.
+    static let parkedAnswersLimit = 60
     /// Sessions whose current follow-up omits its reply reference (`replyToCard`).
     @Published public var replyToDropped: Set<String> = []
     /// A decision whose own answer field takes the keyboard as soon as its card shows it (the alert's "Write my own
@@ -2061,9 +2080,65 @@ public final class WidgetModel: ObservableObject {
         })
     }
 
-    public func setText(_ text: String) {
+    /// The own answer moved from `old` to `ownAnswerCardID`: the field it left keeps its text (parked), and the field
+    /// it entered gets its own back. The reply box is a field too, so its text never shows inside a decision.
+    private func ownAnswerMoved(from old: String?) {
+        let new = ownAnswerCardID
+        guard old != new else { return }
+        let leaveKey = ownAnswerKey ?? selectedKey
+        let enterKey = selectedKey
+        defer {
+            ownAnswerKey = new == nil ? nil : enterKey
+            saveParkedAnswers()
+        }
+        if carryDraftOnMove {
+            carryDraftOnMove = false
+            if let old { parkedAnswers[old] = nil }
+            if let reply = parkedAnswers.removeValue(forKey: "reply:" + leaveKey), !reply.isEmpty {
+                let typed = drafts[leaveKey]?.text ?? ""
+                setText(typed.isEmpty ? reply : reply + "\n" + typed, key: leaveKey)
+            }
+            return
+        }
+        if leaveKey == enterKey {
+            swapAnswerText(key: enterKey, from: old ?? "reply:" + enterKey, to: new ?? "reply:" + enterKey)
+        } else {
+            if let old { swapAnswerText(key: leaveKey, from: old, to: "reply:" + leaveKey) }
+            if let new { swapAnswerText(key: enterKey, from: "reply:" + enterKey, to: new) }
+        }
+    }
+
+    /// In session `key`, the field `from` gives the draft's text up (kept unless empty or equal to its staged note) and
+    /// the field `to` takes its kept text, or an empty field.
+    private func swapAnswerText(key: String, from: String, to: String) {
+        guard !key.isEmpty, from != to else { return }
+        let text = drafts[key]?.text ?? ""
+        let staged = (cards + (sessionCache[key]?.cards ?? [])).first { $0.id == from }?.draft
+        let kept = text.trimmingCharacters(in: .whitespacesAndNewlines)
+        parkedAnswers[from] = kept.isEmpty || kept == staged?.trimmingCharacters(in: .whitespacesAndNewlines) ? nil : text
+        let restored = parkedAnswers.removeValue(forKey: to) ?? ""
+        if restored != text { setText(restored, key: key) }
+    }
+
+    private func saveParkedAnswers() {
+        if parkedAnswers.count > Self.parkedAnswersLimit {
+            for key in parkedAnswers.keys.sorted().prefix(parkedAnswers.count - Self.parkedAnswersLimit) {
+                parkedAnswers[key] = nil
+            }
+        }
+        defaults.set(parkedAnswers, forKey: Self.parkedAnswersKey)
+    }
+
+    /// Reply instead: the own answer closes and its text goes into the reply box (after any reply kept there).
+    public func takeOwnAnswerIntoReply() {
+        guard ownAnswerCardID != nil else { return }
+        carryDraftOnMove = true
+        ownAnswerCardID = nil
+    }
+
+    public func setText(_ text: String, key: String? = nil) {
         sendCloseRevision += 1
-        let key = selectedKey
+        let key = key ?? selectedKey
         guard !key.isEmpty else { return }
 
         var value = drafts[key] ?? WidgetDraft()
@@ -2467,6 +2542,7 @@ public final class WidgetModel: ObservableObject {
     public func submitOwnAnswer() {
         guard let card = ownAnswerCard else { return }
         guard !draft.text.trimmingCharacters(in: .whitespacesAndNewlines).isEmpty || !draft.assetIds.isEmpty else {
+            if sendStagedFromOwnAnswer(card) { return }
             postNote("Write your answer or attach media first.")
             return
         }
