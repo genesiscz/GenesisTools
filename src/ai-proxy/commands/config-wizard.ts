@@ -2,6 +2,7 @@ import { runConfigDetect, runConfigInit, runConfigShow } from "@app/ai-proxy/com
 import { runUpCommand } from "@app/ai-proxy/commands/up";
 import { detectAccounts, loadConfig, saveConfig } from "@app/ai-proxy/lib/config";
 import { normalizeBasePath } from "@app/ai-proxy/lib/path-prefix";
+import { providerDefinition } from "@app/ai-proxy/lib/providers/registry";
 import { buildPublicHealthUrl, resolveCursorBaseUrl } from "@app/ai-proxy/lib/public-url";
 import {
     detectCloudflared,
@@ -13,7 +14,7 @@ import {
     readCloudflaredConfig,
     writeCloudflaredConfig,
 } from "@app/ai-proxy/lib/tunnel/cloudflared";
-import type { AiProxyConfig } from "@app/ai-proxy/lib/types";
+import type { AiProxyAccountConfig, AiProxyConfig } from "@app/ai-proxy/lib/types";
 import { cancel, confirm, intro, isCancel, log, note, outro, select, spinner, text } from "@clack/prompts";
 import { isInteractive, suggestCommand } from "@genesiscz/utils/cli";
 import { toolCommand } from "@genesiscz/utils/cli/tool-command";
@@ -329,17 +330,14 @@ export async function runSetupCloudflaredTunnel(): Promise<void> {
     }
 
     const cursorBaseUrl = resolveCursorBaseUrl(config);
-    const grokAccount = config.accounts.find((account) => account.provider === "grok-subscription");
-    const firstModel = grokAccount?.name ?? config.accounts[0]?.name;
+    const exampleModel = cursorExampleModel(config.accounts);
 
     note(
         [
             "Cursor BYOK:",
             `  Base URL: https://${publicHostname}${basePath}/v1`,
             `  API Key:  ${config.proxyApiKey}`,
-            firstModel
-                ? `  Model:    ${firstModel}/grok/grok-composer-2.5-fast`
-                : "  Model:    (add a grok-subscription account first)",
+            exampleModel ? `  Model:    ${exampleModel}` : "  Model:    (add an account first)",
             "",
             "Keep running:",
             `  ${toolCommand("ai-proxy up")}`,
@@ -432,4 +430,17 @@ async function runSetupCustomExposure(config: AiProxyConfig): Promise<void> {
     await saveConfig(config);
     note(`Cursor URL: ${resolveCursorBaseUrl(config)}\nStart proxy: ${toolCommand("ai-proxy up")}`, "Saved");
     outro("Custom exposure configured.");
+}
+
+/** The model the setup wizard's Cursor note names: the first enabled account's suggested model, which it can serve. */
+export function cursorExampleModel(accounts: AiProxyAccountConfig[]): string | undefined {
+    for (const account of accounts) {
+        const definition = account.enabled ? providerDefinition(account.provider) : undefined;
+
+        if (definition) {
+            return definition.suggestedModel(account);
+        }
+    }
+
+    return undefined;
 }

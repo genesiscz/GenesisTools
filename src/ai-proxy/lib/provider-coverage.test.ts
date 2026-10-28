@@ -1,4 +1,5 @@
 import { describe, expect, test } from "bun:test";
+import { cursorExampleModel } from "@app/ai-proxy/commands/config-wizard";
 import { describeAccountCredential } from "@app/ai-proxy/lib/account-config";
 import { providerTitleFor, suggestedModelFor } from "@app/ai-proxy/lib/detect-report";
 import { defaultApiKeyEnvName } from "@app/ai-proxy/lib/providers/api-key-state";
@@ -307,6 +308,22 @@ describe("each provider type answers with its own facts", () => {
         } finally {
             configureModelFacts({});
         }
+    });
+
+    test("the setup wizard's Cursor note names the first enabled account's own suggested model", () => {
+        expect([
+            cursorExampleModel([work("grok-subscription"), work("openai-subscription")]),
+            cursorExampleModel([{ ...work("openai-subscription"), providerSlug: "codex" }]),
+            cursorExampleModel([{ ...work("grok-subscription"), enabled: false }, work("openrouter")]),
+            cursorExampleModel([unknownProviderAccount()]),
+            cursorExampleModel([]),
+        ]).toEqual([
+            "work/grok/grok-composer-2.5-fast",
+            "work/codex/gpt-6.1-sol",
+            "work/slug/anthropic/claude-sonnet-5.5",
+            undefined,
+            undefined,
+        ]);
     });
 
     test("an unknown provider is not implemented and cannot be built", async () => {

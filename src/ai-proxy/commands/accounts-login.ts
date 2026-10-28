@@ -7,6 +7,7 @@ import {
     saveConfig,
 } from "@app/ai-proxy/lib/config";
 import { clearCopilotModelsCache } from "@app/ai-proxy/lib/copilot-models-cache";
+import { loginProviderFor } from "@app/ai-proxy/lib/providers/registry";
 import type { AiProxyAccountConfig } from "@app/ai-proxy/lib/types";
 import {
     clearGithubCopilotTokenResolutionCache,
@@ -112,7 +113,10 @@ async function runCodexLogin(): Promise<void> {
     // The ACCOUNT write is the shared lib's, so there is one codex login path
     // rather than two that disagree (decision D4). What stays here is the proxy's
     // own bookkeeping below, which the shared lib knows nothing about.
-    const login = await runLogin({ provider: "openai-sub", tool: `${toolCommand("ai-proxy accounts login")} codex` });
+    const login = await runLogin({
+        provider: loginProviderFor("codex").plugin,
+        tool: `${toolCommand("ai-proxy accounts login")} codex`,
+    });
 
     if (!login.ok || !login.account) {
         return;
@@ -122,27 +126,47 @@ async function runCodexLogin(): Promise<void> {
     const planType = login.account.label;
 
     const config = await loadConfig();
-    const existing = config.accounts.find(
-        (item) => item.provider === "openai-subscription" && item.openaiSub?.accountName === accountName
-    );
+    const { account, added } = codexProxyAccount(config.accounts, accountName, planType);
 
-    if (existing) {
-        existing.enabled = true;
-        out.log.info(`Proxy account "${existing.name}" already references it.`);
+    if (added) {
+        out.log.info(`Added proxy account: ${account.name}`);
     } else {
-        const proxyName = config.accounts.some((item) => item.name === "codex") ? `codex-${accountName}` : "codex";
-        const proxyAccount: AiProxyAccountConfig = {
-            name: proxyName,
-            label: planType ? `Codex (${planType})` : "Codex",
-            provider: "openai-subscription",
-            providerSlug: "codex",
-            enabled: true,
-            openaiSub: { accountName },
-        };
-        config.accounts.push(proxyAccount);
-        out.log.info(`Added proxy account: ${proxyName}`);
+        out.log.info(`Proxy account "${account.name}" already references it.`);
     }
 
     await saveConfig(config);
     out.log.info(`Try: ${suggestCommand("tools ai-proxy", { replaceCommand: ["models"] })}`);
+}
+
+/**
+ * The proxy account that references the Codex login `login`, enabled: the existing one, else a new one added to
+ * `accounts` (named `codex`, or `codex-<login>` when that name is taken).
+ */
+export function codexProxyAccount(
+    accounts: AiProxyAccountConfig[],
+    login: string,
+    plan: string | undefined
+): { account: AiProxyAccountConfig; added: boolean } {
+    const codex = loginProviderFor("codex");
+    const existing = accounts.find((item) => item.provider === codex.type && codex.login.name(item) === login);
+
+    if (existing) {
+        existing.enabled = true;
+        return { account: existing, added: false };
+    }
+
+    const slug = codex.definition.defaultSlug;
+    const account = codex.login.bind(
+        {
+            name: accounts.some((item) => item.name === slug) ? `${slug}-${login}` : slug,
+            label: plan ? `Codex (${plan})` : "Codex",
+            provider: codex.type,
+            providerSlug: slug,
+            enabled: true,
+        },
+        login
+    );
+    accounts.push(account);
+
+    return { account, added: true };
 }

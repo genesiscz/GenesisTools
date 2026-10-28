@@ -10,6 +10,7 @@ import {
     runAccountsSetKey,
     runAccountsSetRouting,
 } from "@app/ai-proxy/commands/accounts";
+import { codexProxyAccount } from "@app/ai-proxy/commands/accounts-login";
 import { runSessionUse } from "@app/ai-proxy/commands/session-use";
 import { loadConfig, saveConfig } from "@app/ai-proxy/lib/config";
 import { resetAiProxyConfigStore } from "@app/ai-proxy/lib/config-store";
@@ -537,5 +538,44 @@ describe("session logins per agent", () => {
             claude: ["claude-a"],
             grok: ["grok-a"],
         });
+    });
+});
+
+describe("accounts login codex: the proxy account of a Codex login", () => {
+    const codex = (name: string, login: string, enabled = true): AiProxyAccountConfig => ({
+        name,
+        provider: "openai-subscription",
+        providerSlug: "codex",
+        enabled,
+        openaiSub: { accountName: login },
+    });
+
+    it("enables the account that already references the login, and adds nothing", () => {
+        const accounts = [codex("codex", "alice", false)];
+
+        expect(codexProxyAccount(accounts, "alice", "plus")).toEqual({
+            account: codex("codex", "alice"),
+            added: false,
+        });
+        expect(accounts).toEqual([codex("codex", "alice")]);
+    });
+
+    it("adds a codex account for a new login, named after the login when codex is taken", () => {
+        const grok: AiProxyAccountConfig = {
+            name: "grok",
+            provider: "grok-subscription",
+            providerSlug: "grok",
+            enabled: true,
+            grok: { accountName: "alice" },
+        };
+        const empty: AiProxyAccountConfig[] = [grok];
+        const taken = [codex("codex", "bob")];
+
+        expect([codexProxyAccount(empty, "alice", undefined), codexProxyAccount(taken, "alice", "plus")]).toEqual([
+            { account: { ...codex("codex", "alice"), label: "Codex" }, added: true },
+            { account: { ...codex("codex-alice", "alice"), label: "Codex (plus)" }, added: true },
+        ]);
+        expect(empty.map((account) => account.name)).toEqual(["grok", "codex"]);
+        expect(taken.map((account) => account.name)).toEqual(["codex", "codex-alice"]);
     });
 });
