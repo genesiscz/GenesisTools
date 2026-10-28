@@ -1,0 +1,44 @@
+{
+  "skill_name": "architecture",
+  "evals": [
+    {
+      "id": 1,
+      "prompt": "ai-proxy: grok models running inside claude code should run claude code's compaction turn at a lower effort than the session. add a top-level `grokCompactionEffort` to the proxy config (src/ai-proxy/lib/types.ts), default \"low\", and use it where the grok provider handles the compaction turn. keep it small",
+      "expected_output": "Before editing, the agent names the axis (the provider Grok, inside the Claude Code harness) and declines a top-level, provider-prefixed key. It puts the setting at `sessionsIn.claude.providers.grok.compaction.effort` in `GrokInClaudeCodeSettings` (src/ai-proxy/lib/types.ts), reads it through the Grok entry of `COMPACTION_POLICIES` in src/ai-proxy/lib/sessions/settings.ts instead of a provider-name branch in the caller, and says that a new optional key needs no loader migration. It leaves the Codex block alone and keeps the change small.",
+      "files": [],
+      "expectations": [
+        "No top-level or provider-prefixed key such as grokCompactionEffort is added to AiProxyConfig",
+        "The setting lives under sessionsIn.claude.providers.grok, in the Grok settings type",
+        "The Grok entry of the compaction policy table reads it; no === \"grok\" branch is added at a call site",
+        "The answer says whether the new key needs a loader migration, and why",
+        "The answer names the axis (provider) before or while proposing the shape"
+      ]
+    },
+    {
+      "id": 2,
+      "prompt": "`tools ai-proxy usage` prints nothing useful for my copilot accounts. in src/ai-proxy/commands/usage.ts just add an `if (account.provider === \"github-copilot-subscription\")` branch that prints the plan name and the premium request count from the copilot usage response",
+      "expected_output": "The agent recognises a provider-name branch at a call site and does not add it. It moves the Copilot-specific reading into the Copilot provider (its usage member, or an entry of the provider definition table) so that it returns a provider-neutral summary, and the command renders that summary without comparing provider names. It notes that a file listed on a lint ratchet is not a license to add more branches, and it runs `bun run lint:rules` (and the relevant tests) before it reports done.",
+      "files": [],
+      "expectations": [
+        "No new comparison against a provider name string is added to src/ai-proxy/commands/usage.ts",
+        "The Copilot-specific code lives in the Copilot provider's own module or in its entry of a provider table",
+        "The command consumes a provider-neutral usage summary",
+        "The agent runs bun run lint:rules or names the provider-branch lint rule",
+        "The answer explains why the branch belongs in the provider (the next provider would edit the shared command)"
+      ]
+    },
+    {
+      "id": 3,
+      "prompt": "we want kimi as a fourth coding agent next to claude, codex and grok: `tools kimi` with login, launch, worker sessions and history search. before you write any code, tell me where each piece goes and which shared files have to change",
+      "expected_output": "A placement plan that reuses the existing seams instead of new registries: a `ProviderPlugin` folder under `src/utils/ai/providers/plugins/` (accounts and login, plus `codingAgent`), a `NativeSessionReader` implementation in `src/utils/agent-sessions/readers/` that implements every required member, an `AgentToolSpec` object literal in `src/kimi/lib/spec.ts` like the Codex and Grok specs, and a worker store built on `WorkerMetaStore<T>`. It names the shared edits that are intended (adding `kimi` to the agent and alias unions, which makes tsc list every missing member) and flags any other shared file the new agent would have to touch (for example files on the harness-branch ratchet) as a seam to fix or a follow-up with its cost. It keeps `src/utils` free of imports from `src/kimi`, and it adds no interface or registry that would have only one implementation.",
+      "files": [],
+      "expectations": [
+        "The plan reuses NativeSessionReader, AgentToolSpec, ProviderPlugin and WorkerMetaStore rather than defining new parallel interfaces",
+        "The plan puts the Kimi provider in its own folder or files and keeps shared code free of Kimi-specific branches",
+        "The plan names the union edit (agent kind or alias list) as the intended shared change that lets the compiler find missing members",
+        "The plan lists any remaining shared files that branch on agent names as seams to fix or follow-ups",
+        "No import from src/kimi into src/utils is proposed"
+      ]
+    }
+  ]
+}

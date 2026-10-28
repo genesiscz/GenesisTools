@@ -1,10 +1,34 @@
 {
     "version": 1,
     "skills": {
+        "api-and-interface-design": {
+            "source": "addyosmani/agent-skills",
+            "sourceType": "github",
+            "skillPath": "skills/api-and-interface-design/SKILL.md",
+            "computedHash": "8bdbf1fca81bef9258d7e0d9726f933f25677ec8537792e084a3fb7c54acf2ba"
+        },
+        "balanced-coupling": {
+            "source": "vladikk/modularity",
+            "sourceType": "github",
+            "skillPath": "skills/balanced-coupling/SKILL.md",
+            "computedHash": "89842104e99afea240964b004b978ca8c19aabdd2ba6c68c276ade81ce54c4be"
+        },
+        "document": {
+            "source": "vladikk/modularity",
+            "sourceType": "github",
+            "skillPath": "skills/document/SKILL.md",
+            "computedHash": "1e97c1ad59efb9136fd578efea2a701be70dd94a212c4a3587217626902e0819"
+        },
         "opentui": {
             "source": "msmps/opentui-skill",
             "sourceType": "github",
             "computedHash": "2915038bb3297e759f740f9e6bfa885ed80a4a7fe945825f5874b48db9ce0fd2"
+        },
+        "review": {
+            "source": "vladikk/modularity",
+            "sourceType": "github",
+            "skillPath": "skills/review/SKILL.md",
+            "computedHash": "44d690fdd2a18578c208eabea72215546a20313314f7da415850f5c96a31b565"
         },
         "terminal-ops": {
             "source": "affaan-m/everything-claude-code",

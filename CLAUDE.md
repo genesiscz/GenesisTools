@@ -26,6 +26,13 @@ The detailed rules live in area files. Claude Code loads an area file by itself 
 
 A new rule goes into the area file it belongs to, or into a new `.claude/rules/<topic>.md` with a `paths:` list of globs. Do not add a CLAUDE.md to a subfolder: one rule file can cover several folders, and one folder can have several rule files. Only the sub-apps with a root of their own keep one (`apps/eve/`, `DevDashboard/mobile/`, `src/dashboard/apps/web/.claude/`). Only a rule that every session needs, whatever it touches, goes into this file.
 
+## Design skills: load them before you decide a shape
+
+- `architecture` (`.claude/skills/architecture/`): before you add a config key, a field of a saved JSON shape, a CLI flag set, a branch on a provider or harness name, or a second implementation of anything. It names the axis to nest by, the loader migration, and the interface plus exhaustive table that replaces name branches.
+- `balanced-coupling` with `review`: a design review of a new or growing area, a decision to split or merge modules, or "why is this change so expensive?".
+- `api-and-interface-design`: a new public interface (an `@genesiscz/utils` export, an MCP tool, an HTTP route), a saved JSON shape, a CLI flag set, or a deprecation.
+- `balanced-coupling`, `review` and `document` are CC BY-NC-SA 4.0, so they live only in the main checkout's `.claude/skills/` and are not committed. In a worktree, read them in the main checkout (the first path `git worktree list` prints), at `.claude/skills/<name>/SKILL.md`.
+
 ## Running tools
 
 ```bash
