@@ -42,6 +42,7 @@ import type { AiProxyConfig, EffortSource, ResolvedRoute, ThinkingPresentationMo
 import { scheduleBillingSync } from "@app/ai-proxy/lib/usage/billing-sync";
 import type { CallTimeline } from "@app/ai-proxy/lib/usage/call-timeline";
 import { checkClientQuota } from "@app/ai-proxy/lib/usage/client-ledger";
+import { type PrefixDiff, prefixDiffFor } from "@app/ai-proxy/lib/usage/prefix-diff";
 import { scheduleUsageTracking } from "@app/ai-proxy/lib/usage/track-response";
 import type { RequestTags } from "@app/ai-proxy/lib/usage/types";
 import { CopilotAuthExpiredError } from "@genesiscz/utils/ai/github-copilot";
@@ -145,6 +146,7 @@ function trackProxyRequest(input: {
     compaction?: boolean;
     effort?: string;
     effortSource?: EffortSource;
+    prefix?: PrefixDiff;
 }): void {
     scheduleUsageTracking({
         route: input.route,
@@ -166,6 +168,7 @@ function trackProxyRequest(input: {
         compaction: input.compaction,
         effort: input.effort,
         effortSource: input.effortSource,
+        prefix: input.prefix,
     });
     scheduleBillingSync(input.route.account, input.runtime.providers);
 }
@@ -625,6 +628,7 @@ export function startAiProxyServer(runtime: AiProxyRuntime) {
                         cacheKey: promptCacheKey?.key,
                         compaction: body.compaction,
                         ...effort,
+                        prefix: prefixDiffFor(req),
                     });
 
                     logger.info(

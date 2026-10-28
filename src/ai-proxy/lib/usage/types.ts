@@ -1,4 +1,5 @@
 import type { EffortSource, GrokUsageDetails, SubscriptionUsageDetails } from "@app/ai-proxy/lib/types";
+import type { PrefixDiff } from "@app/ai-proxy/lib/usage/prefix-diff";
 import type { CopilotUsageSummary } from "@genesiscz/utils/ai/github-copilot/types";
 
 export interface TokenUsage {
@@ -87,6 +88,8 @@ export interface UsageRequestRecord {
     /** The effort the request asked for (`/v1/messages`), before the Codex catalog maps it. */
     effort?: string;
     effortSource?: EffortSource;
+    /** Where the upstream request first differed from its thread's previous one: the cause of a cache miss. */
+    prefix?: PrefixDiff;
 }
 
 export interface AccountBillingSnapshot {
