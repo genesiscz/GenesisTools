@@ -110,6 +110,20 @@ export interface UsageSource {
         | null;
 }
 
+/** How the proxy serves the provider's `/v1/chat/completions` and `/v1/messages` requests. */
+export interface ProviderRoutes {
+    /**
+     * A Cursor chat request may go through the provider's Responses API (the `/responses` translation). false when
+     * the provider's `chatCompletions` is the only path: it has no Responses upstream, or its chat stream is already
+     * the reasoning Cursor renders and a re-encode would break it.
+     */
+    readonly chatViaResponses: boolean;
+    /** Its chat completions answer is reshaped (`enrichGrokChatResponse`), so a client can render the reasoning. */
+    readonly reshapesChat: boolean;
+    /** Its native `messages()` recovers a compaction that Claude Code wrote without readable context. */
+    readonly recoversCompaction: boolean;
+}
+
 /**
  * Everything the proxy knows about one provider type, in one object. Callers ask a member and never compare the
  * provider's name; `PROVIDER_DEFINITIONS` in `registry.ts` maps every `AiProxyProviderType` to one of these.
@@ -130,6 +144,7 @@ export interface ProviderDefinition {
     readonly failover: ProviderFailover | null;
     readonly models: ModelSource;
     readonly usage: UsageSource;
+    readonly routes: ProviderRoutes;
     /** The upstream endpoints the account calls, for `introspect` and the models catalog file; null when unlisted. */
     readonly upstreamEndpoints: readonly UpstreamEndpoint[] | null;
     /** Builds the provider. `probe` builds it for a diagnostic, which must never spend a single-use grant. */

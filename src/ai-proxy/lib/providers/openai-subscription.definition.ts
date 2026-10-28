@@ -35,6 +35,7 @@ export const openAiSubscriptionDefinition: ProviderDefinition = {
         },
     },
     usage: { snapshot: null },
+    routes: { chatViaResponses: true, reshapesChat: false, recoversCompaction: true },
     upstreamEndpoints: null,
     create: (account) => OpenAiSubscriptionProvider.create(account),
     suggestedModel: (account) => `${account.name}/${account.providerSlug}/gpt-6.1-sol`,

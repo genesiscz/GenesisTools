@@ -72,6 +72,9 @@ export const grokSubscriptionDefinition: ProviderDefinition = {
             return { fetchedAt: new Date().toISOString(), tier: usage.tier, summary: usage.summary, details: { grok } };
         },
     },
+    // The chat stream already carries the reasoning Cursor renders. A re-encode through /responses lost the role
+    // coalescing and broke the thinking UI.
+    routes: { chatViaResponses: false, reshapesChat: true, recoversCompaction: false },
     upstreamEndpoints: GROK_UPSTREAM_ENDPOINTS,
     create: (account, options) => GrokSubscriptionProvider.create({ account, options }),
     suggestedModel: (account) => `${account.name}/grok/grok-composer-2.5-fast`,
