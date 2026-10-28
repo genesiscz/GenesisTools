@@ -99,7 +99,7 @@ import {
     stallNow,
     stallSentence,
 } from "../hooks/stall";
-import { lockedToSession, samePath, sessionTotalKb, statusOf, worktreeSize } from "../hooks/tmp-usage";
+import { lockedToSession, samePath, sessionTotalKb, statusOf, worktreeMaxAgeS, worktreeSize } from "../hooks/tmp-usage";
 
 /** A Mac where every GenesisTools link opens, on an invented link host. */
 const ALL_LINKS: GenesisProbe = {
@@ -3607,4 +3607,10 @@ test("shared run: a claim released without an answer, or a lapsed one, lets the 
     expect((await sharedRun(host, SHARED_ASK))?.stdout).toBe("mine");
     expect(runs.count).toBe(2);
     expect(JSON.parse(String(files.get(lockPath))).until).toBe(0);
+});
+
+test("session files: a worktree whose git status changed accepts a size at most 5 minutes old, never a forced walk", () => {
+    expect(worktreeMaxAgeS({ status: "## main\n" }, "## main\n M src/x.ts\n")).toBe(300);
+    expect(worktreeMaxAgeS({ status: "## main\n" }, "## main\n")).toBe(1800);
+    expect(worktreeMaxAgeS(undefined, "## main\n")).toBe(1800);
 });

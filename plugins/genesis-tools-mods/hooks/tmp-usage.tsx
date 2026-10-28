@@ -85,10 +85,23 @@ const WORKTREE_EVERY_MS = 30 * 60_000;
  * because all five expired together, and that minute was the Mac's spawn storm.
  */
 const REFRESH_GAP_MS = 60_000;
+/** The oldest shared size a worktree whose git status changed accepts. */
+const STATUS_CHANGED_MAX_AGE_S = 300;
 let lastRefreshAt = 0;
 
 function nextWorktreeAt(startedAt: number): number {
     return paceAfter(WORKTREE_EVERY_MS * (0.83 + Math.random() * 0.34), startedAt);
+}
+
+/**
+ * The oldest size `tools du size` may answer for a worktree, in seconds. `tools du size` shares one answer with every
+ * caller on the Mac. A changed git status asks for a walk at most 5 minutes old, never a forced one: the status is the
+ * whole porcelain with its branch line, so every edit or commit in a busy worktree changes it, and on 2026-10-28
+ * sessions watching the same col-fe worktree forced 10 full walks of it (78 s) in an hour. A walk another session made
+ * in those 5 minutes already counts the change.
+ */
+export function worktreeMaxAgeS(held: { status: string } | undefined, status: string): number {
+    return held && held.status !== status ? STATUS_CHANGED_MAX_AGE_S : WORKTREE_EVERY_MS / 1000;
 }
 
 /**
@@ -114,8 +127,7 @@ export async function worktreeSize(host: Host, path: string, status: string): Pr
         lastRefreshAt = startedAt;
     }
 
-    // `tools du size` shares one answer with every caller on the Mac; a changed status asks for a fresh walk.
-    const maxAge = held && held.status !== status ? 0 : WORKTREE_EVERY_MS / 1000;
+    const maxAge = worktreeMaxAgeS(held, status);
     const kb = (await genesisProbe(host)).tools ? await sharedKb(host, path, maxAge) : await folderKb(host, path);
 
     if (kb !== null) {
