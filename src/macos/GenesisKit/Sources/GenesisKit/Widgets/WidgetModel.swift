@@ -376,6 +376,9 @@ public final class WidgetModel: ObservableObject {
     /// "all settings which affect the ui should be realtime").
     private var livePreferences: [(at: Date, patch: [String: WidgetJSON])] = []
     nonisolated static let livePreferenceSeconds: TimeInterval = 8
+    /// `livePreferenceSeconds`, shorter in tests.
+    var livePreferenceWindow: TimeInterval = WidgetModel.livePreferenceSeconds
+    private var liveExpiry: Task<Void, Never>?
     /// The last snapshot as it arrived, before any overlay.
     private var lastReceived: WidgetSnapshot?
     /// What the callers of `updatePreferences` asked to hear about the write that carries their patch.
@@ -2329,7 +2332,7 @@ public final class WidgetModel: ObservableObject {
     private func overlaid(_ preferences: WidgetPreferences) throws -> WidgetPreferences {
         var patch: [String: WidgetJSON] = [:]
         let now = Date()
-        livePreferences.removeAll { now.timeIntervalSince($0.at) > Self.livePreferenceSeconds }
+        livePreferences.removeAll { now.timeIntervalSince($0.at) > livePreferenceWindow }
         for entry in livePreferences { patch.merge(entry.patch) { _, new in new } }
         for entry in savedPreferences { patch.merge(entry.patch) { _, new in new } }
         patch.merge(pendingPreferences) { _, new in new }
@@ -2392,6 +2395,24 @@ public final class WidgetModel: ObservableObject {
         livePreferences.append((Date(), patch))
         do {
             current.state.preferences = try mergingPreferences(patch, into: current.state.preferences)
+            snapshot = current
+            presentationChanged?()
+        } catch { report(error) }
+        // A write that never arrives (it failed, or nothing was written) must not hold the value: the stored one
+        // shows again when the window ends, with no snapshot needed.
+        liveExpiry?.cancel()
+        liveExpiry = Task { [weak self] in
+            guard let window = self?.livePreferenceWindow else { return }
+            do { try await Task.sleep(for: .seconds(window + 0.1)) } catch { return }
+            self?.dropExpiredLivePreferences()
+        }
+    }
+
+    private func dropExpiredLivePreferences() {
+        guard let last = lastReceived, var current = snapshot else { return }
+        do {
+            current.state.preferences = try overlaid(last.state.preferences)
+            guard current.state.preferences != snapshot?.state.preferences else { return }
             snapshot = current
             presentationChanged?()
         } catch { report(error) }

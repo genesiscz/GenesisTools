@@ -1305,12 +1305,21 @@ final class WidgetStagingTests: XCTestCase {
         defer { model.stop() }
         model.actionRunner = { _ in ["ok": true] }
         model.receive([try snapshot(draftOption: nil)])
+        model.livePreferenceWindow = 0.3
         model.showLivePreferences(["previewWidth": .number(400), "sidePosition": .number(0.3)])
         XCTAssertEqual(model.agentsPreviewWidth, 400)
         XCTAssertEqual(model.snapshot?.state.preferences.sidePosition, 0.3)
         model.receive([try snapshot(draftOption: nil)])
         XCTAssertEqual(model.agentsPreviewWidth, 400, "a snapshot from before the change keeps the live value")
         XCTAssertEqual(model.snapshot?.state.preferences.sidePosition, 0.3)
+        // After the window (8 s live, 0.3 s here), with no write and no new snapshot, the stored value shows again.
+        let expired = expectation(description: "the live value ends")
+        Task { @MainActor in
+            try await Task.sleep(for: .seconds(0.6))
+            XCTAssertEqual(model.agentsPreviewWidth, WidgetModel.defaultPreviewWidth)
+            expired.fulfill()
+        }
+        wait(for: [expired], timeout: 3)
     }
 
     func testLiveSettingsNoteSkipsItsOwnPost() {
