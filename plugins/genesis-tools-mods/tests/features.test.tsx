@@ -109,6 +109,49 @@ const NO_LINKS: GenesisProbe = {
 // Run with `claude plugin test plugins/genesis-tools-mods`. The pure parts of each feature first, then the link
 // fixer end to end over a streamed reply.
 
+test("session files restore measured sizes, persist new sizes and pace known worktrees", async () => {
+    forgetGenesisProbe();
+    const base = checkoutHost();
+    const now = Date.now();
+    let walks = 0;
+    const paths = ["/work/restored-future", "/work/expired-a", "/work/expired-b", "/work/first-measure"];
+    const done = (stdout: string) => ({
+        stdout,
+        stderr: "",
+        exitCode: 0,
+        isStdoutTruncated: false,
+        isStderrTruncated: false,
+    });
+    const host: Host = {
+        ...base,
+        async run(argv) {
+            if (argv[1] === "genesis-tools") {
+                return done(JSON.stringify({ links: {}, router: {} }));
+            }
+            walks++;
+            return done(JSON.stringify(Object.fromEntries(paths.map((path) => [path, 200]))));
+        },
+    };
+    await base.storeSet("tmpUsage.worktreeKb", {
+        [paths[0]]: { kb: 300, status: "clean", nextAt: now + 3_600_000 },
+        [paths[1]]: { kb: 100, status: "clean", nextAt: now - 1 },
+        [paths[2]]: { kb: 100, status: "clean", nextAt: now - 1 },
+    });
+    try {
+        expect(await worktreeSize(host, paths[0], "clean")).toBe(300);
+        expect(walks).toBe(0);
+        expect(await worktreeSize(host, paths[1], "clean")).toBe(200);
+        expect(await worktreeSize(host, paths[2], "clean")).toBe(100);
+        expect(walks).toBe(1);
+        expect(await worktreeSize(host, paths[3], "clean")).toBe(200);
+        expect(walks).toBe(2);
+        const saved = await base.storeGet("tmpUsage.worktreeKb");
+        expect(isRecord(saved) && isRecord(saved[paths[3]]) && saved[paths[3]].kb).toBe(200);
+    } finally {
+        forgetGenesisProbe();
+    }
+});
+
 test("open decisions: asked, minus answered and replaced, with their options", async () => {
     const list = openDecisions([
         {
@@ -1746,11 +1789,21 @@ test("older CLI fallback retries truncated output and matches old entries before
     forgetGenesisProbe();
 });
 
-test("indexed transcript reads retry a missing file and an incomplete scan at the same size", async () => {
+test("indexed transcript reads retry an incomplete prefix without binding an entry to an older call", async () => {
     forgetAgentDetails();
     forgetAnswers();
     forgetGenesisProbe();
     const base = checkoutHost();
+    const at = Date.parse("2020-01-01T00:00:00.000Z");
+    const entry = {
+        id: "partial-entry",
+        at: at + 1_000,
+        tag: "question" as const,
+        title: "",
+        text: "",
+        isUnread: false,
+        images: [],
+    };
     let reads = 0;
     const host: Host = {
         ...base,
@@ -1776,7 +1829,10 @@ test("indexed transcript reads retry a missing file and an incomplete scan at th
                           offset: reads === 2 ? 20 : 100,
                           asks: [{ number: 42, row: "row" }],
                           issues: reads === 2 ? ["skipped oversized row"] : [],
-                          calls: [],
+                          calls: [
+                              { id: "older-call", at: at - 60_000 },
+                              ...(reads > 2 ? [{ id: "entry-call", at }] : []),
+                          ],
                       };
             return {
                 stdout: JSON.stringify(answer),
@@ -1788,11 +1844,16 @@ test("indexed transcript reads retry a missing file and an incomplete scan at th
         },
     };
 
-    await findRows(host, [42, 43], []);
-    await findRows(host, [42, 43], []);
+    await findRows(host, [42], [entry]);
+    expect(jumpRowOf({ entry: entry.id })).toBeUndefined();
+    await findRows(host, [42], [entry]);
     expect(jumpRowOf({ decision: 42 })).toBe("row");
-    await findRows(host, [42, 43], []);
+    expect(jumpRowOf({ entry: entry.id })).toBeUndefined();
+    await findRows(host, [42], [entry]);
     expect(jumpRowOf({ decision: 42 })).toBe("row");
+    expect(jumpRowOf({ entry: entry.id })).toBe("entry-call");
+    expect(reads).toBe(3);
+    await findRows(host, [42], [entry]);
     expect(reads).toBe(3);
     forgetAnswers();
     forgetGenesisProbe();
@@ -2583,6 +2644,11 @@ test("agent details retry aborted metadata reads and rendering facts starts no d
     expect(metaReads).toBe(2);
     expect(facts[0]?.model).toBeDefined();
     expect(facts[0]?.startedAt).toBe(123);
+    expect(facts[0]?.late).toBe(true);
+    const waiting = await factsOf(host, [
+        { id: "resumed", description: "Resumed worker", type: "general-purpose", status: "waiting" },
+    ]);
+    expect(waiting[0]?.late).toBe(false);
     await factsOf(host, [
         ...agents,
         { id: "not-discovered", description: "Unknown worker", type: "general-purpose", status: "running" },

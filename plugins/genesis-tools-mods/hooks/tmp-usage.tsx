@@ -52,6 +52,17 @@ async function sharedKb(host: Host, path: string, maxAgeS: number): Promise<numb
 /** A worktree's last size, the git status it was measured at, and when `du` may walk it again. */
 const worktreeKb = new Map<string, { kb: number | null; status: string; nextAt: number }>();
 const WORKTREE_EVERY_MS = 30 * 60_000;
+/**
+ * At most one size refresh of an already measured worktree per this interval in a session, and each next refresh at a
+ * random point of 25 to 35 minutes: on 2026-10-27 one session walked its five worktrees back to back (6 s each)
+ * because all five expired together, and that minute was the Mac's spawn storm.
+ */
+const REFRESH_GAP_MS = 60_000;
+let lastRefreshAt = 0;
+
+function nextWorktreeAt(startedAt: number): number {
+    return paceAfter(WORKTREE_EVERY_MS * (0.83 + Math.random() * 0.34), startedAt);
+}
 
 /**
  * A worktree's size, walked again only when its git status changed or 30 minutes passed (ten times the walk's length
@@ -59,6 +70,7 @@ const WORKTREE_EVERY_MS = 30 * 60_000;
  * walked eight of them every 5 minutes.
  */
 export async function worktreeSize(host: Host, path: string, status: string): Promise<number | null> {
+    await restoreWorktreeKb(host);
     const held = worktreeKb.get(path);
     const startedAt = Date.now();
 
@@ -66,15 +78,60 @@ export async function worktreeSize(host: Host, path: string, status: string): Pr
         return held.kb;
     }
 
+    // A first measure always runs; a refresh waits its turn, so a session's worktrees never walk in one burst.
+    if (held && startedAt - lastRefreshAt < REFRESH_GAP_MS) {
+        return held.kb;
+    }
+
+    if (held) {
+        lastRefreshAt = startedAt;
+    }
+
     // `tools du size` shares one answer with every caller on the Mac; a changed status asks for a fresh walk.
     const maxAge = held && held.status !== status ? 0 : WORKTREE_EVERY_MS / 1000;
     const kb = (await genesisProbe(host)).tools ? await sharedKb(host, path, maxAge) : await folderKb(host, path);
 
     if (kb !== null) {
-        worktreeKb.set(path, { kb, status, nextAt: paceAfter(WORKTREE_EVERY_MS, startedAt) });
+        worktreeKb.set(path, { kb, status, nextAt: nextWorktreeAt(startedAt) });
+        await host
+            .storeSet(WORKTREE_STORE_KEY, Object.fromEntries([...worktreeKb].slice(-WORKTREE_STORE_KEEP)))
+            .catch(() => undefined);
     }
 
     return kb;
+}
+
+/**
+ * The sizes survive a mods reload through the mods store. Every save of a mod file reloads all sessions, and each one
+ * then measured every worktree again in the same minute (23:24 on 2026-10-27: 28 walks, 33 s).
+ */
+const WORKTREE_STORE_KEY = "tmpUsage.worktreeKb";
+const WORKTREE_STORE_KEEP = 40;
+let worktreeKbRestored = false;
+
+async function restoreWorktreeKb(host: Host): Promise<void> {
+    if (worktreeKbRestored) {
+        return;
+    }
+
+    worktreeKbRestored = true;
+    const stored = await host.storeGet(WORKTREE_STORE_KEY).catch(() => undefined);
+
+    if (!isRecord(stored)) {
+        return;
+    }
+
+    for (const [path, entry] of Object.entries(stored)) {
+        if (
+            isRecord(entry) &&
+            typeof entry.kb === "number" &&
+            typeof entry.status === "string" &&
+            typeof entry.nextAt === "number" &&
+            !worktreeKb.has(path)
+        ) {
+            worktreeKb.set(path, { kb: entry.kb, status: entry.status, nextAt: entry.nextAt });
+        }
+    }
 }
 
 /** The main checkout's folder name, so every worktree of one repository shares its /tmp/cc project folder. */
