@@ -6,8 +6,7 @@ import {
 import {
     CLAUDE_CODE_AGENT_TOOL,
     CLAUDE_CODE_COMPACTION_MARK,
-    hasCompactionPromptText,
-    isClaudeCodeCompactionTurn,
+    ClaudeCodeTurn,
     sessionAgentModelWins,
 } from "@app/ai-proxy/lib/translators/formats/anthropic/claude-code-turns";
 import {
@@ -607,8 +606,8 @@ describe("Claude Code compaction detection gaps", () => {
     it("sees the compaction prompt in a request that does not end on it", () => {
         const body = { messages: [prompt, { role: "assistant", content: "Here is a summary." }] };
 
-        expect(isClaudeCodeCompactionTurn(body)).toBe(false);
-        expect(hasCompactionPromptText(body)).toBe(true);
+        expect(ClaudeCodeTurn.read(body).isCompaction).toBe(false);
+        expect(ClaudeCodeTurn.read(body).missedCompaction).toBe(true);
     });
 
     it("ignores the prompt quoted inside a tool result", () => {
@@ -617,6 +616,6 @@ describe("Claude Code compaction detection gaps", () => {
             content: [{ type: "tool_result", tool_use_id: "t1", content: `${CLAUDE_CODE_COMPACTION_MARK} (quoted)` }],
         };
 
-        expect(hasCompactionPromptText({ messages: [quoted] })).toBe(false);
+        expect(ClaudeCodeTurn.read({ messages: [quoted] }).missedCompaction).toBe(false);
     });
 });

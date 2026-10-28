@@ -31,12 +31,7 @@ import { requestTagsFor } from "@app/ai-proxy/lib/sessions/tags";
 import { resolveThinkingMode } from "@app/ai-proxy/lib/thinking-config";
 import { resolveTranslationMode } from "@app/ai-proxy/lib/translation-config";
 import { handleChatCompletions } from "@app/ai-proxy/lib/translators";
-import {
-    hasCompactionPromptText,
-    isClaudeCodeCompactionTurn,
-    isClaudeCodeModelProbe,
-    modelProbeReply,
-} from "@app/ai-proxy/lib/translators/formats/anthropic/claude-code-turns";
+import { ClaudeCodeTurn, modelProbeReply } from "@app/ai-proxy/lib/translators/formats/anthropic/claude-code-turns";
 import { identityPipeline } from "@app/ai-proxy/lib/translators/identity-pipeline";
 import type { AiProxyConfig, EffortSource, ResolvedRoute, ThinkingPresentationMode } from "@app/ai-proxy/lib/types";
 import { scheduleBillingSync } from "@app/ai-proxy/lib/usage/billing-sync";
@@ -47,10 +42,8 @@ import { scheduleUsageTracking } from "@app/ai-proxy/lib/usage/track-response";
 import type { RequestTags } from "@app/ai-proxy/lib/usage/types";
 import { CopilotAuthExpiredError } from "@genesiscz/utils/ai/github-copilot";
 import { GrokAuthExpiredError } from "@genesiscz/utils/ai/grok";
-import { claudeSessionIdFromMetadata } from "@genesiscz/utils/ai/prompt-cache-key";
 import { SafeJSON } from "@genesiscz/utils/json";
 import { logger } from "@genesiscz/utils/logger";
-import { isObject } from "@genesiscz/utils/object";
 
 const MAX_REQUEST_BODY_BYTES = 4 * 1024 * 1024;
 
@@ -287,11 +280,11 @@ async function readModelBody(req: Request): Promise<ModelBody | { error: Respons
         };
     }
 
-    const claudeSessionId = claudeSessionIdFromMetadata(parsed.metadata);
+    const turn = ClaudeCodeTurn.read(parsed as Record<string, unknown>);
+    const claudeSessionId = turn.sessionId;
     const cacheKey = typeof parsed.prompt_cache_key === "string" ? parsed.prompt_cache_key.trim() : "";
-    const compaction = isClaudeCodeCompactionTurn(parsed);
 
-    if (!compaction && hasCompactionPromptText(parsed)) {
+    if (turn.missedCompaction) {
         recordCompactionEvent({
             kind: "missed",
             ...(claudeSessionId ? { claudeSession: claudeSessionId } : {}),
@@ -305,13 +298,10 @@ async function readModelBody(req: Request): Promise<ModelBody | { error: Respons
         model: parsed.model,
         claudeSessionId,
         conversationId: claudeSessionId ?? (cacheKey || undefined),
-        compaction,
-        probe: isClaudeCodeModelProbe(parsed),
-        stream: parsed.stream === true,
-        clientEffort:
-            isObject(parsed.output_config) && typeof parsed.output_config.effort === "string"
-                ? parsed.output_config.effort.trim() || undefined
-                : undefined,
+        compaction: turn.isCompaction,
+        probe: turn.isModelProbe,
+        stream: turn.stream,
+        clientEffort: turn.effort,
     };
 }
 

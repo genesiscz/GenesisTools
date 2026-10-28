@@ -44,7 +44,6 @@ import {
 import {
     type BackgroundResult,
     backgroundInFlight,
-    backgroundKey,
     backgroundResult,
     clearBackground,
     compactionPoint,
@@ -78,11 +77,8 @@ import {
 } from "@app/ai-proxy/lib/translators/formats/anthropic/anthropic-to-responses";
 import {
     CLAUDE_CODE_AGENT_TOOL,
-    isClaudeCodeCompactionRetry,
-    isClaudeCodeCompactionTurn,
-    limitCompactionSummary,
+    ClaudeCodeTurn,
     sessionAgentModelWins,
-    withoutCompactionPrompt,
 } from "@app/ai-proxy/lib/translators/formats/anthropic/claude-code-turns";
 import { ensureToolRequiredArrays } from "@app/ai-proxy/lib/translators/formats/anthropic/ensure-tool-required";
 import { toAnthropicErrorResponse } from "@app/ai-proxy/lib/translators/formats/anthropic/error-envelope";
@@ -110,11 +106,7 @@ import {
     tryFetchWhamModels,
     type WhamModelRecord,
 } from "@genesiscz/utils/ai/openai/sub-models";
-import {
-    claudeSessionIdFromMetadata,
-    type PromptCacheKey,
-    resolvePromptCacheKey,
-} from "@genesiscz/utils/ai/prompt-cache-key";
+import { type PromptCacheKey, resolvePromptCacheKey } from "@genesiscz/utils/ai/prompt-cache-key";
 // The one predicate in the repo for "did this failure happen below HTTP?".
 // Duplicating it here is how the poll gate and the proxy would drift apart.
 import { isTransportFailure } from "@genesiscz/utils/ai/usage-poll/poll-gate";
@@ -519,7 +511,7 @@ export class OpenAiSubscriptionProvider implements ProxyProvider {
                     return this.nativeMessages(req, model, bodyText, context);
                 }
 
-                if (!isObject(parsed) || !isClaudeCodeCompactionTurn(parsed)) {
+                if (!isObject(parsed) || !ClaudeCodeTurn.read(parsed).isCompaction) {
                     return this.nativeMessages(req, model, bodyText, context);
                 }
 
@@ -781,12 +773,13 @@ export class OpenAiSubscriptionProvider implements ProxyProvider {
             restored: 0,
             dropped: {} as Partial<Record<EnvelopeRejection | "dead", number>>,
         };
+        const turn = ClaudeCodeTurn.read(parsed);
         // One conversation of one client: the reasoning memory never mixes clients or sessions.
-        const conversation = `${whamItemScope(req)}\u0000${context?.promptCacheKey?.key ?? claudeSessionIdFromMetadata(parsed.metadata) ?? ""}`;
-        const compaction = isClaudeCodeCompactionTurn(parsed);
+        const conversation = `${whamItemScope(req)}\u0000${context?.promptCacheKey?.key ?? turn.sessionId ?? ""}`;
+        const compaction = turn.isCompaction;
         const nativeCompaction = compaction && !writtenCompaction && compactionSettings().mode === "native";
         const summaryWords = compaction && !nativeCompaction ? compactionSettings().words : undefined;
-        const claudeSessionId = claudeSessionIdFromMetadata(parsed.metadata);
+        const claudeSessionId = turn.sessionId;
         const clientAgent = req.headers.get("user-agent") ?? undefined;
         const eventBase: Omit<CompactionEvent, "ts" | "kind"> & { thread?: string } = {
             ...(context?.sessionId ? { session: context.sessionId } : {}),
@@ -798,8 +791,7 @@ export class OpenAiSubscriptionProvider implements ProxyProvider {
         // Background compaction runs only for a ccx session, whose record knows where Claude Code will compact.
         const point = compactionPoint(context?.sessionId ? readSessionRecord(context.sessionId) : undefined);
         const background = backgroundCompactionSettings();
-        const threadKey =
-            claudeSessionId && point && background.enabled ? backgroundKey(claudeSessionId, parsed.system) : undefined;
+        const threadKey = point && background.enabled ? turn.threadKey : undefined;
 
         if (threadKey) {
             eventBase.thread = threadKey.slice(threadKey.lastIndexOf(":") + 1, threadKey.lastIndexOf(":") + 9);
@@ -808,7 +800,7 @@ export class OpenAiSubscriptionProvider implements ProxyProvider {
         if (compaction && !writtenCompaction) {
             recordCompactionEvent({ ...eventBase, kind: "turn", mode: nativeCompaction ? "native" : "summary" });
 
-            if (isClaudeCodeCompactionRetry(parsed)) {
+            if (turn.isCompactionRetry) {
                 recordCompactionEvent({
                     ...eventBase,
                     kind: "retry",
@@ -819,11 +811,11 @@ export class OpenAiSubscriptionProvider implements ProxyProvider {
 
         if (nativeCompaction) {
             // The server compacts what came before; Claude Code's summary prompt would only end the cached prefix.
-            parsed = withoutCompactionPrompt(parsed);
+            parsed = turn.withoutCompactionPrompt();
         }
 
         if (summaryWords) {
-            parsed = limitCompactionSummary(parsed, summaryWords);
+            parsed = turn.withSummaryLimit(summaryWords);
         }
 
         // System messages stay in place (`appendDeveloperMessage`): hoisted, they broke the prompt cache.
@@ -881,10 +873,7 @@ export class OpenAiSubscriptionProvider implements ProxyProvider {
         // The effort rides inside `reasoning`, which every body builder branch reads (a top-level `reasoning_effort`
         // is read only when no `reasoning` object exists). An `:effort` suffix, stamped as `reasoning_effort`, wins
         // over Claude Code's `/effort` (`output_config.effort`); the catalog check refuses an effort the model lacks.
-        const clientEffort =
-            isObject(parsed.output_config) && typeof parsed.output_config.effort === "string"
-                ? parsed.output_config.effort.trim()
-                : "";
+        const clientEffort = turn.effort ?? "";
         // A compaction turn writes a summary of what is already known: the session's xhigh only made it slower (6 to 8
         // minutes per compaction on 2026-10-27), so it runs at the compaction effort when the model has that effort.
         const compactionEffort = compaction && !nativeCompaction ? compactionSettings().effort : undefined;
@@ -903,7 +892,7 @@ export class OpenAiSubscriptionProvider implements ProxyProvider {
         // Codex keeps one cache per effort and model: say so where the cache was lost. A compaction turn is its own case.
         const cacheReset =
             claudeSessionId && !compaction
-                ? shapeChange(backgroundKey(claudeSessionId, parsed.system), {
+                ? shapeChange(turn.threadKey ?? claudeSessionId, {
                       effort: effort ?? "",
                       model: concreteModel,
                   })
@@ -1119,7 +1108,7 @@ export class OpenAiSubscriptionProvider implements ProxyProvider {
         if (claudeSessionId) {
             setPrefixDiff(
                 req,
-                notePrefix(backgroundKey(claudeSessionId, parsed.system), {
+                notePrefix(turn.threadKey ?? claudeSessionId, {
                     model: concreteModel,
                     effort: isObject(responsesBody.reasoning) ? String(responsesBody.reasoning.effort ?? "") : "",
                     instructions: responsesBody.instructions,

@@ -1,3 +1,5 @@
+import { createHash } from "node:crypto";
+import { claudeSessionIdFromMetadata } from "@genesiscz/utils/ai/prompt-cache-key";
 import { logger } from "@genesiscz/utils/logger";
 import { isObject } from "@genesiscz/utils/object";
 
@@ -50,112 +52,174 @@ function messagesOf(body: { messages?: unknown }): unknown[] {
     return Array.isArray(body.messages) ? body.messages : [];
 }
 
-/** A Claude Code compaction turn: its last user message carries the compaction prompt. */
-export function isClaudeCodeCompactionTurn(body: { messages?: unknown }): boolean {
-    return compactionPromptIndex(messagesOf(body)) >= 0;
-}
-
 /**
  * How Claude Code 2.1.311+ opens the paragraph it appends when it asks for the summary again, because the last reply
  * had no `<summary>` tag (bundle and mock-server test, 2026-10-27). Seeing it means the earlier answer was wasted.
  */
 export const CLAUDE_CODE_COMPACTION_RETRY_MARK = "For this reply only";
 
-/** The compaction turn is Claude Code's second ask: the earlier reply had no summary it could use. */
-export function isClaudeCodeCompactionRetry(body: { messages?: unknown }): boolean {
-    const messages = messagesOf(body);
-    const prompt = messages[compactionPromptIndex(messages)];
-
-    return isObject(prompt) && textOf(prompt.content).includes(CLAUDE_CODE_COMPACTION_RETRY_MARK);
+/**
+ * A Claude Code thread: its session and the text of its system prompt, so the main loop and each subagent are their
+ * own thread. Only the text counts: the compaction turn marks the system blocks for the cache differently than a
+ * normal turn does (`ttl: "1h"` on one and not the other, 2026-10-28), and hashing the marks split one thread in two.
+ */
+export function claudeCodeThreadKey(claudeSessionId: string, system: unknown): string {
+    const text =
+        typeof system === "string"
+            ? system
+            : Array.isArray(system)
+              ? system.map((block) => (isObject(block) && typeof block.text === "string" ? block.text : "")).join("\n")
+              : "";
+    return `${claudeSessionId}:${createHash("sha256").update(text).digest("hex").slice(0, 16)}`;
 }
 
+export type ClaudeCodeTurnKind = "compaction" | "probe" | "normal";
+
 /**
- * The compaction prompt in a user text block of the last three messages, wherever it sits. With
- * `isClaudeCodeCompactionTurn` false this is a detection gap: Claude Code 2.1.312 put a system message after the prompt,
- * and every compaction fell back to the slow written summary unnoticed (2026-10-27). Tool results are not read, so a
- * session that only quotes the prompt is not counted.
+ * One Claude Code request, read once: what kind of turn it is, which thread it belongs to, and the two rewrites a
+ * compaction turn gets. Every rule about Claude Code's request shapes lives here, per version: both compaction bugs of
+ * 2026-10-27 came from callers that each read the raw body with their own rule.
  */
-export function hasCompactionPromptText(body: { messages?: unknown }): boolean {
-    return messagesOf(body)
-        .slice(-3)
-        .some(
-            (message) =>
-                isObject(message) &&
-                message.role === "user" &&
-                textOf(message.content).includes(CLAUDE_CODE_COMPACTION_MARK)
+export class ClaudeCodeTurn {
+    private constructor(
+        readonly body: Record<string, unknown>,
+        private readonly messages: unknown[],
+        private readonly promptIndex: number
+    ) {}
+
+    static read(body: Record<string, unknown>): ClaudeCodeTurn {
+        const messages = messagesOf(body);
+        return new ClaudeCodeTurn(body, messages, compactionPromptIndex(messages));
+    }
+
+    get kind(): ClaudeCodeTurnKind {
+        return this.isCompaction ? "compaction" : this.isModelProbe ? "probe" : "normal";
+    }
+
+    /** Its last user message, with only system messages after it, carries the compaction prompt. */
+    get isCompaction(): boolean {
+        return this.promptIndex >= 0;
+    }
+
+    /** The compaction turn is Claude Code's second ask: the earlier reply had no summary it could use. */
+    get isCompactionRetry(): boolean {
+        const prompt = this.messages[this.promptIndex];
+        return isObject(prompt) && textOf(prompt.content).includes(CLAUDE_CODE_COMPACTION_RETRY_MARK);
+    }
+
+    /**
+     * The compaction prompt sits in a user text block of the last three messages, but the request is not a compaction
+     * turn: a detection gap (Claude Code 2.1.312 put a system message after the prompt, and every compaction fell back
+     * to the slow written summary unnoticed, 2026-10-27). Tool results are not read, so a quoted prompt is not counted.
+     */
+    get missedCompaction(): boolean {
+        return (
+            !this.isCompaction &&
+            this.messages
+                .slice(-3)
+                .some(
+                    (message) =>
+                        isObject(message) &&
+                        message.role === "user" &&
+                        textOf(message.content).includes(CLAUDE_CODE_COMPACTION_MARK)
+                )
         );
-}
-
-/** The compaction turn without Claude Code's summary prompt: the text blocks carrying it go, and an empty message too. */
-export function withoutCompactionPrompt(body: Record<string, unknown>): Record<string, unknown> {
-    const messages = messagesOf(body);
-    const index = compactionPromptIndex(messages);
-    const prompt = messages[index];
-
-    if (!isObject(prompt)) {
-        return body;
     }
 
-    const content = Array.isArray(prompt.content)
-        ? prompt.content.filter(
-              (block) =>
-                  !(
-                      isObject(block) &&
-                      block.type === "text" &&
-                      typeof block.text === "string" &&
-                      block.text.includes(CLAUDE_CODE_COMPACTION_MARK)
-                  )
-          )
-        : [];
-    const kept = content.length > 0 ? [{ ...prompt, content }] : [];
+    /**
+     * Claude Code's `model_validation` probe: one user "Hi" at `max_tokens: 1`, sent once when `/model` or `--model`
+     * names an id it does not know (Claude Code 2.1.296 binary, checked 2026-10-25). It throws on any error, and gives
+     * up after 15 s with no retry.
+     */
+    get isModelProbe(): boolean {
+        const [only] = this.messages;
 
-    return { ...body, messages: [...messages.slice(0, index), ...kept, ...messages.slice(index + 1)] };
-}
-
-/**
- * The compaction turn with a length limit added to the prompt's user message, at its end so the cached prefix stays
- * whole. A Codex model unasked wrote 15K to 26K tokens of summary, 6 to 8 minutes of output (2026-10-27).
- */
-export function limitCompactionSummary(body: Record<string, unknown>, words: number): Record<string, unknown> {
-    const messages = messagesOf(body);
-    const index = compactionPromptIndex(messages);
-    const prompt = messages[index];
-
-    if (!isObject(prompt)) {
-        return body;
+        return (
+            this.body.max_tokens === 1 &&
+            this.messages.length === 1 &&
+            this.body.tools === undefined &&
+            isObject(only) &&
+            only.role === "user" &&
+            textOf(only.content) === "Hi"
+        );
     }
 
-    const limit = `Keep the whole summary under ${words} words. Prefer exact identifiers, file paths, commands, commit SHAs and open tasks over narration.`;
-    const content =
-        typeof prompt.content === "string"
-            ? [
-                  { type: "text", text: prompt.content },
-                  { type: "text", text: limit },
-              ]
-            : Array.isArray(prompt.content)
-              ? [...prompt.content, { type: "text", text: limit }]
-              : prompt.content;
+    get sessionId(): string | undefined {
+        return claudeSessionIdFromMetadata(this.body.metadata);
+    }
 
-    return { ...body, messages: messages.map((message, at) => (at === index ? { ...prompt, content } : message)) };
-}
+    /** Claude Code's `/effort`, sent as `output_config.effort`. */
+    get effort(): string | undefined {
+        const config = this.body.output_config;
+        const effort = isObject(config) && typeof config.effort === "string" ? config.effort.trim() : "";
+        return effort || undefined;
+    }
 
-/**
- * Claude Code's `model_validation` probe: one user "Hi" at `max_tokens: 1`, sent once when `/model` or `--model`
- * names an id it does not know (Claude Code 2.1.296 binary, checked 2026-10-25). It throws on any error, and gives
- * up after 15 s with no retry.
- */
-export function isClaudeCodeModelProbe(body: { max_tokens?: unknown; messages?: unknown; tools?: unknown }): boolean {
-    const messages = Array.isArray(body.messages) ? body.messages : [];
-    const [only] = messages;
+    get stream(): boolean {
+        return this.body.stream === true;
+    }
 
-    return (
-        body.max_tokens === 1 &&
-        messages.length === 1 &&
-        body.tools === undefined &&
-        isObject(only) &&
-        only.role === "user" &&
-        textOf(only.content) === "Hi"
-    );
+    /** See `claudeCodeThreadKey`; undefined without a Claude Code session. */
+    get threadKey(): string | undefined {
+        const session = this.sessionId;
+        return session ? claudeCodeThreadKey(session, this.body.system) : undefined;
+    }
+
+    /** The body without Claude Code's summary prompt: the text blocks carrying it go, and an empty message too. */
+    withoutCompactionPrompt(): Record<string, unknown> {
+        const prompt = this.messages[this.promptIndex];
+
+        if (!isObject(prompt)) {
+            return this.body;
+        }
+
+        const content = Array.isArray(prompt.content)
+            ? prompt.content.filter(
+                  (block) =>
+                      !(
+                          isObject(block) &&
+                          block.type === "text" &&
+                          typeof block.text === "string" &&
+                          block.text.includes(CLAUDE_CODE_COMPACTION_MARK)
+                      )
+              )
+            : [];
+        const kept = content.length > 0 ? [{ ...prompt, content }] : [];
+        const index = this.promptIndex;
+
+        return {
+            ...this.body,
+            messages: [...this.messages.slice(0, index), ...kept, ...this.messages.slice(index + 1)],
+        };
+    }
+
+    /**
+     * The body with a length limit added to the prompt's user message, at its end so the cached prefix stays whole.
+     * A Codex model unasked wrote 15K to 26K tokens of summary, 6 to 8 minutes of output (2026-10-27).
+     */
+    withSummaryLimit(words: number): Record<string, unknown> {
+        const prompt = this.messages[this.promptIndex];
+
+        if (!isObject(prompt)) {
+            return this.body;
+        }
+
+        const limit = `Keep the whole summary under ${words} words. Prefer exact identifiers, file paths, commands, commit SHAs and open tasks over narration.`;
+        const content =
+            typeof prompt.content === "string"
+                ? [
+                      { type: "text", text: prompt.content },
+                      { type: "text", text: limit },
+                  ]
+                : Array.isArray(prompt.content)
+                  ? [...prompt.content, { type: "text", text: limit }]
+                  : prompt.content;
+
+        return {
+            ...this.body,
+            messages: this.messages.map((message, at) => (at === this.promptIndex ? { ...prompt, content } : message)),
+        };
+    }
 }
 
 /** The probe's answer: a one-token message, so the probe needs no upstream call (a Codex model ignores the cap). */

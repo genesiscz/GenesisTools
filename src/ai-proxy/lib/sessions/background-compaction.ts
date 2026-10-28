@@ -3,6 +3,7 @@ import { existsSync, mkdirSync, readFileSync, unlinkSync, writeFileSync } from "
 import { join } from "node:path";
 import type { BackgroundCompactionSettings } from "@app/ai-proxy/lib/sessions/settings";
 import { getAiProxyStorage } from "@app/ai-proxy/lib/storage";
+import { claudeCodeThreadKey } from "@app/ai-proxy/lib/translators/formats/anthropic/claude-code-turns";
 import { SafeJSON } from "@genesiscz/utils/json";
 import { logger } from "@genesiscz/utils/logger";
 import { isObject } from "@genesiscz/utils/object";
@@ -45,20 +46,8 @@ interface ThreadState {
 /** Per Claude Code thread (session id plus system prompt): the main loop and each subagent compact on their own. */
 const threads = new Map<string, ThreadState>();
 
-/**
- * The thread of a request: its Claude Code session and the text of its system prompt. Only the text counts: the
- * compaction turn marks the system blocks for the cache differently than a normal turn does (`ttl: "1h"` on one and
- * not the other, 2026-10-28), and hashing the marks gave the two turns of one thread different keys.
- */
-export function backgroundKey(claudeSessionId: string, system: unknown): string {
-    const text =
-        typeof system === "string"
-            ? system
-            : Array.isArray(system)
-              ? system.map((block) => (isObject(block) && typeof block.text === "string" ? block.text : "")).join("\n")
-              : "";
-    return `${claudeSessionId}:${createHash("sha256").update(text).digest("hex").slice(0, 16)}`;
-}
+/** The thread of a request; see `claudeCodeThreadKey`. */
+export const backgroundKey = claudeCodeThreadKey;
 
 export function prefixHash(items: unknown[]): string {
     const hash = createHash("sha256");
