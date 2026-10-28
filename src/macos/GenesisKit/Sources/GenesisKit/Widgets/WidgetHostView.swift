@@ -393,7 +393,7 @@ struct WidgetHostView: View {
                     .buttonStyle(.genHover()).padding(.vertical, 14)
             }
         }
-        .frame(width: selected.previewSize.width)
+        .frame(width: selected.id == "agents" ? model.agentsPreviewWidth : selected.previewSize.width)
         // Pinned to the top: while the window still has the last measured height, an overflow hides the footer, never
         // the header (the hover list opened on its middle rows, 2026-10-23).
         .frame(maxHeight: .infinity, alignment: .top)
@@ -563,6 +563,9 @@ struct WidgetPeekView: View {
                     // What the send from this popup did, read where it was sent (UX audit F5).
                     outcomeBlock(outcome)
                 } else {
+                    // The context the agent wrote under the title, so a pick here is not made blind (Martin,
+                    // 2026-10-28: "in this window you should probably have the description").
+                    if let summary = item.summary, !summary.isEmpty, item.needsAnswer { summaryText(summary) }
                     if !options.isEmpty { optionList }
                     if item.isAnsweredElsewhere { answeredBody }
                     if isReminder { stagedBody }
@@ -664,6 +667,18 @@ struct WidgetPeekView: View {
         .accessibilityLabel(kicker + ": " + title)
         .accessibilityHint(openTitle)
         .accessibilityIdentifier("widget.peek.open")
+    }
+
+    private func summaryText(_ summary: String) -> some View {
+        let markdown = (try? AttributedString(
+            markdown: summary, options: .init(interpretedSyntax: .inlineOnlyPreservingWhitespace))) ?? AttributedString(summary)
+        return Text(markdown)
+            .font(.system(size: 12)).foregroundStyle(.secondary)
+            .lineLimit(6).fixedSize(horizontal: false, vertical: true)
+            .textSelection(.enabled)
+            .padding(.horizontal, 8)
+            .frame(maxWidth: .infinity, alignment: .leading)
+            .accessibilityIdentifier("widget.peek.summary")
     }
 
     /// The decision's options as the inbox draws them: a click stages one (or sends it, by the Decision click

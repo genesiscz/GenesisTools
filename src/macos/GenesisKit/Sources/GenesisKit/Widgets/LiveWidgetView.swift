@@ -717,6 +717,7 @@ public struct LiveWidgetView: View {
                                 model.sendStaged(all.map(\.sourceId), known: all)
                             }
                             .disabled(sending)
+                            .accessibilityIdentifier("widget.card.sendAll." + card.sourceId)
                             .instantTooltip("Sends this decision and the \(Plural.count(others.count, "other staged decision")) now, one message per session.")
                         }
                     }
@@ -1220,8 +1221,13 @@ public struct LiveWidgetView: View {
             if open && parked == nil {
                 composerProgress
             }
-            if ownAnswer == nil, parked == nil, let candidate = model.replyToCandidate {
+            // Parked, the reply-to row stays (dim, inert): hidden, it took 24 pt out of the reply box and moved the own
+            // answer field up under the pointer that had just clicked it.
+            if ownAnswer == nil, let candidate = model.replyToCandidate {
                 replyingTo(candidate)
+                    .opacity(parked == nil ? 1 : 0.4)
+                    .allowsHitTesting(parked == nil)
+                    .accessibilityHidden(parked != nil)
             }
             // The own answer centres its one-line field on the send button it holds a place for, so the closed field
             // does not sit low in its box; the reply composer keeps its send button at the foot of a long text.

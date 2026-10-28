@@ -69,6 +69,7 @@ struct WidgetStagedChip: View {
                 }
                 .buttonStyle(.genHover(accent: SessionPalette.blue)).font(.system(size: 11, weight: .semibold))
                 .disabled(sending)
+                .accessibilityIdentifier("widget.staged.send")
                 .instantTooltip(here > 0 && here < all
                     ? "Sends the \(Plural.count(here, "decision")) staged here now, without the review"
                     : "Sends the staged decisions now, without the review, one message per session")
@@ -203,7 +204,9 @@ struct WidgetStagedLeavePrompt: View {
                     Spacer(minLength: 4)
                     IconButton(systemName: "xmark", tooltip: "Close this question and stay where you are") {
                         model.resolveStagedLeave("stay")
-                    }.accessibilityLabel("Close this question and stay")
+                    }
+                    .accessibilityLabel("Close this question and stay")
+                    .accessibilityIdentifier("widget.leave.close")
                 }
                 Text(WidgetModel.stagedSummary(items) + (items.count == 1 ? " if you send it now." : " if you send them now."))
                     .font(.system(size: 11)).foregroundStyle(.secondary)
@@ -220,6 +223,7 @@ struct WidgetStagedLeavePrompt: View {
                         .buttonStyle(.genPrimary()).keyboardShortcut(.defaultAction)
                         .instantTooltip("Closes the panel; the decisions stay staged for later (↩)")
                     Button("Send now") { model.resolveStagedLeave("send") }
+                        .accessibilityIdentifier("widget.leave.send")
                         .buttonStyle(.genHover(accent: SessionPalette.blue))
                         .keyboardShortcut(.return, modifiers: [.command])
                         .instantTooltip("Sends them now, one message per session (⌘↩)")
@@ -234,6 +238,7 @@ struct WidgetStagedLeavePrompt: View {
                     }.buttonStyle(.genHoverPlain())
                     Spacer(minLength: 0)
                     Button("Dismiss") { model.resolveStagedLeave("stay") }
+                        .accessibilityIdentifier("widget.leave.dismiss")
                         .buttonStyle(.genHoverPlain()).foregroundStyle(.secondary)
                         .instantTooltip("Closes this question; the panel stays open and nothing changes.")
                 }.font(.caption)
@@ -275,8 +280,9 @@ struct WidgetStagedDecisionRow: View {
                     .buttonStyle(.genHoverIcon(diameter: 22))
                     .instantTooltip(checked.wrappedValue ? "Goes with this send; click to keep it staged"
                                                          : "Stays staged; click to send it with the others")
-                    .accessibilityLabel(title)
+                    .accessibilityLabel("Send " + title + " now")
                     .accessibilityValue(checked.wrappedValue ? "Will be sent" : "Stays staged")
+                    .accessibilityIdentifier("widget.staged.check." + item.sourceId)
                 }
                 Button {
                     GenMotion.perform(expanding: !open, reduceMotion: reduceMotion) {
@@ -300,6 +306,7 @@ struct WidgetStagedDecisionRow: View {
                 .accessibilityLabel(title)
                 .accessibilityValue(open ? "Expanded" : "Collapsed")
                 .accessibilityHint("Shows the decision and its options")
+                .accessibilityIdentifier("widget.staged.row." + item.sourceId)
             }
             .padding(8)
             if open {

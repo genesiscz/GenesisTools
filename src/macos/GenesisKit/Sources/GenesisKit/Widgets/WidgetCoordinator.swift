@@ -31,6 +31,9 @@ public final class WidgetCoordinator: NSObject, NSWindowDelegate {
     private var globalMouse: Any?
     private var keyboard: Any?
     private var screenObserver: NSObjectProtocol?
+    /// Settings → "Hover list width" while its slider moves (`WidgetLiveSettings`). Idle, it costs nothing.
+    private var liveSettingsObserver: NSObjectProtocol?
+    private var liveSettingsEnd: Task<Void, Never>?
     private var lastSide: EdgePanelPlacement?
     private var lastDisplayID: String?
     private var lastShown: Bool?
@@ -325,6 +328,13 @@ public final class WidgetCoordinator: NSObject, NSWindowDelegate {
         screenObserver = NotificationCenter.default.addObserver(
             forName: NSApplication.didChangeScreenParametersNotification, object: nil, queue: .main
         ) { [weak self] _ in MainActor.assumeIsolated { self?.rebuildPanels() } }
+        liveSettingsObserver = DistributedNotificationCenter.default().addObserver(
+            forName: WidgetLiveSettings.name, object: nil, queue: .main
+        ) { [weak self] note in
+            let width = (note.userInfo?["previewWidth"] as? Double).map { CGFloat($0) }
+            let done = note.userInfo?["done"] as? Bool ?? false
+            MainActor.assumeIsolated { self?.showLivePreview(width: width, done: done) }
+        }
         launchPending = !showSettings && settingsWhenOff
         model.start()
         if showSettings { self.showSettings() }
@@ -418,6 +428,8 @@ public final class WidgetCoordinator: NSObject, NSWindowDelegate {
         openHotKey = nil
         openHotKeyChord = nil
         if let screenObserver { NotificationCenter.default.removeObserver(screenObserver) }
+        if let liveSettingsObserver { DistributedNotificationCenter.default().removeObserver(liveSettingsObserver) }
+        liveSettingsEnd?.cancel()
         panels.values.forEach { $0.hide() }
         settings?.close()
         mediaWindow?.close()
@@ -521,6 +533,28 @@ public final class WidgetCoordinator: NSObject, NSWindowDelegate {
         if surface.edge == .top { return model.layout.top(available: available) }
         let groups = model.layout.groups(available: available)
         return groups.indices.contains(surface.group) ? groups[surface.group] : []
+    }
+
+    /// The hover list opens at the slider's width while it moves, laid out again in place (no new panel, so nothing
+    /// blinks), and closes 2 s after the slider is let go, once the saved width has arrived.
+    private func showLivePreview(width: CGFloat?, done: Bool) {
+        guard let width else { return }
+        liveSettingsEnd?.cancel()
+        model.livePreviewWidth = WidgetModel.clampedPreviewWidth(width)
+        if model.hoveredSurface == nil,
+           let surface = panels.keys.sorted(by: { $0.key < $1.key })
+               .first(where: { $0.edge != .top && selectedModule(for: $0)?.id == "agents" }),
+           model.presentation(for: surface) == .compact {
+            model.hoveredSurface = surface
+            sync()
+        }
+        guard done else { return }
+        liveSettingsEnd = Task { @MainActor [weak self] in
+            do { try await Task.sleep(for: .seconds(2)) } catch { return }
+            guard let self else { return }
+            self.model.livePreviewWidth = nil
+            self.model.endLivePreview()
+        }
     }
 
     private func selectedModule(for surface: WidgetSurfaceID) -> WidgetModuleDescriptor? {
@@ -702,7 +736,7 @@ public final class WidgetCoordinator: NSObject, NSWindowDelegate {
             let detailSize = WidgetClusterGeometry.detailSize(visible: screen.visibleFrame.size)
             let contentHeight = expandedContentHeight(surface, module: module, visible: screen.visibleFrame.size)
             let width = module?.id == "agents" ? detailSize.width : (module?.expandedSize.width ?? 432)
-            let previewSize = CGSize(width: module?.previewSize.width ?? 324,
+            let previewSize = CGSize(width: module?.id == "agents" ? model.agentsPreviewWidth : (module?.previewSize.width ?? 324),
                 height: module?.id == "agents" ? model.previewHeight : (module?.previewSize.height ?? 310))
             if top {
                 expandedWindowHeights[surface] = min(screen.visibleFrame.height - 20, contentHeight + topHeaderHeight)
@@ -1035,5 +1069,19 @@ public final class WidgetCoordinator: NSObject, NSWindowDelegate {
     public static func id(_ screen: NSScreen) -> String {
         (screen.deviceDescription[NSDeviceDescriptionKey("NSScreenNumber")] as? NSNumber)?.stringValue
             ?? screen.localizedName
+    }
+}
+
+/// Settings that show on the widget while they change, before the preference is saved: the settings window posts each
+/// value, the widget face lays its panel out again at once. A distributed notification, so the widget listens for free.
+public enum WidgetLiveSettings {
+    public static var name: Notification.Name {
+        Notification.Name((Bundle.main.bundleIdentifier ?? "com.genesiscz.genesistools") + ".widget.live-settings")
+    }
+
+    /// The hover list width while the slider moves; `done` when it is let go.
+    public static func postPreviewWidth(_ width: Double, done: Bool) {
+        DistributedNotificationCenter.default().postNotificationName(
+            name, object: nil, userInfo: ["previewWidth": width, "done": done], deliverImmediately: true)
     }
 }

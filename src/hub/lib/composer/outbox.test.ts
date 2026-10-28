@@ -76,6 +76,7 @@ import {
 } from "../widget/shelf";
 import {
     claudeAssistantText,
+    decisionSummary,
     discoverWidgetCatalog,
     INBOX_ITEMS_PER_SESSION,
     inboxWindowCounts,
@@ -1781,6 +1782,10 @@ test("staging keys default to Return stages, ⌘ does the other, and a reminder 
     const defaults = widgetPreferencesSchema.parse({});
     expect(defaults.decisionCommandSwaps).toBe(true);
     expect(defaults.ownAnswerReturn).toBe("stage");
+    expect(defaults.ownAnswerEmptyReturn).toBe("send");
+    expect(defaults.previewWidth).toBe(324);
+    expect(widgetPreferencesSchema.safeParse({ previewWidth: 900 }).success).toBe(false);
+    expect(widgetPreferencesSchema.safeParse({ ownAnswerEmptyReturn: "later" }).success).toBe(false);
     expect(defaults.stagedReminder).toBe(true);
     expect(widgetPreferencesSchema.parse({ ownAnswerReturn: "send" }).ownAnswerReturn).toBe("send");
     expect(widgetPreferencesSchema.safeParse({ ownAnswerReturn: "later" }).success).toBe(false);
@@ -6240,4 +6245,25 @@ test("the widget's badge and the hub's Inbox count the same waiting decisions (o
     expect(hubWaiting).toBe(1);
     // The staged pick stays listed for sending either way.
     expect(snapshot.notifications?.staged.map((item) => item.sourceId)).toEqual(["d_1_quiet-session"]);
+});
+
+test("an open decision's summary is the prompt under its title, cut at a word near 600 characters", () => {
+    const row = (title: string | undefined, prompt: string): DecisionRecord => ({
+        id: "d_1_s",
+        sessionId: "s",
+        provider: "codex",
+        number: 1,
+        title,
+        prompt,
+        options: ["yes", "no"],
+        state: "open",
+        updatedTs: new Date(0).toISOString(),
+    });
+    expect(decisionSummary(row("Ship it?", "The release waits for the tests."))).toEqual({
+        summary: "The release waits for the tests.",
+    });
+    expect(decisionSummary(row(undefined, "The prompt is the title here."))).toEqual({});
+    const long = decisionSummary(row("Long", "word ".repeat(200))).summary ?? "";
+    expect(long.length).toBeLessThanOrEqual(601);
+    expect(long.endsWith("word…")).toBe(true);
 });

@@ -12,7 +12,8 @@ import { SafeJSON } from "@genesiscz/utils/json";
  *   bun scripts/native/widget-drive.ts record --seconds 6 --out <dir> "0.5:hover right 0" "1.5:expand right 0" "4:collapse"
  *
  * Commands (WidgetWindow.swift runTestCommand): `expand <edge> [group]`, `module <id> <edge> [group]`,
- * `hover <edge> [group]`, `unhover <edge> [group]`, `collapse`, `select <session key>`, `settings [page]`,
+ * `hover <edge> [group]`, `unhover <edge> [group]`, `collapse`, `leave` (a close that asks first while decisions are
+ * staged), `select <session key>`, `settings [page]`,
  * `inbox <edge> [group]` (the inbox button), `session <key> <edge> [group]` (a rail session button),
  * `passive on|off`. Send `passive on` before `expand` on the user's own screen: an expanded panel otherwise takes the
  * keyboard from the app in front.
