@@ -81,7 +81,7 @@ const folderKbs = new Map<string, { kb: number | null; mark: string; nextAt: num
 const WORKTREE_EVERY_MS = 30 * 60_000;
 /**
  * At most one size refresh of an already measured worktree per this interval in a session, and each next refresh at a
- * random point of 25 to 35 minutes: on 2026-10-27 one session walked its five col-fe worktrees back to back (6 s each)
+ * random point of 25 to 35 minutes: on 2026-10-27 one session walked its five worktrees back to back (6 s each)
  * because all five expired together, and that minute was the Mac's spawn storm.
  */
 const REFRESH_GAP_MS = 60_000;
