@@ -1,5 +1,4 @@
 import * as p from "@clack/prompts";
-import { suggestCommand } from "@genesiscz/utils/cli";
 import { out } from "@genesiscz/utils/logger";
 import pc from "picocolors";
 import type { AccountFlowContext, LoginOutcome, LoginVariant } from "../../account-features";
@@ -77,6 +76,7 @@ export const anthropicSecondaryLogin: LoginVariant = {
     run: anthropicLoginSecondary,
     nextStep: (account) => ({
         label: "Launch with it",
-        command: suggestCommand(`tools cc run ${account.name}`, { add: ["--keychain"] }),
+        tool: `cc run ${account.name}`,
+        add: ["--keychain"],
     }),
 };

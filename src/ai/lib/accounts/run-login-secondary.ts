@@ -8,7 +8,7 @@ import pc from "picocolors";
 import { ownFlags } from "./login-flags";
 import { resolveAccountName } from "./select-account";
 import { resolveAccountsProvider } from "./select-provider";
-import { siblingCommandOf } from "./tool-names";
+import { nextStepCommand, siblingCommandOf } from "./tool-names";
 import { writeLoginOutcome } from "./write-outcome";
 
 export interface RunLoginSecondaryOptions {
@@ -133,5 +133,5 @@ export async function runLoginSecondary(opts: RunLoginSecondaryOptions): Promise
     const next = variant.nextStep(account);
 
     p.log.success(`Secondary login saved to "${account.name}".`);
-    p.outro(`${next.label}: ${pc.cyan(next.command)}`);
+    p.outro(`${next.label}: ${pc.cyan(nextStepCommand(next))}`);
 }

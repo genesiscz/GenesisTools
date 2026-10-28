@@ -1,5 +1,7 @@
-import { describe, expect, test } from "bun:test";
-import { siblingCommandOf } from "./tool-names";
+import { describe, expect, it, test } from "bun:test";
+import { anthropicLongLogin } from "@genesiscz/utils/ai/providers/plugins/anthropic-sub/login-long";
+import { anthropicSecondaryLogin } from "@genesiscz/utils/ai/providers/plugins/anthropic-sub/login-secondary";
+import { nextStepCommand, siblingCommandOf } from "./tool-names";
 
 describe("siblingCommandOf", () => {
     test("swaps the door's own verb for the sibling one", () => {
@@ -21,5 +23,16 @@ describe("siblingCommandOf", () => {
 
     test("a single-word tool name gets the verb appended", () => {
         expect(siblingCommandOf("tools", "login")).toBe("tools login");
+    });
+});
+
+describe("nextStepCommand", () => {
+    it("prints the Claude login variants' launch commands with the binary in front", () => {
+        const account = { name: "work" } as Parameters<typeof anthropicLongLogin.nextStep>[0];
+
+        expect([
+            nextStepCommand(anthropicLongLogin.nextStep(account)),
+            nextStepCommand(anthropicSecondaryLogin.nextStep(account)),
+        ]).toEqual(["tools claude start work", "tools cc run work --keychain"]);
     });
 });
