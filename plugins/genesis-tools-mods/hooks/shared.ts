@@ -153,6 +153,8 @@ export function shortDuration(ms: number): string {
  * plugin, so `register.tsx` holds that hook and calls each feature's part in turn.
  */
 export interface Feature {
+    /** Only draws for a person (a band, a sidebar): skipped in a session nobody watches (`-p`, the SDK). */
+    panelOnly?: boolean;
     /** On session start: start timers, take a first reading. */
     start?: (host: Host) => Promise<void>;
     /** Slash commands, registered at session start and answered by `command.run`. */

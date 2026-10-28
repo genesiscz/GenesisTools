@@ -115,6 +115,7 @@ export function refreshAgentDetails(host: Host): Promise<void> {
 }
 
 export const agentsBand: Feature = {
+    panelOnly: true,
     async start(host) {
         host.every(10_000, () => {
             void refreshAgentDetails(host);

@@ -3614,3 +3614,18 @@ test("session files: a worktree whose git status changed accepts a size at most 
     expect(worktreeMaxAgeS({ status: "## main\n" }, "## main\n")).toBe(1800);
     expect(worktreeMaxAgeS(undefined, "## main\n")).toBe(1800);
 });
+
+test("a session nobody watches (-p, the SDK) starts no panel feature, and a watched one does", async ($, on) => {
+    const machine = processLogMachine(on);
+    const panelRuns = () => machine.calls.filter((argv) => argv[0] === "git" && argv.includes("--porcelain")).length;
+    on("session.start", async (_$, e) => ({ cwd: e.cwd }));
+    on("command.register", async (_$, e) => ({ value: { command: e.name } }));
+
+    await $.session.start({ cwd: "/repo", surface: null, isInteractive: false });
+    await machine.clock.settle();
+    expect(panelRuns()).toBe(0);
+
+    await $.session.start({ cwd: "/repo", surface: "terminal", isInteractive: true });
+    await machine.clock.settle();
+    expect(panelRuns()).toBeGreaterThan(0);
+});

@@ -33,6 +33,7 @@ const flipped = new Set<string>();
 const DONE_TODOS = new Set(["implemented", "dismissed", "superseded"]);
 
 export const inbox: Feature = {
+    panelOnly: true,
     async start(host) {
         await startAnswers(host);
     },

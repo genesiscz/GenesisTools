@@ -653,9 +653,22 @@ const FEATURES: Feature[] = [
     stallCatcher,
 ];
 
+/**
+ * Whether a person watches this session. A `-p` run or an SDK host draws no band or sidebar, so the features that
+ * only draw (`Feature.panelOnly`) start no timer and run no command there: each such worker loaded the mods and ran
+ * git status, gh pr view and du for a panel nobody saw.
+ */
+let isWatched = true;
+
+/** The features this session runs: all of them when watched, else only those that act beyond drawing. */
+function liveFeatures(): Feature[] {
+    return isWatched ? FEATURES : FEATURES.filter((feature) => !feature.panelOnly);
+}
+
 export const register: Register = (on) => {
     on("session.start", async ($, e, next) => {
         const host = hostOf($);
+        isWatched = e.isInteractive;
         // A reload runs `session.start` again in the middle of a turn: mark the session at once, not at the next turn.
         await announceSession($);
         // Times drawn with `liveAgo` / `liveLeft` redraw when their text changes.
@@ -663,7 +676,7 @@ export const register: Register = (on) => {
         // Which genesis.tools links open here, asked outside any render (a newer render aborts an older one's runs).
         primeGenesisProbe(host);
 
-        for (const feature of FEATURES) {
+        for (const feature of liveFeatures()) {
             for (const command of feature.commands ?? []) {
                 await $.command.register({
                     name: command.name,
@@ -696,12 +709,12 @@ export const register: Register = (on) => {
         // Before the call runs, so its PostToolUse hook sees the mark; a no-op once this module set it.
         await announceSession($);
         rememberToolPaths(e);
-        const ends = FEATURES.flatMap((feature) => feature.beforeTool?.(host, e) ?? []);
+        const ends = liveFeatures().flatMap((feature) => feature.beforeTool?.(host, e) ?? []);
 
         try {
             const result = await next(e);
 
-            afterTools({ host, event: e, features: FEATURES });
+            afterTools({ host, event: e, features: liveFeatures() });
 
             // The PR numbers the links mod linked in the message that asked for this call: the model reads which
             // repository each went to with this result, while the turn still runs, not only after it ends.
@@ -725,7 +738,7 @@ export const register: Register = (on) => {
     on("turn.step", async function* ($, e, next) {
         const host = hostOf($);
 
-        for (const feature of FEATURES) {
+        for (const feature of liveFeatures()) {
             void feature.beforeStep?.(host, e).catch(() => undefined);
         }
 
@@ -807,7 +820,7 @@ export const register: Register = (on) => {
             }
         }
 
-        for (const feature of FEATURES) {
+        for (const feature of liveFeatures()) {
             // One feature that throws must not take the others' turn-end work with it.
             await isolated(host, "afterTurn", () => feature.afterTurn?.(host, e));
         }
@@ -825,7 +838,7 @@ export const register: Register = (on) => {
         }
 
         if (result.skip === undefined) {
-            for (const feature of FEATURES) {
+            for (const feature of liveFeatures()) {
                 await isolated(host, "compacted", () => feature.compacted?.(host, e.agentId));
             }
         }

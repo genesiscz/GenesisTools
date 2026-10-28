@@ -672,6 +672,7 @@ async function command(host: Host, args: string): Promise<string> {
 }
 
 export const gitBand: Feature = {
+    panelOnly: true,
     async start(host) {
         host.every(EVERY_MS, () => {
             void isOn(host).then((yes) => {

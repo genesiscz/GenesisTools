@@ -35,7 +35,9 @@ async function folderKb(host: Host, path: string): Promise<number | null> {
 
 /**
  * A folder of this session's own (scratch, task output), walked again only when its own entry list changed (its
- * mtime) or after the 30-minute pace: every session walked both every 5 minutes, 280 `du` runs in 50 minutes.
+ * mtime) or after 5 minutes. Before the mtime check every session walked both every 5 minutes (280 `du` runs in 50
+ * minutes); the 5 minutes came back (2026-10-28) because a write deep inside the folder leaves its mtime as it was,
+ * and the walk is small (8 ms p50).
  */
 async function pacedKb(host: Host, path: string): Promise<number | null> {
     const stat = await host.stat(path).catch(() => undefined);
@@ -53,7 +55,7 @@ async function pacedKb(host: Host, path: string): Promise<number | null> {
     }
 
     const kb = await folderKb(host, path);
-    folderKbs.set(path, { kb, mark, nextAt: paceAfter(WORKTREE_EVERY_MS, startedAt) });
+    folderKbs.set(path, { kb, mark, nextAt: paceAfter(SESSION_FOLDER_EVERY_MS, startedAt) });
 
     return kb;
 }
@@ -79,6 +81,7 @@ const worktreeKb = new Map<string, { kb: number | null; status: string; nextAt: 
 /** The same for the session's own folders, keyed by the folder's mtime. */
 const folderKbs = new Map<string, { kb: number | null; mark: string; nextAt: number }>();
 const WORKTREE_EVERY_MS = 30 * 60_000;
+const SESSION_FOLDER_EVERY_MS = 5 * 60_000;
 /**
  * At most one size refresh of an already measured worktree per this interval in a session, and each next refresh at a
  * random point of 25 to 35 minutes: on 2026-10-27 one session walked its five worktrees back to back (6 s each)
@@ -337,6 +340,7 @@ function measureOnce(host: Host): Promise<void> {
 }
 
 export const tmpUsage: Feature = {
+    panelOnly: true,
     async start(host) {
         const settings = (await settingsOf(host)).tmpUsage;
 
