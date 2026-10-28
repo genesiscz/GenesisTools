@@ -549,7 +549,7 @@ private struct WidgetGeneralSettings: View {
         Binding(get: { value }, set: { patch([key: .bool($0)]) })
     }
     private func patch(_ values: [String: WidgetJSON]) {
-        model.action(["action": "preferences", "patch": .object(values)])
+        model.updatePreferences(values)
     }
 }
 
@@ -755,7 +755,7 @@ private struct WidgetSessionSettings: View {
     }
 
     private func patch(_ values: [String: WidgetJSON]) {
-        model.action(["action": "preferences", "patch": .object(values)])
+        model.updatePreferences(values)
     }
 }
 
@@ -789,14 +789,12 @@ private struct WidgetProviderSettings: View {
                                 model.error = "Keep at least one source enabled."
                                 return
                             }
-                            model.action([
-                                "action": "preferences", "patch": ["providers": .array(values.map(WidgetJSON.string))],
-                            ])
+                            model.updatePreferences(["providers": .array(values.map(WidgetJSON.string))])
                         }))
             }
             Divider()
             Button("Show all providers") {
-                model.action(["action": "preferences", "patch": ["providers": []]])
+                model.updatePreferences(["providers": []])
             }.buttonStyle(.bordered).nativeSettingsPointer().disabled(selected.isEmpty)
             WidgetSettingsError(model: model)
         }
@@ -831,7 +829,7 @@ private struct WidgetModuleSettings: View {
                          : "The side groups are hidden: Visible edges is set to Top.")
                         .font(.caption).frame(maxWidth: .infinity, alignment: .leading)
                     Button(index == nil ? "Show the top notch" : "Show the side groups") {
-                        model.action(["action": "preferences", "patch": ["placement": "both"]])
+                        model.updatePreferences(["placement": "both"])
                     }.buttonStyle(.bordered).nativeSettingsPointer()
                         .accessibilityIdentifier("widget.modules.\(index == nil ? "top" : "side").show")
                 }
@@ -851,20 +849,10 @@ private struct WidgetModuleSettings: View {
                             if let index {
                                 var groups = model.layout.sideGroups
                                 groups[index] = WidgetLayoutConfiguration.unique(ids)
-                                model.action([
-                                    "action": "preferences",
-                                    "patch": [
-                                        "sideGroups": .array(groups.map { .array($0.map(WidgetJSON.string)) })
-                                    ],
-                                ])
+                                model.updatePreferences(["sideGroups": .array(groups.map { .array($0.map(WidgetJSON.string)) })])
                             } else {
-                                model.action([
-                                    "action": "preferences",
-                                    "patch": [
-                                        "topModules": .array(
-                                            WidgetLayoutConfiguration.unique(ids).map(WidgetJSON.string))
-                                    ],
-                                ])
+                                model.updatePreferences(
+                                    ["topModules": .array(WidgetLayoutConfiguration.unique(ids).map(WidgetJSON.string))])
                             }
                         }))
             }
@@ -1033,7 +1021,7 @@ private struct WidgetDictationSettings: View {
         }
     }
     private func patch(_ value: [String: WidgetJSON]) {
-        model.action(["action": "preferences", "patch": .object(value)])
+        model.updatePreferences(value)
     }
 }
 

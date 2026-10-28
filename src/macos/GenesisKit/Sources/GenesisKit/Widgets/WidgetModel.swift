@@ -371,6 +371,11 @@ public final class WidgetModel: ObservableObject {
     /// from state it read earlier, so one read before the write can arrive after it; applied bare, it undid the
     /// saved preference in the live widget.
     private var savedPreferences: [(id: UUID, fence: Int?, patch: [String: WidgetJSON])] = []
+    /// Patches another process (the settings window) changed a moment ago, shown at once until its write has had time
+    /// to reach a snapshot (`livePreferenceSeconds`), so a setting applies while it is changed (Martin, 2026-10-28:
+    /// "all settings which affect the ui should be realtime").
+    private var livePreferences: [(at: Date, patch: [String: WidgetJSON])] = []
+    nonisolated static let livePreferenceSeconds: TimeInterval = 8
     /// The last snapshot as it arrived, before any overlay.
     private var lastReceived: WidgetSnapshot?
     /// What the callers of `updatePreferences` asked to hear about the write that carries their patch.
@@ -2323,6 +2328,9 @@ public final class WidgetModel: ObservableObject {
     /// `preferences` with the saved patches not yet seen in a snapshot, then the ones still to be written, on top.
     private func overlaid(_ preferences: WidgetPreferences) throws -> WidgetPreferences {
         var patch: [String: WidgetJSON] = [:]
+        let now = Date()
+        livePreferences.removeAll { now.timeIntervalSince($0.at) > Self.livePreferenceSeconds }
+        for entry in livePreferences { patch.merge(entry.patch) { _, new in new } }
         for entry in savedPreferences { patch.merge(entry.patch) { _, new in new } }
         patch.merge(pendingPreferences) { _, new in new }
         return try mergingPreferences(patch, into: preferences)
@@ -2377,12 +2385,25 @@ public final class WidgetModel: ObservableObject {
         return try JSONDecoder().decode(WidgetPreferences.self, from: JSONEncoder().encode(WidgetJSON.object(fields)))
     }
 
+    /// A preference another process changed (the settings window posts each change): shown at once, written by that
+    /// process. Nothing is written here.
+    public func showLivePreferences(_ patch: [String: WidgetJSON]) {
+        guard !patch.isEmpty, var current = snapshot else { return }
+        livePreferences.append((Date(), patch))
+        do {
+            current.state.preferences = try mergingPreferences(patch, into: current.state.preferences)
+            snapshot = current
+            presentationChanged?()
+        } catch { report(error) }
+    }
+
     /// Shows `patch` at once and writes it after a short pause, merged with the patches that follow. `saved` or
     /// `failed` runs when the write that carries it ends, so a page can confirm only what was stored.
     public func updatePreferences(
         _ patch: [String: WidgetJSON], saved: (() -> Void)? = nil, failed: (() -> Void)? = nil
     ) {
         pendingPreferences.merge(patch) { _, new in new }
+        WidgetLiveSettings.postPreferences(patch)
         if saved != nil || failed != nil {
             pendingPreferenceOutcomes.append((saved ?? {}, failed ?? {}))
         }

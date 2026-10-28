@@ -158,10 +158,8 @@ public struct WidgetSessionBrowser: View {
                         live: session.status == "working" || group.running > 0,
                         lastAt: Date(timeIntervalSince1970: session.activityAt / 1000),
                         unread: model.inboxFor(session.key).map { $0.unread + $0.needsAnswer } ?? 0)
-                    if session.hiddenByFilter {
-                        Text("Hidden by widget filters").font(.caption2).foregroundStyle(.orange).padding(.leading, 31)
-                    }
                 }
+                .modifier(WidgetHiddenByFilterMark(hidden: session.hiddenByFilter))
                 .padding(.vertical, 7).padding(.horizontal, 4)
                 .frame(maxWidth: .infinity, alignment: .leading).contentShape(Rectangle())
             }
@@ -189,10 +187,8 @@ public struct WidgetSessionBrowser: View {
                         toolCalls: session.toolCalls ?? 0,
                         unread: model.inboxFor(session.key).map { $0.unread + $0.needsAnswer } ?? 0,
                         selected: selected, showsRunningLabel: session.agentId == nil)
-                    if session.hiddenByFilter {
-                        Text("Hidden by widget filters").font(.caption2).foregroundStyle(.orange).padding(.leading, 15)
-                    }
                 }
+                .modifier(WidgetHiddenByFilterMark(hidden: session.hiddenByFilter))
                 .padding(.vertical, 6).padding(.horizontal, 6)
                 .frame(maxWidth: .infinity, alignment: .leading).contentShape(Rectangle())
             }
@@ -225,7 +221,27 @@ public struct WidgetSessionBrowser: View {
     }
 
     private func setProjects(_ projects: [String]) {
-        model.action(["action": "preferences", "patch": ["projects": .array(projects.map(WidgetJSON.string))]])
+        model.updatePreferences(["projects": .array(projects.map(WidgetJSON.string))])
+    }
+}
+
+/// A session the widget filters hide: dimmed, with an orange eye-slash, in the row's own height. A caption line under
+/// each hidden row grew the list by a line per row the moment the first session filter was added, and the settings page
+/// jumped by hundreds of points under the pointer (Martin, 2026-10-28).
+struct WidgetHiddenByFilterMark: ViewModifier {
+    let hidden: Bool
+
+    func body(content: Content) -> some View {
+        content
+            .opacity(hidden ? 0.5 : 1)
+            .overlay(alignment: .topTrailing) {
+                if hidden {
+                    Image(systemName: "eye.slash").font(.system(size: 10, weight: .semibold)).foregroundStyle(.orange)
+                        .padding(.top, 2)
+                        .instantTooltip("Hidden by widget filters")
+                        .accessibilityLabel("Hidden by widget filters")
+                }
+            }
     }
 }
 
