@@ -1811,7 +1811,7 @@ describe("native /v1/messages route: reasoning carried in gtr1 envelopes", () =>
             new Response(USAGE_LIMIT_BODY, { status: 429 })) as typeof fetch;
         const limited = await send(turn, { sessionId: "s-1" });
         expect(limited.status).toBe(400);
-        expect(await limited.text()).toContain("tools ai-proxy session s-1 use --codex <account>");
+        expect(await limited.text()).toContain("tools ai-proxy session s-1 use --codex '<account>'");
 
         const overloaded =
             'event: response.created\ndata: {"type":"response.created","response":{"id":"r1"}}\n\n' +
@@ -1932,7 +1932,7 @@ describe("native /v1/messages route: reasoning carried in gtr1 envelopes", () =>
         );
 
         expect(response.status).toBe(400);
-        expect(await response.text()).toContain("tools ai-proxy session s-1 use --codex <account>");
+        expect(await response.text()).toContain("tools ai-proxy session s-1 use --codex '<account>'");
     });
 
     it("uses the readable summary when cross-login recompaction fails", async () => {

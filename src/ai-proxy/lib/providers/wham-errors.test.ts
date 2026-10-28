@@ -83,7 +83,7 @@ describe("failureText", () => {
         );
         expect(text).toContain("It resets at ");
         expect(text).toContain("(in 1h 30m)");
-        expect(text).toContain("tools ai-proxy session s-1 use --codex <account>");
+        expect(text).toContain("tools ai-proxy session s-1 use --codex '<account>'");
         expect(text).not.toContain("accounts failover");
     });
 
