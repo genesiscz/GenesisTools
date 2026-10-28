@@ -699,7 +699,20 @@ struct WidgetPeekView: View {
                 moreButton("\(options.count - Self.shownOptions) more in its session",
                            tooltip: "Opens the decision in its session with all its options") { open() }
             }
+            ownAnswerField
         }
+    }
+
+    /// The decision's own answer under its options: the card's answer field, compact (Martin, 2026-10-28: "just under
+    /// the buttons as a smaller compact version of the input"). A click opens the decision in its session with the
+    /// full field holding the keyboard. The popup's panel does not type in place: it closes on its timer and when the
+    /// pointer leaves, and the draft it would write belongs to the session the panel shows, not to this decision's.
+    private var ownAnswerField: some View {
+        WidgetAnswerField<EmptyView, EmptyView>.compact(placeholder: "Write my own answer…", shownText: model.ownAnswerText(for: item),
+                                  tooltip: "Opens it in its session with the answer field ready to type") {
+            open(ownAnswer: true)
+        }
+        .padding(.top, 1)
     }
 
     /// A decision answered outside the widget: the option it took, marked as the answer, who recorded it, and the
@@ -849,18 +862,9 @@ struct WidgetPeekView: View {
         .padding(.horizontal, 2)
     }
 
-    /// The footer while nothing was sent from the popup: the own answer, then Send now while a pick waits, else Open.
+    /// The footer while nothing was sent from the popup: Send now while a pick waits, else Open. The own answer is the
+    /// compact field under the options (`ownAnswerField`), not a second button here.
     @ViewBuilder private var footerButtons: some View {
-        if !options.isEmpty {
-            Button { open(ownAnswer: true) } label: {
-                ViewThatFits(in: .horizontal) {
-                    Label("Write my own answer", systemImage: "square.and.pencil")
-                    Label("Own answer", systemImage: "square.and.pencil")
-                }
-            }
-            .instantTooltip("Opens it in its session with the answer field ready to type")
-            .accessibilityIdentifier("widget.peek.ownAnswer")
-        }
         Spacer(minLength: 0)
         if isReminder {
             let ids = model.stagedItems.map(\.sourceId)
