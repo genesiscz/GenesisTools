@@ -2532,3 +2532,117 @@ describe("background compaction thread key", () => {
         expect(backgroundKey("s", [block])).not.toBe(backgroundKey("s", [{ ...block, text: "A subagent." }]));
     });
 });
+
+describe("tools that Claude Code's tool search loads, on the Codex agent", () => {
+    // Regression test: the live tool-list probe of 2026-10-28 — any change
+    // of `tools` reads 0% of the WHAM prompt cache, also an append; session 8cf9eff2 lost 1.15M tokens in 5 loads.
+    const tool = (name: string, deferred = false) => ({
+        name,
+        description: `${name} tool`,
+        input_schema: { type: "object", properties: { value: { type: "string" } } },
+        ...(deferred ? { defer_loading: true } : {}),
+    });
+    const before = [
+        { role: "user", content: "check the bus" },
+        {
+            role: "assistant",
+            content: [{ type: "tool_use", id: "call_search", name: "ToolSearch", input: { query: "select:Monitor" } }],
+        },
+    ];
+    const loaded = [
+        ...before,
+        {
+            role: "user",
+            content: [
+                {
+                    type: "tool_result",
+                    tool_use_id: "call_search",
+                    content: [{ type: "tool_reference", tool_name: "Monitor" }],
+                },
+            ],
+        },
+    ];
+
+    async function sentBody(messages: unknown[], tools: unknown[]): Promise<Record<string, unknown>> {
+        const sent: Array<Record<string, unknown>> = [];
+        globalThis.fetch = (async (_url: RequestInfo | URL, init?: RequestInit) => {
+            sent.push(SafeJSON.parse(String(init?.body)) as Record<string, unknown>);
+            return whamStreamResponse();
+        }) as typeof fetch;
+        const { OpenAiSubscriptionProvider } = await import("./openai-subscription");
+        const provider = await OpenAiSubscriptionProvider.create(account);
+        const bodyText = SafeJSON.stringify({ model: "gpt-6.1-sol", stream: true, max_tokens: 1024, tools, messages });
+        const res = await provider.messages?.(
+            new Request("http://localhost/v1/messages", { method: "POST", body: bodyText }),
+            "gpt-6.1-sol",
+            bodyText
+        );
+        await res?.text();
+        return sent[0] ?? {};
+    }
+
+    it("keeps `tools` the same after a load and makes the loaded tool callable from the input, after its search result", async () => {
+        const first = await sentBody(before, [tool("Bash"), tool("ToolSearch")]);
+        // Claude Code 2.1.310 inserts the loaded tool by name order, with defer_loading.
+        const second = await sentBody(loaded, [tool("Bash"), tool("Monitor", true), tool("ToolSearch")]);
+        const names = (body: Record<string, unknown>) =>
+            (body.tools as Array<{ name: string }> | undefined)?.map((t) => t.name);
+
+        expect(names(second)).toEqual(["Bash", "ToolSearch"]);
+        expect(names(second)).toEqual(names(first));
+
+        const input = second.input as Array<Record<string, unknown>>;
+        const output = input.findIndex(
+            (item) => item.type === "function_call_output" && item.call_id === "call_search"
+        );
+        const added = input[output + 1];
+        expect(added?.type).toBe("additional_tools");
+        expect(added?.role).toBe("developer");
+        expect((added?.tools as Array<{ name: string }> | undefined)?.map((t) => t.name)).toEqual(["Monitor"]);
+    });
+
+    it("sends what an earlier request sent as an exact prefix when a second tool loads, each tool once", async () => {
+        const tools = [tool("Bash"), tool("Monitor", true), tool("TaskStop", true), tool("ToolSearch")];
+        const second = await sentBody(loaded, [tool("Bash"), tool("Monitor", true), tool("ToolSearch")]);
+        const third = await sentBody(
+            [
+                ...loaded,
+                {
+                    role: "assistant",
+                    content: [
+                        {
+                            type: "tool_use",
+                            id: "call_again",
+                            name: "ToolSearch",
+                            input: { query: "select:Monitor,TaskStop" },
+                        },
+                    ],
+                },
+                {
+                    role: "user",
+                    content: [
+                        {
+                            type: "tool_result",
+                            tool_use_id: "call_again",
+                            content: [
+                                { type: "tool_reference", tool_name: "Monitor" },
+                                { type: "tool_reference", tool_name: "TaskStop" },
+                            ],
+                        },
+                    ],
+                },
+            ],
+            tools
+        );
+        const secondInput = second.input as Array<Record<string, unknown>>;
+        const thirdInput = third.input as Array<Record<string, unknown>>;
+
+        expect(thirdInput.slice(0, secondInput.length)).toEqual(secondInput);
+        expect(third.tools).toEqual(second.tools);
+        const added = thirdInput.filter((item) => item.type === "additional_tools");
+        expect(added.map((item) => (item.tools as Array<{ name: string }>).map((t) => t.name))).toEqual([
+            ["Monitor"],
+            ["TaskStop"],
+        ]);
+    });
+});
