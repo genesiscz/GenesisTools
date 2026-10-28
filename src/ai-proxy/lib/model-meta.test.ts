@@ -1,11 +1,9 @@
 import { afterEach, describe, expect, it } from "bun:test";
-import {
-    listAnthropicSubProxyModels,
-    listOpenAiProxyModels,
-    listOpenAiSubProxyModels,
-    listOpenRouterProxyModels,
-    listXaiStaticProxyModels,
-} from "@app/ai-proxy/lib/model-meta";
+import { listAnthropicSubProxyModels } from "@app/ai-proxy/lib/providers/anthropic-subscription.models";
+import { listOpenAiProxyModels } from "@app/ai-proxy/lib/providers/openai-api-key.models";
+import { listOpenAiSubProxyModels } from "@app/ai-proxy/lib/providers/openai-subscription.models";
+import { listOpenRouterProxyModels } from "@app/ai-proxy/lib/providers/openrouter-api-key.models";
+import { listXaiStaticProxyModels } from "@app/ai-proxy/lib/providers/xai-api-key.models";
 import type { AiProxyAccountConfig } from "@app/ai-proxy/lib/types";
 import { ANTHROPIC_SUB_ALIASES } from "@genesiscz/utils/ai/anthropic/models";
 import { byProvider } from "@genesiscz/utils/ai/catalog";

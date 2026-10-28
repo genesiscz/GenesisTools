@@ -1,6 +1,6 @@
-import { listOpenAiProxyModels } from "@app/ai-proxy/lib/model-meta";
 import type { ProviderDefinition } from "@app/ai-proxy/lib/providers/definition";
 import { OpenAiApiKeyProvider } from "@app/ai-proxy/lib/providers/openai-api-key";
+import { listOpenAiProxyModels } from "@app/ai-proxy/lib/providers/openai-api-key.models";
 
 export const openAiApiKeyDefinition: ProviderDefinition = {
     title: "OpenAI API",

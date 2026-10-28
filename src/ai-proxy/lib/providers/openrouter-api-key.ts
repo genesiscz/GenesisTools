@@ -89,7 +89,7 @@ export class OpenRouterApiKeyProvider implements ProxyProvider {
     }
 
     /**
-     * The advertised catalog comes from `lib/model-meta.ts`, which reads the
+     * The advertised catalog comes from `openrouter-api-key.models.ts`, which reads the
      * shared, public model feed. This method exists for the `ProxyProvider`
      * contract; returning [] keeps one catalog rather than two that can disagree.
      */

@@ -1,5 +1,4 @@
 import { accountConfigFingerprint } from "@app/ai-proxy/lib/account-config";
-import { listXaiProxyModels } from "@app/ai-proxy/lib/model-meta";
 import { assertApiKeySourceAllowed } from "@app/ai-proxy/lib/providers/api-key-guard";
 import { defaultApiKeyEnvName } from "@app/ai-proxy/lib/providers/api-key-state";
 import { relayHeaders, rewriteSessionModel, toWsBase } from "@app/ai-proxy/lib/providers/http-relay";
@@ -9,6 +8,7 @@ import {
     inlineResponsesItemReferencesInBodyText,
     whamItemScope,
 } from "@app/ai-proxy/lib/providers/wham-item-store";
+import { listXaiProxyModels } from "@app/ai-proxy/lib/providers/xai-api-key.models";
 import { resolveXaiApiKey, XAI_API_BASE_URL } from "@app/ai-proxy/lib/providers/xai-api-key-auth";
 import { clampXaiReasoningEffort } from "@app/ai-proxy/lib/reasoning-effort-vocab";
 import { rewriteBodyModel } from "@app/ai-proxy/lib/rewrite-upstream-body";

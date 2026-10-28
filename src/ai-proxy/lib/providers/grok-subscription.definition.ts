@@ -1,7 +1,7 @@
 import { resolveGrokAuthPath } from "@app/ai-proxy/lib/account-config";
-import { listGrokProxyModels } from "@app/ai-proxy/lib/model-meta";
 import type { ProviderDefinition } from "@app/ai-proxy/lib/providers/definition";
 import { GrokSubscriptionProvider } from "@app/ai-proxy/lib/providers/grok-subscription";
+import { listGrokProxyModels } from "@app/ai-proxy/lib/providers/grok-subscription.models";
 import {
     buildGrokModelCatalog,
     formatBillingSummary,
