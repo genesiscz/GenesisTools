@@ -2397,6 +2397,61 @@ describe("background compaction (Codex async_compaction for Claude Code)", () =>
         expect(text).toContain("Also remember shelf 31.");
     });
 
+    it("records the older ready run as wasted when a newer run replaces it unused", async () => {
+        // Regression test: 2026-10-28-Research-Session8cf9eff2Slowdowns.sonnet.md Bug 5 — a replaced run (03:15 to
+        // 03:17, 363K tokens read) left no event at all.
+        const sent: Array<Record<string, unknown>> = [];
+        const sessionId = await primeBackground(sent);
+        globalThis.fetch = (async (_url: RequestInfo | URL, init?: RequestInit) => {
+            const body = SafeJSON.parse(String(init?.body)) as Record<string, unknown>;
+            sent.push(body);
+            return isCompaction(body) ? whamCompactionResponse("ENC-BG-2") : turnResponse("ok", 600);
+        }) as typeof fetch;
+        // 600 is 33% past the first run's 450: a refresh run starts and replaces the unused first result.
+        await send({ messages: [u1, a1, u2] }, sessionId);
+        const { backgroundInFlight, backgroundKey } = await import("@app/ai-proxy/lib/sessions/background-compaction");
+        await backgroundInFlight(backgroundKey(claudeSession, "S"));
+
+        expect(sent.filter(isCompaction)).toHaveLength(2);
+        expect(
+            events()
+                .filter((event) => event.kind === "background-wasted")
+                .map((event) => event.reason)
+        ).toEqual(["superseded"]);
+    });
+
+    it("answers the compaction turn from a run that finished before the proxy restarted", async () => {
+        // Regression test: Bug 5 — the run lived only in process memory; 17 restarts in one session lost such runs.
+        const sent: Array<Record<string, unknown>> = [];
+        const sessionId = await primeBackground(sent);
+        const { forgetBackgroundInMemoryForTests } = await import("@app/ai-proxy/lib/sessions/background-compaction");
+        forgetBackgroundInMemoryForTests();
+
+        const reply = await send({ messages: compactTurn(u1) }, sessionId);
+
+        expect(sent.filter(isCompaction)).toHaveLength(1);
+        expect(reply).toContain("[codex-compaction gtc1.");
+    });
+
+    it("does not start a second run after a restart while the saved run is still fresh", async () => {
+        const sent: Array<Record<string, unknown>> = [];
+        const sessionId = await primeBackground(sent);
+        const { forgetBackgroundInMemoryForTests } = await import("@app/ai-proxy/lib/sessions/background-compaction");
+        forgetBackgroundInMemoryForTests();
+
+        // 460 is only 2% past the saved run's 450: no refresh is due.
+        globalThis.fetch = (async (_url: RequestInfo | URL, init?: RequestInit) => {
+            const body = SafeJSON.parse(String(init?.body)) as Record<string, unknown>;
+            sent.push(body);
+            return isCompaction(body) ? whamCompactionResponse("ENC-BG-2") : turnResponse("ok", 460);
+        }) as typeof fetch;
+        await send({ messages: [u1, a1, u2] }, sessionId);
+        const { backgroundInFlight, backgroundKey } = await import("@app/ai-proxy/lib/sessions/background-compaction");
+        await backgroundInFlight(backgroundKey(claudeSession, "S"));
+
+        expect(sent.filter(isCompaction)).toHaveLength(1);
+    });
+
     it("compacts again and tells the agent when the history changed under the background run", async () => {
         const sent: Array<Record<string, unknown>> = [];
         const sessionId = await primeBackground(sent);

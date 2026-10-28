@@ -1090,7 +1090,16 @@ export class OpenAiSubscriptionProvider implements ProxyProvider {
                                   contextTokens,
                                   sessionId: context?.sessionId,
                                   eventBase,
-                              })
+                              }),
+                              (unused, reason) =>
+                                  recordCompactionEvent({
+                                      ...eventBase,
+                                      kind: "background-wasted",
+                                      reason,
+                                      inputTokens: unused.inputTokens,
+                                      cachedTokens: unused.cachedTokens,
+                                      outputTokens: unused.outputTokens,
+                                  })
                           );
                       }
                   }
