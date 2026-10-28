@@ -675,7 +675,8 @@ struct WidgetPeekView: View {
                 // when "After a send" says so (UX audit P11: it expanded the whole panel by itself, with no setting).
                 // Read at the click, ⌘ included: a click that only stages never opens anything.
                 WidgetItemOptionButton(model: model, item: item, index: index, option: option) {
-                    if !model.clickStagesNow, Self.sendOpensSession(model.snapshot?.state.preferences) { open() }
+                    if Self.sendOpensSession(model.snapshot?.state.preferences,
+                        staging: model.clickStagesNow || NSEvent.modifierFlags.contains(.shift)) { open() }
                 }
             }
             if options.count > Self.shownOptions {
@@ -872,8 +873,8 @@ struct WidgetPeekView: View {
 
     /// Alerts → After a send (`popupSendOpens`): a pick sent from the popup leaves it for its session ("session"), or
     /// the popup stays and shows the send's result ("stay", the default).
-    static func sendOpensSession(_ preferences: WidgetPreferences?) -> Bool {
-        preferences?.popupSendOpens == "session"
+    static func sendOpensSession(_ preferences: WidgetPreferences?, staging: Bool = false) -> Bool {
+        !staging && preferences?.popupSendOpens == "session"
     }
 
     private var popupAttention: AttentionPulseStyle {

@@ -15,6 +15,15 @@ final class GitFileDiffTests: XCTestCase {
         return String(decoding: result.stdout, as: UTF8.self).trimmed
     }
 
+    func testOnlyTheSoftFileLimitOffersShowAnyway() {
+        for size in [GitWorkingTreeSource.maxBytes + 1, GitWorkingTreeSource.maxShownBytes,
+                     GitWorkingTreeSource.maxShownBytes + 1] {
+            let note = GitWorkingTreeSource.largeNote(size)
+            XCTAssertEqual(GitWorkingTreeSource.isLarge(note), size <= GitWorkingTreeSource.maxShownBytes,
+                           "only an overridable size skip offers the display action")
+        }
+    }
+
     /// A changed and an added PNG carry their sides' sources, and the page's image URLs serve those bytes.
     func testAnImageInTheDiffNamesItsSidesAndTheirBytesAreServed() throws {
         let repo = FileManager.default.temporaryDirectory.appendingPathComponent("gk-diff-image-\(UUID().uuidString)")

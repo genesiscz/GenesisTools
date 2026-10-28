@@ -129,21 +129,27 @@ export async function resolveCommitLink(options: CommitLinkOptions): Promise<Com
     let candidates: CommitLinkPr[] = [];
 
     if (project && checkout) {
-        const answer = await forgeAnswer({ project, sha: ends[0], checkout, runner, options });
+        const answers = await Promise.all(
+            [...new Set(ends)].map((sha) => forgeAnswer({ project, sha, checkout, runner, options }))
+        );
+        const errors = answers.flatMap((answer) => (answer.error ? [answer.error] : []));
 
-        if (answer.error) {
-            notes.push(`${project.web}: ${answer.error}`);
-        } else {
-            pushed = answer.pushed;
+        for (const error of new Set(errors)) {
+            notes.push(`${project.web}: ${error}`);
         }
 
-        candidates = await Promise.all(answer.prs.map((pr) => judge({ pr, project, ends, checkout, git })));
+        if (errors.length === 0) {
+            pushed = answers.every((answer) => answer.pushed);
+        }
+
+        const prs = [...new Map(answers.flatMap((answer) => answer.prs).map((pr) => [pr.number, pr])).values()];
+        candidates = await Promise.all(prs.map((pr) => judge({ pr, project, ends, checkout, git })));
         candidates.sort(rankPrs);
     } else if (checkout && !project) {
         notes.push(`${checkout} has no GitHub or GitLab origin, so no PR is asked for`);
     }
 
-    const pr = candidates[0] ?? null;
+    const pr = candidates.find((candidate) => candidate.holds !== false || candidate.merge) ?? null;
     const query: HubLinkQuery = pr
         ? { pr: pr.ref, commit: spec }
         : { repo: await repoValue({ project, checkout, named: repo, ends, git, source }), commit: spec };
