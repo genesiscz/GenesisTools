@@ -248,7 +248,10 @@ describe("beforeCopy", () => {
 });
 
 describe("runDiffPost", () => {
-    const plain = { ...DEFAULT_HOOKS_CONFIG, diff: { ...DEFAULT_HOOKS_CONFIG.diff, highlight: "none" as const } };
+    const plain = {
+        ...DEFAULT_HOOKS_CONFIG,
+        diff: { ...DEFAULT_HOOKS_CONFIG.diff, highlight: "none" as const, columns: 0 },
+    };
 
     it("logs every file an editing command touched, past the render cap; a read-only command stops at it", () => {
         const capped = { ...plain, diff: { ...plain.diff, maxFiles: 1 } };
@@ -517,7 +520,10 @@ describe("runDiffPost", () => {
 });
 
 describe("paths git would C-quote", () => {
-    const plain = { ...DEFAULT_HOOKS_CONFIG, diff: { ...DEFAULT_HOOKS_CONFIG.diff, highlight: "none" as const } };
+    const plain = {
+        ...DEFAULT_HOOKS_CONFIG,
+        diff: { ...DEFAULT_HOOKS_CONFIG.diff, highlight: "none" as const, columns: 0 },
+    };
 
     it("reports an edit to a path with a space in its name", () => {
         // `git status --porcelain` renders this as `?? "a file.ts"`. Reading that string as
@@ -556,7 +562,10 @@ describe("paths git would C-quote", () => {
 });
 
 describe("a command that edits a sibling repository", () => {
-    const plain = { ...DEFAULT_HOOKS_CONFIG, diff: { ...DEFAULT_HOOKS_CONFIG.diff, highlight: "none" as const } };
+    const plain = {
+        ...DEFAULT_HOOKS_CONFIG,
+        diff: { ...DEFAULT_HOOKS_CONFIG.diff, highlight: "none" as const, columns: 0 },
+    };
     let other: string;
 
     beforeAll(() => {
@@ -879,7 +888,7 @@ describe("files the command NAMES rather than works in", () => {
     // Its files live in a temp folder outside git, which `showTempScratch` hides by default.
     const plain = {
         ...DEFAULT_HOOKS_CONFIG,
-        diff: { ...DEFAULT_HOOKS_CONFIG.diff, highlight: "none" as const, showTempScratch: true },
+        diff: { ...DEFAULT_HOOKS_CONFIG.diff, highlight: "none" as const, showTempScratch: true, columns: 0 },
     };
     let vault: string;
     let outside: string;
@@ -1332,7 +1341,10 @@ describe("two sessions sharing one repository", () => {
     // Three Claude sessions routinely write into one Obsidian vault. A file session B writes
     // during session A's command window is newer than A's stamp, so without a claim every
     // session prints every session's edits.
-    const plain = { ...DEFAULT_HOOKS_CONFIG, diff: { ...DEFAULT_HOOKS_CONFIG.diff, highlight: "none" as const } };
+    const plain = {
+        ...DEFAULT_HOOKS_CONFIG,
+        diff: { ...DEFAULT_HOOKS_CONFIG.diff, highlight: "none" as const, columns: 0 },
+    };
     // Every session NAMES the file, so each can attribute the change to itself and the claim
     // is what decides who prints it. An unnamed change with two sessions in flight is the
     // attribution case, covered in "a change another session made".
@@ -1408,7 +1420,10 @@ describe("a tree too dirty to capture whole", () => {
     // Measured 2026-09-21 on the Obsidian vault: 64 dirty entries, 43 MB, 8 MB cap, of which
     // three data files were 34 MB. The old all-or-nothing rule cost a 30 KB note its
     // before-state, and the post phase then printed the whole note as `Added` on every call.
-    const plain = { ...DEFAULT_HOOKS_CONFIG, diff: { ...DEFAULT_HOOKS_CONFIG.diff, highlight: "none" as const } };
+    const plain = {
+        ...DEFAULT_HOOKS_CONFIG,
+        diff: { ...DEFAULT_HOOKS_CONFIG.diff, highlight: "none" as const, columns: 0 },
+    };
     let big: string;
     let small: string;
 
@@ -1511,7 +1526,10 @@ describe("a path with a non-ASCII name", () => {
     // returns all 54 KB. The before-state was therefore always missing, and every accented
     // note printed IN FULL as `Added` on every command, nine times on one file before it was
     // caught.
-    const plain = { ...DEFAULT_HOOKS_CONFIG, diff: { ...DEFAULT_HOOKS_CONFIG.diff, highlight: "none" as const } };
+    const plain = {
+        ...DEFAULT_HOOKS_CONFIG,
+        diff: { ...DEFAULT_HOOKS_CONFIG.diff, highlight: "none" as const, columns: 0 },
+    };
     let accented: string;
 
     beforeAll(() => {
@@ -1645,7 +1663,10 @@ describe("the capture budget sees what an entry really weighs", () => {
 });
 
 describe("a deletion that was already there when the command began", () => {
-    const plain = { ...DEFAULT_HOOKS_CONFIG, diff: { ...DEFAULT_HOOKS_CONFIG.diff, highlight: "none" as const } };
+    const plain = {
+        ...DEFAULT_HOOKS_CONFIG,
+        diff: { ...DEFAULT_HOOKS_CONFIG.diff, highlight: "none" as const, columns: 0 },
+    };
 
     it("is not reported again after a later command", () => {
         writeFileSync(join(repo, "old-gone.ts"), "old\n");
@@ -1867,7 +1888,7 @@ describe("silentReason", () => {
 describe("hiding a kind of change", () => {
     const base = {
         ...DEFAULT_HOOKS_CONFIG,
-        diff: { ...DEFAULT_HOOKS_CONFIG.diff, highlight: "none" as const, showTempScratch: true },
+        diff: { ...DEFAULT_HOOKS_CONFIG.diff, highlight: "none" as const, showTempScratch: true, columns: 0 },
     };
     let scratch: string;
 
@@ -1950,7 +1971,10 @@ describe("a command that edits AND commits in the same call", () => {
     // Measured 2026-09-21 in a live session: five commands edited the same file, four of them
     // finished with `git commit` and rendered nothing, the one that did not commit rendered.
     // `git status` is silent about a file the command just committed, because it is clean.
-    const plain = { ...DEFAULT_HOOKS_CONFIG, diff: { ...DEFAULT_HOOKS_CONFIG.diff, highlight: "none" as const } };
+    const plain = {
+        ...DEFAULT_HOOKS_CONFIG,
+        diff: { ...DEFAULT_HOOKS_CONFIG.diff, highlight: "none" as const, columns: 0 },
+    };
     let repo2: string;
 
     const run = (args: string[]) => spawnSync("git", ["-C", repo2, ...args], { encoding: "utf8", env: process.env });
@@ -2092,7 +2116,10 @@ describe("a command that moves HEAD through history", () => {
     // "149 more files changed" for files that other people committed. The hook treats everything
     // between the old and the new HEAD as the command's edit, which is right for `git commit` and
     // wrong for a rebase, a pull, a merge, a checkout or a reset: those carry other people's work.
-    const plain = { ...DEFAULT_HOOKS_CONFIG, diff: { ...DEFAULT_HOOKS_CONFIG.diff, highlight: "none" as const } };
+    const plain = {
+        ...DEFAULT_HOOKS_CONFIG,
+        diff: { ...DEFAULT_HOOKS_CONFIG.diff, highlight: "none" as const, columns: 0 },
+    };
     let repo3: string;
 
     const run = (args: string[]) => spawnSync("git", ["-C", repo3, ...args], { encoding: "utf8", env: process.env });
@@ -2197,7 +2224,10 @@ describe("a deletion that is still sitting in `git status`", () => {
     // the `since` filter that gates every edit cannot gate it. Measured 2026-09-21 on one
     // `git rm --cached`: 14 renders over seven minutes, one per later command in that
     // repository, 13 of them spurious.
-    const plain = { ...DEFAULT_HOOKS_CONFIG, diff: { ...DEFAULT_HOOKS_CONFIG.diff, highlight: "none" as const } };
+    const plain = {
+        ...DEFAULT_HOOKS_CONFIG,
+        diff: { ...DEFAULT_HOOKS_CONFIG.diff, highlight: "none" as const, columns: 0 },
+    };
     // Named, because this file's other sessions leave captures behind that read as commands
     // still running in `repo`, and an unnamed change beside one of those is not attributable.
     const command = "bun run prune doomed.ts";
@@ -2362,7 +2392,10 @@ describe("one message, fitted to what the harness will actually show", () => {
 });
 
 describe("a harness that cannot show a diff", () => {
-    const plain = { ...DEFAULT_HOOKS_CONFIG, diff: { ...DEFAULT_HOOKS_CONFIG.diff, highlight: "none" as const } };
+    const plain = {
+        ...DEFAULT_HOOKS_CONFIG,
+        diff: { ...DEFAULT_HOOKS_CONFIG.diff, highlight: "none" as const, columns: 0 },
+    };
 
     it("renders nothing for grok, on a call that really did change a file", () => {
         const current = begin({ harness: "grok" });
@@ -2652,7 +2685,10 @@ describe("a change another session made", () => {
     // Measured 2026-09-30: a session ran one command in a shared checkout while a second
     // session rewrote a file there, and the first session was shown that diff. Its transcript
     // never named the file in any tool input.
-    const plain = { ...DEFAULT_HOOKS_CONFIG, diff: { ...DEFAULT_HOOKS_CONFIG.diff, highlight: "none" as const } };
+    const plain = {
+        ...DEFAULT_HOOKS_CONFIG,
+        diff: { ...DEFAULT_HOOKS_CONFIG.diff, highlight: "none" as const, columns: 0 },
+    };
     let shared: string;
     let turn = 0;
 
@@ -4555,7 +4591,10 @@ describe("tools agents hooks diff log", () => {
 });
 
 describe("the misfires of 2026-10-14", () => {
-    const plain = { ...DEFAULT_HOOKS_CONFIG, diff: { ...DEFAULT_HOOKS_CONFIG.diff, highlight: "none" as const } };
+    const plain = {
+        ...DEFAULT_HOOKS_CONFIG,
+        diff: { ...DEFAULT_HOOKS_CONFIG.diff, highlight: "none" as const, columns: 0 },
+    };
 
     it("names what `git stash pop` brought back in one line instead of rendering it", () => {
         writeFileSync(join(repo, "stashed.ts"), "one\n");
