@@ -80,10 +80,13 @@ struct WidgetStagedChip: View {
                 }
                 .buttonStyle(.genHover(accent: SessionPalette.blue)).font(.system(size: 11, weight: .semibold))
                 .instantTooltip("The picks and notes you staged. Choose which go now; each session gets one message.")
+                .accessibilityIdentifier("widget.staged.review")
             }
             .padding(.horizontal, 10).padding(.vertical, 7)
             .background(SessionPalette.blue.opacity(0.12), in: RoundedRectangle(cornerRadius: 9))
-            .accessibilityElement(children: .combine)
+            // `.contain`, not `.combine`: combined, VoiceOver and automation saw one element and could press neither
+            // Send nor Review and send.
+            .accessibilityElement(children: .contain)
         }
     }
 }
@@ -110,7 +113,9 @@ struct WidgetStagedList: View {
             HStack(spacing: 8) {
                 IconButton(systemName: "chevron.left", tooltip: "Back to the inbox") {
                     GenMotion.perform(expanding: false, reduceMotion: reduceMotion) { model.stagedView = nil }
-                }.accessibilityLabel("Back to the inbox")
+                }
+                .accessibilityLabel("Back to the inbox")
+                .accessibilityIdentifier("widget.staged.back")
                 Text("Staged decisions").font(.system(size: 13, weight: .semibold))
                 Spacer(minLength: 4)
                 if !model.sessionStaged.isEmpty && model.sessionStaged.count < model.stagedItems.count {
