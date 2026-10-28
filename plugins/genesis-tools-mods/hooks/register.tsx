@@ -548,6 +548,10 @@ function hostOf($: EngineInterface): Host {
         every: (ms, fn) => {
             $.clock.every(ms, fn);
         },
+        sleep: (ms) =>
+            new Promise<void>((resolve) => {
+                $.clock.after(ms, resolve);
+            }),
         storeGet: (key) => $.store.get(key),
         storeSet: (key, value) => $.store.set(key, value),
         status: (text) => $.ui.status(text),
