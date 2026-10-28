@@ -59,6 +59,7 @@ export const grokSubscriptionDefinition: ProviderDefinition = {
                 dropped: catalog.length - available.length,
             };
         },
+        facts: null,
     },
     usage: {
         snapshot: (usage) => {

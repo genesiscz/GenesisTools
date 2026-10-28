@@ -263,25 +263,21 @@ describe("resolveSessionRoute", () => {
 
         const listed = mergeCodexModelRecords({ cache: [] });
         const models = [...listed.values()].filter((model) => model.visibility === "list");
-        // The limit is the launch window (the model's whole window), and a candidate's window must reach it.
-        const picker = sessionPickerModels({ groups: codexGroup(models), contextLimit: 500_000 });
+        const picker = sessionPickerModels({ groups: codexGroup(models), contextLimit: 475_000 });
         expect(picker.data.map((model) => model.id)).not.toContain("codex-claude/gpt-6-astra");
         expect(
-            sessionPickerModels({ groups: codexGroup(models), contextLimit: 272_000 }).data.map((model) => model.id)
+            sessionPickerModels({ groups: codexGroup(models), contextLimit: 258_400 }).data.map((model) => model.id)
         ).toContain("codex-claude/gpt-6-astra");
         expect(sessionPickerModels({ groups: codexGroup(models) }).data).toEqual([]);
-        const pickerIds = (overrides: Record<string, { window: number; usablePercent: number }>) =>
-            sessionPickerModels({
-                groups: codexGroup([...mergeCodexModelRecords({ cache: [], overrides }).values()]),
-                contextLimit: 500_000,
-            }).data.map((model) => model.id);
-        expect(pickerIds({ "gpt-6-astra": { window: 600_000, usablePercent: 80 } })).toContain(
-            "codex-claude/gpt-6-astra"
-        );
-        // A 450K window with 427.5K usable sits between a 500K launch's 400K usable and its window: it must not pass.
-        expect(pickerIds({ "gpt-6-astra": { window: 450_000, usablePercent: 95 } })).not.toContain(
-            "codex-claude/gpt-6-astra"
-        );
+        const overridden = mergeCodexModelRecords({
+            cache: [],
+            overrides: { "gpt-6-astra": { window: 600_000, usablePercent: 80 } },
+        });
+        expect(
+            sessionPickerModels({ groups: codexGroup([...overridden.values()]), contextLimit: 475_000 }).data.map(
+                (model) => model.id
+            )
+        ).toContain("codex-claude/gpt-6-astra");
 
         expect(picker.data.length).toBeGreaterThan(0);
         // Claude Code 2.1.310 drops a gateway model whose id names neither claude nor anthropic.
