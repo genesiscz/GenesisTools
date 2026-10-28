@@ -15,7 +15,7 @@ import { setClaudeSessionSettings } from "@app/ai-proxy/lib/sessions/settings";
 import { getAiProxyStorage } from "@app/ai-proxy/lib/storage";
 import {
     CLAUDE_CODE_COMPACTION_MARK,
-    isClaudeCodeModelProbe,
+    ClaudeCodeTurn,
     modelProbeReply,
 } from "@app/ai-proxy/lib/translators/formats/anthropic/claude-code-turns";
 import {
@@ -2199,12 +2199,15 @@ describe("Claude Code's model_validation probe", () => {
     };
 
     it("is the one-token Hi request and nothing else", () => {
-        expect(isClaudeCodeModelProbe(probe)).toBe(true);
-        expect(isClaudeCodeModelProbe({ ...probe, max_tokens: 2 })).toBe(false);
-        expect(isClaudeCodeModelProbe({ ...probe, tools: [] })).toBe(false);
-        expect(isClaudeCodeModelProbe({ ...probe, messages: [{ role: "user", content: "Hi there" }] })).toBe(false);
+        expect(ClaudeCodeTurn.read(probe).isModelProbe).toBe(true);
+        expect(ClaudeCodeTurn.read({ ...probe, max_tokens: 2 }).isModelProbe).toBe(false);
+        expect(ClaudeCodeTurn.read({ ...probe, tools: [] }).isModelProbe).toBe(false);
+        expect(ClaudeCodeTurn.read({ ...probe, messages: [{ role: "user", content: "Hi there" }] }).isModelProbe).toBe(
+            false
+        );
         expect(
-            isClaudeCodeModelProbe({ ...probe, messages: [...probe.messages, { role: "assistant", content: "Hi" }] })
+            ClaudeCodeTurn.read({ ...probe, messages: [...probe.messages, { role: "assistant", content: "Hi" }] })
+                .isModelProbe
         ).toBe(false);
     });
 
