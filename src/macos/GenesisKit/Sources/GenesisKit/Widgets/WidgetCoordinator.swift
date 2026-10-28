@@ -333,7 +333,11 @@ public final class WidgetCoordinator: NSObject, NSWindowDelegate {
         ) { [weak self] note in
             let width = (note.userInfo?["previewWidth"] as? Double).map { CGFloat($0) }
             let done = note.userInfo?["done"] as? Bool ?? false
-            MainActor.assumeIsolated { self?.showLivePreview(width: width, done: done) }
+            let patch = WidgetLiveSettings.patch(from: note.userInfo)
+            MainActor.assumeIsolated {
+                if let patch { self?.model.showLivePreferences(patch) }
+                self?.showLivePreview(width: width, done: done)
+            }
         }
         launchPending = !showSettings && settingsWhenOff
         model.start()
@@ -1076,6 +1080,24 @@ public final class WidgetCoordinator: NSObject, NSWindowDelegate {
 public enum WidgetLiveSettings {
     public static var name: Notification.Name {
         Notification.Name((Bundle.main.bundleIdentifier ?? "com.genesiscz.genesistools") + ".widget.live-settings")
+    }
+
+    /// A preference patch, the moment it is made. The posting process skips its own copy (`patch(from:)`).
+    public static func postPreferences(_ patch: [String: WidgetJSON]) {
+        guard !patch.isEmpty, let data = try? JSONEncoder().encode(WidgetJSON.object(patch)),
+              let json = String(data: data, encoding: .utf8) else { return }
+        DistributedNotificationCenter.default().postNotificationName(
+            name, object: nil, userInfo: ["patch": json, "pid": Int(ProcessInfo.processInfo.processIdentifier)],
+            deliverImmediately: true)
+    }
+
+    /// The patch in a live-settings note from another process; nil for a width note or the process's own post.
+    static func patch(from userInfo: [AnyHashable: Any]?) -> [String: WidgetJSON]? {
+        guard let json = userInfo?["patch"] as? String,
+              (userInfo?["pid"] as? Int) != Int(ProcessInfo.processInfo.processIdentifier),
+              case .object(let patch)? = try? JSONDecoder().decode(WidgetJSON.self, from: Data(json.utf8))
+        else { return nil }
+        return patch
     }
 
     /// The hover list width while the slider moves; `done` when it is let go.
