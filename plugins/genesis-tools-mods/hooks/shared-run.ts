@@ -16,6 +16,14 @@ export interface SharedRunResult {
     stderr: string;
 }
 
+/**
+ * A `tools` run that failed because this CLI is older than the command or option it was asked for (commander's
+ * "unknown command" or "unknown option"). The marketplace plugin can run beside any installed CLI.
+ */
+export function cliLacks(done: { exitCode: number; stderr: string } | undefined): boolean {
+    return done !== undefined && done.exitCode !== 0 && /unknown (?:command|option)/i.test(done.stderr);
+}
+
 /** The clock the claims and answers are dated by; a test moves it, since the engine's `Date.now` is read-only. */
 export const sharedRunClock = { now: (): number => Date.now() };
 
@@ -181,7 +189,10 @@ async function runShared(
         }
     }
 
-    const done = await host.run(ask.argv, { cwd: ask.cwd, timeoutMs: ask.timeoutMs }).catch(() => undefined);
+    const ran = await host.run(ask.argv, { cwd: ask.cwd, timeoutMs: ask.timeoutMs }).catch(() => undefined);
+    // A cut-off stdout still parses as text (a `git status` with half its rows), so it is neither shared nor
+    // returned: the caller keeps its last complete reading.
+    const done = ran?.isStdoutTruncated ? undefined : ran;
 
     if (path && done) {
         const record = {
