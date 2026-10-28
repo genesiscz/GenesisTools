@@ -62,6 +62,13 @@ export interface ResponsesTranslationHooks {
      * 42,227 tokens cached and the model called the tool. Off: loaded tools join `tools` (`stableToolOrder`).
      */
     deferredToolsAsInput?: boolean;
+    /**
+     * The items an assistant message produced earlier, when Claude Code sent it with its thinking. Asked only for a
+     * message that carries no thinking now; a returned list replaces the message's own translation.
+     */
+    restoreAssistantItems?: (content: unknown[]) => JsonRecord[] | undefined;
+    /** Told the items an assistant message produced while it carried its thinking. */
+    rememberAssistantItems?: (content: unknown[], items: JsonRecord[]) => void;
 }
 
 /** Deferred tools by name, and the ones already given to the model as an `additional_tools` item. */
@@ -291,6 +298,15 @@ function appendAssistantMessage(
         return;
     }
 
+    const thinking = content.some((part) => isObject(part) && part.type === "thinking");
+    const restored = thinking ? undefined : hooks.restoreAssistantItems?.(content);
+
+    if (restored) {
+        input.push(...restored);
+        return;
+    }
+
+    const start = input.length;
     const textParts: string[] = [];
 
     for (const part of content) {
@@ -328,6 +344,10 @@ function appendAssistantMessage(
     }
 
     pushAssistantText(input, textParts);
+
+    if (thinking) {
+        hooks.rememberAssistantItems?.(content, input.slice(start));
+    }
 }
 
 /** Tool names in the order their ToolSearch `tool_reference` blocks first appear in the conversation. */

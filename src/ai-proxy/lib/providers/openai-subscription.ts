@@ -7,6 +7,7 @@ import { clientAbortResponse } from "@app/ai-proxy/lib/providers/client-abort";
 import { cooldownRemainingMs, markRateLimited, markSuccess, markUnhealthy } from "@app/ai-proxy/lib/providers/cooldown";
 import { relayHeaders } from "@app/ai-proxy/lib/providers/http-relay";
 import { resolveOpenAiSubFailoverToken, resolveOpenAiSubToken } from "@app/ai-proxy/lib/providers/openai-sub-token";
+import { rememberedMessageItems, rememberMessageItems } from "@app/ai-proxy/lib/providers/reasoning-memory";
 import type {
     OpenAiModel,
     ProviderInspectionOptions,
@@ -773,7 +774,13 @@ export class OpenAiSubscriptionProvider implements ProxyProvider {
             model: concreteModel,
             compHash: catalog?.compHash ?? "0",
         };
-        const replay = { kept: [] as string[], dropped: {} as Partial<Record<EnvelopeRejection | "dead", number>> };
+        const replay = {
+            kept: [] as string[],
+            restored: 0,
+            dropped: {} as Partial<Record<EnvelopeRejection | "dead", number>>,
+        };
+        // One conversation of one client: the reasoning memory never mixes clients or sessions.
+        const conversation = `${whamItemScope(req)}\u0000${context?.promptCacheKey?.key ?? claudeSessionIdFromMetadata(parsed.metadata) ?? ""}`;
         const compaction = isClaudeCodeCompactionTurn(parsed);
         const nativeCompaction = compaction && !writtenCompaction && compactionSettings().mode === "native";
         const summaryWords = compaction && !nativeCompaction ? compactionSettings().words : undefined;
@@ -835,6 +842,18 @@ export class OpenAiSubscriptionProvider implements ProxyProvider {
                 replay.kept.push(contentHash(opened.item.encrypted_content));
                 return { type: "reasoning", ...opened.item };
             },
+            // Claude Code leaves earlier thinking out of a turn's first request; the same items keep the cache.
+            restoreAssistantItems: (content) => {
+                const items = rememberedMessageItems(conversation, content);
+
+                if (!items || items.some((item) => this.deadReasoning.has(String(item.id)))) {
+                    return undefined;
+                }
+
+                replay.restored += items.filter((item) => item.type === "reasoning").length;
+                return items;
+            },
+            rememberAssistantItems: (content, items) => rememberMessageItems(conversation, content, items),
         });
 
         if (Array.isArray(responsesBody.tools)) {
@@ -884,6 +903,7 @@ export class OpenAiSubscriptionProvider implements ProxyProvider {
                 model: concreteModel,
                 replayed: replay.kept.length,
                 replayedHashes: replay.kept,
+                restored: replay.restored > 0 ? replay.restored : undefined,
                 dropped: Object.keys(replay.dropped).length > 0 ? replay.dropped : undefined,
                 compaction: responsesBody.tool_choice === "none" ? true : undefined,
             },
