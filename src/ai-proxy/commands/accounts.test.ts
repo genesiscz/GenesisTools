@@ -2,18 +2,13 @@ import { afterEach, beforeEach, describe, expect, it } from "bun:test";
 import { mkdirSync, mkdtempSync, rmSync, writeFileSync } from "node:fs";
 import { tmpdir } from "node:os";
 import { join } from "node:path";
-import {
-    codexAccountAuthStatus,
-    runAccountsAllowEnv,
-    runAccountsBind,
-    runAccountsFailover,
-    runAccountsSetKey,
-    runAccountsSetRouting,
-} from "@app/ai-proxy/commands/accounts";
+import { runAccountsAllowEnv, runAccountsFailover, runAccountsSetKey } from "@app/ai-proxy/commands/accounts";
 import { codexProxyAccount } from "@app/ai-proxy/commands/accounts-login";
 import { runSessionUse } from "@app/ai-proxy/commands/session-use";
 import { loadConfig, saveConfig } from "@app/ai-proxy/lib/config";
 import { resetAiProxyConfigStore } from "@app/ai-proxy/lib/config-store";
+import { codexAccountAuthStatus, runAccountsBind } from "@app/ai-proxy/lib/providers/codex/account-commands";
+import { runAccountsSetRouting } from "@app/ai-proxy/lib/providers/openrouter/account-commands";
 import { agentLogins } from "@app/ai-proxy/lib/sessions/accounts";
 import { closeSessionRecord, createSessionRecord, readSessionRecord } from "@app/ai-proxy/lib/sessions/records";
 import { resetAiProxyStorage } from "@app/ai-proxy/lib/storage";
