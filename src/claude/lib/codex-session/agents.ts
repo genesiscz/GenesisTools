@@ -157,6 +157,10 @@ export function leadPrompt(
         `Its subagents ${codex.join(", ")} are Codex models. When a skill or brief asks for a Codex, Sol, Terra, Luna or Astra worker, start that subagent with the Agent tool (subagent_type, and effort to raise it, for example effort "xhigh"), not \`${toolCommand("codex spawn")}\` or the handoff-to skill.`,
         `A native subagent needs no approvals from you and reports back once, when it finishes. A \`${toolCommand("codex spawn")}\` worker started with --write ask makes you approve its commands one by one.`,
         "Use the codex-worker subagent only when the work must run in the Codex CLI's own sandbox.",
+        // Session 8cf9eff2 (2026-10-28): the Codex lead wrote 192 script files, 156 of them run once, each costing a
+        // request; and 461 of 720 background commands ended within 10 s, each followed by a Read of its output.
+        "Run one-off code inline in the Bash command (a heredoc for several lines). Write a script file only when you will run it again or it is longer than about 40 lines.",
+        "Run a command that ends within 2 minutes in the foreground, with a timeout up to 120000 ms; use run_in_background only for longer work.",
     ];
 
     if (skillsNudge(settings)) {
