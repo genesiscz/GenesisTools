@@ -6,6 +6,9 @@ import { atomicWriteFileSync } from "./atomic-file";
 import { LockTimeoutError, withFileLock } from "./file-lock";
 import { toolDataDir } from "./root";
 
+/** How long one lock attempt waits before the waiter looks for the holder's answer again. */
+const LOCK_TRY_MS = 100;
+
 /**
  * One run for identical calls made close together, across processes. On 2026-10-27 about 16 Claude sessions each
  * started the same `gh pr view` while another session's identical run was still going (644 times, 1027 process-s):
@@ -46,36 +49,55 @@ export async function singleFlight<T>({
         return shared.value;
     }
 
+    const lockPath = join(dir, `${name}.lock`);
+    const holdAndRun = async (): Promise<T> => {
+        // The holder this caller waited for may have answered while the lock was held.
+        const answered = await readShared<T>(resultPath, key, ttlMs);
+
+        if (answered) {
+            return answered.value;
+        }
+
+        const value = await run();
+
+        if (!shouldShare || shouldShare(value)) {
+            try {
+                const answer: SharedAnswer<T> = { key, at: Date.now(), value };
+                atomicWriteFileSync(resultPath, SafeJSON.stringify(answer, { strict: true }));
+            } catch (error) {
+                logger.warn({ error, key }, "single-flight answer not written; later callers run again");
+            }
+        }
+
+        return value;
+    };
+
     for (let attempt = 0; attempt <= retries; attempt++) {
-        try {
-            return await withFileLock(
-                join(dir, `${name}.lock`),
-                async () => {
-                    // The holder this caller waited for may have answered while the lock was held.
-                    const answered = await readShared<T>(resultPath, key, ttlMs);
+        const deadline = Date.now() + waitMs;
 
-                    if (answered) {
-                        return answered.value;
-                    }
+        // Short lock attempts with a look at the answer between them: every waiter reads the answer the moment it is
+        // written, instead of queueing for the lock one after another only to read it there (50 waiters took 5 s).
+        while (true) {
+            try {
+                return await withFileLock(
+                    lockPath,
+                    holdAndRun,
+                    Math.max(0, Math.min(LOCK_TRY_MS, deadline - Date.now()))
+                );
+            } catch (error) {
+                if (!(error instanceof LockTimeoutError)) {
+                    throw error;
+                }
+            }
 
-                    const value = await run();
+            const answered = await readShared<T>(resultPath, key, ttlMs);
 
-                    if (!shouldShare || shouldShare(value)) {
-                        try {
-                            const answer: SharedAnswer<T> = { key, at: Date.now(), value };
-                            atomicWriteFileSync(resultPath, SafeJSON.stringify(answer, { strict: true }));
-                        } catch (error) {
-                            logger.warn({ error, key }, "single-flight answer not written; later callers run again");
-                        }
-                    }
+            if (answered) {
+                return answered.value;
+            }
 
-                    return value;
-                },
-                waitMs
-            );
-        } catch (error) {
-            if (!(error instanceof LockTimeoutError)) {
-                throw error;
+            if (Date.now() >= deadline) {
+                break;
             }
         }
     }
