@@ -69,7 +69,7 @@ import {
     compactionRecoveryMessage,
     expandCompactionMarkers,
 } from "@app/ai-proxy/lib/sessions/codex-compaction";
-import { type CompactionEvent, recordCompactionEvent } from "@app/ai-proxy/lib/sessions/compaction-events";
+import { CompactionTrace } from "@app/ai-proxy/lib/sessions/compaction-events";
 import { loginAccountName, noteBlockedCompaction, readSessionRecord } from "@app/ai-proxy/lib/sessions/records";
 import { backgroundCompactionSettings, compactionSettings } from "@app/ai-proxy/lib/sessions/settings";
 import {
@@ -440,33 +440,33 @@ export class OpenAiSubscriptionProvider implements ProxyProvider {
         // One conversation of one client: the reasoning memory never mixes clients or sessions.
         const conversation = `${whamItemScope(req)}\u0000${context?.promptCacheKey?.key ?? turn.sessionId ?? ""}`;
         const compaction = turn.isCompaction;
-        const nativeCompaction = compaction && !writtenCompaction && compactionSettings().mode === "native";
-        const summaryWords = compaction && !nativeCompaction ? compactionSettings().words : undefined;
+        // The compaction settings, read once: a config reload during the request cannot change its path midway.
+        const policy = compactionSettings();
+        const background = backgroundCompactionSettings();
+        const nativeCompaction = compaction && !writtenCompaction && policy.mode === "native";
+        const summaryWords = compaction && !nativeCompaction ? policy.words : undefined;
         const claudeSessionId = turn.sessionId;
         const clientAgent = req.headers.get("user-agent") ?? undefined;
-        const eventBase: Omit<CompactionEvent, "ts" | "kind"> & { thread?: string } = {
+        const trace = new CompactionTrace({
             ...(context?.sessionId ? { session: context.sessionId } : {}),
             ...(claudeSessionId ? { claudeSession: claudeSessionId } : {}),
             model: concreteModel,
             ...(clientAgent ? { client: clientAgent } : {}),
-        };
+        });
 
         // Background compaction runs only for a ccx session, whose record knows where Claude Code will compact.
         const point = compactionPoint(context?.sessionId ? readSessionRecord(context.sessionId) : undefined);
-        const background = backgroundCompactionSettings();
         const threadKey = point && background.enabled ? turn.threadKey : undefined;
 
         if (threadKey) {
-            eventBase.thread = threadKey.slice(threadKey.lastIndexOf(":") + 1, threadKey.lastIndexOf(":") + 9);
+            trace.setThread(threadKey.slice(threadKey.lastIndexOf(":") + 1, threadKey.lastIndexOf(":") + 9));
         }
 
         if (compaction && !writtenCompaction) {
-            recordCompactionEvent({ ...eventBase, kind: "turn", mode: nativeCompaction ? "native" : "summary" });
+            trace.record("turn", { mode: nativeCompaction ? "native" : "summary" });
 
             if (turn.isCompactionRetry) {
-                recordCompactionEvent({
-                    ...eventBase,
-                    kind: "retry",
+                trace.record("retry", {
                     reason: "Claude Code asked for the summary again: the last reply had no <summary> tag",
                 });
             }
@@ -539,7 +539,7 @@ export class OpenAiSubscriptionProvider implements ProxyProvider {
         const clientEffort = turn.effort ?? "";
         // A compaction turn writes a summary of what is already known: the session's xhigh only made it slower (6 to 8
         // minutes per compaction on 2026-10-27), so it runs at the compaction effort when the model has that effort.
-        const compactionEffort = compaction && !nativeCompaction ? compactionSettings().effort : undefined;
+        const compactionEffort = compaction && !nativeCompaction ? policy.effort : undefined;
         const effort =
             compactionEffort && (!catalog || catalog.efforts.includes(compactionEffort))
                 ? compactionEffort
@@ -562,7 +562,7 @@ export class OpenAiSubscriptionProvider implements ProxyProvider {
                 : undefined;
 
         if (cacheReset) {
-            recordCompactionEvent({ ...eventBase, kind: "cache-reset", reason: cacheResetReason(cacheReset) });
+            trace.record("cache-reset", { reason: cacheResetReason(cacheReset) });
 
             if (Array.isArray(responsesBody.input)) {
                 responsesBody.input = withUserReminder(responsesBody.input, cacheResetNotice(cacheReset));
@@ -665,7 +665,7 @@ export class OpenAiSubscriptionProvider implements ProxyProvider {
                     await noteBlockedCompaction(session.id, error.missingId);
                 }
 
-                recordCompactionEvent({ ...eventBase, kind: "blocked", id: error.marker, reason: error.message });
+                trace.record("blocked", { id: error.marker, reason: error.message });
 
                 return toAnthropicErrorResponse(
                     jsonError(
@@ -688,8 +688,9 @@ export class OpenAiSubscriptionProvider implements ProxyProvider {
                     accountHash: stamp.accountHash,
                     model,
                     stream: parsed.stream === true,
-                    eventBase,
+                    trace,
                     startedAt,
+                    settings: background,
                 });
 
                 if (answered.response) {
@@ -709,7 +710,7 @@ export class OpenAiSubscriptionProvider implements ProxyProvider {
                 rawInput,
                 stamp,
                 client,
-                eventBase,
+                trace,
                 startedAt,
                 notice,
                 threadKey,
@@ -742,12 +743,10 @@ export class OpenAiSubscriptionProvider implements ProxyProvider {
                                   stamp,
                                   contextTokens,
                                   sessionId: context?.sessionId,
-                                  eventBase,
+                                  trace,
                               }),
                               (unused, reason) =>
-                                  recordCompactionEvent({
-                                      ...eventBase,
-                                      kind: "background-wasted",
+                                  trace.record("background-wasted", {
                                       reason,
                                       inputTokens: unused.inputTokens,
                                       cachedTokens: unused.cachedTokens,

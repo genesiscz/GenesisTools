@@ -22,8 +22,8 @@ import {
     newCompactionId,
     saveCompaction,
 } from "@app/ai-proxy/lib/sessions/codex-compaction";
-import { type CompactionEvent, recordCompactionEvent } from "@app/ai-proxy/lib/sessions/compaction-events";
-import { backgroundCompactionSettings } from "@app/ai-proxy/lib/sessions/settings";
+import { type CompactionTrace, recordCompactionEvent } from "@app/ai-proxy/lib/sessions/compaction-events";
+import type { BackgroundCompactionSettings } from "@app/ai-proxy/lib/sessions/settings";
 import { toAnthropicErrorResponse } from "@app/ai-proxy/lib/translators/formats/anthropic/error-envelope";
 import {
     accountHash8,
@@ -347,7 +347,7 @@ export class CodexCompactionFlow {
         rawInput: unknown[];
         stamp: ReasoningEnvelopeStamp;
         client: FailureClient;
-        eventBase: Omit<CompactionEvent, "ts" | "kind">;
+        trace: CompactionTrace;
         startedAt: number;
         /** Why a background result could not answer this turn, for the agent to tell the user. */
         notice?: (durationMs: number) => string;
@@ -364,9 +364,7 @@ export class CodexCompactionFlow {
         const { item, usage, summary } = response.ok ? compactionFromSse(await readCompactionText(response)) : {};
 
         if (!item) {
-            recordCompactionEvent({
-                ...input.eventBase,
-                kind: "turn",
+            input.trace.record("turn", {
                 mode: "summary",
                 reason: `Codex native compaction gave no compaction item (HTTP ${response.status}); writing the text summary`,
             });
@@ -403,7 +401,7 @@ export class CodexCompactionFlow {
             }
         }
 
-        recordCompactionEvent({ ...input.eventBase, kind: "done", mode: "native", id, durationMs, ...tokens });
+        input.trace.record("done", { mode: "native", id, durationMs, ...tokens });
 
         return compactionReply({
             model,
@@ -424,8 +422,9 @@ export class CodexCompactionFlow {
         accountHash: string;
         model: string;
         stream: boolean;
-        eventBase: Omit<CompactionEvent, "ts" | "kind">;
+        trace: CompactionTrace;
         startedAt: number;
+        settings: BackgroundCompactionSettings;
     }): Promise<{ response?: Response; notice?: (durationMs: number) => string }> {
         await backgroundInFlight(input.key);
         const result = backgroundResult(input.key);
@@ -441,13 +440,11 @@ export class CodexCompactionFlow {
             accountHash: input.accountHash,
             point: input.point,
             tailTokens: estimateTokens,
-            settings: backgroundCompactionSettings(),
+            settings: input.settings,
         });
 
         if (!match.use) {
-            recordCompactionEvent({
-                ...input.eventBase,
-                kind: "background-wasted",
+            input.trace.record("background-wasted", {
                 reason: match.reason,
                 inputTokens: result.inputTokens,
                 cachedTokens: result.cachedTokens,
@@ -459,7 +456,7 @@ export class CodexCompactionFlow {
         const id = this.deps.store.newId();
         this.deps.store.save({
             id,
-            model: typeof input.eventBase.model === "string" ? input.eventBase.model : input.model,
+            model: input.trace.model ?? input.model,
             createdAt: new Date().toISOString(),
             items: { [result.accountHash]: result.item },
             history: input.rawInput,
@@ -471,15 +468,8 @@ export class CodexCompactionFlow {
             cachedTokens: result.cachedTokens,
             outputTokens: result.outputTokens,
         };
-        recordCompactionEvent({
-            ...input.eventBase,
-            kind: "background-used",
-            id,
-            durationMs,
-            tailItems: match.tail.length,
-            ...tokens,
-        });
-        recordCompactionEvent({ ...input.eventBase, kind: "done", mode: "background", id, durationMs, ...tokens });
+        input.trace.record("background-used", { id, durationMs, tailItems: match.tail.length, ...tokens });
+        input.trace.record("done", { mode: "background", id, durationMs, ...tokens });
 
         return {
             response: compactionReply({
@@ -504,14 +494,14 @@ export class CodexCompactionFlow {
         stamp: ReasoningEnvelopeStamp;
         contextTokens: number;
         sessionId?: string;
-        eventBase: Omit<CompactionEvent, "ts" | "kind">;
+        trace: CompactionTrace;
     }): Promise<BackgroundResult | undefined> {
         const startedAt = Date.now();
         const abort = new AbortController();
         const timer = setTimeout(() => abort.abort(), BACKGROUND_COMPACTION_TIMEOUT_MS);
         const client: FailureClient = { anthropic: true, ...(input.sessionId ? { sessionId: input.sessionId } : {}) };
         const sent = Array.isArray(input.body.input) ? input.body.input : [];
-        recordCompactionEvent({ ...input.eventBase, kind: "background-start", inputTokens: input.contextTokens });
+        input.trace.record("background-start", { inputTokens: input.contextTokens });
 
         try {
             const request = new Request(input.req.url, {
@@ -531,9 +521,7 @@ export class CodexCompactionFlow {
             this.recordBackgroundUsage({ ...input, status: response.status, startedAt, tokens });
 
             if (!item) {
-                recordCompactionEvent({
-                    ...input.eventBase,
-                    kind: "background-failed",
+                input.trace.record("background-failed", {
                     reason: `no compaction item (HTTP ${response.status})`,
                     durationMs: Date.now() - startedAt,
                     ...tokens,
@@ -553,18 +541,11 @@ export class CodexCompactionFlow {
                 readyAt: Date.now(),
                 ...tokens,
             };
-            recordCompactionEvent({
-                ...input.eventBase,
-                kind: "background-ready",
-                durationMs: result.readyAt - startedAt,
-                ...tokens,
-            });
+            input.trace.record("background-ready", { durationMs: result.readyAt - startedAt, ...tokens });
 
             return result;
         } catch (error) {
-            recordCompactionEvent({
-                ...input.eventBase,
-                kind: "background-failed",
+            input.trace.record("background-failed", {
                 reason: error instanceof Error ? error.message : String(error),
                 durationMs: Date.now() - startedAt,
             });
@@ -579,13 +560,13 @@ export class CodexCompactionFlow {
         model: string;
         concreteModel: string;
         sessionId?: string;
-        eventBase: Omit<CompactionEvent, "ts" | "kind">;
+        trace: CompactionTrace;
         status: number;
         startedAt: number;
         tokens: { inputTokens?: number; cachedTokens?: number; outputTokens?: number };
     }): void {
         const { inputTokens = 0, cachedTokens = 0, outputTokens = 0 } = input.tokens;
-        const session = input.sessionId ?? input.eventBase.claudeSession;
+        const session = input.sessionId ?? input.trace.claudeSession;
 
         try {
             this.deps.usage({

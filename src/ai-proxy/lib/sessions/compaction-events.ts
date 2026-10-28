@@ -93,3 +93,32 @@ export function recordCompactionEvent(event: Omit<CompactionEvent, "ts">): Compa
 
     return full;
 }
+
+/**
+ * One request's compaction events. The fields every event of the request shares (session, Claude Code session, model,
+ * client, thread) are set once; each event then names only its kind and its own fields.
+ */
+export class CompactionTrace {
+    private readonly base: Omit<CompactionEvent, "ts" | "kind">;
+
+    constructor(base: Omit<CompactionEvent, "ts" | "kind">) {
+        this.base = { ...base };
+    }
+
+    get claudeSession(): string | undefined {
+        return this.base.claudeSession;
+    }
+
+    get model(): string | undefined {
+        return this.base.model;
+    }
+
+    /** The background-compaction thread, once the request knows it (a turn and its compaction must share it). */
+    setThread(thread: string): void {
+        this.base.thread = thread;
+    }
+
+    record(kind: CompactionEventKind, fields: Omit<CompactionEvent, "ts" | "kind"> = {}): CompactionEvent {
+        return recordCompactionEvent({ ...this.base, kind, ...fields });
+    }
+}
