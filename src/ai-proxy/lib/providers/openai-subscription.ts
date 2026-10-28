@@ -779,12 +779,22 @@ export class OpenAiSubscriptionProvider implements ProxyProvider {
         const summaryWords = compaction && !nativeCompaction ? compactionSettings().words : undefined;
         const claudeSessionId = claudeSessionIdFromMetadata(parsed.metadata);
         const clientAgent = req.headers.get("user-agent") ?? undefined;
-        const eventBase: Omit<CompactionEvent, "ts" | "kind"> = {
+        const eventBase: Omit<CompactionEvent, "ts" | "kind"> & { thread?: string } = {
             ...(context?.sessionId ? { session: context.sessionId } : {}),
             ...(claudeSessionId ? { claudeSession: claudeSessionId } : {}),
             model: concreteModel,
             ...(clientAgent ? { client: clientAgent } : {}),
         };
+
+        // Background compaction runs only for a ccx session, whose record knows where Claude Code will compact.
+        const point = compactionPoint(context?.sessionId ? readSessionRecord(context.sessionId) : undefined);
+        const background = backgroundCompactionSettings();
+        const threadKey =
+            claudeSessionId && point && background.enabled ? backgroundKey(claudeSessionId, parsed.system) : undefined;
+
+        if (threadKey) {
+            eventBase.thread = threadKey.slice(threadKey.lastIndexOf(":") + 1, threadKey.lastIndexOf(":") + 9);
+        }
 
         if (compaction && !writtenCompaction) {
             recordCompactionEvent({ ...eventBase, kind: "turn", mode: nativeCompaction ? "native" : "summary" });
@@ -797,12 +807,6 @@ export class OpenAiSubscriptionProvider implements ProxyProvider {
                 });
             }
         }
-
-        // Background compaction runs only for a ccx session, whose record knows where Claude Code will compact.
-        const point = compactionPoint(context?.sessionId ? readSessionRecord(context.sessionId) : undefined);
-        const background = backgroundCompactionSettings();
-        const threadKey =
-            claudeSessionId && point && background.enabled ? backgroundKey(claudeSessionId, parsed.system) : undefined;
 
         if (nativeCompaction) {
             // The server compacts what came before; Claude Code's summary prompt would only end the cached prefix.

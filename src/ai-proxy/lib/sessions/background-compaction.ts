@@ -41,9 +41,19 @@ interface ThreadState {
 /** Per Claude Code thread (session id plus system prompt): the main loop and each subagent compact on their own. */
 const threads = new Map<string, ThreadState>();
 
-export function backgroundKey(claudeSessionId: string, instructions: unknown): string {
-    const system = typeof instructions === "string" ? instructions : (SafeJSON.stringify(instructions) ?? "");
-    return `${claudeSessionId}:${createHash("sha256").update(system).digest("hex").slice(0, 16)}`;
+/**
+ * The thread of a request: its Claude Code session and the text of its system prompt. Only the text counts: the
+ * compaction turn marks the system blocks for the cache differently than a normal turn does (`ttl: "1h"` on one and
+ * not the other, 2026-10-28), and hashing the marks gave the two turns of one thread different keys.
+ */
+export function backgroundKey(claudeSessionId: string, system: unknown): string {
+    const text =
+        typeof system === "string"
+            ? system
+            : Array.isArray(system)
+              ? system.map((block) => (isObject(block) && typeof block.text === "string" ? block.text : "")).join("\n")
+              : "";
+    return `${claudeSessionId}:${createHash("sha256").update(text).digest("hex").slice(0, 16)}`;
 }
 
 export function prefixHash(items: unknown[]): string {

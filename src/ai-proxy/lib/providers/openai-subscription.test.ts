@@ -2503,3 +2503,15 @@ describe("background compaction matching", () => {
         expect(at(950)).toBe(true);
     });
 });
+
+describe("background compaction thread key", () => {
+    it("ignores the cache marks on the system blocks", async () => {
+        const { backgroundKey } = await import("@app/ai-proxy/lib/sessions/background-compaction");
+        const block = { type: "text", text: "You are Claude Code." };
+
+        expect(backgroundKey("s", [{ ...block, cache_control: { type: "ephemeral", ttl: "1h" } }])).toBe(
+            backgroundKey("s", [{ ...block, cache_control: { type: "ephemeral" } }])
+        );
+        expect(backgroundKey("s", [block])).not.toBe(backgroundKey("s", [{ ...block, text: "A subagent." }]));
+    });
+});
