@@ -24,7 +24,10 @@ describe("billing snapshot shape", () => {
             }
         );
 
-        expect(snapshot?.grok?.billing?.used).toEqual({ val: 42 });
+        expect(snapshot?.details).toEqual({
+            grok: expect.objectContaining({ billing: expect.objectContaining({ used: { val: 42 } }) }),
+        });
+        expect("grok" in (snapshot ?? {})).toBe(false);
         expect(snapshot?.fetchedAt).toEqual(expect.any(String));
         expect("billing" in (snapshot ?? {})).toBe(false);
     });
@@ -46,7 +49,8 @@ describe("billing snapshot shape", () => {
             }
         );
 
-        expect(snapshot?.copilot).toEqual({ plan: "individual", quotaRemaining: 10 });
+        expect(snapshot?.details).toEqual({ copilot: { plan: "individual", quotaRemaining: 10 } });
+        expect("copilot" in (snapshot ?? {})).toBe(false);
         expect(snapshot?.fetchedAt).toEqual(expect.any(String));
     });
 

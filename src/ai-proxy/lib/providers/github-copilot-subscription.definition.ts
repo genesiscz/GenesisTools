@@ -66,7 +66,12 @@ export const githubCopilotSubscriptionDefinition: ProviderDefinition = {
                 return null;
             }
 
-            return { fetchedAt: new Date().toISOString(), tier: usage.tier, summary: usage.summary, copilot };
+            return {
+                fetchedAt: new Date().toISOString(),
+                tier: usage.tier,
+                summary: usage.summary,
+                details: { copilot },
+            };
         },
     },
     upstreamEndpoints: GITHUB_COPILOT_UPSTREAM_ENDPOINTS,

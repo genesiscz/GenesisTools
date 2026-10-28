@@ -1,6 +1,5 @@
 import type { EffortSource, GrokUsageDetails, UsageDetails } from "@app/ai-proxy/lib/types";
 import type { PrefixDiff } from "@app/ai-proxy/lib/usage/prefix-diff";
-import type { CopilotUsageSummary } from "@genesiscz/utils/ai/github-copilot/types";
 
 export interface TokenUsage {
     prompt_tokens?: number;
@@ -96,8 +95,8 @@ export interface AccountBillingSnapshot {
     fetchedAt: string;
     tier?: string;
     summary: string;
-    grok?: GrokUsageDetails;
-    copilot?: CopilotUsageSummary;
+    /** The provider's own part of the read, keyed by its source as `UsageSummary.details` carries it. */
+    details?: UsageDetails;
 }
 
 export interface BillingUsageStore {
