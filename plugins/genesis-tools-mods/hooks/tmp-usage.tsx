@@ -13,6 +13,7 @@ import { genesisProbe } from "./genesis";
 import { liveAgo } from "./live";
 import { bareDescription } from "./model-label";
 import { type Feature, type Host, isRecord, logMod, paceAfter, settingsOf } from "./shared";
+import { cliLacks } from "./shared-run";
 import { actionButton, type Kit, line, type Pressable, plural, pressed, sidebarFrame } from "./sidebar";
 
 let usage: TmpUsage = null;
@@ -33,11 +34,21 @@ async function folderKb(host: Host, path: string): Promise<number | null> {
     return (await host.exists(path)) ? kbOf(host, ["du", "-sk", path], 0) : 0;
 }
 
+/** Set once the installed CLI turned out to have no `tools du size`: the session walks with `du` from then on. */
+let duSizeMissing = false;
+
 /** `tools du size <path> --max-cache-age <s>`: the size another caller measured within the age, or a new walk. */
 async function sharedKb(host: Host, path: string, maxAgeS: number): Promise<number | null> {
     const done = await host
         .run(["tools", "du", "size", path, "--max-cache-age", String(maxAgeS)], { timeoutMs: 120_000 })
         .catch(() => undefined);
+
+    if (cliLacks(done)) {
+        duSizeMissing = true;
+        await logMod(host, "tmp", { event: "du-size-unsupported", stderr: done?.stderr.slice(-200) });
+
+        return folderKb(host, path);
+    }
 
     try {
         const sizes: unknown = done?.exitCode === 0 ? JSON.parse(done.stdout) : undefined;
@@ -89,7 +100,8 @@ export async function worktreeSize(host: Host, path: string, status: string): Pr
 
     // `tools du size` shares one answer with every caller on the Mac; a changed status asks for a fresh walk.
     const maxAge = held && held.status !== status ? 0 : WORKTREE_EVERY_MS / 1000;
-    const kb = (await genesisProbe(host)).tools ? await sharedKb(host, path, maxAge) : await folderKb(host, path);
+    const shared = (await genesisProbe(host)).tools && !duSizeMissing;
+    const kb = shared ? await sharedKb(host, path, maxAge) : await folderKb(host, path);
 
     if (kb !== null) {
         worktreeKb.set(path, { kb, status, nextAt: nextWorktreeAt(startedAt) });

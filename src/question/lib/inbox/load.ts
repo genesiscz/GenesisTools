@@ -1,4 +1,5 @@
 import { statSync } from "node:fs";
+import { dirname } from "node:path";
 import type { AgentSessionRow, AgentSessionRowsOptions } from "@app/ai/lib/sessions/agent-session-rows";
 import { POLLED_LISTING_REUSE_MS } from "@app/ai/lib/sessions/listing-reuse";
 import { readCachedSessionCwd } from "@genesiscz/utils/agent-sessions/cached-title";
@@ -102,12 +103,32 @@ export interface ScanOptions {
     transcript?: { path: string; provider: ResolvedTranscript["provider"] };
     trace?: InboxTrace;
 }
+/**
+ * Probes every file a transcript read consumes. A worker's transcript is its newest turn file plus the earlier ones,
+ * so a cursor must also see an earlier file change and a new turn file appear (a new entry changes its folder's
+ * identity); without that, a worker's next reply would leave a `--since` answer "unchanged" for good.
+ */
+export function traceTranscript(trace: InboxTrace, resolved: ResolvedTranscript): void {
+    trace.probe(resolved.filePath);
+
+    for (const extra of resolved.extraFiles ?? []) {
+        trace.probe(extra);
+    }
+
+    if (resolved.source === "worker") {
+        trace.probe(dirname(resolved.filePath));
+    }
+}
+
 /** What the session's last reply asks, read fresh from its transcript. */
 async function scanSession(session: string, { transcript, trace }: ScanOptions = {}): Promise<TranscriptScan | null> {
     const resolved: ResolvedTranscript = transcript
         ? { provider: transcript.provider, source: "native", sessionId: session, filePath: transcript.path }
         : await resolveTranscript(session);
-    trace?.probe(resolved.filePath);
+    if (trace) {
+        traceTranscript(trace, resolved);
+    }
+
     return scanTurns((await transcriptEnvelope(resolved, { limit: TAIL_TURNS })).turns);
 }
 

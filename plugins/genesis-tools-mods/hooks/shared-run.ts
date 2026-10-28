@@ -7,6 +7,15 @@ import { agentsDir, type Host, isRecord } from "./shared";
 export interface SharedRunResult {
     exitCode: number;
     stdout: string;
+    stderr: string;
+}
+
+/**
+ * A `tools` run that failed because this CLI is older than the command or option it was asked for (commander's
+ * "unknown command" or "unknown option"). The marketplace plugin can run beside any installed CLI.
+ */
+export function cliLacks(done: { exitCode: number; stderr: string } | undefined): boolean {
+    return done !== undefined && done.exitCode !== 0 && /unknown (?:command|option)/i.test(done.stderr);
 }
 
 /** FNV-1a, 32 bits: a file name for the key. The file holds the key itself, so a collision reads as a miss. */
@@ -23,7 +32,8 @@ function hashOf(text: string): string {
 
 /**
  * `argv` run in `cwd`, or the answer another session (or this one) got for the same command and folder within
- * `ttlMs`. Undefined when the command could not start or timed out; such an answer is not shared.
+ * `ttlMs`. Undefined when the command could not start, timed out or overflowed its output; such an answer is not
+ * shared.
  */
 export async function sharedRun(
     host: Host,
@@ -47,7 +57,11 @@ export async function sharedRun(
                 typeof held.exitCode === "number" &&
                 typeof held.stdout === "string"
             ) {
-                return { exitCode: held.exitCode, stdout: held.stdout };
+                return {
+                    exitCode: held.exitCode,
+                    stdout: held.stdout,
+                    stderr: typeof held.stderr === "string" ? held.stderr : "",
+                };
             }
         } catch {
             // A file another session is writing: run the command.
@@ -56,14 +70,17 @@ export async function sharedRun(
 
     const done = await host.run(ask.argv, { cwd: ask.cwd, timeoutMs: ask.timeoutMs }).catch(() => undefined);
 
-    if (!done) {
+    // A cut-off stdout still parses as text (a `git status` with half its rows), so it is neither shared nor
+    // returned: the caller keeps its last complete reading.
+    if (!done || done.isStdoutTruncated) {
         return undefined;
     }
 
+    const answer = { exitCode: done.exitCode, stdout: done.stdout, stderr: done.stderr };
+
     if (path) {
-        const record = { key, at: Date.now(), exitCode: done.exitCode, stdout: done.stdout };
-        await host.write(path, JSON.stringify(record)).catch(() => undefined);
+        await host.write(path, JSON.stringify({ key, at: Date.now(), ...answer })).catch(() => undefined);
     }
 
-    return { exitCode: done.exitCode, stdout: done.stdout };
+    return answer;
 }

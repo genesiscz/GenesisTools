@@ -34,7 +34,7 @@ import {
 import { type GenesisProbe, genesisProbe, hubLink } from "./genesis";
 import { liveAgo } from "./live";
 import { type Feature, type Host, isRecord, logMod, settingsOf } from "./shared";
-import { sharedRun } from "./shared-run";
+import { cliLacks, sharedRun } from "./shared-run";
 import {
     actionButton,
     buttonsWidth,
@@ -75,6 +75,8 @@ const EVERY_MS = 3 * 60_000;
 /** The earlier branches of a checkout whose PRs a row looks up, the last first. */
 const EARLIER_PRS = 3;
 const ghCache = new Map<string, { at: number; pr: BandPr | null }>();
+/** Set once the installed CLI turned out to have no `tools github pr --include`: the session asks gh from then on. */
+let prIncludeMissing = false;
 let refreshing: Promise<void> | undefined;
 let requestedRefresh = 0;
 let completedRefresh = 0;
@@ -220,7 +222,7 @@ export function checkCounts(rollup: unknown): { passed: number; failed: number; 
  * A PR from `gh pr view` in `root`: `which` is a number or a branch, or "" for the checked-out branch, whose answer is
  * kept under `branch` so a switch does not show the last branch's PR for the next 2 minutes.
  */
-async function prOf(
+export async function prOf(
     host: Host,
     ask: { root: string; which: string; tracked: boolean; branch?: string }
 ): Promise<BandPr | null> {
@@ -233,13 +235,23 @@ async function prOf(
     }
 
     // With the GenesisTools CLI, `tools github pr --include` answers from a cache every tool on the Mac shares;
-    // without it, gh. Either way the plugin's own shared file serves every session for the TTL without a process.
-    const viaTools = (await genesisProbe(host)).tools && (which || ask.branch);
+    // without it, or with a CLI older than `--include`, gh. Either way the plugin's own shared file serves every
+    // session for the TTL without a process.
+    let viaTools = (await genesisProbe(host)).tools && !prIncludeMissing && Boolean(which || ask.branch);
     const fields = "number,title,url,state,isDraft,statusCheckRollup";
+    const ghView = ["gh", "pr", "view", ...(which ? [which] : []), "--json", fields];
     const argv = viaTools
         ? ["tools", "github", "pr", which || String(ask.branch), "--include", fields, "--max-cache-age", GH_TTL_S]
-        : ["gh", "pr", "view", ...(which ? [which] : []), "--json", fields];
-    const viewed = await sharedRun(host, { argv, cwd: root, ttlMs: GH_TTL_MS, timeoutMs: 15_000 });
+        : ghView;
+    let viewed = await sharedRun(host, { argv, cwd: root, ttlMs: GH_TTL_MS, timeoutMs: 15_000 });
+
+    if (viaTools && cliLacks(viewed)) {
+        prIncludeMissing = true;
+        viaTools = false;
+        await logMod(host, "git", { event: "pr-include-unsupported", stderr: viewed?.stderr.slice(-200) });
+        viewed = await sharedRun(host, { argv: ghView, cwd: root, ttlMs: GH_TTL_MS, timeoutMs: 15_000 });
+    }
+
     const text = viewed?.exitCode === 0 ? viewed.stdout : undefined;
     let pr: BandPr | null = null;
 

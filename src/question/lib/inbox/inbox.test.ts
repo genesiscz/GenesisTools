@@ -31,6 +31,7 @@ import {
     loadSessionInbox,
     lookupListing,
     lookupSessionCwd,
+    traceTranscript,
     waitingBlock,
 } from "./load";
 import { cursorStillHolds, InboxTrace, recordAnswer } from "./session-cursor";
@@ -451,6 +452,38 @@ describe("loadSessionInbox", () => {
         const released = await loadSessionInbox("s-lease", { ...deps, trace: nextTrace });
         expect(released.staged).toContain("yes");
         expect(nextTrace.unprovable).toBeNull();
+    });
+    test("a worker's cursor sees a new turn file and a change to an earlier one", async () => {
+        const dir = mkdtempSync(join(tmpdir(), "gt-inbox-worker-"));
+        const turn = (n: number) => join(dir, `w1.turn${n}.jsonl`);
+        writeFileSync(turn(1), "{}\n");
+        writeFileSync(turn(2), "{}\n");
+        const answer = await loadSessionInbox("s-worker", {
+            rows: () => [],
+            forms: () => [],
+            entries: () => [],
+            decisions: async () => [],
+        });
+        const recorded = (session: string) => {
+            const trace = new InboxTrace();
+            traceTranscript(trace, {
+                provider: "claude",
+                source: "worker",
+                sessionId: session,
+                filePath: turn(2),
+                extraFiles: [turn(1)],
+            });
+            return recordAnswer({ session, answer, trace }).cursor;
+        };
+
+        const beforeNewTurn = recorded("s-worker");
+        expect(cursorStillHolds("s-worker", beforeNewTurn)).toBe(true);
+        writeFileSync(turn(3), "{}\n");
+        expect(cursorStillHolds("s-worker", beforeNewTurn)).toBe(false);
+
+        const beforeEdit = recorded("s-worker-2");
+        writeFileSync(turn(1), "{}\n{}\n");
+        expect(cursorStillHolds("s-worker-2", beforeEdit)).toBe(false);
     });
     test("one session's decisions, todos by number, its entries and its pending forms, from one read of the log", async () => {
         const row = (overrides: Partial<DecisionRecord>): DecisionRecord => ({
