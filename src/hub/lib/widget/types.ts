@@ -96,6 +96,13 @@ export const widgetPreferencesSchema = z.object({
     decisionCommandSwaps: z.boolean().default(true),
     /** Return in a decision's own answer field: stages the text as its note ("stage"), or sends it as the answer. */
     ownAnswerReturn: z.enum(["stage", "send"]).default("stage"),
+    /**
+     * Return on a staged decision's empty own answer field: sends the staged decision ("send"), asks first in a note
+     * with Send ("confirm"), or only says the field is empty ("nothing").
+     */
+    ownAnswerEmptyReturn: z.enum(["send", "confirm", "nothing"]).default("send"),
+    /** Width in points of the rail's hover list (the agents preview). */
+    previewWidth: z.number().min(260).max(560).default(324),
     /** When the widget starts with staged decisions, a popup lists them with Send now, until it is closed. */
     stagedReminder: z.boolean().default(true),
     /** Leaving the inbox with staged decisions: ask what to do ("ask"), keep them staged, or send them. */

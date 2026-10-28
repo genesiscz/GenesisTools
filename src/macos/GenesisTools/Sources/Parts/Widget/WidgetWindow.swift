@@ -140,6 +140,8 @@ private final class AgentWidgetDelegate: NSObject, NSApplicationDelegate {
         case "inbox": if let target = surface(1) { model.toggleInboxOverview(on: target) }
         case "session": if parts.count > 1, let target = surface(2) { model.toggleSession(parts[1], on: target) }
         case "collapse": model.collapse()
+        // `leave`: a close the user asked for (Esc, a click outside), which asks first while decisions are staged.
+        case "leave": model.requestCollapse()
         case "select": if parts.count > 1 { model.select(parts[1]) }
         // `state`: one app-perf.log line with the selection, whether it loads, its cards, the cache and the warm keys.
         case "state": PerfLog.mark("widget.state " + model.selectionDescription)

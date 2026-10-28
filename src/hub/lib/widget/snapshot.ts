@@ -237,6 +237,8 @@ export interface WidgetInboxItem {
     title?: string;
     /** A decision's number. */
     number?: number;
+    /** An open decision's context, the prompt under its title, at most 600 characters: the alert popup shows it. */
+    summary?: string;
     /** How many inbox items this entry stands for: an answers group lists only its newest item. */
     count?: number;
     /** A decision: its options, so the inbox of every session can stage a pick without opening the session. */
@@ -774,6 +776,24 @@ function decisionTitle(row: DecisionRecord): { title?: string } {
     return title ? { title } : {};
 }
 
+/** The prompt under a titled decision, cut at a word near 600 characters; none when the title is the prompt. */
+export function decisionSummary(row: DecisionRecord): { summary?: string } {
+    const prompt = row.prompt?.trim();
+    if (!prompt || !row.title) {
+        return {};
+    }
+
+    if (prompt.length <= SUMMARY_LIMIT) {
+        return { summary: prompt };
+    }
+
+    const cut = prompt.slice(0, SUMMARY_LIMIT);
+    const space = cut.lastIndexOf(" ");
+    return { summary: `${(space > SUMMARY_LIMIT / 2 ? cut.slice(0, space) : cut).trimEnd()}…` };
+}
+
+const SUMMARY_LIMIT = 600;
+
 export async function widgetSnapshot({
     root,
     selectedKey,
@@ -1189,6 +1209,7 @@ export async function widgetSnapshot({
             needsAnswer: true,
             number: row.number,
             ...decisionTitle(row),
+            ...decisionSummary(row),
             options: row.options,
             ...(row.recommended ? { recommended: row.recommended } : {}),
             revision: row.revision ?? 1,

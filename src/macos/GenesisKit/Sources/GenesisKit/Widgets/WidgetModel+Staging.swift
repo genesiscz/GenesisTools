@@ -28,16 +28,43 @@ extension WidgetModel {
         let text = draft.text.trimmingCharacters(in: .whitespacesAndNewlines)
         // Return again on the empty field, after Return staged the note: the staged decision goes to its session now
         // (Martin, 2026-10-28: "if i enter to stage, then enter it again, it should probably send that one").
-        if text.isEmpty, sendStagedFromOwnAnswer(card) { return }
+        if text.isEmpty, emptyReturnOnStaged(card) { return }
         if DecisionAnswering.returnStages(snapshot?.state.preferences, command: command) {
             guard !text.isEmpty else {
-                postNote("Write your answer first.")
+                // The warning tone: in the default grey this note was nearly invisible (Martin, 2026-10-28).
+                postNote("Write your answer first.", tone: .warning)
                 return
             }
             saveDraft(card)
         } else {
             submitOwnAnswer()
         }
+    }
+
+    /// Return on the empty own answer of a staged decision, by Settings → "Return on an empty answer"
+    /// (`ownAnswerEmptyReturn`): send it ("send", the default), ask first in a note with Send ("confirm"), or only say
+    /// so ("nothing"). False when nothing is staged on it, so the caller says the field is empty.
+    func emptyReturnOnStaged(_ card: WidgetCard) -> Bool {
+        guard isStaged(card) else { return false }
+        let decision = WidgetWords.decision(card.number)
+        switch snapshot?.state.preferences.ownAnswerEmptyReturn ?? "send" {
+        case "confirm":
+            postNote("Send " + decision + " with its staged answer now?", action: WidgetNoticeAction(title: "Send") {
+                [weak self] in _ = self?.sendStagedFromOwnAnswer(card)
+            }, tone: .warning)
+        case "nothing":
+            postNote("The answer field is empty; " + decision + " stays staged. Send now sends it.", tone: .warning)
+        default:
+            sendStagedFromOwnAnswer(card)
+        }
+        return true
+    }
+
+    /// A pick or a note is staged on the card, here or in the snapshot, and no discard of it waits for its Undo.
+    func isStaged(_ card: WidgetCard) -> Bool {
+        !heldDecisionIDs.contains(card.sourceId)
+            && (stagedOption(card.sourceId, stored: card.draftOption) != nil
+                || (pendingStageNotes[card.sourceId] ?? card.draft)?.isEmpty == false)
     }
 
     /// An empty own answer of a staged decision sends that decision, as its Send now does. False when nothing is

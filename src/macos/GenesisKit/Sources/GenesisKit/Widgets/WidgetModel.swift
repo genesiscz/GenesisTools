@@ -445,6 +445,25 @@ public final class WidgetModel: ObservableObject {
     /// The agents preview's measured height. The old estimate (100 + 54 per row) was 11 pt plus 2 pt per row short,
     /// so the centred content lost its header and the top of its first row (2026-10-10, Martin's screenshot).
     public private(set) var previewFitHeight: CGFloat?
+    /// The width a settings slider shows while it is dragged, before the preference is saved; nil otherwise.
+    @Published public var livePreviewWidth: CGFloat? { didSet { if livePreviewWidth != oldValue { presentationChanged?() } } }
+    /// The hover list's width: the slider's while it moves, else Settings → "Hover list width" (`previewWidth`).
+    public var agentsPreviewWidth: CGFloat {
+        WidgetModel.clampedPreviewWidth(livePreviewWidth ?? (snapshot?.state.preferences.previewWidth).map { CGFloat($0) })
+    }
+    nonisolated public static let previewWidthRange: ClosedRange<CGFloat> = 260...560
+    nonisolated public static let defaultPreviewWidth: CGFloat = 324
+    nonisolated static func clampedPreviewWidth(_ width: CGFloat?) -> CGFloat {
+        min(previewWidthRange.upperBound, max(previewWidthRange.lowerBound, (width ?? defaultPreviewWidth).rounded()))
+    }
+
+    /// Ends a hover list the width slider opened, unless the pointer is on the panel now.
+    func endLivePreview() {
+        guard pointerInside.isEmpty, hoveredSurface != nil else { return }
+        hoveredSurface = nil
+        presentationChanged?()
+    }
+
     /// The hover list's last measured height. The list is built again on every hover; it starts at this height so its
     /// first layout is already the real one (`FittedScroll.initialHeight`). Not published: it must not re-render.
     var previewListHeight: CGFloat = 0
@@ -2542,8 +2561,9 @@ public final class WidgetModel: ObservableObject {
     public func submitOwnAnswer() {
         guard let card = ownAnswerCard else { return }
         guard !draft.text.trimmingCharacters(in: .whitespacesAndNewlines).isEmpty || !draft.assetIds.isEmpty else {
+            // The send button is a direct ask: it sends a staged decision whatever Return on an empty answer says.
             if sendStagedFromOwnAnswer(card) { return }
-            postNote("Write your answer or attach media first.")
+            postNote("Write your answer or attach media first.", tone: .warning)
             return
         }
         let option = card.kind == "decision" && card.needsAnswer && draft.assetIds.isEmpty

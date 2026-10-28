@@ -181,6 +181,8 @@ private struct WidgetGeneralSettings: View {
                     "Hover previews", detail: "See a preview without changing keyboard focus.",
                     isOn: boolean("hoverPreviews", prefs?.hoverPreviews ?? true))
                 Divider()
+                WidgetPreviewWidthSlider(saved: prefs?.previewWidth) { patch(["previewWidth": .number($0)]) }
+                Divider()
                 NativeSettingsRow("Session bubble tooltips", detail: "Automatic shows them only while hover previews are off.") {
                     Picker("Session bubble tooltips", selection: string("bubbleTooltip", prefs?.bubbleTooltip ?? "auto")) {
                         Text("Automatic").tag("auto")
@@ -281,6 +283,14 @@ private struct WidgetGeneralSettings: View {
                     Picker("Return in an own answer", selection: string("ownAnswerReturn", prefs?.ownAnswerReturn ?? "stage")) {
                         Text("Stage").tag("stage")
                         Text("Send").tag("send")
+                    }.labelsHidden().pickerStyle(.segmented).frame(width: 250, alignment: .trailing)
+                }
+                Divider()
+                NativeSettingsRow("Return on an empty answer", detail: "Return again in a staged decision's empty answer field, after Return staged its note: send the staged decision now, ask first in a note with Send, or do nothing and say so.") {
+                    Picker("Return on an empty answer", selection: string("ownAnswerEmptyReturn", prefs?.ownAnswerEmptyReturn ?? "send")) {
+                        Text("Send staged").tag("send")
+                        Text("Ask first").tag("confirm")
+                        Text("Nothing").tag("nothing")
                     }.labelsHidden().pickerStyle(.segmented).frame(width: 250, alignment: .trailing)
                 }
                 Divider()
@@ -1179,5 +1189,36 @@ enum WidgetPreviewChoices {
         case "project": return "Project"
         default: return title(sort: sort)
         }
+    }
+}
+
+/// Settings → "Hover list width". While the knob moves, each value goes straight to the widget, which opens its hover
+/// list at that width (`WidgetLiveSettings`); the preference is saved once, when the knob is let go. A preference write
+/// per drag tick would start a `tools` process each time and redraw the widget only after it.
+private struct WidgetPreviewWidthSlider: View {
+    let saved: Double?
+    let save: (Double) -> Void
+    /// The value while a drag runs; nil shows the saved one.
+    @State private var dragging: Double?
+
+    var body: some View {
+        NativeSettingsSlider(
+            "Hover list width", detail: "The list of sessions that opens when the pointer rests on a side bubble. The widget shows it while you drag.",
+            identifier: "widget.previewWidth",
+            value: Binding(
+                get: { dragging ?? saved ?? Double(WidgetModel.defaultPreviewWidth) },
+                set: { value in
+                    dragging = value
+                    WidgetLiveSettings.postPreviewWidth(value, done: false)
+                }),
+            in: Double(WidgetModel.previewWidthRange.lowerBound)...Double(WidgetModel.previewWidthRange.upperBound),
+            step: 4, ticks: [260, 324, 440, 560],
+            format: { "\(Int($0.rounded())) pt" },
+            onCommit: { value in
+                save(value.rounded())
+                WidgetLiveSettings.postPreviewWidth(value, done: true)
+            })
+            // The dragged value stays until the saved one arrives, so the knob does not jump back for a moment.
+            .onChange(of: saved) { _, _ in dragging = nil }
     }
 }

@@ -317,6 +317,10 @@ public struct WidgetPreferences: Codable, Equatable, Sendable {
     public var decisionCommandSwaps: Bool?
     /// Return in a decision's own answer field: "stage" (default, the text becomes its note) or "send".
     public var ownAnswerReturn: String?
+    /// Return on a staged decision's empty own answer: "send" (default), "confirm" (a note with Send) or "nothing".
+    public var ownAnswerEmptyReturn: String?
+    /// Width in points of the rail's hover list (the agents preview). Default 324, 260 to 560.
+    public var previewWidth: Double?
     /// At start, a popup lists the staged decisions with Send now until it is closed. Default true.
     public var stagedReminder: Bool?
     /// Leaving the inbox with staged decisions: "ask" (default), "keep" or "send".
@@ -505,6 +509,8 @@ public struct WidgetInboxItem: Codable, Equatable, Sendable {
     /// A short title (a decision's title or prompt, an answer's question) and a decision's number, for alerts.
     public var title: String? = nil
     public var number: Int? = nil
+    /// An open decision's context under its title (at most 600 characters), for the alert popup.
+    public var summary: String? = nil
     /// How many items this entry stands for: an answers group lists only its newest item.
     public var count: Int? = nil
     /// A decision's options and recommended letter, so the inbox of every session can stage a pick in place.
