@@ -86,6 +86,7 @@ import { bareDescription } from "../hooks/model-label";
 import { forgetRepoMentions, namesIn, sessionRepos, titleMatches, urlProject } from "../hooks/pr-repos";
 import { modsSettings } from "../hooks/settings";
 import { afterTools, forgetSettings, type Host, isRecord } from "../hooks/shared";
+import { sharedRun, sharedRunFiles } from "../hooks/shared-run";
 import { toolLabel } from "../hooks/spinner";
 import {
     checkStall,
@@ -3522,4 +3523,88 @@ test("the agents band lists the session's running codex and grok workers from to
         },
     ]);
     expect(workersOf("not json", "sess-1")).toEqual([]);
+});
+
+/** A host over an in-memory folder shared by "sessions", whose `run` counts and answers after `ms`. */
+function sharedRunHost(files: Map<string, string>, ms: number) {
+    const runs = { count: 0 };
+    const host: Host = {
+        ...checkoutHost(),
+        async run() {
+            runs.count++;
+            await new Promise((resolve) => setTimeout(resolve, ms));
+            return { exitCode: 0, stdout: "mine", stderr: "", isStdoutTruncated: false, isStderrTruncated: false };
+        },
+        async read(path) {
+            const text = files.get(path);
+
+            if (text === undefined) {
+                throw new Error(`ENOENT ${path}`);
+            }
+
+            return text;
+        },
+        async write(path, text) {
+            files.set(path, text);
+        },
+        sleep: (wait) => new Promise((resolve) => setTimeout(resolve, wait)),
+    };
+
+    return { host, runs };
+}
+
+const SHARED_ASK = {
+    argv: ["gh", "pr", "view", "--json", "number"],
+    cwd: "/work/main",
+    ttlMs: 60_000,
+    timeoutMs: 5_000,
+};
+
+test("shared run: identical calls in one session start one process", async () => {
+    const { host, runs } = sharedRunHost(new Map(), 30);
+
+    const answers = await Promise.all([sharedRun(host, SHARED_ASK), sharedRun(host, SHARED_ASK)]);
+
+    expect(answers.map((answer) => answer?.stdout)).toEqual(["mine", "mine"]);
+    expect(runs.count).toBe(1);
+});
+
+test("shared run: a session waits for another session's claimed run and takes its answer", async () => {
+    const files = new Map<string, string>();
+    const { host, runs } = sharedRunHost(files, 0);
+    const { key, path } = sharedRunFiles("/home/test/.genesis-tools/agents", SHARED_ASK);
+    const started = Date.now();
+    files.set(
+        String(path).replace(/\.json$/, ".lock.json"),
+        JSON.stringify({ token: "other", started, until: started + 5_000 })
+    );
+    setTimeout(() => {
+        files.set(String(path), JSON.stringify({ key, at: Date.now(), exitCode: 0, stdout: "theirs", stderr: "" }));
+    }, 300);
+
+    const answer = await sharedRun(host, SHARED_ASK);
+
+    expect(answer?.stdout).toBe("theirs");
+    expect(runs.count).toBe(0);
+});
+
+test("shared run: a claim released without an answer, or a lapsed one, lets the session run", async () => {
+    const files = new Map<string, string>();
+    const { host, runs } = sharedRunHost(files, 0);
+    const { path } = sharedRunFiles("/home/test/.genesis-tools/agents", SHARED_ASK);
+    const lockPath = String(path).replace(/\.json$/, ".lock.json");
+    const started = Date.now();
+    files.set(lockPath, JSON.stringify({ token: "other", started, until: started + 5_000 }));
+    setTimeout(() => {
+        files.set(lockPath, JSON.stringify({ token: "other", started, until: 0 }));
+    }, 300);
+
+    expect((await sharedRun(host, SHARED_ASK))?.stdout).toBe("mine");
+    expect(runs.count).toBe(1);
+
+    files.clear();
+    files.set(lockPath, JSON.stringify({ token: "other", started: started - 9_000, until: started - 1 }));
+    expect((await sharedRun(host, SHARED_ASK))?.stdout).toBe("mine");
+    expect(runs.count).toBe(2);
+    expect(JSON.parse(String(files.get(lockPath))).until).toBe(0);
 });

@@ -42,6 +42,8 @@ export interface Host {
     messages: () => Promise<readonly { role: string; text: string }[]>;
     agents: () => Promise<AgentInfo[]>;
     every: (ms: number, fn: () => void) => void;
+    /** Resolves after `ms` on the engine clock. Optional so a test host may leave it out; without it nothing waits. */
+    sleep?: (ms: number) => Promise<void>;
     storeGet: (key: string) => Promise<unknown>;
     storeSet: (key: string, value: unknown) => Promise<void>;
     status: (text: string | undefined) => void;
