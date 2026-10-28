@@ -9,10 +9,14 @@ import {
     sessionKeyRejection,
     validateClients,
 } from "@app/ai-proxy/lib/clients";
-import { codexModelOverrides, listedCodexModels, setCodexModelOverrides } from "@app/ai-proxy/lib/codex-catalog";
 import { loadConfigFresh } from "@app/ai-proxy/lib/config";
 import { stripBasePath } from "@app/ai-proxy/lib/path-prefix";
-import { acquireProvider, buildProviderMap, providerUnavailableResponse } from "@app/ai-proxy/lib/providers/registry";
+import {
+    acquireProvider,
+    buildProviderMap,
+    configureModelFacts,
+    providerUnavailableResponse,
+} from "@app/ai-proxy/lib/providers/registry";
 import type { ProxyProvider } from "@app/ai-proxy/lib/providers/types";
 import { handleRealtimeClientSecrets, handleRealtimeUpgrade, realtimeWebsocket } from "@app/ai-proxy/lib/realtime";
 import { applyReasoningEffortToBody, findInvalidImageDataPayload } from "@app/ai-proxy/lib/rewrite-upstream-body";
@@ -20,7 +24,7 @@ import { messageToAnthropicSse } from "@app/ai-proxy/lib/server-tools/web-search
 import { sweepBackgroundCompactions } from "@app/ai-proxy/lib/sessions/background-compaction";
 import { sweepCompactions } from "@app/ai-proxy/lib/sessions/codex-compaction";
 import { recordCompactionEvent } from "@app/ai-proxy/lib/sessions/compaction-events";
-import { sessionPickerModels } from "@app/ai-proxy/lib/sessions/picker-models";
+import { sessionPickerGroups, sessionPickerModels } from "@app/ai-proxy/lib/sessions/picker-models";
 import {
     DEFAULT_SESSION_RETENTION_DAYS,
     noteSessionRequest,
@@ -407,7 +411,7 @@ export function startAiProxyServer(runtime: AiProxyRuntime) {
             }
 
             const config = await loadConfigFresh();
-            setCodexModelOverrides(codexModelOverrides(config));
+            configureModelFacts(config);
 
             // An unknown or closed session key is refused before any route runs, and never forwarded anywhere.
             const sessionRejection = sessionKeyRejection(req);
@@ -449,7 +453,7 @@ export function startAiProxyServer(runtime: AiProxyRuntime) {
                     return new Response(
                         SafeJSON.stringify(
                             sessionPickerModels({
-                                models: listedCodexModels(),
+                                groups: sessionPickerGroups(client.session),
                                 contextLimit: client.session.pickerContextTokens,
                             })
                         ),

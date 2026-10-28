@@ -2,8 +2,16 @@ import { describe, expect, test } from "bun:test";
 import { describeAccountCredential } from "@app/ai-proxy/lib/account-config";
 import { providerTitleFor, suggestedModelFor } from "@app/ai-proxy/lib/detect-report";
 import { defaultApiKeyEnvName } from "@app/ai-proxy/lib/providers/api-key-state";
-import { createProvider, isProviderImplemented, providerTypes } from "@app/ai-proxy/lib/providers/registry";
+import {
+    configureModelFacts,
+    createProvider,
+    isProviderImplemented,
+    PROVIDER_DEFINITIONS,
+    providerTypes,
+} from "@app/ai-proxy/lib/providers/registry";
 import { isMetered } from "@app/ai-proxy/lib/sessions/accounts";
+import { sessionPickerGroups, sessionPickerModels } from "@app/ai-proxy/lib/sessions/picker-models";
+import type { AiProxySessionRecord } from "@app/ai-proxy/lib/sessions/records";
 import { loginAccount } from "@app/ai-proxy/lib/sessions/routing";
 import { agentOf } from "@app/ai-proxy/lib/sessions/view";
 import type { AiProxyAccountConfig, AiProxyProviderType } from "@app/ai-proxy/lib/types";
@@ -243,6 +251,62 @@ describe("each provider type answers with its own facts", () => {
                 grok: { accountName: "alice" },
             },
         ]);
+    });
+
+    test("only the Codex catalog keeps per-model facts, under its own picker label", () => {
+        expect(perProvider((provider) => PROVIDER_DEFINITIONS[provider].models.facts?.label ?? null)).toEqual({
+            "grok-subscription": null,
+            "github-copilot-subscription": null,
+            "xai-api-key": null,
+            openai: null,
+            openrouter: null,
+            "anthropic-subscription": null,
+            "openai-subscription": "Codex",
+        });
+    });
+
+    test("a session's /model picker lists the facts of each agent it has an account for, with the config's overrides", () => {
+        const session = (fields: Partial<AiProxySessionRecord>): AiProxySessionRecord => ({
+            version: 1,
+            id: "session-1",
+            keyHash: "0".repeat(64),
+            createdAt: "2026-10-28T10:00:00.000Z",
+            moves: [],
+            meteredConfirmed: [],
+            ...fields,
+        });
+        configureModelFacts({
+            modelOverrides: { codex: { "gpt-6-astra": { window: 600_000, usablePercent: 80 } } },
+        });
+
+        try {
+            const listed = (record: AiProxySessionRecord) =>
+                sessionPickerModels({ groups: sessionPickerGroups(record), contextLimit: 475_000 }).data.map(
+                    (model) => [model.id, model.display_name, model.description]
+                );
+
+            expect(listed(session({ codexAccount: "alice", claudeAccount: "alice" }))).toEqual([
+                [
+                    "codex-claude/gpt-6-astra",
+                    "GPT-6-Astra (Codex)",
+                    "Codex subscription · effort low/medium/high/xhigh/max/ultra · 600k window",
+                ],
+                [
+                    "codex-claude/gpt-6.1-sol",
+                    "GPT-6.1-Sol (Codex)",
+                    "Codex subscription · effort low/medium/high/xhigh/max/ultra · 500k window",
+                ],
+                [
+                    "codex-claude/gpt-6.1-terra",
+                    "GPT-6.1 Terra (Codex)",
+                    "Codex subscription · effort low/medium/high/xhigh/max/ultra · 500k window",
+                ],
+            ]);
+            expect(listed(session({ codexProxyAccount: "work-codex" })).length).toBe(3);
+            expect(listed(session({ claudeAccount: "alice", grokAccount: "alice" }))).toEqual([]);
+        } finally {
+            configureModelFacts({});
+        }
     });
 
     test("an unknown provider is not implemented and cannot be built", async () => {

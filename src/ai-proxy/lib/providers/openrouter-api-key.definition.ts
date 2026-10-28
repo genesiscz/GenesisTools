@@ -18,6 +18,7 @@ export const openRouterApiKeyDefinition: ProviderDefinition = {
         servesCatalogIds: true,
         emptyHint: null,
         catalogEntry: null,
+        facts: null,
     },
     usage: { snapshot: null },
     upstreamEndpoints: null,
