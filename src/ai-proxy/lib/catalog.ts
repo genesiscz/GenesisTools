@@ -1,6 +1,6 @@
 import { createHash } from "node:crypto";
 import { statSync } from "node:fs";
-import type { CatalogOptions } from "@app/ai-proxy/lib/model-meta";
+import type { CatalogOptions } from "@app/ai-proxy/lib/providers/definition";
 import { providerDefinition } from "@app/ai-proxy/lib/providers/registry";
 import type { AiProxyAccountConfig, ProxyModelMeta } from "@app/ai-proxy/lib/types";
 import { concurrentMap } from "@genesiscz/utils/async";

@@ -1,5 +1,5 @@
-import { listAnthropicSubProxyModels } from "@app/ai-proxy/lib/model-meta";
 import { AnthropicSubscriptionProvider } from "@app/ai-proxy/lib/providers/anthropic-subscription";
+import { listAnthropicSubProxyModels } from "@app/ai-proxy/lib/providers/anthropic-subscription.models";
 import type { ProviderDefinition } from "@app/ai-proxy/lib/providers/definition";
 import { resolveAnthropicSubModel } from "@genesiscz/utils/ai/anthropic/models";
 

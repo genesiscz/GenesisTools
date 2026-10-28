@@ -1,5 +1,4 @@
 import type { ModelsCatalogFile } from "@app/ai-proxy/lib/catalog-file";
-import type { CatalogOptions } from "@app/ai-proxy/lib/model-meta";
 import type { ProviderInspectionOptions, ProxyProvider } from "@app/ai-proxy/lib/providers/types";
 import type { ProxyAgent } from "@app/ai-proxy/lib/sessions/view";
 import type { AiProxyAccountConfig, AiProxyConfig, ProxyModelMeta, UsageSummary } from "@app/ai-proxy/lib/types";
@@ -50,6 +49,22 @@ export interface UpstreamEndpoint {
 export type CatalogEntryResult =
     | { readonly entry: ModelsCatalogFile["accounts"][number]; readonly dropped: number }
     | { readonly skipped: string };
+
+/**
+ * A catalog build that must not change what it looks at.
+ *
+ * The two subscription catalogs live-read a token to ask the vendor for its
+ * model list, and resolving an EXPIRED one rotates a single-use grant and
+ * rewrites the config. That is fine while serving a request, and wrong for
+ * `tools ai-proxy models` / `accounts list`, which only print a table — see
+ * CLAUDE.md, "A diagnostic must never mutate". Under `probe` those calls read
+ * the stored token and fall back to the static catalog rather than refreshing.
+ */
+export interface CatalogOptions {
+    probe?: boolean;
+    /** Explicit discovery bypasses the short result cache, while sharing a matching in-flight read. */
+    fresh?: boolean;
+}
 
 /** One model's facts that a Claude Code session reads to list the model in its `/model` picker. */
 export interface ModelFacts {

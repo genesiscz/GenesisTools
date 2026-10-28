@@ -1,7 +1,7 @@
 import { codexModelOverrides, listedCodexModels, setCodexModelOverrides } from "@app/ai-proxy/lib/codex-catalog";
-import { listOpenAiSubProxyModels } from "@app/ai-proxy/lib/model-meta";
 import type { ProviderDefinition } from "@app/ai-proxy/lib/providers/definition";
 import { OpenAiSubscriptionProvider } from "@app/ai-proxy/lib/providers/openai-subscription";
+import { listOpenAiSubProxyModels } from "@app/ai-proxy/lib/providers/openai-subscription.models";
 import { CODEX_AUTH_PATH } from "@genesiscz/utils/ai/openai/codex-auth";
 
 export const openAiSubscriptionDefinition: ProviderDefinition = {

@@ -1,6 +1,6 @@
-import { listXaiProxyModels } from "@app/ai-proxy/lib/model-meta";
 import type { ProviderDefinition } from "@app/ai-proxy/lib/providers/definition";
 import { XaiApiKeyProvider } from "@app/ai-proxy/lib/providers/xai-api-key";
+import { listXaiProxyModels } from "@app/ai-proxy/lib/providers/xai-api-key.models";
 import { env } from "@genesiscz/utils/env";
 
 /** Alias-aware: an account relying on the legacy `X_AI_API_KEY` is told the variable that was actually read. */

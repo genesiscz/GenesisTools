@@ -36,7 +36,7 @@ function accountFor(name: string, authPath: string): AiProxyAccountConfig {
 
 describe("listGrokProxyModels merge policy", () => {
     it("lets a live entry win, drops failed probes and uncurated ids, and stays account-scoped", async () => {
-        const { listGrokProxyModels } = await import("@app/ai-proxy/lib/model-meta");
+        const { listGrokProxyModels } = await import("@app/ai-proxy/lib/providers/grok-subscription.models");
 
         const authA = grokHome("account-a", {
             // Live wins over the static hint for the same id.
@@ -89,7 +89,7 @@ describe("listGrokProxyModels merge policy", () => {
     });
 
     it("reads only the Grok entry of the models catalog, never another provider's entry for the same account name", async () => {
-        const { listGrokProxyModels } = await import("@app/ai-proxy/lib/model-meta");
+        const { listGrokProxyModels } = await import("@app/ai-proxy/lib/providers/grok-subscription.models");
         const account = accountFor("account-c", grokHome("account-c", {}));
         const windowOf = () =>
             listGrokProxyModels(account, "https://example.invalid/v1").find((model) => model.upstreamId === "grok-4.6")

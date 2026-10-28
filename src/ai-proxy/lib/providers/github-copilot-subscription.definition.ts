@@ -1,7 +1,7 @@
 import { resolveGithubCopilotDataDir } from "@app/ai-proxy/lib/account-config";
-import { listCopilotProxyModels } from "@app/ai-proxy/lib/model-meta";
 import type { ProviderDefinition } from "@app/ai-proxy/lib/providers/definition";
 import { GithubCopilotSubscriptionProvider } from "@app/ai-proxy/lib/providers/github-copilot-subscription";
+import { listCopilotProxyModels } from "@app/ai-proxy/lib/providers/github-copilot-subscription.models";
 import {
     fetchCopilotModels,
     fetchCopilotUserInfo,

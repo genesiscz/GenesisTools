@@ -1,6 +1,6 @@
 import { accountConfigFingerprint, resolveGrokAuthPath } from "@app/ai-proxy/lib/account-config";
-import { listGrokProxyModels } from "@app/ai-proxy/lib/model-meta";
 import { mapGrokError } from "@app/ai-proxy/lib/providers/grok-errors";
+import { listGrokProxyModels } from "@app/ai-proxy/lib/providers/grok-subscription.models";
 import { relayHeaders } from "@app/ai-proxy/lib/providers/http-relay";
 import type {
     OpenAiModel,

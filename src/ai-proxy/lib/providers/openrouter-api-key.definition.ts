@@ -1,6 +1,6 @@
-import { listOpenRouterProxyModels } from "@app/ai-proxy/lib/model-meta";
 import type { ProviderDefinition } from "@app/ai-proxy/lib/providers/definition";
 import { OpenRouterApiKeyProvider } from "@app/ai-proxy/lib/providers/openrouter-api-key";
+import { listOpenRouterProxyModels } from "@app/ai-proxy/lib/providers/openrouter-api-key.models";
 
 export const openRouterApiKeyDefinition: ProviderDefinition = {
     title: "OpenRouter",

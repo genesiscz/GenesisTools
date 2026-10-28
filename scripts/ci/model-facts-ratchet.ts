@@ -22,7 +22,6 @@ export const MODEL_ID_LITERAL_RATCHET: ReadonlySet<string> = new Set<string>([
     "scripts/learn-from-fable/probe-stream-vs-plain.ts",
     "scripts/learn-from-fable/probe-tighten-guards.ts",
     "scripts/learn-from-fable/tighten-spec.ts",
-    "src/ai-proxy/lib/model-meta.ts",
     "src/ai-proxy/scripts/verify-openrouter-live.ts",
     "src/ai-spend/lib/workers/cost.ts",
     "src/ai/commands/config/tui.ts",
