@@ -2646,3 +2646,94 @@ describe("tools that Claude Code's tool search loads, on the Codex agent", () =>
         ]);
     });
 });
+
+describe("Claude Code's turn-start thinking flip, on the Codex agent", () => {
+    // Regression test: the 2026-10-28 analysis of session 8cf9eff2, Bug 2 — the first request of a typed turn carries no earlier thinking, so the upstream history changed at the
+    // first reasoning item and the request read 0% of the cache (1.41M uncached tokens in 4 requests).
+    const session = "5a6b7c8d-9e0f-4a1b-8c2d-3e4f5a6b7c8d";
+    const thinking = {
+        type: "thinking",
+        thinking: "check the clock",
+        signature: packReasoningEnvelope(
+            { provider: "codex", accountHash: accountHash8("codex"), model: "gpt-6.1-sol", compHash: "0" },
+            { id: "rs_flip", encrypted_content: "blob-flip", summary: [] }
+        ),
+    };
+    const toolUse = { type: "tool_use", id: "call_clock", name: "get_time", input: { zone: "UTC" } };
+    const toolResult = {
+        role: "user",
+        content: [{ type: "tool_result", tool_use_id: "call_clock", content: "12:00" }],
+    };
+
+    async function sentInput(messages: unknown[]): Promise<Array<Record<string, unknown>>> {
+        const sent: Array<Record<string, unknown>> = [];
+        globalThis.fetch = (async (_url: RequestInfo | URL, init?: RequestInit) => {
+            sent.push(SafeJSON.parse(String(init?.body)) as Record<string, unknown>);
+            return whamStreamResponse();
+        }) as typeof fetch;
+        const { OpenAiSubscriptionProvider } = await import("./openai-subscription");
+        const provider = await OpenAiSubscriptionProvider.create(account);
+        const bodyText = SafeJSON.stringify({ model: "gpt-6.1-sol", stream: true, max_tokens: 1024, messages });
+        const res = await provider.messages?.(
+            new Request("http://localhost/v1/messages", { method: "POST", body: bodyText }),
+            "gpt-6.1-sol",
+            bodyText,
+            { promptCacheKey: { key: session, source: "claude-session" } }
+        );
+        await res?.text();
+        return (sent[0]?.input ?? []) as Array<Record<string, unknown>>;
+    }
+
+    it("puts the reasoning back that the first request of a new turn left out, so the earlier input stays a prefix", async () => {
+        const toolLoop = await sentInput([
+            { role: "user", content: "what time is it" },
+            { role: "assistant", content: [thinking, toolUse] },
+            toolResult,
+        ]);
+        const nextTurn = await sentInput([
+            { role: "user", content: "what time is it" },
+            { role: "assistant", content: [toolUse] },
+            toolResult,
+            { role: "assistant", content: [{ type: "text", text: "It is 12:00." }] },
+            { role: "user", content: "and in Prague?" },
+        ]);
+
+        expect(toolLoop.some((item) => item.type === "reasoning")).toBe(true);
+        expect(nextTurn.slice(0, toolLoop.length)).toEqual(toolLoop);
+    });
+
+    it("never gives one conversation's remembered reasoning to another conversation", async () => {
+        await sentInput([
+            { role: "user", content: "what time is it" },
+            { role: "assistant", content: [thinking, toolUse] },
+            toolResult,
+        ]);
+        const sent: Array<Record<string, unknown>> = [];
+        globalThis.fetch = (async (_url: RequestInfo | URL, init?: RequestInit) => {
+            sent.push(SafeJSON.parse(String(init?.body)) as Record<string, unknown>);
+            return whamStreamResponse();
+        }) as typeof fetch;
+        const { OpenAiSubscriptionProvider } = await import("./openai-subscription");
+        const provider = await OpenAiSubscriptionProvider.create(account);
+        const bodyText = SafeJSON.stringify({
+            model: "gpt-6.1-sol",
+            stream: true,
+            max_tokens: 1024,
+            messages: [
+                { role: "user", content: "what time is it" },
+                { role: "assistant", content: [toolUse] },
+                toolResult,
+            ],
+        });
+        const res = await provider.messages?.(
+            new Request("http://localhost/v1/messages", { method: "POST", body: bodyText }),
+            "gpt-6.1-sol",
+            bodyText,
+            { promptCacheKey: { key: "6b7c8d9e-0f1a-4b2c-9d3e-4f5a6b7c8d9e", source: "claude-session" } }
+        );
+        await res?.text();
+
+        const input = (sent[0]?.input ?? []) as Array<Record<string, unknown>>;
+        expect(input.filter((item) => item.type === "reasoning")).toEqual([]);
+    });
+});
