@@ -238,7 +238,8 @@ describe("native capture target binding", () => {
                 { id: 11, target: false },
             ],
         });
-        const result = await f.controls.run({ do: "click", coords: { x: 10, y: 10 }, atMs: 0 });
+        const result = await f.controls.run({ do: "click", coords: { x: 10, y: 10 }, atMs: 0 }, { app: "Fixture" });
+        expect(result.stderr).toContain("one exact recorded window");
         expect(result.ok).toBe(false);
         expect(f.calls.filter((args) => args[0] === "see")).toHaveLength(0);
         f.controls.dispose();

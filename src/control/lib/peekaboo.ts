@@ -772,6 +772,15 @@ export async function startCapture(argv: string[], signal?: AbortSignal): Promis
         throw new Error("The recorder --out flag requires its output directory.");
     }
 
+    const hasKeptFrame = (folder: string) => {
+        try {
+            return readdirSync(folder, { withFileTypes: true }).some(
+                (file) => file.isFile() && /^keep-\d{4,}\.png$/.test(file.name)
+            );
+        } catch {
+            return false;
+        }
+    };
     const preexisting = new Set(explicitDir ? [] : readdirSync(sessionsRoot));
     const tool = argv[0].split("/").pop() ?? argv[0];
     // killTree walks `pgrep -P` recursively, so the two launcher stages in front of the recorder
@@ -789,11 +798,11 @@ export async function startCapture(argv: string[], signal?: AbortSignal): Promis
     const armDeadline = Date.now() + 15_000;
     while (Date.now() < armDeadline) {
         const fresh = explicitDir
-            ? existsSync(join(explicitDir, "keep-0001.png"))
+            ? hasKeptFrame(explicitDir)
                 ? [explicitDir]
                 : []
             : readdirSync(sessionsRoot)
-                  .filter((d) => !preexisting.has(d) && existsSync(join(sessionsRoot, d, "keep-0001.png")))
+                  .filter((d) => !preexisting.has(d) && hasKeptFrame(join(sessionsRoot, d)))
                   .map((d) => join(sessionsRoot, d));
 
         if (fresh.length > 0) {
