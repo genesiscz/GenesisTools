@@ -2737,3 +2737,90 @@ describe("Claude Code's turn-start thinking flip, on the Codex agent", () => {
         expect(input.filter((item) => item.type === "reasoning")).toEqual([]);
     });
 });
+
+describe("a changed effort on one Claude Code thread, on the Codex agent", () => {
+    // Regression test: 2026-10-28-Research-Session8cf9eff2Slowdowns.sonnet.md Bug 3 — Codex keeps one prompt cache per
+    // effort, so /effort re-read up to 430K tokens without the cache, and nothing said so.
+    const claudeSession = "22222222-3333-4444-8555-666666666666";
+    const metadata = { user_id: SafeJSON.stringify({ session_id: claudeSession }) };
+    let eventsFile = "";
+    let sent: Array<Record<string, unknown>> = [];
+
+    beforeEach(async () => {
+        const { setCompactionEventsPathForTests } = await import("@app/ai-proxy/lib/sessions/compaction-events");
+        const { resetCacheShapeForTests } = await import("@app/ai-proxy/lib/sessions/cache-shape");
+        eventsFile = join(mkdtempSync(join(tmpdir(), "gt-effort-")), "events.jsonl");
+        setCompactionEventsPathForTests(eventsFile);
+        resetCacheShapeForTests();
+        sent = [];
+        globalThis.fetch = (async (_url: RequestInfo | URL, init?: RequestInit) => {
+            sent.push(SafeJSON.parse(String(init?.body)) as Record<string, unknown>);
+            return whamStreamResponse();
+        }) as typeof fetch;
+    });
+
+    afterEach(async () => {
+        const { setCompactionEventsPathForTests } = await import("@app/ai-proxy/lib/sessions/compaction-events");
+        setCompactionEventsPathForTests(undefined);
+    });
+
+    async function send(effort: string, system = "Lead system prompt"): Promise<void> {
+        const { OpenAiSubscriptionProvider } = await import("./openai-subscription");
+        const provider = await OpenAiSubscriptionProvider.create(account);
+        const bodyText = SafeJSON.stringify({
+            model: "gpt-6.1-sol",
+            stream: true,
+            system,
+            metadata,
+            output_config: { effort },
+            messages: [{ role: "user", content: "go on" }],
+        });
+        const res = await provider.messages?.(
+            new Request("http://localhost/v1/messages", { method: "POST", body: bodyText }),
+            "gpt-6.1-sol",
+            bodyText
+        );
+        await res?.text();
+    }
+
+    function events(): Array<Record<string, unknown>> {
+        try {
+            return readFileSync(eventsFile, "utf8")
+                .trim()
+                .split("\n")
+                .filter(Boolean)
+                .map((line) => SafeJSON.parse(line) as Record<string, unknown>);
+        } catch {
+            return [];
+        }
+    }
+
+    it("records a cache-reset event that names both efforts", async () => {
+        await send("high");
+        await send("xhigh");
+
+        expect(
+            events()
+                .filter((event) => event.kind === "cache-reset")
+                .map((event) => event.reason)
+        ).toEqual(["effort high -> xhigh"]);
+    });
+
+    it("tells the agent in that request that the whole context was re-read without the cache", async () => {
+        await send("high");
+        await send("xhigh");
+
+        const last = SafeJSON.stringify(sent[1]?.input);
+        expect(last).toContain("<system-reminder>");
+        expect(last).toContain("high to xhigh");
+        expect(SafeJSON.stringify(sent[0]?.input)).not.toContain("<system-reminder>");
+    });
+
+    it("stays quiet when the effort repeats, and for a subagent that has its own system prompt", async () => {
+        await send("high");
+        await send("high");
+        await send("low", "Subagent system prompt");
+
+        expect(events().filter((event) => event.kind === "cache-reset")).toEqual([]);
+    });
+});

@@ -27,7 +27,9 @@ export type CompactionEventKind =
     | "background-wasted"
     /** Another login compacted a saved history again, or a lost record blocked the session. */
     | "recompacted"
-    | "blocked";
+    | "blocked"
+    /** A request of a thread used another effort or model than the one before, so it re-read the context uncached. */
+    | "cache-reset";
 
 export interface CompactionEvent {
     ts: string;
@@ -61,6 +63,7 @@ const WARN_KINDS = new Set<CompactionEventKind>([
     "background-wasted",
     "background-failed",
     "blocked",
+    "cache-reset",
 ]);
 
 let pathOverride: string | undefined;

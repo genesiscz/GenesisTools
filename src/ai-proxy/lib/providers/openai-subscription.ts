@@ -57,6 +57,7 @@ import {
     trackBackground,
     withUserReminder,
 } from "@app/ai-proxy/lib/sessions/background-compaction";
+import { cacheResetNotice, cacheResetReason, shapeChange } from "@app/ai-proxy/lib/sessions/cache-shape";
 import {
     compactionFromSse,
     compactionMarkers,
@@ -897,6 +898,23 @@ export class OpenAiSubscriptionProvider implements ProxyProvider {
             ...reasoningOptions(catalog, this.account.openaiSub?.reasoningSummary),
             ...(effort ? { effort } : {}),
         };
+
+        // Codex keeps one cache per effort and model: say so where the cache was lost. A compaction turn is its own case.
+        const cacheReset =
+            claudeSessionId && !compaction
+                ? shapeChange(backgroundKey(claudeSessionId, parsed.system), {
+                      effort: effort ?? "",
+                      model: concreteModel,
+                  })
+                : undefined;
+
+        if (cacheReset) {
+            recordCompactionEvent({ ...eventBase, kind: "cache-reset", reason: cacheResetReason(cacheReset) });
+
+            if (Array.isArray(responsesBody.input)) {
+                responsesBody.input = withUserReminder(responsesBody.input, cacheResetNotice(cacheReset));
+            }
+        }
 
         logger.debug(
             {
