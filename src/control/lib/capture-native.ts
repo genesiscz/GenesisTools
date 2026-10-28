@@ -205,7 +205,15 @@ export class NativeCaptureControls {
                         (windowTitle === undefined || window.title === windowTitle)
                 )
             );
+            const axTarget =
+                action !== undefined &&
+                (action.do === "ax-set" || action.do === "ax-press" || action.do === "ax-perform");
+            if (!axTarget && ids.length !== 1) {
+                throw new Error("Native capture requires one exact recorded window or AX target.");
+            }
+
             const matches: ComputerState[] = [];
+            let last: ComputerState | undefined;
             for (const windowId of ids) {
                 const state = await this.computer.get_app_state({
                     app,
@@ -213,6 +221,7 @@ export class NativeCaptureControls {
                     image: options.image ?? false,
                     element_limit: 4000,
                 });
+                last = state;
                 if (action && (action.do === "ax-set" || action.do === "ax-press" || action.do === "ax-perform")) {
                     const count = state.elements.filter((element) => match(element, action)).length;
                     if (count > 1) {
@@ -228,6 +237,10 @@ export class NativeCaptureControls {
             if (matches.length !== 1) {
                 throw new Error("Native capture requires one exact recorded window or AX target.");
             }
+            if (matches[0] === last) {
+                return matches[0];
+            }
+
             return this.computer.get_app_state({
                 app,
                 window_id: matches[0].window.id,

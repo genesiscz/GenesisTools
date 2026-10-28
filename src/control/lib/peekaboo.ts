@@ -766,7 +766,13 @@ export interface CaptureAttempt {
 export async function startCapture(argv: string[], signal?: AbortSignal): Promise<CaptureAttempt> {
     const sessionsRoot = captureSessionsRoot();
     mkdirSync(sessionsRoot, { recursive: true });
-    const preexisting = new Set(readdirSync(sessionsRoot));
+    const outputAt = argv.indexOf("--out");
+    const explicitDir = outputAt >= 0 ? argv[outputAt + 1] : undefined;
+    if (outputAt >= 0 && !explicitDir) {
+        throw new Error("The recorder --out flag requires its output directory.");
+    }
+
+    const preexisting = new Set(explicitDir ? [] : readdirSync(sessionsRoot));
     const tool = argv[0].split("/").pop() ?? argv[0];
     // killTree walks `pgrep -P` recursively, so the two launcher stages in front of the recorder
     // are killed together with it; the launcher also proxies the recorder's exit status.
@@ -782,12 +788,16 @@ export async function startCapture(argv: string[], signal?: AbortSignal): Promis
     let cancelled = false;
     const armDeadline = Date.now() + 15_000;
     while (Date.now() < armDeadline) {
-        const fresh = readdirSync(sessionsRoot).filter(
-            (d) => !preexisting.has(d) && existsSync(join(sessionsRoot, d, "keep-0001.png"))
-        );
+        const fresh = explicitDir
+            ? existsSync(join(explicitDir, "keep-0001.png"))
+                ? [explicitDir]
+                : []
+            : readdirSync(sessionsRoot)
+                  .filter((d) => !preexisting.has(d) && existsSync(join(sessionsRoot, d, "keep-0001.png")))
+                  .map((d) => join(sessionsRoot, d));
 
         if (fresh.length > 0) {
-            dir = join(sessionsRoot, fresh[0]);
+            dir = fresh[0];
             break;
         }
 

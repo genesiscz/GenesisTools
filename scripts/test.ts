@@ -229,6 +229,8 @@ const LOAD_SENSITIVE_FILES = [
     "src/question/lib/pending/ask.test.ts",
     "src/scripts/lib/store.test.ts",
     "src/task/lib/stop-session.test.ts",
+    // A later parallel CI run also stalled this real-child lock suite for 177 seconds.
+    "plugins/genesis-tools/hooks/worktree-lock.test.ts",
     "src/macos/lib/clones/audit.test.ts",
     "src/stash/lib/patch.test.ts",
     // Direct native-syscall suites: getattrlistbulk intermittently answers

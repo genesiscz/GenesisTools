@@ -78,8 +78,8 @@ private func recordOptions(startWarnings: [String]) -> RecordOptions {
     // Clamp here rather than inside the rate policy, so `metadata.json` and `--help` report the
     // rate the recorder actually used. An idle rate above the active one would ask the stream
     // for MORE frames while nothing moves, which is the opposite of what the flag is for.
-    // A movie is watched, so it gets a display's rate by default and never drops to the idle rate: the first frames
-    // of a scroll or an animation were recorded at 2 fps until the stream switched back. PNG frames alone keep 8 fps.
+    // A movie keeps the active rate by default; an explicit idle rate remains an override.
+    // The first frames of motion otherwise arrived at 2 fps until the stream switched back. PNGs alone keep 8 fps.
     let videoOut = argValue("--video-out")
     let activeFps = number("--active-fps", default: videoOut == nil ? 8 : 60, min: 0.5, max: 120)
     let idleFps = argValue("--idle-fps") == nil && videoOut != nil

@@ -1,5 +1,9 @@
 import { describe, expect, it } from "bun:test";
+import { randomUUID } from "node:crypto";
+import { writeFileSync } from "node:fs";
+import { join } from "node:path";
 import {
+    captureSessionsRoot,
     clickArgv,
     moveArgv,
     parseWindowList,
@@ -7,9 +11,60 @@ import {
     pressArgv,
     recordingErrorFromStdout,
     scrollArgv,
+    startCapture,
     typeArgv,
     windowShotArgv,
 } from "./peekaboo";
+
+describe("capture startup identity", () => {
+    it("keeps concurrent explicit output directories separate and preserves legacy discovery", async () => {
+        const root = captureSessionsRoot();
+        const tag = randomUUID();
+        const gate = join(root, "ready-" + tag);
+        const destinations = [join(root, "native-a-" + tag), join(root, "native-b-" + tag)];
+        const script = [
+            'const fs = await import("node:fs/promises");',
+            "const gate = Bun.argv.at(-3), dest = Bun.argv.at(-1);",
+            "const end = Date.now() + 10000;",
+            'while (!await Bun.file(gate).exists()) { if (Date.now() >= end) throw new Error("fixture gate timeout"); await Bun.sleep(100); }',
+            "await fs.mkdir(dest, { recursive: true });",
+            'await Bun.write(dest + "/keep-0001.png", "fixture frame, not a screenshot");',
+            "await Bun.sleep(10000);",
+        ].join("\n");
+        const argv = (dest: string, explicit = true) => [
+            process.execPath,
+            "-e",
+            script,
+            "--",
+            gate,
+            explicit ? "--out" : "--fixture-out",
+            dest,
+        ];
+        const pending = destinations.map((dest) => startCapture(argv(dest)));
+        writeFileSync(gate, "start");
+        const attempts = await Promise.all(pending);
+        try {
+            expect(attempts.map((attempt) => attempt.sessionDir)).toEqual(destinations);
+        } finally {
+            for (const attempt of attempts) {
+                if (attempt.proc.exitCode === null) {
+                    attempt.proc.kill();
+                }
+                await Promise.all([attempt.proc.exited, attempt.stdoutText, attempt.stderrText]);
+            }
+        }
+        const legacyDir = join(root, "legacy-" + tag);
+        const legacy = await startCapture(argv(legacyDir, false));
+        try {
+            expect(legacy.sessionDir).toBe(legacyDir);
+        } finally {
+            if (legacy.proc.exitCode === null) {
+                legacy.proc.kill();
+            }
+            await Promise.all([legacy.proc.exited, legacy.stdoutText, legacy.stderrText]);
+        }
+    }, 30000);
+});
 
 // Peekaboo 4 removed `list`, `hotkey` and `image`, renamed `--coords` to `--at`, and refuses
 // untargeted background input. Every recorder action was built against the old grammar.

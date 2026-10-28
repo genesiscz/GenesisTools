@@ -9,6 +9,7 @@
  * the recording misses the transition.
  */
 
+import { randomUUID } from "node:crypto";
 import { existsSync, mkdirSync, readdirSync, readFileSync, statSync } from "node:fs";
 import { join } from "node:path";
 import { abortableSleep } from "@genesiscz/utils/async";
@@ -379,7 +380,7 @@ export async function runCapturePlanWithSignal({
     throwIfCancelled("before the recorder started");
     let attempt: CaptureAttempt;
     if (backend === "native") {
-        const outDir = join(captureSessionsRoot(), `native-${Date.now()}`);
+        const outDir = join(captureSessionsRoot(), `native-${randomUUID()}`);
         attempt = await startCapture([axTool, ...nativeCaptureArgv(cap, outDir)], signal);
 
         if (!attempt.sessionDir) {
