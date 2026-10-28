@@ -13,7 +13,7 @@ export function isObject(value: unknown): value is Record<string, unknown> {
  * Deep merge `source` into `target`. Only merges plain objects recursively;
  * arrays and primitives are overwritten.
  */
-export function deepMerge<T extends Record<string, unknown>>(target: T, source: Partial<T>): T {
+export function deepMerge<T extends object>(target: T, source: Partial<T>): T {
     const result = { ...target };
     for (const key of Object.keys(source)) {
         if (key === "__proto__" || key === "constructor" || key === "prototype") {

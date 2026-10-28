@@ -231,7 +231,7 @@ export function compactionRecoveryMessage(sessionId: string | undefined, marker:
         `${lost} To restore the saved record: ${restore}. ` +
         `To continue without it: ${drop}, ` +
         "then send the missing context in your next message. " +
-        'To avoid this when you switch providers, set claudeSessions.compaction.mode to "summary" first.'
+        'To avoid this when you switch providers, set sessionsIn.claude.providers.codex.compaction.mode to "summary" first.'
     );
 }
 

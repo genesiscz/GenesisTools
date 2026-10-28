@@ -315,7 +315,7 @@ export async function runCodexSession(
         codexModel,
         ...(claude ? { claude: { fable: claude.hasFable } } : {}),
         ...(codexLogin ? { codexAccount: codexLogin } : {}),
-        settings: config.claudeSessions,
+        settings: config.sessionsIn?.claude,
     });
     const configDir = opts.isolated ? join(claudeCodexConfigRoot(), sessionId) : undefined;
 
@@ -406,8 +406,8 @@ export async function runCodexSession(
             CLAUDE_CODE_AUTO_COMPACT_WINDOW: String(model.info.window),
             CLAUDE_AUTOCOMPACT_PCT_OVERRIDE: String(compact.percent),
         },
-        ...(config.claudeSessions?.compaction?.idle === false ? {} : { promptCacheTtl: "1h" as const }),
-        leadPrompt: leadPrompt(agents, config.claudeSessions),
+        ...(config.sessionsIn?.claude?.global?.compaction?.idle === false ? {} : { promptCacheTtl: "1h" as const }),
+        leadPrompt: leadPrompt(agents, config.sessionsIn?.claude),
         passthrough,
     });
 

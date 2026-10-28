@@ -6,10 +6,17 @@ import { validateClients } from "@app/ai-proxy/lib/clients";
 import { normalizeBasePath } from "@app/ai-proxy/lib/path-prefix";
 import { maskApiKey } from "@app/ai-proxy/lib/providers/api-key-state";
 import { AI_PROXY_CONFIG_FILE_MODE, getAiProxyStorage } from "@app/ai-proxy/lib/storage";
-import type { AiProxyConfig, AiProxyPublicConfig } from "@app/ai-proxy/lib/types";
+import type {
+    AiProxyConfig,
+    AiProxyPublicConfig,
+    ClaudeCodeGlobalSettings,
+    CodexInClaudeCodeSettings,
+    LegacyClaudeSessionsConfig,
+    SessionsInConfig,
+} from "@app/ai-proxy/lib/types";
 import { SafeJSON } from "@genesiscz/utils/json";
 import { logger, out } from "@genesiscz/utils/logger";
-import { isObject } from "@genesiscz/utils/object";
+import { deepMerge, isObject } from "@genesiscz/utils/object";
 
 /** Owner-only: the config carries the proxy bearer key and billed vendor keys. */
 const CONFIG_FILE_MODE = AI_PROXY_CONFIG_FILE_MODE;
@@ -121,12 +128,48 @@ function migratePublicConfig(raw?: AiProxyPublicConfig): AiProxyPublicConfig | u
     return next;
 }
 
+/**
+ * `claudeSessions` before 2026-10-28 held Codex knobs under a generic name. They move into `sessionsIn.claude`:
+ * `compaction.idle` and `lead` belong to Claude Code itself, so they go to `global`; the rest of `compaction` and
+ * `subagents` were Codex knobs, so they go to `providers.codex`. A key that `sessionsIn` already sets wins.
+ */
+function migrateSessionsIn(
+    legacy: LegacyClaudeSessionsConfig | undefined,
+    current: SessionsInConfig | undefined
+): SessionsInConfig | undefined {
+    const { idle, ...codexCompaction } = legacy?.compaction ?? {};
+    const global: ClaudeCodeGlobalSettings = {
+        ...(idle === undefined ? {} : { compaction: { idle } }),
+        ...(legacy?.lead ? { lead: legacy.lead } : {}),
+    };
+    const codex: CodexInClaudeCodeSettings = {
+        ...(Object.keys(codexCompaction).length > 0 ? { compaction: codexCompaction } : {}),
+        ...(legacy?.subagents ? { subagents: legacy.subagents } : {}),
+    };
+
+    if (Object.keys(global).length === 0 && Object.keys(codex).length === 0) {
+        return current;
+    }
+
+    const moved: SessionsInConfig = {
+        claude: {
+            ...(Object.keys(global).length > 0 ? { global } : {}),
+            ...(Object.keys(codex).length > 0 ? { providers: { codex } } : {}),
+        },
+    };
+
+    return deepMerge(moved, current ?? {});
+}
+
 function mergeConfig(existing: Partial<AiProxyConfig>): AiProxyConfig {
     const defaults = getDefaultConfig();
+    const { claudeSessions, ...rest } = existing;
+    const sessionsIn = migrateSessionsIn(claudeSessions, existing.sessionsIn);
 
     const merged = {
         ...defaults,
-        ...existing,
+        ...rest,
+        ...(sessionsIn ? { sessionsIn } : {}),
         listen: { ...defaults.listen, ...existing.listen },
         translation: {
             ...defaults.translation,

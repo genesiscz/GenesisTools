@@ -71,7 +71,7 @@ import {
 } from "@app/ai-proxy/lib/sessions/codex-compaction";
 import { CompactionTrace } from "@app/ai-proxy/lib/sessions/compaction-events";
 import { loginAccountName, noteBlockedCompaction, readSessionRecord } from "@app/ai-proxy/lib/sessions/records";
-import { backgroundCompactionSettings, compactionSettings } from "@app/ai-proxy/lib/sessions/settings";
+import { compactionPolicy } from "@app/ai-proxy/lib/sessions/settings";
 import {
     anthropicToResponses,
     stripReasoningInput,
@@ -440,8 +440,8 @@ export class OpenAiSubscriptionProvider implements ProxyProvider {
         const conversation = `${whamItemScope(req)}\u0000${context?.promptCacheKey?.key ?? turn.sessionId ?? ""}`;
         const compaction = turn.isCompaction;
         // The compaction settings, read once: a config reload during the request cannot change its path midway.
-        const policy = compactionSettings();
-        const background = backgroundCompactionSettings();
+        const policy = compactionPolicy("codex", context?.sessionsIn);
+        const background = policy.background;
         const nativeCompaction = compaction && !writtenCompaction && policy.mode === "native";
         const summaryWords = compaction && !nativeCompaction ? policy.words : undefined;
         const claudeSessionId = turn.sessionId;

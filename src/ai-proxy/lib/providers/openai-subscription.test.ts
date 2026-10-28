@@ -12,7 +12,6 @@ import {
     sweepCompactions,
 } from "@app/ai-proxy/lib/sessions/codex-compaction";
 import { createSessionRecord, readSessionRecord } from "@app/ai-proxy/lib/sessions/records";
-import { setClaudeSessionSettings } from "@app/ai-proxy/lib/sessions/settings";
 import { getAiProxyStorage } from "@app/ai-proxy/lib/storage";
 import {
     CLAUDE_CODE_COMPACTION_MARK,
@@ -25,7 +24,7 @@ import {
     openReasoningEnvelope,
     packReasoningEnvelope,
 } from "@app/ai-proxy/lib/translators/formats/anthropic/reasoning-envelope";
-import type { AiProxyAccountConfig } from "@app/ai-proxy/lib/types";
+import type { AiProxyAccountConfig, SessionsInConfig } from "@app/ai-proxy/lib/types";
 import { env } from "@genesiscz/utils/env";
 import { SafeJSON } from "@genesiscz/utils/json";
 
@@ -1232,7 +1231,11 @@ describe("native /v1/messages route: reasoning carried in gtr1 envelopes", () =>
 
     async function send(
         body: Record<string, unknown>,
-        context?: { promptCacheKey?: { key: string; source: "claude-session" }; sessionId?: string },
+        context?: {
+            promptCacheKey?: { key: string; source: "claude-session" };
+            sessionId?: string;
+            sessionsIn?: SessionsInConfig;
+        },
         signal?: AbortSignal
     ): Promise<Response> {
         const { OpenAiSubscriptionProvider } = await import("./openai-subscription");
@@ -1502,16 +1505,20 @@ describe("native /v1/messages route: reasoning carried in gtr1 envelopes", () =>
             sent.push(SafeJSON.parse(String(init?.body)) as Record<string, unknown>);
             return whamStreamResponse();
         }) as typeof fetch;
-        setClaudeSessionSettings({ compaction: { mode: "summary" } });
         await (
-            await send({
-                model: "gpt-6.1-sol",
-                stream: true,
-                tools: [{ name: "Read", description: "read", input_schema: { type: "object", properties: {} } }],
-                messages: [{ role: "user", content: `${CLAUDE_CODE_COMPACTION_MARK}\n\nSummarize the conversation.` }],
-                output_config: { effort: "xhigh" },
-                reasoning_effort: "xhigh",
-            })
+            await send(
+                {
+                    model: "gpt-6.1-sol",
+                    stream: true,
+                    tools: [{ name: "Read", description: "read", input_schema: { type: "object", properties: {} } }],
+                    messages: [
+                        { role: "user", content: `${CLAUDE_CODE_COMPACTION_MARK}\n\nSummarize the conversation.` },
+                    ],
+                    output_config: { effort: "xhigh" },
+                    reasoning_effort: "xhigh",
+                },
+                { sessionsIn: { claude: { providers: { codex: { compaction: { mode: "summary" } } } } } }
+            )
         ).text();
 
         expect(sent).toHaveLength(1);
@@ -1522,31 +1529,32 @@ describe("native /v1/messages route: reasoning carried in gtr1 envelopes", () =>
         expect((sent[0]?.reasoning as Record<string, unknown> | undefined)?.effort).toBe("xhigh");
         const input = (sent[0]?.input ?? []) as Array<Record<string, unknown>>;
         expect(SafeJSON.stringify(input.at(-1))).toContain("under 5000 words");
-        setClaudeSessionSettings(undefined);
         // WHAM treats a tool without `strict` as strict, and the model then fills every optional field.
         expect(sent[0]?.tools).toEqual([expect.objectContaining({ type: "function", name: "Read", strict: false })]);
     });
 
-    it("claudeSessions.compaction in the config sets another effort and drops the length", async () => {
+    it("sessionsIn.claude.providers.codex.compaction sets another effort and drops the length", async () => {
         const sent: Array<Record<string, unknown>> = [];
         globalThis.fetch = (async (_url: RequestInfo | URL, init?: RequestInit) => {
             sent.push(SafeJSON.parse(String(init?.body)) as Record<string, unknown>);
             return whamStreamResponse();
         }) as typeof fetch;
-        setClaudeSessionSettings({ compaction: { mode: "summary", effort: "low", words: 0 } });
 
-        try {
-            await (
-                await send({
+        await (
+            await send(
+                {
                     model: "gpt-6.1-sol",
                     stream: true,
                     messages: [{ role: "user", content: `${CLAUDE_CODE_COMPACTION_MARK}\n\nSummarize.` }],
                     output_config: { effort: "xhigh" },
-                })
-            ).text();
-        } finally {
-            setClaudeSessionSettings(undefined);
-        }
+                },
+                {
+                    sessionsIn: {
+                        claude: { providers: { codex: { compaction: { mode: "summary", effort: "low", words: 0 } } } },
+                    },
+                }
+            )
+        ).text();
 
         expect((sent[0]?.reasoning as Record<string, unknown> | undefined)?.effort).toBe("low");
         expect(SafeJSON.stringify(sent[0]?.input)).not.toContain("words");
@@ -2272,7 +2280,6 @@ describe("background compaction (Codex async_compaction for Claude Code)", () =>
         eventsFile = join(mkdtempSync(join(tmpdir(), "gt-bgc-")), "events.jsonl");
         setCompactionEventsPathForTests(eventsFile);
         resetBackgroundForTests();
-        setClaudeSessionSettings({});
     });
 
     afterEach(async () => {
