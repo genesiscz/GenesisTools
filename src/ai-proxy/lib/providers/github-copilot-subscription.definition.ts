@@ -57,7 +57,6 @@ export const githubCopilotSubscriptionDefinition: ProviderDefinition = {
                 dropped: 0,
             };
         },
-        facts: null,
     },
     usage: {
         snapshot: (usage) => {
