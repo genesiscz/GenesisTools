@@ -2380,6 +2380,23 @@ describe("background compaction (Codex async_compaction for Claude Code)", () =>
         );
     });
 
+    it("sends a kept turn once when Claude Code also keeps it after the summary", async () => {
+        const sent: Array<Record<string, unknown>> = [];
+        const sessionId = await primeBackground(sent);
+        const reply = await send({ messages: compactTurn(u1) }, sessionId);
+        const inner = (reply.match(/<summary>\\n([\s\S]*?)\\n<\/summary>/)?.[1] ?? "").replaceAll("\\n", "\n");
+        await send(
+            {
+                messages: [{ role: "user", content: `Summary:\n${inner}` }, a2, { role: "user", content: "Go on." }],
+            },
+            sessionId
+        );
+        const text = SafeJSON.stringify(sent.at(-1)?.input);
+
+        expect(text.split("Shelf 31 noted.").length - 1).toBe(1);
+        expect(text).toContain("Also remember shelf 31.");
+    });
+
     it("compacts again and tells the agent when the history changed under the background run", async () => {
         const sent: Array<Record<string, unknown>> = [];
         const sessionId = await primeBackground(sent);
