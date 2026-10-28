@@ -683,6 +683,10 @@ public final class ClickyModel: ObservableObject {
             return
         }
         let code = UInt16(clamping: event.getIntegerValueField(.keyboardEventKeycode))
+        // A shortcut or dictation key, not typing: no sound, no visualizer pulse, no statistics.
+        if preferences.ignoreFunctionKeys && ClickyEventPolicy.isFunctionKey(code) {
+            return
+        }
         let release: Bool
         if type == .flagsChanged {
             release = !CGEventSource.keyState(.combinedSessionState, key: CGKeyCode(code))

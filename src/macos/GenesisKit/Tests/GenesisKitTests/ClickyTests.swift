@@ -140,6 +140,18 @@ final class ClickyTests: XCTestCase {
         XCTAssertGreaterThan(statistics.hours.count, statistics.minutes.count)
     }
 
+    /// F-keys and fn start shortcuts and dictation (Wispr Flow holds fn): silent by default, letters are not.
+    func testFunctionKeysAreSilentByDefault() throws {
+        let old = try JSONDecoder().decode(ClickyPreferences.self, from: Data(#"{"volume":0.5}"#.utf8))
+        XCTAssertTrue(old.ignoreFunctionKeys, "preferences saved before the setting take the new default")
+        for code: UInt16 in [122, 120, 99, 118, 96, 97, 98, 100, 101, 109, 103, 111, 90, 63, 179] {
+            XCTAssertTrue(ClickyEventPolicy.isFunctionKey(code), "key code \(code)")
+        }
+        for code: UInt16 in [0, 1, 36, 49, 51, 53, 56, 55, 59, 123] {
+            XCTAssertFalse(ClickyEventPolicy.isFunctionKey(code), "key code \(code) is typing or a modifier")
+        }
+    }
+
     func testPitchRangeDefaultsToFourPercentAndIsClampedWhenRead() throws {
         let old = try JSONDecoder().decode(ClickyPreferences.self, from: Data(#"{"randomizedPitch":true}"#.utf8))
         XCTAssertEqual(old.pitchRange, 0.04)
