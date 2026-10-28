@@ -365,10 +365,29 @@ export async function expandCompactionMarkers(
             };
         }
 
-        out.splice(index, 0, ...items);
+        out.splice(index, 0, ...withoutResentTail(items, out.slice(index + 1)));
     }
 
     return out;
+}
+
+/**
+ * The item and its tail without the turns Claude Code sends again after the summary. Claude Code 2.1.312 keeps the end
+ * of the conversation word for word after some compactions (the idle one kept the last reply, 2026-10-28), and the
+ * tail of a background compaction holds the same turns; sent twice, they would only cost tokens.
+ */
+function withoutResentTail(items: unknown[], after: unknown[]): unknown[] {
+    const same = (a: unknown, b: unknown) => SafeJSON.stringify(a) === SafeJSON.stringify(b);
+
+    for (let overlap = Math.min(items.length - 1, after.length); overlap > 0; overlap--) {
+        const tail = items.slice(items.length - overlap);
+
+        if (tail.every((item, at) => same(item, after[at]))) {
+            return items.slice(0, items.length - overlap);
+        }
+    }
+
+    return items;
 }
 
 /** The compaction item in a WHAM Responses stream, and the usage of that request. */
