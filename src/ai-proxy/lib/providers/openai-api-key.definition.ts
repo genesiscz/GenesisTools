@@ -17,6 +17,7 @@ export const openAiApiKeyDefinition: ProviderDefinition = {
         servesCatalogIds: false,
         emptyHint: null,
         catalogEntry: null,
+        facts: null,
     },
     usage: { snapshot: null },
     upstreamEndpoints: null,

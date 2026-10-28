@@ -1,3 +1,4 @@
+import { codexModelOverrides, listedCodexModels, setCodexModelOverrides } from "@app/ai-proxy/lib/codex-catalog";
 import { listOpenAiSubProxyModels } from "@app/ai-proxy/lib/model-meta";
 import type { ProviderDefinition } from "@app/ai-proxy/lib/providers/definition";
 import { OpenAiSubscriptionProvider } from "@app/ai-proxy/lib/providers/openai-subscription";
@@ -27,6 +28,11 @@ export const openAiSubscriptionDefinition: ProviderDefinition = {
         servesCatalogIds: false,
         emptyHint: null,
         catalogEntry: null,
+        facts: {
+            label: "Codex",
+            configure: (config) => setCodexModelOverrides(codexModelOverrides(config)),
+            listed: () => listedCodexModels(),
+        },
     },
     usage: { snapshot: null },
     upstreamEndpoints: null,

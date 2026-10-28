@@ -1,13 +1,18 @@
 import { describe, expect, it } from "bun:test";
 import { resolveProxyRoute } from "@app/ai-proxy/lib/account-model-ref";
 import { sessionRouteDenial } from "@app/ai-proxy/lib/clients";
+import type { ModelFacts } from "@app/ai-proxy/lib/providers/definition";
 import { parseProxyModelId, resolveModel } from "@app/ai-proxy/lib/resolve-model";
-import { sessionPickerModels } from "@app/ai-proxy/lib/sessions/picker-models";
+import { type PickerModelGroup, sessionPickerModels } from "@app/ai-proxy/lib/sessions/picker-models";
 import { type AiProxySessionRecord, sessionProxyAccounts } from "@app/ai-proxy/lib/sessions/records";
 import { resolveSessionRoute, sessionPinnedRoute } from "@app/ai-proxy/lib/sessions/routing";
 import type { AiProxyAccountConfig } from "@app/ai-proxy/lib/types";
 import { mergeCodexModelRecords } from "@genesiscz/utils/ai/openai/codex-models";
 import { SafeJSON } from "@genesiscz/utils/json";
+
+function codexGroup(models: ModelFacts[]): PickerModelGroup[] {
+    return [{ agent: "codex", label: "Codex", plane: "subscription", models }];
+}
 
 function grokAccount(name: string): AiProxyAccountConfig {
     return { name, provider: "grok-subscription", providerSlug: "grok", enabled: true };
@@ -253,18 +258,18 @@ describe("resolveSessionRoute", () => {
 
         const listed = mergeCodexModelRecords({ cache: [] });
         const models = [...listed.values()].filter((model) => model.visibility === "list");
-        const picker = sessionPickerModels({ models, contextLimit: 475_000 });
+        const picker = sessionPickerModels({ groups: codexGroup(models), contextLimit: 475_000 });
         expect(picker.data.map((model) => model.id)).not.toContain("codex-claude/gpt-6-astra");
-        expect(sessionPickerModels({ models, contextLimit: 258_400 }).data.map((model) => model.id)).toContain(
-            "codex-claude/gpt-6-astra"
-        );
-        expect(sessionPickerModels({ models }).data).toEqual([]);
+        expect(
+            sessionPickerModels({ groups: codexGroup(models), contextLimit: 258_400 }).data.map((model) => model.id)
+        ).toContain("codex-claude/gpt-6-astra");
+        expect(sessionPickerModels({ groups: codexGroup(models) }).data).toEqual([]);
         const overridden = mergeCodexModelRecords({
             cache: [],
             overrides: { "gpt-6-astra": { window: 600_000, usablePercent: 80 } },
         });
         expect(
-            sessionPickerModels({ models: [...overridden.values()], contextLimit: 475_000 }).data.map(
+            sessionPickerModels({ groups: codexGroup([...overridden.values()]), contextLimit: 475_000 }).data.map(
                 (model) => model.id
             )
         ).toContain("codex-claude/gpt-6-astra");

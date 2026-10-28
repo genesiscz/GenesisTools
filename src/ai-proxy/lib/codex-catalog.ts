@@ -20,8 +20,9 @@ export function codexModelOverrides(
 }
 
 /**
- * The proxy's view of the Codex model catalog. `server.ts` hands over `codexModelOverrides(config)` on every request
- * (the same hot reload as the rest of the config), and the Codex provider asks `codexModelInfo` per request. The
+ * The proxy's view of the Codex model catalog. The server hands every request's config to the Codex definition's
+ * `models.facts.configure` (`configureModelFacts`), which stores `codexModelOverrides(config)` here: the same hot
+ * reload as the rest of the config. The Codex provider asks `codexModelInfo` per request. The
  * request path adds no network call: it uses the live list only when the provider already holds one (the image guard
  * and `/v1/models` fetch it), else the Codex CLI's `models_cache.json`, else the static table.
  */

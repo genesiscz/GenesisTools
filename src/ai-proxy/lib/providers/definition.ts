@@ -2,7 +2,7 @@ import type { ModelsCatalogFile } from "@app/ai-proxy/lib/catalog-file";
 import type { CatalogOptions } from "@app/ai-proxy/lib/model-meta";
 import type { ProviderInspectionOptions, ProxyProvider } from "@app/ai-proxy/lib/providers/types";
 import type { ProxyAgent } from "@app/ai-proxy/lib/sessions/view";
-import type { AiProxyAccountConfig, ProxyModelMeta, UsageSummary } from "@app/ai-proxy/lib/types";
+import type { AiProxyAccountConfig, AiProxyConfig, ProxyModelMeta, UsageSummary } from "@app/ai-proxy/lib/types";
 import type { AccountBillingSnapshot } from "@app/ai-proxy/lib/usage/types";
 
 /**
@@ -51,6 +51,31 @@ export type CatalogEntryResult =
     | { readonly entry: ModelsCatalogFile["accounts"][number]; readonly dropped: number }
     | { readonly skipped: string };
 
+/** One model's facts that a Claude Code session reads to list the model in its `/model` picker. */
+export interface ModelFacts {
+    readonly slug: string;
+    readonly displayName: string;
+    /** The context window in tokens. */
+    readonly window: number;
+    /** The part of the window a request may fill, which the picker compares with the session's launch limit. */
+    readonly usableTokens: number;
+    /** The efforts the model takes, weakest first; [] when no source lists any. */
+    readonly efforts: readonly string[];
+}
+
+/** The part of the proxy config that changes model facts: `modelOverrides`, and the older `codexModels`. */
+export type ModelOverridesConfig = Pick<AiProxyConfig, "modelOverrides" | "codexModels">;
+
+/** A provider's catalog of per-model facts (window, usable tokens, efforts). */
+export interface ModelFactsSource {
+    /** The provider's name in a picker entry: `GPT-6.1-Sol (Codex)`. */
+    readonly label: string;
+    /** Takes the proxy config of this request, whose model overrides change the facts. */
+    configure(config: ModelOverridesConfig): void;
+    /** The models the catalog lists, with their facts. */
+    listed(): ModelFacts[];
+}
+
 /** One provider's models: the list `/v1/models` advertises for an account, and the facts around that list. */
 export interface ModelSource {
     /** The models the account advertises (`/v1/models`, `tools ai-proxy models`). */
@@ -70,6 +95,8 @@ export interface ModelSource {
     readonly catalogEntry:
         | ((account: AiProxyAccountConfig, options: { probe: boolean }) => Promise<CatalogEntryResult>)
         | null;
+    /** The per-model facts a session's `/model` picker lists; null when the provider keeps no catalog of them. */
+    readonly facts: ModelFactsSource | null;
 }
 
 /** One provider's usage, beyond the live read and its summary line (`ProxyProvider.getUsage`). */
