@@ -578,6 +578,112 @@ final class WidgetInteractionTests: XCTestCase {
         XCTAssertEqual(announced.count, 1, "each answer is announced once")
     }
 
+    /// The staged reminder fires once, with the first complete snapshot that holds staged decisions.
+    @MainActor
+    func testStagedDecisionsAtStartAreRemindedOnce() {
+        let domain = "widget-tests." + UUID().uuidString
+        let defaults = UserDefaults(suiteName: domain)!
+        defer { defaults.removePersistentDomain(forName: domain) }
+        let value = model(defaults: defaults)
+        defer { value.stop() }
+        var reminded: [[WidgetInboxItem]] = []
+        value.stagedAtStart = { reminded.append($0) }
+        let staged = WidgetInboxItem(id: "decision:d_6_s", sourceId: "d_6_s", kind: "decision", key: "local:claude:s:",
+            at: 6_000, needsAnswer: true, title: "Keep it?", number: 6, revision: 1, draftOption: "a")
+        func summary(complete: Bool) -> WidgetInboxSummary {
+            var value = WidgetInboxSummary(unread: 0, needsAnswer: 1, complete: complete, truncated: false, sessions: [])
+            value.staged = [staged]
+            return value
+        }
+        value.updateInbox(summary(complete: false))
+        XCTAssertEqual(reminded, [], "an incomplete snapshot is not the start")
+        value.updateInbox(summary(complete: true))
+        XCTAssertEqual(reminded, [[staged]])
+        value.updateInbox(summary(complete: true))
+        XCTAssertEqual(reminded.count, 1, "once per start")
+    }
+
+    /// A pick staged in a decision's popup stays shown once the snapshot lists it as staged, and an unstage clears it.
+    @MainActor
+    func testAPickStagedInThePopupStaysShownAfterTheSnapshotListsIt() {
+        let domain = "widget-tests." + UUID().uuidString
+        let defaults = UserDefaults(suiteName: domain)!
+        defer { defaults.removePersistentDomain(forName: domain) }
+        let value = model(defaults: defaults)
+        defer { value.stop() }
+        let side = WidgetSurfaceID(edge: .right)
+        func item(_ number: Int, pick: String? = nil) -> WidgetInboxItem {
+            WidgetInboxItem(id: "decision:d_\(number)_s", sourceId: "d_\(number)_s", kind: "decision",
+                key: "local:claude:s:", at: Double(number) * 1_000, needsAnswer: true, title: "Ship \(number)?",
+                number: number, revision: 1, draftOption: pick)
+        }
+
+        value.showPeek(item(1), on: side, seconds: 60, many: .list)
+        value.showPeek(item(2), on: side, seconds: 60, many: .list)
+        value.reconcileStaged([item(1, pick: "a"), item(2, pick: "b")])
+        XCTAssertEqual(value.peekItem?.draftOption, "a", "the popup shows the staged pick")
+        XCTAssertEqual(value.peekQueue.first?.draftOption, "b", "a listed alert shows its staged pick too")
+        XCTAssertEqual(value.stagedOption("d_1_s", stored: value.peekItem?.draftOption), "a")
+        value.reconcileStaged([item(2, pick: "b")])
+        XCTAssertNil(value.peekItem?.draftOption, "an unstaged decision reads as waiting again")
+
+        value.dropSentFromPeek(["d_1_s"])
+        XCTAssertEqual(value.peekItem?.sourceId, "d_2_s", "a sent decision leaves the popup for the next alert")
+        XCTAssertEqual(value.peekQueue, [])
+        value.dropSentFromPeek(["d_2_s"])
+        XCTAssertNil(value.peekItem, "the popup closes once its last decision was sent")
+    }
+
+    /// A send from the popup shows its result in the popup before it moves on; one no receiver took stays, with
+    /// Send again, until it is closed (ux audit F5).
+    @MainActor
+    func testASendFromThePopupShowsItsOutcomeThere() {
+        let domain = "widget-tests." + UUID().uuidString
+        let defaults = UserDefaults(suiteName: domain)!
+        defer { defaults.removePersistentDomain(forName: domain) }
+        let value = model(defaults: defaults)
+        defer { value.stop() }
+        let side = WidgetSurfaceID(edge: .right)
+        let item = WidgetInboxItem(id: "decision:d_1_s", sourceId: "d_1_s", kind: "decision", key: "local:claude:s:",
+                                   at: 1_000, needsAnswer: true, title: "Ship?", number: 1, revision: 1)
+        value.showPeek(item, on: side, seconds: 60, many: .list)
+        value.showPeekOutcome(WidgetPeekOutcome(text: "Not delivered to s.", tone: .warning, sendAgain: [item]),
+                              sent: ["d_1_s"], delivered: false)
+        XCTAssertEqual(value.peekItem?.sourceId, "d_1_s", "a send no receiver took stays in the popup")
+        XCTAssertEqual(value.peekOutcome?.tone, .warning)
+        XCTAssertEqual(value.peekOutcome?.sendAgain.map(\.sourceId), ["d_1_s"])
+        value.dismissPeek(all: true)
+        XCTAssertNil(value.peekOutcome, "the outcome leaves with its alert")
+    }
+
+    /// The leave question's Discard waits for its Undo: the decisions leave every send at once, Undo keeps them
+    /// staged, and only the end of the window writes the discard (ux audit F21).
+    @MainActor
+    func testADiscardWaitsForItsUndo() async throws {
+        let domain = "widget-tests." + UUID().uuidString
+        let defaults = UserDefaults(suiteName: domain)!
+        defer { defaults.removePersistentDomain(forName: domain) }
+        let value = model(defaults: defaults)
+        defer { value.stop() }
+        var calls: [WidgetJSON] = []
+        value.actionRunner = { request in
+            calls.append(request)
+            return ["unstaged": 1]
+        }
+        let staged = WidgetInboxItem(id: "decision:d_1_s", sourceId: "d_1_s", kind: "decision", key: "local:claude:s:",
+                                     at: 1_000, needsAnswer: true, number: 1, revision: 1, draftOption: "a")
+        value.reconcileStaged([staged])
+        value.holdDiscard(["d_1_s"])
+        XCTAssertEqual(value.stagedItems, [], "a held discard leaves every send at once")
+        value.undoHeldDiscard()
+        XCTAssertEqual(value.stagedItems.map(\.sourceId), ["d_1_s"], "Undo keeps it staged")
+        value.holdDiscard(["d_1_s"])
+        value.commitHeldDiscard()
+        try await Task.sleep(for: .milliseconds(50))
+        XCTAssertEqual(calls.count, 1, "only the end of the window writes, once")
+        if case .object(let fields) = calls.first { XCTAssertEqual(fields["action"], "unstage") } else { XCTFail() }
+    }
+
     @MainActor
     func testQueuedDecisionsUseOnlyNewerCompleteAuthoritativeSnapshots() throws {
         let defaults = UserDefaults(suiteName: "widget-tests." + UUID().uuidString)!
@@ -723,110 +829,6 @@ final class WidgetInteractionTests: XCTestCase {
         value.dismissPeek()
         try await Task.sleep(for: .milliseconds(350))
         XCTAssertNil(value.peekItem, "the promoted finite alert uses its own duration")
-    /// The staged reminder fires once, with the first complete snapshot that holds staged decisions.
-    @MainActor
-    func testStagedDecisionsAtStartAreRemindedOnce() {
-        let domain = "widget-tests." + UUID().uuidString
-        let defaults = UserDefaults(suiteName: domain)!
-        defer { defaults.removePersistentDomain(forName: domain) }
-        let value = model(defaults: defaults)
-        defer { value.stop() }
-        var reminded: [[WidgetInboxItem]] = []
-        value.stagedAtStart = { reminded.append($0) }
-        let staged = WidgetInboxItem(id: "decision:d_6_s", sourceId: "d_6_s", kind: "decision", key: "local:claude:s:",
-            at: 6_000, needsAnswer: true, title: "Keep it?", number: 6, revision: 1, draftOption: "a")
-        func summary(complete: Bool) -> WidgetInboxSummary {
-            var value = WidgetInboxSummary(unread: 0, needsAnswer: 1, complete: complete, truncated: false, sessions: [])
-            value.staged = [staged]
-            return value
-        }
-        value.updateInbox(summary(complete: false))
-        XCTAssertEqual(reminded, [], "an incomplete snapshot is not the start")
-        value.updateInbox(summary(complete: true))
-        XCTAssertEqual(reminded, [[staged]])
-        value.updateInbox(summary(complete: true))
-        XCTAssertEqual(reminded.count, 1, "once per start")
-    }
-
-    /// A pick staged in a decision's popup stays shown once the snapshot lists it as staged, and an unstage clears it.
-    @MainActor
-    func testAPickStagedInThePopupStaysShownAfterTheSnapshotListsIt() {
-        let domain = "widget-tests." + UUID().uuidString
-        let defaults = UserDefaults(suiteName: domain)!
-        defer { defaults.removePersistentDomain(forName: domain) }
-        let value = model(defaults: defaults)
-        defer { value.stop() }
-        let side = WidgetSurfaceID(edge: .right)
-        func item(_ number: Int, pick: String? = nil) -> WidgetInboxItem {
-            WidgetInboxItem(id: "decision:d_\(number)_s", sourceId: "d_\(number)_s", kind: "decision",
-                key: "local:claude:s:", at: Double(number) * 1_000, needsAnswer: true, title: "Ship \(number)?",
-                number: number, revision: 1, draftOption: pick)
-        }
-
-        value.showPeek(item(1), on: side, seconds: 60, many: .list)
-        value.showPeek(item(2), on: side, seconds: 60, many: .list)
-        value.reconcileStaged([item(1, pick: "a"), item(2, pick: "b")])
-        XCTAssertEqual(value.peekItem?.draftOption, "a", "the popup shows the staged pick")
-        XCTAssertEqual(value.peekQueue.first?.draftOption, "b", "a listed alert shows its staged pick too")
-        XCTAssertEqual(value.stagedOption("d_1_s", stored: value.peekItem?.draftOption), "a")
-        value.reconcileStaged([item(2, pick: "b")])
-        XCTAssertNil(value.peekItem?.draftOption, "an unstaged decision reads as waiting again")
-
-        value.dropSentFromPeek(["d_1_s"])
-        XCTAssertEqual(value.peekItem?.sourceId, "d_2_s", "a sent decision leaves the popup for the next alert")
-        XCTAssertEqual(value.peekQueue, [])
-        value.dropSentFromPeek(["d_2_s"])
-        XCTAssertNil(value.peekItem, "the popup closes once its last decision was sent")
-    }
-
-    /// A send from the popup shows its result in the popup before it moves on; one no receiver took stays, with
-    /// Send again, until it is closed (ux audit F5).
-    @MainActor
-    func testASendFromThePopupShowsItsOutcomeThere() {
-        let domain = "widget-tests." + UUID().uuidString
-        let defaults = UserDefaults(suiteName: domain)!
-        defer { defaults.removePersistentDomain(forName: domain) }
-        let value = model(defaults: defaults)
-        defer { value.stop() }
-        let side = WidgetSurfaceID(edge: .right)
-        let item = WidgetInboxItem(id: "decision:d_1_s", sourceId: "d_1_s", kind: "decision", key: "local:claude:s:",
-                                   at: 1_000, needsAnswer: true, title: "Ship?", number: 1, revision: 1)
-        value.showPeek(item, on: side, seconds: 60, many: .list)
-        value.showPeekOutcome(WidgetPeekOutcome(text: "Not delivered to s.", tone: .warning, sendAgain: [item]),
-                              sent: ["d_1_s"], delivered: false)
-        XCTAssertEqual(value.peekItem?.sourceId, "d_1_s", "a send no receiver took stays in the popup")
-        XCTAssertEqual(value.peekOutcome?.tone, .warning)
-        XCTAssertEqual(value.peekOutcome?.sendAgain.map(\.sourceId), ["d_1_s"])
-        value.dismissPeek(all: true)
-        XCTAssertNil(value.peekOutcome, "the outcome leaves with its alert")
-    }
-
-    /// The leave question's Discard waits for its Undo: the decisions leave every send at once, Undo keeps them
-    /// staged, and only the end of the window writes the discard (ux audit F21).
-    @MainActor
-    func testADiscardWaitsForItsUndo() async throws {
-        let domain = "widget-tests." + UUID().uuidString
-        let defaults = UserDefaults(suiteName: domain)!
-        defer { defaults.removePersistentDomain(forName: domain) }
-        let value = model(defaults: defaults)
-        defer { value.stop() }
-        var calls: [WidgetJSON] = []
-        value.actionRunner = { request in
-            calls.append(request)
-            return ["unstaged": 1]
-        }
-        let staged = WidgetInboxItem(id: "decision:d_1_s", sourceId: "d_1_s", kind: "decision", key: "local:claude:s:",
-                                     at: 1_000, needsAnswer: true, number: 1, revision: 1, draftOption: "a")
-        value.reconcileStaged([staged])
-        value.holdDiscard(["d_1_s"])
-        XCTAssertEqual(value.stagedItems, [], "a held discard leaves every send at once")
-        value.undoHeldDiscard()
-        XCTAssertEqual(value.stagedItems.map(\.sourceId), ["d_1_s"], "Undo keeps it staged")
-        value.holdDiscard(["d_1_s"])
-        value.commitHeldDiscard()
-        try await Task.sleep(for: .milliseconds(50))
-        XCTAssertEqual(calls.count, 1, "only the end of the window writes, once")
-        if case .object(let fields) = calls.first { XCTAssertEqual(fields["action"], "unstage") } else { XCTFail() }
     }
 
     /// Several alerts in one popup (Alerts → Several at once), a popup that stays until it is closed, and a pointer

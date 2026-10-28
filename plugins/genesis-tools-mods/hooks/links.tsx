@@ -222,28 +222,32 @@ async function resolve(
 const pullRequests = new Map<string, { title: string; url: string } | null>();
 
 /** The PR numbers the mod linked since the last note to the model, keyed `<repo>#<n>`. */
-const linkedPullRequests = new Map<string, { token: string; repo: string; why: string; title: string; url: string }>();
+const linkedPullRequests = new Map<string, { token: string; repo: string; why: string; url: string }>();
 
 /**
- * A note for the model about the PR numbers the mod linked in its reply, or undefined when it linked none; taking it
- * clears the list. The mod picks each number's repository from the reply's words and the session's checkout, so a
- * number the reply meant in another repository can still get a wrong link and title, and only the model can see that.
+ * Append the pending PR attribution, acknowledging only entries still matching the successful snapshot. A failed
+ * append leaves the entries for a later turn, and links recorded during the append are never cleared by it.
  */
-export function takeLinkedPullRequestNote(): string | undefined {
+export async function appendLinkedPullRequestNote(append: (note: string) => Promise<unknown>): Promise<void> {
     if (linkedPullRequests.size === 0) {
-        return undefined;
+        return;
     }
 
-    const rows = [...linkedPullRequests.values()].map(
-        (pr) => `- ${pr.token} -> ${pr.url} (${pr.title}), in ${pr.repo}: ${pr.why}`
-    );
-    linkedPullRequests.clear();
+    const pending = [...linkedPullRequests.entries()];
+    const rows = pending.map(([, pr]) => `- ${pr.token} -> ${pr.url}, in ${pr.repo}: ${pr.why}`);
 
-    return [
-        "The genesis-tools-mods links mod changed your last reply: it linked these PR numbers and added the title GitHub gives:",
+    const note = [
+        "The genesis-tools-mods links mod linked these PR numbers:",
         ...rows,
-        "It picks a number's repository in this order: one written at the number (owner/repo#123), the same number linked before, the nearest repository your reply names (a GitHub URL, a hub link, a path in a checkout), and last the remote of the session's checkout. If a number belongs to another repository, or the title is not the PR you meant, tell the user in your next reply that the link was added automatically and is wrong, and give the correct link. Write owner/repo#123 to choose the repository yourself; a PR you write as a full markdown link is never changed.",
+        "It picks a number's repository in this order: one written at the number (owner/repo#123), the same number linked before, the nearest repository your reply names (a GitHub URL, a hub link, a path in a checkout), and last the remote of the session's checkout. If a number belongs to another repository, tell the user in your next reply that the link was added automatically and is wrong, and give the correct link. Write owner/repo#123 to choose the repository yourself; a PR you write as a full markdown link is never changed.",
     ].join("\n");
+    await append(note);
+
+    for (const [key, pr] of pending) {
+        if (linkedPullRequests.get(key) === pr) {
+            linkedPullRequests.delete(key);
+        }
+    }
 }
 
 function githubHost(ctx: LinkContext): string {
@@ -456,7 +460,6 @@ async function linkPlain(ctx: LinkContext, text: string, offset: number): Promis
                     token: hit.token,
                     repo: target.project.path,
                     why: target.why,
-                    title: pr.title,
                     url: pr.url,
                 });
             }
