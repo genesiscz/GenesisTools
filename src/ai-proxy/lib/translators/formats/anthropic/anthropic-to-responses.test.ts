@@ -2,11 +2,13 @@ import { describe, expect, it } from "bun:test";
 import {
     anthropicToGrokResponses,
     anthropicToResponses,
+    stripReasoningInput,
+} from "@app/ai-proxy/lib/translators/formats/anthropic/anthropic-to-responses";
+import {
     packReasoningSignature,
     REASONING_SIGNATURE_PREFIX,
-    stripReasoningInput,
     unpackReasoningSignature,
-} from "@app/ai-proxy/lib/translators/formats/anthropic/anthropic-to-responses";
+} from "@app/ai-proxy/lib/translators/formats/anthropic/reasoning-codec";
 
 describe("packReasoningSignature / unpackReasoningSignature", () => {
     it("round-trips id and encrypted content", () => {

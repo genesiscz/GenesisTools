@@ -143,3 +143,45 @@ describe("one Claude Code request, read per version", () => {
         });
     });
 });
+
+describe("reasoning carried through Claude Code, per provider", () => {
+    // Pinned before the two signature formats moved behind one ReasoningCodec interface.
+    it("Grok: grokrs1:<id>:<encrypted> in the signature, the thinking text as the summary", async () => {
+        const { GROK_RESPONSES_HOOKS } = await import(
+            "@app/ai-proxy/lib/translators/formats/anthropic/anthropic-to-responses"
+        );
+        const { packReasoningSignature } = await import(
+            "@app/ai-proxy/lib/translators/formats/anthropic/reasoning-codec"
+        );
+        const signature = packReasoningSignature("rs_1", "ENC");
+
+        expect(signature).toBe("grokrs1:rs_1:ENC");
+        expect(GROK_RESPONSES_HOOKS.reasoningItem({ type: "thinking", thinking: "why", signature })).toEqual({
+            type: "reasoning",
+            id: "rs_1",
+            summary: [{ type: "summary_text", text: "why" }],
+            encrypted_content: "ENC",
+        });
+        expect(GROK_RESPONSES_HOOKS.reasoningItem({ type: "thinking", thinking: "x", signature: "gtr1.other" })).toBe(
+            undefined
+        );
+    });
+
+    it("Codex: a gtr1 envelope opens only for the login and model family that sealed it", async () => {
+        const { accountHash8, openReasoningEnvelope, packReasoningEnvelope } = await import(
+            "@app/ai-proxy/lib/translators/formats/anthropic/reasoning-envelope"
+        );
+        const stamp = { provider: "codex", accountHash: accountHash8("work"), model: "gpt-6.1-sol", compHash: "0" };
+        const sealed = packReasoningEnvelope(stamp, { id: "rs_1", encrypted_content: "ENC", summary: [] });
+
+        expect(openReasoningEnvelope(sealed, stamp)).toMatchObject({
+            ok: true,
+            item: { id: "rs_1", encrypted_content: "ENC" },
+        });
+        expect(openReasoningEnvelope(sealed, { ...stamp, accountHash: accountHash8("other") })).toEqual({
+            ok: false,
+            reason: "account",
+        });
+        expect(openReasoningEnvelope("grokrs1:rs_1:ENC", stamp)).toEqual({ ok: false, reason: "not-envelope" });
+    });
+});
