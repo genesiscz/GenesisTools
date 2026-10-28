@@ -100,7 +100,7 @@ function nextWorktreeAt(startedAt: number): number {
  * The oldest size `tools du size` may answer for a worktree, in seconds. `tools du size` shares one answer with every
  * caller on the Mac. A changed git status asks for a walk at most 5 minutes old, never a forced one: the status is the
  * whole porcelain with its branch line, so every edit or commit in a busy worktree changes it, and on 2026-10-28
- * sessions watching the same col-fe worktree forced 10 full walks of it (78 s) in an hour. A walk another session made
+ * sessions watching the same web app worktree forced 10 full walks of it (78 s) in an hour. A walk another session made
  * in those 5 minutes already counts the change.
  */
 export function worktreeMaxAgeS(held: { status: string } | undefined, status: string): number {
