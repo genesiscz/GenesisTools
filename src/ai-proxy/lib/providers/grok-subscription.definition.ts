@@ -68,7 +68,7 @@ export const grokSubscriptionDefinition: ProviderDefinition = {
                 return null;
             }
 
-            return { fetchedAt: new Date().toISOString(), tier: usage.tier, summary: usage.summary, grok };
+            return { fetchedAt: new Date().toISOString(), tier: usage.tier, summary: usage.summary, details: { grok } };
         },
     },
     upstreamEndpoints: GROK_UPSTREAM_ENDPOINTS,

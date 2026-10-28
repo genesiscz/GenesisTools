@@ -2,7 +2,13 @@ import { afterEach, beforeEach, describe, expect, it, spyOn } from "bun:test";
 import { mkdtempSync, readdirSync, readFileSync, rmSync, writeFileSync } from "node:fs";
 import { tmpdir } from "node:os";
 import { join } from "node:path";
-import { getTodayUsageSummary, recordUsageRequest, setUsageStoreDirForTests } from "@app/ai-proxy/lib/usage/store";
+import {
+    getTodayUsageSummary,
+    readBillingStore,
+    recordUsageRequest,
+    saveBillingSnapshot,
+    setUsageStoreDirForTests,
+} from "@app/ai-proxy/lib/usage/store";
 import type { UsageRequestRecord } from "@app/ai-proxy/lib/usage/types";
 import { hitPercent } from "@genesiscz/utils/ai/usage/cache-stats";
 import { SafeJSON } from "@genesiscz/utils/json";
@@ -242,5 +248,83 @@ describe("daily usage store", () => {
         expect(today.reasoning_tokens).toBe(12);
         expect(hitPercent(split)).toBeCloseTo((1300 / 1600) * 100, 6);
         expect(hitPercent({ uncached: 0, cacheRead: 0, cacheWrite: 0 })).toBeUndefined();
+    });
+});
+
+describe("billing store: per-provider details nest under details", () => {
+    const grokBilling = {
+        monthlyLimit: { val: 100 },
+        used: { val: 42 },
+        onDemandCap: { val: 0 },
+        billingPeriodStart: "2026-06-01",
+        billingPeriodEnd: "2026-07-01",
+    };
+    const base = { fetchedAt: "2026-10-28T10:00:00.000Z", tier: "Premium", summary: "42% used" };
+
+    function billingFile(): string {
+        return join(dir, "billing.json");
+    }
+
+    function plantBilling(accounts: Record<string, unknown>): void {
+        writeFileSync(billingFile(), `${SafeJSON.stringify({ version: 1, accounts })}\n`);
+    }
+
+    function reload(): ReturnType<typeof readBillingStore> {
+        setUsageStoreDirForTests(dir);
+        return readBillingStore();
+    }
+
+    it("moves the flat grok and copilot keys, and the older billing/settings pair, into details", () => {
+        plantBilling({
+            work: { ...base, grok: { billing: grokBilling } },
+            personal: { ...base, tier: "individual", copilot: { plan: "individual", quotaRemaining: 10 } },
+            side: { ...base, billing: grokBilling, settings: { subscription_tier_display: "Premium" } },
+        });
+
+        expect(reload().accounts).toEqual({
+            work: { ...base, details: { grok: { billing: grokBilling } } },
+            personal: { ...base, tier: "individual", details: { copilot: { plan: "individual", quotaRemaining: 10 } } },
+            side: {
+                ...base,
+                details: { grok: { billing: grokBilling, settings: { subscription_tier_display: "Premium" } } },
+            },
+        });
+    });
+
+    it("keeps details when both shapes are present, and the old key only fills a missing details", () => {
+        const stale = { ...grokBilling, used: { val: 1 } };
+        plantBilling({
+            work: { ...base, details: { grok: { billing: grokBilling } }, grok: { billing: stale } },
+            personal: { ...base, details: { copilot: { plan: "business" } }, copilot: { plan: "individual" } },
+        });
+
+        expect(reload().accounts).toEqual({
+            work: { ...base, details: { grok: { billing: grokBilling } } },
+            personal: { ...base, details: { copilot: { plan: "business" } } },
+        });
+    });
+
+    it("changes nothing on a second load of the migrated store", () => {
+        plantBilling({
+            work: { ...base, grok: { billing: grokBilling } },
+            personal: { ...base, copilot: { plan: "individual" } },
+            plain: { ...base },
+        });
+        const first = reload();
+        writeFileSync(billingFile(), `${SafeJSON.stringify(first)}\n`);
+
+        expect(reload()).toEqual(first);
+    });
+
+    it("writes only the new shape on the next save", () => {
+        plantBilling({ work: { ...base, grok: { billing: grokBilling } } });
+
+        saveBillingSnapshot("personal", { ...base, details: { copilot: { plan: "individual" } } });
+        const onDisk = SafeJSON.parse(readFileSync(billingFile(), "utf-8"));
+
+        expect(onDisk.accounts).toEqual({
+            work: { ...base, details: { grok: { billing: grokBilling } } },
+            personal: { ...base, details: { copilot: { plan: "individual" } } },
+        });
     });
 });

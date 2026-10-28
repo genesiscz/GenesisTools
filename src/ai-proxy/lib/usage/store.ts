@@ -7,9 +7,11 @@ import type {
     DailyModelUsage,
     DailyUsageStore,
     GrokUsageDetails,
+    UsageDetails,
     UsageRequestRecord,
 } from "@app/ai-proxy/lib/usage/types";
 import { noteUnreadableUsageFile, preserveBeforeReplacing } from "@app/ai-proxy/lib/usage/unreadable-files";
+import type { CopilotUsageSummary } from "@genesiscz/utils/ai/github-copilot/types";
 import type { GrokBillingConfig, GrokSettings } from "@genesiscz/utils/ai/grok";
 import { splitPromptTokens } from "@genesiscz/utils/ai/usage/cache-stats";
 import { SafeJSON } from "@genesiscz/utils/json";
@@ -53,21 +55,39 @@ function emptyDailyStore(): DailyUsageStore {
     return { version: 1, days: {} };
 }
 
+/**
+ * The shapes older builds wrote: the per-provider details flat on the snapshot (`grok`, `copilot`, until 2026-10-28),
+ * and before that Grok's `billing` and `settings` flat on it.
+ */
 type LegacyBillingSnapshot = AccountBillingSnapshot & {
+    grok?: GrokUsageDetails;
+    copilot?: CopilotUsageSummary;
     billing?: GrokBillingConfig;
     settings?: GrokSettings;
 };
 
-function migrateBillingSnapshot(snapshot: LegacyBillingSnapshot): AccountBillingSnapshot {
-    if (snapshot.grok || !snapshot.billing) {
-        const { billing: _billing, settings: _settings, ...rest } = snapshot;
-        return rest;
+function legacyDetails(snapshot: LegacyBillingSnapshot): UsageDetails | undefined {
+    if (snapshot.grok) {
+        return { grok: snapshot.grok };
     }
 
-    const { billing, settings, ...rest } = snapshot;
-    const grok: GrokUsageDetails = { billing, ...(settings ? { settings } : {}) };
+    if (snapshot.billing) {
+        return { grok: { billing: snapshot.billing, ...(snapshot.settings ? { settings: snapshot.settings } : {}) } };
+    }
 
-    return { ...rest, grok };
+    if (snapshot.copilot) {
+        return { copilot: snapshot.copilot };
+    }
+
+    return undefined;
+}
+
+/** `details` wins when a snapshot has both shapes; the old keys only fill a missing one, and never stay. */
+function migrateBillingSnapshot(snapshot: LegacyBillingSnapshot): AccountBillingSnapshot {
+    const { grok: _grok, copilot: _copilot, billing: _billing, settings: _settings, ...rest } = snapshot;
+    const details = rest.details ?? legacyDetails(snapshot);
+
+    return details ? { ...rest, details } : rest;
 }
 
 function migrateBillingStore(store: BillingUsageStore): BillingUsageStore {

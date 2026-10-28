@@ -215,9 +215,11 @@ describe("runUsageCommand per provider type", () => {
         }
 
         expect(built).toEqual(["grok-subscription", "github-copilot-subscription"]);
-        expect(saved.map(([name, snapshot]) => [name, Object.keys(snapshot).sort()])).toEqual([
-            ["grok-subscription", ["fetchedAt", "grok", "summary", "tier"]],
-            ["github-copilot-subscription", ["copilot", "fetchedAt", "summary", "tier"]],
+        expect(
+            saved.map(([name, snapshot]) => [name, Object.keys(snapshot).sort(), Object.keys(snapshot.details ?? {})])
+        ).toEqual([
+            ["grok-subscription", ["details", "fetchedAt", "summary", "tier"], ["grok"]],
+            ["github-copilot-subscription", ["details", "fetchedAt", "summary", "tier"], ["copilot"]],
         ]);
     });
 
