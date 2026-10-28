@@ -1,6 +1,7 @@
 import { logger } from "@genesiscz/utils/logger";
 import { profiler } from "@genesiscz/utils/profile";
 import { InvalidArgumentError, Option } from "commander";
+import { singleFlight } from "./single-flight";
 import type { Storage } from "./storage";
 
 const cacheProf = profiler.scope("cache");
@@ -18,6 +19,8 @@ type CacheStorage = Pick<Storage, "getCacheFile" | "putCacheFile">;
  * writes the fresh result, so a later call with a max age can use it. `isValid` adds a check beyond
  * age (a head sha, a file fingerprint); `shouldStore` keeps an answer out of the cache (unfinished).
  * A failed cache write (full disk, unwritable dir) is logged, never thrown: the fetched value stands.
+ * `shareInFlight` names the call across processes: when the caller accepts a cached answer, identical calls that miss
+ * together run `fetch` once and wait for its answer (`singleFlight`), instead of each running it.
  */
 export async function cached<T>({
     storage,
@@ -26,6 +29,7 @@ export async function cached<T>({
     fetch,
     isValid,
     shouldStore,
+    shareInFlight,
 }: {
     storage: CacheStorage;
     key: string;
@@ -33,6 +37,7 @@ export async function cached<T>({
     fetch: () => Promise<T>;
     isValid?: (hit: T) => boolean;
     shouldStore?: (value: T) => boolean;
+    shareInFlight?: string;
 }): Promise<{ value: T; hit: boolean }> {
     let miss = "fresh asked";
 
@@ -48,7 +53,10 @@ export async function cached<T>({
     }
 
     cacheProf.mark(`miss ${key} (${miss})`);
-    const value = await fetch();
+    const value =
+        shareInFlight && maxAgeSeconds !== undefined && maxAgeSeconds > 0
+            ? await singleFlight({ key: shareInFlight, run: fetch, shouldShare: shouldStore })
+            : await fetch();
 
     if (!shouldStore || shouldStore(value)) {
         try {

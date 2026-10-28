@@ -6,6 +6,7 @@ import { join } from "node:path";
 import { tryWithPathArbitration } from "@genesiscz/utils/process/path-arbitration";
 import { parsePidRecord, serializePidRecord } from "@genesiscz/utils/process/pidfile";
 import { attemptRenameSteal, LockTimeoutError, tryAcquireLock, withFileLock } from "./file-lock";
+import { singleFlight } from "./single-flight";
 
 describe("file-lock: stale/orphaned lock handling", () => {
     let dir: string;
@@ -195,5 +196,118 @@ describe("file-lock: stale/orphaned lock handling", () => {
         expect(won).toBe(false);
         expect(readFileSync(lockPath, "utf-8").trim()).toBe("12345"); // restored, not clobbered
         expect(readdirSync(dir)).toEqual(["target.lock"]); // no temp litter
+    });
+});
+
+describe("singleFlight", () => {
+    let dir: string;
+
+    beforeEach(() => {
+        dir = mkdtempSync(join(tmpdir(), "single-flight-test-"));
+    });
+
+    afterEach(() => {
+        rmSync(dir, { recursive: true, force: true });
+    });
+
+    function counted<T>(value: T, ms = 30) {
+        const counter = { runs: 0 };
+        const run = async () => {
+            counter.runs++;
+            await Bun.sleep(ms);
+            return value;
+        };
+
+        return { counter, run };
+    }
+
+    it("runs once for concurrent calls with the same key, and every caller gets the answer", async () => {
+        const { counter, run } = counted("answer");
+
+        const answers = await Promise.all(Array.from({ length: 5 }, () => singleFlight({ key: "same", run, dir })));
+
+        expect(answers).toEqual(["answer", "answer", "answer", "answer", "answer"]);
+        expect(counter.runs).toBe(1);
+    });
+
+    it("runs different keys in parallel", async () => {
+        const started: string[] = [];
+        let release: () => void = () => {};
+        const gate = new Promise<void>((resolve) => {
+            release = resolve;
+        });
+        const run = (key: string) => async () => {
+            started.push(key);
+
+            if (started.length === 2) {
+                release();
+            }
+
+            await gate;
+            return key;
+        };
+
+        const answers = await Promise.all([
+            singleFlight({ key: "a", run: run("a"), dir, waitMs: 1000 }),
+            singleFlight({ key: "b", run: run("b"), dir, waitMs: 1000 }),
+        ]);
+
+        expect(answers).toEqual(["a", "b"]);
+    });
+
+    it("takes over a lock whose process died", async () => {
+        const { counter, run } = counted("mine", 0);
+        writeFileSync(join(dir, `${Bun.hash("dead").toString(16)}.lock`), "999999999");
+
+        expect(await singleFlight({ key: "dead", run, dir, waitMs: 2000 })).toBe("mine");
+        expect(counter.runs).toBe(1);
+    });
+
+    it("runs again once the shared answer is older than ttlMs", async () => {
+        const { counter, run } = counted("again", 0);
+
+        await singleFlight({ key: "old", run, dir, ttlMs: 40 });
+        await singleFlight({ key: "old", run, dir, ttlMs: 40 });
+        expect(counter.runs).toBe(1);
+
+        await Bun.sleep(60);
+        await singleFlight({ key: "old", run, dir, ttlMs: 40 });
+        expect(counter.runs).toBe(2);
+    });
+
+    it("shares nothing that shouldShare refuses, so the next caller runs", async () => {
+        const { counter, run } = counted({ exitCode: 1 }, 0);
+        const shouldShare = (value: { exitCode: number }) => value.exitCode === 0;
+
+        await singleFlight({ key: "failed", run, dir, shouldShare });
+        await singleFlight({ key: "failed", run, dir, shouldShare });
+
+        expect(counter.runs).toBe(2);
+    });
+
+    it("calls fallback after the wait and its retries run out", async () => {
+        let release: () => void = () => {};
+        const held = withFileLock(
+            join(dir, `${Bun.hash("busy").toString(16)}.lock`),
+            () =>
+                new Promise<void>((resolve) => {
+                    release = resolve;
+                }),
+            1000
+        );
+        await Bun.sleep(10);
+
+        const answer = await singleFlight({
+            key: "busy",
+            run: async () => "ran",
+            fallback: async () => "fell back",
+            dir,
+            waitMs: 60,
+            retries: 1,
+        });
+        release();
+        await held;
+
+        expect(answer).toBe("fell back");
     });
 });
