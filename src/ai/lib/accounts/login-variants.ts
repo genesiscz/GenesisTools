@@ -17,8 +17,8 @@ export interface RunLoginVariantOptions {
 
 /** What the core does with one login variant a provider can declare. */
 export interface LoginVariantVerb {
-    /** The command it registers: `login-long`. */
-    verb: string;
+    /** The command it registers: `login-long`. The key name lets check-tool-commands see the word. */
+    commandName: string;
     /** One line for `--help` on the provider-neutral door, and on a door that brings no wording of its own. */
     description: string;
     run(opts: RunLoginVariantOptions): Promise<void>;
@@ -30,12 +30,12 @@ export interface LoginVariantVerb {
  */
 export const LOGIN_VARIANT_VERBS: Record<LoginVariantKey, LoginVariantVerb> = {
     long: {
-        verb: "login-long",
+        commandName: "login-long",
         description: "Attach a long-lived token to an existing account (providers that have one)",
         run: runLoginLong,
     },
     secondary: {
-        verb: "login-secondary",
+        commandName: "login-secondary",
         description: "Attach a second, isolated grant to an account (providers that have one)",
         run: runLoginSecondary,
     },
