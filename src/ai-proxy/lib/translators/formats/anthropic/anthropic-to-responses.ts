@@ -55,6 +55,19 @@ export interface ResponsesTranslationHooks {
      * and WHAM accepts (probed 2026-10-26: the model described the image). Off: each image becomes "[Image Omitted]".
      */
     toolResultImages?: boolean;
+    /**
+     * A tool that Claude Code's tool search loaded (`defer_loading: true`) stays out of `tools` and goes in as an
+     * `additional_tools` input item right after the search result that loaded it. WHAM reads 0% of its prompt cache
+     * after any change of `tools`, also an append (probed 2026-10-28); an `additional_tools` item kept 41,088 of
+     * 42,227 tokens cached and the model called the tool. Off: loaded tools join `tools` (`stableToolOrder`).
+     */
+    deferredToolsAsInput?: boolean;
+}
+
+/** Deferred tools by name, and the ones already given to the model as an `additional_tools` item. */
+interface DeferredTools {
+    byName: Map<string, JsonRecord>;
+    sent: Set<string>;
 }
 
 /** Grok: the signature carries the item id and its encrypted content; the thinking text is the summary. */
@@ -191,7 +204,28 @@ function pushAssistantText(input: JsonRecord[], parts: string[]): void {
     }
 }
 
-function appendUserMessage(input: JsonRecord[], content: unknown, hooks: ResponsesTranslationHooks): void {
+/** The tools a search result loaded, as one `additional_tools` item; undefined when it loaded none not sent before. */
+function loadedToolsItem(result: JsonRecord, deferred: DeferredTools | undefined): JsonRecord | undefined {
+    if (!deferred) {
+        return undefined;
+    }
+
+    const tools = referencedToolNames(result.content)
+        .filter((name) => deferred.byName.has(name) && !deferred.sent.has(name))
+        .map((name) => {
+            deferred.sent.add(name);
+            return responsesTool(deferred.byName.get(name) as JsonRecord);
+        });
+
+    return tools.length > 0 ? { type: "additional_tools", role: "developer", tools } : undefined;
+}
+
+function appendUserMessage(
+    input: JsonRecord[],
+    content: unknown,
+    hooks: ResponsesTranslationHooks,
+    deferred: DeferredTools | undefined
+): void {
     if (typeof content === "string") {
         if (content.length > 0) {
             input.push({ role: "user", content: [{ type: "input_text", text: content }] });
@@ -220,6 +254,12 @@ function appendUserMessage(input: JsonRecord[], content: unknown, hooks: Respons
                 call_id: part.tool_use_id,
                 output: (hooks.toolResultImages ? toolResultItems(part) : undefined) ?? flattenToolResult(part),
             });
+            const loaded = loadedToolsItem(part, deferred);
+
+            if (loaded) {
+                input.push(loaded);
+            }
+
             continue;
         }
 
@@ -336,24 +376,45 @@ function stableToolOrder(tools: unknown[], messages: unknown): unknown[] {
     ];
 }
 
-function responsesTools(tools: unknown, messages: unknown): JsonRecord[] | undefined {
+function responsesTool(tool: JsonRecord): JsonRecord {
+    return {
+        type: "function",
+        name: tool.name,
+        description: tool.description ?? "",
+        parameters: tool.input_schema ?? { type: "object", properties: {}, required: [] },
+    };
+}
+
+function isDeferredTool(tool: unknown): tool is JsonRecord {
+    return isObject(tool) && tool.defer_loading === true && typeof tool.name === "string";
+}
+
+function deferredTools(tools: unknown): DeferredTools {
+    const byName = new Map<string, JsonRecord>();
+
+    for (const tool of Array.isArray(tools) ? tools : []) {
+        if (isDeferredTool(tool)) {
+            byName.set(String(tool.name), tool);
+        }
+    }
+
+    return { byName, sent: new Set() };
+}
+
+function responsesTools(tools: unknown, messages: unknown, deferredAsInput: boolean): JsonRecord[] | undefined {
     if (!Array.isArray(tools)) {
         return undefined;
     }
 
     const mapped: JsonRecord[] = [];
+    const ordered = deferredAsInput ? tools.filter((tool) => !isDeferredTool(tool)) : stableToolOrder(tools, messages);
 
-    for (const tool of stableToolOrder(tools, messages)) {
+    for (const tool of ordered) {
         if (!isObject(tool) || typeof tool.name !== "string") {
             continue;
         }
 
-        mapped.push({
-            type: "function",
-            name: tool.name,
-            description: tool.description ?? "",
-            parameters: tool.input_schema ?? { type: "object", properties: {}, required: [] },
-        });
+        mapped.push(responsesTool(tool));
     }
 
     return mapped.length > 0 ? mapped : undefined;
@@ -427,6 +488,7 @@ function appendDeveloperMessage(input: JsonRecord[], content: unknown): void {
 export function anthropicToResponses(body: JsonRecord, model: string, hooks: ResponsesTranslationHooks): JsonRecord {
     const input: JsonRecord[] = [];
     const dropped = { thinking: 0 };
+    const deferred = hooks.deferredToolsAsInput ? deferredTools(body.tools) : undefined;
 
     if (Array.isArray(body.messages)) {
         for (const message of body.messages) {
@@ -439,7 +501,7 @@ export function anthropicToResponses(body: JsonRecord, model: string, hooks: Res
             } else if (message.role === "system") {
                 appendDeveloperMessage(input, message.content);
             } else {
-                appendUserMessage(input, message.content, hooks);
+                appendUserMessage(input, message.content, hooks, deferred);
             }
         }
     }
@@ -464,7 +526,7 @@ export function anthropicToResponses(body: JsonRecord, model: string, hooks: Res
         out.instructions = instructions;
     }
 
-    const tools = responsesTools(body.tools, body.messages);
+    const tools = responsesTools(body.tools, body.messages, hooks.deferredToolsAsInput === true);
 
     if (tools !== undefined) {
         out.tools = tools;

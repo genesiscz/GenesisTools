@@ -821,6 +821,8 @@ export class OpenAiSubscriptionProvider implements ProxyProvider {
         let responsesBody = anthropicToResponses(ensureToolRequiredArrays(parsed), concreteModel, {
             // A Read of an image comes back as a tool result; WHAM takes it as input_image (codex-rs does the same).
             toolResultImages: true,
+            // A change of `tools` reads 0% of the WHAM cache, so tool search's loads go in as input items.
+            deferredToolsAsInput: true,
             reasoningItem: (thinking) => {
                 const opened = openReasoningEnvelope(thinking.signature, stamp);
 
@@ -837,6 +839,12 @@ export class OpenAiSubscriptionProvider implements ProxyProvider {
 
         if (Array.isArray(responsesBody.tools)) {
             responsesBody.tools = responsesBody.tools.map((tool) => (isObject(tool) ? nonStrictByDefault(tool) : tool));
+        }
+
+        for (const item of Array.isArray(responsesBody.input) ? responsesBody.input : []) {
+            if (isObject(item) && item.type === "additional_tools" && Array.isArray(item.tools)) {
+                item.tools = item.tools.map((tool) => (isObject(tool) ? nonStrictByDefault(tool) : tool));
+            }
         }
 
         // Claude Code forbids tools in its compaction prompt in words only; a Codex model may still call one, which
