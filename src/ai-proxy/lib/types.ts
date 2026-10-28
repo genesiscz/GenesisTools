@@ -292,8 +292,16 @@ export interface AiProxyConfig {
     codexModels?: Record<string, CodexModelOverride>;
     /** Closed session records (`sessions/<id>.json`) are deleted after this many days. Default 30. */
     sessionRetentionDays?: number;
-    /** How the proxy and `tools claude codex` treat Claude Code sessions on Codex models. */
-    claudeSessions?: ClaudeSessionsConfig;
+    /**
+     * Agent sessions that run through the proxy, by the harness the session runs in and then by the provider of its
+     * models: Claude Code on Codex is `sessionsIn.claude.providers.codex`.
+     */
+    sessionsIn?: SessionsInConfig;
+    /**
+     * @deprecated The shape before 2026-10-28. The loader moves it into `sessionsIn.claude` (`migrateSessionsIn` in
+     * `config-store.ts`) and the next save drops it, so no reader sees it.
+     */
+    claudeSessions?: LegacyClaudeSessionsConfig;
 }
 
 /** Text around a built-in system note: `replace` drops the built-in text, `prepend` and `append` keep it. */
@@ -303,8 +311,44 @@ export interface SystemNoteConfig {
     replace?: string;
 }
 
-export interface ClaudeSessionsConfig {
-    /** Claude Code's compaction turn on a Codex model. */
+/**
+ * Settings for agent sessions, keyed first by the harness a session runs in (the outer axis), then by the provider of
+ * its models. A harness or provider added later gets its own key: a Codex CLI on a Claude model would be
+ * `sessionsIn.codex.providers.claude`.
+ */
+export interface SessionsInConfig {
+    /** Claude Code sessions: `tools claude codex`, and any Claude Code client of `/v1/messages`. */
+    claude?: ClaudeCodeSessionsConfig;
+}
+
+export interface ClaudeCodeSessionsConfig {
+    /** What holds for a Claude Code session whatever provider its models come from. */
+    global?: ClaudeCodeGlobalSettings;
+    /** What holds for one provider of the session's models. */
+    providers?: ClaudeCodeProviderSettings;
+}
+
+export interface ClaudeCodeProviderSettings {
+    codex?: CodexInClaudeCodeSettings;
+    grok?: GrokInClaudeCodeSettings;
+}
+
+export interface ClaudeCodeGlobalSettings {
+    compaction?: {
+        /**
+         * Default true: `tools claude codex` sets Claude Code's `promptCacheTtl` to "1h", the only way its idle
+         * compaction arms. Near the cache's end (54 minutes idle, over 200K context) Claude Code then compacts, and a
+         * ready background result answers it with no upstream request. Takes effect on launch or resume.
+         */
+        idle?: boolean;
+    };
+    /** The note `tools claude codex` appends to the main loop's system prompt. */
+    lead?: { systemNote?: SystemNoteConfig };
+}
+
+/** Claude Code on a Codex model. */
+export interface CodexInClaudeCodeSettings {
+    /** Claude Code's compaction turn. */
     compaction?: {
         /**
          * Default "native": Codex's own server-side compaction (`compaction_trigger`), at the session's effort and on
@@ -316,12 +360,6 @@ export interface ClaudeSessionsConfig {
         effort?: ReasoningEffort | "session";
         /** The summary length the model is asked to stay under, in words. Default 5000; 0 asks for no limit. */
         words?: number;
-        /**
-         * Default true: `tools claude codex` sets Claude Code's `promptCacheTtl` to "1h", the only way its idle
-         * compaction arms. Near the cache's end (54 minutes idle, over 200K context) Claude Code then compacts, and a
-         * ready background result answers it with no upstream request. Takes effect on launch or resume.
-         */
-        idle?: boolean;
         /**
          * Native mode only: compact in the background before Claude Code asks (Codex's `async_compaction`), so its
          * compaction turn is answered at once. Each fraction is of the session's compaction point (window times
@@ -338,9 +376,7 @@ export interface ClaudeSessionsConfig {
             maxTailFraction?: number;
         };
     };
-    /** The note ccx appends to the main loop's system prompt. */
-    lead?: { systemNote?: SystemNoteConfig };
-    /** The Codex subagents ccx defines (sol, terra, luna, …). */
+    /** The Codex subagents `tools claude codex` defines (sol, terra, luna, …). */
     subagents?: {
         systemNote?: SystemNoteConfig;
         skills?: {
@@ -350,6 +386,22 @@ export interface ClaudeSessionsConfig {
             allowed?: string[];
         };
     };
+}
+
+/** Claude Code on a Grok model. Grok has no server-side compaction, so its model always writes the summary. */
+export interface GrokInClaudeCodeSettings {
+    /** Claude Code's compaction turn. */
+    compaction?: {
+        /** The summary length the model is asked to stay under, in words. Default: no limit, Claude Code's own prompt. */
+        words?: number;
+    };
+}
+
+/** `claudeSessions` before 2026-10-28: one flat block whose compaction and subagents were Codex knobs. */
+export interface LegacyClaudeSessionsConfig {
+    compaction?: NonNullable<CodexInClaudeCodeSettings["compaction"]> & { idle?: boolean };
+    lead?: ClaudeCodeGlobalSettings["lead"];
+    subagents?: CodexInClaudeCodeSettings["subagents"];
 }
 
 /** `ultra` is a Codex UI level: the Codex agent resolves it per model (codex-rs `resolve_reasoning_effort`). */

@@ -1,4 +1,4 @@
-import type { ThinkingPresentationMode, UsageSummary } from "@app/ai-proxy/lib/types";
+import type { SessionsInConfig, ThinkingPresentationMode, UsageSummary } from "@app/ai-proxy/lib/types";
 import type { PromptCacheKey } from "@genesiscz/utils/ai/prompt-cache-key";
 
 export interface OpenAiModel {
@@ -28,6 +28,8 @@ export interface ProviderRequestContext {
     sessionAgents?: readonly string[];
     /** The session record the request came from: an account failure names its switch command. */
     sessionId?: string;
+    /** `sessionsIn` of the proxy config, read for this request, so an edit applies to the next request. */
+    sessionsIn?: SessionsInConfig;
 }
 
 export interface ProxyProvider {

@@ -4,6 +4,7 @@ import { tmpdir } from "node:os";
 import { join } from "node:path";
 import { GrokSubscriptionProvider } from "@app/ai-proxy/lib/providers/grok-subscription";
 import { resetWhamItemStore } from "@app/ai-proxy/lib/providers/wham-item-store";
+import { CLAUDE_CODE_COMPACTION_MARK } from "@app/ai-proxy/lib/translators/formats/anthropic/claude-code-turns";
 import { TOOL_ROUTING_TAG } from "@app/ai-proxy/lib/translators/formats/anthropic/tool-routing-tag";
 import type { AiProxyAccountConfig } from "@app/ai-proxy/lib/types";
 import { GrokSubscriptionClient } from "@genesiscz/utils/ai/grok";
@@ -475,6 +476,45 @@ describe("GrokSubscriptionProvider.messages /responses route (default)", () => {
         const parsed = SafeJSON.parse(await res.text(), { strict: true }) as Record<string, unknown>;
         expect(parsed.type).toBe("error");
         expect((parsed.error as Record<string, unknown>).message).toContain("some other problem");
+    });
+
+    describe("Claude Code's compaction turn", () => {
+        const compactionBody = SafeJSON.stringify({
+            model: "grok-4.6",
+            max_tokens: 100,
+            messages: [
+                { role: "user", content: "fix the failing test" },
+                { role: "assistant", content: "fixed" },
+                { role: "user", content: `${CLAUDE_CODE_COMPACTION_MARK}\n\nSummarize the conversation.` },
+            ],
+        });
+        const ok = () => new Response(envelope, { status: 200, headers: { "content-type": "application/json" } });
+
+        it("asks for the summary length that sessionsIn.claude.providers.grok.compaction.words sets", async () => {
+            const { provider, sent } = stubbedProvider(ok);
+
+            await provider.messages(
+                new Request("http://proxy/v1/messages", { method: "POST", body: compactionBody }),
+                "grok-4.6",
+                compactionBody,
+                { sessionsIn: { claude: { providers: { grok: { compaction: { words: 800 } } } } } }
+            );
+
+            const input = sent[0]?.body.input as unknown[];
+            expect(SafeJSON.stringify(input.at(-1))).toContain("Keep the whole summary under 800 words.");
+        });
+
+        it("sends Claude Code's compaction prompt unchanged when no length is set", async () => {
+            const { provider, sent } = stubbedProvider(ok);
+
+            await provider.messages(
+                new Request("http://proxy/v1/messages", { method: "POST", body: compactionBody }),
+                "grok-4.6",
+                compactionBody
+            );
+
+            expect(SafeJSON.stringify(sent[0]?.body.input)).not.toContain("Keep the whole summary under");
+        });
     });
 });
 

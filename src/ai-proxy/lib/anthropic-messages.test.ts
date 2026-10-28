@@ -3,7 +3,7 @@ import { compactionNote } from "@app/ai-proxy/lib/sessions/codex-compaction";
 import { acknowledgeCompactionDrop, createSessionRecord, readSessionRecord } from "@app/ai-proxy/lib/sessions/records";
 import { SafeJSON } from "@genesiscz/utils/json";
 import { anthropicBodyToOpenAiBody, anthropicMessagesPipeline, countAnthropicInputTokens } from "./anthropic-messages";
-import type { OpenAiModel, ProxyProvider } from "./providers/types";
+import type { OpenAiModel, ProviderRequestContext, ProxyProvider } from "./providers/types";
 import type { UsageSummary } from "./types";
 
 const PROXY_MODEL = "martin/grok/grok-4.5";
@@ -777,5 +777,38 @@ describe("Anthropic-only request fields", () => {
         // ...while the fields that DO translate survive.
         expect(body.max_tokens).toBe(64);
         expect(body.model).toBe(UPSTREAM_MODEL);
+    });
+});
+
+describe("anthropicMessagesPipeline: session settings", () => {
+    it("hands the config's sessionsIn to a provider that speaks Anthropic, with the request", async () => {
+        const contexts: Array<ProviderRequestContext | undefined> = [];
+        const provider: ProxyProvider = {
+            ...fakeProvider(() => new Response("{}")),
+            async messages(_req, _model, _bodyText, context) {
+                contexts.push(context);
+                return new Response(SafeJSON.stringify({ type: "message", role: "assistant", content: [] }), {
+                    status: 200,
+                    headers: { "Content-Type": "application/json" },
+                });
+            },
+        };
+
+        await anthropicMessagesPipeline({
+            provider,
+            upstreamModel: UPSTREAM_MODEL,
+            proxyModel: PROXY_MODEL,
+            req: request(),
+            bodyText: SafeJSON.stringify({
+                model: PROXY_MODEL,
+                max_tokens: 8,
+                messages: [{ role: "user", content: "hi" }],
+            }),
+            sessionsIn: { claude: { providers: { codex: { compaction: { mode: "summary" } } } } },
+        });
+
+        expect(contexts[0]?.sessionsIn).toEqual({
+            claude: { providers: { codex: { compaction: { mode: "summary" } } } },
+        });
     });
 });

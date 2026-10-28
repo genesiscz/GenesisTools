@@ -22,10 +22,12 @@ import {
     type WebSearchServerTool,
     webSearchResponse,
 } from "@app/ai-proxy/lib/server-tools/web-search";
+import { type CompactionPolicy, compactionPolicy } from "@app/ai-proxy/lib/sessions/settings";
 import {
     anthropicToGrokResponses,
     stripReasoningInput,
 } from "@app/ai-proxy/lib/translators/formats/anthropic/anthropic-to-responses";
+import { ClaudeCodeTurn } from "@app/ai-proxy/lib/translators/formats/anthropic/claude-code-turns";
 import { ensureToolRequiredArrays } from "@app/ai-proxy/lib/translators/formats/anthropic/ensure-tool-required";
 import { toAnthropicErrorResponse } from "@app/ai-proxy/lib/translators/formats/anthropic/error-envelope";
 import {
@@ -54,6 +56,13 @@ import { env } from "@genesiscz/utils/env";
 import { SafeJSON } from "@genesiscz/utils/json";
 import { logger } from "@genesiscz/utils/logger";
 import { isObject } from "@genesiscz/utils/object";
+
+/** Claude Code's compaction turn asks for the configured summary length; any other body goes up as it came. */
+function withSummaryLength(body: Record<string, unknown>, policy: CompactionPolicy): Record<string, unknown> {
+    const turn = ClaudeCodeTurn.read(body);
+
+    return turn.isCompaction && policy.words ? turn.withSummaryLimit(policy.words) : body;
+}
 
 export class GrokSubscriptionProvider implements ProxyProvider {
     readonly id = "grok-subscription";
@@ -153,6 +162,11 @@ export class GrokSubscriptionProvider implements ProxyProvider {
         let taggedTools = new Set<string>();
 
         if (typeof parsed === "object" && parsed !== null && !Array.isArray(parsed)) {
+            const request = withSummaryLength(
+                parsed as Record<string, unknown>,
+                compactionPolicy("grok", context?.sessionsIn)
+            );
+
             // Anthropic server tools execute inside Anthropic's API; grok's
             // deserializer rejects them with an opaque `missing field
             // description` that reads like a proxy bug (probe session
@@ -160,7 +174,7 @@ export class GrokSubscriptionProvider implements ProxyProvider {
             // native /responses server tool; every OTHER server tool gets an
             // error naming the real cause — judged over the whole tools list,
             // so a mixed request cannot smuggle one past the web_search path.
-            const serverTools = findServerTools(parsed as Record<string, unknown>);
+            const serverTools = findServerTools(request);
             const unsupported = serverTools.find((type) => !type.startsWith("web_search_"));
 
             if (unsupported !== undefined) {
@@ -177,16 +191,10 @@ export class GrokSubscriptionProvider implements ProxyProvider {
             }
 
             if (serverTools.length > 0) {
-                const webSearch = parseWebSearchServerTool(parsed as Record<string, unknown>);
+                const webSearch = parseWebSearchServerTool(request);
 
                 if (webSearch) {
-                    return this.emulatedWebSearchResponse(
-                        req,
-                        model,
-                        parsed as Record<string, unknown>,
-                        webSearch,
-                        cacheKey
-                    );
+                    return this.emulatedWebSearchResponse(req, model, request, webSearch, cacheKey);
                 }
             }
 
@@ -198,12 +206,10 @@ export class GrokSubscriptionProvider implements ProxyProvider {
             // AI_PROXY_GROK_MESSAGES_ROUTE=shim restores the passthrough
             // below instantly.
             if (env.aiProxy.getGrokMessagesRoute() === "responses") {
-                return this.messagesViaResponses(req, model, parsed as Record<string, unknown>, cacheKey);
+                return this.messagesViaResponses(req, model, request, cacheKey);
             }
 
-            const body = stringifyUnknownToolResultBlocks(
-                hoistSystemMessages(ensureToolRequiredArrays(parsed as Record<string, unknown>))
-            );
+            const body = stringifyUnknownToolResultBlocks(hoistSystemMessages(ensureToolRequiredArrays(request)));
             body.model = model;
 
             // Grok's STREAMING /messages merges parallel calls into one block

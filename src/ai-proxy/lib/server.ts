@@ -26,7 +26,6 @@ import {
     sweepSessionRecords,
 } from "@app/ai-proxy/lib/sessions/records";
 import { resolveSessionRoute, sessionPinnedRoute } from "@app/ai-proxy/lib/sessions/routing";
-import { setClaudeSessionSettings } from "@app/ai-proxy/lib/sessions/settings";
 import { requestTagsFor } from "@app/ai-proxy/lib/sessions/tags";
 import { resolveThinkingMode } from "@app/ai-proxy/lib/thinking-config";
 import { resolveTranslationMode } from "@app/ai-proxy/lib/translation-config";
@@ -407,7 +406,6 @@ export function startAiProxyServer(runtime: AiProxyRuntime) {
 
             const config = await loadConfigFresh();
             setCodexModelOverrides(config.codexModels);
-            setClaudeSessionSettings(config.claudeSessions);
 
             // An unknown or closed session key is refused before any route runs, and never forwarded anywhere.
             const sessionRejection = sessionKeyRejection(req);
@@ -590,6 +588,7 @@ export function startAiProxyServer(runtime: AiProxyRuntime) {
                         cacheKeyPolicy: session?.cacheKeyPolicy,
                         recordId: session?.id,
                         sessionAgents: session?.agents,
+                        sessionsIn: config.sessionsIn,
                     });
                     const elapsedMs = Math.round(performance.now() - requestStarted);
 

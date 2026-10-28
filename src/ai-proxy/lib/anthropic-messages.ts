@@ -16,6 +16,7 @@ import {
     createAnthropicStreamState,
     openAiCompletionToAnthropicMessage,
 } from "@app/ai-proxy/lib/translators/formats/anthropic/openai-to-anthropic-responses";
+import type { SessionsInConfig } from "@app/ai-proxy/lib/types";
 import { type CallTimeline, TimelineCollector } from "@app/ai-proxy/lib/usage/call-timeline";
 import { captureResponseBody } from "@app/ai-proxy/lib/usage/capture-response";
 import { type PipelineResult, pipelineResult } from "@app/ai-proxy/lib/usage/pipeline-result";
@@ -599,6 +600,7 @@ export async function anthropicMessagesPipeline({
     cacheKeyPolicy,
     recordId,
     sessionAgents,
+    sessionsIn,
 }: {
     provider: ProxyProvider;
     upstreamModel: string;
@@ -613,6 +615,8 @@ export async function anthropicMessagesPipeline({
     recordId?: string;
     /** The subagents the session defined with their own model (`ProviderRequestContext.sessionAgents`). */
     sessionAgents?: readonly string[];
+    /** `sessionsIn` of the proxy config, read for this request (`ProviderRequestContext.sessionsIn`). */
+    sessionsIn?: SessionsInConfig;
 }): Promise<AnthropicMessagesResult> {
     const prof = profiler.scope("ai-proxy");
     const parsed = SafeJSON.parse(bodyText, { strict: true });
@@ -662,7 +666,12 @@ export async function anthropicMessagesPipeline({
             bodyText,
             prof,
             startedAt,
-            context: { promptCacheKey, sessionAgents, ...(recordId ? { sessionId: recordId } : {}) },
+            context: {
+                promptCacheKey,
+                sessionAgents,
+                ...(recordId ? { sessionId: recordId } : {}),
+                ...(sessionsIn ? { sessionsIn } : {}),
+            },
         });
     }
 

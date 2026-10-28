@@ -142,9 +142,12 @@ Supported values: `minimal`, `low`, `medium`, `high`, `xhigh`, `max`, `ultra`. E
   `xhigh`, like `max`.
 - **Per-model overrides** go in `config.json` as `codexModels.<slug>`: `window`, `usablePercent`,
   `compactPercent`, `defaultEffort`. The proxy uses `defaultEffort`; `tools claude codex` uses the rest.
-- **Claude Code on Codex** reads `config.json` `claudeSessions` (every field is optional). The proxy reloads
-  compaction settings on each request. Lead notes, subagent notes, and skill settings take effect on launch or resume:
-  - `compaction.mode`: default `"native"`, Codex's own server-side compaction: the turn's request plus a
+- **Claude Code sessions** read `config.json` `sessionsIn.claude` (every field is optional). It has two levels:
+  `global` for Claude Code itself, and `providers.codex` / `providers.grok` for the provider of the session's models.
+  A `claudeSessions` block from before 2026-10-28 moves there on load (`idle` and `lead` to `global`, the rest to
+  `providers.codex`), and the next save drops it. The proxy reloads compaction settings on each request. Lead notes,
+  subagent notes, and skill settings take effect on launch or resume:
+  - `providers.codex.compaction.mode`: default `"native"`, Codex's own server-side compaction: the turn's request plus a
     `compaction_trigger` item, at the session's effort on its cached prefix. Claude Code keeps a
     `[codex-compaction gtc1.<id>]` marker. The proxy stores the encrypted item and compacted history in
     `ai-proxy/compactions/<id>.json` and restores the item on later requests. Another Codex login compacts the saved
@@ -158,14 +161,16 @@ Supported values: `minimal`, `low`, `medium`, `high`, `xhigh`, `max`, `ultra`. E
     recover history from an unrestorable marker. For future compactions, set
     the mode to `"summary"` before switching providers. `"summary"` makes one written-summary request (`effort`,
     `words` below); it is also the fallback when a native compaction returns no item.
-  - `compaction.effort`: the effort of Claude Code's compaction turn, default `"session"` (the session's own).
+  - `providers.codex.compaction.effort`: the effort of Claude Code's compaction turn, default `"session"` (the session's own).
     Each effort level has its own prompt cache, so another effort re-reads the whole context uncached (428K tokens on
     2026-10-27); set one only when speed matters more than the cache.
-  - `compaction.words`: the summary length asked for, default `5000`; `0` asks for none.
-  - `compaction.idle` (default `true`): `tools claude codex` sets Claude Code's `promptCacheTtl` to `"1h"`. Claude Code
+  - `providers.codex.compaction.words`: the summary length asked for, default `5000`; `0` asks for none.
+  - `providers.grok.compaction.words`: Grok has no server-side compaction, so its model writes Claude Code's summary.
+    Set a length to ask for one; by default the compaction prompt goes up as Claude Code wrote it.
+  - `global.compaction.idle` (default `true`): `tools claude codex` sets Claude Code's `promptCacheTtl` to `"1h"`. Claude Code
     arms its idle compaction only after a main request that used the one-hour cache, and through the proxy it otherwise
     asks for five minutes, so without this the idle compaction never runs. Takes effect on launch or resume.
-  - `compaction.background` (native mode, `tools claude codex` sessions only): Codex's `async_compaction`. When a
+  - `providers.codex.compaction.background` (native mode, `tools claude codex` sessions only): Codex's `async_compaction`. When a
     turn's context reaches `startAt` (default `0.8`) of the session's compaction point (window times compact percent),
     the proxy compacts that turn in the background. Claude Code's compaction turn (auto, `/compact`, or idle compaction
     near the cache's expiry) is then answered at once, and the turns after the background point stay verbatim behind
@@ -176,10 +181,10 @@ Supported values: `minimal`, `low`, `medium`, `high`, `xhigh`, `max`, `ultra`. E
     so the agent tells the user in its next reply (`background-wasted` in the events). Set
     `enabled: false` to turn it off. Claude Code's own background compaction ("precomputed compaction") needs a server
     flag that was off on 2026-10-28; when it sends its compaction turn early, the same path answers it.
-  - `lead.systemNote` and `subagents.systemNote`: `{ prepend, append, replace }` around the note `tools claude codex`
-    gives the main loop and its Codex subagents.
-  - `subagents.skills.nudge` (default `true`): the lead names in each brief the skills a subagent loads, and the
-    subagent loads only those. `subagents.skills.allowed`: the list the lead picks from.
+  - `global.lead.systemNote` and `providers.codex.subagents.systemNote`: `{ prepend, append, replace }` around the
+    note `tools claude codex` gives the main loop and its Codex subagents.
+  - `providers.codex.subagents.skills.nudge` (default `true`): the lead names in each brief the skills a subagent
+    loads, and the subagent loads only those. `providers.codex.subagents.skills.allowed`: the list the lead picks from.
 
 - **The client's own field wins.** An explicit `reasoning_effort` (or a nested `reasoning.effort`
   on the Responses door) takes precedence over the suffix, which is the fallback.
