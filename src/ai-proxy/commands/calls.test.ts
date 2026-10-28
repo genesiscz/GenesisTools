@@ -74,3 +74,47 @@ describe("collectRecords", () => {
         expect(records.map((r) => r.elapsedMs)).toEqual([17_000, 18_000, 19_000]);
     });
 });
+
+describe("ai-proxy monitor", () => {
+    const record = {
+        ts: "2026-10-28T00:10:00.000Z",
+        account: "work",
+        provider: "openai-subscription",
+        proxyModel: "codex/gpt-6.1-sol",
+        upstreamModel: "gpt-6.1-sol",
+        path: "/v1/messages#background-compaction",
+        status: 200,
+        elapsedMs: 4200,
+        stream: true,
+        usage: { prompt_tokens: 1000, cache_read_input_tokens: 9000, completion_tokens: 500 },
+        tags: { session: "abcdef12-0000" },
+        compaction: true,
+    };
+
+    it("filters requests by session, compaction, slowness and errors", async () => {
+        const { requestPasses } = await import("./monitor");
+
+        expect(requestPasses(record, { session: "abcdef" })).toBe(true);
+        expect(requestPasses(record, { session: "zzz" })).toBe(false);
+        expect(requestPasses({ ...record, compaction: undefined }, { compaction: true })).toBe(false);
+        expect(requestPasses(record, { slow: 5 })).toBe(false);
+        expect(requestPasses(record, { errors: true })).toBe(false);
+        expect(requestPasses({ ...record, status: 529 }, { errors: true })).toBe(true);
+    });
+
+    it("prints a background compaction request and a wasted event with their reason", async () => {
+        const { formatEvent, formatRequest, eventPasses } = await import("./monitor");
+        const wasted = {
+            ts: record.ts,
+            kind: "background-wasted" as const,
+            claudeSession: "abcdef12-1111",
+            reason: "history_changed",
+        };
+
+        expect(formatRequest(record)).toContain("BG-COMPACT");
+        expect(formatRequest(record)).toContain("hit 90%");
+        expect(formatEvent(wasted)).toContain("history_changed");
+        expect(eventPasses(wasted, { errors: true, session: "abcdef" })).toBe(true);
+        expect(eventPasses({ ...wasted, kind: "done" }, { errors: true })).toBe(false);
+    });
+});

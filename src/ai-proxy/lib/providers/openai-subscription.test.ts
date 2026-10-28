@@ -2256,3 +2256,262 @@ describe("reasoning envelope", () => {
         expect(isReasoningReplayRejection(500, "could not decrypt")).toBe(false);
     });
 });
+
+describe("background compaction (Codex async_compaction for Claude Code)", () => {
+    const claudeSession = "11111111-2222-4333-8444-555555555555";
+    const metadata = { user_id: SafeJSON.stringify({ session_id: claudeSession }) };
+    let eventsFile = "";
+
+    beforeEach(async () => {
+        const { setCompactionEventsPathForTests } = await import("@app/ai-proxy/lib/sessions/compaction-events");
+        const { resetBackgroundForTests } = await import("@app/ai-proxy/lib/sessions/background-compaction");
+        eventsFile = join(mkdtempSync(join(tmpdir(), "gt-bgc-")), "events.jsonl");
+        setCompactionEventsPathForTests(eventsFile);
+        resetBackgroundForTests();
+        setClaudeSessionSettings({});
+    });
+
+    afterEach(async () => {
+        const { setCompactionEventsPathForTests } = await import("@app/ai-proxy/lib/sessions/compaction-events");
+        setCompactionEventsPathForTests(undefined);
+    });
+
+    /** A normal WHAM turn whose usage reports this much context. */
+    function turnResponse(text: string, inputTokens: number): Response {
+        const sse =
+            `event: response.output_text.delta\ndata: ${SafeJSON.stringify({ type: "response.output_text.delta", delta: text })}\n\n` +
+            `event: response.completed\ndata: ${SafeJSON.stringify({
+                type: "response.completed",
+                response: {
+                    status: "completed",
+                    output: [],
+                    usage: {
+                        input_tokens: inputTokens,
+                        input_tokens_details: { cached_tokens: inputTokens - 10 },
+                        output_tokens: 3,
+                    },
+                },
+            })}\n\n`;
+        return new Response(sse, { status: 200, headers: { "content-type": "text/event-stream" } });
+    }
+
+    const isCompaction = (body: Record<string, unknown>) => {
+        const input = Array.isArray(body.input) ? body.input : [];
+        return SafeJSON.stringify(input.at(-1)) === SafeJSON.stringify({ type: "compaction_trigger" });
+    };
+
+    async function send(body: Record<string, unknown>, sessionId: string): Promise<string> {
+        const { OpenAiSubscriptionProvider } = await import("./openai-subscription");
+        const provider = await OpenAiSubscriptionProvider.create(account);
+        const bodyText = SafeJSON.stringify({ model: "gpt-6.1-sol", stream: true, system: "S", metadata, ...body });
+        const response = await provider.messages?.(
+            new Request("http://localhost/v1/messages", { method: "POST", body: bodyText }),
+            "gpt-6.1-sol",
+            bodyText,
+            { sessionId }
+        );
+        return (await response?.text()) ?? "";
+    }
+
+    function events(): Array<Record<string, unknown>> {
+        try {
+            return readFileSync(eventsFile, "utf8")
+                .trim()
+                .split("\n")
+                .filter(Boolean)
+                .map((line) => SafeJSON.parse(line) as Record<string, unknown>);
+        } catch {
+            return [];
+        }
+    }
+
+    const u1 = { role: "user", content: "The code word is KESTREL." };
+    const a1 = { role: "assistant", content: "Noted." };
+    const u2 = { role: "user", content: "Also remember shelf 31." };
+    const a2 = { role: "assistant", content: "Shelf 31 noted." };
+    const compactTurn = (first: Record<string, unknown>) => [
+        first,
+        a1,
+        u2,
+        a2,
+        { role: "user", content: [{ type: "text", text: `${CLAUDE_CODE_COMPACTION_MARK}\nSummarize.` }] },
+    ];
+
+    async function primeBackground(sent: Array<Record<string, unknown>>) {
+        const sessionId = crypto.randomUUID();
+        createSessionRecord({ id: sessionId, window: 1000, compactPercent: 50 });
+        globalThis.fetch = (async (_url: RequestInfo | URL, init?: RequestInit) => {
+            const body = SafeJSON.parse(String(init?.body)) as Record<string, unknown>;
+            sent.push(body);
+            return isCompaction(body) ? whamCompactionResponse("ENC-BG") : turnResponse("ok", 450);
+        }) as typeof fetch;
+        // 450 of a 500-token compaction point is past the 0.8 start: this turn starts the background run.
+        await send({ messages: [u1] }, sessionId);
+        const { backgroundInFlight } = await import("@app/ai-proxy/lib/sessions/background-compaction");
+        const { backgroundKey } = await import("@app/ai-proxy/lib/sessions/background-compaction");
+        await backgroundInFlight(backgroundKey(claudeSession, "S"));
+        return sessionId;
+    }
+
+    it("answers the compaction turn from the background run and keeps the later turns behind its item", async () => {
+        const sent: Array<Record<string, unknown>> = [];
+        const sessionId = await primeBackground(sent);
+
+        expect(sent.filter(isCompaction)).toHaveLength(1);
+        const reply = await send({ messages: compactTurn(u1) }, sessionId);
+        const inner = reply.match(/<summary>\\n([\s\S]*?)\\n<\/summary>/)?.[1] ?? "";
+
+        // No second compaction request: the background item answered.
+        expect(sent.filter(isCompaction)).toHaveLength(1);
+        expect(inner).toContain("[codex-compaction gtc1.");
+
+        await send(
+            { messages: [{ role: "user", content: `Summary:\n${inner.replaceAll("\\n", "\n")}\n\nGo on.` }] },
+            sessionId
+        );
+        const next = (sent.at(-1)?.input ?? []) as Array<Record<string, unknown>>;
+        expect(next[0]).toEqual({ type: "compaction", id: "cmp_1", encrypted_content: "ENC-BG" });
+        const text = SafeJSON.stringify(next);
+        expect(text).toContain("Also remember shelf 31.");
+        expect(text).toContain("Shelf 31 noted.");
+        expect(text).not.toContain("KESTREL");
+        expect(events().map((event) => event.kind)).toEqual(
+            expect.arrayContaining(["background-start", "background-ready", "background-used", "done"])
+        );
+    });
+
+    it("compacts again and tells the agent when the history changed under the background run", async () => {
+        const sent: Array<Record<string, unknown>> = [];
+        const sessionId = await primeBackground(sent);
+        const reply = await send(
+            { messages: compactTurn({ role: "user", content: "The code word is FALCON." }) },
+            sessionId
+        );
+
+        expect(sent.filter(isCompaction)).toHaveLength(2);
+        expect(reply).toContain("Proxy notice");
+        expect(reply).toContain("the conversation before it changed");
+        const wasted = events().find((event) => event.kind === "background-wasted");
+        expect(wasted?.reason).toBe("history_changed");
+
+        // The next turn carries a one-time reminder to tell the user; the turn after it does not.
+        await send({ messages: [{ role: "user", content: "Go on." }] }, sessionId);
+        expect(SafeJSON.stringify(sent.at(-1)?.input)).toContain("Start your next reply with one sentence");
+        await send({ messages: [{ role: "user", content: "Go on." }] }, sessionId);
+        expect(SafeJSON.stringify(sent.at(-1)?.input)).not.toContain("Start your next reply");
+    });
+
+    it("does not start a background run below the start fraction or outside a ccx session", async () => {
+        const sent: Array<Record<string, unknown>> = [];
+        const sessionId = crypto.randomUUID();
+        createSessionRecord({ id: sessionId, window: 1000, compactPercent: 50 });
+        globalThis.fetch = (async (_url: RequestInfo | URL, init?: RequestInit) => {
+            sent.push(SafeJSON.parse(String(init?.body)) as Record<string, unknown>);
+            return turnResponse("ok", 300);
+        }) as typeof fetch;
+        await send({ messages: [u1] }, sessionId);
+        const plain = crypto.randomUUID();
+        createSessionRecord({ id: plain });
+        globalThis.fetch = (async (_url: RequestInfo | URL, init?: RequestInit) => {
+            sent.push(SafeJSON.parse(String(init?.body)) as Record<string, unknown>);
+            return turnResponse("ok", 900_000);
+        }) as typeof fetch;
+        await send({ messages: [u1] }, plain);
+        await Bun.sleep(20);
+
+        expect(sent.filter(isCompaction)).toHaveLength(0);
+    });
+
+    it("logs Claude Code's second ask for a summary as a retry", async () => {
+        const sessionId = crypto.randomUUID();
+        createSessionRecord({ id: sessionId });
+        globalThis.fetch = (async (_url: RequestInfo | URL, _init?: RequestInit) =>
+            whamCompactionResponse("ENC-R")) as typeof fetch;
+        await send(
+            {
+                messages: [
+                    u1,
+                    {
+                        role: "user",
+                        content: `${CLAUDE_CODE_COMPACTION_MARK}\nSummarize.\n\nFor this reply only: put the summary inside <summary></summary> tags.`,
+                    },
+                ],
+            },
+            sessionId
+        );
+
+        expect(events().find((event) => event.kind === "retry")).toBeDefined();
+    });
+});
+
+describe("background compaction matching", () => {
+    const settings = { enabled: true, startAt: 0.8, refreshFraction: 0.15, maxTailFraction: 0.4 };
+
+    async function result(prefix: unknown[]) {
+        const { prefixHash } = await import("@app/ai-proxy/lib/sessions/background-compaction");
+        return {
+            item: { type: "compaction", encrypted_content: "E" },
+            accountHash: "loginaaa",
+            prefixLength: prefix.length,
+            prefixHash: prefixHash(prefix),
+            prefix,
+            contextTokens: 100,
+            startedAt: 0,
+            readyAt: 0,
+        };
+    }
+
+    it("names each reason a background result cannot answer the turn", async () => {
+        const { matchBackground } = await import("@app/ai-proxy/lib/sessions/background-compaction");
+        const prefix = [{ role: "user", content: [{ type: "input_text", text: "a" }] }];
+        const done = await result(prefix);
+        const tail = [{ role: "assistant", content: [{ type: "output_text", text: "b" }] }];
+        const base = { result: done, point: 1000, tailTokens: () => 10, settings };
+
+        expect(matchBackground({ ...base, rawInput: [...prefix, ...tail], accountHash: "loginaaa" })).toEqual({
+            use: true,
+            tail,
+        });
+        expect(matchBackground({ ...base, rawInput: [...prefix, ...tail], accountHash: "loginbbb" })).toEqual({
+            use: false,
+            reason: "login_changed",
+        });
+        expect(matchBackground({ ...base, rawInput: tail, accountHash: "loginaaa" })).toEqual({
+            use: false,
+            reason: "history_changed",
+        });
+        expect(
+            matchBackground({ ...base, tailTokens: () => 401, rawInput: [...prefix, ...tail], accountHash: "loginaaa" })
+        ).toEqual({ use: false, reason: "tail_too_large" });
+    });
+
+    it("starts once per growth step and never while a run is in flight", async () => {
+        const { resetBackgroundForTests, shouldStartBackground, trackBackground } = await import(
+            "@app/ai-proxy/lib/sessions/background-compaction"
+        );
+        resetBackgroundForTests();
+        const at = (contextTokens: number) => shouldStartBackground({ key: "k", contextTokens, point: 1000, settings });
+
+        expect(at(799)).toBe(false);
+        expect(at(800)).toBe(true);
+        let finish: (value: undefined) => void = () => {};
+        trackBackground("k", 800, new Promise((resolve) => (finish = resolve)));
+        expect(at(990)).toBe(false);
+        finish(undefined);
+        await Bun.sleep(1);
+        expect(at(900)).toBe(false);
+        expect(at(950)).toBe(true);
+    });
+});
+
+describe("background compaction thread key", () => {
+    it("ignores the cache marks on the system blocks", async () => {
+        const { backgroundKey } = await import("@app/ai-proxy/lib/sessions/background-compaction");
+        const block = { type: "text", text: "You are Claude Code." };
+
+        expect(backgroundKey("s", [{ ...block, cache_control: { type: "ephemeral", ttl: "1h" } }])).toBe(
+            backgroundKey("s", [{ ...block, cache_control: { type: "ephemeral" } }])
+        );
+        expect(backgroundKey("s", [block])).not.toBe(backgroundKey("s", [{ ...block, text: "A subagent." }]));
+    });
+});

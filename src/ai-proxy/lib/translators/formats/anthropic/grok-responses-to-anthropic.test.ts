@@ -5,6 +5,9 @@ import {
 } from "@app/ai-proxy/lib/translators/formats/anthropic/anthropic-to-responses";
 import {
     CLAUDE_CODE_AGENT_TOOL,
+    CLAUDE_CODE_COMPACTION_MARK,
+    hasCompactionPromptText,
+    isClaudeCodeCompactionTurn,
     sessionAgentModelWins,
 } from "@app/ai-proxy/lib/translators/formats/anthropic/claude-code-turns";
 import {
@@ -595,5 +598,25 @@ describe("a session's own subagents run on their own model", () => {
             prompt: "go",
             subagent_type: "opus",
         });
+    });
+});
+
+describe("Claude Code compaction detection gaps", () => {
+    const prompt = { role: "user", content: [{ type: "text", text: `${CLAUDE_CODE_COMPACTION_MARK}\nSummarize.` }] };
+
+    it("sees the compaction prompt in a request that does not end on it", () => {
+        const body = { messages: [prompt, { role: "assistant", content: "Here is a summary." }] };
+
+        expect(isClaudeCodeCompactionTurn(body)).toBe(false);
+        expect(hasCompactionPromptText(body)).toBe(true);
+    });
+
+    it("ignores the prompt quoted inside a tool result", () => {
+        const quoted = {
+            role: "user",
+            content: [{ type: "tool_result", tool_use_id: "t1", content: `${CLAUDE_CODE_COMPACTION_MARK} (quoted)` }],
+        };
+
+        expect(hasCompactionPromptText({ messages: [quoted] })).toBe(false);
     });
 });

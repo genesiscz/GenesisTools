@@ -63,6 +63,7 @@ export async function readPrFields({
         storage,
         key,
         maxAgeSeconds: maxCacheAgeSeconds,
+        shareInFlight: `github/${key}`,
         fetch: async () => {
             const view = await run(["gh", "pr", "view", input, ...repoArgs, "--json", viewFields.join(",")], {
                 cwd,

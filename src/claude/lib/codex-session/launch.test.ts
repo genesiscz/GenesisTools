@@ -223,6 +223,21 @@ describe("environment and arguments", () => {
             })
         ).toEqual(["--resume", "s1", "--effort", "low", "--settings", "{}", "--append-system-prompt", "mine"]);
     });
+
+    it("asks Claude Code for the one-hour cache, so its idle compaction can arm", () => {
+        const args = sessionArgs({
+            sessionId: "s1",
+            resume: false,
+            effort: "high",
+            agents: [],
+            settingsEnv: {},
+            promptCacheTtl: "1h",
+            leadPrompt: "lead note",
+            passthrough: [],
+        });
+
+        expect(args[args.indexOf("--settings") + 1]).toBe('{"env":{},"promptCacheTtl":"1h"}');
+    });
 });
 
 describe("the shared settings model guard (a /model pick must not become every session's default)", () => {

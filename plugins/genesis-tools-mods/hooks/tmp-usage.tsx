@@ -21,6 +21,84 @@ let measuring: Promise<void> | undefined;
 const LOW_FREE_KB = 10 * 1024 * 1024;
 export const TMP_PANE = "mods-tmp";
 
+/**
+ * A shell command that moves a folder by more than an edit does: a package install or removal, a build, a worktree or
+ * branch move, a clean, a recursive removal or move, an archive extraction. No age can cover these: a walk at 12:00:00
+ * and `bun install` at 12:00:05 would show a size gigabytes too small for the whole age.
+ */
+const CHANGES_SIZE = new RegExp(
+    [
+        String.raw`\b(?:bun|npm|pnpm|yarn)\s+(?:install|i|ci|add|remove|rm|uninstall|update|upgrade)\b`,
+        String.raw`\b(?:bun|npm|pnpm|yarn)\s+(?:run\s+)?build\b`,
+        String.raw`\b(?:next|vite|expo|metro|swift|cargo)\s+build\b`,
+        String.raw`\bpod\s+install\b`,
+        String.raw`(?:^|[;&|(]\s*)(?:(?:tsc|tsgo)\b(?![^;&|]*--noEmit)|xcodebuild\b|make\b)`,
+        String.raw`\bgit\s+(?:-C\s+\S+\s+)?(?:worktree\s+(?:add|remove|prune)|clone|checkout|switch|clean|stash\s+pop)\b`,
+        String.raw`\btools\s+rm\b`,
+        String.raw`\brm\s+-\w*[rR]`,
+        String.raw`(?:^|[;&|(]\s*)mv\s`,
+        String.raw`\btar\s+-?\w*x|\b(?:unzip|ditto)\b`,
+    ].join("|")
+);
+
+export function changesSize(command: string): boolean {
+    return CHANGES_SIZE.test(command);
+}
+
+/** How long after the last size-changing command the walk waits, so five installs in a row cost one walk. */
+const TRIGGER_DEBOUNCE_MS = 10_000;
+/** Folders a size-changing command touched, with when the last such command ended; walked once the debounce passed. */
+const staleSince = new Map<string, number>();
+let staleDueAt = 0;
+/** Folders the next reading walks whatever their pace says: accept only a size measured after this time. */
+const forcedSince = new Map<string, number>();
+/** Folders waiting for or inside a triggered walk: the sidebar says "measuring…" instead of an old size. */
+const walking = new Set<string>();
+/** When each folder's size was measured. `isBound`: a shared answer at most that old, not an exact time. */
+const sizeAges = new Map<string, { at: number; isBound: boolean }>();
+
+/** Marks folders a size-changing command ran in; each new mark moves the walk 10 s further out. */
+export function markSizeStale(paths: readonly string[], at = Date.now()): void {
+    for (const path of paths) {
+        staleSince.set(path, at);
+        walking.add(path);
+    }
+
+    staleDueAt = at + TRIGGER_DEBOUNCE_MS;
+}
+
+/** Moves the marks whose debounce has passed to the next reading. True when there is a walk to run. */
+export function takeDueStale(now = Date.now()): boolean {
+    if (staleSince.size === 0 || now < staleDueAt) {
+        return false;
+    }
+
+    for (const [path, since] of staleSince) {
+        forcedSince.set(path, since);
+    }
+
+    staleSince.clear();
+
+    return true;
+}
+
+/** `12m ago`, `≤30m ago` for a shared answer, `measuring…` while a triggered walk is due; undefined before a reading. */
+export function sizeAgeText(path: string, now = Date.now()): string | undefined {
+    if (walking.has(path)) {
+        return "measuring…";
+    }
+
+    const age = sizeAges.get(path);
+
+    if (!age) {
+        return undefined;
+    }
+
+    const text = liveAgo(age.at, { unit: "minute", now });
+
+    return age.isBound ? `≤${text}` : text;
+}
+
 async function kbOf(host: Host, argv: string[], column: number): Promise<number | null> {
     const done = await host.run(argv, { timeoutMs: 60_000 }).catch(() => undefined);
     const lines = done?.stdout.trim().split("\n") ?? [];
@@ -30,21 +108,66 @@ async function kbOf(host: Host, argv: string[], column: number): Promise<number 
     return done?.exitCode === 0 && /^\d+$/.test(token) && Number.isFinite(value) ? value : null;
 }
 
-async function folderKb(host: Host, path: string): Promise<number | null> {
-    return (await host.exists(path)) ? kbOf(host, ["du", "-sk", path], 0) : 0;
+/** `du -sk <path>`, leaving out every folder named in `skip` (a basename mask, `du -I`). */
+async function folderKb(host: Host, path: string, skip: readonly string[] = []): Promise<number | null> {
+    const masks = skip.flatMap((name) => ["-I", name]);
+
+    return (await host.exists(path)) ? kbOf(host, ["du", "-sk", ...masks, path], 0) : 0;
 }
 
-/** Set once the installed CLI turned out to have no `tools du size`: the session walks with `du` from then on. */
-let duSizeMissing = false;
+/**
+ * A folder of this session's own (scratch, task output), walked again after 5 minutes (ten times the walk's length
+ * when that is longer), or about 10 s after a command that changes its size (`markSizeStale`). Its mtime does not
+ * trigger a walk: a scratch folder that collects logs changes it on every write, and on 2026-10-28 that made 27 walks
+ * of one 1.4 GB scratch folder in 30 minutes (31 s). The worktrees inside it are left out (`skip`): the worktree rule
+ * measures them.
+ */
+async function pacedKb(host: Host, path: string, skip: readonly string[] = []): Promise<number | null> {
+    if (!(await host.exists(path))) {
+        return 0;
+    }
 
-/** `tools du size <path> --max-cache-age <s>`: the size another caller measured within the age, or a new walk. */
-async function sharedKb(host: Host, path: string, maxAgeS: number): Promise<number | null> {
+    const held = folderKbs.get(path);
+    const startedAt = Date.now();
+    const mark = skip.join("\n");
+
+    if (held && held.mark === mark && startedAt < held.nextAt && !forcedSince.has(path)) {
+        return held.kb;
+    }
+
+    const kb = await folderKb(host, path, skip);
+    folderKbs.set(path, { kb, mark, nextAt: paceAfter(SESSION_FOLDER_EVERY_MS, startedAt) });
+    forcedSince.delete(path);
+    walking.delete(path);
+    sizeAges.set(path, { at: startedAt, isBound: false });
+
+    return kb;
+}
+
+/**
+ * `tools du size <path> --max-cache-age <s>`: the size another caller measured within the age, or a new walk.
+ * `walked`: the answer took over a second, so it was this walk's (a shared answer takes about 140 ms).
+ */
+async function sharedKb(host: Host, path: string, maxAgeS: number): Promise<{ kb: number | null; walked: boolean }> {
+    const startedAt = Date.now();
+    const kb = await sharedKbOnly(host, path, maxAgeS);
+
+    return { kb, walked: Date.now() - startedAt > 1_000 };
+}
+
+/**
+ * The probe of a CLI that turned out to have no `tools du size`: the session walks with `du` until the probe is read
+ * again (a new probe can be a newer CLI).
+ */
+let duSizeMissingIn: object | undefined;
+
+async function sharedKbOnly(host: Host, path: string, maxAgeS: number): Promise<number | null> {
     const done = await host
         .run(["tools", "du", "size", path, "--max-cache-age", String(maxAgeS)], { timeoutMs: 120_000 })
         .catch(() => undefined);
 
     if (cliLacks(done)) {
-        duSizeMissing = true;
+        duSizeMissingIn = await genesisProbe(host);
         await logMod(host, "tmp", { event: "du-size-unsupported", stderr: done?.stderr.slice(-200) });
 
         return folderKb(host, path);
@@ -62,17 +185,33 @@ async function sharedKb(host: Host, path: string, maxAgeS: number): Promise<numb
 
 /** A worktree's last size, the git status it was measured at, and when `du` may walk it again. */
 const worktreeKb = new Map<string, { kb: number | null; status: string; nextAt: number }>();
+/** The same for the session's own folders, keyed by the worktree names left out of the walk. */
+const folderKbs = new Map<string, { kb: number | null; mark: string; nextAt: number }>();
 const WORKTREE_EVERY_MS = 30 * 60_000;
+const SESSION_FOLDER_EVERY_MS = 5 * 60_000;
 /**
  * At most one size refresh of an already measured worktree per this interval in a session, and each next refresh at a
  * random point of 25 to 35 minutes: on 2026-10-27 one session walked its five worktrees back to back (6 s each)
  * because all five expired together, and that minute was the Mac's spawn storm.
  */
 const REFRESH_GAP_MS = 60_000;
+/** The oldest shared size a worktree whose git status changed accepts. */
+const STATUS_CHANGED_MAX_AGE_S = 300;
 let lastRefreshAt = 0;
 
 function nextWorktreeAt(startedAt: number): number {
     return paceAfter(WORKTREE_EVERY_MS * (0.83 + Math.random() * 0.34), startedAt);
+}
+
+/**
+ * The oldest size `tools du size` may answer for a worktree, in seconds. `tools du size` shares one answer with every
+ * caller on the Mac. A changed git status asks for a walk at most 5 minutes old, never a forced one: the status is the
+ * whole porcelain with its branch line, so every edit or commit in a busy worktree changes it, and on 2026-10-28
+ * sessions watching the same web app worktree forced 10 full walks of it (78 s) in an hour. A walk another session made
+ * in those 5 minutes already counts the change.
+ */
+export function worktreeMaxAgeS(held: { status: string } | undefined, status: string): number {
+    return held && held.status !== status ? STATUS_CHANGED_MAX_AGE_S : WORKTREE_EVERY_MS / 1000;
 }
 
 /**
@@ -84,13 +223,14 @@ export async function worktreeSize(host: Host, path: string, status: string): Pr
     await restoreWorktreeKb(host);
     const held = worktreeKb.get(path);
     const startedAt = Date.now();
+    const forced = forcedSince.get(path);
 
-    if (held && held.status === status && startedAt < held.nextAt) {
+    if (forced === undefined && held && held.status === status && startedAt < held.nextAt) {
         return held.kb;
     }
 
     // A first measure always runs; a refresh waits its turn, so a session's worktrees never walk in one burst.
-    if (held && startedAt - lastRefreshAt < REFRESH_GAP_MS) {
+    if (forced === undefined && held && startedAt - lastRefreshAt < REFRESH_GAP_MS) {
         return held.kb;
     }
 
@@ -98,12 +238,23 @@ export async function worktreeSize(host: Host, path: string, status: string): Pr
         lastRefreshAt = startedAt;
     }
 
-    // `tools du size` shares one answer with every caller on the Mac; a changed status asks for a fresh walk.
-    const maxAge = held && held.status !== status ? 0 : WORKTREE_EVERY_MS / 1000;
-    const shared = (await genesisProbe(host)).tools && !duSizeMissing;
-    const kb = shared ? await sharedKb(host, path, maxAge) : await folderKb(host, path);
+    // After a size-changing command, only a walk made after it counts, this session's or another's.
+    const maxAge =
+        forced === undefined ? worktreeMaxAgeS(held, status) : Math.max(1, Math.ceil((startedAt - forced) / 1000));
+    const probe = await genesisProbe(host);
+    const shared =
+        probe.tools && probe !== duSizeMissingIn
+            ? await sharedKb(host, path, maxAge)
+            : { kb: await folderKb(host, path), walked: true };
+    const kb = shared.kb;
+    forcedSince.delete(path);
+    walking.delete(path);
 
     if (kb !== null) {
+        sizeAges.set(
+            path,
+            shared.walked ? { at: startedAt, isBound: false } : { at: startedAt - maxAge * 1000, isBound: true }
+        );
         worktreeKb.set(path, { kb, status, nextAt: nextWorktreeAt(startedAt) });
         await host
             .storeSet(WORKTREE_STORE_KEY, Object.fromEntries([...worktreeKb].slice(-WORKTREE_STORE_KEEP)))
@@ -185,16 +336,18 @@ export function statusOf(porcelain: string): { branch: string; changes: number }
     return { branch: branch || "?", changes: lines.filter((row) => !row.startsWith("## ")).length };
 }
 
-/** The session's whole share in KB: its scratch, its task output and every worktree outside the scratch folder. */
+function basename(path: string): string {
+    return path.slice(path.lastIndexOf("/") + 1);
+}
+
+/** The session's whole share in KB: its scratch (without its worktrees), its task output and every worktree. */
 export function sessionTotalKb(reading: Pick<TmpReading, "scratch" | "tasks" | "worktrees">): number | null {
     if (reading.scratch.kb === null) {
         return null;
     }
 
-    const inside = (path: string) => path.startsWith(`${reading.scratch.path}/`);
-    const outside = reading.worktrees.filter((tree) => !inside(tree.path));
-
-    return outside.reduce((sum, tree) => sum + (tree.kb ?? 0), reading.scratch.kb + (reading.tasks.kb ?? 0));
+    // The scratch walk leaves its worktrees out, so every worktree counts here once.
+    return reading.worktrees.reduce((sum, tree) => sum + (tree.kb ?? 0), reading.scratch.kb + (reading.tasks.kb ?? 0));
 }
 
 /** The worktrees this session's subagents got, from `<session>/subagents/*.meta.json`. */
@@ -280,11 +433,20 @@ async function measure(host: Host): Promise<void> {
     const projectFolder = sessionDir?.split("/").slice(-2, -1)[0];
     // lint-rules-ignore: Claude Code's own per-session task output folder, read only.
     const tasks = uid && projectFolder ? `/tmp/claude-${uid}/${projectFolder}/${await host.sessionId()}` : "";
+    const worktrees = await worktreesOf(host, scratch);
+    const inside = worktrees.filter((tree) => tree.path.startsWith(`${scratch}/`));
     const reading: TmpReading = {
         at: Date.now(),
-        scratch: { path: scratch, kb: await folderKb(host, scratch) },
-        tasks: { path: tasks, kb: tasks ? await folderKb(host, tasks) : 0 },
-        worktrees: await worktreesOf(host, scratch),
+        scratch: {
+            path: scratch,
+            kb: await pacedKb(
+                host,
+                scratch,
+                inside.map((tree) => basename(tree.path))
+            ),
+        },
+        tasks: { path: tasks, kb: tasks ? await pacedKb(host, tasks) : 0 },
+        worktrees,
         freeKb: await kbOf(host, ["df", "-k", "/"], 3),
     };
 
@@ -310,13 +472,36 @@ function measureOnce(host: Host): Promise<void> {
 }
 
 export const tmpUsage: Feature = {
+    panelOnly: true,
     async start(host) {
         const settings = (await settingsOf(host)).tmpUsage;
 
         host.every(settings.minutes * 60_000, () => {
             void measureOnce(host);
         });
+        host.every(5_000, () => {
+            if (takeDueStale()) {
+                void measureOnce(host);
+            }
+        });
         void measureOnce(host);
+    },
+    async afterTool(host, e) {
+        if (e.tool !== "Bash" || !changesSize(e.command) || !usage) {
+            return;
+        }
+
+        // The folders the command names, else the one it ran in.
+        const known = [usage.scratch.path, ...usage.worktrees.map((tree) => tree.path)];
+        const text = JSON.stringify(e);
+        const named = known.filter((path) => text.includes(path));
+        const cwd = await host.cwd();
+        const touched = named.length > 0 ? named : known.filter((path) => cwd === path || cwd.startsWith(`${path}/`));
+
+        if (touched.length > 0) {
+            markSizeStale(touched);
+            host.redraw();
+        }
     },
     sidebars: [{ id: TMP_PANE, title: "Session files", draw: tmpPane }],
     commands: [
@@ -426,6 +611,7 @@ function folderLine(kit: Kit, key: string, label: string, path: string, kb: numb
             </Box>
             <Box flexGrow={1} />
             <Box flexShrink={0} marginLeft={1}>
+                {sizeAgeText(path) ? <Text dimColor>{`${sizeAgeText(path)} `}</Text> : null}
                 <Text bold>{sizeText(kb)}</Text>
             </Box>
         </Box>

@@ -178,7 +178,16 @@ public struct GitRepoStatus: Equatable, Sendable {
     }
 
     /// The entry of a file in this repository, nil when the file is clean or outside it.
+    /// A file spelled under the root as given needs no `realpath`: each one is a system call per path part, and the
+    /// two of them per file mark held Genesis Markdown's main thread up to 1 s per render on a busy disk (2026-10-27).
+    /// Other spellings (`/tmp` for `/private/tmp`) still resolve both sides.
     public func entry(for file: URL) -> GitStatusEntry? {
+        let given = file.standardizedFileURL.path
+        let base = root.standardizedFileURL.path + "/"
+        if given.hasPrefix(base) {
+            guard let index = byPath[String(given.dropFirst(base.count))] else { return nil }
+            return entries[index]
+        }
         guard let path = GitQueries.relative(file, to: root), let index = byPath[path] else { return nil }
         return entries[index]
     }

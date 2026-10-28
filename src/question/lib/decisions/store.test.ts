@@ -923,6 +923,29 @@ describe("decision kinds, batch updates, harvest and staleness", () => {
         expect(staleCrossings(marked, config, at(200)).map((item) => item.threshold)).toEqual(["alarm"]);
     });
 
+    test("the stop hook blocks only on a decision the reply asks, never on a mention of one asked elsewhere", () => {
+        const config = { stopHook: "block" as const, maxBlocksPerSession: 5 };
+        const mentions = [
+            "I did not ask a new question. ❓ DECISION 25 belongs to another session, and I answered it there.",
+            "❓ DECISION 25 belongs to agents-hooks-diff, and I already answered it.",
+            "Still open: [❓ DECISION 25](https://links.example.test/claude/find/abc/decision/25).",
+            "- [❓ DECISION 25](https://links.example.test/claude/find/abc/decision/25) (worktree age)",
+        ];
+
+        for (const reply of mentions) {
+            expect([reply, stopHookVerdict(config, reply, []).action]).toEqual([reply, "allow"]);
+        }
+
+        for (const reply of [
+            "❓ DECISION 25: worktree age\na) 300 s\nb) 1800 s",
+            "### ❓ DECISION 25 — Worktree age\n\n- a) 300 s\n- b) keep it",
+            "❓ **DECISION 25**\n**a)** one\n**b)** two",
+        ]) {
+            expect([reply, stopHookVerdict(config, reply, []).missing]).toEqual([reply, [25]]);
+            expect(stopHookVerdict(config, reply, [25]).action).toBe("allow");
+        }
+    });
+
     test("a stop-hook reason tells the agent to post through question_post", () => {
         const verdict = stopHookVerdict({ stopHook: "block", maxBlocksPerSession: 2 }, "❓ DECISION 3 — x", [1]);
 

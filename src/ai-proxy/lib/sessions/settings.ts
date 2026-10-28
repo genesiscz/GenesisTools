@@ -28,6 +28,27 @@ export function compactionSettings(config: ClaudeSessionsConfig = current): {
     };
 }
 
+export interface BackgroundCompactionSettings {
+    enabled: boolean;
+    startAt: number;
+    refreshFraction: number;
+    maxTailFraction: number;
+}
+
+/** Background compaction (`compaction.background`): on by default, and off whenever the mode is not native. */
+export function backgroundCompactionSettings(config: ClaudeSessionsConfig = current): BackgroundCompactionSettings {
+    const background = config.compaction?.background;
+    const fraction = (value: number | undefined, fallback: number) =>
+        typeof value === "number" && Number.isFinite(value) && value > 0 && value <= 1 ? value : fallback;
+
+    return {
+        enabled: (background?.enabled ?? true) && compactionSettings(config).mode === "native",
+        startAt: fraction(background?.startAt, 0.8),
+        refreshFraction: fraction(background?.refreshFraction, 0.15),
+        maxTailFraction: fraction(background?.maxTailFraction, 0.4),
+    };
+}
+
 /** A built-in note with the configured text around it, or in its place. */
 export function withSystemNote(builtIn: string, note: SystemNoteConfig | undefined): string {
     const body = note?.replace ?? builtIn;

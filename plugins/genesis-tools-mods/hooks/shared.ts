@@ -42,6 +42,8 @@ export interface Host {
     messages: () => Promise<readonly { role: string; text: string }[]>;
     agents: () => Promise<AgentInfo[]>;
     every: (ms: number, fn: () => void) => void;
+    /** Resolves after `ms` on the engine clock. Optional so a test host may leave it out; without it nothing waits. */
+    sleep?: (ms: number) => Promise<void>;
     storeGet: (key: string) => Promise<unknown>;
     storeSet: (key: string, value: unknown) => Promise<void>;
     status: (text: string | undefined) => void;
@@ -151,6 +153,8 @@ export function shortDuration(ms: number): string {
  * plugin, so `register.tsx` holds that hook and calls each feature's part in turn.
  */
 export interface Feature {
+    /** Only draws for a person (a band, a sidebar): skipped in a session nobody watches (`-p`, the SDK). */
+    panelOnly?: boolean;
     /** On session start: start timers, take a first reading. */
     start?: (host: Host) => Promise<void>;
     /** Slash commands, registered at session start and answered by `command.run`. */

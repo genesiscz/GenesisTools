@@ -16,7 +16,7 @@
 // made, pushed or worked on there and then switched away from keeps its PR in the row, and a worktree the session
 // removed keeps its row (`worktree removed`), with its branch and PRs read in the main checkout. A row is named by
 // `mods.git.name`: `Kalendora/enhancements` for a linked worktree (`repo-folder`), `Kalendora`, or `enhancements`.
-import type { ElementTable, RenderElement } from "claude-code";
+import type { ElementTable, RenderElement, ToolCallInput } from "claude-code";
 import type { BandCheck, BandPr, GitBand, GitBandRows, GitBandSwitch } from "../types";
 import {
     addCheckout,
@@ -25,6 +25,7 @@ import {
     folderSuggestions,
     headOf,
     hideCheckout,
+    isBranchName,
     noteToolCall,
     pickRoots,
     removeAdded,
@@ -34,7 +35,7 @@ import {
 import { type GenesisProbe, genesisProbe, hubLink } from "./genesis";
 import { liveAgo } from "./live";
 import { type Feature, type Host, isRecord, logMod, settingsOf } from "./shared";
-import { cliLacks, sharedRun } from "./shared-run";
+import { type SharedRunResult, sharedRun } from "./shared-run";
 import {
     actionButton,
     buttonsWidth,
@@ -59,27 +60,72 @@ let ownRoot: string | undefined;
 let turnedOn: GitBandSwitch = null;
 
 const GH_TTL_MS = 2 * 60_000;
-const GH_TTL_S = String(GH_TTL_MS / 1000);
 
-/** The `checks` array of a `tools github pr --include checks` answer, as `gh pr checks --json` prints it. */
-function checksText(stdout: string): string {
-    try {
-        const answer: unknown = JSON.parse(stdout);
+/** gh's answer for a branch or number with no PR: exit 1 and this on stderr; an answer like any other. */
+const NO_PR = /no pull requests? found|could not resolve to a pull ?request/i;
 
-        return isRecord(answer) && Array.isArray(answer.checks) ? JSON.stringify(answer.checks) : "";
-    } catch {
-        return "";
-    }
+/** Whether gh answered, a PR or "no PR"; a network or auth failure is no answer. */
+function answered(done: SharedRunResult | undefined): done is SharedRunResult {
+    return done !== undefined && (done.exitCode === 0 || NO_PR.test(done.stderr));
 }
 const EVERY_MS = 3 * 60_000;
 /** The earlier branches of a checkout whose PRs a row looks up, the last first. */
 const EARLIER_PRS = 3;
-const ghCache = new Map<string, { at: number; pr: BandPr | null }>();
-/** Set once the installed CLI turned out to have no `tools github pr --include`: the session asks gh from then on. */
-let prIncludeMissing = false;
+const ghCache = new Map<string, { at: number; ttlMs: number; pr: BandPr | null }>();
+/**
+ * How long a branch's PR answer holds. An open PR keeps `GH_TTL_MS` (pushes and CI move it); a branch with no PR, or a
+ * merged or closed one, changes rarely: on 2026-10-27, 90 of 133 shared answers were "no PR", each asked again every
+ * 2 minutes by 21 sessions. The band's refresh press and `/mod-git refresh` still read them at once.
+ */
+const GH_NO_PR_TTL_MS = 10 * 60_000;
+const GH_CLOSED_TTL_MS = 30 * 60_000;
+
+function prTtl(pr: BandPr | null): number {
+    if (!pr) {
+        return GH_NO_PR_TTL_MS;
+    }
+
+    return pr.state === "OPEN" ? GH_TTL_MS : GH_CLOSED_TTL_MS;
+}
+
+function parsedPr(text: string | undefined, tracked: boolean): BandPr | null {
+    try {
+        const parsed: unknown = text ? JSON.parse(text) : undefined;
+
+        if (isRecord(parsed) && typeof parsed.number === "number") {
+            return {
+                number: parsed.number,
+                title: String(parsed.title ?? ""),
+                url: String(parsed.url ?? ""),
+                state: String(parsed.state ?? ""),
+                draft: parsed.isDraft === true,
+                tracked,
+                own: false,
+                hidden: false,
+                ...checkCounts(parsed.statusCheckRollup),
+                checks: checksOf(parsed.statusCheckRollup),
+            };
+        }
+    } catch {
+        return null;
+    }
+
+    return null;
+}
 let refreshing: Promise<void> | undefined;
 let requestedRefresh = 0;
 let completedRefresh = 0;
+/** Checkouts a tool call changed since the last refresh: the next refresh asks git fresh for these only. */
+const changedRoots = new Set<string>();
+/** A tool call's refresh waiting for the gap below; the 5 s tick or the next tool call starts it. */
+let toolRefreshDue: "tool" | "checkout" | undefined;
+let lastToolRefreshAt = 0;
+/**
+ * One refresh after tool calls per this gap. On 2026-10-27 one session with subagents refreshed every row on each of
+ * its git commands, 219 times in 30 minutes (444 `git status` runs), because every subagent's call reaches this hook.
+ */
+const TOOL_REFRESH_GAP_MS = 10_000;
+const TOOLS_THAT_WRITE = new Set(["Edit", "MultiEdit", "Write", "NotebookEdit", "Bash"]);
 
 async function run(host: Host, argv: string[], cwd: string): Promise<string | undefined> {
     const done = await host.run(argv, { cwd, timeoutMs: 15_000 }).catch(() => undefined);
@@ -222,7 +268,7 @@ export function checkCounts(rollup: unknown): { passed: number; failed: number; 
  * A PR from `gh pr view` in `root`: `which` is a number or a branch, or "" for the checked-out branch, whose answer is
  * kept under `branch` so a switch does not show the last branch's PR for the next 2 minutes.
  */
-export async function prOf(
+async function prOf(
     host: Host,
     ask: { root: string; which: string; tracked: boolean; branch?: string }
 ): Promise<BandPr | null> {
@@ -230,72 +276,43 @@ export async function prOf(
     const key = `${root}|${which || `@${ask.branch ?? ""}`}`;
     const held = ghCache.get(key);
 
-    if (held && Date.now() - held.at < GH_TTL_MS) {
+    if (held && Date.now() - held.at < held.ttlMs) {
         return held.pr ? { ...held.pr, tracked } : null;
     }
 
-    // With the GenesisTools CLI, `tools github pr --include` answers from a cache every tool on the Mac shares;
-    // without it, or with a CLI older than `--include`, gh. Either way the plugin's own shared file serves every
-    // session for the TTL without a process.
-    let viaTools = (await genesisProbe(host)).tools && !prIncludeMissing && Boolean(which || ask.branch);
+    // gh itself, behind the plugin's shared file, which serves every session for the TTL without a process. Not
+    // `tools github pr --include`: the mods are its only caller with these fields, so its cache was always as old as
+    // this file's on a miss, and each miss paid a Bun start on top of gh (1.2-1.7 s against 0.9 s, 2026-10-27).
     const fields = "number,title,url,state,isDraft,statusCheckRollup";
-    const ghView = ["gh", "pr", "view", ...(which ? [which] : []), "--json", fields];
-    const argv = viaTools
-        ? ["tools", "github", "pr", which || String(ask.branch), "--include", fields, "--max-cache-age", GH_TTL_S]
-        : ghView;
-    let viewed = await sharedRun(host, { argv, cwd: root, ttlMs: GH_TTL_MS, timeoutMs: 15_000 });
+    const argv = ["gh", "pr", "view", ...(which ? [which] : []), "--json", fields];
+    // The longest hold first; an answer that turns out to be an open PR is read again under the short one, which
+    // reruns the command only when the shared file is older than that.
+    const run = { argv, cwd: root, timeoutMs: 15_000 };
+    let viewed = await sharedRun(host, { ...run, ttlMs: GH_CLOSED_TTL_MS });
+    let pr = answered(viewed) ? parsedPr(viewed.stdout, tracked) : null;
 
-    if (viaTools && cliLacks(viewed)) {
-        prIncludeMissing = true;
-        viaTools = false;
-        await logMod(host, "git", { event: "pr-include-unsupported", stderr: viewed?.stderr.slice(-200) });
-        viewed = await sharedRun(host, { argv: ghView, cwd: root, ttlMs: GH_TTL_MS, timeoutMs: 15_000 });
-    }
-
-    const text = viewed?.exitCode === 0 ? viewed.stdout : undefined;
-    let pr: BandPr | null = null;
-
-    try {
-        const answer: unknown = text ? JSON.parse(text) : undefined;
-        const parsed: unknown = viaTools && isRecord(answer) ? answer.pr : answer;
-
-        if (isRecord(parsed) && typeof parsed.number === "number") {
-            pr = {
-                number: parsed.number,
-                title: String(parsed.title ?? ""),
-                url: String(parsed.url ?? ""),
-                state: String(parsed.state ?? ""),
-                draft: parsed.isDraft === true,
-                tracked,
-                own: false,
-                hidden: false,
-                ...checkCounts(parsed.statusCheckRollup),
-                checks: checksOf(parsed.statusCheckRollup),
-            };
-        }
-    } catch {
-        pr = null;
+    if (!answered(viewed) || prTtl(pr) < GH_CLOSED_TTL_MS) {
+        viewed = await sharedRun(host, { ...run, ttlMs: answered(viewed) ? prTtl(pr) : GH_TTL_MS });
+        pr = answered(viewed) ? parsedPr(viewed.stdout, tracked) : null;
     }
 
     // A PR with a check to look at gets `gh pr checks`, which says why a status failed (`Deployment was blocked`)
     // and counts a re-run once. It exits 1 with a failed check and 8 with a pending one, so its exit code says nothing.
     if (pr && (pr.failed > 0 || pr.pending > 0)) {
         const done = await sharedRun(host, {
-            argv: viaTools
-                ? ["tools", "github", "pr", String(pr.number), "--include", "checks", "--max-cache-age", GH_TTL_S]
-                : ["gh", "pr", "checks", String(pr.number), "--json", "name,description,link,bucket"],
+            argv: ["gh", "pr", "checks", String(pr.number), "--json", "name,description,link,bucket"],
             cwd: root,
             ttlMs: GH_TTL_MS,
             timeoutMs: 15_000,
         });
-        const checks = done ? prChecksOf(viaTools ? checksText(done.stdout) : done.stdout) : undefined;
+        const checks = done ? prChecksOf(done.stdout) : undefined;
 
         if (checks) {
             pr = { ...pr, ...countChecks(checks), checks };
         }
     }
 
-    ghCache.set(key, { at: Date.now(), pr });
+    ghCache.set(key, { at: Date.now(), ttlMs: answered(viewed) ? prTtl(pr) : GH_TTL_MS, pr });
 
     return pr;
 }
@@ -353,7 +370,9 @@ async function rowPrs(
         ? { ...own, own: true, tracked: tracked.includes(own.number), hidden: hidden.includes(own.number) }
         : null;
     const prs = [mine, ...others].filter((pr): pr is BandPr => pr !== null);
-    const names = (at.touch?.branches ?? []).filter((name) => name !== at.branch).slice(0, EARLIER_PRS);
+    const names = (at.touch?.branches ?? [])
+        .filter((name) => name !== at.branch && isBranchName(name))
+        .slice(0, EARLIER_PRS);
     const earlier = await Promise.all(names.map((name) => prOf(host, { root: at.cwd, which: name, tracked: false })));
 
     earlier.forEach((pr, index) => {
@@ -452,8 +471,12 @@ async function readRow(
 async function refreshNow(host: Host, why: string): Promise<void> {
     const started = Date.now();
     const roots = await bandRoots(host);
-    const shared = why === "timer" || why === "start";
-    const read = await Promise.all(roots.map((at) => readRow(host, at.root, at.why, shared)));
+    // A timer reads the answers other sessions share; a tool's refresh asks git fresh only for the checkouts it
+    // changed; a press or a command asks fresh for all.
+    const fresh = new Set(changedRoots);
+    changedRoots.clear();
+    const shared = (root: string) => why === "timer" || why === "start" || (why === "tool" && !fresh.has(root));
+    const read = await Promise.all(roots.map((at) => readRow(host, at.root, at.why, shared(at.root))));
     // A checkout git could not read this time keeps its last row; one whose folder is gone with nothing to show goes.
     const next = roots
         .map(({ root }, index) => {
@@ -503,6 +526,38 @@ export async function refresh(host: Host, why: string): Promise<void> {
         });
         await refreshing;
     }
+}
+
+const READ_ONLY_STEP =
+    /^(?:cd|ls|cat|head|tail|wc|rg|grep|find|fd|echo|pwd|which|date|stat|file|du|df|jq|sort|uniq|tr|cut|true|sed -n|git (?:status|log|diff|show|rev-parse|branch --show-current|blame|ls-files|remote -v)|gh (?:pr|issue|run) (?:view|list|checks|diff)|tools (?:ts|json) )\b/;
+
+/** Whether every step of a shell command only reads: `cd x && git status | head` does, `bun x.ts` might not. */
+export function onlyReads(command: string): boolean {
+    return command
+        .split(/&&|\|\||[;|\n]/)
+        .map((step) => step.trim().replace(/^git -C \S+ /, "git "))
+        .filter(Boolean)
+        .every((step) => READ_ONLY_STEP.test(step));
+}
+
+/** The shown checkouts a tool call can have changed: those holding a path it names, else the session's own. */
+function rootsOfCall(e: ToolCallInput, cwdRoot: string | undefined): string[] {
+    const text = JSON.stringify(e);
+    const named = rows.map((row) => row.root).filter((root) => text.includes(root));
+
+    return named.length > 0 ? named : cwdRoot ? [cwdRoot] : [];
+}
+
+/** Starts the waiting tool refresh once the gap since the last one has passed. */
+function runDueToolRefresh(host: Host): void {
+    if (!toolRefreshDue || Date.now() - lastToolRefreshAt < TOOL_REFRESH_GAP_MS) {
+        return;
+    }
+
+    const why = toolRefreshDue;
+    toolRefreshDue = undefined;
+    lastToolRefreshAt = Date.now();
+    backgroundRefresh(host, why);
 }
 
 function backgroundRefresh(host: Host, why: string): void {
@@ -617,6 +672,7 @@ async function command(host: Host, args: string): Promise<string> {
 }
 
 export const gitBand: Feature = {
+    panelOnly: true,
     async start(host) {
         host.every(EVERY_MS, () => {
             void isOn(host).then((yes) => {
@@ -624,6 +680,10 @@ export const gitBand: Feature = {
                     backgroundRefresh(host, "timer");
                 }
             });
+        });
+        // A burst of tool calls makes one refresh, at most one per gap, the last one after the burst.
+        host.every(5_000, () => {
+            runDueToolRefresh(host);
         });
 
         if (await isOn(host)) {
@@ -681,9 +741,17 @@ export const gitBand: Feature = {
         try {
             const moved = await noteToolCall(host, e);
 
-            if (moved || (e.tool === "Bash" && /(^|[\s;&|(])(git|gh)\s/.test(e.command))) {
-                backgroundRefresh(host, moved ? "checkout" : "tool");
+            // Read, Grep, Glob and the like, and a shell command that only reads, change nothing git shows.
+            if (!moved && (!TOOLS_THAT_WRITE.has(e.tool) || (e.tool === "Bash" && onlyReads(e.command)))) {
+                return;
             }
+
+            for (const root of rootsOfCall(e, ownRoot)) {
+                changedRoots.add(root);
+            }
+
+            toolRefreshDue = moved || toolRefreshDue === "checkout" ? "checkout" : "tool";
+            runDueToolRefresh(host);
         } catch (error) {
             await logMod(host, "git", { event: "checkout-failed", error: String(error) });
             host.toast(`Could not save or refresh this session's checkouts: ${String(error)}`);

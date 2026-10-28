@@ -41,6 +41,22 @@ import {
     webSearchResponse,
 } from "@app/ai-proxy/lib/server-tools/web-search";
 import {
+    type BackgroundResult,
+    backgroundInFlight,
+    backgroundKey,
+    backgroundResult,
+    clearBackground,
+    compactionPoint,
+    estimateTokens,
+    matchBackground,
+    prefixHash,
+    setPendingNotice,
+    shouldStartBackground,
+    takePendingNotice,
+    trackBackground,
+    withUserReminder,
+} from "@app/ai-proxy/lib/sessions/background-compaction";
+import {
     compactionFromSse,
     compactionMarkers,
     compactionNote,
@@ -51,14 +67,16 @@ import {
     newCompactionId,
     saveCompaction,
 } from "@app/ai-proxy/lib/sessions/codex-compaction";
-import { loginAccountName, noteBlockedCompaction } from "@app/ai-proxy/lib/sessions/records";
-import { compactionSettings } from "@app/ai-proxy/lib/sessions/settings";
+import { type CompactionEvent, recordCompactionEvent } from "@app/ai-proxy/lib/sessions/compaction-events";
+import { loginAccountName, noteBlockedCompaction, readSessionRecord } from "@app/ai-proxy/lib/sessions/records";
+import { backgroundCompactionSettings, compactionSettings } from "@app/ai-proxy/lib/sessions/settings";
 import {
     anthropicToResponses,
     stripReasoningInput,
 } from "@app/ai-proxy/lib/translators/formats/anthropic/anthropic-to-responses";
 import {
     CLAUDE_CODE_AGENT_TOOL,
+    isClaudeCodeCompactionRetry,
     isClaudeCodeCompactionTurn,
     limitCompactionSummary,
     sessionAgentModelWins,
@@ -80,7 +98,7 @@ import {
 } from "@app/ai-proxy/lib/translators/formats/anthropic/reasoning-envelope";
 import { responsesToChat } from "@app/ai-proxy/lib/translators/responses-to-chat";
 import type { AiProxyAccountConfig, ThinkingPresentationMode, UsageSummary } from "@app/ai-proxy/lib/types";
-import { getTodayUsageSummary, getUsageSummarySince } from "@app/ai-proxy/lib/usage/store";
+import { getTodayUsageSummary, getUsageSummarySince, recordUsageRequest } from "@app/ai-proxy/lib/usage/store";
 import { extractPlanType, WHAM_BASE_URL } from "@genesiscz/utils/ai/openai/codex-auth";
 import { type CodexModelInfo, resolveCodexEffort } from "@genesiscz/utils/ai/openai/codex-models";
 import {
@@ -89,7 +107,11 @@ import {
     tryFetchWhamModels,
     type WhamModelRecord,
 } from "@genesiscz/utils/ai/openai/sub-models";
-import { type PromptCacheKey, resolvePromptCacheKey } from "@genesiscz/utils/ai/prompt-cache-key";
+import {
+    claudeSessionIdFromMetadata,
+    type PromptCacheKey,
+    resolvePromptCacheKey,
+} from "@genesiscz/utils/ai/prompt-cache-key";
 // The one predicate in the repo for "did this failure happen below HTTP?".
 // Duplicating it here is how the poll gate and the proxy would drift apart.
 import { isTransportFailure } from "@genesiscz/utils/ai/usage-poll/poll-gate";
@@ -323,6 +345,128 @@ export async function compactionDispatch({
     });
 
     return new Response(body, { headers: { "Content-Type": "text/event-stream", "Cache-Control": "no-cache" } });
+}
+
+/** A background compaction is a full-context request; past this it is abandoned (a native one took 155 s at 430K). */
+const BACKGROUND_COMPACTION_TIMEOUT_MS = 15 * 60_000;
+/** How the usage ledger names a background compaction's request. */
+export const BACKGROUND_COMPACTION_PATH = "/v1/messages#background-compaction";
+
+/** A Responses usage object as the token counts a compaction event and Claude Code's usage carry. */
+function usageTokens(usage: Record<string, unknown> | undefined): {
+    inputTokens?: number;
+    cachedTokens?: number;
+    outputTokens?: number;
+} {
+    const details = isObject(usage?.input_tokens_details) ? usage.input_tokens_details : {};
+
+    return {
+        ...(typeof usage?.input_tokens === "number" ? { inputTokens: usage.input_tokens } : {}),
+        ...(typeof details.cached_tokens === "number" ? { cachedTokens: details.cached_tokens } : {}),
+        ...(typeof usage?.output_tokens === "number" ? { outputTokens: usage.output_tokens } : {}),
+    };
+}
+
+/** Claude Code's answer to its compaction turn: one text block, as SSE or JSON like the request asked. */
+function compactionReply(input: {
+    model: string;
+    text: string;
+    tokens: { inputTokens?: number; cachedTokens?: number; outputTokens?: number };
+    stream: boolean;
+}): Response {
+    const { inputTokens = 0, cachedTokens = 0, outputTokens = 0 } = input.tokens;
+    const reply = {
+        id: `msg_${randomUUID().replaceAll("-", "")}`,
+        type: "message",
+        role: "assistant",
+        model: input.model,
+        content: [{ type: "text", text: input.text }],
+        stop_reason: "end_turn",
+        stop_sequence: null,
+        usage: {
+            input_tokens: Math.max(0, inputTokens - cachedTokens),
+            cache_read_input_tokens: cachedTokens,
+            output_tokens: outputTokens,
+        },
+    };
+
+    return input.stream
+        ? new Response(messageToAnthropicSse(reply), { headers: { "Content-Type": "text/event-stream" } })
+        : new Response(SafeJSON.stringify(reply), { headers: { "Content-Type": "application/json" } });
+}
+
+const WASTE_REASONS: Record<"login_changed" | "history_changed" | "tail_too_large", string> = {
+    login_changed: "another Codex login made it, and this login cannot read it",
+    history_changed: "the conversation before it changed (a rewound, edited or replaced turn)",
+    tail_too_large: "too much happened after it, so the next turns would have reached the limit again",
+};
+
+/**
+ * The line the agent reads in its compaction summary when a background run went unused: one more full-context request
+ * was spent. The agent tells the user once; the proxy log and `tools ai-proxy monitor` keep the details.
+ */
+export function backgroundWasteNotice(
+    result: Pick<BackgroundResult, "readyAt">,
+    reason: keyof typeof WASTE_REASONS,
+    durationMs: number
+): string {
+    const at = new Date(result.readyAt).toTimeString().slice(0, 5);
+
+    return (
+        `Proxy notice: the compaction ai-proxy prepared in the background at ${at} could not be used, because ` +
+        `${WASTE_REASONS[reason]}. This compaction read the whole context again (${Math.round(durationMs / 1000)} s).`
+    );
+}
+
+/**
+ * The stream unchanged, and `onUsage` with the `response.completed` usage when it passes by. Only lines that carry
+ * that event are parsed, so the cost stays a substring check per chunk.
+ */
+export function tapCompletedUsage(
+    body: ReadableStream<Uint8Array>,
+    onUsage: (usage: Record<string, unknown>) => void
+): ReadableStream<Uint8Array> {
+    const decoder = new TextDecoder();
+    let pending = "";
+    let done = false;
+
+    const scan = (text: string) => {
+        pending += text;
+        let newline = pending.indexOf("\n");
+
+        while (newline >= 0) {
+            const line = pending.slice(0, newline);
+            pending = pending.slice(newline + 1);
+            newline = pending.indexOf("\n");
+
+            if (done || !line.startsWith("data: ") || !line.includes('"response.completed"')) {
+                continue;
+            }
+
+            try {
+                const event: unknown = SafeJSON.parse(line.slice("data: ".length), { strict: true });
+
+                if (isObject(event) && isObject(event.response) && isObject(event.response.usage)) {
+                    done = true;
+                    onUsage(event.response.usage);
+                }
+            } catch (error) {
+                logger.debug({ error }, "ai-proxy: could not read a response.completed frame for its usage");
+            }
+        }
+    };
+
+    return body.pipeThrough(
+        new TransformStream<Uint8Array, Uint8Array>({
+            transform(chunk, controller) {
+                controller.enqueue(chunk);
+                scan(decoder.decode(chunk, { stream: true }));
+            },
+            flush() {
+                scan(`${decoder.decode()}\n`);
+            },
+        })
+    );
 }
 
 /** Who gets an account failure: the Anthropic route's client (Claude Code) gets the status it acts on. */
@@ -633,6 +777,36 @@ export class OpenAiSubscriptionProvider implements ProxyProvider {
         const compaction = isClaudeCodeCompactionTurn(parsed);
         const nativeCompaction = compaction && !writtenCompaction && compactionSettings().mode === "native";
         const summaryWords = compaction && !nativeCompaction ? compactionSettings().words : undefined;
+        const claudeSessionId = claudeSessionIdFromMetadata(parsed.metadata);
+        const clientAgent = req.headers.get("user-agent") ?? undefined;
+        const eventBase: Omit<CompactionEvent, "ts" | "kind"> & { thread?: string } = {
+            ...(context?.sessionId ? { session: context.sessionId } : {}),
+            ...(claudeSessionId ? { claudeSession: claudeSessionId } : {}),
+            model: concreteModel,
+            ...(clientAgent ? { client: clientAgent } : {}),
+        };
+
+        // Background compaction runs only for a ccx session, whose record knows where Claude Code will compact.
+        const point = compactionPoint(context?.sessionId ? readSessionRecord(context.sessionId) : undefined);
+        const background = backgroundCompactionSettings();
+        const threadKey =
+            claudeSessionId && point && background.enabled ? backgroundKey(claudeSessionId, parsed.system) : undefined;
+
+        if (threadKey) {
+            eventBase.thread = threadKey.slice(threadKey.lastIndexOf(":") + 1, threadKey.lastIndexOf(":") + 9);
+        }
+
+        if (compaction && !writtenCompaction) {
+            recordCompactionEvent({ ...eventBase, kind: "turn", mode: nativeCompaction ? "native" : "summary" });
+
+            if (isClaudeCodeCompactionRetry(parsed)) {
+                recordCompactionEvent({
+                    ...eventBase,
+                    kind: "retry",
+                    reason: "Claude Code asked for the summary again: the last reply had no <summary> tag",
+                });
+            }
+        }
 
         if (nativeCompaction) {
             // The server compacts what came before; Claude Code's summary prompt would only end the cached prefix.
@@ -792,6 +966,8 @@ export class OpenAiSubscriptionProvider implements ProxyProvider {
                     await noteBlockedCompaction(session.id, error.missingId);
                 }
 
+                recordCompactionEvent({ ...eventBase, kind: "blocked", id: error.marker, reason: error.message });
+
                 return toAnthropicErrorResponse(
                     jsonError(
                         400,
@@ -802,6 +978,28 @@ export class OpenAiSubscriptionProvider implements ProxyProvider {
         }
 
         if (nativeCompaction) {
+            const startedAt = Date.now();
+            let notice: ((durationMs: number) => string) | undefined;
+
+            if (threadKey && point) {
+                const answered = await this.answerFromBackground({
+                    key: threadKey,
+                    point,
+                    rawInput,
+                    accountHash: stamp.accountHash,
+                    model,
+                    stream: parsed.stream === true,
+                    eventBase,
+                    startedAt,
+                });
+
+                if (answered.response) {
+                    return answered.response;
+                }
+
+                notice = answered.notice;
+            }
+
             return this.compactNatively({
                 req,
                 model,
@@ -812,8 +1010,45 @@ export class OpenAiSubscriptionProvider implements ProxyProvider {
                 rawInput,
                 stamp,
                 client,
+                eventBase,
+                startedAt,
+                notice,
+                threadKey,
             });
         }
+
+        const pending = threadKey ? takePendingNotice(threadKey) : undefined;
+
+        if (pending && Array.isArray(responsesBody.input)) {
+            responsesBody = { ...responsesBody, input: withUserReminder(responsesBody.input, pending) };
+        }
+
+        // A turn near the compaction point starts the background compaction of what it sends, once its usage is in.
+        const sentBody = responsesBody;
+        const onUsage =
+            threadKey && point
+                ? (usage: Record<string, unknown>) => {
+                      const contextTokens = typeof usage.input_tokens === "number" ? usage.input_tokens : 0;
+
+                      if (shouldStartBackground({ key: threadKey, contextTokens, point, settings: background })) {
+                          trackBackground(
+                              threadKey,
+                              contextTokens,
+                              this.runBackgroundCompaction({
+                                  req,
+                                  model,
+                                  concreteModel,
+                                  body: sentBody,
+                                  rawInput,
+                                  stamp,
+                                  contextTokens,
+                                  sessionId: context?.sessionId,
+                                  eventBase,
+                              })
+                          );
+                      }
+                  }
+                : undefined;
 
         // The recall quest's mode B: the turn goes up without the reasoning carried from earlier turns.
         if (env.aiProxy.getReasoningReplay() === "drop" && replay.kept.length > 0) {
@@ -887,7 +1122,7 @@ export class OpenAiSubscriptionProvider implements ProxyProvider {
             }
 
             return new Response(
-                responsesSseToAnthropic(head.body, {
+                responsesSseToAnthropic(onUsage ? tapCompletedUsage(head.body, onUsage) : head.body, {
                     model,
                     signReasoning,
                     label: "codex",
@@ -902,6 +1137,11 @@ export class OpenAiSubscriptionProvider implements ProxyProvider {
         }
 
         const envelope = SafeJSON.parse(await response.text(), { strict: true });
+
+        if (onUsage && isObject(envelope) && isObject(envelope.usage)) {
+            onUsage(envelope.usage);
+        }
+
         return new Response(
             SafeJSON.stringify(
                 responsesToAnthropicMessage(isObject(envelope) ? envelope : {}, {
@@ -930,6 +1170,11 @@ export class OpenAiSubscriptionProvider implements ProxyProvider {
         rawInput: unknown[];
         stamp: ReasoningEnvelopeStamp;
         client: FailureClient;
+        eventBase: Omit<CompactionEvent, "ts" | "kind">;
+        startedAt: number;
+        /** Why a background result could not answer this turn, for the agent to tell the user. */
+        notice?: (durationMs: number) => string;
+        threadKey?: string;
     }): Promise<Response> {
         const { req, model, client } = input;
         const sent = Array.isArray(input.responsesBody.input) ? input.responsesBody.input : [];
@@ -942,10 +1187,12 @@ export class OpenAiSubscriptionProvider implements ProxyProvider {
         const { item, usage, summary } = response.ok ? compactionFromSse(await readCompactionText(response)) : {};
 
         if (!item) {
-            logger.warn(
-                { model, status: response.status },
-                "ai-proxy: Codex native compaction gave no compaction item; writing the text summary instead"
-            );
+            recordCompactionEvent({
+                ...input.eventBase,
+                kind: "turn",
+                mode: "summary",
+                reason: `Codex native compaction gave no compaction item (HTTP ${response.status}); writing the text summary`,
+            });
             return this.nativeMessages(req, model, input.bodyText, input.context, true);
         }
 
@@ -964,30 +1211,228 @@ export class OpenAiSubscriptionProvider implements ProxyProvider {
             items: { [accountHash]: item },
             history: input.rawInput,
         });
-        const inputTokens = typeof usage?.input_tokens === "number" ? usage.input_tokens : 0;
-        const details = isObject(usage?.input_tokens_details) ? usage.input_tokens_details : {};
-        const cached = typeof details.cached_tokens === "number" ? details.cached_tokens : 0;
-        // Claude Code 2.1.311 asks for the summary once more when the reply has no <summary> tag (one more full-context
-        // request, 155 s at 430K on 2026-10-27), and keeps only the text inside the tags, so the note goes in whole.
-        const reply = {
-            id: `msg_${randomUUID().replaceAll("-", "")}`,
-            type: "message",
-            role: "assistant",
-            model,
-            content: [{ type: "text", text: `<summary>\n${compactionNote(id, summary)}\n</summary>` }],
-            stop_reason: "end_turn",
-            stop_sequence: null,
-            usage: {
-                input_tokens: Math.max(0, inputTokens - cached),
-                cache_read_input_tokens: cached,
-                output_tokens: typeof usage?.output_tokens === "number" ? usage.output_tokens : 0,
-            },
-        };
-        logger.info({ model, id, inputTokens, cached }, "ai-proxy: Codex native compaction for Claude Code");
+        const durationMs = Date.now() - input.startedAt;
+        const tokens = usageTokens(usage);
+        const notice = input.notice?.(durationMs);
 
-        return input.parsed.stream === true
-            ? new Response(messageToAnthropicSse(reply), { headers: { "Content-Type": "text/event-stream" } })
-            : new Response(SafeJSON.stringify(reply), { headers: { "Content-Type": "application/json" } });
+        if (input.threadKey) {
+            clearBackground(input.threadKey);
+
+            if (notice) {
+                setPendingNotice(
+                    input.threadKey,
+                    `${notice} Start your next reply with one sentence that tells the user this.`
+                );
+            }
+        }
+
+        recordCompactionEvent({ ...input.eventBase, kind: "done", mode: "native", id, durationMs, ...tokens });
+
+        return compactionReply({
+            model,
+            text: `<summary>\n${compactionNote(id, summary)}${notice ? `\n${notice}` : ""}\n</summary>`,
+            tokens,
+            stream: input.parsed.stream === true,
+        });
+    }
+
+    /**
+     * A compaction turn answered from the background run of its thread, when that run can stand for it. A run in
+     * flight is awaited (the turn's keepalives are already running), like Codex does, instead of a second request.
+     */
+    private async answerFromBackground(input: {
+        key: string;
+        point: number;
+        rawInput: unknown[];
+        accountHash: string;
+        model: string;
+        stream: boolean;
+        eventBase: Omit<CompactionEvent, "ts" | "kind">;
+        startedAt: number;
+    }): Promise<{ response?: Response; notice?: (durationMs: number) => string }> {
+        await backgroundInFlight(input.key);
+        const result = backgroundResult(input.key);
+
+        if (!result) {
+            return {};
+        }
+
+        clearBackground(input.key);
+        const match = matchBackground({
+            result,
+            rawInput: input.rawInput,
+            accountHash: input.accountHash,
+            point: input.point,
+            tailTokens: estimateTokens,
+            settings: backgroundCompactionSettings(),
+        });
+
+        if (!match.use) {
+            recordCompactionEvent({
+                ...input.eventBase,
+                kind: "background-wasted",
+                reason: match.reason,
+                inputTokens: result.inputTokens,
+                cachedTokens: result.cachedTokens,
+                outputTokens: result.outputTokens,
+            });
+            return { notice: (durationMs) => backgroundWasteNotice(result, match.reason, durationMs) };
+        }
+
+        const id = newCompactionId();
+        saveCompaction({
+            id,
+            model: typeof input.eventBase.model === "string" ? input.eventBase.model : input.model,
+            createdAt: new Date().toISOString(),
+            items: { [result.accountHash]: result.item },
+            history: input.rawInput,
+            ...(match.tail.length > 0 ? { tail: { account: result.accountHash, items: match.tail } } : {}),
+        });
+        const durationMs = Date.now() - input.startedAt;
+        const tokens = {
+            inputTokens: result.inputTokens,
+            cachedTokens: result.cachedTokens,
+            outputTokens: result.outputTokens,
+        };
+        recordCompactionEvent({
+            ...input.eventBase,
+            kind: "background-used",
+            id,
+            durationMs,
+            tailItems: match.tail.length,
+            ...tokens,
+        });
+        recordCompactionEvent({ ...input.eventBase, kind: "done", mode: "background", id, durationMs, ...tokens });
+
+        return {
+            response: compactionReply({
+                model: input.model,
+                text: `<summary>\n${compactionNote(id)}\n</summary>`,
+                tokens,
+                stream: input.stream,
+            }),
+        };
+    }
+
+    /**
+     * Compacts what one turn sent, in the background: the same request plus `compaction_trigger`, at its effort and
+     * on its cached prefix, on a request of its own that the client's hang-up does not cancel. Never throws.
+     */
+    private async runBackgroundCompaction(input: {
+        req: Request;
+        model: string;
+        concreteModel: string;
+        body: Record<string, unknown>;
+        rawInput: unknown[];
+        stamp: ReasoningEnvelopeStamp;
+        contextTokens: number;
+        sessionId?: string;
+        eventBase: Omit<CompactionEvent, "ts" | "kind">;
+    }): Promise<BackgroundResult | undefined> {
+        const startedAt = Date.now();
+        const abort = new AbortController();
+        const timer = setTimeout(() => abort.abort(), BACKGROUND_COMPACTION_TIMEOUT_MS);
+        const client: FailureClient = { anthropic: true, ...(input.sessionId ? { sessionId: input.sessionId } : {}) };
+        const sent = Array.isArray(input.body.input) ? input.body.input : [];
+        recordCompactionEvent({ ...input.eventBase, kind: "background-start", inputTokens: input.contextTokens });
+
+        try {
+            const request = new Request(input.req.url, {
+                method: "POST",
+                headers: input.req.headers,
+                body: "{}",
+                signal: abort.signal,
+            });
+            const response = await this.respond(
+                request,
+                input.model,
+                { ...input.body, input: [...sent, { type: "compaction_trigger" }], stream: true },
+                client
+            );
+            const { item, usage } = response.ok ? compactionFromSse(await readCompactionText(response)) : {};
+            const tokens = usageTokens(usage);
+            this.recordBackgroundUsage({ ...input, status: response.status, startedAt, tokens });
+
+            if (!item) {
+                recordCompactionEvent({
+                    ...input.eventBase,
+                    kind: "background-failed",
+                    reason: `no compaction item (HTTP ${response.status})`,
+                    durationMs: Date.now() - startedAt,
+                    ...tokens,
+                });
+                return undefined;
+            }
+
+            const servedBy = client.servedIdentity;
+            const result: BackgroundResult = {
+                item,
+                accountHash: servedBy ? accountHash8(servedBy) : input.stamp.accountHash,
+                prefixLength: input.rawInput.length,
+                prefixHash: prefixHash(input.rawInput),
+                prefix: input.rawInput,
+                contextTokens: input.contextTokens,
+                startedAt,
+                readyAt: Date.now(),
+                ...tokens,
+            };
+            recordCompactionEvent({
+                ...input.eventBase,
+                kind: "background-ready",
+                durationMs: result.readyAt - startedAt,
+                ...tokens,
+            });
+
+            return result;
+        } catch (error) {
+            recordCompactionEvent({
+                ...input.eventBase,
+                kind: "background-failed",
+                reason: error instanceof Error ? error.message : String(error),
+                durationMs: Date.now() - startedAt,
+            });
+            return undefined;
+        } finally {
+            clearTimeout(timer);
+        }
+    }
+
+    /** The background request is real spend: it goes into the usage ledger like a client's request. */
+    private recordBackgroundUsage(input: {
+        model: string;
+        concreteModel: string;
+        sessionId?: string;
+        eventBase: Omit<CompactionEvent, "ts" | "kind">;
+        status: number;
+        startedAt: number;
+        tokens: { inputTokens?: number; cachedTokens?: number; outputTokens?: number };
+    }): void {
+        const { inputTokens = 0, cachedTokens = 0, outputTokens = 0 } = input.tokens;
+        const session = input.sessionId ?? input.eventBase.claudeSession;
+
+        try {
+            recordUsageRequest({
+                ts: new Date().toISOString(),
+                account: this.account.name,
+                provider: this.id,
+                proxyModel: input.model,
+                upstreamModel: input.concreteModel,
+                path: BACKGROUND_COMPACTION_PATH,
+                status: input.status,
+                elapsedMs: Date.now() - input.startedAt,
+                stream: true,
+                usage: {
+                    prompt_tokens: Math.max(0, inputTokens - cachedTokens),
+                    completion_tokens: outputTokens,
+                    total_tokens: inputTokens + outputTokens,
+                    cache_read_input_tokens: cachedTokens,
+                },
+                ...(session ? { tags: { session, label: "background-compaction" } } : {}),
+                compaction: true,
+            });
+        } catch (error) {
+            logger.warn({ error }, "ai-proxy: could not record the background compaction's usage");
+        }
     }
 
     /**
@@ -1003,7 +1448,7 @@ export class OpenAiSubscriptionProvider implements ProxyProvider {
         accountHash: string;
         client: FailureClient;
         ancestors?: ReadonlySet<string>;
-    }): Promise<Record<string, unknown>> {
+    }): Promise<unknown[]> {
         if (input.ancestors?.has(input.id)) {
             throw new CompactionRestoreError(input.id, true, `Compaction history contains a cycle at ${input.id}.`);
         }
@@ -1017,7 +1462,7 @@ export class OpenAiSubscriptionProvider implements ProxyProvider {
         const held = record.items[input.accountHash];
 
         if (held) {
-            return held;
+            return record.tail?.account === input.accountHash ? [held, ...record.tail.items] : [held];
         }
 
         const ancestors = new Set(input.ancestors);
@@ -1064,12 +1509,9 @@ export class OpenAiSubscriptionProvider implements ProxyProvider {
         }
 
         saveCompaction({ ...record, items: { ...record.items, [input.accountHash]: item } });
-        logger.info(
-            { id: input.id, model: input.model },
-            "ai-proxy: compacted a saved history again for another login"
-        );
+        recordCompactionEvent({ kind: "recompacted", id: input.id, model: input.model, reason: "another Codex login" });
 
-        return item;
+        return [item];
     }
 
     /**
