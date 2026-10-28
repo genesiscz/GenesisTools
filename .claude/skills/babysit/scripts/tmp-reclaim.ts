@@ -134,6 +134,48 @@ function ageFlag(name: string, fallback: number): number {
     return validAge(Number(raw ?? fallback), name);
 }
 
+const USAGE = `usage: bun tmp-reclaim.ts [--run <dir>] [--min-age-hours 6] [--live-hours 12] [--protect <id|path> ...]
+       bun tmp-reclaim.ts --own-session <session uuid> [--min-age-minutes 10] [--run <dir>]
+       bun tmp-reclaim.ts --apply --plan <plan.json> [--run <dir>]
+
+Without --apply it is a dry run: it lists the candidates and writes a plan file. --apply removes only what that
+plan names, when the plan is at most 30 minutes old.`;
+const VALUE_FLAGS = new Set([
+    "--run",
+    "--min-age-hours",
+    "--live-hours",
+    "--protect",
+    "--own-session",
+    "--min-age-minutes",
+    "--plan",
+]);
+
+/** Help and an unknown flag exit before any scan, so neither one runs a dry run or writes a plan. */
+function checkArgs(args: string[]): void {
+    for (let i = 0; i < args.length; i++) {
+        const arg = args[i] ?? "";
+
+        if (arg === "--help" || arg === "-h") {
+            console.log(USAGE);
+            process.exit(0);
+        }
+
+        if (VALUE_FLAGS.has(arg)) {
+            i++;
+            continue;
+        }
+
+        if (arg !== "--apply") {
+            console.error(`✖ unknown argument ${arg}\n\n${USAGE}`);
+            process.exit(1);
+        }
+    }
+}
+
+if (import.meta.main) {
+    checkArgs(process.argv.slice(2));
+}
+
 let minAgeHours = ageFlag("--min-age-hours", 6);
 const liveHours = ageFlag("--live-hours", 12);
 const runDir = flag("--run") ?? env.get("BABYSIT_RUN");
