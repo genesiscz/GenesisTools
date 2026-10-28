@@ -13,6 +13,12 @@ public final class WidgetModel: ObservableObject {
 
     @Published public private(set) var snapshot: WidgetSnapshot? {
         didSet {
+            // Only the preferences changed (a live setting): the sessions and the inbox are the same, so only what
+            // the preferences decide is computed again. Rebuilding the inbox was most of a live apply (2026-10-28).
+            if preferencesOnlyChange {
+                refreshPreferenceDerived()
+                return
+            }
             sessionIndex = Dictionary(
                 (snapshot?.sessions ?? []).map { ($0.key, $0) }, uniquingKeysWith: { first, _ in first })
             sessionRoster.update(snapshot?.sessions ?? [])
@@ -21,6 +27,34 @@ public final class WidgetModel: ObservableObject {
             resolveDecisionReveal()
         }
     }
+    /// Set while a snapshot that differs only in its preferences is published (`publishPreferences`).
+    private var preferencesOnlyChange = false
+
+    /// Publishes `preferences` on the current snapshot without rebuilding what comes from its sessions and inbox.
+    private func publishPreferences(_ preferences: WidgetPreferences) {
+        guard var current = snapshot, current.state.preferences != preferences else { return }
+        current.state.preferences = preferences
+        preferencesOnlyChange = true
+        defer { preferencesOnlyChange = false }
+        snapshot = current
+        presentationChanged?()
+    }
+
+    /// The parts of `updateInbox` that read preferences: the rail order, the opening inbox filter, the hover list.
+    private func refreshPreferenceDerived() {
+        let railActive = railSessions.filter { session in
+            let inbox = inboxSessions[session.key]
+            return session.visualStatus == .working || (inbox?.unread ?? 0) + (inbox?.needsAnswer ?? 0) > 0
+        }
+        railActivitySessions = snapshot?.state.preferences.railOrder == "stable"
+            ? railActive : railActive.sorted(by: Self.previewOrder(inbox: inboxSessions, sort: previewSort))
+        if !inboxFilterPicked, let opening = snapshot?.state.preferences.inboxFilter, opening != inboxFilter {
+            inboxFilter = opening
+        }
+        previewList = Self.previewRows(
+            sessions: snapshot?.sessions ?? [], inbox: inboxSessions, filter: previewFilter, sort: previewSort)
+    }
+
     /// Called for each new `state.showDecision` (a decision link while the widget runs). The first snapshot only
     /// remembers the request it finds, so an old link is not replayed at start.
     public var decisionRequested: ((String) -> Void)?
@@ -379,6 +413,12 @@ public final class WidgetModel: ObservableObject {
     /// `livePreferenceSeconds`, shorter in tests.
     var livePreferenceWindow: TimeInterval = WidgetModel.livePreferenceSeconds
     private var liveExpiry: Task<Void, Never>?
+    /// Live notes not yet applied, merged (`showLivePreferences`).
+    private var liveApplyPending: [String: WidgetJSON] = [:]
+    private var liveAppliedAt = Date.distantPast
+    private var liveApplyTask: Task<Void, Never>?
+    /// The shortest time between two live applies: 30 per second keeps a slider smooth.
+    var liveApplyInterval: TimeInterval = 1.0 / 30
     /// The last snapshot as it arrived, before any overlay.
     private var lastReceived: WidgetSnapshot?
     /// What the callers of `updatePreferences` asked to hear about the write that carries their patch.
@@ -2391,13 +2431,22 @@ public final class WidgetModel: ObservableObject {
     /// A preference another process changed (the settings window posts each change): shown at once, written by that
     /// process. Nothing is written here.
     public func showLivePreferences(_ patch: [String: WidgetJSON]) {
-        guard !patch.isEmpty, var current = snapshot else { return }
+        guard !patch.isEmpty, snapshot != nil else { return }
         livePreferences.append((Date(), patch))
-        do {
-            current.state.preferences = try mergingPreferences(patch, into: current.state.preferences)
-            snapshot = current
-            presentationChanged?()
-        } catch { report(error) }
+        // A slider posts up to 60 notes a second, and each new snapshot rebuilds the inbox and re-renders the panels
+        // (about 8 ms of main thread per note, measured 2026-10-28). Notes are merged and applied at most once per
+        // `liveApplyInterval`, the first at once and the last always.
+        liveApplyPending.merge(patch) { _, new in new }
+        let wait = liveApplyInterval - Date().timeIntervalSince(liveAppliedAt)
+        if wait <= 0 {
+            applyLivePreferences()
+        } else if liveApplyTask == nil {
+            liveApplyTask = Task { [weak self] in
+                do { try await Task.sleep(for: .seconds(wait)) } catch { return }
+                self?.liveApplyTask = nil
+                self?.applyLivePreferences()
+            }
+        }
         // A write that never arrives (it failed, or nothing was written) must not hold the value: the stored one
         // shows again when the window ends, with no snapshot needed.
         liveExpiry?.cancel()
@@ -2408,14 +2457,18 @@ public final class WidgetModel: ObservableObject {
         }
     }
 
+    private func applyLivePreferences() {
+        let patch = liveApplyPending
+        liveApplyPending = [:]
+        liveAppliedAt = Date()
+        guard !patch.isEmpty, let current = snapshot else { return }
+        // The same value again (a slider held still, a repeated note) publishes nothing.
+        do { publishPreferences(try mergingPreferences(patch, into: current.state.preferences)) } catch { report(error) }
+    }
+
     private func dropExpiredLivePreferences() {
-        guard let last = lastReceived, var current = snapshot else { return }
-        do {
-            current.state.preferences = try overlaid(last.state.preferences)
-            guard current.state.preferences != snapshot?.state.preferences else { return }
-            snapshot = current
-            presentationChanged?()
-        } catch { report(error) }
+        guard let last = lastReceived else { return }
+        do { publishPreferences(try overlaid(last.state.preferences)) } catch { report(error) }
     }
 
     /// Shows `patch` at once and writes it after a short pause, merged with the patches that follow. `saved` or
