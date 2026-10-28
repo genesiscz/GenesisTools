@@ -1322,6 +1322,58 @@ final class WidgetStagingTests: XCTestCase {
         wait(for: [expired], timeout: 3)
     }
 
+    /// A slider posts up to 60 notes a second. The widget applies the first at once, merges the rest, applies the last
+    /// one after the interval, and publishes nothing for a value it already shows.
+    func testABurstOfLiveNotesIsAppliedFirstAndLastOnly() throws {
+        let model = StagingFixture.model()
+        defer { model.stop() }
+        model.receive([try snapshot(draftOption: nil)])
+        model.liveApplyInterval = 0.2
+        var published = 0
+        model.presentationChanged = { published += 1 }
+        for width in stride(from: 300, through: 400, by: 10) {
+            model.showLivePreferences(["previewWidth": .number(Double(width))])
+        }
+        XCTAssertEqual(model.agentsPreviewWidth, 300, "the first note shows at once")
+        XCTAssertEqual(published, 1, "the notes inside the interval wait")
+        let applied = expectation(description: "the last note is applied")
+        Task { @MainActor in
+            try await Task.sleep(for: .seconds(0.4))
+            XCTAssertEqual(model.agentsPreviewWidth, 400, "the last note always lands")
+            XCTAssertEqual(published, 2)
+            model.showLivePreferences(["previewWidth": .number(400)])
+            XCTAssertEqual(published, 2, "the same value again publishes nothing")
+            applied.fulfill()
+        }
+        wait(for: [applied], timeout: 3)
+    }
+
+    /// A live note skips the inbox rebuild, so what the preferences decide must match a full snapshot with them.
+    func testALivePreferenceNoteMatchesAFullSnapshotWithTheSamePreferences() throws {
+        let patch = ["previewFilter": "active", "previewSort": "recent", "railOrder": "stable", "inboxFilter": "decisions"]
+        let live = StagingFixture.model()
+        defer { live.stop() }
+        live.receive([try snapshot(draftOption: nil)])
+        live.showLivePreferences(patch.mapValues { WidgetJSON.string($0) })
+
+        let full = StagingFixture.model()
+        defer { full.stop() }
+        var root = try XCTUnwrap(
+            JSONSerialization.jsonObject(with: Data(try snapshot(draftOption: nil).utf8)) as? [String: Any])
+        var state = try XCTUnwrap(root["state"] as? [String: Any])
+        var preferences = state["preferences"] as? [String: Any] ?? [:]
+        preferences.merge(patch) { _, new in new }
+        state["preferences"] = preferences
+        root["state"] = state
+        full.receive([String(decoding: try JSONSerialization.data(withJSONObject: root), as: UTF8.self)])
+
+        XCTAssertEqual(live.snapshot?.state.preferences, full.snapshot?.state.preferences)
+        XCTAssertEqual(live.inboxFilter, "decisions")
+        XCTAssertEqual(live.inboxFilter, full.inboxFilter)
+        XCTAssertEqual(live.previewList.map(\.key), full.previewList.map(\.key))
+        XCTAssertEqual(live.railActivitySessions.map(\.key), full.railActivitySessions.map(\.key))
+    }
+
     func testLiveSettingsNoteSkipsItsOwnPost() {
         let own: [AnyHashable: Any] = ["patch": #"{"sidePosition":0.3}"#, "pid": Int(ProcessInfo.processInfo.processIdentifier)]
         XCTAssertNil(WidgetLiveSettings.patch(from: own), "the posting process does not apply its own note twice")
