@@ -1,11 +1,11 @@
 import { safeStreamControllerError } from "@app/ai-proxy/lib/safe-stream-controller";
-import { packReasoningSignature } from "@app/ai-proxy/lib/translators/formats/anthropic/anthropic-to-responses";
 import {
     type AnthropicStopReason,
     type AnthropicUsage,
     anthropicSseFrame,
     parsedToolInput,
 } from "@app/ai-proxy/lib/translators/formats/anthropic/openai-to-anthropic-responses";
+import { grokReasoningCodec } from "@app/ai-proxy/lib/translators/formats/anthropic/reasoning-codec";
 import { SafeJSON } from "@genesiscz/utils/json";
 import { logger } from "@genesiscz/utils/logger";
 import { isObject } from "@genesiscz/utils/object";
@@ -70,16 +70,6 @@ function reasoningSummaryText(item: JsonRecord): string {
         .map((part) => (isObject(part) && typeof part.text === "string" ? part.text : ""))
         .filter((text) => text.length > 0)
         .join("\n\n");
-}
-
-/** Grok's signature: the item id and its encrypted content; empty when the item carries none. */
-function grokReasoningSignature(item: JsonRecord): string {
-    if (typeof item.encrypted_content !== "string" || item.encrypted_content.length === 0) {
-        return "";
-    }
-
-    const id = typeof item.id === "string" ? item.id : `rs_${crypto.randomUUID()}`;
-    return packReasoningSignature(id, item.encrypted_content);
 }
 
 /** What differs per upstream when a Responses output becomes an Anthropic message. */
@@ -148,7 +138,7 @@ export function grokResponsesToAnthropicMessage(
 }
 
 export function responsesToAnthropicMessage(response: JsonRecord, options: ResponsesToAnthropicOptions): JsonRecord {
-    const sign = options.signReasoning ?? grokReasoningSignature;
+    const sign = options.signReasoning ?? grokReasoningCodec.seal;
     const output = Array.isArray(response.output) ? response.output : [];
     const content: JsonRecord[] = [];
 
@@ -528,7 +518,7 @@ export function responsesSseToAnthropic(
     const label = options.label ?? "grok";
     const state: StreamState = {
         model: options.model,
-        sign: options.signReasoning ?? grokReasoningSignature,
+        sign: options.signReasoning ?? grokReasoningCodec.seal,
         label,
         lastKind: undefined,
         messageId: `msg_${crypto.randomUUID()}`,

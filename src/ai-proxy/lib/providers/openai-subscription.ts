@@ -87,12 +87,10 @@ import {
     responsesSseToAnthropic,
     responsesToAnthropicMessage,
 } from "@app/ai-proxy/lib/translators/formats/anthropic/grok-responses-to-anthropic";
+import { codexReasoningCodec } from "@app/ai-proxy/lib/translators/formats/anthropic/reasoning-codec";
 import {
     accountHash8,
-    type EnvelopeRejection,
     isReasoningReplayRejection,
-    openReasoningEnvelope,
-    packReasoningEnvelope,
     type ReasoningEnvelopeStamp,
 } from "@app/ai-proxy/lib/translators/formats/anthropic/reasoning-envelope";
 import { responsesToChat } from "@app/ai-proxy/lib/translators/responses-to-chat";
@@ -431,10 +429,11 @@ export class OpenAiSubscriptionProvider implements ProxyProvider {
             model: concreteModel,
             compHash: catalog?.compHash ?? "0",
         };
+        const codec = codexReasoningCodec(stamp);
         const replay = {
             kept: [] as string[],
             restored: 0,
-            dropped: {} as Partial<Record<EnvelopeRejection | "dead", number>>,
+            dropped: {} as Record<string, number>,
         };
         const turn = ClaudeCodeTurn.read(parsed);
         // One conversation of one client: the reasoning memory never mixes clients or sessions.
@@ -488,16 +487,16 @@ export class OpenAiSubscriptionProvider implements ProxyProvider {
             // A change of `tools` reads 0% of the WHAM cache, so tool search's loads go in as input items.
             deferredToolsAsInput: true,
             reasoningItem: (thinking) => {
-                const opened = openReasoningEnvelope(thinking.signature, stamp);
+                const opened = codec.open(thinking);
 
-                if (!opened.ok || this.deadReasoning.has(opened.item.id)) {
+                if (!opened.ok || this.deadReasoning.has(String(opened.item.id))) {
                     const reason = opened.ok ? "dead" : opened.reason;
                     replay.dropped[reason] = (replay.dropped[reason] ?? 0) + 1;
                     return undefined;
                 }
 
-                replay.kept.push(contentHash(opened.item.encrypted_content));
-                return { type: "reasoning", ...opened.item };
+                replay.kept.push(contentHash(String(opened.item.encrypted_content)));
+                return opened.item;
             },
             // Claude Code leaves earlier thinking out of a turn's first request; the same items keep the cache.
             restoreAssistantItems: (content) => {
@@ -812,19 +811,11 @@ export class OpenAiSubscriptionProvider implements ProxyProvider {
         }
 
         const signReasoning = (item: Record<string, unknown>): string => {
-            if (typeof item.encrypted_content !== "string" || item.encrypted_content.length === 0) {
-                return "";
-            }
-
             // A failover login served this turn: its reasoning is its own, and the primary login could not decrypt it.
             const servedBy = client.servedIdentity;
-            const signer = servedBy ? { ...stamp, accountHash: accountHash8(servedBy) } : stamp;
-
-            return packReasoningEnvelope(signer, {
-                id: typeof item.id === "string" ? item.id : `rs_${randomUUID()}`,
-                encrypted_content: item.encrypted_content,
-                summary: Array.isArray(item.summary) ? item.summary : [],
-            });
+            return servedBy
+                ? codexReasoningCodec({ ...stamp, accountHash: accountHash8(servedBy) }).seal(item)
+                : codec.seal(item);
         };
 
         const sessionAgents = new Set(context?.sessionAgents ?? []);

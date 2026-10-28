@@ -1,3 +1,4 @@
+import { grokReasoningCodec } from "@app/ai-proxy/lib/translators/formats/anthropic/reasoning-codec";
 import { SafeJSON } from "@genesiscz/utils/json";
 import { logger } from "@genesiscz/utils/logger";
 import { isObject } from "@genesiscz/utils/object";
@@ -21,27 +22,6 @@ type JsonRecord = Record<string, unknown>;
  * history, the shim's `signature: ""`) are dropped, exactly as the OpenAI
  * translation drops them.
  */
-
-export const REASONING_SIGNATURE_PREFIX = "grokrs1:";
-
-export function packReasoningSignature(id: string, encryptedContent: string): string {
-    return `${REASONING_SIGNATURE_PREFIX}${id}:${encryptedContent}`;
-}
-
-export function unpackReasoningSignature(signature: unknown): { id: string; encryptedContent: string } | undefined {
-    if (typeof signature !== "string" || !signature.startsWith(REASONING_SIGNATURE_PREFIX)) {
-        return undefined;
-    }
-
-    const rest = signature.slice(REASONING_SIGNATURE_PREFIX.length);
-    const separator = rest.indexOf(":");
-
-    if (separator <= 0 || separator === rest.length - 1) {
-        return undefined;
-    }
-
-    return { id: rest.slice(0, separator), encryptedContent: rest.slice(separator + 1) };
-}
 
 /** What differs per upstream when an Anthropic request becomes a Responses request. */
 export interface ResponsesTranslationHooks {
@@ -80,18 +60,8 @@ interface DeferredTools {
 /** Grok: the signature carries the item id and its encrypted content; the thinking text is the summary. */
 export const GROK_RESPONSES_HOOKS: ResponsesTranslationHooks = {
     reasoningItem: (thinking) => {
-        const packed = unpackReasoningSignature(thinking.signature);
-
-        if (packed === undefined) {
-            return undefined;
-        }
-
-        return {
-            type: "reasoning",
-            id: packed.id,
-            summary: [{ type: "summary_text", text: String(thinking.thinking ?? "") }],
-            encrypted_content: packed.encryptedContent,
-        };
+        const opened = grokReasoningCodec.open(thinking);
+        return opened.ok ? opened.item : undefined;
     },
 };
 

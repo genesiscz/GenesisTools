@@ -1,9 +1,5 @@
 import { describe, expect, it, spyOn } from "bun:test";
 import {
-    packReasoningSignature,
-    unpackReasoningSignature,
-} from "@app/ai-proxy/lib/translators/formats/anthropic/anthropic-to-responses";
-import {
     CLAUDE_CODE_AGENT_TOOL,
     CLAUDE_CODE_COMPACTION_MARK,
     ClaudeCodeTurn,
@@ -15,6 +11,10 @@ import {
     responsesSseToAnthropic,
     responsesToAnthropicMessage,
 } from "@app/ai-proxy/lib/translators/formats/anthropic/grok-responses-to-anthropic";
+import {
+    packReasoningSignature,
+    unpackReasoningSignature,
+} from "@app/ai-proxy/lib/translators/formats/anthropic/reasoning-codec";
 import { extractUsageFromJsonBody } from "@app/ai-proxy/lib/usage/extract";
 import { SafeJSON } from "@genesiscz/utils/json";
 import { logger } from "@genesiscz/utils/logger";
