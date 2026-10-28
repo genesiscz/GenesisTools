@@ -2,7 +2,6 @@ import { randomUUID } from "node:crypto";
 import { accountConfigFingerprint } from "@app/ai-proxy/lib/account-config";
 import { codexModelInfo } from "@app/ai-proxy/lib/codex-catalog";
 import { captureUpstreamFailure } from "@app/ai-proxy/lib/debug-capture";
-import { jsonError } from "@app/ai-proxy/lib/http-error";
 import { clientAbortResponse } from "@app/ai-proxy/lib/providers/client-abort";
 import {
     CodexCompactionFlow,
@@ -11,21 +10,18 @@ import {
     type FailureClient,
     fileCompactionStore,
     inputHasFallback,
-    requestWithSignal,
 } from "@app/ai-proxy/lib/providers/codex/compaction-flow";
-import { execToolBridge } from "@app/ai-proxy/lib/providers/codex/exec/tool";
 import {
     buildWhamResponsesBody,
     contentHash,
-    hasCompactionInput,
     hasReasoningInput,
     nonStrictByDefault,
     reasoningOptions,
-    resolveWhamReasoning,
     warnDroppedParamsOnce,
 } from "@app/ai-proxy/lib/providers/codex/wham-body";
 import {
     accumulateResponsesJson,
+    jsonError,
     tapCompletedUsage,
     whamErrorResponse,
 } from "@app/ai-proxy/lib/providers/codex/wham-stream";
@@ -67,12 +63,7 @@ import {
     trackBackground,
     withUserReminder,
 } from "@app/ai-proxy/lib/sessions/background-compaction";
-import {
-    cacheResetNotice,
-    cacheResetReason,
-    preserveCacheReminders,
-    shapeChange,
-} from "@app/ai-proxy/lib/sessions/cache-shape";
+import { cacheResetNotice, cacheResetReason, shapeChange } from "@app/ai-proxy/lib/sessions/cache-shape";
 import {
     compactionMarkers,
     compactionRecoveryMessage,
@@ -93,7 +84,6 @@ import {
 import { ensureToolRequiredArrays } from "@app/ai-proxy/lib/translators/formats/anthropic/ensure-tool-required";
 import { toAnthropicErrorResponse } from "@app/ai-proxy/lib/translators/formats/anthropic/error-envelope";
 import {
-    MAX_REPLAY_RESPONSE_CHARS,
     responsesSseToAnthropic,
     responsesToAnthropicMessage,
 } from "@app/ai-proxy/lib/translators/formats/anthropic/grok-responses-to-anthropic";
@@ -107,7 +97,6 @@ import { responsesToChat } from "@app/ai-proxy/lib/translators/responses-to-chat
 import type { AiProxyAccountConfig, ThinkingPresentationMode, UsageSummary } from "@app/ai-proxy/lib/types";
 import { notePrefix, setPrefixDiff } from "@app/ai-proxy/lib/usage/prefix-diff";
 import { getTodayUsageSummary, getUsageSummarySince, recordUsageRequest } from "@app/ai-proxy/lib/usage/store";
-import { streamUsageOptions } from "@app/ai-proxy/lib/usage/stream-start-usage";
 import { extractPlanType, WHAM_BASE_URL } from "@genesiscz/utils/ai/openai/codex-auth";
 import {
     fetchWhamModels,
@@ -191,7 +180,17 @@ export class OpenAiSubscriptionProvider implements ProxyProvider {
                     signal: req.signal,
                     stream: parsed.stream === true,
                     run: (signal) =>
-                        this.nativeMessages(requestWithSignal(req, bodyText, signal), model, bodyText, context),
+                        this.nativeMessages(
+                            new Request(req.url, {
+                                method: req.method,
+                                headers: req.headers,
+                                ...(req.method === "GET" || req.method === "HEAD" ? {} : { body: bodyText }),
+                                signal,
+                            }),
+                            model,
+                            bodyText,
+                            context
+                        ),
                 });
             };
         }
@@ -437,14 +436,8 @@ export class OpenAiSubscriptionProvider implements ProxyProvider {
             dropped: {} as Record<string, number>,
         };
         const turn = ClaudeCodeTurn.read(parsed);
-        // Content-derived cache keys are not conversation identities.
-        const conversationId =
-            context?.promptCacheKey?.source === "content"
-                ? (turn.sessionId ?? context?.sessionId)
-                : (context?.promptCacheKey?.key ?? turn.sessionId ?? context?.sessionId);
-        const conversation = conversationId
-            ? `${whamItemScope(req)}\u0000${conversationId}\u0000${stamp.accountHash}\u0000${stamp.compHash}`
-            : undefined;
+        // One conversation of one client: the reasoning memory never mixes clients or sessions.
+        const conversation = `${whamItemScope(req)}\u0000${context?.promptCacheKey?.key ?? turn.sessionId ?? ""}`;
         const compaction = turn.isCompaction;
         // The compaction settings, read once: a config reload during the request cannot change its path midway.
         const policy = compactionPolicy("codex", context?.sessionsIn);
@@ -452,8 +445,6 @@ export class OpenAiSubscriptionProvider implements ProxyProvider {
         const nativeCompaction = compaction && !writtenCompaction && policy.mode === "native";
         const summaryWords = compaction && !nativeCompaction ? policy.words : undefined;
         const claudeSessionId = turn.sessionId;
-        const cacheScope = `${whamItemScope(req)}\u0000${stamp.accountHash}\u0000${conversationId ?? claudeSessionId ?? ""}`;
-        const cacheThread = `${cacheScope}\u0000${turn.threadKey ?? claudeSessionId ?? ""}`;
         const clientAgent = req.headers.get("user-agent") ?? undefined;
         const trace = new CompactionTrace({
             ...(context?.sessionId ? { session: context.sessionId } : {}),
@@ -489,21 +480,12 @@ export class OpenAiSubscriptionProvider implements ProxyProvider {
             parsed = turn.withSummaryLimit(summaryWords);
         }
 
-        // Codex's `exec` rides on Claude Code's Bash: offered when the client has Bash, replayed as the model made it.
-        const exec = execToolBridge({
-            tools: parsed.tools,
-            sessionsIn: context?.sessionsIn,
-            sessionId: turn.sessionId,
-            model: concreteModel,
-        });
-
         // System messages stay in place (`appendDeveloperMessage`): hoisted, they broke the prompt cache.
         let responsesBody = anthropicToResponses(ensureToolRequiredArrays(parsed), concreteModel, {
             // A Read of an image comes back as a tool result; WHAM takes it as input_image (codex-rs does the same).
             toolResultImages: true,
             // A change of `tools` reads 0% of the WHAM cache, so tool search's loads go in as input items.
             deferredToolsAsInput: true,
-            deferredRecoveryScope: conversationId ? cacheThread : undefined,
             reasoningItem: (thinking) => {
                 const opened = codec.open(thinking);
 
@@ -518,7 +500,7 @@ export class OpenAiSubscriptionProvider implements ProxyProvider {
             },
             // Claude Code leaves earlier thinking out of a turn's first request; the same items keep the cache.
             restoreAssistantItems: (content) => {
-                const items = conversation ? rememberedMessageItems(conversation, content) : undefined;
+                const items = rememberedMessageItems(conversation, content);
 
                 if (!items || items.some((item) => this.deadReasoning.has(String(item.id)))) {
                     return undefined;
@@ -527,21 +509,11 @@ export class OpenAiSubscriptionProvider implements ProxyProvider {
                 replay.restored += items.filter((item) => item.type === "reasoning").length;
                 return items;
             },
-            rememberAssistantItems: (content, items) => {
-                if (conversation) {
-                    rememberMessageItems(conversation, content, items);
-                }
-            },
-            ...(exec ? { customToolCall: exec.replayItem } : {}),
+            rememberAssistantItems: (content, items) => rememberMessageItems(conversation, content, items),
         });
 
         if (Array.isArray(responsesBody.tools)) {
             responsesBody.tools = responsesBody.tools.map((tool) => (isObject(tool) ? nonStrictByDefault(tool) : tool));
-        }
-
-        // Last, after the function tools got `strict: false`: a custom tool has no `strict`.
-        if (exec) {
-            responsesBody.tools = [...(Array.isArray(responsesBody.tools) ? responsesBody.tools : []), exec.definition];
         }
 
         for (const item of Array.isArray(responsesBody.input) ? responsesBody.input : []) {
@@ -579,31 +551,21 @@ export class OpenAiSubscriptionProvider implements ProxyProvider {
             ...(effort ? { effort } : {}),
         };
 
-        const resolvedReasoning = resolveWhamReasoning(responsesBody, concreteModel, {
-            defaultReasoningEffort: this.account.openaiSub?.defaultReasoningEffort,
-            catalog,
-        });
-        const effectiveEffort = String(resolvedReasoning.reasoning?.effort ?? "");
-
         // Codex keeps one cache per effort and model: say so where the cache was lost. A compaction turn is its own case.
         const cacheReset =
             claudeSessionId && !compaction
-                ? shapeChange(cacheThread, {
-                      effort: effectiveEffort,
+                ? shapeChange(turn.threadKey ?? claudeSessionId, {
+                      effort: effort ?? "",
                       model: concreteModel,
                   })
                 : undefined;
 
         if (cacheReset) {
             trace.record("cache-reset", { reason: cacheResetReason(cacheReset) });
-        }
 
-        if (claudeSessionId && Array.isArray(responsesBody.input)) {
-            responsesBody.input = preserveCacheReminders(
-                cacheThread,
-                responsesBody.input,
-                cacheReset ? cacheResetNotice(cacheReset) : undefined
-            );
+            if (Array.isArray(responsesBody.input)) {
+                responsesBody.input = withUserReminder(responsesBody.input, cacheResetNotice(cacheReset));
+            }
         }
 
         logger.debug(
@@ -633,7 +595,12 @@ export class OpenAiSubscriptionProvider implements ProxyProvider {
                     stream: false,
                     timeoutMs: 120_000,
                     run: async (signal) => {
-                        const restoreReq = requestWithSignal(req, bodyText, signal);
+                        const restoreReq = new Request(req.url, {
+                            method: req.method,
+                            headers: req.headers,
+                            ...(req.method === "GET" || req.method === "HEAD" ? {} : { body: bodyText }),
+                            signal,
+                        });
                         expanded = await expandCompactionMarkers(rawInput, async (id) => {
                             try {
                                 return await this.compaction.compactionItem({
@@ -800,17 +767,11 @@ export class OpenAiSubscriptionProvider implements ProxyProvider {
 
         // Where this request first differs from the thread's previous one: the ledger row names a miss's cause.
         if (claudeSessionId) {
-            const firstUser = Array.isArray(parsed.messages)
-                ? parsed.messages.find((message) => isObject(message) && message.role === "user")
-                : undefined;
-            const diagnosticThread = firstUser
-                ? `${cacheScope}\u0000${claudeSessionId}\u0000${contentHash(SafeJSON.stringify(firstUser))}`
-                : cacheThread;
             setPrefixDiff(
                 req,
-                notePrefix(diagnosticThread, {
+                notePrefix(turn.threadKey ?? claudeSessionId, {
                     model: concreteModel,
-                    effort: effectiveEffort,
+                    effort: isObject(responsesBody.reasoning) ? String(responsesBody.reasoning.effort ?? "") : "",
                     instructions: responsesBody.instructions,
                     tools: responsesBody.tools,
                     input: Array.isArray(responsesBody.input) ? responsesBody.input : [],
@@ -857,45 +818,6 @@ export class OpenAiSubscriptionProvider implements ProxyProvider {
                 : codec.seal(item);
         };
 
-        const rememberTextResponse = (content: Record<string, unknown>[]): void => {
-            if (!conversation || (client.servedIdentity && accountHash8(client.servedIdentity) !== stamp.accountHash)) {
-                return;
-            }
-            let replayChars = content.length;
-            for (const block of content) {
-                for (const field of ["text", "thinking", "signature"]) {
-                    if (typeof block[field] === "string") {
-                        replayChars += block[field].length;
-                    }
-                }
-                if (replayChars > MAX_REPLAY_RESPONSE_CHARS) {
-                    return;
-                }
-            }
-            try {
-                const thinking = content.filter((block) => block.type === "thinking");
-                if (
-                    thinking.some((block) => {
-                        const opened = codec.open(block);
-                        return !opened.ok || this.deadReasoning.has(String(opened.item.id));
-                    })
-                ) {
-                    return;
-                }
-                const translated = anthropicToResponses({ messages: [{ role: "assistant", content }] }, concreteModel, {
-                    reasoningItem: (thinking) => {
-                        const opened = codec.open(thinking);
-                        return opened.ok && !this.deadReasoning.has(String(opened.item.id)) ? opened.item : undefined;
-                    },
-                });
-                if (Array.isArray(translated.input)) {
-                    rememberMessageItems(conversation, content, translated.input.filter(isObject));
-                }
-            } catch (error) {
-                logger.warn({ error }, "ai-proxy: could not remember a completed reasoning reply");
-            }
-        };
-
         const sessionAgents = new Set(context?.sessionAgents ?? []);
         const keepAgentModel = sessionAgentModelWins(sessionAgents);
         const toolInput =
@@ -915,12 +837,9 @@ export class OpenAiSubscriptionProvider implements ProxyProvider {
                 responsesSseToAnthropic(onUsage ? tapCompletedUsage(head.body, onUsage) : head.body, {
                     model,
                     signReasoning,
-                    onTextResponse: conversation ? rememberTextResponse : undefined,
                     label: "codex",
                     toolInput,
-                    customToolCall: exec?.clientCall,
                     signal: req.signal,
-                    ...streamUsageOptions({ scope: whamItemScope(req), body: parsed }),
                 }),
                 {
                     status: response.status,
@@ -940,10 +859,8 @@ export class OpenAiSubscriptionProvider implements ProxyProvider {
                 responsesToAnthropicMessage(isObject(envelope) ? envelope : {}, {
                     model,
                     signReasoning,
-                    onTextResponse: conversation ? rememberTextResponse : undefined,
                     label: "codex",
                     toolInput,
-                    customToolCall: exec?.clientCall,
                 })
             ),
             { status: 200, headers: { "Content-Type": "application/json" } }
@@ -1040,10 +957,16 @@ export class OpenAiSubscriptionProvider implements ProxyProvider {
                     .map((record) => record.slug);
                 const hint = visionModels.length > 0 ? ` Vision-capable: ${visionModels.join(", ")}.` : "";
 
-                return jsonError(400, `Model ${concreteModel} does not accept image input.${hint}`, {
-                    type: "invalid_request_error",
-                    code: "unsupported_modality",
-                });
+                return new Response(
+                    SafeJSON.stringify({
+                        error: {
+                            message: `Model ${concreteModel} does not accept image input.${hint}`,
+                            type: "invalid_request_error",
+                            code: "unsupported_modality",
+                        },
+                    }),
+                    { status: 400, headers: { "Content-Type": "application/json" } }
+                );
             }
         }
 
@@ -1068,11 +991,17 @@ export class OpenAiSubscriptionProvider implements ProxyProvider {
 
         if (effortError) {
             logger.info({ account: this.account.name, model: concreteModel, effortError }, "ai-proxy: effort refused");
-            return jsonError(400, effortError, {
-                type: "invalid_request_error",
-                param: "reasoning.effort",
-                code: "unsupported_effort",
-            });
+            return new Response(
+                SafeJSON.stringify({
+                    error: {
+                        message: effortError,
+                        type: "invalid_request_error",
+                        param: "reasoning.effort",
+                        code: "unsupported_effort",
+                    },
+                }),
+                { status: 400, headers: { "Content-Type": "application/json" } }
+            );
         }
 
         warnDroppedParamsOnce(dropped);
@@ -1089,9 +1018,6 @@ export class OpenAiSubscriptionProvider implements ProxyProvider {
             return failoverBodyText;
         };
 
-        // A compaction item in the body was expanded for the primary login, and a rebuilt one is saved as the primary's:
-        // another login cannot decrypt the first and would sign the second, so neither request fails over.
-        const primaryOnly = client?.primaryOnly === true || hasCompactionInput(whamBody);
         const started = performance.now();
         let upstream: Response | undefined;
         let servedBy: string | undefined;
@@ -1099,14 +1025,6 @@ export class OpenAiSubscriptionProvider implements ProxyProvider {
         const tried: string[] = [];
 
         for (const candidate of this.tokenCandidates()) {
-            if (primaryOnly && !candidate.primary) {
-                lastFailure ??= jsonError(
-                    503,
-                    "The Codex login that holds this compacted conversation is unavailable, and its compaction cannot move to another login."
-                );
-                continue;
-            }
-
             const coolingMs = this.failover ? cooldownRemainingMs(candidate.key) : 0;
             if (coolingMs > 0) {
                 logger.debug(
