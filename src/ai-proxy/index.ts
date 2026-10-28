@@ -1,16 +1,12 @@
 #!/usr/bin/env bun
 
 import {
-    type AccountsRoutingPatch,
     runAccountsAllowEnv,
-    runAccountsBind,
     runAccountsFailover,
     runAccountsList,
     runAccountsRemove,
     runAccountsSetEnabled,
     runAccountsSetKey,
-    runAccountsSetRouting,
-    runAccountsStatus,
     runAccountsTest,
 } from "@app/ai-proxy/commands/accounts";
 import { runAccountsLogin } from "@app/ai-proxy/commands/accounts-login";
@@ -33,6 +29,8 @@ import { runUpCommand } from "@app/ai-proxy/commands/up";
 import { runUsageCommand } from "@app/ai-proxy/commands/usage";
 import { registerAiProxyRefScanner } from "@app/ai-proxy/lib/account-refs";
 import { loadConfigFresh } from "@app/ai-proxy/lib/config";
+import { PROVIDER_ACCOUNT_COMMANDS } from "@app/ai-proxy/lib/providers/account-commands";
+import { providerTypes } from "@app/ai-proxy/lib/providers/registry";
 import { isValidThinkingMode } from "@app/ai-proxy/lib/thinking-config";
 import type { AiProxyProviderType, CursorTranslationMode, ThinkingPresentationMode } from "@app/ai-proxy/lib/types";
 import { setProxyUsageSink } from "@app/ai-proxy/lib/usage/usage-events";
@@ -413,19 +411,6 @@ program
         await runUsageCommand(options);
     });
 
-function parseCsvOption(value?: string): string[] | undefined {
-    if (!value) {
-        return undefined;
-    }
-
-    const items = value
-        .split(",")
-        .map((item) => item.trim())
-        .filter(Boolean);
-
-    return items.length > 0 ? items : undefined;
-}
-
 const accountsCmd = program.command("accounts").description("Manage configured accounts");
 
 accountsCmd
@@ -435,25 +420,12 @@ accountsCmd
         await runAccountsLogin(provider);
     });
 
-accountsCmd
-    .command("status")
-    .description("Auth detail for codex accounts (source, expiry, plan)")
-    .action(async () => {
-        await runAccountsStatus();
-    });
-
-accountsCmd
-    .command("bind <name>")
-    .description(
-        `Point a codex account at a managed login (${toolCommand("codex login")}), instead of the Codex CLI's auth.json`
-    )
-    .option(
-        "--codex <login>",
-        `The managed openai-sub login, e.g. one listed by \`${toolCommand("ai-proxy accounts status")}\``
-    )
-    .action(async (name: string, options: { codex?: string }) => {
-        await runAccountsBind(name, options);
-    });
+// The subcommands only one provider's accounts take (`status` and `bind` for Codex, `set-routing` for OpenRouter).
+for (const type of providerTypes()) {
+    for (const command of PROVIDER_ACCOUNT_COMMANDS[type]) {
+        command.register(accountsCmd);
+    }
+}
 
 accountsCmd
     .command("list")
@@ -507,70 +479,6 @@ accountsCmd
     .action(async (name: string, options: { off?: boolean; env?: string }) => {
         await runAccountsAllowEnv(name, !options.off, { envName: options.env });
     });
-
-accountsCmd
-    .command("set-routing <name>")
-    .description("Pin an OpenRouter account's provider routing (order/only/ignore/sort/fallbacks)")
-    .option(
-        "--match <glob>",
-        "Scope to one per-model route instead of the account-level default (exact id or a trailing *)"
-    )
-    .option("--order <providers>", "Comma-separated provider names, most preferred first")
-    .option("--only <providers>", "Comma-separated provider names — route ONLY to these")
-    .option("--ignore <providers>", "Comma-separated provider names to never route to")
-    .option("--sort <mode>", "price|throughput|latency", (value: string) => {
-        if (value !== "price" && value !== "throughput" && value !== "latency") {
-            throw new Error(`--sort must be price, throughput, or latency (got "${value}")`);
-        }
-
-        return value;
-    })
-    .option("--allow-fallbacks", "Allow OpenRouter to fall back beyond the pinned/allowed providers")
-    .option("--no-allow-fallbacks", "Refuse fallback — only the pinned/allowed providers may serve the request")
-    .option("--require-parameters", "Only route to providers supporting every parameter in the request")
-    .option("--no-require-parameters", "Allow providers that silently drop unsupported parameters")
-    .option("--data-collection <mode>", "allow|deny", (value: string) => {
-        if (value !== "allow" && value !== "deny") {
-            throw new Error(`--data-collection must be allow or deny (got "${value}")`);
-        }
-
-        return value;
-    })
-    .option("--fallback-models <ids>", "Comma-separated OpenRouter model ids to try if the primary one fails")
-    .option("--clear", "Remove all provider-routing pins for this account")
-    .action(
-        async (
-            name: string,
-            options: {
-                match?: string;
-                order?: string;
-                only?: string;
-                ignore?: string;
-                sort?: "price" | "throughput" | "latency";
-                allowFallbacks?: boolean;
-                requireParameters?: boolean;
-                dataCollection?: "allow" | "deny";
-                fallbackModels?: string;
-                clear?: boolean;
-            },
-            command: Command
-        ) => {
-            const patch: AccountsRoutingPatch = {
-                order: parseCsvOption(options.order),
-                only: parseCsvOption(options.only),
-                ignore: parseCsvOption(options.ignore),
-                sort: options.sort,
-                allowFallbacks:
-                    command.getOptionValueSource("allowFallbacks") === "cli" ? options.allowFallbacks : undefined,
-                requireParameters:
-                    command.getOptionValueSource("requireParameters") === "cli" ? options.requireParameters : undefined,
-                dataCollection: options.dataCollection,
-                fallbackModels: parseCsvOption(options.fallbackModels),
-            };
-
-            await runAccountsSetRouting(name, patch, { clear: options.clear, match: options.match });
-        }
-    );
 
 accountsCmd
     .command("remove <name>")

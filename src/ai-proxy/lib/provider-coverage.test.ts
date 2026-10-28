@@ -2,6 +2,7 @@ import { describe, expect, test } from "bun:test";
 import { cursorExampleModel } from "@app/ai-proxy/commands/config-wizard";
 import { describeAccountCredential } from "@app/ai-proxy/lib/account-config";
 import { providerTitleFor, suggestedModelFor } from "@app/ai-proxy/lib/detect-report";
+import { PROVIDER_ACCOUNT_COMMANDS } from "@app/ai-proxy/lib/providers/account-commands";
 import { defaultApiKeyEnvName } from "@app/ai-proxy/lib/providers/api-key-state";
 import {
     configureModelFacts,
@@ -17,6 +18,7 @@ import { loginAccount } from "@app/ai-proxy/lib/sessions/routing";
 import { agentOf } from "@app/ai-proxy/lib/sessions/view";
 import type { AiProxyAccountConfig, AiProxyProviderType } from "@app/ai-proxy/lib/types";
 import { SafeJSON } from "@genesiscz/utils/json";
+import { Command } from "commander";
 
 /**
  * Adding a provider type used to mean touching six independent switch/if chains, each failing SILENTLY when missed.
@@ -324,6 +326,28 @@ describe("each provider type answers with its own facts", () => {
             undefined,
             undefined,
         ]);
+    });
+
+    test("each provider adds only its own accounts subcommands", () => {
+        const registered = (provider: AiProxyProviderType) => {
+            const accounts = new Command("accounts");
+
+            for (const command of PROVIDER_ACCOUNT_COMMANDS[provider]) {
+                command.register(accounts);
+            }
+
+            return accounts.commands.map((command) => command.name());
+        };
+
+        expect(perProvider(registered)).toEqual({
+            "grok-subscription": [],
+            "github-copilot-subscription": [],
+            "xai-api-key": [],
+            openai: [],
+            openrouter: ["set-routing"],
+            "anthropic-subscription": [],
+            "openai-subscription": ["status", "bind"],
+        });
     });
 
     test("an unknown provider is not implemented and cannot be built", async () => {

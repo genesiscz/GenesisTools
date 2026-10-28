@@ -1,4 +1,5 @@
 import { buildProxyModelCatalog } from "@app/ai-proxy/lib/catalog";
+import { aiProxyCommand, HOT_RELOAD_HINT, RESTART_HINT } from "@app/ai-proxy/lib/command-hints";
 import { loadConfig, saveConfig } from "@app/ai-proxy/lib/config";
 import { type AccountListRow, displayAccountsTable, displayAccountTestResult } from "@app/ai-proxy/lib/display";
 import { apiKeyStatus, defaultApiKeyEnvName, findEnvSourceFile } from "@app/ai-proxy/lib/providers/api-key-state";
@@ -8,29 +9,10 @@ import {
     isProviderImplemented,
     providerDefinition,
 } from "@app/ai-proxy/lib/providers/registry";
-import type {
-    AiProxyAccountConfig,
-    AiProxyOpenRouterAccountConfig,
-    AiProxyOpenRouterProviderRouting,
-    AiProxyOpenRouterRoute,
-    AiProxyProviderType,
-} from "@app/ai-proxy/lib/types";
-import { AiConfigStore } from "@genesiscz/utils/ai/config/AiConfigStore";
-import { CodexAccountBinding } from "@genesiscz/utils/ai/openai/account-binding";
-import {
-    CODEX_AUTH_PATH,
-    extractExpiry,
-    extractPlanType,
-    readCodexAuthJson,
-} from "@genesiscz/utils/ai/openai/codex-auth";
+import type { AiProxyAccountConfig, AiProxyProviderType } from "@app/ai-proxy/lib/types";
 import { isInteractive, suggestCommand } from "@genesiscz/utils/cli";
 import { toolCommand } from "@genesiscz/utils/cli/tool-command";
-import { SafeJSON } from "@genesiscz/utils/json";
 import { out } from "@genesiscz/utils/logger";
-
-function cmd(replaceCommand: string[]): string {
-    return suggestCommand("tools ai-proxy", { replaceCommand });
-}
 
 export async function runAccountsList(): Promise<void> {
     const config = await loadConfig();
@@ -61,7 +43,7 @@ export async function runAccountsTest(name: string): Promise<void> {
         out.println();
         out.printlnErr(`  Account "${name}" is disabled in config.`);
         out.println();
-        out.println(`  ${cmd(["config", "show"])}`);
+        out.println(`  ${aiProxyCommand(["config", "show"])}`);
         out.println();
         return;
     }
@@ -71,8 +53,8 @@ export async function runAccountsTest(name: string): Promise<void> {
         out.printlnErr(`  Provider not implemented for runtime yet: ${account.provider}`);
         out.println(`  Account "${name}" is configured but has no catalog/runtime adapter.`);
         out.println();
-        out.println(`  ${cmd(["accounts", "list"])}`);
-        out.println(`  ${cmd(["config", "show"])}`);
+        out.println(`  ${aiProxyCommand(["accounts", "list"])}`);
+        out.println(`  ${aiProxyCommand(["config", "show"])}`);
         out.println();
         return;
     }
@@ -96,151 +78,11 @@ export async function runAccountsTest(name: string): Promise<void> {
         out.printlnErr(`  Upstream test failed for "${name}"`);
         out.printlnErr(`  ${message}`);
         out.println();
-        out.println(`  ${cmd(["config", "detect"])}`);
-        out.println(`  ${cmd(["config", "show"])}`);
-        out.println(`  ${cmd(["status"])}`);
+        out.println(`  ${aiProxyCommand(["config", "detect"])}`);
+        out.println(`  ${aiProxyCommand(["config", "show"])}`);
+        out.println(`  ${aiProxyCommand(["status"])}`);
         out.println();
     }
-}
-
-/** One codex proxy account's auth, read without refreshing anything. */
-export interface CodexAccountAuthStatus {
-    /** The managed login it binds (`openaiSub.accountName`), or undefined for the legacy Codex CLI read. */
-    login?: string;
-    source: string;
-    plan?: string;
-    expiresAt?: number;
-    error?: string;
-}
-
-/**
- * Where a codex proxy account's token comes from. A managed login goes through `CodexAccountBinding`, the one
- * Codex auth engine of ai-proxy, `tools codex run` and `tools codex spawn`, read-only: a status never refreshes,
- * because an OpenAI refresh token is single use. An account without `openaiSub.accountName` is the legacy read of
- * the Codex CLI's own `auth.json`, which GenesisTools never refreshes.
- */
-export async function codexAccountAuthStatus(account: AiProxyAccountConfig): Promise<CodexAccountAuthStatus> {
-    const login = account.openaiSub?.accountName;
-
-    if (!login) {
-        const path = account.openaiSub?.codexAuthPath ?? CODEX_AUTH_PATH;
-        const tokens = await readCodexAuthJson(path);
-
-        return {
-            source: `legacy Codex CLI login (${path}, read-only)`,
-            plan: tokens?.accessToken ? extractPlanType(tokens.accessToken) : undefined,
-            expiresAt: tokens?.expiresAt,
-            error: tokens?.accessToken ? undefined : "no token",
-        };
-    }
-
-    try {
-        const binding = await CodexAccountBinding.create(login, { allowRefresh: false });
-        const tokens = await binding.tokens({ refresh: false });
-
-        return {
-            login,
-            source: `managed login "${login}"`,
-            plan: tokens.chatgptPlanType ?? extractPlanType(tokens.accessToken),
-            expiresAt: extractExpiry(tokens.accessToken),
-        };
-    } catch (err) {
-        return { login, source: `managed login "${login}"`, error: err instanceof Error ? err.message : String(err) };
-    }
-}
-
-/**
- * Auth detail for codex (openai-subscription) accounts: where the token comes
- * from, when it expires, and the ChatGPT plan when the JWT carries it. A legacy
- * account gets the command that binds it to a managed login.
- */
-export async function runAccountsStatus(): Promise<void> {
-    const config = await loadConfig();
-    const codexAccounts = config.accounts.filter((account) => account.provider === "openai-subscription");
-
-    if (codexAccounts.length === 0) {
-        out.log.info("No openai-subscription accounts configured.");
-        out.log.info(cmd(["accounts", "login", "codex"]));
-        return;
-    }
-
-    for (const account of codexAccounts) {
-        const status = await codexAccountAuthStatus(account);
-        const failover = account.openaiSub?.failoverAccountNames;
-        const expiry = status.expiresAt
-            ? `${new Date(status.expiresAt).toLocaleString()}${status.expiresAt < Date.now() ? " (EXPIRED)" : ""}`
-            : "unknown";
-
-        out.log.info(`${account.name}${status.plan ? ` (${status.plan})` : ""}${account.enabled ? "" : " [disabled]"}`);
-        out.log.info(`  auth:    ${status.source}${status.error ? ` — ${status.error}` : ""}`);
-        out.log.info(`  expires: ${expiry}`);
-
-        if (failover && failover.length > 0) {
-            out.log.info(`  failover: ${failover.join(", ")}`);
-        }
-
-        if (!status.login) {
-            await warnLegacyCodexAccount(account.name);
-        }
-    }
-}
-
-/** The legacy read has no refresh and no named owner; offer the managed logins it can bind to instead. */
-async function warnLegacyCodexAccount(proxyAccount: string): Promise<void> {
-    const store = await AiConfigStore.readOnly();
-    const logins = store.accounts({ provider: "openai-sub", enabled: true }).map((entry) => entry.name);
-
-    out.log.warn(
-        `  legacy: "${proxyAccount}" reads the Codex CLI's own login (no openaiSub.accountName). GenesisTools never refreshes it, and it is not the shared Codex auth engine.`
-    );
-
-    if (logins.length > 0) {
-        out.log.info(`  bind it to a managed login: ${cmd(["accounts", "bind", proxyAccount, "--codex", logins[0]])}`);
-        out.log.info(`  managed logins: ${logins.join(", ")}`);
-        return;
-    }
-
-    out.log.info(`  import the Codex CLI's login: ${toolCommand("codex login")} --import-native`);
-    out.log.info(`  or log in a new one: ${cmd(["accounts", "login", "codex"])}`);
-}
-
-/**
- * Point a codex proxy account at a managed `openai-sub` login (`openaiSub.accountName`), so its token comes
- * from `CodexAccountBinding` instead of the legacy read of the Codex CLI's `auth.json`.
- */
-export async function runAccountsBind(name: string, options: { codex?: string }): Promise<void> {
-    const config = await loadConfig();
-    const account = config.accounts.find((item) => item.name === name);
-
-    if (!account) {
-        out.log.warn(`Account not found: ${name}`);
-        out.log.info(cmd(["accounts", "list"]));
-        process.exitCode = 1;
-        return;
-    }
-
-    if (account.provider !== "openai-subscription") {
-        out.log.warn(`Account "${name}" is ${account.provider}; bind takes an openai-subscription (codex) account.`);
-        process.exitCode = 1;
-        return;
-    }
-
-    const login = options.codex?.trim();
-    const store = await AiConfigStore.readOnly();
-    const logins = store.accounts({ provider: "openai-sub", enabled: true }).map((entry) => entry.name);
-
-    if (!login || !logins.includes(login)) {
-        out.log.warn(login ? `No enabled Codex login named "${login}".` : "--codex <login> is required.");
-        out.log.info(`Managed logins: ${logins.join(", ") || "none"} (${toolCommand("codex login")} <name> adds one)`);
-        process.exitCode = 1;
-        return;
-    }
-
-    account.openaiSub = { ...account.openaiSub, accountName: login };
-    delete account.openaiSub.codexAuthPath;
-    await saveConfig(config);
-    out.log.success(`"${name}" now uses the managed login "${login}".`);
-    out.log.info(`Restart the proxy to apply: ${toolCommand("ai-proxy down")} && ${toolCommand("ai-proxy up")}`);
 }
 
 /**
@@ -253,7 +95,7 @@ export async function runAccountsFailover(name: string, state: string | undefine
 
     if (!account) {
         out.log.warn(`Account not found: ${name}`);
-        out.log.info(cmd(["accounts", "list"]));
+        out.log.info(aiProxyCommand(["accounts", "list"]));
         process.exitCode = 1;
         return;
     }
@@ -303,7 +145,7 @@ export async function runAccountsSetEnabled(name: string, enabled: boolean): Pro
 
     if (!account) {
         out.log.warn(`Account not found: ${name}`);
-        out.log.info(cmd(["accounts", "list"]));
+        out.log.info(aiProxyCommand(["accounts", "list"]));
         return;
     }
 
@@ -324,7 +166,7 @@ export async function runAccountsSetKey(name: string, key: string | undefined): 
 
     if (!account) {
         out.log.warn(`Account not found: ${name}`);
-        out.log.info(cmd(["accounts", "list"]));
+        out.log.info(aiProxyCommand(["accounts", "list"]));
         return;
     }
 
@@ -339,7 +181,7 @@ export async function runAccountsSetKey(name: string, key: string | undefined): 
         // Passing the key as argv puts it in shell history and in `ps` for the
         // lifetime of the command — kept for scripts, but say so.
         out.log.warn("A key passed on the command line lands in shell history and is visible to `ps`.");
-        out.log.info(`Interactive, masked entry: ${cmd(["accounts", "set-key", name])}`);
+        out.log.info(`Interactive, masked entry: ${aiProxyCommand(["accounts", "set-key", name])}`);
         applyStoredKey(account, trimmed);
         await saveConfig(config);
         reportStoredKey(name, account.provider);
@@ -369,10 +211,8 @@ function reportStoredKey(name: string, provider: AiProxyProviderType): void {
 }
 
 function allowEnvHint(name: string): string {
-    return cmd(["accounts", "allow-env", name]);
+    return aiProxyCommand(["accounts", "allow-env", name]);
 }
-
-const RESTART_HINT = `Restart the proxy to apply: ${toolCommand("ai-proxy down")} && ${toolCommand("ai-proxy up")}`;
 
 /** Print where the account stands today, then offer the four end states. */
 async function chooseCredential(input: {
@@ -478,7 +318,7 @@ export async function runAccountsAllowEnv(
 
     if (!account) {
         out.log.warn(`Account not found: ${name}`);
-        out.log.info(cmd(["accounts", "list"]));
+        out.log.info(aiProxyCommand(["accounts", "list"]));
         return;
     }
 
@@ -534,203 +374,6 @@ export async function runAccountsAllowEnv(
     out.log.info(RESTART_HINT);
 }
 
-/** Parsed, CLI-agnostic form of the `set-routing` flags — the thin door does the flag parsing. */
-export interface AccountsRoutingPatch {
-    order?: string[];
-    only?: string[];
-    ignore?: string[];
-    sort?: "price" | "throughput" | "latency";
-    allowFallbacks?: boolean;
-    requireParameters?: boolean;
-    dataCollection?: "allow" | "deny";
-    fallbackModels?: string[];
-}
-
-const HOT_RELOAD_HINT = "The running proxy re-reads config.json on its next request — no restart needed.";
-
-function hasRoutingPatch(patch: AccountsRoutingPatch): boolean {
-    return Boolean(
-        patch.order ||
-            patch.only ||
-            patch.ignore ||
-            patch.sort ||
-            patch.allowFallbacks !== undefined ||
-            patch.requireParameters !== undefined ||
-            patch.dataCollection ||
-            patch.fallbackModels
-    );
-}
-
-function buildProviderPatch(
-    existing: AiProxyOpenRouterProviderRouting | undefined,
-    patch: AccountsRoutingPatch
-): AiProxyOpenRouterProviderRouting {
-    return {
-        ...existing,
-        ...(patch.order ? { order: patch.order } : {}),
-        ...(patch.only ? { only: patch.only } : {}),
-        ...(patch.ignore ? { ignore: patch.ignore } : {}),
-        ...(patch.sort ? { sort: patch.sort } : {}),
-        ...(patch.allowFallbacks !== undefined ? { allow_fallbacks: patch.allowFallbacks } : {}),
-        ...(patch.requireParameters !== undefined ? { require_parameters: patch.requireParameters } : {}),
-        ...(patch.dataCollection ? { data_collection: patch.dataCollection } : {}),
-    };
-}
-
-export async function runAccountsSetRouting(
-    name: string,
-    patch: AccountsRoutingPatch,
-    options: { clear?: boolean; match?: string } = {}
-): Promise<void> {
-    const config = await loadConfig();
-    const account = config.accounts.find((item) => item.name === name);
-
-    if (!account) {
-        out.log.warn(`Account not found: ${name}`);
-        out.log.info(cmd(["accounts", "list"]));
-        return;
-    }
-
-    if (account.provider !== "openrouter") {
-        out.log.warn(`Account "${name}" is ${account.provider} — provider-routing pins are an OpenRouter feature.`);
-        return;
-    }
-
-    if (options.match) {
-        await applyRoutePatch({ config, account, name, match: options.match, patch, clear: options.clear });
-        return;
-    }
-
-    if (options.clear) {
-        if (account.openrouter) {
-            delete account.openrouter.provider;
-            delete account.openrouter.fallbackModels;
-
-            if (Object.keys(account.openrouter).length === 0) {
-                delete account.openrouter;
-            }
-        }
-
-        await saveConfig(config);
-        out.log.success(`Cleared provider routing for "${name}" — it now uses OpenRouter's own default routing.`);
-        out.log.info(HOT_RELOAD_HINT);
-        return;
-    }
-
-    if (!hasRoutingPatch(patch)) {
-        out.log.warn("No routing fields given — nothing changed.");
-        out.log.info(cmd(["accounts", "set-routing", name, "--order", "Morph,DeepInfra", "--no-allow-fallbacks"]));
-        return;
-    }
-
-    const existing: AiProxyOpenRouterAccountConfig = account.openrouter ?? {};
-    const mergedProvider = buildProviderPatch(existing.provider, patch);
-
-    account.openrouter = {
-        ...existing,
-        ...(Object.keys(mergedProvider).length > 0 ? { provider: mergedProvider } : {}),
-        ...(patch.fallbackModels ? { fallbackModels: patch.fallbackModels } : {}),
-    };
-
-    await saveConfig(config);
-
-    out.log.success(`Updated provider routing for "${name}".`);
-
-    if (account.openrouter.provider) {
-        out.log.info(`  provider: ${SafeJSON.stringify(account.openrouter.provider) ?? "{}"}`);
-    }
-
-    if (account.openrouter.fallbackModels) {
-        out.log.info(`  fallbackModels: ${SafeJSON.stringify(account.openrouter.fallbackModels) ?? "[]"}`);
-    }
-
-    out.log.info(HOT_RELOAD_HINT);
-}
-
-/**
- * `--match` scopes the whole operation to one entry of `openrouter.routes[]`
- * instead of the account-level default — a strict pin for one model (or
- * vendor prefix) without narrowing every other model routed through the same
- * account.
- */
-async function applyRoutePatch(input: {
-    config: Awaited<ReturnType<typeof loadConfig>>;
-    account: AiProxyAccountConfig;
-    name: string;
-    match: string;
-    patch: AccountsRoutingPatch;
-    clear?: boolean;
-}): Promise<void> {
-    const { config, account, name, match, patch, clear } = input;
-    const routes = account.openrouter?.routes ?? [];
-    const index = routes.findIndex((route) => route.match === match);
-
-    if (clear) {
-        if (index === -1) {
-            out.log.warn(`No route for "${match}" on "${name}" — nothing to clear.`);
-            return;
-        }
-
-        const next = routes.filter((_, i) => i !== index);
-        account.openrouter = { ...account.openrouter };
-
-        if (next.length > 0) {
-            account.openrouter.routes = next;
-        } else {
-            delete account.openrouter.routes;
-        }
-
-        await saveConfig(config);
-        out.log.success(`Cleared the "${match}" route for "${name}".`);
-        out.log.info(HOT_RELOAD_HINT);
-        return;
-    }
-
-    if (!hasRoutingPatch(patch)) {
-        out.log.warn("No routing fields given — nothing changed.");
-        out.log.info(
-            cmd([
-                "accounts",
-                "set-routing",
-                name,
-                "--match",
-                match,
-                "--order",
-                "Morph,DeepInfra",
-                "--no-allow-fallbacks",
-            ])
-        );
-        return;
-    }
-
-    const existingRoute: AiProxyOpenRouterRoute | undefined = index === -1 ? undefined : routes[index];
-    const mergedProvider = buildProviderPatch(existingRoute?.provider, patch);
-    const nextRoute: AiProxyOpenRouterRoute = {
-        ...existingRoute,
-        match,
-        ...(Object.keys(mergedProvider).length > 0 ? { provider: mergedProvider } : {}),
-        ...(patch.fallbackModels ? { fallbackModels: patch.fallbackModels } : {}),
-    };
-    const nextRoutes =
-        index === -1 ? [...routes, nextRoute] : routes.map((route, i) => (i === index ? nextRoute : route));
-
-    account.openrouter = { ...account.openrouter, routes: nextRoutes };
-
-    await saveConfig(config);
-
-    out.log.success(`Updated the "${match}" route for "${name}" (${nextRoutes.length} route(s) configured).`);
-
-    if (nextRoute.provider) {
-        out.log.info(`  provider: ${SafeJSON.stringify(nextRoute.provider) ?? "{}"}`);
-    }
-
-    if (nextRoute.fallbackModels) {
-        out.log.info(`  fallbackModels: ${SafeJSON.stringify(nextRoute.fallbackModels) ?? "[]"}`);
-    }
-
-    out.log.info(HOT_RELOAD_HINT);
-}
-
 export async function runAccountsRemove(name: string): Promise<void> {
     const config = await loadConfig();
     const before = config.accounts.length;
@@ -738,7 +381,7 @@ export async function runAccountsRemove(name: string): Promise<void> {
 
     if (config.accounts.length === before) {
         out.log.warn(`Account not found: ${name}`);
-        out.log.info(cmd(["accounts", "list"]));
+        out.log.info(aiProxyCommand(["accounts", "list"]));
         return;
     }
 
