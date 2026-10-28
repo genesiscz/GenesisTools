@@ -34,6 +34,21 @@ function positiveInt(value: string | undefined, fallback: number): number {
     return Number.isFinite(parsed) && parsed > 0 ? parsed : fallback;
 }
 
+/** `--expected-revision <n>`: a revision is 1 or more; anything else is refused, never read as "no check". */
+function revisionFlag(value: string | undefined): number | undefined {
+    if (value === undefined) {
+        return undefined;
+    }
+
+    const parsed = Number.parseInt(value, 10);
+
+    if (!Number.isInteger(parsed) || parsed < 1) {
+        throw new Error("--expected-revision takes a revision number, 1 or more");
+    }
+
+    return parsed;
+}
+
 function promptReceipt(raw: string | undefined): PromptReceipt | undefined {
     if (raw === undefined) {
         return undefined;
@@ -362,8 +377,9 @@ export function registerInboxCommand(program: Command, deps: InboxCommandDeps = 
         .option("--text <note>", "The unsent note; empty clears it")
         .option("--provider <name>")
         .option("--cwd <path>")
+        .option("--expected-revision <n>", "Refuse when the agent re-posted the decision since this revision")
         .action(async (_flags: AnswerFlags, command: Command) => {
-            const flags: AnswerFlags = command.optsWithGlobals();
+            const flags: AnswerFlags & { expectedRevision?: string } = command.optsWithGlobals();
 
             try {
                 if (!flags.session) {
@@ -376,6 +392,7 @@ export function registerInboxCommand(program: Command, deps: InboxCommandDeps = 
                     throw new Error("--decision takes a number");
                 }
 
+                const expectedRevision = revisionFlag(flags.expectedRevision);
                 const { draftDecision } = await import("../lib/inbox/drafts");
                 out.result(
                     await draftDecision(
@@ -386,6 +403,7 @@ export function registerInboxCommand(program: Command, deps: InboxCommandDeps = 
                             ...(flags.text !== undefined ? { text: flags.text } : {}),
                             ...(flags.provider ? { provider: flags.provider } : {}),
                             ...(flags.cwd ? { cwd: flags.cwd } : {}),
+                            ...(expectedRevision !== undefined ? { expectedRevision } : {}),
                         },
                         await storeDeps()
                     )
@@ -401,8 +419,9 @@ export function registerInboxCommand(program: Command, deps: InboxCommandDeps = 
         .command("dismiss")
         .description("Drop a decision that no longer matters, without sending anything")
         .requiredOption("--decision <n>", "The decision number")
+        .option("--expected-revision <n>", "Refuse when the agent re-posted the decision since this revision")
         .action(async (_flags: AnswerFlags, command: Command) => {
-            const flags: AnswerFlags = command.optsWithGlobals();
+            const flags: AnswerFlags & { expectedRevision?: string } = command.optsWithGlobals();
 
             try {
                 if (!flags.session) {
@@ -416,8 +435,18 @@ export function registerInboxCommand(program: Command, deps: InboxCommandDeps = 
                 }
 
                 const { file, events } = await storeDeps();
+                const expectedRevision = revisionFlag(flags.expectedRevision);
                 const { dismissDecision } = await import("../lib/inbox/drafts");
-                out.result(await dismissDecision({ session: flags.session, number }, { file, events }));
+                out.result(
+                    await dismissDecision(
+                        {
+                            session: flags.session,
+                            number,
+                            ...(expectedRevision !== undefined ? { expectedRevision } : {}),
+                        },
+                        { file, events }
+                    )
+                );
             } catch (error) {
                 log.debug({ error }, "inbox dismiss refused");
                 out.result({ error: error instanceof Error ? error.message : String(error) });

@@ -437,6 +437,7 @@ describe("loadSessionInbox", () => {
             options: [],
             state: "answered",
             answer: "yes",
+            answeredVia: "inbox",
             updatedTs: "2026-03-01T08:00:00.000Z",
             promptReservation: { token: "fixture", expiresAt: Date.now() + 60_000 },
         };

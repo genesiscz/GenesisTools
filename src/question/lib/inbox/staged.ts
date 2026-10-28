@@ -1,5 +1,5 @@
 import { decisionLines, dueDecisions, optionLetters } from "../decisions/read";
-import { type DecisionRecord, kindOf } from "../decisions/store";
+import { awaitsDelivery, type DecisionRecord, kindOf } from "../decisions/store";
 
 /**
  * What a send would deliver, without the delivery code: `inbox --session <id> --json --all-items` shows the staged
@@ -32,7 +32,14 @@ export function stagedSendText(rows: DecisionRecord[], session: string): string 
     const due = dueDecisions(
         rows
             .filter((row) => row.sessionId === session && kindOf(row) === "decision")
-            .map((row) => (isDrafted(row) ? { ...row, state: "answered" as const, ...promotedDraft(row) } : row))
+            .flatMap((row) => {
+                if (isDrafted(row)) {
+                    return [{ ...row, state: "answered" as const, ...promotedDraft(row) }];
+                }
+
+                // A chat answer an agent recorded as `answered` is not waiting to go out (`awaitsDelivery`).
+                return awaitsDelivery(row) ? [row] : [];
+            })
     );
 
     return due.length > 0 ? decisionLines(due) : undefined;

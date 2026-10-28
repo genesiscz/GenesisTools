@@ -2,12 +2,14 @@ import { type DeliverDeps, resolveDeliveryTarget } from "../decisions/deliver";
 import { optionLetters } from "../decisions/read";
 import { type SendResult, sendAnsweredDecisions } from "../decisions/send";
 import {
+    type DecisionRecord,
     type HarvestedDecision,
     harvestDecisions,
     kindOf,
     type PromptReceipt,
     readDecisions,
     recordDelivery,
+    staleRevisionError,
     updateDecisions,
 } from "../decisions/store";
 import { isDrafted, promotedDraft } from "./staged";
@@ -29,6 +31,17 @@ export interface DraftInput {
     text?: string;
     provider?: string;
     cwd?: string;
+    /**
+     * The revision of the text the user picked on. A pick made on text the agent has since re-posted is refused
+     * (`staleRevisionError`), as the widget's own stage is.
+     */
+    expectedRevision?: number;
+}
+
+function checkRevision(row: DecisionRecord, number: number, expected: number | undefined): void {
+    if (expected !== undefined && expected !== (row.revision ?? 1)) {
+        throw staleRevisionError(number);
+    }
 }
 
 export interface DraftDeps {
@@ -90,6 +103,7 @@ export async function draftDecision(input: DraftInput, deps: DraftDeps) {
         throw new Error(`DECISION ${input.number} is already ${row.state}`);
     }
 
+    checkRevision(row, input.number, input.expectedRevision);
     const option = normalize(input.option);
     const draftOption = option ?? row.draftOption ?? "";
     const draft = input.text !== undefined ? input.text : (row.draft ?? "");
@@ -108,7 +122,15 @@ export async function draftDecision(input: DraftInput, deps: DraftDeps) {
     // The state moves only when it changes: `open` to `open` is no transition, and clearing an
     // untouched decision used to fail with "cannot move ... from open to open".
     const [updated] = await updateDecisions(deps.file, deps.events, {
-        updates: [{ id: row.id, ...(state === row.state ? {} : { state }), draftOption, draft }],
+        updates: [
+            {
+                id: row.id,
+                ...(state === row.state ? {} : { state }),
+                draftOption,
+                draft,
+                ...(input.expectedRevision !== undefined ? { expectedRevision: input.expectedRevision } : {}),
+            },
+        ],
     });
 
     return updated;
@@ -116,7 +138,7 @@ export async function draftDecision(input: DraftInput, deps: DraftDeps) {
 
 /** Drops a decision that no longer matters (a scratch probe) without sending anything. */
 export async function dismissDecision(
-    { session, number }: { session: string; number: number },
+    { session, number, expectedRevision }: { session: string; number: number; expectedRevision?: number },
     deps: Pick<DraftDeps, "file" | "events">
 ) {
     const rows = readDecisions(deps.file);
@@ -135,8 +157,9 @@ export async function dismissDecision(
         throw new Error(`DECISION ${number} is already ${row.state}`);
     }
 
+    checkRevision(row, number, expectedRevision);
     const [updated] = await updateDecisions(deps.file, deps.events, {
-        updates: [{ id: row.id, state: "dismissed" }],
+        updates: [{ id: row.id, state: "dismissed", ...(expectedRevision !== undefined ? { expectedRevision } : {}) }],
     });
 
     return updated;
@@ -207,9 +230,13 @@ export async function sendDrafts(
     }
 
     if (drafted.length > 0) {
-        await updateDecisions(deps.file, deps.events, {
-            updates: drafted.map((row) => ({ id: row.id, state: "answered" as const, ...promotedDraft(row) })),
-        });
+        await updateDecisions(
+            deps.file,
+            deps.events,
+            { updates: drafted.map((row) => ({ id: row.id, state: "answered" as const, ...promotedDraft(row) })) },
+            undefined,
+            { actor: "user" }
+        );
     }
 
     // A just-resumed session boots for a few seconds: wait, bounded, for its pane to be live.
@@ -255,7 +282,8 @@ export async function sendDrafts(
             text: answered.map((row) => row.number).join(", "),
             numbers: [],
             channel: "resume",
-            delivered: true,
+            // The pane never came up: nothing was typed. The answers wait, stamped with the place it resumed.
+            delivered: false,
             target: input.recordResumeTarget,
             dryRun: false,
             promoted: drafted.map((row) => row.number),

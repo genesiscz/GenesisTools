@@ -1,5 +1,6 @@
 import { statSync } from "node:fs";
 import { dirname } from "node:path";
+import { loadHooksConfig } from "@app/agents/lib/hooks/config";
 import type { AgentSessionRow, AgentSessionRowsOptions } from "@app/ai/lib/sessions/agent-session-rows";
 import { POLLED_LISTING_REUSE_MS } from "@app/ai/lib/sessions/listing-reuse";
 import { readCachedSessionCwd } from "@genesiscz/utils/agent-sessions/cached-title";
@@ -15,6 +16,7 @@ import {
     type DecisionRecord,
     type DecisionState,
     type HarvestedDecision,
+    harvestDecisions,
     kindOf,
     readDecisions,
 } from "../decisions/store";
@@ -57,6 +59,17 @@ export interface InboxDeps {
     tail: (row: AgentSessionRow) => Promise<TranscriptTurn[]>;
     stat: (path: string) => { size: number; mtimeMs: number } | null;
     rows: () => DecisionRecord[];
+    /**
+     * Stores a listed session's unposted blocks as open decisions (`decisions.harvestListed`); answers how many it
+     * stored. Absent: the inbox only lists them.
+     */
+    harvest?: (input: {
+        sessionId: string;
+        provider?: string;
+        cwd?: string;
+        found: HarvestedDecision[];
+        at: string | null;
+    }) => Promise<number>;
     forms: () => AskForm[] | Promise<AskForm[]>;
     readCache: () => Promise<ScanCache | null>;
     writeCache: (cache: ScanCache) => Promise<void>;
@@ -92,10 +105,80 @@ export const realInboxDeps: InboxDeps = {
         }
     },
     rows: () => readDecisions(decisionFiles().file),
+    harvest: async ({ sessionId, provider, cwd, found, at }) => {
+        if (!loadHooksConfig().decisions.harvestListed) {
+            return 0;
+        }
+
+        const { file, events } = decisionFiles();
+        // Asked when the reply was written, not when the inbox first listed it: the waiting count's freshness and
+        // the chat-answer step read the ask time.
+        const stored = await harvestDecisions(
+            file,
+            events,
+            { sessionId, ...(provider ? { provider } : {}), ...(cwd ? { cwd } : {}), found },
+            () => at ?? new Date().toISOString()
+        );
+        return stored.length;
+    },
     forms: async () => (await import("../pending/ask")).listPendingForms({}, 200),
     readCache: () => storage().getCacheFile<ScanCache>(CACHE_KEY, "7 days"),
     writeCache: (cache) => storage().putCacheFile(CACHE_KEY, cache, "7 days"),
 };
+
+/**
+ * The listed sessions' unposted `❓ DECISION N` blocks, stored as open decisions (`InboxDeps.harvest`), so the widget,
+ * which reads only the decision log, counts and answers the same decisions as the hub. A block the log has under its
+ * number in any state is left alone.
+ */
+async function harvestListed({
+    sessions,
+    scans,
+    rows,
+    deps,
+}: {
+    sessions: AgentSessionRow[];
+    scans: Map<string, TranscriptScan>;
+    rows: readonly DecisionRecord[];
+    deps: InboxDeps;
+}): Promise<number> {
+    if (!deps.harvest) {
+        return 0;
+    }
+
+    const known = new Set(
+        rows.filter((row) => kindOf(row) === "decision").map((row) => `${row.sessionId}#${row.number}`)
+    );
+    let stored = 0;
+
+    for (const [sessionId, scan] of scans) {
+        const found = scan.blocks.filter((block) => !known.has(`${sessionId}#${block.number}`));
+
+        if (found.length === 0) {
+            continue;
+        }
+
+        const session = sessions.find((row) => row.sessionId === sessionId);
+
+        try {
+            stored += await deps.harvest({
+                sessionId,
+                ...(session?.provider ? { provider: session.provider } : {}),
+                ...(session?.cwd ? { cwd: session.cwd } : {}),
+                found,
+                at: scan.at,
+            });
+        } catch (error) {
+            log.warn({ error, session: sessionId }, "inbox: could not store the unposted decisions it lists");
+        }
+    }
+
+    if (stored > 0) {
+        log.info({ stored }, "inbox: stored unposted decisions it lists");
+    }
+
+    return stored;
+}
 
 /** Where a session's transcript is when the caller knows it, and what a cursor records of the read. */
 export interface ScanOptions {
@@ -103,6 +186,7 @@ export interface ScanOptions {
     transcript?: { path: string; provider: ResolvedTranscript["provider"] };
     trace?: InboxTrace;
 }
+
 /**
  * Probes every file a transcript read consumes. A worker's transcript is its newest turn file plus the earlier ones,
  * so a cursor must also see an earlier file change and a new turn file appear (a new entry changes its folder's
@@ -402,7 +486,10 @@ export async function loadInbox({
     });
 
     await deps.writeCache(next);
-    const inbox = buildInbox({ sessions, scans, rows: deps.rows(), forms: await deps.forms() }).map((session) => ({
+    const listed = deps.rows();
+    const harvested = await harvestListed({ sessions, scans, rows: listed, deps });
+    const rows = harvested > 0 ? deps.rows() : listed;
+    const inbox = buildInbox({ sessions, scans, rows, forms: await deps.forms() }).map((session) => ({
         ...session,
         items: session.items.map((item) =>
             item.kind === "decision" ? { ...item, refs: fillExcerpts(item.refs, session.cwd ?? undefined) } : item
