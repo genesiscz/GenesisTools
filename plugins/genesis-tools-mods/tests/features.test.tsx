@@ -63,10 +63,10 @@ import {
     labelOf,
     middleCut,
     namesCheckouts,
+    onlyReads,
     parseNumstat,
     parseStatus,
     prChecksOf,
-    prOf,
     refresh as refreshGit,
     toggle as toggleGit,
     wordingFor,
@@ -80,7 +80,7 @@ import { bareDescription } from "../hooks/model-label";
 import { forgetRepoMentions, sessionRepos, urlProject } from "../hooks/pr-repos";
 import { modsSettings } from "../hooks/settings";
 import { afterTools, forgetSettings, type Host, isRecord } from "../hooks/shared";
-import { cliLacks, sharedRun } from "../hooks/shared-run";
+import { cliLacks, sharedRun, sharedRunClock, sharedRunFiles } from "../hooks/shared-run";
 import { toolLabel } from "../hooks/spinner";
 import {
     checkStall,
@@ -93,7 +93,18 @@ import {
     stallNow,
     stallSentence,
 } from "../hooks/stall";
-import { lockedToSession, samePath, sessionTotalKb, statusOf, worktreeSize } from "../hooks/tmp-usage";
+import {
+    changesSize,
+    lockedToSession,
+    markSizeStale,
+    samePath,
+    sessionTotalKb,
+    sizeAgeText,
+    statusOf,
+    takeDueStale,
+    worktreeMaxAgeS,
+    worktreeSize,
+} from "../hooks/tmp-usage";
 
 /** A Mac where every GenesisTools link opens, on an invented link host. */
 const ALL_LINKS: GenesisProbe = {
@@ -392,6 +403,13 @@ test("git band: status line and CI counts", async () => {
     expect(
         hubUrlOf(ALL_LINKS, { url: "https://gitlab.example.com/a/b/-/merge_requests/3", number: 3 })
     ).toBeUndefined();
+});
+
+test("git band: a shell command that only reads does not refresh the band", () => {
+    expect(onlyReads("cd /work/a && git status --porcelain | head -5")).toBe(true);
+    expect(onlyReads("git -C /work/a log --oneline -3; rg -n foo src")).toBe(true);
+    expect(onlyReads("git -C /work/a commit -m x")).toBe(false);
+    expect(onlyReads("bun scripts/fix.ts && git status")).toBe(false);
 });
 
 test("git band: the checkouts a command or an edit works in", async () => {
@@ -1418,6 +1436,243 @@ function machine({
     });
 }
 
+function processLogMachine(
+    on: On,
+    options: {
+        failCwd?: boolean;
+        failSession?: boolean;
+        holdAppends?: boolean;
+        holdWrites?: boolean;
+        /** The session mark a previous load left in the process environment: this start is a reload. */
+        reloading?: boolean;
+    } = {}
+) {
+    forgetSettings();
+    forgetCheckouts();
+    forgetGenesisProbe();
+    const clock = mock.clock(on);
+    mock.store(on);
+    let failEnvironment = false;
+    let hideHome = false;
+    on("env.get", async (_$, e) => {
+        if (failEnvironment) {
+            return { deny: "environment unavailable" };
+        }
+
+        if (options.reloading && e.name === "GENESIS_TOOLS_MODS_SESSION") {
+            return { value: "sess-log" };
+        }
+
+        return { value: !hideHome && e.name === "HOME" ? "/home/test" : undefined };
+    });
+    on("session.id", async () => {
+        if (options.failSession) {
+            return { deny: "session unavailable" };
+        }
+
+        return { value: "sess-log" };
+    });
+    on("session.cwd", async () => {
+        if (options.failCwd) {
+            return { deny: "cwd unavailable" };
+        }
+
+        return { value: "/repo" };
+    });
+    on("fs.read", async (_$, e) => {
+        if (e.path.endsWith("/agents/hooks.json")) {
+            return { value: JSON.stringify({ mods: { git: { enabled: true, expand: "all" } } }) };
+        }
+
+        throw new Error("no file");
+    });
+    on("fs.exists", async () => ({ value: true }));
+    on("fs.stat", async () => ({ value: { kind: "dir", size: 0, mtimeMs: 0, isLink: false } }));
+    on("ui.panes", async () => ({ value: [] }));
+    on("session.end", async (_$, e) => ({ sessionId: e.sessionId }));
+    const writes: string[] = [];
+    const calls: string[][] = [];
+    let release = () => {};
+    const barrier = new Promise<void>((resolve) => {
+        release = resolve;
+    });
+    let releaseWrite = () => {};
+    const writeBarrier = new Promise<void>((resolve) => {
+        releaseWrite = resolve;
+    });
+    let markWriteStarted = () => {};
+    const writeStarted = new Promise<void>((resolve) => {
+        markWriteStarted = resolve;
+    });
+    let appends = 0;
+    on("process.run", async (_$, e) => {
+        calls.push([...e.argv]);
+        const path = e.argv.at(-1) ?? "";
+        if (path.includes("/mods-log/processes-")) {
+            markWriteStarted();
+            if (options.holdWrites) {
+                await writeBarrier;
+            }
+
+            writes.push(e.init?.stdin ?? "");
+        } else if (path.endsWith("/mods-log/git.jsonl")) {
+            appends++;
+            if (options.holdAppends) {
+                await barrier;
+            }
+        }
+
+        const stdout = e.argv.includes("--show-toplevel")
+            ? "/repo\n"
+            : e.argv.includes("--porcelain")
+              ? "## main\n"
+              : "";
+        return { value: { exitCode: 0, stdout, stderr: "", isStdoutTruncated: false, isStderrTruncated: false } };
+    });
+
+    return {
+        clock,
+        writes,
+        calls,
+        appends: () => appends,
+        release,
+        writeStarted,
+        releaseWrite,
+        hideHome: () => {
+            hideHome = true;
+        },
+        failEnvironment: () => {
+            failEnvironment = true;
+        },
+    };
+}
+
+const gitCommand = {
+    command: "mod-git",
+    args: "off",
+    origin: { kind: "composer" } as const,
+    presentation: { isFullscreen: false, columns: 100 },
+};
+
+function processLogRows(writes: string[]): Record<string, unknown>[] {
+    return writes
+        .flatMap((batch) =>
+            batch
+                .trim()
+                .split("\n")
+                .map((line) => JSON.parse(line))
+        )
+        .filter(isRecord);
+}
+
+test("process log: session end flushes a final append batch", async ($, on) => {
+    const machine = processLogMachine(on);
+    await $.command.run(gitCommand);
+    await $.session.end({ reason: "other", sessionId: "sess-log", resume: { id: "sess-log" } });
+    const rows = processLogRows(machine.writes);
+    expect(
+        rows.some(
+            (row) => Array.isArray(row.argv) && row.argv.includes("/home/test/.genesis-tools/agents/mods-log/git.jsonl")
+        )
+    ).toBe(true);
+    expect(rows.some((row) => Array.isArray(row.argv) && row.argv[0] === "find")).toBe(true);
+    expect(rows.some((row) => row.cwd === "/repo" && row.cwdSource === "session")).toBe(true);
+});
+
+test("process log: idle timer flushes the append batch", async ($, on) => {
+    const machine = processLogMachine(on);
+    await $.command.run(gitCommand);
+    await machine.clock.advance(10_000);
+    expect(processLogRows(machine.writes).some((row) => Array.isArray(row.argv) && row.argv[0] === "/bin/sh")).toBe(
+        true
+    );
+});
+
+test("process log: session end waits for an in-flight timer writer", async ($, on) => {
+    const machine = processLogMachine(on, { holdWrites: true });
+    await $.command.run(gitCommand);
+    const advancing = machine.clock.advance(10_000);
+    await machine.writeStarted;
+    // The timer has already selected its destination; avoid a second shutdown write masking the race.
+    machine.hideHome();
+    let ended = false;
+    const ending = $.session.end({ reason: "other", sessionId: "sess-log", resume: { id: "sess-log" } }).then(() => {
+        ended = true;
+    });
+    await machine.clock.settle();
+    const endedBeforeWrite = ended;
+    machine.releaseWrite();
+    await Promise.all([advancing, ending]);
+    expect(endedBeforeWrite).toBe(false);
+    expect(ended).toBe(true);
+    expect(processLogRows(machine.writes).some((row) => Array.isArray(row.argv) && row.argv[0] === "/bin/sh")).toBe(
+        true
+    );
+});
+
+test("process log: Finder button logs the open process", async ($, on) => {
+    const machine = processLogMachine(on);
+    await $.command.run({ ...gitCommand, args: "refresh" });
+    const ui = await $.ui.mount({
+        plugin: "genesis-tools-mods",
+        surface: "terminal",
+        component: "Pane",
+        requestId: "mods-git",
+        props: {
+            title: "Git",
+            isFocused: true,
+            bodyColumns: 100,
+            placement: "inline",
+            scroll: { offset: 0, bodyRows: 30 },
+            view: {},
+        },
+    });
+    await ui.press({ key: "git-0-finder" });
+    await machine.clock.advance(10_000);
+    expect(machine.calls.some((argv) => argv[0] === "open" && argv[1] === "/repo")).toBe(true);
+    const rows = processLogRows(machine.writes);
+    expect(rows.some((row) => Array.isArray(row.argv) && row.argv[0] === "open" && row.argv[1] === "/repo")).toBe(true);
+    expect(rows.some((row) => row.cwd === "/repo" && row.cwdSource === "explicit-absolute")).toBe(true);
+    await ui.unmount();
+});
+
+test("process log: forty concurrent completions write two nonempty batches", async ($, on) => {
+    const machine = processLogMachine(on, { holdAppends: true });
+    const commands = Array.from({ length: 40 }, () => $.command.run(gitCommand));
+    await machine.clock.settle();
+    expect(machine.appends()).toBe(40);
+    machine.release();
+    await Promise.all(commands);
+    await machine.clock.advance(10_000);
+    const rows = processLogRows(machine.writes);
+    expect(machine.writes).toHaveLength(2);
+    expect(
+        rows.filter(
+            (row) => Array.isArray(row.argv) && row.argv.includes("/home/test/.genesis-tools/agents/mods-log/git.jsonl")
+        )
+    ).toHaveLength(40);
+});
+
+test("process log: unavailable metadata stays nonfatal and the folder is unknown", async ($, on) => {
+    const machine = processLogMachine(on, { failCwd: true, failSession: true });
+    const result = await $.command.run(gitCommand);
+    await machine.clock.advance(10_000);
+    expect(result.text).toContain("off");
+    expect(
+        processLogRows(machine.writes).some(
+            (row) => row.cwd === null && row.cwdSource === "unknown" && row.session === "unknown"
+        )
+    ).toBe(true);
+});
+
+test("process log: environment failures do not reject a command", async ($, on) => {
+    const machine = processLogMachine(on);
+    const result = await $.command.run(gitCommand);
+    machine.failEnvironment();
+    await machine.clock.advance(10_000);
+    expect(result.text).toContain("off");
+});
+
 test("the link fixer links what resolves, as the reply streams, and leaves the rest", async ($, on) => {
     machine({ on });
 
@@ -1979,10 +2234,10 @@ test("session files: worktrees locked to the session, their state, and the total
         sessionTotalKb({
             scratch: { path: "/tmp/cc/p/s", kb: 400 },
             tasks: { path: "/tmp/claude-1/p/s", kb: 12 },
-            // The one inside the scratch folder is already in its 400.
+            // The scratch walk leaves out the worktree inside it, so that one counts on its own.
             worktrees: [tree("/work/.claude/worktrees/agent-1", 3000), tree("/tmp/cc/p/s/worktrees/w", 100)],
         })
-    ).toBe(3412);
+    ).toBe(3512);
 });
 
 test("session files: a failed worktree measurement retries and a successful one stays cached", async () => {
@@ -2081,40 +2336,6 @@ test("session files: a CLI without tools du size walks with du, and keeps doing 
         expect(await worktreeSize(host, "/work/old-cli-a", "clean")).toBe(789);
         expect(await worktreeSize(host, "/work/old-cli-b", "clean")).toBe(789);
         expect(asked).toEqual(["tools du size", "du -sk /work/old-cli-a", "du -sk /work/old-cli-b"]);
-    } finally {
-        forgetGenesisProbe();
-    }
-});
-
-test("git band: a CLI without github pr --include shows the PR through gh", async () => {
-    forgetGenesisProbe();
-    const base = checkoutHost();
-    const asked: string[] = [];
-    const done = (stdout: string, exitCode: number, stderr = "") => ({
-        stdout,
-        stderr,
-        exitCode,
-        isStdoutTruncated: false,
-        isStderrTruncated: false,
-    });
-    const host: Host = {
-        ...base,
-        async run(argv) {
-            if (argv[1] === "genesis-tools") {
-                return done(JSON.stringify({ router: { linkHost: "links.example.test" }, links: {} }), 0);
-            }
-
-            asked.push(argv[0]);
-            return argv[0] === "tools"
-                ? done("", 1, "error: unknown option '--include'")
-                : done(JSON.stringify({ number: 42, title: "Old CLI", url: "u", state: "OPEN", isDraft: false }), 0);
-        },
-    };
-
-    try {
-        const pr = await prOf(host, { root: "/work/old-cli-pr", which: "42", tracked: true });
-        expect(pr?.number).toBe(42);
-        expect(asked).toEqual(["tools", "gh"]);
     } finally {
         forgetGenesisProbe();
     }
@@ -3187,4 +3408,507 @@ test("the agents band lists the session's running codex and grok workers from to
         },
     ]);
     expect(workersOf("not json", "sess-1")).toEqual([]);
+});
+
+/** A host over an in-memory folder shared by "sessions", whose `run` counts and answers after `ms`. */
+function sharedRunHost(files: Map<string, string>, ms: number) {
+    const runs = { count: 0 };
+    const host: Host = {
+        ...checkoutHost(),
+        async run() {
+            runs.count++;
+            await new Promise((resolve) => setTimeout(resolve, ms));
+            return { exitCode: 0, stdout: "mine", stderr: "", isStdoutTruncated: false, isStderrTruncated: false };
+        },
+        async read(path) {
+            const text = files.get(path);
+
+            if (text === undefined) {
+                throw new Error(`ENOENT ${path}`);
+            }
+
+            return text;
+        },
+        async write(path, text) {
+            files.set(path, text);
+        },
+        sleep: (wait) => new Promise((resolve) => setTimeout(resolve, wait)),
+    };
+
+    return { host, runs };
+}
+
+const SHARED_ASK = {
+    argv: ["gh", "pr", "view", "--json", "number"],
+    cwd: "/work/main",
+    ttlMs: 60_000,
+    timeoutMs: 5_000,
+};
+
+test("shared run: identical calls in one session start one process", async () => {
+    const { host, runs } = sharedRunHost(new Map(), 30);
+
+    const answers = await Promise.all([sharedRun(host, SHARED_ASK), sharedRun(host, SHARED_ASK)]);
+
+    expect(answers.map((answer) => answer?.stdout)).toEqual(["mine", "mine"]);
+    expect(runs.count).toBe(1);
+});
+
+test("shared run: a session waits for another session's claimed run and takes its answer", async () => {
+    const files = new Map<string, string>();
+    const { host, runs } = sharedRunHost(files, 0);
+    const { key, path } = sharedRunFiles("/home/test/.genesis-tools/agents", SHARED_ASK);
+    const started = Date.now();
+    files.set(
+        String(path).replace(/\.json$/, ".lock.json"),
+        JSON.stringify({ token: "other", started, until: started + 5_000 })
+    );
+    setTimeout(() => {
+        files.set(String(path), JSON.stringify({ key, at: Date.now(), exitCode: 0, stdout: "theirs", stderr: "" }));
+    }, 300);
+
+    const answer = await sharedRun(host, SHARED_ASK);
+
+    expect(answer?.stdout).toBe("theirs");
+    expect(runs.count).toBe(0);
+});
+
+test("shared run: a claim released without an answer, or a lapsed one, lets the session run", async () => {
+    const files = new Map<string, string>();
+    const { host, runs } = sharedRunHost(files, 0);
+    const { path } = sharedRunFiles("/home/test/.genesis-tools/agents", SHARED_ASK);
+    const lockPath = String(path).replace(/\.json$/, ".lock.json");
+    const started = Date.now();
+    files.set(lockPath, JSON.stringify({ token: "other", started, until: started + 5_000 }));
+    setTimeout(() => {
+        files.set(lockPath, JSON.stringify({ token: "other", started, until: 0 }));
+    }, 300);
+
+    expect((await sharedRun(host, SHARED_ASK))?.stdout).toBe("mine");
+    expect(runs.count).toBe(1);
+
+    files.clear();
+    files.set(lockPath, JSON.stringify({ token: "other", started: started - 9_000, until: started - 1 }));
+    expect((await sharedRun(host, SHARED_ASK))?.stdout).toBe("mine");
+    expect(runs.count).toBe(2);
+    expect(JSON.parse(String(files.get(lockPath))).until).toBe(0);
+});
+
+test("session files: a worktree whose git status changed accepts a size at most 5 minutes old, never a forced walk", () => {
+    expect(worktreeMaxAgeS({ status: "## main\n" }, "## main\n M src/x.ts\n")).toBe(300);
+    expect(worktreeMaxAgeS({ status: "## main\n" }, "## main\n")).toBe(1800);
+    expect(worktreeMaxAgeS(undefined, "## main\n")).toBe(1800);
+});
+
+test("a session nobody watches (-p, the SDK) starts no panel feature, and a watched one does", async ($, on) => {
+    const machine = processLogMachine(on);
+    const panelRuns = () => machine.calls.filter((argv) => argv[0] === "git" && argv.includes("--porcelain")).length;
+    on("session.start", async (_$, e) => ({ cwd: e.cwd }));
+    on("command.register", async (_$, e) => ({ value: { command: e.name } }));
+
+    await $.session.start({ cwd: "/repo", surface: null, isInteractive: false });
+    await machine.clock.settle();
+    expect(panelRuns()).toBe(0);
+
+    await $.session.start({ cwd: "/repo", surface: "terminal", isInteractive: true });
+    await machine.clock.settle();
+    expect(panelRuns()).toBeGreaterThan(0);
+});
+
+const SHARED_DIR = "/home/test/.genesis-tools/agents";
+
+/** The answer file and the claim file of `SHARED_ASK` (or another ask). */
+function sharedFiles(ask: { argv: readonly string[]; cwd: string } = SHARED_ASK) {
+    const { key, path } = sharedRunFiles(SHARED_DIR, ask);
+
+    return { key, path: String(path), lockPath: String(path).replace(/\.json$/, ".lock.json") };
+}
+
+/**
+ * A host whose `sleep` moves a fake clock instead of waiting, with `sharedRunClock` on that clock: the 250 ms poll
+ * and the 10 s give-up are counted, not waited for. `onSleep` runs after each step, as another session would act.
+ */
+function fakeClockHost(files: Map<string, string>, onSleep: (now: number, sleeps: number) => void = () => {}) {
+    const realNow = sharedRunClock.now;
+    let now = realNow();
+    const sleeps: number[] = [];
+    const runs = { count: 0 };
+    const { host: base } = sharedRunHost(files, 0);
+    const host: Host = {
+        ...base,
+        async run() {
+            runs.count++;
+            return { exitCode: 0, stdout: "mine", stderr: "", isStdoutTruncated: false, isStderrTruncated: false };
+        },
+        sleep: async (ms) => {
+            sleeps.push(ms);
+            now += ms;
+            onSleep(now, sleeps.length);
+        },
+    };
+    sharedRunClock.now = () => now;
+
+    return {
+        host,
+        runs,
+        sleeps,
+        restore: () => {
+            sharedRunClock.now = realNow;
+        },
+        now: () => now,
+    };
+}
+
+test("shared run: a waiter polls every 250 ms and gives up after 10 s on a live claim, then runs itself", async () => {
+    const files = new Map<string, string>();
+    const clock = fakeClockHost(files);
+    const { lockPath } = sharedFiles();
+
+    try {
+        const started = sharedRunClock.now();
+        files.set(lockPath, JSON.stringify({ token: "other", started, until: started + 60_000 }));
+
+        expect((await sharedRun(clock.host, SHARED_ASK))?.stdout).toBe("mine");
+        expect(clock.sleeps.every((ms) => ms === 250)).toBe(true);
+        expect(clock.sleeps.length).toBe(40);
+        expect(clock.now() - started).toBe(10_000);
+        expect(clock.runs.count).toBe(1);
+    } finally {
+        clock.restore();
+    }
+});
+
+test("shared run: a claim that lapses before 10 s ends the wait at its own time", async () => {
+    const files = new Map<string, string>();
+    const clock = fakeClockHost(files);
+    const { lockPath } = sharedFiles();
+
+    try {
+        const started = sharedRunClock.now();
+        files.set(lockPath, JSON.stringify({ token: "other", started, until: started + 1_000 }));
+
+        expect((await sharedRun(clock.host, SHARED_ASK))?.stdout).toBe("mine");
+        expect(clock.sleeps.length).toBe(4);
+    } finally {
+        clock.restore();
+    }
+});
+
+test("shared run: the claimant's answer ends the wait at the next poll", async () => {
+    const files = new Map<string, string>();
+    const { key, path, lockPath } = sharedFiles();
+    const clock = fakeClockHost(files, (now, sleeps) => {
+        if (sleeps === 3) {
+            files.set(path, JSON.stringify({ key, at: now, exitCode: 0, stdout: "theirs", stderr: "" }));
+        }
+    });
+
+    try {
+        const started = sharedRunClock.now();
+        files.set(lockPath, JSON.stringify({ token: "other", started, until: started + 60_000 }));
+
+        expect((await sharedRun(clock.host, SHARED_ASK))?.stdout).toBe("theirs");
+        expect(clock.sleeps.length).toBe(3);
+        expect(clock.runs.count).toBe(0);
+    } finally {
+        clock.restore();
+    }
+});
+
+test("shared run: an answer older than the claim is not the claimant's answer, so the waiter keeps waiting", async () => {
+    const files = new Map<string, string>();
+    const { key, path, lockPath } = sharedFiles();
+    const clock = fakeClockHost(files, (now, sleeps) => {
+        if (sleeps === 2) {
+            // Written before the claim started, though still inside the ttl: an earlier run's answer.
+            files.set(path, JSON.stringify({ key, at: now - 5_000, exitCode: 0, stdout: "older", stderr: "" }));
+        }
+
+        if (sleeps === 5) {
+            files.set(lockPath, JSON.stringify({ token: "other", started: now - 2_000, until: 0 }));
+        }
+    });
+
+    try {
+        const started = sharedRunClock.now();
+        files.set(lockPath, JSON.stringify({ token: "other", started, until: started + 60_000 }));
+
+        expect((await sharedRun(clock.host, SHARED_ASK))?.stdout).toBe("mine");
+        expect(clock.runs.count).toBe(1);
+    } finally {
+        clock.restore();
+    }
+});
+
+test("shared run: ttl 0 never reads or writes a claim, even with a live one", async () => {
+    const files = new Map<string, string>();
+    const clock = fakeClockHost(files);
+    const { lockPath } = sharedFiles();
+
+    try {
+        const started = sharedRunClock.now();
+        const claim = JSON.stringify({ token: "other", started, until: started + 60_000 });
+        files.set(lockPath, claim);
+
+        expect((await sharedRun(clock.host, { ...SHARED_ASK, ttlMs: 0 }))?.stdout).toBe("mine");
+        expect(clock.sleeps).toEqual([]);
+        expect(files.get(lockPath)).toBe(claim);
+    } finally {
+        clock.restore();
+    }
+});
+
+test("shared run: two sessions writing a claim together both read the later one, and only its writer runs", async () => {
+    const files = new Map<string, string>();
+    const { key, path, lockPath } = sharedFiles();
+    const clock = fakeClockHost(files, (now, sleeps) => {
+        if (sleeps === 2) {
+            files.set(path, JSON.stringify({ key, at: now, exitCode: 0, stdout: "winner's", stderr: "" }));
+        }
+    });
+    const write = clock.host.write;
+    clock.host.write = async (target, text) => {
+        await write(target, text);
+
+        if (target === lockPath && !text.includes('"until":0')) {
+            // Another session's claim lands right after this one's.
+            files.set(
+                lockPath,
+                JSON.stringify({ token: "winner", started: sharedRunClock.now(), until: sharedRunClock.now() + 60_000 })
+            );
+        }
+    };
+
+    try {
+        expect((await sharedRun(clock.host, SHARED_ASK))?.stdout).toBe("winner's");
+        expect(clock.runs.count).toBe(0);
+    } finally {
+        clock.restore();
+    }
+});
+
+test("shared run: a garbled, empty or foreign claim file is no claim, so the session claims and runs", async () => {
+    for (const content of ["", "{not json", JSON.stringify({ token: 7 }), JSON.stringify(["a"])]) {
+        const files = new Map<string, string>();
+        const clock = fakeClockHost(files);
+        const { lockPath } = sharedFiles();
+        files.set(lockPath, content);
+
+        try {
+            expect((await sharedRun(clock.host, SHARED_ASK))?.stdout).toBe("mine");
+            expect(clock.sleeps).toEqual([]);
+            expect(clock.runs.count).toBe(1);
+            expect(JSON.parse(String(files.get(lockPath))).until).toBe(0);
+        } finally {
+            clock.restore();
+        }
+    }
+});
+
+test("shared run: a torn answer file or one for another key is a miss", async () => {
+    for (const answer of [
+        '{"key":"x","at":1',
+        JSON.stringify({ key: "another command", at: sharedRunClock.now(), exitCode: 0, stdout: "theirs", stderr: "" }),
+        JSON.stringify({ key: sharedFiles().key, at: sharedRunClock.now(), exitCode: "0", stdout: "theirs" }),
+    ]) {
+        const files = new Map<string, string>();
+        const clock = fakeClockHost(files);
+        files.set(sharedFiles().path, answer);
+
+        try {
+            expect((await sharedRun(clock.host, SHARED_ASK))?.stdout).toBe("mine");
+            expect(clock.runs.count).toBe(1);
+        } finally {
+            clock.restore();
+        }
+    }
+});
+
+test("shared run: the same argv in another folder never shares, and an old answer of the right key is a hit", async () => {
+    const files = new Map<string, string>();
+    const clock = fakeClockHost(files);
+    const other = { ...SHARED_ASK, cwd: "/work/wt-a" };
+    const { key, path } = sharedFiles();
+
+    try {
+        files.set(
+            path,
+            JSON.stringify({ key, at: sharedRunClock.now() - 30_000, exitCode: 0, stdout: "cached", stderr: "" })
+        );
+
+        expect((await sharedRun(clock.host, SHARED_ASK))?.stdout).toBe("cached");
+        expect((await sharedRun(clock.host, other))?.stdout).toBe("mine");
+        expect(clock.runs.count).toBe(1);
+        expect(sharedFiles(other).path).not.toBe(path);
+    } finally {
+        clock.restore();
+    }
+});
+
+test("shared run: a command that fails to start is not shared, and its claim is released", async () => {
+    const files = new Map<string, string>();
+    const clock = fakeClockHost(files);
+    const { path, lockPath } = sharedFiles();
+    clock.host.run = async () => {
+        throw new Error("spawn failed");
+    };
+
+    try {
+        expect(await sharedRun(clock.host, SHARED_ASK)).toBeUndefined();
+        expect(files.has(path)).toBe(false);
+        expect(JSON.parse(String(files.get(lockPath))).until).toBe(0);
+    } finally {
+        clock.restore();
+    }
+});
+
+test("shared run: a non-zero exit is shared with its error output, as gh's no-PR answer must be", async () => {
+    const files = new Map<string, string>();
+    const clock = fakeClockHost(files);
+    clock.host.run = async () => ({
+        exitCode: 1,
+        stdout: "",
+        stderr: 'no pull requests found for branch "x"',
+        isStdoutTruncated: false,
+        isStderrTruncated: false,
+    });
+
+    try {
+        await sharedRun(clock.host, SHARED_ASK);
+        clock.host.run = async () => {
+            throw new Error("must not run again");
+        };
+        const again = await sharedRun(clock.host, SHARED_ASK);
+
+        expect(again).toEqual({ exitCode: 1, stdout: "", stderr: 'no pull requests found for branch "x"' });
+    } finally {
+        clock.restore();
+    }
+});
+
+test("shared run: a host that cannot sleep never waits; it runs at once next to a live claim", async () => {
+    const files = new Map<string, string>();
+    const { host, runs } = sharedRunHost(files, 0);
+    const { lockPath } = sharedFiles();
+    const started = Date.now();
+    files.set(lockPath, JSON.stringify({ token: "other", started, until: started + 60_000 }));
+
+    expect((await sharedRun({ ...host, sleep: undefined }, SHARED_ASK))?.stdout).toBe("mine");
+    expect(runs.count).toBe(1);
+});
+
+test("shared run: ten callers in one session at once start one process and get the same answer", async () => {
+    const { host, runs } = sharedRunHost(new Map(), 20);
+
+    const answers = await Promise.all(Array.from({ length: 10 }, () => sharedRun(host, SHARED_ASK)));
+
+    expect(new Set(answers.map((answer) => answer?.stdout))).toEqual(new Set(["mine"]));
+    expect(runs.count).toBe(1);
+});
+
+test("session files: the commands that move a folder's size trigger a walk, reads and plain words do not", () => {
+    for (const command of [
+        "bun install",
+        "cd /work/wt-a && bun i",
+        "npm ci",
+        "pnpm add react",
+        "yarn remove lodash",
+        "bun run build",
+        "npm run build",
+        "next build",
+        "swift build -c release",
+        "pod install",
+        "tsc -p .",
+        "make all",
+        "git worktree add /tmp/x main",
+        "git -C /work/wt-a checkout feature",
+        "git switch main",
+        "git clean -fdx",
+        "tools rm dist",
+        "rm -rf node_modules",
+        "mv build /tmp/old-build",
+        "tar -xzf a.tgz",
+        "unzip pack.zip",
+    ]) {
+        expect([command, changesSize(command)]).toEqual([command, true]);
+    }
+
+    for (const command of [
+        "git status --porcelain",
+        "bun scripts/test.ts src/a.test.ts",
+        "tsgo --noEmit -p .",
+        "bunx biome check src",
+        'git commit -m "next: build the install step"',
+        "rg -n mv src",
+        "ls -la",
+        "cat README.md",
+    ]) {
+        expect([command, changesSize(command)]).toEqual([command, false]);
+    }
+});
+
+test("session files: size-changing commands are debounced, so five in a row cause one walk 10 s after the last", () => {
+    const t = 1_000_000;
+    markSizeStale(["/work/debounce"], t);
+    expect(sizeAgeText("/work/debounce", t)).toBe("measuring…");
+    expect(takeDueStale(t + 5_000)).toBe(false);
+    markSizeStale(["/work/debounce"], t + 8_000);
+    expect(takeDueStale(t + 15_000)).toBe(false);
+    expect(takeDueStale(t + 18_000)).toBe(true);
+    expect(takeDueStale(t + 30_000)).toBe(false);
+});
+
+test("session files: after an install the worktree is walked at once, accepting only a size measured since", async () => {
+    forgetGenesisProbe();
+    const base = checkoutHost();
+    const path = "/work/after-install";
+    const asked: string[][] = [];
+    const host: Host = {
+        ...base,
+        async run(argv) {
+            if (argv[1] === "du") {
+                asked.push([...argv]);
+            }
+
+            const stdout =
+                argv[1] === "genesis-tools"
+                    ? JSON.stringify({ links: {}, router: {} })
+                    : JSON.stringify({ [path]: 900 });
+
+            return { stdout, stderr: "", exitCode: 0, isStdoutTruncated: false, isStderrTruncated: false };
+        },
+    };
+
+    try {
+        expect(await worktreeSize(host, path, "## main\n")).toBe(900);
+        asked.length = 0;
+        // Fresh and unchanged: no walk.
+        expect(await worktreeSize(host, path, "## main\n")).toBe(900);
+        expect(asked).toEqual([]);
+
+        markSizeStale([path], Date.now() - 12_000);
+        expect(takeDueStale()).toBe(true);
+        expect(await worktreeSize(host, path, "## main\n")).toBe(900);
+        expect(asked.length).toBe(1);
+        const maxAge = Number(asked[0]?.at(-1));
+        expect(maxAge >= 12 && maxAge <= 14).toBe(true);
+        expect(sizeAgeText(path)).not.toBe("measuring…");
+    } finally {
+        forgetGenesisProbe();
+    }
+});
+
+test("a reloaded session starts its features at a random point of the next 30 s, not in the reload's second", async ($, on) => {
+    const machine = processLogMachine(on, { reloading: true });
+    on("session.start", async (_$, e) => ({ cwd: e.cwd }));
+    on("command.register", async (_$, e) => ({ value: { command: e.name } }));
+    const gitRuns = () => machine.calls.filter((argv) => argv[0] === "git" && argv.includes("--porcelain")).length;
+
+    await $.session.start({ cwd: "/repo", surface: "terminal", isInteractive: true });
+    await machine.clock.settle();
+    expect(gitRuns()).toBe(0);
+
+    await machine.clock.advance(30_000);
+    await machine.clock.settle();
+    expect(gitRuns()).toBeGreaterThan(0);
 });

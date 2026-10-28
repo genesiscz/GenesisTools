@@ -259,6 +259,7 @@ async function refresh(host: Host, why: string): Promise<void> {
 }
 
 export const decisions: Feature = {
+    panelOnly: true,
     async start(host) {
         await startAnswers(host);
 
