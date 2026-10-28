@@ -32,7 +32,7 @@ export interface MonitorOptions {
     once?: boolean;
 }
 
-const WARN_EVENTS = new Set(["retry", "missed", "background-wasted", "background-failed", "blocked"]);
+const WARN_EVENTS = new Set(["retry", "missed", "background-wasted", "background-failed", "blocked", "cache-reset"]);
 
 function requestsFile(): string {
     return join(getAiProxyStorage().getBaseDir(), "usage", "requests.jsonl");
