@@ -79,6 +79,21 @@ describe("sessionsIn config migration", () => {
         expect(config.sessionsIn?.claude?.providers?.codex?.compaction).toEqual({ mode: "native", words: 3000 });
     });
 
+    it("changes nothing when the migrated config is loaded again", () => {
+        const once = parseConfigJson(
+            SafeJSON.stringify({
+                claudeSessions: { compaction: { mode: "summary", idle: false }, lead: { systemNote: { append: "x" } } },
+            })
+        );
+
+        expect(parseConfigJson(SafeJSON.stringify(once)).sessionsIn).toEqual({
+            claude: {
+                global: { compaction: { idle: false }, lead: { systemNote: { append: "x" } } },
+                providers: { codex: { compaction: { mode: "summary" } } },
+            },
+        });
+    });
+
     it("adds no sessionsIn block to a config that has neither shape", () => {
         expect(parseConfigJson(SafeJSON.stringify({})).sessionsIn).toBeUndefined();
     });
