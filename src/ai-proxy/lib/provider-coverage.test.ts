@@ -284,7 +284,7 @@ describe("each provider type answers with its own facts", () => {
 
         try {
             const listed = (record: AiProxySessionRecord) =>
-                sessionPickerModels({ groups: sessionPickerGroups(record), contextLimit: 500_000 }).data.map(
+                sessionPickerModels({ groups: sessionPickerGroups(record), contextLimit: 475_000 }).data.map(
                     (model) => [model.id, model.display_name, model.description]
                 );
 

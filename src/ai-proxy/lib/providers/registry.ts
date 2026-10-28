@@ -5,7 +5,12 @@ import {
     describeAccountCredential,
 } from "@app/ai-proxy/lib/account-config";
 import { anthropicSubscriptionDefinition } from "@app/ai-proxy/lib/providers/anthropic-subscription.definition";
-import type { ProviderDefinition, ProviderLogin, ProxyPluginId } from "@app/ai-proxy/lib/providers/definition";
+import type {
+    ModelOverridesConfig,
+    ProviderDefinition,
+    ProviderLogin,
+    ProxyPluginId,
+} from "@app/ai-proxy/lib/providers/definition";
 import { githubCopilotSubscriptionDefinition } from "@app/ai-proxy/lib/providers/github-copilot-subscription.definition";
 import { grokSubscriptionDefinition } from "@app/ai-proxy/lib/providers/grok-subscription.definition";
 import { openAiApiKeyDefinition } from "@app/ai-proxy/lib/providers/openai-api-key.definition";
@@ -102,6 +107,13 @@ export function providerForPlugin(
 /** Every plugin whose AI-config accounts the proxy serves, in table order. */
 export function servedPlugins(): ProxyPluginId[] {
     return providerTypes().flatMap((type) => PROVIDER_DEFINITIONS[type].plugin ?? []);
+}
+
+/** Hands this request's proxy config to each provider's model facts, so an edited model override applies at once. */
+export function configureModelFacts(config: ModelOverridesConfig): void {
+    for (const type of providerTypes()) {
+        PROVIDER_DEFINITIONS[type].models.facts?.configure(config);
+    }
 }
 
 /**
