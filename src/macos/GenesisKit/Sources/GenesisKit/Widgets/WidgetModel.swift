@@ -1086,12 +1086,7 @@ public final class WidgetModel: ObservableObject {
         if queue != peekQueue { peekQueue = queue }
         guard let shown = peekItem, ids.contains(shown.sourceId) else { return }
         PerfLog.mark("widget.peek sent id=\(shown.id) waiting=\(peekQueue.count)")
-        if peekQueue.isEmpty {
-            endPeek(advance: false)
-            return
-        }
-        peekItem = peekQueue.removeFirst()
-        presentationChanged?()
+        endPeek(includeListed: true)
     }
 
     /// A snapshot must not close the popup before its in-flight send can show its result.
@@ -1171,11 +1166,11 @@ public final class WidgetModel: ObservableObject {
         return nil
     }
 
-    func endPeek(advance: Bool = true) {
+    func endPeek(advance: Bool = true, includeListed: Bool = false) {
         peekTask?.cancel()
         peekTask = nil
         guard let item = peekItem else { return }
-        if advance, peekMany == .queue, let surface = hoveredSurface, let next = nextQueuedPeek() {
+        if advance, (peekMany == .queue || includeListed), let surface = hoveredSurface, let next = nextQueuedPeek() {
             peekDurations[item.id] = nil
             peekInboxGenerations[item.id] = nil
             peekItem = next

@@ -233,8 +233,12 @@ public struct GitWorkingTreeSource {
     /// The limit for a file a reader asked to see anyway (`fullFiles`): past it the page would stall drawing it.
     public static let maxShownBytes = 20_000_000
 
-    /// The note of a file skipped only for its size; a reader may ask to see it anyway (`fullFiles`).
-    public static func largeNote(_ size: Int) -> String { "large file, \(size / 1024) KB" }
+    /// A size skip: only the soft limit may be overridden with `fullFiles`.
+    public static func largeNote(_ size: Int) -> String {
+        size > maxShownBytes
+            ? "file exceeds the \(maxShownBytes / 1_000_000) MB display limit, \(size / 1024) KB"
+            : "large file, \(size / 1024) KB"
+    }
 
     /// Whether `note` (`DiffFile.skipped`) says the file was skipped only for its size, so it can be shown on request.
     public static func isLarge(_ note: String?) -> Bool { note?.hasPrefix("large file, ") == true }

@@ -1624,6 +1624,26 @@ final class WidgetStagingTests: XCTestCase {
         }
     }
 
+    func testSentPopupStartsTheNextAlertsOwnCountdownInQueueAndListModes() async throws {
+        for many in [WidgetAlerts.PopupMany.queue, .list] {
+            let model = StagingFixture.model()
+            defer { model.stop() }
+            model.receive([try snapshot(draftOption: nil)])
+            let item = try XCTUnwrap(model.inboxOverviewItems.first)
+            var later = item
+            later.id = "decision:later"
+            later.sourceId = "later"
+            let side = WidgetSurfaceID(edge: .right)
+            model.showPeek(item, on: side, seconds: 0, many: many)
+            model.showPeek(later, on: side, seconds: 0.05, many: many)
+            model.dropSentFromPeek([item.sourceId])
+            XCTAssertEqual(model.peekItem?.sourceId, "later")
+            XCTAssertEqual(model.peekSeconds, 0.05, "the next alert gets its own duration")
+            try await Task.sleep(for: .milliseconds(300))
+            XCTAssertNil(model.peekItem, "the next alert does not inherit an already finished timer")
+        }
+    }
+
     func testSettledPopupKeepsDeliveredOutcomeForItsConfiguredLifetime() async throws {
         let model = StagingFixture.model()
         defer { model.stop() }
@@ -1637,7 +1657,7 @@ final class WidgetStagingTests: XCTestCase {
         later.sourceId = "later"
         model.showPeek(item, on: side, seconds: 0.05, many: .list)
         model.showPeekOutcome(WidgetPeekOutcome(text: "Delivered", tone: .success), sent: [item.sourceId], delivered: true)
-        model.showPeek(later, on: side, seconds: 0.05, many: .list)
+        model.showPeek(later, on: side, seconds: 0.4, many: .list)
         var answered = item
         answered.needsAnswer = false
         answered.answeredVia = "agent"

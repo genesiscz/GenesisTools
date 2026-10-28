@@ -1608,6 +1608,47 @@ describe("resolveCommitLink", () => {
         expect(unpushed.query).toEqual({ repo: "acme/shop", commit: "c3e3ad830" });
     });
 
+    test.each([true, false])(
+        "a range queries both endpoints and avoids a PR known not to hold it (%s)",
+        async (childHolds) => {
+            const base = fake({
+                api: { code: 0, stdout: "[]" },
+                ancestors: [`${FULL} head58`, `${FULL} head71`, ...(childHolds ? [`${LATER} head71`] : [])],
+            });
+            const endpoints: string[] = [];
+            const runner: CommandRunner = async (cmd, options) => {
+                const endpoint = cmd[0] === "gh" ? cmd.find((part) => part.includes("/commits/")) : undefined;
+
+                if (!endpoint) {
+                    return base.runner(cmd, options);
+                }
+
+                endpoints.push(endpoint);
+                const prs = endpoint.includes(LATER)
+                    ? [ghPr(58, "open", "head58"), ghPr(71, "open", "head71")]
+                    : [ghPr(58, "open", "head58")];
+                return { code: 0, stdout: SafeJSON.stringify(prs), stderr: "" };
+            };
+            const link = await resolveCommitLink({
+                spec: "c3e3ad830..4dbdd3869b",
+                cwd: "/work/shop",
+                runner,
+                source,
+                cache: false,
+            });
+            expect(link.pr?.ref ?? null).toBe(childHolds ? "acme/shop#71" : null);
+            expect(link.candidates).toHaveLength(2);
+            expect(endpoints).toEqual([
+                `repos/acme/shop/commits/${FULL}/pulls`,
+                `repos/acme/shop/commits/${LATER}/pulls`,
+            ]);
+
+            if (!childHolds) {
+                expect(link.query).toEqual({ repo: "acme/shop", commit: "c3e3ad830..4dbdd3869b" });
+            }
+        }
+    );
+
     test("GitLab asks the MR endpoint and writes !; a range keeps its form", async () => {
         const { runner, asked } = fake({
             origin: "git@gitlab.example.com:group/sub/app.git",

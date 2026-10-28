@@ -321,6 +321,8 @@ final class WidgetDecisionSurfacesTests: XCTestCase {
         defer { open.stop() }
         XCTAssertEqual(open.snapshot?.state.preferences.popupSendOpens, "session", "the hub's key reaches the widget")
         XCTAssertTrue(WidgetPeekView.sendOpensSession(open.snapshot?.state.preferences))
+        XCTAssertFalse(WidgetPeekView.sendOpensSession(open.snapshot?.state.preferences, staging: true),
+                       "a staged pick, including Shift, is not a send")
     }
 
     /// F21: Discard checked waits behind the model's Undo window, and while it waits no view reads those decisions as
