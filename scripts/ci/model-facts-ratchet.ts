@@ -45,7 +45,6 @@ export const MODEL_ID_LITERAL_RATCHET: ReadonlySet<string> = new Set<string>([
 export const MODEL_PRICE_TABLE_RATCHET: ReadonlySet<string> = new Set<string>([]);
 
 export const EFFORT_LIST_RATCHET: ReadonlySet<string> = new Set<string>([
-    "src/ai-proxy/lib/providers/openai-subscription.ts",
     "src/ai-proxy/lib/resolve-model.ts",
     "src/ai-proxy/lib/types.ts",
     "src/utils/agent-harness/llm.ts",

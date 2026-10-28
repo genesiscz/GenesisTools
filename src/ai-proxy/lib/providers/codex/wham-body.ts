@@ -1,6 +1,7 @@
 import { createHash } from "node:crypto";
 import { convertMessagesToInput } from "@app/ai-proxy/lib/chat-to-responses-body";
 import { resolveWhamItemReferences } from "@app/ai-proxy/lib/providers/wham-item-store";
+import { effortRange } from "@genesiscz/utils/ai/catalog/efforts";
 import { type CodexModelInfo, resolveCodexEffort } from "@genesiscz/utils/ai/openai/codex-models";
 import { type PromptCacheKey, resolvePromptCacheKey } from "@genesiscz/utils/ai/prompt-cache-key";
 import { env } from "@genesiscz/utils/env";
@@ -79,7 +80,7 @@ export function mapResponsesTools(tools: unknown, dropped: string[]): unknown[] 
     return kept.length > 0 ? kept : undefined;
 }
 
-export const WHAM_REASONING_EFFORTS = new Set(["minimal", "low", "medium", "high", "xhigh"]);
+export const WHAM_REASONING_EFFORTS = new Set<string>(effortRange("minimal", "xhigh"));
 
 export interface WhamBodyBuildResult {
     body: Record<string, unknown>;
