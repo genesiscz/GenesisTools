@@ -286,6 +286,10 @@ private struct ClickySettingsPageContent: View {
                 setting(
                     "Held-key repeats", detail: "Play repeated sounds while a key is held down.",
                     value: $model.preferences.repeatSounds)
+                Divider()
+                setting(
+                    "Silent F-keys and fn", detail: "F1 to F20 and the fn (Globe) key make no sound and count in no statistics: they start shortcuts and dictation, such as Wispr Flow.",
+                    value: $model.preferences.ignoreFunctionKeys)
             }
             Text(
                 "Built-in sounds are synthesized locally at the output's own rate. Randomized pitch also shuffles a pack's recorded takes. Headphones make the stereo positioning easier to hear."

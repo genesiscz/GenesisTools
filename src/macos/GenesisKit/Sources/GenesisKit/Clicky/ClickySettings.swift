@@ -51,6 +51,9 @@ public struct ClickyPreferences: Codable, Equatable {
     public static let pitchRangeLimits: ClosedRange<Double> = 0.005...0.15
     public var spatialAudio = true
     public var repeatSounds = false
+    /// F1 to F20 and the fn (Globe) key make no sound and count in no statistics: they start shortcuts and dictation
+    /// (Wispr Flow holds fn), they are not typing (Martin, 2026-10-28).
+    public var ignoreFunctionKeys = true
     public var quietHours = false
     public var quietStart = 22 * 60
     public var quietEnd = 8 * 60
@@ -102,6 +105,7 @@ public struct ClickyPreferences: Codable, Equatable {
         pitchRange = min(max(pitchRange, Self.pitchRangeLimits.lowerBound), Self.pitchRangeLimits.upperBound)
         try read(.spatialAudio, into: &spatialAudio)
         try read(.repeatSounds, into: &repeatSounds)
+        try read(.ignoreFunctionKeys, into: &ignoreFunctionKeys)
         try read(.quietHours, into: &quietHours)
         try read(.quietStart, into: &quietStart)
         try read(.quietEnd, into: &quietEnd)
@@ -238,6 +242,13 @@ public enum ClickyEventPolicy {
     ) -> Bool {
         enabled && !secureInput && !sleeping && !quiet && !excluded && (!repeated || repeatSounds)
     }
+
+    /// F1 to F20 (kVK_F1 … kVK_F20), fn (kVK_Function, 63) and the Globe key of newer Apple keyboards (179).
+    public static let functionKeyCodes: Set<UInt16> = [
+        122, 120, 99, 118, 96, 97, 98, 100, 101, 109, 103, 111, 105, 107, 113, 106, 64, 79, 80, 90, 63, 179,
+    ]
+
+    public static func isFunctionKey(_ keyCode: UInt16) -> Bool { functionKeyCodes.contains(keyCode) }
 
     public static func pan(keyCode: UInt16) -> Float {
         let rows: [[UInt16]] = [
