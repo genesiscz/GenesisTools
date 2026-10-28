@@ -103,19 +103,23 @@ describe("provider registry", () => {
 
     // Presence of the member is the capability declaration, so these two filters
     // are the whole feature gate: no parallel enum, nothing to keep in sync.
+    /** A provider with no login switch, no app, nothing to retire after a login, and no variant. */
+    const NO_LOGIN_SPECIFICS = { loginFlags: [], loginApps: [], afterLogin: async () => {}, loginVariants: {} };
+
     test("filters by account features, and usage separately from accounts", () => {
         const presentation = { displayName: "Alpha", alias: "alpha", limitOrder: [], prominentLimits: [] };
 
         registerPlugin(fakePlugin("plain"));
         registerPlugin({
             ...fakePlugin("with-accounts"),
-            accounts: { presentation, logoutTargets: ["oauth"] },
+            accounts: { presentation, logoutTargets: ["oauth"], ...NO_LOGIN_SPECIFICS },
         });
         registerPlugin({
             ...fakePlugin("with-usage"),
             accounts: {
                 presentation,
                 logoutTargets: ["oauth"],
+                ...NO_LOGIN_SPECIFICS,
                 usage: {
                     poll: async () => {
                         throw new Error("not used");

@@ -197,6 +197,10 @@ describe("__fetchProviderSnapshots", () => {
         const features: AccountFeatures = {
             presentation: { displayName: "Fake", alias: "fake", limitOrder: [], prominentLimits: [] },
             logoutTargets: [],
+            loginFlags: [],
+            loginApps: [],
+            afterLogin: async () => {},
+            loginVariants: {},
             usage,
         };
 
@@ -404,6 +408,10 @@ describe("__fetchProviderSnapshots and a repaired credential", () => {
         const features: AccountFeatures = {
             presentation: { displayName: "Fake", alias: "fake", limitOrder: [], prominentLimits: [] },
             logoutTargets: [],
+            loginFlags: [],
+            loginApps: [],
+            afterLogin: async () => {},
+            loginVariants: {},
             usage,
         };
 

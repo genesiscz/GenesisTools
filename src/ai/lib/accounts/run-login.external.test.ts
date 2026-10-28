@@ -155,6 +155,10 @@ beforeEach(async () => {
         externalPlugin("grok-sub", {
             presentation: { displayName: "Grok", alias: "grok", limitOrder: [], prominentLimits: [] },
             logoutTargets: ["authFile"],
+            loginFlags: [],
+            loginApps: [],
+            afterLogin: async () => {},
+            loginVariants: {},
             externalLogin: (ctx) => ({
                 command: VENDOR_COMMAND,
                 env: { FAKE_VENDOR_HOME: home },
@@ -172,6 +176,10 @@ beforeEach(async () => {
         externalPlugin("openai-sub", {
             presentation: { displayName: "Codex", alias: "codex", limitOrder: [], prominentLimits: [] },
             logoutTargets: ["authFile"],
+            loginFlags: [],
+            loginApps: [],
+            afterLogin: async () => {},
+            loginVariants: {},
         })
     );
 

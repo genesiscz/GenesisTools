@@ -9,8 +9,9 @@ import type { AccountProviderAlias } from "./alias-list";
  * This is the `accounts` member of `ProviderPlugin` (spec 2026-09-04, section 4.1). It is
  * a member, not a new noun, because "Provider" and "Driver" already carry two meanings each
  * in this repo (`ProviderPlugin` vs ai-proxy's `ProxyProvider`, ai-spend's `MonitorDriver`).
- * Presence of a method is the capability declaration: a plugin without `loginLong` has no
- * long-lived token concept, and the CLI hides that subcommand for it.
+ * What the shared login commands need from a provider is a required member (`loginFlags`,
+ * `loginApps`, `afterLogin`, `loginVariants`), so the compiler names every plugin that has not
+ * decided it; a provider with nothing to declare says so with an empty list.
  *
  * Every write to the config store happens in the CLI layer through `account-ops.ts` or
  * `AiConfigStore.mutate`; a flow only RETURNS what it obtained (`LoginOutcome`). Never the
@@ -24,8 +25,11 @@ export interface AccountFlowContext {
     account?: AccountEntry;
     /** Requested account name for a first login; the flow may derive one from the identity. */
     requestedName?: string;
-    /** Codex compatibility alias for the default separate vault grant. */
-    codexBroker?: boolean;
+    /**
+     * This provider's own login switches that were given, by `LoginFlag.name`: the ones it declared in
+     * `loginFlags`, or in the variant's `flags`. A switch another provider declared never reaches this flow.
+     */
+    providerFlags?: ReadonlySet<string>;
     /** Vendor home to log into or bind (`--home`): a codex profile dir, a grok GROK_HOME. */
     home?: string;
     /** An existing credential file to bind without running a flow (`--auth-file`). */
@@ -292,6 +296,49 @@ export interface ExternalLoginInstruction {
     authFile: string;
 }
 
+/**
+ * A switch a provider adds to one of its login verbs: `login`, or a verb of `loginVariants`. The shared
+ * command declares it on the provider's door, and the provider's flow finds it in
+ * `AccountFlowContext.providerFlags` when it was given. A login switch takes no value.
+ */
+export interface LoginFlag {
+    /** The long option without its dashes, and the name the flow looks it up by: `broker` is `--broker`. */
+    readonly name: string;
+    /** One line for `--help`. */
+    readonly description: string;
+    /**
+     * `login` only: the switch is another spelling of the default login, a grant stored in the vault. The
+     * core refuses it beside `--import-native` or `--home`/`--auth-file`, before anything is read or written.
+     */
+    readonly defaultLoginAlias?: boolean;
+    /**
+     * Also parsed on every other provider's door, hidden from `--help` there, where no flow is handed it. For
+     * a switch that scripts typed on every door before it became this provider's own.
+     */
+    readonly acceptedOnEveryDoor?: boolean;
+}
+
+/** A login verb beside `login`: it attaches one more credential to an account that already exists. */
+export interface LoginVariant<Context extends AccountFlowContext = AccountFlowContext> {
+    /** The switches this verb takes on this provider's door. */
+    readonly flags: readonly LoginFlag[];
+    /** Obtain the credential and prove whose it is. Writes nothing: the core writes what it returns. */
+    run(ctx: Context): Promise<LoginOutcome>;
+    /** The command that puts the saved credential to use, printed once it is written. */
+    nextStep(account: AccountEntry): { label: string; command: string };
+}
+
+/**
+ * The login verbs beside `login` that a provider offers, keyed by the credential each one writes. The core
+ * owns each verb and its write: `login-long` stores `credentials.longLivedToken`, `login-secondary` the
+ * `secondary` grant. A provider without that credential leaves the key out, and no door registers the
+ * verb for it.
+ */
+export interface LoginVariants {
+    readonly long?: LoginVariant<AccountFlowContext & { pastedToken?: string }>;
+    readonly secondary?: LoginVariant;
+}
+
 /** Provider-specific facts the poll core folds into the error snapshot it builds. */
 export interface UsageFailureClass {
     /**
@@ -394,10 +441,23 @@ export interface AccountFeatures {
 
     /** Interactive first login or re-login. Absent means "run the vendor CLI"; no plugin is absent today. */
     login?(ctx: AccountFlowContext): Promise<LoginOutcome>;
-    /** Long-lived token attach (Anthropic only today). */
-    loginLong?(ctx: AccountFlowContext & { pastedToken?: string }): Promise<LoginOutcome>;
-    /** Secondary isolated grant (Anthropic only today). */
-    loginSecondary?(ctx: AccountFlowContext): Promise<LoginOutcome>;
+    /**
+     * The switches this provider adds to its `login` command, beside the core's `--home`, `--auth-file`
+     * and `--import-native` (offered to every provider whose credential is a file).
+     */
+    readonly loginFlags: readonly LoginFlag[];
+    /**
+     * Apps a login of this provider joins: recorded on an account that lists no app yet, and made the
+     * default of each app that has none.
+     */
+    readonly loginApps: readonly string[];
+    /**
+     * Retire what the replaced grant left behind, once a login has written the account. The core clears
+     * the poll gate for every provider itself; this is for state only the provider keeps.
+     */
+    afterLogin(account: AccountEntry): Promise<void>;
+    /** The login verbs beside `login` that attach another credential (`login-long`, `login-secondary`). */
+    readonly loginVariants: LoginVariants;
     /** Which credential fields logout may clear, in the order the CLI offers them. */
     readonly logoutTargets: readonly LogoutTarget[];
     /**

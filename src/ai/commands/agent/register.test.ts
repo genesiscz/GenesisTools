@@ -138,6 +138,25 @@ test("the shared flags are the same on the new tool as on the real ones", () => 
     }
 });
 
+/**
+ * A provider's login variants are plugin members, so an agent tool over a provider that declares them
+ * answers `login-long` and `login-secondary` with no command file. Anthropic is the real provider that
+ * declares both; today's codex and grok tools declare none.
+ */
+const variantSpec: AgentToolSpec = { ...kimiSpec, provider: "anthropic-sub" };
+
+test("a tool over a provider with login variants answers each variant verb", () => {
+    expect(verbsOf(variantSpec).filter((verb) => verb.startsWith("login"))).toEqual([
+        "login",
+        "login-long",
+        "login-secondary",
+    ]);
+});
+
+test("a tool's variant verb takes the switches its provider declared for it", () => {
+    expect(flagsOf(variantSpec, "login-long")).toEqual(["--setup-token"]);
+});
+
 test("a tool with no worker driver gets no worker verbs, rather than stubs that lie", () => {
     const { worker, ...noWorker } = kimiSpec;
 

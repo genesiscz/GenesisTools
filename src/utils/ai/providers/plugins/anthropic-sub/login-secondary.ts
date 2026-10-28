@@ -1,7 +1,8 @@
 import * as p from "@clack/prompts";
+import { suggestCommand } from "@genesiscz/utils/cli";
 import { out } from "@genesiscz/utils/logger";
 import pc from "picocolors";
-import type { AccountFlowContext, LoginOutcome } from "../../account-features";
+import type { AccountFlowContext, LoginOutcome, LoginVariant } from "../../account-features";
 import {
     errorForExchange,
     fetchAndDisplayProfile,
@@ -69,3 +70,13 @@ export async function anthropicLoginSecondary(ctx: AccountFlowContext): Promise<
         identity: identityFromLogin(tokens, profile),
     };
 }
+
+/** `login-secondary`: the grant a `--keychain` launch rotates on its own. */
+export const anthropicSecondaryLogin: LoginVariant = {
+    flags: [],
+    run: anthropicLoginSecondary,
+    nextStep: (account) => ({
+        label: "Launch with it",
+        command: suggestCommand(`tools cc run ${account.name}`, { add: ["--keychain"] }),
+    }),
+};

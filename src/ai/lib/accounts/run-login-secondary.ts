@@ -2,9 +2,10 @@ import * as p from "@clack/prompts";
 import { AiConfigStore } from "@genesiscz/utils/ai/config/AiConfigStore";
 import { providerAliasOf } from "@genesiscz/utils/ai/providers/aliases";
 import { registerBuiltInPlugins } from "@genesiscz/utils/ai/providers/plugins";
-import { isInteractive, suggestCommand } from "@genesiscz/utils/cli";
+import { isInteractive } from "@genesiscz/utils/cli";
 import { out } from "@genesiscz/utils/logger";
 import pc from "picocolors";
+import { ownFlags } from "./login-flags";
 import { resolveAccountName } from "./select-account";
 import { resolveAccountsProvider } from "./select-provider";
 import { siblingCommandOf } from "./tool-names";
@@ -13,15 +14,16 @@ import { writeLoginOutcome } from "./write-outcome";
 export interface RunLoginSecondaryOptions {
     provider?: string | true;
     name?: string;
+    /** Provider switches the command line set; the flow is handed those its `secondary` variant declared. */
+    providerFlags?: ReadonlySet<string>;
     tool: string;
     subcommand?: string[];
 }
 
 /**
- * A second, isolated grant on an existing account, used only by
- * `tools claude start <name> --keychain`. The identity comparand is the
- * SECONDARY grant's uuid, not the account's: that is the key future keychain
- * rotations match on, so an unexpected identity here would route them to the
+ * A second, isolated grant on an existing account, which the provider's `nextStep` names the use
+ * of. The identity comparand is the SECONDARY grant's uuid, not the account's: that is the key
+ * future rotations of that grant match on, so an unexpected identity here would route them to the
  * wrong account.
  */
 export async function runLoginSecondary(opts: RunLoginSecondaryOptions): Promise<void> {
@@ -55,8 +57,9 @@ export async function runLoginSecondary(opts: RunLoginSecondaryOptions): Promise
 
     const plugin = resolved.plugin;
     const alias = providerAliasOf(plugin.id);
+    const variant = plugin.accounts?.loginVariants.secondary;
 
-    if (!plugin.accounts?.loginSecondary) {
+    if (!variant) {
         out.error(pc.red(`${alias} has no login-secondary; use login.`));
         process.exitCode = 1;
         return;
@@ -104,7 +107,12 @@ export async function runLoginSecondary(opts: RunLoginSecondaryOptions): Promise
         }
     }
 
-    const outcome = await plugin.accounts.loginSecondary({ account, requestedName: account.name, interactive });
+    const outcome = await variant.run({
+        account,
+        requestedName: account.name,
+        interactive,
+        providerFlags: ownFlags(opts.providerFlags, variant.flags),
+    });
 
     const written = await writeLoginOutcome({
         name: account.name,
@@ -122,6 +130,8 @@ export async function runLoginSecondary(opts: RunLoginSecondaryOptions): Promise
         return;
     }
 
+    const next = variant.nextStep(account);
+
     p.log.success(`Secondary login saved to "${account.name}".`);
-    p.outro(`Launch with it: ${pc.cyan(suggestCommand(`tools cc run ${account.name}`, { add: ["--keychain"] }))}`);
+    p.outro(`${next.label}: ${pc.cyan(next.command)}`);
 }

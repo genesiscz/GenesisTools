@@ -45,6 +45,10 @@ function fakePlugin(id: string, logoutTargets: LogoutTarget[]): ProviderPlugin {
     const accounts: AccountFeatures = {
         presentation: { displayName: "Codex", alias: "codex", limitOrder: [], prominentLimits: [] },
         logoutTargets,
+        loginFlags: [],
+        loginApps: [],
+        afterLogin: async () => {},
+        loginVariants: {},
     };
 
     return {

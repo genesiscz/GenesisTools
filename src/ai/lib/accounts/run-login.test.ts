@@ -1,11 +1,14 @@
 import { afterEach, beforeEach, describe, expect, test } from "bun:test";
 import { existsSync, mkdirSync, mkdtempSync, readFileSync, realpathSync, writeFileSync } from "node:fs";
 import { tmpdir } from "node:os";
-import { join } from "node:path";
+import { dirname, join } from "node:path";
 import { AiConfigStore } from "@genesiscz/utils/ai/config/AiConfigStore";
 import { type AiConfigData, CONFIG_VERSION } from "@genesiscz/utils/ai/config/schema";
 import type { AccountFeatures, LoginOutcome } from "@genesiscz/utils/ai/providers/account-features";
 import type { BindContext, ProviderPlugin } from "@genesiscz/utils/ai/providers/plugin-types";
+import { _resetBuiltInPluginsForTest } from "@genesiscz/utils/ai/providers/plugins";
+import { anthropicSubPlugin } from "@genesiscz/utils/ai/providers/plugins/anthropic-sub";
+import { openAiSubPlugin } from "@genesiscz/utils/ai/providers/plugins/openai-sub";
 import { restoreCodexAuthFile } from "@genesiscz/utils/ai/providers/plugins/openai-sub/login";
 import { _resetPluginsForTest, registerPlugin } from "@genesiscz/utils/ai/providers/registry";
 import { env } from "@genesiscz/utils/env";
@@ -16,7 +19,9 @@ import {
     _setMasterKeyProvidersForTest,
     resolveSecret,
 } from "@genesiscz/utils/security";
+import { genesisToolsDir } from "@genesiscz/utils/storage/root";
 import { collectAccountRows } from "./run-list";
+import { runLogin } from "./run-login";
 import { writeLoginOutcome } from "./write-outcome";
 
 /**
@@ -99,6 +104,10 @@ beforeEach(async () => {
         fakePlugin("fake-sub", {
             presentation,
             logoutTargets: ["oauth"],
+            loginFlags: [],
+            loginApps: [],
+            afterLogin: async () => {},
+            loginVariants: {},
             async identityOf(account) {
                 return { accountUuid: account.accountUuid, email: account.label };
             },
@@ -490,7 +499,16 @@ describe("writeLoginOutcome refuses a credential file another account owns", () 
  */
 describe("writeLoginOutcome keeps a guessed name off another provider's account", () => {
     async function seedApiKeyWork(): Promise<void> {
-        registerPlugin(fakePlugin("other-sub", { presentation, logoutTargets: ["oauth"] }));
+        registerPlugin(
+            fakePlugin("other-sub", {
+                presentation,
+                logoutTargets: ["oauth"],
+                loginFlags: [],
+                loginApps: [],
+                afterLogin: async () => {},
+                loginVariants: {},
+            })
+        );
         await seed({
             version: CONFIG_VERSION,
             accounts: [
@@ -565,6 +583,121 @@ describe("writeLoginOutcome keeps a guessed name off another provider's account"
 
         expect(written).not.toBeNull();
         expect(await resolveSecret(storedAccount("work")?.credentials.accessToken)).toBe("sk-fake-fresh");
+    });
+});
+
+/**
+ * What a login changes beside its own account entry: the apps it joins as their default, and the
+ * refresh cooldown it retires. Driven through `runLogin` with the REAL plugins; only the browser flow
+ * is replaced, by one that hands back a fresh grant.
+ */
+describe("what a login changes beside its own account", () => {
+    let realIsTty: boolean | undefined;
+
+    function cooldownFile(): string {
+        return genesisToolsDir("ai", "invalid-grant.json");
+    }
+
+    function cooldowns(): Record<string, number> {
+        return SafeJSON.parse(readFileSync(cooldownFile(), "utf8"), { strict: true });
+    }
+
+    function storedConfig(): AiConfigData {
+        return SafeJSON.parse(readFileSync(configPath(), "utf8"), { strict: true });
+    }
+
+    function withFreshGrant(plugin: ProviderPlugin): ProviderPlugin {
+        const accounts = plugin.accounts;
+
+        if (!accounts) {
+            throw new Error(`${plugin.id} has no account features`);
+        }
+
+        return {
+            ...plugin,
+            accounts: {
+                ...accounts,
+                login: async () => ({
+                    provider: plugin.id,
+                    credentials: { accessToken: "sk-invented-fresh", refreshToken: "rt-invented-fresh" },
+                }),
+            },
+        };
+    }
+
+    function subscription(id: string, name: string, provider: string): AiConfigData["accounts"][number] {
+        return {
+            id,
+            name,
+            provider,
+            enabled: true,
+            billing: { mode: "subscription" },
+            credentials: {},
+            useEnvApiKey: false,
+        };
+    }
+
+    beforeEach(async () => {
+        _resetPluginsForTest();
+        // Claims the built-ins are registered, so `runLogin` keeps the plugins registered here.
+        _resetBuiltInPluginsForTest(true);
+        registerPlugin(withFreshGrant(anthropicSubPlugin));
+        registerPlugin(withFreshGrant(openAiSubPlugin));
+        realIsTty = process.stdin.isTTY;
+        Object.defineProperty(process.stdin, "isTTY", { value: false, configurable: true, writable: true });
+        process.exitCode = 0;
+
+        await seed({
+            version: CONFIG_VERSION,
+            accounts: [
+                subscription("acc_work", "work", "anthropic-sub"),
+                subscription("acc_personal", "personal", "openai-sub"),
+            ],
+            defaults: {},
+        });
+        // Both names have a dead grant on record, so each case can show whose cooldown a login retires.
+        mkdirSync(dirname(cooldownFile()), { recursive: true });
+        writeFileSync(cooldownFile(), SafeJSON.stringify({ work: 1, personal: 1 }));
+    });
+
+    afterEach(() => {
+        Object.defineProperty(process.stdin, "isTTY", {
+            value: realIsTty ?? false,
+            configurable: true,
+            writable: true,
+        });
+        process.exitCode = 0;
+        _resetBuiltInPluginsForTest();
+    });
+
+    test("a Claude login makes the account the claude and ask apps' own default", async () => {
+        const result = await runLogin({ provider: "claude", name: "work", tool: "tools claude login" });
+
+        expect(result.ok).toBe(true);
+        expect(storedAccount("work")?.apps).toEqual(["claude", "ask"]);
+        expect(storedConfig().defaults.app?.claude?.chat?.model).toBe("@account/acc_work");
+        expect(storedConfig().defaults.app?.ask?.chat?.model).toBe("@account/acc_work");
+    });
+
+    test("a Claude login retires the invalid-grant cooldown its dead grant earned", async () => {
+        await runLogin({ provider: "claude", name: "work", tool: "tools claude login" });
+
+        expect(cooldowns()).toEqual({ personal: 1 });
+    });
+
+    test("NEGATIVE CONTROL: a Codex login joins no app and fills no app default", async () => {
+        const result = await runLogin({ provider: "codex", name: "personal", tool: "tools codex login" });
+
+        expect(result.ok).toBe(true);
+        expect(storedAccount("personal")?.apps).toBeUndefined();
+        expect(storedConfig().defaults.app?.claude).toBeUndefined();
+        expect(storedConfig().defaults.app?.ask).toBeUndefined();
+    });
+
+    test("NEGATIVE CONTROL: a Codex login leaves every invalid-grant cooldown in place", async () => {
+        await runLogin({ provider: "codex", name: "personal", tool: "tools codex login" });
+
+        expect(cooldowns()).toEqual({ work: 1, personal: 1 });
     });
 });
 

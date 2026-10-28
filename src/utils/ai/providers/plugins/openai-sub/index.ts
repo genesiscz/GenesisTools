@@ -14,7 +14,7 @@ import { OpenAISubResolver } from "../../../resolvers/OpenAISubResolver";
 import type { AccountFeatures } from "../../account-features";
 import type { BindContext, ProviderBinding, ProviderPlugin } from "../../plugin-types";
 import { discoverCodexHomes } from "./discover";
-import { codexLogin } from "./login";
+import { BROKER_FLAG, codexLogin } from "./login";
 import { codexSpendScope } from "./spend";
 import { codexUsage } from "./usage";
 
@@ -78,6 +78,13 @@ export const openAiSubPlugin: ProviderPlugin = {
         presentation,
         logoutTargets: ["oauth", "authFile"],
         login: codexLogin,
+        loginFlags: [BROKER_FLAG],
+        // The `claude` and `ask` defaults stay Anthropic's: a Codex login there would retarget them.
+        loginApps: [],
+        // Codex keeps no refresh cooldown to retire; the core clears the poll gate itself.
+        afterLogin: async () => {},
+        // No long-lived token and no secondary grant.
+        loginVariants: {},
         nativeAuthFile: () => {
             // The primary entry, not the raw variable: `CODEX_HOME` is a comma-separated list,
             // and joining the whole string produced `~/.codex-a,~/.codex-b/auth.json`, which

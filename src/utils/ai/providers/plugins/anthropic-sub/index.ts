@@ -1,12 +1,13 @@
 import { claudeHistoryReader } from "@genesiscz/utils/agent-sessions/compact-readers";
 import { getLanguageModel } from "@genesiscz/utils/ask/types/provider";
+import { clearInvalidGrant } from "@genesiscz/utils/claude/subscription-auth";
 import { AnthropicSubResolver } from "../../../resolvers/AnthropicSubResolver";
 import type { AccountFeatures } from "../../account-features";
 import type { BindContext, ProviderBinding, ProviderPlugin } from "../../plugin-types";
 import { LIMIT_ORDER, PROMINENT_LIMITS } from "./buckets";
 import { anthropicLogin } from "./login";
-import { anthropicLoginLong } from "./login-long";
-import { anthropicLoginSecondary } from "./login-secondary";
+import { anthropicLongLogin } from "./login-long";
+import { anthropicSecondaryLogin } from "./login-secondary";
 import { anthropicSpendScope } from "./spend";
 import { anthropicUsage } from "./usage";
 import { anthropicWarmup } from "./warmup";
@@ -78,8 +79,13 @@ export const anthropicSubPlugin: ProviderPlugin = {
         presentation,
         logoutTargets: ["oauth", "longLived", "secondary"],
         login: anthropicLogin,
-        loginLong: anthropicLoginLong,
-        loginSecondary: anthropicLoginSecondary,
+        // OAuth only: no credential file to bind, and the flow takes no switch.
+        loginFlags: [],
+        // Only an Anthropic login ever made itself the default of `claude` and `ask`.
+        loginApps: ["claude", "ask"],
+        // A fresh grant retires the invalid-grant cooldown the dead one earned.
+        afterLogin: (account) => clearInvalidGrant(account.name),
+        loginVariants: { long: anthropicLongLogin, secondary: anthropicSecondaryLogin },
         usage: anthropicUsage,
         warmup: anthropicWarmup,
 

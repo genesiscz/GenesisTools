@@ -12,7 +12,7 @@ import {
 } from "../../../oauth/callback-server";
 import { CODEX_REDIRECT_URI, codexOAuth } from "../../../openai/codex-auth";
 import type { AccountFlowContext } from "../../account-features";
-import { codexLogin } from "./login";
+import { BROKER_FLAG, codexLogin } from "./login";
 
 /**
  * The outward-facing call this file must never make. `presentAuthorizationUrl`
@@ -253,7 +253,7 @@ describe("Codex browser login", () => {
 
     test("--broker remains an alias for separate vault login", async () => {
         const { ctx, authFile } = setup();
-        const outcome = await codexLogin({ ...ctx, codexBroker: true }, noListener);
+        const outcome = await codexLogin({ ...ctx, providerFlags: new Set([BROKER_FLAG.name]) }, noListener);
         expect(outcome.credentials.authFile).toBe("");
         expect(outcome.credentials.accessToken).toBe("access-invented");
         expect(readFileSync(authFile, "utf8")).toBe("native credential sentinel");

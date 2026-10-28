@@ -75,6 +75,14 @@ export const grokSubPlugin: ProviderPlugin = {
     accounts: {
         presentation,
         login: grokLogin,
+        // `--home` and `--auth-file` are the core's; Grok's own flow takes no switch.
+        loginFlags: [],
+        // The `claude` and `ask` defaults stay Anthropic's: a Grok login there would retarget them.
+        loginApps: [],
+        // Grok keeps no refresh cooldown to retire; the core clears the poll gate itself.
+        afterLogin: async () => {},
+        // No long-lived token and no secondary grant.
+        loginVariants: {},
         nativeAuthFile: () => grokAuthPath(),
         logoutTargets: ["oauth", "authFile"],
         usage: grokUsage,
