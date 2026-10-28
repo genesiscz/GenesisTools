@@ -11,8 +11,4 @@ export const PROXY_PROVIDER_BRANCH_RATCHET: ReadonlyMap<string, number> = new Ma
     // Commands that exist for one provider: `accounts status` and `accounts bind` are Codex's, `set-routing` is
     // OpenRouter's. A member pays off once a second provider gets such a command.
     ["src/ai-proxy/commands/accounts.ts", 3],
-    // `accounts login codex` finds the proxy account of a Codex login (worker login-seams owns the file).
-    ["src/ai-proxy/commands/accounts-login.ts", 1],
-    // The setup wizard's Cursor example is written for a Grok account.
-    ["src/ai-proxy/commands/config-wizard.ts", 1],
 ]);
