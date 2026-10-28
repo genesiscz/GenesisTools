@@ -1772,8 +1772,7 @@ func cmdAct(appName _: String) {
                     cancellation.setIntegerValueField(.scrollWheelEventScrollPhase, value: 8)
                     try ScrollMotion.dispatch(count: events.count, interval: interval, remaining: workflowRemaining,
                                               sleep: { Thread.sleep(forTimeInterval: $0) }, cancel: {
-                        do { try inputGate.post { cancellation.postToPid(pid) } }
-                        catch { FileHandle.standardError.write(Data("Scroll cancellation failed: \(error)\n".utf8)) }
+                        inputGate.deliver { cancellation.postToPid(pid) }
                     }) { index in
                         try inputGate.post { events[index].postToPid(pid) }
                     }

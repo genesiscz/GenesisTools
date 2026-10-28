@@ -24,23 +24,25 @@ describe("capture startup identity", () => {
         const destinations = [join(root, "native-a-" + tag), join(root, "native-b-" + tag)];
         const script = [
             'const fs = await import("node:fs/promises");',
-            "const gate = Bun.argv.at(-3), dest = Bun.argv.at(-1);",
+            "const gate = Bun.argv.at(-3), dest = Bun.argv.at(-1), frame = Bun.argv.at(-4);",
             "const end = Date.now() + 10000;",
             'while (!await Bun.file(gate).exists()) { if (Date.now() >= end) throw new Error("fixture gate timeout"); await Bun.sleep(100); }',
             "await fs.mkdir(dest, { recursive: true });",
-            'await Bun.write(dest + "/keep-0001.png", "fixture frame, not a screenshot");',
+            'await Bun.write(dest + "/" + frame, "fixture frame, not a screenshot");',
             "await Bun.sleep(10000);",
         ].join("\n");
-        const argv = (dest: string, explicit = true) => [
-            process.execPath,
-            "-e",
-            script,
-            "--",
-            gate,
-            explicit ? "--out" : "--fixture-out",
+        const argv = ({
             dest,
-        ];
-        const pending = destinations.map((dest) => startCapture(argv(dest)));
+            explicit = true,
+            frame = "keep-0001.png",
+        }: {
+            dest: string;
+            explicit?: boolean;
+            frame?: string;
+        }) => [process.execPath, "-e", script, "--", frame, gate, explicit ? "--out" : "--fixture-out", dest];
+        const pending = destinations.map((dest, index) =>
+            startCapture(argv({ dest, frame: index === 0 ? "keep-0002.png" : "keep-0001.png" }))
+        );
         writeFileSync(gate, "start");
         const attempts = await Promise.all(pending);
         try {
@@ -54,7 +56,7 @@ describe("capture startup identity", () => {
             }
         }
         const legacyDir = join(root, "legacy-" + tag);
-        const legacy = await startCapture(argv(legacyDir, false));
+        const legacy = await startCapture(argv({ dest: legacyDir, explicit: false }));
         try {
             expect(legacy.sessionDir).toBe(legacyDir);
         } finally {

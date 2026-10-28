@@ -37,6 +37,25 @@ final class ScrollMotionTests: XCTestCase {
         XCTAssertEqual(phases, [1, 2, 8], "a partially sent gesture ends with cancellation")
     }
 
+    func testTakeoverStillClosesTheScrollGesture() {
+        var taken = false
+        var phases: [Int64] = []
+        let gate = SyntheticInputGate(tookOver: { taken })
+        XCTAssertThrowsError(try ScrollMotion.dispatch(count: 3, interval: 0.1,
+            remaining: { nil }, sleep: { _ in }, cancel: {
+                gate.deliver { phases.append(8) }
+            }) { index in
+                try gate.post {
+                    phases.append(ScrollMotion.phase(index: index, count: 3))
+                    taken = true
+                }
+            }) { error in
+                XCTAssertTrue((error as? UserTakeoverError)?.dispatched == true)
+            }
+        XCTAssertEqual(phases, [1, 8])
+        XCTAssertEqual(gate.posted, 2)
+    }
+
     func testNumericDefaultsApplyOnlyWhenOptionsAreAbsent() throws {
         let defaults = try ScrollNumericOptions([:])
         XCTAssertEqual(defaults.pixels, 120)
