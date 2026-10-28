@@ -547,8 +547,8 @@ async function measure(host: Host): Promise<void> {
         return;
     }
 
-    const { project, main } = await projectOf(host);
     // lint-rules-ignore: /tmp/cc/<project>/<session> is the agents' scratch folder by convention, not a temp file.
+    const { project, main } = await projectOf(host);
     const scratch = `/tmp/cc/${project}/${await host.sessionId()}`;
     const sessionDir = await sessionDirOf(host);
     const uid = await uidOf(host);
@@ -610,12 +610,8 @@ export const tmpUsage: Feature = {
             return;
         }
 
-        // The folders the command names, else the one it ran in; the task output folder counts in the total too.
-        const known = [
-            usage.scratch.path,
-            ...(usage.tasks.path ? [usage.tasks.path] : []),
-            ...usage.worktrees.map((tree) => tree.path),
-        ];
+        // The folders the command names, else the one it ran in.
+        const known = [usage.scratch.path, ...usage.worktrees.map((tree) => tree.path)];
         const text = JSON.stringify(e);
         const named = known.filter((path) => text.includes(path));
         const cwd = await host.cwd();
