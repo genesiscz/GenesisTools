@@ -22,7 +22,7 @@ tools rm profiles                   # settings per agent, session or project, an
 # The user only (an agent's shell call is blocked, and the verb asks a person):
 tools rm approve <id>
 tools rm roots add <dir> [--note "<why>"]
-tools rm config set <key> <value>   # ask-action, aside-unsaved, session-scratch, own-files, grace-preset,
+tools rm config set <key> <value>   # approval, ask-action, aside-unsaved, session-scratch, own-files, grace-preset,
                                     # grace-other, trash-root, disable-preset, enable-preset,
                                     # disable-profile, enable-profile
 tools rm profile set <name> --agent codex --ask-action request [...]
@@ -108,8 +108,14 @@ project, and the operating-system user for a person. `tools rm log` prints the n
 `approve`, `roots add`, `config set` and `profile set|remove` need a person, in two layers:
 
 - the shell guard rule `rm-user-verbs` blocks them in an agent's shell call (Claude Code, Codex, Grok);
-- the verb itself asks: outside an agent on a terminal you type the code it shows; inside an agent, or without a
+- the verb itself asks. With GenesisTools.app installed, a window shows the paths and who asked, and "Approve with
+  Touch ID" goes on only after Touch ID (or the account password). An agent can open the window but cannot touch the
+  sensor. Without the app: outside an agent on a terminal you type the code it shows; inside an agent, or without a
   terminal, a macOS dialog asks and only a click on Approve goes on. A terminal an agent fakes still gets the dialog.
+
+The setting `approval` picks the way: `auto` (the default: Touch ID when the installed app offers it, else the code),
+`touch-id` (refuse without the app) or `code` (never Touch ID). `tools rm config set approval code` asks the person
+the current way first.
 
 In Claude Code, run `! tools rm approve <id>` from the prompt.
 

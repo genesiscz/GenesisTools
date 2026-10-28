@@ -4,9 +4,11 @@ import {
     allPresets,
     BUILTIN_PROFILES,
     isAskAction,
+    isRmApproval,
     isTrashRootName,
     OPT_IN_PRESETS,
     presetsFor,
+    RM_APPROVALS,
     type RmConfig,
     rmConfigPath,
     saveRmConfig,
@@ -16,6 +18,7 @@ import pc from "picocolors";
 import { minutesOption, requirePerson, runContext } from "../lib/run";
 
 const SETTINGS = [
+    "approval",
     "ask-action",
     "aside-unsaved",
     "session-scratch",
@@ -48,6 +51,12 @@ function isSetting(key: string): key is Setting {
 
 function apply(config: RmConfig, key: Setting, value: string): RmConfig {
     switch (key) {
+        case "approval":
+            if (!isRmApproval(value)) {
+                throw new Error(`approval takes ${RM_APPROVALS.join(", ")}.`);
+            }
+
+            return { ...config, approval: value };
         case "ask-action":
             if (!isAskAction(value)) {
                 throw new Error("ask-action takes aside or request.");

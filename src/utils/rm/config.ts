@@ -34,6 +34,14 @@ export interface RmPreset {
 /** What happens to a path that needs the user: `aside` moves it into the session's aside folder, `request` leaves it. */
 export type RmAskAction = "aside" | "request";
 
+/**
+ * How a person confirms: `auto` uses Touch ID through GenesisTools.app when the installed app offers it and falls back
+ * to `code` otherwise; `touch-id` refuses without the app; `code` is the typed code on a terminal, or the macOS dialog.
+ */
+export type RmApproval = "auto" | "touch-id" | "code";
+
+export const RM_APPROVALS: readonly RmApproval[] = ["auto", "touch-id", "code"];
+
 /** The settings a profile may change. Lists add to the base config; scalars replace it. */
 export interface RmPolicy {
     askAction: RmAskAction;
@@ -84,6 +92,8 @@ export interface RmConfig extends RmPolicy {
     profiles: RmProfile[];
     /** Built-in profiles the user turned off, by name. */
     disabledProfiles: string[];
+    /** How a person confirms. Not a profile setting: it belongs to the person, not to the caller. */
+    approval: RmApproval;
 }
 
 export function rmDataDir(...segments: string[]): string {
@@ -105,6 +115,7 @@ export function defaultRmConfig(): RmConfig {
         customPresets: [],
         profiles: [],
         disabledProfiles: [],
+        approval: "auto",
         askAction: "aside",
         asideUnsaved: false,
         allowSessionScratch: true,
@@ -185,6 +196,10 @@ function optionalBool(value: unknown): boolean | undefined {
     return typeof value === "boolean" ? value : undefined;
 }
 
+export function isRmApproval(value: unknown): value is RmApproval {
+    return RM_APPROVALS.some((approval) => approval === value);
+}
+
 export function isAskAction(value: unknown): value is RmAskAction {
     return value === "aside" || value === "request";
 }
@@ -253,6 +268,7 @@ export function parseRmConfig(raw: unknown): RmConfig {
         profiles: Array.isArray(raw.profiles)
             ? raw.profiles.map(parseProfile).filter((p): p is RmProfile => p !== null)
             : [],
+        approval: isRmApproval(raw.approval) ? raw.approval : defaults.approval,
         askAction: isAskAction(raw.askAction) ? raw.askAction : defaults.askAction,
         asideUnsaved: bool(raw.asideUnsaved, defaults.asideUnsaved),
         allowSessionScratch: bool(raw.allowSessionScratch, defaults.allowSessionScratch),

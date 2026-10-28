@@ -101,7 +101,9 @@ export function registerRequestCommands(program: Command): void {
 
     program
         .command("approve")
-        .description("confirm an agent's request (a person only: a typed code, or a macOS dialog)")
+        .description(
+            "confirm an agent's request (a person only: Touch ID through GenesisTools.app, a typed code, or a macOS dialog)"
+        )
         .argument("<id>", "the request id")
         .action(async (id: string) => {
             const ctx = runContext();
