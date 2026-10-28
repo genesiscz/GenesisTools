@@ -4,6 +4,7 @@ import { tmpdir } from "node:os";
 import { join } from "node:path";
 import { resetCooldowns } from "@app/ai-proxy/lib/providers/cooldown";
 import {
+    type CompactionRecord,
     compactionFromSse,
     compactionNote,
     loadCompaction,
@@ -2925,5 +2926,82 @@ describe("where a Codex request's prefix first differs from the thread's previou
         const changed = await diffOf({ system, messages: turn2, tools: [tool("Bash"), tool("Write")] });
 
         expect(changed).toEqual({ part: "tools" });
+    });
+});
+
+describe("CodexCompactionFlow through its ports", () => {
+    // The flow's own interface, with a store in memory and the upstream faked at the HTTP boundary: the second adapter
+    // of the CompactionStore port (the first is the file store under ai-proxy/compactions/).
+    async function flowWith(records: Map<string, CompactionRecord>, upstream: () => Response) {
+        const { CodexCompactionFlow } = await import("./codex/compaction-flow");
+        const calls: Array<Record<string, unknown>> = [];
+        const flow = new CodexCompactionFlow({
+            upstream: async (_req, _model, body) => {
+                calls.push(body);
+                return upstream();
+            },
+            writtenSummary: async () => new Response("written"),
+            store: {
+                load: (id) => records.get(id),
+                save: (record) => {
+                    records.set(record.id, record);
+                },
+                newId: () => "gtc1.test",
+            },
+            usage: () => {},
+            account: "work",
+            provider: "openai-subscription",
+        });
+        return { flow, calls };
+    }
+    const input = (accountHash: string) => ({
+        id: "gtc1.saved",
+        req: new Request("http://localhost/v1/messages", { method: "POST" }),
+        model: "gpt-6.1-sol",
+        template: { model: "gpt-6.1-sol" },
+        accountHash,
+        client: { anthropic: true },
+    });
+
+    it("gives back the login's own item without an upstream request", async () => {
+        const records = new Map<string, CompactionRecord>([
+            [
+                "gtc1.saved",
+                {
+                    id: "gtc1.saved",
+                    model: "m",
+                    createdAt: "x",
+                    items: { aaaa: { type: "compaction", encrypted_content: "A" } },
+                    history: [],
+                },
+            ],
+        ]);
+        const { flow, calls } = await flowWith(records, () => new Response("", { status: 500 }));
+
+        expect(await flow.compactionItem(input("aaaa"))).toEqual([{ type: "compaction", encrypted_content: "A" }]);
+        expect(calls).toHaveLength(0);
+    });
+
+    it("compacts the saved history again for another login and keeps both items in the store", async () => {
+        const history = [{ role: "user", content: [{ type: "input_text", text: "remember KESTREL" }] }];
+        const records = new Map<string, CompactionRecord>([
+            [
+                "gtc1.saved",
+                {
+                    id: "gtc1.saved",
+                    model: "m",
+                    createdAt: "x",
+                    items: { aaaa: { type: "compaction", encrypted_content: "A" } },
+                    history,
+                },
+            ],
+        ]);
+        const { flow, calls } = await flowWith(records, () => whamCompactionResponse("B"));
+
+        const item = await flow.compactionItem(input("bbbb"));
+
+        expect(item).toEqual([{ type: "compaction", id: "cmp_1", encrypted_content: "B" }]);
+        expect(calls[0]?.input).toEqual([...history, { type: "compaction_trigger" }]);
+        expect(Object.keys(records.get("gtc1.saved")?.items ?? {}).sort()).toEqual(["aaaa", "bbbb"]);
     });
 });
