@@ -30,6 +30,8 @@ export async function folderKb({
         storage,
         key: `sizes/${Bun.hash(absolutePath).toString(16)}.json`,
         maxAgeSeconds: maxCacheAgeSeconds,
+        // Sessions that ask together after an install wait for one walk instead of each walking the folder.
+        shareInFlight: `du/${absolutePath}`,
         fetch: async () => {
             const done = await run(["du", "-sk", absolutePath], { cwd: "/", timeoutMs: DU_TIMEOUT_MS });
             const token = done.stdout.trim().split("\n").pop()?.split(/\s+/)[0] ?? "";
