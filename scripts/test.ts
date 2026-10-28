@@ -224,6 +224,11 @@ if (workerLog) {
 const LOAD_SENSITIVE_FILES = [
     "src/utils/fs/disk-usage.test.ts",
     "src/utils/fs/watcher.test.ts",
+    // CI's parallel workers timed out seven real-child cases in these suites.
+    // Keep every assertion in the serial phase; the worker stall's cause is not established.
+    "src/question/lib/pending/ask.test.ts",
+    "src/scripts/lib/store.test.ts",
+    "src/task/lib/stop-session.test.ts",
     "src/macos/lib/clones/audit.test.ts",
     "src/stash/lib/patch.test.ts",
     // Direct native-syscall suites: getattrlistbulk intermittently answers
