@@ -12,13 +12,16 @@ import {
     changedFiles,
     checkSource,
     checkSwiftSource,
+    type Finding,
     namesToolCommand,
     namesTranscriptFormat,
     pluginsDisabledFor,
     ratchetAdditions,
+    withinCountRatchets,
 } from "./lint-rules";
 import { EFFORT_LIST_RATCHET, MODEL_ID_LITERAL_RATCHET, MODEL_PRICE_TABLE_RATCHET } from "./model-facts-ratchet";
 import { NATIVE_HOME_CLAUDE_RATCHET, NATIVE_HOME_CODEX_GROK_RATCHET } from "./native-home-ratchet";
+import { PROXY_PROVIDER_BRANCH_RATCHET } from "./proxy-provider-ratchet";
 import { TOOL_COMMAND_RATCHET } from "./tool-command-ratchet";
 import { TRANSCRIPT_FORMAT_RATCHET } from "./transcript-format-ratchet";
 
@@ -656,6 +659,12 @@ describe("the agent and model ratchet rules (❓ DECISION 22 b)", () => {
                 owner: ["const live = /claude/i.test(process.command);", "src/utils/process/classify.ts"],
                 miss: ['const t = text.includes("claude");', "src/timely/x.ts"],
             },
+            {
+                rule: "no-proxy-provider-branch",
+                hit: ['if (account.provider === "grok-subscription") {}', "src/ai-proxy/lib/x.ts"],
+                owner: ['if (account.provider === "grok-subscription") {}', "src/ai-proxy/lib/providers/x.ts"],
+                miss: ['if (format === "openai") {}', "src/ai-proxy/lib/x.ts"],
+            },
         ];
 
         for (const { rule, hit, owner, miss } of cases) {
@@ -773,6 +782,7 @@ describe("the agent and model ratchet rules (❓ DECISION 22 b)", () => {
             "harness-ratchet.ts",
             "model-facts-ratchet.ts",
             "native-home-ratchet.ts",
+            "proxy-provider-ratchet.ts",
             "tool-command-ratchet.ts",
             "transcript-format-ratchet.ts",
         ];
@@ -853,4 +863,84 @@ describe("the agent and model ratchet rules (❓ DECISION 22 b)", () => {
 
         expect(stale).toEqual([]);
     }, 30_000);
+});
+
+describe("no-proxy-provider-branch", () => {
+    const rule = "no-proxy-provider-branch";
+
+    test("flags a switch case and any comparison against a provider name that only the proxy uses", () => {
+        for (const source of [
+            'switch (account.provider) { case "openrouter": break; }',
+            'const codex = accounts.filter((item) => item.provider !== "openai-subscription");',
+            'if (type === "xai-api-key") {}',
+            'if (provider.id === "openai") {}',
+        ]) {
+            expect({ source, flagged: rules(source, "src/ai-proxy/commands/x.ts").includes(rule) }).toEqual({
+                source,
+                flagged: true,
+            });
+        }
+    });
+
+    test("leaves the shared names alone unless the other side is a provider, and leaves other tools alone", () => {
+        expect(rules('if (wire === "openrouter") {}', "src/ai-proxy/lib/x.ts")).not.toContain(rule);
+        expect(rules('if (account.provider === "grok-subscription") {}', "src/utils/ai/x.ts")).not.toContain(rule);
+    });
+
+    test("a per-file count lets that many findings pass and reports every one of a file that has more", () => {
+        const finding = (file: string, line: number, name = rule): Finding => ({
+            file,
+            line,
+            column: 1,
+            rule: name,
+            severity: "error",
+            message: "provider branch",
+            text: "x",
+        });
+        const counts = new Map([[rule, new Map([["src/a.ts", 2]])]]);
+
+        const atCount = withinCountRatchets([finding("src/a.ts", 1), finding("src/a.ts", 2)], counts);
+        const overCount = withinCountRatchets(
+            [finding("src/a.ts", 1), finding("src/a.ts", 2), finding("src/a.ts", 3)],
+            counts
+        );
+        const unlisted = withinCountRatchets([finding("src/b.ts", 1), finding("src/a.ts", 1, "other-rule")], counts);
+
+        expect([atCount.length, overCount.map((item) => item.line), unlisted.length]).toEqual([0, [1, 2, 3], 2]);
+        expect(overCount[0].message).toContain("3 in this file");
+    });
+
+    test("an established count list rejects a new file and a higher count, and allows a lower one", () => {
+        const list = (entries: [string, number][]) =>
+            `export const EXAMPLE_RATCHET = new Map<string, number>(${SafeJSON.stringify(entries)});`;
+
+        expect(
+            ratchetAdditions(
+                list([["src/a.ts", 2]]),
+                list([
+                    ["src/a.ts", 3],
+                    ["src/b.ts", 1],
+                ])
+            )
+        ).toEqual(["EXAMPLE_RATCHET: src/a.ts (2 → 3)", "EXAMPLE_RATCHET: src/b.ts"]);
+        expect(ratchetAdditions(list([["src/a.ts", 2]]), list([["src/a.ts", 1]]))).toEqual([]);
+        expect(() => ratchetAdditions(list([]), "export const EXAMPLE_RATCHET = new Map([[name, 1]]);")).toThrow(
+            "literal"
+        );
+    });
+
+    test("every count on the list is the file's real number of findings, so a fixed branch lowers its count", async () => {
+        const stale: string[] = [];
+
+        for (const [file, allowed] of PROXY_PROVIDER_BRANCH_RATCHET) {
+            const source = await Bun.file(file).text();
+            const found = checkSource(file, source, { ratchets: false }).filter((item) => item.rule === rule).length;
+
+            if (found !== allowed) {
+                stale.push(`${file}: listed ${allowed}, found ${found}`);
+            }
+        }
+
+        expect(stale).toEqual([]);
+    });
 });

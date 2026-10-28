@@ -38,6 +38,7 @@ import { SafeJSON } from "@genesiscz/utils/json";
 import { AGENT_PROCESS_MATCH_RATCHET, HARNESS_BRANCH_RATCHET, HOOK_PAYLOAD_READ_RATCHET } from "./harness-ratchet";
 import { EFFORT_LIST_RATCHET, MODEL_ID_LITERAL_RATCHET, MODEL_PRICE_TABLE_RATCHET } from "./model-facts-ratchet";
 import { NATIVE_HOME_CLAUDE_RATCHET, NATIVE_HOME_CODEX_GROK_RATCHET } from "./native-home-ratchet";
+import { PROXY_PROVIDER_BRANCH_RATCHET } from "./proxy-provider-ratchet";
 import { TOOL_COMMAND_RATCHET } from "./tool-command-ratchet";
 import { TRANSCRIPT_FORMAT_RATCHET } from "./transcript-format-ratchet";
 
@@ -72,6 +73,11 @@ interface Rule {
     onlyIn?: RegExp;
     /** Single files still allowed while they are migrated (a ratchet: an entry only ever leaves). */
     allowedFiles?: ReadonlySet<string>;
+    /**
+     * Per file, how many findings still pass while the file is migrated. One more fails every finding of the file,
+     * because any of them can be the new one (a ratchet: a count only ever goes down).
+     */
+    allowedCounts?: ReadonlyMap<string, number>;
 }
 
 function ruleApplies(rule: Rule, file: string, ratchets = true): boolean {
@@ -292,11 +298,40 @@ export function isEffortList(text: string): boolean {
 /** Harness branching, hook payload reads and agent process matching (Haiku survey, HarnessBranching.haiku.md). */
 const AGENT_HARNESS_LITERAL = /^(["'`])(?:claude|codex|grok)\1$/;
 const AGENT_HARNESS_WORD = /claude|codex|grok/i;
-const AGENT_COMPARE_OPS = new Set(["===", "!==", "==", "!="]);
+const COMPARE_OPS = new Set(["===", "!==", "==", "!="]);
 const AGENT_OPERAND = /harness|provider|alias|kind|agent|backend|source|resolved|target|basename|argv0|^base$|\.base$/i;
 const AGENT_SUBJECT = /command|cmd|argv|\bargs\b|\bcomm\b|process|\bproc\b/i;
 const AGENT_SESSION_OWNERS =
     /(?:^|\/)src\/(?:utils\/process\/|utils\/claude\/peer-message\.ts$|codex\/lib\/process-scan\.ts$|grok\/lib\/process-scan\.ts$|claude\/lib\/active-sessions\.ts$)/;
+/**
+ * What a literal is compared with: the other side of `===`, `!==`, `==` or `!=`, or the value a `case` literal is
+ * switched on. Undefined when the literal is not compared at all.
+ */
+function comparedOperand(node: SgNode, text: string): string | undefined {
+    const parent = node.parent();
+
+    if (parent?.kind() === "switch_case") {
+        return parent.parent()?.parent()?.field("value")?.text() ?? "";
+    }
+
+    if (parent?.kind() !== "binary_expression" || !COMPARE_OPS.has(parent.field("operator")?.text() ?? "")) {
+        return undefined;
+    }
+
+    const other = parent.field("right")?.text() === text ? parent.field("left") : parent.field("right");
+
+    return other?.text() ?? "";
+}
+
+/**
+ * The ai-proxy's own provider names (`AiProxyProviderType`, 2026-10-28): a comparison against one picks provider
+ * behaviour at a call site, which belongs in the provider's `ProviderDefinition`. `openai` and `openrouter` are
+ * also plugin ids and wire-format names, so those two count only against an operand that names a provider.
+ */
+const PROXY_ONLY_PROVIDER_LITERAL =
+    /^(["'`])(?:grok-subscription|github-copilot-subscription|anthropic-subscription|openai-subscription|xai-api-key)\1$/;
+const PROXY_SHARED_PROVIDER_LITERAL = /^(["'`])(?:openai|openrouter)\1$/;
+const PROXY_PROVIDER_OPERAND = /provider/i;
 const AGENT_HARNESS_OWNERS =
     /(?:^|\/)src\/(?:utils\/agent-sessions\/|utils\/ai\/providers\/|utils\/providers\/session-paths\.ts$|agents\/lib\/hooks\/(?:payload|config)\.ts$|utils\/process\/|utils\/claude\/peer-message\.ts$|codex\/lib\/process-scan\.ts$|grok\/lib\/process-scan\.ts$|claude\/lib\/active-sessions\.ts$)/;
 const AGENT_PAYLOAD_SNAKE_FIELDS =
@@ -539,22 +574,32 @@ const RULES: Rule[] = [
                 return false;
             }
 
-            const parent = node.parent();
+            const operand = comparedOperand(node, text);
 
-            if (parent?.kind() === "switch_case") {
-                return AGENT_OPERAND.test(parent.parent()?.parent()?.field("value")?.text() ?? "");
-            }
+            return operand !== undefined && AGENT_OPERAND.test(operand);
+        },
+    },
+    {
+        name: "no-proxy-provider-branch",
+        severity: "error",
+        kinds: LITERAL_KINDS,
+        message:
+            "An ai-proxy provider-name branch belongs in a ProviderDefinition member " +
+            "(src/ai-proxy/lib/providers/definition.ts) or in the ProxyProvider, not in its caller. " +
+            "scripts/ci/proxy-provider-ratchet.ts lists how many comparisons each unmigrated file may keep.",
+        onlyIn: /^src\/ai-proxy\//,
+        allowedIn: /^src\/ai-proxy\/lib\/providers\//,
+        allowedCounts: PROXY_PROVIDER_BRANCH_RATCHET,
+        test: (text, node) => {
+            const proxyOnly = PROXY_ONLY_PROVIDER_LITERAL.test(text);
 
-            if (
-                parent?.kind() !== "binary_expression" ||
-                !AGENT_COMPARE_OPS.has(parent.field("operator")?.text() ?? "")
-            ) {
+            if (!proxyOnly && !PROXY_SHARED_PROVIDER_LITERAL.test(text)) {
                 return false;
             }
 
-            const other = parent.field("right")?.text() === text ? parent.field("left") : parent.field("right");
+            const operand = comparedOperand(node, text);
 
-            return AGENT_OPERAND.test(other?.text() ?? "");
+            return operand !== undefined && (proxyOnly || PROXY_PROVIDER_OPERAND.test(operand));
         },
     },
     {
@@ -1418,7 +1463,44 @@ export function checkSource(file: string, source: string, { ratchets = true }: {
         }
     }
 
-    return findings;
+    return ratchets ? withinCountRatchets(findings) : findings;
+}
+
+/** The per-file counts of every rule that has them, by rule name. */
+const COUNT_RATCHETS: ReadonlyMap<string, ReadonlyMap<string, number>> = new Map(
+    RULES.flatMap((rule) => (rule.allowedCounts ? [[rule.name, rule.allowedCounts] as const] : []))
+);
+
+/**
+ * Drops the findings a per-file count still allows. A file over its count keeps every finding, each saying the
+ * count, because any of them can be the new one.
+ */
+export function withinCountRatchets(
+    findings: Finding[],
+    counts: ReadonlyMap<string, ReadonlyMap<string, number>> = COUNT_RATCHETS
+): Finding[] {
+    const perFile = new Map<string, number>();
+
+    for (const finding of findings) {
+        const key = `${finding.rule}\0${finding.file}`;
+        perFile.set(key, (perFile.get(key) ?? 0) + 1);
+    }
+
+    return findings.flatMap((finding) => {
+        const allowed = counts.get(finding.rule)?.get(finding.file);
+
+        if (allowed === undefined) {
+            return [finding];
+        }
+
+        const found = perFile.get(`${finding.rule}\0${finding.file}`) ?? 0;
+
+        if (found <= allowed) {
+            return [];
+        }
+
+        return [{ ...finding, message: `${finding.message} (${found} in this file; the ratchet allows ${allowed}.)` }];
+    });
 }
 
 /**
@@ -1437,14 +1519,24 @@ const RATCHET_INPUTS = [
     "scripts/ci/harness-ratchet.ts",
     "scripts/ci/model-facts-ratchet.ts",
     "scripts/ci/native-home-ratchet.ts",
+    "scripts/ci/proxy-provider-ratchet.ts",
     "scripts/ci/tool-command-ratchet.ts",
     "scripts/ci/transcript-format-ratchet.ts",
 ];
 
-/** Read data, never execute a historical module. An unsupported list shape fails closed. */
-function ratchetLists(source: string): Map<string, Set<string>> {
+/** The named entries of an array literal, comments left out. */
+function arrayEntries(array: SgNode): SgNode[] {
+    return array.children().filter((child) => child.isNamed() && child.kind() !== "comment");
+}
+
+/**
+ * Read data, never execute a historical module. A list is `new Set([...paths])` (a file only leaves) or
+ * `new Map([[path, count], ...])` (a count only goes down); null stands for "listed" in a Set. Any other shape fails
+ * closed.
+ */
+function ratchetLists(source: string): Map<string, Map<string, number | null>> {
     const root = parse(Lang.TypeScript, source).root();
-    const lists = new Map<string, Set<string>>();
+    const lists = new Map<string, Map<string, number | null>>();
 
     for (const node of root.findAll({ rule: { kind: "variable_declarator" } })) {
         const name = node.field("name")?.text() ?? "";
@@ -1460,37 +1552,68 @@ function ratchetLists(source: string): Map<string, Set<string>> {
                 ?.children()
                 .filter((child) => child.isNamed()) ?? [];
         const array = args[0];
+        const collection = value?.field("constructor")?.text();
 
-        if (
-            value?.kind() !== "new_expression" ||
-            value.field("constructor")?.text() !== "Set" ||
-            array?.kind() !== "array"
-        ) {
-            throw new Error(`lint-rules: ${name} must be a literal new Set([...])`);
+        if (value?.kind() !== "new_expression" || array?.kind() !== "array") {
+            throw new Error(`lint-rules: ${name} must be a literal new Set([...]) or new Map([...])`);
         }
 
-        const entries = array.children().filter((child) => child.isNamed() && child.kind() !== "comment");
+        if (collection === "Set") {
+            const entries = arrayEntries(array);
 
-        if (entries.some((entry) => entry.kind() !== "string")) {
-            throw new Error(`lint-rules: ${name} must contain only literal paths`);
+            if (entries.some((entry) => entry.kind() !== "string")) {
+                throw new Error(`lint-rules: ${name} must contain only literal paths`);
+            }
+
+            lists.set(name, new Map(entries.map((entry) => [unquote(entry), null])));
+            continue;
         }
 
-        lists.set(name, new Set(entries.map(unquote)));
+        if (collection !== "Map") {
+            throw new Error(`lint-rules: ${name} must be a literal new Set([...]) or new Map([...])`);
+        }
+
+        const counts = new Map<string, number | null>();
+
+        for (const entry of arrayEntries(array)) {
+            const pair = entry.kind() === "array" ? arrayEntries(entry) : [];
+
+            if (pair.length !== 2 || pair[0].kind() !== "string" || pair[1].kind() !== "number") {
+                throw new Error(`lint-rules: ${name} must contain only literal [path, count] pairs`);
+            }
+
+            counts.set(unquote(pair[0]), Number(pair[1].text()));
+        }
+
+        lists.set(name, counts);
     }
 
     return lists;
 }
 
-/** A list's first introduction establishes its baseline; an established list may only lose entries. */
+/**
+ * A list's first introduction establishes its baseline; an established list may only lose entries, and a count may
+ * only go down.
+ */
 export function ratchetAdditions(baseSource: string, headSource: string): string[] {
     const base = ratchetLists(baseSource);
     const additions: string[] = [];
 
-    for (const [name, files] of ratchetLists(headSource)) {
+    for (const [name, entries] of ratchetLists(headSource)) {
         const previous = base.get(name);
 
-        if (previous) {
-            additions.push(...[...files].filter((file) => !previous.has(file)).map((file) => `${name}: ${file}`));
+        if (!previous) {
+            continue;
+        }
+
+        for (const [file, count] of entries) {
+            const before = previous.get(file);
+
+            if (!previous.has(file)) {
+                additions.push(`${name}: ${file}`);
+            } else if (count !== null && typeof before === "number" && count > before) {
+                additions.push(`${name}: ${file} (${before} → ${count})`);
+            }
         }
     }
 
@@ -1826,15 +1949,17 @@ async function scanAll(files: string[], options: { processToolOnly?: boolean } =
         sources.set(file, (await Bun.file(file).text()).split("\n"));
     }
 
-    return unfiltered.filter((finding) => {
-        const lines = sources.get(finding.file) ?? [];
+    return withinCountRatchets(
+        unfiltered.filter((finding) => {
+            const lines = sources.get(finding.file) ?? [];
 
-        if (needsImportCheck.has(finding) && !CHILD_PROCESS_IMPORT.test(lines.join("\n"))) {
-            return false;
-        }
+            if (needsImportCheck.has(finding) && !CHILD_PROCESS_IMPORT.test(lines.join("\n"))) {
+                return false;
+            }
 
-        return !isSuppressed(lines, finding.line);
-    });
+            return !isSuppressed(lines, finding.line);
+        })
+    );
 }
 
 if (import.meta.main) {
