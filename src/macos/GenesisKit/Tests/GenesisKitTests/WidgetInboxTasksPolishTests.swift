@@ -1298,6 +1298,30 @@ final class WidgetStagingTests: XCTestCase {
         XCTAssertTrue(names(actions).contains("send-staged"), "the second Return sends the staged decision")
     }
 
+    /// A change in the settings window shows in the widget at once, and a snapshot written before it does not take it
+    /// back (Martin, 2026-10-28: "all settings which affect the ui should be realtime").
+    func testLivePreferencesShowAtOnceAndOutliveAStaleSnapshot() throws {
+        let model = StagingFixture.model()
+        defer { model.stop() }
+        model.actionRunner = { _ in ["ok": true] }
+        model.receive([try snapshot(draftOption: nil)])
+        model.showLivePreferences(["previewWidth": .number(400), "sidePosition": .number(0.3)])
+        XCTAssertEqual(model.agentsPreviewWidth, 400)
+        XCTAssertEqual(model.snapshot?.state.preferences.sidePosition, 0.3)
+        model.receive([try snapshot(draftOption: nil)])
+        XCTAssertEqual(model.agentsPreviewWidth, 400, "a snapshot from before the change keeps the live value")
+        XCTAssertEqual(model.snapshot?.state.preferences.sidePosition, 0.3)
+    }
+
+    func testLiveSettingsNoteSkipsItsOwnPost() {
+        let own: [AnyHashable: Any] = ["patch": #"{"sidePosition":0.3}"#, "pid": Int(ProcessInfo.processInfo.processIdentifier)]
+        XCTAssertNil(WidgetLiveSettings.patch(from: own), "the posting process does not apply its own note twice")
+        var other = own
+        other["pid"] = 1
+        XCTAssertEqual(WidgetLiveSettings.patch(from: other)?["sidePosition"], .number(0.3))
+        XCTAssertNil(WidgetLiveSettings.patch(from: ["previewWidth": 300.0, "done": false]), "a width note is no patch")
+    }
+
     func testStagedChipNamesTheSessionsThatHoldTheDecisions() {
         func item(_ id: String, _ key: String) -> WidgetInboxItem {
             WidgetInboxItem(id: "decision:" + id, sourceId: id, kind: "decision", key: key, at: 1, needsAnswer: true)
