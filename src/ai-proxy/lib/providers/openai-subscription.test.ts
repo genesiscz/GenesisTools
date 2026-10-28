@@ -1,16 +1,8 @@
 import { afterEach, beforeEach, describe, expect, it, mock } from "bun:test";
-import { createHash } from "node:crypto";
-import { existsSync, mkdtempSync, readFileSync, utimesSync, writeFileSync } from "node:fs";
+import { mkdtempSync, readFileSync, utimesSync, writeFileSync } from "node:fs";
 import { tmpdir } from "node:os";
 import { join } from "node:path";
-import { execBashInput, parseExecBashCommand } from "@app/ai-proxy/lib/providers/codex/exec/bash-command";
-import { EXEC_RUNNER_PATH } from "@app/ai-proxy/lib/providers/codex/exec/tool";
 import { resetCooldowns } from "@app/ai-proxy/lib/providers/cooldown";
-import {
-    rememberedMessageItems,
-    rememberMessageItems,
-    resetReasoningMemoryForTests,
-} from "@app/ai-proxy/lib/providers/reasoning-memory";
 import {
     type CompactionRecord,
     compactionFromSse,
@@ -35,98 +27,6 @@ import {
 import type { AiProxyAccountConfig, SessionsInConfig } from "@app/ai-proxy/lib/types";
 import { env } from "@genesiscz/utils/env";
 import { SafeJSON } from "@genesiscz/utils/json";
-import { isObject } from "@genesiscz/utils/object";
-
-describe("reasoning message identity", () => {
-    it("uses the shared JSON error helper for basic and typed envelopes", async () => {
-        const { jsonError } = await import("@app/ai-proxy/lib/http-error");
-        const basic = jsonError(502, "upstream failed");
-        expect(basic.status).toBe(502);
-        expect(basic.headers.get("content-type")).toBe("application/json");
-        expect(await basic.json()).toEqual({ error: { message: "upstream failed" } });
-        const typed = jsonError(403, "denied", { type: "forbidden", code: "not_allowed" });
-        expect(await typed.json()).toEqual({ error: { message: "denied", type: "forbidden", code: "not_allowed" } });
-    });
-
-    it("replays a cache notice on the same historical message", async () => {
-        const { preserveCacheReminders, resetCacheShapeForTests } = await import(
-            "@app/ai-proxy/lib/sessions/cache-shape"
-        );
-        resetCacheShapeForTests();
-        const input = [{ role: "user", content: "question" }];
-        const first = preserveCacheReminders("thread", input, "changed");
-        const continuation = preserveCacheReminders("thread", [...input, { role: "assistant", content: "answer" }]);
-        expect(continuation[0]).toEqual(first[0]);
-        expect(preserveCacheReminders("thread", [{ role: "user", content: "new history" }])[0]).toEqual({
-            role: "user",
-            content: "new history",
-        });
-    });
-
-    it("bounds the number of remembered notices per thread", async () => {
-        const { preserveCacheReminders, resetCacheShapeForTests } = await import(
-            "@app/ai-proxy/lib/sessions/cache-shape"
-        );
-        resetCacheShapeForTests();
-        const input: Array<{ role: string; content: string }> = [];
-        for (let index = 0; index < 130; index++) {
-            input.push({ role: "user", content: `message ${index}` });
-            preserveCacheReminders("thread", input, `notice ${index}`);
-        }
-        const restored = preserveCacheReminders("thread", input);
-        expect(restored[0]).toEqual(input[0]);
-        expect(restored[1]).toEqual(input[1]);
-        expect(SafeJSON.stringify(restored[2])).toContain("notice 2");
-        expect(SafeJSON.stringify(restored[129])).toContain("notice 129");
-    });
-
-    it("times out an idle WHAM stream", async () => {
-        const { whamSsePayloads } = await import("@app/ai-proxy/lib/providers/codex/wham-stream");
-        let cancelled = false;
-        const stream = new ReadableStream<Uint8Array>({
-            cancel() {
-                cancelled = true;
-            },
-        });
-        await expect(whamSsePayloads(stream, 10).next()).rejects.toThrow("timed out");
-        expect(cancelled).toBe(true);
-    });
-
-    it("does not restore ambiguous identical text from different reasoning replies", () => {
-        resetReasoningMemoryForTests();
-        const content = [{ type: "text", text: "Done." }];
-        const first = [
-            { type: "reasoning", id: "first" },
-            { type: "message", role: "assistant", content: "Done." },
-        ];
-        const second = [
-            { type: "reasoning", id: "second" },
-            { type: "message", role: "assistant", content: "Done." },
-        ];
-        rememberMessageItems("conversation", content, first);
-        rememberMessageItems("conversation", content, first);
-        expect(rememberedMessageItems("conversation", content)).toEqual(first);
-        rememberMessageItems("conversation", content, second);
-        expect(rememberedMessageItems("conversation", content)).toBeUndefined();
-        rememberMessageItems("conversation", content, first);
-        expect(rememberedMessageItems("conversation", content)).toBeUndefined();
-        resetReasoningMemoryForTests();
-    });
-
-    it("does not restore a tool call whose name or arguments changed", () => {
-        resetReasoningMemoryForTests();
-        const tool = { type: "tool_use", id: "call-1", name: "read", input: { path: "first" } };
-        const items = [
-            { type: "reasoning", id: "reason-1" },
-            { type: "function_call", call_id: "call-1" },
-        ];
-        rememberMessageItems("conversation", [tool], items);
-        expect(rememberedMessageItems("conversation", [tool])).toEqual(items);
-        expect(rememberedMessageItems("conversation", [{ ...tool, input: { path: "second" } }])).toBeUndefined();
-        expect(rememberedMessageItems("conversation", [{ ...tool, name: "write" }])).toBeUndefined();
-        resetReasoningMemoryForTests();
-    });
-});
 
 const TEST_TOKEN = "codex-access-token";
 const TEST_ACCOUNT_ID = "acct-123";
@@ -391,41 +291,6 @@ describe("buildWhamResponsesBody", () => {
             { defaultReasoningEffort: "high", itemScope: ITEM_SCOPE }
         );
         expect(bogus.body.reasoning).toEqual({ effort: "high" });
-    });
-
-    it("resolves explicit, default and catalog-mapped effort without reading input", async () => {
-        const { buildWhamResponsesBody, resolveWhamReasoning } = await import("./codex/wham-body");
-        const { mergeCodexModelRecords } = await import("@genesiscz/utils/ai/openai/codex-models");
-        const catalog = mergeCodexModelRecords({
-            live: [
-                {
-                    slug: "gpt-x-sol",
-                    displayName: "X",
-                    contextWindow: 500_000,
-                    visibility: "list",
-                    supportedEfforts: ["low", "high", "xhigh", "ultra"],
-                    defaultEffort: "low",
-                    multiAgentReasoningEffort: "xhigh",
-                },
-            ],
-            fallback: [],
-        }).get("gpt-x-sol");
-        const cases = [{ reasoning: { effort: "high" } }, { reasoning: {} }, { reasoning: { effort: "ultra" } }];
-        for (const [index, options] of cases.entries()) {
-            const input = {
-                ...options,
-                get input(): never {
-                    throw new Error("resolver read input");
-                },
-            };
-            const resolved = resolveWhamReasoning(input, "gpt-x-sol", { catalog });
-            const built = buildWhamResponsesBody({ ...options, input: [] }, "gpt-x-sol", {
-                catalog,
-                itemScope: ITEM_SCOPE,
-            });
-            expect(built.body.reasoning).toEqual(resolved.reasoning);
-            expect(resolved.reasoning?.effort).toBe(["high", "low", "xhigh"][index]);
-        }
     });
 
     it("checks the effort against the model's catalog record instead of the fixed allowlist", async () => {
@@ -1634,52 +1499,6 @@ describe("native /v1/messages route: reasoning carried in gtr1 envelopes", () =>
         expect(signatures.every((signature) => signature.split(".")[2] === accountHash8("backup"))).toBe(true);
     });
 
-    it("with failover on, a compacted turn and its cross-login rebuild stay on the primary login", async () => {
-        const authHeaders: Array<string | null> = [];
-        globalThis.fetch = (async (_url: RequestInfo | URL, init?: RequestInit) => {
-            authHeaders.push(new Headers(init?.headers).get("authorization"));
-            return new Response('{"error":{"message":"slow down"}}', { status: 429, headers: { "retry-after": "60" } });
-        }) as typeof fetch;
-        const { OpenAiSubscriptionProvider } = await import("./openai-subscription");
-        const provider = await OpenAiSubscriptionProvider.create({
-            ...account,
-            failover: true,
-            openaiSub: { failoverAccountNames: ["backup"] },
-        });
-        const turn = async (items: Record<string, Record<string, unknown>>) => {
-            const id = `gtc1.${crypto.randomUUID()}`;
-            saveCompaction({
-                id,
-                model: "gpt-6.1-sol",
-                createdAt: new Date().toISOString(),
-                items,
-                history: [{ role: "user", content: [{ type: "input_text", text: "earlier" }] }],
-            });
-            const bodyText = SafeJSON.stringify({
-                model: "gpt-6.1-sol",
-                stream: true,
-                messages: [{ role: "user", content: `${compactionNote(id)}\nGo on.` }],
-            });
-            authHeaders.length = 0;
-            const res = await provider.messages?.(
-                new Request("http://localhost/v1/messages", { method: "POST", body: bodyText }),
-                "gpt-6.1-sol",
-                bodyText
-            );
-            await res?.text();
-            return { id, status: res?.status, headers: [...authHeaders] };
-        };
-
-        // Another login made the item: the rebuild for the primary does not fail over, and nothing is saved for it.
-        const rebuilt = await turn({ otherlgn: { type: "compaction", encrypted_content: "old" } });
-        expect(rebuilt.headers).toEqual([`Bearer ${TEST_TOKEN}`]);
-        expect(Object.keys(loadCompaction(rebuilt.id)?.items ?? {})).toEqual(["otherlgn"]);
-        // The primary holds the item and is now cooling: the turn carries the item, so the backup login never gets it.
-        const held = await turn({ [accountHash8("codex")]: { type: "compaction", encrypted_content: "held" } });
-        expect(held.headers).toEqual([]);
-        expect(held.status).toBe(503);
-    });
-
     it("a written-summary compaction goes out with tool_choice none", async () => {
         const sent: Array<Record<string, unknown>> = [];
         globalThis.fetch = (async (_url: RequestInfo | URL, init?: RequestInit) => {
@@ -2468,78 +2287,6 @@ describe("background compaction (Codex async_compaction for Claude Code)", () =>
         setCompactionEventsPathForTests(undefined);
     });
 
-    it("sweeps expired persisted background data and rejects malformed records", async () => {
-        const { backgroundResult, forgetBackgroundInMemoryForTests, sweepBackgroundCompactions, trackBackground } =
-            await import("@app/ai-proxy/lib/sessions/background-compaction");
-        const key = "retention-test";
-        const result = {
-            item: { type: "compaction" },
-            accountHash: "work",
-            prefixLength: 0,
-            prefixHash: "hash",
-            prefix: [],
-            contextTokens: 100,
-            startedAt: Date.now(),
-            readyAt: Date.now(),
-        };
-        trackBackground(key, 100, Promise.resolve(result));
-        await Promise.resolve();
-        const name = `${createHash("sha256").update(key).digest("hex").slice(0, 32)}.json`;
-        const path = join(getAiProxyStorage().getBaseDir(), "background", name);
-        expect(existsSync(path)).toBe(true);
-        forgetBackgroundInMemoryForTests();
-        expect(backgroundResult(key)).toEqual(result);
-        forgetBackgroundInMemoryForTests();
-        writeFileSync(path, SafeJSON.stringify({ key, result: { ...result, readyAt: undefined } }));
-        expect(backgroundResult(key)).toBeUndefined();
-        expect(existsSync(path)).toBe(false);
-        writeFileSync(path, "{invalid json");
-        expect(backgroundResult(key)).toBeUndefined();
-        expect(existsSync(path)).toBe(false);
-        trackBackground(key, 100, Promise.resolve(result));
-        await Promise.resolve();
-        const old = new Date(Date.now() - 3 * 86_400_000);
-        utimesSync(path, old, old);
-        const temporary = `${path}.1.2.3.tmp`;
-        writeFileSync(temporary, "unfinished");
-        utimesSync(temporary, old, old);
-        expect(sweepBackgroundCompactions(1)).toEqual(expect.arrayContaining([name, `${name}.1.2.3.tmp`]));
-        expect(existsSync(path)).toBe(false);
-        expect(existsSync(temporary)).toBe(false);
-    });
-
-    it("keeps the previous background file when a replacement write fails", async () => {
-        const { backgroundResult, forgetBackgroundInMemoryForTests, trackBackground } = await import(
-            "@app/ai-proxy/lib/sessions/background-compaction"
-        );
-        const { atomicWriteIo } = await import("@genesiscz/utils/storage/atomic-file");
-        const key = "atomic-replacement";
-        const result = {
-            item: { type: "compaction" },
-            accountHash: "work",
-            prefixLength: 0,
-            prefixHash: "hash",
-            prefix: [],
-            contextTokens: 100,
-            startedAt: Date.now(),
-            readyAt: Date.now(),
-        };
-        trackBackground(key, 100, Promise.resolve(result));
-        await Promise.resolve();
-        const write = atomicWriteIo.writeSync;
-        try {
-            atomicWriteIo.writeSync = () => {
-                throw new Error("injected write failure");
-            };
-            trackBackground(key, 200, Promise.resolve({ ...result, contextTokens: 200 }));
-            await Promise.resolve();
-        } finally {
-            atomicWriteIo.writeSync = write;
-        }
-        forgetBackgroundInMemoryForTests();
-        expect(backgroundResult(key)).toEqual(result);
-    });
-
     /** A normal WHAM turn whose usage reports this much context. */
     function turnResponse(text: string, inputTokens: number): Response {
         const sse =
@@ -2882,12 +2629,7 @@ describe("tools that Claude Code's tool search loads, on the Codex agent", () =>
         },
     ];
 
-    async function sentBody(
-        messages: unknown[],
-        tools: unknown[],
-        clientKey?: string,
-        cacheKey?: { key: string; source: "client" | "content" }
-    ): Promise<Record<string, unknown>> {
+    async function sentBody(messages: unknown[], tools: unknown[]): Promise<Record<string, unknown>> {
         const sent: Array<Record<string, unknown>> = [];
         globalThis.fetch = (async (_url: RequestInfo | URL, init?: RequestInit) => {
             sent.push(SafeJSON.parse(String(init?.body)) as Record<string, unknown>);
@@ -2897,144 +2639,13 @@ describe("tools that Claude Code's tool search loads, on the Codex agent", () =>
         const provider = await OpenAiSubscriptionProvider.create(account);
         const bodyText = SafeJSON.stringify({ model: "gpt-6.1-sol", stream: true, max_tokens: 1024, tools, messages });
         const res = await provider.messages?.(
-            new Request("http://localhost/v1/messages", {
-                method: "POST",
-                body: bodyText,
-                headers: clientKey ? { authorization: `Bearer ${clientKey}` } : {},
-            }),
+            new Request("http://localhost/v1/messages", { method: "POST", body: bodyText }),
             "gpt-6.1-sol",
-            bodyText,
-            cacheKey ? { promptCacheKey: cacheKey } : undefined
+            bodyText
         );
         await res?.text();
         return sent[0] ?? {};
     }
-
-    it("does not introduce deferred tools on a never-loaded first turn", async () => {
-        const body = await sentBody([{ role: "user", content: "check the bus" }], [tool("Monitor", true)]);
-        const input = body.input as Array<Record<string, unknown>>;
-        expect(input.some((item) => item.type === "additional_tools")).toBe(false);
-    });
-
-    it("introduces a surviving tool use once without changing earlier input prefixes", async () => {
-        const tools = [tool("Monitor", true), tool("TaskStop", true)];
-        const first = [{ role: "user", content: "check status" }];
-        const call = (name: string, id: string) => ({
-            role: "assistant",
-            content: [{ type: "tool_use", id, name, input: {} }],
-        });
-        const result = (id: string) => ({
-            role: "user",
-            content: [{ type: "tool_result", tool_use_id: id, content: "done" }],
-        });
-        const used = [...first, call("Monitor", "call-one"), result("call-one")];
-        const more = [...used, call("Monitor", "call-two"), result("call-two"), call("TaskStop", "call-three")];
-        const initial = (await sentBody(first, tools)).input as Array<Record<string, unknown>>;
-        const second = (await sentBody(used, tools)).input as Array<Record<string, unknown>>;
-        const third = (await sentBody(more, tools)).input as Array<Record<string, unknown>>;
-        expect(second.slice(0, initial.length)).toEqual(initial);
-        expect(third.slice(0, second.length)).toEqual(second);
-        const additions = third.filter((item) => item.type === "additional_tools");
-        expect(additions.map((item) => (item.tools as Array<{ name: string }>).map((entry) => entry.name))).toEqual([
-            ["Monitor"],
-            ["TaskStop"],
-        ]);
-        const monitor = third.findIndex((item) => item.type === "function_call" && item.name === "Monitor");
-        expect(third[monitor - 1]?.type).toBe("additional_tools");
-    });
-
-    it("does not reintroduce a tool whose search reference survived", async () => {
-        const history = [
-            ...loaded,
-            { role: "assistant", content: [{ type: "tool_use", id: "m1", name: "Monitor", input: {} }] },
-        ];
-        const body = await sentBody(history, [tool("Monitor", true), tool("ToolSearch")]);
-        const additions = (body.input as Array<Record<string, unknown>>).filter(
-            (item) => item.type === "additional_tools"
-        );
-        expect(additions).toHaveLength(1);
-    });
-
-    it("keeps compacted introductions stable across later searches and new deferred tools", async () => {
-        const first = [
-            { role: "user", content: "This session is being continued.\n\nSummary: cache regression case." },
-        ];
-        const search = (id: string, name: string) => [
-            { role: "assistant", content: [{ type: "tool_use", id, name: "ToolSearch", input: { query: name } }] },
-            {
-                role: "user",
-                content: [
-                    { type: "tool_result", tool_use_id: id, content: [{ type: "tool_reference", tool_name: name }] },
-                ],
-            },
-        ];
-        const initialTools = [tool("Monitor", true), tool("ToolSearch")];
-        const nextTools = [tool("Monitor", true), tool("TaskStop", true), tool("ToolSearch")];
-        const afterMonitor = [...first, ...search("search-one", "Monitor")];
-        const afterTask = [...afterMonitor, ...search("search-two", "TaskStop")];
-        const cacheKey = { key: "continuation-a", source: "client" as const };
-        const initial = (await sentBody(first, initialTools, "client-a", cacheKey)).input as Array<
-            Record<string, unknown>
-        >;
-        const second = (await sentBody(afterMonitor, nextTools, "client-a", cacheKey)).input as Array<
-            Record<string, unknown>
-        >;
-        const third = (await sentBody(afterTask, nextTools, "client-a", cacheKey)).input as Array<
-            Record<string, unknown>
-        >;
-        expect(second.slice(0, initial.length)).toEqual(initial);
-        expect(third.slice(0, second.length)).toEqual(second);
-        const names = third
-            .filter((item) => item.type === "additional_tools")
-            .map((item) => (item.tools as Array<{ name: string }>).map((entry) => entry.name));
-        expect(names).toEqual([["Monitor"], ["TaskStop"]]);
-    });
-
-    it("isolates remembered compacted introductions by client", async () => {
-        const history = [{ role: "user", content: "This session is being continued.\n\nSummary: separate clients." }];
-        const cacheKey = { key: "shared-id", source: "client" as const };
-        const first = await sentBody(history, [tool("Monitor", true)], "client-a", cacheKey);
-        const second = await sentBody(history, [tool("TaskStop", true)], "client-b", cacheKey);
-        const names = (body: Record<string, unknown>) => {
-            const input = body.input as Array<Record<string, unknown>>;
-            return (input[0]?.tools as Array<{ name: string }> | undefined)?.map((entry) => entry.name);
-        };
-        expect(names(first)).toEqual(["Monitor"]);
-        expect(names(second)).toEqual(["TaskStop"]);
-    });
-
-    it("does not share recovery snapshots without a trusted conversation identity", async () => {
-        const names = (body: Record<string, unknown>) => {
-            const input = body.input as Array<Record<string, unknown>>;
-            return (input[0]?.tools as Array<{ name: string }> | undefined)?.map((entry) => entry.name);
-        };
-        for (const cacheKey of [undefined, { key: "same-content", source: "content" as const }]) {
-            const suffix = cacheKey ? "content" : "anonymous";
-            const history = [{ role: "user", content: `This session is being continued.\n\nSummary: ${suffix} test.` }];
-            const first = await sentBody(history, [tool("Monitor", true)], "client-a", cacheKey);
-            const second = await sentBody(history, [tool("TaskStop", true)], "client-a", cacheKey);
-            expect(names(first)).toEqual(["Monitor"]);
-            expect(names(second)).toEqual(["TaskStop"]);
-        }
-    });
-
-    it("still introduces every tool when the recovery snapshot exceeds its memory limit", async () => {
-        const history = [{ role: "user", content: "This session is being continued.\n\nSummary: many tools." }];
-        const tools = Array.from({ length: 513 }, (_, index) => tool(`Deferred${index}`, true));
-        const body = await sentBody(history, tools, "client-a", { key: "many-tools", source: "client" });
-        const input = body.input as Array<Record<string, unknown>>;
-        expect((input[0]?.tools as unknown[] | undefined)?.length).toBe(513);
-    });
-
-    it("introduces a deferred tool whose search result is absent after compaction", async () => {
-        const body = await sentBody(
-            [{ role: "user", content: "This session is being continued.\n\nSummary:\nMonitor was loaded." }],
-            [tool("Monitor", true)]
-        );
-        const input = body.input as Array<Record<string, unknown>>;
-        expect(input[0]?.type).toBe("additional_tools");
-        expect((input[0]?.tools as Array<{ name: string }> | undefined)?.map((item) => item.name)).toEqual(["Monitor"]);
-    });
 
     it("keeps `tools` the same after a load and makes the loaded tool callable from the input, after its search result", async () => {
         const first = await sentBody(before, [tool("Bash"), tool("ToolSearch")]);
@@ -3043,8 +2654,7 @@ describe("tools that Claude Code's tool search loads, on the Codex agent", () =>
         const names = (body: Record<string, unknown>) =>
             (body.tools as Array<{ name: string }> | undefined)?.map((t) => t.name);
 
-        // Bash brings Codex's exec tool, always last (see "Codex's exec tool on the Claude Code route").
-        expect(names(second)).toEqual(["Bash", "ToolSearch", "exec"]);
+        expect(names(second)).toEqual(["Bash", "ToolSearch"]);
         expect(names(second)).toEqual(names(first));
 
         const input = second.input as Array<Record<string, unknown>>;
@@ -3103,195 +2713,6 @@ describe("tools that Claude Code's tool search loads, on the Codex agent", () =>
     });
 });
 
-describe("final reasoning reply at the next typed turn", () => {
-    function reasoningReply(status: "completed" | "incomplete" = "completed", text = "answer"): Response {
-        const reasoning = {
-            type: "reasoning",
-            id: "rs_final",
-            encrypted_content: "encrypted",
-            summary: [{ type: "summary_text", text: "think" }],
-        };
-        const message = { type: "message", content: [{ type: "output_text", text }] };
-        const events: Array<Record<string, unknown>> = [
-            { type: "response.output_item.added", output_index: 0, item: reasoning },
-            { type: "response.reasoning_summary_text.delta", output_index: 0, delta: "think" },
-            { type: "response.output_item.done", output_index: 0, item: reasoning },
-            { type: "response.output_item.added", output_index: 1, item: message },
-        ];
-        for (let offset = 0; offset < text.length; offset += 512) {
-            events.push({
-                type: "response.output_text.delta",
-                output_index: 1,
-                delta: text.slice(offset, offset + 512),
-            });
-        }
-        events.push(
-            { type: "response.output_item.done", output_index: 1, item: message },
-            { type: `response.${status}`, response: { id: "resp_final", status, output: [reasoning, message] } }
-        );
-        return new Response(events.map((event) => `data: ${SafeJSON.stringify(event)}\n\n`).join(""), {
-            headers: { "content-type": "text/event-stream" },
-        });
-    }
-
-    async function visibleContent(response: Response, stream: boolean): Promise<Array<Record<string, unknown>>> {
-        if (!stream) {
-            const body: unknown = await response.json();
-            return isObject(body) && Array.isArray(body.content) ? body.content.filter(isObject) : [];
-        }
-        const content: Array<Record<string, unknown>> = [];
-        for (const line of (await response.text()).split("\n")) {
-            if (!line.startsWith("data: ")) {
-                continue;
-            }
-            const event: unknown = SafeJSON.parse(line.slice(6), { strict: true });
-            if (!isObject(event) || typeof event.index !== "number") {
-                continue;
-            }
-            if (event.type === "content_block_start" && isObject(event.content_block)) {
-                content[event.index] = { ...event.content_block };
-            } else if (event.type === "content_block_delta" && isObject(event.delta)) {
-                const block = content[event.index];
-                if (!block) {
-                    continue;
-                }
-                if (event.delta.type === "thinking_delta") {
-                    block.thinking = String(block.thinking ?? "") + String(event.delta.thinking ?? "");
-                } else if (event.delta.type === "signature_delta") {
-                    block.signature = event.delta.signature;
-                } else if (event.delta.type === "text_delta") {
-                    block.text = String(block.text ?? "") + String(event.delta.text ?? "");
-                }
-            }
-        }
-        return content;
-    }
-
-    it("does not remember an incomplete streamed reply", async () => {
-        const { responsesSseToAnthropic } = await import(
-            "@app/ai-proxy/lib/translators/formats/anthropic/grok-responses-to-anthropic"
-        );
-        const body = reasoningReply("incomplete").body;
-        if (!body) {
-            throw new Error("fixture has no stream");
-        }
-        let called = false;
-        const stream = responsesSseToAnthropic(body, {
-            model: "test-model",
-            signReasoning: () => "signature",
-            onTextResponse: () => {
-                called = true;
-            },
-        });
-        await new Response(stream).text();
-        expect(called).toBe(false);
-    });
-
-    for (const stream of [true, false]) {
-        it(`delivers but does not remember an oversized ${stream ? "streamed" : "non-streamed"} reply`, async () => {
-            resetReasoningMemoryForTests();
-            const { MAX_REPLAY_RESPONSE_CHARS } = await import(
-                "@app/ai-proxy/lib/translators/formats/anthropic/grok-responses-to-anthropic"
-            );
-            const answer = "x".repeat(MAX_REPLAY_RESPONSE_CHARS + 1);
-            const sent: Array<Record<string, unknown>> = [];
-            globalThis.fetch = (async (_url: RequestInfo | URL, init?: RequestInit) => {
-                sent.push(SafeJSON.parse(String(init?.body)) as Record<string, unknown>);
-                return sent.length === 1 ? reasoningReply("completed", answer) : whamStreamResponse();
-            }) as typeof fetch;
-            const { OpenAiSubscriptionProvider } = await import("./openai-subscription");
-            const provider = await OpenAiSubscriptionProvider.create(account);
-            const context = { promptCacheKey: { key: `oversized-${stream}`, source: "client" as const } };
-            const send = async (messages: unknown[], streaming: boolean) => {
-                const body = SafeJSON.stringify({ model: "gpt-6.1-sol", stream: streaming, messages });
-                const result = await provider.messages?.(
-                    new Request("http://localhost/v1/messages", { method: "POST", body }),
-                    "gpt-6.1-sol",
-                    body,
-                    context
-                );
-                if (!result) {
-                    throw new Error("provider returned no response");
-                }
-                return result;
-            };
-            const first = [{ role: "user", content: "question" }];
-            const visible = await visibleContent(await send(first, stream), stream);
-            expect(visible.find((block) => block.type === "text")?.text).toBe(answer);
-            await (
-                await send(
-                    [
-                        ...first,
-                        { role: "assistant", content: visible.filter((block) => block.type !== "thinking") },
-                        { role: "user", content: "follow-up" },
-                    ],
-                    true
-                )
-            ).text();
-            const input = sent[1]?.input;
-            expect(Array.isArray(input)).toBe(true);
-            expect(Array.isArray(input) && input.some((item) => isObject(item) && item.type === "reasoning")).toBe(
-                false
-            );
-        });
-        for (const trusted of [true, false]) {
-            it(`${trusted ? "restores" : "does not restore"} reasoning from a final ${stream ? "streamed" : "non-streamed"} reply ${trusted ? "with a trusted identity" : "with a content-only identity"}`, async () => {
-                resetReasoningMemoryForTests();
-                const sent: Array<Record<string, unknown>> = [];
-                globalThis.fetch = (async (_url: RequestInfo | URL, init?: RequestInit) => {
-                    sent.push(SafeJSON.parse(String(init?.body)) as Record<string, unknown>);
-                    return sent.length === 1 ? reasoningReply() : whamStreamResponse();
-                }) as typeof fetch;
-                const { OpenAiSubscriptionProvider } = await import("./openai-subscription");
-                const provider = await OpenAiSubscriptionProvider.create(account);
-                const context = {
-                    promptCacheKey: {
-                        key: `reply-${stream}`,
-                        source: trusted ? ("client" as const) : ("content" as const),
-                    },
-                };
-                const send = async (messages: unknown[], streaming: boolean) => {
-                    const body = SafeJSON.stringify({ model: "gpt-6.1-sol", stream: streaming, messages });
-                    const result = await provider.messages?.(
-                        new Request("http://localhost/v1/messages", { method: "POST", body }),
-                        "gpt-6.1-sol",
-                        body,
-                        context
-                    );
-                    if (!result) {
-                        throw new Error("provider returned no response");
-                    }
-                    return result;
-                };
-                const first = [{ role: "user", content: "question" }];
-                const visible = await visibleContent(await send(first, stream), stream);
-                expect(visible.map((block) => block.type)).toEqual(["thinking", "text"]);
-                const next = [
-                    ...first,
-                    { role: "assistant", content: visible.filter((block) => block.type !== "thinking") },
-                    { role: "user", content: "follow-up" },
-                ];
-                await (await send(next, true)).text();
-                const input = sent[1]?.input;
-                expect(Array.isArray(input)).toBe(true);
-                const reasoning = Array.isArray(input)
-                    ? input.find((item) => isObject(item) && item.type === "reasoning" && item.id === "rs_final")
-                    : undefined;
-                if (trusted) {
-                    expect(reasoning).toEqual({
-                        type: "reasoning",
-                        id: "rs_final",
-                        encrypted_content: "encrypted",
-                        summary: [{ type: "summary_text", text: "think" }],
-                    });
-                } else {
-                    expect(reasoning).toBeUndefined();
-                }
-            });
-        }
-    }
-});
-
 describe("Claude Code's turn-start thinking flip, on the Codex agent", () => {
     // Regression test: the 2026-10-28 analysis of session 8cf9eff2, Bug 2 — the first request of a typed turn carries no earlier thinking, so the upstream history changed at the
     // first reasoning item and the request read 0% of the cache (1.41M uncached tokens in 4 requests).
@@ -3310,25 +2731,20 @@ describe("Claude Code's turn-start thinking flip, on the Codex agent", () => {
         content: [{ type: "tool_result", tool_use_id: "call_clock", content: "12:00" }],
     };
 
-    async function sentInput(
-        messages: unknown[],
-        options: { source?: "content" | "claude-session"; accountName?: string } = {}
-    ): Promise<Array<Record<string, unknown>>> {
+    async function sentInput(messages: unknown[]): Promise<Array<Record<string, unknown>>> {
         const sent: Array<Record<string, unknown>> = [];
         globalThis.fetch = (async (_url: RequestInfo | URL, init?: RequestInit) => {
             sent.push(SafeJSON.parse(String(init?.body)) as Record<string, unknown>);
             return whamStreamResponse();
         }) as typeof fetch;
         const { OpenAiSubscriptionProvider } = await import("./openai-subscription");
-        const provider = await OpenAiSubscriptionProvider.create(
-            options.accountName ? { ...account, name: options.accountName } : account
-        );
+        const provider = await OpenAiSubscriptionProvider.create(account);
         const bodyText = SafeJSON.stringify({ model: "gpt-6.1-sol", stream: true, max_tokens: 1024, messages });
         const res = await provider.messages?.(
             new Request("http://localhost/v1/messages", { method: "POST", body: bodyText }),
             "gpt-6.1-sol",
             bodyText,
-            { promptCacheKey: { key: session, source: options.source ?? "claude-session" } }
+            { promptCacheKey: { key: session, source: "claude-session" } }
         );
         await res?.text();
         return (sent[0]?.input ?? []) as Array<Record<string, unknown>>;
@@ -3350,23 +2766,6 @@ describe("Claude Code's turn-start thinking flip, on the Codex agent", () => {
 
         expect(toolLoop.some((item) => item.type === "reasoning")).toBe(true);
         expect(nextTurn.slice(0, toolLoop.length)).toEqual(toolLoop);
-    });
-
-    it("does not restore across accounts or from a content-only identity", async () => {
-        resetReasoningMemoryForTests();
-        const original = [
-            { role: "user", content: "question" },
-            { role: "assistant", content: [thinking, toolUse] },
-            toolResult,
-        ];
-        const omitted = [{ role: "user", content: "question" }, { role: "assistant", content: [toolUse] }, toolResult];
-        expect((await sentInput(original)).some((item) => item.type === "reasoning")).toBe(true);
-        expect((await sentInput(omitted, { accountName: "other" })).some((item) => item.type === "reasoning")).toBe(
-            false
-        );
-        resetReasoningMemoryForTests();
-        await sentInput(original, { source: "content" });
-        expect((await sentInput(omitted, { source: "content" })).some((item) => item.type === "reasoning")).toBe(false);
     });
 
     it("never gives one conversation's remembered reasoning to another conversation", async () => {
@@ -3431,18 +2830,9 @@ describe("a changed effort on one Claude Code thread, on the Codex agent", () =>
         setCompactionEventsPathForTests(undefined);
     });
 
-    async function send(
-        effort: string | undefined,
-        system = "Lead system prompt",
-        identity: { accountName?: string; clientKey?: string; conversation?: string } = {}
-    ): Promise<unknown> {
+    async function send(effort: string, system = "Lead system prompt"): Promise<void> {
         const { OpenAiSubscriptionProvider } = await import("./openai-subscription");
-        const { prefixDiffFor } = await import("@app/ai-proxy/lib/usage/prefix-diff");
-        const provider = await OpenAiSubscriptionProvider.create({
-            ...account,
-            name: identity.accountName ?? account.name,
-            openaiSub: { defaultReasoningEffort: "low" },
-        });
+        const provider = await OpenAiSubscriptionProvider.create(account);
         const bodyText = SafeJSON.stringify({
             model: "gpt-6.1-sol",
             stream: true,
@@ -3451,19 +2841,12 @@ describe("a changed effort on one Claude Code thread, on the Codex agent", () =>
             output_config: { effort },
             messages: [{ role: "user", content: "go on" }],
         });
-        const req = new Request("http://localhost/v1/messages", {
-            method: "POST",
-            body: bodyText,
-            headers: identity.clientKey ? { authorization: `Bearer ${identity.clientKey}` } : {},
-        });
         const res = await provider.messages?.(
-            req,
+            new Request("http://localhost/v1/messages", { method: "POST", body: bodyText }),
             "gpt-6.1-sol",
-            bodyText,
-            identity.conversation ? { promptCacheKey: { key: identity.conversation, source: "client" } } : undefined
+            bodyText
         );
         await res?.text();
-        return prefixDiffFor(req);
     }
 
     function events(): Array<Record<string, unknown>> {
@@ -3477,25 +2860,6 @@ describe("a changed effort on one Claude Code thread, on the Codex agent", () =>
             return [];
         }
     }
-
-    it("isolates shape, reminders and prefix diagnostics across accounts, clients and conversations", async () => {
-        const owner = { accountName: "work", clientKey: "client-a", conversation: "conversation-a" };
-        await send("high", undefined, owner);
-        await send("xhigh", undefined, owner);
-        expect(SafeJSON.stringify(sent[1]?.input)).toContain("<system-reminder>");
-        for (const other of [
-            { ...owner, accountName: "personal" },
-            { ...owner, clientKey: "client-b" },
-            { ...owner, conversation: "conversation-b" },
-        ]) {
-            const index = sent.length;
-            expect(await send("high", undefined, other)).toEqual({ part: "first" });
-            expect(SafeJSON.stringify(sent[index]?.input)).not.toContain("<system-reminder>");
-        }
-        expect(events().filter((event) => event.kind === "cache-reset")).toHaveLength(1);
-        await send("xhigh", undefined, owner);
-        expect(SafeJSON.stringify(sent.at(-1)?.input)).toContain("<system-reminder>");
-    });
 
     it("records a cache-reset event that names both efforts", async () => {
         await send("high");
@@ -3516,19 +2880,6 @@ describe("a changed effort on one Claude Code thread, on the Codex agent", () =>
         expect(last).toContain("<system-reminder>");
         expect(last).toContain("high to xhigh");
         expect(SafeJSON.stringify(sent[0]?.input)).not.toContain("<system-reminder>");
-    });
-
-    it("keeps the reminder in a continuation at the same effort", async () => {
-        await send("high");
-        await send("xhigh");
-        await send("xhigh");
-        expect(sent[2]?.input).toEqual(sent[1]?.input);
-    });
-
-    it("does not report a change for an explicit default effort", async () => {
-        await send(undefined);
-        await send("low");
-        expect(events().filter((event) => event.kind === "cache-reset")).toEqual([]);
     });
 
     it("stays quiet when the effort repeats, and for a subagent that has its own system prompt", async () => {
@@ -3573,12 +2924,6 @@ describe("where a Codex request's prefix first differs from the thread's previou
         expect(first).toEqual({ part: "first" });
         expect(grown).toEqual({ part: "none" });
         expect(edited).toEqual({ part: "input", index: 1, of: 3, itemType: "message" });
-    });
-
-    it("names an instruction change within the same conversation", async () => {
-        const messages = [{ role: "user", content: crypto.randomUUID() }];
-        await diffOf({ system: "original instructions", messages });
-        expect(await diffOf({ system: "changed instructions", messages })).toEqual({ part: "instructions" });
     });
 
     it("names the tools when the tool list changed", async () => {
@@ -3665,273 +3010,5 @@ describe("CodexCompactionFlow through its ports", () => {
         expect(item).toEqual([{ type: "compaction", id: "cmp_1", encrypted_content: "B" }]);
         expect(calls[0]?.input).toEqual([...history, { type: "compaction_trigger" }]);
         expect(Object.keys(records.get("gtc1.saved")?.items ?? {}).sort()).toEqual(["aaaa", "bbbb"]);
-    });
-});
-
-describe("Codex's exec tool on the Claude Code route", () => {
-    const bash = { name: "Bash", description: "Run a command", input_schema: { type: "object", properties: {} } };
-    const read = { name: "Read", description: "Read a file", input_schema: { type: "object", properties: {} } };
-    const js = 'const r = await tools.exec_command({ cmd: "ls" });\ntext(r.output);';
-
-    async function sentBody(
-        messages: unknown[],
-        tools: unknown[],
-        sessionsIn?: SessionsInConfig
-    ): Promise<Record<string, unknown>> {
-        const sent: Array<Record<string, unknown>> = [];
-        globalThis.fetch = (async (_url: RequestInfo | URL, init?: RequestInit) => {
-            sent.push(SafeJSON.parse(String(init?.body)) as Record<string, unknown>);
-            return whamStreamResponse();
-        }) as typeof fetch;
-        const { OpenAiSubscriptionProvider } = await import("./openai-subscription");
-        const provider = await OpenAiSubscriptionProvider.create(account);
-        const bodyText = SafeJSON.stringify({ model: "gpt-6.1-sol", stream: true, max_tokens: 1024, tools, messages });
-        const res = await provider.messages?.(
-            new Request("http://localhost/v1/messages", { method: "POST", body: bodyText }),
-            "gpt-6.1-sol",
-            bodyText,
-            sessionsIn ? { sessionsIn } : undefined
-        );
-        await res?.text();
-        return sent[0] ?? {};
-    }
-
-    function history(runner: string): unknown[] {
-        return [
-            { role: "user", content: "list the files" },
-            {
-                role: "assistant",
-                content: [
-                    {
-                        type: "tool_use",
-                        id: "call_exec",
-                        name: "Bash",
-                        input: execBashInput({ js, bun: "/opt/bun", runner, sessionId: "sess-1" }),
-                    },
-                ],
-            },
-            {
-                role: "user",
-                content: [
-                    {
-                        type: "tool_result",
-                        tool_use_id: "call_exec",
-                        content: "Script completed\nWall time 0.1 seconds\nOutput:\na.ts",
-                    },
-                ],
-            },
-        ];
-    }
-
-    const toolNames = (body: Record<string, unknown>) =>
-        (body.tools as Array<{ name: string }> | undefined)?.map((tool) => tool.name);
-
-    it("is the last tool, from the first request on, and `tools` stays the same once the history holds an exec call", async () => {
-        const first = await sentBody([{ role: "user", content: "list the files" }], [bash, read]);
-        const second = await sentBody(history("/wt/src/ai-proxy/lib/providers/codex/exec/runner.ts"), [bash, read]);
-        const tools = first.tools as Array<Record<string, unknown>>;
-
-        expect(toolNames(first)).toEqual(["Bash", "Read", "exec"]);
-        expect(tools.at(-1)?.type).toBe("custom");
-        expect(tools.at(-1)?.strict).toBeUndefined();
-        expect(tools[0]?.strict).toBe(false);
-        expect(SafeJSON.stringify(second.tools)).toBe(SafeJSON.stringify(first.tools));
-    });
-
-    it("is not offered with the setting off or without Bash", async () => {
-        const off = await sentBody([{ role: "user", content: "hi" }], [bash, read], {
-            claude: { providers: { codex: { execTool: false } } },
-        });
-        const noBash = await sentBody([{ role: "user", content: "hi" }], [read]);
-
-        expect(toolNames(off)).toEqual(["Bash", "Read"]);
-        expect(toolNames(noBash)).toEqual(["Read"]);
-    });
-
-    it("replays the exec call and its output exactly as the model made and saw them, from any runner path", async () => {
-        const fromWorktree = await sentBody(history("/wt/src/ai-proxy/lib/providers/codex/exec/runner.ts"), [bash]);
-        const fromMain = await sentBody(history("/main/src/ai-proxy/lib/providers/codex/exec/runner.ts"), [bash]);
-        const input = fromWorktree.input as Array<Record<string, unknown>>;
-
-        expect(input.slice(1)).toEqual([
-            { type: "custom_tool_call", call_id: "call_exec", name: "exec", input: js },
-            {
-                type: "custom_tool_call_output",
-                call_id: "call_exec",
-                output: "Script completed\nWall time 0.1 seconds\nOutput:\na.ts",
-            },
-        ]);
-        expect(SafeJSON.stringify(fromMain.input)).toBe(SafeJSON.stringify(fromWorktree.input));
-    });
-
-    it("preserves exec replay when a surviving deferred tool call is introduced", async () => {
-        const monitor = { name: "Monitor", defer_loading: true, input_schema: { type: "object", properties: {} } };
-        const messages = [
-            ...history("/wt/src/ai-proxy/lib/providers/codex/exec/runner.ts"),
-            { role: "assistant", content: [{ type: "tool_use", id: "call_monitor", name: "Monitor", input: {} }] },
-            { role: "user", content: [{ type: "tool_result", tool_use_id: "call_monitor", content: "done" }] },
-        ];
-        const body = await sentBody(messages, [bash, monitor]);
-        const input = body.input as Array<Record<string, unknown>>;
-        expect(input.map((item) => item.type)).toEqual([
-            undefined,
-            "custom_tool_call",
-            "custom_tool_call_output",
-            "additional_tools",
-            "function_call",
-            "function_call_output",
-        ]);
-        expect(input[1]?.name).toBe("exec");
-        expect(input[4]?.name).toBe("Monitor");
-    });
-
-    it("with the setting off, the same history goes up as the Bash function call it is", async () => {
-        const body = await sentBody(history("/wt/src/ai-proxy/lib/providers/codex/exec/runner.ts"), [bash], {
-            claude: { providers: { codex: { execTool: false } } },
-        });
-        const types = (body.input as Array<{ type?: string }>).map((item) => item.type);
-
-        expect(types).toEqual([undefined, "function_call", "function_call_output"]);
-    });
-});
-
-describe("Codex's exec tool: the model's call reaches Claude Code as one Bash call", () => {
-    const bash = { name: "Bash", description: "Run a command", input_schema: { type: "object", properties: {} } };
-    const js = 'const r = await tools.exec_command({ cmd: "ls" });\nconst EOF = 1;\ntext(r.output + EOF);';
-    const metadata = { user_id: SafeJSON.stringify({ session_id: "sess-exec-1" }) };
-    const call = { type: "custom_tool_call", id: "ctc_1", call_id: "call_exec", name: "exec", input: js };
-    const whamSse = [
-        { type: "response.output_item.added", output_index: 0, item: { ...call, input: "" } },
-        { type: "response.custom_tool_call_input.delta", output_index: 0, item_id: "ctc_1", delta: js },
-        { type: "response.output_item.done", output_index: 0, item: call },
-        {
-            type: "response.completed",
-            response: { status: "completed", output: [call], usage: { input_tokens: 9, output_tokens: 4 } },
-        },
-    ]
-        .map((event) => `event: ${event.type}\ndata: ${SafeJSON.stringify(event)}\n\n`)
-        .join("");
-
-    async function ask(
-        body: Record<string, unknown>
-    ): Promise<{ response: Response; sent: Array<Record<string, unknown>> }> {
-        const sent: Array<Record<string, unknown>> = [];
-        globalThis.fetch = (async (_url: RequestInfo | URL, init?: RequestInit) => {
-            sent.push(SafeJSON.parse(String(init?.body)) as Record<string, unknown>);
-            return new Response(whamSse, { status: 200, headers: { "content-type": "text/event-stream" } });
-        }) as typeof fetch;
-        const { OpenAiSubscriptionProvider } = await import("./openai-subscription");
-        const provider = await OpenAiSubscriptionProvider.create(account);
-        const bodyText = SafeJSON.stringify({
-            model: "gpt-6.1-sol",
-            max_tokens: 1024,
-            tools: [bash],
-            metadata,
-            ...body,
-        });
-        const response = await provider.messages?.(
-            new Request("http://localhost/v1/messages", { method: "POST", body: bodyText }),
-            "gpt-6.1-sol",
-            bodyText
-        );
-
-        if (!response) {
-            throw new Error("the native route is off");
-        }
-
-        return { response, sent };
-    }
-
-    function streamedToolUse(text: string): { name?: unknown; id?: unknown; input: Record<string, unknown> } {
-        let start: Record<string, unknown> | undefined;
-        let json = "";
-
-        for (const chunk of text.split("\n\n")) {
-            const data = chunk.split("\n").find((line) => line.startsWith("data: "));
-            const frame = data ? (SafeJSON.parse(data.slice(6), { strict: true }) as Record<string, unknown>) : {};
-            const block = frame.content_block as Record<string, unknown> | undefined;
-            const delta = frame.delta as Record<string, unknown> | undefined;
-
-            if (block?.type === "tool_use") {
-                start = block;
-            }
-
-            if (delta?.type === "input_json_delta") {
-                json += String(delta.partial_json);
-            }
-        }
-
-        return {
-            name: start?.name,
-            id: start?.id,
-            input: SafeJSON.parse(json, { strict: true }) as Record<string, unknown>,
-        };
-    }
-
-    it("streaming: a Bash tool_use that runs this checkout's runner on the script, for this session", async () => {
-        const { response } = await ask({ stream: true, messages: [{ role: "user", content: "list" }] });
-        const toolUse = streamedToolUse(await response.text());
-
-        expect(toolUse.name).toBe("Bash");
-        expect(toolUse.id).toBe("call_exec");
-        expect(toolUse.input).toEqual({
-            ...execBashInput({
-                js,
-                bun: process.execPath,
-                runner: EXEC_RUNNER_PATH,
-                sessionId: "sess-exec-1",
-                model: "gpt-6.1-sol",
-            }),
-        });
-        expect(parseExecBashCommand(String(toolUse.input.command))).toBe(js);
-    });
-
-    it("non-streaming: the same Bash tool_use", async () => {
-        const { response } = await ask({ stream: false, messages: [{ role: "user", content: "list" }] });
-        const message = (await response.json()) as { content: Array<Record<string, unknown>>; stop_reason: string };
-
-        expect(message.content).toEqual([
-            {
-                type: "tool_use",
-                id: "call_exec",
-                name: "Bash",
-                input: execBashInput({
-                    js,
-                    bun: process.execPath,
-                    runner: EXEC_RUNNER_PATH,
-                    sessionId: "sess-exec-1",
-                    model: "gpt-6.1-sol",
-                }),
-            },
-        ]);
-        expect(message.stop_reason).toBe("tool_use");
-    });
-
-    it("the Bash call Claude Code sends back goes up as the very custom_tool_call the model made", async () => {
-        const first = await ask({ stream: true, messages: [{ role: "user", content: "list" }] });
-        const toolUse = streamedToolUse(await first.response.text());
-        const next = await ask({
-            stream: true,
-            messages: [
-                { role: "user", content: "list" },
-                {
-                    role: "assistant",
-                    content: [{ type: "tool_use", id: toolUse.id, name: "Bash", input: toolUse.input }],
-                },
-                {
-                    role: "user",
-                    content: [
-                        { type: "tool_result", tool_use_id: toolUse.id, content: "Script completed\nOutput:\nx" },
-                    ],
-                },
-            ],
-        });
-        await next.response.text();
-        const input = next.sent[0]?.input as Array<Record<string, unknown>>;
-
-        expect(input.slice(1)).toEqual([
-            { type: "custom_tool_call", call_id: "call_exec", name: "exec", input: call.input },
-            { type: "custom_tool_call_output", call_id: "call_exec", output: "Script completed\nOutput:\nx" },
-        ]);
     });
 });

@@ -1,15 +1,12 @@
 import { createHash } from "node:crypto";
-import { existsSync, mkdirSync, readdirSync, readFileSync, statSync, unlinkSync } from "node:fs";
+import { existsSync, mkdirSync, readFileSync, unlinkSync, writeFileSync } from "node:fs";
 import { join } from "node:path";
-import { withSystemReminders } from "@app/ai-proxy/lib/sessions/cache-shape";
 import type { BackgroundCompactionSettings } from "@app/ai-proxy/lib/sessions/settings";
 import { getAiProxyStorage } from "@app/ai-proxy/lib/storage";
 import { claudeCodeThreadKey } from "@app/ai-proxy/lib/translators/formats/anthropic/claude-code-turns";
 import { SafeJSON } from "@genesiscz/utils/json";
 import { logger } from "@genesiscz/utils/logger";
 import { isObject } from "@genesiscz/utils/object";
-import { atomicWriteFileSync, isMissingFileError } from "@genesiscz/utils/storage/atomic-file";
-import { estimateTokens } from "@genesiscz/utils/tokens";
 
 /**
  * Background compaction, the proxy's copy of Codex's `async_compaction` (codex-rs, off by default there in 2026-10):
@@ -28,6 +25,8 @@ export interface BackgroundResult {
     /** How many raw Responses input items the item compacts, and their hash. */
     prefixLength: number;
     prefixHash: string;
+    /** The raw input it compacted (markers left as text): the history of the record a used result becomes. */
+    prefix: unknown[];
     /** The context of the turn it compacted (input plus cached tokens). */
     contextTokens: number;
     startedAt: number;
@@ -117,55 +116,10 @@ function persist(key: string, result: BackgroundResult): void {
 
     try {
         mkdirSync(join(path, ".."), { recursive: true, mode: 0o700 });
-        atomicWriteFileSync(path, SafeJSON.stringify({ key, result }), { mode: 0o600 });
+        writeFileSync(path, SafeJSON.stringify({ key, result }), { mode: 0o600 });
     } catch (error) {
         logger.warn({ err: error, key }, "ai-proxy: could not save a background compaction; a restart loses it");
     }
-}
-
-function isBackgroundResult(value: unknown): value is BackgroundResult {
-    if (!isObject(value)) {
-        return false;
-    }
-
-    return (
-        isObject(value.item) &&
-        typeof value.accountHash === "string" &&
-        typeof value.prefixHash === "string" &&
-        [value.prefixLength, value.contextTokens, value.startedAt, value.readyAt].every(
-            (number) => typeof number === "number" && Number.isFinite(number) && number >= 0
-        ) &&
-        [value.inputTokens, value.cachedTokens, value.outputTokens].every(
-            (number) => number === undefined || (typeof number === "number" && Number.isFinite(number) && number >= 0)
-        )
-    );
-}
-
-/** Remove expired background data even when its thread is never opened again. */
-export function sweepBackgroundCompactions(retentionDays: number, now = Date.now()): string[] {
-    const dir = join(getAiProxyStorage().getBaseDir(), "background");
-    if (!existsSync(dir)) {
-        return [];
-    }
-
-    const removed: string[] = [];
-    for (const name of readdirSync(dir)) {
-        if (!/^[0-9a-f]{32}\.json(?:\.\d+\.\d+\.\d+\.tmp)?$/.test(name)) {
-            continue;
-        }
-        const path = join(dir, name);
-        try {
-            if (statSync(path).mtimeMs < now - retentionDays * 86_400_000) {
-                unlinkSync(path);
-                removed.push(name);
-            }
-        } catch (error) {
-            if (!isMissingFileError(error)) {
-                logger.warn({ error, name }, "ai-proxy: could not sweep background compaction");
-            }
-        }
-    }
-    return removed;
 }
 
 function readPersisted(key: string): BackgroundResult | undefined {
@@ -175,34 +129,18 @@ function readPersisted(key: string): BackgroundResult | undefined {
         return undefined;
     }
 
-    let text: string;
     try {
-        text = readFileSync(path, "utf8");
+        const saved = SafeJSON.parse(readFileSync(path, "utf8")) as { key?: string; result?: BackgroundResult };
+
+        if (saved.key !== key || !saved.result || Date.now() - saved.result.readyAt > PERSISTED_MAX_AGE_MS) {
+            return undefined;
+        }
+
+        return saved.result;
     } catch (error) {
         logger.warn({ err: error, key }, "ai-proxy: a saved background compaction could not be read");
         return undefined;
     }
-
-    let saved: unknown;
-    try {
-        saved = SafeJSON.parse(text, { strict: true });
-    } catch (error) {
-        logger.warn({ err: error, key }, "ai-proxy: a saved background compaction is malformed");
-        forgetPersisted(key);
-        return undefined;
-    }
-
-    if (
-        !isObject(saved) ||
-        saved.key !== key ||
-        !isBackgroundResult(saved.result) ||
-        Date.now() - saved.result.readyAt > PERSISTED_MAX_AGE_MS
-    ) {
-        forgetPersisted(key);
-        return undefined;
-    }
-
-    return saved.result;
 }
 
 /** The thread's state, loaded from its saved run when this process has none (after a restart). */
@@ -229,10 +167,8 @@ function forgetPersisted(key: string): void {
 
     try {
         unlinkSync(persistedPath(key));
-    } catch (error) {
-        if (!isMissingFileError(error)) {
-            logger.warn({ error, key }, "ai-proxy: could not remove background compaction");
-        }
+    } catch {
+        // Nothing saved for this thread.
     }
 }
 
@@ -325,8 +261,8 @@ export function matchBackground(input: {
 }
 
 /** A rough token count for a tail of Responses input items: 4 characters per token, as Claude Code estimates. */
-export function estimateItemTokens(items: unknown[]): number {
-    return estimateTokens(SafeJSON.stringify(items) ?? "");
+export function estimateTokens(items: unknown[]): number {
+    return Math.ceil((SafeJSON.stringify(items) ?? "").length / 4);
 }
 
 /**
@@ -354,8 +290,15 @@ export function withUserReminder(input: unknown[], text: string): unknown[] {
         return input;
     }
 
-    const reminded = withSystemReminders(message, [text]);
-    return input.map((item, index) => (index === at ? reminded : item));
+    const reminder = { type: "input_text", text: `<system-reminder>\n${text}\n</system-reminder>` };
+    const content =
+        typeof message.content === "string"
+            ? [{ type: "input_text", text: message.content }, reminder]
+            : Array.isArray(message.content)
+              ? [...message.content, reminder]
+              : [reminder];
+
+    return input.map((item, index) => (index === at ? { ...message, content } : item));
 }
 
 /** Tests start clean. */
