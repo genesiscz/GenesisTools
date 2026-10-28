@@ -351,10 +351,28 @@ describe("question_post decisions and question_update", () => {
         // An agent's door: its "answered" is the chat answer it got, recorded as acknowledged, never queued for a send.
         const updated = SafeJSON.parse(
             await handleQuestionUpdate({ updates: [{ id: "d_1_sess-1", state: "answered", option: "b" }] }, logDeps)
-        ) as { updated: Array<{ state: string; option?: string; answeredVia?: string; comments?: string[] }> };
+        ) as { updated: Array<Record<string, unknown>> };
         expect(updated.updated.map((row) => row.state)).toEqual(["acknowledged"]);
-        expect(updated.updated[0]).toMatchObject({ option: "b", answeredVia: "agent" });
-        expect(updated.updated[0]?.comments?.at(-1)).toContain("only a send queues or delivers an answer");
+        expect(updated.updated[0]).toMatchObject({ id: "d_1_sess-1", number: 1, option: "b", answeredVia: "agent" });
+        // The reply confirms the update; it does not echo the posted question back.
+        expect(updated.updated[0]).not.toHaveProperty("prompt");
+        expect(updated.updated[0]).not.toHaveProperty("options");
+        expect(String(updated.updated[0]?.note)).toContain("only a send queues or delivers an answer");
+
+        const full = SafeJSON.parse(
+            await handleQuestionUpdate(
+                { updates: [{ id: "d_1_sess-1", comment: "checked" }], include: ["prompt", "comments"] },
+                logDeps
+            )
+        ) as { updated: Array<Record<string, unknown>> };
+        expect(full.updated[0]).toHaveProperty("prompt");
+        expect(full.updated[0]?.comments).toContain("checked");
+        expect(full.updated[0]).not.toHaveProperty("note");
+        const all = SafeJSON.parse(
+            await handleQuestionUpdate({ updates: [{ id: "d_1_sess-1", comment: "again" }], include: ["all"] }, logDeps)
+        ) as { updated: Array<Record<string, unknown>>; events?: string };
+        expect(all.updated[0]).toHaveProperty("options");
+        expect(all.events).toBeString();
 
         const polled = handleQuestionPoll({}, logDeps);
         expect(polled).not.toContain("Answered decisions not yet acknowledged");
