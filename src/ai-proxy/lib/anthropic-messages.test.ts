@@ -1,4 +1,5 @@
 import { describe, expect, it } from "bun:test";
+import { providerTypes } from "@app/ai-proxy/lib/providers/registry";
 import { compactionNote } from "@app/ai-proxy/lib/sessions/codex-compaction";
 import { acknowledgeCompactionDrop, createSessionRecord, readSessionRecord } from "@app/ai-proxy/lib/sessions/records";
 import { SafeJSON } from "@genesiscz/utils/json";
@@ -323,6 +324,49 @@ describe("anthropicMessagesPipeline: the conversation's cache key", () => {
 });
 
 describe("anthropicMessagesPipeline", () => {
+    it("lets only the provider whose native messages() recovers it pass an unrecoverable compaction", async () => {
+        const id = `gtc1.${crypto.randomUUID()}`;
+        const bodyText = SafeJSON.stringify({
+            model: PROXY_MODEL,
+            max_tokens: 32,
+            messages: [{ role: "user", content: compactionNote(id) }],
+        });
+        const status = async (providerId: string, native: boolean) => {
+            const provider = {
+                ...fakeProvider(() => new Response("{}", { headers: { "Content-Type": "application/json" } })),
+                id: providerId,
+                ...(native
+                    ? { messages: async () => new Response("{}", { headers: { "Content-Type": "application/json" } }) }
+                    : {}),
+            };
+            const result = await anthropicMessagesPipeline({
+                provider,
+                upstreamModel: UPSTREAM_MODEL,
+                proxyModel: PROXY_MODEL,
+                req: request(),
+                bodyText,
+            });
+
+            return result.response.status;
+        };
+        const answers: Record<string, number[]> = {};
+
+        for (const providerId of [...providerTypes(), "pigeon"]) {
+            answers[providerId] = [await status(providerId, true), await status(providerId, false)];
+        }
+
+        expect(answers).toEqual({
+            "grok-subscription": [400, 400],
+            "github-copilot-subscription": [400, 400],
+            "anthropic-subscription": [400, 400],
+            "openai-subscription": [200, 400],
+            "xai-api-key": [400, 400],
+            openai: [400, 400],
+            openrouter: [400, 400],
+            pigeon: [400, 400],
+        });
+    });
+
     it("blocks legacy marker-only compactions on other providers but forwards readable fallbacks", async () => {
         const provider = fakeProvider(
             () =>

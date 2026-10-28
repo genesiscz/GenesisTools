@@ -21,6 +21,8 @@ export const openRouterApiKeyDefinition: ProviderDefinition = {
         facts: null,
     },
     usage: { snapshot: null },
+    // No Responses upstream (it answers 501), yet its chat answer carries reasoning a client must render.
+    routes: { chatViaResponses: false, reshapesChat: true, recoversCompaction: false },
     upstreamEndpoints: null,
     create: (account) => OpenRouterApiKeyProvider.create(account),
     // Three segments plus the slash inside the OpenRouter id: the fully qualified form `resolve-model.ts` parses

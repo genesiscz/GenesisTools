@@ -75,6 +75,7 @@ export const githubCopilotSubscriptionDefinition: ProviderDefinition = {
             };
         },
     },
+    routes: { chatViaResponses: true, reshapesChat: false, recoversCompaction: false },
     upstreamEndpoints: GITHUB_COPILOT_UPSTREAM_ENDPOINTS,
     create: (account) => GithubCopilotSubscriptionProvider.create(account),
     suggestedModel: (account) => `${account.name}/github-copilot/claude-sonnet-4`,

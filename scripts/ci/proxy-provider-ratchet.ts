@@ -15,8 +15,4 @@ export const PROXY_PROVIDER_BRANCH_RATCHET: ReadonlyMap<string, number> = new Ma
     ["src/ai-proxy/commands/accounts-login.ts", 1],
     // The setup wizard's Cursor example is written for a Grok account.
     ["src/ai-proxy/commands/config-wizard.ts", 1],
-    // Recovering an unrecoverable compaction, which only the Codex provider's messages() can do.
-    ["src/ai-proxy/lib/anthropic-messages.ts", 1],
-    // The providers whose chat completions never go through the /responses translation.
-    ["src/ai-proxy/lib/translators/index.ts", 3],
 ]);

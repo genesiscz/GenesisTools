@@ -1,3 +1,4 @@
+import { providerDefinition } from "@app/ai-proxy/lib/providers/registry";
 import type { ProviderRequestContext, ProxyProvider } from "@app/ai-proxy/lib/providers/types";
 import { safeStreamControllerError } from "@app/ai-proxy/lib/safe-stream-controller";
 import {
@@ -635,7 +636,7 @@ export async function anthropicMessagesPipeline({
 
     const blocked = findUnrecoverableCompaction(parsed.messages);
 
-    if ((provider.id !== "openai-subscription" || !provider.messages) && blocked) {
+    if (blocked && !(provider.messages && providerDefinition(provider.id)?.routes.recoversCompaction)) {
         const recorded = recordId ? await noteBlockedCompaction(recordId, blocked) : undefined;
         const failure = errorResponse(400, compactionRecoveryMessage(recorded?.id, blocked));
         return {

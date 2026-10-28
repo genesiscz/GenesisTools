@@ -20,6 +20,7 @@ export const openAiApiKeyDefinition: ProviderDefinition = {
         facts: null,
     },
     usage: { snapshot: null },
+    routes: { chatViaResponses: true, reshapesChat: false, recoversCompaction: false },
     upstreamEndpoints: null,
     create: (account) => OpenAiApiKeyProvider.create(account),
     suggestedModel: (account) => `${account.name}/${account.providerSlug}/gpt-6.1-sol`,

@@ -29,6 +29,8 @@ export const anthropicSubscriptionDefinition: ProviderDefinition = {
         facts: null,
     },
     usage: { snapshot: null },
+    // No Responses upstream: chat completions is the only path.
+    routes: { chatViaResponses: false, reshapesChat: false, recoversCompaction: false },
     upstreamEndpoints: null,
     create: (account) => AnthropicSubscriptionProvider.create(account),
     // The short alias, not a dated id: the list always advertises `sonnet`, which follows the current model.

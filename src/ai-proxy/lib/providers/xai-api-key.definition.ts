@@ -27,6 +27,7 @@ export const xaiApiKeyDefinition: ProviderDefinition = {
         facts: null,
     },
     usage: { snapshot: null },
+    routes: { chatViaResponses: true, reshapesChat: false, recoversCompaction: false },
     upstreamEndpoints: null,
     create: (account) => XaiApiKeyProvider.create(account),
     suggestedModel: (account) => `${account.name}/${account.providerSlug}/grok-4.7`,
