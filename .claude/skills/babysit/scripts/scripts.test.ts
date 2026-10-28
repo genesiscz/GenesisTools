@@ -2607,6 +2607,20 @@ describe("round 7 review regressions", () => {
         expect(result.stdout.toString()).toContain('"live-session":2');
     });
 
+    test("reclaim --help and an unknown flag exit before any scan and write no plan", () => {
+        const s = reclaimFixture();
+        fs.mkdirSync(join(s.root, "dead-scratch"));
+        const help = s.execute(["--help"]);
+        expect(help.exitCode).toBe(0);
+        expect(help.stdout.toString()).toStartWith("usage: bun tmp-reclaim.ts");
+        expect(help.stdout.toString()).not.toContain("plan:");
+        const typo = s.execute(["--min-age-hour", "0"]);
+        expect(typo.exitCode).toBe(1);
+        expect(typo.stderr.toString()).toContain("unknown argument --min-age-hour");
+        const plans = fs.readdirSync(s.root, { recursive: true }).filter((name) => String(name).includes("plan"));
+        expect([...plans, ...fs.readdirSync(s.run)]).toEqual([]);
+    });
+
     test("reclaim apply rejects traversal, symlink ancestors and unplanned shapes before deletion", () => {
         const s = reclaimFixture();
         const outside = join(s.dir, "outside");
