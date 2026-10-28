@@ -2879,3 +2879,48 @@ describe("a changed effort on one Claude Code thread, on the Codex agent", () =>
         expect(events().filter((event) => event.kind === "cache-reset")).toEqual([]);
     });
 });
+
+describe("where a Codex request's prefix first differs from the thread's previous request", () => {
+    // Regression test: 2026-10-28-Research-Session8cf9eff2Slowdowns.sonnet.md Bug 4 — three full misses could not be
+    // explained, because nothing recorded what the upstream request looked like next to the one before it.
+    const claudeSession = "33333333-4444-4555-8666-777777777777";
+    const metadata = { user_id: SafeJSON.stringify({ session_id: claudeSession }) };
+
+    async function diffOf(body: Record<string, unknown>): Promise<unknown> {
+        globalThis.fetch = (async () => whamStreamResponse()) as unknown as typeof fetch;
+        const { OpenAiSubscriptionProvider } = await import("./openai-subscription");
+        const { prefixDiffFor } = await import("@app/ai-proxy/lib/usage/prefix-diff");
+        const provider = await OpenAiSubscriptionProvider.create(account);
+        const bodyText = SafeJSON.stringify({ model: "gpt-6.1-sol", stream: true, metadata, ...body });
+        const req = new Request("http://localhost/v1/messages", { method: "POST", body: bodyText });
+        const res = await provider.messages?.(req, "gpt-6.1-sol", bodyText);
+        await res?.text();
+        return prefixDiffFor(req);
+    }
+
+    const turn1 = [{ role: "user", content: "first question" }];
+    const turn2 = [...turn1, { role: "assistant", content: "first answer" }, { role: "user", content: "second" }];
+
+    it("names no change when the earlier request is a prefix, and the first changed input item otherwise", async () => {
+        const system = `thread ${crypto.randomUUID()}`;
+        const first = await diffOf({ system, messages: turn1 });
+        const grown = await diffOf({ system, messages: turn2 });
+        const edited = await diffOf({
+            system,
+            messages: [turn2[0], { role: "assistant", content: "an edited answer" }, turn2[2]],
+        });
+
+        expect(first).toEqual({ part: "first" });
+        expect(grown).toEqual({ part: "none" });
+        expect(edited).toEqual({ part: "input", index: 1, of: 3, itemType: "message" });
+    });
+
+    it("names the tools when the tool list changed", async () => {
+        const system = `thread ${crypto.randomUUID()}`;
+        const tool = (name: string) => ({ name, description: name, input_schema: { type: "object", properties: {} } });
+        await diffOf({ system, messages: turn1, tools: [tool("Bash")] });
+        const changed = await diffOf({ system, messages: turn2, tools: [tool("Bash"), tool("Write")] });
+
+        expect(changed).toEqual({ part: "tools" });
+    });
+});

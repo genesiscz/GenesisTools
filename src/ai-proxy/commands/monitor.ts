@@ -7,6 +7,7 @@ import { existsSync, readFileSync } from "node:fs";
 import { join } from "node:path";
 import { type CompactionEvent, compactionEventsPath } from "@app/ai-proxy/lib/sessions/compaction-events";
 import { getAiProxyStorage } from "@app/ai-proxy/lib/storage";
+import type { PrefixDiff } from "@app/ai-proxy/lib/usage/prefix-diff";
 import type { UsageRequestRecord } from "@app/ai-proxy/lib/usage/types";
 import { FileTailer } from "@genesiscz/utils/fs/file-tailer";
 import { SafeJSON } from "@genesiscz/utils/json";
@@ -100,6 +101,7 @@ export function formatRequest(record: UsageRequestRecord): string {
         record.compaction ? pc.magenta(record.path.includes("background") ? "BG-COMPACT" : "COMPACT") : "",
         record.failure ? pc.red(`failure=${record.failure}`) : "",
         record.rateLimited ? pc.yellow("rate-limited") : "",
+        input > 0 && cached / input < 0.5 ? missCause(record.prefix) : "",
     ]
         .filter(Boolean)
         .join(" ");
@@ -119,6 +121,23 @@ export function formatRequest(record: UsageRequestRecord): string {
     ]
         .filter(Boolean)
         .join("  ");
+}
+
+/** What a missed request changed against its thread's previous request (`prefix` in the ledger row). */
+function missCause(prefix: PrefixDiff | undefined): string {
+    if (!prefix || prefix.part === "first") {
+        return "";
+    }
+
+    if (prefix.part === "none") {
+        return pc.yellow("changed nothing (upstream miss)");
+    }
+
+    if (prefix.part === "input") {
+        return pc.yellow(`changed input#${prefix.index}/${prefix.of} ${prefix.itemType}`);
+    }
+
+    return pc.yellow(`changed ${prefix.part}`);
 }
 
 export function formatEvent(event: CompactionEvent): string {

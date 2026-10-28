@@ -117,4 +117,19 @@ describe("ai-proxy monitor", () => {
         expect(eventPasses(wasted, { errors: true, session: "abcdef" })).toBe(true);
         expect(eventPasses({ ...wasted, kind: "done" }, { errors: true })).toBe(false);
     });
+
+    it("names where a missed request's prefix changed, and says nothing on a cached one", async () => {
+        // Regression test: Bug 4 of the 8cf9eff2 analysis — a miss row did not say what changed.
+        const { formatRequest } = await import("./monitor");
+        const missed = {
+            ...record,
+            usage: { prompt_tokens: 400_000, completion_tokens: 10, cache_read_input_tokens: 0 },
+            prefix: { part: "input" as const, index: 2, of: 340, itemType: "reasoning" },
+        };
+        const upstream = { ...missed, prefix: { part: "none" as const } };
+
+        expect(formatRequest(missed)).toContain("changed input#2/340 reasoning");
+        expect(formatRequest(upstream)).toContain("changed nothing (upstream miss)");
+        expect(formatRequest({ ...record, prefix: { part: "tools" as const } })).not.toContain("changed");
+    });
 });

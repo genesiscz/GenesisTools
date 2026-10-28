@@ -100,6 +100,7 @@ import {
 } from "@app/ai-proxy/lib/translators/formats/anthropic/reasoning-envelope";
 import { responsesToChat } from "@app/ai-proxy/lib/translators/responses-to-chat";
 import type { AiProxyAccountConfig, ThinkingPresentationMode, UsageSummary } from "@app/ai-proxy/lib/types";
+import { notePrefix, setPrefixDiff } from "@app/ai-proxy/lib/usage/prefix-diff";
 import { getTodayUsageSummary, getUsageSummarySince, recordUsageRequest } from "@app/ai-proxy/lib/usage/store";
 import { extractPlanType, WHAM_BASE_URL } from "@genesiscz/utils/ai/openai/codex-auth";
 import { type CodexModelInfo, resolveCodexEffort } from "@genesiscz/utils/ai/openai/codex-models";
@@ -1112,6 +1113,20 @@ export class OpenAiSubscriptionProvider implements ProxyProvider {
                 "ai-proxy: reasoning replay off (AI_PROXY_REASONING_REPLAY=drop)"
             );
             responsesBody = stripReasoningInput(responsesBody);
+        }
+
+        // Where this request first differs from the thread's previous one: the ledger row names a miss's cause.
+        if (claudeSessionId) {
+            setPrefixDiff(
+                req,
+                notePrefix(backgroundKey(claudeSessionId, parsed.system), {
+                    model: concreteModel,
+                    effort: isObject(responsesBody.reasoning) ? String(responsesBody.reasoning.effort ?? "") : "",
+                    instructions: responsesBody.instructions,
+                    tools: responsesBody.tools,
+                    input: Array.isArray(responsesBody.input) ? responsesBody.input : [],
+                })
+            );
         }
 
         let response = await this.respond(req, model, responsesBody, client);

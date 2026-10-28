@@ -8,6 +8,7 @@ import {
     extractLatestUsageFromSse,
     extractUsageFromJsonBody,
 } from "@app/ai-proxy/lib/usage/extract";
+import type { PrefixDiff } from "@app/ai-proxy/lib/usage/prefix-diff";
 import { recordUsageRequest } from "@app/ai-proxy/lib/usage/store";
 import { writeTranscript } from "@app/ai-proxy/lib/usage/transcripts";
 import type { RequestTags } from "@app/ai-proxy/lib/usage/types";
@@ -38,6 +39,7 @@ export function trackCompletedRequest(input: {
     compaction?: boolean;
     effort?: string;
     effortSource?: EffortSource;
+    prefix?: PrefixDiff;
 }): void {
     const stream = input.stream ?? bodyWantsStream(input.bodyText);
     let usage = stream ? extractLatestUsageFromSse(input.responseBody) : extractUsageFromJsonBody(input.responseBody);
@@ -113,6 +115,7 @@ export function trackCompletedRequest(input: {
         ...(input.compaction ? { compaction: true } : {}),
         ...(input.effort ? { effort: input.effort } : {}),
         ...(input.effortSource ? { effortSource: input.effortSource } : {}),
+        ...(input.prefix ? { prefix: input.prefix } : {}),
     };
 
     recordUsageRequest(record);
@@ -162,6 +165,7 @@ export function scheduleUsageTracking(input: {
     compaction?: boolean;
     effort?: string;
     effortSource?: EffortSource;
+    prefix?: PrefixDiff;
 }): void {
     void input.responseBody
         .then(async (responseBody) => {
