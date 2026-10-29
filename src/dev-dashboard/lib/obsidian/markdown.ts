@@ -100,6 +100,61 @@ const INLINE_TAG_RE = /^#([A-Za-z][\w/-]*)(?=$|[\s.,;:!?)\]])/;
 const SAFE_LINK_SCHEME_RE = /^(?:https?:|mailto:|tel:|#|\/|\.{1,2}\/|[^:]*$)/i;
 const SAFE_IMG_SRC_RE = /^(?:https?:|data:image\/(?:png|jpe?g|gif|webp|svg\+xml|avif);|#|\/|\.{1,2}\/|[^:]*$)/i;
 
+interface ImageSize {
+    width?: string;
+    height?: string;
+}
+
+// Obsidian's size suffix on an image alt or embed label: `|360` or `|360x200`.
+const OBSIDIAN_SIZE_RE = /^(?:(.*)\|)?(\d{1,5})(?:x(\d{1,5}))?$/s;
+const HTML_DIMENSION_RE = /^(\d{1,5})(%?)$/;
+// The one raw HTML tag a note may write: `<img>` with src, alt, width and height, each quoted.
+const HTML_IMG_RE = /^<img((?:\s+(?:src|alt|width|height)\s*=\s*(?:"[^"<>]*"|'[^'<>]*'))*)\s*\/?>$/i;
+const HTML_IMG_ATTR_RE = /(src|alt|width|height)\s*=\s*(?:"([^"]*)"|'([^']*)')/gi;
+
+/** `alt|360x200` → the alt without its suffix and the size; `alt` alone stays as it is. */
+function splitObsidianSize(text: string): { label: string; size: ImageSize | undefined } {
+    const match = OBSIDIAN_SIZE_RE.exec(text.trim());
+
+    if (!match) {
+        return { label: text, size: undefined };
+    }
+
+    return { label: (match[1] ?? "").trim(), size: { width: match[2], height: match[3] } };
+}
+
+/**
+ * A pixel width is the `width` attribute. A percent goes into a style, since `width="50%"` is not valid HTML,
+ * and so does every height: the page's `img { height: auto }` would otherwise cancel a height attribute.
+ */
+function sizeAttrs(size: ImageSize | undefined): string {
+    if (!size) {
+        return "";
+    }
+
+    const attrs: string[] = [];
+    const styles: string[] = [];
+
+    for (const [name, value] of [
+        ["width", size.width],
+        ["height", size.height],
+    ] as const) {
+        const match = value ? HTML_DIMENSION_RE.exec(value) : null;
+
+        if (!match) {
+            continue;
+        }
+
+        if (name === "width" && !match[2]) {
+            attrs.push(`width="${match[1]}"`);
+        } else {
+            styles.push(`${name}:${match[1]}${match[2] || "px"}`);
+        }
+    }
+
+    return [...attrs, ...(styles.length > 0 ? [`style="${styles.join(";")}"`] : [])].map((a) => ` ${a}`).join("");
+}
+
 function sanitizeUrl(href: string, allow: RegExp): string {
     // Strip ASCII control chars/whitespace that obfuscate the scheme
     // (e.g. `java\tscript:`), then enforce the scheme allowlist.
@@ -123,12 +178,12 @@ function isLocalHref(href: string): boolean {
 const PANEL_ICONS: Record<string, string> = { json: "{ }", markdown: "¶", code: "</>" };
 
 /** `labelHtml` is already escaped: link text comes out of marked as HTML, embed labels are escaped by the caller. */
-function renderAsset(asset: ResolvedAsset, labelHtml: string, inline: boolean): string {
+function renderAsset(asset: ResolvedAsset, labelHtml: string, inline: boolean, size?: ImageSize): string {
     const url = escapeHtml(asset.url);
 
     if (asset.kind === "image") {
         if (inline) {
-            return `<img src="${url}" alt="${labelHtml}" class="dd-md-asset-img" loading="lazy" />`;
+            return `<img src="${url}" alt="${labelHtml}" class="dd-md-asset-img"${sizeAttrs(size)} loading="lazy" />`;
         }
 
         return `<a href="${url}" class="dd-md-asset-link">${labelHtml}</a>`;
@@ -301,10 +356,17 @@ function embedExtension(opts: RenderOptions): MarkedExtension {
                     const asset = opts.resolveAsset?.(t.target) ?? null;
 
                     if (asset) {
-                        // `![[x.webp|300]]` carries a size, not a caption, so images keep the file name as alt.
-                        const label = asset.kind === "image" || t.display === t.target ? asset.name : t.display;
+                        // `![[x.webp|300]]` carries a size, not a caption; `![[x.webp|caption|300]]` carries both.
+                        const { label: caption, size } =
+                            asset.kind === "image" && t.display !== t.target
+                                ? splitObsidianSize(t.display)
+                                : { label: t.display, size: undefined };
+                        const label =
+                            t.display === t.target || caption === "" || (asset.kind === "image" && !size)
+                                ? asset.name
+                                : caption;
 
-                        return renderAsset(asset, escapeHtml(label), true);
+                        return renderAsset(asset, escapeHtml(label), true, size);
                     }
 
                     const target = escapeHtml(t.target);
@@ -602,6 +664,58 @@ function highlightCode(code: string, language: string): string {
     }
 }
 
+interface ImageRequest {
+    href: string;
+    alt: string;
+    title?: string | null;
+    size?: ImageSize;
+}
+
+function parseHtmlImg(text: string): ImageRequest | null {
+    const match = HTML_IMG_RE.exec(text);
+
+    if (!match) {
+        return null;
+    }
+
+    const attrs = new Map<string, string>();
+
+    for (const attr of match[1].matchAll(HTML_IMG_ATTR_RE)) {
+        attrs.set(attr[1].toLowerCase(), attr[2] ?? attr[3] ?? "");
+    }
+
+    const src = attrs.get("src");
+
+    if (!src) {
+        return null;
+    }
+
+    return {
+        href: src,
+        alt: attrs.get("alt") ?? "",
+        size: { width: attrs.get("width"), height: attrs.get("height") },
+    };
+}
+
+function renderImage(opts: RenderOptions, image: ImageRequest): string {
+    const local = isLocalHref(image.href);
+
+    if (local && opts.inertLocalLinks) {
+        return `<span class="dd-md-inert-link">${escapeHtml(image.alt || image.href)}</span>`;
+    }
+
+    const asset = local ? (opts.resolveAsset?.(image.href) ?? null) : null;
+
+    if (asset) {
+        return renderAsset(asset, escapeHtml(image.alt || asset.name), true, image.size);
+    }
+
+    const src = escapeHtml(sanitizeUrl(image.href, SAFE_IMG_SRC_RE));
+    const title = image.title ? ` title="${escapeHtml(image.title)}"` : "";
+
+    return `<img src="${src}" alt="${escapeHtml(image.alt)}"${title}${sizeAttrs(image.size)} />`;
+}
+
 function buildMarked(opts: RenderOptions): Marked {
     return new Marked(
         { gfm: true, breaks: false },
@@ -615,7 +729,17 @@ function buildMarked(opts: RenderOptions): Marked {
             renderer: {
                 // A comment-only token (`<!-- md:include … -->` around an excerpt, a json2md stamp, an
                 // `<!-- updated … -->` note) is for the file, not the reader: Obsidian and Genesis hide it too.
-                html: ({ text }) => (text.replace(/<!--[\s\S]*?-->/g, "").trim() === "" ? "" : escapeHtml(text)),
+                html: ({ text }) => {
+                    if (text.replace(/<!--[\s\S]*?-->/g, "").trim() === "") {
+                        return "";
+                    }
+
+                    // `<img src alt width height>` is rebuilt from its parsed values like a markdown image;
+                    // any other attribute, or any other tag, stays escaped text.
+                    const img = parseHtmlImg(text.trim());
+
+                    return img ? renderImage(opts, img) : escapeHtml(text);
+                },
                 link(token: Tokens.Link): string {
                     const local = isLocalHref(token.href);
 
@@ -642,22 +766,9 @@ function buildMarked(opts: RenderOptions): Marked {
                     return `<a href="${href}"${title}>${inner}</a>`;
                 },
                 image(token: Tokens.Image): string {
-                    const local = isLocalHref(token.href);
+                    const { label, size } = splitObsidianSize(token.text);
 
-                    if (local && opts.inertLocalLinks) {
-                        return `<span class="dd-md-inert-link">${escapeHtml(token.text || token.href)}</span>`;
-                    }
-
-                    const asset = local ? (opts.resolveAsset?.(token.href) ?? null) : null;
-
-                    if (asset) {
-                        return renderAsset(asset, escapeHtml(token.text || asset.name), true);
-                    }
-
-                    const src = escapeHtml(sanitizeUrl(token.href, SAFE_IMG_SRC_RE));
-                    const title = token.title ? ` title="${escapeHtml(token.title)}"` : "";
-
-                    return `<img src="${src}" alt="${escapeHtml(token.text)}"${title} />`;
+                    return renderImage(opts, { href: token.href, alt: label, title: token.title, size });
                 },
             },
         },
