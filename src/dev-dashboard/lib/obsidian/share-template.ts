@@ -286,7 +286,7 @@ th { color: var(--dd-text); font-weight: 600; }
 tr:last-child td { border-bottom: 0; }
 tbody tr:nth-child(even) { background: rgba(255, 255, 255, 0.015); }
 
-img { max-width: 100%; height: auto; border-radius: 6px; }
+img { max-width: 100%; height: auto; border-radius: 6px; object-fit: contain; }
 
 .dd-md-meta {
     display: flex;

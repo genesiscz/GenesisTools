@@ -253,3 +253,55 @@ describe("details and summary", () => {
         expect(html.match(/dd-src-block/g)?.length).toBe(1);
     });
 });
+
+describe("image size", () => {
+    const asset = {
+        resolveWikilink: () => null,
+        resolveAsset: (target: string) =>
+            target.endsWith(".webp") ? { url: `/a/${target}`, kind: "image" as const, name: target } : null,
+    };
+
+    test("![alt|360](x) and ![alt|360x200](x) size a local image and drop the suffix from the alt", () => {
+        const { html } = renderMarkdown("![shot|360](x.webp)\n\n![shot|360x200](x.webp)", asset);
+
+        expect(html).toContain('<img src="/a/x.webp" alt="shot" class="dd-md-asset-img" width="360" loading="lazy" />');
+        expect(html).toContain('alt="shot" class="dd-md-asset-img" width="360" style="height:200px"');
+    });
+
+    test("![[x|360]] and ![[x|caption|360x200]] size an embed", () => {
+        const { html } = renderMarkdown("![[x.webp|360]]\n\n![[x.webp|Before|360x200]]\n\n![[x.webp|Caption]]", asset);
+
+        expect(html).toContain('alt="x.webp" class="dd-md-asset-img" width="360" loading');
+        expect(html).toContain('alt="Before" class="dd-md-asset-img" width="360" style="height:200px"');
+        expect(html).toContain('alt="x.webp" class="dd-md-asset-img" loading');
+    });
+
+    test("a remote image takes the same size", () => {
+        const { html } = renderMarkdown("![logo|120](https://example.org/l.png)", noop);
+
+        expect(html).toContain('<img src="https://example.org/l.png" alt="logo" width="120" />');
+    });
+
+    test("<img src alt width height> renders as an image, local src resolved, percent as a style", () => {
+        const { html } = renderMarkdown(
+            'Inline <img src="x.webp" alt="half" width="50%"> here\n\n<img src=\'https://example.org/l.png\' width="80" height="40">',
+            asset
+        );
+
+        expect(html).toContain('<img src="/a/x.webp" alt="half" class="dd-md-asset-img" style="width:50%" loading');
+        expect(html).toContain('<img src="https://example.org/l.png" alt="" width="80" style="height:40px" />');
+    });
+
+    test("<img> with any other attribute or a script src stays escaped or neutered", () => {
+        const { html } = renderMarkdown(
+            '<img src="x.webp" onerror="alert(1)">\n\n<img src="javascript:alert(1)" width="10">\n\n<img src="x.webp" style="position:fixed">',
+            asset
+        );
+
+        expect(html).toContain("&lt;img src=&quot;x.webp&quot; onerror");
+        expect(html).toContain('<img src="#" alt="" width="10" />');
+        expect(html).toContain("&lt;img src=&quot;x.webp&quot; style");
+        expect(html).not.toContain('onerror="');
+        expect(html).not.toContain("javascript:");
+    });
+});
