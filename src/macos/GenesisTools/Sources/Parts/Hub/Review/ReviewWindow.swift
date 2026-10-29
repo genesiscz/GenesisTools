@@ -2526,7 +2526,7 @@ struct ReviewRootView: View {
         let room = innerWidth * Self.listFraction
         return SideSplit(panelEdge: .trailing, maxFraction: Self.listFraction) {
             diffColumn
-                .freezesWidthWhileResizing(heavy: false)
+                .freezesWidthWhileResizing(heavy: false, neighbourOf: "review.files")
                 // The diff's own width decides; only a crossing of the threshold re-renders.
                 .onGeometryChange(for: Bool.self, of: { $0.size.width > 0 && $0.size.width < Self.wrapBelow }) { model.fitWrap(narrow: $0) }
             if showsFileList {
@@ -2597,6 +2597,8 @@ struct ReviewRootView: View {
                     .frame(maxWidth: .infinity, maxHeight: .infinity)
                 } else {
                     RendererHost(renderer: model.renderer)
+                        // The threads list above resizes: the page lays out once at its final height and slides.
+                        .flexiblePane(neighbourOf: "review.prThreads")
                         .onGeometryChange(for: Int.self, of: { Int($0.frame(in: .global).minY.rounded()) }) { HubBench.note("review.diff.top", $0) }
                         .overlay {
                             // The first load of this review: the page has nothing to draw yet.

@@ -145,6 +145,16 @@ extension View {
         }
     }
 
+    /// The same for a rich tooltip (`TooltipContent`).
+    @ViewBuilder
+    func liveTooltip(_ live: Bool, _ content: TooltipContent?) -> some View {
+        if live, let content {
+            instantTooltip(content)
+        } else {
+            self
+        }
+    }
+
     /// A control at rest, drawn without its `Button`, hover sensor and tooltip: still a button to VoiceOver and the
     /// accessibility clients, which press it through its default action.
     func restingButton(enabled: Bool, action: @escaping () -> Void) -> some View {

@@ -184,6 +184,8 @@ enum HubBench {
             if wants("agents"), model.mode == .agents { addAgentsRefresh() }
             // From another mode (a session's transcript open), opt-in: GENESIS_HUB_BENCH_ONLY=inbox.
             if model.mode == .timeline ? wants("inbox") : model.mode != .inbox && only.contains("inbox") { addInboxSwitch() }
+            // Opt-in: every mode in turn, what each switch costs on the main thread.
+            if only.contains("modes") { addModeSweep() }
             // Opt-in only (not in the default run): it scrolls the transcript, which loads rows.
             if only.contains("scroll"), model.panes.contains(.transcript) { addTranscriptScroll() }
             if only.contains("open"), model.mode == .sessions, model.panes.contains(.transcript) { addTranscriptOpen() }
@@ -265,6 +267,21 @@ enum HubBench {
             for _ in 0..<3 {
                 steps.append(Step(scenario: "inbox", action: { model.setMode(.inbox) }, delay: 1.5))
                 steps.append(Step(scenario: "inbox.back", action: { model.setMode(from) }, delay: 1.5))
+            }
+        }
+
+        /// `modes` (opt-in): every mode in turn, twice, 2 s apart. The busy time after each switch is what the switch
+        /// costs on the main thread: the old mode's views go, the new mode's arrive, and its first data renders land.
+        /// One scenario per mode (`mode.prs`, …), so a slow mode is named; the second round shows what a mode's
+        /// caches save. Under `sample` it is the way to profile a switch off screen.
+        private func addModeSweep() {
+            let model = model
+            let modes: [HubMode] = [.worktrees, .prs, .inbox, .timeline, .agents, .sessions]
+            for mode in modes { order.append("mode.\(mode.rawValue)") }
+            for _ in 0..<2 {
+                for mode in modes {
+                    steps.append(Step(scenario: "mode.\(mode.rawValue)", action: { model.setMode(mode) }, delay: 2.0))
+                }
             }
         }
 

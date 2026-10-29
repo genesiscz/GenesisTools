@@ -112,9 +112,17 @@ public enum StallTest {
 /// the layout changes the width, and SwiftUI runs transaction after transaction inside one run-loop pass.
 /// The hub's main thread sat in such a pass for over 115 s on the PRs view (hang 2026-10-08 01:46,
 /// `GraphHost.flushTransactions` → `RootGeometry` → `StackLayout.sizeThatFits`). Whole points only, so a
-/// sub-pixel see-saw writes nothing, and more than 30 writes in a second log the label and its values.
+/// sub-pixel see-saw writes nothing. More than 30 writes in a second that see-saw (the loop went 302, 308,
+/// 302, 308: a reversal on nearly every write) log the label and its values. A drag writes as many, since
+/// the panels reflow per step, but runs one way and back, a few reversals a second at most; the count alone
+/// named every sidebar drag a loop (2026-10-29).
 public enum LayoutLoopWatch {
     nonisolated(unsafe) private static var windows: [String: (start: CFAbsoluteTime, values: [Int], logged: Bool)] = [:]
+
+    /// Writes in one second above which a see-saw is a loop.
+    public static let writesPerSecond = 30
+    /// Direction reversals in the window above which the writes see-saw.
+    public static let loopReversals = 8
 
     public static func note(_ label: String, _ value: CGFloat) {
         let now = CFAbsoluteTimeGetCurrent()
@@ -123,11 +131,30 @@ public enum LayoutLoopWatch {
             window = (now, [], false)
         }
         window.values.append(Int(value))
-        if window.values.count > 30, !window.logged {
+        if !window.logged, isLoop(window.values) {
             window.logged = true
-            PerfSpans.log("layout.loop \(label): \(window.values.count) width writes in 1 s, last \(window.values.suffix(8).map(String.init).joined(separator: ","))")
+            PerfSpans.log("layout.loop \(label): \(window.values.count) width writes in 1 s, \(reversals(window.values)) reversals, last \(window.values.suffix(8).map(String.init).joined(separator: ","))")
         }
         windows[label] = window
+    }
+
+    /// True for the writes of one second that are a loop: more than `writesPerSecond` of them, see-sawing.
+    public static func isLoop(_ values: [Int]) -> Bool {
+        values.count > writesPerSecond && reversals(values) >= loopReversals
+    }
+
+    /// How many times the values changed direction (a repeated value changes nothing).
+    public static func reversals(_ values: [Int]) -> Int {
+        var count = 0
+        var direction = 0
+        for index in values.indices.dropFirst() {
+            let step = values[index] - values[index - 1]
+            if step == 0 { continue }
+            let sign = step > 0 ? 1 : -1
+            if direction != 0, sign != direction { count += 1 }
+            direction = sign
+        }
+        return count
     }
 }
 
@@ -138,6 +165,19 @@ extension View {
             LayoutLoopWatch.note(label, value)
             if width.wrappedValue != value {
                 width.wrappedValue = value
+            }
+        }
+    }
+
+    /// The same watch, written into `narrow` only when the width crosses `threshold`: a view that only asks
+    /// "is there room for the titles" re-renders at the crossing, not on every point of a sidebar drag (the
+    /// hub's mode picker re-rendered on each of a drag's 140 steps for a flag that never changed, 2026-10-29).
+    public func measuredWidth(_ label: String, narrowerThan threshold: CGFloat, _ narrow: Binding<Bool>) -> some View {
+        onGeometryChange(for: CGFloat.self, of: { $0.size.width.rounded() }) { value in
+            LayoutLoopWatch.note(label, value)
+            let next = value < threshold
+            if narrow.wrappedValue != next {
+                narrow.wrappedValue = next
             }
         }
     }

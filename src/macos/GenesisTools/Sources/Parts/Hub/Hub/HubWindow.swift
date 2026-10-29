@@ -2238,24 +2238,24 @@ struct HubRootView: View {
                 // until release, it left a dark gap or cut the content off for the whole drag (Martin,
                 // 2026-10-29: "fix this all resizing issue pls"); the per-step cost is in the commit.
                 PRsMain(model: model, prs: model.prs)
-                    .flexiblePane()
+                    .flexiblePane(neighbourOf: "hub.sidebar")
             } else if model.mode == .inbox {
                 // InboxMain with its ⌘F find (Hub/HubInboxFind.swift).
                 InboxFindHost(model: model, inbox: model.inbox)
-                    .flexiblePane()
+                    .flexiblePane(neighbourOf: "hub.sidebar")
             } else if model.mode == .timeline {
                 TimelineMain(model: model, timeline: model.timeline)
-                    .flexiblePane()
+                    .flexiblePane(neighbourOf: "hub.sidebar")
             } else if model.mode == .agents {
                 // Held like Sessions: the transcript keeps its layout while the sidebar drags.
                 AgentsMain(model: model, agents: model.agents)
             } else if model.mode == .worktrees {
                 if let path = model.selectedWorktree, let worktree = model.worktrees.first(where: { $0.path == path }) {
                     WorktreeDetailView(model: model, worktree: worktree)
-                        .flexiblePane()
+                        .flexiblePane(neighbourOf: "hub.sidebar")
                 } else if model.selectedWorktree == WorktreeCleanup.selectionID, !model.loadingWorktrees {
                     WorktreeCleanupView(model: model)
-                        .flexiblePane()
+                        .flexiblePane(neighbourOf: "hub.sidebar")
                 } else if model.loadingWorktrees {
                     PaneSkeleton("Finding worktrees")
                 } else {
@@ -2393,11 +2393,10 @@ private struct HubModePicker: View {
         .inbox: "tray", .timeline: "clock", .agents: "person.2",
     ]
 
-    /// The row's width; six titles need about 340 pt at the small control size.
-    @State private var width: CGFloat = 360
+    /// Six titles need about 340 pt at the small control size; narrower, the row shows icons.
+    @State private var icons = false
 
     var body: some View {
-        let icons = width < 340
         HStack(spacing: 1) {
             ForEach(HubMode.allCases, id: \.self) { mode in
                 segment(mode, icons: icons)
@@ -2407,7 +2406,7 @@ private struct HubModePicker: View {
         .background(RoundedRectangle(cornerRadius: 7).fill(Color.white.opacity(0.06)))
         .overlay(RoundedRectangle(cornerRadius: 7).stroke(ReviewPalette.hairline))
         .frame(maxWidth: .infinity)
-        .measuredWidth("hub.modes", $width)
+        .measuredWidth("hub.modes", narrowerThan: 340, $icons)
         .accessibilityElement(children: .contain)
         .accessibilityLabel(Text("Mode"))
     }
