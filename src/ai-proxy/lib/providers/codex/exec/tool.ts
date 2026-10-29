@@ -1,7 +1,6 @@
 import { join } from "node:path";
-import { execBashInput, parseExecBashCommand } from "@app/ai-proxy/lib/providers/codex/exec/bash-command";
+import { parseExecBashCommand } from "@app/ai-proxy/lib/providers/codex/exec/bash-command";
 import { EXEC_DESCRIPTION, EXEC_GRAMMAR } from "@app/ai-proxy/lib/providers/codex/exec/description";
-import type { CustomToolMapping } from "@app/ai-proxy/lib/translators/formats/anthropic/grok-responses-to-anthropic";
 import type { SessionsInConfig } from "@app/ai-proxy/lib/types";
 import { isObject } from "@genesiscz/utils/object";
 
@@ -29,8 +28,6 @@ export interface ExecToolBridge {
     readonly definition: JsonRecord;
     /** A Bash `tool_use` of the history as the `custom_tool_call` the model made, or undefined for any other call. */
     replayItem(toolUse: JsonRecord): JsonRecord | undefined;
-    /** The model's `exec` call as the Bash call Claude Code runs: the runner, fed the script verbatim. */
-    clientCall(name: string): CustomToolMapping | undefined;
 }
 
 /**
@@ -41,14 +38,9 @@ export interface ExecToolBridge {
 export function execToolBridge({
     tools,
     sessionsIn,
-    sessionId,
-    model,
 }: {
     tools: unknown;
     sessionsIn: SessionsInConfig | undefined;
-    /** The Claude Code session, whose `store` and `load` its scripts share. */
-    sessionId?: string;
-    model?: string;
 }): ExecToolBridge | undefined {
     if (sessionsIn?.claude?.providers?.codex?.execTool === false) {
         return undefined;
@@ -75,13 +67,5 @@ export function execToolBridge({
                 ? undefined
                 : { type: "custom_tool_call", call_id: toolUse.id, name: EXEC_TOOL_NAME, input: js };
         },
-        clientCall: (name) =>
-            name === EXEC_TOOL_NAME
-                ? {
-                      name: EXEC_CLIENT_TOOL,
-                      input: (js) =>
-                          execBashInput({ js, bun: process.execPath, runner: EXEC_RUNNER_PATH, sessionId, model }),
-                  }
-                : undefined,
     };
 }
