@@ -1,9 +1,10 @@
+import { homedir } from "node:os";
 import { isInteractive } from "@genesiscz/utils/cli";
 import { logger } from "@genesiscz/utils/logger";
 import { type GenesisAppRpcOutcome, genesisAppRpc } from "@genesiscz/utils/macos/genesis-app-rpc";
 import * as p from "@genesiscz/utils/prompts/p";
 import type { RmApproval } from "./config";
-import type { RmCaller } from "./rules";
+import type { RmCaller, RmTargetKind } from "./rules";
 
 export type ApprovalVia = "tty" | "dialog" | "touch-id" | "password";
 
@@ -13,14 +14,57 @@ export interface ApprovalOutcome {
     detail: string;
 }
 
+/** One path of a request as the approval window shows it: a row with its icon, size and reason. */
+export interface ApprovalItem {
+    /** Where it was, the path the request names. */
+    path: string;
+    /** What is there now (`missing` when it is gone). */
+    kind: RmTargetKind;
+    /** Its allocated size; absent when not measured (a missing path, a root request). */
+    bytes?: number;
+    /** A folder with nothing in it. */
+    empty?: boolean;
+    /** Where an aside move put it while it waits; the window reveals this copy. */
+    storedAt?: string;
+    /** One short sentence for a person: why no rule allowed it. */
+    reason: string;
+}
+
+/** The agent that asked, as the window names it. */
+export interface ApprovalAsker {
+    /** The agent's display name, e.g. "Claude Code". */
+    agent: string;
+    session?: string;
+    project?: string;
+    branch?: string;
+}
+
+/** The request behind a prompt, so the window can show rows instead of the terminal's lines. */
+export interface ApprovalRequestInfo {
+    /** The request id, or null for a run a person confirms at once (`tools rm <paths>` on a terminal). */
+    id: string | null;
+    kind: "delete" | "root";
+    /** The agent's own words for why. */
+    why: string | null;
+    /** The folder the request was made in. */
+    cwd: string;
+    /** Minutes the trash keeps the items before the drain deletes them. */
+    graceMinutes?: number;
+    asker?: ApprovalAsker;
+    items: ApprovalItem[];
+}
+
 export interface ApprovalPrompt {
     title: string;
+    /** The terminal's lines; also what an app build without `request` support shows. */
     lines: string[];
     /** What a person types on a terminal to confirm (the request id, or `delete`). */
     code: string;
     caller: RmCaller;
     /** The person's `approval` setting; `auto` when not given. */
     approval?: RmApproval;
+    /** Set for a delete or root request; settings changes (config, roots, profiles) have only lines. */
+    request?: ApprovalRequestInfo;
 }
 
 /** The app's window answered (`outcome`), or there is no app that offers it (`missing`). */
@@ -92,12 +136,112 @@ function isRmApproveReply(value: unknown): value is RmApproveReply {
 }
 
 function callerLabel(caller: RmCaller): string | undefined {
-    if (!caller.isInAgent) {
+    const asker = approvalAsker(caller);
+
+    if (!asker) {
         return undefined;
     }
 
-    const session = caller.sessionTitle ?? caller.sessionId?.slice(0, 8);
-    return session ? `${caller.agent} · ${session}` : caller.agent;
+    const session = asker.session ?? asker.project;
+    return session ? `${asker.agent} · ${session}` : asker.agent;
+}
+
+const AGENT_NAMES: Record<string, string> = {
+    "claude-code": "Claude Code",
+    codex: "Codex",
+    grok: "Grok",
+    cursor: "Cursor",
+    gemini: "Gemini",
+};
+
+/** The agent's name as a person reads it: "Claude Code" for `claude-code`; an unknown one keeps its id. */
+export function agentDisplayName(agent: string): string {
+    return AGENT_NAMES[agent] ?? agent;
+}
+
+/** Who asked, from the request's caller; nothing for a person. */
+export function approvalAsker(caller: RmCaller | null | undefined): ApprovalAsker | undefined {
+    if (!caller?.isInAgent) {
+        return undefined;
+    }
+
+    return {
+        agent: agentDisplayName(caller.agent),
+        session: caller.sessionTitle ?? undefined,
+        project: caller.project ?? undefined,
+        branch: caller.branch ?? undefined,
+    };
+}
+
+function tildePath(path: string, home = homedir()): string {
+    if (path === home) {
+        return "~";
+    }
+
+    return path.startsWith(`${home}/`) ? `~${path.slice(home.length)}` : path;
+}
+
+function countOf(count: string, one: string, many: string): string {
+    return `${count} ${count === "1" ? one : many}`;
+}
+
+/**
+ * The rule's reason as one short sentence for the approval window. The rule table words its reasons for the
+ * terminal ("no rule allows it: a preset, this session's scratch or own files, or a trusted root"); a person deciding
+ * in the window needs what that means for this path.
+ */
+export function approvalItemReason(rule: string, reason: string, home = homedir()): string {
+    if (rule === "default") {
+        return "Outside this session's scratch, its own files and the trusted folders";
+    }
+
+    if (rule === "root") {
+        return "Agents may delete anything inside a trusted folder without asking";
+    }
+
+    if (rule === "git-history") {
+        return "A repository's .git folder: its history and unpushed commits go with it";
+    }
+
+    const untracked = /^(\d+) untracked file\(s\) git does not ignore in (.+): may be new work$/.exec(reason);
+
+    if (rule === "git-untracked" && untracked) {
+        const [, count = "0", tree = ""] = untracked;
+        return `Holds ${countOf(count, "file", "files")} git does not track in ${tildePath(tree, home)}, which may be new work`;
+    }
+
+    const tracked = /^(\d+) file\(s\) tracked by git in (.+?):/.exec(reason);
+
+    if (rule === "git-tracked" && tracked) {
+        const [, count = "0", tree = ""] = tracked;
+        return `Holds ${countOf(count, "file", "files")} tracked by git in ${tildePath(tree, home)}`;
+    }
+
+    const nested = /^holds (\d+) git repositor(?:y|ies), e\.g\. (.+)$/.exec(reason);
+
+    if (rule === "nested-repos" && nested) {
+        const [, count = "0", example = ""] = nested;
+        return `Holds ${countOf(count, "git repository", "git repositories")}, such as ${tildePath(example, home)}`;
+    }
+
+    const text = reason.trim().replace(/\.$/, "");
+    return text.charAt(0).toUpperCase() + text.slice(1);
+}
+
+/** What `rm.approve` sends the app: the terminal's lines for older builds, plus the request's rows when there is one. */
+export function appApproveParams(prompt: ApprovalPrompt, cwd = process.cwd()): Record<string, unknown> {
+    const params: Record<string, unknown> = {
+        title: prompt.title,
+        lines: prompt.lines,
+        caller: callerLabel(prompt.caller),
+        folder: prompt.request?.cwd ?? cwd,
+    };
+
+    if (prompt.request) {
+        params.request = prompt.request;
+    }
+
+    return params;
 }
 
 /** Only an exact `allow` approves; any other reply, and any failure that is not "no app", is a no. */
@@ -126,11 +270,10 @@ export function appApprovalFromReply(outcome: GenesisAppRpcOutcome<RmApproveRepl
 }
 
 async function askApp(prompt: ApprovalPrompt): Promise<AppApproval> {
-    const outcome = await genesisAppRpc<RmApproveReply>(
-        "rm.approve",
-        { title: prompt.title, lines: prompt.lines, caller: callerLabel(prompt.caller), folder: process.cwd() },
-        { timeoutMs: APP_TIMEOUT_MS, isResult: isRmApproveReply }
-    );
+    const outcome = await genesisAppRpc<RmApproveReply>("rm.approve", appApproveParams(prompt), {
+        timeoutMs: APP_TIMEOUT_MS,
+        isResult: isRmApproveReply,
+    });
     const answer = appApprovalFromReply(outcome);
     logger.debug({ answer }, "rm: approval window answered");
     return answer;

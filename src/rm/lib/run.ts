@@ -3,7 +3,9 @@ import { isInteractive, toolCommand } from "@genesiscz/utils/cli";
 import { createStopwatch, formatBytes } from "@genesiscz/utils/format";
 import { logger, out } from "@genesiscz/utils/logger";
 import {
+    type ApprovalPrompt,
     appendRmLedger,
+    approvalItemReason,
     confirmByPerson,
     createRmRequest,
     defaultRuleContext,
@@ -143,11 +145,24 @@ export async function executePlan(
     if (asked.length > 0) {
         if (!ctx.caller.isInAgent && isInteractive() && options.aside !== true) {
             const outcome = await confirmByPerson({
-                title: `Delete ${asked.length} path(s) that no rule allows?`,
+                title: `Delete ${asked.length === 1 ? "1 item" : `${asked.length} items`} that no rule allows?`,
                 lines: asked.map((item) => `${item.target.path}  (${item.verdict.reason})`),
                 code: "delete",
                 caller: ctx.caller,
                 approval: ctx.base.approval,
+                request: {
+                    id: null,
+                    kind: "delete",
+                    why: options.reason ?? null,
+                    cwd: ctx.cwd,
+                    graceMinutes: ctx.config.grace.otherMinutes,
+                    items: asked.map((item) => ({
+                        path: item.target.path,
+                        kind: item.target.kind,
+                        bytes: item.target.kind === "missing" ? undefined : measureBytes(item.target.path),
+                        reason: approvalItemReason(item.verdict.rule, item.verdict.reason),
+                    })),
+                },
             });
 
             if (outcome.approved) {
@@ -289,7 +304,7 @@ export function printRequestHint(id: string, count: number): void {
 /** For a verb only a person may run (approve, roots add, config set): ask, and log how it was answered. */
 export async function requirePerson(
     ctx: RunContext,
-    prompt: { title: string; lines: string[]; code: string }
+    prompt: Pick<ApprovalPrompt, "title" | "lines" | "code" | "request">
 ): Promise<{ approved: boolean; via: string }> {
     const outcome = await confirmByPerson({ ...prompt, caller: ctx.caller, approval: ctx.base.approval });
 

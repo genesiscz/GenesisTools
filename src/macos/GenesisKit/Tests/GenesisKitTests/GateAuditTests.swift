@@ -1,3 +1,4 @@
+import LocalAuthentication
 import XCTest
 @testable import GenesisKitBase
 @testable import GenesisKit
@@ -306,5 +307,101 @@ final class ApprovalAttentionTests: XCTestCase {
         XCTAssertEqual(ApprovalAttention.defaultSound, "Purr")
         XCTAssertTrue(ApprovalAttention.sounds.contains(ApprovalAttention.defaultSound))
         XCTAssertTrue(ApprovalAttention.notifyAfterChoices.contains { $0.seconds == ApprovalAttention.defaultNotifyAfter })
+    }
+}
+
+/// Touch ID in the approval window (`ApprovalVerifier`): a failed touch offers Try again and never answers, a success
+/// answers once with its method, a deny stops listening. The evaluator is a fake, so no test arms the real sensor.
+@MainActor
+final class ApprovalVerifierTests: XCTestCase {
+    final class FakeEvaluator: ApprovalBiometricEvaluator {
+        var unavailable: String?
+        var biometricReplies: [@Sendable (Bool, Error?) -> Void] = []
+        var passwordReplies: [@Sendable (Bool, Error?) -> Void] = []
+
+        func unavailableReason(_ context: LAContext) -> String? { unavailable }
+        func evaluateBiometrics(_ context: LAContext, reason: String, reply: @escaping @Sendable (Bool, Error?) -> Void) {
+            biometricReplies.append(reply)
+        }
+        func evaluatePassword(reason: String, reply: @escaping @Sendable (Bool, Error?) -> Void) {
+            passwordReplies.append(reply)
+        }
+    }
+
+    private func settle() {
+        RunLoop.main.run(until: Date().addingTimeInterval(0.05))
+    }
+
+    func testAFailedTouchRetriesAndASuccessAnswersOnce() throws {
+        let fake = FakeEvaluator()
+        let verifier = ApprovalVerifier(reason: "approve: test", evaluator: fake)
+        var answers: [String] = []
+        verifier.onVerified = { answers.append($0) }
+
+        verifier.begin(windowIsKey: false)
+        XCTAssertEqual(verifier.state, .listening)
+        verifier.evaluate(try XCTUnwrap(verifier.context))
+        try XCTUnwrap(fake.biometricReplies.last)(false, LAError(.authenticationFailed))
+        settle()
+        XCTAssertEqual(verifier.state, .failed("Touch ID did not recognize the finger. Try again, or use your password."))
+        XCTAssertTrue(answers.isEmpty)
+
+        verifier.retry()
+        XCTAssertEqual(verifier.state, .listening)
+        XCTAssertEqual(verifier.attempt, 2)
+        verifier.evaluate(try XCTUnwrap(verifier.context))
+        try XCTUnwrap(fake.biometricReplies.last)(true, nil)
+        settle()
+        XCTAssertEqual(verifier.state, .verified)
+        XCTAssertEqual(answers, ["touch-id"])
+
+        // A late reply of the first context is stale and answers nothing.
+        try XCTUnwrap(fake.biometricReplies.first)(true, nil)
+        settle()
+        XCTAssertEqual(answers, ["touch-id"])
+    }
+
+    func testWithoutTouchIDThePasswordAnswersAndACancelledPasswordWaitsAgain() throws {
+        let fake = FakeEvaluator()
+        fake.unavailable = "Touch ID is not available on this Mac. Use your password."
+        let verifier = ApprovalVerifier(reason: "approve: test", evaluator: fake)
+        var answers: [String] = []
+        verifier.onVerified = { answers.append($0) }
+
+        verifier.begin(windowIsKey: true)
+        XCTAssertEqual(verifier.state, .unavailable("Touch ID is not available on this Mac. Use your password."))
+
+        verifier.usePassword()
+        XCTAssertEqual(verifier.state, .password)
+        try XCTUnwrap(fake.passwordReplies.last)(false, LAError(.userCancel))
+        settle()
+        XCTAssertEqual(verifier.state, .unavailable("Touch ID is not available on this Mac. Use your password."))
+        XCTAssertTrue(answers.isEmpty)
+
+        verifier.usePassword()
+        try XCTUnwrap(fake.passwordReplies.last)(true, nil)
+        settle()
+        XCTAssertEqual(answers, ["password"])
+    }
+
+    func testADenyStopsListeningAndALateTouchIsIgnored() throws {
+        let fake = FakeEvaluator()
+        let verifier = ApprovalVerifier(reason: "approve: test", evaluator: fake)
+        var answers: [String] = []
+        let model = ApprovalDialogModel(title: "t", purpose: "p", symbol: "trash.fill", facts: [], details: [], warning: nil,
+                                        footnote: "f", rememberChoices: [], rememberNote: nil, allowTitle: "Use password…",
+                                        deadline: nil, identifier: "test", verifier: verifier)
+        var denied = 0
+        model.onDeny = { denied += 1 }
+        model.onVerified = { method, _ in answers.append(method) }
+
+        verifier.begin(windowIsKey: false)
+        verifier.evaluate(try XCTUnwrap(verifier.context))
+        model.deny()
+        try XCTUnwrap(fake.biometricReplies.last)(true, nil)
+        settle()
+        XCTAssertEqual(denied, 1)
+        XCTAssertTrue(answers.isEmpty)
+        XCTAssertNil(verifier.context)
     }
 }

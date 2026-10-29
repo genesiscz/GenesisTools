@@ -49,6 +49,12 @@ public final class ApprovalDialogModel: ObservableObject {
     public let allowTitle: String
     public let deadline: Date?
     public let identifier: String
+    /// The paths a destructive request names, as rows with their icons and open buttons (the rm window). Empty for a
+    /// request that has only facts.
+    public let items: [ApprovalItem]
+    /// Touch ID inside the window: the sensor listens from the first frame and a touch approves (`onVerified`).
+    /// nil keeps the Allow button, whose `onAllow` runs the host's own authentication.
+    public let verifier: ApprovalVerifier?
 
     @Published public var rememberIndex = 0
     @Published public var showsDetails = false
@@ -56,10 +62,13 @@ public final class ApprovalDialogModel: ObservableObject {
 
     public var onAllow: @MainActor (ApprovalRemember?) -> Void = { _ in }
     public var onDeny: @MainActor () -> Void = {}
+    /// The verifier confirmed the person: `method` is "touch-id" or "password".
+    public var onVerified: @MainActor (_ method: String, ApprovalRemember?) -> Void = { _, _ in }
 
     public init(title: String, purpose: String, command: String? = nil, symbol: String, facts: [ApprovalFact], details: [ApprovalFact],
                 warning: String?, footnote: String, rememberChoices: [ApprovalRemember], rememberNote: String?,
-                allowTitle: String, deadline: Date?, identifier: String) {
+                allowTitle: String, deadline: Date?, identifier: String, items: [ApprovalItem] = [],
+                verifier: ApprovalVerifier? = nil) {
         self.title = title
         self.purpose = purpose
         self.command = command
@@ -73,6 +82,9 @@ public final class ApprovalDialogModel: ObservableObject {
         self.allowTitle = allowTitle
         self.deadline = deadline
         self.identifier = identifier
+        self.items = items
+        self.verifier = verifier
+        verifier?.onVerified = { [weak self] method in self?.verified(method: method) }
     }
 
     public func allow() {
@@ -84,7 +96,14 @@ public final class ApprovalDialogModel: ObservableObject {
     public func deny() {
         guard !answered else { return }
         answered = true
+        verifier?.cancel()
         onDeny()
+    }
+
+    private func verified(method: String) {
+        guard !answered else { return }
+        answered = true
+        onVerified(method, rememberChoices.indices.contains(rememberIndex) ? rememberChoices[rememberIndex] : nil)
     }
 }
 
@@ -116,19 +135,28 @@ public struct ApprovalDialogView: View {
                 .frame(maxWidth: .infinity, alignment: .leading)
             }
 
-            facts(model.facts)
-                .padding(.leading, 66)
-
-            GenDisclosure(isExpanded: $model.showsDetails, minHeight: 22, identifier: "\(model.identifier)-details") {
-                facts(model.details)
-                    .padding(.leading, 18)
-                    .padding(.top, 2)
-            } label: {
-                Text("Details")
-                    .font(.system(size: 12))
-                    .foregroundStyle(.secondary)
+            if !model.facts.isEmpty {
+                facts(model.facts)
+                    .padding(.leading, 66)
             }
-            .padding(.leading, 66)
+
+            if !model.items.isEmpty {
+                ApprovalItemList(items: model.items, identifier: model.identifier)
+                    .padding(.leading, 66)
+            }
+
+            if !model.details.isEmpty {
+                GenDisclosure(isExpanded: $model.showsDetails, minHeight: 22, identifier: "\(model.identifier)-details") {
+                    facts(model.details)
+                        .padding(.leading, 18)
+                        .padding(.top, 2)
+                } label: {
+                    Text("Details")
+                        .font(.system(size: 12))
+                        .foregroundStyle(.secondary)
+                }
+                .padding(.leading, 66)
+            }
 
             if let warning = model.warning {
                 Label(warning, systemImage: "exclamationmark.triangle.fill")
@@ -146,10 +174,15 @@ public struct ApprovalDialogView: View {
                 .padding(.leading, 66)
 
             remember
-            buttons
+            if let verifier = model.verifier {
+                ApprovalVerifyFooter(model: model, verifier: verifier)
+            } else {
+                buttons
+            }
         }
         .padding(20)
-        .frame(width: 480)
+        // Rows with a name, a folder and three buttons need the room; a request of facts keeps the alert's width.
+        .frame(width: model.items.isEmpty ? 480 : 580)
         // The hosting controller insets its content by the hidden title bar; the strip stays draggable through
         // `.titlebarZone()`, so the dialog uses the full height (Martin's screenshot showed an empty band on top).
         .ignoresSafeArea()
@@ -252,6 +285,112 @@ public struct ApprovalDialogView: View {
     }
 }
 
+/// The footer of a window that confirms with Touch ID in place: Apple's glyph with what it waits for, the countdown,
+/// and the ways out. No button approves on Return (a stray Return must never delete), Esc denies.
+struct ApprovalVerifyFooter: View {
+    @ObservedObject var model: ApprovalDialogModel
+    @ObservedObject var verifier: ApprovalVerifier
+
+    var body: some View {
+        VStack(alignment: .leading, spacing: 12) {
+            Divider().padding(.horizontal, -20)
+            HStack(alignment: .center, spacing: 12) {
+                sensor
+                VStack(alignment: .leading, spacing: 2) {
+                    Text(headline)
+                        .font(.system(size: 13, weight: .semibold))
+                        .accessibilityIdentifier("\(model.identifier)-verify-state")
+                    if let message {
+                        Text(message.text)
+                            .font(.system(size: 11))
+                            .foregroundStyle(message.isProblem ? Color.orange : Color.secondary)
+                            .fixedSize(horizontal: false, vertical: true)
+                    }
+                    if let deadline = model.deadline {
+                        (Text("Denies itself in ") + Text(timerInterval: Date()...max(Date(), deadline), countsDown: true))
+                            .font(.system(size: 11).monospacedDigit())
+                            .foregroundStyle(.secondary)
+                            .lineLimit(1)
+                    }
+                }
+                .frame(maxWidth: .infinity, alignment: .leading)
+                .accessibilityElement(children: .combine)
+                buttons
+            }
+        }
+        .disabled(model.answered)
+    }
+
+    @ViewBuilder
+    private var sensor: some View {
+        switch verifier.state {
+        case .unavailable, .password:
+            Image(systemName: "lock.fill")
+                .font(.system(size: 18, weight: .medium))
+                .foregroundStyle(.secondary)
+                .frame(width: 32, height: 32)
+                .accessibilityHidden(true)
+        case .verified:
+            Image(systemName: "checkmark.circle.fill")
+                .font(.system(size: 22, weight: .medium))
+                .foregroundStyle(.green)
+                .frame(width: 32, height: 32)
+                .accessibilityHidden(true)
+        default:
+            ApprovalTouchIDGlyph(verifier: verifier)
+                .frame(width: 32, height: 32)
+                .accessibilityLabel("Touch ID")
+        }
+    }
+
+    private var headline: String {
+        switch verifier.state {
+        case .idle, .listening, .failed: return "Touch ID to approve"
+        case .password: return "Waiting for your password"
+        case .unavailable: return "Approve with your password"
+        case .verified: return "Approved"
+        }
+    }
+
+    private var message: (text: String, isProblem: Bool)? {
+        switch verifier.state {
+        case .failed(let text): return (text, true)
+        case .unavailable(let text): return (text, false)
+        case .password: return ("The system asks for your password in its own window.", false)
+        default: return nil
+        }
+    }
+
+    private var buttons: some View {
+        HStack(spacing: 8) {
+            if case .failed = verifier.state {
+                Button("Try again", action: verifier.retry)
+                    .pointerCursor()
+                    .accessibilityIdentifier("\(model.identifier)-retry")
+            }
+            if case .unavailable = verifier.state {
+                Button("Approve with password…", action: verifier.usePassword)
+                    .buttonStyle(.borderedProminent)
+                    .pointerCursor()
+                    .accessibilityIdentifier("\(model.identifier)-password")
+            } else {
+                Button("Use password…", action: verifier.usePassword)
+                    .disabled(verifier.state == .password)
+                    .pointerCursor(verifier.state != .password)
+                    .accessibilityIdentifier("\(model.identifier)-password")
+            }
+            Button("Deny", action: model.deny)
+                .keyboardShortcut(.cancelAction)
+                .pointerCursor()
+                .accessibilityIdentifier("\(model.identifier)-deny")
+        }
+        .fixedSize()
+        .controlSize(.regular)
+        // The panel is non-activating, so its app is never active while it shows; keep the key look (see `buttons`).
+        .environment(\.controlActiveState, .key)
+    }
+}
+
 /// One floating panel for one request. It never runs a modal session (a modal loop on the main queue stops every
 /// timer queued there, so a deadline never fired), never activates its app, and takes the keyboard only after the
 /// user clicks into it: a request that pops up while someone types must not catch a stray Return. So that it is not
@@ -302,6 +441,7 @@ public final class ApprovalPanelPresenter: NSObject, NSWindowDelegate {
     }
 
     public func close() {
+        model?.verifier?.cancel()
         reminder?.stop()
         reminder = nil
         panel?.delegate = nil
