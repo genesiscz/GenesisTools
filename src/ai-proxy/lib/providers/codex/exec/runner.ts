@@ -7,7 +7,11 @@ import { guardedExecCommand } from "@app/ai-proxy/lib/providers/codex/exec/exec-
 import { shellGuard } from "@app/ai-proxy/lib/providers/codex/exec/guard";
 import { runExecScript } from "@app/ai-proxy/lib/providers/codex/exec/script";
 import { execStorePath, fileExecStore } from "@app/ai-proxy/lib/providers/codex/exec/store";
-import { logger } from "@genesiscz/utils/logger";
+import { logger, setConsoleLevel } from "@genesiscz/utils/logger";
+
+// Claude Code's Bash result carries stderr too, so a console log line would sit above Codex's `Script completed`
+// header. The runner's logs go to the day log only.
+setConsoleLevel("silent");
 
 function sessionArg(argv: string[]): string | undefined {
     const index = argv.indexOf("--session");
