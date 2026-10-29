@@ -3,7 +3,8 @@ import { createHash } from "node:crypto";
 import { existsSync, mkdtempSync, readFileSync, utimesSync, writeFileSync } from "node:fs";
 import { tmpdir } from "node:os";
 import { join } from "node:path";
-import { execBashInput } from "@app/ai-proxy/lib/providers/codex/exec/bash-command";
+import { execBashInput, parseExecBashCommand } from "@app/ai-proxy/lib/providers/codex/exec/bash-command";
+import { EXEC_RUNNER_PATH } from "@app/ai-proxy/lib/providers/codex/exec/tool";
 import { resetCooldowns } from "@app/ai-proxy/lib/providers/cooldown";
 import {
     rememberedMessageItems,
@@ -3724,5 +3725,134 @@ describe("Codex's exec tool on the Claude Code route", () => {
         const types = (body.input as Array<{ type?: string }>).map((item) => item.type);
 
         expect(types).toEqual([undefined, "function_call", "function_call_output"]);
+    });
+});
+
+describe("Codex's exec tool: the model's call reaches Claude Code as one Bash call", () => {
+    const bash = { name: "Bash", description: "Run a command", input_schema: { type: "object", properties: {} } };
+    const js = 'const r = await tools.exec_command({ cmd: "ls" });\nconst EOF = 1;\ntext(r.output + EOF);';
+    const metadata = { user_id: SafeJSON.stringify({ session_id: "sess-exec-1" }) };
+    const call = { type: "custom_tool_call", id: "ctc_1", call_id: "call_exec", name: "exec", input: js };
+    const whamSse = [
+        { type: "response.output_item.added", output_index: 0, item: { ...call, input: "" } },
+        { type: "response.custom_tool_call_input.delta", output_index: 0, item_id: "ctc_1", delta: js },
+        { type: "response.output_item.done", output_index: 0, item: call },
+        {
+            type: "response.completed",
+            response: { status: "completed", output: [call], usage: { input_tokens: 9, output_tokens: 4 } },
+        },
+    ]
+        .map((event) => `event: ${event.type}\ndata: ${SafeJSON.stringify(event)}\n\n`)
+        .join("");
+
+    async function ask(
+        body: Record<string, unknown>
+    ): Promise<{ response: Response; sent: Array<Record<string, unknown>> }> {
+        const sent: Array<Record<string, unknown>> = [];
+        globalThis.fetch = (async (_url: RequestInfo | URL, init?: RequestInit) => {
+            sent.push(SafeJSON.parse(String(init?.body)) as Record<string, unknown>);
+            return new Response(whamSse, { status: 200, headers: { "content-type": "text/event-stream" } });
+        }) as typeof fetch;
+        const { OpenAiSubscriptionProvider } = await import("./openai-subscription");
+        const provider = await OpenAiSubscriptionProvider.create(account);
+        const bodyText = SafeJSON.stringify({
+            model: "gpt-6.1-sol",
+            max_tokens: 1024,
+            tools: [bash],
+            metadata,
+            ...body,
+        });
+        const response = await provider.messages?.(
+            new Request("http://localhost/v1/messages", { method: "POST", body: bodyText }),
+            "gpt-6.1-sol",
+            bodyText
+        );
+
+        if (!response) {
+            throw new Error("the native route is off");
+        }
+
+        return { response, sent };
+    }
+
+    function streamedToolUse(text: string): { name?: unknown; id?: unknown; input: Record<string, unknown> } {
+        let start: Record<string, unknown> | undefined;
+        let json = "";
+
+        for (const chunk of text.split("\n\n")) {
+            const data = chunk.split("\n").find((line) => line.startsWith("data: "));
+            const frame = data ? (SafeJSON.parse(data.slice(6), { strict: true }) as Record<string, unknown>) : {};
+            const block = frame.content_block as Record<string, unknown> | undefined;
+            const delta = frame.delta as Record<string, unknown> | undefined;
+
+            if (block?.type === "tool_use") {
+                start = block;
+            }
+
+            if (delta?.type === "input_json_delta") {
+                json += String(delta.partial_json);
+            }
+        }
+
+        return {
+            name: start?.name,
+            id: start?.id,
+            input: SafeJSON.parse(json, { strict: true }) as Record<string, unknown>,
+        };
+    }
+
+    it("streaming: a Bash tool_use that runs this checkout's runner on the script, for this session", async () => {
+        const { response } = await ask({ stream: true, messages: [{ role: "user", content: "list" }] });
+        const toolUse = streamedToolUse(await response.text());
+
+        expect(toolUse.name).toBe("Bash");
+        expect(toolUse.id).toBe("call_exec");
+        expect(toolUse.input).toEqual({
+            ...execBashInput({ js, bun: process.execPath, runner: EXEC_RUNNER_PATH, sessionId: "sess-exec-1" }),
+        });
+        expect(parseExecBashCommand(String(toolUse.input.command))).toBe(js);
+    });
+
+    it("non-streaming: the same Bash tool_use", async () => {
+        const { response } = await ask({ stream: false, messages: [{ role: "user", content: "list" }] });
+        const message = (await response.json()) as { content: Array<Record<string, unknown>>; stop_reason: string };
+
+        expect(message.content).toEqual([
+            {
+                type: "tool_use",
+                id: "call_exec",
+                name: "Bash",
+                input: execBashInput({ js, bun: process.execPath, runner: EXEC_RUNNER_PATH, sessionId: "sess-exec-1" }),
+            },
+        ]);
+        expect(message.stop_reason).toBe("tool_use");
+    });
+
+    it("the Bash call Claude Code sends back goes up as the very custom_tool_call the model made", async () => {
+        const first = await ask({ stream: true, messages: [{ role: "user", content: "list" }] });
+        const toolUse = streamedToolUse(await first.response.text());
+        const next = await ask({
+            stream: true,
+            messages: [
+                { role: "user", content: "list" },
+                {
+                    role: "assistant",
+                    content: [{ type: "tool_use", id: toolUse.id, name: "Bash", input: toolUse.input }],
+                },
+                {
+                    role: "user",
+                    content: [
+                        { type: "tool_result", tool_use_id: toolUse.id, content: "Script completed\nOutput:\nx" },
+                    ],
+                },
+            ],
+        });
+        await next.response.text();
+        const input = next.sent[0]?.input as Array<Record<string, unknown>>;
+
+        expect(input.slice(1)).toEqual([
+            { type: "custom_tool_call", call_id: "call_exec", name: "exec", input: call.input },
+            { type: "custom_tool_call_output", call_id: "call_exec", output: "Script completed\nOutput:\nx" },
+        ]);
     });
 });

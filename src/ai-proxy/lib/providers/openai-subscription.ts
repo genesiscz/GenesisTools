@@ -497,7 +497,11 @@ export class OpenAiSubscriptionProvider implements ProxyProvider {
         }
 
         // Codex's `exec` rides on Claude Code's Bash: offered when the client has Bash, replayed as the model made it.
-        const exec = execToolBridge({ tools: parsed.tools, sessionsIn: context?.sessionsIn });
+        const exec = execToolBridge({
+            tools: parsed.tools,
+            sessionsIn: context?.sessionsIn,
+            sessionId: turn.sessionId,
+        });
 
         // System messages stay in place (`appendDeveloperMessage`): hoisted, they broke the prompt cache.
         let responsesBody = anthropicToResponses(ensureToolRequiredArrays(parsed), concreteModel, {
@@ -925,6 +929,7 @@ export class OpenAiSubscriptionProvider implements ProxyProvider {
                     onTextResponse: conversation ? rememberTextResponse : undefined,
                     label: "codex",
                     toolInput,
+                    customToolCall: exec?.clientCall,
                     signal: req.signal,
                 }),
                 {
@@ -948,6 +953,7 @@ export class OpenAiSubscriptionProvider implements ProxyProvider {
                     onTextResponse: conversation ? rememberTextResponse : undefined,
                     label: "codex",
                     toolInput,
+                    customToolCall: exec?.clientCall,
                 })
             ),
             { status: 200, headers: { "Content-Type": "application/json" } }

@@ -619,3 +619,91 @@ describe("Claude Code compaction detection gaps", () => {
         expect(ClaudeCodeTurn.read({ messages: [quoted] }).missedCompaction).toBe(false);
     });
 });
+
+describe("a custom (free-form) tool call as a client tool call", () => {
+    const js = 'const r = await tools.exec_command({ cmd: "ls" });\ntext(r.output);';
+    const customToolCall = (name: string) =>
+        name === "exec" ? { name: "Bash", input: (raw: string) => ({ command: `RUN ${raw}`, timeout: 1 }) } : undefined;
+    const item = { type: "custom_tool_call", id: "ctc_1", call_id: "call_exec", name: "exec", input: js };
+    const streamed = [
+        { type: "response.output_item.added", output_index: 0, item: { ...item, input: "" } },
+        { type: "response.custom_tool_call_input.delta", output_index: 0, item_id: "ctc_1", delta: js.slice(0, 20) },
+        { type: "response.custom_tool_call_input.delta", output_index: 0, item_id: "ctc_1", delta: js.slice(20) },
+        { type: "response.custom_tool_call_input.done", output_index: 0, item_id: "ctc_1", input: js },
+        { type: "response.output_item.done", output_index: 0, item },
+    ];
+
+    function toolUse(frames: Frame[]): { start?: Record<string, unknown>; input: string; stop?: unknown } {
+        const start = frames.find((frame) => frame.event === "content_block_start")?.data.content_block as
+            | Record<string, unknown>
+            | undefined;
+        const input = frames
+            .map((frame) => frame.data.delta as Record<string, unknown> | undefined)
+            .filter((delta) => delta?.type === "input_json_delta")
+            .map((delta) => String(delta?.partial_json))
+            .join("");
+        const stop = (frames.find((frame) => frame.event === "message_delta")?.data.delta as Record<string, unknown>)
+            ?.stop_reason;
+
+        return { start, input, stop };
+    }
+
+    it("streaming: one tool_use of the client tool, its input built once from the whole script", async () => {
+        const { frames } = await collect(
+            responsesSseToAnthropic(
+                sse([...streamed, { type: "response.completed", response: { status: "completed", output: [item] } }]),
+                { model: "gpt-6.1-sol", customToolCall }
+            )
+        );
+        const call = toolUse(frames);
+
+        expect(call.start).toEqual({ type: "tool_use", id: "call_exec", name: "Bash", input: {} });
+        expect(SafeJSON.parse(call.input, { strict: true })).toEqual({ command: `RUN ${js}`, timeout: 1 });
+        expect(call.stop).toBe("tool_use");
+    });
+
+    it("streaming: a call seen only in the terminal snapshot, or with no done frame, still comes whole", async () => {
+        const snapshotOnly = await collect(
+            responsesSseToAnthropic(
+                sse([{ type: "response.completed", response: { status: "completed", output: [item] } }]),
+                { model: "gpt-6.1-sol", customToolCall }
+            )
+        );
+        const deltasOnly = await collect(
+            responsesSseToAnthropic(sse(streamed.slice(0, 3)), { model: "gpt-6.1-sol", customToolCall })
+        );
+
+        for (const { frames } of [snapshotOnly, deltasOnly]) {
+            expect(SafeJSON.parse(toolUse(frames).input, { strict: true })).toEqual({
+                command: `RUN ${js}`,
+                timeout: 1,
+            });
+            expect(toolUse(frames).stop).toBe("tool_use");
+        }
+    });
+
+    it("streaming: without a mapping the custom call is skipped and the turn ends normally", async () => {
+        const warn = spyOn(logger, "warn").mockImplementation(() => undefined);
+        const { frames } = await collect(
+            responsesSseToAnthropic(
+                sse([...streamed, { type: "response.completed", response: { status: "completed", output: [item] } }]),
+                { model: "gpt-6.1-sol" }
+            )
+        );
+        warn.mockRestore();
+
+        expect(frames.some((frame) => frame.event === "content_block_start")).toBe(false);
+    });
+
+    it("non-streaming: the same tool_use, and stop_reason tool_use", () => {
+        const message = responsesToAnthropicMessage(
+            { id: "resp_1", status: "completed", output: [item] },
+            { model: "gpt-6.1-sol", customToolCall }
+        );
+
+        expect(message.content).toEqual([
+            { type: "tool_use", id: "call_exec", name: "Bash", input: { command: `RUN ${js}`, timeout: 1 } },
+        ]);
+        expect(message.stop_reason).toBe("tool_use");
+    });
+});

@@ -179,7 +179,12 @@ export async function accumulateResponsesJson(
             continue;
         }
 
-        if (event.type === "response.output_item.done" && isObject(event.item) && event.item.type === "function_call") {
+        // A custom (free-form) call, Codex's `exec`, is a call like a function call.
+        if (
+            event.type === "response.output_item.done" &&
+            isObject(event.item) &&
+            (event.item.type === "function_call" || event.item.type === "custom_tool_call")
+        ) {
             functionCalls.push(event.item);
             continue;
         }
@@ -257,7 +262,8 @@ export async function accumulateResponsesJson(
 
     for (const call of functionCalls) {
         if (isObject(call) && typeof call.id !== "string") {
-            output.push({ ...call, id: `fc_${randomUUID().replace(/-/g, "")}` });
+            const prefix = call.type === "custom_tool_call" ? "ctc" : "fc";
+            output.push({ ...call, id: `${prefix}_${randomUUID().replace(/-/g, "")}` });
             continue;
         }
 
