@@ -454,8 +454,10 @@ export interface RunningCmuxSession {
 
 /**
  * This agent's processes that run in a cmux tab now. A process whose session is not resolved, or that runs
- * outside cmux, is left out: there is no tab to focus for it. Keep duplicate session IDs until the caller
- * filters processes that have stopped, exited, or run in the caller's tab.
+ * outside cmux, is left out: there is no tab to focus for it. A `cwd-unique` session is a guess (one unclaimed
+ * session and one unresolved process in a folder), so it is left out too: on 2026-10-29 the resumed session's
+ * process was stopped, and the guess gave its id to an idle session in another tab, which "Focus" then raised.
+ * Keep duplicate session IDs until the caller filters processes that have stopped, exited, or run in the caller's tab.
  */
 export async function listRunningCmuxSessions(
     source: AgentWhoSource,
@@ -465,7 +467,7 @@ export async function listRunningCmuxSessions(
     const running: RunningCmuxSession[] = [];
 
     for (const entry of entries) {
-        if (!entry.sessionId || !entry.surfaceId) {
+        if (!entry.sessionId || !entry.surfaceId || entry.sessionSource === "cwd-unique") {
             continue;
         }
 
