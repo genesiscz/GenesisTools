@@ -1853,11 +1853,46 @@ struct PRListView: View {
     }
 
     private func row(_ pr: HubPR) -> some View {
-        let selected = prs.selectedID == pr.id
+        // A value row (`PRRow`, `Equatable`): a publish of the hub's models re-renders it only when what it shows
+        // changed, and at rest it carries no button, tooltip or link (`live`), so a drag step or a focus walk
+        // with an accessibility client meets 40 labels, not 40 × 3 responders.
+        PRRow(
+            pr: pr,
+            selected: prs.selectedID == pr.id,
+            flash: prs.changed.contains(pr.id),
+            readiness: readiness.readiness(for: pr),
+            select: { listFocused = true; prs.select(pr, opened: true) }
+        )
+        .equatable()
+    }
+}
+
+/// One PR of the list, from values. The row is live (a button with its hover fill, tooltips, the CI link) while
+/// the pointer is on it or it is selected; at rest it draws the same labels with no control, so the window's
+/// responder tree stays small with an accessibility client attached (performance.md, "Dense lists and
+/// accessibility clients": a walk visited every row's buttons per changed node, 100 to 300 ms each during a
+/// sidebar drag in PRs mode, 2026-10-29). VoiceOver still presses it (`restingButton`).
+struct PRRow: View, Equatable {
+    let pr: HubPR
+    let selected: Bool
+    /// New or updated after a refresh: flashes once.
+    let flash: Bool
+    let readiness: PRReadiness?
+    let select: () -> Void
+    @State private var hovering = false
+
+    static func == (a: PRRow, b: PRRow) -> Bool {
+        a.pr == b.pr && a.selected == b.selected && a.flash == b.flash && a.readiness == b.readiness
+    }
+
+    private var live: Bool { hovering || selected }
+
+    var body: some View {
+        let live = live
         // The badges sit at the end of the meta line: as a right-hand column they took ~70 pt from a
         // title that already had ~150, so most titles read "feat(flexi, col-…".
-        return HStack(alignment: .top, spacing: 8) {
-            PRStateIcon(pr: pr)
+        let labels = HStack(alignment: .top, spacing: 8) {
+            PRStateIcon(pr: pr, live: live)
             VStack(alignment: .leading, spacing: 3) {
                 Text(pr.title)
                     .font(.system(size: 12.5, weight: .medium))
@@ -1866,7 +1901,7 @@ struct PRListView: View {
                     .frame(maxWidth: .infinity, alignment: .leading)
                 // The author gives way first: whole, then truncated to at least a few letters, then
                 // gone. Squeezed by the badges it read "q" or "c" (video 2026-09-30 14:07).
-                metaLine(pr)
+                metaLine(live: live)
                 .font(.system(size: 11))
                 .foregroundColor(ReviewPalette.dim)
                 .lineLimit(1)
@@ -1876,17 +1911,29 @@ struct PRListView: View {
         .padding(.vertical, 6)
         .background(RoundedRectangle(cornerRadius: 8).fill(selected ? Color.white.opacity(0.08) : Color.clear))
         // New and updated rows after a refresh flash once.
-        .swrFlash(prs.changed.contains(pr.id))
+        .swrFlash(flash)
         .contentShape(Rectangle())
-        .rowButton(cornerRadius: 8) { listFocused = true; prs.select(pr, opened: true) }
+        Group {
+            if live {
+                labels
+                    .rowButton(cornerRadius: 8) { select() }
+                    .liveTooltip(true, "\(pr.label) \(pr.headBranch) → \(pr.baseBranch)\nRight-click for its web pages")
+            } else {
+                labels
+                    .restingButton(enabled: true, action: select)
+                    .accessibilityLabel(Text(verbatim: "\(pr.label) \(pr.title)"))
+            }
+        }
         .padding(.horizontal, 6)
-        .instantTooltip("\(pr.label) \(pr.headBranch) → \(pr.baseBranch)\nRight-click for its web pages")
+        .onHover { inside in
+            if inside != hovering { hovering = inside }
+        }
         // The row stays one button (select); its labels' web pages live here, since a link inside
         // the row would turn a click meant to select into a browser tab.
-        .contextMenu { linksMenu(pr) }
+        .contextMenu { linksMenu }
     }
 
-    private func metaLine(_ pr: HubPR) -> some View {
+    private func metaLine(live: Bool) -> some View {
         PRMetaLineLayout {
             Text(verbatim: pr.label).font(.system(size: 11, design: .monospaced))
             // Flexible and clipped, so a zero width hides it instead of drawing an ellipsis.
@@ -1896,33 +1943,33 @@ struct PRListView: View {
             Text(verbatim: "·").frame(maxWidth: .infinity).clipped()
             // Whole, so the author truncates and the age never reads "4 hr. a…".
             LiveAgo(date: pr.updated, style: .brief)
-            badges(pr)
+            badges(live: live)
         }
     }
 
     @ViewBuilder
-    private func badges(_ pr: HubPR) -> some View {
+    private func badges(live: Bool) -> some View {
         HStack(spacing: 5) {
             if let proposal = pr.proposal {
                 Label("\(proposal.pending)", systemImage: "text.bubble")
                     .font(.system(size: 10.5, weight: .semibold))
                     .foregroundColor(proposal.pending > 0 ? ReviewPalette.modified : ReviewPalette.dim)
-                    .instantTooltip("Agent review (\(proposal.decision.replacingOccurrences(of: "_", with: " "))): \(proposal.pending) of \(proposal.drafts) draft comments undecided")
+                    .liveTooltip(live, "Agent review (\(proposal.decision.replacingOccurrences(of: "_", with: " "))): \(proposal.pending) of \(proposal.drafts) draft comments undecided")
             }
             if pr.localWorktree != nil {
                 Image(systemName: "externaldrive.badge.checkmark")
                     .font(.system(size: 10))
                     .foregroundColor(ReviewPalette.dim)
-                    .instantTooltip("The branch is checked out locally: New session here works in its worktree")
+                    .liveTooltip(live, "The branch is checked out locally: New session here works in its worktree")
             }
-            PRReadinessBadge(readiness: readiness.readiness(for: pr))
-            CIBadge(ci: pr.ci)
+            PRReadinessBadge(readiness: readiness, live: live)
+            CIBadge(ci: pr.ci, live: live)
         }
         .fixedSize()
     }
 
     @ViewBuilder
-    private func linksMenu(_ pr: HubPR) -> some View {
+    private var linksMenu: some View {
         let kind = pr.isGitLab ? "MR" : "PR"
         let pages: [(String, URL?)] = [
             ("Open the \(kind) \(pr.label)", URL(string: pr.url)),
@@ -2013,6 +2060,8 @@ struct PRMetaLineLayout: Layout {
 
 struct PRStateIcon: View {
     let pr: HubPR
+    /// The tooltip exists only while the row is live (`PRRow`); a lone icon elsewhere is always live.
+    var live = true
 
     var body: some View {
         let tone = PRStateTone(pr: pr)
@@ -2020,7 +2069,7 @@ struct PRStateIcon: View {
             .font(.system(size: 12, weight: .semibold))
             .foregroundColor(tone.color)
             .frame(width: 16)
-            .instantTooltip(tone.title)
+            .liveTooltip(live, tone.title)
             .accessibilityElement(children: .ignore)
             .accessibilityLabel(Text(verbatim: tone.title))
     }
@@ -2049,6 +2098,8 @@ struct PRLabelPill: View {
 
 struct CIBadge: View {
     let ci: String?
+    /// Its link and tooltip exist only while the row is live (`PRRow`); alone, it is always live.
+    var live = true
     /// The checks page; the badge opens it when set.
     var url: URL?
 
@@ -2072,7 +2123,7 @@ struct CIBadge: View {
                 }
             }()
             let icon = Image(systemName: symbol).font(.system(size: 11)).foregroundColor(color)
-            if let url {
+            if let url, live {
                 Button { ExternalOpener.open(url) } label: { icon }
                     .buttonStyle(.genHoverIcon())
                     .instantTooltip("\(sentence). Open the checks\n\(url.absoluteString)")
@@ -2080,8 +2131,15 @@ struct CIBadge: View {
                     .accessibilityRemoveTraits(.isButton)
                     .accessibilityAddTraits(.isLink)
                     .accessibilityValue(Text(url.absoluteString))
+            } else if let url {
+                // At rest: the same icon, a link to VoiceOver, no button in the responder tree.
+                icon.restingButton(enabled: true) { ExternalOpener.open(url) }
+                    .accessibilityLabel(Text(verbatim: sentence))
+                    .accessibilityRemoveTraits(.isButton)
+                    .accessibilityAddTraits(.isLink)
+                    .accessibilityValue(Text(url.absoluteString))
             } else {
-                icon.instantTooltip(sentence)
+                icon.liveTooltip(live, sentence)
                     .accessibilityElement(children: .ignore)
                     .accessibilityLabel(Text(verbatim: sentence))
             }
@@ -2155,7 +2213,7 @@ struct PRDetailView: View {
                         overview.flexiblePane().hubSurface(.content)
                     }
                     ReviewRootView(model: review)
-                        .flexiblePane()
+                        .flexiblePane(neighbourOf: "prs.overview")
                         .hubSurface(.content)
                 }
                 .measuredWidth("prs.detail", $width)

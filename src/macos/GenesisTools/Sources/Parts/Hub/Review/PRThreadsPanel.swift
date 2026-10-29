@@ -11,7 +11,7 @@ struct PRReviewBar: View {
     /// The room the diff column has for the list; the diff under it keeps at least a few lines.
     var maxListHeight: CGFloat = 900
     @AppStorage private var open: Bool
-    @AppStorage("review.prThreads.height", store: HubDefaults.store) private var listHeight = 260.0
+    static let heightKey = "review.prThreads.height"
     /// The standalone window's Context panel has a Threads tab: while it is open, a second list of the
     /// same threads above the diff only took the diff's room ("No thread matches" over 350 pt, 2026-10-02).
     @AppStorage private var contextCollapsed: Bool
@@ -23,13 +23,13 @@ struct PRReviewBar: View {
         self.maxListHeight = maxListHeight
         _open = AppStorage(wrappedValue: false, "review.prThreads.open", store: model.panelDefaults)
         _contextCollapsed = AppStorage(wrappedValue: true, ReviewContextPanel.collapsedKey, store: model.panelDefaults)
+        _drag = State(wrappedValue: GenResizeDrag(rest: CGFloat(HubDefaults.store.object(forKey: Self.heightKey) as? Double ?? 260)))
     }
     @State private var submitting = false
     @State private var fixing = false
-    /// The height the drag began with: the layout keeps it until release (see `threadsList`).
-    @State private var dragStart: Double?
-    @State private var liveHeight: Double?
-    @State private var timer = GenResizeDragTimer()
+    /// The list edge's drag and the list's rest height (`rest`, saved under `heightKey`; see `threadsList`). Only
+    /// the reveal reads them, so a step and a release re-run no body here and never re-render the thread rows.
+    @State private var drag: GenResizeDrag
     @AppStorage(HubResizeGrips.key, store: HubDefaults.store) private var grips = HubResizeGrips.auto.rawValue
 
     static let minListHeight: CGFloat = 110
@@ -164,67 +164,67 @@ struct PRReviewBar: View {
         }
     }
 
-    private func clamped(_ height: Double) -> CGFloat {
-        min(max(Self.minListHeight, CGFloat(height)), max(Self.minListHeight, maxListHeight))
+    private func clamped(_ height: CGFloat) -> CGFloat {
+        min(max(Self.minListHeight, height), max(Self.minListHeight, maxListHeight))
     }
 
     /// The list with a resizer on its bottom edge. While a drag runs, the layout keeps the height the
     /// drag began with and the list draws over the diff below (or leaves a band of the pane showing);
     /// the height is saved and the web diff reflows once, on release. Resizing the web view per drag
     /// step would lay out the diff for every step, as a side panel drag did before `HubLiveResize`.
+    /// The list itself is laid out once, at the tallest height it may take, and only the clip follows the
+    /// edge: its rows are heavy (markdown, selectable text), and a list that grew per step re-measured them all.
     private var threadsList: some View {
-        let slot = clamped(dragStart ?? listHeight)
-        let shown = clamped(liveHeight ?? listHeight)
-        // While dragging, the list is laid out at the tallest height it may take and only its clip follows the edge.
-        let layout = dragStart != nil ? clamped(.greatestFiniteMagnitude) : shown
-        return PRThreadsList(model: model, store: store)
-            // Out of the accessibility tree for the drag: a moving clip made SwiftUI resolve every comment's text for
-            // the accessibility client on each step (641 of 2488 main-thread samples). VoiceOver resizes through the
-            // handle's adjustable action instead.
-            .accessibilityHidden(dragStart != nil)
-            .hubSurface(.content)
-            .genResizeReveal(.vertical, shown: shown, layout: layout)
-            .genResizeOverlap(dragStart != nil && shown > slot + 0.5, edge: .bottom)
-            .overlay(Rectangle().fill(ReviewPalette.hairline).frame(height: 1), alignment: .top)
-            .overlay(alignment: .bottom) { resizer }
-            .frame(height: slot, alignment: .top)
+        GenResizeReveal(drag: drag, axis: .vertical, fixedEdge: .top,
+                        clamp: clamped, layout: { [tallest = clamped(.greatestFiniteMagnitude)] _ in tallest },
+                        accessibility: GenResizeAccessibility(label: "Resize the PR threads list") { increment in
+                            settle(clamped(drag.rest + (increment ? 40 : -40)))
+                        }) {
+            PRThreadsList(model: model, store: store)
+                .hubSurface(.content)
+        } handle: {
+            resizer
+        }
+        .overlay(Rectangle().fill(ReviewPalette.hairline).frame(height: 1), alignment: .top)
     }
 
     private var resizer: some View {
         GenResizeHandle(
-            axis: .vertical, panelSide: .before, dragging: dragStart != nil,
+            drag: drag, axis: .vertical, panelSide: .before,
             tint: ReviewPalette.renamed, line: .clear,
             // Inside the review, under the threads, the edge is easy to miss: its grip shows at rest unless the
             // reader chose otherwise (Settings, Hub, Resize handles).
             gripAtRest: (HubResizeGrips(rawValue: grips) ?? .auto).showsAtRest(prominent: true),
             tooltip: "Drag to resize the threads list",
-            accessibilityLabel: "Resize the PR threads list",
-            accessibilityValue: "\(Int(clamped(listHeight))) points",
-            onAdjust: { increment in listHeight = Double(clamped(listHeight + (increment ? 40 : -40))) },
             onChanged: dragChanged,
             onEnded: dragEnded)
     }
 
+    /// A dragged or adjusted height: the new rest, saved.
+    private func settle(_ height: CGFloat) {
+        drag.rest = height
+        HubDefaults.store.set(Double(height), forKey: Self.heightKey)
+    }
+
     private func dragChanged(_ translation: CGFloat) {
-        timer.step()
-        if dragStart == nil {
-            dragStart = Double(clamped(listHeight))
-        }
-        liveHeight = Double(clamped((dragStart ?? listHeight) + Double(translation)))
+        if !drag.active { drag.begin(at: clamped(drag.rest)) }
+        drag.move(to: clamped((drag.start ?? clamped(drag.rest)) + translation))
     }
 
     private func dragEnded() {
         // Both onEnded and the gesture-state reset call this; only the first one counts.
-        guard dragStart != nil else { return }
-        let final = liveHeight ?? listHeight
-        let start = dragStart ?? listHeight
+        guard let start = drag.start else { return }
+        let final = drag.live ?? start
         HubPerf.log("review.prThreads list resized to \(Int(final))")
-        if timer.finish("prThreads.list", from: start, to: final) != nil { HubMainBusy.measure("resize.prThreads.list.release") }
-        // One reflow, animated: the diff slides to its new top (instant under Reduce Motion).
-        withAnimation(GenMotion.animation(expanding: final >= start, reduceMotion: GenMotion.systemReduceMotion)) {
-            listHeight = final
-            liveHeight = nil
-            dragStart = nil
+        HubMainBusy.measure("resize.prThreads.list.release")
+        // One reflow, animated: the diff lays out once at its final height and slides to its new top while the
+        // list's slot catches up (`PaneHold`); instant under Reduce Motion.
+        let reduceMotion = GenMotion.systemReduceMotion
+        let duration = reduceMotion ? 0 : GenMotion.duration(expanding: final >= start)
+        HubLiveResize.shared.release(of: "review.prThreads", shift: final - start, edge: .top, duration: duration)
+        withAnimation(GenMotion.animation(expanding: final >= start, reduceMotion: reduceMotion)) {
+            drag.end("prThreads.list", settleAfter: duration)
+            settle(final)
         }
     }
 

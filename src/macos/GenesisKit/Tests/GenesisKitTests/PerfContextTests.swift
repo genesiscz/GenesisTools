@@ -33,3 +33,20 @@ final class PerfContextTests: XCTestCase {
         XCTAssertTrue(line.contains("step\(PerfContext.keep + 2) "))
     }
 }
+
+/// The layout loop watch names a see-saw, never a drag.
+final class LayoutLoopWatchTests: XCTestCase {
+    func testADragThereAndBackIsNotALoop() {
+        let drag = Array(300...340) + Array((280...339).reversed())
+        XCTAssertEqual(LayoutLoopWatch.reversals(drag), 1)
+        XCTAssertFalse(LayoutLoopWatch.isLoop(drag))
+    }
+
+    func testASeeSawOverThirtyWritesIsALoop() {
+        let loop = (0..<40).map { $0 % 2 == 0 ? 302 : 308 }
+        XCTAssertEqual(LayoutLoopWatch.reversals(loop), 38)
+        XCTAssertTrue(LayoutLoopWatch.isLoop(loop))
+        XCTAssertFalse(LayoutLoopWatch.isLoop(Array(loop.prefix(20))), "too few writes for a loop")
+        XCTAssertEqual(LayoutLoopWatch.reversals([302, 302, 308, 308, 302]), 1, "a repeated value changes nothing")
+    }
+}
