@@ -81,7 +81,27 @@ const ASSET_TYPES: Record<string, AssetType> = {
     ".avif": { contentType: "image/avif", kind: "image" },
     ".svg": { contentType: "image/svg+xml", kind: "image" },
     ".json": { contentType: "application/json; charset=utf-8", kind: "json" },
+    // Obsidian's embeddable audio, video and PDF formats.
+    ".mp3": { contentType: "audio/mpeg", kind: "audio" },
+    ".m4a": { contentType: "audio/mp4", kind: "audio" },
+    ".wav": { contentType: "audio/wav", kind: "audio" },
+    ".ogg": { contentType: "audio/ogg", kind: "audio" },
+    ".flac": { contentType: "audio/flac", kind: "audio" },
+    ".3gp": { contentType: "audio/3gpp", kind: "audio" },
+    ".mp4": { contentType: "video/mp4", kind: "video" },
+    ".mov": { contentType: "video/quicktime", kind: "video" },
+    ".webm": { contentType: "video/webm", kind: "video" },
+    ".ogv": { contentType: "video/ogg", kind: "video" },
+    ".mkv": { contentType: "video/x-matroska", kind: "video" },
+    ".pdf": { contentType: "application/pdf", kind: "pdf" },
 };
+
+const MEDIA_KINDS = new Set<AssetKind>(["image", "audio", "video", "pdf"]);
+
+/** A file the page shows as itself (picture, player, PDF viewer) and serves as bytes, never in a side panel. */
+export function isMediaKind(kind: AssetKind): boolean {
+    return MEDIA_KINDS.has(kind);
+}
 
 const SKIPPED_DIRS = new Set(["node_modules"]);
 
@@ -467,7 +487,7 @@ export async function readShareAsset(options: {
     }
 
     // An SVG is XML text: it is masked like the other text assets. The hash still names the bytes on disk.
-    if (asset.kind === "image" && !asset.vaultPath.toLowerCase().endsWith(".svg")) {
+    if (isMediaKind(asset.kind) && !asset.vaultPath.toLowerCase().endsWith(".svg")) {
         return { asset, body: loaded.bytes };
     }
 
@@ -619,8 +639,8 @@ export function embeddedPanelKey(baseUrl: string, lines: { start: number; end: n
 }
 
 export interface ShareEmbed {
-    /** Image hash to a `data:` URL holding the bytes the page would serve. */
-    images: Map<string, string>;
+    /** Media hash (image, audio, video, PDF) to a `data:` URL holding the bytes the page would serve. */
+    media: Map<string, string>;
     /** `embeddedPanelKey` to the rendered panel body and a `data:` URL of the raw file. */
     panels: Record<string, { html: string; raw: string }>;
 }
@@ -630,7 +650,7 @@ function dataUrl(contentType: string, body: Buffer): string {
 }
 
 /**
- * Everything a saved copy of the share page needs offline: each image as a `data:` URL, and each text
+ * Everything a saved copy of the share page needs offline: each media file as a `data:` URL, and each text
  * asset pre-rendered once per line range the note links to. `panelBase(hash)` is the chip URL without
  * its `#L` fragment. Bodies come from `readShareAsset`, so they are masked; a changed file is left out.
  * Returns null when the files together exceed `SHARE_BUNDLE_MAX_BYTES`.
@@ -641,7 +661,7 @@ export async function buildShareEmbed(options: {
     panelBase: (hash: string) => string;
 }): Promise<ShareEmbed | null> {
     const { vaultRoot, index, panelBase } = options;
-    const embed: ShareEmbed = { images: new Map(), panels: {} };
+    const embed: ShareEmbed = { media: new Map(), panels: {} };
     const bodies = new Map<string, Buffer>();
     let total = 0;
 
@@ -662,15 +682,15 @@ export async function buildShareEmbed(options: {
 
         bodies.set(asset.hash, found.body);
 
-        if (asset.kind === "image") {
-            embed.images.set(asset.hash, dataUrl(asset.contentType, found.body));
+        if (isMediaKind(asset.kind)) {
+            embed.media.set(asset.hash, dataUrl(asset.contentType, found.body));
         }
     }
 
     for (const [target, asset] of index.byTarget) {
         const body = bodies.get(asset.hash);
 
-        if (!body || asset.kind === "image") {
+        if (!body || isMediaKind(asset.kind)) {
             continue;
         }
 
@@ -682,7 +702,7 @@ export async function buildShareEmbed(options: {
         };
     }
 
-    log.debug({ images: embed.images.size, panels: Object.keys(embed.panels).length, total }, "share embed built");
+    log.debug({ media: embed.media.size, panels: Object.keys(embed.panels).length, total }, "share embed built");
 
     return embed;
 }
