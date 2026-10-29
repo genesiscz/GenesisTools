@@ -3,6 +3,7 @@ import { createHash } from "node:crypto";
 import { existsSync, mkdtempSync, readFileSync, utimesSync, writeFileSync } from "node:fs";
 import { tmpdir } from "node:os";
 import { join } from "node:path";
+import { execBashInput } from "@app/ai-proxy/lib/providers/codex/exec/bash-command";
 import { resetCooldowns } from "@app/ai-proxy/lib/providers/cooldown";
 import {
     rememberedMessageItems,
@@ -2995,7 +2996,8 @@ describe("tools that Claude Code's tool search loads, on the Codex agent", () =>
         const names = (body: Record<string, unknown>) =>
             (body.tools as Array<{ name: string }> | undefined)?.map((t) => t.name);
 
-        expect(names(second)).toEqual(["Bash", "ToolSearch"]);
+        // Bash brings Codex's exec tool, always last (see "Codex's exec tool on the Claude Code route").
+        expect(names(second)).toEqual(["Bash", "ToolSearch", "exec"]);
         expect(names(second)).toEqual(names(first));
 
         const input = second.input as Array<Record<string, unknown>>;
@@ -3616,5 +3618,111 @@ describe("CodexCompactionFlow through its ports", () => {
         expect(item).toEqual([{ type: "compaction", id: "cmp_1", encrypted_content: "B" }]);
         expect(calls[0]?.input).toEqual([...history, { type: "compaction_trigger" }]);
         expect(Object.keys(records.get("gtc1.saved")?.items ?? {}).sort()).toEqual(["aaaa", "bbbb"]);
+    });
+});
+
+describe("Codex's exec tool on the Claude Code route", () => {
+    const bash = { name: "Bash", description: "Run a command", input_schema: { type: "object", properties: {} } };
+    const read = { name: "Read", description: "Read a file", input_schema: { type: "object", properties: {} } };
+    const js = 'const r = await tools.exec_command({ cmd: "ls" });\ntext(r.output);';
+
+    async function sentBody(
+        messages: unknown[],
+        tools: unknown[],
+        sessionsIn?: SessionsInConfig
+    ): Promise<Record<string, unknown>> {
+        const sent: Array<Record<string, unknown>> = [];
+        globalThis.fetch = (async (_url: RequestInfo | URL, init?: RequestInit) => {
+            sent.push(SafeJSON.parse(String(init?.body)) as Record<string, unknown>);
+            return whamStreamResponse();
+        }) as typeof fetch;
+        const { OpenAiSubscriptionProvider } = await import("./openai-subscription");
+        const provider = await OpenAiSubscriptionProvider.create(account);
+        const bodyText = SafeJSON.stringify({ model: "gpt-6.1-sol", stream: true, max_tokens: 1024, tools, messages });
+        const res = await provider.messages?.(
+            new Request("http://localhost/v1/messages", { method: "POST", body: bodyText }),
+            "gpt-6.1-sol",
+            bodyText,
+            sessionsIn ? { sessionsIn } : undefined
+        );
+        await res?.text();
+        return sent[0] ?? {};
+    }
+
+    function history(runner: string): unknown[] {
+        return [
+            { role: "user", content: "list the files" },
+            {
+                role: "assistant",
+                content: [
+                    {
+                        type: "tool_use",
+                        id: "call_exec",
+                        name: "Bash",
+                        input: execBashInput({ js, bun: "/opt/bun", runner, sessionId: "sess-1" }),
+                    },
+                ],
+            },
+            {
+                role: "user",
+                content: [
+                    {
+                        type: "tool_result",
+                        tool_use_id: "call_exec",
+                        content: "Script completed\nWall time 0.1 seconds\nOutput:\na.ts",
+                    },
+                ],
+            },
+        ];
+    }
+
+    const toolNames = (body: Record<string, unknown>) =>
+        (body.tools as Array<{ name: string }> | undefined)?.map((tool) => tool.name);
+
+    it("is the last tool, from the first request on, and `tools` stays the same once the history holds an exec call", async () => {
+        const first = await sentBody([{ role: "user", content: "list the files" }], [bash, read]);
+        const second = await sentBody(history("/wt/src/ai-proxy/lib/providers/codex/exec/runner.ts"), [bash, read]);
+        const tools = first.tools as Array<Record<string, unknown>>;
+
+        expect(toolNames(first)).toEqual(["Bash", "Read", "exec"]);
+        expect(tools.at(-1)?.type).toBe("custom");
+        expect(tools.at(-1)?.strict).toBeUndefined();
+        expect(tools[0]?.strict).toBe(false);
+        expect(SafeJSON.stringify(second.tools)).toBe(SafeJSON.stringify(first.tools));
+    });
+
+    it("is not offered with the setting off or without Bash", async () => {
+        const off = await sentBody([{ role: "user", content: "hi" }], [bash, read], {
+            claude: { providers: { codex: { execTool: false } } },
+        });
+        const noBash = await sentBody([{ role: "user", content: "hi" }], [read]);
+
+        expect(toolNames(off)).toEqual(["Bash", "Read"]);
+        expect(toolNames(noBash)).toEqual(["Read"]);
+    });
+
+    it("replays the exec call and its output exactly as the model made and saw them, from any runner path", async () => {
+        const fromWorktree = await sentBody(history("/wt/src/ai-proxy/lib/providers/codex/exec/runner.ts"), [bash]);
+        const fromMain = await sentBody(history("/main/src/ai-proxy/lib/providers/codex/exec/runner.ts"), [bash]);
+        const input = fromWorktree.input as Array<Record<string, unknown>>;
+
+        expect(input.slice(1)).toEqual([
+            { type: "custom_tool_call", call_id: "call_exec", name: "exec", input: js },
+            {
+                type: "custom_tool_call_output",
+                call_id: "call_exec",
+                output: "Script completed\nWall time 0.1 seconds\nOutput:\na.ts",
+            },
+        ]);
+        expect(SafeJSON.stringify(fromMain.input)).toBe(SafeJSON.stringify(fromWorktree.input));
+    });
+
+    it("with the setting off, the same history goes up as the Bash function call it is", async () => {
+        const body = await sentBody(history("/wt/src/ai-proxy/lib/providers/codex/exec/runner.ts"), [bash], {
+            claude: { providers: { codex: { execTool: false } } },
+        });
+        const types = (body.input as Array<{ type?: string }>).map((item) => item.type);
+
+        expect(types).toEqual([undefined, "function_call", "function_call_output"]);
     });
 });

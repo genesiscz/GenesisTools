@@ -309,3 +309,70 @@ describe("anthropicToResponses: tools loaded by tool search", () => {
         expect(after).toEqual([...before, "SendMessage"]);
     });
 });
+
+describe("anthropicToResponses: a client tool call the model made as a custom tool", () => {
+    const messages = [
+        { role: "user", content: "count the files" },
+        {
+            role: "assistant",
+            content: [
+                { type: "tool_use", id: "call_exec", name: "Bash", input: { command: "RUN js-1" } },
+                { type: "tool_use", id: "call_plain", name: "Bash", input: { command: "ls" } },
+            ],
+        },
+        {
+            role: "user",
+            content: [
+                { type: "tool_result", tool_use_id: "call_exec", content: "Script completed\nOutput:\n3" },
+                { type: "tool_result", tool_use_id: "call_plain", content: [{ type: "text", text: "a.ts" }] },
+            ],
+        },
+    ];
+    const customToolCall = (toolUse: Record<string, unknown>) => {
+        const input = toolUse.input as { command?: string };
+        return input.command?.startsWith("RUN ")
+            ? { type: "custom_tool_call", call_id: toolUse.id, name: "exec", input: input.command.slice(4) }
+            : undefined;
+    };
+
+    it("replays the hook's custom_tool_call and sends its result as custom_tool_call_output; other calls stay function calls", () => {
+        const out = anthropicToResponses({ messages }, "gpt-6.1-sol", {
+            reasoningItem: () => undefined,
+            customToolCall,
+        });
+
+        expect(out.input).toEqual([
+            { role: "user", content: [{ type: "input_text", text: "count the files" }] },
+            { type: "custom_tool_call", call_id: "call_exec", name: "exec", input: "js-1" },
+            { type: "function_call", call_id: "call_plain", name: "Bash", arguments: '{"command":"ls"}' },
+            { type: "custom_tool_call_output", call_id: "call_exec", output: "Script completed\nOutput:\n3" },
+            { type: "function_call_output", call_id: "call_plain", output: "a.ts" },
+        ]);
+    });
+
+    it("without the hook every call is a function call", () => {
+        const out = anthropicToResponses({ messages }, "gpt-6.1-sol", { reasoningItem: () => undefined });
+        const types = (out.input as Array<{ type?: string }>).map((item) => item.type);
+
+        expect(types).toEqual([
+            undefined,
+            "function_call",
+            "function_call",
+            "function_call_output",
+            "function_call_output",
+        ]);
+    });
+
+    it("a restored assistant message's custom call still gets a custom output", () => {
+        const restored = [{ type: "custom_tool_call", call_id: "call_exec", name: "exec", input: "js-1" }];
+        const out = anthropicToResponses({ messages: [messages[1], messages[2]] }, "gpt-6.1-sol", {
+            reasoningItem: () => undefined,
+            restoreAssistantItems: () => restored,
+        });
+        const output = (out.input as Array<{ type?: string; call_id?: string }>).find(
+            (item) => item.call_id === "call_exec" && item.type !== "custom_tool_call"
+        );
+
+        expect(output?.type).toBe("custom_tool_call_output");
+    });
+});

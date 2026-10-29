@@ -12,6 +12,7 @@ import {
     fileCompactionStore,
     inputHasFallback,
 } from "@app/ai-proxy/lib/providers/codex/compaction-flow";
+import { execToolBridge } from "@app/ai-proxy/lib/providers/codex/exec/tool";
 import {
     buildWhamResponsesBody,
     contentHash,
@@ -495,6 +496,9 @@ export class OpenAiSubscriptionProvider implements ProxyProvider {
             parsed = turn.withSummaryLimit(summaryWords);
         }
 
+        // Codex's `exec` rides on Claude Code's Bash: offered when the client has Bash, replayed as the model made it.
+        const exec = execToolBridge({ tools: parsed.tools, sessionsIn: context?.sessionsIn });
+
         // System messages stay in place (`appendDeveloperMessage`): hoisted, they broke the prompt cache.
         let responsesBody = anthropicToResponses(ensureToolRequiredArrays(parsed), concreteModel, {
             // A Read of an image comes back as a tool result; WHAM takes it as input_image (codex-rs does the same).
@@ -530,10 +534,16 @@ export class OpenAiSubscriptionProvider implements ProxyProvider {
                     rememberMessageItems(conversation, content, items);
                 }
             },
+            ...(exec ? { customToolCall: exec.replayItem } : {}),
         });
 
         if (Array.isArray(responsesBody.tools)) {
             responsesBody.tools = responsesBody.tools.map((tool) => (isObject(tool) ? nonStrictByDefault(tool) : tool));
+        }
+
+        // Last, after the function tools got `strict: false`: a custom tool has no `strict`.
+        if (exec) {
+            responsesBody.tools = [...(Array.isArray(responsesBody.tools) ? responsesBody.tools : []), exec.definition];
         }
 
         for (const item of Array.isArray(responsesBody.input) ? responsesBody.input : []) {
