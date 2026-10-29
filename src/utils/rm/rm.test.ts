@@ -22,6 +22,7 @@ import {
     type ApprovalDeps,
     appApprovalFromReply,
     appApproveParams,
+    appendRmLedger,
     approvalAsker,
     approvalGraceMinutes,
     approvalItemReason,
@@ -65,6 +66,8 @@ import {
     type RmLedgerEntry,
     type RmRequest,
     type RmRuleContext,
+    readRmLedger,
+    readRmLedgerNewest,
     recheckAfterWait,
     recoverAsideJournals,
     rememberOptions,
@@ -82,6 +85,7 @@ import {
     type TrashPaths,
     totalRmLedger,
     trashItemName,
+    trashRootChangeBlocker,
 } from "./index";
 
 const AGENT: RmCaller = { agent: "claude-code", sessionId: "sess-1111", isInAgent: true };
@@ -325,6 +329,20 @@ describe("session scratch and roots", () => {
 
         expect(verdictOf(dir("trusted", "x"), c)).toEqual({ kind: "allow", rule: "root" });
         expect(verdictOf(root, c)).toEqual({ kind: "ask", rule: "default" });
+    });
+
+    test("an allowed path inside an asked folder stays in the plan; an asked one inside it goes with the folder", () => {
+        const root = dir("trusted-overlap");
+        const c = ctx({ config: { ...config, roots: [{ path: root, addedAt: "", via: "cli" }] } });
+        const allowedChild = dir("trusted-overlap", "build");
+        const theirs = dir("cc", "proj", "sess-2222", "overlap");
+        const plan = planRemoval([root, allowedChild, theirs, dir("cc", "proj", "sess-2222", "overlap", "inner")], c);
+
+        expect(plan.map((item) => [item.target.path, item.verdict.kind])).toEqual([
+            [root, "ask"],
+            [allowedChild, "allow"],
+            [theirs, "ask"],
+        ]);
     });
 
     test("a path inside another input is dropped from the plan", () => {
@@ -957,6 +975,25 @@ describe("audit log", () => {
         ]);
         expect(filterRmLedger(entries, { session: "cdx" })).toHaveLength(3);
     });
+
+    test("the newest-entries read stops at the limit and at --since, and keeps the filter", () => {
+        const path = join(dir("ledger-newest"), "ledger.jsonl");
+        const codex: RmCaller = { agent: "codex", sessionId: "cdx-9", isInAgent: true };
+        const now = Date.now();
+
+        for (let i = 0; i < 6; i++) {
+            const at = new Date(now - (6 - i) * 60_000).toISOString();
+            appendRmLedger({ at, action: "move", path: `/x/${i}`, caller: i % 2 === 0 ? AGENT : codex }, path);
+        }
+
+        expect(readRmLedgerNewest({}, 2, path).map((e) => e.path)).toEqual(["/x/4", "/x/5"]);
+        expect(readRmLedgerNewest({ agent: "codex" }, 2, path).map((e) => e.path)).toEqual(["/x/3", "/x/5"]);
+        expect(readRmLedgerNewest({ since: new Date(now - 150_000) }, 50, path).map((e) => e.path)).toEqual([
+            "/x/4",
+            "/x/5",
+        ]);
+        expect(readRmLedgerNewest({}, 50, path)).toEqual(readRmLedger(path));
+    });
 });
 
 describe("defaults", () => {
@@ -1076,6 +1113,8 @@ describe("security review fixes", () => {
             "null",
             '{"protect":42}',
             '{"profiles":[{"name":"x","match":{},"allowOwnFiles":"no"}]}',
+            '{"roots":[{"path":"/safe","session":false}]}',
+            '{"roots":[{"path":"/safe","expiresAt":"not-a-date"}]}',
         ].entries()) {
             expect(() => loadRmConfig(file(join(folder, `invalid-${index}.json`), content))).toThrow(
                 /invalid safety config/
@@ -1701,5 +1740,29 @@ describe("crash safety: the record comes before the move", () => {
         expect(request.targets.map((t) => t.stored)).toEqual(aside?.moved.map((t) => t.stored) ?? []);
         expect(request.asideDir).toBe(aside?.dir);
         expect(recoverAsideJournals(requestsDir)).toEqual([]);
+    });
+});
+
+describe("changing the trash root", () => {
+    test("is refused while the current root holds a batch, and allowed once it is empty or unchanged", () => {
+        const own = { ...config, trashRoot: join(dir("root-move"), "GenesisTools", "rm") };
+        const paths = {
+            batchesDir: dir("root-move-state", "batches"),
+            lockPath: join(base, "root-move-state", "lock"),
+        };
+        const next = join(base, "elsewhere", "GenesisTools", "rm");
+
+        expect(trashRootChangeBlocker(own, next, paths)).toBeNull();
+
+        const target = resolveTarget(file(join(dir("root-move-src"), "a.txt")), base);
+        const batch = moveToTrash([{ target, rule: "test" }], { config: own, caller: AGENT, graceMinutes: 60, paths });
+
+        expect(trashRootChangeBlocker(own, next, paths, "tools rm drain --now")).toContain("run tools rm drain --now");
+        expect(trashRootChangeBlocker(own, next, paths)).toContain("drain the trash");
+        expect(trashRootChangeBlocker(own, own.trashRoot, paths)).toBeNull();
+
+        restoreBatch(batch?.id ?? "", { config: own, paths });
+
+        expect(trashRootChangeBlocker(own, next, paths)).toBeNull();
     });
 });

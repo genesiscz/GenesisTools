@@ -150,6 +150,11 @@ export async function executePlan(
 
     result.refused = refused.length;
 
+    // Paths a person kept at the prompt; the run did not do what it was asked, so it does not exit 0.
+    let declined = 0;
+    // The request (and its aside move) waits until the allowed paths moved, since one may lie inside an asked folder.
+    let requestLater = false;
+
     if (asked.length > 0) {
         if (!ctx.caller.isInAgent && isInteractive() && options.aside !== true) {
             const confirmed = await confirmAtTerminal(asked, ctx, options);
@@ -174,10 +179,10 @@ export async function executePlan(
                 allowed.push(item);
                 confirmedMinutes.set(item, minutes);
             }
+
+            declined = asked.length - confirmed.size;
         } else {
-            const asking = requestForAsked(asked, ctx, options);
-            result.requestId = asking.id;
-            result.denials = asking.denials;
+            requestLater = true;
         }
     }
 
@@ -217,8 +222,14 @@ export async function executePlan(
         }
     }
 
+    if (requestLater) {
+        const asking = requestForAsked(asked, ctx, options);
+        result.requestId = asking.id;
+        result.denials = asking.denials;
+    }
+
     kickDrainer(ctx.config);
-    process.exitCode = result.refused > 0 ? 1 : result.requestId ? 3 : 0;
+    process.exitCode = result.refused > 0 || declined > 0 ? 1 : result.requestId ? 3 : 0;
 
     if (options.json) {
         out.result({
