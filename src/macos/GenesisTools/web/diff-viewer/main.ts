@@ -834,6 +834,8 @@ const css = {
     button: "font:12px -apple-system,sans-serif;color:rgba(255,255,255,.75);background:transparent;border:1px solid rgba(255,255,255,.12);border-radius:7px;padding:3px 9px;cursor:pointer;-webkit-user-select:none;user-select:none",
     primary:
         "font:12px -apple-system,sans-serif;font-weight:600;color:#111;background:#ffa11f;border:0;border-radius:7px;padding:4px 11px;cursor:pointer;-webkit-user-select:none;user-select:none",
+    /** The agent's blue (the AGENT ANALYSIS label's colour), for a send that goes to the agent rather than the PR. */
+    agent: "font:12px -apple-system,sans-serif;font-weight:600;color:#0b1220;background:#8ab4ff;border:0;border-radius:7px;padding:4px 11px;cursor:pointer;-webkit-user-select:none;user-select:none",
     textarea:
         "width:100%;box-sizing:border-box;min-height:70px;resize:vertical;background:#0e0f11;color:#eee;border:1px solid rgba(255,255,255,.15);border-radius:8px;padding:8px;font:13px/1.45 -apple-system,sans-serif;outline:none",
 };
@@ -1877,6 +1879,13 @@ function renderReplyBox(threadId: string): HTMLElement {
     footer.appendChild(
         renderBox(threadId, box, [
             {
+                label: "Stage for agent",
+                title: "Send this to the review's agent with the thread: it can change its suggested reply or make the fix",
+                primary: false,
+                tone: "agent",
+                send: (body) => threadAction(threadId, "stage", { body }),
+            },
+            {
                 label: "Post…",
                 title: "Publish the reply at once, visible to everyone (asks first)",
                 primary: false,
@@ -1897,6 +1906,8 @@ interface BoxButton {
     label: string;
     title: string;
     primary: boolean;
+    /** "agent": the blue of the agent's own controls, beside the orange PR actions. */
+    tone?: "agent";
     send: (body: string) => void;
 }
 
@@ -1957,6 +1968,9 @@ function renderBox(threadId: string, box: ThreadBox, sends: BoxButton[]): HTMLEl
 
     for (const send of sends) {
         const node = button(send.label, () => run(send), send.primary, send.title);
+        if (send.tone === "agent") {
+            node.style.cssText = css.agent;
+        }
         node.disabled = box.sending;
         actions.appendChild(node);
     }

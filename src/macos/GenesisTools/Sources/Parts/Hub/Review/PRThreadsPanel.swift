@@ -29,8 +29,8 @@ struct PRReviewBar: View {
     /// The height the drag began with: the layout keeps it until release (see `threadsList`).
     @State private var dragStart: Double?
     @State private var liveHeight: Double?
-    @State private var hovering = false
-    @GestureState private var dragging = false
+    @State private var timer = GenResizeDragTimer()
+    @AppStorage(HubResizeGrips.key, store: HubDefaults.store) private var grips = HubResizeGrips.auto.rawValue
 
     static let minListHeight: CGFloat = 110
 
@@ -178,61 +178,31 @@ struct PRReviewBar: View {
         return PRThreadsList(model: model, store: store)
             .frame(height: shown)
             .hubSurface(.content)
+            .genResizeOverlap(dragStart != nil && shown > slot + 0.5, edge: .bottom)
             .overlay(Rectangle().fill(ReviewPalette.hairline).frame(height: 1), alignment: .top)
             .overlay(alignment: .bottom) { resizer }
             .frame(height: slot, alignment: .top)
     }
 
     private var resizer: some View {
-        let hot = hovering || dragStart != nil
-        return ZStack {
-            Rectangle()
-                .fill(hot ? ReviewPalette.renamed.opacity(0.55) : Color.clear)
-                .frame(height: 1)
-            Capsule()
-                .fill(ReviewPalette.renamed)
-                .frame(width: 36, height: 4)
-                .shadow(color: ReviewPalette.renamed.opacity(0.6), radius: 6)
-                .opacity(hot ? 1 : 0)
-                .scaleEffect(x: hot ? 1 : 0.4)
-        }
-        // A 10 pt target around a 1 pt line: the edge does not have to be hit to the pixel.
-        .frame(height: 1)
-        .frame(maxWidth: .infinity)
-        .overlay(Color.clear.frame(height: 10).contentShape(Rectangle()))
-        .animation(.easeOut(duration: 0.14), value: hot)
-        .onHover { inside in
-            if inside != hovering { hovering = inside }
-        }
-        .hoverCursor(.resizeUpDown)
-        .onDisappear {
-            if hovering { NSCursor.arrow.set() }
-            hovering = false
-        }
-        // Global space: the handle moves with the list during the drag, so local translations would drift.
-        .gesture(
-            DragGesture(minimumDistance: 1, coordinateSpace: .global)
-                .updating($dragging) { _, state, _ in state = true }
-                .onChanged { value in dragChanged(value.translation.height) }
-                .onEnded { _ in dragEnded() }
-        )
-        // A cancelled gesture never calls onEnded: without this the diff stayed frozen.
-        .onChange(of: dragging) { _, active in
-            if !active, dragStart != nil { dragEnded() }
-        }
-        .instantTooltip("Drag to resize the threads list")
-        .accessibilityElement()
-        .accessibilityLabel(Text("Resize the PR threads list"))
-        .accessibilityValue(Text(verbatim: "\(Int(clamped(listHeight))) points"))
-        .accessibilityAdjustableAction { direction in
-            listHeight = Double(clamped(listHeight + (direction == .increment ? 40 : -40)))
-        }
+        GenResizeHandle(
+            axis: .vertical, panelSide: .before, dragging: dragStart != nil,
+            tint: ReviewPalette.renamed, line: .clear,
+            // Inside the review, under the threads, the edge is easy to miss: its grip shows at rest unless the
+            // reader chose otherwise (Settings, Hub, Resize handles).
+            gripAtRest: (HubResizeGrips(rawValue: grips) ?? .auto).showsAtRest(prominent: true),
+            tooltip: "Drag to resize the threads list",
+            accessibilityLabel: "Resize the PR threads list",
+            accessibilityValue: "\(Int(clamped(listHeight))) points",
+            onAdjust: { increment in listHeight = Double(clamped(listHeight + (increment ? 40 : -40))) },
+            onChanged: dragChanged,
+            onEnded: dragEnded)
     }
 
     private func dragChanged(_ translation: CGFloat) {
+        timer.step()
         if dragStart == nil {
             dragStart = Double(clamped(listHeight))
-            HubLiveResize.shared.begin("prThreads")
         }
         liveHeight = Double(clamped((dragStart ?? listHeight) + Double(translation)))
     }
@@ -241,15 +211,15 @@ struct PRReviewBar: View {
         // Both onEnded and the gesture-state reset call this; only the first one counts.
         guard dragStart != nil else { return }
         let final = liveHeight ?? listHeight
+        let start = dragStart ?? listHeight
         HubPerf.log("review.prThreads list resized to \(Int(final))")
-        var transaction = Transaction()
-        transaction.disablesAnimations = true
-        withTransaction(transaction) {
+        if timer.finish("prThreads.list", from: start, to: final) != nil { HubMainBusy.measure("resize.prThreads.list.release") }
+        // One reflow, animated: the diff slides to its new top (instant under Reduce Motion).
+        withAnimation(GenMotion.animation(expanding: final >= start, reduceMotion: GenMotion.systemReduceMotion)) {
             listHeight = final
             liveHeight = nil
             dragStart = nil
         }
-        HubLiveResize.shared.end("prThreads")
     }
 
     @ViewBuilder
@@ -656,6 +626,12 @@ struct PRThreadsList: View {
                 Rectangle().fill(ReviewPalette.hairline).frame(width: 1, height: 14)
                 PRFilterChip(title: "This file", symbol: "doc.text", on: onlyThisFile,
                              tooltip: "Show only the threads on the file at the top of the diff") { onlyThisFile.toggle() }
+                if let open = model.openInWindow {
+                    GhostButton("Open review", symbol: "arrow.up.right.square",
+                                tooltip: "Open this review in its own window: the same diff, threads and proposal", height: 22,
+                                action: open)
+                        .fixedSize()
+                }
                 Spacer(minLength: 0)
                 if !compact {
                     selectForFix(fixable)

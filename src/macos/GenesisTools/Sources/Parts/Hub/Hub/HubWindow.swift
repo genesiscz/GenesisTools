@@ -2264,9 +2264,6 @@ struct HubRootView: View {
             ResizableSidePanel(key: "hub.sidebar", edge: .leading, title: model.mode.title, defaultWidth: 320,
                                minWidth: Self.sidebarMinWidth, maxWidth: max(Self.sidebarMinWidth, sidebarRoom),
                                autoCollapse: width > 0 && sidebarRoom < Self.sidebarMinWidth,
-                               // Sessions mode holds the layout for the transcript; every other
-                               // mode's main view moves with the edge and reflows on release.
-                               holdsLayout: model.mode == .sessions || model.mode == .agents,
                                railAccessory: AnyView(HubModeRail(model: model, inbox: model.inbox))) {
                 SessionListView(model: model)
             }

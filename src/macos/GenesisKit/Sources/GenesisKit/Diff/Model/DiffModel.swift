@@ -287,6 +287,9 @@ public struct RenderedLiveThread: Encodable, Equatable {
 public struct ThreadActionInput: Equatable {
     public enum Action: String {
         case reply, resolve, unresolve
+        /// The reply box's text to the review's agent, with the thread (Stage for agent): the host queues it, the
+        /// PR gets nothing.
+        case stage
         case noteUpdate = "note.update"
         case noteDelete = "note.delete"
     }
@@ -323,7 +326,7 @@ public struct ThreadActionInput: Equatable {
         switch action {
         case .reply: return draft ? nil : .post
         case .noteDelete: return .deleteDraft
-        case .resolve, .unresolve, .noteUpdate: return nil
+        case .resolve, .unresolve, .noteUpdate, .stage: return nil
         }
     }
 
