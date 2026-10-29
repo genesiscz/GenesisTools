@@ -349,3 +349,21 @@ Sections: [Affordance](#affordance) · [Windows and overlays](#windows-and-overl
   repository), instead of replacing it with "not in a git repository".
 - A list of hosted projects quietly leaves out what is not hosted (a clone of a local folder, no remote); an error
   banner is for a project that should work and does not.
+
+## Dragged edges and resizable panels (any window, 2026-10-29)
+- The content of the dragged panel follows the pointer on every step; nothing in it is laid out in steps or buckets
+  of the width, so its far side never jumps or gets cut. Judge it by frame captures of the far edge during a real
+  drag, not by a per-step median.
+- Only the dragged panel changes per step. Its neighbours keep their layout and the panel draws over them; they
+  reflow once, at release, and hold their final size through the release animation.
+- A release costs one reflow: no hitch after the mouse-up. The host of the panel reads none of the drag's state and
+  none of the saved length in its body (the swift skill's performance.md, "The release re-runs no host body").
+- A heavy list (markdown rows, a transcript) behind a dragged edge is laid out once at its largest size and only its
+  clip moves; it is never hidden from accessibility for the drag, which rebuilds its nodes at release.
+- A dense list beside or inside a dragged panel carries buttons, tooltips and links only on the hovered or selected
+  row; the rest draw the same labels. With an accessibility client every control is walked per changed node.
+- A test drive proves it hit the edge by the app's own log line, never by the pointer's coordinates, and waits for
+  the mode's loads before it measures (the swift skill's `scripts/resize/`).
+- The dev monitor stays quiet through a normal drag; a watcher that fires on normal use gets ignored, so its rule
+  names the defect's shape (a see-saw), not a rate.
+

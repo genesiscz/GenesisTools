@@ -3,6 +3,47 @@
 Newest first. Each entry: date, symptom as the user saw it, cause, fix, commit. Generic lessons go to
 checklist.md or motion.md as well.
 
+- 2026-10-29 19:41 — **Hub resizing, judged after Opus's pass: the right side of a dragged panel jumped, releases hitched, the monitor cried loop.**
+  - *Right-aligned content jumped and was cut while the sidebar was dragged.* Opus laid the panel's content out in 12 pt
+    buckets of the live width (`5dbafec4b5`), so times, chips and badges sat up to 12 pt past or short of the edge and
+    jumped on every bucket change. His "53 → 10 ms per step" was the bucket's own artifact: most steps did no layout,
+    p50 fell, p90 stayed at about 45 ms. Fix: the content follows the edge on every step (`GenResizeReveal`,
+    `layout: { $0 }`); a step costs 17 to 22 ms in Worktrees and Sessions, which a hand does not see. Rule: never
+    quantize what a dragged edge shows; judge a drag by p90 and by frame captures of the far edge
+    (`.claude/skills/swift/scripts/resize/drag-frames.ts`), never by p50 alone.
+  - *The PR threads list froze for 468 to 912 ms at release.* Opus hid the list from accessibility during the drag,
+    and SwiftUI rebuilt every node at release. Fix: no accessibility toggle; the list is laid out once at its tallest
+    and only the clip follows the edge (step gap p50 31 → 10 ms).
+  - *Every sidebar drag ended with a hitch of 105 to 334 ms.* The host's body read the saved width and the drag's
+    release flags, so a release re-ran it three times and re-rendered the whole sidebar; two unused
+    `@Environment(\.genResizing)` reads re-rendered the session list and the file sidebar at the first step and at
+    release. Fix: the rest length lives in `GenResizeDrag.rest`, the z order in `genResizeRaised`, the collapse hint
+    in `genResizeCollapseHint`, the handle's collapse tint in `GenResizeHandle`; the neighbour holds through the
+    release (`PaneHold`). Worktrees sidebar release 275 → 35 ms, Files 266 → 48, Sessions 329 → 137, PR overview
+    112 → 85. Rule: a release re-runs no host body, the same rule as a step.
+  - *`tools hub dev monitor` named every drag a layout loop* (`hub.modes: 31 width writes in 1 s`). The mode picker
+    measured its width per step and `LayoutLoopWatch` counted writes. Fix: a loop see-saws, a drag runs one way and
+    back, so the watch now needs 8 direction reversals too; the picker writes only its narrow flag
+    (`measuredWidth(_:narrowerThan:_:)`). A watcher that cries on every normal use trains the reader to ignore it.
+  - *The first test drags landed beside the edges* (Martin: "you were in a bad coordinates"). The resize edges are
+    accessibility elements labelled "Resize <title>"; `hub-drags.ts` drags along their frames and counts a drag only
+    when the hub logged its own `hub.resize <panel>` line, else MISSED. Rule: a drive-by test proves it hit by the
+    app's own log, never by the pointer's coordinates.
+  - *The PRs sidebar drag stalled 0.4 to 2.5 s* (Martin: "the PR left panel responsiveness is rly bad"). The hang
+    sample put 22 to 38% in `AccessibilityNode.updateFocusResponder` walks of the window's responders (100 to 300 ms
+    each): every PR row carried a button, a tooltip, a CI link and badge tooltips at rest, and the list re-rendered
+    on every publish of the hub's models. Fix: `PRRow`, a value row (`Equatable`, `.equatable()`) whose controls exist
+    only while hovered or selected (`LiveButton` pattern: `rowButton`, `liveTooltip`, `restingButton` for VoiceOver).
+    Step gap p50 50 → 41 ms, p95 334 to 540 → 54, max 593 to 717 → 58, release 459 to 608 → 90 ms, no stall.
+  - *Drags through `tools control` never resized anything* (Martin: "it should be able with the cursor from the
+    overlay"). A window-addressed drag (`--background`) reached the SwiftUI `DragGesture` only sometimes. Fix:
+    the handle's hit area is an AppKit view (`GenResizeDragSurface`), which takes every posted press; verified by
+    the hub's log line (sidebar 60 steps, p50 27 ms per step). Rule: a control an agent must drive owns its press
+    in AppKit.
+  - *Still open:* the threads list's release costs 300 ms of SwiftUI layout under `NSHostingView.layout` (not
+    attributed yet); the Agents sidebar drag costs 119 ms per step (its rows, untouched today); Sessions, Inbox and
+    Activity releases 170 to 216 ms.
+
 - 2026-10-29 18:08 — **The hub's Worktrees diff was empty after a switch from Sessions (the page had drawn all 94 files).**
   - *Two modes shared one diff view, and the closing pane took it back.* Sessions and Worktrees use the same
     `ReviewModel` when they show one checkout, so one `WKWebView` moves between two `RendererHost` containers. The

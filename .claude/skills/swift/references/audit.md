@@ -163,3 +163,20 @@ reference it points to), the code quoted, the fix in one sentence. Order by cost
 wrong state first; hitches in frequent actions next; rare or small costs last. End with **Coverage**: one line per
 section above with the searches run, their hit counts, and the findings or "none". Put a shape whose cost depends on
 numbers you do not have under **Needs a measurement**, with the instrument and the result that would confirm it.
+
+## Added 2026-10-29: drags, releases and watchers
+
+Searches: `rg -n 'DragGesture|onChanged|GenResizeDrag|HubLiveResize|measuredWidth|onGeometryChange' <files>`.
+- A body that reads a per-step value (the live width, a translation, `drag.live`) rebuilds its content per step:
+  closures and `@State` objects compare unequal. The per-step value is read by one leaf that applies it.
+- A body that reads what changes at release (the saved length, a `releasing` flag, a collapse flag) re-renders its
+  content once per flag at the mouse-up. Those reads belong in leaf modifiers, the saved length in the drag object.
+- `@Environment` reads nobody uses are still dependencies: find them with `rg -n '@Environment\(' | rg -v <use>`.
+- Content laid out in buckets of a dragged width (`rounded` to a step, `/ 12 * 12`) jumps at its far side; the
+  per-step median it saves is the steps that skipped work.
+- A list hidden from accessibility during a drag (`accessibilityHidden(dragging)`) rebuilds its nodes at release.
+- A watcher keyed on a rate (writes per second) fires on normal use once content follows a drag; it needs the shape
+  of the defect (direction reversals for a loop).
+- Dense rows beside a dragged edge with a button, tooltip or link each: the responder walk per changed accessibility
+  node visits all of them (`AccessibilityNode.updateFocusResponder` 100 to 300 ms in a window of 40 rows).
+

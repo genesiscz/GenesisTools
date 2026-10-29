@@ -60,6 +60,9 @@ to make by screenshot.
 - **A tooltip never stands in for the real hover behavior.** If hover should open a preview, a tooltip appearing
   instead is a bug to fix, not a fallback.
 - **Every count opens what it counts**, and every session offers its terminal (cmux) and its inbox.
+- **A dragged edge follows the pointer, and nothing jumps at release.** The panel's far side reflows with every
+  step (never in buckets), the neighbours stay put until the mouse-up, and the release is one reflow with no hitch.
+  Test it with a real drag and frame captures (`references/checklist.md`, "Dragged edges").
 
 ## Design authorities (load before a judgment call)
 

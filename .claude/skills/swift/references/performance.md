@@ -69,6 +69,68 @@ are in [genesistools.md](genesistools.md)). Add a new entry at the end of its se
   411.4 ms total transition time. These are callback timings, not compositor frames or proof that
   search, selection and dismissal all work; verify those interactions separately.
 
+### A dragged panel: one value per step, one leaf reads it (2026-10-29 19:41)
+- **Symptom:** a sidebar drag costs 30 to 60 ms per step with an accessibility client; a drag of a list edge costs
+  50 ms; the web view beside the panel goes blank while it resizes.
+- **Why:** the host's body read the live width, so every step rebuilt the panel's content (closures and fresh
+  `@State` objects never compare equal), re-ran the handle's gesture and accessibility modifiers, re-resolved every
+  row's text for the accessibility client, and moved the neighbours, which laid out the whole window per step.
+- **Fix:** the overlap model (GenesisKit `GenResize.swift`): only the dragged panel changes per step, drawn over its
+  neighbour on an opaque backing; the neighbours keep their slot; one reflow at release. A step changes one value
+  (`GenResizeDrag.live`, `@Observable`) and only `GenResizeReveal` reads it; the host builds content, handle and
+  overlays once. A list of heavy rows is laid out once at its tallest and only the clip moves
+  (`layout: { _ in tallest }`); a panel the reader wants to see more of reflows with the edge (`layout: { $0 }`).
+- **Measured (HubBench, AX client, busy ms per step p50 / p90):** PRs sidebar 59.6 / 75.5 → 30.5 / 44.9, PR overview
+  41.7 / 52.3 → 14.7 / 26.4, Sessions sidebar 30 / 34 → 16.7 / 24, Worktrees sidebar 37 / 43 → 17.7 / 21, PRs window
+  sweep: a layout loop at 100% CPU (widths 302 to 308, exit 70) → 25 / 70. Real pointer, step gap p50 / p95 ms:
+  Worktrees sidebar 20 / 25, Sessions 17 / 23, PR overview 15 / 29, PR threads list 31 / 34 → 10 / 17, Files 16 / 22.
+
+### Do not quantize what a dragged edge shows
+- Laying the content out in 12 pt buckets of the live width made p50 fall from 53 to 10 ms per step and left p90 at
+  45: the saved steps were the ones that did nothing, and the far side jumped on every bucket change. A metric that
+  can skip work lies in its median; report p90 and max with it, and look at frames of the edge.
+
+### The release re-runs no host body either
+- **Symptom:** a 105 to 334 ms hitch right after the mouse-up of a smooth drag.
+- **Why:** the host's body read the saved width and the drag's `releasing` and `willCollapse`, so the release re-ran
+  it up to three times, each re-rendering the whole panel content; an unused `@Environment` read of a per-drag flag
+  did the same to the neighbour lists.
+- **Fix:** the rest length lives in the drag object (`GenResizeDrag.rest`, read by the reveal), the z order and the
+  collapse hint are leaf modifiers (`genResizeRaised`, `genResizeCollapseHint`), the handle picks its own collapse
+  tint, and the neighbour holds its final size through the release animation, aligned away from the panel
+  (`PaneHold` on `HubLiveResize.release`), so nothing reflows per frame. Remove every `@Environment` read a view does
+  not use: it is a dependency all the same.
+- **Measured (release main busy, real pointer):** Worktrees sidebar 275 → 35 ms, Files 266 → 48, Sessions 329 → 137,
+  PR overview 112 → 85. The PR threads list stays at 300 to 420 ms: `sample` puts it in `NSHostingView.layout`
+  (AttributeGraph updates and layout, no app frames), still open.
+
+### A layout loop see-saws; a drag runs one way
+- `LayoutLoopWatch` counted width writes per second and so named every sidebar drag a loop once the content reflowed
+  per step (31 writes in a second, 374, 376, 377 …). A loop reverses direction on nearly every write (302, 308, 302);
+  a drag there and back reverses at most a few times. The watch now needs 8 reversals in the window too
+  (`LayoutLoopWatch.isLoop`, GenesisKitBase `PerfSpans.swift`). A view that only asks "is there room" writes a flag,
+  not the width (`measuredWidth(_:narrowerThan:_:)`), so it re-renders at the crossing, not per point.
+
+### Accessibility walks during a drag of a dense list (2026-10-29)
+- **Symptom:** the PRs sidebar drag stalled 0.4 to 2.5 s while the Worktrees and Sessions sidebars did not.
+- **Why:** the hang sample put 22 to 38% in `AccessibilityNode.updateFocusResponder` → `MultiViewResponder.visit`:
+  each walk visits every responder of the window (100 to 300 ms with 40 PR rows, the threads list and the file
+  sidebar on screen), a step that re-wraps titles invalidates nodes and triggers several, and every row carried a
+  button, a tooltip, a CI link and badge tooltips at rest; the list also re-rendered on every publish of the models
+  it observed.
+- **Fix:** the dense-list rule above, applied: `PRRow` takes values (`Equatable`, `.equatable()`) and is live only
+  while hovered or selected (`LiveButton`, `liveTooltip`, `restingButton` keeps it a button to VoiceOver).
+- **Measured (real pointer, 45 s after the mode switch):** step gap p50 50 → 41 ms, p95 334 to 540 → 54, max 593
+  to 717 → 58, release 459 to 608 → 90 ms, no stall. The Agents sidebar, whose rows were not touched, still costs
+  119 ms per step: the same fix is due there.
+
+### A control an agent drives owns its press in AppKit (2026-10-29)
+- A window-addressed drag (`tools control act --action drag --background`: mouse events posted to the process, the
+  pointer left alone) started a SwiftUI `DragGesture` only sometimes; an `NSView`'s `mouseDown`, `mouseDragged` and
+  `mouseUp` take it every time. `GenResizeHandle`'s hit area is `GenResizeDragSurface` (`acceptsFirstMouse`,
+  `mouseDownCanMoveWindow` false), which reports translations along its axis; the real pointer takes the same path.
+  Verified by the hub's own `hub.resize` line: 60 posted steps, p50 27 ms per step, release 185 ms.
+
 ## Web views
 
 ### Never create a `WKWebView` on a click

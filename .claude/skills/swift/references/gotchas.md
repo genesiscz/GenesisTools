@@ -21,6 +21,27 @@
   `screenPropertiesChanged`) is a synchronous call into an overloaded WindowServer. In one 16-second sample, 783 of
   ~1980 busy main-thread samples were that hit test. Check `WindowServer` CPU (80-100% here, with a screen
   recording and a computer-use agent running) before optimizing a view that only looks slow.
+- **HubBench's accessibility client polls the focused element every 0.5 s, and each poll costs the app about 28 ms**
+  (`AccessibilityNode.updateFocusResponder`, a walk of the window's responders). It lands inside some drag steps and
+  not others, so a bench's per-step p50 moves by 10 ms between builds that changed nothing there; compare p90 and the
+  real-pointer step gaps (2026-10-29, three builds blamed for a p50 of 33 that was the poll).
+- **`HubMainBusy` and the step gaps are wall time.** At a load average of 36 the same release read 324 ms that read
+  302 at a load of 6, and a 2.4 s pointer drag took 6 s. Write `uptime` into every result and rerun under 12.
+- **A `sample` timed at the end of a drag misses the release under load**: the pointer events arrive late, the release
+  lands after the 1 s window, and the file shows an idle main thread. Check the main thread's sample count first.
+- **The in-process stall sampler's stack file is thin on SwiftUI layout.** It names app frames (`PRMetaLineLayout`
+  2.6%) under a 67% `NSHostingView.layout`, because SwiftUI's view bodies are `<deduplicated_symbol>`. For a stall
+  over 1 s read the `hang-*.txt` it spawns (`sample`, full tree) with `scripts/resize/sample-who.ts`, which groups by
+  machinery: body updates, layout, accessibility walks, lazy placements, text.
+- **A SwiftUI `DragGesture` does not reliably start from window-addressed mouse events** (`tools control act
+  --background`, posted to the process with the pointer left alone): a drag of the hub's sidebar logged nothing in
+  one window and resized in a freshly opened one, while an `NSView`'s `mouseDown` / `mouseDragged` / `mouseUp` take
+  them every time (the ax-tool smoke test's own AppKit app, and GenesisKit's `GenResizeDragSurface`). A control an
+  agent must drive without the user's pointer owns its press in AppKit, with `acceptsFirstMouse` true and
+  `mouseDownCanMoveWindow` false, and reports translations to SwiftUI (2026-10-29).
+- **A watcher that counts events names normal use a defect.** The layout-loop watch counted width writes per second
+  and fired on every sidebar drag once content reflowed per step; it needs the shape of a loop (reversals), not the
+  rate (2026-10-29).
 
 ## SwiftUI / AppKit
 

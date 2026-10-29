@@ -149,3 +149,27 @@ floods it), and read the stack file each `hang` or `spin` line names. A face rep
 calls `HangWatch.start()`; on 2026-10-23 the widget, markdown and settings faces did not, so two widget spins and
 the Clicky key-tap stalls went unseen. The swift skill's gotchas.md ("Hangs that reached the user on 2026-10-23")
 has the details.
+
+### A drag, a release, and what a sample can and cannot name (2026-10-29 19:41)
+
+A resize has two costs, measured apart: the step (the hub logs `hub.resize <panel> a->b pt: N steps, step gap p50
+p95 max` from its own drag timer) and the release (`…release main busy N ms`, the main thread's busy time over the
+600 ms after the mouse-up). HubBench gives the step off screen with an accessibility client attached; the real
+pointer gives both, driven by the swift skill's `scripts/resize/hub-drags.ts` inside a "Stop touching" window, and
+only a drag the app logged counts.
+
+- **A metric that can skip work lies in its median.** Laying a panel out in 12 pt buckets took p50 from 53 to 10 ms
+  and left p90 at 45: the cheap steps were the ones that did nothing, and the user saw the far edge jump. Report
+  p50, p90 and max together, and for anything visual add frames of the thing (`drag-frames.ts`).
+- **Know the instrument's own cost.** HubBench's accessibility client polls the focused element every 0.5 s and each
+  poll costs the app about 28 ms, inside some steps and not others; three builds were blamed for a p50 of 33 that
+  was the poll. A/B the instrument on a build that changed nothing before blaming the change.
+- **Wall time under load is not a result.** Main-thread busy and step gaps are wall time; a release read 324 ms at a
+  load average of 36 and 302 at 6, and a 2.4 s drag took 6 s. Every result names `uptime`; rerun under 12.
+- **`sample` names machinery, not views, in SwiftUI.** View bodies are `<deduplicated_symbol>`; group the main
+  thread by family instead (`sample-who.ts`): `GraphHost.flushTransactions` is body updates, `ViewGraph.updateOutputs`
+  is layout, `AccessibilityNode.updateFocusResponder` → `MultiViewResponder.visit` is the responder walk an
+  accessibility client causes (100 to 300 ms each in a window with dense rows), `LazySubviewPlacements` is a lazy
+  stack re-placing rows. Our own frames under them (`SideSplit.placeSubviews`, `PRMetaLineLayout`) say which layout.
+- **Time the sample to the event.** A sample started 2.3 s into a 2.4 s drag catches the release when the machine is
+  quiet and an idle main thread when it is not; check the main thread's sample count before reading the tree.

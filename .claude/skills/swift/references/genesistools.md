@@ -26,6 +26,12 @@ GenesisTools checkout.
 - Rank today's app→CLI calls by total time from `mark call t=… via=… ms=… argv=…` lines.
 - HubBench: `GENESIS_HUB_BENCH_ONLY=open GENESIS_HUB_BENCH_OPEN=<id>,<id> GENESIS_HUB_BENCH_AX=1
   ~/Applications/GenesisTools.app/Contents/MacOS/GenesisTools --hub --bench <out.json> --panes transcript,changes`.
+- Resizes: `GENESIS_HUB_BENCH_ONLY=sidebar,overview,files,window,split` per mode (`--mode prs --pr <ref>`), summarised
+  by `scripts/resize/bench-summary.ts`; `GENESIS_HUB_BENCH_ONLY=modes` switches through every mode twice for a
+  `sample` of the switches. The real thing: `scripts/resize/hub-drags.ts` (every edge, verified by the hub's
+  `hub.resize` line), `drag-frames.ts` (the far edge frame by frame), `release-sample.ts` + `sample-who.ts` (what a
+  release spends). Resize engine: GenesisKit `Controls/GenResize.swift`; hosts `Hub/HubPanels.swift`
+  (`ResizableSidePanel`, `PaneHold`, `HubLiveResize`) and `Review/PRThreadsPanel.swift` (2026-10-29).
 
 ## What was done (2026-10-08, PR #479)
 
@@ -58,6 +64,18 @@ GenesisTools checkout.
   through the generic `runReport`.
 
 - The widget watcher (`hub widget watch`, another session's worktree): a full snapshot every 5 s (~15% CPU).
+- Hub mode switches (2026-10-29, dev monitor): `hub.mode.prs` 0.6 to 1.3 s on the main thread, `prs.list.render`
+  0.4 to 1.1 s, `prs.readiness.render` 0.5 to 0.9 s, `prs.threads.show` 0.7 to 1.5 s (arrives up to 40 s after the
+  switch), `review.cache.paint` 0.6 s, `hub.mode.worktrees` 0.7 to 0.8 s, `hub.mode.sessions` 0.64 s,
+  `transcript.tail.render` 0.66 s, `transcript.open` 0.65 s busy and 1.6 s to settle; 40 to 79 git and `bun hub pr`
+  processes per switch.
+- A window resize in PRs mode see-saws (`LayoutLoopWatch` with the reversal rule, bench window sweep 2026-10-29 20:07):
+  `prs.detail` 782, 758, 782, 758 and `review.files` / `review.root` 327, 320, 304 repeating, 8 reversals in a
+  second. A real width feedback between the Files panel's fitted width and the review root; the loop ends by itself
+  but costs the sweep its p90 (70 ms). Not fixed yet.
+- The PR threads list release: 300 ms of SwiftUI layout under `NSHostingView.layout` (not attributed yet). The
+  Agents sidebar drag: 119 ms per step (its rows carry controls at rest; `PRRow` is the fix to copy). Sessions,
+  Inbox and Activity sidebar releases 170 to 216 ms.
 
 ## Markdown viewer (GenesisKit `Markdown/`, 2026-10-13 17:22)
 

@@ -87,6 +87,11 @@ the bare `ai usage sessions --json --fresh` (all 2,404 transcripts) was not, and
 State: the metric (CPU ms), the statistic (median of N), the order, the load average, the input size, the check,
 both values, and the commit. Example: "cold row build 1,180 → 423 ms of CPU, median of 9 fresh processes per arm,
 BAABBA blocks of 4, load 37, 630 rows in both arms, 747458e06 → 2082e48f9." Then the cause in one sentence.
+- A change that lets some runs skip the work moves the median and not the tail: report p50 with p90 and max, and
+  say what a run does when it skips (2026-10-29: a bucketed layout "halved" a drag's p50 while p90 stood still and
+  the UI jumped).
+- Name the load average with every wall-time figure; a main-thread busy figure at a load of 36 is not comparable
+  with one at 6.
 
 ## 8. Shell traps that make a run measure nothing (2026-10-13 17:22)
 
