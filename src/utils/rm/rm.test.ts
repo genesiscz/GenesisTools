@@ -430,6 +430,23 @@ describe("requests and approval", () => {
             expect(calls).toEqual(["app", "app"]);
         });
 
+        test("a window whose process ended without an answer is asked again, not replaced by the dialog", async () => {
+            const calls: string[] = [];
+            let first = true;
+            const endedThenAllowed = async (): Promise<AppApproval> => {
+                if (first) {
+                    first = false;
+                    return { kind: "missing", detail: "rm.approve produced no reply (exit 143)" };
+                }
+
+                return allowed();
+            };
+            const outcome = await confirmByPerson(prompt, depsWith(endedThenAllowed, calls));
+
+            expect(outcome.via).toBe("touch-id");
+            expect(calls).toEqual(["app", "app"]);
+        });
+
         test("auto falls back to the code only when there is no app to ask", async () => {
             const calls: string[] = [];
             const outcome = await confirmByPerson(prompt, depsWith(missing, calls));

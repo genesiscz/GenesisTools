@@ -364,6 +364,17 @@ describe("staleAppFacePids", () => {
         expect(staleAppFacePids(processRows(stdout), launcher)).toEqual(["111", "222", "333", "666"]);
     });
 
+    it("spares an approval window a person is answering, and still kills other --rpc faces", () => {
+        const stdout = [
+            `  111 ${launcher} --rpc {"method":"rm.approve","params":{"title":"Delete 2 paths"}}`,
+            `  222 ${launcher} --rpc {"method":"gate.approve"}`,
+            `  333 ${launcher} --rpc {"method":"vault.unlock"}`,
+            `  444 ${launcher} --rpc {"method":"notify.post"}`,
+        ].join("\n");
+
+        expect(staleAppFacePids(processRows(stdout), launcher)).toEqual(["444"]);
+    });
+
     it("kills a link router that outlived its link, but not a launcher whose program takes a URL", () => {
         const stdout = [
             `  111 ${launcher} https://example.com/a%20b`,
