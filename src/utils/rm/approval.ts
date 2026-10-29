@@ -78,6 +78,9 @@ const APP_TIMEOUT_MS = 180_000;
  */
 const APP_MISSING_CODES = new Set(["unavailable", "method_unknown", "handshake"]);
 
+/** `genesisAppRpc`'s detail when the window's process exited before it replied. */
+const WINDOW_ENDED = /produced no reply \(exit \d+\)/;
+
 interface RmApproveReply {
     decision: string;
     method?: string;
@@ -156,7 +159,14 @@ export async function confirmByPerson(
     const approval = prompt.approval ?? "auto";
 
     if (approval !== "code" && deps.platform === "darwin") {
-        const answer = await deps.app(prompt);
+        let answer = await deps.app(prompt);
+
+        // The window opened and its process ended without an answer (a rebuild of the app replaced it): the app is
+        // there, so it asks again rather than putting up the text dialog as a second dialog for the same request.
+        if (answer.kind === "missing" && WINDOW_ENDED.test(answer.detail)) {
+            logger.info({ detail: answer.detail }, "rm: the approval window ended without an answer; asking again");
+            answer = await deps.app(prompt);
+        }
 
         if (answer.kind === "answered") {
             return answer.outcome;

@@ -1726,6 +1726,9 @@ export function readAppFaceProcesses(): ProcessEntry[] {
     );
 }
 
+/** RPC methods that hold a window open for a person's answer (Notify.swift `rpcMethods`). */
+const APPROVAL_RPC_METHODS = ["rm.approve", "gate.approve", "vault.unlock"];
+
 export function staleAppFacePids(processes: Pick<ProcessEntry, "pid" | "command">[], launcherPath: string): string[] {
     const stale: string[] = [];
 
@@ -1749,6 +1752,13 @@ export function staleAppFacePids(processes: Pick<ProcessEntry, "pid" | "command"
         // router, which ends within seconds, so one that is still there holds every later link and drops it
         // (2026-10-06: 5 h). Anything else starts with a program path, which means it is the launcher and
         // must be left alone.
+        // An approval window a person is answering right now (`tools rm approve`, a gate, a vault unlock) is spared: it
+        // ends itself at its own deadline, and killing it made the CLI fall back to the old text dialog, a second
+        // dialog for the same request (2026-10-29, a rebuild 12 s after the Touch ID window opened).
+        if (rest.startsWith("--rpc") && APPROVAL_RPC_METHODS.some((method) => rest.includes(`"${method}"`))) {
+            continue;
+        }
+
         if (rest === "" || rest.startsWith("-") || /^https?:\/\//.test(rest)) {
             stale.push(String(entry.pid));
         }
