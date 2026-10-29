@@ -690,6 +690,72 @@ describe("running session resume selection", () => {
     });
 });
 
+describe("running sessions the resume picker may focus", () => {
+    test("a process matched to a session only by its folder is not offered: the guess sent a resume to another session's tab", async () => {
+        // 2026-10-29: the gt-native-ux process was stopped, the idle lead session in another tab of the same repo had no
+        // other evidence, so the cwd guess named that tab and "Focus" raised the wrong session.
+        const sessionId = "11111111-1111-4111-8111-111111111111";
+        const tui: ActiveAgentProcess = {
+            pid: 101,
+            ppid: 99,
+            tty: "ttys001",
+            startedAt: 1_700_000_000_000,
+            cpuTime: "0:00.01",
+            args: "codex",
+            kind: "tui",
+            account: "work",
+            proxyTarget: null,
+            cwd: "/repo/fixture",
+        };
+        const scan = spyOn(processScan, "listActiveAgentProcesses").mockResolvedValue([
+            tui,
+            {
+                ...tui,
+                pid: 102,
+                tty: "ttys002",
+                cwd: "/repo/other",
+                args: `codex resume ${sessionId.replace("1", "2")}`,
+            },
+        ]);
+        const refs = spyOn(journalRefs, "loadAllSessionCmuxRefs").mockReturnValue(new Map());
+        const source = {
+            alias: "codex" as const,
+            classify: classifyCodexArgs,
+            resumeIdFromArgs: codexResumeIdFromArgs,
+            activeSessions: async () => [{ sessionId, cwd: tui.cwd }],
+        };
+        const runner = async () =>
+            SafeJSON.stringify({
+                windows: [
+                    {
+                        workspaces: [
+                            {
+                                panes: [
+                                    {
+                                        surfaces: [
+                                            { id: "surface-one", ref: "surface:1", tty: "ttys001" },
+                                            { id: "surface-two", ref: "surface:2", tty: "ttys002" },
+                                        ],
+                                    },
+                                ],
+                            },
+                        ],
+                    },
+                ],
+            });
+
+        try {
+            const all = await listActiveAgentSessions(source, { runner, tails: false });
+
+            expect(all.find((entry) => entry.pid === 101)).toMatchObject({ sessionId, sessionSource: "cwd-unique" });
+            expect((await listRunningCmuxSessions(source, { runner })).map((entry) => entry.pid)).toEqual([102]);
+        } finally {
+            refs.mockRestore();
+            scan.mockRestore();
+        }
+    });
+});
+
 describe("helper processes cannot claim live sessions", () => {
     test.each(["hook-tty", "cwd-unique"])(
         "a lower-PID Codex helper cannot take the TUI's %s identity",
