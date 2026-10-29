@@ -27,15 +27,24 @@ import { planAllowsClaudeCode } from "./subscription";
  * The only numbers involved are the buckets' own periods (5h, 7d) and the
  * majority-stall factor (1/2).
  *
- * GROUPED URGENCY (the `group`/`score`/`cooling` fields) is the alternative
- * ordering: accounts partition into fable / opus / dead / expired, and inside a
- * group rank by capacity that evaporates soonest. `sortGrouped` applies it;
- * `scoreAccounts` still returns tier order so existing callers are unchanged.
+ * GROUPED URGENCY (the `group`/`score`/`cooling`/`surplus` fields) is the
+ * alternative ordering: accounts partition into fable / opus / dead / expired,
+ * and inside a group rank by capacity that evaporates soonest. A week whose
+ * rate beats the nominal pace (100% / 168h) has a SURPLUS: a nominal burn
+ * cannot empty it before the reset, so the leftover is lost. Among surplus
+ * weeks the one that resets first loses its leftover first, while the others
+ * keep theirs, so it goes first (earliest deadline first). Comparing rates
+ * there picked a fresh 5-day week over a 34%-left week resetting in 44h,
+ * because 98/120 beats 34/44 by a hair. Weeks without a surplus follow, by
+ * score. `sortGrouped` applies it; `scoreAccounts` still returns tier order so
+ * existing callers are unchanged.
  */
 
 const SESSION_PERIOD_HOURS = 5;
 const WEEKLY_PERIOD_HOURS = 168;
 const MS_PER_HOUR = 3_600_000;
+/** The %/h that spends a full weekly bucket in exactly one period. */
+const NOMINAL_WEEKLY_RATE = 100 / WEEKLY_PERIOD_HOURS;
 /** weekly_all at/below this headroom ⇒ the account can't serve any model. */
 const DEAD_HEADROOM_PCT = 2;
 /** 5h window at/below this ⇒ "cooling": sinks to its group's bottom until the reset. */
@@ -109,6 +118,10 @@ export interface ScoredAccount {
     score: number;
     /** 5h window nearly spent — sinks to the group bottom until its reset passes. */
     cooling: boolean;
+    /** The binding weekly rate beats the nominal pace, so its leftover is lost at the reset. */
+    surplus: boolean;
+    /** Hours until the binding weekly bucket refills; the period when no reset is scheduled. */
+    bindingResetHours: number;
     /** Usage API 403'd at the org level: the subscription is gone (strikethrough row, never auto-picked). */
     subscriptionExpired?: boolean;
     /** Weekly scarcity rate in %/h of the binding weekly bucket. 0 for no-data. */
@@ -232,6 +245,8 @@ export function scoreAccounts(accounts: AccountUsage[], opts: ScoreOptions = {})
                 group: "dead",
                 score: 0,
                 cooling: false,
+                surplus: false,
+                bindingResetHours: WEEKLY_PERIOD_HOURS,
                 subscriptionExpired: true,
                 weeklyRatePctPerHour: 0,
                 sessionHeadroomPct: 0,
@@ -255,6 +270,8 @@ export function scoreAccounts(accounts: AccountUsage[], opts: ScoreOptions = {})
                 group: expired ? "expired" : "fable",
                 score: 0,
                 cooling: false,
+                surplus: false,
+                bindingResetHours: WEEKLY_PERIOD_HOURS,
                 weeklyRatePctPerHour: 0,
                 sessionHeadroomPct: 0,
                 weeklyHeadroomPct: 0,
@@ -302,16 +319,22 @@ export function scoreAccounts(accounts: AccountUsage[], opts: ScoreOptions = {})
         // opus group runs on the binding weekly bucket alone.
         const fableLeft = effectiveLeftPct(limits.fable, now);
         const fableAvailable = !limits.fable || fableLeft > FABLE_EXHAUSTED_PCT;
-        const fableRate = limits.fable
-            ? fableLeft / hoursToReset(limits.fable.resetsAt, WEEKLY_PERIOD_HOURS, now)
-            : Number.POSITIVE_INFINITY;
+        const fableResetHours = hoursToReset(limits.fable?.resetsAt, WEEKLY_PERIOD_HOURS, now);
+        const fableRate = limits.fable ? fableLeft / fableResetHours : Number.POSITIVE_INFINITY;
 
         const dead = binding.headroomPct <= DEAD_HEADROOM_PCT;
         const cooling = !dead && session.headroomPct <= COOLING_HEADROOM_PCT;
         const group: AccountGroup = loginExpired ? "expired" : dead ? "dead" : fableAvailable ? "fable" : "opus";
-        const bindingRate = group === "fable" ? Math.min(fableRate, weeklyRate) : weeklyRate;
+        const fableBinds = group === "fable" && fableRate < weeklyRate;
+        const bindingRate = fableBinds ? fableRate : weeklyRate;
         const score = bindingRate * usableFraction;
-        const grouped = { group, score, cooling };
+        const grouped = {
+            group,
+            score,
+            cooling,
+            surplus: bindingRate >= NOMINAL_WEEKLY_RATE,
+            bindingResetHours: fableBinds ? fableResetHours : binding.hoursToReset,
+        };
 
         if (binding.headroomPct < 1) {
             return {
@@ -378,13 +401,18 @@ export function scoreAccounts(accounts: AccountUsage[], opts: ScoreOptions = {})
 
 /**
  * Grouped-urgency ordering: fable → opus → dead → expired, cooling accounts at
- * each group's bottom, then highest urgency score first. Stable, so ties keep
+ * each group's bottom, then surplus weeks by the earliest reset, then the rest
+ * by the highest urgency score. Stable, so ties keep
  * the order they came in with (config order, since `scoreAccounts` preserves it
  * for equal keys). Sorts a COPY — callers may keep the tier-ordered array.
  */
 export function sortGrouped(scored: ScoredAccount[]): ScoredAccount[] {
     return [...scored].sort(
         (a, b) =>
-            GROUP_ORDER[a.group] - GROUP_ORDER[b.group] || Number(a.cooling) - Number(b.cooling) || b.score - a.score
+            GROUP_ORDER[a.group] - GROUP_ORDER[b.group] ||
+            Number(a.cooling) - Number(b.cooling) ||
+            Number(b.surplus) - Number(a.surplus) ||
+            (a.surplus ? a.bindingResetHours - b.bindingResetHours : 0) ||
+            b.score - a.score
     );
 }

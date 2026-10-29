@@ -339,6 +339,49 @@ describe("grouped urgency", () => {
         expect(sortGrouped(scored).map((s) => s.accountName)).toEqual(["fable-ok", "opus-only", "expired", "dead"]);
     });
 
+    // Both weeks hold more than a nominal pace can burn before their resets, so
+    // each will lose its leftover. The one resetting first loses it first, and
+    // the other keeps its headroom: "later" has a slightly higher rate here and
+    // still ranks second.
+    test("sortGrouped burns the surplus week that resets first", () => {
+        const scored = scoreAccounts(
+            [
+                account(
+                    "later",
+                    usage({
+                        five_hour: { utilization: 3, resets_at: hoursFromNow(2) },
+                        seven_day: { utilization: 2, resets_at: hoursFromNow(119) },
+                    })
+                ),
+                account(
+                    "soon",
+                    usage({
+                        five_hour: { utilization: 23, resets_at: hoursFromNow(1) },
+                        seven_day: { utilization: 66, resets_at: hoursFromNow(43) },
+                    })
+                ),
+            ],
+            { now: NOW }
+        );
+
+        expect(scored.map((s) => s.accountName)).toEqual(["later", "soon"]);
+        expect(sortGrouped(scored).map((s) => s.accountName)).toEqual(["soon", "later"]);
+    });
+
+    // A week that a nominal pace empties before its reset wastes nothing, but a
+    // session on it stalls before the refill, so a surplus week goes first.
+    test("sortGrouped ranks a short week after a surplus week that resets later", () => {
+        const scored = scoreAccounts(
+            [
+                account("short", usage({ seven_day: { utilization: 90, resets_at: hoursFromNow(30) } })),
+                account("fresh", usage({ seven_day: { utilization: 5, resets_at: hoursFromNow(150) } })),
+            ],
+            { now: NOW }
+        );
+
+        expect(sortGrouped(scored).map((s) => s.accountName)).toEqual(["fresh", "short"]);
+    });
+
     test("sortGrouped sinks cooling accounts to their group's bottom", () => {
         const scored = scoreAccounts(
             [

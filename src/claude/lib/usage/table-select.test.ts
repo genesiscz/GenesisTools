@@ -16,6 +16,8 @@ function scoredAccount(name: string, tier: ScoredAccount["tier"], limits: Scored
         group: "fable",
         score: 1,
         cooling: false,
+        surplus: true,
+        bindingResetHours: 100,
         weeklyRatePctPerHour: 1,
         sessionHeadroomPct: 50,
         weeklyHeadroomPct: 50,
