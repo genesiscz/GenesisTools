@@ -57,6 +57,8 @@ interface RenderOptions {
     inertLocalLinks?: boolean;
     /** Wrap each top-level block in `data-line-start`/`data-line-end` (1-based source lines, frontmatter counted). */
     lineAnchors?: boolean;
+    /** Prefix for `/share/<slug>` links; a saved copy of a page sets the dashboard's public origin. */
+    pageBaseUrl?: string;
 }
 
 export interface RenderResult {
@@ -261,7 +263,7 @@ function wikilinkExtension(opts: RenderOptions): MarkedExtension {
                     const slug = opts.resolveWikilink(t.target);
 
                     if (slug) {
-                        return `<a href="/share/${encodeURIComponent(slug)}" class="dd-wikilink">${escapeHtml(t.display)}</a>`;
+                        return `<a href="${escapeHtml(opts.pageBaseUrl ?? "")}/share/${encodeURIComponent(slug)}" class="dd-wikilink">${escapeHtml(t.display)}</a>`;
                     }
 
                     return `<span class="dd-wikilink dd-wikilink-unresolved">${escapeHtml(t.display)}</span>`;

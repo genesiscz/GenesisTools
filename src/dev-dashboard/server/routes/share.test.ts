@@ -4,10 +4,12 @@ import { mkdirSync, mkdtempSync, rmSync, symlinkSync, writeFileSync } from "node
 import { tmpdir } from "node:os";
 import { join } from "node:path";
 import { publishNote } from "@app/dev-dashboard/lib/obsidian/publish";
+import type { ShareEmbed } from "@app/dev-dashboard/lib/obsidian/share-assets";
 import { getDevDashboardStorage, resetDevDashboardStorage } from "@app/dev-dashboard/lib/storage";
 import { shareRoutes } from "@app/dev-dashboard/server/routes/share";
 import type { RouteContext, RouteResult } from "@app/dev-dashboard/server/types";
 import { env } from "@genesiscz/utils/env";
+import { unzip } from "@genesiscz/utils/fs/unzip";
 import { SafeJSON } from "@genesiscz/utils/json";
 
 const PIC = Buffer.from("RIFF\u0000\u0000\u0000\u0000WEBPVP8 fake-webp-bytes");
@@ -318,5 +320,66 @@ describe("GET /share/:slug assets", () => {
 
         expect(SafeJSON.parse(bodies[2], { strict: true })).toEqual({ service: "demo", apiKey: "[redacted]" });
         expect(bodies[4]).toBe("# Setup\n\nexport DEMO_KEY=[redacted]\n");
+    });
+
+    test("the download menu offers markdown, a zip with the attachments and a self-contained HTML file", async () => {
+        const page = await get({}, "text/html");
+        const html = page.kind === "raw" ? page.body : "";
+
+        expect(html).toContain('id="dd-share-download-menu"');
+        expect(html).toContain(`href="/share/${slug}?download=zip" download>With all attachments`);
+        expect(html).toContain(`href="/share/${slug}?download=html" download>Save as HTML`);
+    });
+
+    test("download=zip holds the note and every referenced file, masked, in their vault layout", async () => {
+        const res = await get({ download: "zip" });
+
+        expect(res.kind).toBe("binary");
+
+        if (res.kind !== "binary") {
+            return;
+        }
+
+        expect(res.contentType).toBe("application/zip");
+        expect(res.headers?.["Content-Disposition"]).toBe("attachment; filename*=UTF-8''Run.zip");
+        const files = unzip(res.body);
+        const text = (name: string) => Buffer.from(files.get(name) ?? new Uint8Array()).toString("utf8");
+
+        expect(text("Run/Notes/sub/Run.md")).toContain("inline key [redacted]");
+        expect(Buffer.from(files.get("Run/Notes/assets/pic.webp") ?? []).equals(PIC)).toBe(true);
+        expect(Buffer.from(files.get("Run/Notes/assets/dir x/b.png") ?? []).equals(SPACED)).toBe(true);
+        expect(Buffer.from(files.get("Run/Other/shot.png") ?? []).equals(SHOT)).toBe(true);
+        expect(text("Run/Notes/assets/data.json")).toBe(DATA);
+        expect(text("Run/Notes/sub/logo.svg")).not.toContain("sk-test-");
+        expect(text("Run/Notes/creds.json")).not.toContain(FAKE_TOKEN);
+        expect([...files.keys()].some((name) => name.includes("secret") || name.includes("escape"))).toBe(false);
+    });
+
+    test("download=html is one file: images are data URLs and panels are embedded, never fetched", async () => {
+        const res = await get({ download: "html" }, "text/html");
+
+        expect(res.kind).toBe("raw");
+
+        if (res.kind !== "raw") {
+            return;
+        }
+
+        expect(res.headers?.["Content-Disposition"]).toBe("attachment; filename*=UTF-8''Run.html");
+        expect(res.body).toContain(`<img src="data:image/webp;base64,${PIC.toString("base64")}"`);
+        expect(res.body).not.toContain(`/share/${slug}?asset=`);
+        expect(res.body).not.toContain('id="dd-share-download-menu"');
+        expect(res.body).toContain(`href="?asset=${sha(TOOL)}#L5-L6"`);
+        expect(res.body).not.toContain(FAKE_TOKEN);
+        expect(res.body).toMatch(new RegExp(`<a href="https?://[^"]+/share/${pubSlug}" class="dd-wikilink">Pub</a>`));
+
+        const json = /<script type="application\/json" id="dd-share-embedded-panels">([^<]*)<\/script>/.exec(res.body);
+        const panels: ShareEmbed["panels"] = SafeJSON.parse(json?.[1] ?? "{}", { strict: true });
+
+        expect(Object.keys(panels)).toContain(`?asset=${sha(TOOL)}|5-6`);
+        expect(Object.keys(panels)).toContain(`?asset=${sha(DATA)}|`);
+        expect(panels[`?asset=${sha(TOOL)}|5-6`].html).toContain("line5");
+        expect(panels[`?asset=${sha(DATA)}|`].raw).toBe(
+            `data:application/json;charset=utf-8;base64,${Buffer.from(DATA).toString("base64")}`
+        );
     });
 });

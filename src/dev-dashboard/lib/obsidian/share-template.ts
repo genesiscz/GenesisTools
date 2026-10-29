@@ -10,6 +10,12 @@ interface ShareTemplateOptions {
     sourcePath?: string;
     /** A JSON asset URL whose side panel opens on load (a deep link to `?asset=<hash>`). */
     openAssetUrl?: string;
+    /** How many files the note references; above zero the download menu offers a zip with them. */
+    attachmentCount?: number;
+    /** URLs of the note as a zip with its attachments and as one self-contained HTML file. */
+    downloads?: { zip: string; html: string };
+    /** A saved copy of the page: panel bodies by `embeddedPanelKey`, read instead of fetched. */
+    embeddedPanels?: Record<string, { html: string; raw: string }>;
 }
 
 const HLJS_CSS_URL = "https://cdn.jsdelivr.net/gh/highlightjs/cdn-release@11.10.0/build/styles/atom-one-dark.min.css";
@@ -651,6 +657,58 @@ footer.dd-share-footer .dd-share-source {
     height: 18px;
 }
 
+.dd-share-download {
+    position: relative;
+}
+
+.dd-share-download-menu {
+    position: absolute;
+    top: calc(100% + 6px);
+    right: 0;
+    min-width: 220px;
+    padding: 4px;
+    border: 1px solid var(--dd-border-strong);
+    border-radius: 8px;
+    background: var(--dd-bg-elevated);
+    box-shadow: 0 8px 24px rgba(0, 0, 0, 0.35);
+}
+
+.dd-share-download-menu[hidden] {
+    display: none;
+}
+
+.dd-share-download-menu a,
+.dd-share-download-menu button {
+    display: block;
+    width: 100%;
+    padding: 8px 10px;
+    border: 0;
+    border-radius: 6px;
+    background: none;
+    color: var(--dd-text);
+    font: inherit;
+    font-size: 13px;
+    text-align: left;
+    text-decoration: none;
+    cursor: pointer;
+}
+
+.dd-share-download-menu a:hover,
+.dd-share-download-menu a:focus-visible,
+.dd-share-download-menu button:hover,
+.dd-share-download-menu button:focus-visible {
+    background: var(--dd-accent-soft);
+    color: var(--dd-accent);
+    outline: none;
+}
+
+.dd-share-download-menu small {
+    display: block;
+    margin-top: 2px;
+    color: var(--dd-text-faint);
+    font-size: 11px;
+}
+
 .dd-share-source-panel {
     display: none;
     font-family: var(--dd-mono);
@@ -718,8 +776,8 @@ const BOOK_OPEN_ICON =
 const DOWNLOAD_ICON =
     '<svg xmlns="http://www.w3.org/2000/svg" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2" stroke-linecap="round" stroke-linejoin="round" aria-hidden="true"><path d="M21 15v4a2 2 0 0 1-2 2H5a2 2 0 0 1-2-2v-4"/><polyline points="7 10 12 15 17 10"/><line x1="12" x2="12" y1="15" y2="3"/></svg>';
 
-function embedSourceJson(source: string): string {
-    return SafeJSON.stringify(source).replace(/</g, "\\u003c");
+function embedJson(value: unknown): string {
+    return SafeJSON.stringify(value).replace(/</g, "\\u003c");
 }
 
 interface ShareLabels {
@@ -760,19 +818,54 @@ function buildViewToggleScript({
 
     panel.textContent = JSON.parse(dataEl.textContent);
 
+    function downloadSource() {
+        var blob = new Blob([panel.textContent], { type: ${SafeJSON.stringify(contentType)} });
+        var url = URL.createObjectURL(blob);
+        var a = document.createElement("a");
+        a.href = url;
+        a.download = ${SafeJSON.stringify(downloadName)};
+        document.body.appendChild(a);
+        a.click();
+        a.remove();
+        URL.revokeObjectURL(url);
+    }
+
     var downloadBtn = document.getElementById("dd-share-download-btn");
-    if (downloadBtn) {
+    var downloadMenu = document.getElementById("dd-share-download-menu");
+    if (downloadBtn && downloadMenu) {
+        var setMenu = function (open) {
+            downloadMenu.hidden = !open;
+            downloadBtn.setAttribute("aria-expanded", open ? "true" : "false");
+            if (open) {
+                downloadMenu.querySelector("a, button").focus();
+            }
+        };
         downloadBtn.addEventListener("click", function () {
-            var blob = new Blob([panel.textContent], { type: ${SafeJSON.stringify(contentType)} });
-            var url = URL.createObjectURL(blob);
-            var a = document.createElement("a");
-            a.href = url;
-            a.download = ${SafeJSON.stringify(downloadName)};
-            document.body.appendChild(a);
-            a.click();
-            a.remove();
-            URL.revokeObjectURL(url);
+            setMenu(downloadMenu.hidden);
         });
+        document.getElementById("dd-share-download-md").addEventListener("click", function () {
+            setMenu(false);
+            downloadSource();
+        });
+        var menuLinks = downloadMenu.querySelectorAll("a");
+        for (var m = 0; m < menuLinks.length; m++) {
+            menuLinks[m].addEventListener("click", function () {
+                setMenu(false);
+            });
+        }
+        document.addEventListener("click", function (event) {
+            if (!downloadMenu.hidden && !downloadMenu.parentElement.contains(event.target)) {
+                setMenu(false);
+            }
+        });
+        document.addEventListener("keydown", function (event) {
+            if (event.key === "Escape" && !downloadMenu.hidden) {
+                setMenu(false);
+                downloadBtn.focus();
+            }
+        });
+    } else if (downloadBtn) {
+        downloadBtn.addEventListener("click", downloadSource);
     }
 
     var fileCodeIcon = ${SafeJSON.stringify(FILE_CODE_ICON)};
@@ -937,6 +1030,9 @@ function buildAssetPanelScript(): string {
     }
 
     var basePath = location.pathname;
+    var embeddedEl = document.getElementById("dd-share-embedded-panels");
+    // A saved copy has no server: panels come from the page itself and the URL never changes.
+    var embedded = embeddedEl ? JSON.parse(embeddedEl.textContent) : null;
     var lastFocus = null;
     var isOpen = false;
     // Each open asks for one fragment; an answer for an earlier open (or after a close) is dropped.
@@ -1013,7 +1109,6 @@ function buildAssetPanelScript(): string {
         var name = nameFor(base);
         lastFocus = document.activeElement;
         title.textContent = lines ? name + ":" + lines.start + (lines.end > lines.start ? "-" + lines.end : "") : name;
-        rawLink.href = base + "&view=raw";
         content.textContent = "Loading " + name + "\u2026";
         document.body.classList.add("dd-share-panel-open");
         panel.setAttribute("aria-hidden", "false");
@@ -1021,6 +1116,23 @@ function buildAssetPanelScript(): string {
         setBehindInert(true);
         isOpen = true;
         var request = ++panelRequest;
+        if (embedded) {
+            var entry = embedded[base + "|" + (lines ? lines.start + "-" + lines.end : "")] || embedded[base + "|"];
+            if (entry) {
+                rawLink.href = entry.raw;
+                rawLink.setAttribute("download", name);
+                content.innerHTML = entry.html;
+                content.scrollTop = 0;
+                markLines(lines);
+            } else {
+                rawLink.removeAttribute("href");
+                content.textContent = name + " is not part of this saved page.";
+            }
+            closeBtn.focus();
+            return;
+        }
+
+        rawLink.href = base + "&view=raw";
         if (push) {
             history.pushState({ ddAsset: url }, "", url);
         }
@@ -1061,7 +1173,7 @@ function buildAssetPanelScript(): string {
         panel.setAttribute("aria-hidden", "true");
         panel.setAttribute("inert", "");
         setBehindInert(false);
-        if (push) {
+        if (push && !embedded) {
             history.pushState(null, "", basePath);
         }
         if (lastFocus && lastFocus.focus) {
@@ -1104,7 +1216,16 @@ function buildAssetPanelScript(): string {
 }
 
 export function renderSharePage(options: ShareTemplateOptions): string {
-    const { title, rendered, source, sourcePath, openAssetUrl } = options;
+    const {
+        title,
+        rendered,
+        source,
+        sourcePath,
+        openAssetUrl,
+        attachmentCount = 0,
+        downloads,
+        embeddedPanels,
+    } = options;
     const headExtras: string[] = [
         `<link rel="preconnect" href="https://fonts.googleapis.com">`,
         `<link rel="preconnect" href="https://fonts.gstatic.com" crossorigin>`,
@@ -1143,6 +1264,22 @@ export function renderSharePage(options: ShareTemplateOptions): string {
     bodyExtras.push(buildAssetPanelScript());
     bodyExtras.push(buildWidthScript());
 
+    const attachmentsLabel = `${attachmentCount} ${attachmentCount === 1 ? "attachment" : "attachments"}`;
+    const zipItem =
+        downloads && attachmentCount > 0
+            ? `<a role="menuitem" href="${escapeHtml(downloads.zip)}" download>With all attachments<small>zip, ${attachmentsLabel}</small></a>`
+            : "";
+    const downloadControl = downloads
+        ? `<div class="dd-share-download">
+<button type="button" class="dd-share-view-btn" id="dd-share-download-btn" aria-label="Download" title="Download" aria-haspopup="menu" aria-expanded="false" aria-controls="dd-share-download-menu">${DOWNLOAD_ICON}</button>
+<div class="dd-share-download-menu" id="dd-share-download-menu" role="menu" hidden>
+<button type="button" role="menuitem" id="dd-share-download-md">${isSourceFile ? "Source file only" : "Markdown only"}<small>${escapeHtml(downloadName)}</small></button>
+${zipItem}
+<a role="menuitem" href="${escapeHtml(downloads.html)}" download>Save as HTML<small>one file${attachmentCount > 0 ? `, ${attachmentsLabel} embedded` : ""}</small></a>
+</div>
+</div>`
+        : `<button type="button" class="dd-share-view-btn" id="dd-share-download-btn" aria-label="${escapeHtml(labels.download)}" title="${escapeHtml(labels.download)}">${DOWNLOAD_ICON}</button>`;
+
     const sourceLine = sourcePath ? `<span class="dd-share-source">${escapeHtml(sourcePath)}</span>` : "";
 
     return `<!doctype html>
@@ -1158,7 +1295,7 @@ ${headExtras.join("\n")}
 <body${openAssetUrl ? ` data-open-asset="${escapeHtml(openAssetUrl)}"` : ""}>
 <div class="dd-share-toolbar">
 <button type="button" class="dd-share-view-btn" id="dd-share-view-btn" aria-label="${escapeHtml(labels.showRaw)}" title="${escapeHtml(labels.showRaw)}">${FILE_CODE_ICON}</button>
-<button type="button" class="dd-share-view-btn" id="dd-share-download-btn" aria-label="${escapeHtml(labels.download)}" title="${escapeHtml(labels.download)}">${DOWNLOAD_ICON}</button>
+${downloadControl}
 </div>
 <main>
 <article>${rendered.html}</article>
@@ -1174,7 +1311,8 @@ ${headExtras.join("\n")}
 </div>
 <div class="dd-share-panel-body" id="dd-share-panel-body"></div>
 </aside>
-<script type="application/json" id="dd-share-source-data">${embedSourceJson(source)}</script>
+<script type="application/json" id="dd-share-source-data">${embedJson(source)}</script>
+${embeddedPanels ? `<script type="application/json" id="dd-share-embedded-panels">${embedJson(embeddedPanels)}</script>` : ""}
 ${bodyExtras.join("\n")}
 </body>
 </html>`;

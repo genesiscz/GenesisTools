@@ -4,21 +4,23 @@ import { findPublishedBySlug, listPublished } from "@app/dev-dashboard/lib/obsid
 import { readNote } from "@app/dev-dashboard/lib/obsidian/reader";
 import {
     buildShareAssetIndex,
+    buildShareBundle,
+    buildShareEmbed,
     codeLanguageFor,
     fencedCode,
     hashAsset,
     lineRangeOf,
     readShareAsset,
-    renderCodeAssetHtml,
-    renderJsonAssetHtml,
-    renderMarkdownAssetHtml,
+    renderShareAssetFragment,
     SHARE_ASSET_HASH_RE,
-    type ShareAsset,
     type ShareAssetIndex,
+    type ShareEmbed,
     shareAssetUrl,
 } from "@app/dev-dashboard/lib/obsidian/share-assets";
 import { renderSharePage } from "@app/dev-dashboard/lib/obsidian/share-template";
+import { publicBaseUrl } from "@app/dev-dashboard/lib/public-base";
 import type { RouteContext, RouteDef, RouteResult } from "@app/dev-dashboard/server/types";
+import { zip } from "@genesiscz/utils/fs/zip";
 import { redactSecretsInText } from "@genesiscz/utils/transclude";
 
 const NOT_FOUND_HTML = "<!doctype html><meta charset=utf-8><title>Not found</title><h1>Not found</h1>";
@@ -80,21 +82,25 @@ async function assetIndexFor(options: {
 
 const LINES_PARAM_RE = /^(\d{1,7})(?:-(\d{1,7}))?$/;
 
-function renderAssetFragment(asset: ShareAsset, text: string, linesParam: string | null): string {
-    if (asset.kind === "json") {
-        return renderJsonAssetHtml(text);
-    }
-
-    if (asset.kind === "markdown") {
-        return renderMarkdownAssetHtml(text);
-    }
-
+function parseLinesParam(linesParam: string | null): { start: number; end: number } | null {
     const match = linesParam ? LINES_PARAM_RE.exec(linesParam) : null;
-    const lines = match
-        ? { start: Number(match[1]), end: Math.max(Number(match[1]), Number(match[2] ?? match[1])) }
-        : null;
 
-    return renderCodeAssetHtml({ text, language: asset.language ?? "plaintext", lines });
+    return match ? { start: Number(match[1]), end: Math.max(Number(match[1]), Number(match[2] ?? match[1])) } : null;
+}
+
+const TOO_LARGE: RouteResult = {
+    kind: "text",
+    status: 413,
+    contentType: "text/plain; charset=utf-8",
+    body: "the note and its attachments are too large to download as one file",
+};
+
+function attachmentHeaders(fileName: string): Record<string, string> {
+    return {
+        "X-Content-Type-Options": "nosniff",
+        "Cache-Control": "no-store",
+        "Content-Disposition": `attachment; filename*=UTF-8''${encodeURIComponent(fileName)}`,
+    };
 }
 
 function wantsHtml(ctx: RouteContext): boolean {
@@ -147,6 +153,50 @@ export function shareRoutes(): RouteDef[] {
                         notePath: note.vaultPath,
                         source: markdown,
                     });
+                    const title = (note.vaultPath.split("/").pop() ?? note.vaultPath).replace(/\.md$/, "");
+                    const fileBase = title.replace(/[\\/:*?"<>|]/g, "_") || "note";
+                    const download = ctx.query.get("download");
+
+                    if (download === "zip") {
+                        const bundle = await buildShareBundle({
+                            vaultRoot: obsidianVault,
+                            index: assets,
+                            notePath: note.vaultPath,
+                            noteText: source,
+                            folderName: fileBase,
+                        });
+
+                        if (!bundle) {
+                            return TOO_LARGE;
+                        }
+
+                        return {
+                            kind: "binary",
+                            status: 200,
+                            contentType: "application/zip",
+                            body: zip(bundle.entries),
+                            headers: attachmentHeaders(`${fileBase}.zip`),
+                        };
+                    }
+
+                    // A saved page has no server behind it: images become data: URLs, panels are pre-rendered
+                    // into the page, and links to other shared notes point at this dashboard's public address.
+                    let embed: ShareEmbed | null = null;
+
+                    if (download === "html") {
+                        embed = await buildShareEmbed({
+                            vaultRoot: obsidianVault,
+                            index: assets,
+                            panelBase: (hash) => `?asset=${hash}`,
+                        });
+
+                        if (!embed) {
+                            return TOO_LARGE;
+                        }
+                    }
+
+                    const pageBase = embed ? await publicBaseUrl() : "";
+
                     let openAssetUrl: string | undefined;
 
                     if (requestedHash !== null) {
@@ -177,7 +227,11 @@ export function shareRoutes(): RouteDef[] {
                                 status: 200,
                                 contentType: "text/html; charset=utf-8",
                                 headers: ASSET_HEADERS,
-                                body: renderAssetFragment(asset, body.toString("utf8"), ctx.query.get("lines")),
+                                body: renderShareAssetFragment(
+                                    asset,
+                                    body.toString("utf8"),
+                                    parseLinesParam(ctx.query.get("lines"))
+                                ),
                             };
                         }
 
@@ -201,6 +255,7 @@ export function shareRoutes(): RouteDef[] {
                     const published = await listPublished();
                     const publishedByPath = new Map(published.map((entry) => [entry.vaultPath, entry.slug]));
                     const rendered = renderMarkdown(markdown, {
+                        pageBaseUrl: pageBase,
                         resolveWikilink: (name) => {
                             const match = published.find((publishedNote) => {
                                 const base = publishedNote.vaultPath.split("/").pop() ?? publishedNote.vaultPath;
@@ -222,7 +277,7 @@ export function shareRoutes(): RouteDef[] {
 
                             if (publishedSlug) {
                                 return {
-                                    url: `/share/${encodeURIComponent(publishedSlug)}`,
+                                    url: `${pageBase}/share/${encodeURIComponent(publishedSlug)}`,
                                     kind: "page",
                                     name: asset.name,
                                 };
@@ -233,15 +288,44 @@ export function shareRoutes(): RouteDef[] {
                                 ? `#L${range.start}${range.end > range.start ? `-L${range.end}` : ""}`
                                 : "";
 
-                            return {
-                                url: `${shareAssetUrl(slug, asset.hash)}${fragment}`,
-                                kind: asset.kind,
-                                name: asset.name,
-                            };
+                            if (embed && asset.kind === "image") {
+                                const inline = embed.images.get(asset.hash);
+
+                                return inline ? { url: inline, kind: "image", name: asset.name } : null;
+                            }
+
+                            const url = embed ? `?asset=${asset.hash}` : shareAssetUrl(slug, asset.hash);
+
+                            return { url: `${url}${fragment}`, kind: asset.kind, name: asset.name };
                         },
                     });
-                    const title = (note.vaultPath.split("/").pop() ?? note.vaultPath).replace(/\.md$/, "");
-                    const page = renderSharePage({ title, rendered, source, sourcePath: note.vaultPath, openAssetUrl });
+                    const page = renderSharePage({
+                        title,
+                        rendered,
+                        source,
+                        sourcePath: note.vaultPath,
+                        openAssetUrl,
+                        attachmentCount: [...assets.byHash.values()].filter(
+                            (asset) => asset.vaultPath !== note.vaultPath
+                        ).length,
+                        downloads: embed
+                            ? undefined
+                            : {
+                                  zip: `/share/${encodeURIComponent(slug)}?download=zip`,
+                                  html: `/share/${encodeURIComponent(slug)}?download=html`,
+                              },
+                        embeddedPanels: embed?.panels,
+                    });
+
+                    if (embed) {
+                        return {
+                            kind: "raw",
+                            status: 200,
+                            contentType: "text/html; charset=utf-8",
+                            headers: attachmentHeaders(`${fileBase}.html`),
+                            body: page,
+                        };
+                    }
 
                     return {
                         kind: "raw",
