@@ -1965,8 +1965,20 @@ struct PRMetaLineLayout: Layout {
         return [label, 0, 0, age, badges]
     }
 
-    private func plan(_ proposal: ProposedViewSize, _ subviews: Subviews) -> [CGFloat] {
-        Self.widths(ideal: subviews.map { $0.sizeThatFits(.unspecified).width }, width: proposal.width)
+    /// The parts' natural widths. They do not depend on the row's width, so a drag measures them once
+    /// instead of on every step; SwiftUI calls `updateCache` when a part changes.
+    struct Cache { var ideal: [CGFloat] }
+
+    func makeCache(subviews: Subviews) -> Cache {
+        Cache(ideal: subviews.map { $0.sizeThatFits(.unspecified).width })
+    }
+
+    func updateCache(_ cache: inout Cache, subviews: Subviews) {
+        cache = makeCache(subviews: subviews)
+    }
+
+    private func plan(_ proposal: ProposedViewSize, _ cache: Cache) -> [CGFloat] {
+        Self.widths(ideal: cache.ideal, width: proposal.width)
     }
 
     private static func naturalWidth(_ widths: [CGFloat]) -> CGFloat {
@@ -1974,14 +1986,14 @@ struct PRMetaLineLayout: Layout {
         return shown.reduce(0) { $0 + $1.element } + CGFloat(max(0, shown.count - 2)) * spacing + badgeGap
     }
 
-    func sizeThatFits(proposal: ProposedViewSize, subviews: Subviews, cache: inout ()) -> CGSize {
-        let widths = plan(proposal, subviews)
+    func sizeThatFits(proposal: ProposedViewSize, subviews: Subviews, cache: inout Cache) -> CGSize {
+        let widths = plan(proposal, cache)
         let height = zip(subviews, widths).map { $0.sizeThatFits(ProposedViewSize(width: $1, height: nil)).height }.max() ?? 0
         return CGSize(width: proposal.width ?? Self.naturalWidth(widths), height: height)
     }
 
-    func placeSubviews(in bounds: CGRect, proposal: ProposedViewSize, subviews: Subviews, cache: inout ()) {
-        let widths = plan(ProposedViewSize(width: bounds.width, height: proposal.height), subviews)
+    func placeSubviews(in bounds: CGRect, proposal: ProposedViewSize, subviews: Subviews, cache: inout Cache) {
+        let widths = plan(ProposedViewSize(width: bounds.width, height: proposal.height), cache)
         var x = bounds.minX
         for (index, subview) in subviews.enumerated() {
             let width = index < widths.count ? widths[index] : 0
@@ -2132,19 +2144,17 @@ struct PRDetailView: View {
             if showDiff, let review = prs.review {
                 let room = width * Self.overviewFraction
                 // The shared panel (glowing grip, drag past the minimum to fold, width saved on
-                // release) instead of NSSplitView's bare divider. Both columns follow its drag at once
-                // (no gap) and keep their content's size until release, their surface filling the rest:
-                // reflowing them per step cost 13 to 15 ms of main thread per step, held 5 (`--bench`
-                // overview, 2026-09-30).
+                // release) instead of NSSplitView's bare divider. Both columns reflow on every step of a
+                // drag or a window resize: held at their start size, they showed a gap or cut text until
+                // release (Martin, 2026-10-29).
                 SideSplit(panelEdge: .leading, maxFraction: Self.overviewFraction) {
                     ResizableSidePanel(key: "prs.overview", edge: .leading, title: "PR", defaultWidth: 460,
                                        minWidth: Self.overviewMinWidth, maxWidth: max(Self.overviewMinWidth, room),
                                        autoCollapse: width > 0 && room < Self.overviewMinWidth,
                                        holdsLayout: false) {
-                        overview.freezesWidthWhileResizing().hubSurface(.content)
+                        overview.hubSurface(.content)
                     }
                     ReviewRootView(model: review)
-                        .freezesWidthWhileResizing()
                         .hubSurface(.content)
                 }
                 .measuredWidth("prs.detail", $width)
@@ -2853,3 +2863,4 @@ struct PRSessionsSection: View {
         return "No session worked on this branch, its commits or its files."
     }
 }
+

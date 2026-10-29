@@ -2694,6 +2694,22 @@ private struct ReviewHeader: View {
     var leadingInset: CGFloat = 78
     @ObservedObject private var repos = RepoFactsStore.shared
     @State private var pickingAgent = false
+    /// The variants the row shows, picked from its width (`choose`). Two `ViewThatFits` measured all seven
+    /// variants on every step of a divider drag: 13 ms of the diff pane's 17 ms per step (`--bench`
+    /// sidebar, 2026-10-29). Now each variant's natural width is measured once, in a hidden copy.
+    @State private var choice = HeaderChoice(summary: .full, controls: 0)
+    @State private var summaryWidths: [SummaryLevel: CGFloat] = [:]
+    @State private var controlsWidths: [Int: CGFloat] = [:]
+    @State private var extrasWidth: CGFloat = 0
+    /// The row's last width, kept outside SwiftUI's state so a drag step re-renders nothing.
+    @State private var lastWidth = WidthBox()
+
+    struct HeaderChoice: Equatable {
+        var summary: SummaryLevel
+        var controls: Int
+    }
+
+    final class WidthBox { var value: CGFloat = 0 }
 
     var body: some View {
         // One row of one height at every width. It used to wrap its controls to a second row in a
@@ -2707,24 +2723,25 @@ private struct ReviewHeader: View {
             }
             // The summary gives way too, least useful part first: in a 1100 pt PRs window its fixed
             // labels were wider than the column, and the row overflowed on both sides (audit gap 6).
-            ViewThatFits(in: .horizontal) {
-                HStack(spacing: 10) { summary(.full) }
-                HStack(spacing: 8) { summary(.noCompare) }
-                HStack(spacing: 8) { summary(.totals) }
-                HStack(spacing: 6) { summary(.scope) }
-            }
+            summaryRow(choice.summary)
             if let news = model.pushNews {
                 ReloadPill(news: news) { model.reloadToNewest() }
             }
             Spacer(minLength: 8)
-            ViewThatFits(in: .horizontal) {
-                HStack(spacing: 10) { controls }
-                HStack(spacing: 6) { compactControls }
-                HStack(spacing: 4) { minimalControls }
-            }
-            .layoutPriority(1)
+            controlsRow(choice.controls, live: true)
+                .layoutPriority(1)
         }
         .frame(maxWidth: .infinity, alignment: .leading)
+        .background(alignment: .topLeading) { measurements }
+        .onGeometryChange(for: CGFloat.self, of: { $0.size.width }) { width in
+            lastWidth.value = width
+            let next = choose(width: width)
+            if next != choice { choice = next }
+        }
+        .onChange(of: MeasuredWidths(summary: summaryWidths, controls: controlsWidths, extras: extrasWidth)) {
+            let next = choose(width: lastWidth.value)
+            if next != choice { choice = next }
+        }
         .clipped()
         .frame(height: 44)
         .buttonStyle(.genHoverPlain())
@@ -2738,6 +2755,78 @@ private struct ReviewHeader: View {
             if let url, model.pr == nil {
                 model.attachPR(.ref(url))
             }
+        }
+    }
+
+    private struct MeasuredWidths: Equatable {
+        var summary: [SummaryLevel: CGFloat]
+        var controls: [Int: CGFloat]
+        var extras: CGFloat
+    }
+
+    private static let summaryLevels: [SummaryLevel] = [.full, .noCompare, .totals, .scope]
+
+    /// The first controls variant that fits beside the smallest summary, then the fullest summary that fits beside
+    /// those controls: what the two `ViewThatFits` picked, the controls first (they had the layout priority).
+    private func choose(width: CGFloat) -> HeaderChoice {
+        guard width > 0 else { return choice }
+        // The row's gaps: summary to Spacer, the Spacer's minimum, Spacer to controls.
+        let fixed = extrasWidth + 10 + 8 + 10
+        let smallest = summaryWidths[.scope] ?? 0
+        let controls = (0..<2).first { (controlsWidths[$0] ?? 0) + smallest + fixed <= width } ?? 2
+        let room = width - fixed - (controlsWidths[controls] ?? 0)
+        let summary = Self.summaryLevels.first { (summaryWidths[$0] ?? 0) <= room } ?? .scope
+        return HeaderChoice(summary: summary, controls: controls)
+    }
+
+    /// Every variant at its natural width, hidden: measured once, and again only when its content changes.
+    private var measurements: some View {
+        ZStack(alignment: .topLeading) {
+            ForEach(Self.summaryLevels, id: \.self) { level in
+                summaryRow(level)
+                    .fixedSize()
+                    .onGeometryChange(for: CGFloat.self, of: { $0.size.width }) { summaryWidths[level] = $0 }
+            }
+            ForEach(0..<3, id: \.self) { index in
+                controlsRow(index, live: false)
+                    .fixedSize()
+                    .onGeometryChange(for: CGFloat.self, of: { $0.size.width }) { controlsWidths[index] = $0 }
+            }
+            // The hub button and the reload pill, each with the row's 10 pt gap after it.
+            HStack(spacing: 10) {
+                if !model.embedded, model.pr != nil {
+                    IconButton(systemName: "rectangle.3.group", tooltip: "") {}
+                }
+                if let news = model.pushNews {
+                    ReloadPill(news: news) {}
+                }
+                Color.clear.frame(width: 0, height: 0)
+            }
+            .fixedSize()
+            .onGeometryChange(for: CGFloat.self, of: { $0.size.width }) { extrasWidth = $0 }
+        }
+        .hidden()
+        .allowsHitTesting(false)
+        .accessibilityHidden(true)
+    }
+
+    @ViewBuilder
+    private func summaryRow(_ level: SummaryLevel) -> some View {
+        switch level {
+        case .full: HStack(spacing: 10) { summary(.full) }
+        case .noCompare: HStack(spacing: 8) { summary(.noCompare) }
+        case .totals: HStack(spacing: 8) { summary(.totals) }
+        case .scope: HStack(spacing: 6) { summary(.scope) }
+        }
+    }
+
+    /// `live` off: a measuring copy, whose Send button opens no popover.
+    @ViewBuilder
+    private func controlsRow(_ index: Int, live: Bool) -> some View {
+        switch index {
+        case 0: HStack(spacing: 10) { controls(live: live) }
+        case 1: HStack(spacing: 6) { compactControls(live: live) }
+        default: HStack(spacing: 4) { minimalControls(live: live) }
         }
     }
 
@@ -2805,7 +2894,7 @@ private struct ReviewHeader: View {
     }
 
     @ViewBuilder
-    private var controls: some View {
+    private func controls(live: Bool) -> some View {
             if model.commentCount > 0 {
                 Label {
                     Text(verbatim: "\(model.commentCount)")
@@ -2824,7 +2913,7 @@ private struct ReviewHeader: View {
             }
             .disabled(model.unsentCount == 0)
             .instantTooltip(model.unsentCount > 0 ? "Pick the agent session that gets the \(Plural.count(model.unsentCount, "queued comment"))" : "No comments waiting for an agent")
-            .popover(isPresented: $pickingAgent, arrowEdge: .bottom) {
+            .popover(isPresented: live ? $pickingAgent : .constant(false), arrowEdge: .bottom) {
                 AgentSendForm(model: model) { pickingAgent = false }
             }
             Button {
@@ -2855,21 +2944,21 @@ private struct ReviewHeader: View {
         IconButton(systemName: "magnifyingglass", tooltip: HubKeymap.hint("Find in every file of the diff", HubKeymap.findOpen)) { model.find() }
     }
 
-    private var sendButton: some View {
+    private func sendButton(live: Bool) -> some View {
         IconButton(systemName: "paperplane",
                    tooltip: model.unsentCount > 0 ? "Send \(Plural.count(model.unsentCount, "queued comment")) to an agent…" : "No comments waiting for an agent") {
             pickingAgent = true
         }
         .disabled(model.unsentCount == 0)
-        .popover(isPresented: $pickingAgent, arrowEdge: .bottom) {
+        .popover(isPresented: live ? $pickingAgent : .constant(false), arrowEdge: .bottom) {
             AgentSendForm(model: model) { pickingAgent = false }
         }
     }
 
     /// Icons instead of labels, and the text size behind a menu.
     @ViewBuilder
-    private var compactControls: some View {
-        sendButton
+    private func compactControls(live: Bool) -> some View {
+        sendButton(live: live)
         IconButton(systemName: model.options.diffStyle == .split ? "rectangle.split.2x1" : "rectangle",
                    tooltip: model.options.diffStyle == .split ? "Side by side (click for one column)" : "One column (click for side by side)") {
             model.setStyle(model.options.diffStyle == .split ? .unified : .split)
@@ -2885,8 +2974,8 @@ private struct ReviewHeader: View {
 
     /// The narrowest pane: send, and everything else in one menu.
     @ViewBuilder
-    private var minimalControls: some View {
-        sendButton
+    private func minimalControls(live: Bool) -> some View {
+        sendButton(live: live)
         viewMenu
     }
 

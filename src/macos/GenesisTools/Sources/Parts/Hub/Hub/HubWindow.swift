@@ -2267,33 +2267,27 @@ struct HubRootView: View {
                                // Sessions mode holds the layout for the transcript; every other
                                // mode's main view moves with the edge and reflows on release.
                                holdsLayout: model.mode == .sessions || model.mode == .agents,
-                               holdsContent: model.mode == .prs && ProcessInfo.processInfo.environment["GENESIS_HUB_HOLD_CONTENT"] != "0",
                                railAccessory: AnyView(HubModeRail(model: model, inbox: model.inbox))) {
                 SessionListView(model: model)
             }
             if model.mode == .prs {
-                // Every main view outside Sessions mode moves with the sidebar's edge at once and
-                // reflows on release: reflowed per step, a sidebar drag cost 1 to 15 ms more per step
-                // than the held layout (`--bench`, 2026-09-30).
+                // Every main view outside Sessions mode reflows with the sidebar's edge on every step. Held
+                // until release, it left a dark gap or cut the content off for the whole drag (Martin,
+                // 2026-10-29: "fix this all resizing issue pls"); the per-step cost is in the commit.
                 PRsMain(model: model, prs: model.prs)
-                    .freezesWidthWhileDragging(panel: "hub.sidebar")
             } else if model.mode == .inbox {
                 // InboxMain with its ⌘F find (Hub/HubInboxFind.swift).
                 InboxFindHost(model: model, inbox: model.inbox)
-                    .freezesWidthWhileDragging(panel: "hub.sidebar")
             } else if model.mode == .timeline {
                 TimelineMain(model: model, timeline: model.timeline)
-                    .freezesWidthWhileDragging(panel: "hub.sidebar")
             } else if model.mode == .agents {
                 // Held like Sessions: the transcript keeps its layout while the sidebar drags.
                 AgentsMain(model: model, agents: model.agents)
             } else if model.mode == .worktrees {
                 if let path = model.selectedWorktree, let worktree = model.worktrees.first(where: { $0.path == path }) {
                     WorktreeDetailView(model: model, worktree: worktree)
-                        .freezesWidthWhileDragging(panel: "hub.sidebar")
                 } else if model.selectedWorktree == WorktreeCleanup.selectionID, !model.loadingWorktrees {
                     WorktreeCleanupView(model: model)
-                        .freezesWidthWhileDragging(panel: "hub.sidebar")
                 } else if model.loadingWorktrees {
                     PaneSkeleton("Finding worktrees")
                 } else {
