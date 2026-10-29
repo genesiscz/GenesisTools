@@ -12,6 +12,8 @@ function scored(leftPct: number, resetsInMs: number): ScoredAccount {
         group: "fable",
         score: 1,
         cooling: false,
+        surplus: true,
+        bindingResetHours: 100,
         weeklyRatePctPerHour: 1,
         sessionHeadroomPct: leftPct,
         weeklyHeadroomPct: leftPct,
