@@ -241,7 +241,9 @@ describe("details and summary", () => {
             "<details><summary><img src=x onerror=alert(1)></summary>\n\ntext\n\n</details>\n\n<details>\n\nlost",
             noop
         ).html;
-        expect(html).not.toContain("<img");
+        // The summary's <img> is rebuilt without its handler, as Obsidian's sanitizer does.
+        expect(html).toContain('<img src="x" alt="" />');
+        expect(html).not.toContain("onerror");
         expect(html).toContain("&lt;details&gt;");
     });
 
@@ -292,16 +294,18 @@ describe("image size", () => {
         expect(html).toContain('<img src="https://example.org/l.png" alt="" width="80" style="height:40px" />');
     });
 
-    test("<img> with any other attribute or a script src stays escaped or neutered", () => {
+    test("<img> keeps only src, alt and size: a handler or style is dropped, a script src neutered", () => {
         const { html } = renderMarkdown(
             '<img src="x.webp" onerror="alert(1)">\n\n<img src="javascript:alert(1)" width="10">\n\n<img src="x.webp" style="position:fixed">',
             asset
         );
 
-        expect(html).toContain("&lt;img src=&quot;x.webp&quot; onerror");
         expect(html).toContain('<img src="#" alt="" width="10" />');
-        expect(html).toContain("&lt;img src=&quot;x.webp&quot; style");
-        expect(html).not.toContain('onerror="');
+        expect(
+            html.match(/<img src="\/a\/x\.webp" alt="x\.webp" class="dd-md-asset-img" loading="lazy" \/>/g)
+        ).toHaveLength(2);
+        expect(html).not.toContain("onerror");
+        expect(html).not.toContain("position");
         expect(html).not.toContain("javascript:");
     });
 });
@@ -374,7 +378,7 @@ describe("Obsidian syntax", () => {
         expect(html).toContain('data-callout-fold="open" open>');
     });
 
-    test("plain formatting tags pass, anything with attributes or another name stays escaped", () => {
+    test("formatting tags pass, a safe style stays, a script stays text", () => {
         const { html } = renderMarkdown(
             'Press <kbd>Ctrl</kbd>+<kbd>C</kbd>, H<sub>2</sub>O, x<sup>2</sup>, <u>under</u><br>next <span style="color:red">no</span> <script>x</script>',
             noop
@@ -384,8 +388,44 @@ describe("Obsidian syntax", () => {
         expect(html).toContain("H<sub>2</sub>O");
         expect(html).toContain("x<sup>2</sup>");
         expect(html).toContain("<u>under</u><br>next");
-        expect(html).toContain("&lt;span style=");
-        expect(html).toContain("&lt;script&gt;");
+        expect(html).toContain('<span style="color:red">no</span>');
+        expect(html).toContain("&lt;script&gt;x&lt;/script&gt;");
+    });
+});
+
+describe("raw HTML allowlist", () => {
+    test("a block keeps its structure, align and safe styles; everything else is dropped or text", () => {
+        const md = [
+            '<div align="center" style="color: #f00; position: fixed; background-image: url(x)" onclick="steal()">',
+            '<a href="https://example.org" target="_top">site</a> <a href="javascript:alert(1)">bad</a>',
+            "<!-- hidden -->Tom &amp; Jerry &copy; 3 < 4",
+            '<iframe src="https://evil.example"></iframe><table><tr><td colspan="2" onmouseover="x">c</td></tr></table>',
+            "</div>",
+        ].join("\n");
+        const { html } = renderMarkdown(md, noop);
+
+        expect(html).toContain('<div align="center" style="color:#f00">');
+        expect(html).toContain('<a href="https://example.org" rel="noopener noreferrer" target="_blank">site</a>');
+        expect(html).toContain("<a>bad</a>");
+        expect(html).toContain("Tom &amp; Jerry &copy; 3 &lt; 4");
+        expect(html).toContain("&lt;iframe src=&quot;https://evil.example&quot;&gt;&lt;/iframe&gt;");
+        expect(html).toContain('<td colspan="2">c</td>');
+        expect(html).not.toContain("hidden");
+        expect(html).not.toContain("onclick");
+        expect(html).not.toContain("onmouseover");
+        expect(html).not.toContain("url(");
+        expect(html).not.toContain("_top");
+    });
+
+    test("broken tags end up as text, never as markup", () => {
+        const { html } = renderMarkdown(
+            '<div class="x" <img src=x onerror=alert(1)//>\n\n<span title="a>b" onclick=x>t</span>',
+            noop
+        );
+
+        expect(html).not.toContain("onerror=");
+        expect(html).not.toContain("onclick=");
+        expect(html).not.toContain('class="x"');
     });
 });
 
