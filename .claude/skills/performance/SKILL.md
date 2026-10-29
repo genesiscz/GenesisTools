@@ -85,6 +85,9 @@ measured. So the rule of this skill is simple: no change, and no claim, without 
   start and import cost), `agent-sessions/`, `hooks/` (hook latency, attribution), `polls/` (event-loop stalls,
   wakeups), `macos-resources/` (spawn counts), `process/`, `fs/`, `json/`, `compress/`, `widget/`, `swift/`,
   `dashboards/`, `statusline/`, `clones/`, `du/`.
+- "A drag or a release of a native panel is slow, or a bench's median disagrees with what the user sees" →
+  `references/profiling.md` "A drag, a release, and what a sample can and cannot name"; the swift skill's
+  `scripts/resize/` drives the real pointer and samples the release.
 - "The native app hangs or a SwiftUI view is slow" → the swift skill; `references/profiling.md` sections 7, 8 and
   "The native app" hold the instrument recipes this skill shares with it.
 

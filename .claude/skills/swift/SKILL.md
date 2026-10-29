@@ -63,7 +63,10 @@ that is wrong for this app, and the rules that wait for `@Observable`, Swift 6 o
 | GBs of memory for a 200 MB file | `readFileSync` + split, side files all at once | Chunked line reader, lazy per file |
 | Every call ~250 ms even when cached | A process per call (runtime startup) | Resident server door, byte-identical output |
 | One slow call makes all calls slow | Serial server queue | Fix the slowest door first, re-rank |
-| Width state writes 30×/s | Geometry → state → layout feedback | Whole points + a loop detector |
+| Width state writes 30×/s | Geometry → state → layout feedback | Whole points + a loop detector that needs reversals, not a rate |
+| A drag costs 30-60 ms per step; the neighbour's web view blanks | The host body reads the live value; the neighbours move per step | One value per step, one leaf reads it; the panel draws over its neighbour, one reflow at release (GenesisKit `GenResize.swift`) |
+| A hitch of 100-330 ms after the mouse-up | The host body reads the saved length and the release flags | The rest length in the drag object, the flags in leaf modifiers, the neighbour held through the release |
+| A drag of a dense list stalls 0.4-1.7 s with an accessibility client | A button, tooltip and link in every row; a responder walk per changed node | Value rows, controls only on the hovered or selected row |
 
 ## Animated panels and notches
 

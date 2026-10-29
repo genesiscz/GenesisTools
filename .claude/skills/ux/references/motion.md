@@ -21,6 +21,14 @@
 - Building a large SwiftUI tree on expand delays the first frame; make the content cheap, build it before the
   motion, or keep it alive if that costs nothing at idle (measure idle CPU).
 - Decoding JSON snapshots on the main thread competes with animation frames.
+- A dragged panel whose content is laid out in buckets of the live width (12 pt steps) jumps on its far side on every
+  bucket change and cuts right-aligned content in between; the step cost "saved" is the steps that did nothing. The
+  content follows the edge on every step, and a drag is judged by `drag-frames.ts` captures of the far edge
+  (2026-10-29, hub sidebar).
+- A release that re-runs the host's body re-renders the whole panel once per flag it reads (the saved width,
+  `releasing`, `willCollapse`): a 100 to 330 ms hitch right after the mouse-up. The flags are read by leaves only
+  (`genResizeRaised`, `genResizeCollapseHint`, `GenResizeDrag.rest`), and the neighbour holds its final size through
+  the release animation (`PaneHold`), so nothing reflows per frame (2026-10-29).
 - A live AppKit control (a `TextField`) inside content that moves on every frame costs a hosting-view layout and a
   key-view-loop rebuild per frame: gap p50 18–26 ms against 8 ms without it (`ReshapeCostProbeTests`). Draw a
   stand-in of the same size while `\.edgePanelMoving` is true, and keep the real field while the user types in it.
