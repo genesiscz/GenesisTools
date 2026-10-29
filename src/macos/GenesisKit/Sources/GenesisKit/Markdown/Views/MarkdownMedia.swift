@@ -62,9 +62,13 @@ enum MarkdownMedia {
 
     private static let wikilinkPattern = try! NSRegularExpression(
         pattern: #"(!?)\[\[([^\]\|#]+)(?:#[^\]\|]*)?(?:\|[^\]]*)?\]\]"#)
-    private static let markdownPattern = try! NSRegularExpression(
-        // The destination may hold one level of balanced parentheses (`photo(1).png`), as markdown-it reads it.
-        pattern: #"(!?)\[(?:[^\]\\]|\\.)*\]\(\s*(<[^>\n]*>|(?:[^()\s\\]|\\.|\((?:[^()\s\\]|\\.)*\))+)"#)
+    // The destination may hold one level of balanced parentheses (`photo(1).png`), as markdown-it reads it, and a
+    // label one level of balanced brackets. Images and links are separate passes: in `[![a](small.png)](full.png)`
+    // the link's label holds the image, and one combined pass consumed the image inside the link's match.
+    private static let label = #"\[(?:[^\[\]\\]|\\.|\[(?:[^\[\]\\]|\\.)*\])*\]"#
+    private static let destination = #"\(\s*(<[^>\n]*>|(?:[^()\s\\]|\\.|\((?:[^()\s\\]|\\.)*\))+)"#
+    private static let imagePattern = try! NSRegularExpression(pattern: "!" + label + destination)
+    private static let linkPattern = try! NSRegularExpression(pattern: #"(?<![!\\])"# + label + destination)
     private static let definitionPattern = try! NSRegularExpression(
         pattern: #"(?m)^ {0,3}\[[^\]\n]+\]:\s*(<[^>\n]*>|\S+)"#)
     private static let htmlImagePattern = try! NSRegularExpression(
@@ -93,8 +97,11 @@ enum MarkdownMedia {
         for m in wikilinkPattern.matches(in: markdown, range: range) {
             if let target = group(m, 2) { add(target, embed: group(m, 1) == "!") }
         }
-        for m in markdownPattern.matches(in: markdown, range: range) {
-            if let target = group(m, 2) { add(target, embed: group(m, 1) == "!") }
+        for m in imagePattern.matches(in: markdown, range: range) {
+            if let target = group(m, 1) { add(target, embed: true) }
+        }
+        for m in linkPattern.matches(in: markdown, range: range) {
+            if let target = group(m, 1) { add(target, embed: false) }
         }
         // A definition may be used as `![x][ref]` or `[x][ref]`; either is allowed.
         for m in definitionPattern.matches(in: markdown, range: range) {
