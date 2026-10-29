@@ -143,9 +143,39 @@ extension View {
         modifier(GenResizeOverlap(active: active, edge: edge))
     }
 
+    /// Shows `shown` points of the view along `axis` while it is laid out at `layout` points. During a drag, pass the
+    /// most the drag can reach as `layout`: the content is laid out once, and each step only moves a clip, so no row
+    /// and no accessibility node changes per step. A list that grew per step resolved every row's text for the
+    /// accessibility client on each step (the PR threads list: 75% of the main thread, 50 ms steps, 2026-10-29).
+    /// Outside a drag pass the same value twice.
+    public func genResizeReveal(_ axis: Axis, shown: CGFloat, layout: CGFloat, alignment: Alignment = .topLeading) -> some View {
+        frame(width: axis == .horizontal ? max(shown, layout) : nil, height: axis == .vertical ? max(shown, layout) : nil,
+              alignment: alignment)
+            .frame(width: axis == .horizontal ? shown : nil, height: axis == .vertical ? shown : nil, alignment: alignment)
+            // Open at the top: a surface may paint up into a transparent title bar.
+            .clipShape(GenOpenTopClip())
+    }
+
     /// The pointer becomes `cursor` while it is over the view, and the arrow again when it leaves or the view goes.
     public func genHoverCursor(_ cursor: NSCursor) -> some View {
         modifier(GenHoverCursor(cursor: cursor))
+    }
+}
+
+/// The width or height a dragged panel lays its content out at: the shown length rounded up to a whole `bucket`.
+/// Steps inside one bucket propose the same size, so SwiftUI keeps the last layout and only the clip moves; the
+/// content reflows once per bucket instead of once per step. A PR list row re-measured its text on every step of a
+/// sidebar drag: 35 ms of main thread a step (2026-10-29).
+public enum GenResizeLayout {
+    public static func bucketed(_ shown: CGFloat, bucket: CGFloat = 12) -> CGFloat {
+        guard bucket > 0, shown > 0 else { return max(0, shown) }
+        return (shown / bucket).rounded(.up) * bucket
+    }
+}
+
+private struct GenOpenTopClip: Shape {
+    func path(in rect: CGRect) -> Path {
+        Path(CGRect(x: rect.minX, y: rect.minY - 10_000, width: rect.width, height: rect.height + 10_000))
     }
 }
 

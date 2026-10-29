@@ -3,6 +3,16 @@
 Newest first. Each entry: date, symptom as the user saw it, cause, fix, commit. Generic lessons go to
 checklist.md or motion.md as well.
 
+- 2026-10-29 18:08 — **The hub's Worktrees diff was empty after a switch from Sessions (the page had drawn all 94 files).**
+  - *Two modes shared one diff view, and the closing pane took it back.* Sessions and Worktrees use the same
+    `ReviewModel` when they show one checkout, so one `WKWebView` moves between two `RendererHost` containers. The
+    Sessions container's last `updateNSView` ran after the Worktrees one had attached the view, so the view left with
+    the closed pane. The page log looked healthy; only a live window capture (`tools control screenshot`) showed the
+    blank pane, and only for the Sessions → Worktrees path (the other modes have no diff to steal it back).
+    Fix: a container claims the view in `viewDidMoveToWindow`, and an update takes it only from a container that is
+    out of the window (3cb1524e33). Rule: one AppKit view shared by several representables is claimed by the one
+    that enters the window, never by whichever updates last; test every mode-to-mode path, not one switch.
+
 - 2026-10-27 20:01 — **The widget's own answer field dropped and restored typed text, and ⌘A / ⌘C only beeped.**
   - *A late snapshot wrote an older draft into the field.* `hub widget watch` reads state.json when a snapshot starts
     and sends it 1 to 17 s later, and the model let any snapshot write a draft once its last save had landed. The
