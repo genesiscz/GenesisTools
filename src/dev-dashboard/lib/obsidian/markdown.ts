@@ -54,7 +54,7 @@ import markedKatex from "marked-katex-extension";
  */
 export interface ResolvedAsset {
     url: string;
-    kind: "image" | "json" | "markdown" | "code" | "page";
+    kind: "image" | "audio" | "video" | "pdf" | "json" | "markdown" | "code" | "page";
     name: string;
 }
 
@@ -185,6 +185,37 @@ function isLocalHref(href: string): boolean {
 const PANEL_ICONS: Record<string, string> = { json: "{ }", markdown: "¶", code: "</>" };
 
 /** `labelHtml` is already escaped: link text comes out of marked as HTML, embed labels are escaped by the caller. */
+const PDF_HEIGHT_RE = /[#&]height=(\d{2,4})/;
+
+/**
+ * `![[talk.mp3]]` is a player, `![[clip.mp4|480]]` a video, `![[doc.pdf#page=3&height=400]]` the PDF in a frame
+ * (the fragment goes to the browser's viewer). A link to one, or a PDF in a saved page (a frame cannot show a
+ * `data:` PDF), is a plain link that opens or downloads it.
+ */
+function renderMediaAsset(asset: ResolvedAsset, labelHtml: string, inline: boolean, size?: ImageSize): string {
+    const url = escapeHtml(asset.url);
+    const saved = asset.url.startsWith("data:");
+
+    if (inline && asset.kind === "audio") {
+        return `<audio class="dd-md-asset-audio" controls preload="metadata" src="${url}" title="${labelHtml}"></audio>`;
+    }
+
+    if (inline && asset.kind === "video") {
+        return `<video class="dd-md-asset-video" controls preload="metadata" src="${url}" title="${labelHtml}"${sizeAttrs(size)}></video>`;
+    }
+
+    if (inline && asset.kind === "pdf" && !saved) {
+        const height = PDF_HEIGHT_RE.exec(asset.url)?.[1];
+        const heightStyle = height ? ` style="height:${height}px"` : "";
+
+        return `<iframe class="dd-md-asset-pdf" src="${url}" title="${labelHtml}"${heightStyle}></iframe>`;
+    }
+
+    const download = saved ? ` download="${escapeHtml(asset.name)}"` : ' target="_blank" rel="noopener"';
+
+    return `<a href="${url}" class="dd-md-asset-link"${download}>${labelHtml}</a>`;
+}
+
 function renderAsset(asset: ResolvedAsset, labelHtml: string, inline: boolean, size?: ImageSize): string {
     const url = escapeHtml(asset.url);
 
@@ -198,6 +229,10 @@ function renderAsset(asset: ResolvedAsset, labelHtml: string, inline: boolean, s
 
     if (asset.kind === "page") {
         return `<a href="${url}" class="dd-wikilink">${labelHtml}</a>`;
+    }
+
+    if (asset.kind === "audio" || asset.kind === "video" || asset.kind === "pdf") {
+        return renderMediaAsset(asset, labelHtml, inline, size);
     }
 
     const panelUrl = escapeHtml(asset.url.split("#")[0]);
@@ -363,14 +398,13 @@ function embedExtension(opts: RenderOptions): MarkedExtension {
 
                     if (asset) {
                         // `![[x.webp|300]]` carries a size, not a caption; `![[x.webp|caption|300]]` carries both.
+                        const sizable = asset.kind === "image" || asset.kind === "video";
                         const { label: caption, size } =
-                            asset.kind === "image" && t.display !== t.target
+                            sizable && t.display !== t.target
                                 ? splitObsidianSize(t.display)
                                 : { label: t.display, size: undefined };
                         const label =
-                            t.display === t.target || caption === "" || (asset.kind === "image" && !size)
-                                ? asset.name
-                                : caption;
+                            t.display === t.target || caption === "" || (sizable && !size) ? asset.name : caption;
 
                         return renderAsset(asset, escapeHtml(label), true, size);
                     }

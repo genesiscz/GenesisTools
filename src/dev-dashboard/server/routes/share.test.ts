@@ -70,6 +70,11 @@ const NOTE = [
     `inline key ${FAKE_TOKEN}`,
 ].join("\n\n");
 
+const SOUND = Buffer.from("ID3 fake-mp3-bytes-0123456789");
+const CLIP = Buffer.from("\u0000\u0000\u0000\u0018ftypmp42 fake-mp4");
+const PDF = Buffer.from("%PDF-1.4 fake pdf body");
+const MEDIA_NOTE = "# Media\n\n![[talk.mp3]]\n\n![[clip.mp4|480]]\n\n![[doc.pdf#page=3&height=400]]\n";
+
 function sha(bytes: Buffer | string): string {
     return createHash("sha256").update(bytes).digest("hex");
 }
@@ -79,6 +84,7 @@ describe("GET /share/:slug assets", () => {
     let slug = "";
     let pubSlug = "";
     let codeSlug = "";
+    let mediaSlug = "";
 
     beforeAll(async () => {
         dir = mkdtempSync(join(tmpdir(), "share-assets-"));
@@ -104,6 +110,10 @@ describe("GET /share/:slug assets", () => {
         writeFileSync(join(vault, "Other/shot.png"), SHOT);
         writeFileSync(join(vault, "secret.png"), SECRET);
         writeFileSync(join(dir, "outside/escape.png"), OUTSIDE);
+        writeFileSync(join(vault, "Notes/talk.mp3"), SOUND);
+        writeFileSync(join(vault, "Notes/clip.mp4"), CLIP);
+        writeFileSync(join(vault, "Notes/doc.pdf"), PDF);
+        writeFileSync(join(vault, "Notes/Media.md"), MEDIA_NOTE);
         symlinkSync(join(dir, "outside/escape.png"), join(vault, "Notes/sub/escape.png"));
 
         env.testing.set("GENESIS_TOOLS_HOME", join(dir, "home"));
@@ -117,6 +127,7 @@ describe("GET /share/:slug assets", () => {
         slug = (await publishNote("Notes/sub/Run.md")).slug;
         pubSlug = (await publishNote("Other/Pub.md")).slug;
         codeSlug = (await publishNote("Notes/Report.ts")).slug;
+        mediaSlug = (await publishNote("Notes/Media.md")).slug;
     });
 
     afterAll(() => {
@@ -125,13 +136,18 @@ describe("GET /share/:slug assets", () => {
         rmSync(dir, { recursive: true, force: true });
     });
 
-    async function get(query: Record<string, string>, accept = "*/*", target = slug): Promise<RouteResult> {
+    async function get(
+        query: Record<string, string>,
+        accept = "*/*",
+        target = slug,
+        extra: Record<string, string> = {}
+    ): Promise<RouteResult> {
         const ctx: RouteContext = {
             method: "GET",
             pathname: `/share/${target}`,
             query: new URLSearchParams(query),
             params: { slug: target },
-            headers: { accept },
+            headers: { accept, ...extra },
             readJson: async () => {
                 throw new Error("no body");
             },
@@ -381,5 +397,50 @@ describe("GET /share/:slug assets", () => {
         expect(panels[`?asset=${sha(DATA)}|`].raw).toBe(
             `data:application/json;charset=utf-8;base64,${Buffer.from(DATA).toString("base64")}`
         );
+    });
+
+    test("audio, video and PDF embeds render as a player, a sized video and a PDF frame with its fragment", async () => {
+        const page = await get({}, "text/html", mediaSlug);
+        const html = page.kind === "raw" ? page.body : "";
+        const url = (bytes: Buffer) => `/share/${mediaSlug}?asset=${sha(bytes)}`;
+
+        expect(html).toContain(`<audio class="dd-md-asset-audio" controls preload="metadata" src="${url(SOUND)}"`);
+        expect(html).toContain(
+            `<video class="dd-md-asset-video" controls preload="metadata" src="${url(CLIP)}" title="clip.mp4" width="480">`
+        );
+        expect(html).toContain(
+            `<iframe class="dd-md-asset-pdf" src="${url(PDF)}#page=3&amp;height=400" title="doc.pdf" style="height:400px">`
+        );
+    });
+
+    test("media is served as bytes with byte ranges; a PDF has no sandbox so the viewer opens", async () => {
+        const full = await get({ asset: sha(CLIP) }, "text/html", mediaSlug);
+        const part = await get({ asset: sha(CLIP) }, "*/*", mediaSlug, { range: "bytes=4-11" });
+        const tail = await get({ asset: sha(CLIP) }, "*/*", mediaSlug, { range: "bytes=-4" });
+        const past = await get({ asset: sha(CLIP) }, "*/*", mediaSlug, { range: "bytes=9999-" });
+        const pdf = await get({ asset: sha(PDF) }, "text/html", mediaSlug);
+
+        expect(full.kind === "binary" && full.status).toBe(200);
+        expect(full.kind === "binary" && full.headers?.["Accept-Ranges"]).toBe("bytes");
+        expect(part.kind === "binary" && part.status).toBe(206);
+        expect(part.kind === "binary" && Buffer.from(part.body).equals(CLIP.subarray(4, 12))).toBe(true);
+        expect(part.kind === "binary" && part.headers?.["Content-Range"]).toBe(`bytes 4-11/${CLIP.length}`);
+        expect(tail.kind === "binary" && Buffer.from(tail.body).equals(CLIP.subarray(-4))).toBe(true);
+        expect(past.kind === "binary" && past.status).toBe(416);
+        expect(pdf.kind === "binary" && pdf.contentType).toBe("application/pdf");
+        expect(pdf.kind === "binary" && pdf.headers?.["Content-Security-Policy"]).not.toContain("sandbox");
+        expect(pdf.kind === "binary" && Buffer.from(pdf.body).equals(PDF)).toBe(true);
+    });
+
+    test("a saved page embeds audio and video as data and offers the PDF as a download", async () => {
+        const res = await get({ download: "html" }, "text/html", mediaSlug);
+        const html = res.kind === "raw" ? res.body : "";
+
+        expect(html).toContain(`src="data:audio/mpeg;base64,${SOUND.toString("base64")}"`);
+        expect(html).toContain(`src="data:video/mp4;base64,${CLIP.toString("base64")}"`);
+        expect(html).toContain(
+            `href="data:application/pdf;base64,${PDF.toString("base64")}" class="dd-md-asset-link" download="doc.pdf"`
+        );
+        expect(html).not.toContain("?asset=");
     });
 });

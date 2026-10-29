@@ -9,10 +9,12 @@ import {
     codeLanguageFor,
     fencedCode,
     hashAsset,
+    isMediaKind,
     lineRangeOf,
     readShareAsset,
     renderShareAssetFragment,
     SHARE_ASSET_HASH_RE,
+    type ShareAsset,
     type ShareAssetIndex,
     type ShareEmbed,
     shareAssetUrl,
@@ -94,6 +96,52 @@ const TOO_LARGE: RouteResult = {
     contentType: "text/plain; charset=utf-8",
     body: "the note and its attachments are too large to download as one file",
 };
+
+const RANGE_RE = /^bytes=(\d*)-(\d*)$/;
+
+/**
+ * An asset's bytes, or the one byte range asked for: Safari plays `<audio>` and `<video>` only from a server
+ * that answers ranges. A PDF goes without the sandbox policy, because a sandboxed document cannot open the
+ * browser's PDF viewer.
+ */
+function assetBytes(options: { asset: ShareAsset; body: Buffer; range: string | undefined }): RouteResult {
+    const { asset, body, range } = options;
+    const headers: Record<string, string> = {
+        ...ASSET_HEADERS,
+        ...(asset.kind === "pdf" ? { "Content-Security-Policy": "default-src 'none'; object-src 'self'" } : {}),
+        Vary: "Accept",
+        "Accept-Ranges": "bytes",
+        "Content-Disposition": `inline; filename*=UTF-8''${encodeURIComponent(asset.name)}`,
+    };
+    const match = range ? RANGE_RE.exec(range.trim()) : null;
+
+    if (!match || (match[1] === "" && match[2] === "")) {
+        return { kind: "binary", status: 200, contentType: asset.contentType, body, headers };
+    }
+
+    const size = body.length;
+    // `bytes=-500` is the last 500 bytes.
+    const start = match[1] === "" ? Math.max(0, size - Number(match[2])) : Number(match[1]);
+    const end = match[1] === "" || match[2] === "" ? size - 1 : Math.min(size - 1, Number(match[2]));
+
+    if (start >= size || start > end) {
+        return {
+            kind: "binary",
+            status: 416,
+            contentType: asset.contentType,
+            body: new Uint8Array(),
+            headers: { ...headers, "Content-Range": `bytes */${size}` },
+        };
+    }
+
+    return {
+        kind: "binary",
+        status: 206,
+        contentType: asset.contentType,
+        body: body.subarray(start, end + 1),
+        headers: { ...headers, "Content-Range": `bytes ${start}-${end}/${size}` },
+    };
+}
 
 function attachmentHeaders(fileName: string): Record<string, string> {
     return {
@@ -221,7 +269,7 @@ export function shareRoutes(): RouteDef[] {
 
                         const view = ctx.query.get("view");
 
-                        if (asset.kind !== "image" && view === "fragment") {
+                        if (!isMediaKind(asset.kind) && view === "fragment") {
                             return {
                                 kind: "raw",
                                 status: 200,
@@ -235,18 +283,8 @@ export function shareRoutes(): RouteDef[] {
                             };
                         }
 
-                        if (asset.kind === "image" || view === "raw" || !wantsHtml(ctx)) {
-                            return {
-                                kind: "binary",
-                                status: 200,
-                                contentType: asset.contentType,
-                                body,
-                                headers: {
-                                    ...ASSET_HEADERS,
-                                    Vary: "Accept",
-                                    "Content-Disposition": `inline; filename*=UTF-8''${encodeURIComponent(asset.name)}`,
-                                },
-                            };
+                        if (isMediaKind(asset.kind) || view === "raw" || !wantsHtml(ctx)) {
+                            return assetBytes({ asset, body, range: ctx.headers.range });
                         }
 
                         openAssetUrl = url;
@@ -288,15 +326,17 @@ export function shareRoutes(): RouteDef[] {
                                 ? `#L${range.start}${range.end > range.start ? `-L${range.end}` : ""}`
                                 : "";
 
-                            if (embed && asset.kind === "image") {
-                                const inline = embed.images.get(asset.hash);
+                            if (embed && isMediaKind(asset.kind)) {
+                                const inline = embed.media.get(asset.hash);
 
-                                return inline ? { url: inline, kind: "image", name: asset.name } : null;
+                                return inline ? { url: inline, kind: asset.kind, name: asset.name } : null;
                             }
 
                             const url = embed ? `?asset=${asset.hash}` : shareAssetUrl(slug, asset.hash);
+                            // `doc.pdf#page=3&height=400` keeps its fragment for the PDF viewer and the frame height.
+                            const pdfFragment = asset.kind === "pdf" ? (/#.*$/.exec(target)?.[0] ?? "") : "";
 
-                            return { url: `${url}${fragment}`, kind: asset.kind, name: asset.name };
+                            return { url: `${url}${fragment || pdfFragment}`, kind: asset.kind, name: asset.name };
                         },
                     });
                     const page = renderSharePage({

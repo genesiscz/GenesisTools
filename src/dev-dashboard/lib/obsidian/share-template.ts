@@ -535,6 +535,18 @@ kbd {
 li:has(> input[data-task]), li:has(> p > input[data-task]) { list-style: none; }
 input[data-task] { accent-color: var(--dd-text-faint); }
 
+.dd-md-asset-audio { display: block; width: 100%; max-width: 520px; margin: 0.5em 0; }
+.dd-md-asset-video { display: block; max-width: 100%; height: auto; margin: 0.5em 0; border-radius: 6px; background: #000; }
+.dd-md-asset-pdf {
+    display: block;
+    width: 100%;
+    height: 720px;
+    margin: 0.5em 0;
+    border: 1px solid var(--dd-border);
+    border-radius: 6px;
+    background: var(--dd-bg-panel);
+}
+
 .dd-md-properties {
     margin: 0 0 1.4em;
     padding: 8px 14px;
