@@ -2,11 +2,14 @@ import { existsSync, readdirSync, rmdirSync } from "node:fs";
 import { resolve } from "node:path";
 import { toolCommand } from "@genesiscz/utils/cli";
 import { formatBytes } from "@genesiscz/utils/format";
-import { out } from "@genesiscz/utils/logger";
+import { logger, out } from "@genesiscz/utils/logger";
 import {
+    type ApprovalItem,
     appendRmLedger,
+    approvalAsker,
     approvalDenyReason,
     approvalGraceMinutes,
+    approvalItemReason,
     createRmRequest,
     denyRmRequest,
     finishRmApproval,
@@ -34,6 +37,16 @@ function removeEmptyAsideDir(dir: string | undefined): void {
     }
 
     rmdirSync(dir);
+}
+
+/** True for a folder with nothing in it; an unreadable folder is not called empty. */
+function isEmptyDir(dir: string): boolean {
+    try {
+        return readdirSync(dir).length === 0;
+    } catch (error) {
+        logger.debug({ error, dir }, "rm: could not list a folder for the approval window");
+        return false;
+    }
 }
 
 export function registerRequestCommands(program: Command): void {
@@ -144,12 +157,22 @@ export function registerRequestCommands(program: Command): void {
                 return;
             }
 
-            const who = request.caller
-                ? `${request.caller.agent} session ${request.caller.sessionId?.slice(0, 8) ?? "?"}`
-                : "an agent";
-            const lines = openEntries.map(({ wanted, target }) => {
-                const bytes = wanted.bytes ?? measureBytes(target.path);
-                const size = request.kind === "delete" ? `  ${formatBytes(bytes)}` : "";
+            const asker = approvalAsker(request.caller);
+            const who = asker ? (asker.session ?? asker.project ?? asker.agent) : "an agent";
+            const items: ApprovalItem[] = openEntries.map(({ wanted, target }) => {
+                const isDelete = request.kind === "delete" && target.kind !== "missing";
+                return {
+                    path: wanted.path,
+                    kind: target.kind,
+                    bytes: isDelete ? (wanted.bytes ?? measureBytes(target.path)) : undefined,
+                    empty: target.kind === "dir" ? isEmptyDir(target.path) : undefined,
+                    storedAt: wanted.stored,
+                    reason: approvalItemReason(wanted.rule, wanted.reason),
+                };
+            });
+            const lines = openEntries.map(({ wanted }, index) => {
+                const bytes = items[index]?.bytes;
+                const size = bytes === undefined ? "" : `  ${formatBytes(bytes)}`;
                 const where = wanted.stored ? ", moved aside" : "";
                 return `${shown(wanted.path, ctx.cwd)}${size}  (${wanted.reason}${where})`;
             });
@@ -159,8 +182,23 @@ export function registerRequestCommands(program: Command): void {
             }
 
             const verb =
-                request.kind === "delete" ? `Delete ${open.length} path(s)` : `Trust ${open[0]?.path} as a root`;
-            const answer = await requirePerson(ctx, { title: `${verb} for ${who}?`, lines, code: id });
+                request.kind === "delete"
+                    ? `Delete ${open.length === 1 ? "1 item" : `${open.length} items`}`
+                    : `Trust ${shown(open[0]?.path ?? "", ctx.cwd)}`;
+            const answer = await requirePerson(ctx, {
+                title: `${verb} for ${who}?`,
+                lines,
+                code: id,
+                request: {
+                    id,
+                    kind: request.kind,
+                    why: request.reason,
+                    cwd: request.cwd,
+                    graceMinutes: request.kind === "delete" ? ctx.config.grace.otherMinutes : undefined,
+                    asker,
+                    items,
+                },
+            });
 
             if (!answer.approved) {
                 return;

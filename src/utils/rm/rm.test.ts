@@ -21,7 +21,10 @@ import {
     type AppApproval,
     type ApprovalDeps,
     appApprovalFromReply,
+    appApproveParams,
+    approvalAsker,
     approvalGraceMinutes,
+    approvalItemReason,
     assertInsideTrash,
     BUILTIN_PRESETS,
     confirmByPerson,
@@ -556,6 +559,68 @@ describe("requests and approval", () => {
             expect(linux.approved).toBe(false);
             expect(code.via).toBe("dialog");
             expect(calls).toEqual(["app", "dialog"]);
+        });
+
+        test("the window gets the request's rows beside the terminal's lines, and a settings change only lines", () => {
+            const request = {
+                id: "abc234",
+                kind: "delete" as const,
+                why: "old exports",
+                cwd: "/work/shop",
+                graceMinutes: 60,
+                asker: approvalAsker({ ...AGENT, sessionTitle: "shop-admin", project: "shop", branch: "main" }),
+                items: [{ path: "/work/shop/out", kind: "dir" as const, bytes: 0, empty: true, reason: "Outside" }],
+            };
+            const withRequest = appApproveParams({ ...prompt, request }, "/elsewhere");
+            const settings = appApproveParams(prompt, "/elsewhere");
+
+            expect(withRequest).toMatchObject({ title: "t", lines: ["/x"], folder: "/work/shop", request });
+            expect(request.asker).toEqual({
+                agent: "Claude Code",
+                session: "shop-admin",
+                project: "shop",
+                branch: "main",
+            });
+            expect(settings).toEqual({
+                title: "t",
+                lines: ["/x"],
+                caller: "Claude Code",
+                folder: "/elsewhere",
+            });
+            expect("request" in settings).toBe(false);
+            expect(approvalAsker({ ...AGENT, isInAgent: false })).toBeUndefined();
+        });
+
+        test("a rule's terminal reason becomes one sentence a person reads", () => {
+            const home = "/Users/someone";
+
+            expect(
+                approvalItemReason(
+                    "default",
+                    "no rule allows it: a preset, this session's scratch or own files, or a trusted root",
+                    home
+                )
+            ).toBe("Outside this session's scratch, its own files and the trusted folders");
+            expect(
+                approvalItemReason(
+                    "git-untracked",
+                    "3 untracked file(s) git does not ignore in /Users/someone/Notes: may be new work",
+                    home
+                )
+            ).toBe("Holds 3 files git does not track in ~/Notes, which may be new work");
+            expect(
+                approvalItemReason(
+                    "git-tracked",
+                    "1 file(s) tracked by git in /srv/app: use git rm, or ask the user",
+                    home
+                )
+            ).toBe("Holds 1 file tracked by git in /srv/app");
+            expect(
+                approvalItemReason("nested-repos", "holds 2 git repositories, e.g. /Users/someone/x/.git", home)
+            ).toBe("Holds 2 git repositories, such as ~/x/.git");
+            expect(approvalItemReason("unsaved-clone", "a clone with 2 unpushed commits.", home)).toBe(
+                "A clone with 2 unpushed commits"
+            );
         });
 
         test("only an exact allow approves; a missing app or an old build is not an answer", () => {

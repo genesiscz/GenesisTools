@@ -217,6 +217,32 @@ public enum PathOpener {
         NSWorkspace.shared.open(url)
     }
 
+    /// Genesis Markdown's bundle id: the app the link router hands `genesis-md:` and `/md/open` links to.
+    public static let genesisMarkdownBundleID = "dev.foltyn.genesis.markdown"
+
+    /// Genesis Markdown's location, or nil on a Mac without it (Launch Services, the lookup `open -b` uses).
+    public static func genesisMarkdownApp() -> URL? {
+        NSWorkspace.shared.urlForApplication(withBundleIdentifier: genesisMarkdownBundleID)
+    }
+
+    /// "Open in Genesis Markdown": the file in Genesis Markdown directly, so it opens without the link router.
+    public static func genesisMarkdown(_ path: String) {
+        let url = fileURL(path)
+        guard let app = genesisMarkdownApp() else {
+            KitHost.log("path.genesisMarkdown no app for \(url.path)")
+            CopyToast.post(title: "Genesis Markdown is not installed", detail: PathDisplay.tilde(url.path), style: .problem)
+            return
+        }
+
+        KitHost.log("path.genesisMarkdown \(url.path)")
+        NSWorkspace.shared.open([url], withApplicationAt: app, configuration: NSWorkspace.OpenConfiguration()) { _, error in
+            if let error {
+                KitHost.log("path.genesisMarkdown failed for \(url.path): \(error.localizedDescription)")
+                CopyToast.post(title: "Genesis Markdown did not open it", detail: PathDisplay.tilde(url.path), style: .problem)
+            }
+        }
+    }
+
     /// "Open in Terminal": the app's own terminal (a cmux workspace, `GenesisKitHost.openTerminal`) when it
     /// has one, else Terminal.app in the path's folder (a file: its folder).
     public static func terminal(_ path: String) {
