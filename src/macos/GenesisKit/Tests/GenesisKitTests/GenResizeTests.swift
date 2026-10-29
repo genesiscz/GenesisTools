@@ -9,6 +9,15 @@ final class GenResizeTests: XCTestCase {
         XCTAssertEqual(line, "resize panel.hub.sidebar 327->412 pt: 8 steps in 1.0 s, step gap p50 10 p95 90 max 90 ms, 2 over 33 ms")
     }
 
+    /// Steps inside one bucket share a layout size, never smaller than the shown length, so the clip always has content.
+    func testDragLayoutRoundsUpToWholeBuckets() {
+        XCTAssertEqual(GenResizeLayout.bucketed(327.3), 336)
+        XCTAssertEqual(GenResizeLayout.bucketed(330), 336)
+        XCTAssertEqual(GenResizeLayout.bucketed(336), 336)
+        XCTAssertEqual(GenResizeLayout.bucketed(0), 0)
+        XCTAssertEqual(GenResizeLayout.bucketed(-4), 0)
+    }
+
     func testOneStepHasNoGaps() {
         let line = GenResizeDragTimer.summary("prThreads.list", from: 260, to: 260, gaps: [], seconds: 0)
         XCTAssertEqual(line, "resize prThreads.list 260->260 pt: 1 steps in 0.0 s, step gap p50 0 p95 0 max 0 ms, 0 over 33 ms")

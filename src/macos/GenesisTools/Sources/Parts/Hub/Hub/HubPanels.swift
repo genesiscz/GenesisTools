@@ -222,8 +222,12 @@ struct ResizableSidePanel<Content: View>: View {
                 // Above the content: drawn first, the trailing handle lay under the file list, which took every press on
                 // its grab area, so the Files edge could not be dragged at all (2026-10-29).
                 if edge == .trailing { handle.offset(x: dragShift).zIndex(1) }
+                // While dragging, the content is laid out in 12 pt buckets and clipped to the edge, so most steps
+                // reuse the last layout (GenResizeLayout).
                 content()
-                    .frame(width: max(0, shownWidth), alignment: edge == .leading ? .leading : .trailing)
+                    .genResizeReveal(.horizontal, shown: max(0, shownWidth),
+                                     layout: dragStart != nil ? GenResizeLayout.bucketed(shownWidth) : max(0, shownWidth),
+                                     alignment: .leading)
                     .genResizeOverlap(overlapping, edge: edge == .leading ? .trailing : .leading)
                     .opacity(willCollapse ? 0.35 : 1)
                     .frame(width: dragStart != nil ? max(0, slotWidth) : nil, alignment: edge == .leading ? .leading : .trailing)

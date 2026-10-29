@@ -175,9 +175,15 @@ struct PRReviewBar: View {
     private var threadsList: some View {
         let slot = clamped(dragStart ?? listHeight)
         let shown = clamped(liveHeight ?? listHeight)
+        // While dragging, the list is laid out at the tallest height it may take and only its clip follows the edge.
+        let layout = dragStart != nil ? clamped(.greatestFiniteMagnitude) : shown
         return PRThreadsList(model: model, store: store)
-            .frame(height: shown)
+            // Out of the accessibility tree for the drag: a moving clip made SwiftUI resolve every comment's text for
+            // the accessibility client on each step (641 of 2488 main-thread samples). VoiceOver resizes through the
+            // handle's adjustable action instead.
+            .accessibilityHidden(dragStart != nil)
             .hubSurface(.content)
+            .genResizeReveal(.vertical, shown: shown, layout: layout)
             .genResizeOverlap(dragStart != nil && shown > slot + 0.5, edge: .bottom)
             .overlay(Rectangle().fill(ReviewPalette.hairline).frame(height: 1), alignment: .top)
             .overlay(alignment: .bottom) { resizer }
