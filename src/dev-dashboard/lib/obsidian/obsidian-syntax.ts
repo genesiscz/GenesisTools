@@ -123,8 +123,74 @@ export class FootnoteBook {
     }
 }
 
+const TASK_STATUS_RE = /^\[([^\]\s])\][ \t]+/;
+
+interface StatusCheckbox {
+    type: "checkbox";
+    raw: string;
+    checked: boolean;
+    status: string;
+}
+
+function trimInlineText(token: Token | undefined, length: number): void {
+    if (token && "text" in token && typeof token.text === "string") {
+        token.raw = token.raw.slice(length);
+        token.text = token.text.slice(length);
+    }
+}
+
+/**
+ * GFM knows only `[ ]` and `[x]`. Obsidian shows any other character (`[/]`, `[-]`, `[>]`) as a checked box
+ * too and keeps the character, so themes can draw it; here it is `data-task` on the box.
+ */
+function markStatusTask(item: Tokens.ListItem): void {
+    const first = item.tokens[0];
+
+    if (item.task || !first || (first.type !== "text" && first.type !== "paragraph")) {
+        return;
+    }
+
+    const match = TASK_STATUS_RE.exec(first.raw);
+
+    if (!match) {
+        return;
+    }
+
+    const checkbox: StatusCheckbox = { type: "checkbox", raw: match[0], checked: true, status: match[1] };
+    const length = match[0].length;
+    item.task = true;
+    item.checked = true;
+    first.raw = first.raw.slice(length);
+
+    if ("text" in first && typeof first.text === "string") {
+        first.text = first.text.slice(length);
+    }
+
+    const inline = "tokens" in first && Array.isArray(first.tokens) ? first.tokens : null;
+    trimInlineText(inline?.[0], length);
+
+    if (first.type === "paragraph" && inline) {
+        inline.unshift(checkbox);
+    } else {
+        item.tokens.unshift(checkbox);
+    }
+}
+
 export function obsidianSyntaxExtension(book: FootnoteBook): MarkedExtension {
     return {
+        walkTokens(token: Token): void {
+            if (token.type === "list_item") {
+                markStatusTask(token as Tokens.ListItem);
+            }
+        },
+        renderer: {
+            checkbox(token: Tokens.Checkbox): string {
+                const status = "status" in token && typeof token.status === "string" ? token.status : null;
+                const statusAttr = status ? ` data-task="${escapeHtml(status)}"` : "";
+
+                return `<input ${token.checked ? 'checked="" ' : ""}disabled="" type="checkbox"${statusAttr}> `;
+            },
+        },
         extensions: [
             {
                 name: "blockComment",
@@ -255,4 +321,85 @@ export function obsidianSyntaxExtension(book: FootnoteBook): MarkedExtension {
             },
         ],
     };
+}
+
+export interface NoteProperty {
+    key: string;
+    value: string | string[] | boolean;
+}
+
+function unquote(value: string): string {
+    const trimmed = value.trim();
+
+    return /^(["']).*\1$/s.test(trimmed) ? trimmed.slice(1, -1) : trimmed;
+}
+
+/**
+ * The top-level keys of a note's frontmatter, in the forms Obsidian's properties editor writes: a scalar,
+ * a flow list `[a, b]`, or a block list of `- item` lines. A nested map shows as its raw text.
+ */
+export function parseProperties(frontmatter: string): NoteProperty[] {
+    const lines = frontmatter.split(/\r?\n/);
+    const props: NoteProperty[] = [];
+
+    for (let i = 0; i < lines.length; i++) {
+        const match = /^([^\s#:][^:]*):(?:[ \t]+(.*))?$/.exec(lines[i]);
+
+        if (!match) {
+            continue;
+        }
+
+        const key = match[1].trim();
+        const inline = (match[2] ?? "").trim();
+
+        if (inline.startsWith("[") && inline.endsWith("]")) {
+            props.push({ key, value: inline.slice(1, -1).split(",").map(unquote).filter(Boolean) });
+            continue;
+        }
+
+        if (inline === "true" || inline === "false") {
+            props.push({ key, value: inline === "true" });
+            continue;
+        }
+
+        if (inline !== "" && inline !== "|" && inline !== ">") {
+            props.push({ key, value: unquote(inline) });
+            continue;
+        }
+
+        const nested: string[] = [];
+
+        while (i + 1 < lines.length && /^\s+\S|^-\s/.test(lines[i + 1])) {
+            nested.push(lines[++i]);
+        }
+
+        const items = nested.map((line) => /^\s*-\s+(.*)$/.exec(line)?.[1]);
+
+        if (nested.length > 0 && items.every((item) => item !== undefined)) {
+            props.push({ key, value: items.map((item) => unquote(item ?? "")).filter(Boolean) });
+        } else {
+            props.push({ key, value: nested.map((line) => line.trim()).join(inline === ">" ? " " : "\n") });
+        }
+    }
+
+    return props;
+}
+
+/** Obsidian's properties box: one row per key, lists as chips, a checkbox as a box. Folds like the panel in Obsidian. */
+export function renderProperties(props: NoteProperty[]): string {
+    if (props.length === 0) {
+        return "";
+    }
+
+    const rows = props.map(({ key, value }) => {
+        const cell = Array.isArray(value)
+            ? value.map((item) => `<span class="dd-md-prop-chip">${escapeHtml(item)}</span>`).join("")
+            : typeof value === "boolean"
+              ? `<input type="checkbox" disabled=""${value ? ' checked=""' : ""} aria-label="${value ? "Yes" : "No"}">`
+              : escapeHtml(value);
+
+        return `<dt>${escapeHtml(key)}</dt><dd>${cell}</dd>`;
+    });
+
+    return `<details class="dd-md-properties" open><summary>Properties</summary><dl>${rows.join("")}</dl></details>`;
 }

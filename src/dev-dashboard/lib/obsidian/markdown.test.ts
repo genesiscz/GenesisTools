@@ -388,3 +388,51 @@ describe("Obsidian syntax", () => {
         expect(html).toContain("&lt;script&gt;");
     });
 });
+
+describe("Obsidian tasks, properties and nested callouts", () => {
+    test("any status character is a checked box that keeps the character; [ ] and [x] stay GFM", () => {
+        const { html } = renderMarkdown("- [/] half **way**\n- [x] done\n- [ ] open\n\n- [-] loose", noop);
+
+        expect(html).toContain(
+            '<input checked="" disabled="" type="checkbox" data-task="/"> half <strong>way</strong>'
+        );
+        expect(html).toContain('<input checked="" disabled="" type="checkbox"> done');
+        expect(html).toContain('<input disabled="" type="checkbox"> open');
+        expect(html).toContain('<p><input checked="" disabled="" type="checkbox" data-task="-"> loose');
+        expect(html).not.toContain("[/]");
+        expect(html).not.toContain("[-]");
+    });
+
+    test("frontmatter properties show in a box: scalars, lists, booleans; tags stay chips", () => {
+        const md = [
+            "---",
+            "title: 'A note'",
+            "tags: [one]",
+            "aliases:",
+            "  - First",
+            "  - Second",
+            'related: [a, "b"]',
+            "draft: true",
+            "---",
+            "Body",
+        ].join("\n");
+        const { html } = renderMarkdown(md, noop);
+
+        expect(html).toContain('<details class="dd-md-properties" open><summary>Properties</summary><dl>');
+        expect(html).toContain("<dt>title</dt><dd>A note</dd>");
+        expect(html).toContain(
+            '<dt>aliases</dt><dd><span class="dd-md-prop-chip">First</span><span class="dd-md-prop-chip">Second</span></dd>'
+        );
+        expect(html).toContain('<span class="dd-md-prop-chip">b</span>');
+        expect(html).toContain('<dt>draft</dt><dd><input type="checkbox" disabled="" checked=""');
+        expect(html).not.toContain("<dt>tags</dt>");
+        expect(html).toContain('<span class="dd-md-tag">#one</span>');
+    });
+
+    test("a callout nested in a callout renders as a callout inside the body", () => {
+        const { html } = renderMarkdown("> [!note] Outer\n> text\n> > [!warning] Inner\n> > careful", noop);
+
+        expect(html).toContain('markdown-alert-note" data-callout="note"');
+        expect(html).toMatch(/markdown-alert-body">[\s\S]*markdown-alert-warning/);
+    });
+});

@@ -4,7 +4,10 @@ import {
     anchorFor,
     FootnoteBook,
     headingSlug,
+    type NoteProperty,
     obsidianSyntaxExtension,
+    parseProperties,
+    renderProperties,
 } from "@app/dev-dashboard/lib/obsidian/obsidian-syntax";
 import { escapeHtml } from "@genesiscz/utils/string";
 import hljs from "highlight.js/lib/core";
@@ -246,13 +249,15 @@ function extractYamlTags(frontmatter: string): string[] {
     return tags.filter(Boolean);
 }
 
-function extractMetadata(source: string): { markdown: string; tags: string[] } {
+function extractMetadata(source: string): { markdown: string; tags: string[]; properties: NoteProperty[] } {
     const frontmatterMatch = source.match(FRONTMATTER_RE);
 
     if (frontmatterMatch) {
         return {
             markdown: source.slice(frontmatterMatch[0].length),
             tags: extractYamlTags(frontmatterMatch[1]),
+            // Tags already show as the chips above the note.
+            properties: parseProperties(frontmatterMatch[1]).filter((prop) => prop.key.toLowerCase() !== "tags"),
         };
     }
 
@@ -262,10 +267,11 @@ function extractMetadata(source: string): { markdown: string; tags: string[] } {
         return {
             markdown: source.slice(tagsMatch[0].length),
             tags: parseTagList(tagsMatch[1]),
+            properties: [],
         };
     }
 
-    return { markdown: source, tags: [] };
+    return { markdown: source, tags: [], properties: [] };
 }
 
 function renderTagsHeader(tags: string[]): string {
@@ -968,7 +974,7 @@ export function renderMarkdown(source: string, opts: RenderOptions): RenderResul
     const hasMermaid = body.includes('<div class="mermaid">');
 
     return {
-        html: `${tagsHeader}${body}${book.renderSection()}`,
+        html: `${tagsHeader}${renderProperties(metadata.properties)}${body}${book.renderSection()}`,
         hasMath,
         hasMermaid,
         tags: metadata.tags,
