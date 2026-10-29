@@ -532,6 +532,36 @@ kbd {
     font-size: 0.85em;
 }
 
+li:has(> input[data-task]), li:has(> p > input[data-task]) { list-style: none; }
+input[data-task] { accent-color: var(--dd-text-faint); }
+
+.dd-md-properties {
+    margin: 0 0 1.4em;
+    padding: 8px 14px;
+    border: 1px solid var(--dd-border);
+    border-radius: 8px;
+    background: var(--dd-bg-panel);
+    font-size: 0.9em;
+}
+.dd-md-properties > summary { cursor: pointer; color: var(--dd-text-dim); font-weight: 600; }
+.dd-md-properties dl {
+    display: grid;
+    grid-template-columns: minmax(90px, max-content) 1fr;
+    gap: 6px 16px;
+    margin: 10px 0 4px;
+}
+.dd-md-properties dt { color: var(--dd-text-dim); font-family: var(--dd-mono); font-size: 0.92em; }
+.dd-md-properties dd { margin: 0; white-space: pre-wrap; word-break: break-word; }
+.dd-md-prop-chip {
+    display: inline-block;
+    margin: 0 6px 4px 0;
+    padding: 0 8px;
+    border-radius: 10px;
+    background: var(--dd-accent-soft);
+    color: var(--dd-accent);
+    font-size: 0.92em;
+}
+
 sup.footnote-ref a { padding: 0 1px; text-decoration: none; }
 section.footnotes { margin-top: 2.4em; font-size: 0.92em; color: var(--dd-text-dim); }
 section.footnotes hr { margin-bottom: 1.2em; }
