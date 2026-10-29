@@ -13,6 +13,7 @@ import {
     lineRangeOf,
     readShareAsset,
     renderShareAssetFragment,
+    renderTransclusionHtml,
     SHARE_ASSET_HASH_RE,
     type ShareAsset,
     type ShareAssetIndex,
@@ -23,7 +24,10 @@ import { renderSharePage } from "@app/dev-dashboard/lib/obsidian/share-template"
 import { publicBaseUrl } from "@app/dev-dashboard/lib/public-base";
 import type { RouteContext, RouteDef, RouteResult } from "@app/dev-dashboard/server/types";
 import { zip } from "@genesiscz/utils/fs/zip";
+import { logger } from "@genesiscz/utils/logger";
 import { redactSecretsInText } from "@genesiscz/utils/transclude";
+
+const { log } = logger.scoped("share");
 
 const NOT_FOUND_HTML = "<!doctype html><meta charset=utf-8><title>Not found</title><h1>Not found</h1>";
 const ASSET_CACHE_LIMIT = 64;
@@ -96,6 +100,16 @@ const TOO_LARGE: RouteResult = {
     contentType: "text/plain; charset=utf-8",
     body: "the note and its attachments are too large to download as one file",
 };
+
+/** `Some%20Heading` → `Some Heading`; a stray `%` keeps the text as written instead of failing the page. */
+function decodeFragment(fragment: string): string {
+    try {
+        return decodeURIComponent(fragment);
+    } catch (err) {
+        log.debug({ fragment, err }, "embed fragment is not URI-encoded, using it verbatim");
+        return fragment;
+    }
+}
 
 const RANGE_RE = /^bytes=(\d*)-(\d*)$/;
 
@@ -290,6 +304,25 @@ export function shareRoutes(): RouteDef[] {
                         openAssetUrl = url;
                     }
 
+                    // Every note the page may embed, read once and masked like any text asset.
+                    const noteTexts = new Map<string, string>();
+
+                    for (const asset of assets.byHash.values()) {
+                        if (asset.kind !== "markdown" || asset.vaultPath === note.vaultPath) {
+                            continue;
+                        }
+
+                        const found = await readShareAsset({
+                            vaultRoot: obsidianVault,
+                            index: assets,
+                            hash: asset.hash,
+                        });
+
+                        if (found) {
+                            noteTexts.set(asset.hash, found.body.toString("utf8"));
+                        }
+                    }
+
                     const published = await listPublished();
                     const publishedByPath = new Map(published.map((entry) => [entry.vaultPath, entry.slug]));
                     const rendered = renderMarkdown(markdown, {
@@ -310,6 +343,14 @@ export function shareRoutes(): RouteDef[] {
                                 return null;
                             }
 
+                            const range = lineRangeOf(target);
+                            const noteText =
+                                asset.kind === "markdown" && !range ? noteTexts.get(asset.hash) : undefined;
+                            const section = /#(.*)$/.exec(target)?.[1] ?? "";
+                            const transclusion =
+                                noteText === undefined
+                                    ? {}
+                                    : { embed: () => renderTransclusionHtml(noteText, decodeFragment(section)) };
                             const publishedSlug =
                                 asset.kind === "markdown" ? publishedByPath.get(asset.vaultPath) : undefined;
 
@@ -318,10 +359,10 @@ export function shareRoutes(): RouteDef[] {
                                     url: `${pageBase}/share/${encodeURIComponent(publishedSlug)}`,
                                     kind: "page",
                                     name: asset.name,
+                                    ...transclusion,
                                 };
                             }
 
-                            const range = lineRangeOf(target);
                             const fragment = range
                                 ? `#L${range.start}${range.end > range.start ? `-L${range.end}` : ""}`
                                 : "";
@@ -336,7 +377,12 @@ export function shareRoutes(): RouteDef[] {
                             // `doc.pdf#page=3&height=400` keeps its fragment for the PDF viewer and the frame height.
                             const pdfFragment = asset.kind === "pdf" ? (/#.*$/.exec(target)?.[0] ?? "") : "";
 
-                            return { url: `${url}${fragment || pdfFragment}`, kind: asset.kind, name: asset.name };
+                            return {
+                                url: `${url}${fragment || pdfFragment}`,
+                                kind: asset.kind,
+                                name: asset.name,
+                                ...transclusion,
+                            };
                         },
                     });
                     const page = renderSharePage({

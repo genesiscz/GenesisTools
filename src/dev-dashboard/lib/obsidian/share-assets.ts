@@ -4,6 +4,7 @@ import { readdir, readFile, realpath, stat } from "node:fs/promises";
 import { posix, relative, resolve, sep } from "node:path";
 import { fileURLToPath } from "node:url";
 import { type ResolvedAsset, renderCodeLines, renderMarkdown } from "@app/dev-dashboard/lib/obsidian/markdown";
+import { headingSlug } from "@app/dev-dashboard/lib/obsidian/obsidian-syntax";
 import { SafeJSON } from "@genesiscz/utils/json";
 import { logger } from "@genesiscz/utils/logger";
 import { redactSecretsInText } from "@genesiscz/utils/transclude";
@@ -705,4 +706,67 @@ export async function buildShareEmbed(options: {
     log.debug({ media: embed.media.size, panels: Object.keys(embed.panels).length, total }, "share embed built");
 
     return embed;
+}
+
+const HEADING_LINE_RE = /^(#{1,6})[ \t]+(.*?)[ \t]*#*[ \t]*$/;
+
+/**
+ * The part of a note an embed shows: the whole body without frontmatter, the section under `#Heading`
+ * (until the next heading of the same or a higher level), or the block that ends in `^id`.
+ */
+export function noteSection(text: string, fragment: string): string {
+    const body = text.replace(/^---\r?\n[\s\S]*?\r?\n---[ \t]*(?:\r?\n|$)/, "");
+
+    if (!fragment) {
+        return body;
+    }
+
+    const lines = body.split("\n");
+
+    if (fragment.startsWith("^")) {
+        const end = lines.findIndex((line) => line.trimEnd().endsWith(` ${fragment}`) || line.trim() === fragment);
+
+        if (end === -1) {
+            return "";
+        }
+
+        let start = end;
+
+        while (start > 0 && lines[start - 1].trim() !== "") {
+            start--;
+        }
+
+        return lines.slice(start, end + 1).join("\n");
+    }
+
+    const wanted = headingSlug(fragment);
+    const start = lines.findIndex((line) => {
+        const match = HEADING_LINE_RE.exec(line);
+
+        return match !== null && headingSlug(match[2]) === wanted;
+    });
+
+    if (start === -1) {
+        return "";
+    }
+
+    const level = HEADING_LINE_RE.exec(lines[start])?.[1].length ?? 1;
+    const end = lines.findIndex((line, index) => {
+        const match = index > start ? HEADING_LINE_RE.exec(line) : null;
+
+        return match !== null && match[1].length <= level;
+    });
+
+    return lines.slice(start, end === -1 ? undefined : end).join("\n");
+}
+
+/** An embedded note or section, rendered like the side panel: its own links, images and embeds stay text. */
+export function renderTransclusionHtml(text: string, fragment: string): string {
+    const section = noteSection(text, fragment);
+
+    if (!section.trim()) {
+        return `<p class="dd-md-transclusion-missing">${fragment ? "This section is not in the note." : "The note is empty."}</p>`;
+    }
+
+    return renderMarkdown(section, { resolveWikilink: () => null, inertLocalLinks: true }).html;
 }

@@ -73,7 +73,16 @@ const NOTE = [
 const SOUND = Buffer.from("ID3 fake-mp3-bytes-0123456789");
 const CLIP = Buffer.from("\u0000\u0000\u0000\u0018ftypmp42 fake-mp4");
 const PDF = Buffer.from("%PDF-1.4 fake pdf body");
-const MEDIA_NOTE = "# Media\n\n![[talk.mp3]]\n\n![[clip.mp4|480]]\n\n![[doc.pdf#page=3&height=400]]\n";
+const MEDIA_NOTE = [
+    "# Media",
+    "![[talk.mp3]]",
+    "![[clip.mp4|480]]",
+    "![[doc.pdf#page=3&height=400]]",
+    "![[wrap]]",
+    "![[wrap#Wrap]]",
+    "![[wrap#No such heading]]",
+    "![[Pub]]",
+].join("\n\n");
 
 function sha(bytes: Buffer | string): string {
     return createHash("sha256").update(bytes).digest("hex");
@@ -441,6 +450,24 @@ describe("GET /share/:slug assets", () => {
         expect(html).toContain(
             `href="data:application/pdf;base64,${PDF.toString("base64")}" class="dd-md-asset-link" download="doc.pdf"`
         );
-        expect(html).not.toContain("?asset=");
+        expect(html).not.toContain(`/share/${mediaSlug}?asset=`);
+    });
+
+    test("![[note]] and ![[note#Heading]] show the note's text in place, its links inert, without frontmatter", async () => {
+        const page = await get({}, "text/html", mediaSlug);
+        const html = page.kind === "raw" ? page.body : "";
+        const blocks = html.split('<div class="dd-md-transclusion">').slice(1);
+
+        expect(blocks).toHaveLength(4);
+        expect(html).not.toMatch(/<p>\s*<div class="dd-md-transclusion">/);
+        expect(blocks[0]).toContain("Target paragraph on line eight.");
+        expect(blocks[0]).toContain('<span class="dd-md-inert-link">s</span>');
+        expect(blocks[0]).not.toContain("dd-md-properties");
+        expect(blocks[0]).not.toContain("tags: [demo]");
+        expect(blocks[1]).toContain("First paragraph.");
+        expect(blocks[2]).toContain("This section is not in the note.");
+        expect(blocks[3]).toContain(`<a href="/share/${pubSlug}" class="dd-wikilink">Pub</a>`);
+        expect(blocks[3]).toContain("a published note");
+        expect(html).not.toContain(sha(SECRET_MD));
     });
 });
