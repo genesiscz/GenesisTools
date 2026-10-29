@@ -2275,19 +2275,24 @@ struct HubRootView: View {
                 // until release, it left a dark gap or cut the content off for the whole drag (Martin,
                 // 2026-10-29: "fix this all resizing issue pls"); the per-step cost is in the commit.
                 PRsMain(model: model, prs: model.prs)
+                    .flexiblePane()
             } else if model.mode == .inbox {
                 // InboxMain with its ⌘F find (Hub/HubInboxFind.swift).
                 InboxFindHost(model: model, inbox: model.inbox)
+                    .flexiblePane()
             } else if model.mode == .timeline {
                 TimelineMain(model: model, timeline: model.timeline)
+                    .flexiblePane()
             } else if model.mode == .agents {
                 // Held like Sessions: the transcript keeps its layout while the sidebar drags.
                 AgentsMain(model: model, agents: model.agents)
             } else if model.mode == .worktrees {
                 if let path = model.selectedWorktree, let worktree = model.worktrees.first(where: { $0.path == path }) {
                     WorktreeDetailView(model: model, worktree: worktree)
+                        .flexiblePane()
                 } else if model.selectedWorktree == WorktreeCleanup.selectionID, !model.loadingWorktrees {
                     WorktreeCleanupView(model: model)
+                        .flexiblePane()
                 } else if model.loadingWorktrees {
                     PaneSkeleton("Finding worktrees")
                 } else {

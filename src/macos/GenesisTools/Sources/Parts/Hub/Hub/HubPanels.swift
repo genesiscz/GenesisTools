@@ -142,6 +142,14 @@ private struct FreezeWidthWhileResizing: ViewModifier {
 extension View {
     func freezesWidthWhileResizing(heavy: Bool = true) -> some View { modifier(FreezeWidthWhileResizing(heavy: heavy)) }
 
+    /// A pane that follows every resize step: zero minimums, so its content's minimum never pushes the root past
+    /// the window (the root's width sets the sidebar's room, and that fed back into a layout loop at 100% CPU,
+    /// 2026-10-29), and clipped open at the top like `freezesWidthWhileResizing`, so a title bar row still draws.
+    func flexiblePane() -> some View {
+        frame(minWidth: 0, maxWidth: .infinity, minHeight: 0, maxHeight: .infinity, alignment: .topLeading)
+            .clipShape(OpenTopRectangle())
+    }
+
     /// Holds only while the live side panel `key` drags; it moves with the panel's edge at once and
     /// reflows on release.
     func freezesWidthWhileDragging(panel key: String) -> some View {
@@ -261,7 +269,9 @@ struct ResizableSidePanel<Content: View>: View {
                 rail
                 if edge == .leading { railLine }
             } else {
-                if edge == .trailing { handle.offset(x: dragShift) }
+                // Above the content: drawn first, the trailing handle lay under the file list, which took every press on
+                // its grab area, so the Files edge could not be dragged at all (2026-10-29).
+                if edge == .trailing { handle.offset(x: dragShift).zIndex(1) }
                 content()
                     .frame(width: max(0, contentWidth))
                     .frame(width: max(0, shownWidth), alignment: edge == .leading ? .leading : .trailing)
@@ -289,7 +299,7 @@ struct ResizableSidePanel<Content: View>: View {
                                 .fixedSize()
                         }
                     }
-                if edge == .leading { handle.offset(x: dragShift) }
+                if edge == .leading { handle.offset(x: dragShift).zIndex(1) }
             }
         }
         .overlay(alignment: edge == .leading ? .topLeading : .topTrailing) {
@@ -385,7 +395,9 @@ struct ResizableSidePanel<Content: View>: View {
             // A background, so the line can reach up through the title bar like the surfaces on both
             // sides of it; the hit target below stays out of the title bar.
             .titlebarBackground(Rectangle().fill(hot ? tint.opacity(0.55) : ReviewPalette.hairline))
-        .overlay(Color.clear.frame(width: 10).contentShape(Rectangle()))
+        // On the panel's own side, where the handle (raised above the content) gets every press; the neighbour can
+        // be a web view (the diff), an AppKit view that SwiftUI's hit testing does not reach over.
+        .overlay(Color.clear.frame(width: 10).contentShape(Rectangle()).offset(x: edge == .leading ? -4.5 : 4.5))
         .animation(.easeOut(duration: 0.14), value: hot)
         .animation(.easeOut(duration: 0.14), value: willCollapse)
         .onHover { inside in
@@ -399,7 +411,9 @@ struct ResizableSidePanel<Content: View>: View {
             hovering = false
         }
         .gesture(
-            DragGesture(minimumDistance: 1)
+            // Global: the handle moves with the edge, so a translation measured in its own space would include
+            // that move and the edge would trail the pointer.
+            DragGesture(minimumDistance: 1, coordinateSpace: .global)
                 .updating($dragging) { _, state, _ in state = true }
                 .onChanged { value in dragChanged(value.translation.width) }
                 .onEnded { _ in dragEnded() }

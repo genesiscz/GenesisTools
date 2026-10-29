@@ -2152,9 +2152,10 @@ struct PRDetailView: View {
                                        minWidth: Self.overviewMinWidth, maxWidth: max(Self.overviewMinWidth, room),
                                        autoCollapse: width > 0 && room < Self.overviewMinWidth,
                                        holdsLayout: false) {
-                        overview.hubSurface(.content)
+                        overview.flexiblePane().hubSurface(.content)
                     }
                     ReviewRootView(model: review)
+                        .flexiblePane()
                         .hubSurface(.content)
                 }
                 .measuredWidth("prs.detail", $width)

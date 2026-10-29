@@ -2631,6 +2631,7 @@ struct ReviewRootView: View {
                 if let pr = model.pr {
                     // Leaves the header, the bar and a few diff lines when the list is dragged tall.
                     PRReviewBar(model: model, store: pr, maxListHeight: height - 240)
+                        .onGeometryChange(for: Int.self, of: { Int($0.size.height.rounded()) }) { HubBench.note("review.bar.height", $0) }
                         .zIndex(1)
                 }
                 if let news = model.pushNews, model.dismissedNewsHead != news.newest.headSha {
@@ -2668,6 +2669,7 @@ struct ReviewRootView: View {
                     .frame(maxWidth: .infinity, maxHeight: .infinity)
                 } else {
                     RendererHost(renderer: model.renderer)
+                        .onGeometryChange(for: Int.self, of: { Int($0.frame(in: .global).minY.rounded()) }) { HubBench.note("review.diff.top", $0) }
                         .overlay {
                             // The first load of this review: the page has nothing to draw yet.
                             if model.files.isEmpty && model.loading {
@@ -2731,7 +2733,8 @@ private struct ReviewHeader: View {
             controlsRow(choice.controls, live: true)
                 .layoutPriority(1)
         }
-        .frame(maxWidth: .infinity, alignment: .leading)
+        // Zero minimum: a variant that does not quite fit is cut at the edge, never widens the column it measures.
+        .frame(minWidth: 0, maxWidth: .infinity, alignment: .leading)
         .background(alignment: .topLeading) { measurements }
         .onGeometryChange(for: CGFloat.self, of: { $0.size.width }) { width in
             lastWidth.value = width
