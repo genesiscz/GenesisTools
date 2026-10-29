@@ -125,6 +125,9 @@ enum PRCommand {
             return input.noteID.map { draftUpdate(target, draftId: $0, bodyFile: bodyFile) }
         case .noteDelete:
             return input.noteID.map { draftDelete(target, draftId: $0) }
+        case .stage:
+            // The review's agent gets it (ReviewModel.stageForAgent); the PR gets nothing.
+            return nil
         }
     }
 
@@ -578,6 +581,7 @@ final class PRThreadsStore: ObservableObject {
             case .unresolve: return ("Reopening…", "Thread reopened.")
             case .noteUpdate: return ("Saving the draft…", "Draft updated.")
             case .noteDelete: return ("Deleting the draft…", "Draft deleted.")
+            case .stage: return ("Staging for the agent…", "Staged for the agent.")
             }
         }()
         write(status, body: needsBody ? text : nil, args: { bodyFile in

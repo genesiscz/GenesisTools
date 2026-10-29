@@ -35,6 +35,31 @@ public enum HubAgentNavigation: String, CaseIterable, Identifiable, Sendable {
     }
 }
 
+/// When the hub's resize handles show their blue grip. Both faces read and write `key` through `@AppStorage`.
+public enum HubResizeGrips: String, CaseIterable, Identifiable, Sendable {
+    case auto, always, hover
+    public static let key = "hub.resizeGrips"
+    public var id: String { rawValue }
+    public var title: String {
+        switch self {
+        case .auto: return "Auto"
+        case .always: return "Always"
+        case .hover: return "On hover"
+        }
+    }
+
+    public var detail: String {
+        switch self {
+        case .auto: return "Handles inside a pane (the PR threads list) show their grip all the time; the side panel edges show theirs under the pointer."
+        case .always: return "Every resize handle shows its grip, so you can see what can be resized."
+        case .hover: return "A grip shows only under the pointer."
+        }
+    }
+
+    /// Whether a handle shows its grip at rest. `prominent`: a handle inside content that is easy to miss.
+    public func showsAtRest(prominent: Bool) -> Bool { self == .always || (self == .auto && prominent) }
+}
+
 /// The hub's preferences that a person sets, shared by the hub window (`--hub`) and the Hub pages of the settings
 /// window (`--features`). Both faces run from one bundle, so they read one defaults domain. A write posts a distributed
 /// notification, and every other process reloads, as `NativeSettingsAppearance` does for General.

@@ -93,6 +93,7 @@ private struct HubAppearanceSettings: View {
 private struct HubPaneSettings: View {
     @ObservedObject var preferences: HubPreferences
     @AppStorage(GitCommitClickMode.defaultsKey) private var commitClick = GitCommitClickMode.chooseThenShow.rawValue
+    @AppStorage(HubResizeGrips.key) private var resizeGrips = HubResizeGrips.auto.rawValue
 
     var body: some View {
         VStack(spacing: 18) {
@@ -132,6 +133,15 @@ private struct HubPaneSettings: View {
                     selection: Binding(
                         get: { GitCommitClickMode(rawValue: commitClick) ?? .chooseThenShow },
                         set: { commitClick = $0.rawValue }))
+            }
+            NativeSettingsCard("Resize handles") {
+                NativeSettingsSegmented(
+                    "Show the grip", identifier: "hub.resizeGrips",
+                    options: HubResizeGrips.allCases.map { NativeSettingsOption($0, $0.title, detail: $0.detail) },
+                    selection: Binding(
+                        get: { HubResizeGrips(rawValue: resizeGrips) ?? .auto },
+                        set: { resizeGrips = $0.rawValue }),
+                    minSegmentWidth: 80)
             }
             Text("The panes in the hub show the same controls. Changes apply to a running hub at once.")
                 .font(.system(size: 11)).foregroundStyle(.secondary)

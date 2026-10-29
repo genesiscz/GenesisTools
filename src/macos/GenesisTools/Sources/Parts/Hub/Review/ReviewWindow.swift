@@ -510,6 +510,9 @@ final class ReviewModel: ObservableObject {
     @Published var showsComparePicker = false
     /// Inside the hub the header is not next to the traffic lights, so it needs no leading inset.
     var embedded = false
+    /// Set by a host that can show this review in its own window (the hub's PR view): the proposal's title and the
+    /// threads toolbar's Open review use it. Nil in the review window itself.
+    var openInWindow: (() -> Void)?
     /// Set when no checkout on disk holds the diff's head (a PR without a worktree, its head fetched
     /// into `repo`): this repository's files open on the host at that head (Review/ReviewRemoteHead.swift).
     var remoteHead: ReviewRemoteHead?
@@ -2103,6 +2106,9 @@ final class ReviewModel: ObservableObject {
         }
 
         HubPerf.log("review.threadAction \(input.action.rawValue)\(input.draft ? " draft" : "") \(thread)")
+        if input.action == .stage {
+            return stageForAgent(thread: thread, body: input.body?.trimmed ?? "", finished: finished)
+        }
         switch input.confirmation {
         case .post?:
             if !PRConfirm.post(input.body?.trimmed ?? "", on: store, where_: "A reply in the existing thread.") {
@@ -2116,6 +2122,30 @@ final class ReviewModel: ObservableObject {
             break
         }
         store.perform(input, finished: finished)
+    }
+
+    /// Stage for agent: the reader's reply to a thread goes to the review's agent, as their comment on the thread's
+    /// lines linked to the thread (the card shows it as theirs), so the agent can change its suggested reply or make
+    /// the fix. It is the path Queue to agent takes for a suggestion; nothing reaches the PR.
+    private func stageForAgent(thread: String, body: String, finished: @escaping (Bool) -> Void) {
+        guard !body.isEmpty else { return finished(false) }
+        guard let live = pr?.payload?.threads.first(where: { $0.id == thread }) else {
+            notice = "The thread is no longer on the PR, so there is nothing to stage the reply on."
+            return finished(false)
+        }
+        let primary = primaryRoot
+        guard let file = primary.files.first(where: { $0.path == live.path || (live.oldPath != nil && $0.oldPath == live.oldPath) }) else {
+            notice = "The thread is on \(live.path), which is not in this diff."
+            return finished(false)
+        }
+        let input = CommentInput(editingID: nil, fileID: primary.global(file.id), side: live.side,
+                                 startLine: min(live.startLine ?? live.line, live.line), endLine: live.line, body: body)
+        guard let comment = addComment(input) else {
+            notice = "Could not anchor the reply on \(live.path):\(live.line)."
+            return finished(false)
+        }
+        commentOwner(comment.id)?.store.link(comment.id, thread: live.id)
+        sendToAgent(ids: [comment.id], finished: { finished(true) })
     }
 
     private func updateThread(_ id: String, editedReply: String? = nil, replyStatus: String? = nil, providerId: String? = nil) {
@@ -2463,18 +2493,12 @@ struct ReviewRootView: View {
             if showsContext {
                 ResizableSidePanel(key: ReviewContextPanel.key, edge: .leading, title: "Context", defaultWidth: 420,
                                    minWidth: Self.contextMinWidth, maxWidth: max(Self.contextMinWidth, width * Self.contextFraction),
-                                   autoCollapse: contextSqueezed,
-                                   // The diff and the file list move with the edge on every step and keep
-                                   // their size until release: held, the panel drew over the diff and the
-                                   // diff jumped sideways on release. The panel's own rows hold their width
-                                   // too (ReviewContextPanelView), so they stop re-wrapping per step.
-                                   holdsLayout: false, collapsedStore: model.panelDefaults) {
+                                   autoCollapse: contextSqueezed, collapsedStore: model.panelDefaults) {
                     ReviewContextPanelView(model: model)
                 }
             }
             filesSplit
                 .measuredWidth("review.files", $innerWidth)
-                .freezesWidthWhileDragging(panel: ReviewContextPanel.key)
         }
         .hubSurface(.content)
         .preferredColorScheme(.dark)
@@ -3142,10 +3166,27 @@ private struct ProposalBanner: View {
                 .fixedSize()
             VStack(alignment: .leading, spacing: 4) {
                 HStack(spacing: 8) {
-                    Text(verbatim: "\(proposal.agent) reviewed \(proposal.label)")
-                        .font(.system(size: 12, weight: .semibold))
-                        .lineLimit(1)
-                        .truncationMode(.tail)
+                    if let open = model.openInWindow {
+                        Button(action: open) {
+                            HStack(spacing: 4) {
+                                Text(verbatim: "\(proposal.agent) reviewed \(proposal.label)")
+                                    .font(.system(size: 12, weight: .semibold))
+                                    .lineLimit(1)
+                                    .truncationMode(.tail)
+                                Image(systemName: "arrow.up.right.square")
+                                    .font(.system(size: 10.5))
+                                    .foregroundColor(ReviewPalette.dim)
+                            }
+                        }
+                        .buttonStyle(.genHoverPlain())
+                        .instantTooltip("Open this review in its own window: the same diff, threads and proposal")
+                        .accessibilityLabel(Text("Open \(proposal.agent)'s review in its own window"))
+                    } else {
+                        Text(verbatim: "\(proposal.agent) reviewed \(proposal.label)")
+                            .font(.system(size: 12, weight: .semibold))
+                            .lineLimit(1)
+                            .truncationMode(.tail)
+                    }
                     if let confidence = proposal.confidence {
                         Text(verbatim: "[\(confidence)%]")
                             .font(.system(size: 11.5, design: .monospaced))

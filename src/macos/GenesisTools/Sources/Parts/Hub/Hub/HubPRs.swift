@@ -1261,6 +1261,7 @@ final class PRsModel: ObservableObject {
         reviewHeadSha = pr.headSha
         let next = ReviewModel(repo: URL(fileURLWithPath: path), options: DiffViewOptions.remembered())
         next.embedded = true
+        next.openInWindow = { [weak self] in self?.openInReviewWindow(pr) }
         // Only the proposal changed (a review landed, no push): the commit the reader picked still exists.
         if samePR, let previous = review, previous.repo.path == URL(fileURLWithPath: path).path, sameHead {
             next.scope = previous.scope
@@ -2150,8 +2151,7 @@ struct PRDetailView: View {
                 SideSplit(panelEdge: .leading, maxFraction: Self.overviewFraction) {
                     ResizableSidePanel(key: "prs.overview", edge: .leading, title: "PR", defaultWidth: 460,
                                        minWidth: Self.overviewMinWidth, maxWidth: max(Self.overviewMinWidth, room),
-                                       autoCollapse: width > 0 && room < Self.overviewMinWidth,
-                                       holdsLayout: false) {
+                                       autoCollapse: width > 0 && room < Self.overviewMinWidth) {
                         overview.flexiblePane().hubSurface(.content)
                     }
                     ReviewRootView(model: review)
