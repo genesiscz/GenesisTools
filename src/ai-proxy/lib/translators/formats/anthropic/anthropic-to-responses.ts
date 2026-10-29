@@ -1,4 +1,3 @@
-import { createHash } from "node:crypto";
 import { grokReasoningCodec } from "@app/ai-proxy/lib/translators/formats/anthropic/reasoning-codec";
 import { SafeJSON } from "@genesiscz/utils/json";
 import { logger } from "@genesiscz/utils/logger";
@@ -43,8 +42,6 @@ export interface ResponsesTranslationHooks {
      * 42,227 tokens cached and the model called the tool. Off: loaded tools join `tools` (`stableToolOrder`).
      */
     deferredToolsAsInput?: boolean;
-    /** Account, client and conversation scope for remembered compaction introductions. */
-    deferredRecoveryScope?: string;
     /**
      * The items an assistant message produced earlier, when Claude Code sent it with its thinking. Asked only for a
      * message that carries no thinking now; a returned list replaces the message's own translation.
@@ -206,25 +203,6 @@ function loadedToolsItem(result: JsonRecord, deferred: DeferredTools | undefined
     return tools.length > 0 ? { type: "additional_tools", role: "developer", tools } : undefined;
 }
 
-/** Introduce an offered deferred tool immediately before its first surviving call. */
-function introduceUsedTools(input: JsonRecord[], content: unknown, deferred: DeferredTools | undefined): void {
-    if (!deferred || !Array.isArray(content)) {
-        return;
-    }
-
-    for (const part of content) {
-        if (!isObject(part) || part.type !== "tool_use" || typeof part.name !== "string") {
-            continue;
-        }
-        const tool = deferred.byName.get(part.name);
-        if (!tool || deferred.sent.has(part.name)) {
-            continue;
-        }
-        deferred.sent.add(part.name);
-        input.push({ type: "additional_tools", role: "developer", tools: [responsesTool(tool)] });
-    }
-}
-
 function appendUserMessage(
     input: JsonRecord[],
     content: unknown,
@@ -282,39 +260,6 @@ function appendUserMessage(
     }
 
     pushUserMessage(input, parts);
-}
-
-/** The call ids of the function and custom tool calls among `items`, in item order. */
-function callIdsOf(items: JsonRecord[]): string[] {
-    return items.flatMap((item) =>
-        (item.type === "function_call" || item.type === "custom_tool_call") && typeof item.call_id === "string"
-            ? [item.call_id]
-            : []
-    );
-}
-
-/**
- * The user message's `tool_result` blocks in the order of the calls they answer, each in a slot a result held before.
- * Claude Code appends results in completion order (two parallel Agent launches that finished out of order, session
- * 2026-10-27), which Anthropic reads by `tool_use_id`. A Responses model pairs outputs with calls by position: given
- * the outputs of the PR 603 and PR 604 launches swapped, GPT-6.1 Sol filed each agent id under the other PR.
- * codex-rs drains its in-flight calls in call order (`FuturesOrdered`), so this is the order the model expects.
- * A result whose call is not in `calls` keeps its place after the known ones.
- */
-function inCallOrder(content: unknown, calls: readonly string[]): unknown {
-    if (!Array.isArray(content) || calls.length < 2) {
-        return content;
-    }
-
-    const isResult = (part: unknown): part is JsonRecord => isObject(part) && part.type === "tool_result";
-    const rank = (part: JsonRecord) => {
-        const index = calls.indexOf(String(part.tool_use_id));
-        return index < 0 ? calls.length : index;
-    };
-    const ordered = content.filter(isResult).sort((a, b) => rank(a) - rank(b));
-    let next = 0;
-
-    return content.map((part) => (isResult(part) ? ordered[next++] : part));
 }
 
 /** Notes the call ids of the `custom_tool_call` items among `items`, whose results go up as custom outputs. */
@@ -516,66 +461,6 @@ function isDeferredTool(tool: unknown): tool is JsonRecord {
     return isObject(tool) && tool.defer_loading === true && typeof tool.name === "string";
 }
 
-function compactedHistoryText(messages: unknown): string | undefined {
-    if (!Array.isArray(messages)) {
-        return undefined;
-    }
-    const first = messages.find((message) => isObject(message) && message.role === "user");
-    if (!isObject(first)) {
-        return undefined;
-    }
-    const text =
-        typeof first.content === "string"
-            ? first.content
-            : Array.isArray(first.content)
-              ? first.content
-                    .filter(isObject)
-                    .map((block) => (typeof block.text === "string" ? block.text : ""))
-                    .join("\n")
-              : "";
-    return text.startsWith("This session is being continued") || text.includes("[codex-compaction ") ? text : undefined;
-}
-
-// A first observation fixes the compacted prefix. New tool references belong at their later search result.
-const recoveredByHistory = new Map<string, string[]>();
-const MAX_RECOVERED_HISTORIES = 1024;
-const MAX_RECOVERED_TOOLS = 512;
-
-function recoveredToolNames(
-    scope: string | undefined,
-    summary: string,
-    deferred: DeferredTools,
-    messages: unknown
-): string[] {
-    const key = scope
-        ? createHash("sha256")
-              .update(SafeJSON.stringify([scope, summary]))
-              .digest("hex")
-        : undefined;
-    let names = key ? recoveredByHistory.get(key) : undefined;
-    if (!names) {
-        const referenced = new Set(referencedToolNames(messages));
-        names = [...deferred.byName.keys()].filter((name) => !referenced.has(name));
-        if (names.length > MAX_RECOVERED_TOOLS) {
-            logger.warn({ count: names.length }, "ai-proxy: too many recovered tools to remember their cache prefix");
-            return names;
-        }
-    }
-    if (!key) {
-        return names;
-    }
-    recoveredByHistory.delete(key);
-    recoveredByHistory.set(key, names);
-    while (recoveredByHistory.size > MAX_RECOVERED_HISTORIES) {
-        const oldest = recoveredByHistory.keys().next().value;
-        if (oldest === undefined) {
-            break;
-        }
-        recoveredByHistory.delete(oldest);
-    }
-    return names;
-}
-
 function deferredTools(tools: unknown): DeferredTools {
     const byName = new Map<string, JsonRecord>();
 
@@ -677,24 +562,6 @@ export function anthropicToResponses(body: JsonRecord, model: string, hooks: Res
     const dropped = { thinking: 0 };
     const deferred = hooks.deferredToolsAsInput ? deferredTools(body.tools) : undefined;
     const customCalls = new Set<unknown>();
-    // The calls the last assistant message made, whose results the next user message carries.
-    let calls: string[] = [];
-
-    const summary = deferred ? compactedHistoryText(body.messages) : undefined;
-    if (deferred && summary !== undefined) {
-        const names = recoveredToolNames(hooks.deferredRecoveryScope, summary, deferred, body.messages);
-        const tools: JsonRecord[] = [];
-        for (const name of names) {
-            const tool = deferred.byName.get(name);
-            if (tool) {
-                tools.push(responsesTool(tool));
-                deferred.sent.add(name);
-            }
-        }
-        if (tools.length > 0) {
-            input.push({ type: "additional_tools", role: "developer", tools });
-        }
-    }
 
     if (Array.isArray(body.messages)) {
         for (const message of body.messages) {
@@ -703,14 +570,11 @@ export function anthropicToResponses(body: JsonRecord, model: string, hooks: Res
             }
 
             if (message.role === "assistant") {
-                introduceUsedTools(input, message.content, deferred);
-                const start = input.length;
                 appendAssistantMessage(input, message.content, dropped, hooks, customCalls);
-                calls = callIdsOf(input.slice(start));
             } else if (message.role === "system") {
                 appendDeveloperMessage(input, message.content);
             } else {
-                appendUserMessage(input, inCallOrder(message.content, calls), hooks, deferred, customCalls);
+                appendUserMessage(input, message.content, hooks, deferred, customCalls);
             }
         }
     }
