@@ -1,5 +1,11 @@
 import { detailsExtension, groupDetails } from "@app/dev-dashboard/lib/obsidian/details";
 import { buildObsidianNoteHref } from "@app/dev-dashboard/lib/obsidian/note-href";
+import {
+    anchorFor,
+    FootnoteBook,
+    headingSlug,
+    obsidianSyntaxExtension,
+} from "@app/dev-dashboard/lib/obsidian/obsidian-syntax";
 import { escapeHtml } from "@genesiscz/utils/string";
 import hljs from "highlight.js/lib/core";
 import apache from "highlight.js/lib/languages/apache";
@@ -301,27 +307,23 @@ function wikilinkExtension(opts: RenderOptions): MarkedExtension {
                 },
                 renderer(token: Tokens.Generic): string {
                     const t = token as unknown as WikilinkToken;
-                    const asset = opts.resolveAsset?.(t.target) ?? null;
+                    const hashAt = t.target.indexOf("#");
+                    const note = hashAt === -1 ? t.target : t.target.slice(0, hashAt).trim();
+                    const fragment = hashAt === -1 ? "" : t.target.slice(hashAt + 1).trim();
+                    // Without an alias Obsidian shows `[[#Heading]]` as "Heading" and `[[Note#Heading]]` as "Note > Heading".
+                    const display =
+                        t.display !== t.target || !fragment ? t.display : note ? `${note} > ${fragment}` : fragment;
 
-                    if (asset) {
-                        return renderAsset(asset, escapeHtml(t.display), false);
+                    if (!note && fragment) {
+                        return `<a href="#${escapeHtml(anchorFor(fragment))}" class="dd-wikilink">${escapeHtml(display)}</a>`;
                     }
 
-                    const vaultPath = opts.resolveVaultNotePath?.(t.target) ?? null;
+                    // The whole target first, so a `#L12` line link still reaches its asset; then the note alone.
+                    const html =
+                        resolveWikilinkHtml(opts, t.target, display, "") ??
+                        (fragment ? resolveWikilinkHtml(opts, note, display, anchorFor(fragment)) : null);
 
-                    if (vaultPath) {
-                        const href = buildObsidianNoteHref(vaultPath);
-
-                        return `<a href="${escapeHtml(href)}" class="dd-wikilink" data-obsidian-note="${escapeHtml(vaultPath)}">${escapeHtml(t.display)}</a>`;
-                    }
-
-                    const slug = opts.resolveWikilink(t.target);
-
-                    if (slug) {
-                        return `<a href="${escapeHtml(opts.pageBaseUrl ?? "")}/share/${encodeURIComponent(slug)}" class="dd-wikilink">${escapeHtml(t.display)}</a>`;
-                    }
-
-                    return `<span class="dd-wikilink dd-wikilink-unresolved">${escapeHtml(t.display)}</span>`;
+                    return html ?? `<span class="dd-wikilink dd-wikilink-unresolved">${escapeHtml(display)}</span>`;
                 },
             },
         ],
@@ -538,7 +540,7 @@ function obsidianCalloutExtension(): MarkedExtension {
                     const block: string[] = [];
 
                     for (const line of lines) {
-                        if (/^ {0,3}>/.test(line) || (block.length > 0 && line.trim() === "")) {
+                        if (/^ {0,3}>/.test(line)) {
                             block.push(line);
 
                             continue;
@@ -575,6 +577,15 @@ function obsidianCalloutExtension(): MarkedExtension {
                     const title = this.parser.parseInline(t.titleTokens);
                     const bodyHtml = this.parser.parse(t.tokens);
                     const body = bodyHtml.trim() ? `<div class="markdown-alert-body">${bodyHtml}</div>` : "";
+
+                    // `[!note]-` starts folded and `[!note]+` open, as in Obsidian: a native fold, no script.
+                    if (t.fold) {
+                        return (
+                            `<details class="markdown-alert markdown-alert-${t.group}" data-callout="${escapeHtml(t.rawType)}"${foldAttr}${t.fold === "open" ? " open" : ""}>` +
+                            `<summary class="markdown-alert-title">${calloutIcon(t.group)}<span>${title}</span></summary>` +
+                            `${body}</details>\n`
+                        );
+                    }
 
                     return (
                         `<div class="markdown-alert markdown-alert-${t.group}" data-callout="${escapeHtml(t.rawType)}"${foldAttr}>` +
@@ -716,7 +727,60 @@ function renderImage(opts: RenderOptions, image: ImageRequest): string {
     return `<img src="${src}" alt="${escapeHtml(image.alt)}"${title}${sizeAttrs(image.size)} />`;
 }
 
-function buildMarked(opts: RenderOptions): Marked {
+function resolveWikilinkHtml(opts: RenderOptions, target: string, display: string, anchor: string): string | null {
+    const hash = anchor ? `#${anchor}` : "";
+    const asset = opts.resolveAsset?.(target) ?? null;
+
+    if (asset) {
+        return renderAsset(
+            asset.kind === "page" ? { ...asset, url: `${asset.url}${hash}` } : asset,
+            escapeHtml(display),
+            false
+        );
+    }
+
+    const vaultPath = opts.resolveVaultNotePath?.(target) ?? null;
+
+    if (vaultPath) {
+        const href = buildObsidianNoteHref(vaultPath);
+
+        return `<a href="${escapeHtml(href)}" class="dd-wikilink" data-obsidian-note="${escapeHtml(vaultPath)}">${escapeHtml(display)}</a>`;
+    }
+
+    const slug = opts.resolveWikilink(target);
+
+    if (slug) {
+        return `<a href="${escapeHtml(opts.pageBaseUrl ?? "")}/share/${encodeURIComponent(slug)}${escapeHtml(hash)}" class="dd-wikilink">${escapeHtml(display)}</a>`;
+    }
+
+    return null;
+}
+
+// Inline HTML a note may write as is: formatting tags with no attributes, plus line breaks. Each tag is
+// one marked html token, so an allowed tag is printed back by name, never copied.
+const SAFE_INLINE_TAG_RE =
+    /^<(\/?)(kbd|mark|sub|sup|u|s|del|ins|small|b|i|em|strong|code|abbr|cite|q|var|samp|dfn|span|br|wbr)\s*(\/?)>$/i;
+const VOID_TAGS = new Set(["br", "wbr"]);
+
+function safeInlineTag(text: string): string | null {
+    const match = SAFE_INLINE_TAG_RE.exec(text.trim());
+
+    if (!match) {
+        return null;
+    }
+
+    const name = match[2].toLowerCase();
+
+    if (VOID_TAGS.has(name)) {
+        return match[1] ? "" : `<${name}>`;
+    }
+
+    return `<${match[1]}${name}>`;
+}
+
+function buildMarked(opts: RenderOptions, book: FootnoteBook): Marked {
+    const usedSlugs = new Map<string, number>();
+
     return new Marked(
         { gfm: true, breaks: false },
         // The rendered HTML is served on the public, auth-bypassed /share/:slug
@@ -738,7 +802,19 @@ function buildMarked(opts: RenderOptions): Marked {
                     // any other attribute, or any other tag, stays escaped text.
                     const img = parseHtmlImg(text.trim());
 
-                    return img ? renderImage(opts, img) : escapeHtml(text);
+                    if (img) {
+                        return renderImage(opts, img);
+                    }
+
+                    return safeInlineTag(text) ?? escapeHtml(text);
+                },
+                heading(token: Tokens.Heading): string {
+                    const base = headingSlug(token.text);
+                    const seen = usedSlugs.get(base) ?? 0;
+                    usedSlugs.set(base, seen + 1);
+                    const id = seen === 0 ? base : `${base}-${seen}`;
+
+                    return `<h${token.depth} id="${escapeHtml(id)}">${this.parser.parseInline(token.tokens)}</h${token.depth}>\n`;
                 },
                 link(token: Tokens.Link): string {
                     const local = isLocalHref(token.href);
@@ -777,6 +853,7 @@ function buildMarked(opts: RenderOptions): Marked {
             highlight: highlightCode,
         }),
         obsidianCalloutExtension(),
+        obsidianSyntaxExtension(book),
         detailsExtension(),
         markedKatex({ throwOnError: false, output: "html", strict: false }),
         embedExtension(opts),
@@ -877,7 +954,8 @@ export function renderCodeLines(options: {
 
 export function renderMarkdown(source: string, opts: RenderOptions): RenderResult {
     const metadata = extractMetadata(source);
-    const md = buildMarked(opts);
+    const book = new FootnoteBook();
+    const md = buildMarked(opts, book);
     const body = opts.lineAnchors
         ? renderWithLineAnchors(
               md,
@@ -890,7 +968,7 @@ export function renderMarkdown(source: string, opts: RenderOptions): RenderResul
     const hasMermaid = body.includes('<div class="mermaid">');
 
     return {
-        html: `${tagsHeader}${body}`,
+        html: `${tagsHeader}${body}${book.renderSection()}`,
         hasMath,
         hasMermaid,
         tags: metadata.tags,

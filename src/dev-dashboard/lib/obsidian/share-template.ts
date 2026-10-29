@@ -500,6 +500,46 @@ body.dd-share-panel-open .dd-share-panel { transform: none; }
 
 .markdown-alert-title code { color: inherit; }
 
+details.markdown-alert:not([open]) { padding-bottom: 4px; }
+details.markdown-alert > summary.markdown-alert-title { cursor: pointer; list-style: none; }
+details.markdown-alert > summary.markdown-alert-title::-webkit-details-marker { display: none; }
+details.markdown-alert > summary.markdown-alert-title::after {
+    content: "";
+    width: 7px;
+    height: 7px;
+    margin-left: 2px;
+    border-right: 2px solid currentColor;
+    border-bottom: 2px solid currentColor;
+    transform: rotate(-45deg);
+    transition: transform 0.15s;
+}
+details.markdown-alert[open] > summary.markdown-alert-title::after { transform: rotate(45deg); }
+
+mark {
+    padding: 0 2px;
+    border-radius: 3px;
+    background: color-mix(in srgb, #facc15 32%, transparent);
+    color: inherit;
+}
+
+kbd {
+    padding: 1px 6px;
+    border: 1px solid var(--dd-border-strong);
+    border-bottom-width: 2px;
+    border-radius: 4px;
+    background: var(--dd-bg-panel);
+    font-family: var(--dd-mono);
+    font-size: 0.85em;
+}
+
+sup.footnote-ref a { padding: 0 1px; text-decoration: none; }
+section.footnotes { margin-top: 2.4em; font-size: 0.92em; color: var(--dd-text-dim); }
+section.footnotes hr { margin-bottom: 1.2em; }
+section.footnotes li:target { background: var(--dd-accent-soft); border-radius: 4px; }
+.footnote-backref { text-decoration: none; }
+.dd-block-id { display: inline; }
+:target { scroll-margin-top: 72px; }
+
 .markdown-alert-icon {
     flex: none;
     width: 17px;
