@@ -1416,6 +1416,10 @@ function gnApplyMedia(frag){
   for(var i=0;i<imgs.length;i++){
     var img=imgs[i];var ref=img.getAttribute('data-gn-ref')||img.getAttribute('src')||'';
     img.removeAttribute('data-gn-ref');img.removeAttribute('srcset');img.removeAttribute('data-gn-img');
+    // `![caption|300](x.png)`: Obsidian's size suffix on the alt text, read first so a missing picture's pill
+    // shows the caption without it.
+    var alt=img.getAttribute('alt')||'';var size=/\|\s*(\d+)(?:x(\d+))?\s*$/.exec(alt);
+    if(size){img.setAttribute('alt',alt.slice(0,size.index).trim());img.setAttribute('width',size[1]);if(size[2])img.setAttribute('height',size[2]);}
     var hit=gnMedia[gnMediaKey(ref)];
     if(hit&&hit.kind==='image'){img.setAttribute('src',hit.src);}
     else if(hit&&hit.kind==='pending'){var tp=document.createElement('template');tp.innerHTML=gnPendingHTML(ref);img.parentNode.replaceChild(tp.content.firstChild,img);continue;}
@@ -1430,9 +1434,6 @@ function gnApplyMedia(frag){
     if(/^(gnmedia:|data:image\/)/i.test(img.getAttribute('src')||'')){img.setAttribute('data-gn-img',String(viewable++));
       img.setAttribute('tabindex','0');img.setAttribute('role','button');
       img.setAttribute('aria-label','Open picture'+((img.getAttribute('alt')||'').trim()?' '+img.getAttribute('alt').trim():''));}
-    // `![caption|300](x.png)`: Obsidian's size suffix on the alt text.
-    var alt=img.getAttribute('alt')||'';var size=/\|\s*(\d+)(?:x(\d+))?\s*$/.exec(alt);
-    if(size){img.setAttribute('alt',alt.slice(0,size.index).trim());img.setAttribute('width',size[1]);if(size[2])img.setAttribute('height',size[2]);}
   }
   var links=frag.querySelectorAll('a[href]:not(.dd-wikilink)');
   for(var j=0;j<links.length;j++){

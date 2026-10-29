@@ -520,6 +520,15 @@ final class MarkdownWebSecurityTests: XCTestCase {
         XCTAssertEqual(MarkdownMedia.references(in: "![](photo(1).png)").map(\.key), ["photo(1).png"])
     }
 
+    /// `[![alt|480](small.webp)](full.webp)`: the image inside a link is an embed. The outer link used to swallow
+    /// it, so the picture showed as missing.
+    func testAnImageInsideALinkIsRegistered() {
+        let refs = MarkdownMedia.references(in: "[![Prices|480](proposal/images/01.webp)](proposal/images/full/01.webp)")
+        XCTAssertEqual(refs, [MarkdownMedia.Reference(key: "proposal/images/01.webp", embed: true)])
+        XCTAssertEqual(
+            MarkdownMedia.references(in: "[see ![x](a.png) and](b.json)").map(\.key).sorted(), ["a.png", "b.json"])
+    }
+
     /// A `.json` link or embed is a chip; a click opens the file pretty-printed
     /// as a json block, and a token the document did not reference opens nothing.
     func testAJSONChipOpensAPrettyPrintedPanel() async throws {
