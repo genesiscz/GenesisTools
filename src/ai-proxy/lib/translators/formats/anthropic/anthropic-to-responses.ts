@@ -49,6 +49,12 @@ export interface ResponsesTranslationHooks {
     restoreAssistantItems?: (content: unknown[]) => JsonRecord[] | undefined;
     /** Told the items an assistant message produced while it carried its thinking. */
     rememberAssistantItems?: (content: unknown[], items: JsonRecord[]) => void;
+    /**
+     * A client `tool_use` that the model made as a custom (free-form) tool call: the `custom_tool_call` item to replay
+     * in its place, or undefined to send it as a function call. Its tool result then goes up as a
+     * `custom_tool_call_output`, the pair the model produced and saw.
+     */
+    customToolCall?: (toolUse: JsonRecord) => JsonRecord | undefined;
 }
 
 /** Deferred tools by name, and the ones already given to the model as an `additional_tools` item. */
@@ -201,7 +207,8 @@ function appendUserMessage(
     input: JsonRecord[],
     content: unknown,
     hooks: ResponsesTranslationHooks,
-    deferred: DeferredTools | undefined
+    deferred: DeferredTools | undefined,
+    customCalls: ReadonlySet<unknown>
 ): void {
     if (typeof content === "string") {
         if (content.length > 0) {
@@ -222,6 +229,11 @@ function appendUserMessage(
 
     for (const part of content) {
         if (!isObject(part)) {
+            continue;
+        }
+
+        if (part.type === "tool_result" && customCalls.has(part.tool_use_id)) {
+            input.push({ type: "custom_tool_call_output", call_id: part.tool_use_id, output: flattenToolResult(part) });
             continue;
         }
 
@@ -250,11 +262,21 @@ function appendUserMessage(
     pushUserMessage(input, parts);
 }
 
+/** Notes the call ids of the `custom_tool_call` items among `items`, whose results go up as custom outputs. */
+function noteCustomCalls(items: JsonRecord[], customCalls: Set<unknown>): void {
+    for (const item of items) {
+        if (item.type === "custom_tool_call") {
+            customCalls.add(item.call_id);
+        }
+    }
+}
+
 function appendAssistantMessage(
     input: JsonRecord[],
     content: unknown,
     dropped: { thinking: number },
-    hooks: ResponsesTranslationHooks
+    hooks: ResponsesTranslationHooks,
+    customCalls: Set<unknown>
 ): void {
     if (typeof content === "string") {
         if (content.length > 0) {
@@ -272,6 +294,7 @@ function appendAssistantMessage(
     const restored = thinking ? undefined : hooks.restoreAssistantItems?.(content);
 
     if (restored) {
+        noteCustomCalls(restored, customCalls);
         input.push(...restored);
         return;
     }
@@ -299,6 +322,14 @@ function appendAssistantMessage(
 
         if (part.type === "tool_use") {
             pushAssistantText(input, textParts);
+            const custom = hooks.customToolCall?.(part);
+
+            if (custom) {
+                noteCustomCalls([custom], customCalls);
+                input.push(custom);
+                continue;
+            }
+
             input.push({
                 type: "function_call",
                 call_id: part.id,
@@ -479,6 +510,7 @@ export function anthropicToResponses(body: JsonRecord, model: string, hooks: Res
     const input: JsonRecord[] = [];
     const dropped = { thinking: 0 };
     const deferred = hooks.deferredToolsAsInput ? deferredTools(body.tools) : undefined;
+    const customCalls = new Set<unknown>();
 
     if (Array.isArray(body.messages)) {
         for (const message of body.messages) {
@@ -487,11 +519,11 @@ export function anthropicToResponses(body: JsonRecord, model: string, hooks: Res
             }
 
             if (message.role === "assistant") {
-                appendAssistantMessage(input, message.content, dropped, hooks);
+                appendAssistantMessage(input, message.content, dropped, hooks, customCalls);
             } else if (message.role === "system") {
                 appendDeveloperMessage(input, message.content);
             } else {
-                appendUserMessage(input, message.content, hooks, deferred);
+                appendUserMessage(input, message.content, hooks, deferred, customCalls);
             }
         }
     }

@@ -68,8 +68,9 @@ export function mapResponsesTools(tools: unknown, dropped: string[]): unknown[] 
     const kept: unknown[] = [];
 
     for (const tool of tools) {
-        // `web_search` is OpenAI's hosted search, sent the way codex-rs sends it; WHAM runs it server-side.
-        if (isObject(tool) && (tool.type === "function" || tool.type === "web_search")) {
+        // `web_search` is OpenAI's hosted search, sent the way codex-rs sends it; WHAM runs it server-side. A `custom`
+        // tool is a free-form one (codex-rs's `exec` and `apply_patch`), which WHAM takes as sent.
+        if (isObject(tool) && (tool.type === "function" || tool.type === "web_search" || tool.type === "custom")) {
             kept.push(tool);
             continue;
         }

@@ -360,6 +360,12 @@ export interface ClaudeCodeGlobalSettings {
 
 /** Claude Code on a Codex model. */
 export interface CodexInClaudeCodeSettings {
+    /**
+     * Default true: a request whose tools include Claude Code's Bash also offers Codex's `exec` tool (JavaScript that
+     * calls `tools.exec_command`), and each `exec` call runs as one Bash command. Read on each request; a change
+     * changes `tools`, which reads 0% of the prompt cache once.
+     */
+    execTool?: boolean;
     /** Claude Code's compaction turn. */
     compaction?: {
         /**
