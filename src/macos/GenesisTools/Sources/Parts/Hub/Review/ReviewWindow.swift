@@ -3837,31 +3837,48 @@ private struct FileRow: View {
 /// SwiftUI gets a fresh container per `makeNSView`; the renderer's one long-lived view moves into
 /// whichever container is current. Handing SwiftUI the same NSView from two makeNSView calls (the
 /// hub re-creates this view on tab and header changes) crashed layout in StackLayout.sizeThatFits.
+///
+/// Two containers can hold one renderer: Sessions and Worktrees share the hub's review when they show the same
+/// checkout. A container that is leaving the window must not take the view back: the Sessions pane's last update
+/// ran after the Worktrees pane had attached it, so the view left with the closed pane and the Worktrees diff
+/// stayed blank (2026-10-29). So a container in a window claims the view when it arrives there, and an update
+/// takes it only from a container that is no longer in a window.
 private struct RendererHost: NSViewRepresentable {
     let renderer: DiffRenderer
 
-    func makeNSView(context: Context) -> NSView {
-        let container = NSView()
-        attach(to: container)
+    func makeNSView(context: Context) -> RendererContainer {
+        let container = RendererContainer()
+        container.renderer = renderer
+        if renderer.view.window == nil { container.claim() }
         return container
     }
 
-    func updateNSView(_ container: NSView, context: Context) {
-        if renderer.view.superview !== container {
-            attach(to: container)
+    func updateNSView(_ container: RendererContainer, context: Context) {
+        container.renderer = renderer
+        if renderer.view.superview !== container, container.window != nil, renderer.view.window == nil {
+            container.claim()
         }
     }
+}
 
-    private func attach(to container: NSView) {
-        let view = renderer.view
+private final class RendererContainer: NSView {
+    var renderer: DiffRenderer?
+
+    override func viewDidMoveToWindow() {
+        super.viewDidMoveToWindow()
+        if window != nil, renderer?.view.superview !== self { claim() }
+    }
+
+    func claim() {
+        guard let view = renderer?.view else { return }
         view.removeFromSuperview()
         view.translatesAutoresizingMaskIntoConstraints = false
-        container.addSubview(view)
+        addSubview(view)
         NSLayoutConstraint.activate([
-            view.leadingAnchor.constraint(equalTo: container.leadingAnchor),
-            view.trailingAnchor.constraint(equalTo: container.trailingAnchor),
-            view.topAnchor.constraint(equalTo: container.topAnchor),
-            view.bottomAnchor.constraint(equalTo: container.bottomAnchor),
+            view.leadingAnchor.constraint(equalTo: leadingAnchor),
+            view.trailingAnchor.constraint(equalTo: trailingAnchor),
+            view.topAnchor.constraint(equalTo: topAnchor),
+            view.bottomAnchor.constraint(equalTo: bottomAnchor),
         ])
     }
 }
