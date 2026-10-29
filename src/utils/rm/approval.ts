@@ -1,4 +1,5 @@
 import { homedir } from "node:os";
+import { harnessLabel, harnessOfRuntimeAgent } from "@genesiscz/utils/ai/providers/harness-index";
 import { isInteractive } from "@genesiscz/utils/cli";
 import { logger } from "@genesiscz/utils/logger";
 import { type GenesisAppRpcOutcome, genesisAppRpc } from "@genesiscz/utils/macos/genesis-app-rpc";
@@ -218,17 +219,16 @@ function callerLabel(caller: RmCaller): string | undefined {
     return session ? `${asker.agent} · ${session}` : asker.agent;
 }
 
-const AGENT_NAMES: Record<string, string> = {
-    "claude-code": "Claude Code",
-    codex: "Codex",
-    grok: "Grok",
+/** Runtime agents that are not harnesses; a harness's name comes from its driver. */
+const OTHER_AGENT_NAMES: Record<string, string> = {
     cursor: "Cursor",
     gemini: "Gemini",
 };
 
 /** The agent's name as a person reads it: "Claude Code" for `claude-code`; an unknown one keeps its id. */
 export function agentDisplayName(agent: string): string {
-    return AGENT_NAMES[agent] ?? agent;
+    const harness = harnessOfRuntimeAgent(agent);
+    return harness ? harnessLabel(harness) : (OTHER_AGENT_NAMES[agent] ?? agent);
 }
 
 /** Who asked, from the request's caller; nothing for a person. */
@@ -255,7 +255,7 @@ function historyProvider(caller: RmCaller): string {
         return anchor.provider;
     }
 
-    return caller.agent === "claude-code" ? "claude" : caller.agent;
+    return harnessOfRuntimeAgent(caller.agent) ?? caller.agent;
 }
 
 /**

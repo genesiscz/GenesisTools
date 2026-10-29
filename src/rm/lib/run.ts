@@ -236,6 +236,12 @@ export async function executePlan(
         result.denials = asking.denials;
     }
 
+    if (requestLater) {
+        const asking = requestForAsked(asked, ctx, options);
+        result.requestId = asking.id;
+        result.denials = asking.denials;
+    }
+
     kickDrainer(ctx.config);
 
     if (moveError !== undefined) {

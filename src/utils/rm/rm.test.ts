@@ -1124,6 +1124,8 @@ describe("security review fixes", () => {
             "null",
             '{"protect":42}',
             '{"profiles":[{"name":"x","match":{},"allowOwnFiles":"no"}]}',
+            '{"roots":[{"path":"/safe","session":false}]}',
+            '{"roots":[{"path":"/safe","expiresAt":"not-a-date"}]}',
         ].entries()) {
             expect(() => loadRmConfig(file(join(folder, `invalid-${index}.json`), content))).toThrow(
                 /invalid safety config/
