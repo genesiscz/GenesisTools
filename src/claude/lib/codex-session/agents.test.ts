@@ -37,6 +37,17 @@ describe("leadPrompt", () => {
         expect(text).toContain("in the foreground");
     });
 
+    it("sends dependent steps to one exec call while the exec tool is on, in one sentence", () => {
+        const on = leadPrompt(sessionAgents({ codexModel }));
+        const off = { providers: { codex: { execTool: false } } };
+        const sentence = on.split("\n").filter((line) => line.includes("exec call"));
+
+        expect(sentence).toEqual([
+            "Run steps that depend on an earlier step's output in one exec call (`await tools.exec_command({ cmd })` per command, with the logic between them in JavaScript), not in one Bash call per step.",
+        ]);
+        expect(leadPrompt(sessionAgents({ codexModel, settings: off }), off)).not.toContain("exec call");
+    });
+
     it("takes the configured note and skills list, and the nudge can be turned off", () => {
         const settings = {
             global: { lead: { systemNote: { append: "Prefer terra for reviews." } } },

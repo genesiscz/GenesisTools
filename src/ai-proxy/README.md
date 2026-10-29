@@ -187,6 +187,16 @@ Supported values: `minimal`, `low`, `medium`, `high`, `xhigh`, `max`, `ultra`. E
     note `tools claude codex` gives the main loop and its Codex subagents.
   - `providers.codex.subagents.skills.nudge` (default `true`): the lead names in each brief the skills a subagent
     loads, and the subagent loads only those. `providers.codex.subagents.skills.allowed`: the list the lead picks from.
+  - `providers.codex.execTool` (default `true`): a request whose tools include Claude Code's `Bash` also offers
+    Codex's own `exec` tool, a JavaScript script that calls `await tools.exec_command({ cmd })` and `text(...)`, so a
+    chain of dependent commands costs one model call. The proxy sends a call as one `Bash` call that pipes the script
+    through a quoted heredoc into `src/ai-proxy/lib/providers/codex/exec/runner.ts` of the proxy's checkout, and sends
+    it back to the model as the `custom_tool_call` it made, so the prompt cache holds. The runner puts every nested
+    command through the `tools agents hooks` shell guard (a block is an error the script sees), prints Codex's
+    `Script completed` header, and keeps the output under Claude Code's 30,000-character Bash limit. `store` and
+    `load` keep values per Claude Code session in `ai-proxy/exec-store/<session>.json`. The tool is in `tools` from
+    the first request, so turning the setting on or off reads the prompt cache once at 0%. The lead note names it
+    while it is on; that part takes effect on launch or resume, the tool on the next request.
 
 - **The client's own field wins.** An explicit `reasoning_effort` (or a nested `reasoning.effort`
   on the Responses door) takes precedence over the suffix, which is the fallback.

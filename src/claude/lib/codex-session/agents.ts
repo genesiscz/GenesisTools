@@ -163,6 +163,13 @@ export function leadPrompt(
         "Run a command that ends within 2 minutes in the foreground, with a timeout up to 120000 ms; use run_in_background only for longer work.",
     ];
 
+    // The proxy offers Codex's exec tool beside Bash (`sessionsIn.claude.providers.codex.execTool`, default on).
+    if (settings?.providers?.codex?.execTool !== false) {
+        lines.push(
+            "Run steps that depend on an earlier step's output in one exec call (`await tools.exec_command({ cmd })` per command, with the logic between them in JavaScript), not in one Bash call per step."
+        );
+    }
+
     if (skillsNudge(settings)) {
         const allowed = settings?.providers?.codex?.subagents?.skills?.allowed;
         lines.push(
