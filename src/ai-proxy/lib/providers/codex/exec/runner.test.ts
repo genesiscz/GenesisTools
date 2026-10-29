@@ -230,4 +230,25 @@ describe("the exec runner entry", () => {
         expect(stdout).toMatch(/^Script completed\nWall time \d+\.\d seconds\nOutput:\n/);
         expect(stdout.endsWith(`${dir} 0`)).toBe(true);
     });
+
+    it("writes its log lines to the day log only, never to stderr, so Codex's header stays the first line the model reads", async () => {
+        // The live run of 2026-10-29 put "ai-proxy exec: the shell guard blocked a nested command" above the header,
+        // because Claude Code's Bash result carries stderr too. A console level makes the runner's own logs visible.
+        const dir = realpathSync(mkdtempSync(join(tmpdir(), "exec-entry-")));
+        const proc = Bun.spawn([process.execPath, join(import.meta.dir, "runner.ts")], {
+            cwd: dir,
+            env: { ...process.env, LOG_CONSOLE_LEVEL: "debug", LOG_SILENT: "" },
+            stdin: new TextEncoder().encode('text("done");\n'),
+            stdout: "pipe",
+            stderr: "pipe",
+        });
+        const [stdout, stderr, code] = await Promise.all([
+            new Response(proc.stdout).text(),
+            new Response(proc.stderr).text(),
+            proc.exited,
+        ]);
+
+        expect({ code, stderr }).toEqual({ code: 0, stderr: "" });
+        expect(stdout).toMatch(/^Script completed\nWall time \d+\.\d seconds\nOutput:\ndone$/);
+    });
 });
