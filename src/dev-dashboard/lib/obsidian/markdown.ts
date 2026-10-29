@@ -1,5 +1,6 @@
 import { detailsExtension, groupDetails } from "@app/dev-dashboard/lib/obsidian/details";
 import { buildObsidianNoteHref } from "@app/dev-dashboard/lib/obsidian/note-href";
+import { sanitizeNoteHtml } from "@app/dev-dashboard/lib/obsidian/note-html";
 import {
     anchorFor,
     FootnoteBook,
@@ -117,9 +118,6 @@ interface ImageSize {
 // Obsidian's size suffix on an image alt or embed label: `|360` or `|360x200`.
 const OBSIDIAN_SIZE_RE = /^(?:(.*)\|)?(\d{1,5})(?:x(\d{1,5}))?$/s;
 const HTML_DIMENSION_RE = /^(\d{1,5})(%?)$/;
-// The one raw HTML tag a note may write: `<img>` with src, alt, width and height, each quoted.
-const HTML_IMG_RE = /^<img((?:\s+(?:src|alt|width|height)\s*=\s*(?:"[^"<>]*"|'[^'<>]*'))*)\s*\/?>$/i;
-const HTML_IMG_ATTR_RE = /(src|alt|width|height)\s*=\s*(?:"([^"]*)"|'([^']*)')/gi;
 
 /** `alt|360x200` → the alt without its suffix and the size; `alt` alone stays as it is. */
 function splitObsidianSize(text: string): { label: string; size: ImageSize | undefined } {
@@ -688,32 +686,6 @@ interface ImageRequest {
     size?: ImageSize;
 }
 
-function parseHtmlImg(text: string): ImageRequest | null {
-    const match = HTML_IMG_RE.exec(text);
-
-    if (!match) {
-        return null;
-    }
-
-    const attrs = new Map<string, string>();
-
-    for (const attr of match[1].matchAll(HTML_IMG_ATTR_RE)) {
-        attrs.set(attr[1].toLowerCase(), attr[2] ?? attr[3] ?? "");
-    }
-
-    const src = attrs.get("src");
-
-    if (!src) {
-        return null;
-    }
-
-    return {
-        href: src,
-        alt: attrs.get("alt") ?? "",
-        size: { width: attrs.get("width"), height: attrs.get("height") },
-    };
-}
-
 function renderImage(opts: RenderOptions, image: ImageRequest): string {
     const local = isLocalHref(image.href);
 
@@ -762,28 +734,6 @@ function resolveWikilinkHtml(opts: RenderOptions, target: string, display: strin
     return null;
 }
 
-// Inline HTML a note may write as is: formatting tags with no attributes, plus line breaks. Each tag is
-// one marked html token, so an allowed tag is printed back by name, never copied.
-const SAFE_INLINE_TAG_RE =
-    /^<(\/?)(kbd|mark|sub|sup|u|s|del|ins|small|b|i|em|strong|code|abbr|cite|q|var|samp|dfn|span|br|wbr)\s*(\/?)>$/i;
-const VOID_TAGS = new Set(["br", "wbr"]);
-
-function safeInlineTag(text: string): string | null {
-    const match = SAFE_INLINE_TAG_RE.exec(text.trim());
-
-    if (!match) {
-        return null;
-    }
-
-    const name = match[2].toLowerCase();
-
-    if (VOID_TAGS.has(name)) {
-        return match[1] ? "" : `<${name}>`;
-    }
-
-    return `<${match[1]}${name}>`;
-}
-
 function buildMarked(opts: RenderOptions, book: FootnoteBook): Marked {
     const usedSlugs = new Map<string, number>();
 
@@ -792,7 +742,7 @@ function buildMarked(opts: RenderOptions, book: FootnoteBook): Marked {
         // The rendered HTML is served on the public, auth-bypassed /share/:slug
         // page. marked passes raw HTML in a note through verbatim, so a note
         // containing <script>/<img onerror> would execute in a visitor's
-        // browser. Escape raw-HTML tokens so they render as inert text; marked's
+        // browser. Raw-HTML tokens are rebuilt from an allowlist instead; marked's
         // own element output and the trusted KaTeX/mermaid/wikilink extensions
         // are unaffected.
         {
@@ -804,15 +754,14 @@ function buildMarked(opts: RenderOptions, book: FootnoteBook): Marked {
                         return "";
                     }
 
-                    // `<img src alt width height>` is rebuilt from its parsed values like a markdown image;
-                    // any other attribute, or any other tag, stays escaped text.
-                    const img = parseHtmlImg(text.trim());
-
-                    if (img) {
-                        return renderImage(opts, img);
-                    }
-
-                    return safeInlineTag(text) ?? escapeHtml(text);
+                    // Raw HTML is rebuilt from an allowlist (note-html.ts); an `<img>` renders like a markdown image.
+                    return sanitizeNoteHtml(text, (img) =>
+                        renderImage(opts, {
+                            href: img.src,
+                            alt: img.alt,
+                            size: { width: img.width, height: img.height },
+                        })
+                    );
                 },
                 heading(token: Tokens.Heading): string {
                     const base = headingSlug(token.text);
