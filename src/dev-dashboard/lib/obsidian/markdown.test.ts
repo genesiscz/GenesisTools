@@ -163,14 +163,14 @@ describe("renderMarkdown", () => {
             "",
             "<!-- updated 2026-10-01 18:00: note -->",
             "",
-            "<b>bold</b> <!-- inline comment -->",
+            '<font color="red">bold</font> <!-- inline comment -->',
         ].join("\n");
         const { html } = renderMarkdown(md, noop);
 
         expect(html).not.toContain("md:include");
         expect(html).not.toContain("updated 2026");
         expect(html).toContain('<code class="hljs language-ts">');
-        expect(html).toContain("&lt;b&gt;bold&lt;/b&gt;");
+        expect(html).toContain("&lt;font color=&quot;red&quot;&gt;bold&lt;/font&gt;");
     });
 
     test("passes mermaid blocks through and sets hasMermaid", () => {
@@ -303,5 +303,88 @@ describe("image size", () => {
         expect(html).toContain("&lt;img src=&quot;x.webp&quot; style");
         expect(html).not.toContain('onerror="');
         expect(html).not.toContain("javascript:");
+    });
+});
+
+describe("Obsidian syntax", () => {
+    test("==highlight== becomes <mark> and keeps inline markdown inside", () => {
+        const { html } = renderMarkdown("a ==**big** word== and a == b", noop);
+
+        expect(html).toContain("<mark><strong>big</strong> word</mark>");
+        expect(html).toContain("a == b");
+    });
+
+    test("%%comments%% are hidden, inline and as a block, but not inside code", () => {
+        const { html } = renderMarkdown("keep %%hidden%% this\n\n%%\nblock secret\n%%\n\n`%%code%%`", noop);
+
+        expect(html).toContain("keep  this");
+        expect(html).not.toContain("hidden");
+        expect(html).not.toContain("block secret");
+        expect(html).toContain("<code>%%code%%</code>");
+    });
+
+    test("footnotes number in citation order and list under the note; inline footnotes too", () => {
+        const md =
+            "First[^b] then[^a] and again[^b] and ^[an *inline* one].\n\n[^a]: Alpha.\n[^b]: Beta with `code`.\n[^unused]: Nobody cites me.";
+        const { html } = renderMarkdown(md, noop);
+
+        expect(html).toContain('<sup class="footnote-ref"><a href="#fn-1" id="fnref-1">1</a></sup>');
+        expect(html).toContain('<a href="#fn-2" id="fnref-2">2</a>');
+        expect(html).toContain('again<sup class="footnote-ref"><a href="#fn-1">1</a></sup>');
+        expect(html).toContain('<li id="fn-1">Beta with <code>code</code>.');
+        expect(html).toContain('<li id="fn-2">Alpha.');
+        expect(html).toContain('<li id="fn-3">an <em>inline</em> one');
+        expect(html).not.toContain("Nobody cites me");
+    });
+
+    test("a citation with no definition stays text", () => {
+        const { html } = renderMarkdown("See [^missing].", noop);
+
+        expect(html).toContain("See [^missing].");
+        expect(html).not.toContain("footnotes");
+    });
+
+    test("headings get ids, and [[#Heading]] and [[#^block]] link to them", () => {
+        const md =
+            "# My Heading!\n\n## My Heading\n\nA paragraph ^para-1\n\n[[#My Heading]] [[#^para-1|the paragraph]]";
+        const { html } = renderMarkdown(md, noop);
+
+        expect(html).toContain('<h1 id="my-heading">My Heading!</h1>');
+        expect(html).toContain('<h2 id="my-heading-1">My Heading</h2>');
+        expect(html).toContain('A paragraph<span class="dd-block-id" id="^para-1"></span>');
+        expect(html).toContain('<a href="#my-heading" class="dd-wikilink">My Heading</a>');
+        expect(html).toContain('<a href="#^para-1" class="dd-wikilink">the paragraph</a>');
+    });
+
+    test("[[Note#Heading]] links to the shared note at that heading", () => {
+        const { html } = renderMarkdown("[[Other#Some Part]]", {
+            resolveWikilink: (name) => (name === "Other" ? "abc" : null),
+        });
+
+        expect(html).toContain('<a href="/share/abc#some-part" class="dd-wikilink">Other &gt; Some Part</a>');
+    });
+
+    test("a folded callout is a native fold: [!note]- closed, [!tip]+ open", () => {
+        const { html } = renderMarkdown("> [!note]- Closed\n> body\n\n> [!tip]+ Open\n> body", noop);
+
+        expect(html).toContain(
+            '<details class="markdown-alert markdown-alert-note" data-callout="note" data-callout-fold="closed">'
+        );
+        expect(html).toContain('<summary class="markdown-alert-title">');
+        expect(html).toContain('data-callout-fold="open" open>');
+    });
+
+    test("plain formatting tags pass, anything with attributes or another name stays escaped", () => {
+        const { html } = renderMarkdown(
+            'Press <kbd>Ctrl</kbd>+<kbd>C</kbd>, H<sub>2</sub>O, x<sup>2</sup>, <u>under</u><br>next <span style="color:red">no</span> <script>x</script>',
+            noop
+        );
+
+        expect(html).toContain("<kbd>Ctrl</kbd>+<kbd>C</kbd>");
+        expect(html).toContain("H<sub>2</sub>O");
+        expect(html).toContain("x<sup>2</sup>");
+        expect(html).toContain("<u>under</u><br>next");
+        expect(html).toContain("&lt;span style=");
+        expect(html).toContain("&lt;script&gt;");
     });
 });
