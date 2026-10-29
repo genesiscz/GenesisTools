@@ -547,6 +547,16 @@ input[data-task] { accent-color: var(--dd-text-faint); }
     background: var(--dd-bg-panel);
 }
 
+.dd-md-transclusion {
+    margin: 1em 0;
+    padding: 4px 0 4px 14px;
+    border-left: 3px solid var(--dd-border-strong);
+}
+.dd-md-transclusion-head { font-size: 0.85em; margin-bottom: 6px; }
+.dd-md-transclusion-body > :first-child { margin-top: 0; }
+.dd-md-transclusion-body > :last-child { margin-bottom: 0; }
+.dd-md-transclusion-missing { color: var(--dd-text-faint); font-style: italic; }
+
 .dd-md-properties {
     margin: 0 0 1.4em;
     padding: 8px 14px;

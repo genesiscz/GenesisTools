@@ -56,6 +56,8 @@ export interface ResolvedAsset {
     url: string;
     kind: "image" | "audio" | "video" | "pdf" | "json" | "markdown" | "code" | "page";
     name: string;
+    /** A note's text for `![[Note]]` / `![[Note#Heading]]`, rendered only when the reference is an embed. */
+    embed?: () => string;
 }
 
 interface RenderOptions {
@@ -218,6 +220,13 @@ function renderMediaAsset(asset: ResolvedAsset, labelHtml: string, inline: boole
 
 function renderAsset(asset: ResolvedAsset, labelHtml: string, inline: boolean, size?: ImageSize): string {
     const url = escapeHtml(asset.url);
+
+    // `![[Note]]` shows the note's text in place, under a link to the whole note, as Obsidian does.
+    if (inline && asset.embed) {
+        const head = renderAsset({ ...asset, embed: undefined }, labelHtml, false);
+
+        return `<div class="dd-md-transclusion"><div class="dd-md-transclusion-head">${head}</div><div class="dd-md-transclusion-body">${asset.embed()}</div></div>`;
+    }
 
     if (asset.kind === "image") {
         if (inline) {
@@ -403,8 +412,9 @@ function embedExtension(opts: RenderOptions): MarkedExtension {
                             sizable && t.display !== t.target
                                 ? splitObsidianSize(t.display)
                                 : { label: t.display, size: undefined };
-                        const label =
-                            t.display === t.target || caption === "" || (sizable && !size) ? asset.name : caption;
+                        // A note embed is titled by the note's name, as Obsidian shows it: `Pub`, not `Pub.md`.
+                        const name = asset.embed ? asset.name.replace(/\.md$/i, "") : asset.name;
+                        const label = t.display === t.target || caption === "" || (sizable && !size) ? name : caption;
 
                         return renderAsset(asset, escapeHtml(label), true, size);
                     }
@@ -796,6 +806,17 @@ function buildMarked(opts: RenderOptions, book: FootnoteBook): Marked {
                             size: { width: img.width, height: img.height },
                         })
                     );
+                },
+                // An embedded note is block content; a paragraph that holds only that embed drops its <p>,
+                // since a <div> inside a <p> is not valid HTML.
+                paragraph(token: Tokens.Paragraph): string {
+                    const inner = this.parser.parseInline(token.tokens);
+
+                    if (/^<div class="dd-md-transclusion">[\s\S]*<\/div>$/.test(inner.trim())) {
+                        return `${inner.trim()}\n`;
+                    }
+
+                    return `<p>${inner}</p>\n`;
                 },
                 heading(token: Tokens.Heading): string {
                     const base = headingSlug(token.text);
