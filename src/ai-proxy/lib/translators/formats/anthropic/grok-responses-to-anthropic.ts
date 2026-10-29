@@ -86,6 +86,23 @@ export interface ResponsesToAnthropicOptions {
      * then sent once, rewritten; every other call streams as it arrives.
      */
     toolInput?: (name: string) => ((input: unknown) => unknown) | undefined;
+    /**
+     * A custom (free-form) tool call as a client tool call, chosen by the custom tool's name: the client tool's name and
+     * its input built from the raw text the model wrote, sent once the call is complete. Without a mapping the call is
+     * skipped like any item with no Anthropic block.
+     */
+    customToolCall?: (name: string) => CustomToolMapping | undefined;
+}
+
+export interface CustomToolMapping {
+    name: string;
+    input: (raw: string) => unknown;
+}
+
+function customMapping(options: { customToolCall?: ResponsesToAnthropicOptions["customToolCall"] }, item: JsonRecord) {
+    return item.type === "custom_tool_call" && typeof item.name === "string"
+        ? options.customToolCall?.(item.name)
+        : undefined;
 }
 
 const warnedItemTypes = new Set<string>();
@@ -171,6 +188,18 @@ export function responsesToAnthropicMessage(response: JsonRecord, options: Respo
             continue;
         }
 
+        const custom = customMapping(options, item);
+
+        if (custom) {
+            content.push({
+                type: "tool_use",
+                id: typeof item.call_id === "string" ? item.call_id : `toolu_${crypto.randomUUID()}`,
+                name: custom.name,
+                input: custom.input(typeof item.input === "string" ? item.input : ""),
+            });
+            continue;
+        }
+
         warnUnknownItem(item, options.label ?? "grok");
     }
 
@@ -185,7 +214,10 @@ export function responsesToAnthropicMessage(response: JsonRecord, options: Respo
         role: "assistant",
         model: options.model,
         content,
-        stop_reason: stopReasonFor(response, false),
+        stop_reason: stopReasonFor(
+            response,
+            content.some((block) => block.type === "tool_use")
+        ),
         stop_sequence: null,
         usage: usageFromResponses(response.usage) ?? { input_tokens: 0, output_tokens: 0 },
     };
@@ -203,6 +235,8 @@ interface ItemState {
     closed: boolean;
     /** Set for a tool call whose input is rewritten: its arguments are held in `heldArgs`. */
     rewrite?: (input: unknown) => unknown;
+    /** Set for a custom tool call sent as a client tool call: its raw input is held in `heldArgs`. */
+    customInput?: (raw: string) => unknown;
     heldArgs: string;
 }
 
@@ -218,6 +252,7 @@ interface StreamState {
     /** Responses output_index → block state. Ignored item types are absent. */
     items: Map<number, ItemState>;
     toolInput: ResponsesToAnthropicOptions["toolInput"];
+    customToolCall: ResponsesToAnthropicOptions["customToolCall"];
     sawFunctionCall: boolean;
     usage: AnthropicUsage | null;
     outputChars: number;
@@ -245,7 +280,10 @@ function frameStart(state: StreamState): string {
     });
 }
 
-function contentBlockFor(item: JsonRecord): { kind: BlockKind; block: JsonRecord } | null {
+function contentBlockFor(
+    item: JsonRecord,
+    state: StreamState
+): { kind: BlockKind; block: JsonRecord; customInput?: (raw: string) => unknown } | null {
     if (item.type === "reasoning") {
         return { kind: "thinking", block: { type: "thinking", thinking: "" } };
     }
@@ -266,11 +304,26 @@ function contentBlockFor(item: JsonRecord): { kind: BlockKind; block: JsonRecord
         };
     }
 
+    const custom = customMapping(state, item);
+
+    if (custom) {
+        return {
+            kind: "tool_use",
+            block: {
+                type: "tool_use",
+                id: typeof item.call_id === "string" ? item.call_id : `toolu_${crypto.randomUUID()}`,
+                name: custom.name,
+                input: {},
+            },
+            customInput: custom.input,
+        };
+    }
+
     return null;
 }
 
 function openItem(state: StreamState, outputIndex: number, item: JsonRecord): string {
-    const mapped = contentBlockFor(item);
+    const mapped = contentBlockFor(item, state);
 
     if (mapped === null) {
         warnUnknownItem(item, state.label);
@@ -286,9 +339,10 @@ function openItem(state: StreamState, outputIndex: number, item: JsonRecord): st
         summaryParts: 0,
         closed: false,
         rewrite:
-            mapped.kind === "tool_use" && typeof mapped.block.name === "string"
+            mapped.kind === "tool_use" && !mapped.customInput && typeof mapped.block.name === "string"
                 ? state.toolInput?.(mapped.block.name)
                 : undefined,
+        customInput: mapped.customInput,
         heldArgs: "",
     });
 
@@ -322,6 +376,12 @@ function closeItem(state: StreamState, outputIndex: number, doneItem: JsonRecord
     }
 
     let out = "";
+
+    if (item.customInput) {
+        const raw = typeof doneItem?.input === "string" && doneItem.input.length > 0 ? doneItem.input : item.heldArgs;
+        const json = SafeJSON.stringify(item.customInput(raw));
+        out += deltaFrame(state, outputIndex, { type: "input_json_delta", partial_json: json }, json.length);
+    }
 
     if (item.rewrite) {
         const raw =
@@ -484,6 +544,16 @@ function handleEvent(state: StreamState, event: JsonRecord): string {
         );
     }
 
+    if (type === "response.custom_tool_call_input.delta" && typeof event.delta === "string") {
+        const held = state.items.get(outputIndex);
+
+        if (held?.customInput) {
+            held.heldArgs += event.delta;
+        }
+
+        return "";
+    }
+
     if (type === "response.output_item.done") {
         return closeItem(state, outputIndex, isObject(event.item) ? event.item : undefined);
     }
@@ -526,6 +596,7 @@ export function responsesSseToAnthropic(
         nextBlockIndex: 0,
         items: new Map(),
         toolInput: options.toolInput,
+        customToolCall: options.customToolCall,
         sawFunctionCall: false,
         usage: null,
         outputChars: 0,
