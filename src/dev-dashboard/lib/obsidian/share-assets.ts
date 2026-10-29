@@ -518,3 +518,171 @@ export function renderCodeAssetHtml(options: {
 
     return `${windowNote}${code}`;
 }
+
+export const SHARE_BUNDLE_MAX_BYTES = 200 * 1024 * 1024;
+
+function commonDir(paths: string[]): string {
+    const dirs = paths.map((path) => {
+        const dir = posix.dirname(path);
+
+        return dir === "." ? [] : dir.split("/");
+    });
+    const [first = [], ...rest] = dirs;
+    let length = first.length;
+
+    for (const dir of rest) {
+        let same = 0;
+
+        while (same < length && same < dir.length && dir[same] === first[same]) {
+            same++;
+        }
+
+        length = same;
+    }
+
+    return first.slice(0, length).join("/");
+}
+
+/**
+ * The shared note and every file it references, as zip entries under one folder named after the note.
+ * Paths keep their layout below the deepest folder they all share, so relative links and wikilinks in the
+ * note still resolve after unzipping. Every attachment goes through `readShareAsset`, so the zip holds the
+ * same masked bytes the page serves; one that changed since indexing is left out. Returns null when the
+ * files together exceed `SHARE_BUNDLE_MAX_BYTES`.
+ */
+export async function buildShareBundle(options: {
+    vaultRoot: string;
+    index: ShareAssetIndex;
+    notePath: string;
+    noteText: string;
+    folderName: string;
+}): Promise<{ entries: Array<{ name: string; data: Uint8Array }>; skipped: number } | null> {
+    const { vaultRoot, index, notePath, noteText, folderName } = options;
+    const files: Array<{ vaultPath: string; data: Uint8Array }> = [
+        { vaultPath: notePath, data: new TextEncoder().encode(noteText) },
+    ];
+    let total = files[0].data.length;
+    let skipped = 0;
+
+    for (const asset of index.byHash.values()) {
+        if (asset.vaultPath === notePath) {
+            continue;
+        }
+
+        const found = await readShareAsset({ vaultRoot, index, hash: asset.hash });
+
+        if (!found) {
+            log.warn({ notePath, asset: asset.vaultPath }, "share bundle skipped an attachment that changed");
+            skipped++;
+            continue;
+        }
+
+        total += found.body.length;
+
+        if (total > SHARE_BUNDLE_MAX_BYTES) {
+            log.warn({ notePath, total }, "share bundle is over the size limit");
+            return null;
+        }
+
+        files.push({ vaultPath: asset.vaultPath, data: found.body });
+    }
+
+    const base = commonDir(files.map((file) => file.vaultPath));
+    const strip = base === "" ? 0 : base.length + 1;
+    const entries = files.map((file) => ({ name: `${folderName}/${file.vaultPath.slice(strip)}`, data: file.data }));
+
+    log.debug({ notePath, files: entries.length, skipped, total }, "share bundle built");
+
+    return { entries, skipped };
+}
+
+/** The side-panel body for a text asset; `lines` narrows a code file to a window around the range. */
+export function renderShareAssetFragment(
+    asset: ShareAsset,
+    text: string,
+    lines: { start: number; end: number } | null
+): string {
+    if (asset.kind === "json") {
+        return renderJsonAssetHtml(text);
+    }
+
+    if (asset.kind === "markdown") {
+        return renderMarkdownAssetHtml(text);
+    }
+
+    return renderCodeAssetHtml({ text, language: asset.language ?? "plaintext", lines });
+}
+
+/** Key of one embedded panel: the chip's base URL and its line range, as the page script builds it. */
+export function embeddedPanelKey(baseUrl: string, lines: { start: number; end: number } | null): string {
+    return `${baseUrl}|${lines ? `${lines.start}-${lines.end}` : ""}`;
+}
+
+export interface ShareEmbed {
+    /** Image hash to a `data:` URL holding the bytes the page would serve. */
+    images: Map<string, string>;
+    /** `embeddedPanelKey` to the rendered panel body and a `data:` URL of the raw file. */
+    panels: Record<string, { html: string; raw: string }>;
+}
+
+function dataUrl(contentType: string, body: Buffer): string {
+    return `data:${contentType.replace(/\s+/g, "")};base64,${body.toString("base64")}`;
+}
+
+/**
+ * Everything a saved copy of the share page needs offline: each image as a `data:` URL, and each text
+ * asset pre-rendered once per line range the note links to. `panelBase(hash)` is the chip URL without
+ * its `#L` fragment. Bodies come from `readShareAsset`, so they are masked; a changed file is left out.
+ * Returns null when the files together exceed `SHARE_BUNDLE_MAX_BYTES`.
+ */
+export async function buildShareEmbed(options: {
+    vaultRoot: string;
+    index: ShareAssetIndex;
+    panelBase: (hash: string) => string;
+}): Promise<ShareEmbed | null> {
+    const { vaultRoot, index, panelBase } = options;
+    const embed: ShareEmbed = { images: new Map(), panels: {} };
+    const bodies = new Map<string, Buffer>();
+    let total = 0;
+
+    for (const asset of index.byHash.values()) {
+        const found = await readShareAsset({ vaultRoot, index, hash: asset.hash });
+
+        if (!found) {
+            log.warn({ asset: asset.vaultPath }, "share embed skipped an attachment that changed");
+            continue;
+        }
+
+        total += found.body.length;
+
+        if (total > SHARE_BUNDLE_MAX_BYTES) {
+            log.warn({ total }, "share embed is over the size limit");
+            return null;
+        }
+
+        bodies.set(asset.hash, found.body);
+
+        if (asset.kind === "image") {
+            embed.images.set(asset.hash, dataUrl(asset.contentType, found.body));
+        }
+    }
+
+    for (const [target, asset] of index.byTarget) {
+        const body = bodies.get(asset.hash);
+
+        if (!body || asset.kind === "image") {
+            continue;
+        }
+
+        const lines = lineRangeOf(target);
+        const key = embeddedPanelKey(panelBase(asset.hash), lines);
+        embed.panels[key] ??= {
+            html: renderShareAssetFragment(asset, body.toString("utf8"), lines),
+            raw: dataUrl(asset.contentType, body),
+        };
+    }
+
+    log.debug({ images: embed.images.size, panels: Object.keys(embed.panels).length, total }, "share embed built");
+
+    return embed;
+}
