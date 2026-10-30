@@ -1,11 +1,16 @@
 import { cleanPromptText } from "@app/claude/lib/cmux/sessions";
 import { getSessionListing, type SessionMetadataRecord } from "@app/claude/lib/history/search";
 import { loadPins } from "@genesiscz/utils/agent-sessions/pins";
+import {
+    type ClaudeTailUsage,
+    emptyClaudeTailUsage,
+    parseClaudeTailUsage,
+} from "@genesiscz/utils/agent-sessions/readers/claude-tail-usage";
+import { readSessionsContinuedIn } from "@genesiscz/utils/agent-sessions/session-backward";
 import { liveClaudeSessionIds } from "@genesiscz/utils/claude/peer-message";
 import { readTailBytes } from "@genesiscz/utils/claude/session.utils";
 import { loadAllSessionCmuxRefs } from "@genesiscz/utils/cmux/session-refs";
 import { FileIdentityCache, fileIdentity } from "@genesiscz/utils/fs/identity-cache";
-import { SafeJSON } from "@genesiscz/utils/json";
 import { logger } from "@genesiscz/utils/logger";
 import { isObject } from "@genesiscz/utils/object";
 import { collapsePath } from "@genesiscz/utils/paths";
@@ -97,18 +102,8 @@ export interface SessionCmuxLocation {
     at: number;
 }
 
-interface TailUsage {
-    totalTokens: number;
-    cacheReadTokens: number;
-    cacheCreateTokens: number;
-    inputTokens: number;
-    model: string | null;
-    prevModel: string | null;
-    lastCacheAt: number | null;
-    lastUserAt: number | null;
-    /** `compactMetadata.postTokens` when compaction happened after the last real turn. */
-    compactedPostTokens: number | null;
-    /** `continuedInSessionId` of a `continued-in` line after the last real turn. */
+interface TailUsage extends ClaudeTailUsage {
+    /** The session this transcript continued in (`NativeSessionReader.continuedIn`). */
     continuedIn: string | null;
 }
 
@@ -156,151 +151,7 @@ function simplifyModel(model: string): string {
 }
 
 function emptyTailUsage(): TailUsage {
-    return {
-        totalTokens: 0,
-        cacheReadTokens: 0,
-        cacheCreateTokens: 0,
-        inputTokens: 0,
-        model: null,
-        prevModel: null,
-        lastCacheAt: null,
-        lastUserAt: null,
-        compactedPostTokens: null,
-        continuedIn: null,
-    };
-}
-
-function cacheAtFromLine(obj: { type?: unknown; timestamp?: unknown; isSidechain?: unknown }): number | null {
-    if (obj.type !== "user" && obj.type !== "assistant") {
-        return null;
-    }
-
-    if (obj.isSidechain === true) {
-        return null;
-    }
-
-    if (typeof obj.timestamp !== "string") {
-        return null;
-    }
-
-    const parsed = Date.parse(obj.timestamp);
-
-    if (!Number.isFinite(parsed)) {
-        return null;
-    }
-
-    return parsed;
-}
-
-/**
- * A real typed user message: main-thread, not a tool result, not the injected
- * compaction summary, not a meta record. Content is a string, or an array with a
- * text part (tool results are arrays of tool_result parts only).
- */
-function userAtFromLine(obj: {
-    type?: unknown;
-    timestamp?: unknown;
-    isSidechain?: unknown;
-    isMeta?: unknown;
-    isCompactSummary?: unknown;
-    message?: { content?: unknown };
-}): number | null {
-    if (obj.type !== "user" || obj.isSidechain === true || obj.isMeta === true || obj.isCompactSummary === true) {
-        return null;
-    }
-
-    const content = obj.message?.content;
-    const isTyped =
-        typeof content === "string" ||
-        (Array.isArray(content) && content.some((part) => (part as { type?: unknown })?.type === "text"));
-
-    if (!isTyped || typeof obj.timestamp !== "string") {
-        return null;
-    }
-
-    const parsed = Date.parse(obj.timestamp);
-    return Number.isFinite(parsed) ? parsed : null;
-}
-
-function parseTailLines(lines: string[], filePath: string): TailUsage {
-    const usage = emptyTailUsage();
-    let lastModel: string | null = null;
-    let prevModel: string | null = null;
-    let foundUsage = false;
-    let foundPrev = false;
-
-    for (let i = lines.length - 1; i >= 0; i--) {
-        // Everything is found — the rest of the tail can only be older.
-        if (foundPrev && usage.lastUserAt !== null && usage.lastCacheAt !== null) {
-            break;
-        }
-
-        try {
-            const obj = SafeJSON.parse(lines[i], { strict: true });
-
-            if (usage.lastCacheAt === null) {
-                usage.lastCacheAt = cacheAtFromLine(obj);
-            }
-
-            if (usage.lastUserAt === null) {
-                usage.lastUserAt = userAtFromLine(obj);
-            }
-
-            if (
-                !foundUsage &&
-                usage.continuedIn === null &&
-                obj.type === "continued-in" &&
-                typeof obj.continuedInSessionId === "string"
-            ) {
-                usage.continuedIn = obj.continuedInSessionId;
-                continue;
-            }
-
-            // A compaction after the last real turn states the exact post-compact
-            // context in compactMetadata.postTokens — no assistant usage carries it yet.
-            if (!foundUsage && usage.compactedPostTokens === null && obj.type === "system") {
-                if (obj.subtype === "compact_boundary") {
-                    const post = obj.compactMetadata?.postTokens;
-                    usage.compactedPostTokens = typeof post === "number" ? post : 0;
-                }
-
-                continue;
-            }
-
-            if (obj.type !== "assistant" || !obj.message?.usage) {
-                continue;
-            }
-
-            // Claude Code writes local notices (API errors, "No response.") as assistant
-            // records with model "<synthetic>". They are not model turns: no real usage,
-            // and surfacing the model string as-is is the "<synthetic>" bug.
-            if (obj.message.model === "<synthetic>") {
-                continue;
-            }
-
-            if (!foundUsage) {
-                const u = obj.message.usage;
-                usage.totalTokens = (u.input_tokens ?? 0) + (u.output_tokens ?? 0);
-                usage.cacheReadTokens = u.cache_read_input_tokens ?? 0;
-                usage.cacheCreateTokens = u.cache_creation_input_tokens ?? 0;
-                usage.inputTokens = u.input_tokens ?? 0;
-                lastModel = obj.message.model ? simplifyModel(obj.message.model) : null;
-                foundUsage = true;
-                continue;
-            }
-
-            if (!foundPrev) {
-                prevModel = obj.message.model ? simplifyModel(obj.message.model) : null;
-                foundPrev = true;
-            }
-        } catch (err) {
-            logger.debug({ err, filePath }, "skip malformed session tail line");
-        }
-    }
-
-    usage.model = lastModel;
-    usage.prevModel = prevModel;
-    return usage;
+    return { ...emptyClaudeTailUsage(), continuedIn: null };
 }
 
 function isNullableNumber(value: unknown): value is number | null {
@@ -334,14 +185,16 @@ function isTailUsage(usage: unknown): usage is TailUsage {
  * every call (`claude-sessions tail` 340 ms of a 2.6 s agents call, 2026-10-08). Kept on disk too, so a new
  * process re-parses only the transcripts that changed: a fresh `ai usage sessions` spent 327 ms per run in
  * `parseTailLines`, 38% of its JavaScript time, on tails no one had written to since the last run (`tools ts
- * profile`, 2026-10-12). Bump the version whenever `parseTailLines` or `TailUsage` changes what an entry means.
+ * profile`, 2026-10-12). Bump the version whenever `parseClaudeTailUsage` or `TailUsage` changes what an entry
+ * means. Version 3 (2026-10-30): `model` and `prevModel` hold the transcript's model ids, simplified when a row is
+ * built, and `continuedIn` comes from the Claude reader.
  */
 const tailCache = new FileIdentityCache<TailUsage>({
     // Above the transcripts one listing reads (2,404 here on 2026-10-12); about 450 bytes each on disk.
     limit: 20_000,
     persist: {
         path: () => toolDataDir("claude", "cache", "session-tail-usage.json"),
-        version: 2,
+        version: 3,
         isValue: isTailUsage,
     },
 });
@@ -351,25 +204,58 @@ export function __forgetTailCacheForTests(): void {
     tailCache.forget();
 }
 
-async function extractTailUsage(filePath: string): Promise<TailUsage> {
+/**
+ * The tail usage of each file, from the cache while a file is unchanged. The files read again also ask the Claude
+ * reader which session each continued in (one discovery for all of them); when that read fails, their usage is
+ * returned without a successor and is not cached, so the next listing asks again.
+ */
+async function extractTailUsages(filePaths: readonly string[]): Promise<TailUsage[]> {
     // The identity comes first: a write after it leaves a newer one, and the next call reads the tail again.
-    const identity = fileIdentity(filePath);
-    const cached = tailCache.get(filePath, identity);
-    if (cached) {
-        return { ...cached };
+    const identities = filePaths.map((filePath) => fileIdentity(filePath));
+    const usages: (TailUsage | undefined)[] = filePaths.map((filePath, index) => {
+        const cached = tailCache.get(filePath, identities[index]);
+        return cached ? { ...cached } : undefined;
+    });
+    const misses = filePaths.filter((_, index) => usages[index] === undefined);
+
+    if (misses.length === 0) {
+        return usages.map((usage) => usage ?? emptyTailUsage());
     }
 
-    const { usage, read } = await extractTailUsageUncached(filePath);
-    if (identity && read) {
-        tailCache.set(filePath, identity, { ...usage });
-    }
+    const [reads, successors] = await Promise.all([
+        Promise.all(misses.map((filePath) => extractTailUsageUncached(filePath))),
+        readSessionsContinuedIn({ kind: "claude", transcriptPaths: misses }).catch((err) => {
+            logger.warn({ err, files: misses.length }, "[sessions] continued-in pointers unreadable; not caching");
+            return null;
+        }),
+    ]);
+    const readByPath = new Map(misses.map((filePath, index) => [filePath, reads[index]]));
 
-    return usage;
+    return filePaths.map((filePath, index) => {
+        const cached = usages[index];
+
+        if (cached) {
+            return cached;
+        }
+
+        const read = readByPath.get(filePath);
+        const usage: TailUsage = {
+            ...(read?.usage ?? emptyClaudeTailUsage()),
+            continuedIn: successors?.get(filePath) ?? null,
+        };
+        const identity = identities[index];
+
+        if (identity && read?.read && successors) {
+            tailCache.set(filePath, identity, { ...usage });
+        }
+
+        return usage;
+    });
 }
 
 /** The tail usage read and parsed with no cache. Exported for `scripts/benchmarks/fs/read-child.ts`. */
-export async function extractTailUsageUncached(filePath: string): Promise<{ usage: TailUsage; read: boolean }> {
-    const fallback = emptyTailUsage();
+export async function extractTailUsageUncached(filePath: string): Promise<{ usage: ClaudeTailUsage; read: boolean }> {
+    const fallback = emptyClaudeTailUsage();
 
     try {
         const size = Number(Bun.file(filePath).size) || 0;
@@ -378,7 +264,7 @@ export async function extractTailUsageUncached(filePath: string): Promise<{ usag
 
         for (;;) {
             const lines = await readTailBytes(filePath, bytes);
-            parsed = parseTailLines(lines, filePath);
+            parsed = parseClaudeTailUsage(lines, filePath);
 
             const haveClock = parsed.lastCacheAt != null;
             const haveUsage = parsed.model != null;
@@ -430,6 +316,8 @@ function buildRow(record: SessionMetadataRecord, usage: TailUsage, now: number, 
     const lastCacheAt = usage.lastCacheAt ?? record.mtime;
     const { status, ttlSec } = computeCacheStatus(lastCacheAt, now);
     const sessionId = record.sessionId ?? record.filePath.split("/").pop()?.replace(".jsonl", "") ?? "";
+    const model = usage.model ? simplifyModel(usage.model) : null;
+    const prevModel = usage.prevModel ? simplifyModel(usage.prevModel) : null;
 
     return {
         sessionId,
@@ -444,8 +332,8 @@ function buildRow(record: SessionMetadataRecord, usage: TailUsage, now: number, 
         gitBranch: record.gitBranch,
         mtime: record.mtime,
         lastCacheAt,
-        model: usage.model,
-        modelSwitched: usage.model !== null && usage.prevModel !== null && usage.model !== usage.prevModel,
+        model,
+        modelSwitched: model !== null && prevModel !== null && model !== prevModel,
         cacheStatus: status,
         cacheTtlSec: ttlSec,
         cacheLifetimeSec: Math.ceil(CACHE_TTL_MS / 1000),
@@ -518,8 +406,7 @@ export async function listSessionRowsWithTimings(
 
         for (let i = 0; i < records.length; i += TAIL_BATCH_SIZE) {
             const batch = records.slice(i, i + TAIL_BATCH_SIZE);
-            const batchUsages = await Promise.all(batch.map((r) => extractTailUsage(r.filePath)));
-            usages.push(...batchUsages);
+            usages.push(...(await extractTailUsages(batch.map((r) => r.filePath))));
         }
 
         // `refresh: false` is a diagnostic (a dry run, `hub rules test`): it may read and compute, never write.

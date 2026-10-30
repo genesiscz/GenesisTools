@@ -1203,3 +1203,88 @@ describe("tmuxCmuxLocations", () => {
         expect(asked).toBe(0);
     });
 });
+
+describe("findSessionTargets follows a continued session", () => {
+    const CONTINUED = "0ef8d65a-1111-4222-8333-444444444444";
+    const livePane = pane({
+        id: "pane:7",
+        workspaceId: "workspace:11",
+        surfaces: [surface({ id: "surface:7", title: restoredTitle(SESSION_A), selected: true })],
+    });
+
+    function deps(overrides: Partial<ResolveDeps> = {}): ResolveDeps {
+        return {
+            identify: async () => undefined,
+            fetchSnapshot: async () => snapshot([livePane]),
+            lookupRefs: () => null,
+            lookupSession: async (query) => ({ aliases: [], sessionId: query }),
+            tmuxHosts: async () => [],
+            continuedIn: async (sessionId) => (sessionId === CONTINUED ? SESSION_A : undefined),
+            ...overrides,
+        };
+    }
+
+    test("an id that continued in another session resolves to the pane of its live id", async () => {
+        const result = await findSessionTargets(CONTINUED, { deps: deps(), exact: true });
+
+        expect(result.continuedFrom).toBe(CONTINUED);
+        expect(result.targets.map((target) => [target.surfaceId, target.matchedOn])).toEqual([
+            ["surface:7", "title-id"],
+        ]);
+        expect(identifiesExactSession(result)).toBe(true);
+    });
+
+    test("the live id's recorded pane wins, as it does for a query that names it", async () => {
+        const result = await findSessionTargets(CONTINUED, {
+            deps: deps({
+                lookupRefs: (query) =>
+                    query === SESSION_A
+                        ? {
+                              sessionId: SESSION_A,
+                              workspaceId: "WS-UUID",
+                              surfaceId: "S7-UUID",
+                              workspaceRef: "workspace:1",
+                              paneRef: "pane:7",
+                              surfaceRef: "surface:7",
+                              windowRef: null,
+                              tmuxPane: null,
+                              cwd: null,
+                              at: 1,
+                          }
+                        : null,
+            }),
+        });
+
+        expect(result.source).toBe("recorded");
+        expect(result.continuedFrom).toBe(CONTINUED);
+        expect(result.targets.map((target) => target.surfaceId)).toEqual(["S7-UUID"]);
+    });
+
+    test("a session that did not continue, or whose pointer cannot be read, is searched as named", async () => {
+        const plain = await findSessionTargets(SESSION_A, { deps: deps() });
+        expect(plain.continuedFrom).toBeUndefined();
+        expect(plain.targets.map((target) => target.surfaceId)).toEqual(["surface:7"]);
+
+        const unreadable = await findSessionTargets(CONTINUED, {
+            deps: deps({ continuedIn: async () => Promise.reject(new Error("index locked")) }),
+        });
+        expect(unreadable.continuedFrom).toBeUndefined();
+        expect(unreadable.targets).toEqual([]);
+    });
+
+    test("a pointer loop stops at the last new id instead of following it forever", async () => {
+        let asked = 0;
+        const result = await findSessionTargets(CONTINUED, {
+            deps: deps({
+                continuedIn: async (sessionId) => {
+                    asked++;
+                    return sessionId === CONTINUED ? SESSION_A : CONTINUED;
+                },
+            }),
+        });
+
+        expect(asked).toBe(2);
+        expect(result.continuedFrom).toBe(CONTINUED);
+        expect(result.targets.map((target) => target.surfaceId)).toEqual(["surface:7"]);
+    });
+});

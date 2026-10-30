@@ -36,6 +36,11 @@ export interface SessionTargetsResult {
     unavailable: string | false;
     /** Where the session runs in tmux, when it does and no cmux pane shows it: the reason for an empty result. */
     tmuxHosts?: TmuxHost[];
+    /**
+     * The id the query named, when that session had continued in another one: the targets are then the live
+     * session's, and `targets[n].sessionIds` name the live id.
+     */
+    continuedFrom?: string;
 }
 
 export interface ResolveDeps {
@@ -45,6 +50,8 @@ export interface ResolveDeps {
     lookupRefs?: (query: string) => SessionCmuxRefs | null;
     /** The tmux panes a session runs in (`findTmuxHosts`). */
     tmuxHosts?: (sessionId: string) => Promise<TmuxHost[]>;
+    /** The session this one continued in (one hop), when it did; default: the Claude reader's `continuedIn`. */
+    continuedIn?: (sessionId: string) => Promise<string | undefined>;
 }
 
 export interface FindSessionTargetsOpts {
@@ -53,7 +60,31 @@ export interface FindSessionTargetsOpts {
     exact?: boolean;
     /** Skip the hook-recorded shortcut — the retry path after stale refs failed. */
     skipRecorded?: boolean;
+    /** Follow a full session id that continued in another session to its live id (default true). */
+    followContinued?: boolean;
     deps?: ResolveDeps;
+}
+
+/**
+ * The session a Claude session continued in, by its id: the transcript's path from the history index as it is (no
+ * refresh; the old session is long indexed), then the reader's `continuedIn`. The index is read once per lookup.
+ */
+function claudeContinuedIn(): (sessionId: string) => Promise<string | undefined> {
+    let sessions: Promise<{ sessionId: string | null; filePath: string }[]> | undefined;
+
+    return async (sessionId) => {
+        sessions ??= import("@app/claude/lib/history/search").then(async ({ getSessionListing }) => {
+            return (await getSessionListing({ excludeSubagents: true, refresh: false })).sessions;
+        });
+        const filePath = (await sessions).find((session) => session.sessionId?.toLowerCase() === sessionId)?.filePath;
+
+        if (!filePath) {
+            return undefined;
+        }
+
+        const { readSessionsContinuedIn } = await import("@genesiscz/utils/agent-sessions/session-backward");
+        return (await readSessionsContinuedIn({ kind: "claude", transcriptPaths: [filePath] })).get(filePath);
+    };
 }
 
 /** A session id (or prefix) as `focus`/`send` accept it. */
@@ -210,6 +241,10 @@ export function tmuxMissHint(result: Pick<SessionTargetsResult, "tmuxHosts">): s
  * A session known to run in tmux with no cmux pane on its tmux session skips the weak `cwd` and `screen`
  * fallbacks: where it runs is known, and no pane shows it, so a pane in the same folder is not it.
  *
+ * A full session id with no recorded pane that continued in another session (Claude Code's ← key or `/background`
+ * hand the conversation to a new id) is searched as its live id: the old id runs nowhere, while the cache band chip
+ * and a queued decision answer still name it (2026-10-30: a chip named ef8d65 after it had continued as 68f2bba6).
+ *
  * Non-id queries keep the single selected-previews pass `focus` always used.
  */
 export async function findSessionTargets(
@@ -268,6 +303,35 @@ export async function findSessionTargets(
 
         if (target) {
             return { targets: [target], source: "recorded", identity: await identityPromise, unavailable: false };
+        }
+    }
+
+    const continuedFrom =
+        sessionQuery && opts.followContinued !== false && FULL_SESSION_ID.test(queryTrim)
+            ? queryTrim.toLowerCase()
+            : null;
+    // A test that injects no lookup gets none: the real one reads this machine's history index and transcripts.
+    const successorOf = deps.continuedIn ?? (isTestProcess() ? undefined : claudeContinuedIn());
+
+    if (continuedFrom && successorOf) {
+        // Loaded here, not at the top: the reader registry costs a `send` or `focus` that resolves a recorded pane
+        // about 130 ms of start-up, and only this slower path needs it.
+        const { followSessionContinuations } = await import("@genesiscz/utils/agent-sessions/session-backward");
+        const { liveId, chain } = await followSessionContinuations(continuedFrom, (sessionId) =>
+            successorOf(sessionId).catch((err) => {
+                log.debug({ err, sessionId }, "continued-in lookup failed; searching for the id as named");
+                return undefined;
+            })
+        );
+
+        if (liveId !== continuedFrom) {
+            log.info({ query: continuedFrom, liveId, chain }, "the session continued in another id; searching for it");
+            const live = await findSessionTargets(liveId, {
+                ...opts,
+                followContinued: false,
+                deps: { ...deps, identify: () => identityPromise },
+            });
+            return { ...live, continuedFrom };
         }
     }
 

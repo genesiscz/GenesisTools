@@ -58,6 +58,93 @@ export async function readSessionTurnBoundary({
 }
 
 /**
+ * The session each transcript continued in (`NativeSessionReader.continuedIn`), keyed by transcript path; a transcript
+ * that was not continued, or that no source owns, is absent. One discovery serves every path, so a listing that reads
+ * many tails pays for it once.
+ */
+export async function readSessionsContinuedIn({
+    kind,
+    transcriptPaths,
+    signal,
+}: {
+    kind: string;
+    transcriptPaths: readonly string[];
+    signal?: AbortSignal;
+}): Promise<Map<string, string>> {
+    const successors = new Map<string, string>();
+
+    if (transcriptPaths.length === 0) {
+        return successors;
+    }
+
+    const { reader } = resolveHistoryProvider(kind);
+    const found = await reader.discover(reader.roots(), { filePaths: [...transcriptPaths], signal });
+
+    for (const issue of found.issues) {
+        logger.debug(issue, "Continued-in discovery issue");
+    }
+
+    for (const path of transcriptPaths) {
+        const source = found.sources.find(
+            (candidate) => candidate.filePath === path || candidate.dataPaths.includes(path)
+        );
+
+        if (!source) {
+            logger.debug({ path, kind }, "No session source to read a continued-in pointer from");
+            continue;
+        }
+
+        const successor = await reader.continuedIn(source);
+
+        if (successor) {
+            successors.set(path, successor);
+        }
+    }
+
+    return successors;
+}
+
+/** Where following a session's continued-in pointers ended: the live id, and every id on the way, oldest first. */
+export interface SessionContinuation {
+    liveId: string;
+    chain: string[];
+}
+
+/** A conversation is handed on a few times at most; a longer chain is a loop in the data, not a conversation. */
+const MAX_CONTINUATION_HOPS = 16;
+
+/**
+ * Follows a session through the sessions it continued in to the one that goes on (Claude Code's ← key or
+ * `/background` hand a conversation to a new id). `successorOf` answers one hop; a pointer back to an id already on
+ * the chain, or a chain past the hop limit, stops at the last new id and logs it.
+ */
+export async function followSessionContinuations(
+    sessionId: string,
+    successorOf: (sessionId: string) => Promise<string | undefined>
+): Promise<SessionContinuation> {
+    const chain = [sessionId];
+
+    for (let hop = 0; hop < MAX_CONTINUATION_HOPS; hop++) {
+        const current = chain[chain.length - 1];
+        const next = await successorOf(current);
+
+        if (!next) {
+            return { liveId: current, chain };
+        }
+
+        if (chain.includes(next)) {
+            logger.warn({ sessionId, chain, next }, "Continued-in pointers form a loop; stopping at the last new id");
+            return { liveId: current, chain };
+        }
+
+        chain.push(next);
+    }
+
+    logger.warn({ sessionId, chain, maxHops: MAX_CONTINUATION_HOPS }, "Continued-in chain stopped at its hop limit");
+    return { liveId: chain[chain.length - 1], chain };
+}
+
+/**
  * A session's rows from a byte offset to its end, through its provider's reader (`NativeSessionReader.readForward`):
  * the door an incremental scan uses, so it reads only what was appended since its last `endOffset`.
  */
