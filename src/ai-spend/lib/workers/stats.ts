@@ -99,6 +99,21 @@ function sessionKey(backend: WorkerBackend, sessionId: string | null, name: stri
 }
 
 /**
+ * The id ai-spend keys a worker session's usage by, from its native session id. Codex keys usage by the rollout's
+ * file name (`rollout-<time>-<thread id>`), so the thread's rollout is looked up on disk (null when it is not there);
+ * Claude and Grok key it by the session id itself.
+ */
+const SPEND_SESSION_ID: Record<WorkerBackend, (sessionId: string, home: string | null | undefined) => string | null> = {
+    claude: (sessionId) => sessionId,
+    codex: (sessionId, home) => {
+        const rollout = findCodexRollout(sessionId, home ? [home] : undefined);
+
+        return rollout ? transcriptStem(basename(rollout)) : null;
+    },
+    grok: (sessionId) => sessionId,
+};
+
+/**
  * One worker session's transcript events, through ai-spend's own loader. The session's home is
  * handed over as a discovered home, because a worker may run in one ai-spend never walks by
  * default (`--worker-home`, `worker-home-noskills`, a codex `--home`). null when no transcript
@@ -113,17 +128,10 @@ export function loadWorkerSessionEvents(
     }
 
     const homes = session.home ? [{ home: session.home }] : [];
-    let id = session.sessionId;
+    const id = SPEND_SESSION_ID[session.backend](session.sessionId, session.home);
 
-    // ai-spend keys codex usage by the rollout's file name (`rollout-<time>-<thread id>`).
-    if (session.backend === "codex") {
-        const rollout = findCodexRollout(session.sessionId, session.home ? [session.home] : undefined);
-
-        if (!rollout) {
-            return null;
-        }
-
-        id = transcriptStem(basename(rollout));
+    if (id === null) {
+        return null;
     }
 
     // The by-name door only: `loadEvents` would fall back to reading EVERY Claude transcript

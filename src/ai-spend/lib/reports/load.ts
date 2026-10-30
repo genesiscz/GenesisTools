@@ -1,13 +1,14 @@
 import type { AccountEntry } from "@genesiscz/utils/ai/config/schema";
 import type { DiscoveredHome } from "@genesiscz/utils/ai/providers/account-features";
-import { CLAUDE_ALL_ACCOUNT_ID, UNBOUND_ACCOUNT_ID } from "@genesiscz/utils/ai/usage";
+import { UNBOUND_ACCOUNT_ID } from "@genesiscz/utils/ai/usage";
 import { logger } from "@genesiscz/utils/logger";
-import type { AgentId } from "../drivers";
+import { type AgentId, spendAccountRowId } from "../drivers";
 import { prof } from "../prof";
 import type { PricingTable } from "../types";
 import { priceCandidates as defaultCandidates, eventCost } from "./cost";
 import { inDayWindow, zonedDay } from "./dates";
 import {
+    isNativeSource,
     type LoadNativeOptions,
     loadClaudeEvents,
     loadCodexEvents,
@@ -98,7 +99,7 @@ function loadExtraSources(
     const events: SpendEvent[] = [];
 
     for (const source of SOURCE_IDS) {
-        if (source === "claude" || source === "codex" || source === "grok" || !wanted.has(source)) {
+        if (isNativeSource(source) || !wanted.has(source)) {
             continue;
         }
 
@@ -188,7 +189,7 @@ export function dedupEvents(events: SpendEvent[]): SpendEvent[] {
 }
 
 export function candidatesFor(event: SpendEvent): string[] {
-    if (event.source === "claude" || event.source === "codex" || event.source === "grok") {
+    if (isNativeSource(event.source)) {
         return nativePriceCandidates(event.source, event.model);
     }
 
@@ -205,8 +206,8 @@ export function pricedEventCost(event: SpendEvent, pricing: PricingTable, mode: 
  * anything no account claims is `(unbound)` rather than being dropped.
  */
 export function spendEventAccountId(event: SpendEvent): string {
-    if (event.source === "claude") {
-        return CLAUDE_ALL_ACCOUNT_ID;
+    if (isNativeSource(event.source)) {
+        return spendAccountRowId(event.source, event.accountId);
     }
 
     return event.accountId ?? UNBOUND_ACCOUNT_ID;

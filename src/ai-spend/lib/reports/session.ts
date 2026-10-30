@@ -3,7 +3,7 @@ import type { PricingTable } from "../types";
 import { totalTokensOf } from "./cost";
 import { lastSinceDay, zonedDay } from "./dates";
 import { filterEvents, pricedEventCost } from "./load";
-import type { CostMode, ModelBreakdownJson, SourceId, SpendEvent } from "./types";
+import { type CostMode, type ModelBreakdownJson, SOURCE_JSON_SHAPE, type SourceId, type SpendEvent } from "./types";
 
 export interface SessionBuildOptions {
     timezone: string;
@@ -161,7 +161,7 @@ export function buildSessionReport(events: SpendEvent[], options: SessionBuildOp
         };
     }
 
-    if (options.source === "codex") {
+    if (options.source && SOURCE_JSON_SHAPE[options.source] === "models-map") {
         return {
             sessions: rows.map((row) => {
                 const models: Record<string, unknown> = {};
