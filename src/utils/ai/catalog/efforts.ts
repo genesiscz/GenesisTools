@@ -8,12 +8,45 @@ export const REASONING_EFFORTS = ["none", "minimal", "low", "medium", "high", "x
 
 export type ReasoningEffort = (typeof REASONING_EFFORTS)[number];
 
+type Between<
+    List extends readonly string[],
+    From extends string,
+    To extends string,
+    Started extends boolean = false,
+> = List extends readonly [infer Head extends string, ...infer Rest extends readonly string[]]
+    ? Started extends true
+        ? Head extends To
+            ? Head
+            : Head | Between<Rest, From, To, true>
+        : Head extends From
+          ? Head extends To
+              ? Head
+              : Head | Between<Rest, From, To, true>
+          : Between<Rest, From, To, false>
+    : never;
+
+/**
+ * The efforts from `From` to `To` as a type, both included, so a provider's subset is written once as a range and
+ * never as a union literal of its own: `type ReviewEffort = EffortRange<"low", "max">` is
+ * `"low" | "medium" | "high" | "xhigh" | "max"`. The runtime twin is `effortRange(from, to)`.
+ */
+export type EffortRange<From extends ReasoningEffort, To extends ReasoningEffort> = Between<
+    typeof REASONING_EFFORTS,
+    From,
+    To
+>;
+
 /** The efforts from `from` to `to`, both included, weakest first: `effortRange("low", "max")`. */
 export function effortRange<From extends ReasoningEffort, To extends ReasoningEffort>(
     from: From,
     to: To
-): ReasoningEffort[] {
-    return REASONING_EFFORTS.slice(REASONING_EFFORTS.indexOf(from), REASONING_EFFORTS.indexOf(to) + 1);
+): EffortRange<From, To>[] {
+    const first = REASONING_EFFORTS.indexOf(from);
+    const last = REASONING_EFFORTS.indexOf(to);
+
+    return REASONING_EFFORTS.filter(
+        (effort, index): effort is EffortRange<From, To> => index >= first && index <= last
+    );
 }
 
 export function isReasoningEffort(value: unknown): value is ReasoningEffort {
