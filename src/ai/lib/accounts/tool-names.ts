@@ -5,7 +5,7 @@ import { toolCommand } from "@genesiscz/utils/cli/tool-command";
 /** The command a login variant's `nextStep` names, with this checkout's binary in front of its tool. */
 export function nextStepCommand(next: LoginNextStep): string {
     return suggestCommand(toolCommand(next.tool), {
-        ...(next.replaceCommand ? { replaceCommand: next.replaceCommand } : {}),
+        replaceCommand: next.replaceCommand ?? [],
         ...(next.add ? { add: next.add } : {}),
     });
 }

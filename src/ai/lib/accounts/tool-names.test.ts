@@ -27,6 +27,26 @@ describe("siblingCommandOf", () => {
 });
 
 describe("nextStepCommand", () => {
+    it("replaces the current login arguments and keeps leading global options", () => {
+        const originalArgv = process.argv;
+        const account = { name: "work" } as Parameters<typeof anthropicLongLogin.nextStep>[0];
+
+        try {
+            process.argv = ["bun", "index.ts", "login-secondary", "work"];
+            expect(nextStepCommand(anthropicSecondaryLogin.nextStep(account))).toBe("tools cc run work --keychain");
+
+            process.argv = ["bun", "index.ts", "--verbose=true", "login-secondary", "work"];
+            expect(nextStepCommand(anthropicSecondaryLogin.nextStep(account))).toBe(
+                "tools cc run work --verbose=true --keychain"
+            );
+
+            process.argv = ["bun", "index.ts", "login-long", "work"];
+            expect(nextStepCommand(anthropicLongLogin.nextStep(account))).toBe("tools claude start work");
+        } finally {
+            process.argv = originalArgv;
+        }
+    });
+
     it("prints the Claude login variants' launch commands with the binary in front", () => {
         const account = { name: "work" } as Parameters<typeof anthropicLongLogin.nextStep>[0];
 
