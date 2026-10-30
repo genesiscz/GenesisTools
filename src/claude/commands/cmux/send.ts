@@ -22,6 +22,8 @@ export interface SendOptions {
     enter?: boolean;
     paste?: boolean;
     exactSession?: boolean;
+    /** Type even while a dialog is open in the session; see `openDialogFor` in `@genesiscz/utils/agents/dialogs`. */
+    force?: boolean;
     enterDelay?: string;
     dryRun?: boolean;
     json?: boolean;

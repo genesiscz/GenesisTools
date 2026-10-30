@@ -19,6 +19,9 @@ import {
     SessionMessageTooLargeError,
     sessionMessageTextHash,
 } from "@genesiscz/utils/agent-sessions/message-queue";
+import { dialogRefusal, openDialogFor } from "@genesiscz/utils/agents/dialogs/guard";
+import type { DialogProvider, OpenDialog } from "@genesiscz/utils/agents/dialogs/types";
+import { resolveTranscript } from "@genesiscz/utils/ai/transcripts/resolve";
 import {
     type ClaudeLiveSession,
     claudeSessionsDir,
@@ -209,6 +212,30 @@ export interface DeliverDeps {
     findTargets?: (sessionId: string, opts: { skipRecorded?: boolean }) => Promise<SessionTargetsResult>;
     /** The panes that exist right now, to check a recorded ref against. */
     snapshot?: () => Promise<CmuxLiveSnapshot>;
+    /** Is a dialog open in the receiving session? Asked before text is typed into a pane; tests pass a fake. */
+    openDialog?: (input: OpenDialogInput) => Promise<OpenDialog | null> | OpenDialog | null;
+}
+
+export interface OpenDialogInput {
+    provider: DialogProvider;
+    sessionId: string;
+    sourceHome?: string;
+}
+
+/**
+ * State signals only: the hook records, then the transcript's turn state. A session whose transcript cannot be
+ * found still gets the hook records, so a permission prompt recorded by a hook blocks the typing either way.
+ */
+async function defaultOpenDialog(input: OpenDialogInput): Promise<OpenDialog | null> {
+    let transcriptPath: string | undefined;
+
+    try {
+        transcriptPath = (await resolveTranscript(input.sessionId, {}, input.provider)).filePath;
+    } catch (error) {
+        log.debug({ error, session: input.sessionId }, "no transcript for the dialog guard; hook records only");
+    }
+
+    return openDialogFor({ provider: input.provider, sessionId: input.sessionId, transcriptPath });
 }
 
 function codexWorkerFor(sessionId: string, sourceHome?: string): string | null {
@@ -423,7 +450,16 @@ export async function deliverToSession(
         sourceHome,
         text,
         deliveryKey,
-    }: { session: string; provider?: string; sourceHome?: string; text: string; deliveryKey?: string },
+        force = false,
+    }: {
+        session: string;
+        provider?: string;
+        sourceHome?: string;
+        text: string;
+        deliveryKey?: string;
+        /** Type into the pane even while a dialog is open there. The structural rungs never need it. */
+        force?: boolean;
+    },
     deps: DeliverDeps = {}
 ): Promise<DeliveryResult> {
     const run = deps.runTool ?? runTool;
@@ -663,6 +699,21 @@ export async function deliverToSession(
         throw new DeliveryUnknownError(
             "Codex did not return a valid input acknowledgement. Check the conversation before retrying."
         );
+    }
+
+    // The last rung types free text into the pane, so it is the only one a dialog can swallow. Structural rungs
+    // (the Claude peer socket, an owned worker, the Codex app-server) answered above and never reach this.
+    if (!force && (nativeProvider === "claude" || nativeProvider === "codex" || nativeProvider === "grok")) {
+        const dialog = await (deps.openDialog ?? defaultOpenDialog)({
+            provider: nativeProvider,
+            sessionId: session,
+            sourceHome,
+        });
+
+        if (dialog) {
+            log.warn({ session, provider, dialog }, "a dialog is open in the session; the text is not typed");
+            return undelivered(dialogRefusal(dialog));
+        }
     }
 
     // After `--`: a message that starts with a hyphen is text, not an option.
