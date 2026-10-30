@@ -16,7 +16,7 @@ export type DialogKeyMap =
 
 /**
  * Measured live on 2026-10-30 21:51 to 21:53 (Claude Code 2.1.314, Haiku, a scratch session in a background cmux
- * tab; GenesisBrain Dev/Agents/DecisionDetection.md, section 2026-10-30 21:58). In the AskUserQuestion dialog:
+ * tab; GenesisBrain Dev/Agents/DecisionDetection.md, section 2026-10-30 22:07). In the AskUserQuestion dialog:
  *
  * - The digit of an option, typed as text, picks that option AND submits it in one press, wherever the highlight is
  *   ("2" with the highlight on option 3 answered option 2). `cmux send-key 2` is refused ("Unknown key").
