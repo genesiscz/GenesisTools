@@ -1,7 +1,6 @@
 import { readFileSync } from "node:fs";
 import { join } from "node:path";
-import { ACCOUNT_PROVIDER_ALIASES, byHarness, byHarnessWhere } from "@genesiscz/utils/ai/providers/alias-list";
-import { harnessHooks } from "@genesiscz/utils/ai/providers/harness-hooks";
+import { ACCOUNT_PROVIDER_ALIASES } from "@genesiscz/utils/ai/providers/alias-list";
 import type { HarnessId } from "@genesiscz/utils/harness/types";
 import { SafeJSON } from "@genesiscz/utils/json";
 import { genesisToolsDir, toolDataDir } from "@genesiscz/utils/storage/root";
@@ -502,15 +501,16 @@ export function defaultLogPath(): string {
  * reading the note. `destructive` rules always block regardless of length.
  *
  * The zsh glob qualifier only misfires under Claude Code, which sets
- * NO_BARE_GLOB_QUAL; a harness whose own zsh honours `(N)` allows it (`honoursBareGlobQualifier`).
+ * NO_BARE_GLOB_QUAL; Codex's and Grok's own zsh honour `(N)`, so they allow it.
  */
 export const DEFAULT_HOOKS_CONFIG: HooksConfig = {
     guard: {
         enabled: true,
         default: {},
-        harnesses: byHarnessWhere((id) =>
-            harnessHooks(id).honoursBareGlobQualifier ? { "zsh-glob-qualifier": "allow" } : undefined
-        ),
+        harnesses: {
+            codex: { "zsh-glob-qualifier": "allow" },
+            grok: { "zsh-glob-qualifier": "allow" },
+        },
         models: {},
         longCommand: { lines: 30, chars: 2500 },
         contextCapPerSession: 3,
@@ -546,9 +546,16 @@ export const DEFAULT_HOOKS_CONFIG: HooksConfig = {
         maxMessageChars: 9_900,
         commandLines: 3,
         categories: { source: true, formatting: true, log: false, generated: false },
-        // 🛑 OFF where the harness cannot show a diff (`rendersAnsiDiffs`; Grok, observed 2026-09-22, the reason is in
-        // its driver's hooks part). The capture is skipped too, so such a session pays nothing for a render.
-        harnesses: byHarnessWhere((id) => (harnessHooks(id).rendersAnsiDiffs ? undefined : { enabled: false })),
+        harnesses: {
+            // 🛑 OFF for Grok, because Grok cannot show a diff. Observed 2026-09-22 on a real
+            // PostToolUse message: it prints the escape sequences as literal text (`[1mUpdated`
+            // with the ESC byte eaten), and it cuts the message after about 200 characters,
+            // ending `-impo… [+7768 chars]`. So one file HEADER already overflows it, and no
+            // setting of `maxMessageChars` or `highlight` makes 200 characters a diff. The
+            // capture is skipped too, so a Grok session pays nothing for a render it cannot
+            // have. Claude and Codex both render it correctly and are unaffected.
+            grok: { enabled: false },
+        },
     },
     decisions: {
         stopHook: "off",
@@ -561,7 +568,7 @@ export const DEFAULT_HOOKS_CONFIG: HooksConfig = {
         injectAnswers: false,
         staleness: { warnAfterMinutes: 30, alarmAfterMinutes: 120, notify: true },
     },
-    questions: { harnesses: byHarness(() => false), notify: true },
+    questions: { harnesses: { claude: false, codex: false, grok: false }, notify: true },
     agentsTalk: { hint: true },
     // Every mod past the full diff and the idle compaction starts off: `tools agents hooks mods enable <name> --write`.
     mods: {
@@ -1314,7 +1321,11 @@ function mergeQuestions(stored: unknown): QuestionsConfig {
     const harnesses = partOf(part.harnesses);
 
     return {
-        harnesses: byHarness((id) => boolOr(harnesses[id], base.harnesses[id])),
+        harnesses: {
+            claude: boolOr(harnesses.claude, base.harnesses.claude),
+            codex: boolOr(harnesses.codex, base.harnesses.codex),
+            grok: boolOr(harnesses.grok, base.harnesses.grok),
+        },
         notify: boolOr(part.notify, base.notify),
     };
 }
