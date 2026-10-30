@@ -1,3 +1,5 @@
+import { harnessDriver } from "@genesiscz/utils/ai/providers/harness-index";
+
 /**
  * Which `ps` lines are a grok process, and what kind.
  *
@@ -15,7 +17,7 @@ export function classifyGrokArgs(args: string): GrokProcessKind | null {
     const tokens = args.split(/\s+/);
     const base = (tokens[0] ?? "").split("/").pop() ?? "";
 
-    if (base !== "grok") {
+    if (base !== harnessDriver("grok").identity.binary) {
         return null;
     }
 

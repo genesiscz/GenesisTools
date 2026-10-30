@@ -6,13 +6,13 @@
  * on stdout. Driven by `session-listing.ts`; run alone to look at one sample.
  */
 import { resolveHistoryProvider } from "@genesiscz/utils/agent-sessions/provider";
+import { ACCOUNT_PROVIDER_ALIASES } from "@genesiscz/utils/ai/providers/alias-list";
 import { SafeJSON } from "@genesiscz/utils/json";
 
-const PROVIDERS = ["claude", "grok", "codex"] as const;
 const metrics: Record<string, number> = {};
 
 for (const pass of ["cold", "warm"] as const) {
-    for (const name of PROVIDERS) {
+    for (const name of ACCOUNT_PROVIDER_ALIASES) {
         const provider = resolveHistoryProvider(name);
         const roots = provider.reader.roots();
         const cpuStarted = process.cpuUsage();

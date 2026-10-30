@@ -484,6 +484,10 @@ export async function pasteIntoSurface(input: {
     };
 }
 
+/**
+ * The one table of the message part: each driver is this tool's code (Claude's peer channel, the Codex thread queue,
+ * Grok's leader), which the harness drivers in `src/utils` cannot import (harness guard).
+ */
 const MESSAGE_DRIVERS: Record<TurnProvider, () => MessageDriver> = {
     claude: claudeMessageDriver,
     codex: codexMessageDriver,

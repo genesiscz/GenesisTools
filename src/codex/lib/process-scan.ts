@@ -1,3 +1,5 @@
+import { harnessDriver } from "@genesiscz/utils/ai/providers/harness-index";
+
 /**
  * Which `ps` lines are a codex process, and what kind.
  *
@@ -14,7 +16,7 @@ export function classifyCodexArgs(args: string): CodexProcessKind | null {
     const tokens = args.split(/\s+/);
     const base = (tokens[0] ?? "").split("/").pop() ?? "";
 
-    if (base === "codex") {
+    if (base === harnessDriver("codex").identity.binary) {
         return tokens.includes("app-server") ? "app-server" : "tui";
     }
 

@@ -6,7 +6,9 @@ import { dirname, join, resolve } from "node:path";
 import { performance } from "node:perf_hooks";
 import { historyDatabasePath } from "../../src/utils/agent-sessions/database";
 import { openHistoryService } from "../../src/utils/agent-sessions/open-service";
+import { ACCOUNT_PROVIDER_ALIASES } from "../../src/utils/ai/providers/alias-list";
 import { env } from "../../src/utils/env";
+import type { HarnessId } from "../../src/utils/harness/types";
 import { SafeJSON } from "../../src/utils/json";
 
 const OBSERVATIONS = ["usage_snapshots", "spend_snapshots"] as const;
@@ -59,7 +61,7 @@ function observations(database: Database) {
 export async function rehearseHistoryCorpus(options: {
     source: string;
     output: string;
-    roots?: Partial<Record<"claude" | "codex" | "grok", string[]>>;
+    roots?: { readonly [Provider in HarnessId]?: string[] };
 }) {
     const source = resolve(options.source);
     if ([source, `${source}-wal`, `${source}-shm`].includes(resolve(options.output))) {
@@ -83,7 +85,7 @@ export async function rehearseHistoryCorpus(options: {
         database = new Database(copy);
         const before = observations(database);
         const providers = [];
-        for (const provider of ["claude", "codex", "grok"] as const) {
+        for (const provider of ACCOUNT_PROVIDER_ALIASES) {
             const started = performance.now();
             const service = openHistoryService({ provider, database, roots: options.roots?.[provider] });
             const synced = await service.sync();

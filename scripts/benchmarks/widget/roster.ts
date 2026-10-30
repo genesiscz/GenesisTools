@@ -23,9 +23,15 @@
 import { resolve } from "node:path";
 import { compareToBaseline, formatComparison, recordBaseline } from "@app/benchmark/lib";
 import type { AgentParent } from "@app/hub/lib/agents/types";
-import { readWidgetRoster, refreshWidgetIndex, type WidgetRoster } from "@app/hub/lib/widget/roster-index";
+import {
+    readWidgetRoster,
+    refreshWidgetIndex,
+    type WidgetRoster,
+    type WidgetRosterScope,
+} from "@app/hub/lib/widget/roster-index";
 import { discoverWidgetCatalog } from "@app/hub/lib/widget/snapshot";
 import { withoutListingReuse } from "@genesiscz/utils/agent-sessions/listing-freshness";
+import { ACCOUNT_PROVIDER_ALIASES } from "@genesiscz/utils/ai/providers/alias-list";
 import { collectOutput, runTool } from "@genesiscz/utils/cli";
 import { SafeJSON } from "@genesiscz/utils/json";
 import { out } from "@genesiscz/utils/logger";
@@ -121,7 +127,7 @@ async function parityTriple(only?: Set<string>) {
         return canonical(await readWidgetRoster());
     };
     const readNew = async () => {
-        await refreshWidgetIndex(new Set(["claude", "claude-agents", "codex", "grok"]));
+        await refreshWidgetIndex(new Set<WidgetRosterScope>([...ACCOUNT_PROVIDER_ALIASES, "claude-agents"]));
         return canonical(await readWidgetRoster());
     };
     const before = await readOld();

@@ -1,6 +1,9 @@
 import { nativeHomePath } from "@genesiscz/utils/providers/session-paths";
 
-/** The session trees the walk benchmarks read (read-only), shaped like the listing walks them. */
+/**
+ * The session trees the walk benchmarks read (read-only), shaped like the listing walks them. The keys are tree names
+ * the baselines record (`claude-listing`, `claude-all`, `grok`, `codex`), not the harness set (harness guard).
+ */
 export const WALK_TREES = {
     /** The Claude listing: project folders only (`maxDepth: 1`), as `excludeAgents` walks them. */
     "claude-listing": { roots: [nativeHomePath("claude", "projects")], names: [], endsWith: [".jsonl"], maxDepth: 1 },
