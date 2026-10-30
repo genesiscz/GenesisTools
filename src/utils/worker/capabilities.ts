@@ -7,8 +7,8 @@
  * a missing capability is declared, never emulated or silently degraded.
  */
 
-import type { AccountProviderAlias } from "@genesiscz/utils/ai/providers/alias-list";
-import { byHarness, harnessWorker } from "@genesiscz/utils/ai/providers/harness-index";
+import { type AccountProviderAlias, byHarness } from "@genesiscz/utils/ai/providers/alias-list";
+import { harnessWorker } from "@genesiscz/utils/ai/providers/harness-index";
 
 export type WorkerBackend = AccountProviderAlias;
 

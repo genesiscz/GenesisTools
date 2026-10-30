@@ -3,7 +3,7 @@ import { homedir } from "node:os";
 import { join } from "node:path";
 import type { AccountEntry } from "@genesiscz/utils/ai/config/schema";
 import type { DiscoveredHome } from "@genesiscz/utils/ai/providers/account-features";
-import { byHarness } from "@genesiscz/utils/ai/providers/harness-index";
+import { byHarness } from "@genesiscz/utils/ai/providers/alias-list";
 import { CLAUDE_ALL_ACCOUNT_ID, CLAUDE_ALL_ACCOUNT_NAME } from "@genesiscz/utils/ai/usage";
 import { isZstdPath } from "@genesiscz/utils/compress/zstd";
 import { readWholeTextSync } from "@genesiscz/utils/fs/read-lines";

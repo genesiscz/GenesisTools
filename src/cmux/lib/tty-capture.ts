@@ -1,7 +1,7 @@
 import { homedir } from "node:os";
 import { agentOfCommand } from "@app/cmux/lib/tab-process";
 
-import { byHarness } from "@genesiscz/utils/ai/providers/harness-index";
+import { byHarness } from "@genesiscz/utils/ai/providers/alias-list";
 import { listProcesses, readProcess } from "@genesiscz/utils/process/processes";
 import { isShellProgram } from "@genesiscz/utils/shell/programs";
 

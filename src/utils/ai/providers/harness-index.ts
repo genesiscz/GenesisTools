@@ -121,8 +121,6 @@ export function harnessWorker(id: HarnessId): WorkerCapabilities {
     return slot;
 }
 
-export { byHarness } from "./alias-list";
-
 /** The static facts about a harness's transcript shape; every harness has them. */
 export function harnessTranscriptFacts(id: HarnessId): TranscriptFacts {
     const slot = harnessDriver(id).parts.transcript;
