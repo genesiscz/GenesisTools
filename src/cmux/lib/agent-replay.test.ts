@@ -763,7 +763,7 @@ describe("correctNativeResumeBindings", () => {
         expect(corrected.drift).toContain("resume target recovered from cmux autosave (claude)");
     });
 
-    test("a retarget to an account-less session keeps the 'cc run will ask' warning", () => {
+    test("a retarget to an account-less session keeps the 'run will ask' warning", () => {
         const a = "aaaaaaaa-1111-4111-8111-111111111111";
         const b = "bbbbbbbb-2222-4222-8222-222222222222";
         const surface = terminal("✳ Rewrite the invoice collector", {
@@ -780,7 +780,7 @@ describe("correctNativeResumeBindings", () => {
         const corrected = first(correctNativeResumeBindings(profileWith([surface]), catalog(sessions)));
 
         expect(corrected.command).toBe(`tools cc run -- --resume ${b}`);
-        expect(corrected.drift).toContain("no account recorded for this session — cc run will ask for one");
+        expect(corrected.drift).toContain("no account recorded for this session — tools claude run will ask for one");
     });
 
     test("a binding the title agrees with is left exactly as it was", () => {

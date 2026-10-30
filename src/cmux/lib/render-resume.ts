@@ -9,6 +9,7 @@ import {
 } from "@app/cmux/lib/launchers";
 import type { AccountProviderAlias } from "@genesiscz/utils/ai/providers/alias-list";
 import { harnessLaunch } from "@genesiscz/utils/ai/providers/harness-index";
+import { toolCommand } from "@genesiscz/utils/cli/tool-command";
 import type { LaunchRecipe } from "@genesiscz/utils/harness/parts";
 import { shellWords } from "@genesiscz/utils/session-changes/words";
 import { shellWord } from "@genesiscz/utils/shell/quote";
@@ -356,11 +357,12 @@ function passthroughStart(command: string): number | undefined {
     return separator?.end;
 }
 
-/** How each agent's own binary reads a resume target, and its launcher: the driver's launch recipe. */
+/**
+ * How each agent's own binary reads a resume target (the driver's launch recipe), and the launcher that starts it on
+ * an account (`tools <agent> run <account>`; Claude's used to read `cc`, its shell alias).
+ */
 function nativeResume(kind: AccountProviderAlias): LaunchRecipe["resumeSyntax"] & { launcher: string } {
-    const launch = harnessLaunch(kind);
-
-    return { ...launch.resumeSyntax, launcher: launch.launcher };
+    return { ...harnessLaunch(kind).resumeSyntax, launcher: toolCommand(kind) };
 }
 
 /** A wrapper's own resume flag, before `--`: it runs a search that can prompt, so it is never a replay target. */
