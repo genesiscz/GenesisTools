@@ -1,9 +1,7 @@
 import { ACCOUNT_PROVIDER_ALIASES } from "@genesiscz/utils/ai/providers/alias-list";
 import { logger } from "@genesiscz/utils/logger";
 import { snippetAround } from "@genesiscz/utils/string";
-import { createCodexAdapter } from "./codex-sessions";
-import { createGrokAdapter } from "./grok-sessions";
-import { createClaudeAdapter } from "./native-adapter";
+import { createNativeHistoryAdapter } from "./native-adapter";
 import type { AgentSearchFilters, AgentSearchHit, AgentSessionAdapter, NativeHistoryEntry } from "./types";
 
 // `tools hub search`: one query over every provider's indexed sessions. There is no second index:
@@ -70,11 +68,10 @@ export interface SessionSearchResult {
 
 export type SearchAdapters = Partial<Record<SearchProvider, () => AgentSessionAdapter<string>>>;
 
-export const realSearchAdapters: SearchAdapters = {
-    claude: () => createClaudeAdapter(),
-    codex: () => createCodexAdapter(),
-    grok: () => createGrokAdapter(),
-};
+/** Every harness's own history adapter, the one behind `tools <provider> history`, resolved through its plugin. */
+export const realSearchAdapters: SearchAdapters = Object.fromEntries(
+    SEARCH_PROVIDERS.map((kind) => [kind, () => createNativeHistoryAdapter({ kind })])
+);
 
 export function isSearchProvider(value: string): value is SearchProvider {
     return (SEARCH_PROVIDERS as readonly string[]).includes(value);
