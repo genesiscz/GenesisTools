@@ -386,10 +386,8 @@ export function liveSessionCloseIO(store: SessionStore): SessionCloseIO {
                 return;
             }
 
-            const where = surfaceTargetArgs(surfaceTarget(record));
-            await runCmuxOk(["send", ...where, "--", text]);
-            await Bun.sleep(300);
-            await runCmuxOk(["send-key", ...where, "enter"]);
+            // One paste with its submit: no gap between the text and Enter for anything to type into.
+            await runCmuxOk(["paste", ...surfaceTargetArgs(surfaceTarget(record)), "--submit", "--", text]);
         },
         async agentRunning(record) {
             if (isAdopted(record)) {

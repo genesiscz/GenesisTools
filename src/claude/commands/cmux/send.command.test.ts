@@ -578,3 +578,19 @@ test("Claude's registry status `waiting` is an open dialog for that session only
     expect(claudeRegistryDialog(SESSION_A, () => [{ ...entry, parkedJobId: "job-1" }])).toBeNull();
     expect(claudeRegistryDialog("another-session", () => [entry])).toBeNull();
 });
+
+test("multi-line text goes as one paste even without --paste; a single line keeps the typed path", async () => {
+    setSnapshot([pane({ id: "pane:7", surfaces: [surface({ id: "surface:41", title: SESSION_A, selected: true })] })]);
+
+    expect(await sendCommand(SESSION_A, "first line\nsecond line", { enterDelay: "0" }, deps)).toBe(true);
+    expect(events.filter((event) => event.startsWith("paste") || event.startsWith("send"))).toEqual([
+        "paste --surface surface:41 --submit -- first line\nsecond line",
+    ]);
+
+    events = [];
+    expect(await sendCommand(SESSION_A, "one line", { enterDelay: "0" }, deps)).toBe(true);
+    expect(events.filter((event) => event.startsWith("paste") || event.startsWith("send"))).toEqual([
+        "send --surface surface:41 -- one line",
+        "send-key --surface surface:41 enter",
+    ]);
+});

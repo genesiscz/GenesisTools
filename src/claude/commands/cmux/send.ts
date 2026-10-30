@@ -354,7 +354,9 @@ export async function sendCommand(
         return false;
     }
 
-    const paste = opts.paste === true;
+    // Multi-line text always goes as one paste: typed keystrokes turn each newline into Enter, so the agent got
+    // every line as its own prompt. A single line keeps the typed path unless --paste asks for the paste.
+    const paste = opts.paste === true || text.includes("\n");
     const force = opts.force === true;
 
     if (surfaceId) {
@@ -367,7 +369,7 @@ export async function sendCommand(
             report({ opts, query: queryTrim, target, surfaceId, enter, source: result.source });
             return true;
         } catch (err) {
-            if (result.source !== "recorded" || opts.paste) {
+            if (result.source !== "recorded" || paste) {
                 throw err;
             }
             // Recorded refs outlived their pane (cmux restart). Fall back to the matcher.
