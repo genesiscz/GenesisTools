@@ -1,4 +1,17 @@
-import { chmodSync, lstatSync, mkdirSync, realpathSync, statSync } from "node:fs";
+import {
+    chmodSync,
+    existsSync,
+    linkSync,
+    lstatSync,
+    mkdirSync,
+    readlinkSync,
+    realpathSync,
+    renameSync,
+    rmdirSync,
+    statSync,
+    symlinkSync,
+    unlinkSync,
+} from "node:fs";
 import { tmpdir } from "node:os";
 import { basename, dirname, isAbsolute, join, relative, resolve, sep } from "node:path";
 
@@ -178,4 +191,59 @@ export function ensurePrivateDir(path: string, options: { ancestors?: boolean } 
             return real;
         }
     }
+}
+
+/** Codes that mean "something is at the destination" for `renameNoReplace`. */
+export const DESTINATION_TAKEN = new Set(["EEXIST", "ENOTEMPTY", "ENOTDIR", "EISDIR"]);
+
+/**
+ * Moves `from` to `to` only when nothing is at `to`, without a gap a recreated path could slip into (a plain rename
+ * replaces a file, or an empty folder, that appeared after a check). A file is hard-linked (EEXIST when the name is
+ * taken) and then unlinked; a symlink is recreated the same way; a folder first claims the name with an empty
+ * folder, and the rename then only ever replaces that one (ENOTEMPTY or ENOTDIR when it was swapped for something
+ * else). A file system without hard links falls back to a check and a rename.
+ */
+export function renameNoReplace(from: string, to: string): void {
+    const stat = lstatSync(from);
+
+    if (stat.isDirectory()) {
+        mkdirSync(to);
+
+        try {
+            renameSync(from, to);
+        } catch (error) {
+            try {
+                rmdirSync(to);
+            } catch {
+                // Not our empty claim any more: leave whatever is there.
+            }
+
+            throw error;
+        }
+
+        return;
+    }
+
+    try {
+        if (stat.isSymbolicLink()) {
+            symlinkSync(readlinkSync(from), to);
+        } else {
+            linkSync(from, to);
+        }
+    } catch (error) {
+        const code = (error as NodeJS.ErrnoException).code;
+
+        if (code !== "EPERM" && code !== "ENOTSUP" && code !== "EOPNOTSUPP") {
+            throw error;
+        }
+
+        if (existsSync(to) || identityOf(to) !== null) {
+            throw Object.assign(new Error(`EEXIST: ${to} exists`), { code: "EEXIST" });
+        }
+
+        renameSync(from, to);
+        return;
+    }
+
+    unlinkSync(from);
 }

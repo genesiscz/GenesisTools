@@ -25,12 +25,14 @@ import { isTrashRootName, type RmConfig, rmDataDir } from "./config";
 import { appendRmLedger } from "./ledger";
 import {
     canonicalPath,
+    DESTINATION_TAKEN,
     ensurePrivateDir,
     identityOf,
     isInside,
     mountPointOf,
     pathSegments,
     realOrSelf,
+    renameNoReplace,
     VOLUME_TRASH_DIR,
 } from "./paths";
 import { type RmCaller, type RmTarget, type RmTargetKind, targetChangeReason } from "./rules";
@@ -179,9 +181,16 @@ export function renameVerified(target: RmTarget, to: string, hooks: RenameHooks 
         return;
     }
 
-    if (identityOf(target.path) === null) {
-        renameSync(to, target.path);
+    try {
+        renameNoReplace(to, target.path);
         throw new RmTargetChangedError(target.path, "it was swapped during the move; put back");
+    } catch (error) {
+        if (
+            error instanceof RmTargetChangedError ||
+            !DESTINATION_TAKEN.has((error as NodeJS.ErrnoException).code ?? "")
+        ) {
+            throw error;
+        }
     }
 
     throw new RmTargetChangedError(target.path, `it was swapped during the move and waits at ${to}`);
@@ -586,7 +595,20 @@ export function restoreBatch(
         }
 
         mkdirSync(dirname(item.original), { recursive: true });
-        renameSync(item.stored, item.original);
+
+        try {
+            // Never over something that appeared at the original path since the check above.
+            renameNoReplace(item.stored, item.original);
+        } catch (error) {
+            if (!DESTINATION_TAKEN.has((error as NodeJS.ErrnoException).code ?? "")) {
+                throw error;
+            }
+
+            result.skipped.push({ path: item.original, reason: "something exists at the original path" });
+            remaining.push(item);
+            continue;
+        }
+
         result.restored.push(item.original);
         appendRmLedger({ action: "restore", path: item.original, batchId: id, caller: options.caller ?? null });
     }

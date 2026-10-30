@@ -49,6 +49,7 @@ import {
     type RmLedgerEntry,
     type RmRuleContext,
     recheckAfterWait,
+    renameNoReplace,
     resolveTarget,
     restoreBatch,
     returnAside,
@@ -890,5 +891,58 @@ describe("security review fixes: the path is checked, then moved", () => {
         git(origin, "worktree", "add", "-q", "--detach", join(later, "wt"));
 
         expect(recheckAfterWait(pinned, c)).toMatch(/linked worktree/);
+    });
+});
+
+describe("security review fixes: a put-back never replaces", () => {
+    test("renameNoReplace refuses a taken file or folder name and leaves both sides whole", () => {
+        const from = file(join(dir("noreplace"), "from.txt"), "aside copy");
+        const to = file(join(base, "noreplace", "to.txt"), "new work");
+
+        expect(() => renameNoReplace(from, to)).toThrow();
+        expect(readFileSync(to, "utf8")).toBe("new work");
+        expect(readFileSync(from, "utf8")).toBe("aside copy");
+
+        const fromDir = dir("noreplace", "from-dir");
+        file(join(fromDir, "a.txt"), "a");
+        const emptyDir = dir("noreplace", "empty-dir");
+
+        expect(() => renameNoReplace(fromDir, emptyDir)).toThrow();
+        expect(existsSync(join(fromDir, "a.txt"))).toBe(true);
+
+        renameNoReplace(from, join(base, "noreplace", "free.txt"));
+        expect(readFileSync(join(base, "noreplace", "free.txt"), "utf8")).toBe("aside copy");
+        expect(existsSync(from)).toBe(false);
+    });
+
+    test("deny keeps the aside copy when the original path is recreated between the check and the move", () => {
+        for (const kind of ["file", "dir"] as const) {
+            const original = join(dir("putback", kind), "draft");
+            const stored = join(dir("putback", kind, "aside"), "0-draft");
+
+            if (kind === "file") {
+                file(stored, "aside copy");
+            } else {
+                file(join(stored, "inner.txt"), "aside copy");
+            }
+
+            const target = { path: original, kind, rule: "default", reason: "test", stored };
+            const recreate = () => {
+                if (kind === "file") {
+                    file(original, "recreated meanwhile");
+                } else {
+                    mkdirSync(original);
+                }
+            };
+            const back = returnAside([target], AGENT, "req1", { beforeMove: recreate });
+
+            expect(back.returned).toEqual([]);
+            expect(back.kept[0]?.reason).toMatch(/something exists there now/);
+            expect(existsSync(stored)).toBe(true);
+
+            if (kind === "file") {
+                expect(readFileSync(original, "utf8")).toBe("recreated meanwhile");
+            }
+        }
     });
 });

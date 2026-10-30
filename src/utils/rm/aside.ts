@@ -1,8 +1,15 @@
-import { existsSync, lstatSync, mkdirSync, renameSync } from "node:fs";
+import { existsSync, lstatSync, mkdirSync } from "node:fs";
 import { dirname, join } from "node:path";
 import { logger } from "@genesiscz/utils/logger";
 import { appendRmLedger } from "./ledger";
-import { ensurePrivateDir, isSameOrInside, realOrSelf, sharedTempRoot } from "./paths";
+import {
+    DESTINATION_TAKEN,
+    ensurePrivateDir,
+    isSameOrInside,
+    realOrSelf,
+    renameNoReplace,
+    sharedTempRoot,
+} from "./paths";
 import { listRmRequests, type RmRequestTarget } from "./requests";
 import type { RmCaller, RmTarget, RmVerdict } from "./rules";
 import { measureBytes, RmTargetChangedError, renameVerified, trashItemName } from "./trash";
@@ -114,11 +121,20 @@ export interface ReturnResult {
     kept: Array<{ path: string; reason: string }>;
 }
 
-/** Moves aside items back to where they were (a denied request). */
+/** A seam for the test that recreates the original path between the check and the put-back. */
+export interface ReturnHooks {
+    beforeMove?: (path: string) => void;
+}
+
+/**
+ * Moves aside items back to where they were (a denied request). The put-back never replaces anything: a path that
+ * appeared there, even after the check, keeps its place and the aside copy keeps waiting.
+ */
 export function returnAside(
     targets: readonly RmRequestTarget[],
     caller: RmCaller | null,
-    requestId: string
+    requestId: string,
+    hooks: ReturnHooks = {}
 ): ReturnResult {
     const result: ReturnResult = { returned: [], kept: [] };
 
@@ -132,13 +148,27 @@ export function returnAside(
             continue;
         }
 
+        const taken = { path: target.path, reason: `something exists there now; it waits at ${target.stored}` };
+
         if (existsSync(target.path) || isLink(target.path)) {
-            result.kept.push({ path: target.path, reason: `something exists there now; it waits at ${target.stored}` });
+            result.kept.push(taken);
             continue;
         }
 
         mkdirSync(dirname(target.path), { recursive: true });
-        renameSync(target.stored, target.path);
+        hooks.beforeMove?.(target.path);
+
+        try {
+            renameNoReplace(target.stored, target.path);
+        } catch (error) {
+            if (!DESTINATION_TAKEN.has((error as NodeJS.ErrnoException).code ?? "")) {
+                throw error;
+            }
+
+            result.kept.push(taken);
+            continue;
+        }
+
         result.returned.push(target.path);
         appendRmLedger({ action: "return", path: target.path, stored: target.stored, requestId, caller });
     }
