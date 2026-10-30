@@ -14,6 +14,7 @@ import { OpenAISubResolver } from "../../../resolvers/OpenAISubResolver";
 import type { AccountFeatures } from "../../account-features";
 import type { BindContext, ProviderBinding, ProviderPlugin } from "../../plugin-types";
 import { discoverCodexHomes } from "./discover";
+import { codexHarness } from "./harness";
 import { BROKER_FLAG, codexLogin } from "./login";
 import { codexSpendScope } from "./spend";
 import { codexUsage } from "./usage";
@@ -41,6 +42,7 @@ const presentation: AccountFeatures["presentation"] = {
 export const openAiSubPlugin: ProviderPlugin = {
     id: "openai-sub",
     codingAgent: codexHistoryReader,
+    harness: codexHarness,
     kind: "subscription",
     capabilities: new Set(["chat", "summarize", "translate"]),
     credential: {

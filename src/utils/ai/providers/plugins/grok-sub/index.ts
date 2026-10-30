@@ -7,6 +7,7 @@ import { GrokSubResolver } from "../../../resolvers/GrokSubResolver";
 import type { AccountFeatures } from "../../account-features";
 import type { BindContext, ProviderBinding, ProviderPlugin } from "../../plugin-types";
 import { discoverGrokHomes } from "./discover";
+import { grokHarness } from "./harness";
 import { grokLogin } from "./login";
 import { grokSpendScope } from "./spend";
 import { grokUsage } from "./usage";
@@ -33,6 +34,7 @@ const presentation: AccountFeatures["presentation"] = {
 export const grokSubPlugin: ProviderPlugin = {
     id: "grok-sub",
     codingAgent: grokHistoryReader,
+    harness: grokHarness,
     kind: "subscription",
     capabilities: new Set(["chat", "summarize", "translate"]),
     credential: {
