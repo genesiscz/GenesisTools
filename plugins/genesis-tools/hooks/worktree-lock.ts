@@ -98,6 +98,9 @@ export type LockHolder =
 
 export type LockOutcome = "locked" | "ours" | "held";
 
+/** How a session reached a worktree: it works there (cwd, an edit) or a command only named the path. */
+type WorktreeClaim = "work" | "mention";
+
 export interface StaleLock extends LinkedWorktree {
     reason: string;
 }
@@ -877,13 +880,22 @@ function removeIfPresent(path: string): void {
  */
 export function lockWorktreesForPaths(options: {
     sessionId: string;
+    /** Paths this session WORKS in: its cwd, a file it edited. They claim the worktree. */
     paths: string[];
+    /**
+     * Paths a shell command merely NAMED (`du -sk <worktree>`, `git -C <worktree> status`). A mention locks a
+     * worktree nobody holds, so a fresh `git worktree add` is protected at once, but it never queues behind a live
+     * owner and never takes over a stale lock: on 2026-10-27 a read-only inspection by one session became the
+     * successor of another session's campaign checkout, and on 2026-10-23 a `du` of a subagent worktree locked it
+     * to the measuring session.
+     */
+    mentions?: string[];
     agent?: AgentProcess;
     findAgent?: () => AgentProcess | null;
     now?: number;
     fresh?: boolean;
 }): Map<string, LockOutcome> {
-    const { sessionId, paths, now = Date.now(), fresh = false } = options;
+    const { sessionId, paths, mentions = [], now = Date.now(), fresh = false } = options;
     const outcomes = new Map<string, LockOutcome>();
 
     if (!SAFE_SESSION_ID.test(sessionId)) {
@@ -892,12 +904,23 @@ export function lockWorktreesForPaths(options: {
 
     const cache = new Map<string, LinkedWorktree | null>();
     const worktrees = new Map<string, LinkedWorktree>();
+    const claims = new Map<string, WorktreeClaim>();
+
+    for (const path of mentions) {
+        const worktree = linkedWorktreeOf(path, cache);
+
+        if (worktree) {
+            worktrees.set(worktree.adminDir, worktree);
+            claims.set(worktree.adminDir, "mention");
+        }
+    }
 
     for (const path of paths) {
         const worktree = linkedWorktreeOf(path, cache);
 
         if (worktree) {
             worktrees.set(worktree.adminDir, worktree);
+            claims.set(worktree.adminDir, "work");
         }
     }
 
@@ -951,9 +974,21 @@ export function lockWorktreesForPaths(options: {
             }
 
             const user = { ...agent, sessionId, since: new Date(now).toISOString() };
+            const claim = claims.get(worktree.adminDir) ?? "work";
 
             if (holder && !isLockStale(holder)) {
-                rememberUser(worktree, user);
+                // Only a session that works here waits in line for the lock; a mention leaves no trace.
+                if (claim === "work") {
+                    rememberUser(worktree, user);
+                }
+                return "held";
+            }
+
+            if (holder && claim === "mention") {
+                dayLog("debug", "a mention of a worktree with a stale lock leaves the lock as it is", {
+                    worktree: worktree.root,
+                    previous: current,
+                });
                 return "held";
             }
 
@@ -1222,6 +1257,7 @@ export function lockWorktreesForToolUse(payload: object, options: { agent?: Agen
         }
 
         let paths: string[];
+        let mentions: string[] = [];
 
         if (EDIT_TOOLS.has(tool)) {
             if (writeFailed(input.tool_response)) {
@@ -1231,16 +1267,13 @@ export function lockWorktreesForToolUse(payload: object, options: { agent?: Agen
             paths = filePathsOf(input);
         } else if (isShellTool(tool)) {
             const command = input.tool_input?.command;
-            paths = typeof command === "string" ? shellCommandPaths(command) : [];
-
-            if (typeof input.cwd === "string") {
-                paths.push(input.cwd);
-            }
+            mentions = typeof command === "string" ? shellCommandPaths(command) : [];
+            paths = typeof input.cwd === "string" ? [input.cwd] : [];
         } else {
             return;
         }
 
-        lockWorktreesForPaths({ sessionId: input.session_id, paths, ...options });
+        lockWorktreesForPaths({ sessionId: input.session_id, paths, mentions, ...options });
     } catch (error) {
         dayLog("error", "worktree lock failed on a tool call", { error: messageOf(error) });
     }
