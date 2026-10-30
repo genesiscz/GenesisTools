@@ -4,7 +4,9 @@
  * at a given batch size, so batch-size-dependent hangs/drift are observable in
  * isolation instead of only inside a long filter run.
  *
- *   bun scripts/learn-from-fable/probe-judge-batch.ts <batchSize> [model]
+ *   bun scripts/learn-from-fable/probe-judge-batch.ts <batchSize> [episodes.jsonl] [--model <ref>]
+ *
+ * The model defaults to the fable config's judge stage (probe-models.ts).
  */
 import { readFileSync } from "node:fs";
 import { AiProxyClient } from "@genesiscz/utils/ai/proxy/AiProxyClient";
@@ -13,10 +15,11 @@ import { out } from "@genesiscz/utils/logger";
 import { buildJudgeUser, JUDGE_SYSTEM, parseJudgeArray } from "../../src/learn-from-fable/lib/stages/judge";
 import type { Episode } from "../../src/learn-from-fable/lib/stages/types";
 import { defaultEpisodesPath } from "./probe-episodes";
+import { probeArgs } from "./probe-models";
 
-const size = Number(process.argv[2] ?? 3);
-const model = process.argv[3] ?? "martin/claude-sub/claude-sonnet-5";
-const path = process.argv[4] ?? defaultEpisodesPath();
+const { model, args } = probeArgs(["judge"]);
+const size = Number(args[0] ?? 3);
+const path = args[1] ?? defaultEpisodesPath();
 
 const episodes: Episode[] = readFileSync(path, "utf-8")
     .split("\n")

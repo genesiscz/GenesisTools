@@ -1,7 +1,7 @@
 /**
  * Probe: does the ai-proxy deliver schema-shaped output per provider?
  *
- * For each model (args, default: grok-4.5 + sonnet) runs the same tiny task in
+ * For each model (args, default: grok's default model from the catalog + sonnet) runs the same tiny task in
  * both schema modes ("response_format" native, "prompt" injected) and reports
  * whether the reply parsed against the expectation, plus the usage the proxy
  * returned AND the last matching record in usage/requests.jsonl (proving the
@@ -11,6 +11,7 @@
  */
 
 import { existsSync, readFileSync } from "node:fs";
+import { MODEL_ROLES } from "@genesiscz/utils/ai/catalog/roles";
 import { AiProxyClient, type SchemaMode } from "@genesiscz/utils/ai/proxy/AiProxyClient";
 import { SafeJSON } from "@genesiscz/utils/json";
 
@@ -53,7 +54,7 @@ function lastUsageRecord(model: string): unknown {
     return "NO record for model";
 }
 
-const models = process.argv.slice(2).length ? process.argv.slice(2) : ["grok-4.5", "sonnet"];
+const models = process.argv.slice(2).length ? process.argv.slice(2) : [MODEL_ROLES.xai.default, "sonnet"];
 const client = new AiProxyClient();
 let failures = 0;
 

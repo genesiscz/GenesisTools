@@ -6,12 +6,14 @@
  * wider makes it worse and running narrower fixes it; if the stall rate is flat
  * across widths, it is upstream flakiness and the answer is retries, not tuning.
  *
- * Usage: bun scripts/learn-from-fable/probe-claude-sub-concurrency.ts [model]
+ * Usage: bun scripts/learn-from-fable/probe-claude-sub-concurrency.ts [widths] [--model <ref>]
+ * The model defaults to the fable config's filterBare stage (probe-models.ts).
  */
 import { AiProxyClient } from "@genesiscz/utils/ai/proxy/AiProxyClient";
+import { probeArgs } from "./probe-models";
 
-const model = process.argv[2] ?? "olivia/claude-sub/claude-sonnet-5";
-const WIDTHS = (process.argv[3] ?? "4,12").split(",").map(Number);
+const { model, args } = probeArgs(["filterBare"]);
+const WIDTHS = (args[0] ?? "4,12").split(",").map(Number);
 const CALLS_PER_WIDTH = 12;
 const BUDGET_MS = 45_000;
 

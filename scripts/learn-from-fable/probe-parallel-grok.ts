@@ -4,15 +4,17 @@
  * instant and reports time-to-first-token, total time, token counts, and finish
  * reason per call — so serialization, queueing, or hidden tool turns show up.
  *
- *   bun scripts/learn-from-fable/probe-parallel-grok.ts [n] [model]
+ *   bun scripts/learn-from-fable/probe-parallel-grok.ts [n] [--model <ref>]
+ * The model defaults to the fable config's mine stage (probe-models.ts).
  */
 import { loadLocalProxyConfig } from "@genesiscz/utils/ai/proxy/AiProxyClient";
 import { SafeJSON } from "@genesiscz/utils/json";
 import { out } from "@genesiscz/utils/logger";
 import { profiler } from "@genesiscz/utils/profile";
+import { probeArgs } from "./probe-models";
 
-const N = Number(process.argv[2] ?? 20);
-const MODEL = process.argv[3] ?? "martin/grok/grok-4.5";
+const { model: MODEL, args } = probeArgs(["mine"]);
+const N = Number(args[0] ?? 20);
 const local = loadLocalProxyConfig();
 const BASE = process.env.AI_PROXY_URL ?? local.baseUrl;
 const AUTH: Record<string, string> = local.apiKey ? { authorization: `Bearer ${local.apiKey}` } : {};

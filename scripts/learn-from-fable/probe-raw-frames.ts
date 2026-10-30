@@ -4,7 +4,9 @@
  * the client's accumulation logic. Answers the question a hang can't otherwise
  * answer: is upstream silent, or is it sending frames we fail to interpret?
  *
- *   bun scripts/learn-from-fable/probe-raw-frames.ts <batchSize> [model] [seconds]
+ *   bun scripts/learn-from-fable/probe-raw-frames.ts <batchSize> [seconds] [episodes.jsonl] [--model <ref>]
+ *
+ * The model defaults to the fable config's judge stage (probe-models.ts).
  */
 import { readFileSync } from "node:fs";
 import { loadLocalProxyConfig } from "@genesiscz/utils/ai/proxy/AiProxyClient";
@@ -13,11 +15,12 @@ import { out } from "@genesiscz/utils/logger";
 import { buildJudgeUser, JUDGE_SYSTEM } from "../../src/learn-from-fable/lib/stages/judge";
 import type { Episode } from "../../src/learn-from-fable/lib/stages/types";
 import { defaultEpisodesPath } from "./probe-episodes";
+import { probeArgs } from "./probe-models";
 
-const size = Number(process.argv[2] ?? 3);
-const model = process.argv[3] ?? "martin/claude-sub/claude-sonnet-5";
-const limitSecs = Number(process.argv[4] ?? 90);
-const path = process.argv[5] ?? defaultEpisodesPath();
+const { model, args } = probeArgs(["judge"]);
+const size = Number(args[0] ?? 3);
+const limitSecs = Number(args[1] ?? 90);
+const path = args[2] ?? defaultEpisodesPath();
 
 const episodes: Episode[] = readFileSync(path, "utf-8")
     .split("\n")

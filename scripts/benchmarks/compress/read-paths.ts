@@ -10,7 +10,7 @@
  *   daemon-7d      tools daemon stats --since 7d --json (7 day logs, 5 of them .zst in the zst arm)
  *   daemon-24h     tools daemon stats --json (today and yesterday, plain in both arms: the control)
  *   jev-day        tools jev sessions --day <the largest compressed day>
- *   proxy-large    tools ai-proxy calls --show on the 144 MB transcript
+ *   proxy-large    tools ai-proxy calls --show on the 144 MB transcript (filtered by its newest call's model)
  *   proxy-medium   tools ai-proxy calls --show on a 23 MB transcript
  *   tail-1000      tools markdown resolve of {{tail n=1000}} on a 292 MB day log
  *   rg-day         rg -c of one pattern on that day: plain rg against `rg -z` (the agent path)
@@ -24,6 +24,7 @@ import { readFileSync, writeFileSync } from "node:fs";
 import { join } from "node:path";
 import type { BaselineMetrics } from "@app/benchmark/lib";
 import { env } from "@genesiscz/utils/env";
+import { readLastLines } from "@genesiscz/utils/fs/read-lines";
 import { SafeJSON } from "@genesiscz/utils/json";
 import { out } from "@genesiscz/utils/logger";
 import { genesisToolsDirIn } from "@genesiscz/utils/storage/root";
@@ -58,6 +59,32 @@ function day(offset: number): string {
     return benchDays()[offset]!;
 }
 
+const PROXY_MODEL_FIELD = /"proxyModel":"([^"]+)"/;
+let largeModel: string | undefined;
+
+/**
+ * The proxy model of the large transcript's newest call. `calls --model` with it reads that one 144 MB transcript,
+ * whatever model the call was recorded with on this Mac, and both arms get the same filter.
+ */
+function largeTranscriptModel(): string {
+    if (largeModel) {
+        return largeModel;
+    }
+
+    const path = genesisToolsDirIn(armHome("plain"), "ai-proxy", "transcripts", TRANSCRIPTS.large);
+    const found = readLastLines(path)
+        .lines.map((line) => PROXY_MODEL_FIELD.exec(line)?.[1])
+        .filter((model): model is string => model !== undefined)
+        .at(-1);
+
+    if (!found) {
+        throw new Error(`No proxyModel in the last 64 KB of ${path}: the proxy-large scenario has no filter.`);
+    }
+
+    largeModel = found;
+    return found;
+}
+
 function logFile(arm: Arm, name: string): string {
     const plain = genesisToolsDirIn(armHome(arm), "logs", name);
     return arm === "zst" ? `${plain}.zst` : plain;
@@ -74,7 +101,7 @@ const SCENARIOS: Scenario[] = [
     {
         name: "proxy-large",
         command: () => ({
-            argv: [TOOLS, "ai-proxy", "calls", "--model", "work/xai/grok-4.3", "--limit", "1", "--show"],
+            argv: [TOOLS, "ai-proxy", "calls", "--model", largeTranscriptModel(), "--limit", "1", "--show"],
         }),
     },
     {

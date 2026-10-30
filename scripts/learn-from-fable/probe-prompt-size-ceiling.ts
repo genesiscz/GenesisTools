@@ -6,11 +6,13 @@
  * ceiling is real and low, the spec stage cannot run on claude-sub at any useful
  * batch size and the recommendation has to say so.
  *
- * Usage: bun scripts/learn-from-fable/probe-prompt-size-ceiling.ts [model]
+ * Usage: bun scripts/learn-from-fable/probe-prompt-size-ceiling.ts [--model <ref>]
+ * The model defaults to the fable config's judge stage (probe-models.ts).
  */
 import { AiProxyClient } from "@genesiscz/utils/ai/proxy/AiProxyClient";
+import { probeArgs } from "./probe-models";
 
-const model = process.argv[2] ?? "olivia/claude-sub/claude-opus-5";
+const { model } = probeArgs(["judge"]);
 /** Approximate prompt sizes in tokens (4 chars ~ 1 token). */
 const SIZES = [2_000, 6_000, 12_000, 24_000];
 const BUDGET_MS = 180_000;
