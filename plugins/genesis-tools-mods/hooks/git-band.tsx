@@ -112,14 +112,6 @@ function parsedPr(text: string | undefined, tracked: boolean): BandPr | null {
 
     return null;
 }
-/** Set by an explicit refresh (`/mod-git refresh`, the sidebar's refresh): the next pass asks gh, not the shared answers. */
-let prsFresh = false;
-
-function forgetPrAnswers(): void {
-    ghCache.clear();
-    prsFresh = true;
-}
-
 let refreshing: Promise<void> | undefined;
 let requestedRefresh = 0;
 let completedRefresh = 0;
@@ -291,18 +283,17 @@ export function checkCounts(rollup: unknown): { passed: number; failed: number; 
 
 /**
  * A PR from `gh pr view` in `root`: `which` is a number or a branch, or "" for the checked-out branch, whose answer is
- * kept under `branch`, here and in the shared file, so a switch does not show the last branch's PR. `fresh` (an
- * explicit refresh) asks gh again instead of reading a held or shared answer.
+ * kept under `branch` so a switch does not show the last branch's PR for the next 2 minutes.
  */
 async function prOf(
     host: Host,
-    ask: { root: string; which: string; tracked: boolean; branch?: string; fresh?: boolean }
+    ask: { root: string; which: string; tracked: boolean; branch?: string }
 ): Promise<BandPr | null> {
-    const { root, which, tracked, fresh } = ask;
+    const { root, which, tracked } = ask;
     const key = `${root}|${which || `@${ask.branch ?? ""}`}`;
     const held = ghCache.get(key);
 
-    if (held && !fresh && Date.now() - held.at < held.ttlMs) {
+    if (held && Date.now() - held.at < held.ttlMs) {
         return held.pr ? { ...held.pr, tracked } : null;
     }
 
@@ -311,16 +302,13 @@ async function prOf(
     // this file's on a miss, and each miss paid a Bun start on top of gh (1.2-1.7 s against 0.9 s, 2026-10-27).
     const fields = "number,title,url,state,isDraft,statusCheckRollup";
     const argv = ["gh", "pr", "view", ...(which ? [which] : []), "--json", fields];
-    // Without `which`, gh answers for the branch checked out now, which the argv does not show: the shared answer is
-    // kept per branch. Naming the branch to gh instead would lose its upstream lookup (a branch pushed under another name).
-    const scope = which ? undefined : `branch=${ask.branch ?? ""}`;
     // The longest hold first; an answer that turns out to be an open PR is read again under the short one, which
     // reruns the command only when the shared file is older than that.
-    const run = { argv, cwd: root, timeoutMs: 15_000, scope };
-    let viewed = await sharedRun(host, { ...run, ttlMs: fresh ? 0 : GH_CLOSED_TTL_MS });
+    const run = { argv, cwd: root, timeoutMs: 15_000 };
+    let viewed = await sharedRun(host, { ...run, ttlMs: GH_CLOSED_TTL_MS });
     let pr = answered(viewed) ? parsedPr(viewed.stdout, tracked) : null;
 
-    if (!fresh && (!answered(viewed) || prTtl(pr) < GH_CLOSED_TTL_MS)) {
+    if (!answered(viewed) || prTtl(pr) < GH_CLOSED_TTL_MS) {
         viewed = await sharedRun(host, { ...run, ttlMs: answered(viewed) ? prTtl(pr) : GH_TTL_MS });
         pr = answered(viewed) ? parsedPr(viewed.stdout, tracked) : null;
     }
@@ -331,7 +319,7 @@ async function prOf(
         const done = await sharedRun(host, {
             argv: ["gh", "pr", "checks", String(pr.number), "--json", "name,description,link,bucket"],
             cwd: root,
-            ttlMs: fresh ? 0 : GH_TTL_MS,
+            ttlMs: GH_TTL_MS,
             timeoutMs: 15_000,
         });
         const checks = done ? prChecksOf(done.stdout) : undefined;
@@ -385,30 +373,24 @@ async function isOn(host: Host): Promise<boolean> {
  */
 async function rowPrs(
     host: Host,
-    at: { cwd: string; root: string; which: string; branch: string; touch?: Touch; fresh: boolean }
+    at: { cwd: string; root: string; which: string; branch: string; touch?: Touch }
 ): Promise<BandPr[]> {
     const tracked = await trackedPrs(host, at.root);
     const hidden = await hiddenPrs(host, at.root);
-    const { fresh } = at;
-    const own = await prOf(host, { root: at.cwd, which: at.which, tracked: false, branch: at.branch, fresh });
+    const own = await prOf(host, { root: at.cwd, which: at.which, tracked: false, branch: at.branch });
     const others = await Promise.all(
         tracked
             .filter((n) => n !== own?.number)
-            .map((n) => prOf(host, { root: at.cwd, which: String(n), tracked: true, fresh }))
+            .map((n) => prOf(host, { root: at.cwd, which: String(n), tracked: true }))
     );
     const mine = own
         ? { ...own, own: true, tracked: tracked.includes(own.number), hidden: hidden.includes(own.number) }
         : null;
-    // A tracked PR hidden while it was the branch's own stays hidden after a switch makes it one of the others.
-    const prs = [mine, ...others.map((pr) => (pr ? { ...pr, hidden: hidden.includes(pr.number) } : null))].filter(
-        (pr): pr is BandPr => pr !== null
-    );
+    const prs = [mine, ...others].filter((pr): pr is BandPr => pr !== null);
     const names = (at.touch?.branches ?? [])
         .filter((name) => name !== at.branch && isBranchName(name))
         .slice(0, EARLIER_PRS);
-    const earlier = await Promise.all(
-        names.map((name) => prOf(host, { root: at.cwd, which: name, tracked: false, fresh }))
-    );
+    const earlier = await Promise.all(names.map((name) => prOf(host, { root: at.cwd, which: name, tracked: false })));
 
     earlier.forEach((pr, index) => {
         if (pr && !prs.some((held) => held.number === pr.number)) {
@@ -423,12 +405,7 @@ async function rowPrs(
  * The row of a worktree the session removed: the branch it had last, that branch's PRs and the earlier ones, read in
  * the main checkout; null when the branch has no local ref and no PR left to show.
  */
-async function goneRow(
-    host: Host,
-    root: string,
-    touch: Touch,
-    ask: { ttlMs: number; freshPrs: boolean }
-): Promise<GitBand | null> {
+async function goneRow(host: Host, root: string, touch: Touch, ttlMs: number): Promise<GitBand | null> {
     const branch = touch.branches?.[0];
     const repo = touch.repo;
 
@@ -440,10 +417,10 @@ async function goneRow(
         host,
         ["git", "for-each-ref", "--format=%(refname:short)%09%(upstream:track)", `refs/heads/${branch}`],
         repo,
-        ask.ttlMs
+        ttlMs
     );
     const sync = ref?.split("\t")[1] ?? "";
-    const prs = await rowPrs(host, { cwd: repo, root, which: branch, branch, touch, fresh: ask.freshPrs });
+    const prs = await rowPrs(host, { cwd: repo, root, which: branch, branch, touch });
 
     if (!ref?.trim() && prs.length === 0) {
         return null;
@@ -494,16 +471,9 @@ async function readRow(
     host: Host,
     root: string,
     why: GitBand["why"],
-    ask: { ttlMs: number; freshPrs: boolean }
+    ttlMs: number
 ): Promise<GitBand | null | undefined> {
-    const { ttlMs } = ask;
-    // `--no-optional-locks`: a background read never takes the index lock a commit or a stage in the checkout needs.
-    const status = await gitText(
-        host,
-        ["git", "--no-optional-locks", "status", "--porcelain", "--branch"],
-        root,
-        ttlMs
-    );
+    const status = await gitText(host, ["git", "status", "--porcelain", "--branch"], root, ttlMs);
     const earlier = (await settingsOf(host)).git.earlier === "show";
     const touch = earlier ? (await sessionCheckouts(host)).find((held) => held.root === root) : undefined;
 
@@ -512,14 +482,12 @@ async function readRow(
             return undefined;
         }
 
-        return touch ? goneRow(host, root, touch, ask) : null;
+        return touch ? goneRow(host, root, touch, ttlMs) : null;
     }
 
-    const numstat = parseNumstat(
-        (await gitText(host, ["git", "--no-optional-locks", "diff", "--numstat", "HEAD"], root, ttlMs)) ?? ""
-    );
+    const numstat = parseNumstat((await gitText(host, ["git", "diff", "--numstat", "HEAD"], root, ttlMs)) ?? "");
     const state = parseStatus(status);
-    const prs = await rowPrs(host, { cwd: root, root, which: "", branch: state.branch, touch, fresh: ask.freshPrs });
+    const prs = await rowPrs(host, { cwd: root, root, which: "", branch: state.branch, touch });
     const { repo } = await headOf(host, root);
 
     return { root, why, at: Date.now(), ...state, ...numstat, prs, repo };
@@ -532,14 +500,9 @@ async function refreshNow(host: Host, why: string): Promise<void> {
     // the checkouts it changed and shares the rest for 30 s; a press or a command asks fresh for all.
     const fresh = new Set(changedRoots);
     changedRoots.clear();
-    // An explicit refresh asks gh again too; every other pass reads the PR answers sessions share.
-    const freshPrs = prsFresh;
-    prsFresh = false;
     const ttlOf = (root: string) =>
         fresh.has(root) ? 0 : why === "timer" || why === "start" ? TIMER_SHARED_MS : why === "tool" ? SHARED_GIT_MS : 0;
-    const read = await Promise.all(
-        roots.map((at) => readRow(host, at.root, at.why, { ttlMs: ttlOf(at.root), freshPrs }))
-    );
+    const read = await Promise.all(roots.map((at) => readRow(host, at.root, at.why, ttlOf(at.root))));
     // A checkout git could not read this time keeps its last row; one whose folder is gone with nothing to show goes.
     const next = roots
         .map(({ root }, index) => {
@@ -656,7 +619,7 @@ async function command(host: Host, args: string): Promise<string> {
     }
 
     if (verb === "refresh") {
-        forgetPrAnswers();
+        ghCache.clear();
         await refresh(host, "command");
 
         return "Git band refreshed.";
@@ -734,12 +697,6 @@ async function command(host: Host, args: string): Promise<string> {
     return USAGE;
 }
 
-const checkoutMoves = new WeakMap<object, boolean>();
-
-export async function recordCheckout(host: Host, input: object): Promise<void> {
-    checkoutMoves.set(input, await noteToolCall(host, input));
-}
-
 export const gitBand: Feature = {
     panelOnly: true,
     async start(host) {
@@ -808,7 +765,7 @@ export const gitBand: Feature = {
         }
 
         try {
-            const moved = checkoutMoves.get(e) ?? false;
+            const moved = await noteToolCall(host, e);
 
             // Read, Grep, Glob and the like, and a shell command that only reads, change nothing git shows.
             if (!moved && (!TOOLS_THAT_WRITE.has(e.tool) || (e.tool === "Bash" && onlyReads(e.command)))) {
@@ -1615,7 +1572,7 @@ async function gitPane(host: Host, kit: Kit): Promise<RenderElement> {
         isDim: true,
         hint: "Read every checkout's git state and pull requests again.",
         onPress: () => {
-            forgetPrAnswers();
+            ghCache.clear();
             void pressed(host, "git-refresh", `Reading ${plural(rows.length, "checkout")}…`, "busy")
                 .then(() => refresh(host, "sidebar"))
                 .then(() => pressed(host, "git-refresh", `Read ${plural(rows.length, "checkout")} again.`))
