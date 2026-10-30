@@ -57,3 +57,57 @@ export const agentsToolChangesDoor: CallDoor<{ session: string; toolIds: string[
         }
     },
 };
+
+/**
+ * `tools agents changes <session> --last-turns <n> --json [--store-blobs]`: the Changes pane's ask, repeated on
+ * every refresh of a live session. As a process each ask parsed the whole transcript again (309 MB for one
+ * session: 2.4 to 7.8 s, 3 s of CPU and 650 MB, every 40 s on 2026-10-30); here the fold reads only what the
+ * files gained. `--store-blobs` is honoured: the pane reads the before-states from the object store by oid, and a
+ * loose object is content-addressed, so the write is idempotent and a process writing the same oid is no conflict.
+ */
+export const agentsTurnChangesDoor: CallDoor<{ session: string; lastTurns: number; storeBlobs: boolean }> = {
+    kind: "call",
+    name: "agents changes --last-turns --json",
+    command: ["agents", "changes"],
+    match(argv) {
+        const parsed = parseArgv(argv, {
+            command: ["agents", "changes"],
+            positionals: 1,
+            flags: { "--last-turns": "value", "--json": "bool", "--store-blobs": "bool" },
+        });
+        const session = parsed?.positionals[0];
+        const lastTurns = parsed ? Number(stringFlag(parsed, "--last-turns")) : Number.NaN;
+        if (
+            !parsed ||
+            parsed.flags.get("--json") !== true ||
+            !session ||
+            !SESSION_ID.test(session) ||
+            !Number.isInteger(lastTurns) ||
+            lastTurns < 1
+        ) {
+            return null;
+        }
+
+        return { session, lastTurns, storeBlobs: parsed.flags.get("--store-blobs") === true };
+    },
+    async run({ session, lastTurns, storeBlobs }, { signal }) {
+        try {
+            signal.throwIfAborted();
+            const { readJsonlRows } = await import("@genesiscz/utils/jsonl");
+            const { sessionChangesPath } = await import("@app/agents/lib/changes/log");
+            const { sessionTurnChanges, turnChangesJson } = await import("@app/agents/lib/changes/tool-changes");
+            const file = sessionChangesPath(session);
+            const read = readJsonlRows<ChangeEvent>(file);
+            const warning = read.skipped > 0 ? `Skipped ${read.skipped} unreadable line(s) in ${file}\n` : "";
+            const options = { json: true, lastTurns: String(lastTurns), storeBlobs };
+            const result = await sessionTurnChanges({ session, file, rows: read.rows, options, count: lastTurns });
+            if ("error" in result) {
+                return { stdout: "", stderr: `${warning}${result.error}\n`, exit: 1 };
+            }
+
+            return { ...ok(asResult(turnChangesJson(session, file, options, result))), stderr: warning };
+        } catch (error) {
+            return failed(error);
+        }
+    },
+};

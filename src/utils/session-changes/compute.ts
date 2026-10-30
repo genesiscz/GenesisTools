@@ -540,6 +540,38 @@ class WrittenFiles extends Map<string, string> {
  * app bundles, outside the session's directories) apply to every shell-detected change and
  * never to a file tool's.
  */
+/**
+ * Each shell call's analysis, by session and call id, kept across asks in a resident process (the hub server): a
+ * transcript only grows, so a call's text, its directory and the files written before it never change, and the
+ * analysis of an old call is the same on every ask. Without this a warm ask of a 309 MB session analyzed its
+ * thousands of commands again (976 ms of a 1,071 ms compute, `tools ts profile`, 2026-10-30), and the shell scan's
+ * own 8 MB text cache was too small for that session to help. An entry also keeps what the analysis wrote into
+ * `files`, so a later command that runs a script this one wrote still finds it.
+ */
+const ANALYSES_SESSIONS_KEPT = 4;
+const analysesBySession = new Map<string, Map<string, KeptAnalysis>>();
+
+interface KeptAnalysis {
+    command: string;
+    cwd: string;
+    analysis: CommandAnalysis;
+    wrote: Array<[string, string]>;
+}
+
+function keptAnalyses(sessionId: string): Map<string, KeptAnalysis> {
+    const kept = analysesBySession.get(sessionId) ?? new Map<string, KeptAnalysis>();
+    analysesBySession.delete(sessionId);
+    analysesBySession.set(sessionId, kept);
+    if (analysesBySession.size > ANALYSES_SESSIONS_KEPT) {
+        const oldest = analysesBySession.keys().next().value;
+        if (oldest !== undefined) {
+            analysesBySession.delete(oldest);
+        }
+    }
+
+    return kept;
+}
+
 export function computeSessionChanges(input: SessionChangesInput): ComputedSessionChanges {
     const rows = input.log ?? [];
     const calls = input.transcript?.calls ?? [];
@@ -621,6 +653,7 @@ export function computeSessionChanges(input: SessionChangesInput): ComputedSessi
     // heredoc, or a Write) is known when a later call runs it.
     const installsByTurn = new Map<string, boolean>();
     const analyses = new Map<string, CommandAnalysis>();
+    const keptByCall = keptAnalyses(input.sessionId);
     const written = new WrittenFiles();
     const chronological = [...calls].sort((a, b) => (a.startedAt ?? 0) - (b.startedAt ?? 0));
 
@@ -638,11 +671,27 @@ export function computeSessionChanges(input: SessionChangesInput): ComputedSessi
             continue;
         }
 
-        const analysis = analyzeCommand({
-            command: call.command,
-            cwd: call.cwd ?? rules.roots[0] ?? "/",
-            files: written,
-        });
+        const cwd = call.cwd ?? rules.roots[0] ?? "/";
+        const kept = keptByCall.get(call.id);
+        let analysis: CommandAnalysis;
+        if (kept && kept.command === call.command && kept.cwd === cwd) {
+            analysis = kept.analysis;
+            for (const [path, text] of kept.wrote) {
+                written.set(path, text);
+            }
+        } else {
+            const before = new Set(written.keys());
+            analysis = analyzeCommand({ command: call.command, cwd, files: written });
+            const wrote: Array<[string, string]> = [];
+            for (const [path, text] of written) {
+                if (!before.has(path)) {
+                    wrote.push([path, text]);
+                }
+            }
+
+            keptByCall.set(call.id, { command: call.command, cwd, analysis, wrote });
+        }
+
         analyses.set(call.id, analysis);
 
         if (analysis.installs && !call.isError) {
