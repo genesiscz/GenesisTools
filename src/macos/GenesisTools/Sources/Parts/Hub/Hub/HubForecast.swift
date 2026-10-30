@@ -126,7 +126,9 @@ final class HubForecastStore: ObservableObject {
 
     func load() {
         loading = true
+        let loaded = HubSnapshotLoads.begin("forecast")
         Task {
+            defer { loaded() }
             do {
                 let result = try await HubDailyCLI.decode(HubForecastResult.self, ["forecast", "--json"], span: "forecast.load")
                 accounts = result.accounts

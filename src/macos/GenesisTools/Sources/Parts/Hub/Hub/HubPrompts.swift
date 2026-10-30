@@ -142,6 +142,8 @@ final class PromptLibraryStore: ObservableObject {
     func load() async {
         guard !loading else { return }
         loading = true
+        let loaded = HubSnapshotLoads.begin("prompts")
+        defer { loaded() }
         let span = HubPerf.begin("prompts.list", awaits: true)
         let result = await Task.detached(priority: .userInitiated) { () -> Result<[HubPrompt], Error> in
             Result { try JSONDecoder().decode([HubPrompt].self, from: Self.runCLI(["hub", "prompts", "list", "--json"])) }

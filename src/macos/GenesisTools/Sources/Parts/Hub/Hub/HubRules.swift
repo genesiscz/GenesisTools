@@ -142,6 +142,8 @@ final class HubRulesModel: ObservableObject {
     }
 
     private func reload() async {
+        let loaded = HubSnapshotLoads.begin("rules")
+        defer { loaded() }
         do {
             list = try await HubDailyCLI.decode(HubRulesList.self, ["rules", "list", "--json"], span: "rules.list")
         } catch {
