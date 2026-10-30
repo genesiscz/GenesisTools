@@ -2805,7 +2805,8 @@ describe("tools that Claude Code's tool search loads, on the Codex agent", () =>
     async function sentBody(
         messages: unknown[],
         tools: unknown[],
-        clientKey?: string
+        clientKey?: string,
+        cacheKey?: { key: string; source: "client" | "content" }
     ): Promise<Record<string, unknown>> {
         const sent: Array<Record<string, unknown>> = [];
         globalThis.fetch = (async (_url: RequestInfo | URL, init?: RequestInit) => {
@@ -2822,7 +2823,8 @@ describe("tools that Claude Code's tool search loads, on the Codex agent", () =>
                 headers: clientKey ? { authorization: `Bearer ${clientKey}` } : {},
             }),
             "gpt-6.1-sol",
-            bodyText
+            bodyText,
+            cacheKey ? { promptCacheKey: cacheKey } : undefined
         );
         await res?.text();
         return sent[0] ?? {};
@@ -2890,9 +2892,16 @@ describe("tools that Claude Code's tool search loads, on the Codex agent", () =>
         const nextTools = [tool("Monitor", true), tool("TaskStop", true), tool("ToolSearch")];
         const afterMonitor = [...first, ...search("search-one", "Monitor")];
         const afterTask = [...afterMonitor, ...search("search-two", "TaskStop")];
-        const initial = (await sentBody(first, initialTools)).input as Array<Record<string, unknown>>;
-        const second = (await sentBody(afterMonitor, nextTools)).input as Array<Record<string, unknown>>;
-        const third = (await sentBody(afterTask, nextTools)).input as Array<Record<string, unknown>>;
+        const cacheKey = { key: "continuation-a", source: "client" as const };
+        const initial = (await sentBody(first, initialTools, "client-a", cacheKey)).input as Array<
+            Record<string, unknown>
+        >;
+        const second = (await sentBody(afterMonitor, nextTools, "client-a", cacheKey)).input as Array<
+            Record<string, unknown>
+        >;
+        const third = (await sentBody(afterTask, nextTools, "client-a", cacheKey)).input as Array<
+            Record<string, unknown>
+        >;
         expect(second.slice(0, initial.length)).toEqual(initial);
         expect(third.slice(0, second.length)).toEqual(second);
         const names = third
@@ -2903,8 +2912,9 @@ describe("tools that Claude Code's tool search loads, on the Codex agent", () =>
 
     it("isolates remembered compacted introductions by client", async () => {
         const history = [{ role: "user", content: "This session is being continued.\n\nSummary: separate clients." }];
-        const first = await sentBody(history, [tool("Monitor", true)], "client-a");
-        const second = await sentBody(history, [tool("TaskStop", true)], "client-b");
+        const cacheKey = { key: "shared-id", source: "client" as const };
+        const first = await sentBody(history, [tool("Monitor", true)], "client-a", cacheKey);
+        const second = await sentBody(history, [tool("TaskStop", true)], "client-b", cacheKey);
         const names = (body: Record<string, unknown>) => {
             const input = body.input as Array<Record<string, unknown>>;
             return (input[0]?.tools as Array<{ name: string }> | undefined)?.map((entry) => entry.name);
@@ -2913,10 +2923,25 @@ describe("tools that Claude Code's tool search loads, on the Codex agent", () =>
         expect(names(second)).toEqual(["TaskStop"]);
     });
 
+    it("does not share recovery snapshots without a trusted conversation identity", async () => {
+        const names = (body: Record<string, unknown>) => {
+            const input = body.input as Array<Record<string, unknown>>;
+            return (input[0]?.tools as Array<{ name: string }> | undefined)?.map((entry) => entry.name);
+        };
+        for (const cacheKey of [undefined, { key: "same-content", source: "content" as const }]) {
+            const suffix = cacheKey ? "content" : "anonymous";
+            const history = [{ role: "user", content: `This session is being continued.\n\nSummary: ${suffix} test.` }];
+            const first = await sentBody(history, [tool("Monitor", true)], "client-a", cacheKey);
+            const second = await sentBody(history, [tool("TaskStop", true)], "client-a", cacheKey);
+            expect(names(first)).toEqual(["Monitor"]);
+            expect(names(second)).toEqual(["TaskStop"]);
+        }
+    });
+
     it("still introduces every tool when the recovery snapshot exceeds its memory limit", async () => {
         const history = [{ role: "user", content: "This session is being continued.\n\nSummary: many tools." }];
         const tools = Array.from({ length: 513 }, (_, index) => tool(`Deferred${index}`, true));
-        const body = await sentBody(history, tools);
+        const body = await sentBody(history, tools, "client-a", { key: "many-tools", source: "client" });
         const input = body.input as Array<Record<string, unknown>>;
         expect((input[0]?.tools as unknown[] | undefined)?.length).toBe(513);
     });

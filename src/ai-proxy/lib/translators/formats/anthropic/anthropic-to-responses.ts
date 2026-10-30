@@ -426,11 +426,18 @@ const recoveredByHistory = new Map<string, string[]>();
 const MAX_RECOVERED_HISTORIES = 1024;
 const MAX_RECOVERED_TOOLS = 512;
 
-function recoveredToolNames(scope: string, summary: string, deferred: DeferredTools, messages: unknown): string[] {
-    const key = createHash("sha256")
-        .update(SafeJSON.stringify([scope, summary]))
-        .digest("hex");
-    let names = recoveredByHistory.get(key);
+function recoveredToolNames(
+    scope: string | undefined,
+    summary: string,
+    deferred: DeferredTools,
+    messages: unknown
+): string[] {
+    const key = scope
+        ? createHash("sha256")
+              .update(SafeJSON.stringify([scope, summary]))
+              .digest("hex")
+        : undefined;
+    let names = key ? recoveredByHistory.get(key) : undefined;
     if (!names) {
         const referenced = new Set(referencedToolNames(messages));
         names = [...deferred.byName.keys()].filter((name) => !referenced.has(name));
@@ -438,6 +445,9 @@ function recoveredToolNames(scope: string, summary: string, deferred: DeferredTo
             logger.warn({ count: names.length }, "ai-proxy: too many recovered tools to remember their cache prefix");
             return names;
         }
+    }
+    if (!key) {
+        return names;
     }
     recoveredByHistory.delete(key);
     recoveredByHistory.set(key, names);
@@ -554,7 +564,7 @@ export function anthropicToResponses(body: JsonRecord, model: string, hooks: Res
 
     const summary = deferred ? compactedHistoryText(body.messages) : undefined;
     if (deferred && summary !== undefined) {
-        const names = recoveredToolNames(hooks.deferredRecoveryScope ?? "", summary, deferred, body.messages);
+        const names = recoveredToolNames(hooks.deferredRecoveryScope, summary, deferred, body.messages);
         const tools: JsonRecord[] = [];
         for (const name of names) {
             const tool = deferred.byName.get(name);
