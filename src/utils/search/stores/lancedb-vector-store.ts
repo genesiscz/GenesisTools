@@ -1,4 +1,4 @@
-import { AsyncOpQueue } from "@genesiscz/utils/async";
+import { AsyncOpQueue } from "@genesiscz/utils/async-op-queue";
 import { importStorePackage } from "@genesiscz/utils/package-store";
 import { ensurePackage } from "@genesiscz/utils/packages";
 import { bruteForceVectorSearch, type VectorSearchHit, type VectorStore } from "./vector-store";

@@ -73,6 +73,11 @@
             "types": "./async.ts",
             "default": "./async.ts"
         },
+        "./async-op-queue": {
+            "bun": "./async-op-queue.ts",
+            "types": "./async-op-queue.ts",
+            "default": "./async-op-queue.ts"
+        },
         "./browser": {
             "bun": "./browser.ts",
             "types": "./browser.ts",
