@@ -379,6 +379,26 @@ function isDeferredTool(tool: unknown): tool is JsonRecord {
     return isObject(tool) && tool.defer_loading === true && typeof tool.name === "string";
 }
 
+function hasCompactedHistory(messages: unknown): boolean {
+    if (!Array.isArray(messages)) {
+        return false;
+    }
+    const first = messages.find((message) => isObject(message) && message.role === "user");
+    if (!isObject(first)) {
+        return false;
+    }
+    const text =
+        typeof first.content === "string"
+            ? first.content
+            : Array.isArray(first.content)
+              ? first.content
+                    .filter(isObject)
+                    .map((block) => (typeof block.text === "string" ? block.text : ""))
+                    .join("\n")
+              : "";
+    return text.startsWith("This session is being continued") || text.includes("[codex-compaction ");
+}
+
 function deferredTools(tools: unknown): DeferredTools {
     const byName = new Map<string, JsonRecord>();
 
@@ -479,6 +499,21 @@ export function anthropicToResponses(body: JsonRecord, model: string, hooks: Res
     const input: JsonRecord[] = [];
     const dropped = { thinking: 0 };
     const deferred = hooks.deferredToolsAsInput ? deferredTools(body.tools) : undefined;
+
+    if (deferred && hasCompactedHistory(body.messages)) {
+        const referenced = new Set(referencedToolNames(body.messages));
+        const orphaned = [...deferred.byName.entries()].filter(([name]) => !referenced.has(name));
+        if (orphaned.length > 0) {
+            input.push({
+                type: "additional_tools",
+                role: "developer",
+                tools: orphaned.map(([, tool]) => responsesTool(tool)),
+            });
+            for (const [name] of orphaned) {
+                deferred.sent.add(name);
+            }
+        }
+    }
 
     if (Array.isArray(body.messages)) {
         for (const message of body.messages) {

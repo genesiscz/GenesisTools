@@ -1,5 +1,5 @@
 import { afterEach, describe, expect, it } from "bun:test";
-import { mkdirSync, mkdtempSync, rmSync, statSync, writeFileSync } from "node:fs";
+import { mkdirSync, mkdtempSync, readFileSync, rmSync, statSync, writeFileSync } from "node:fs";
 import { tmpdir } from "node:os";
 import { join } from "node:path";
 import {
@@ -288,5 +288,115 @@ describe("isReadableByOthers", () => {
         // Execute-only counts: it still grants a bit to somebody else.
         expect(isReadableByOthers(0o601)).toBe(true);
         expect(isReadableByOthers(0o610)).toBe(true);
+    });
+});
+
+describe("sessionsIn config migration", () => {
+    it("loads an old claudeSessions block as sessionsIn.claude, Claude Code knobs global, Codex knobs under codex", () => {
+        const config = parseConfigJson(
+            SafeJSON.stringify({
+                claudeSessions: {
+                    compaction: {
+                        mode: "summary",
+                        effort: "low",
+                        words: 3000,
+                        idle: false,
+                        background: { enabled: false, startAt: 0.7 },
+                    },
+                    lead: { systemNote: { append: "Prefer terra for reviews." } },
+                    subagents: {
+                        systemNote: { prepend: "Be brief." },
+                        skills: { nudge: false, allowed: ["simplify"] },
+                    },
+                },
+            })
+        );
+
+        expect({ sessionsIn: config.sessionsIn, claudeSessions: config.claudeSessions }).toEqual({
+            sessionsIn: {
+                claude: {
+                    global: {
+                        compaction: { idle: false },
+                        lead: { systemNote: { append: "Prefer terra for reviews." } },
+                    },
+                    providers: {
+                        codex: {
+                            compaction: {
+                                mode: "summary",
+                                effort: "low",
+                                words: 3000,
+                                background: { enabled: false, startAt: 0.7 },
+                            },
+                            subagents: {
+                                systemNote: { prepend: "Be brief." },
+                                skills: { nudge: false, allowed: ["simplify"] },
+                            },
+                        },
+                    },
+                },
+            },
+            claudeSessions: undefined,
+        });
+    });
+
+    it("keeps the sessionsIn value where both shapes set the same key", () => {
+        const config = parseConfigJson(
+            SafeJSON.stringify({
+                claudeSessions: { compaction: { mode: "summary", words: 3000 } },
+                sessionsIn: { claude: { providers: { codex: { compaction: { mode: "native" } } } } },
+            })
+        );
+
+        expect(config.sessionsIn?.claude?.providers?.codex?.compaction).toEqual({ mode: "native", words: 3000 });
+    });
+
+    it("changes nothing when the migrated config is loaded again", () => {
+        const once = parseConfigJson(
+            SafeJSON.stringify({
+                claudeSessions: { compaction: { mode: "summary", idle: false }, lead: { systemNote: { append: "x" } } },
+            })
+        );
+
+        expect(parseConfigJson(SafeJSON.stringify(once)).sessionsIn).toEqual({
+            claude: {
+                global: { compaction: { idle: false }, lead: { systemNote: { append: "x" } } },
+                providers: { codex: { compaction: { mode: "summary" } } },
+            },
+        });
+    });
+
+    it("adds no sessionsIn block to a config that has neither shape", () => {
+        expect(parseConfigJson(SafeJSON.stringify({})).sessionsIn).toBeUndefined();
+    });
+
+    it("writes the new shape to disk on the next save, so the old key leaves config.json", async () => {
+        const home = mkdtempSync(join(tmpdir(), "ai-proxy-sessions-in-"));
+        env.testing.set("GENESIS_TOOLS_HOME", home);
+        resetAiProxyConfigStore();
+        resetAiProxyStorage();
+
+        try {
+            const storage = getAiProxyStorage();
+            await storage.ensureDirs();
+            writeFileSync(
+                storage.getConfigPath(),
+                SafeJSON.stringify({ accounts: [], claudeSessions: { compaction: { idle: false, words: 1200 } } })
+            );
+
+            await getAiProxyConfigStore().mutate(() => {});
+
+            const saved = SafeJSON.parse(readFileSync(storage.getConfigPath(), "utf8")) as Record<string, unknown>;
+            expect({ sessionsIn: saved.sessionsIn, claudeSessions: saved.claudeSessions }).toEqual({
+                sessionsIn: {
+                    claude: {
+                        global: { compaction: { idle: false } },
+                        providers: { codex: { compaction: { words: 1200 } } },
+                    },
+                },
+                claudeSessions: undefined,
+            });
+        } finally {
+            rmSync(home, { recursive: true, force: true });
+        }
     });
 });

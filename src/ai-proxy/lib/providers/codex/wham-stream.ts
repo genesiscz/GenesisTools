@@ -98,14 +98,23 @@ const SSE_LINE_END = /\r\n|\r|\n/;
  * at CRLF, LF or a lone CR, as the SSE grammar allows; a CR that ends a read waits for the next
  * read, which may carry its LF.
  */
-export async function* whamSsePayloads(stream: ReadableStream<Uint8Array>): AsyncGenerator<string> {
+export async function* whamSsePayloads(stream: ReadableStream<Uint8Array>, idleMs = 120_000): AsyncGenerator<string> {
     const reader = stream.getReader();
     const decoder = new TextDecoder();
     let pending = "";
     let data: string[] = [];
     try {
         while (true) {
-            const chunk = await reader.read();
+            let timer: ReturnType<typeof setTimeout> | undefined;
+            const idle = new Promise<never>((_resolve, reject) => {
+                timer = setTimeout(() => reject(new Error("WHAM upstream stream timed out.")), idleMs);
+            });
+            let chunk: Awaited<ReturnType<typeof reader.read>>;
+            try {
+                chunk = await Promise.race([reader.read(), idle]);
+            } finally {
+                clearTimeout(timer);
+            }
             pending += decoder.decode(chunk.value, { stream: !chunk.done });
             let end = SSE_LINE_END.exec(pending);
             while (end && !(end[0] === "\r" && end.index === pending.length - 1 && !chunk.done)) {

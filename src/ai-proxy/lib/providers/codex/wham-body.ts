@@ -230,9 +230,23 @@ export function buildWhamResponsesBody(
         body.prompt_cache_key = cacheKey.key;
     }
 
+    const resolved = resolveWhamReasoning(parsed, model, options);
+    if (resolved.reasoning) {
+        body.reasoning = resolved.reasoning;
+    }
+    return { body, dropped, effortError: resolved.effortError, cacheKey };
+}
+
+/** Resolve only the reasoning options. This does not inspect or transform request input. */
+export function resolveWhamReasoning(
+    parsed: Record<string, unknown>,
+    model: string,
+    options: { defaultReasoningEffort?: "none" | "low" | "medium" | "high"; catalog?: CodexModelInfo }
+): { reasoning?: Record<string, unknown>; effortError?: string } {
+    const body: Record<string, unknown> = {};
     if (options.catalog && options.catalog.efforts.length > 0) {
         const effortError = applyCatalogEffort({ parsed, body, model, catalog: options.catalog, options });
-        return { body, dropped, effortError, cacheKey };
+        return { reasoning: isObject(body.reasoning) ? body.reasoning : undefined, effortError };
     }
 
     if (isObject(parsed.reasoning)) {
@@ -242,6 +256,13 @@ export function buildWhamResponsesBody(
         // needs the same strongest-accepted mapping as the else-branch —
         // clamping it to "low" ran the user's `:max` ask at the WEAKEST effort.
         const reasoning = { ...parsed.reasoning };
+        if (
+            reasoning.effort === undefined &&
+            options.defaultReasoningEffort &&
+            options.defaultReasoningEffort !== "none"
+        ) {
+            reasoning.effort = options.defaultReasoningEffort;
+        }
 
         if (reasoning.effort === "max") {
             logger.debug({ model }, "ai-proxy: WHAM has no 'max' effort — using xhigh, the strongest it accepts");
@@ -280,7 +301,7 @@ export function buildWhamResponsesBody(
         }
     }
 
-    return { body, dropped, cacheKey };
+    return { reasoning: isObject(body.reasoning) ? body.reasoning : undefined };
 }
 
 /**

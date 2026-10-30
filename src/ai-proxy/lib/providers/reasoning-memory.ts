@@ -25,15 +25,7 @@ function messageKey(conversation: string, content: unknown[]): string | undefine
             return [];
         }
 
-        if (block.type === "tool_use") {
-            return [{ tool: block.id }];
-        }
-
-        if (block.type === "text") {
-            return [{ text: block.text }];
-        }
-
-        return [{ type: block.type }];
+        return [block];
     });
 
     if (identity.length === 0) {

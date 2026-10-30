@@ -17,6 +17,7 @@ import {
     hasReasoningInput,
     nonStrictByDefault,
     reasoningOptions,
+    resolveWhamReasoning,
     warnDroppedParamsOnce,
 } from "@app/ai-proxy/lib/providers/codex/wham-body";
 import {
@@ -63,7 +64,12 @@ import {
     trackBackground,
     withUserReminder,
 } from "@app/ai-proxy/lib/sessions/background-compaction";
-import { cacheResetNotice, cacheResetReason, shapeChange } from "@app/ai-proxy/lib/sessions/cache-shape";
+import {
+    cacheResetNotice,
+    cacheResetReason,
+    preserveCacheReminders,
+    shapeChange,
+} from "@app/ai-proxy/lib/sessions/cache-shape";
 import {
     compactionMarkers,
     compactionRecoveryMessage,
@@ -436,8 +442,14 @@ export class OpenAiSubscriptionProvider implements ProxyProvider {
             dropped: {} as Record<string, number>,
         };
         const turn = ClaudeCodeTurn.read(parsed);
-        // One conversation of one client: the reasoning memory never mixes clients or sessions.
-        const conversation = `${whamItemScope(req)}\u0000${context?.promptCacheKey?.key ?? turn.sessionId ?? ""}`;
+        // Content-derived cache keys are not conversation identities.
+        const conversationId =
+            context?.promptCacheKey?.source === "content"
+                ? (turn.sessionId ?? context?.sessionId)
+                : (context?.promptCacheKey?.key ?? turn.sessionId ?? context?.sessionId);
+        const conversation = conversationId
+            ? `${whamItemScope(req)}\u0000${conversationId}\u0000${stamp.accountHash}\u0000${stamp.compHash}`
+            : undefined;
         const compaction = turn.isCompaction;
         // The compaction settings, read once: a config reload during the request cannot change its path midway.
         const policy = compactionPolicy("codex", context?.sessionsIn);
@@ -500,7 +512,7 @@ export class OpenAiSubscriptionProvider implements ProxyProvider {
             },
             // Claude Code leaves earlier thinking out of a turn's first request; the same items keep the cache.
             restoreAssistantItems: (content) => {
-                const items = rememberedMessageItems(conversation, content);
+                const items = conversation ? rememberedMessageItems(conversation, content) : undefined;
 
                 if (!items || items.some((item) => this.deadReasoning.has(String(item.id)))) {
                     return undefined;
@@ -509,7 +521,11 @@ export class OpenAiSubscriptionProvider implements ProxyProvider {
                 replay.restored += items.filter((item) => item.type === "reasoning").length;
                 return items;
             },
-            rememberAssistantItems: (content, items) => rememberMessageItems(conversation, content, items),
+            rememberAssistantItems: (content, items) => {
+                if (conversation) {
+                    rememberMessageItems(conversation, content, items);
+                }
+            },
         });
 
         if (Array.isArray(responsesBody.tools)) {
@@ -551,21 +567,31 @@ export class OpenAiSubscriptionProvider implements ProxyProvider {
             ...(effort ? { effort } : {}),
         };
 
+        const resolvedReasoning = resolveWhamReasoning(responsesBody, concreteModel, {
+            defaultReasoningEffort: this.account.openaiSub?.defaultReasoningEffort,
+            catalog,
+        });
+        const effectiveEffort = String(resolvedReasoning.reasoning?.effort ?? "");
+
         // Codex keeps one cache per effort and model: say so where the cache was lost. A compaction turn is its own case.
         const cacheReset =
             claudeSessionId && !compaction
                 ? shapeChange(turn.threadKey ?? claudeSessionId, {
-                      effort: effort ?? "",
+                      effort: effectiveEffort,
                       model: concreteModel,
                   })
                 : undefined;
 
         if (cacheReset) {
             trace.record("cache-reset", { reason: cacheResetReason(cacheReset) });
+        }
 
-            if (Array.isArray(responsesBody.input)) {
-                responsesBody.input = withUserReminder(responsesBody.input, cacheResetNotice(cacheReset));
-            }
+        if (claudeSessionId && Array.isArray(responsesBody.input)) {
+            responsesBody.input = preserveCacheReminders(
+                turn.threadKey ?? claudeSessionId,
+                responsesBody.input,
+                cacheReset ? cacheResetNotice(cacheReset) : undefined
+            );
         }
 
         logger.debug(
@@ -767,11 +793,17 @@ export class OpenAiSubscriptionProvider implements ProxyProvider {
 
         // Where this request first differs from the thread's previous one: the ledger row names a miss's cause.
         if (claudeSessionId) {
+            const firstUser = Array.isArray(parsed.messages)
+                ? parsed.messages.find((message) => isObject(message) && message.role === "user")
+                : undefined;
+            const diagnosticThread = firstUser
+                ? `${whamItemScope(req)}\u0000${claudeSessionId}\u0000${contentHash(SafeJSON.stringify(firstUser))}`
+                : (turn.threadKey ?? claudeSessionId);
             setPrefixDiff(
                 req,
-                notePrefix(turn.threadKey ?? claudeSessionId, {
+                notePrefix(diagnosticThread, {
                     model: concreteModel,
-                    effort: isObject(responsesBody.reasoning) ? String(responsesBody.reasoning.effort ?? "") : "",
+                    effort: effectiveEffort,
                     instructions: responsesBody.instructions,
                     tools: responsesBody.tools,
                     input: Array.isArray(responsesBody.input) ? responsesBody.input : [],
