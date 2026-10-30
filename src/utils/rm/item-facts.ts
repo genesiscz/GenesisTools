@@ -1,4 +1,4 @@
-import { type Dirent, existsSync, lstatSync, readdirSync } from "node:fs";
+import { existsSync, lstatSync, opendirSync } from "node:fs";
 import { dirname, join, relative, sep } from "node:path";
 import { formatRelativeTime } from "@genesiscz/utils/format";
 import { createGit } from "@genesiscz/utils/git/core";
@@ -211,15 +211,6 @@ export async function probeItemGit(probes: readonly GitProbe[]): Promise<Map<str
     return found;
 }
 
-function readEntries(dir: string): Dirent[] {
-    try {
-        return readdirSync(dir, { withFileTypes: true });
-    } catch (error) {
-        logger.debug({ error, dir }, "rm: could not list a folder for its stats");
-        return [];
-    }
-}
-
 function mtimeOf(path: string): number {
     try {
         return lstatSync(path).mtimeMs;
@@ -240,22 +231,32 @@ export function folderStats(dir: string, cap = FOLDER_WALK_CAP): FolderStats {
     while (stack.length > 0 && !capped) {
         const current = stack.pop() ?? dir;
 
-        for (const entry of readEntries(current)) {
-            if (seen >= cap) {
-                capped = true;
-                break;
+        try {
+            const handle = opendirSync(current);
+            try {
+                while (true) {
+                    const entry = handle.readSync();
+                    if (!entry) {
+                        break;
+                    }
+                    if (seen >= cap) {
+                        capped = true;
+                        break;
+                    }
+                    seen++;
+                    const path = join(current, entry.name);
+                    if (entry.isDirectory()) {
+                        stack.push(path);
+                        continue;
+                    }
+                    files++;
+                    newest = Math.max(newest, mtimeOf(path));
+                }
+            } finally {
+                handle.closeSync();
             }
-
-            seen++;
-            const path = join(current, entry.name);
-
-            if (entry.isDirectory()) {
-                stack.push(path);
-                continue;
-            }
-
-            files++;
-            newest = Math.max(newest, mtimeOf(path));
+        } catch (error) {
+            logger.debug({ error, dir: current }, "rm: could not list a folder for its stats");
         }
     }
 
