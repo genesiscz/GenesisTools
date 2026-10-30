@@ -37,11 +37,4 @@ export const HARNESS_BRANCH_RATCHET: ReadonlySet<string> = new Set<string>([
 
 export const HOOK_PAYLOAD_READ_RATCHET: ReadonlySet<string> = new Set<string>([]);
 
-export const AGENT_PROCESS_MATCH_RATCHET: ReadonlySet<string> = new Set<string>([
-    "scripts/benchmarks/process/call-sites.ts",
-    "src/claude/lib/teams/status.ts",
-    "src/cmux/lib/tab-process.ts",
-    "src/codex/lib/spawn.ts",
-    "src/question/lib/decisions/deliver.ts",
-    "src/utils/cmux/tmux-host.ts",
-]);
+export const AGENT_PROCESS_MATCH_RATCHET: ReadonlySet<string> = new Set<string>([]);

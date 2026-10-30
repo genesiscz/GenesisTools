@@ -1,5 +1,5 @@
 import { describe, expect, test } from "bun:test";
-import { argvSessionId, classifyCommand } from "./classify";
+import { argvSessionId, classifyCommand, isAgentProcess, runsAgent } from "./classify";
 
 // Invented pids, paths and session ids; the process shapes are copied from a real `ps -axo` dump.
 const S1 = "11111111-1111-4111-8111-111111111111";
@@ -15,6 +15,7 @@ describe("classifyCommand", () => {
             provider: "claude",
             label: "claude",
             sessionId: S1,
+            service: false,
         });
         expect(classifyCommand(`${HOME}/.local/share/claude/versions/2.1.112 -p hi`).provider).toBe("claude");
         expect(classifyCommand(`${HOME}/node_modules/@openai/codex/vendor/codex resume ${S2}`)).toMatchObject({
@@ -84,7 +85,44 @@ describe("classifyCommand", () => {
             provider: "claude",
             label: "claude tool shell",
             sessionId: S3,
+            service: false,
         });
+    });
+
+    test("an agent binary that runs a helper is a service, not a session", () => {
+        for (const command of [
+            "codex-gateway serve",
+            "/opt/bin/codex-gateway serve",
+            `${HOME}/Applications/GenesisTools.app/Contents/MacOS/GenesisTools codex-gateway serve`,
+            `${HOME}/.bun/bin/claude mcp serve`,
+            `node ${HOME}/node_modules/@anthropic-ai/claude-code/cli.js mcp serve`,
+        ]) {
+            expect(classifyCommand(command)).toMatchObject({ kind: "agent", service: true });
+            expect(isAgentProcess(command, "codex") || isAgentProcess(command, "claude")).toBe(false);
+        }
+
+        // A versioned Codex binary resuming a session is the agent; a prompt that says "mcp" is no subcommand.
+        expect(classifyCommand(`/opt/bin/codex-aarch64-apple-darwin resume ${S2}`).service).toBe(false);
+        expect(isAgentProcess(`${HOME}/.bun/bin/claude --resume ${S1} mcp`, "claude")).toBe(true);
+    });
+
+    test("runsAgent takes a tools <agent> run|start|resume launcher from any checkout or off PATH", () => {
+        expect(runsAgent("bun /repo/tools codex run work", "codex")).toBe(true);
+        expect(runsAgent(`zsh -ic exec tools cc resume ${S1}`, "claude")).toBe(true);
+        expect(runsAgent("bun /repo/tools codex run work", "claude")).toBe(false);
+        expect(runsAgent("tools claude history", "claude")).toBe(false);
+    });
+
+    test("isAgentProcess takes the agent itself; runsAgent takes its wrappers too", () => {
+        const binary = `${HOME}/.bun/bin/claude --agent-id mate@team --agent-name mate`;
+        const wrapper = `bun run ${GT}/src/claude/index.ts run work`;
+
+        expect(isAgentProcess(binary, "claude")).toBe(true);
+        expect(isAgentProcess(wrapper, "claude")).toBe(false);
+        expect(runsAgent(wrapper, "claude")).toBe(true);
+        expect(runsAgent(binary, "codex")).toBe(false);
+        expect(runsAgent(`bun ${GT}/src/claude/index.ts teams discover`, "claude")).toBe(false);
+        expect(runsAgent(`rg -n claude ${GT}/src`, "claude")).toBe(false);
     });
 
     test("argvSessionId takes uuids only, never a resume query", () => {

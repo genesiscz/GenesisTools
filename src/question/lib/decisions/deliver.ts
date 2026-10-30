@@ -37,6 +37,7 @@ import { toolCommand } from "@genesiscz/utils/cli/tool-command";
 import { type CmuxLiveSnapshot, fetchCmuxLiveSnapshot } from "@genesiscz/utils/cmux/lib/live-snapshot";
 import { SafeJSON } from "@genesiscz/utils/json";
 import { logger } from "@genesiscz/utils/logger";
+import { runsAgent } from "@genesiscz/utils/process/classify";
 import { batchPsInfo } from "@genesiscz/utils/process/ps";
 import { isProcessAlive } from "@genesiscz/utils/process-alive";
 import { isTestProcess } from "@genesiscz/utils/test-process";
@@ -82,7 +83,7 @@ function liveClaudePeers(session: string, sourceHome?: string): ClaudeLiveSessio
     const processes = batchPsInfo(candidates.map((peer) => peer.pid));
     return candidates.filter((peer) => {
         const process = processes.get(peer.pid);
-        return process && /claude/i.test(process.command);
+        return process && runsAgent(process.command, "claude");
     });
 }
 

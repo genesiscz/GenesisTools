@@ -18,6 +18,11 @@ export interface ProcClass {
     label: string;
     /** A session id the argv or the environment names (`--resume <uuid>`, `…SESSION_ID='<uuid>'`). */
     sessionId: string | null;
+    /**
+     * An agent binary that runs one of its helpers instead of a session: a `codex-<name>` binary that names no session
+     * (`codex-gateway serve`), or the CLI's own MCP door (`claude mcp serve`). It never makes a tab a live agent.
+     */
+    service: boolean;
 }
 
 const UUID = /^[0-9a-f]{8}-[0-9a-f]{4}-[0-9a-f]{4}-[0-9a-f]{4}-[0-9a-f]{12}$/i;
@@ -35,6 +40,11 @@ const WRAPPER_TOOLS: Record<string, AgentProvider> = {
     "cursor-agent": "cursor-agent",
 };
 const WRAPPER_VERBS = new Set(["run", "resume", "start"]);
+/** `tools <agent> run|start|resume …` from any checkout path or off PATH: the launcher that starts the agent. */
+const TOOLS_LAUNCHER = /(?:^|[\s/])tools\s+([\w-]+)\s+(?:run|start|resume)\b/;
+/** A Codex helper binary (`codex-gateway`); a versioned Codex binary has the same shape and tells itself apart by a session. */
+const CODEX_HELPER = /^codex-[\w-]+$/;
+const INTERPRETERS = /^(?:node|bun|bash|sh|zsh)$/;
 const MCP = /mcp-server|mcporter|(?:^|[\s/@_-])mcp(?:$|[\s/_.-])|-mcp\b/i;
 const CLAUDE_SHELL = /\/\.claude\/shell-snapshots\//;
 const SHELL_SESSION = /SESSION_ID=['"]?([0-9a-f]{8}-[0-9a-f]{4}-[0-9a-f]{4}-[0-9a-f]{4}-[0-9a-f]{12})/i;
@@ -85,7 +95,7 @@ function agentOf(command: string): AgentProvider | null {
     const second = basename(command.trim().split(/\s+/)[1] ?? "");
 
     if (
-        /^(?:node|bun|bash|sh|zsh)$/.test(name) &&
+        INTERPRETERS.test(name) &&
         (second === "cursor-agent" || second === "claude" || second === "grok" || second === "codex")
     ) {
         return second;
@@ -114,12 +124,29 @@ export function argvSessionId(command: string): string | null {
     return joined && UUID.test(joined[1]) ? joined[1] : null;
 }
 
+/** The first argument after the agent's entry (the binary, or the script an interpreter runs): `mcp` in `claude mcp serve`. */
+function agentSubcommand(command: string): string | undefined {
+    const tokens = command.trim().split(/\s+/);
+    const entry = INTERPRETERS.test(basename(tokens[0] ?? "")) ? 1 : 0;
+
+    return tokens[entry + 1];
+}
+
+function isAgentService(command: string, sessionId: string | null): boolean {
+    if (agentSubcommand(command) === "mcp") {
+        return true;
+    }
+
+    return !sessionId && CODEX_HELPER.test(basename(argv0(command)));
+}
+
 export function classifyCommand(raw: string): ProcClass {
     const command = raw.replace(LAUNCHER_PREFIX, "");
     const provider = agentOf(command);
 
     if (provider) {
-        return { kind: "agent", provider, label: provider, sessionId: argvSessionId(command) };
+        const sessionId = argvSessionId(command);
+        return { kind: "agent", provider, label: provider, sessionId, service: isAgentService(command, sessionId) };
     }
 
     const tool = command.match(TOOL_ENTRY);
@@ -131,14 +158,14 @@ export function classifyCommand(raw: string): ProcClass {
         const wrapped = WRAPPER_TOOLS[name];
 
         if (wrapped && WRAPPER_VERBS.has(verb)) {
-            return { kind: "wrapper", provider: wrapped, label, sessionId: argvSessionId(command) };
+            return { kind: "wrapper", provider: wrapped, label, sessionId: argvSessionId(command), service: false };
         }
 
         if (verb === "mcp" || name.includes("mcp")) {
-            return { kind: "mcp", provider: null, label, sessionId: null };
+            return { kind: "mcp", provider: null, label, sessionId: null, service: false };
         }
 
-        return { kind: "tools", provider: null, label, sessionId: null };
+        return { kind: "tools", provider: null, label, sessionId: null, service: false };
     }
 
     if (CLAUDE_SHELL.test(command)) {
@@ -147,14 +174,40 @@ export function classifyCommand(raw: string): ProcClass {
             provider: "claude",
             label: "claude tool shell",
             sessionId: command.match(SHELL_SESSION)?.[1] ?? null,
+            service: false,
         };
     }
 
     if (MCP.test(command)) {
-        return { kind: "mcp", provider: null, label: mcpLabel(command), sessionId: null };
+        return { kind: "mcp", provider: null, label: mcpLabel(command), sessionId: null, service: false };
     }
 
-    return { kind: "other", provider: null, label: basename(argv0(command)), sessionId: null };
+    return { kind: "other", provider: null, label: basename(argv0(command)), sessionId: null, service: false };
+}
+
+/** Does this command line run the provider's agent itself, the binary or its script, and not one of its services? */
+export function isAgentProcess(command: string, provider: AgentProvider): boolean {
+    const proc = classifyCommand(command);
+
+    return proc.kind === "agent" && proc.provider === provider && !proc.service;
+}
+
+/**
+ * Does this command line run the provider's agent, as its own process, through a wrapper that starts it, or through
+ * a `tools <agent> run|start|resume` launcher of any checkout or off PATH (`/repo/tools codex run`, `zsh -ic exec
+ * tools cc resume <id>`)? The launcher form is not a wrapper for `classifyCommand`, which also reads it off a shell
+ * that only mentions it.
+ */
+export function runsAgent(command: string, provider: AgentProvider): boolean {
+    const proc = classifyCommand(command);
+
+    if ((proc.kind === "agent" || proc.kind === "wrapper") && proc.provider === provider && !proc.service) {
+        return true;
+    }
+
+    const launcher = command.match(TOOLS_LAUNCHER)?.[1];
+
+    return launcher !== undefined && WRAPPER_TOOLS[launcher] === provider;
 }
 
 /** The token that names the MCP server: `context7-mcp`, `graft mcp` → `graft`, `…/bridgememory-mcp/server.cjs`. */

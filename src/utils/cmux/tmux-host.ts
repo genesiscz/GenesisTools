@@ -5,6 +5,7 @@ import { toolCommand } from "@genesiscz/utils/cli/tool-command";
 import { runCmuxJSON } from "@genesiscz/utils/cmux/lib/cli";
 import { SafeJSON } from "@genesiscz/utils/json";
 import { logger } from "@genesiscz/utils/logger";
+import { runsAgent } from "@genesiscz/utils/process/classify";
 import { commandOfRow, listProcessTable } from "@genesiscz/utils/process/libproc-table";
 import { listPsTable, type PsRow, processBasename } from "@genesiscz/utils/process/ps";
 import { shellWord } from "@genesiscz/utils/shell/quote";
@@ -141,7 +142,7 @@ export function sessionPidsBySession(
 ): Map<string, number[]> {
     const commandOf = new Map(processes.map((proc) => [proc.pid, proc.command]));
     // A registry entry outlives its process; a recycled pid that runs something else is not the session.
-    const liveOwner = new Map([...registry].filter(([pid]) => /claude/i.test(commandOf.get(pid) ?? "")));
+    const liveOwner = new Map([...registry].filter(([pid]) => runsAgent(commandOf.get(pid) ?? "", "claude")));
     const found = new Map<string, number[]>();
 
     for (const [pid, sessionId] of liveOwner) {
