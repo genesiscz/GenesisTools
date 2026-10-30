@@ -1,7 +1,7 @@
 import { readFileSync } from "node:fs";
-import { homedir } from "node:os";
 import { join } from "node:path";
 import type { AgentCaller } from "@genesiscz/utils/agent/runtime";
+import { claudeSessionsDir } from "@genesiscz/utils/claude/peer-message";
 import { SafeJSON } from "@genesiscz/utils/json";
 import { logger } from "@genesiscz/utils/logger";
 import { readProcessCwd } from "@genesiscz/utils/process/cwd";
@@ -115,7 +115,7 @@ export function resolveCallerFromPeer(opts: {
     }
 
     const agent = HARNESS_BY_NAME[chosen.name] ?? "unknown";
-    const sessionId = sessionIdFor(agent, chosen, opts.claudeSessionsDir ?? join(homedir(), ".claude", "sessions"));
+    const sessionId = sessionIdFor(agent, chosen, opts.claudeSessionsDir ?? claudeSessionsDir());
 
     return {
         agent,

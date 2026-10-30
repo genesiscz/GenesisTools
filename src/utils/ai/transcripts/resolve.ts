@@ -1,5 +1,4 @@
 import { existsSync, readdirSync, readFileSync, realpathSync, statSync } from "node:fs";
-import { homedir } from "node:os";
 import { basename, dirname, isAbsolute, join, relative, resolve, sep } from "node:path";
 import { PROJECTS_DIR } from "@genesiscz/utils/claude/projects";
 import { workersDir as claudeWorkerDir } from "@genesiscz/utils/claude/worker-paths";
@@ -7,7 +6,13 @@ import { sessionsDir as codexWorkerDir } from "@genesiscz/utils/codex/worker-pat
 import { env } from "@genesiscz/utils/env";
 import { sessionsDir as grokWorkerDir } from "@genesiscz/utils/grok/worker-paths";
 import { SafeJSON } from "@genesiscz/utils/json";
-import { isNativeTranscript, nativeSessionRoots, transcriptStem } from "@genesiscz/utils/providers/session-paths";
+import {
+    codexHomeOverrides,
+    isNativeTranscript,
+    nativeHome,
+    nativeSessionRoots,
+    transcriptStem,
+} from "@genesiscz/utils/providers/session-paths";
 import type { TranscriptProvider } from "./types";
 
 export type TranscriptSource = "native" | "worker";
@@ -155,7 +160,7 @@ export function defaultTranscriptRoots(): Required<TranscriptRoots> {
         claudeWorker: claudeWorkerDir(),
         grokHome: env.grok.getHome(),
         grokWorker: grokWorkerDir(),
-        codexHome: env.codex.getHomeOverride() ?? join(homedir(), ".codex"),
+        codexHome: env.codex.getHomeOverride() ?? nativeHome("codex"),
         codexWorker: codexWorkerDir(),
     };
 }
@@ -419,14 +424,12 @@ export function rescanWorkerTurns(resolved: ResolvedTranscript): { filePath: str
     return { filePath, extraFiles: extraFiles.length > 0 ? extraFiles : undefined };
 }
 
+/** The default root is the raw `CODEX_HOME` comma list, so it names every home; any other root is one home. */
 function splitCodexHomes(codexHome: string): string[] {
-    const override = env.codex.getHomeOverride();
-    if (override && codexHome === override) {
-        return override
-            .split(",")
-            .map((part) => part.trim())
-            .filter((part) => part.length > 0);
+    if (codexHome === env.codex.getHomeOverride()) {
+        return codexHomeOverrides();
     }
+
     return [codexHome];
 }
 

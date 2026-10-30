@@ -12,11 +12,10 @@
  * - Codex:  `session_index.jsonl` -> `thread_name`, in every home `CODEX_HOME` names (else `~/.codex`).
  */
 import { existsSync, readdirSync, readFileSync, statSync } from "node:fs";
-import { homedir } from "node:os";
 import { join } from "node:path";
 import { SafeJSON } from "@genesiscz/utils/json";
 import { logger } from "@genesiscz/utils/logger";
-import { codexHomeOverrides, nativeSessionRoots } from "@genesiscz/utils/providers/session-paths";
+import { codexHomeOverrides, nativeHome, nativeSessionRoots } from "@genesiscz/utils/providers/session-paths";
 import { scanFileMatches } from "./file-scan";
 import type { TurnProvider } from "./turn-state";
 
@@ -211,7 +210,7 @@ function grokSessions(roots: string[]): TitledSession[] {
 export function codexIndexPaths(): string[] {
     const homes = codexHomeOverrides();
 
-    return (homes.length > 0 ? homes : [join(homedir(), ".codex")]).map((home) => join(home, "session_index.jsonl"));
+    return (homes.length > 0 ? homes : [nativeHome("codex")]).map((home) => join(home, "session_index.jsonl"));
 }
 
 function codexSessions(indexPaths: readonly string[]): TitledSession[] {
