@@ -22,6 +22,7 @@ import {
     agentFilterMatches,
     canonicalAgent,
     HANDOFF_AGENTS_LIST,
+    type HandoffAgent,
     handoffNameFor,
     isKnownAgent,
     normalizeHandoffName,
@@ -320,6 +321,9 @@ export function launchCwd(by: Pick<HandoffEventBy, "cwd" | "repoRoot" | "isWorkt
     return by.isWorktree ? (by.cwd ?? by.repoRoot) : (by.repoRoot ?? by.cwd);
 }
 
+/** The harness the run link starts: a `cmux-claude` launch of `tools claude run auto`. */
+const LAUNCH_LINK_AGENT: HandoffAgent = "claude";
+
 /** `cwd` comes from the RESOLVED actor, so the link opens in the handoff's checkout even with default deps. */
 function mintHandoffLaunch({
     name,
@@ -442,7 +446,7 @@ export function postHandoff(input: PostHandoffInput, deps: HandoffDeps = {}): Po
         const targetCwd =
             named === null || named.project === by.project ? (named?.launchCwd ?? launchCwd(by)) : named.launchCwd;
         const runLink =
-            (targetAgent === undefined || canonicalAgent(targetAgent) === "claude") &&
+            (targetAgent === undefined || canonicalAgent(targetAgent) === LAUNCH_LINK_AGENT) &&
             (named === null || targetCwd !== null)
                 ? mintHandoffLaunch({
                       name: handoff.name ?? handoff.id,

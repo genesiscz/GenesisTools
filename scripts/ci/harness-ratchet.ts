@@ -12,9 +12,7 @@
  * matching in `src/utils/process/classify.ts`.
  */
 export const HARNESS_BRANCH_RATCHET: ReadonlySet<string> = new Set<string>([
-    "scripts/history/schema-benchmark.ts",
     "src/agents/commands/hooks.ts",
-    "src/agents/lib/changes/blame.ts",
     "src/agents/lib/hooks/diff-log.ts",
     "src/agents/lib/hooks/diff/capture.ts",
     "src/agents/lib/hooks/diff/run.ts",
@@ -36,18 +34,12 @@ export const HARNESS_BRANCH_RATCHET: ReadonlySet<string> = new Set<string>([
     "src/cmux/lib/tty-capture.ts",
     "src/codex/lib/message-delivery.ts",
     "src/codex/lib/review/import.ts",
-    "src/dev-dashboard/lib/tmux/claude-pane-title.ts",
     "src/genesis-tools-mcp/lib/http-caller.ts",
-    "src/git/commands/worktree.ts",
-    "src/handoff/executor.ts",
     "src/hub/lib/agents/index.ts",
     "src/hub/lib/composer/dispatch.ts",
     "src/hub/lib/insights/index.ts",
     "src/hub/lib/widget/context.ts",
     "src/hub/lib/widget/snapshot.ts",
-    "src/learn-from-fable/lib/runners/index.ts",
-    "src/mcp-manager/commands/list.ts",
-    "src/mcp-manager/commands/rename.ts",
     "src/question/lib/decisions/deliver.ts",
     "src/question/lib/decisions/read.ts",
     "src/question/lib/decisions/store.ts",
@@ -62,7 +54,6 @@ export const HARNESS_BRANCH_RATCHET: ReadonlySet<string> = new Set<string>([
     "src/utils/ai/transcripts/subagents.ts",
     "src/utils/ai/transcripts/turn-index.ts",
     "src/utils/cli/failures/caller.ts",
-    "src/utils/worker/contract.ts",
 ]);
 
 export const HOOK_PAYLOAD_READ_RATCHET: ReadonlySet<string> = new Set<string>([

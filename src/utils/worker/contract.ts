@@ -1,6 +1,6 @@
 import { type EffortRange, effortRange } from "@genesiscz/utils/ai/catalog/efforts";
 import { toolCommand } from "@genesiscz/utils/cli/tool-command";
-import type { WorkerBackend } from "./capabilities";
+import { WORKER_CAPABILITIES, type WorkerBackend } from "./capabilities";
 
 export type WorkerSandbox = "read-only" | "cwd-jail" | "workspace-write" | "none";
 
@@ -139,14 +139,9 @@ const BACKEND_LABEL: Record<WorkerBackend, string> = {
     claude: "Claude Code",
 };
 
-/**
- * How mail reaches the worker. A codex worker's daemon delivers every message addressed to it as turn input
- * (merged into a running turn, or a new turn when idle), so a model-side `login --once` only blocked the turn and
- * received the same mail twice; one held the identity's slot for 3+ minutes on 2026-10-13. Other backends still
- * receive through `login --once`.
- */
+/** How mail reaches the worker: `WORKER_CAPABILITIES[backend].busMail`. */
 function receiveLines(backend: WorkerBackend, bus: WorkerBus, sessionFlag: string): string[] {
-    if (backend === "codex") {
+    if (WORKER_CAPABILITIES[backend].busMail === "turn-input") {
         return [
             `Mail addressed to you arrives by itself as input that starts with \`[Bus message from <sender> #<id>. Reply with: ...]\`: inside your running turn, or as a new turn when you are idle. Never run \`${toolCommand("agents login")}\` or \`${toolCommand("agents request")}\`: they block your turn and receive that mail a second time.`,
             "At a checkpoint where you must wait for the lead, send your message and END your turn; the reply starts your next turn.",
@@ -222,13 +217,9 @@ function reportShapeLines(): string[] {
     ];
 }
 
-/**
- * A codex sandbox denies watchman's state directory (`~/.local/state/watchman`), so Jest failed before any test on
- * its `fchmod` (2026-10-13). The flag, not a writable root: that directory also holds watchman triggers, which run
- * commands outside the sandbox, so making it writable would let a worker escape.
- */
+/** Jest needs `--watchman=false` where the sandbox blocks watchman (`WORKER_CAPABILITIES[...].sandboxBlocksWatchman`). */
 function sandboxLines(input: WorkerContractInput): string[] {
-    if (input.backend !== "codex" || input.sandbox === "none") {
+    if (!WORKER_CAPABILITIES[input.backend].sandboxBlocksWatchman || input.sandbox === "none") {
         return [];
     }
 

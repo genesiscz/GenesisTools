@@ -98,7 +98,7 @@ export async function runConfig(options: WorktreeOptions): Promise<number> {
         return 1;
     }
 
-    if (loaded.source === "claude" && loaded.path) {
+    if (loaded.path !== null && loaded.path === loaded.paths.claude) {
         // `loadRepoConfig` returns the versioned file first, so the local file this wizard writes is never read.
         out.log.error(
             `The worktree policy of this repository is the versioned ${loaded.path}. It shadows the local file this wizard writes, so a change made here would not take effect.`

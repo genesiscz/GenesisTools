@@ -11,7 +11,11 @@ import { initializeCompactHistorySchema } from "../../src/utils/agent-sessions/m
 import { readClaudeMetadata } from "../../src/utils/agent-sessions/readers/claude";
 import { HistoryRepository } from "../../src/utils/agent-sessions/repository";
 import { BASELINE_REVISION, createBaselineOracle } from "../../src/utils/agent-sessions/testing/baseline-oracle";
-import { generateHistoryCorpus, type HistoryCorpusManifest } from "../../src/utils/agent-sessions/testing/corpus";
+import {
+    corpusSourcesOf,
+    generateHistoryCorpus,
+    type HistoryCorpusManifest,
+} from "../../src/utils/agent-sessions/testing/corpus";
 import {
     createFixtureWorld,
     FIXED_HISTORY_NOW,
@@ -336,15 +340,10 @@ async function prepareMetadata(options: {
 }): Promise<PreparedMetadata[]> {
     const root = realpathSync(options.world.sources.claude);
     const sourceHome = realpathSync(dirname(root));
-    const revisions = new Map(
-        options.corpus.sources
-            .filter((source) => source.provider === "claude")
-            .map((source) => [source.relativePath, source.sha256])
-    );
+    const claudeSources = corpusSourcesOf(options.corpus, "claude");
+    const revisions = new Map(claudeSources.map((source) => [source.relativePath, source.sha256]));
     const prepared: PreparedMetadata[] = [];
-    for (const source of options.corpus.sources.filter(
-        (candidate) => candidate.provider === "claude" && candidate.relativePath.endsWith(".jsonl")
-    )) {
+    for (const source of claudeSources.filter((candidate) => candidate.relativePath.endsWith(".jsonl"))) {
         const filePath = realpathSync(join(options.world.root, source.relativePath));
         const nativeSource: NativeSessionSource<"claude"> = {
             kind: "claude",
@@ -596,7 +595,7 @@ export async function runSchemaBenchmark(config: SchemaBenchmarkConfig): Promise
             world,
             directory: join(world.root, "derived", "mutation"),
         });
-        const claudeSources = corpus.sources.filter((source) => source.provider === "claude");
+        const claudeSources = corpusSourcesOf(corpus, "claude");
         const sourceAfter = await sourceCodeHashes();
         const changedDuringRun = Object.keys(sourceBefore).filter((name) => sourceBefore[name] !== sourceAfter[name]);
         if (changedDuringRun.length > 0) {
