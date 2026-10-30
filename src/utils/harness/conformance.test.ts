@@ -1,5 +1,5 @@
 import { describe, expect, test } from "bun:test";
-import { existsSync } from "node:fs";
+import { existsSync, readFileSync } from "node:fs";
 import { join } from "node:path";
 import { ACCOUNT_PROVIDER_ALIASES } from "@genesiscz/utils/ai/providers/alias-list";
 import { providerAliasOf } from "@genesiscz/utils/ai/providers/aliases";
@@ -7,6 +7,7 @@ import { harnessDriver, harnessDrivers, harnessLaunch } from "@genesiscz/utils/a
 import { registerBuiltInPlugins } from "@genesiscz/utils/ai/providers/plugins";
 import { allProviderPlugins } from "@genesiscz/utils/ai/providers/registry";
 import { moduleDir } from "@genesiscz/utils/fs/module-dir";
+import { HARNESS_SWIFT_PATH, renderHarnessSwift } from "../../../scripts/gen-harness-swift";
 import { HARNESS_PARTS, type HarnessDriver, isPartNote } from "./types";
 
 /**
@@ -125,4 +126,10 @@ describe("launch: the resume command of every harness", () => {
             expect(Object.keys(launch.resumeFlags).length).toBeGreaterThan(0);
         });
     }
+});
+
+describe("the Swift mirror of the drivers", () => {
+    test("Harness.swift is what scripts/gen-harness-swift.ts writes from today's drivers", () => {
+        expect(readFileSync(HARNESS_SWIFT_PATH, "utf8")).toBe(renderHarnessSwift());
+    });
 });
