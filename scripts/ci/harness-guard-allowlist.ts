@@ -111,7 +111,6 @@ export const HARNESS_GUARD_ALLOWLIST: Readonly<Record<string, HarnessGuardCounts
     "src/utils/agents/dialogs/types.ts": { list: 1 },
     "src/utils/ai/compact/sources.ts": { table: 2 },
     "src/utils/ai/transcripts/around.ts": { list: 1, table: 4 },
-    "src/utils/ai/transcripts/load.ts": { table: 2 },
     "src/utils/ai/transcripts/native-scan.ts": { table: 2 },
     "src/utils/ai/transcripts/resolve.ts": { list: 1, table: 4 },
     "src/utils/ai/transcripts/session-title.ts": { table: 1 },

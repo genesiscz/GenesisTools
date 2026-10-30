@@ -1,4 +1,4 @@
-import { closeSync, fstatSync, openSync, readSync } from "node:fs";
+import { closeSync, existsSync, fstatSync, openSync, readSync } from "node:fs";
 import { isZstdPath } from "@genesiscz/utils/compress/zstd";
 import { readLinesSync } from "@genesiscz/utils/fs/read-lines";
 import { logger } from "@genesiscz/utils/logger";
@@ -201,4 +201,17 @@ export function readRecordsAppendOnly(
             closeSync(fd);
         }
     }
+}
+
+/**
+ * A transcript's records, or none when the file is gone. A live Codex or Grok file is read again on every write:
+ * between 8 and 48 MB only its new lines are parsed; a larger file is parsed whole each time, to bound the cache's
+ * memory. Moved from load.ts, where the provider parsers used to live.
+ */
+export function readTranscriptRecords(path: string): unknown[] {
+    if (!existsSync(path)) {
+        return [];
+    }
+
+    return readRecordsAppendOnly(path);
 }

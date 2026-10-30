@@ -1,8 +1,9 @@
 import type { AgentRuntimeContext } from "@genesiscz/utils/agent/context";
 import type { ResumeOptions } from "@genesiscz/utils/agent-sessions/resume-argv";
 import type { NativeSessionReader } from "@genesiscz/utils/agent-sessions/types";
+import type { ResolvedTranscript } from "@genesiscz/utils/ai/transcripts/resolve";
 import type { TurnQuestionCall, TurnSnapshot, TurnStateInput } from "@genesiscz/utils/ai/transcripts/turn-state";
-import type { SliceOptions, TranscriptEnvelope, TranscriptTurn } from "@genesiscz/utils/ai/transcripts/types";
+import type { TranscriptTurn } from "@genesiscz/utils/ai/transcripts/types";
 
 /**
  * The contracts of the coding-agent parts whose implementation can live in `@genesiscz/utils`, next to the
@@ -37,8 +38,13 @@ export interface LocatedTranscript {
 
 /** D: transcript lines to the provider-neutral turns every renderer reads. */
 export interface TranscriptParser {
-    toTurns(lines: readonly string[], options?: SliceOptions): Promise<TranscriptTurn[]>;
-    envelope?(lines: readonly string[]): TranscriptEnvelope;
+    /** The turns of one transcript file (`index` numbers a chain of files, earliest first). */
+    fromFile(resolved: ResolvedTranscript, path: string, index: number): Promise<TranscriptTurn[]>;
+    /**
+     * The turns of some of a transcript's lines (the end of a file too large to parse whole). Claude has its own tail
+     * reader (`lastClaudeAssistantText` in hub/lib/widget/snapshot.ts) and gets no turns here.
+     */
+    fromLines(resolved: ResolvedTranscript, lines: readonly string[]): TranscriptTurn[];
 }
 
 /** E: the state of the newest turn, read from a bounded tail of the transcript. */

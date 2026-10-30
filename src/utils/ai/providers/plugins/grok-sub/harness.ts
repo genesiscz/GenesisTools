@@ -12,7 +12,7 @@ export const grokHarness: HarnessDriver<"grok"> = {
     identity: { label: "Grok", binary: "grok", plugin: "grok-sub", aliases: ["grok-cli"] },
     parts: {
         locate: pending("P2", "the grok finders in src/utils/ai/transcripts/resolve.ts and session-paths.ts roots"),
-        parse: pending("P2", "the grok entry of the parser table in src/utils/ai/transcripts/load.ts"),
+        parse: () => import("./harness-parse").then((m) => m.grokParse),
         turnState: pending("P2", "grokTurnState and READERS in src/utils/ai/transcripts/turn-state.ts"),
         questions: pending("P2", "the grok question signals inside src/utils/ai/transcripts/turn-state.ts"),
         live: pending("P2", "the grok live tail in src/utils/ai/transcripts/live.ts and activity.ts"),
