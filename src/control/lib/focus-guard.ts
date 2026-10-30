@@ -4,7 +4,7 @@ import { toolCommand } from "@genesiscz/utils/cli/tool-command";
 import { env } from "@genesiscz/utils/env";
 import { logger } from "@genesiscz/utils/logger";
 import { readExecutablePath } from "@genesiscz/utils/process/processes";
-import { type AxResult, runAx } from "./runner";
+import { type AxResult, type AxRun, runAx } from "./runner";
 
 const { log } = logger.scoped("control-focus-guard");
 
@@ -96,12 +96,12 @@ function processName(pid: number): string | undefined {
  * One `ax-tool front` read, plus `apps` and then the executable only when the frontmost pid has no window
  * (a notification banner, a GenesisTools panel). Null means "cannot prove it is safe".
  */
-export function readFrontState(): FrontState | null {
-    const front = runAx(["front"], 5000);
+export async function readFrontState(run: AxRun = runAx): Promise<FrontState | null> {
+    const front = await run(["front"], 5000);
     let state = frontStateFrom(front);
 
     if (state !== null && state.app === undefined) {
-        state = frontStateFrom(front, runAx(["apps"], 5000));
+        state = frontStateFrom(front, await run(["apps"], 5000));
     }
 
     if (state?.pid !== undefined && state.app === undefined) {
@@ -187,7 +187,8 @@ export async function guardFocusSteal({
     app,
     toPid,
     stealFocus,
-    readFront = readFrontState,
+    run = runAx,
+    readFront = () => readFrontState(run),
     loadGuard = async () => (await loadJevSettings()).focusStealGuard,
     environment = env.getProcessEnv(),
 }: {
@@ -195,7 +196,9 @@ export async function guardFocusSteal({
     app?: string;
     toPid?: string;
     stealFocus?: boolean;
-    readFront?: () => FrontState | null;
+    /** The native runner the default frontmost read uses. */
+    run?: AxRun;
+    readFront?: () => FrontState | null | Promise<FrontState | null>;
     loadGuard?: () => Promise<FocusStealGuard | undefined>;
     environment?: NodeJS.ProcessEnv;
 }): Promise<AxResult | null> {
@@ -210,7 +213,7 @@ export async function guardFocusSteal({
         return null;
     }
 
-    const front = readFront();
+    const front = await readFront();
     const refusal = focusStealRefusal({ verb, app, toPid, front });
 
     if (refusal === null) {

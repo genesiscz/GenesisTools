@@ -3,6 +3,7 @@ import { SafeJSON } from "@genesiscz/utils/json";
 import { logger, out } from "@genesiscz/utils/logger";
 import type { Command } from "commander";
 import pc from "picocolors";
+import { elementQueryArgs } from "../lib/query";
 import { runAx } from "../lib/runner";
 import { addTargetOptions, targetArgs, targetLabel } from "../lib/target";
 
@@ -128,16 +129,7 @@ export function registerDiscoveryCommands(program: Command): void {
         .option("--json", "raw JSON output")
         .option("--pretty", "indent JSON output (default compact)")
         .action((opts) => {
-            const axArgs = ["find", "--app", opts.app, "--depth", opts.depth];
-            for (const flag of ["role", "title", "value", "desc", "subrole", "text", "q", "window"] as const) {
-                if (opts[flag]) {
-                    axArgs.push(`--${flag}`, opts[flag]);
-                }
-            }
-            if (opts.exact) {
-                axArgs.push("--exact");
-            }
-            const result = runAx(axArgs);
+            const result = runAx(elementQueryArgs({ verb: "find", app: opts.app, target: opts }));
             if (opts.json) {
                 out.println(SafeJSON.stringify(result, null, opts.pretty ? 2 : 0));
                 process.exit(result.ok === false ? 1 : 0);

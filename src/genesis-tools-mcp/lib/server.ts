@@ -161,7 +161,12 @@ export function serverInstructions({ askViaQuestionTool, inboxState }: Instructi
         `JEV (capability \`jev\`, read-only, the same tools \`${toolCommand("jev mcp")}\` serves alone): \`jev_route\` maps a plain ` +
         "request to one GenesisTools command line without running it; `jev_compact` shrinks a transcript, log or " +
         "diff with Jev-judged drops; `jev_verify` judges claims against a document per template " +
-        "(`jev_verify_templates` lists them). Every result is JSON text. None of them acts on the machine."
+        "(`jev_verify_templates` lists them). Every result is JSON text. None of them acts on the machine.\n\n" +
+        `CONTROL (capability \`control\`, the same core as \`${toolCommand("control")}\`): \`control_find\` and \`control_get\` ` +
+        "read a running macOS app's elements without raising or focusing anything. `control_workflow_run` is the " +
+        "preferred way to act: a versioned plan run against fresh observations, each step verified before the next. " +
+        "`control_run` takes a `control run` plan object inline and returns per-step results; its type/set/hotkey " +
+        "steps refuse while another app is frontmost."
     );
 }
 
@@ -301,6 +306,7 @@ const CAPABILITY_MATCHERS: Record<string, (name: string) => boolean> = {
     decision: (name) => DECISION_TOOLS.has(name),
     annotate: (name) => name.startsWith("annotate_"),
     jev: (name) => name.startsWith("jev_"),
+    control: (name) => name.startsWith("control_"),
 };
 
 /**
@@ -326,6 +332,7 @@ export function filterRegistryByCapabilities(
 
 const registries = new Map<string, Record<string, ToolEntry>>();
 let jevEntries: Promise<Record<string, ToolEntry>> | undefined;
+let controlEntries: Promise<Record<string, ToolEntry>> | undefined;
 
 /**
  * The Jev tools import the evaluation stack (about 80 MB resident, measured 2026-10-01), so they load
@@ -336,17 +343,28 @@ function loadJevEntries(): Promise<Record<string, ToolEntry>> {
     return jevEntries;
 }
 
+/**
+ * The control tools import the native runner and the plan and workflow runners, so they load only for a
+ * capability list that can expose them: unset (everything) or one naming `control`.
+ */
+function loadControlEntries(): Promise<Record<string, ToolEntry>> {
+    controlEntries ??= import("@app/control/mcp/genesis-tools").then((module) => module.controlToolEntries());
+    return controlEntries;
+}
+
 /** One registry per instructions variant; a resident server builds it once, not per request. */
 async function toolRegistry(
     context: InstructionContext,
     capabilities: string[] | undefined
 ): Promise<Record<string, ToolEntry>> {
     const withJev = capabilities === undefined || capabilities.includes("jev");
-    const key = `${context.askViaQuestionTool}:${context.inboxState}:${withJev}`;
+    const withControl = capabilities === undefined || capabilities.includes("control");
+    const key = `${context.askViaQuestionTool}:${context.inboxState}:${withJev}:${withControl}`;
     let registry = registries.get(key);
     if (!registry) {
         registry = {
             ...(withJev ? await loadJevEntries() : {}),
+            ...(withControl ? await loadControlEntries() : {}),
             ...buildToolRegistry(context),
         };
         registries.set(key, registry);
