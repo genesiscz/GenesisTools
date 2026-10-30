@@ -25,6 +25,7 @@ export const grokHarness: HarnessDriver<"grok"> = {
             subagentsOnDisk: false,
             // Grok stamps a message in whole seconds.
             timestampResolutionMs: 1000,
+            turnIdsEndWithRowUuid: false,
         },
         exit: pending("P3", "the grok entry of AGENTS in src/cmux/lib/session-agents.ts"),
         hooks: pending("P4", "the grok entries of HARNESS_HOOK_FACTS and HOOK_INSTALLERS in src/agents"),
