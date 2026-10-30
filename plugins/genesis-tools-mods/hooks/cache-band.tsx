@@ -3,8 +3,8 @@
 // when a turn finishes, and removes it when it ends. The band shows this session's minutes
 // left dim, yellow under `mods.cacheBand.cautionMinutes` and red under `mods.cacheBand.warnMinutes`; with `others`
 // on, it also shows every other session whose cache runs out inside the yellow window, so a reply that would rewrite
-// a cold cache is visible from any open session. A listing runs every 15 seconds; one prune every five minutes
-// removes marks older than the cache lifetime before history can accumulate in each session's reads.
+// a cold cache is visible from any open session. A listing runs every 15 seconds; a mark older than the cache
+// lifetime (a session that ended without removing it) is skipped, and a `find` removes it.
 // The times are live (`live.ts`): a yellow or red chip counts each second, a dim one each minute. After a compaction
 // the chip says so and that the next reply starts a fresh cache, since there is nothing left to keep warm.
 import type { ElementTable, RenderElement } from "claude-code";
@@ -19,8 +19,6 @@ let rows: CacheRows = [];
 /** Claude Code's prompt cache for a subscription session lives an hour after its last write. */
 const TTL_MS = 60 * 60_000;
 const EVERY_MS = 15_000;
-const PRUNE_MS = 5 * 60_000;
-let prunedAt = 0;
 
 interface CacheMark {
     sessionId: string;
@@ -123,21 +121,23 @@ async function scan(host: Host): Promise<void> {
     }
 
     const now = Date.now();
-
-    if (settings.others && now - prunedAt >= PRUNE_MS) {
-        const done = await host
-            .run(["find", dir, "-type", "f", "-name", "*.json", "-mmin", "+60", "-delete"], { timeoutMs: 5_000 })
-            .catch(() => undefined);
-
-        if (done?.exitCode === 0) {
-            prunedAt = now;
-        }
-    }
-
     const ownId = await host.sessionId();
     const entries = settings.others
         ? await host.list(dir).catch(() => [])
         : [{ name: `${ownId}.json`, kind: "file" as const }];
+    const stale = entries.some(
+        (entry) =>
+            entry.kind === "file" && entry.name.endsWith(".json") && "mtimeMs" in entry && entry.mtimeMs + TTL_MS < now
+    );
+
+    // The `find` runs only while the listing shows a mark to delete: every session ran it every 5 minutes before,
+    // 646 of the 14,746 processes of 20 sessions in a quiet 3 hours on 2026-10-30, with nothing to delete.
+    if (settings.others && stale) {
+        await host
+            .run(["find", dir, "-type", "f", "-name", "*.json", "-mmin", "+60", "-delete"], { timeoutMs: 5_000 })
+            .catch(() => undefined);
+    }
+
     const marks: CacheMark[] = [];
 
     for (const entry of entries) {
