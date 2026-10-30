@@ -31,9 +31,20 @@ export interface RunStatuslineOptions {
     raw?: Record<string, unknown>;
 }
 
+/**
+ * The statusline feature of each host, null where the harness has no statusline hook yet. Harness-guard: this is the
+ * one host table the drivers' pending `statusline` part names (P4); the hot entry imports the Claude feature directly,
+ * since a lazy driver part would add an import hop to a render that runs every six seconds in every session.
+ */
+const HOST_FEATURES: { readonly [Host in StatuslineHost]: ((cache?: StatuslineCache) => StatuslineFeature) | null } = {
+    claude: claudeCodeStatusline,
+    codex: null,
+    grok: null,
+};
+
 /** The host feature for a host, or null when that host has no statusline hook yet. */
 export function featureFor(host: StatuslineHost, cache?: StatuslineCache): StatuslineFeature | null {
-    return host === "claude" ? claudeCodeStatusline(cache) : null;
+    return HOST_FEATURES[host]?.(cache) ?? null;
 }
 
 /** Render once and return the lines; the caller decides how to print and when to exit. */

@@ -71,6 +71,7 @@ export async function importNativeCodexSession(
     session: AgentSession,
     context: NativeSessionImportContext
 ): Promise<NativeSessionImportResult> {
+    // Harness-guard: the Codex importer's own precondition; another harness's session is refused.
     if (session.kind !== "codex" || !context.nativeClient) {
         throw new Error("Codex import requires a Codex session and its authenticated native client");
     }

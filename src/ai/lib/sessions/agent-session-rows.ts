@@ -152,6 +152,9 @@ function lastCacheAtMs(record: { lastTimestamp?: string | null; mtime: number })
 /** One listed session's account, from the row or the SessionStart pins. */
 type RowAccount = (record: { sessionId: string | null; sourceHome?: string | null }) => string | null;
 
+/** How one harness's rows are listed. */
+type RowLister = (options: AgentSessionRowsOptions) => Promise<AgentSessionRow[]>;
+
 /** What differs between the providers `nativeRows` lists straight off the history index. */
 interface NativeRowSpec {
     /** The prompt-cache lifetime the row's cache chip counts down from. */
@@ -162,23 +165,6 @@ interface NativeRowSpec {
      */
     accountOf(pins: Map<string, SessionPin>): Promise<RowAccount>;
 }
-
-const NATIVE_ROW_SPECS: Record<Exclude<AccountProviderAlias, "claude">, NativeRowSpec> = {
-    // Codex cannot name the account on its own, so it falls back to the SessionStart pin its launcher's
-    // `TOOLS_CODEX_ACCOUNT` produced.
-    codex: {
-        cacheTtlMs: CODEX_CACHE_TTL_MS,
-        accountOf: async (pins) => (record) => (record.sessionId ? pins.get(record.sessionId)?.account : null) ?? null,
-    },
-    // Grok answers from the session's own home.
-    grok: {
-        cacheTtlMs: GROK_CACHE_TTL_MS,
-        accountOf: async () => {
-            const lookup = await grokAccountNameLookup();
-            return (record) => (record.sourceHome ? grokAccount(lookup, record.sourceHome) : null);
-        },
-    },
-};
 
 /**
  * The journal location for this row, or null when the newest line is another agent's or names
@@ -221,8 +207,13 @@ export function cmuxLocationForRow(
  * tool stayed pinned to one provider, which is why nothing downstream of it had a Codex or
  * Grok equivalent.
  */
-async function nativeRows(
-    alias: Exclude<AccountProviderAlias, "claude">,
+function nativeRows(alias: AccountProviderAlias, spec: NativeRowSpec): RowLister {
+    return (options) => nativeRowsOf(alias, spec, options);
+}
+
+async function nativeRowsOf(
+    alias: AccountProviderAlias,
+    spec: NativeRowSpec,
     options: AgentSessionRowsOptions
 ): Promise<AgentSessionRow[]> {
     // Read-only: a session listing is a diagnostic and must not rewrite the journal, and a
@@ -241,7 +232,6 @@ async function nativeRows(
         ...(options.maxDiscoveryAgeMs === undefined ? {} : { maxDiscoveryAgeMs: options.maxDiscoveryAgeMs }),
         ...(options.refresh === undefined ? {} : { refresh: options.refresh }),
     });
-    const spec = NATIVE_ROW_SPECS[alias];
     const accountOf = await spec.accountOf(pins);
     const refs = loadAllSessionCmuxRefs();
     const rows: AgentSessionRow[] = [];
@@ -381,11 +371,27 @@ async function claudeRows(options: AgentSessionRowsOptions): Promise<AgentSessio
     return claude.map((row) => ({ ...row, provider: "claude" as const }));
 }
 
-/** How each provider's rows are listed: Claude by its own listing, Codex and Grok off the shared history index. */
-const ROW_LISTERS: Record<AccountProviderAlias, (options: AgentSessionRowsOptions) => Promise<AgentSessionRow[]>> = {
+/**
+ * How each harness's rows are listed: Claude by its own listing, Codex and Grok off the shared history index with
+ * their cache clock and account lookup. Harness-guard: this one tool-owned table stays here, because Claude's listing
+ * and the cache clocks are the claude tool's (`@app/claude/lib/usage/session-rows`), which a driver cannot import.
+ */
+const ROW_LISTERS: { readonly [Id in AccountProviderAlias]: RowLister } = {
     claude: claudeRows,
-    codex: (options) => nativeRows("codex", options),
-    grok: (options) => nativeRows("grok", options),
+    // Codex cannot name the account on its own, so it falls back to the SessionStart pin its launcher's
+    // `TOOLS_CODEX_ACCOUNT` produced.
+    codex: nativeRows("codex", {
+        cacheTtlMs: CODEX_CACHE_TTL_MS,
+        accountOf: async (pins) => (record) => (record.sessionId ? pins.get(record.sessionId)?.account : null) ?? null,
+    }),
+    // Grok answers from the session's own home.
+    grok: nativeRows("grok", {
+        cacheTtlMs: GROK_CACHE_TTL_MS,
+        accountOf: async () => {
+            const lookup = await grokAccountNameLookup();
+            return (record) => (record.sourceHome ? grokAccount(lookup, record.sourceHome) : null);
+        },
+    }),
 };
 
 /** Every provider's sessions in one list, newest first. */

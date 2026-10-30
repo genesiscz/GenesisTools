@@ -5,7 +5,7 @@ import { getSessionListing } from "@app/claude/lib/history/search";
 import { HistoryDatabase } from "@genesiscz/utils/agent-sessions/database";
 import { catalogHistory } from "@genesiscz/utils/agent-sessions/open-service";
 import { resolveHistoryProvider } from "@genesiscz/utils/agent-sessions/provider";
-import { ACCOUNT_PROVIDER_ALIASES } from "@genesiscz/utils/ai/providers/alias-list";
+import { ACCOUNT_PROVIDER_ALIASES, isAccountProviderAlias } from "@genesiscz/utils/ai/providers/alias-list";
 import { byHarness } from "@genesiscz/utils/ai/providers/harness-index";
 import type { HarnessId } from "@genesiscz/utils/harness/types";
 import { logger } from "@genesiscz/utils/logger";
@@ -80,16 +80,15 @@ export type WidgetRosterPaths = ReadonlyMap<WidgetRosterScope, readonly string[]
 /** Above this many changed transcripts in one scope, the scope's own listing costs less than the exact refresh. */
 export const WIDGET_EXACT_PATHS_LIMIT = 64;
 
-/** The provider whose index a provider scope refreshes. */
-const SCOPE_PROVIDER = {
-    claude: "claude",
-    "claude-agents": "claude",
-    codex: "codex",
-    grok: "grok",
-} as const satisfies Record<Exclude<WidgetRosterScope, "all">, HarnessId>;
+type ProviderScope = Exclude<WidgetRosterScope, "all">;
 
-function isProviderScope(key: string): key is keyof typeof SCOPE_PROVIDER {
-    return Object.hasOwn(SCOPE_PROVIDER, key);
+/** The provider whose index a provider scope refreshes: a harness scope its own, the sub-agent listing Claude's. */
+function scopeProvider(scope: ProviderScope): HarnessId {
+    return scope === "claude-agents" ? "claude" : scope;
+}
+
+function isProviderScope(key: string): key is ProviderScope {
+    return key === "claude-agents" || isAccountProviderAlias(key);
 }
 
 /** The changed transcripts a roster request carries (a plain object, as a worker message holds it), as a map. */
@@ -195,7 +194,7 @@ export async function refreshWidgetIndex(
 
         const changed = paths.get(scope);
         if (changed && changed.length > 0 && changed.length <= WIDGET_EXACT_PATHS_LIMIT) {
-            const provider = SCOPE_PROVIDER[scope];
+            const provider = scopeProvider(scope);
             exact.set(provider, [...(exact.get(provider) ?? []), { scope, paths: changed }]);
         } else {
             whole.add(scope);

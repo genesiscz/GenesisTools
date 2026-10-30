@@ -66,6 +66,7 @@ export interface SessionSearchResult {
     elapsedMs: number;
 }
 
+/** Harness-guard: an injectable map type, filled from the canonical list below; it holds no fact per harness. */
 export type SearchAdapters = Partial<Record<SearchProvider, () => AgentSessionAdapter<string>>>;
 
 /** Every harness's own history adapter, the one behind `tools <provider> history`, resolved through its plugin. */
