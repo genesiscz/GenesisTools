@@ -27,7 +27,7 @@ export const grokHarness: HarnessDriver<"grok"> = {
             timestampResolutionMs: 1000,
             turnIdsEndWithRowUuid: false,
         },
-        exit: pending("P3", "the grok entry of AGENTS in src/cmux/lib/session-agents.ts"),
+        exit: { command: "/exit" },
         hooks: pending("P4", "the grok entries of HARNESS_HOOK_FACTS and HOOK_INSTALLERS in src/agents"),
         statusline: pending("P4", "the grok statusline host in src/ai/commands/statusline"),
         compaction: pending(

@@ -26,7 +26,7 @@ export const codexHarness: HarnessDriver<"codex"> = {
             timestampResolutionMs: 0,
             turnIdsEndWithRowUuid: false,
         },
-        exit: pending("P3", "the codex entry of AGENTS in src/cmux/lib/session-agents.ts"),
+        exit: { command: "/quit" },
         hooks: pending("P4", "the codex entries of HARNESS_HOOK_FACTS and HOOK_INSTALLERS in src/agents"),
         statusline: pending("P4", "the codex statusline host in src/ai/commands/statusline"),
         compaction: pending(
