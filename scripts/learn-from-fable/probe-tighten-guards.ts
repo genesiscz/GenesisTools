@@ -6,14 +6,19 @@
  * wrong three times in this stage already. This runs one real batch and prints every
  * predicate's verdict per bullet.
  *
- * Usage: bun scripts/learn-from-fable/probe-tighten-guards.ts <spec.md> [model]
+ * Usage: bun scripts/learn-from-fable/probe-tighten-guards.ts <spec.md> [--model <ref>]
+ * The model defaults to the fable config's judge stage, the one `tools learn-from-fable spec` runs (probe-models.ts).
  */
 import { readFileSync } from "node:fs";
 import { createRunner } from "@app/learn-from-fable/lib/runners";
 import { buildTightenUser, parseTightenReply, SPEC_TIGHTEN_SYSTEM } from "@app/learn-from-fable/lib/stages/spec";
+import { probeArgs } from "./probe-models";
 
 const CAP = 420;
-const [path, model = "martin/grok/grok-4.5"] = process.argv.slice(2);
+const {
+    model,
+    args: [path],
+} = probeArgs(["judge"]);
 const oversized = readFileSync(path, "utf-8")
     .split("\n")
     .filter((line) => /^\s*[-*]\s/.test(line) && line.length > CAP)

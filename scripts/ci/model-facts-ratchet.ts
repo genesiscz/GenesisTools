@@ -8,21 +8,7 @@
  * (❓ DECISION 22 b, a Haiku survey, ModelFacts, in the notes of 2026-10-25).
  * Ratchets: no file may join a list, and `lint-rules.test.ts` fails when a listed file no longer offends.
  */
-export const MODEL_ID_LITERAL_RATCHET: ReadonlySet<string> = new Set<string>([
-    "scripts/ai-proxy/structured-output.ts",
-    "scripts/benchmarks/compress/read-paths.ts",
-    "scripts/benchmarks/statusline/current-statusline.ts",
-    "scripts/learn-from-fable/probe-claude-sub-concurrency.ts",
-    "scripts/learn-from-fable/probe-extractor-latency.ts",
-    "scripts/learn-from-fable/probe-judge-batch.ts",
-    "scripts/learn-from-fable/probe-parallel-grok.ts",
-    "scripts/learn-from-fable/probe-prompt-size-ceiling.ts",
-    "scripts/learn-from-fable/probe-raw-frames.ts",
-    "scripts/learn-from-fable/probe-stream-vs-plain.ts",
-    "scripts/learn-from-fable/probe-tighten-guards.ts",
-    "scripts/learn-from-fable/tighten-spec.ts",
-    "src/ai-proxy/scripts/verify-openrouter-live.ts",
-]);
+export const MODEL_ID_LITERAL_RATCHET: ReadonlySet<string> = new Set<string>([]);
 
 export const MODEL_PRICE_TABLE_RATCHET: ReadonlySet<string> = new Set<string>([]);
 

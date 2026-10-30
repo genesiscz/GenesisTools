@@ -4,14 +4,15 @@
  * vs non-streamed, per model. Streaming was adopted for observability; this
  * proves whether it changed latency or output on each provider.
  *
- *   bun scripts/learn-from-fable/probe-stream-vs-plain.ts [model...]
+ *   bun scripts/learn-from-fable/probe-stream-vs-plain.ts [--model <ref>]...
+ * Without --model it compares the fable config's filterBare and mine stages (probe-models.ts).
  */
 import { AiProxyClient } from "@genesiscz/utils/ai/proxy/AiProxyClient";
 import { SafeJSON } from "@genesiscz/utils/json";
 import { out } from "@genesiscz/utils/logger";
+import { probeArgs } from "./probe-models";
 
-const MODELS = process.argv.slice(2);
-const models = MODELS.length ? MODELS : ["martin/claude-sub/claude-sonnet-5", "martin/grok/grok-4.5"];
+const { models } = probeArgs(["filterBare", "mine"]);
 
 // ~8k chars of filler + a task with an unambiguous, checkable answer.
 const filler = Array.from({ length: 120 }, (_, i) => `line ${i}: the quick brown fox jumps over the lazy dog`).join(

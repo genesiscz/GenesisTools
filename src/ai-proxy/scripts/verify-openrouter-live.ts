@@ -409,7 +409,19 @@ function lastSseUsage(sse: string): { prompt_tokens?: number; completion_tokens?
     return found;
 }
 
-const IMAGE_MODELS = ["google/gemini-3.1-flash-lite-image", "openai/gpt-5-image-mini"];
+/** The vendors whose image models a run covers. */
+const IMAGE_VENDORS = ["google/", "openai/"];
+
+/** The cheapest model of each image vendor that outputs an image, from the OpenRouter catalog. */
+function pickImageModels(): string[] {
+    const images = openRouterModelsSync()
+        .filter((model) => model.architecture?.output_modalities?.includes("image"))
+        .map((model) => ({ id: model.id, rate: openRouterPricingSync(model.id)?.inputPer1M }))
+        .filter((entry): entry is { id: string; rate: number } => entry.rate !== undefined)
+        .sort((a, b) => a.rate - b.rate);
+
+    return IMAGE_VENDORS.flatMap((vendor) => images.find((entry) => entry.id.startsWith(vendor))?.id ?? []);
+}
 
 /**
  * Images go through `ai.image()` rather than a hand-rolled client, so the facade
@@ -592,7 +604,7 @@ async function main(): Promise<void> {
     rows.push(await callEmbed());
 
     if (images) {
-        for (const model of IMAGE_MODELS) {
+        for (const model of pickImageModels()) {
             rows.push(await callImage(model));
         }
     }

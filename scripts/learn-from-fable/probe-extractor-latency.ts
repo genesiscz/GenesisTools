@@ -4,7 +4,10 @@
  * several proxy models / reasoning efforts and reports client-observed time next
  * to the proxy's own accounting, so proxy overhead is separable from upstream time.
  *
- *   PROFILE=probe bun scripts/learn-from-fable/probe-extractor-latency.ts
+ *   PROFILE=probe bun scripts/learn-from-fable/probe-extractor-latency.ts <transcript> [--model <ref>]...
+ *
+ * The first model runs at its default effort and at low effort; every further model runs once beside it. Without
+ * --model the probe compares the fable config's mine and filterBare stages (probe-models.ts).
  */
 import { resolve } from "node:path";
 import { AiProxyClient } from "@genesiscz/utils/ai/proxy/AiProxyClient";
@@ -14,6 +17,7 @@ import { profiler } from "@genesiscz/utils/profile";
 import { nativeHome } from "@genesiscz/utils/providers/session-paths";
 import { EXTRACT_SCHEMA, EXTRACT_SYSTEM } from "../../src/learn-from-fable/lib/stages/mine";
 import { condenseForExtraction, loadTurns } from "../../src/learn-from-fable/lib/transcript";
+import { probeArgs } from "./probe-models";
 
 /**
  * Claude encodes a project's directory by replacing every non-alphanumeric
@@ -29,7 +33,8 @@ function claudeProjectDir(repoRoot: string): string {
 // guidance below has to follow it or it names a directory that does not exist.
 const CLAUDE_DIR = nativeHome("claude", env.paths.getHome());
 const TRANSCRIPT_DIR = `${CLAUDE_DIR}/projects/${claudeProjectDir(resolve(import.meta.dir, "../.."))}`;
-const SESSION = process.argv[2];
+const { model: primary, models, args } = probeArgs(["mine", "filterBare"]);
+const SESSION = args[0];
 
 if (!SESSION) {
     out.error(`Pass a transcript path. This checkout's transcripts live in:\n    ${TRANSCRIPT_DIR}`);
@@ -43,13 +48,16 @@ interface Probe {
     maxTokens?: number;
 }
 
+/** The model part of a `<account>/<provider>/<model>` id, short enough for the label column. */
+function shortName(model: string): string {
+    return model.split("/").at(-1) ?? model;
+}
+
 const PROBES: Probe[] = [
-    { label: "warmup-tiny", model: "martin/grok/grok-4-fast", maxTokens: 16 },
-    { label: "grok-4.5 default", model: "martin/grok/grok-4.5" },
-    { label: "grok-4.5 low-effort", model: "martin/grok/grok-4.5", reasoningEffort: "low" },
-    { label: "grok-4-fast", model: "martin/grok/grok-4-fast" },
-    { label: "grok-4.3", model: "martin/grok/grok-4.3" },
-    { label: "sonnet-5", model: "martin/claude-sub/claude-sonnet-5" },
+    { label: "warmup-tiny", model: primary, maxTokens: 16 },
+    { label: `${shortName(primary)} default`, model: primary },
+    { label: `${shortName(primary)} low-effort`, model: primary, reasoningEffort: "low" },
+    ...models.slice(1).map((model) => ({ label: shortName(model), model })),
 ];
 
 const p = profiler.scope("probe");

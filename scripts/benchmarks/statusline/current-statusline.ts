@@ -46,6 +46,8 @@ import { mkdirSync, readdirSync, statSync, writeFileSync } from "node:fs";
 import { homedir, loadavg } from "node:os";
 import { join } from "node:path";
 import { type BaselineMetrics, compareToBaseline, formatComparison, recordBaseline } from "@app/benchmark/lib";
+import { resolveAnthropicSubModel } from "@genesiscz/utils/ai/anthropic/models";
+import { byId } from "@genesiscz/utils/ai/catalog";
 import { env } from "@genesiscz/utils/env";
 import { SafeJSON } from "@genesiscz/utils/json";
 import { logger, out } from "@genesiscz/utils/logger";
@@ -328,13 +330,16 @@ function pickTranscript(explicit: string | null): TranscriptChoice {
  * plausible mid-session context so the percentage and delta arms take their
  * normal branches; no timing in the pipeline depends on their values.
  */
+/** The current Opus, as Claude Code names it in the statusline input. */
+const OPUS = byId(resolveAnthropicSubModel("opus"), "anthropic");
+
 function buildPayload(repo: RepoTarget, transcript: TranscriptChoice): string {
     const payload = {
         hook_event_name: "Status",
         session_id: transcript.sessionId,
         transcript_path: transcript.path,
         cwd: repo.path,
-        model: { id: "claude-opus-5", display_name: "Opus 5" },
+        model: { id: OPUS?.id, display_name: OPUS?.displayName.replace(/^Claude /, "") },
         workspace: { current_dir: repo.path, project_dir: repo.path },
         version: "2.1.120",
         output_style: { name: "default" },
