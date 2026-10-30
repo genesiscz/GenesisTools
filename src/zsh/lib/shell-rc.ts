@@ -24,7 +24,7 @@ export async function isInstalled(rcPath: string): Promise<boolean> {
 }
 
 /** The rc file's text, or `undefined` when it does not exist. Any other read error throws. */
-function readRc(rcPath: string): string | undefined {
+export function readRc(rcPath: string): string | undefined {
     const bytes = readFileIfExistsSync(rcPath);
     return bytes === undefined ? undefined : Buffer.from(bytes).toString("utf8");
 }
@@ -34,13 +34,13 @@ function readRc(rcPath: string): string | undefined {
  * atomic writer writes through, and the replaced text is kept as `<rc>.bak`. An rc that changed since it
  * was read (an editor, another installer) is refused rather than overwritten.
  */
-function replaceRc(rcPath: string, before: string | undefined, after: string): void {
+export function replaceRc(rcPath: string, before: string | undefined, after: string): void {
     if (before === after) {
         return;
     }
 
     if (readRc(rcPath) !== before) {
-        throw new Error(`${rcPath} changed while the shell hook was being written. It was left untouched; run again.`);
+        throw new Error(`${rcPath} changed while GenesisTools was writing it. It was left untouched; run again.`);
     }
 
     atomicWriteFileSync(rcPath, after, { backup: true });
