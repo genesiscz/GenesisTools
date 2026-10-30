@@ -1,6 +1,7 @@
 import { describe, expect, test } from "bun:test";
+import { scanClaudeNative } from "@genesiscz/utils/agent-sessions/readers/claude-native-scan";
 import { SafeJSON } from "@genesiscz/utils/json";
-import { codexModelOf, scanClaudeNative, toolInputKeys } from "./native-scan";
+import { codexModelOf, toolInputKeys } from "./native-scan";
 import { buildToolStats, buildTurnCosts, type CallPricer } from "./turn-cost";
 import type { TranscriptTool, TranscriptTurn } from "./types";
 
