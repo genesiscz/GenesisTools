@@ -67,7 +67,7 @@ export async function serializeWidgetMedia(assets: WidgetAsset[]): Promise<strin
                     cli: [process.execPath, resolve(import.meta.dir, "../../../../widget-tools"), "video"],
                     references: { skill: "genesis-tools:macos-control", existingVideo: reference, newCapture: capture },
                 }) +
-                "\nTimestamps refer to the original video. A frame displayed at the range start can have a slightly earlier source timestamp. The original stays available for context outside the selected range. For different frames use the video-review reference; for a new capture use capture.md.\n</fromVideo>"
+                "\nTimestamps refer to the original video. A frame displayed at the range start can have a slightly earlier source timestamp. A sheet's scale says how many times its tiles shrink the source; above about 3 no text of a screen recording survives, so read the full-resolution frame of that moment (frames[].path in the manifest, or crop it) before you judge text. The original stays available for context outside the selected range. For different frames use the video-review reference; for a new capture use capture.md.\n</fromVideo>"
         );
     }
     const context = blocks.join("\n\n");

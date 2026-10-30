@@ -47,6 +47,11 @@ export interface VideoSheet {
     lastUs: number;
     columns: number;
     rows: number;
+    /** The first tile's drawn size and how many times the source is scaled down in it (added 2026-10-30; a
+     * manifest from before has none). At a scale above about 3 read the full-resolution frame for text. */
+    tileWidth?: number;
+    tileHeight?: number;
+    scale?: number;
 }
 export interface VideoManifest {
     version: 1;
@@ -108,6 +113,9 @@ export const videoManifestSchema = z.object({
                 lastUs: z.number(),
                 columns: z.number(),
                 rows: z.number(),
+                tileWidth: z.number().optional(),
+                tileHeight: z.number().optional(),
+                scale: z.number().optional(),
             })
         )
         .min(1)

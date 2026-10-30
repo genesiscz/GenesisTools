@@ -14,6 +14,14 @@ Choose 1, 2, 3 or 4 FPS and 1, 4, 8, 16 or 32 frames per image.
 The JSON result includes contact-sheet paths, full-resolution PNG paths, requested/actual timestamps and
 a manifest path. Read selected sheets first, then inspect full-resolution frames where necessary.
 
+A sheet is at most 4096 px wide and a tile is the frame scaled down, never up: each sheet in the manifest
+carries `tileWidth`, `tileHeight` and `scale` (how many times the tile shrinks the source). Pick the frames
+per image from the source width so the scale stays at 2 or less: a whole Retina display (about 4100 px)
+takes 4 per image, a 2560 px capture 8, a 1920 px one 16; 32 only fits a source under about 1400 px. The
+widget's frame review starts there by itself. At a scale above about 3 no text of a screen recording
+survives, and a reader shrinks a wide image once more, so judge text on the full-resolution frame of
+that moment (`frames[].path`), cropped to the pane in question when the display is large.
+
 The --difference 0 setting retains all samples. A positive percentage skips candidates whose changed-pixel
 percentage is strictly lower than that value, comparing with the last kept frame. The first sample stays.
 A reduced selection is evidence filtering, not proof that omitted frames are unimportant.

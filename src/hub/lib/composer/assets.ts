@@ -4,6 +4,7 @@ import { copyFile, mkdir, stat, unlink } from "node:fs/promises";
 import { basename, extname, join, resolve } from "node:path";
 import { importImageAttachments } from "@genesiscz/utils/image/attachments";
 import { logger } from "@genesiscz/utils/logger";
+import { defaultVideoSettings } from "@genesiscz/utils/video/defaults";
 import { prepareVideoEvidence, videoDigest } from "@genesiscz/utils/video/evidence";
 import { probeVideo } from "@genesiscz/utils/video/probe";
 import { planVideoSamples } from "@genesiscz/utils/video/sampling";
@@ -69,7 +70,7 @@ export async function importWidgetAsset({
                 durationUs: info.durationUs,
                 width: info.displayWidth,
                 height: info.displayHeight,
-                settings: { fps: 2, framesPerImage: 16, minimumDifferencePct: 0 },
+                settings: defaultVideoSettings({ width: info.displayWidth }),
                 revision: 1,
                 status: "pending",
             };
