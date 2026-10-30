@@ -1,7 +1,7 @@
 import { describe, expect, test } from "bun:test";
+import { totalsOf } from "@genesiscz/utils/ai/transcripts/types";
 import { SafeJSON } from "@genesiscz/utils/json";
-import { codexGtEventsToTurns, codexNativeLinesToTurns } from "./codex";
-import { totalsOf } from "./types";
+import { codexGtEventsToTurns, codexNativeLinesToTurns } from "./codex-turns";
 
 describe("codexGtEventsToTurns", () => {
     test("maps agent message and command execution into turns", () => {

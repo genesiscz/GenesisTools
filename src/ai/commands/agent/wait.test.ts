@@ -6,7 +6,7 @@ import * as delivery from "@app/ai/lib/agent-message/delivery";
 import { cmuxNamedSessionId, resolveSessionTranscript } from "@app/ai/lib/sessions/resolve-transcript";
 import * as liveSessions from "@app/cmux/lib/session-close-live";
 import type { SessionCreatedRecord } from "@app/cmux/lib/session-store";
-import { codexNativeLinesToTurns } from "@genesiscz/utils/ai/transcripts/codex";
+import { codexNativeLinesToTurns } from "@genesiscz/utils/agent-sessions/readers/codex-turns";
 import type { ResolvedTranscript } from "@genesiscz/utils/ai/transcripts/resolve";
 import * as transcriptResolver from "@genesiscz/utils/ai/transcripts/resolve";
 import * as nativeTitles from "@genesiscz/utils/ai/transcripts/session-title";
