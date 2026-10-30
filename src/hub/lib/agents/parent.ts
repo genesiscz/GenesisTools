@@ -26,7 +26,8 @@ export function readParent(
     { now, promptChars }: { now: number; promptChars?: number }
 ): AgentParent {
     const { subagents } = listSubagents(
-        { provider: "claude", source: "native", sessionId: row.sessionId, filePath: row.filePath },
+        // Sub-agents on disk are Claude's (`SUBAGENTS_ON_DISK` in the transcript facts); another harness lists none.
+        { provider: row.provider ?? "claude", source: "native", sessionId: row.sessionId, filePath: row.filePath },
         { now, scan: true, promptChars }
     );
     const team = readSessionTeam(row.sessionId, root);

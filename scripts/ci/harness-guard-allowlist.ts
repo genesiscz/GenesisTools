@@ -64,7 +64,7 @@ export const HARNESS_GUARD_ALLOWLIST: Readonly<Record<string, HarnessGuardCounts
     "src/genesis-tools-mcp/lib/http-caller.ts": { table: 2 },
     "src/grok/lib/process-scan.ts": { branch: 1 },
     "src/handoff/targeting.ts": { list: 1, table: 1 },
-    "src/hub/lib/agents/index.ts": { list: 2, table: 2 },
+    "src/hub/lib/agents/index.ts": { table: 2 },
     "src/hub/lib/composer/dispatch.ts": { branch: 6 },
     "src/hub/lib/insights/index.ts": { table: 2 },
     "src/hub/lib/widget/context.ts": { table: 2 },
