@@ -34,6 +34,9 @@ struct ReviewRoot: Equatable {
     /// The tree's row id for this root's folder.
     var rowID: String { "dir:\(prefix)" }
 
+    /// This root as GenesisKit's row builder names it (`ChangedFilesTree`).
+    var treeRoot: ChangedFilesTreeRoot { ChangedFilesTreeRoot(rowID: rowID, prefix: prefix) }
+
     /// A repo-relative id or path as the merged diff names it.
     func global(_ local: String) -> String {
         prefix.isEmpty ? local : "\(prefix)/\(local)"

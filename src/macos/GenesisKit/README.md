@@ -1989,7 +1989,7 @@ GitCommitView(root: repo.root, commit: commit)
 #### `GitTreeDecorationsModel`
 
 A file tree's git marks for the repository holding its root, spelled the way the tree spells its paths (git reports
-real paths: `/private/tmp` for `/tmp`). Pass `decorations` to `FileTreeView(git:)`.
+real paths: `/private/tmp` for `/tmp`). Pass them to `FileTreeView.changedRows` and to the rows' git marks.
 
 #### `AgentBlameModel` / `AgentBlame`
 
@@ -2142,37 +2142,41 @@ if case .found(let library) = try reader.lookup(home + "/Library") {
 
 ### Files
 
-A folder tree for a sidebar, and Finder's file verbs. `FileTreeModel` holds the open folders and the visible rows, `FileTreeView` draws them in a lazy list, and the host passes a `FileTreeStyle` (colors, font and `FileTreeMetrics` sizes) and a `FileTreeActions` for what happens on open, re-root and change. Each row's context menu is `FileItemMenu` by default, or the host's own verbs through `FileTreeMenu`, and `FileTreePulse` lights one row up once. `FileOperations` runs the verbs: rename, duplicate, move to the Trash and create. A delete is always a move to the Trash, so Finder's "Put Back" undoes it, and creating never replaces anything.
+A folder tree for a sidebar, and Finder's file verbs. `FileTreeModel` holds the open folders and the visible rows, `GenTreeTable` draws them with `FileTreeView.row`, and the host passes a `FileTreeStyle` (colors, font and `FileTreeMetrics` sizes) and a `FileTreeActions` for what happens on open, re-root and change. Each row's context menu is `FileItemMenu` by default, or the host's own verbs through `FileTreeMenu`, and `FileTreePulse` lights one row up once. `FileOperations` runs the verbs: rename, duplicate, move to the Trash and create. A delete is always a move to the Trash, so Finder's "Put Back" undoes it, and creating never replaces anything.
 
-#### `FileTreeView`
+#### `FileTreeView` and `GenTreeTable`
 
-The tree itself: one flat, lazily built list of rows. Wrap it in a `ScrollView`. Folders are read off the main thread and served from a cache after the first read. A click on a file calls `actions.open`, and a double-click on a file then calls `actions.openKept`. A click on a folder opens or closes it, and a double-click on a folder calls `actions.setRoot`. A row's context menu is `actions.menu` when it is set, and `FileItemMenu` otherwise. After a menu action the folder that changed is read again (for a new item, the folder it went into). Then `actions.changed` is called, or, with a custom `menu`, the `changed` handler of that menu.
+The tree's rows are drawn in `GenTreeTable` (Files/Tree): an AppKit table of reused cells, each a SwiftUI row, laid over
+its slot by the window's `GenOverlayContentView` so a scroll never lays out the SwiftUI root. `FileTreeView` is the
+namespace of the row helpers a host lays in its table (the lazy-stack list view was deleted on 2026-10-30). A click on a
+file calls `actions.open`, and a double-click on a file then calls `actions.openKept`. A click on a folder opens or
+closes it, and a double-click on a folder calls `actions.setRoot`. A row's context menu is `actions.menu` when it is
+set, and `FileItemMenu` otherwise. After a menu action the folder that changed is read again (for a new item, the folder
+it went into). Then `actions.changed` is called, or, with a custom `menu`, the `changed` handler of that menu.
 
-- `model: FileTreeModel`: the model that owns the rows.
-- `selected: String?`: the absolute path of the selected row, or nil.
-- `style: FileTreeStyle`: the colors, font and sizes.
-- `actions: FileTreeActions`: what the host does with clicks and changes.
-- `pulse: FileTreePulse? = nil`: lights up the row whose `id` equals `pulse.id`, once for each new token. The other rows get no pulse.
-- `git: GitTreeDecorations? = nil`: git marks, a letter on each changed file (its name tinted) and a dot on each folder that holds changes (`GitTreeDecorationsModel`); nil shows none.
-- `changedOnly: Bool = false`: with `git`, only the changed files and the folders that hold them (`FileTreeView.changedRows`).
-- `icon: (FileTreeRow) -> String = FileTreeView.defaultIcon`: returns the SF Symbol name for a row.
+- `FileTreeView.row(_:selected:icon:style:model:actions:)`: one row's view, Equatable, for a table cell.
+- `FileTreeView.defaultIcon(_ row: FileTreeRow) -> String`: the default icon. It returns a folder symbol (filled when
+  open), and for files a symbol chosen by extension: text for `md`, `markdown` and `mdx`, a tile group for `canvas`, a
+  table for `base` and `csv`, curly braces for `json`, `yaml`, `yml` and `toml`, a photo for common image types, and a
+  plain document otherwise.
+- `FileTreeView.changedRows(_:_:)`: only the changed files and the folders that hold them (with `GitTreeDecorations`).
+- `GenTreeTable(rows:revision:box:keys:height:insets:cell:)`: the table over any `GenTreeRow` (`FileTreeRow`, GenesisKit's
+  `ChangedFilesTreeRow`); `revision` is what else the cells draw, `height` gives rows of different heights.
 
 A `FileTreeRow` is one visible line: `id: String` (the absolute path), `name: String`, `isFolder: Bool`, `depth: Int`, `expanded: Bool`, `loading: Bool` and `url: URL`.
 
-`FileTreeView.defaultIcon(_ row: FileTreeRow) -> String` is the default icon function. It returns a folder symbol (filled when open), and for files a symbol chosen by extension: text for `md`, `markdown` and `mdx`, a tile group for `canvas`, a table for `base` and `csv`, curly braces for `json`, `yaml`, `yml` and `toml`, a photo for common image types, and a plain document otherwise.
-
 ```swift
-ScrollView {
-    FileTreeView(model: tree, selected: openFile?.path, style: style, actions: actions, pulse: pulse) { row in
-        row.isFolder ? FileTreeView.defaultIcon(row) : "doc.plaintext"
-    }
+let selected = openFile.map { FileTreeRowKey(selection: $0.path) }
+GenTreeTable(rows: tree.rows, revision: openFile, box: box) { row in
+    AnyView(FileTreeView.row(row, selected: row.key == selected, icon: FileTreeView.defaultIcon(row), style: style,
+                             model: tree, actions: actions))
 }
 .onAppear { tree.setRoot(notesFolder) }
 ```
 
 #### `FileTreeModel`
 
-The main-actor observable model behind `FileTreeView`. It keeps the set of open folders, caches each folder's listing and publishes the visible rows as one flat array. It reads nothing until the host calls `setRoot`.
+The main-actor observable model behind the tree's rows. It keeps the set of open folders, caches each folder's listing and publishes the visible rows as one flat array. It reads nothing until the host calls `setRoot`.
 
 - `root: URL`: the starting root. It is standardized, but no folder is read yet.
 
@@ -2286,7 +2290,7 @@ let menu = FileTreeMenu(
 
 #### `FileTreePulse`
 
-A request to light up one row (or a header) once. "Show in Sidebar" uses it for the row it scrolled to. Create a new value with a new `token` each time the user asks, and pass it to `FileTreeView(pulse:)` or to the `fileTreePulse` modifier.
+A request to light up one row (or a header) once. "Show in Sidebar" uses it for the row it scrolled to. Create a new value with a new `token` each time the user asks, and pass it to the row view (`FileTreeRowView`'s `pulse`) or to the `fileTreePulse` modifier.
 
 - `id: String`: the row to light up. It is the row's absolute path.
 - `token: Int`: a new value plays the pulse again. A view that appears later with the same token plays it only while the pulse is fresh.

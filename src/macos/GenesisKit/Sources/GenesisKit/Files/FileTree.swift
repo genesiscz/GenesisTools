@@ -522,44 +522,16 @@ public struct FileTreeActions {
     }
 }
 
-public struct FileTreeView: View {
-    @ObservedObject var model: FileTreeModel
-    let selected: String?
-    let style: FileTreeStyle
-    let actions: FileTreeActions
-    let pulse: FileTreePulse?
-    let icon: (FileTreeRow) -> String
-    /// Git marks (M, A, U, D on files, a dot on folders that hold changes); nil shows none.
-    let git: GitTreeDecorations?
-    /// Only the changed files and the folders that hold them (with `git`).
-    let changedOnly: Bool
-
-    public init(
-        model: FileTreeModel,
-        selected: String?,
-        style: FileTreeStyle,
-        actions: FileTreeActions,
-        pulse: FileTreePulse? = nil,
-        git: GitTreeDecorations? = nil,
-        changedOnly: Bool = false,
-        icon: @escaping (FileTreeRow) -> String = FileTreeView.defaultIcon
-    ) {
-        self.model = model
-        self.selected = selected
-        self.style = style
-        self.actions = actions
-        self.pulse = pulse
-        self.git = git
-        self.changedOnly = changedOnly
-        self.icon = icon
-    }
-
-    /// The rows `changedOnly` leaves: a changed file, or a folder that holds one.
+/// The tree's row helpers for the hosts that draw its rows in their own table (the markdown viewer's
+/// `MarkdownTreeTable`, the hub's Folders list): the row view, the default icons and the changed-only filter. Its
+/// lazy-stack list view was deleted on 2026-10-30 when its last host, the hub's Folders mode, moved to `GenTreeTable`.
+public enum FileTreeView {
+    /// The rows a changed-only list keeps: a changed file, or a folder that holds one.
     public static func changedRows(_ rows: [FileTreeRow], _ git: GitTreeDecorations) -> [FileTreeRow] {
         rows.filter { git.change(for: $0.id) != nil || git.holdsChanges($0.id) }
     }
 
-    /// One row as this view draws it, for a host that lays several trees in one table (the hub's Folders mode).
+    /// One tree row, for a host that lays it in its own table (the hub's Folders mode).
     public static func row(_ row: FileTreeRow, selected: Bool, icon: String, style: FileTreeStyle, model: FileTreeModel,
                            actions: FileTreeActions) -> some View {
         FileTreeRowView(row: row, selected: selected, icon: icon, style: style, model: model, actions: actions).equatable()
@@ -576,22 +548,6 @@ public struct FileTreeView: View {
         case "json", "yaml", "yml", "toml": return "curlybraces"
         case "png", "jpg", "jpeg", "gif", "webp", "heic", "svg": return "photo"
         default: return "doc"
-        }
-    }
-
-    public var body: some View {
-        let _ = RenderProbe.hit("tree.view")
-        let selectedKey = selected.map { FileTreeRowKey(selection: $0) }
-        LazyVStack(alignment: .leading, spacing: 0) {
-            ForEach(changedOnly && git != nil ? Self.changedRows(model.rows, git ?? .none) : model.rows, id: \.key) { row in
-                FileTreeRowView(
-                    row: row, selected: row.key == selectedKey, icon: icon(row), style: style, model: model, actions: actions,
-                    pulse: pulse?.id == row.id ? pulse : nil,
-                    change: git?.change(for: row.id), holdsChanges: git?.holdsChanges(row.id) ?? false,
-                    lines: git?.count(for: row.id)
-                )
-                .equatable()
-            }
         }
     }
 }

@@ -72,7 +72,7 @@ final class ReviewRootsTests: XCTestCase {
     }
 
     func testTheTreeHasOneTopLevelFolderPerRootWithItsOwnTotals() {
-        let rows = sidebarRows(ReviewRoots.merge(twoRoots), tree: true, collapsed: [], roots: twoRoots)
+        let rows = ChangedFilesTree.rows(ReviewRoots.merge(twoRoots), tree: true, collapsed: [], roots: twoRoots.map(\.treeRoot))
         let roots = rows.compactMap { row -> (Int, Int, Int)? in
             if case .root(let index, let additions, let deletions) = row.kind { return (index, additions, deletions) }
             return nil
@@ -96,12 +96,12 @@ final class ReviewRootsTests: XCTestCase {
     func testACollapsedOrEmptyRootKeepsOnlyItsRow() {
         var roots = twoRoots
         roots[1].files = []
-        let rows = sidebarRows(ReviewRoots.merge(roots), tree: true, collapsed: ["dir:tools"], roots: roots)
+        let rows = ChangedFilesTree.rows(ReviewRoots.merge(roots), tree: true, collapsed: ["dir:tools"], roots: roots.map(\.treeRoot))
         XCTAssertEqual(rows.map(\.id), ["dir:tools", "dir:notes"])
     }
 
     func testTheFlatListGroupsEachRootsFoldersUnderIt() {
-        let rows = sidebarRows(ReviewRoots.merge(twoRoots), tree: false, collapsed: [], roots: twoRoots)
+        let rows = ChangedFilesTree.rows(ReviewRoots.merge(twoRoots), tree: false, collapsed: [], roots: twoRoots.map(\.treeRoot))
         XCTAssertEqual(rows.map(\.id), ["dir:tools", "tools/README.md", "dir:tools/src", "tools/src/a.ts",
                                         "dir:notes", "notes/README.md", "dir:notes/daily", "notes/daily/2026-01-02.md"])
     }
@@ -109,21 +109,21 @@ final class ReviewRootsTests: XCTestCase {
     func testEveryFolderRowSumsTheFilesUnderItOpenOrFolded() {
         let files = [file("lib/desktop/patches/a.diff", add: 264), file("lib/desktop/patches/b.diff", add: 23, del: 3),
                      file("lib/desktop/c.ts", add: 1, del: 1), file("codex/commands/d.ts", add: 5)]
-        func sums(_ rows: [SidebarRow]) -> [String: [Int]] {
+        func sums(_ rows: [ChangedFilesTreeRow]) -> [String: [Int]] {
             rows.reduce(into: [:]) { sums, row in
                 if case .directory(_, let additions, let deletions) = row.kind { sums[row.id] = [additions, deletions] }
             }
         }
 
-        let open = sums(sidebarRows(files, tree: true, collapsed: []))
+        let open = sums(ChangedFilesTree.rows(files, tree: true, collapsed: []))
         XCTAssertEqual(open["dir:lib/desktop"], [288, 4], "a folder counts its nested folders")
         XCTAssertEqual(open["dir:lib/desktop/patches"], [287, 3])
         XCTAssertEqual(open["dir:codex/commands"], [5, 0], "a single-child chain reads as one row with the sum")
 
-        let folded = sums(sidebarRows(files, tree: true, collapsed: ["dir:lib/desktop"]))
+        let folded = sums(ChangedFilesTree.rows(files, tree: true, collapsed: ["dir:lib/desktop"]))
         XCTAssertEqual(folded["dir:lib/desktop"], [288, 4])
 
-        let flat = sums(sidebarRows(files, tree: false, collapsed: []))
+        let flat = sums(ChangedFilesTree.rows(files, tree: false, collapsed: []))
         XCTAssertEqual(flat["dir:lib/desktop/patches"], [287, 3], "the flat list's folder headers sum their files too")
     }
 
@@ -132,7 +132,7 @@ final class ReviewRootsTests: XCTestCase {
         let files = [file("src/ai/a.ts", add: 59, del: 3), file("src/azure-devops/commands/query.ts", add: 98, del: 2),
                      file("src/browser-extension/lib/hub.ts", add: 7), file("src/browser-extension/extension/c.ts", add: 102, del: 9),
                      file("README.md", add: 1)]
-        let rows = sidebarRows(files, tree: true, collapsed: [])
+        let rows = ChangedFilesTree.rows(files, tree: true, collapsed: [])
         var sums: [String: [Int]] = [:]
         for row in rows {
             if case .directory(_, let additions, let deletions) = row.kind { sums[row.id] = [additions, deletions] }
@@ -144,7 +144,7 @@ final class ReviewRootsTests: XCTestCase {
         XCTAssertEqual(sums.count, 6, "src, ai, azure-devops/commands, browser-extension, extension, lib")
 
         // With several roots, each root row carries its own total too.
-        let roots = sidebarRows(ReviewRoots.merge(twoRoots), tree: true, collapsed: [], roots: twoRoots)
+        let roots = ChangedFilesTree.rows(ReviewRoots.merge(twoRoots), tree: true, collapsed: [], roots: twoRoots.map(\.treeRoot))
         for row in roots {
             switch row.kind {
             case .directory(_, let additions, let deletions), .root(_, let additions, let deletions):
@@ -156,7 +156,7 @@ final class ReviewRootsTests: XCTestCase {
     }
 
     func testOneRootStillBuildsTheOldTree() {
-        let rows = sidebarRows([file("src/lib/a.ts"), file("b.ts")], tree: true, collapsed: [])
+        let rows = ChangedFilesTree.rows([file("src/lib/a.ts"), file("b.ts")], tree: true, collapsed: [])
         XCTAssertEqual(rows.map(\.id), ["dir:src/lib", "src/lib/a.ts", "b.ts"])
     }
 
