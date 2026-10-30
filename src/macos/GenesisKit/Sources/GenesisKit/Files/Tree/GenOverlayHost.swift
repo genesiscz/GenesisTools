@@ -18,7 +18,7 @@ import AppKit
 import SwiftUI
 
 /// Hosts the SwiftUI root beside AppKit overlays whose scrolling must not relayout that root.
-final class GenOverlayContentView: NSView {
+public final class GenOverlayContentView: NSView {
     /// The SwiftUI root; it states no sizes of its own (`MarkdownDocumentWindowController.contentView`).
     let root: NSView
     /// The root's hosting sizing (none: the window's minimum is `MarkdownWindowMinimum`).
@@ -31,7 +31,7 @@ final class GenOverlayContentView: NSView {
     }
 
     /// Installs the sizing-free SwiftUI root beneath the overlay layer.
-    init<Root: View>(root: GenRootHostingView<Root>) {
+    public init<Root: View>(root: GenRootHostingView<Root>) {
         self.root = root
         rootSizingOptions = { [unowned root] in root.sizingOptions }
         super.init(frame: .zero)
@@ -41,7 +41,7 @@ final class GenOverlayContentView: NSView {
 
     /// Rejects archive construction because the window supplies its root programmatically.
     @available(*, unavailable)
-    required init?(coder: NSCoder) { fatalError("init(coder:) is not used") }
+    public required init?(coder: NSCoder) { fatalError("init(coder:) is not used") }
 
     /// Lays `view` over `slot` from now on, above the root.
     func attach(_ view: NSView, over slot: NSView) {
@@ -61,7 +61,7 @@ final class GenOverlayContentView: NSView {
     }
 
     /// Sizes the root to the window content and places overlays above their slots.
-    override func layout() {
+    override public func layout() {
         super.layout()
         if root.frame != bounds { root.frame = bounds }
         placeOverlays()
@@ -111,9 +111,9 @@ extension GenOverlayContentView {
 }
 
 /// The root's hosting view: after it lays out, the overlays follow their slots.
-final class GenRootHostingView<Content: View>: NSHostingView<Content> {
+public final class GenRootHostingView<Content: View>: NSHostingView<Content> {
     /// Repositions sibling overlays after SwiftUI finishes laying out the root.
-    override func layout() {
+    override public func layout() {
         super.layout()
         (superview as? GenOverlayContentView)?.placeOverlays()
     }
@@ -121,7 +121,7 @@ final class GenRootHostingView<Content: View>: NSHostingView<Content> {
 
 /// A place in the SwiftUI root for an AppKit view that lives outside it: inside a `GenOverlayContentView` the
 /// view is laid over this slot; anywhere else (a test that hosts the root alone) it is the slot's own subview.
-final class GenOverlaySlot: NSView {
+public final class GenOverlaySlot: NSView {
     /// The AppKit content drawn over this placeholder slot.
     let overlay: NSView
     /// The overlay's content height (the table's rows); the overlay covers no more of the slot than that.
@@ -139,37 +139,37 @@ final class GenOverlaySlot: NSView {
     required init?(coder: NSCoder) { fatalError("init(coder:) is not used") }
 
     /// Attaches or detaches the overlay when the slot changes windows.
-    override func viewDidMoveToWindow() {
+    override public func viewDidMoveToWindow() {
         super.viewDidMoveToWindow()
         settle()
     }
 
     /// Finds the overlay host after the placeholder is reparented.
-    override func viewDidMoveToSuperview() {
+    override public func viewDidMoveToSuperview() {
         super.viewDidMoveToSuperview()
         settle()
     }
 
     /// Repositions the overlay after the placeholder is resized.
-    override func setFrameSize(_ newSize: NSSize) {
+    override public func setFrameSize(_ newSize: NSSize) {
         super.setFrameSize(newSize)
         place()
     }
 
     /// Repositions the overlay after the placeholder moves.
-    override func setFrameOrigin(_ newOrigin: NSPoint) {
+    override public func setFrameOrigin(_ newOrigin: NSPoint) {
         super.setFrameOrigin(newOrigin)
         place()
     }
 
     /// Hides or repositions the overlay when the placeholder is hidden.
-    override func viewDidHide() {
+    override public func viewDidHide() {
         super.viewDidHide()
         place()
     }
 
     /// Restores overlay placement when the placeholder becomes visible again.
-    override func viewDidUnhide() {
+    override public func viewDidUnhide() {
         super.viewDidUnhide()
         place()
     }
@@ -179,12 +179,12 @@ final class GenOverlaySlot: NSView {
     /// SwiftUI host, which opens the sidebar's context menu, the same way a click under the table's rows reached it
     /// when the table was inside the root. Returning nil instead gave SwiftUI a point over its placeholder for this
     /// view, and it showed no menu (check app, 2026-10-15).
-    override func hitTest(_ point: NSPoint) -> NSView? {
+    override public func hitTest(_ point: NSPoint) -> NSView? {
         overlay.superview === self ? super.hitTest(point) : (frame.contains(point) ? self : nil)
     }
 
     /// Lets the containing sidebar supply the context menu for empty placeholder space.
-    override func menu(for event: NSEvent) -> NSMenu? { nil }
+    override public func menu(for event: NSEvent) -> NSMenu? { nil }
 
     /// The content height changed (rows came or went): the overlay is laid again.
     func contentChanged() {

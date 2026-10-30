@@ -10,9 +10,11 @@ import AppKit
 
 /// The tree's scroll view, set by `GenTreeTable`. A class, so setting it does not re-render the tree. It owns the
 /// one glide that may write that scroll view's origin.
-final class GenTreeScrollBox {
+public final class GenTreeScrollBox {
     /// The table scroll view whose clip origin a reveal may change.
-    weak var scrollView: NSScrollView?
+    public weak var scrollView: NSScrollView?
+
+    public init() {}
     /// The glide writing this scroll view, when one is running.
     private(set) var glide: GenTreeGlide?
 

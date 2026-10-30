@@ -1,4 +1,5 @@
 import AppKit
+import SwiftUI
 import XCTest
 @testable import GenesisToolsHost
 @testable import GenesisToolsHub
@@ -106,8 +107,8 @@ final class ReviewFileListTests: XCTestCase {
 
     func testTheCachedRowsFollowEveryInputTheyAreBuiltFrom() {
         let model = twoRootModel()
-        func fresh() -> [SidebarRow] {
-            sidebarRows(model.filteredFiles, tree: model.fileListIsTree, collapsed: model.collapsed, roots: model.roots)
+        func fresh() -> [ChangedFilesTreeRow] {
+            ChangedFilesTree.rows(model.filteredFiles, tree: model.fileListIsTree, collapsed: model.collapsed, roots: model.fileListTreeRoots)
         }
         var last = model.fileListRows
         XCTAssertEqual(last, fresh())
@@ -166,5 +167,48 @@ final class ReviewFileListTests: XCTestCase {
             XCTAssertFalse(previous == next, "\(name): a row input changed, so the rows draw again")
             previous = next
         }
+    }
+
+    /// The list draws in GenesisKit's table (`GenTreeTable`): one table row per list row, a fold takes the folder's
+    /// rows out, and a scroll target (the diff's file on top, a reveal) brings its row on screen.
+    func testTheTableShowsTheRowsFoldsAndScrollsToTheTarget() throws {
+        let model = ReviewModel(repo: base.appendingPathComponent("session"), options: DiffViewOptions(), renderer: NullRenderer())
+        var tools = ReviewRoot(folder: base.appendingPathComponent("tools").path, repo: base.appendingPathComponent("tools"))
+        tools.files = (0..<300).map { file(String(format: "src/part%d/file%03d.ts", $0 / 100, $0)) }
+        model.setRoots([tools])
+        let window = NSWindow(contentRect: NSRect(x: 0, y: 0, width: 320, height: 620), styleMask: [.borderless], backing: .buffered, defer: false)
+        window.isReleasedWhenClosed = false
+        window.alphaValue = 0
+        let host = NSHostingView(rootView: FileSidebar(model: model).frame(width: 320, height: 620))
+        window.level = .init(rawValue: Int(CGWindowLevelForKey(.desktopWindow)) - 1)
+        window.contentView = host
+        window.order(.below, relativeTo: 0)
+        func settle() {
+            for _ in 0..<4 {
+                host.layoutSubtreeIfNeeded()
+                RunLoop.current.run(until: Date().addingTimeInterval(0.1))
+            }
+        }
+        settle()
+        func table(in view: NSView) -> NSTableView? {
+            if let table = view as? NSTableView { return table }
+            return view.subviews.lazy.compactMap { table(in: $0) }.first
+        }
+        let list = try XCTUnwrap(table(in: host), "the file list is a table")
+        XCTAssertEqual(list.numberOfRows, model.fileListRows.count)
+        XCTAssertEqual(list.numberOfRows, 304, "src, three part folders and 300 files")
+
+        model.collapsed.insert("dir:src/part0")
+        settle()
+        XCTAssertEqual(list.numberOfRows, 204, "a folded folder keeps its row and hides its 100 files")
+
+        let target = "src/part2/file299.ts"
+        model.sidebarScrollTarget = target
+        settle()
+        let index = try XCTUnwrap(model.fileListRows.firstIndex { $0.id == target })
+        let visible = list.rows(in: list.visibleRect)
+        XCTAssertTrue(visible.contains(index), "row \(index) is on screen (\(visible))")
+        XCTAssertFalse(visible.contains(0), "a positive control: the list moved away from its top")
+        window.close()
     }
 }

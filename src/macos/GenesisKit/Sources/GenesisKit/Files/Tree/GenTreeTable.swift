@@ -15,7 +15,7 @@ import SwiftUI
 
 /// What a row of `GenTreeTable` must answer: an identity that survives a fold (the slide animation diffs the rows by
 /// it), and the shape the keyboard walks (`GenTreeKeys`).
-protocol GenTreeRow: Equatable {
+public protocol GenTreeRow: Equatable {
     associatedtype Key: Hashable
     /// The row's identity in the list; equal keys are the same row before and after a change.
     var key: Key { get }
@@ -33,7 +33,7 @@ extension FileTreeRow: GenTreeRow {}
 /// A list of equal-height rows in an `NSTableView`. `cell` builds the SwiftUI view of one row; `revision` is any value
 /// that changes when something the cells draw changes besides the rows themselves (the selection, a pulse, the git
 /// marks, the style), so the visible cells are built again.
-struct GenTreeTable<Row: GenTreeRow, Revision: Equatable>: NSViewRepresentable {
+public struct GenTreeTable<Row: GenTreeRow, Revision: Equatable>: NSViewRepresentable {
     @GenReduceMotion private var reduceMotion
     /// The visible tree rows in depth-first display order.
     let rows: [Row]
@@ -45,13 +45,31 @@ struct GenTreeTable<Row: GenTreeRow, Revision: Equatable>: NSViewRepresentable {
     var keys: GenTreeKeys<Row>? = nil
     /// Builds the hosted SwiftUI content for a row when the table needs it.
     let cell: (Row) -> AnyView
+    /// Each row's own height, for a list whose rows differ (the hub's file list). nil: every row is as tall as the
+    /// first row's view, measured, which is the markdown tree's case.
+    var height: ((Row) -> CGFloat)? = nil
+    /// The empty space above the first row and under the last one.
+    var insets = NSEdgeInsets(top: GenTreeScroll.padding, left: 0, bottom: GenTreeScroll.padding, right: 0)
+
+    /// The rows, what else the cells draw, the scroll handle and the row view; `keys`, `height` and `insets` are
+    /// optional (no keyboard, one measured height, the markdown tree's padding).
+    public init(rows: [Row], revision: Revision, box: GenTreeScrollBox, keys: GenTreeKeys<Row>? = nil,
+                height: ((Row) -> CGFloat)? = nil, insets: NSEdgeInsets? = nil, cell: @escaping (Row) -> AnyView) {
+        self.rows = rows
+        self.revision = revision
+        self.box = box
+        self.keys = keys
+        self.height = height
+        if let insets { self.insets = insets }
+        self.cell = cell
+    }
 
     /// Creates the persistent table data source and cell coordinator.
-    func makeCoordinator() -> Coordinator { Coordinator() }
+    public func makeCoordinator() -> Coordinator { Coordinator() }
 
     /// The table's scroll view lives outside SwiftUI: laid over this slot by the window's content view
     /// (`GenOverlayContentView`), so its scrolling never lays out a SwiftUI host.
-    func makeNSView(context: Context) -> GenOverlaySlot {
+    public func makeNSView(context: Context) -> GenOverlaySlot {
         let table = GenTreeTableView()
         let column = NSTableColumn(identifier: NSUserInterfaceItemIdentifier("row"))
         column.resizingMask = .autoresizingMask
@@ -65,6 +83,8 @@ struct GenTreeTable<Row: GenTreeRow, Revision: Equatable>: NSViewRepresentable {
         table.columnAutoresizingStyle = .uniformColumnAutoresizingStyle
         table.usesAutomaticRowHeights = false
         table.dataSource = context.coordinator
+        // Before the delegate is set: the table asks once whether the delegate answers each row's height.
+        context.coordinator.height = height
         table.delegate = context.coordinator
         table.coordinatorKeys = context.coordinator
 
@@ -76,20 +96,22 @@ struct GenTreeTable<Row: GenTreeRow, Revision: Equatable>: NSViewRepresentable {
         scroll.autohidesScrollers = true
         scroll.scrollerStyle = .overlay
         scroll.automaticallyAdjustsContentInsets = false
-        scroll.contentInsets = NSEdgeInsets(top: GenTreeScroll.padding, left: 0, bottom: GenTreeScroll.padding, right: 0)
+        scroll.contentInsets = insets
         context.coordinator.table = table
         box.scrollView = scroll
         apply(to: context.coordinator, table: table, force: true)
         let slot = GenOverlaySlot(overlay: scroll)
         slot.contentHeight = { [weak table, weak scroll] in
             guard let table, let scroll else { return .greatestFiniteMagnitude }
-            return CGFloat(table.numberOfRows) * table.rowHeight + scroll.contentInsets.top + scroll.contentInsets.bottom
+            // The rows' own extent (the table's frame also covers the empty space under them).
+            let rows = table.numberOfRows > 0 ? table.rect(ofRow: table.numberOfRows - 1).maxY : 0
+            return rows + scroll.contentInsets.top + scroll.contentInsets.bottom
         }
         return slot
     }
 
     /// Updates row content and repositions the AppKit overlay after a SwiftUI change.
-    func updateNSView(_ slot: GenOverlaySlot, context: Context) {
+    public func updateNSView(_ slot: GenOverlaySlot, context: Context) {
         box.scrollView = slot.overlay as? NSScrollView
         guard let table = context.coordinator.table else { return }
         apply(to: context.coordinator, table: table, force: false)
@@ -97,7 +119,7 @@ struct GenTreeTable<Row: GenTreeRow, Revision: Equatable>: NSViewRepresentable {
     }
 
     /// Detaches the overlay when SwiftUI dismantles its placeholder.
-    static func dismantleNSView(_ slot: GenOverlaySlot, coordinator: Coordinator) {
+    public static func dismantleNSView(_ slot: GenOverlaySlot, coordinator: Coordinator) {
         slot.leave()
     }
 
@@ -114,7 +136,8 @@ struct GenTreeTable<Row: GenTreeRow, Revision: Equatable>: NSViewRepresentable {
         let old = coordinator.rows
         coordinator.rows = rows
         coordinator.revision = revision
-        if coordinator.rowHeight == nil || revisionChanged, let first = rows.first {
+        coordinator.height = height
+        if height == nil, coordinator.rowHeight == nil || revisionChanged, let first = rows.first {
             let height = GenTreeTableCell.height(of: coordinator.cell(first))
             if height != coordinator.rowHeight {
                 coordinator.rowHeight = height
@@ -162,7 +185,7 @@ struct GenTreeTable<Row: GenTreeRow, Revision: Equatable>: NSViewRepresentable {
 
     /// Keeps row values and builds reusable cells for the AppKit table.
     @MainActor
-    final class Coordinator: NSObject, NSTableViewDataSource, NSTableViewDelegate, GenTreeKeyTarget {
+    public final class Coordinator: NSObject, NSTableViewDataSource, NSTableViewDelegate, GenTreeKeyTarget {
         /// The table supplied by the representable, held without extending its lifetime.
         weak var table: NSTableView?
         /// The row snapshot currently exposed to the table data source.
@@ -177,6 +200,20 @@ struct GenTreeTable<Row: GenTreeRow, Revision: Equatable>: NSViewRepresentable {
         var revision: Any?
         /// The measured height shared by all visible table rows.
         var rowHeight: CGFloat?
+        /// Each row's own height (`GenTreeTable.height`); nil: `rowHeight` for every row.
+        var height: ((Row) -> CGFloat)?
+
+        /// The table asks the delegate for each row's height only when rows have their own heights: answering it for a
+        /// list of one height would make the table measure every row, which the markdown tree never paid.
+        override public func responds(to selector: Selector!) -> Bool {
+            if selector == #selector(NSTableViewDelegate.tableView(_:heightOfRow:)) { return height != nil }
+            return super.responds(to: selector)
+        }
+
+        public func tableView(_ tableView: NSTableView, heightOfRow row: Int) -> CGFloat {
+            guard let height, rows.indices.contains(row) else { return tableView.rowHeight }
+            return height(rows[row])
+        }
         /// The current builder installed by the representable for reusable cells.
         var cell: (Row) -> AnyView = { _ in AnyView(EmptyView()) }
         /// The keyboard's verbs, from the representable.
@@ -250,10 +287,10 @@ struct GenTreeTable<Row: GenTreeRow, Revision: Equatable>: NSViewRepresentable {
         }
 
         /// Reports exactly the number of rows in the current snapshot.
-        func numberOfRows(in tableView: NSTableView) -> Int { rows.count }
+        public func numberOfRows(in tableView: NSTableView) -> Int { rows.count }
 
         /// Reuses or creates a hosting cell and supplies the requested row content.
-        func tableView(_ tableView: NSTableView, viewFor tableColumn: NSTableColumn?, row: Int) -> NSView? {
+        public func tableView(_ tableView: NSTableView, viewFor tableColumn: NSTableColumn?, row: Int) -> NSView? {
             let identifier = NSUserInterfaceItemIdentifier("markdown-tree-cell")
             let view = tableView.makeView(withIdentifier: identifier, owner: nil) as? GenTreeTableCell
                 ?? GenTreeTableCell(identifier: identifier)
@@ -262,7 +299,7 @@ struct GenTreeTable<Row: GenTreeRow, Revision: Equatable>: NSViewRepresentable {
         }
 
         /// Leaves selection to row controls rather than the AppKit table.
-        func tableView(_ tableView: NSTableView, shouldSelectRow row: Int) -> Bool { false }
+        public func tableView(_ tableView: NSTableView, shouldSelectRow row: Int) -> Bool { false }
 
         /// The cells on screen take their views again (the selection, a pulse or the git marks changed).
         func rebuildVisible() {
@@ -437,7 +474,7 @@ enum GenTreeKeyAction: Equatable {
 }
 
 /// The verbs the keyboard reaches: the host's own, so a key does what a click on the row does.
-struct GenTreeKeys<Row: GenTreeRow> {
+public struct GenTreeKeys<Row: GenTreeRow> {
     /// Opens a file (Return on a file row).
     var open: (Row) -> Void
     /// Opens or closes a folder (Right, Left, Return on a folder row).

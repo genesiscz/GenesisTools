@@ -601,7 +601,7 @@ final class ReviewModel: ObservableObject {
     }
     /// The file list's rows for what it shows now (`fileListRows`); nil after the files, roots, filter, tree mode or
     /// folds changed.
-    private var fileListRowsCache: [SidebarRow]?
+    private var fileListRowsCache: [ChangedFilesTreeRow]?
     /// Absolute paths as `file(atPath:)` compares them (symlinks resolved, standardized), each read from disk once:
     /// the Folders tree asks for every row it draws, and a body must not touch the disk per row. Dropped when the
     /// roots move to other folders.
@@ -713,13 +713,18 @@ final class ReviewModel: ObservableObject {
     /// The file list's rows (`FileSidebar`, `FileListFit`), built on the first read after the files, roots, filter,
     /// tree mode or folds changed. Built in the list's body, every publish of this model (a comment count, a notice,
     /// the loading flag) split, sorted and walked every path again: 442 ms per publish at 4995 rows (2026-10-23).
-    var fileListRows: [SidebarRow] {
+    var fileListRows: [ChangedFilesTreeRow] {
         if let fileListRowsCache {
             return fileListRowsCache
         }
-        let made = sidebarRows(filteredFiles, tree: fileListIsTree, collapsed: collapsed, roots: roots)
+        let made = ChangedFilesTree.rows(filteredFiles, tree: fileListIsTree, collapsed: collapsed, roots: fileListTreeRoots)
         fileListRowsCache = made
         return made
+    }
+
+    /// The roots as GenesisKit's row builder names them (`ChangedFilesTree`).
+    var fileListTreeRoots: [ChangedFilesTreeRoot] {
+        roots.map { ChangedFilesTreeRoot(rowID: $0.rowID, prefix: $0.prefix) }
     }
 
     var selectedIndex: Int? {
@@ -3333,6 +3338,8 @@ struct FileSidebar: View {
     @ObservedObject var model: ReviewModel
     @FocusState private var filterFocused: Bool
     @GenReduceMotion private var reduceMotion
+    /// The table's scroll view, for `sidebarScrollTarget`.
+    @State private var box = GenTreeScrollBox()
 
     /// Folds or opens a folder in one `GenMotion` animation (the list is lazy: only the rows on screen move).
     private func toggleFolder(_ id: String) {
@@ -3348,7 +3355,7 @@ struct FileSidebar: View {
 
     var body: some View {
         let _ = RenderProbe.hit("review.files.body")
-        let list = Self.rows(of: model, toggle: toggleFolder)
+        let list = Self.rows(of: model, box: box, toggle: toggleFolder)
         VStack(spacing: 0) {
             HStack(spacing: 6) {
                 HStack(spacing: 6) {
@@ -3385,10 +3392,7 @@ struct FileSidebar: View {
                     .padding(.top, 24)
             }
 
-            ScrollViewReader { proxy in
-                ScrollView {
-                    list.equatable()
-                }
+            list.equatable()
                 .onChange(of: model.sidebarScrollTarget) { id in
                     guard let id else { return }
                     // Unfold the folders above the target so the row exists, then scroll only as far as needed.
@@ -3396,10 +3400,11 @@ struct FileSidebar: View {
                         model.collapsed.remove(folder)
                     }
                     DispatchQueue.main.async {
-                        proxy.scrollTo(id)
+                        guard let index = model.fileListRows.firstIndex(where: { $0.id == id }),
+                              let table = box.scrollView?.documentView as? NSTableView, index < table.numberOfRows else { return }
+                        table.scrollRowToVisible(index)
                     }
                 }
-            }
         }
         .hubSurface(.chrome)
         // ⌘F with the keyboard in the file list focuses its filter (Hub/HubPanelFind.swift).
@@ -3408,8 +3413,9 @@ struct FileSidebar: View {
 
     /// The rows' values as the model has them now: every input a row draws, each read once per body of the shell.
     /// The rows (`fileListRows`) and the lookups behind the drafts are built once per change, not here.
-    static func rows(of model: ReviewModel, toggle: @escaping (String) -> Void) -> FileSidebarRows {
+    static func rows(of model: ReviewModel, box: GenTreeScrollBox = GenTreeScrollBox(), toggle: @escaping (String) -> Void) -> FileSidebarRows {
         FileSidebarRows(
+            box: box,
             rows: model.fileListRows,
             tree: model.fileListIsTree,
             selectedID: model.selectedID,
@@ -3430,7 +3436,9 @@ struct FileSidebar: View {
 /// built in the shell's body (2026-10-23 file tree comparison). 🛑 A new input a row draws is a field here AND a term
 /// of `==`; one left out of `==` leaves the rows stale until another input changes.
 struct FileSidebarRows: View, Equatable {
-    let rows: [SidebarRow]
+    /// The table's scroll handle: the same object for the shell's life, so it is no input of `==`.
+    let box: GenTreeScrollBox
+    let rows: [ChangedFilesTreeRow]
     let tree: Bool
     let selectedID: String?
     let collapsed: Set<String>
@@ -3450,44 +3458,77 @@ struct FileSidebarRows: View, Equatable {
             && a.pathActionsKey == b.pathActionsKey
     }
 
+    /// What the cells draw besides the rows (a row carries its own fold state).
+    private struct Revision: Equatable {
+        let selectedID: String?
+        let drafts: [String: Int]
+        let roots: [ReviewRoot]
+        let hasRootActions: Bool
+        let pathActionsKey: ReviewPathActionsKey
+    }
+
+    /// A row's height in the list: its view's own, the top gap of a later root or a flat-list group, and the 1 pt
+    /// between rows that the lazy stack had (`spacing: 1`).
+    static func height(of row: ChangedFilesTreeRow, tree: Bool) -> CGFloat {
+        switch row.kind {
+        case .root(let index, _, _): return 26 + (index == 0 ? 0 : 6) + 1
+        case .directory: return 24 + (tree ? 0 : 8) + 1
+        case .file: return 26 + 1
+        }
+    }
+
     var body: some View {
         let _ = RenderProbe.hit("review.files.rows")
-        LazyVStack(alignment: .leading, spacing: 1) {
-            ForEach(rows) { row in
-                switch row.kind {
-                case .root(let index, let additions, let deletions):
-                    RootFolderRow(root: roots[index], additions: additions, deletions: deletions,
-                                  collapsed: collapsed.contains(row.id), actions: rootActions) {
-                        toggle(row.id)
-                    }
-                    .padding(.horizontal, 6)
-                    .padding(.top, index == 0 ? 0 : 6)
-                case .directory(let name, let additions, let deletions):
-                    DirectoryRow(
-                        name: name,
-                        depth: row.depth,
-                        additions: additions,
-                        deletions: deletions,
-                        tree: tree,
-                        collapsed: collapsed.contains(row.id)
-                    )
-                    .rowButton(cornerRadius: 6) {
-                        toggle(row.id)
-                    }
-                    // The gap above a flat-list group sits outside the button, so the
-                    // hover box covers the folder name and nothing above it.
-                    .padding(.horizontal, 6)
-                    .padding(.top, tree ? 0 : 8)
-                case .file(let file):
-                    FileRow(file: file, selected: file.id == selectedID, depth: row.depth, drafts: drafts[file.id] ?? 0)
-                        .id(file.id)
-                        .rowButton(cornerRadius: 6) { select(file.id) }
-                        .contextMenu { fileMenu(file) }
-                        .padding(.horizontal, 6)
-                }
-            }
+        let tree = tree
+        // The stack's 12 pt under the last row, less the 1 pt gap the last row's height already holds.
+        GenTreeTable(
+            rows: rows,
+            revision: Revision(selectedID: selectedID, drafts: drafts, roots: roots, hasRootActions: rootActions != nil,
+                               pathActionsKey: pathActionsKey),
+            box: box,
+            height: { Self.height(of: $0, tree: tree) },
+            insets: NSEdgeInsets(top: 0, left: 0, bottom: 11, right: 0)
+        ) { row in
+            AnyView(cell(row).frame(maxWidth: .infinity, maxHeight: .infinity, alignment: .topLeading))
         }
-        .padding(.bottom, 12)
+        // Tree and flat give a folder another height, and a root's place gives it its top gap: a new table measures
+        // the rows again when either changes.
+        .id("\(tree)-\(roots.count)")
+    }
+
+    @ViewBuilder
+    private func cell(_ row: ChangedFilesTreeRow) -> some View {
+        switch row.kind {
+        case .root(let index, let additions, let deletions):
+            RootFolderRow(root: roots[index], additions: additions, deletions: deletions,
+                          collapsed: !row.expanded, actions: rootActions) {
+                toggle(row.id)
+            }
+            .padding(.horizontal, 6)
+            .padding(.top, index == 0 ? 0 : 6)
+        case .directory(let name, let additions, let deletions):
+            DirectoryRow(
+                name: name,
+                depth: row.depth,
+                additions: additions,
+                deletions: deletions,
+                tree: tree,
+                collapsed: !row.expanded
+            )
+            .rowButton(cornerRadius: 6) {
+                toggle(row.id)
+            }
+            // The gap above a flat-list group sits outside the button, so the
+            // hover box covers the folder name and nothing above it.
+            .padding(.horizontal, 6)
+            .padding(.top, tree ? 0 : 8)
+        case .file(let file):
+            FileRow(file: file, selected: file.id == selectedID, depth: row.depth, drafts: drafts[file.id] ?? 0)
+                .id(file.id)
+                .rowButton(cornerRadius: 6) { select(file.id) }
+                .contextMenu { fileMenu(file) }
+                .padding(.horizontal, 6)
+        }
     }
 
     /// Open, copy or reveal the file in its own repository (with several roots, not `model.repo`).
@@ -3531,7 +3572,7 @@ enum FileListFit {
         (additions > 0 ? spacing + text("+\(additions)", counts) : 0) + (deletions > 0 ? spacing + text("−\(deletions)", counts) : 0)
     }
 
-    private static func rowWidth(_ row: SidebarRow, tree: Bool, roots: [ReviewRoot], hasRootActions: Bool) -> CGFloat {
+    private static func rowWidth(_ row: ChangedFilesTreeRow, tree: Bool, roots: [ReviewRoot], hasRootActions: Bool) -> CGFloat {
         let indent = 6 + CGFloat(row.depth) * 14
         switch row.kind {
         case .file(let file):

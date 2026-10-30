@@ -607,19 +607,23 @@ enum HubGlass {
     /// the whole tree on every layout pass, a third of the main thread while resizing (sampled
     /// 2026-09-24). `HubRootView` sets the window's minimum explicitly instead.
     static func makeContentView<Root: View>(root: Root) -> NSView {
-        let hosting = NSHostingView(rootView: root)
+        let hosting = GenRootHostingView(rootView: root)
         hosting.sizingOptions = []
-        hosting.translatesAutoresizingMaskIntoConstraints = false
+        // The root sits in an overlay host (GenesisKit `GenOverlayContentView`): the Changes pane's file list is an
+        // AppKit table laid over its slot, so scrolling it never lays out the hub's SwiftUI root. With the table inside
+        // the root, a scroll step of a 1864-file list cost 15.3 ms of main thread (hub bench, 2026-10-30).
+        let content = GenOverlayContentView(root: hosting)
+        content.translatesAutoresizingMaskIntoConstraints = false
         let effect = NSVisualEffectView()
         effect.blendingMode = .withinWindow
         effect.material = .windowBackground
         effect.state = .inactive
-        effect.addSubview(hosting)
+        effect.addSubview(content)
         NSLayoutConstraint.activate([
-            hosting.leadingAnchor.constraint(equalTo: effect.leadingAnchor),
-            hosting.trailingAnchor.constraint(equalTo: effect.trailingAnchor),
-            hosting.topAnchor.constraint(equalTo: effect.topAnchor),
-            hosting.bottomAnchor.constraint(equalTo: effect.bottomAnchor),
+            content.leadingAnchor.constraint(equalTo: effect.leadingAnchor),
+            content.trailingAnchor.constraint(equalTo: effect.trailingAnchor),
+            content.topAnchor.constraint(equalTo: effect.topAnchor),
+            content.bottomAnchor.constraint(equalTo: effect.bottomAnchor),
         ])
         return effect
     }
