@@ -84,7 +84,7 @@ afterAll(async () => {
 });
 
 describe("approve in the window", () => {
-    test("only the ticked path goes to the trash for 10 minutes; the other goes back; a twin request is decided too", () => {
+    test("only the ticked aside copy goes to trash; a twin request remains pending", () => {
         const request = asideRequest("work");
         const [a, b] = request.targets.map((target) => target.path);
         const twin = createRmRequest({
@@ -108,13 +108,73 @@ describe("approve in the window", () => {
         expect(Date.parse(batch?.drainAfter ?? "") - before).toBeGreaterThanOrEqual(10 * 60_000 - 1000);
         expect(existsSync(a ?? "")).toBe(false);
         expect(existsSync(b ?? "")).toBe(true);
-        expect(loadRmRequest(twin.id)).toMatchObject({ status: "approved", batchId: batch?.id });
+        expect(loadRmRequest(twin.id)).toMatchObject({ status: "pending" });
 
         const root = loadRmConfig().roots.find((r) => r.path === join(base, "work"));
 
         expect(root).toMatchObject({ session: "sess-2222", via: `request:${request.id}` });
         expect(root && isRootActive(root, "sess-2222")).toBe(true);
         expect(root && isRootActive(root, "sess-other")).toBe(false);
+    });
+
+    test("approval leaves a recreated original and a separate aside copy untouched", () => {
+        const request = asideRequest("replacement");
+        const original = request.targets[0]?.path ?? "";
+        const other = createRmRequest({
+            kind: "delete",
+            caller: AGENT,
+            cwd: request.cwd,
+            reason: null,
+            targets: [{ path: original, kind: "file", rule: "default", reason: "older request" }],
+        });
+        const otherCopy = file(join(base, "other-copy", "a.txt"));
+        const asideTwin = createRmRequest({
+            kind: "delete",
+            caller: AGENT,
+            cwd: request.cwd,
+            reason: null,
+            targets: [{ path: original, stored: otherCopy, kind: "file", rule: "default", reason: "another copy" }],
+            asideDir: join(base, "other-copy"),
+        });
+        file(original);
+        const { approved, denied } = splitBySelection(entriesOf(request), [original]);
+        const { batch } = approveDelete({
+            ctx: context(),
+            request,
+            approved,
+            denied,
+            choices: { selected: [original], disposal: "permanent", remember: "once", note: null },
+        });
+        expect(batch?.items).toHaveLength(1);
+        expect(existsSync(original)).toBe(true);
+        expect(existsSync(otherCopy)).toBe(true);
+        expect(loadRmRequest(other.id)?.status).toBe("pending");
+        expect(loadRmRequest(asideTwin.id)?.status).toBe("pending");
+    });
+
+    test("duplicate in-place requests share the approved object", () => {
+        const path = file(join(base, "in-place", "a.txt"));
+        const target = { path, kind: "file" as const, rule: "default", reason: "asked again" };
+        const input = { kind: "delete" as const, caller: AGENT, cwd: base, reason: null, targets: [target] };
+        const request = createRmRequest(input);
+        const twin = createRmRequest(input);
+        const stored = file(join(base, "in-place-other-copy", "a.txt"));
+        const asideTwin = createRmRequest({
+            ...input,
+            targets: [{ ...target, stored }],
+            asideDir: join(base, "in-place-other-copy"),
+        });
+        const { batch } = approveDelete({
+            ctx: context(),
+            request,
+            approved: entriesOf(request),
+            denied: [],
+            choices: { selected: null, disposal: "trash", remember: "once", note: null },
+        });
+        expect(batch?.items).toHaveLength(1);
+        expect(loadRmRequest(twin.id)).toMatchObject({ status: "approved", batchId: batch?.id });
+        expect(existsSync(stored)).toBe(true);
+        expect(loadRmRequest(asideTwin.id)?.status).toBe("pending");
     });
 
     test("a permanent delete is due at once", () => {

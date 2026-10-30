@@ -14,7 +14,6 @@ import {
     hardDenyReason,
     isRootActive,
     listRmRequests,
-    type MoveRequest,
     measureBytes,
     moveToTrash,
     probeItemGit,
@@ -194,35 +193,18 @@ interface SharedRequest {
     rest: RmRequestTarget[];
 }
 
-function sharedRequests(request: RmRequest, approvedPaths: ReadonlySet<string>): SharedRequest[] {
+function sharedRequests(request: RmRequest, approved: readonly ApproveEntry[]): SharedRequest[] {
+    // Only in-place requests can describe the same object. An aside copy, including one
+    // in another request, is a distinct object and requires its own approval.
+    const inPlace = new Set(approved.filter(({ wanted }) => !wanted.stored).map(({ wanted }) => wanted.path));
     return listRmRequests()
         .filter((other) => other.id !== request.id)
         .map((other) => ({
             request: other,
-            shared: other.targets.filter((target) => approvedPaths.has(target.path)),
-            rest: other.targets.filter((target) => !approvedPaths.has(target.path)),
+            shared: other.targets.filter((target) => !target.stored && inPlace.has(target.path)),
+            rest: other.targets.filter((target) => target.stored || !inPlace.has(target.path)),
         }))
         .filter((other) => other.shared.length > 0);
-}
-
-/** The shared targets of other requests that still hold something of their own (their own aside copy). */
-function sharedMoves(ctx: RunContext, shared: readonly SharedRequest[], taken: Set<string>): MoveRequest[] {
-    const moves: MoveRequest[] = [];
-
-    for (const { request, shared: targets } of shared) {
-        for (const wanted of targets) {
-            const target = resolveTarget(wanted.stored ?? wanted.path, request.cwd);
-
-            if (target.kind === "missing" || taken.has(target.canonical) || hardDenyReason(target, ctx.rules)) {
-                continue;
-            }
-
-            taken.add(target.canonical);
-            moves.push({ target, rule: `approved ${request.id}`, original: wanted.path, bytes: wanted.bytes });
-        }
-    }
-
-    return moves;
 }
 
 /** Marks the other requests decided with this one: fully shared ones approved, the rest keep their own paths. */
@@ -332,7 +314,7 @@ export interface DeleteApproval {
 }
 
 /**
- * Carries out an approved delete: the ticked paths (and the same paths of other pending requests) move to the trash
+ * Carries out an approved delete: the ticked paths move to the trash
  * with the picked disposal's grace, the unticked ones go back from aside, and a remember choice adds roots. The caller
  * starts the drainer (`kickDrainer`), which deletes a permanent batch at once.
  */
@@ -347,9 +329,7 @@ export function approveDelete(input: {
 }): DeleteApproval {
     const { ctx, request, approved, denied, choices } = input;
     const byTarget = new Map(approved.map((entry) => [entry.target, entry]));
-    const approvedPaths = new Set(approved.map((entry) => entry.wanted.path));
-    const shared = sharedRequests(request, approvedPaths);
-    const taken = new Set(approved.map((entry) => entry.target.canonical));
+    const shared = sharedRequests(request, approved);
     const graceMinutes = disposalGraceMinutes(choices.disposal);
     const batch = moveToTrash(
         [
@@ -359,7 +339,6 @@ export function approveDelete(input: {
                 original: wanted.path,
                 bytes: wanted.bytes,
             })),
-            ...sharedMoves(ctx, shared, taken),
         ],
         {
             config: ctx.config,
