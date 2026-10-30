@@ -9,7 +9,7 @@ import type {
     TranscriptLocator,
     TurnStateReader,
 } from "@genesiscz/utils/harness/parts";
-import { type HarnessDriver, type HarnessId, isPartNote } from "@genesiscz/utils/harness/types";
+import { type HarnessDriver, type HarnessId, isPartNote, type PartNote } from "@genesiscz/utils/harness/types";
 import type { WorkerCapabilities } from "@genesiscz/utils/worker/capabilities";
 import { claudeHarness } from "./plugins/anthropic-sub/harness";
 import { grokHarness } from "./plugins/grok-sub/harness";
@@ -44,103 +44,58 @@ export function harnessPluginId(id: HarnessId): string {
     return harnessDriver(id).identity.plugin;
 }
 
-/** The launch recipe of a harness; every harness has one, so a note here is a broken driver. */
+/** A part every harness carries; a note in its slot is a broken driver, so it throws with the note's reason. */
+function requiredPart<T>(id: HarnessId, slot: T | PartNote, what: string): T {
+    if (isPartNote(slot)) {
+        throw new Error(`The ${id} harness driver has no ${what}: ${slot.reason}`);
+    }
+
+    return slot;
+}
+
+/** The launch recipe of a harness. */
 export function harnessLaunch(id: HarnessId): LaunchRecipe {
-    const slot = harnessDriver(id).parts.launch;
-
-    if (isPartNote(slot)) {
-        throw new Error(`The ${id} harness driver has no launch recipe: ${slot.reason}`);
-    }
-
-    return slot;
+    return requiredPart(id, harnessDriver(id).parts.launch, "launch recipe");
 }
 
-/** The history reader of a harness (its driver's lazy `history` part); every harness has one. */
+/** The history reader of a harness (its driver's lazy `history` part). */
 export async function harnessHistory(id: HarnessId): Promise<NativeSessionReader> {
-    const slot = harnessDriver(id).parts.history;
-
-    if (isPartNote(slot)) {
-        throw new Error(`The ${id} harness driver has no history reader: ${slot.reason}`);
-    }
-
-    return slot();
+    return requiredPart(id, harnessDriver(id).parts.history, "history reader")();
 }
 
-/** Where a harness keeps its transcripts (its driver's `locate` part); every harness has one. */
+/** Where a harness keeps its transcripts (its driver's `locate` part). */
 export function harnessLocate(id: HarnessId): TranscriptLocator {
-    const slot = harnessDriver(id).parts.locate;
-
-    if (isPartNote(slot)) {
-        throw new Error(`The ${id} harness driver has no transcript locator: ${slot.reason}`);
-    }
-
-    return slot;
+    return requiredPart(id, harnessDriver(id).parts.locate, "transcript locator");
 }
 
-/** The turn-state reader of a harness (its driver's `turnState` part); every harness has one. */
+/** The turn-state reader of a harness (its driver's `turnState` part). */
 export function harnessTurnState(id: HarnessId): TurnStateReader {
-    const slot = harnessDriver(id).parts.turnState;
-
-    if (isPartNote(slot)) {
-        throw new Error(`The ${id} harness driver has no turn-state reader: ${slot.reason}`);
-    }
-
-    return slot;
+    return requiredPart(id, harnessDriver(id).parts.turnState, "turn-state reader");
 }
 
-/** How a harness is recognised from the environment of a process it started; every harness has one. */
+/** How a harness is recognised from the environment of a process it started. */
 export function harnessHost(id: HarnessId): HostResolver {
-    const slot = harnessDriver(id).parts.host;
-
-    if (isPartNote(slot)) {
-        throw new Error(`The ${id} harness driver has no host resolver: ${slot.reason}`);
-    }
-
-    return slot;
+    return requiredPart(id, harnessDriver(id).parts.host, "host resolver");
 }
 
-/** How a harness's CLI is recognised in a process command line; every harness has one. */
+/** How a harness's CLI is recognised in a process command line. */
 export function harnessProcess(id: HarnessId): ProcessSignature {
-    const slot = harnessDriver(id).parts.process;
-
-    if (isPartNote(slot)) {
-        throw new Error(`The ${id} harness driver has no process signature: ${slot.reason}`);
-    }
-
-    return slot;
+    return requiredPart(id, harnessDriver(id).parts.process, "process signature");
 }
 
-/** What a `tools <agent>` worker of the harness can do; every harness has workers. */
+/** What a `tools <agent>` worker of the harness can do. */
 export function harnessWorker(id: HarnessId): WorkerCapabilities {
-    const slot = harnessDriver(id).parts.worker;
-
-    if (isPartNote(slot)) {
-        throw new Error(`The ${id} harness driver has no worker capabilities: ${slot.reason}`);
-    }
-
-    return slot;
+    return requiredPart(id, harnessDriver(id).parts.worker, "worker capabilities");
 }
 
-/** The static facts about a harness's transcript shape; every harness has them. */
+/** The static facts about a harness's transcript shape. */
 export function harnessTranscriptFacts(id: HarnessId): TranscriptFacts {
-    const slot = harnessDriver(id).parts.transcript;
-
-    if (isPartNote(slot)) {
-        throw new Error(`The ${id} harness driver has no transcript facts: ${slot.reason}`);
-    }
-
-    return slot;
+    return requiredPart(id, harnessDriver(id).parts.transcript, "transcript facts");
 }
 
-/** The slash command that ends an interactive session of the harness; every harness has one. */
+/** The slash command that ends an interactive session of the harness. */
 export function harnessExit(id: HarnessId): ExitCommand {
-    const slot = harnessDriver(id).parts.exit;
-
-    if (isPartNote(slot)) {
-        throw new Error(`The ${id} harness driver has no exit command: ${slot.reason}`);
-    }
-
-    return slot;
+    return requiredPart(id, harnessDriver(id).parts.exit, "exit command");
 }
 
 /** The harness whose host part reports this runtime agent name (`claude-code` is Claude), or null for a non-harness. */
