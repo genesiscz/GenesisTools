@@ -1,4 +1,6 @@
 import { describe, expect, it, spyOn } from "bun:test";
+import { readFileSync } from "node:fs";
+import { join } from "node:path";
 import { createAnthropic } from "@ai-sdk/anthropic";
 import { anthropicToResponses } from "@app/ai-proxy/lib/translators/formats/anthropic/anthropic-to-responses";
 import {
@@ -13,6 +15,7 @@ import {
     responsesSseToAnthropic,
     responsesToAnthropicMessage,
 } from "@app/ai-proxy/lib/translators/formats/anthropic/grok-responses-to-anthropic";
+import type { AnthropicUsage } from "@app/ai-proxy/lib/translators/formats/anthropic/openai-to-anthropic-responses";
 import {
     codexReasoningCodec,
     packReasoningSignature,
@@ -979,5 +982,93 @@ describe("a final reply, then a task notification as the next turn", () => {
         });
         expect(stopReason(frames)).toBe("end_turn");
         expect(hasVisibleOutput(blocks)).toBe(false);
+    });
+});
+
+describe("the message_start usage of a Responses stream (the statusline context reading)", () => {
+    // A WHAM stream captured from gpt-6.1-sol: response.created and response.in_progress carry "usage": null, and the
+    // count arrives only in response.completed. Claude Code shows a streaming message by its message_start usage.
+    const captured = readFileSync(
+        join(import.meta.dir, "..", "..", "..", "providers", "fixtures", "wham-reasoning-parallel-tools.sse"),
+        "utf8"
+    );
+    const capturedStream = (): ReadableStream<Uint8Array> => new Response(captured).body ?? sse([]);
+    const usageOf = (frames: Frame[], event: string): unknown => {
+        const frame = frames.find((entry) => entry.event === event);
+        const message = frame?.data.message;
+
+        if (event === "message_start" && message !== null && typeof message === "object" && "usage" in message) {
+            return message.usage;
+        }
+
+        return frame?.data.usage;
+    };
+    const held: AnthropicUsage = { input_tokens: 548, cache_read_input_tokens: 291_200, output_tokens: 0 };
+
+    it("opens with the start usage it is given, not 0, and ends with the upstream's real count", async () => {
+        const seen: AnthropicUsage[] = [];
+        const { frames } = await collect(
+            responsesSseToAnthropic(capturedStream(), {
+                model: "gpt-6.1-sol",
+                label: "codex",
+                startUsage: held,
+                onUsage: (usage) => seen.push(usage),
+            })
+        );
+
+        expect(usageOf(frames, "message_start")).toEqual(held);
+        const final = { input_tokens: 129, output_tokens: 312, output_tokens_details: { reasoning_tokens: 161 } };
+        expect(usageOf(frames, "message_delta")).toEqual(final);
+        expect(seen).toEqual([final]);
+    });
+
+    it("without a start usage the captured stream opens with a 0-token context (the old behaviour)", async () => {
+        const { frames } = await collect(responsesSseToAnthropic(capturedStream(), { model: "gpt-6.1-sol" }));
+
+        expect(usageOf(frames, "message_start")).toEqual({ input_tokens: 0, output_tokens: 0 });
+    });
+
+    it("moves the cached share of a Codex count outside input_tokens, as the Anthropic API reports it", async () => {
+        const seen: AnthropicUsage[] = [];
+        const { frames } = await collect(
+            responsesSseToAnthropic(
+                sse([
+                    { type: "response.created", response: { status: "in_progress", usage: null } },
+                    {
+                        type: "response.completed",
+                        response: {
+                            status: "completed",
+                            output: [],
+                            usage: {
+                                input_tokens: 293_172,
+                                input_tokens_details: { cached_tokens: 291_584 },
+                                output_tokens: 40,
+                                total_tokens: 293_212,
+                            },
+                        },
+                    },
+                ]),
+                { model: "gpt-6.1-terra", startUsage: held, onUsage: (usage) => seen.push(usage) }
+            )
+        );
+
+        const final = { input_tokens: 1588, cache_read_input_tokens: 291_584, output_tokens: 40 };
+        expect(usageOf(frames, "message_start")).toEqual(held);
+        expect(usageOf(frames, "message_delta")).toEqual(final);
+        expect(seen).toEqual([final]);
+    });
+
+    it("keeps the start usage's input side when the upstream reports no usage at all", async () => {
+        const seen: AnthropicUsage[] = [];
+        const { frames } = await collect(
+            responsesSseToAnthropic(sse([{ type: "response.created", response: { usage: null } }]), {
+                model: "gpt-6.1-terra",
+                startUsage: held,
+                onUsage: (usage) => seen.push(usage),
+            })
+        );
+
+        expect(usageOf(frames, "message_delta")).toEqual(held);
+        expect(seen).toEqual([]);
     });
 });

@@ -44,6 +44,7 @@ import { findServerTools } from "@app/ai-proxy/lib/translators/formats/anthropic
 import { stringifyUnknownToolResultBlocks } from "@app/ai-proxy/lib/translators/formats/anthropic/stringify-unknown-blocks";
 import { tagConfusableTools } from "@app/ai-proxy/lib/translators/formats/anthropic/tool-routing-tag";
 import type { AiProxyAccountConfig, UsageSummary } from "@app/ai-proxy/lib/types";
+import { streamUsageOptions } from "@app/ai-proxy/lib/usage/stream-start-usage";
 import {
     formatBillingSummary,
     GrokAuthExpiredError,
@@ -320,7 +321,9 @@ export class GrokSubscriptionProvider implements ProxyProvider {
         const contentType = response.headers.get("content-type") ?? "";
 
         if (response.body && contentType.includes("text/event-stream")) {
-            return new Response(grokResponsesSseToAnthropic(response.body, { model }), {
+            const usage = streamUsageOptions({ scope: whamItemScope(req), body: parsed });
+
+            return new Response(grokResponsesSseToAnthropic(response.body, { model, ...usage }), {
                 status: response.status,
                 headers: relayHeaders(response),
             });

@@ -21,6 +21,7 @@ import type { SessionsInConfig } from "@app/ai-proxy/lib/types";
 import { type CallTimeline, TimelineCollector } from "@app/ai-proxy/lib/usage/call-timeline";
 import { captureResponseBody } from "@app/ai-proxy/lib/usage/capture-response";
 import { type PipelineResult, pipelineResult } from "@app/ai-proxy/lib/usage/pipeline-result";
+import { estimateAnthropicBodyTokens } from "@app/ai-proxy/lib/usage/stream-start-usage";
 import {
     claudeSessionIdFromMetadata,
     type PromptCacheKey,
@@ -127,8 +128,6 @@ function sseHeaders(): Record<string, string> {
  * meter is ever observed to be wrong.
  */
 export function countAnthropicInputTokens(bodyText: string): number {
-    const sink: string[] = [];
-
     try {
         const parsed = SafeJSON.parse(bodyText, { strict: true });
 
@@ -136,35 +135,10 @@ export function countAnthropicInputTokens(bodyText: string): number {
             return estimateTokens(bodyText);
         }
 
-        collectText(parsed.system, sink);
-        collectText(parsed.messages, sink);
-        collectText(parsed.tools, sink);
+        return estimateAnthropicBodyTokens(parsed);
     } catch (err) {
         logger.debug({ err }, "ai-proxy: count_tokens body parse failed, falling back to raw length");
         return estimateTokens(bodyText);
-    }
-
-    return estimateTokens(sink.join("\n"));
-}
-
-function collectText(value: unknown, sink: string[]): void {
-    if (typeof value === "string") {
-        sink.push(value);
-        return;
-    }
-
-    if (Array.isArray(value)) {
-        for (const entry of value) {
-            collectText(entry, sink);
-        }
-
-        return;
-    }
-
-    if (isObject(value)) {
-        for (const entry of Object.values(value)) {
-            collectText(entry, sink);
-        }
     }
 }
 

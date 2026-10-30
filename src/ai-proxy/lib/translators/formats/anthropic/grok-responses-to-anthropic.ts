@@ -97,6 +97,14 @@ export interface ResponsesToAnthropicOptions {
      * skipped like any item with no Anthropic block.
      */
     customToolCall?: (name: string) => CustomToolMapping | undefined;
+    /**
+     * The usage the `message_start` frame reports. A Responses upstream reports usage only when it finishes, and
+     * Claude Code shows a streaming message by its `message_start` usage, so a 0 there is a 0-token context in its
+     * statusline for the whole turn. Without it (or when the upstream reports no usage at all) the input side is 0.
+     */
+    startUsage?: AnthropicUsage;
+    /** Called once with the translated final usage, when the upstream reported one. */
+    onUsage?: (usage: AnthropicUsage) => void;
 }
 
 export interface CustomToolMapping {
@@ -273,6 +281,8 @@ interface StreamState {
     customToolCall: ResponsesToAnthropicOptions["customToolCall"];
     sawFunctionCall: boolean;
     usage: AnthropicUsage | null;
+    startUsage: AnthropicUsage;
+    onUsage: ResponsesToAnthropicOptions["onUsage"];
     outputChars: number;
     replayChars: number;
     finished: boolean;
@@ -314,7 +324,7 @@ function frameStart(state: StreamState): string {
             content: [],
             stop_reason: null,
             stop_sequence: null,
-            usage: { input_tokens: 0, output_tokens: 0 },
+            usage: state.startUsage,
         },
     });
 }
@@ -559,6 +569,10 @@ function finishFrames(state: StreamState, response: JsonRecord | undefined): str
         state.usage = usageFromResponses(response.usage) ?? state.usage;
     }
 
+    if (state.usage !== null) {
+        state.onUsage?.(state.usage);
+    }
+
     const stopReason =
         response !== undefined
             ? stopReasonFor(response, state.sawFunctionCall)
@@ -568,7 +582,8 @@ function finishFrames(state: StreamState, response: JsonRecord | undefined): str
 
     out += anthropicSseFrame("message_delta", {
         delta: { stop_reason: stopReason, stop_sequence: null },
-        usage: state.usage ?? { input_tokens: 0, output_tokens: Math.ceil(state.outputChars / 4) },
+        // No upstream usage: the input side stays what message_start said, so the client keeps a context reading.
+        usage: state.usage ?? { ...state.startUsage, output_tokens: Math.ceil(state.outputChars / 4) },
     });
     out += anthropicSseFrame("message_stop", {});
 
@@ -711,6 +726,8 @@ export function responsesSseToAnthropic(
         customToolCall: options.customToolCall,
         sawFunctionCall: false,
         usage: null,
+        startUsage: options.startUsage ?? { input_tokens: 0, output_tokens: 0 },
+        onUsage: options.onUsage,
         outputChars: 0,
         replayChars: 0,
         finished: false,

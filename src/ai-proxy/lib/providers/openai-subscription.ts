@@ -105,6 +105,7 @@ import { responsesToChat } from "@app/ai-proxy/lib/translators/responses-to-chat
 import type { AiProxyAccountConfig, ThinkingPresentationMode, UsageSummary } from "@app/ai-proxy/lib/types";
 import { notePrefix, setPrefixDiff } from "@app/ai-proxy/lib/usage/prefix-diff";
 import { getTodayUsageSummary, getUsageSummarySince, recordUsageRequest } from "@app/ai-proxy/lib/usage/store";
+import { streamUsageOptions } from "@app/ai-proxy/lib/usage/stream-start-usage";
 import { extractPlanType, WHAM_BASE_URL } from "@genesiscz/utils/ai/openai/codex-auth";
 import {
     fetchWhamModels,
@@ -932,6 +933,7 @@ export class OpenAiSubscriptionProvider implements ProxyProvider {
                     toolInput,
                     customToolCall: exec?.clientCall,
                     signal: req.signal,
+                    ...streamUsageOptions({ scope: whamItemScope(req), body: parsed }),
                 }),
                 {
                     status: response.status,
