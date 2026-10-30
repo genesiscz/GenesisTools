@@ -8,12 +8,14 @@ import { readJsonlForward } from "@genesiscz/utils/agent-sessions/read-forward";
 import type { JsonRecord, JsonValue } from "@genesiscz/utils/agent-sessions/source-scan";
 import { asRecord, blocksMetadata, scanJsonlRecords } from "@genesiscz/utils/agent-sessions/source-scan";
 import { isWrapperUserText } from "@genesiscz/utils/agent-sessions/user-text";
+import { readLastLines } from "@genesiscz/utils/fs/read-lines";
 import { SafeJSON } from "@genesiscz/utils/json";
 import { profiler } from "@genesiscz/utils/profile";
 import { boundHistoryText, HISTORY_METADATA_LIMITS } from "../metadata";
 import type {
     BackwardRead,
     BoundedMetadataField,
+    ContinuedInOptions,
     ForwardRead,
     HistoryMetadataRead,
     HistoryReadOptions,
@@ -629,7 +631,13 @@ export type ClaudeHistoryOperations = Pick<NativeSessionReader<"claude">, "parse
     Required<
         Pick<
             NativeSessionReader<"claude">,
-            "readMetadata" | "scan" | "readRecords" | "readBackward" | "readTurnBoundary" | "readForward"
+            | "readMetadata"
+            | "scan"
+            | "readRecords"
+            | "readBackward"
+            | "readTurnBoundary"
+            | "readForward"
+            | "continuedIn"
         >
     >;
 
@@ -699,6 +707,37 @@ async function readClaudeTurnBoundary(
     });
 }
 
+/**
+ * Claude Code (2.1.296 and later) ends a session that the ← key or `/background` moved to a new id with one trailing
+ * row, `{"type":"continued-in","continuedInSessionId":"…"}`. It is the last row, so the tail is enough; a session
+ * still being written ends on another row and answers undefined, as a session that was never continued does.
+ */
+async function readClaudeContinuedIn(
+    source: NativeSessionSource<"claude">,
+    options: ContinuedInOptions = {}
+): Promise<string | undefined> {
+    const { lines } = readLastLines(source.filePath, { maxBytes: options.maxBytes ?? CONTINUED_IN_TAIL_BYTES });
+
+    for (let index = lines.length - 1; index >= 0; index -= 1) {
+        let row: JsonRecord;
+
+        try {
+            row = asRecord(SafeJSON.parse(lines[index], { strict: true }) as JsonValue);
+        } catch {
+            // A row cut by the write in progress; the pointer, when there is one, is a whole row before it.
+            continue;
+        }
+
+        return row.type === "continued-in" && typeof row.continuedInSessionId === "string"
+            ? row.continuedInSessionId
+            : undefined;
+    }
+
+    return undefined;
+}
+
+const CONTINUED_IN_TAIL_BYTES = 64 * 1024;
+
 export function createClaudeHistoryOperations(): ClaudeHistoryOperations {
     return {
         parserVersion: "7",
@@ -708,5 +747,6 @@ export function createClaudeHistoryOperations(): ClaudeHistoryOperations {
         readBackward: readClaudeBackward,
         readTurnBoundary: readClaudeTurnBoundary,
         readForward: readClaudeForward,
+        continuedIn: readClaudeContinuedIn,
     };
 }

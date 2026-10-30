@@ -720,7 +720,13 @@ export type GrokHistoryOperations = Pick<NativeSessionReader<"grok">, "parserVer
     Required<
         Pick<
             NativeSessionReader<"grok">,
-            "readMetadata" | "scan" | "readRecords" | "readBackward" | "readTurnBoundary" | "readForward"
+            | "readMetadata"
+            | "scan"
+            | "readRecords"
+            | "readBackward"
+            | "readTurnBoundary"
+            | "readForward"
+            | "continuedIn"
         >
     >;
 
@@ -805,5 +811,7 @@ export function createGrokHistoryOperations(): GrokHistoryOperations {
         readBackward: readGrokBackward,
         readTurnBoundary: readGrokTurnBoundary,
         readForward: readGrokForward,
+        // Grok's chat history stays in one folder for the life of the session; it writes no successor pointer.
+        continuedIn: async () => undefined,
     };
 }

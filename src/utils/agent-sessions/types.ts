@@ -322,6 +322,11 @@ export interface BackwardRead {
     lastAssistantOffset?: number;
 }
 
+export interface ContinuedInOptions {
+    /** How many bytes of the end of the source to read; the pointer is its last row. Default 64 KB. */
+    maxBytes?: number;
+}
+
 /**
  * One coding agent's native sessions (Claude, Codex, Grok). Every fact a feature reads from a transcript is a member
  * here, implemented by each provider from its own format, so a feature never parses a transcript itself
@@ -342,6 +347,13 @@ export interface NativeSessionReader<Kind extends string = AgentKind> {
      * reads only what was appended since the last one (the question tool's decision rows).
      */
     readForward(source: NativeSessionSource<Kind>, options: ReadForwardOptions): Promise<ForwardRead>;
+    /**
+     * The id of the session this one continued in, when the harness closed it with a pointer to its successor
+     * (Claude Code writes a trailing `continued-in` row when the ← key or `/background` moves a conversation to a new
+     * id); undefined when the session was not continued or the provider keeps no such pointer. A feature that follows
+     * a session to its live id (the cache band chip, `tools claude cmux focus`) asks here and never reads the row.
+     */
+    continuedIn(source: NativeSessionSource<Kind>, options?: ContinuedInOptions): Promise<string | undefined>;
     importSession?(
         session: AgentSession<Kind>,
         context: NativeSessionImportContext

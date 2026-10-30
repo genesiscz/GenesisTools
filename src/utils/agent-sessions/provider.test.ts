@@ -17,7 +17,7 @@ import {
     sessionMessageTextHash,
 } from "./message-queue";
 import { resolveHistoryProvider } from "./provider";
-import { noBackwardRead } from "./testing/no-backward-read";
+import { noBackwardRead, noContinuedIn } from "./testing/no-backward-read";
 
 afterEach(() => {
     _resetPluginsForTest();
@@ -37,6 +37,7 @@ test("a registered fourth history provider can be resolved without an account al
             kind: "fixture",
             parserVersion: "1",
             readBackward: noBackwardRead,
+            continuedIn: noContinuedIn,
             readTurnBoundary: async () => null,
             readForward: async () => ({ rows: [], file: null, endOffset: 0, issues: [] }),
             roots: () => [],

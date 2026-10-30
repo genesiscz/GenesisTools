@@ -3,7 +3,7 @@ import { mkdirSync, mkdtempSync, realpathSync, rmSync, utimesSync, writeFileSync
 import { tmpdir } from "node:os";
 import { dirname, join } from "node:path";
 import type { DailyStats } from "@genesiscz/utils/agent-sessions/cache-types";
-import { noBackwardRead } from "@genesiscz/utils/agent-sessions/testing/no-backward-read";
+import { noBackwardRead, noContinuedIn } from "@genesiscz/utils/agent-sessions/testing/no-backward-read";
 import type {
     HistoryStatisticsRead,
     NativeSessionReader,
@@ -238,6 +238,7 @@ function reader(overrides: Partial<Reader> = {}): Reader {
         kind: "claude",
         parserVersion: "test",
         readBackward: noBackwardRead,
+        continuedIn: noContinuedIn,
         readTurnBoundary: async () => null,
         readForward: async () => ({ rows: [], file: null, endOffset: 0, issues: [] }),
         roots: () => [root],
