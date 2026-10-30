@@ -54,6 +54,15 @@ export interface PortRegistryBase {
     /** Anything noteworthy. */
     readonly note?: string;
     /**
+     * May a PLAIN browser navigation (the address bar, a page moving the top frame) start this server? Absent
+     * means no. Only the literal `true` on an entry counts: never inferred from "it is a dashboard" or "it has a
+     * launch command". An external click (the OS handler) is a different trigger and ignores this flag. The browser
+     * extension downloads it per port and ensures only when it is true, for both `http://localhost:<port>` and the
+     * dashboard-name spelling. The long name says why it is off by default: ai-proxy holds accounts and billing,
+     * mcp-gateway holds upstream OAuth (handoff h_ch1jao9c, 2026-10-20).
+     */
+    readonly allowExecuteByPlainBrowserNavigationMightBeDangerous?: boolean;
+    /**
      * Verify the live process is this app. Called only when `ctx.port === entry.port`.
      * Prefer path/argv needles over bare package names.
      */
@@ -137,6 +146,7 @@ export function matchGenesisTool(...toolNeedles: string[]): PortProcessMatcher {
 export const DASHBOARDS = {
     artifact: {
         key: "artifact",
+        allowExecuteByPlainBrowserNavigationMightBeDangerous: true,
         name: "Artifact Server",
         description: "On-the-fly dashboards from any folder of loose HTML/TSX/MD artifacts.",
         port: 3076,
@@ -150,6 +160,7 @@ export const DASHBOARDS = {
     },
     "artifact-library": {
         key: "artifact-library",
+        allowExecuteByPlainBrowserNavigationMightBeDangerous: true,
         name: "Artifact Library",
         description: "ONE server for every registered artifact folder (/a/<name>/ mounts).",
         port: 3096,
@@ -162,6 +173,7 @@ export const DASHBOARDS = {
     },
     jev: {
         key: "jev",
+        allowExecuteByPlainBrowserNavigationMightBeDangerous: true,
         theme: "cyberpunk",
         name: "Jev Lab",
         description: "Evaluation, generation, arena and native control workbench.",
@@ -176,6 +188,7 @@ export const DASHBOARDS = {
     },
     "claude-history": {
         key: "claude-history",
+        allowExecuteByPlainBrowserNavigationMightBeDangerous: true,
         theme: "cyberpunk",
         name: "Claude History Browser",
         description: "Search & browse Claude Code conversation history.",
@@ -191,6 +204,7 @@ export const DASHBOARDS = {
     // `dashboard-names` preset turns every key here into a host).
     "personal-dashboard": {
         key: "personal-dashboard",
+        allowExecuteByPlainBrowserNavigationMightBeDangerous: true,
         name: "Personal Dashboard",
         description: "Tasks, timers, activity log, focus modes.",
         port: 3000,
@@ -204,6 +218,7 @@ export const DASHBOARDS = {
     },
     "dev-dashboard": {
         key: "dev-dashboard",
+        allowExecuteByPlainBrowserNavigationMightBeDangerous: true,
         name: "Dev Dashboard",
         description: "Obsidian vault + ttyd terminal + cmux multiplexer.",
         port: 3042,
@@ -218,6 +233,7 @@ export const DASHBOARDS = {
     },
     clarity: {
         key: "clarity",
+        allowExecuteByPlainBrowserNavigationMightBeDangerous: true,
         theme: "cyberpunk",
         name: "Clarity Timelog",
         description: "Azure DevOps ↔ CA PPM Clarity timesheet sync.",
@@ -231,6 +247,7 @@ export const DASHBOARDS = {
     },
     reas: {
         key: "reas",
+        allowExecuteByPlainBrowserNavigationMightBeDangerous: true,
         theme: "cyberpunk",
         name: "REAS Analyzer",
         description: "Real-estate investment analysis (reas.cz + Sreality + MF cenová mapa).",
@@ -245,6 +262,7 @@ export const DASHBOARDS = {
     },
     shops: {
         key: "shops",
+        allowExecuteByPlainBrowserNavigationMightBeDangerous: true,
         theme: "cyberpunk",
         name: "Shops CZ",
         description: "Czech e-shop price intelligence — watchlist, alerts, observability.",
@@ -258,6 +276,7 @@ export const DASHBOARDS = {
     },
     youtube: {
         key: "youtube",
+        allowExecuteByPlainBrowserNavigationMightBeDangerous: true,
         theme: "cyberpunk",
         name: "YouTube Web UI",
         description: "Browse, search & analyze YouTube videos, channels, transcripts.",
@@ -272,6 +291,7 @@ export const DASHBOARDS = {
     },
     spotify: {
         key: "spotify",
+        allowExecuteByPlainBrowserNavigationMightBeDangerous: true,
         theme: "cyberpunk",
         name: "Spotify Listening",
         description: "Listening analytics over your own export, plus two-person taste compatibility.",
@@ -287,6 +307,7 @@ export const DASHBOARDS = {
     },
     monitor: {
         key: "monitor",
+        allowExecuteByPlainBrowserNavigationMightBeDangerous: true,
         theme: "cyberpunk",
         name: "Monitor",
         description: "Uptime watchers for websites, status pages and AI providers.",
@@ -302,6 +323,7 @@ export const DASHBOARDS = {
     },
     "debugging-master": {
         key: "debugging-master",
+        allowExecuteByPlainBrowserNavigationMightBeDangerous: true,
         name: "Log Viewer (dbg + task)",
         description: "Unified live log dashboard for debugging-master and task sessions.",
         port: 7243,
@@ -315,6 +337,7 @@ export const DASHBOARDS = {
     },
     "dev-dashboard-cloud": {
         key: "dev-dashboard-cloud",
+        allowExecuteByPlainBrowserNavigationMightBeDangerous: true,
         name: "DevDashboard Cloud",
         description: "Managed-tier marketing landing + signup + customer dashboard (provisioning, billing).",
         port: 7251,
