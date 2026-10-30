@@ -21,11 +21,11 @@ import type {
     ContinuedInOptions,
     ForwardRead,
     HistoryMetadataRead,
-    HistoryOperations,
     HistoryReadOptions,
     HistoryRecordRead,
     HistorySourceRecord,
     NativeHistoryEntry,
+    NativeSessionReader,
     NativeSessionSource,
     NativeSourceIssue,
     ReadBackwardOptions,
@@ -35,7 +35,6 @@ import type {
 } from "../types";
 import { scanClaudeNative } from "./claude-native-scan";
 import { claudeNativeId, claudeProjectDirectory, claudeProjectName, isClaudeSubagentPath } from "./claude-paths";
-import { anchorRecord, anchorStrings, historyEntryBuilder, type ToolContext } from "./history-entry";
 
 const TOOL_INPUT_FIELD_CAP = 2_000;
 const TOOL_INPUT_TOTAL_CAP = 8_000;
@@ -82,6 +81,11 @@ interface ParsedClaudeRow {
     row: JsonRecord;
 }
 
+interface ToolContext {
+    names: Map<string, string>;
+    paths: Map<string, string[]>;
+}
+
 function nativePaths(input: JsonRecord): string[] {
     const result: string[] = [];
     for (const field of ["file_path", "path", "filePath", "notebook_path"]) {
@@ -110,7 +114,36 @@ function commitHashes(text: string): string[] {
     ];
 }
 
-const historyEntry = historyEntryBuilder(commitHashes);
+function historyEntry(options: {
+    role: NativeHistoryEntry["role"];
+    text: string;
+    line: number;
+    timestamp?: string;
+    tool?: string;
+    toolEvent?: "call" | "result";
+    inputText?: string;
+    searchText?: string;
+    paths?: string[];
+    callId?: string;
+}): NativeHistoryEntry | undefined {
+    if (!options.text && !options.searchText) {
+        return;
+    }
+
+    return {
+        line: options.line,
+        role: options.role,
+        text: options.text,
+        ...(options.searchText ? { searchText: options.searchText } : {}),
+        ...(options.tool ? { tool: options.tool } : {}),
+        ...(options.toolEvent ? { toolEvent: options.toolEvent } : {}),
+        ...(options.inputText ? { inputText: options.inputText } : {}),
+        ...(options.callId ? { callId: options.callId } : {}),
+        paths: options.paths ?? [],
+        commits: commitHashes(options.text),
+        ...(options.timestamp ? { timestamp: options.timestamp } : {}),
+    };
+}
 
 function contentEntries(options: {
     content: JsonValue | undefined;
@@ -688,7 +721,21 @@ async function readClaudeMetadataUncounted(
     };
 }
 
-export type ClaudeHistoryOperations = HistoryOperations<"claude">;
+export type ClaudeHistoryOperations = Pick<NativeSessionReader<"claude">, "parserVersion"> &
+    Required<
+        Pick<
+            NativeSessionReader<"claude">,
+            | "readMetadata"
+            | "scan"
+            | "readRecords"
+            | "readBackward"
+            | "readTurnBoundary"
+            | "readForward"
+            | "continuedIn"
+            | "modelOfRow"
+            | "rowAnchors"
+        >
+    >;
 
 /** The session JSONL from an offset to its end; a row's key is its `uuid`, the id a transcript scroll targets. */
 async function readClaudeForward(
@@ -786,6 +833,16 @@ async function readClaudeContinuedIn(
 }
 
 const CONTINUED_IN_TAIL_BYTES = 64 * 1024;
+
+function anchorRecord(value: unknown): Record<string, unknown> {
+    return typeof value === "object" && value !== null && !Array.isArray(value)
+        ? Object.fromEntries(Object.entries(value))
+        : {};
+}
+
+function anchorStrings(values: unknown[]): string[] {
+    return values.filter((value): value is string => typeof value === "string" && value.length > 0);
+}
 
 /** A user or assistant row names its `uuid` and its message id, and an assistant row the ids of its tool calls. */
 function claudeRowAnchors(): RowAnchorWalk {

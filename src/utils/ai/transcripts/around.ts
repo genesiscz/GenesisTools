@@ -1,15 +1,16 @@
 import type { TranscriptAnchor } from "@genesiscz/utils/agent/source-anchor";
 import { resolveHistoryProvider } from "@genesiscz/utils/agent-sessions/provider";
-
+import { codexNativeLinesToTurns } from "@genesiscz/utils/agent-sessions/readers/codex-turns";
 import { isAccountProviderAlias } from "@genesiscz/utils/ai/providers/alias-list";
 import { harnessTranscriptFacts } from "@genesiscz/utils/ai/providers/harness-index";
-
+import type { ConversationMessage } from "@genesiscz/utils/claude/types";
 import { logger } from "@genesiscz/utils/logger";
-
+import { claudeMessagesToTurns } from "./claude";
+import { grokNativeLinesToTurns } from "./grok";
 import { readTailWindow } from "./native-scan";
 import { parseTranscriptLine } from "./parse-line";
 import type { ResolvedTranscript } from "./resolve";
-import { isoFromRecordTimestamp, type TranscriptTurn } from "./types";
+import { isoFromRecordTimestamp, type TranscriptProvider, type TranscriptTurn } from "./types";
 
 export interface TranscriptAround {
     status: "native" | "receipt-time" | "native-not-found" | "unanchored" | "unsupported";
@@ -35,6 +36,12 @@ const MAX_LINE_BYTES = 64 * 1024;
 const MAX_WINDOW_BYTES = 256 * 1024;
 const MAX_RECORDS = 100;
 
+function record(value: unknown): Record<string, unknown> {
+    return typeof value === "object" && value !== null && !Array.isArray(value)
+        ? (value as Record<string, unknown>)
+        : {};
+}
+
 function findNativeRecord({
     rows,
     anchor,
@@ -58,6 +65,24 @@ function findNativeRecord({
     return -1;
 }
 
+function claudeMessage(value: Record<string, unknown>): value is Record<string, unknown> & ConversationMessage {
+    const message = record(value.message);
+    if (typeof value.uuid !== "string" || !["user", "assistant"].includes(String(value.type))) {
+        return false;
+    }
+    if (value.type === "user" && typeof message.content === "string") {
+        return true;
+    }
+    return Array.isArray(message.content) && message.content.every((part) => typeof record(part).type === "string");
+}
+
+/** One provider's turns of a window of its native records. */
+const WINDOW_TURNS: Record<TranscriptProvider, (values: Record<string, unknown>[]) => TranscriptTurn[]> = {
+    claude: (values) => claudeMessagesToTurns(values.filter(claudeMessage)),
+    codex: codexNativeLinesToTurns,
+    grok: grokNativeLinesToTurns,
+};
+
 function turns({
     records,
     resolved,
@@ -68,7 +93,7 @@ function turns({
     toolCallId?: string;
 }): { turns: TranscriptTurn[]; truncated: boolean } {
     const values = records.map((item) => item.value);
-    const result = harnessTranscriptFacts(resolved.provider).windowTurns(values);
+    const result = WINDOW_TURNS[resolved.provider](values);
     const truncated = result.some(
         (turn) => turn.text.length > 8_000 || (turn.reasoning?.length ?? 0) > 2_000 || turn.tools.length > 12
     );
