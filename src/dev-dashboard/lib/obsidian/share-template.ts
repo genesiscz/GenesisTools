@@ -1,4 +1,5 @@
 import type { RenderResult } from "@app/dev-dashboard/lib/obsidian/markdown";
+import type { OfflineShareAssets } from "@app/dev-dashboard/lib/obsidian/offline-assets";
 import { codeLanguageFor } from "@app/dev-dashboard/lib/obsidian/share-assets";
 import { SafeJSON } from "@genesiscz/utils/json";
 import { escapeHtml } from "@genesiscz/utils/string";
@@ -16,18 +17,14 @@ interface ShareTemplateOptions {
     downloads?: { zip: string; html: string };
     /** A saved copy of the page: panel bodies by `embeddedPanelKey`, read instead of fetched. */
     embeddedPanels?: Record<string, { html: string; raw: string }>;
+    offlineAssets?: OfflineShareAssets;
+    mermaidCode?: string;
 }
 
 const HLJS_CSS_URL = "https://cdn.jsdelivr.net/gh/highlightjs/cdn-release@11.10.0/build/styles/atom-one-dark.min.css";
 const HLJS_CSS_SRI = "sha384-oaMLBGEzBOJx3UHwac0cVndtX5fxGQIfnAeFZ35RTgqPcYlbprH9o9PUV/F8Le07";
 const KATEX_CSS_URL = "https://cdn.jsdelivr.net/npm/katex@0.16.11/dist/katex.min.css";
 const KATEX_CSS_SRI = "sha384-nB0miv6/jRmo5UMMR1wu3Gz6NLsoTkbqJghGIsx//Rlm+ZU03BU6SQNC66uf4l5+";
-const MERMAID_JS_URL = "https://cdn.jsdelivr.net/npm/mermaid@11.15.0/dist/mermaid.esm.min.mjs";
-// SRI for the Mermaid ESM entry. Update whenever MERMAID_JS_URL's version
-// changes (regenerate via `openssl dgst -sha384 -binary <file> | openssl base64
-// -A`). Covers the ~28 KB entry only; lazy-loaded diagram chunks ship from the
-// same CDN unprotected — a full seal needs self-hosting.
-const MERMAID_JS_SRI = "sha384-whY2DyvhZRFfs9hvtGdZaKcgbETgqMlDN+KNlWnXEL2QDa2XQkBOApUT7arfftO9";
 const INTER_FONT_URL =
     "https://fonts.googleapis.com/css2?family=Inter:wght@400;500;600;700&family=JetBrains+Mono:wght@400;600&family=Lora:ital,wght@0,400;0,600;1,400&display=swap";
 
@@ -835,27 +832,45 @@ body.dd-share-mode-source .dd-share-source-panel {
 `;
 }
 
-function buildMermaidScript(): string {
-    return `
-<script type="module">
-import mermaid from "${MERMAID_JS_URL}";
-mermaid.initialize({
-    startOnLoad: true,
-    theme: "dark",
-    themeVariables: {
-        background: "#101316",
-        primaryColor: "#101316",
-        primaryTextColor: "#e6edf3",
-        primaryBorderColor: "#34d399",
-        lineColor: "#5b6670",
-        secondaryColor: "#161b20",
-        tertiaryColor: "#0c0e10",
-        nodeBorder: "#34d399",
-        clusterBkg: "#101316",
-        clusterBorder: "#1e2428"
-    },
-    securityLevel: "strict"
-});
+function buildMermaidScript(code: string): string {
+    // Note-authored diagram styles must never enter the public page's DOM or CSS cascade.
+    const prefix = `<!doctype html><meta charset="utf-8"><meta http-equiv="Content-Security-Policy" content="default-src 'none'; script-src 'unsafe-inline'; style-src 'unsafe-inline'; img-src data:; font-src data:; base-uri 'none'; form-action 'none'"><style>body{margin:0;background:#101316} .mermaid{margin:0}</style><script>${code.replace(/<\/script/gi, "<\\/script")}</script><div class="mermaid">`;
+    const suffix = `</div><script>
+mermaid.initialize({ startOnLoad: false, theme: "dark", securityLevel: "strict" });
+mermaid.run().then(function () {
+    var diagram = document.querySelector('.mermaid');
+    function resize() {
+        var svg = diagram.querySelector('svg');
+        if (svg) parent.postMessage({ ddMermaidHeight: Math.ceil(svg.getBoundingClientRect().height) + 16 }, '*');
+    }
+    new ResizeObserver(resize).observe(diagram);
+    resize();
+}).catch(function (error) { console.error('Mermaid rendering failed', error); });
+</script>`;
+    return `<script>
+(function () {
+    var prefix = ${embedJson(prefix)};
+    var suffix = ${embedJson(suffix)};
+    var frames = [];
+    document.querySelectorAll('.mermaid').forEach(function (diagram) {
+        var frame = document.createElement('iframe');
+        frame.setAttribute('sandbox', 'allow-scripts');
+        frame.setAttribute('title', 'Mermaid diagram');
+        frame.setAttribute('referrerpolicy', 'no-referrer');
+        frame.style.cssText = 'display:block;width:100%;height:300px;border:0';
+        var text = diagram.textContent.replace(/&/g, '&amp;').replace(/</g, '&lt;').replace(/>/g, '&gt;');
+        frame.srcdoc = prefix + text + suffix;
+        frames.push(frame);
+        diagram.replaceWith(frame);
+    });
+    window.addEventListener('message', function (event) {
+        var frame = frames.find(function (item) { return item.contentWindow === event.source; });
+        var height = event.data && event.data.ddMermaidHeight;
+        if (frame && typeof height === 'number' && Number.isFinite(height)) {
+            frame.style.height = Math.max(80, Math.min(4000, height)) + 'px';
+        }
+    });
+})();
 </script>`;
 }
 
@@ -937,12 +952,14 @@ function buildViewToggleScript({
         });
         document.getElementById("dd-share-download-md").addEventListener("click", function () {
             setMenu(false);
+            downloadBtn.focus();
             downloadSource();
         });
         var menuLinks = downloadMenu.querySelectorAll("a");
         for (var m = 0; m < menuLinks.length; m++) {
             menuLinks[m].addEventListener("click", function () {
                 setMenu(false);
+                downloadBtn.focus();
             });
         }
         document.addEventListener("click", function (event) {
@@ -1317,30 +1334,28 @@ export function renderSharePage(options: ShareTemplateOptions): string {
         attachmentCount = 0,
         downloads,
         embeddedPanels,
+        offlineAssets,
+        mermaidCode,
     } = options;
-    const headExtras: string[] = [
-        `<link rel="preconnect" href="https://fonts.googleapis.com">`,
-        `<link rel="preconnect" href="https://fonts.gstatic.com" crossorigin>`,
-        `<link rel="stylesheet" href="${INTER_FONT_URL}">`,
-        `<link rel="stylesheet" href="${HLJS_CSS_URL}" integrity="${HLJS_CSS_SRI}" crossorigin="anonymous">`,
-    ];
+    const headExtras: string[] = offlineAssets
+        ? [`<style>${offlineAssets.css}</style>`]
+        : [
+              `<link rel="preconnect" href="https://fonts.googleapis.com">`,
+              `<link rel="preconnect" href="https://fonts.gstatic.com" crossorigin>`,
+              `<link rel="stylesheet" href="${INTER_FONT_URL}">`,
+              `<link rel="stylesheet" href="${HLJS_CSS_URL}" integrity="${HLJS_CSS_SRI}" crossorigin="anonymous">`,
+          ];
 
-    if (rendered.hasMath) {
+    if (rendered.hasMath && !offlineAssets) {
         headExtras.push(
             `<link rel="stylesheet" href="${KATEX_CSS_URL}" integrity="${KATEX_CSS_SRI}" crossorigin="anonymous">`
         );
     }
 
-    if (rendered.hasMermaid) {
-        headExtras.push(
-            `<link rel="modulepreload" href="${MERMAID_JS_URL}" integrity="${MERMAID_JS_SRI}" crossorigin="anonymous">`
-        );
-    }
-
     const bodyExtras: string[] = [];
 
-    if (rendered.hasMermaid) {
-        bodyExtras.push(buildMermaidScript());
+    if (rendered.hasMermaid && mermaidCode) {
+        bodyExtras.push(buildMermaidScript(mermaidCode));
     }
 
     const fileName = sourcePath?.split("/").pop();
@@ -1359,15 +1374,15 @@ export function renderSharePage(options: ShareTemplateOptions): string {
     const attachmentsLabel = `${attachmentCount} ${attachmentCount === 1 ? "attachment" : "attachments"}`;
     const zipItem =
         downloads && attachmentCount > 0
-            ? `<a role="menuitem" href="${escapeHtml(downloads.zip)}" download>With all attachments<small>zip, ${attachmentsLabel}</small></a>`
+            ? `<a href="${escapeHtml(downloads.zip)}" download>With all attachments<small>zip, ${attachmentsLabel}</small></a>`
             : "";
     const downloadControl = downloads
         ? `<div class="dd-share-download">
-<button type="button" class="dd-share-view-btn" id="dd-share-download-btn" aria-label="Download" title="Download" aria-haspopup="menu" aria-expanded="false" aria-controls="dd-share-download-menu">${DOWNLOAD_ICON}</button>
-<div class="dd-share-download-menu" id="dd-share-download-menu" role="menu" hidden>
-<button type="button" role="menuitem" id="dd-share-download-md">${isSourceFile ? "Source file only" : "Markdown only"}<small>${escapeHtml(downloadName)}</small></button>
+<button type="button" class="dd-share-view-btn" id="dd-share-download-btn" aria-label="Download" title="Download" aria-expanded="false" aria-controls="dd-share-download-menu">${DOWNLOAD_ICON}</button>
+<div class="dd-share-download-menu" id="dd-share-download-menu" hidden>
+<button type="button" id="dd-share-download-md">${isSourceFile ? "Source file only" : "Markdown only"}<small>${escapeHtml(downloadName)}</small></button>
 ${zipItem}
-<a role="menuitem" href="${escapeHtml(downloads.html)}" download>Save as HTML<small>one file${attachmentCount > 0 ? `, ${attachmentsLabel} embedded` : ""}</small></a>
+<a href="${escapeHtml(downloads.html)}" download>Save as HTML<small>one file${attachmentCount > 0 ? `, ${attachmentsLabel} embedded` : ""}</small></a>
 </div>
 </div>`
         : `<button type="button" class="dd-share-view-btn" id="dd-share-download-btn" aria-label="${escapeHtml(labels.download)}" title="${escapeHtml(labels.download)}">${DOWNLOAD_ICON}</button>`;

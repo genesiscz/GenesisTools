@@ -368,6 +368,35 @@ describe("Obsidian syntax", () => {
         expect(html).toContain('<a href="/share/abc#some-part" class="dd-wikilink">Other &gt; Some Part</a>');
     });
 
+    test("published page assets retain heading and block fragments", () => {
+        const { html } = renderMarkdown("[[Other#Some Part]] [[Other#^block]]", {
+            resolveWikilink: () => null,
+            resolveAsset: () => ({ kind: "page", url: "/share/abc", name: "Other" }),
+        });
+
+        expect(html).toContain('href="/share/abc#some-part"');
+        expect(html).toContain('href="/share/abc#^block"');
+    });
+
+    test("raw HTML and Mermaid labels cannot inject markup before diagram rendering", () => {
+        const source = [
+            '<iframe srcdoc="<script>window.bad=1</script>"></iframe>',
+            '<svg onload="window.bad=2"></svg>',
+            '<form action="https://example.test"><input></form>',
+            '<span style="position:fixed" onclick="window.bad=3">text</span>',
+            '```mermaid\ngraph TD\nA["<img src=x onerror=window.bad=4>"] --> B\n```',
+        ].join("\n\n");
+        const { html } = renderMarkdown(source, noop);
+
+        expect(html).not.toContain("<iframe");
+        expect(html).not.toContain("<svg");
+        expect(html).not.toContain("<form");
+        expect(html).not.toContain("<img src=x");
+        expect(html).not.toContain('style="position:fixed"');
+        expect(html).not.toContain(' onclick="window.bad=3"');
+        expect(html).toContain("&lt;img src=x onerror=window.bad=4&gt;");
+    });
+
     test("a folded callout is a native fold: [!note]- closed, [!tip]+ open", () => {
         const { html } = renderMarkdown("> [!note]- Closed\n> body\n\n> [!tip]+ Open\n> body", noop);
 

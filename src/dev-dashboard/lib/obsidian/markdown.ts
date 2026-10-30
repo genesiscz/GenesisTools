@@ -368,7 +368,7 @@ function wikilinkExtension(opts: RenderOptions): MarkedExtension {
 
                     // The whole target first, so a `#L12` line link still reaches its asset; then the note alone.
                     const html =
-                        resolveWikilinkHtml(opts, t.target, display, "") ??
+                        resolveWikilinkHtml(opts, t.target, display, fragment ? anchorFor(fragment) : "") ??
                         (fragment ? resolveWikilinkHtml(opts, note, display, anchorFor(fragment)) : null);
 
                     return html ?? `<span class="dd-wikilink dd-wikilink-unresolved">${escapeHtml(display)}</span>`;

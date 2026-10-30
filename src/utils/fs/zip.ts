@@ -111,3 +111,28 @@ export function zip(entries: ZipEntry[]): Uint8Array {
 
     return out;
 }
+
+/** Compress and assemble the archive away from the caller's event loop. */
+export function zipAsync(entries: ZipEntry[]): Promise<Uint8Array> {
+    return new Promise((resolve, reject) => {
+        const worker = new Worker(new URL("./zip-worker.ts", import.meta.url).href);
+        worker.onmessage = (event: MessageEvent<{ body?: Uint8Array; error?: string }>) => {
+            worker.terminate();
+            if (event.data.body) {
+                resolve(event.data.body);
+            } else {
+                reject(new Error(event.data.error ?? "zip worker failed"));
+            }
+        };
+        worker.onerror = (event) => {
+            worker.terminate();
+            reject(new Error(event.message));
+        };
+        try {
+            worker.postMessage(entries);
+        } catch (error) {
+            worker.terminate();
+            reject(error);
+        }
+    });
+}

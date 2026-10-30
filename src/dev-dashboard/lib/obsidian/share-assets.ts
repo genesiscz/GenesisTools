@@ -579,18 +579,34 @@ export async function buildShareBundle(options: {
     folderName: string;
 }): Promise<{ entries: Array<{ name: string; data: Uint8Array }>; skipped: number } | null> {
     const { vaultRoot, index, notePath, noteText, folderName } = options;
+
+    if (Buffer.byteLength(noteText, "utf8") > SHARE_BUNDLE_MAX_BYTES) {
+        return null;
+    }
+
     const files: Array<{ vaultPath: string; data: Uint8Array }> = [
         { vaultPath: notePath, data: new TextEncoder().encode(noteText) },
     ];
     let total = files[0].data.length;
     let skipped = 0;
 
-    for (const asset of index.byHash.values()) {
+    const seenPaths = new Set<string>();
+
+    for (const asset of index.byTarget.values()) {
+        if (seenPaths.has(asset.vaultPath)) {
+            continue;
+        }
+
+        seenPaths.add(asset.vaultPath);
         if (asset.vaultPath === notePath) {
             continue;
         }
 
-        const found = await readShareAsset({ vaultRoot, index, hash: asset.hash });
+        const found = await readShareAsset({
+            vaultRoot,
+            index: { byTarget: index.byTarget, byHash: new Map([[asset.hash, asset]]) },
+            hash: asset.hash,
+        });
 
         if (!found) {
             log.warn({ notePath, asset: asset.vaultPath }, "share bundle skipped an attachment that changed");
@@ -660,11 +676,16 @@ export async function buildShareEmbed(options: {
     vaultRoot: string;
     index: ShareAssetIndex;
     panelBase: (hash: string) => string;
+    sourceBytes: number;
 }): Promise<ShareEmbed | null> {
-    const { vaultRoot, index, panelBase } = options;
+    const { vaultRoot, index, panelBase, sourceBytes } = options;
     const embed: ShareEmbed = { media: new Map(), panels: {} };
     const bodies = new Map<string, Buffer>();
-    let total = 0;
+    let total = sourceBytes;
+
+    if (total > SHARE_BUNDLE_MAX_BYTES) {
+        return null;
+    }
 
     for (const asset of index.byHash.values()) {
         const found = await readShareAsset({ vaultRoot, index, hash: asset.hash });

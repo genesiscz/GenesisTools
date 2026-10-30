@@ -17,7 +17,7 @@ describe("renderSharePage", () => {
         expect(page).toContain("Show raw markdown source");
     });
 
-    test("SRI-pins the Mermaid ESM entry when the note uses mermaid", () => {
+    test("runs the local Mermaid renderer in a sandbox without network access", () => {
         const page = renderSharePage({
             title: "Diagram",
             rendered: {
@@ -27,12 +27,13 @@ describe("renderSharePage", () => {
                 tags: [],
             },
             source: "```mermaid\ngraph TD; A-->B\n```",
+            mermaidCode: "window.mermaid = {};",
         });
 
-        expect(page).toContain('rel="modulepreload"');
-        expect(page).toContain("mermaid@11.15.0/dist/mermaid.esm.min.mjs");
-        expect(page).toMatch(/integrity="sha384-[A-Za-z0-9+/=]+"/);
-        expect(page).toContain('crossorigin="anonymous"');
+        expect(page).toContain("window.mermaid = {};");
+        expect(page).toContain("frame.setAttribute('sandbox', 'allow-scripts')");
+        expect(page).toContain("default-src 'none'");
+        expect(page).not.toContain("mermaid.esm.min.mjs");
     });
 
     test("does not emit the Mermaid preload when the note has no mermaid", () => {

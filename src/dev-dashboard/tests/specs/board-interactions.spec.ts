@@ -1,4 +1,6 @@
 import { expect, test } from "@playwright/test";
+import { renderMarkdown } from "../../lib/obsidian/markdown";
+import { offlineShareAssets } from "../../lib/obsidian/offline-assets";
 import { renderSharePage } from "../../lib/obsidian/share-template";
 import { boardDoc, freshBoard, seedCard, seedNote, seedTextCard } from "../helpers/boards-test-api";
 import { BoardDetailPage } from "../pages/board-detail-page";
@@ -540,6 +542,70 @@ test.describe("staged pill + picker re-answer", () => {
         await expect
             .poll(async () => (await request.get(`/api/boards/${slug}/questions`)).json())
             .toMatchObject({ questions: [{ answer: ["Beta"], staged: true }] });
+    });
+});
+
+test.describe("shared diagram isolation", () => {
+    test("renders a normal diagram offline", async ({ page, context }) => {
+        const source = "```mermaid\ngraph TD; A-->B\n```\n\n$x^2$";
+        const rendered = renderMarkdown(source, { resolveWikilink: () => null });
+        const assets = await offlineShareAssets(true);
+        const html = renderSharePage({
+            title: "Note",
+            source,
+            rendered,
+            offlineAssets: assets,
+            mermaidCode: assets.mermaid,
+        });
+
+        await context.setOffline(true);
+        try {
+            await page.setContent(html);
+            await expect(page.frameLocator('iframe[title="Mermaid diagram"]').locator("svg g.node")).toHaveCount(2);
+            await expect(page.locator(".katex")).toBeVisible();
+        } finally {
+            await context.setOffline(false);
+        }
+    });
+
+    test("keeps hostile diagram styles and scripts outside the public page", async ({ page }) => {
+        const source = [
+            '<iframe srcdoc="<script>window.bad=1</script>"></iframe>',
+            '<svg onload="window.bad=2"></svg>',
+            '<form action="https://example.test"><input></form>',
+            '```mermaid\n%%{init: {"securityLevel":"loose", "themeCSS":"body { position: fixed; inset: 0; }"}}%%\ngraph TD\nA["<img src=x onerror=window.bad=3>"] --> B\nstyle A position:fixed,top:0px\nclick A "javascript:window.bad=4"\n```',
+        ].join("\n\n");
+        const rendered = renderMarkdown(source, { resolveWikilink: () => null });
+        const assets = await offlineShareAssets(true);
+        const html = renderSharePage({ title: "Note", source, rendered, mermaidCode: assets.mermaid });
+
+        await page.setContent(html);
+        const frame = page.frameLocator('iframe[title="Mermaid diagram"]');
+        await expect(frame.locator("svg g.node")).toHaveCount(2);
+        await expect(page.locator("iframe")).toHaveCount(1);
+        await expect(page.locator("iframe")).toHaveAttribute("sandbox", "allow-scripts");
+        expect(
+            await page
+                .locator("[style]")
+                .evaluateAll((elements) => elements.some((el) => (el as HTMLElement).style.position === "fixed"))
+        ).toBe(false);
+        expect(await page.locator("form, [onload], [onclick], [onerror]").count()).toBe(0);
+        expect(await page.evaluate(() => (window as Window & { bad?: number }).bad)).toBeUndefined();
+        expect(
+            await frame.locator("body").evaluate(() => {
+                try {
+                    void parent.document.body;
+                    return false;
+                } catch {
+                    return true;
+                }
+            })
+        ).toBe(true);
+        expect(
+            await frame
+                .locator("[style]")
+                .evaluateAll((elements) => elements.some((el) => (el as HTMLElement).style.position === "fixed"))
+        ).toBe(true);
     });
 });
 

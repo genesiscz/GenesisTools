@@ -1,5 +1,6 @@
 import { getConfig } from "@app/dev-dashboard/config";
 import { renderMarkdown } from "@app/dev-dashboard/lib/obsidian/markdown";
+import { offlineShareAssets } from "@app/dev-dashboard/lib/obsidian/offline-assets";
 import { findPublishedBySlug, listPublished } from "@app/dev-dashboard/lib/obsidian/publish";
 import { readNote } from "@app/dev-dashboard/lib/obsidian/reader";
 import {
@@ -23,7 +24,7 @@ import {
 import { renderSharePage } from "@app/dev-dashboard/lib/obsidian/share-template";
 import { publicBaseUrl } from "@app/dev-dashboard/lib/public-base";
 import type { RouteContext, RouteDef, RouteResult } from "@app/dev-dashboard/server/types";
-import { zip } from "@genesiscz/utils/fs/zip";
+import { zipAsync } from "@genesiscz/utils/fs/zip";
 import { logger } from "@genesiscz/utils/logger";
 import { redactSecretsInText } from "@genesiscz/utils/transclude";
 
@@ -236,7 +237,7 @@ export function shareRoutes(): RouteDef[] {
                             kind: "binary",
                             status: 200,
                             contentType: "application/zip",
-                            body: zip(bundle.entries),
+                            body: await zipAsync(bundle.entries),
                             headers: attachmentHeaders(`${fileBase}.zip`),
                         };
                     }
@@ -250,6 +251,7 @@ export function shareRoutes(): RouteDef[] {
                             vaultRoot: obsidianVault,
                             index: assets,
                             panelBase: (hash) => `?asset=${hash}`,
+                            sourceBytes: Buffer.byteLength(source, "utf8"),
                         });
 
                         if (!embed) {
@@ -385,6 +387,8 @@ export function shareRoutes(): RouteDef[] {
                             };
                         },
                     });
+                    const localAssets =
+                        embed || rendered.hasMermaid ? await offlineShareAssets(rendered.hasMermaid) : undefined;
                     const page = renderSharePage({
                         title,
                         rendered,
@@ -401,6 +405,8 @@ export function shareRoutes(): RouteDef[] {
                                   html: `/share/${encodeURIComponent(slug)}?download=html`,
                               },
                         embeddedPanels: embed?.panels,
+                        offlineAssets: embed ? localAssets : undefined,
+                        mermaidCode: localAssets?.mermaid,
                     });
 
                     if (embed) {

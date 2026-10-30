@@ -1,15 +1,21 @@
-import { afterAll, beforeAll, describe, expect, test } from "bun:test";
+import { afterAll, beforeAll, describe, expect, spyOn, test } from "bun:test";
 import { createHash } from "node:crypto";
 import { mkdirSync, mkdtempSync, rmSync, symlinkSync, writeFileSync } from "node:fs";
 import { tmpdir } from "node:os";
 import { join } from "node:path";
 import { publishNote } from "@app/dev-dashboard/lib/obsidian/publish";
-import type { ShareEmbed } from "@app/dev-dashboard/lib/obsidian/share-assets";
+import {
+    buildShareBundle,
+    buildShareEmbed,
+    SHARE_BUNDLE_MAX_BYTES,
+    type ShareEmbed,
+} from "@app/dev-dashboard/lib/obsidian/share-assets";
 import { getDevDashboardStorage, resetDevDashboardStorage } from "@app/dev-dashboard/lib/storage";
 import { shareRoutes } from "@app/dev-dashboard/server/routes/share";
 import type { RouteContext, RouteResult } from "@app/dev-dashboard/server/types";
 import { env } from "@genesiscz/utils/env";
 import { unzip } from "@genesiscz/utils/fs/unzip";
+import { zip, zipAsync } from "@genesiscz/utils/fs/zip";
 import { SafeJSON } from "@genesiscz/utils/json";
 
 const PIC = Buffer.from("RIFF\u0000\u0000\u0000\u0000WEBPVP8 fake-webp-bytes");
@@ -52,6 +58,7 @@ const TOOL = Array.from({ length: 1000 }, (_, i) => `const line${i + 1} = ${i + 
 const NOTE = [
     "# Run",
     "![[../assets/pic.webp]]",
+    "![[../assets/pic-copy.webp]]",
     "![[shot.png|300]]",
     "![spaced](../assets/dir%20x/b.png)",
     "![[logo.svg]]",
@@ -75,6 +82,8 @@ const CLIP = Buffer.from("\u0000\u0000\u0000\u0018ftypmp42 fake-mp4");
 const PDF = Buffer.from("%PDF-1.4 fake pdf body");
 const MEDIA_NOTE = [
     "# Media",
+    "```mermaid\ngraph TD; A-->B\n```",
+    "$x^2$",
     "![[talk.mp3]]",
     "![[clip.mp4|480]]",
     "![[doc.pdf#page=3&height=400]]",
@@ -113,6 +122,7 @@ describe("GET /share/:slug assets", () => {
         writeFileSync(join(vault, "secret.md"), SECRET_MD);
         writeFileSync(join(dir, "outside/x.md"), OUTSIDE_MD);
         writeFileSync(join(vault, "Notes/assets/pic.webp"), PIC);
+        writeFileSync(join(vault, "Notes/assets/pic-copy.webp"), PIC);
         writeFileSync(join(vault, "Notes/assets/dir x/b.png"), SPACED);
         writeFileSync(join(vault, "Notes/assets/data.json"), DATA);
         writeFileSync(join(vault, "Notes/sub/logo.svg"), LOGO);
@@ -372,12 +382,106 @@ describe("GET /share/:slug assets", () => {
 
         expect(text("Run/Notes/sub/Run.md")).toContain("inline key [redacted]");
         expect(Buffer.from(files.get("Run/Notes/assets/pic.webp") ?? []).equals(PIC)).toBe(true);
+        expect(Buffer.from(files.get("Run/Notes/assets/pic-copy.webp") ?? []).equals(PIC)).toBe(true);
         expect(Buffer.from(files.get("Run/Notes/assets/dir x/b.png") ?? []).equals(SPACED)).toBe(true);
         expect(Buffer.from(files.get("Run/Other/shot.png") ?? []).equals(SHOT)).toBe(true);
         expect(text("Run/Notes/assets/data.json")).toBe(DATA);
         expect(text("Run/Notes/sub/logo.svg")).not.toContain("sk-test-");
         expect(text("Run/Notes/creds.json")).not.toContain(FAKE_TOKEN);
         expect([...files.keys()].some((name) => name.includes("secret") || name.includes("escape"))).toBe(false);
+    });
+
+    test("ZIP keeps its synchronous API and the worker yields to the event loop", async () => {
+        const data = Buffer.alloc(2 * 1024 * 1024, 42);
+        const entries = [{ name: "data.bin", data }];
+        const syncArchive = zip(entries);
+        expect(syncArchive).toBeInstanceOf(Uint8Array);
+        expect(Buffer.from(unzip(syncArchive).get("data.bin") ?? []).equals(data)).toBe(true);
+
+        const terminated = spyOn(Worker.prototype, "terminate");
+        try {
+            let ticked = false;
+            setTimeout(() => {
+                ticked = true;
+            }, 0);
+            const archive = await zipAsync(entries);
+
+            expect(ticked).toBe(true);
+            expect(Buffer.from(unzip(archive).get("data.bin") ?? []).equals(data)).toBe(true);
+            expect(terminated).toHaveBeenCalledTimes(1);
+        } finally {
+            terminated.mockRestore();
+        }
+    });
+
+    test("ZIP worker reports archive errors and terminates", async () => {
+        const terminated = spyOn(Worker.prototype, "terminate");
+        const entries = Array.from({ length: 0x10000 }, () => ({ name: "a", data: new Uint8Array() }));
+        try {
+            expect(() => zip(entries)).toThrow("ZIP64");
+            await expect(zipAsync(entries)).rejects.toThrow("ZIP64");
+            expect(terminated).toHaveBeenCalledTimes(1);
+        } finally {
+            terminated.mockRestore();
+        }
+    });
+
+    test("ZIP worker terminates when sending entries throws", async () => {
+        const terminated = spyOn(Worker.prototype, "terminate");
+        const send = spyOn(Worker.prototype, "postMessage").mockImplementation(() => {
+            throw new Error("send failed");
+        });
+        try {
+            await expect(zipAsync([])).rejects.toThrow("send failed");
+            expect(terminated).toHaveBeenCalledTimes(1);
+        } finally {
+            send.mockRestore();
+            terminated.mockRestore();
+        }
+    });
+
+    test("ZIP worker terminates on an uncaught worker error", async () => {
+        const terminated = spyOn(Worker.prototype, "terminate");
+        const send = spyOn(Worker.prototype, "postMessage").mockImplementation(function (this: Worker) {
+            this.dispatchEvent(new ErrorEvent("error", { message: "worker failed" }));
+        });
+        try {
+            await expect(zipAsync([])).rejects.toThrow("worker failed");
+            expect(terminated).toHaveBeenCalledTimes(1);
+        } finally {
+            send.mockRestore();
+            terminated.mockRestore();
+        }
+    });
+
+    test("saved HTML embeds diagram and math resources without external stylesheets", async () => {
+        const res = await get({ download: "html" }, "text/html", mediaSlug);
+        expect(res.kind).toBe("raw");
+        if (res.kind !== "raw") {
+            return;
+        }
+
+        expect(res.body).toContain("data:font/woff2;base64,");
+        expect(res.body).toContain("mermaid.initialize(");
+        expect(res.body).not.toContain('rel="stylesheet" href="https:');
+        expect(res.body).not.toContain('import mermaid from "https:');
+        expect(res.body).not.toContain("url(fonts/");
+    });
+
+    test("both downloads count source bytes without attachments", async () => {
+        const index = { byTarget: new Map(), byHash: new Map() };
+        const sourceBytes = SHARE_BUNDLE_MAX_BYTES + 1;
+
+        expect(await buildShareEmbed({ vaultRoot: dir, index, panelBase: () => "", sourceBytes })).toBeNull();
+        expect(
+            await buildShareBundle({
+                vaultRoot: dir,
+                index,
+                notePath: "large.md",
+                noteText: "a".repeat(sourceBytes),
+                folderName: "large",
+            })
+        ).toBeNull();
     });
 
     test("download=html is one file: images are data URLs and panels are embedded, never fetched", async () => {
