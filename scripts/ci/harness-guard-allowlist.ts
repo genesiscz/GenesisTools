@@ -56,7 +56,6 @@ export const HARNESS_GUARD_ALLOWLIST: Readonly<Record<string, HarnessGuardCounts
     "src/ai/lib/sessions/rows-cache.ts": { table: 1 },
     "src/claude/commands/codex.ts": { list: 1, table: 1 },
     "src/claude/lib/active-sessions.ts": { branch: 1 },
-    "src/cmux/lib/render-resume.ts": { table: 2 },
     "src/cmux/lib/replay-catalog.ts": { list: 1 },
     "src/cmux/lib/restore-in-place.ts": { table: 2 },
     "src/cmux/lib/session-agents.ts": { list: 1, table: 2 },

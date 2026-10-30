@@ -69,6 +69,17 @@ export interface LaunchRecipe {
      * or version.
      */
     readonly resumeFlags: Readonly<Record<string, FlagArity>>;
+    /**
+     * How the agent's own binary reads a resume target, directly or after a wrapper's `--`: a flag (`--resume`, `-r`),
+     * or a `resume` subcommand (Codex); `render` writes that target for a session id.
+     */
+    readonly resumeSyntax: {
+        readonly flags: readonly string[];
+        readonly subcommand: boolean;
+        render(sessionId: string): string;
+    };
+    /** The command that starts the harness on an account (`<launcher> run <account>`), named in hint text. */
+    readonly launcher: string;
 }
 
 /** H: the slash command that ends an interactive session. */
