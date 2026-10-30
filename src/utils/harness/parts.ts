@@ -102,6 +102,11 @@ export interface TranscriptFacts {
     readonly pagesByTurnIndex: boolean;
     /** Whether the harness writes a session's sub-agents beside it (Claude's `<session>/subagents/`). */
     readonly subagentsOnDisk: boolean;
+    /**
+     * How coarse the transcript's timestamps are, in ms: 0 when it stamps milliseconds, 1000 when it stamps seconds
+     * (Grok), so a wait compares a send time with that much slack.
+     */
+    readonly timestampResolutionMs: number;
 }
 
 /** H: the slash command that ends an interactive session. */

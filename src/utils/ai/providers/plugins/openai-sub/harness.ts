@@ -19,7 +19,12 @@ export const codexHarness: HarnessDriver<"codex"> = {
         questions: pending("P2", "the codex question signals inside src/utils/ai/transcripts/turn-state.ts"),
         live: pending("P2", "the codex live tail in src/utils/ai/transcripts/live.ts and activity.ts"),
         launch: codexLaunch,
-        transcript: { recordsTerminalEvent: true, pagesByTurnIndex: false, subagentsOnDisk: false },
+        transcript: {
+            recordsTerminalEvent: true,
+            pagesByTurnIndex: false,
+            subagentsOnDisk: false,
+            timestampResolutionMs: 0,
+        },
         exit: pending("P3", "the codex entry of AGENTS in src/cmux/lib/session-agents.ts"),
         hooks: pending("P4", "the codex entries of HARNESS_HOOK_FACTS and HOOK_INSTALLERS in src/agents"),
         statusline: pending("P4", "the codex statusline host in src/ai/commands/statusline"),

@@ -46,7 +46,6 @@ export const HARNESS_GUARD_ALLOWLIST: Readonly<Record<string, HarnessGuardCounts
     "src/ai-spend/lib/series.ts": { table: 1 },
     "src/ai-spend/lib/workers/sessions.ts": { list: 1 },
     "src/ai-spend/lib/workers/stats.ts": { table: 2 },
-    "src/ai/commands/agent/wait.ts": { table: 2 },
     "src/ai/commands/statusline/run.ts": { branch: 1 },
     "src/ai/lib/agent-message/delivery.ts": { table: 2 },
     "src/ai/lib/sessions/agent-session-rows.ts": { table: 3 },
