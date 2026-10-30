@@ -6,7 +6,7 @@ import { readPrefixMark } from "./file-scan";
 import { parseTranscriptLine } from "./parse-line";
 import type { TranscriptTurn } from "./types";
 
-/** A turn parser that keeps its state between calls (codex.ts `createCodexTurnParser`). */
+/** A turn parser that keeps its state between calls (`createCodexTurnParser` in agent-sessions/readers/codex-turns.ts). */
 export interface TurnFold {
     push(lines: readonly (string | unknown)[]): void;
     snapshot(): TranscriptTurn[];

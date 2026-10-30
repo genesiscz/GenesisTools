@@ -1,8 +1,8 @@
 import type { TranscriptAnchor } from "@genesiscz/utils/agent/source-anchor";
+import { codexNativeLinesToTurns } from "@genesiscz/utils/agent-sessions/readers/codex-turns";
 import type { ConversationMessage } from "@genesiscz/utils/claude/types";
 import { logger } from "@genesiscz/utils/logger";
 import { claudeMessagesToTurns } from "./claude";
-import { codexNativeLinesToTurns } from "./codex";
 import { grokNativeLinesToTurns } from "./grok";
 import { readTailWindow } from "./native-scan";
 import { parseTranscriptLine } from "./parse-line";
