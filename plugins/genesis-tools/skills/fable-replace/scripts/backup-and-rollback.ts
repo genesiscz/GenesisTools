@@ -244,7 +244,8 @@ export const scratchSessionKey = (): string => {
     const named =
         process.env.FABLE_REPLACE_SESSION || process.env.CLAUDE_CODE_SESSION_ID || process.env.CODEX_THREAD_ID;
     const key = named && named.trim().length > 0 ? named.trim() : `ppid-${process.ppid}`;
-    return key.replace(SESSION_KEY_UNSAFE, "_").slice(0, SESSION_KEY_MAX);
+    // A leading dot goes too: "." or ".." would name the root or the temp dir itself as the session folder.
+    return key.replace(SESSION_KEY_UNSAFE, "_").replace(/^\./, "_").slice(0, SESSION_KEY_MAX);
 };
 
 /** This session's own folder under the root: the only place an ordinary run writes or prunes. */
