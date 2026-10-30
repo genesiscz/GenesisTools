@@ -14,5 +14,4 @@ export const TRANSCRIPT_FORMAT_RATCHET: ReadonlySet<string> = new Set<string>([
     "src/utils/ai/transcripts/around.ts",
     "src/utils/ai/transcripts/native-scan.ts",
     "src/utils/ai/transcripts/turn-state.ts",
-    "src/utils/session-changes/codex.ts",
 ]);

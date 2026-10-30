@@ -2,6 +2,7 @@ import { describe, expect, it } from "bun:test";
 import { appendFileSync, mkdirSync, mkdtempSync, writeFileSync } from "node:fs";
 import { tmpdir } from "node:os";
 import { join } from "node:path";
+import { parseCodexRollout } from "@genesiscz/utils/agent-sessions/readers/codex-changes";
 import { SafeJSON } from "@genesiscz/utils/json";
 import { findCodexRollout, isCodexRollout } from "./codex";
 import { readClaudeTranscriptFolded } from "./fold";
@@ -17,7 +18,6 @@ import {
     lastChangedTurns,
     mergeTurnFiles,
     parseClaudeTranscript,
-    parseCodexRollout,
     pathExclusion,
     type SessionChangesInput,
     type StageKind,

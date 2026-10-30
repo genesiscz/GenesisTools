@@ -1,12 +1,13 @@
+import { parseCodexRollout } from "@genesiscz/utils/agent-sessions/readers/codex-changes";
 import { readWholeTextSync } from "@genesiscz/utils/fs/read-lines";
 import { logger } from "@genesiscz/utils/logger";
-import { findCodexRollout, isCodexRollout, parseCodexRollout } from "./codex";
+import { findCodexRollout, isCodexRollout } from "./codex";
 import { type ComputedSessionChanges, computeSessionChanges, type SessionChangesInput } from "./compute";
 import { readClaudeTranscriptFolded } from "./fold";
 import { findClaudeTranscript } from "./transcript";
 import type { SessionTranscript } from "./types";
 
-export { findCodexRollout, isCodexRollout, parseCodexRollout } from "./codex";
+export { findCodexRollout, isCodexRollout } from "./codex";
 export type { AnalyzeCommandInput, CommandAnalysis, StageKind } from "./command";
 export {
     analyzeCommand,
