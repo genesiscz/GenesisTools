@@ -164,6 +164,6 @@ export function createNativeHistoryAdapter<Kind extends string = AgentKind>(opti
     };
 }
 
-export function createClaudeAdapter(roots?: string[]): AgentSessionAdapter {
+export function createClaudeAdapter(roots?: string[]): AgentSessionAdapter<"claude"> {
     return createNativeHistoryAdapter({ kind: "claude", roots });
 }

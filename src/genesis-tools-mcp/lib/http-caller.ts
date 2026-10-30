@@ -84,16 +84,20 @@ export function codexThreadIdFromOpenFiles(paths: string[]): string | null {
     return ids.size === 1 ? [...ids][0] : null;
 }
 
+/**
+ * How a calling process names its session: Claude by its session registry, Codex by the one rollout it holds open.
+ * Grok and Copilot leave no trace this lookup can read.
+ */
+const SESSION_ID_OF: Record<AgentCaller["agent"], (info: ProcessInfo, claudeSessionsDir: string) => string | null> = {
+    "claude-code": (info, claudeSessionsDir) => claudeSessionId(info, claudeSessionsDir),
+    codex: (info) => codexThreadIdFromOpenFiles(readOpenFilePaths(info.pid)),
+    grok: () => null,
+    copilot: () => null,
+    unknown: () => null,
+};
+
 function sessionIdFor(agent: AgentCaller["agent"], info: ProcessInfo, claudeSessionsDir: string): string | null {
-    if (agent === "claude-code") {
-        return claudeSessionId(info, claudeSessionsDir);
-    }
-
-    if (agent === "codex") {
-        return codexThreadIdFromOpenFiles(readOpenFilePaths(info.pid));
-    }
-
-    return null;
+    return SESSION_ID_OF[agent](info, claudeSessionsDir);
 }
 
 const UNKNOWN: ResolvedCaller = { agent: "unknown", sessionId: null, cwd: null, pid: null, processName: null };
