@@ -9,6 +9,14 @@ import { DEFAULT_EVALUATION_PROVIDER, EVALUATION_PROVIDERS } from "./types";
  * credentials in `~/.genesis-tools/jev/config.json` under one `settings` object, so a saved
  * default can never be mistaken for an API key.
  */
+/**
+ * When `control type`, `set` and `hotkey` refuse to run while another app is frontmost: `always` (the
+ * default, Martin 2026-10-30), only when an agent runs them (`agents`), or never (`off`). `--steal-focus`
+ * lifts it for one call.
+ */
+export const FOCUS_STEAL_GUARDS = ["always", "agents", "off"] as const;
+export type FocusStealGuard = (typeof FOCUS_STEAL_GUARDS)[number];
+
 export const jevSettingsSchema = z
     .object({
         provider: z.enum(EVALUATION_PROVIDERS),
@@ -19,6 +27,7 @@ export const jevSettingsSchema = z
         gate: z.number().gt(0).lte(1),
         maxSeconds: z.number().int().positive(),
         cursorOverlay: z.enum(["on", "off"]),
+        focusStealGuard: z.enum(FOCUS_STEAL_GUARDS),
         confirmRisk: z.enum(["off", "medium", "high"]),
         narrowAt: z.number().int().positive(),
         speak: z.enum(["off", "decisions", "all"]),
@@ -89,6 +98,13 @@ export const JEV_SETTINGS: readonly SettingSpec[] = [
         describe: "draw the cursor overlay where an act landed, so a watching human sees it",
         values: ["on", "off"],
         fallback: "on",
+    },
+    {
+        key: "focusStealGuard",
+        describe:
+            "control type/set/hotkey refuse while another app is frontmost: always, only under an agent, or off; --steal-focus lifts it once",
+        values: FOCUS_STEAL_GUARDS,
+        fallback: "always",
     },
     { key: "maxSeconds", describe: "listen session budget in seconds", fallback: "60" },
 ];

@@ -3,7 +3,7 @@ import { type BaselineMetrics, monitorLoopStalls, withSpawnCounter } from "@app/
 /**
  * Baseline for the two polls that block the event loop with `Bun.sleepSync`.
  *
- * ARM 1 — `waitFor`, `src/control/commands/verify.ts:45`. It polls an
+ * ARM 1 — `waitFor`, `src/control/lib/conditions.ts`. It polls an
  * accessibility condition and sleeps between polls with `Bun.sleepSync(interval)`,
  * so the whole timeout is time no other task can run: not a timer, not an HTTP
  * response, not a signal handler. The real exported function runs here with a
@@ -27,7 +27,7 @@ import { type BaselineMetrics, monitorLoopStalls, withSpawnCounter } from "@app/
  * inside a stall number.
  */
 import { injectLeadAssignment } from "@app/claude/lib/teams/launch";
-import { waitFor } from "@app/control/commands/verify";
+import { waitFor } from "@app/control/lib/conditions";
 import { runAx } from "@app/control/lib/runner";
 import { out } from "@genesiscz/utils/logger";
 import { Command } from "commander";
