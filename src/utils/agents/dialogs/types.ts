@@ -1,5 +1,7 @@
-/** The harnesses a dialog record can belong to; the same spellings as `TurnProvider`. */
-export type DialogProvider = "claude" | "codex" | "grok";
+import type { HarnessId } from "@genesiscz/utils/harness/types";
+
+/** The harnesses a dialog record can belong to; the same type as `TurnProvider`. */
+export type DialogProvider = HarnessId;
 
 /** What the agent waits on: a question with options, a permission prompt, or a plan to approve. */
 export type OpenQuestionKind = "decision" | "permission" | "plan";

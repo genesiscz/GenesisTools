@@ -1,5 +1,6 @@
 import { existsSync, readdirSync, readFileSync, realpathSync, statSync } from "node:fs";
 import { basename, dirname, isAbsolute, join, relative, resolve, sep } from "node:path";
+import { ACCOUNT_PROVIDER_ALIASES } from "@genesiscz/utils/ai/providers/alias-list";
 import { PROJECTS_DIR } from "@genesiscz/utils/claude/projects";
 import { workersDir as claudeWorkerDir } from "@genesiscz/utils/claude/worker-paths";
 import { sessionsDir as codexWorkerDir } from "@genesiscz/utils/codex/worker-paths";
@@ -650,8 +651,8 @@ function resolveWith({
             ...findCodexWorker(query, resolved.codexWorker, fs),
         ],
     };
-    // The search order of the providers when none is given; ties in `mtime` keep it.
-    const searched: TranscriptProvider[] = provider ? [provider] : ["claude", "grok", "codex"];
+    // The search order of the providers when none is given (the canonical harness order); ties in `mtime` keep it.
+    const searched: readonly TranscriptProvider[] = provider ? [provider] : ACCOUNT_PROVIDER_ALIASES;
     const hits: RankedHit[] = searched.flatMap((name) => finders[name]());
     if (hits.length === 0) {
         throw new Error(`No session file found for "${query}"`);
