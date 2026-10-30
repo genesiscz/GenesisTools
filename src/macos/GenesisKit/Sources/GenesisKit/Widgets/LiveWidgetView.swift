@@ -1111,6 +1111,7 @@ public struct LiveWidgetView: View {
         case "prompt": return "as a new prompt"
         case "queued": return "queued for the session"
         case "resume": return "by resuming the session"
+        case "grok-leader": return "through its Grok leader"
         default: return nil
         }
     }
