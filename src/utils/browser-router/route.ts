@@ -41,7 +41,14 @@ export type RouteAction =
           trustMinted?: boolean;
       }
     | { type: "tool"; tool: string; args: string[]; approval: ApprovalMode }
-    | { type: "service"; port: number; name: string; to: string };
+    | {
+          type: "service";
+          port: number;
+          name: string;
+          to: string;
+          /** Copied from the port registry: a plain browser navigation may start it only when this is true. */
+          allowExecuteByPlainBrowserNavigationMightBeDangerous?: boolean;
+      };
 
 /** A host name as a regular expression: dots escaped, nothing else allowed in. */
 export function hostPattern(host: string): string {
@@ -891,7 +898,15 @@ function parseAction(value: Record<string, unknown>, index: number): RouteAction
             throw new RouteError(`routes[${index}].action needs name and to`);
         }
 
-        return { type: "service", port: value.port, name: value.name, to: value.to };
+        return {
+            type: "service",
+            port: value.port,
+            name: value.name,
+            to: value.to,
+            ...(value.allowExecuteByPlainBrowserNavigationMightBeDangerous === true
+                ? { allowExecuteByPlainBrowserNavigationMightBeDangerous: true }
+                : {}),
+        };
     }
 
     throw new RouteError(`routes[${index}].action.type must be open, forward, unwrap, token, run, tool, or service`);

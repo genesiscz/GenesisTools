@@ -7,6 +7,8 @@ export interface RegistryService {
     name: string;
     /** A browser dashboard, not an API: only these get a name of their own. */
     dashboard: boolean;
+    /** The registry's literal `true`, else false: whether a plain browser navigation may start it. */
+    allowExecuteByPlainBrowserNavigationMightBeDangerous: boolean;
 }
 
 /** Every registered server with a launch command, from `src/utils/ui/dashboards.ts`. */
@@ -14,7 +16,14 @@ export function registryServices(): RegistryService[] {
     const dashboards = new Set(listDashboards().map((entry) => entry.key));
     return listPortRegistry()
         .filter((entry) => entry.launch)
-        .map((entry) => ({ key: entry.key, port: entry.port, name: entry.name, dashboard: dashboards.has(entry.key) }));
+        .map((entry) => ({
+            key: entry.key,
+            port: entry.port,
+            name: entry.name,
+            dashboard: dashboards.has(entry.key),
+            allowExecuteByPlainBrowserNavigationMightBeDangerous:
+                entry.allowExecuteByPlainBrowserNavigationMightBeDangerous === true,
+        }));
 }
 
 function pick(services: RegistryService[], only: string[] | undefined): RegistryService[] {
@@ -27,7 +36,14 @@ export function localServiceRoutes(only?: string[]): RouteRule[] {
         preset: "local-services",
         name: service.name,
         pattern: `https?://(?:localhost|127\\.0\\.0\\.1):${service.port}([/?#].*)?`,
-        action: { type: "service", port: service.port, name: service.name, to: `http://localhost:${service.port}$1` },
+        action: {
+            type: "service",
+            port: service.port,
+            name: service.name,
+            to: `http://localhost:${service.port}$1`,
+            allowExecuteByPlainBrowserNavigationMightBeDangerous:
+                service.allowExecuteByPlainBrowserNavigationMightBeDangerous,
+        },
     }));
 }
 
@@ -71,6 +87,8 @@ export function dashboardNameRoutes({
     return dashboardNames({ only, names }).flatMap(({ name, service }) => {
         const action = {
             type: "service" as const,
+            allowExecuteByPlainBrowserNavigationMightBeDangerous:
+                service.allowExecuteByPlainBrowserNavigationMightBeDangerous,
             port: service.port,
             name: service.name,
             to: `http://localhost:${service.port}$1`,
