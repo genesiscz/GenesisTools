@@ -131,7 +131,7 @@ function isRecord(value: unknown): value is Record<string, unknown> {
     return typeof value === "object" && value !== null && !Array.isArray(value);
 }
 
-const LOG_LEVELS = { info: 30, warn: 40, error: 50 } as const;
+const LOG_LEVELS = { debug: 20, info: 30, warn: 40, error: 50 } as const;
 
 /**
  * One pino-shaped line in `~/.genesis-tools/logs/<local date>.log`, the day log every tool writes. A
@@ -856,6 +856,12 @@ function handoffOrUnlock({
         `${formatLockReason({ agent: successor, sessionId: successor.sessionId, since: new Date(successor.since) })}\n`
     );
     renameSync(temp, path);
+    // Logged, because on 2026-10-27 a lock changed hands here and the day log had no line for the moment.
+    dayLog("info", "handed a worktree lock to a surviving user", {
+        worktree: worktree.root,
+        previous: reason,
+        successor: successor.sessionId,
+    });
     return "handed-off";
 }
 
