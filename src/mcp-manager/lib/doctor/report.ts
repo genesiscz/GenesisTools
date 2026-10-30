@@ -2,11 +2,14 @@ import { formatDuration } from "@genesiscz/utils/format";
 import { formatTable } from "@genesiscz/utils/table";
 import { REDACTED } from "../auth/constants.ts";
 import { redactHeaderValues } from "../auth/redact.ts";
+import { claudeConfigLabel } from "./discovery.ts";
 import { detectDuplicateTools, type ServerTools } from "./duplicates.ts";
 import type { ConfigSource, DoctorReport, NormalizedServer, ProbeResult, Status } from "./types.ts";
 
 /** Every config file `discover()` reads, in the order `mergeServers` layers them. */
-export const CONFIG_SOURCES: readonly ConfigSource[] = ["~/.claude.json", ".mcp.json", ".cursor/mcp.json"];
+export function configSources(): readonly ConfigSource[] {
+    return [claudeConfigLabel(), ".mcp.json", ".cursor/mcp.json"];
+}
 
 /**
  * The "no servers" empty state (#446 item 10): name the sources that were
@@ -15,7 +18,7 @@ export const CONFIG_SOURCES: readonly ConfigSource[] = ["~/.claude.json", ".mcp.
  */
 export function formatEmptyServersMessage(): string {
     return (
-        `No MCP servers configured in ${CONFIG_SOURCES.join(", ")}. ` +
+        `No MCP servers configured in ${configSources().join(", ")}. ` +
         "claude.ai connectors and plugin-provided servers are not included."
     );
 }

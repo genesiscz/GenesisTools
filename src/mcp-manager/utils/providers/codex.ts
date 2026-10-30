@@ -10,6 +10,7 @@ import {
 } from "@app/mcp-manager/utils/harnesses.js";
 import { env } from "@genesiscz/utils/env";
 import { logger } from "@genesiscz/utils/logger";
+import { defaultNativeHome } from "@genesiscz/utils/providers/session-paths";
 import * as TOML from "@iarna/toml";
 import chalk from "chalk";
 import type { CodexGenericConfig, CodexMCPServerConfig, CodexPluginConfig } from "./codex.types.js";
@@ -74,7 +75,7 @@ export class CodexProvider extends MCPProvider {
     private syncFromHomes: string[];
 
     constructor(options: CodexProviderOptions = {}) {
-        const defaultHome = path.join(env.paths.getHome() || env.paths.getUserProfile() || "~", ".codex");
+        const defaultHome = defaultNativeHome("codex", env.paths.getHome() || env.paths.getUserProfile() || "~");
         const syncToHomes = options.syncToHomes?.length ? options.syncToHomes : [defaultHome];
         super(codexConfigPathForHome(syncToHomes[0] ?? defaultHome), "codex");
         this.syncToHomes = syncToHomes;

@@ -1,7 +1,8 @@
-import { homedir } from "node:os";
 import { join } from "node:path";
 import { SafeJSON } from "@genesiscz/utils/json";
 import { logger } from "@genesiscz/utils/logger";
+import { collapsePath } from "@genesiscz/utils/paths";
+import { claudeJsonPath } from "@genesiscz/utils/providers/session-paths";
 import type { ConfigSource, NormalizedServer } from "./types.ts";
 
 interface RawStdioDef {
@@ -25,6 +26,8 @@ export interface RawConfig {
 
 export interface ConfigBlobs {
     claude: RawConfig | null;
+    /** The label of the `.claude.json` that was read; `claudeConfigLabel()` when absent. */
+    claudeSource?: ConfigSource;
     mcp: RawConfig | null;
     cursor: RawConfig | null;
 }
@@ -76,10 +79,15 @@ function normalizeOne(name: string, def: RawServerDef, source: ConfigSource): No
     };
 }
 
+/** Claude Code's `.claude.json` as the doctor names it: its real path, the home written as `~`. */
+export function claudeConfigLabel(home?: string): ConfigSource {
+    return collapsePath(claudeJsonPath(home));
+}
+
 export function mergeServers(blobs: ConfigBlobs): NormalizedServer[] {
     const byName = new Map<string, NormalizedServer>();
     const layers: { config: RawConfig | null; source: ConfigSource }[] = [
-        { config: blobs.claude, source: "~/.claude.json" },
+        { config: blobs.claude, source: blobs.claudeSource ?? claudeConfigLabel() },
         { config: blobs.mcp, source: ".mcp.json" },
         { config: blobs.cursor, source: ".cursor/mcp.json" },
     ];
@@ -120,12 +128,11 @@ async function readJsonFile(path: string): Promise<RawConfig | null> {
 }
 
 export async function readConfigSources(opts: { home?: string; projectDir: string }): Promise<ConfigBlobs> {
-    const home = opts.home ?? homedir();
     const [claude, mcp, cursor] = await Promise.all([
-        readJsonFile(join(home, ".claude.json")),
+        readJsonFile(claudeJsonPath(opts.home)),
         readJsonFile(join(opts.projectDir, ".mcp.json")),
         readJsonFile(join(opts.projectDir, ".cursor", "mcp.json")),
     ]);
 
-    return { claude, mcp, cursor };
+    return { claude, claudeSource: claudeConfigLabel(opts.home), mcp, cursor };
 }
