@@ -1,8 +1,7 @@
 import { existsSync, readdirSync } from "node:fs";
-import { homedir } from "node:os";
 import { join } from "node:path";
-import { env } from "@genesiscz/utils/env";
 import { logger } from "@genesiscz/utils/logger";
+import { codexHomeOverrides, nativeHome } from "@genesiscz/utils/providers/session-paths";
 
 const { log } = logger.scoped("session-changes");
 
@@ -16,8 +15,8 @@ function listDir(dir: string): string[] {
 }
 
 function codexHomes(): string[] {
-    const override = env.codex.getHomeOverride();
-    return override ? override.split(",").map((home) => home.trim()) : [join(homedir(), ".codex")];
+    const homes = codexHomeOverrides();
+    return homes.length > 0 ? homes : [nativeHome("codex")];
 }
 
 /**

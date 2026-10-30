@@ -8,12 +8,12 @@ import { FFIType } from "bun:ffi";
  *   bun scripts/benchmarks/json/parse-child.ts <arm>
  */
 import { existsSync } from "node:fs";
-import { homedir } from "node:os";
 import { join } from "node:path";
 import { defineNativeLibrary } from "@genesiscz/utils/bun/compiler";
 import { fastWalk } from "@genesiscz/utils/fs/native/fast-walk";
 import { readLastLines } from "@genesiscz/utils/fs/read-lines";
 import { SafeJSON } from "@genesiscz/utils/json";
+import { nativeHomePath } from "@genesiscz/utils/providers/session-paths";
 import { parse as commentJsonParse } from "comment-json";
 import { PARSE_ARMS } from "./arms";
 
@@ -50,7 +50,7 @@ const simdjson = existsSync(join(SIMDJSON_PREFIX, "lib", "libsimdjson.dylib"))
     : null;
 
 const since = Date.now() - 24 * 3_600_000;
-const walked = await fastWalk({ roots: [join(homedir(), ".claude", "projects")], endsWith: [".jsonl"], maxDepth: 1 });
+const walked = await fastWalk({ roots: [nativeHomePath("claude", "projects")], endsWith: [".jsonl"], maxDepth: 1 });
 const lines: string[] = [];
 
 for (const entry of walked.entries) {

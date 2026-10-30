@@ -1,5 +1,4 @@
 import { existsSync, mkdirSync, readdirSync, statSync, writeFileSync } from "node:fs";
-import { homedir } from "node:os";
 import { dirname, join } from "node:path";
 import { pathToFileURL } from "node:url";
 import { claudeCodeStatusline } from "@genesiscz/utils/ai/providers/plugins/anthropic-sub/statusline";
@@ -20,10 +19,10 @@ import { renderStatusline } from "@genesiscz/utils/ai/statusline/render";
 import type { StatuslineConfig, StatuslineFeature } from "@genesiscz/utils/ai/statusline/types";
 import { isInteractive, suggestCommand } from "@genesiscz/utils/cli";
 import { toolCommand } from "@genesiscz/utils/cli/tool-command";
-import { env } from "@genesiscz/utils/env";
 import { SafeJSON } from "@genesiscz/utils/json";
 import { logger, out } from "@genesiscz/utils/logger";
 import * as p from "@genesiscz/utils/prompts/p";
+import { nativeHome } from "@genesiscz/utils/providers/session-paths";
 import { stripAnsi } from "@genesiscz/utils/string";
 import type { Command } from "commander";
 import { featureFor, runStatusline, type StatuslineHost } from "./run";
@@ -96,7 +95,7 @@ function isOurs(command: string | null): boolean {
  * project, so model, session title and last-message time are real, with synthetic context usage.
  */
 function samplePayload(cwd: string): Record<string, unknown> {
-    const claudeDir = env.paths.getClaudeConfigDir() ?? join(homedir(), ".claude");
+    const claudeDir = nativeHome("claude");
     const projectDir = join(claudeDir, "projects", cwd.replace(/\//g, "-"));
     let transcriptPath: string | null = null;
 

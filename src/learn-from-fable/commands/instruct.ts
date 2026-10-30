@@ -8,6 +8,7 @@ import { join } from "node:path";
 import { toolCommand } from "@genesiscz/utils/cli/tool-command";
 import { env } from "@genesiscz/utils/env";
 import { out } from "@genesiscz/utils/logger";
+import { nativeHome } from "@genesiscz/utils/providers/session-paths";
 import { atomicWriteFileSync } from "@genesiscz/utils/storage/storage";
 import { FABLE_MODEL, type FableConfig, packPaths } from "../lib/config";
 import { readStageRuns } from "../lib/manifest";
@@ -58,7 +59,7 @@ export async function skillCommand(config: FableConfig, options: { maxLines: num
 
     if (options.sync) {
         const canonical = join(paths.skillDir, "SKILL.md");
-        const runtime = join(env.paths.getHome(), ".claude", "skills", "fable-style", "SKILL.md");
+        const runtime = join(nativeHome("claude", env.paths.getHome()), "skills", "fable-style", "SKILL.md");
 
         if (!existsSync(canonical)) {
             out.log.error(

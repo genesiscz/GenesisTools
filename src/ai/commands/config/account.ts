@@ -9,6 +9,7 @@ import {
     testAccount,
 } from "@genesiscz/utils/ai/config/account-ops";
 import type { AccountEntry, UseEnvApiKey } from "@genesiscz/utils/ai/config/schema";
+import { grokAuthPath } from "@genesiscz/utils/ai/grok/paths";
 import { isAccountProviderAlias, providerAliasOf } from "@genesiscz/utils/ai/providers/aliases";
 import type { ProviderPlugin } from "@genesiscz/utils/ai/providers/plugin-types";
 import { allProviderPlugins, providerPlugin } from "@genesiscz/utils/ai/providers/registry";
@@ -16,6 +17,7 @@ import { isInteractive, suggestCommand } from "@genesiscz/utils/cli";
 import { toolCommand } from "@genesiscz/utils/cli/tool-command";
 import { SafeJSON } from "@genesiscz/utils/json";
 import { out } from "@genesiscz/utils/logger";
+import { collapsePath } from "@genesiscz/utils/paths";
 import * as p from "@genesiscz/utils/prompts/p";
 import { redactSecrets } from "@genesiscz/utils/security";
 import {
@@ -148,7 +150,10 @@ async function collectInteractively(flags: AddFlags): Promise<AddAccountInput> {
             const preset = field === "authFile" ? flags.authFile : flags.dataDir;
             const value =
                 preset ??
-                (await p.text({ message: `${field} path (leave empty to skip):`, placeholder: "~/.grok/auth.json" }));
+                (await p.text({
+                    message: `${field} path (leave empty to skip):`,
+                    placeholder: collapsePath(grokAuthPath()),
+                }));
 
             if (value.trim().length > 0) {
                 input[field] = value.trim();
