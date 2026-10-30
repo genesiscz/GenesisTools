@@ -6,13 +6,16 @@
  * marker that moves when a turn ends, so "wait for the next turn" can tell a new finish from an old one.
  *
  * - Claude: `<project>/<id>.jsonl`. The last conversation record decides (`activity.ts`).
- * - Grok:   `updates.jsonl` of a TUI session. `turn_completed` ends a turn; `hook_*` records are noise.
+ * - Grok:   `updates.jsonl` of a TUI session. `turn_completed` ends a turn; `hook_*` records are noise. Its
+ *           permission prompts are only in `events.jsonl` beside it, read as the event log (`EVENT_LOGS`).
  * - Codex:  `rollout-*.jsonl`. `task_complete` (with `last_agent_message`) ends a turn.
  *
  * The readers are pure over parsed records. `readTurnState` is the one place that touches the disk:
- * one `stat`, one bounded tail read, no process spawn and no write.
+ * one `stat`, one bounded tail read of the transcript (and of the event log for a provider that has one),
+ * no process spawn and no write.
  */
-import { statSync } from "node:fs";
+import { existsSync, statSync } from "node:fs";
+import { basename, dirname, join } from "node:path";
 import { isZstdPath } from "@genesiscz/utils/compress/zstd";
 import { SafeJSON } from "@genesiscz/utils/json";
 import { logger } from "@genesiscz/utils/logger";
@@ -25,7 +28,28 @@ export type TurnProvider = "claude" | "grok" | "codex";
 /** A turn's last records can hold a long tool result, so this is larger than the activity tail. */
 export const TURN_TAIL_BYTES = 256 * 1024;
 
+/**
+ * Grok's `events.jsonl` lines are short (`phase_changed` is about 80 bytes), and a session that waits on a
+ * permission prompt writes nothing after the request, so the open request is within the last few lines.
+ */
+export const EVENT_LOG_TAIL_BYTES = 64 * 1024;
+
 type JsonRecord = Record<string, unknown>;
+
+/** What a session waits on: a question tool, a plan to approve, or a permission prompt of the harness. */
+export type TurnQuestionKind = "decision" | "permission" | "plan";
+
+/** The call a session waits on while `asksQuestion` is true. Its id is the dialog record's identity. */
+export interface TurnQuestionCall {
+    kind: TurnQuestionKind;
+    /**
+     * The call that asked: Claude's `tool_use` id, Codex's `call_id`, Grok's `toolCallId`. A Grok permission prompt
+     * whose call is not in the tail gets `permission:<ISO time of the request>`.
+     */
+    callId: string;
+    /** The option labels the question tool offered, when its input lists them. */
+    options?: string[];
+}
 
 /** A tool call of the current turn that has no result yet. */
 export interface OpenToolCall {
@@ -53,6 +77,12 @@ export interface TurnSnapshot {
      * `request_user_input_async` asked while the turn keeps running shows up here with `asksQuestion` false.
      */
     question: string | null;
+    /**
+     * The call the session waits on, set by all three readers whenever `asksQuestion` is true and the call carries an
+     * id. Absent while nothing waits. Optional only so the hand-built snapshots of other modules' tests stay valid;
+     * every reader here fills it.
+     */
+    questionCall?: TurnQuestionCall;
     /** True when the user stopped the turn (Esc in Claude, `turn_aborted` in Codex). The turn has ended. */
     interrupted: boolean;
     /**
@@ -130,6 +160,11 @@ export interface TurnStateInput {
     /** The byte offset in the file where each record's line starts, aligned with `records`. */
     offsets?: ReadonlyArray<number>;
     /**
+     * The tail of the session's event log beside the transcript (`EVENT_LOGS`), oldest first: Grok's `events.jsonl`,
+     * the only place its permission prompts are recorded. Absent for a provider without one, or when it is missing.
+     */
+    eventLog?: ReadonlyArray<JsonRecord>;
+    /**
      * True when nothing writes the transcript any more: a `.jsonl.zst` rollout, which Codex 0.164 writes only for a
      * session it closed. The state is then `FINISHED`, whatever the last turn did; `asksQuestion`, `lastText` and the
      * rest still describe that turn.
@@ -188,6 +223,25 @@ function questionTextOf(input: unknown): string | null {
     }
 
     return null;
+}
+
+/** The option labels of a question tool's first question: `questions[0].options[]`, each a string or `{label}`. */
+function questionOptionsOf(input: unknown): string[] | undefined {
+    const value = typeof input === "string" ? parseTranscriptLine(input) : input;
+    const first = isRecord(value) && Array.isArray(value.questions) ? value.questions[0] : undefined;
+    const options: unknown[] = isRecord(first) && Array.isArray(first.options) ? first.options : [];
+    const labels = options.flatMap((option) => {
+        const label = isRecord(option) ? option.label : option;
+        return typeof label === "string" && label.trim() ? [label.trim()] : [];
+    });
+
+    return labels.length > 0 ? labels : undefined;
+}
+
+/** A question call of the given kind, with the options its input lists. */
+function questionCallOf(kind: TurnQuestionKind, callId: string, input: unknown): TurnQuestionCall {
+    const options = questionOptionsOf(input);
+    return { kind, callId, ...(options ? { options } : {}) };
 }
 
 /** Input keys that say what a call does, best first: a Bash `description` reads better than its command. */
@@ -278,6 +332,7 @@ function snapshotOf({
     lastText,
     asksQuestion,
     question = null,
+    questionCall = null,
     endedTurn,
     interrupted = false,
     turnError = null,
@@ -290,6 +345,7 @@ function snapshotOf({
     lastText: string;
     asksQuestion: boolean;
     question?: string | null;
+    questionCall?: TurnQuestionCall | null;
     endedTurn: boolean;
     interrupted?: boolean;
     turnError?: string | null;
@@ -315,6 +371,7 @@ function snapshotOf({
         lastText,
         asksQuestion,
         question,
+        ...(asksQuestion && questionCall ? { questionCall } : {}),
         interrupted,
         turnError,
         lastEventAt,
@@ -348,8 +405,11 @@ function claudeTextBlocks(record: JsonRecord): string[] {
     );
 }
 
-/** The question of an `AskUserQuestion` call in this record, `""` when it has no readable text, else null. */
-function claudeQuestionOf(record: JsonRecord): string | null {
+/**
+ * The `AskUserQuestion` call in this record, else null: its question (`""` when it has no readable text) and the call
+ * with its `tool_use` id and options.
+ */
+function claudeQuestionOf(record: JsonRecord): { text: string; call: TurnQuestionCall | null } | null {
     const message = isRecord(record.message) ? record.message : null;
     const content = message?.content;
 
@@ -360,7 +420,14 @@ function claudeQuestionOf(record: JsonRecord): string | null {
     const call = content.find(
         (block) => isRecord(block) && block.type === "tool_use" && block.name === "AskUserQuestion"
     );
-    return isRecord(call) ? (questionTextOf(call.input) ?? "") : null;
+    if (!isRecord(call)) {
+        return null;
+    }
+
+    return {
+        text: questionTextOf(call.input) ?? "",
+        call: typeof call.id === "string" ? questionCallOf("decision", call.id, call.input) : null,
+    };
 }
 
 /**
@@ -371,6 +438,7 @@ function claudeFinalMessage(records: ReadonlyArray<JsonRecord>): {
     text: string;
     asksQuestion: boolean;
     question: string | null;
+    questionCall: TurnQuestionCall | null;
 } {
     const lastConversation = records.findLastIndex(
         (record) => typeof record.type === "string" && CLAUDE_CONVERSATION.has(record.type)
@@ -378,17 +446,22 @@ function claudeFinalMessage(records: ReadonlyArray<JsonRecord>): {
     const last = records[lastConversation];
 
     if (!last) {
-        return { text: "", asksQuestion: false, question: null };
+        return { text: "", asksQuestion: false, question: null, questionCall: null };
     }
 
     if (last.type === "result") {
-        return { text: typeof last.result === "string" ? last.result : "", asksQuestion: false, question: null };
+        return {
+            text: typeof last.result === "string" ? last.result : "",
+            asksQuestion: false,
+            question: null,
+            questionCall: null,
+        };
     }
 
     const lastMessage = isRecord(last.message) ? last.message : null;
     const messageId = typeof lastMessage?.id === "string" ? lastMessage.id : null;
     const texts: string[] = [];
-    let question: string | null = null;
+    let question: { text: string; call: TurnQuestionCall | null } | null = null;
 
     for (let index = lastConversation; index >= 0; index--) {
         const record = records[index];
@@ -415,7 +488,12 @@ function claudeFinalMessage(records: ReadonlyArray<JsonRecord>): {
         }
     }
 
-    return { text: texts.join("\n").trim(), asksQuestion: question !== null, question: question || null };
+    return {
+        text: texts.join("\n").trim(),
+        asksQuestion: question !== null,
+        question: question?.text || null,
+        questionCall: question?.call ?? null,
+    };
 }
 
 /**
@@ -536,6 +614,7 @@ export function claudeTurnState(input: TurnStateInput): TurnSnapshot {
         lastText: final.text,
         asksQuestion: final.asksQuestion && last?.kind === "question",
         question: final.question,
+        questionCall: final.questionCall,
         endedTurn: interrupted || last?.kind === "question" || last?.kind === "exit",
         interrupted,
         turnStartedAt: claudeTurnStartedAt(input.records),
@@ -578,8 +657,83 @@ const GROK_WORK: ReadonlySet<string> = new Set([
 /** Grok tool-call statuses that end a call. `in_progress` and `pending` are progress, not an answer. */
 const GROK_TERMINAL_STATUSES: ReadonlySet<string> = new Set(["completed", "failed"]);
 
-/** Grok tools that stop the turn until the user answers: a question, and a plan to approve. */
-const GROK_WAITING_TOOLS: ReadonlySet<string> = new Set(["ask_user", "exit_plan"]);
+/** Grok tools that stop the turn until the user answers, by `_meta["x.ai/tool"].kind`: a question, a plan to approve. */
+const GROK_WAITING_TOOLS: ReadonlyMap<string, TurnQuestionKind> = new Map([
+    ["ask_user", "decision"],
+    ["exit_plan", "plan"],
+]);
+
+/** An `events.jsonl` permission request still unanswered: the tool it asks for and the request's ISO time. */
+interface GrokPermissionRequest {
+    tool: string;
+    at: string;
+}
+
+/**
+ * The permission prompt open at the end of Grok's `events.jsonl` tail: a `permission_requested` with no later
+ * `permission_resolved` of the same `tool_name` in the current turn (`turn_started` and `turn_ended` reset it). The
+ * records carry no call id, so an answer closes the oldest open request of its tool. Every Grok tool call passes
+ * through a request and almost all are allowed in 0 ms (33,367 of 33,407 under a second on 2026-10-30), so only a
+ * request still open at the tail is a prompt the user must answer.
+ */
+function grokOpenPermission(eventLog: ReadonlyArray<JsonRecord>): GrokPermissionRequest | null {
+    let pending: GrokPermissionRequest[] = [];
+
+    for (const record of eventLog) {
+        if (record.type === "turn_started" || record.type === "turn_ended") {
+            pending = [];
+            continue;
+        }
+
+        const tool = typeof record.tool_name === "string" ? record.tool_name : null;
+
+        if (!tool) {
+            continue;
+        }
+
+        if (record.type === "permission_requested") {
+            pending.push({ tool, at: typeof record.ts === "string" ? record.ts : "" });
+        } else if (record.type === "permission_resolved") {
+            const index = pending.findIndex((request) => request.tool === tool);
+
+            if (index >= 0) {
+                pending.splice(index, 1);
+            }
+        }
+    }
+
+    return pending.at(-1) ?? null;
+}
+
+/**
+ * The open permission prompt as a question: the tool and a summary of its input, from the newest open `tool_call` of
+ * that tool in `updates.jsonl` (Grok writes the call before the prompt and its result only after the answer), and that
+ * call's id. A request with no open call of its tool counts only while it is newer than the transcript's last record,
+ * with the id `permission:<request time>`; an older one belongs to a call the transcript already finished.
+ */
+function grokPermissionQuestion(
+    request: GrokPermissionRequest,
+    calls: TurnCalls,
+    lastEventAt: number | null
+): { question: string; call: TurnQuestionCall } | null {
+    const call = [...calls.open.values()].filter((open) => open.name === request.tool).at(-1);
+
+    if (call) {
+        return {
+            question: call.summary ? `${call.name}: ${call.summary}` : call.name,
+            call: { kind: "permission", callId: call.id },
+        };
+    }
+
+    const requestedAt = toEpochMs(request.at);
+
+    // Grok stamps `updates.jsonl` in whole seconds, so a request in the same second as the last record is newer.
+    if (requestedAt === undefined || (lastEventAt !== null && requestedAt < lastEventAt)) {
+        return null;
+    }
+
+    return { question: request.tool, call: { kind: "permission", callId: `permission:${request.at}` } };
+}
 
 function grokToolMeta(update: JsonRecord): JsonRecord | null {
     const meta = isRecord(update._meta) ? update._meta : null;
@@ -615,8 +769,8 @@ export function grokTurnState(input: TurnStateInput): TurnSnapshot {
     let turnStartedAt: number | null = null;
     let turnStartOffset: number | undefined;
     let previousKind: string | null = null;
-    // toolCallId → question text, until a `tool_call_update` with a terminal status answers it.
-    const open = new Map<string, string>();
+    // toolCallId → the question tool's call, until a `tool_call_update` with a terminal status answers it.
+    const open = new Map<string, TurnQuestionCall>();
     // Every call of the turn still running, closed the same way.
     const calls = new TurnCalls();
 
@@ -653,10 +807,11 @@ export function grokTurnState(input: TurnStateInput): TurnSnapshot {
         }
 
         const toolKind = grokToolKind(parsed.update);
+        const waitingKind = toolKind ? GROK_WAITING_TOOLS.get(toolKind) : undefined;
 
-        if (parsed.kind === "tool_call" && callId && toolKind && GROK_WAITING_TOOLS.has(toolKind)) {
-            question = questionTextOf(parsed.update.rawInput) ?? (toolKind === "exit_plan" ? "Approve the plan?" : "");
-            open.set(callId, question);
+        if (parsed.kind === "tool_call" && callId && waitingKind) {
+            question = questionTextOf(parsed.update.rawInput) ?? (waitingKind === "plan" ? "Approve the plan?" : "");
+            open.set(callId, questionCallOf(waitingKind, callId, parsed.update.rawInput));
         } else if (
             parsed.kind === "tool_call_update" &&
             callId &&
@@ -684,14 +839,19 @@ export function grokTurnState(input: TurnStateInput): TurnSnapshot {
         }
     }
 
-    const waiting = open.size > 0;
+    const asked = [...open.values()].at(-1) ?? null;
+    // A question tool waits on its own; a permission prompt only while the turn is still running.
+    const request = !asked && !ended && input.eventLog ? grokOpenPermission(input.eventLog) : null;
+    const permission = request ? grokPermissionQuestion(request, calls, events.at(-1)?.ts ?? null) : null;
+    const waiting = asked !== null || permission !== null;
 
     return snapshotOf({
         input,
         events: waiting ? waitingOn(events) : events,
         lastText: message.trim(),
         asksQuestion: waiting,
-        question: question || null,
+        question: permission ? permission.question : question || null,
+        questionCall: permission ? permission.call : asked,
         endedTurn: ended || waiting,
         turnStartedAt,
         turnStartOffset,
@@ -727,8 +887,10 @@ export function codexTurnState(input: TurnStateInput): TurnSnapshot {
     let aborted = false;
     let turnError: string | null = null;
     let question: string | null = null;
-    // call_id → question text of a `request_user_input` with no `function_call_output` yet.
-    const open = new Map<string, string>();
+    // The newest `request_user_input(_async)` call of the turn, with its id and options.
+    let questionCall: TurnQuestionCall | null = null;
+    // call_id → the `request_user_input` call with no `function_call_output` yet.
+    const open = new Map<string, TurnQuestionCall>();
     // The turn's last tool call was `request_user_input_async`: the turn ends on that question.
     let lastCallAsks = false;
     let turnStartedAt: number | null = null;
@@ -778,6 +940,7 @@ export function codexTurnState(input: TurnStateInput): TurnSnapshot {
             turnStartedAt = ts;
             message = "";
             question = null;
+            questionCall = null;
             lastCallAsks = false;
             open.clear();
             calls.start(ts);
@@ -805,9 +968,10 @@ export function codexTurnState(input: TurnStateInput): TurnSnapshot {
 
             if (name === "request_user_input" || name === "request_user_input_async") {
                 question = questionTextOf(parsed.payload.arguments) ?? "";
+                questionCall = callId ? questionCallOf("decision", callId, parsed.payload.arguments) : null;
 
-                if (name === "request_user_input" && callId) {
-                    open.set(callId, question);
+                if (name === "request_user_input" && questionCall) {
+                    open.set(questionCall.callId, questionCall);
                 }
             }
         } else if (record.type === "response_item" && parsed.type === "function_call_output" && callId) {
@@ -828,6 +992,7 @@ export function codexTurnState(input: TurnStateInput): TurnSnapshot {
         lastText: message.trim(),
         asksQuestion: waiting || (ended && !aborted && lastCallAsks),
         question: question || null,
+        questionCall: waiting ? [...open.values()].at(-1) : questionCall,
         endedTurn: ended || waiting,
         interrupted: aborted,
         turnError: ended ? turnError : null,
@@ -934,6 +1099,60 @@ export function turnStateOf(provider: TurnProvider, input: TurnStateInput): Turn
     return READERS[provider](input);
 }
 
+/**
+ * Where each provider keeps the second log its turn state needs beside the transcript, or null for none. One entry
+ * per provider, so the next provider states its answer here.
+ */
+const EVENT_LOGS: Record<TurnProvider, (transcriptPath: string) => string | null> = {
+    // Claude records no permission prompt in its transcript; only its `Notification` hook sees one.
+    claude: () => null,
+    // Codex rollouts persist no approval request; only a live app-server client sees one.
+    codex: () => null,
+    // Grok writes its permission prompts to `events.jsonl` in the session folder, never to `updates.jsonl`.
+    grok: (transcriptPath) =>
+        basename(transcriptPath) === "updates.jsonl" ? join(dirname(transcriptPath), "events.jsonl") : null,
+};
+
+/** Every whole JSON line of a raw tail, with the byte offset where it starts. */
+function tailRecords(tail: { raw: Buffer; start: number }): { records: JsonRecord[]; offsets: number[] } {
+    const records: JsonRecord[] = [];
+    const offsets: number[] = [];
+    // Lines are cut from the raw bytes, so an offset stays exact past a line that holds invalid UTF-8.
+    let from = 0;
+
+    while (from <= tail.raw.length) {
+        const newline = tail.raw.indexOf(0x0a, from);
+        const end = newline === -1 ? tail.raw.length : newline;
+        const record = parseTranscriptLine(tail.raw.subarray(from, end).toString("utf8"));
+
+        if (record !== null) {
+            records.push(record);
+            offsets.push(tail.start + from);
+        }
+
+        from = end + 1;
+    }
+
+    return { records, offsets };
+}
+
+/** The tail of the provider's event log beside the transcript, or undefined when it has none or it cannot be read. */
+function readEventLog(provider: TurnProvider, transcriptPath: string): JsonRecord[] | undefined {
+    const path = EVENT_LOGS[provider](transcriptPath);
+
+    if (!path || !existsSync(path)) {
+        return undefined;
+    }
+
+    try {
+        // The cap drops only OLDER lines, never newer ones: a session that waits on a prompt stops writing.
+        return tailRecords(readTailAt(path, EVENT_LOG_TAIL_BYTES)).records;
+    } catch (err) {
+        logger.debug({ err, path, provider }, "[transcripts] could not read the session event log");
+        return undefined;
+    }
+}
+
 export interface ReadTurnStateOptions {
     now?: number;
     stallTimeoutMs: number;
@@ -963,28 +1182,14 @@ export function readTurnState(
         }
 
         const tail = readTailAt(filePath, TURN_TAIL_BYTES);
-        const records: JsonRecord[] = [];
-        const offsets: number[] = [];
-        // Lines are cut from the raw bytes, so an offset stays exact past a line that holds invalid UTF-8.
-        let from = 0;
-
-        while (from <= tail.raw.length) {
-            const newline = tail.raw.indexOf(0x0a, from);
-            const end = newline === -1 ? tail.raw.length : newline;
-            const record = parseTranscriptLine(tail.raw.subarray(from, end).toString("utf8"));
-
-            if (record !== null) {
-                records.push(record);
-                offsets.push(tail.start + from);
-            }
-
-            from = end + 1;
-        }
+        const { records, offsets } = tailRecords(tail);
+        const eventLog = readEventLog(provider, filePath);
 
         return {
             ...turnStateOf(provider, {
                 records,
                 offsets,
+                ...(eventLog ? { eventLog } : {}),
                 lastModified: stat.mtimeMs,
                 now,
                 stallTimeoutMs: options.stallTimeoutMs,
