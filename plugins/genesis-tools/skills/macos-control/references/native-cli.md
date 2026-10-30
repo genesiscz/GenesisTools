@@ -196,6 +196,58 @@ Clicky page) draws the window off screen, writes the PNG and exits. It never tak
   `hub snapshot: still loading: digest` on stderr. Treat a shot with that line as showing a loading state.
 - Pin `--width` and `--height` (points) on both sides of a before/after pair: without them the window takes
   the live hub's size, so two runs on different days differ in size.
+- **Sidecars.** A hub or `--features` snapshot also writes `<shot>.geometry.json` (window points, scale,
+  backing scale, binary UUID, commit). With `--snapshot-tree`, a hub snapshot writes `<shot>.tree.json`
+  too: every accessibility element's role path, identifier, label presence (never the text), frame in window
+  points and flags. The tree needs the Accessibility grant; without it the file says `"source": "none"`. The review window's
+  `--snapshot` writes neither yet.
+
+## Before/after reports
+
+Use `control report` when you must show what a change did to a screen, for a pair or a whole shot list. It
+answers the question a plain pixel diff cannot: which differences are the change, and which are only other
+data (another session, other counts, other text).
+
+- **Geometry check.** `compare-screenshot` and `report` read both geometry sidecars. Another point size
+  (2056 x 1290 pt against 1440 x 900 pt) is refused with both sizes named, unless `--resize-to-match`. The
+  same point size at another scale (1x against 2x) is resampled and reported. Without sidecars the check
+  falls back to the image pixels.
+- **Regions.** `compare-screenshot a.png b.png --regions --annotate-out b.boxes.png` clusters the mismatched
+  pixels (anti-aliasing excluded) into boxes: `--merge-distance` joins near changes, `--min-area` drops noise.
+- **Tree diff.** `compare-tree a.png b.png` matches the two view trees by identifier, else by role path, and
+  reports moved, resized, added, removed and restyled controls. It never compares text. Another row count,
+  text of another width and what that text pushed along are data only. Exit 0 = no layout change, 1 =
+  changes, 2 = no usable tree.
+- **Colours.** A pixel region that overlaps a tree change is red; every other region is amber (data only).
+  When one side has no tree, every region is red, because pixels alone cannot tell data from design. So take
+  both sides with `--snapshot-tree`, or the report marks the data noise red too. The tree is opt-in because
+  the walk costs about 0.7 ms per element (700 ms on a 1,050-element digest shot).
+- **Same data.** There is no fixture mode yet: render both sides from the same live data, one after the
+  other, with the two binaries at the same pinned `--width` and `--height`.
+- **Preview.** Preview skips a file that is already open in another window, and it sorts by name. So the
+  report writes the annotated pairs into the `--out` folder as `NN-<screen>-1-before.png` and
+  `NN-<screen>-2-after.png`, lists them in `order.txt`, and prints the one-line command that opens them in
+  order. Use a fresh `--out` folder for each report.
+
+Worked example (a before build and an after build of the hub, same live data, same size):
+
+```bash
+OUT=/tmp/cc/<project>/<session>/report
+for side in before after; do
+  bin=/path/to/$side/.build/debug/GenesisTools
+  $bin --hub --mode inbox --width 1440 --height 900 --snapshot-tree --snapshot $OUT/shots/01-inbox-$side.png
+  $bin --hub --session <id> --panes changes --width 1440 --height 900 --snapshot-tree --snapshot $OUT/shots/02-changes-$side.png
+done
+# optional change notes per screen: {"inbox": {"fix": "H12", "note": "The filter moved into the toolbar."}}
+tools control report $OUT/shots --notes notes.json --out $OUT/pairs --note <vault folder>/YYYY-MM-DD-BeforeAfter.md
+# prints per pair "N red, M amber, tree K change(s)", then the note, order.txt and the Preview command:
+tr '\n' '\0' < $OUT/pairs/order.txt | xargs -0 open -a Preview
+```
+
+`<input>` is a folder of `<stem>-before` / `<stem>-after` images (the screen name is the stem without a
+leading `NN-`), or a shot list JSON: `{"title"?, "pairs": [{"screen", "before", "after", "fix"?, "note"?}]}`,
+with paths relative to the file. `--raw` also copies the unannotated pairs into `<out>/raw`. Exit 1 means a
+pair was refused; its section in the note says why.
 
 ## Plans and recording
 
