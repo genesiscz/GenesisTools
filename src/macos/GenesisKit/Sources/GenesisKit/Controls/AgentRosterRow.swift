@@ -167,13 +167,15 @@ public enum AgentRosterStyle {
         }
     }
 
+    /// The tag colour of a harness (`Harness.markAccent`, from its TypeScript driver's palette).
     public static func harnessColor(_ provider: String) -> Color {
-        switch provider {
-        case "codex": return Color(red: 0.45, green: 0.8, blue: 0.75)
-        case "grok": return Color(red: 0.75, green: 0.6, blue: 0.95)
-        default: return Color(red: 0.9, green: 0.6, blue: 0.4)
-        }
+        guard let harness = Harness(rawValue: provider) else { return otherAgentColor }
+        let rgb = harness.markAccent
+        return Color(red: rgb.red, green: rgb.green, blue: rgb.blue)
     }
+
+    /// The tag colour of an agent with no harness driver: the warm tone such rows always had.
+    static let otherAgentColor = Color(red: 0.9, green: 0.6, blue: 0.4)
 
     public static func duration(from start: Date?, to end: Date?) -> String? {
         guard let start, let end, end >= start else { return nil }

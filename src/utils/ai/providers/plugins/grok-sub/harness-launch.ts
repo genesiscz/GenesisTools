@@ -7,6 +7,11 @@ export const grokLaunch: LaunchRecipe = {
     resumeArgv: (sessionId, options) =>
         options.account ? ["tools", "grok", "run", options.account, "--", "-r", sessionId] : ["grok", "-r", sessionId],
     resumeSyntax: { flags: ["-r", "--resume"], subcommand: false, render: (sessionId) => `-r ${sessionId}` },
+    // The hub starts Grok in its default home and offers no account for it.
+    startArgv: ({ prompt }) => ["grok", ...(prompt === undefined ? [] : [prompt])],
+    startPinsAccount: false,
+    // `tools grok cmux` has focus and send but no open-session: the hub types the resume argv into the pane.
+    cmuxOpenSession: false,
 
     resumeFlags: {
         "--agent": "value",

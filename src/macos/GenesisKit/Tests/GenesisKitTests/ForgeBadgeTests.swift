@@ -47,6 +47,27 @@ final class ForgeBadgeTests: XCTestCase {
         XCTAssertNil(AIProviderMark.Kind(provider: "gemini"), "an agent with no mark keeps its letter")
     }
 
+    /// The colours, logos and spellings the Swift sites had before they read `Harness` (2026-10-31), pinned so the
+    /// drivers' palette changes nothing on screen.
+    func testHarnessPaletteKeepsTheColoursAndMarksTheSitesHad() {
+        XCTAssertEqual(Harness.allCases.map(\.rawValue), ["claude", "codex", "grok"])
+        XCTAssertEqual(AgentRosterStyle.harnessColor("claude"), Color(red: 0.9, green: 0.6, blue: 0.4))
+        XCTAssertEqual(AgentRosterStyle.harnessColor("codex"), Color(red: 0.45, green: 0.8, blue: 0.75))
+        XCTAssertEqual(AgentRosterStyle.harnessColor("grok"), Color(red: 0.75, green: 0.6, blue: 0.95))
+        XCTAssertEqual(AgentRosterStyle.harnessColor("cursor"), Color(red: 0.9, green: 0.6, blue: 0.4))
+        XCTAssertEqual(AgentRosterStyle.harnessColor("Codex"), Color(red: 0.9, green: 0.6, blue: 0.4), "the roster matches the exact id")
+        let marks: [String: AIProviderMark.Kind] = [
+            "claude": .claude, "anthropic": .claude, "anthropic-sub": .claude,
+            "codex": .codex, "openai": .codex, "openai-sub": .codex,
+            "grok": .grok, "xai": .grok, "grok-sub": .grok, "XAI": .grok,
+        ]
+        for (provider, kind) in marks {
+            XCTAssertEqual(AIProviderMark.Kind(provider: provider), kind, provider)
+        }
+        XCTAssertNil(AIProviderMark.Kind(provider: "claude-code"), "an alias never had a mark")
+        XCTAssertEqual(Set(AIProviderMark.paths.keys), Set(Harness.allCases))
+    }
+
     func testAnArcWithPackedFlagsReachesItsEndPoint() {
         // `a1 1 0 012 0` is flags 0 and 1, then the point (2, 0): a half circle from (0, 0) to (2, 0).
         let path = SVGPath.parse("M0 0a1 1 0 012 0")

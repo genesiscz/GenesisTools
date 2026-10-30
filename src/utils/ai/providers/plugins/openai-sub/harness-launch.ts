@@ -2,6 +2,11 @@ import type { LaunchRecipe } from "@genesiscz/utils/harness/parts";
 
 /** How a codex session resumes, and the flags a resume carries over, read from `codex resume --help` (codex 0.13x, 2026-10-15). */
 export const codexLaunch: LaunchRecipe = {
+    // The hub starts Codex in its default home and offers no account for it.
+    startArgv: ({ prompt }) => ["codex", ...(prompt === undefined ? [] : [prompt])],
+    startPinsAccount: false,
+    // `tools codex cmux` has focus and send but no open-session: the hub types the resume argv into the pane.
+    cmuxOpenSession: false,
     resumeArgv: (sessionId, options) => {
         if (!options.account) {
             return ["codex", "resume", sessionId];

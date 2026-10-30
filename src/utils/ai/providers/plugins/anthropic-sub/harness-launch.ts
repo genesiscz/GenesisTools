@@ -7,6 +7,13 @@ export const claudeLaunch: LaunchRecipe = {
             ? ["tools", "claude", "start", options.account, "--", "--resume", sessionId]
             : ["claude", "--resume", sessionId],
     resumeSyntax: { flags: ["--resume"], subcommand: false, render: (sessionId) => `--resume ${sessionId}` },
+    // `tools claude run` asks for the account in the terminal when none is given.
+    startArgv: ({ account, prompt }) => [
+        ...(account ? ["tools", "claude", "run", account] : ["tools", "claude", "run"]),
+        ...(prompt === undefined ? [] : ["--", prompt]),
+    ],
+    startPinsAccount: true,
+    cmuxOpenSession: true,
 
     resumeFlags: {
         "--add-dir": "value",

@@ -407,6 +407,9 @@ public final class SessionNativeLog: @unchecked Sendable {
 
     // MARK: Scan helpers
 
+    /// The transcript line formats this reader indexes. This file is the Swift side's format owner, like the
+    /// TypeScript readers under `src/utils/agent-sessions/readers/`: the bytes of a line pick its kind, not the
+    /// harness set, and a harness whose format it does not read (Grok) has no case.
     private enum LineKind {
         case claude, codex, other
 

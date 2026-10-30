@@ -779,7 +779,7 @@ private struct WidgetSessionSettings: View {
 
 private struct WidgetProviderSettings: View {
     @ObservedObject var model: WidgetModel
-    private let providers = ["claude", "codex", "grok", "unknown"]
+    private let providers = Harness.allCases.map(\.rawValue) + ["unknown"]
     private var selected: [String] { model.snapshot?.state.preferences.providers ?? [] }
     var body: some View {
         VStack(spacing: 18) {

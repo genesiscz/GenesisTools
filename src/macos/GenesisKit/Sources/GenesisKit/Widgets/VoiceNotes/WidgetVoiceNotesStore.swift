@@ -111,7 +111,7 @@ public final class WidgetVoiceNotesStore: ObservableObject {
     }
 
     public var selected: WidgetVoiceNote? { notes.first { $0.id == selectedID } }
-    public var sessions: [WidgetSession] { sessionsSource().filter { ["claude", "codex", "grok"].contains($0.target.provider) } }
+    public var sessions: [WidgetSession] { sessionsSource().filter { Harness(rawValue: $0.target.provider) != nil } }
     public var isBusy: Bool { phase != nil }
     public var providerLabel: String { settings().provider }
     public var text: String {

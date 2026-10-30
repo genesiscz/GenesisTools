@@ -89,14 +89,35 @@ export interface HarnessIdentity {
     readonly plugin: string;
     /** Other spellings a user or another tool writes for the harness ("claude-code", "codex-cli"). */
     readonly aliases: readonly string[];
-    /** How the apps draw the harness: the letter and colour of its badge (`ProviderBadge`, via `Harness.swift`). */
+    /**
+     * The model-provider plugin id of the company behind the harness (`anthropic`, `openai`, `xai`): an account row of
+     * that provider wears the harness's mark (`AIProviderMark`, via `Harness.swift`).
+     */
+    readonly vendor: string;
+    /** How the apps draw the harness: its badge, its tag colour and its logo (via `Harness.swift`). */
     readonly mark: HarnessMark;
 }
 
-/** A harness's badge: one letter on a square of one colour (sRGB, each channel 0 to 1). */
+/** An sRGB colour, each channel 0 to 1. */
+export interface HarnessColor {
+    readonly red: number;
+    readonly green: number;
+    readonly blue: number;
+}
+
+/** The one palette of a harness in the apps: every colour and glyph that stands for it. */
 export interface HarnessMark {
+    /** The letter of its badge (`ProviderBadge`) when no logo is drawn. */
     readonly letter: string;
-    readonly color: { readonly red: number; readonly green: number; readonly blue: number };
+    /** The badge's square (`ProviderBadge`). */
+    readonly color: HarnessColor;
+    /** The tag beside an agent's name in the agent rosters (`AgentRosterStyle.harnessColor`). */
+    readonly accent: HarnessColor;
+    /**
+     * The logo as one SVG path in a 24 x 24 box, filled even-odd (`AIProviderMark`), or null to keep the letter. The
+     * paths come from LobeHub's icon set (MIT, `@lobehub/icons-static-svg`).
+     */
+    readonly logo: string | null;
 }
 
 /**

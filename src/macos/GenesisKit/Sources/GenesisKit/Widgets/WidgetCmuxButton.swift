@@ -99,14 +99,15 @@ struct WidgetCmuxPanel: View {
         }
     }
 
-    /// Claude resumes through `tools claude cmux open-session`; another agent's resume command is typed into the pane.
+    /// A harness with `tools <agent> cmux open-session` (`Harness.cmuxOpenSession`) resumes through it; another agent's
+    /// resume command is typed into the pane.
     private func open(at target: CmuxTarget) async -> String? {
         let sessionId = session.target.sessionId
-        if session.target.provider == "claude",
+        if let harness = Harness(rawValue: session.target.provider), harness.cmuxOpenSession,
            let args = target.openSessionArgs ?? tree?.windows.first.map({ ["--window", $0.target] }) {
             do {
                 let result = try await model.bridge.run(
-                    subcommand: "claude", args: ["cmux", "open-session", sessionId] + args + ["--json"], timeoutSeconds: 60)
+                    subcommand: harness.rawValue, args: ["cmux", "open-session", sessionId] + args + ["--json"], timeoutSeconds: 60)
                 return CmuxCommandRunner.openSessionFailure(
                     status: result.exitCode, stdout: Data(result.stdout.utf8), stderr: Data(result.stderr.utf8))
             } catch {

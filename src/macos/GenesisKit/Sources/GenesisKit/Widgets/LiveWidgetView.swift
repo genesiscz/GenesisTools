@@ -1104,7 +1104,9 @@ public struct LiveWidgetView: View {
         "open", "drafted", "answered", "sent", "acknowledged", "implemented", "dismissed", "superseded",
     ]
 
-    /// How an answer reached its agent (the log's `delivery.route`).
+    /// How an answer reached its agent (the log's `delivery.route`). The routes are the decision log's delivery
+    /// channels (`DeliveryChannel` in `src/question/lib/decisions/deliver.ts`), not the harness set: `codex` is the
+    /// Codex worker route.
     static func routePhrase(_ route: String) -> String? {
         switch route {
         case "cmux": return "through cmux"

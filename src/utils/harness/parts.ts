@@ -70,10 +70,28 @@ export interface QuestionSignalReader {
 /** How a flag takes its value: none, a required next word (or `=value`), or only an `=value`. */
 export type FlagArity = "none" | "value" | "optional";
 
+/** What a new interactive session starts with: the account to pin (empty or absent for none), and the first prompt. */
+export interface StartOptions {
+    readonly account?: string;
+    readonly prompt?: string;
+}
+
 /** G: the command line that resumes a session. Single source for TS and (P7) the Swift generator. */
 export interface LaunchRecipe {
     /** Argv that resumes an interactive TUI session, through `tools <agent>` when an account is pinned. */
     resumeArgv(sessionId: string, options: ResumeOptions): string[];
+    /**
+     * Argv that starts a new interactive session in a terminal (the hub's "New session" sheet, via `Harness.swift`),
+     * with the first prompt when one is given.
+     */
+    startArgv(options: StartOptions): string[];
+    /** Whether `startArgv` pins `options.account`; the hub shows its account field only then. */
+    readonly startPinsAccount: boolean;
+    /**
+     * Whether `tools <agent> cmux open-session` resumes a session into a chosen cmux pane under its own account;
+     * otherwise the hub types `resumeArgv` into the pane.
+     */
+    readonly cmuxOpenSession: boolean;
     /**
      * The flags the agent itself accepts and a resume may carry over from the command that started the tab, read
      * from the agent's own `--help`. Left out on purpose: the model (a session can switch models, so the tab's start

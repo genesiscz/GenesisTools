@@ -15,8 +15,14 @@
 
 import { existsSync, mkdirSync, readFileSync, writeFileSync } from "node:fs";
 import { dirname, join } from "node:path";
-import { harnessDrivers, harnessExit, harnessLaunch } from "@genesiscz/utils/ai/providers/harness-index";
-import type { HarnessDriver } from "@genesiscz/utils/harness/types";
+import {
+    harnessDrivers,
+    harnessExit,
+    harnessLaunch,
+    harnessTranscriptFacts,
+} from "@genesiscz/utils/ai/providers/harness-index";
+import type { HarnessColor, HarnessDriver } from "@genesiscz/utils/harness/types";
+import { SafeJSON } from "@genesiscz/utils/json";
 
 export const HARNESS_SWIFT_PATH = join(
     import.meta.dirname,
@@ -24,15 +30,64 @@ export const HARNESS_SWIFT_PATH = join(
     "src/macos/GenesisKit/Sources/GenesisKitBase/Generated/Harness.swift"
 );
 
-/** Stands in for the session id while the TypeScript recipe builds the argv; the Swift side passes its parameter. */
+/** Stand in for the Swift parameters while a TypeScript recipe builds an argv; the Swift side passes its parameter. */
 const SESSION_PLACEHOLDER = "\u0000session\u0000";
+const ACCOUNT_PLACEHOLDER = "\u0000account\u0000";
+const PROMPT_PLACEHOLDER = "\u0000prompt\u0000";
+const SWIFT_PARAMETERS: ReadonlyMap<string, string> = new Map([
+    [SESSION_PLACEHOLDER, "sessionId"],
+    [ACCOUNT_PLACEHOLDER, "account"],
+    [PROMPT_PLACEHOLDER, "prompt"],
+]);
 
 function swiftString(value: string): string {
     return `"${value.replace(/\\/g, "\\\\").replace(/"/g, '\\"')}"`;
 }
 
 function swiftArgv(argv: readonly string[]): string {
-    return `[${argv.map((token) => (token === SESSION_PLACEHOLDER ? "sessionId" : swiftString(token))).join(", ")}]`;
+    return `[${argv.map((token) => SWIFT_PARAMETERS.get(token) ?? swiftString(token)).join(", ")}]`;
+}
+
+function swiftColor(color: HarnessColor): string {
+    return `(${color.red}, ${color.green}, ${color.blue})`;
+}
+
+/**
+ * The body of `startArgs(account:prompt:)` for one harness: the recipe rendered with and without each parameter, so
+ * the Swift side keeps exactly the TypeScript argv. A recipe that ignores the account switches on the prompt only.
+ */
+function startArgsCase(driver: HarnessDriver): string[] {
+    const launch = harnessLaunch(driver.id);
+    const argv = (account: boolean, prompt: boolean) =>
+        launch.startArgv({
+            account: account ? ACCOUNT_PLACEHOLDER : "",
+            prompt: prompt ? PROMPT_PLACEHOLDER : undefined,
+        });
+    const promptCase = (argvWithPrompt: string[]) =>
+        argvWithPrompt.includes(PROMPT_PLACEHOLDER) ? ".some(let prompt)" : ".some";
+    const ignoresAccount =
+        SafeJSON.stringify(argv(false, false)) === SafeJSON.stringify(argv(true, false)) &&
+        SafeJSON.stringify(argv(false, true)) === SafeJSON.stringify(argv(true, true));
+
+    if (ignoresAccount) {
+        return [
+            `        case .${driver.id}:`,
+            "            switch prompt {",
+            `            case .none: return ${swiftArgv(argv(false, false))}`,
+            `            case ${promptCase(argv(false, true))}: return ${swiftArgv(argv(false, true))}`,
+            "            }",
+        ];
+    }
+
+    return [
+        `        case .${driver.id}:`,
+        "            switch (account.isEmpty, prompt) {",
+        `            case (true, .none): return ${swiftArgv(argv(false, false))}`,
+        `            case (false, .none): return ${swiftArgv(argv(true, false))}`,
+        `            case (true, ${promptCase(argv(false, true))}): return ${swiftArgv(argv(false, true))}`,
+        `            case (false, ${promptCase(argv(true, true))}): return ${swiftArgv(argv(true, true))}`,
+        "            }",
+    ];
 }
 
 /** One `switch self` over every harness, each case returning the Swift expression `expressionOf` gives. */
@@ -65,9 +120,32 @@ export function renderHarnessSwift(): string {
         "",
         "    /// The colour of the harness's badge, sRGB with each channel 0 to 1.",
         "    public var markColor: (red: Double, green: Double, blue: Double) {",
-        ...switchOverHarnesses(
-            ({ identity: { mark } }) => `(${mark.color.red}, ${mark.color.green}, ${mark.color.blue})`
-        ),
+        ...switchOverHarnesses(({ identity: { mark } }) => swiftColor(mark.color)),
+        "    }",
+        "",
+        "    /// The colour of the tag beside an agent's name in the agent rosters, sRGB with each channel 0 to 1.",
+        "    public var markAccent: (red: Double, green: Double, blue: Double) {",
+        ...switchOverHarnesses(({ identity: { mark } }) => swiftColor(mark.accent)),
+        "    }",
+        "",
+        "    /// The logo as one SVG path in a 24 x 24 box, filled even-odd; nil keeps the badge letter.",
+        "    public var markLogo: String? {",
+        ...switchOverHarnesses(({ identity: { mark } }) => (mark.logo === null ? "nil" : swiftString(mark.logo))),
+        "    }",
+        "",
+        "    /// The id of the provider plugin that carries the harness's driver.",
+        "    public var plugin: String {",
+        ...switchOverHarnesses((driver) => swiftString(driver.identity.plugin)),
+        "    }",
+        "",
+        "    /// The model-provider plugin id of the company behind the harness; its accounts wear the harness's mark.",
+        "    public var vendor: String {",
+        ...switchOverHarnesses((driver) => swiftString(driver.identity.vendor)),
+        "    }",
+        "",
+        "    /// Whether the harness writes a session's sub-agents beside it on disk (`<session>/subagents/`).",
+        "    public var subagentsOnDisk: Bool {",
+        ...switchOverHarnesses((driver) => String(harnessTranscriptFacts(driver.id).subagentsOnDisk)),
         "    }",
         "",
         "    /// The executable a user starts.",
@@ -83,6 +161,23 @@ export function renderHarnessSwift(): string {
         "    /// Argv that resumes a session in the default home (no pinned account).",
         "    public func resumeArgs(sessionId: String) -> [String] {",
         ...switchOverHarnesses((driver) => swiftArgv(harnessLaunch(driver.id).resumeArgv(SESSION_PLACEHOLDER, {}))),
+        "    }",
+        "",
+        "    /// Whether `tools <agent> cmux open-session` resumes a session into a chosen cmux pane under its own account.",
+        "    public var cmuxOpenSession: Bool {",
+        ...switchOverHarnesses((driver) => String(harnessLaunch(driver.id).cmuxOpenSession)),
+        "    }",
+        "",
+        "    /// Whether `startArgs` pins the account it is given; a new-session sheet asks for one only then.",
+        "    public var startPinsAccount: Bool {",
+        ...switchOverHarnesses((driver) => String(harnessLaunch(driver.id).startPinsAccount)),
+        "    }",
+        "",
+        "    /// Argv that starts a new interactive session; an empty account pins none, a prompt is the first message.",
+        "    public func startArgs(account: String, prompt: String?) -> [String] {",
+        "        switch self {",
+        ...harnessDrivers().flatMap(startArgsCase),
+        "        }",
         "    }",
         "}",
         "",
