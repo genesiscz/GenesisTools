@@ -23,6 +23,7 @@ function fakeDriver(options: {
         priceCandidates: (model) => [model],
         sharedAccountRow: null,
         spendSessionId: (sessionId) => sessionId,
+        spendLayout: { kind: "rows" },
     };
 }
 

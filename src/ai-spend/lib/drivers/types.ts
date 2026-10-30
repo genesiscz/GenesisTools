@@ -94,4 +94,19 @@ export interface MonitorDriver {
      * worker's provider home, when known); null when the transcript that names it is not on disk.
      */
     spendSessionId(sessionId: string, home: string | null | undefined): string | null;
+    /** Where a transcript names its session and project (`reports/native.ts` picks its reader by the kind). */
+    spendLayout: SpendLayout;
 }
+
+/**
+ * Where a transcript names its session and project: in each row (`rows`, the row parser reads both), or in its path
+ * (`path`, the driver's line parser reads the usage and the layout supplies the rest).
+ */
+export type SpendLayout =
+    | { kind: "rows" }
+    | {
+          kind: "path";
+          session(file: string): string;
+          /** Empty when the layout names no project. */
+          project(file: string): string;
+      };

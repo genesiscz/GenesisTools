@@ -1,15 +1,23 @@
 import { type Dirent, existsSync, readdirSync, statSync } from "node:fs";
-import { basename, dirname, join, sep } from "node:path";
+import { basename, join, sep } from "node:path";
 import type { AccountEntry } from "@genesiscz/utils/ai/config/schema";
 import type { DiscoveredHome } from "@genesiscz/utils/ai/providers/account-features";
 import { logger } from "@genesiscz/utils/logger";
-import { transcriptStem } from "@genesiscz/utils/providers/session-paths";
+
 import { resolveDriverRoots, rootForFile } from "../account-roots";
+import { spendDriver } from "../drivers";
 import { claudeDriver } from "../drivers/claude";
 import { codexDriver } from "../drivers/codex";
 import { grokDriver } from "../drivers/grok";
 import { num } from "../drivers/parse-helpers";
-import type { AgentId, ByAgent, DriverRoot, DriverUsageEvent, MonitorDriver } from "../drivers/types";
+import {
+    AGENT_IDS,
+    type AgentId,
+    type DriverRoot,
+    type DriverUsageEvent,
+    type MonitorDriver,
+    type SpendLayout,
+} from "../drivers/types";
 import { findRecentTranscripts } from "../monitor";
 import { prof } from "../prof";
 import { asRecord, asString, parseJsonValue } from "./jsonl";
@@ -151,26 +159,8 @@ function parseClaudeLine(line: string, file: string): SpendEvent[] {
     return events;
 }
 
-/**
- * Where Codex and Grok keep a transcript's session id and project: in its path. Claude's rows carry both, so its
- * parser never asks (`parseClaudeLine`).
- */
-interface PathLayout {
-    session(file: string): string;
-    /** Empty when the layout names no project. */
-    project(file: string): string;
-}
-
-const CODEX_LAYOUT: PathLayout = {
-    session: (file) => transcriptStem(basename(file)),
-    project: () => "",
-};
-
-/** Native grok is `<project>/<sessionId>/updates.jsonl`. */
-const GROK_LAYOUT: PathLayout = {
-    session: (file) => basename(dirname(file)),
-    project: (file) => basename(dirname(dirname(file))),
-};
+/** A driver whose transcripts name their session and project in the path (`MonitorDriver.spendLayout`). */
+type PathLayout = Extract<SpendLayout, { kind: "path" }>;
 
 export interface NativeChunkOptions {
     driver: MonitorDriver;
@@ -198,7 +188,7 @@ export interface NativeChunkResult {
  * series and a report disagreeing about the same file.
  */
 export function parseNativeChunk(options: NativeChunkOptions): NativeChunkResult {
-    return NATIVE_READS[options.source].parseChunk(options);
+    return nativeRead(options.source).parseChunk(options);
 }
 
 function parseClaudeChunk({ file, chunk }: NativeChunkOptions): NativeChunkResult {
@@ -365,7 +355,7 @@ function parseDriverFiles(options: DriverFilesOptions): SpendEvent[] {
     const events: SpendEvent[] = [];
 
     for (const file of files) {
-        const parsed = NATIVE_READS[source].parseFile({ driver, source, file, sessionId });
+        const parsed = nativeRead(source).parseFile({ driver, source, file, sessionId });
 
         if (parsed === null) {
             continue;
@@ -556,20 +546,22 @@ function pathNamedRead(driver: MonitorDriver, layout: PathLayout): NativeRead {
     };
 }
 
-const NATIVE_READS: ByAgent<NativeRead> = {
-    claude: {
-        driver: claudeDriver,
-        parseChunk: parseClaudeChunk,
-        parseFile: parseClaudeFile,
-        sessionFiles: claudeSessionFiles,
-    },
-    codex: pathNamedRead(codexDriver, CODEX_LAYOUT),
-    grok: pathNamedRead(grokDriver, GROK_LAYOUT),
-};
+/** The reader of a driver whose rows carry their session and project (`spendLayout.kind` "rows"). */
+function rowNamedRead(driver: MonitorDriver): NativeRead {
+    return { driver, parseChunk: parseClaudeChunk, parseFile: parseClaudeFile, sessionFiles: claudeSessionFiles };
+}
+
+/** How ai-spend reads a source's transcripts, chosen by its driver's `spendLayout`. */
+function nativeRead(source: NativeSourceId): NativeRead {
+    const driver = spendDriver(source);
+    const layout = driver.spendLayout;
+
+    return layout.kind === "rows" ? rowNamedRead(driver) : pathNamedRead(driver, layout);
+}
 
 /** Whether ai-spend reads this source from a coding agent's own transcripts (through a `MonitorDriver`). */
 export function isNativeSource(source: SourceId): source is NativeSourceId {
-    return Object.hasOwn(NATIVE_READS, source);
+    return AGENT_IDS.some((id) => id === source);
 }
 
 /**
@@ -591,7 +583,7 @@ export function loadNativeSessionEvents(
         return undefined;
     }
 
-    const { driver, sessionFiles } = NATIVE_READS[source];
+    const { driver, sessionFiles } = nativeRead(source);
     const roots = driverRoots(driver, options);
     const files = sessionFiles({
         driver,
@@ -609,5 +601,5 @@ export function loadNativeSessionEvents(
 }
 
 export function nativePriceCandidates(source: NativeSourceId, model: string): string[] {
-    return NATIVE_READS[source].driver.priceCandidates(model);
+    return spendDriver(source).priceCandidates(model);
 }

@@ -1,5 +1,5 @@
 import { existsSync, readFileSync } from "node:fs";
-import { dirname, join } from "node:path";
+import { basename, dirname, join } from "node:path";
 import { createGrokUsageParser } from "@genesiscz/utils/agent-sessions/readers/grok-usage";
 import { stripModelVariantSuffix } from "@genesiscz/utils/ai/catalog";
 import type { AccountEntry } from "@genesiscz/utils/ai/config/schema";
@@ -125,6 +125,13 @@ export const grokDriver: MonitorDriver = {
 
     // Each Grok home belongs to its own account.
     sharedAccountRow: null,
+
+    // Native grok is `<project>/<sessionId>/updates.jsonl`.
+    spendLayout: {
+        kind: "path",
+        session: (file) => basename(dirname(file)),
+        project: (file) => basename(dirname(dirname(file))),
+    },
 
     // ai-spend keys Grok usage by the session id itself (the session folder's name).
     spendSessionId: (sessionId) => sessionId,

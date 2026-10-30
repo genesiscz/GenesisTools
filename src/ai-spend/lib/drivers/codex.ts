@@ -101,6 +101,9 @@ export const codexDriver: MonitorDriver = {
     // Each Codex home belongs to its own account.
     sharedAccountRow: null,
 
+    // A rollout names its thread in its file name and records no project.
+    spendLayout: { kind: "path", session: (file) => transcriptStem(basename(file)), project: () => "" },
+
     /**
      * Codex keys usage by the rollout's file name (`rollout-<time>-<thread id>`), so the thread's rollout is looked up
      * on disk, in the worker's home when known.

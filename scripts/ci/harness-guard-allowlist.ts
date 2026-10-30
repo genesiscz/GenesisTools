@@ -104,7 +104,6 @@ export const HARNESS_GUARD_ALLOWLIST: Readonly<Record<string, HarnessGuardCounts
         table: 1,
         why: "the one tool-owned spend table (SPEND_DRIVERS) that every driver's spend part names: MonitorDriver reads ai-spend's own parsers and pricing",
     },
-    "src/ai-spend/lib/reports/native.ts": { table: 1 },
     "src/ai-spend/lib/reports/types.ts": {
         list: 1,
         table: 3,

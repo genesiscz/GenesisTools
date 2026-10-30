@@ -103,6 +103,9 @@ export const claudeDriver: MonitorDriver = {
     // `~/.claude/projects` records no login (decision D6), so all Claude spend is the "claude (all accounts)" row.
     sharedAccountRow: CLAUDE_ALL_ACCOUNT_ID,
 
+    // Claude's rows carry their session id and project, so the row parser reads them (`parseClaudeLine`).
+    spendLayout: { kind: "rows" },
+
     // ai-spend keys Claude usage by the session id itself.
     spendSessionId: (sessionId) => sessionId,
 };
