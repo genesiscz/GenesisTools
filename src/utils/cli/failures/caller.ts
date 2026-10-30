@@ -1,9 +1,9 @@
 import { existsSync, readdirSync } from "node:fs";
-import { homedir } from "node:os";
 import { join } from "node:path";
 import type { AgentRuntimeContext } from "@genesiscz/utils/agent/context";
 import { nativeHistoryReaders } from "@genesiscz/utils/agent-sessions/compact-readers";
 import { readLastLines } from "@genesiscz/utils/fs/read-lines";
+import { defaultNativeHome, parseCodexHomeList } from "@genesiscz/utils/providers/session-paths";
 import type { FailureCaller } from "./record";
 
 const TAIL_BYTES = 512 * 1024;
@@ -91,18 +91,20 @@ export interface CallerInputs {
 }
 
 /** The transcript of the calling session, when this machine has it. */
-export function transcriptOf({ context, processEnv, now = new Date(), home = homedir() }: CallerInputs): string | null {
+export function transcriptOf({ context, processEnv, now = new Date(), home }: CallerInputs): string | null {
     if (!context.sessionId) {
         return null;
     }
 
     if (context.agent === "claude-code") {
-        const configDir = processEnv.CLAUDE_CONFIG_DIR?.trim() || join(home, ".claude");
+        const configDir = processEnv.CLAUDE_CONFIG_DIR?.trim() || defaultNativeHome("claude", home);
         return claudeTranscript(context.sessionId, [context.cwd, context.repoRoot], configDir);
     }
 
     if (context.agent === "codex") {
-        return codexRollout(context.sessionId, processEnv.CODEX_HOME?.trim() || join(home, ".codex"), now);
+        // The caller's CODEX_HOME is a comma list; its Codex writes rollouts to the first entry.
+        const codexHome = parseCodexHomeList(processEnv.CODEX_HOME)[0] ?? defaultNativeHome("codex", home);
+        return codexRollout(context.sessionId, codexHome, now);
     }
 
     return null;
