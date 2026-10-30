@@ -383,6 +383,9 @@ package func runHub(_ args: [String]) -> Never {
                                 PerfLog.mark("hub.snapshot titlebar \(titlebar)")
                                 FileHandle.standardError.write(Data("hub snapshot: titlebar \(titlebar)\n".utf8))
                                 ReviewSnapshot.write(window: window, webView: showsDiff && !covered ? web : nil, to: snapshotPath) {
+                                    // The size, scale and build beside the PNG (Host/App/SnapshotGeometry.swift).
+                                    SnapshotGeometry.write(png: snapshotPath, face: "hub", backingScale: window.backingScaleFactor,
+                                                           points: window.contentView?.bounds.size)
                                     exit(0)
                                 }
                             }

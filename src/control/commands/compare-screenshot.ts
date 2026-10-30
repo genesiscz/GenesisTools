@@ -4,6 +4,7 @@ import { logger, out } from "@genesiscz/utils/logger";
 import type { Command } from "commander";
 import pc from "picocolors";
 import { DEFAULT_REGION_OPTIONS, type DiffRegion, findDiffRegions, regionAnnotations } from "../lib/diff-regions";
+import { comparePairGeometry, readSnapshotGeometry } from "../lib/snapshot-geometry";
 
 interface CompareOptions {
     threshold: string;
@@ -31,7 +32,7 @@ export function registerCompareScreenshotCommand(program: Command): void {
     program
         .command("compare-screenshot <a> <b>")
         .description(
-            "Pixelmatch two images: mismatch count/percentage + similarity score, optional diff PNG.\nExit 0 = within --max-mismatch (or no gate), 1 = over it, 2 = unusable inputs (e.g. dimension mismatch without --resize-to-match)."
+            "Pixelmatch two images: mismatch count/percentage + similarity score, optional diff PNG.\nA GenesisTools --snapshot pair is checked by its geometry sidecars (<shot>.geometry.json): another point size is refused, the same size at another scale is resampled and reported.\nExit 0 = within --max-mismatch (or no gate), 1 = over it, 2 = unusable inputs (e.g. a size mismatch without --resize-to-match)."
         )
         .option(
             "--threshold <0..1>",
@@ -85,9 +86,18 @@ export function registerCompareScreenshotCommand(program: Command): void {
             }
 
             let resized = false;
+            const geometry = comparePairGeometry(await readSnapshotGeometry(aPath), await readSnapshotGeometry(bPath));
+            if (geometry.kind === "size-mismatch" && !opts.resizeToMatch) {
+                logger.error(
+                    `${geometry.message}. Render both at the same --width and --height, or pass --resize-to-match to scale B onto A`
+                );
+                process.exit(2);
+            }
 
+            const resampleNote =
+                geometry.kind === "rescale" || geometry.kind === "size-mismatch" ? geometry.message : undefined;
             if (a.width !== b.width || a.height !== b.height) {
-                if (!opts.resizeToMatch) {
+                if (!opts.resizeToMatch && geometry.kind !== "rescale") {
                     logger.error(
                         `dimension mismatch: ${a.width}x${a.height} vs ${b.width}x${b.height} — pass --resize-to-match to scale B onto A`
                     );
@@ -153,6 +163,10 @@ export function registerCompareScreenshotCommand(program: Command): void {
                     diffOut: opts.diffOut,
                     regions,
                     annotateOut: opts.annotateOut,
+                    geometry:
+                        geometry.kind === "unknown"
+                            ? undefined
+                            : { verdict: geometry.kind, a: geometry.a, b: geometry.b, note: resampleNote },
                 });
             } else {
                 const verdict =
@@ -167,6 +181,10 @@ export function registerCompareScreenshotCommand(program: Command): void {
 
                 if (opts.diffOut) {
                     out.println(pc.dim(`diff -> ${opts.diffOut}`));
+                }
+
+                if (resampleNote) {
+                    out.println(pc.yellow(resampleNote));
                 }
 
                 if (regions) {

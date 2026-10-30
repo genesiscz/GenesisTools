@@ -115,6 +115,7 @@ final class FeatureSettingsShell: FeatureSettingsPluginHost {
                 try png.write(to: URL(fileURLWithPath: path))
                 FileHandle.standardError.write(
                     Data("snapshot: \(path) \(rep.pixelsWide)x\(rep.pixelsHigh) by \(capture.method)\n".utf8))
+                SnapshotGeometry.write(png: path, face: "features", backingScale: window.backingScaleFactor)
                 exit(0)
             } catch {
                 FileHandle.standardError.write(Data("snapshot: \(error.localizedDescription)\n".utf8))
