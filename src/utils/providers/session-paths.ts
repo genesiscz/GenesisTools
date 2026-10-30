@@ -52,6 +52,27 @@ export function nativeHome(kind: NativeSessionProvider, home = homedir()): strin
 }
 
 /**
+ * A path inside the agent's home: `nativeHomePath("claude", "teams")` is `$CLAUDE_CONFIG_DIR/teams` or
+ * `~/.claude/teams`, `nativeHomePath("codex", "config.toml")` the primary Codex home's config. Every hand-joined
+ * `join(homedir(), ".claude", …)` becomes a call here, so an override reaches each reader (lint-rules
+ * `no-hand-built-claude-home`, `no-hand-built-codex-grok-home`).
+ */
+export function nativeHomePath(kind: NativeSessionProvider, ...segments: string[]): string {
+    return join(nativeHome(kind), ...segments);
+}
+
+/**
+ * Claude Code's `.claude.json` (accounts, MCP servers, project trust). Claude Code reads it from
+ * `$CLAUDE_CONFIG_DIR/.claude.json` when that variable is set (`src/claude/lib/launch-env.ts`), else from the home
+ * folder. On 2026-10-25 `src/utils/claude/auth.ts` read `~/.claude.json` while `launch-env.ts` honoured the
+ * variable, so with it set the two read different files; this is the one answer.
+ */
+export function claudeJsonPath(home = homedir()): string {
+    const configDir = env.paths.getClaudeConfigDir();
+    return configDir ? join(configDir, ".claude.json") : join(home, ".claude.json");
+}
+
+/**
  * On-disk CLI session stores. Claude: `~/.claude/projects`. Grok:
  * `~/.grok/sessions`. Codex: `~/.codex/sessions` plus `archived_sessions`.
  * `CLAUDE_CONFIG_DIR`, `GROK_HOME`, and `CODEX_HOME` (comma list) override.
