@@ -5,6 +5,7 @@ import { deferredLocator } from "@genesiscz/utils/harness/deferred";
 import type { HarnessDriver } from "@genesiscz/utils/harness/types";
 import { pending, toolOwned } from "@genesiscz/utils/harness/types";
 import { claudeDialog } from "./harness-dialog";
+import { claudeHooks } from "./harness-hooks";
 import { claudeLaunch } from "./harness-launch";
 
 import { claudeWorker } from "./harness-worker";
@@ -59,7 +60,7 @@ export const claudeHarness: HarnessDriver<"claude"> = {
             eventLog: () => null,
         },
         exit: { command: "/exit" },
-        hooks: pending("P4", "the claude entries of HARNESS_HOOK_FACTS and HOOK_INSTALLERS in src/agents"),
+        hooks: claudeHooks,
         statusline: pending("P4", "the claude statusline host in src/ai/commands/statusline"),
         compaction: pending(
             "P5",

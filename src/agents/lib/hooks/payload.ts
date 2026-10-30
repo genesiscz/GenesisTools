@@ -1,3 +1,6 @@
+import { byHarness, isAccountProviderAlias } from "@genesiscz/utils/ai/providers/alias-list";
+import { harnessHooks } from "@genesiscz/utils/ai/providers/harness-hooks";
+import type { HookFacts } from "@genesiscz/utils/harness/parts";
 import { SafeJSON } from "@genesiscz/utils/json";
 import type { HarnessName } from "./config";
 
@@ -34,27 +37,11 @@ export interface HookPayload {
     raw: Record<string, unknown>;
 }
 
-/** What a hook may assume about the harness that ran it. One entry per harness, so a new one names each answer. */
-export interface HarnessHookFacts {
-    /** Its diff-log entries are filled from its transcript (`extendFromTranscripts` reads the tool calls there). */
-    diffLogFromTranscript: boolean;
-    /** Its transcript's earlier tool inputs name the paths a Bash diff attributes (`refreshMentions`). */
-    transcriptMentions: boolean;
-    /** The GenesisTools mods plugin runs inside it and draws the full diffs itself. */
-    modsDrawDiffs: boolean;
-    /**
-     * Its model may come from `~/.claude/settings.json` when the transcript names none. Only Claude's: that file says
-     * nothing about the model a Grok session runs (on 2026-09-16 every grok row was logged as "sonnet" because of it).
-     */
-    settingsModel: boolean;
-}
+/** What a hook may assume about the harness that ran it: its driver's `hooks` part (`HookFacts`). */
+export type HarnessHookFacts = HookFacts;
 
-export const HARNESS_HOOK_FACTS: Record<HarnessName, HarnessHookFacts> = {
-    claude: { diffLogFromTranscript: true, transcriptMentions: true, modsDrawDiffs: true, settingsModel: true },
-    // Grok runs Claude's hooks, and its entries are extended from its transcript like Claude's.
-    grok: { diffLogFromTranscript: true, transcriptMentions: false, modsDrawDiffs: false, settingsModel: false },
-    codex: { diffLogFromTranscript: false, transcriptMentions: false, modsDrawDiffs: false, settingsModel: false },
-};
+/** Each harness's hook facts, read through the light `harness-hooks.ts` door, which loads no driver. */
+export const HARNESS_HOOK_FACTS: Readonly<Record<HarnessName, HarnessHookFacts>> = byHarness(harnessHooks);
 
 /** The facts of a harness named by a stored string (a diff-log row); undefined for a name no harness has. */
 export function harnessHookFacts(name: string): HarnessHookFacts | undefined {
@@ -62,7 +49,7 @@ export function harnessHookFacts(name: string): HarnessHookFacts | undefined {
 }
 
 export function isHarnessName(name: string): name is HarnessName {
-    return Object.hasOwn(HARNESS_HOOK_FACTS, name);
+    return isAccountProviderAlias(name);
 }
 
 function record(value: unknown): Record<string, unknown> | undefined {

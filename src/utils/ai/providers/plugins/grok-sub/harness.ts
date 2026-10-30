@@ -4,6 +4,7 @@ import { interpreterScriptIndex } from "@genesiscz/utils/harness/interpreter-ent
 import { deferredLocator } from "@genesiscz/utils/harness/deferred";
 import type { HarnessDriver } from "@genesiscz/utils/harness/types";
 import { pending, toolOwned, unsupported } from "@genesiscz/utils/harness/types";
+import { grokHooks } from "./harness-hooks";
 import { grokLaunch } from "./harness-launch";
 
 import { grokWorker } from "./harness-worker";
@@ -56,7 +57,7 @@ export const grokHarness: HarnessDriver<"grok"> = {
                     : null,
         },
         exit: { command: "/exit" },
-        hooks: pending("P4", "the grok entries of HARNESS_HOOK_FACTS and HOOK_INSTALLERS in src/agents"),
+        hooks: grokHooks,
         statusline: pending("P4", "the grok statusline host in src/ai/commands/statusline"),
         compaction: pending(
             "P5",

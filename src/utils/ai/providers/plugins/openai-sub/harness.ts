@@ -4,6 +4,7 @@ import { interpreterScriptIndex } from "@genesiscz/utils/harness/interpreter-ent
 import { deferredLocator } from "@genesiscz/utils/harness/deferred";
 import type { HarnessDriver } from "@genesiscz/utils/harness/types";
 import { pending, toolOwned, unsupported } from "@genesiscz/utils/harness/types";
+import { codexHooks } from "./harness-hooks";
 import { codexLaunch } from "./harness-launch";
 
 import { codexWorker } from "./harness-worker";
@@ -52,7 +53,7 @@ export const codexHarness: HarnessDriver<"codex"> = {
             eventLog: () => null,
         },
         exit: { command: "/quit" },
-        hooks: pending("P4", "the codex entries of HARNESS_HOOK_FACTS and HOOK_INSTALLERS in src/agents"),
+        hooks: codexHooks,
         statusline: pending("P4", "the codex statusline host in src/ai/commands/statusline"),
         compaction: pending(
             "P5",

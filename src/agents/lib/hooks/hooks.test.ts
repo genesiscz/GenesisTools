@@ -3621,18 +3621,27 @@ describe("HARNESS_HOOK_FACTS", () => {
             transcriptMentions: true,
             modsDrawDiffs: true,
             settingsModel: true,
+            honoursBareGlobQualifier: false,
+            rendersAnsiDiffs: true,
+            turnIsPromptId: true,
         });
         expect(HARNESS_HOOK_FACTS.grok).toEqual({
             diffLogFromTranscript: true,
             transcriptMentions: false,
             modsDrawDiffs: false,
             settingsModel: false,
+            honoursBareGlobQualifier: true,
+            rendersAnsiDiffs: false,
+            turnIsPromptId: false,
         });
         expect(HARNESS_HOOK_FACTS.codex).toEqual({
             diffLogFromTranscript: false,
             transcriptMentions: false,
             modsDrawDiffs: false,
             settingsModel: false,
+            honoursBareGlobQualifier: true,
+            rendersAnsiDiffs: true,
+            turnIsPromptId: false,
         });
         expect(harnessHookFacts("cursor")).toBeUndefined();
         expect(harnessHookFacts("constructor")).toBeUndefined();

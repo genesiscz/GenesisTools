@@ -121,14 +121,7 @@ export function harnessWorker(id: HarnessId): WorkerCapabilities {
     return slot;
 }
 
-/**
- * A table with one entry per harness, each read from its driver. For an old `Record<HarnessId, T>` export whose
- * callers index it by name: the table stays, its values come from the drivers, and the mapped type still refuses a
- * harness without an entry.
- */
-export function byHarness<T>(pick: (id: HarnessId) => T): Readonly<Record<HarnessId, T>> {
-    return { claude: pick("claude"), codex: pick("codex"), grok: pick("grok") };
-}
+export { byHarness } from "./alias-list";
 
 /** The static facts about a harness's transcript shape; every harness has them. */
 export function harnessTranscriptFacts(id: HarnessId): TranscriptFacts {

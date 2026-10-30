@@ -59,8 +59,10 @@ export const HARNESS_GUARD_ALLOWLIST: Readonly<Record<string, HarnessGuardCounts
         table: 2,
         why: "HOOK_INSTALLERS, the agents tool's one table of hook-file installers (they write settings.json and hooks.json, which the tool owns); Grok runs Claude's hooks and has no entry",
     },
-    "src/agents/lib/changes/blame.ts": { table: 2 },
-    "src/agents/lib/hooks/config.ts": { table: 9 },
+    "src/agents/lib/hooks/config.ts": {
+        table: 6,
+        why: "the user's per-harness hook config shape (guard, diff and question overrides keyed by HarnessName), read from hooks.json; its defaults come from the drivers' hooks parts",
+    },
     "src/agents/lib/hooks/diff/theme.ts": {
         branch: 1,
         why: "a DiffThemeName: the theme named claude follows Claude Code's own /theme, it is no harness",
@@ -69,7 +71,10 @@ export const HARNESS_GUARD_ALLOWLIST: Readonly<Record<string, HarnessGuardCounts
         table: 2,
         why: "the result type of lastSeenPerHarness, keyed by the canonical harness type and filled from HARNESS_NAMES; no fact of its own",
     },
-    "src/agents/lib/hooks/payload.ts": { table: 2 },
+    "src/agents/lib/hooks/payload.ts": {
+        table: 1,
+        why: "the declared type of HARNESS_HOOK_FACTS, which byHarness builds from the drivers' hooks parts through harness-hooks.ts",
+    },
     "src/ai-proxy/commands/session-use.ts": {
         list: 1,
         why: "the ai-proxy upstream-route axis (which upstream answers a request), not the coding-agent harness of a session (plan decision G5)",

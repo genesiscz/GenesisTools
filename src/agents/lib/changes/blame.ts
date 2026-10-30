@@ -1,7 +1,8 @@
 import { spawnSync } from "node:child_process";
 import { readdirSync, readFileSync, statSync } from "node:fs";
 import { dirname, join } from "node:path";
-import { type AccountProviderAlias, isAccountProviderAlias } from "@genesiscz/utils/ai/providers/alias-list";
+import { isAccountProviderAlias } from "@genesiscz/utils/ai/providers/alias-list";
+import { harnessHooks } from "@genesiscz/utils/ai/providers/harness-hooks";
 import { listWorktrees } from "@genesiscz/utils/git";
 import { SafeJSON } from "@genesiscz/utils/json";
 import { logger } from "@genesiscz/utils/logger";
@@ -452,17 +453,6 @@ async function cachedTurnPrompts(session: string, turns: string[]): Promise<Map<
     return found;
 }
 
-/**
- * Whether a provider's change-log turn is the id of the prompt row that started it, so `deps.prompts` can find the
- * prompt. Claude's turn is the prompt's `promptId` (`turnPrompts`); a Codex or Grok turn names no such row, so their
- * lines show no prompt.
- */
-const TURN_IS_PROMPT_ID: Record<AccountProviderAlias, boolean> = {
-    claude: true,
-    codex: false,
-    grok: false,
-};
-
 export interface BlameDeps {
     checkouts: (repo: string) => Promise<string[]>;
     events: (paths: ReadonlySet<string>, since: Date) => { events: ChangeEvent[]; logs: number };
@@ -549,7 +539,8 @@ export async function blameFiles(
     }
 
     const prompted = sources.filter(
-        (source) => isAccountProviderAlias(source.provider) && TURN_IS_PROMPT_ID[source.provider]
+        // A turn that is the prompt row's id lets `deps.prompts` find the prompt (`HookFacts.turnIsPromptId`).
+        (source) => isAccountProviderAlias(source.provider) && harnessHooks(source.provider).turnIsPromptId
     );
 
     for (const session of new Set(prompted.map((source) => source.session))) {
