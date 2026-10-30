@@ -42,11 +42,13 @@ export function execToolBridge({
     tools,
     sessionsIn,
     sessionId,
+    model,
 }: {
     tools: unknown;
     sessionsIn: SessionsInConfig | undefined;
     /** The Claude Code session, whose `store` and `load` its scripts share. */
     sessionId?: string;
+    model?: string;
 }): ExecToolBridge | undefined {
     if (sessionsIn?.claude?.providers?.codex?.execTool === false) {
         return undefined;
@@ -77,7 +79,8 @@ export function execToolBridge({
             name === EXEC_TOOL_NAME
                 ? {
                       name: EXEC_CLIENT_TOOL,
-                      input: (js) => execBashInput({ js, bun: process.execPath, runner: EXEC_RUNNER_PATH, sessionId }),
+                      input: (js) =>
+                          execBashInput({ js, bun: process.execPath, runner: EXEC_RUNNER_PATH, sessionId, model }),
                   }
                 : undefined,
     };

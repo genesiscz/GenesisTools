@@ -59,6 +59,7 @@ export function execBashInput({
     bun,
     runner,
     sessionId,
+    model,
 }: {
     js: string;
     /** The Bun binary that runs the runner, by absolute path. */
@@ -67,12 +68,14 @@ export function execBashInput({
     runner: string;
     /** The Claude Code session, whose `store` and `load` the script uses. */
     sessionId?: string;
+    model?: string;
 }): ExecBashInput {
     const delimiter = execDelimiter(js);
     const session = sessionId ? ` --session ${shellQuote(sessionId)}` : "";
+    const modelArg = model ? ` --model ${shellQuote(model)}` : "";
 
     return {
-        command: `${shellQuote(bun)} ${shellQuote(runner)}${session} <<'${delimiter}'\n${js}\n${delimiter}`,
+        command: `${shellQuote(bun)} ${shellQuote(runner)}${session}${modelArg} <<'${delimiter}'\n${js}\n${delimiter}`,
         description: `exec: ${summaryLine(js)}`,
         timeout: EXEC_BASH_TIMEOUT_MS,
     };

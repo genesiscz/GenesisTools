@@ -1,5 +1,6 @@
 import { describe, expect, it } from "bun:test";
 import { createHash } from "node:crypto";
+import { existsSync } from "node:fs";
 import { DEFAULT_HOOKS_CONFIG } from "@app/agents/lib/hooks/config";
 import { evaluateCommand } from "@app/agents/lib/hooks/guard";
 import {
@@ -94,7 +95,7 @@ describe("exec's Bash command", () => {
     });
 
     for (const shell of ["/bin/zsh", "/bin/sh"]) {
-        it(`runs through ${shell} with the script intact`, async () => {
+        (existsSync(shell) ? it : it.skip)(`runs through ${shell} with the script intact`, async () => {
             const js = [
                 "const block = `",
                 "EOF",
