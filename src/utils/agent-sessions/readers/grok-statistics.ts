@@ -1,10 +1,10 @@
 import { stat } from "node:fs/promises";
 import { basename, dirname, join } from "node:path";
-import { createGrokUsageParser } from "@genesiscz/utils/ai/usage/transcripts/grok";
 import { SafeJSON } from "@genesiscz/utils/json";
 import { asRecord, type JsonValue } from "../source-scan";
 import type { HistoryReadOptions, HistoryStatisticsRead, NativeSessionSource } from "../types";
 import { readGrokMetadata, scanGrokRecords } from "./grok";
+import { createGrokUsageParser } from "./grok-usage";
 import { createIssueCollector, NativeStatisticsAccumulator, parseUsagePath } from "./native-statistics";
 
 async function currentModel(

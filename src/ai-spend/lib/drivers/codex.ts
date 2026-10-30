@@ -1,6 +1,6 @@
+import { createCodexUsageParser } from "@genesiscz/utils/agent-sessions/readers/codex-usage";
 import { stripModelVariantSuffix } from "@genesiscz/utils/ai/catalog";
 import type { AccountEntry } from "@genesiscz/utils/ai/config/schema";
-import { createCodexUsageParser } from "@genesiscz/utils/ai/usage/transcripts/codex";
 import {
     isNativeTranscript,
     nativeSessionRoots,

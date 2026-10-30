@@ -1,8 +1,8 @@
 import { existsSync, readFileSync } from "node:fs";
 import { dirname, join } from "node:path";
+import { createGrokUsageParser } from "@genesiscz/utils/agent-sessions/readers/grok-usage";
 import { stripModelVariantSuffix } from "@genesiscz/utils/ai/catalog";
 import type { AccountEntry } from "@genesiscz/utils/ai/config/schema";
-import { createGrokUsageParser } from "@genesiscz/utils/ai/usage/transcripts/grok";
 import { SafeJSON } from "@genesiscz/utils/json";
 import { logger } from "@genesiscz/utils/logger";
 import {
