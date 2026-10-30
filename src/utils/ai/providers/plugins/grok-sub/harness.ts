@@ -26,7 +26,12 @@ export const grokHarness: HarnessDriver<"grok"> = {
             "compaction reads the history part today (src/utils/ai/compact/sources.ts); a contract of its own only if a harness needs one"
         ),
         host: { agent: "grok", sessionEnvKey: "GROK_SESSION_ID", detects: isGrok, resolve: resolveGrokContext },
-        process: pending("P6", "the grok argv patterns in src/utils/process/classify.ts"),
+        process: {
+            runsCli: ({ name, command }) =>
+                name === "grok" ||
+                /^grok-\d+(?:\.\d+)*(?:-[\w-]+)?$/.test(name) ||
+                /\bgrok-cli\/dist\/index\.m?js\b/.test(command),
+        },
         history: () => import("@genesiscz/utils/agent-sessions/compact-readers").then((m) => m.grokHistoryReader),
         cmux: toolOwned(
             "src/cmux/lib/session-agents.ts",

@@ -26,7 +26,10 @@ export const codexHarness: HarnessDriver<"codex"> = {
             "compaction reads the history part today (src/utils/ai/compact/sources.ts); a contract of its own only if a harness needs one"
         ),
         host: { agent: "codex", sessionEnvKey: "CODEX_THREAD_ID", detects: isCodex, resolve: resolveCodexContext },
-        process: pending("P6", "the codex argv patterns in src/utils/process/classify.ts"),
+        process: {
+            runsCli: ({ name, command }) =>
+                /^codex(?:-[\w-]+)?$/.test(name) || /@openai\/codex\/bin\/codex\.m?js\b/.test(command),
+        },
         history: () => import("@genesiscz/utils/agent-sessions/compact-readers").then((m) => m.codexHistoryReader),
         cmux: toolOwned(
             "src/cmux/lib/session-agents.ts",

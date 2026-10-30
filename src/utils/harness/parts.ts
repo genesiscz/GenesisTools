@@ -103,8 +103,12 @@ export interface HostResolver {
 
 /** N: how to recognise the harness in a process command line. */
 export interface ProcessSignature {
-    matches(command: string): boolean;
-    sessionIdFromCommand?(command: string): string | null;
+    /**
+     * Whether a process runs the harness's own CLI: `argv0` is the first word of the command, `name` its basename,
+     * `command` the whole space-joined argv (`ps` output). Script installs started through an interpreter
+     * (`bash ~/.local/bin/grok`) are matched by the caller through `identity.binary`.
+     */
+    runsCli(input: { argv0: string; name: string; command: string }): boolean;
 }
 
 /** Parts that wrap parsers and readers: a driver holds a loader, so reading the driver never loads them. */

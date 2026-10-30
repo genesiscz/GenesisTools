@@ -36,7 +36,12 @@ export const claudeHarness: HarnessDriver<"claude"> = {
             detects: isClaude,
             resolve: resolveClaudeContext,
         },
-        process: pending("P6", "the claude argv patterns in src/utils/process/classify.ts"),
+        process: {
+            runsCli: ({ argv0, name, command }) =>
+                name === "claude" ||
+                /\/claude\/versions\/[\d.]+$/.test(argv0) ||
+                /@anthropic-ai\/claude-code\/cli\.m?js\b/.test(command),
+        },
         history: () => import("@genesiscz/utils/agent-sessions/compact-readers").then((m) => m.claudeHistoryReader),
         cmux: toolOwned(
             "src/cmux/lib/session-agents.ts",
