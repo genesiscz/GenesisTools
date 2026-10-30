@@ -2,6 +2,7 @@ import { afterEach, describe, expect, spyOn, test } from "bun:test";
 import { mkdtempSync, rmSync } from "node:fs";
 import { tmpdir } from "node:os";
 import { join } from "node:path";
+import { grokLeaderSocket, recordedLeaderSockets } from "@app/grok/lib/leader";
 import * as transcripts from "@genesiscz/utils/ai/transcripts/resolve";
 import { toolsEntrypoint } from "@genesiscz/utils/cli/tools";
 import type { JournalCoverage } from "@genesiscz/utils/cmux/journal-coverage";
@@ -537,6 +538,7 @@ const ACCOUNTS = async () => ({
     accounts: [
         { id: "acc_work", name: "work", provider: "anthropic-sub", enabled: true },
         { id: "acc_side", name: "side", provider: "openai-sub", enabled: true },
+        { id: "acc_shop", name: "shop", provider: "grok-sub", enabled: true },
     ],
 });
 
@@ -620,6 +622,53 @@ test("agents new forwards an explicit --no-cross-messages to tools claude run", 
     expect(calls.find((call) => call[0] === "workspace")).toContain(
         withPidNote(`${TOOLS} 'claude' 'run' 'work' '--no-cross-messages'`, "/state/sessions/held.pid")
     );
+});
+
+test("a grok session joins its account's leader under a known session id, and the record names both", async () => {
+    const { io, calls } = harness();
+    const store = memoryStore();
+    const ids = ["11111111-1111-4111-8111-111111111111", "22222222-2222-4222-8222-222222222222"];
+    const deps = { io, store, accounts: ACCOUNTS, sessionId: () => ids.shift() ?? "unexpected" };
+    const socket = grokLeaderSocket("shop");
+
+    const stdout = await captureStdout(() =>
+        runSessionNew("grok", { repo: "/repo/app", account: "shop", name: "One", prompt: "go", json: true }, deps)
+    );
+    await captureStdout(() => runSessionNew("grok", { repo: "/repo/app", account: "shop", name: "Two" }, deps));
+
+    const lines = calls.filter((call) => call[0] === "workspace");
+    expect(lines[0]).toContain(
+        withPidNote(
+            `${TOOLS} 'grok' 'run' 'shop' '--leader-socket' ${shellQuote(socket)} '--session-id' '${"1".repeat(8)}-1111-4111-8111-111111111111' '--' 'go'`,
+            "/state/sessions/one.pid"
+        )
+    );
+    expect(SafeJSON.parse(stdout, { strict: true })).toMatchObject({
+        providers: { grok: { leader: { socket, sessionId: "11111111-1111-4111-8111-111111111111" } } },
+    });
+    const records = openSessions(store.read());
+    expect(records.map((record) => record.providers?.grok?.leader)).toEqual([
+        { socket, sessionId: "11111111-1111-4111-8111-111111111111" },
+        { socket, sessionId: "22222222-2222-4222-8222-222222222222" },
+    ]);
+    // One leader per account: the second session joins the first one's socket.
+    expect(recordedLeaderSockets("22222222-2222-4222-8222-222222222222", store)).toEqual([socket]);
+    expect(recordedLeaderSockets("33333333-3333-4333-8333-333333333333", store)).toEqual([]);
+    // Restore drops the first prompt and keeps the leader flags; the launcher ignores --session-id on a resume.
+    expect(agentRunLauncher(lines[0]?.find((arg) => arg.includes("--leader-socket")) ?? "")?.launcher).toBe(
+        `${shellWord(toolsEntrypoint())} grok run shop --leader-socket ${shellWord(socket)} --session-id 11111111-1111-4111-8111-111111111111`
+    );
+});
+
+test("a claude or codex session carries no provider block", async () => {
+    const { io } = harness();
+    const store = memoryStore();
+
+    await captureStdout(() =>
+        runSessionNew("codex", { repo: "/repo/app", account: "side", name: "Plain" }, { io, store, accounts: ACCOUNTS })
+    );
+    expect(store.lines[0]).not.toHaveProperty("providers");
+    expect(sessionAgent("claude").launchExtras).toBeNull();
 });
 
 test("two starts with the same --name in parallel open one workspace and one record; the other is refused", async () => {

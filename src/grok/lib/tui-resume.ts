@@ -22,6 +22,26 @@ export interface GrokTuiSpawnInput {
     authPath?: string;
     /** The home the session tree lives in; the session's own home wins over it. */
     home?: string;
+    /** Run the session inside the shared leader on this socket (`--leader --leader-socket`); it starts one if none answers. */
+    leaderSocket?: string;
+    /** The id a NEW conversation gets (`--session-id`); ignored when the launch resumes or continues one. */
+    sessionId?: string;
+}
+
+/** Native flags that pick an existing conversation, so a `--session-id` for a new one must not go with them. */
+const PICKS_A_SESSION = /^(?:-r|--resume|-c|--continue|-s|--session-id)(?:=|$)/;
+
+/** `--leader --leader-socket <sock>`, plus `--session-id <id>` when the launch starts a new conversation. */
+function leaderArgs(options: GrokTuiSpawnInput): string[] {
+    const resumes =
+        options.session !== undefined ||
+        options.nativeResume === true ||
+        options.continueLast === true ||
+        (options.passthrough ?? []).some((arg) => PICKS_A_SESSION.test(arg));
+    return [
+        ...(options.leaderSocket ? ["--leader", "--leader-socket", options.leaderSocket] : []),
+        ...(options.sessionId && !resumes ? ["--session-id", options.sessionId] : []),
+    ];
 }
 
 /**
@@ -57,7 +77,12 @@ export function buildGrokTuiSpawn(options: GrokTuiSpawnInput): {
     }
 
     return {
-        cmd: [...mode, ...(options.model ? ["-m", options.model] : []), ...(options.passthrough ?? [])],
+        cmd: [
+            ...mode,
+            ...(options.model ? ["-m", options.model] : []),
+            ...leaderArgs(options),
+            ...(options.passthrough ?? []),
+        ],
         // The shared launch path already chose between the session's directory and the
         // requested one (and warned when the recorded one is gone), so an explicit cwd wins.
         cwd: options.cwd ?? session?.cwd ?? process.cwd(),

@@ -88,3 +88,43 @@ test("query resume opens the selected session's native home without changing the
         expect(buildGrokTuiSpawn({ binary: "/fixture/grok" }).env.GROK_HOME).toBe("/personal-home");
     });
 });
+
+describe("buildGrokTuiSpawn in leader mode", () => {
+    test("a leader launch joins the socket, and a new conversation gets the session id", () => {
+        const fresh = buildGrokTuiSpawn({
+            binary: "/fixture/grok",
+            leaderSocket: "/state/leaders/shop.sock",
+            sessionId: "sess_new",
+            passthrough: ["go"],
+        });
+        expect(fresh.cmd.slice(1)).toEqual([
+            "--leader",
+            "--leader-socket",
+            "/state/leaders/shop.sock",
+            "--session-id",
+            "sess_new",
+            "go",
+        ]);
+    });
+
+    test.each([
+        ["a picked session", { session: SESSION }],
+        ["the native picker", { nativeResume: true }],
+        ["continue", { continueLast: true }],
+        ["a pinned -r", { passthrough: ["-r", "sess_0001"] }],
+        ["a pinned --resume=", { passthrough: ["--resume=sess_0001"] }],
+    ])("a resume through %s keeps the leader and drops the new-conversation id", (_label, extra) => {
+        const spawn = buildGrokTuiSpawn({
+            binary: "/fixture/grok",
+            leaderSocket: "/state/leaders/shop.sock",
+            sessionId: "sess_new",
+            ...extra,
+        });
+        expect(spawn.cmd).toContain("--leader-socket");
+        expect(spawn.cmd).not.toContain("--session-id");
+    });
+
+    test("without a leader socket the argv is unchanged", () => {
+        expect(buildGrokTuiSpawn({ binary: "/fixture/grok", passthrough: ["go"] }).cmd.slice(1)).toEqual(["go"]);
+    });
+});

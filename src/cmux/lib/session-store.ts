@@ -39,6 +39,17 @@ export interface SessionCreatedRecord {
     createdAt: string;
     /** `session-agent-new` on lines written before the command moved to `tools cmux agents new`. */
     createdBy: "agents-new" | "session-agent-new";
+    /** What one provider's launch set up for this session, under that provider. Absent on older lines. */
+    providers?: SessionProviderBlocks;
+}
+
+/**
+ * Provider-specific facts of a recorded session, one block per provider. Grok: the leader the TUI joined
+ * (`--leader --leader-socket`) and the session id it was started with (`--session-id`), so a second ACP client can
+ * prompt that session through the leader without keystrokes.
+ */
+export interface SessionProviderBlocks {
+    grok?: { leader: { socket: string; sessionId: string } };
 }
 
 export interface SessionClosedRecord {

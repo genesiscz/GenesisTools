@@ -1,3 +1,4 @@
+import { mkdirSync } from "node:fs";
 import { basename, dirname } from "node:path";
 import type { AgentLauncher } from "@app/ai/commands/agent/spec";
 import { MODEL_ROLES } from "@genesiscz/utils/ai/catalog/roles";
@@ -53,6 +54,13 @@ interface LegacyWorkerFlags {
 
 export const grokLauncher: AgentLauncher = {
     extendRun(command) {
+        command
+            .option(
+                "--leader-socket <path>",
+                "Run the session in the shared Grok leader on this socket (starts one when none answers), so another client can prompt it"
+            )
+            .option("--session-id <uuid>", "The id a new conversation gets (ignored when resuming or continuing)");
+
         // `tools grok run --name x --cwd y` was the headless worker before `run` meant the TUI on
         // every tool. The flags stay, hidden, and route to the worker with a notice.
         for (const [flags, description] of [
@@ -125,6 +133,13 @@ export const grokLauncher: AgentLauncher = {
                 );
             }
 
+            // `--leader-socket <path> --session-id <uuid>`: the TUI joins a shared leader under a known id.
+            const { leaderSocket, sessionId } = input.flags;
+            if (typeof leaderSocket === "string") {
+                // The leader the TUI starts binds the socket; its folder has to exist.
+                mkdirSync(dirname(leaderSocket), { recursive: true, mode: 0o700 });
+            }
+
             const spawn = buildGrokTuiSpawn({
                 binary,
                 ...(input.session === undefined ? {} : { session: input.session }),
@@ -136,6 +151,8 @@ export const grokLauncher: AgentLauncher = {
                 account: input.account.name,
                 authPath: auth.authPath,
                 home: auth.home,
+                ...(typeof leaderSocket === "string" ? { leaderSocket } : {}),
+                ...(typeof sessionId === "string" ? { sessionId } : {}),
             });
             logger.info(
                 { account: input.account.name, home: spawn.env.GROK_HOME, cwd: spawn.cwd, argv: spawn.cmd.slice(1) },
