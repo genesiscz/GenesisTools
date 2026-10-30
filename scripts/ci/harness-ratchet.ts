@@ -27,7 +27,6 @@ export const HARNESS_BRANCH_RATCHET: ReadonlySet<string> = new Set<string>([
     "src/cmux/lib/tty-capture.ts",
     "src/genesis-tools-mcp/lib/http-caller.ts",
     "src/question/lib/decisions/deliver.ts",
-    "src/utils/ai/openai/native-session-import.ts",
     "src/utils/ai/transcripts/around.ts",
     "src/utils/ai/transcripts/native-scan.ts",
     "src/utils/ai/transcripts/resolve.ts",
