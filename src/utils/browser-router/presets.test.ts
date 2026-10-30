@@ -1,5 +1,6 @@
 import { describe, expect, test } from "bun:test";
-import type { Capability } from "./capabilities";
+import { harnessDrivers } from "@genesiscz/utils/ai/providers/harness-index";
+import { type Capability, hasCapability } from "./capabilities";
 import { applyPresets, presetById, presetRouted, presets, presetWarnings } from "./presets";
 import { defaultRouterConfig, type RouteRule, type RouterConfig, route } from "./route";
 
@@ -232,5 +233,15 @@ describe("decide preset route", () => {
             kind: "run",
             argv: ["tools", "macos", "mail", "open", "4711"],
         });
+    });
+});
+
+describe("harness capabilities", () => {
+    test("every harness has an installed capability that asks for its binary", () => {
+        for (const driver of harnessDrivers()) {
+            const capability: Capability = `${driver.id}:installed`;
+
+            expect(hasCapability(capability)).toBe(Bun.which(driver.identity.binary) !== null);
+        }
     });
 });
