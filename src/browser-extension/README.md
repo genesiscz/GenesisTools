@@ -78,6 +78,39 @@ First install: `build`, `install-host`, then `brave://extensions` > Developer mo
 `dist/browser-extension`. `tools browser-router status` and `tools doctor --only extensions` report
 whether it is loaded, and an older build.
 
+## Router links and typed loopback addresses
+
+The worker installs redirect rules (`main_frame` only) that send a navigation to the route page
+(`extension/route.ts`) before any request leaves the browser: the router's link host, its alias hosts and
+dashboard names (from the build's `router-hosts.json`), and typed `http://localhost:<port>` and
+`http://127.0.0.1:<port>` addresses of registered servers.
+
+A typed loopback address, or a dashboard name such as `https://artifact-library/`, starts its server only when
+the router config's `service` routes for that port carry `allowExecuteByPlainBrowserNavigationMightBeDangerous:
+true` (`tools browser-router presets sync` copies it from `src/utils/ui/dashboards.ts`: every dashboard has it,
+no web service does). A page can move the top frame without the user meaning to start a process, so that flag
+is the only authorization, and it is read live:
+
+- The worker downloads the service list from the host (`router.services`) when it starts (at most once per
+  5 minutes, since a worker wakes for every tab load) and again on every navigation the route page decides. It
+  catches only the ports whose downloaded flag is true AND whose two origins this build was granted. A
+  navigation started by a page on a loopback origin (a dashboard's own links) is not caught.
+- The host checks again: `router.ensure` re-parses the URL, asks the router, and runs
+  `tools browser-router ensure <port>` only when the live entry for that exact port is true. Something already
+  listening is left alone. The route page then continues to `http://localhost:<port>` plus the path in the
+  same tab (one tab, the exact URL, 30 s), and never hands the URL to GenesisTools.app, which would open a
+  second tab. A server that does not come up shows the error with its log path, and the dead page is not opened.
+- A port whose flag is false is not caught, or loads as typed, and is never started from the browser. An
+  external click (GenesisTools.app, the OS handler) is a different trigger and still starts it. A dashboard
+  name whose flag is false waits for a click on the route page.
+- Only `http:` with the host `localhost` or `127.0.0.1` written out literally counts: no https, userinfo,
+  trailing dot, suffix host, `127.0.0.2`, `0.0.0.0`, `[::1]` or `2130706433` (`lib/loopback.ts`).
+
+The build grants `http://127.0.0.1:<port>/*` and `http://localhost:<port>/*` only for ports whose flag is true
+at build time, never a loopback wildcard (that would let the extension fetch the AI proxy and the MCP gateway).
+A flag flipped to false stops the start on the next download, with no rebuild; one flipped to true is caught
+after the next `tools browser-extension build`. `tools browser-extension verify` checks the grants.
+
 ## Config
 
 `~/.genesis-tools/browser-extension/config.json` (`tools browser-extension config --init` writes the

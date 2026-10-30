@@ -10,6 +10,7 @@ import {
     freshnessOf,
     updateRangeFromReply,
 } from "@genesiscz/utils/browser-extension/runtime/freshness";
+import { defaultRouterConfig, type RouteRule } from "@genesiscz/utils/browser-router/route";
 import type { LocalCheckout } from "@genesiscz/utils/git/local-checkouts";
 import { SafeJSON } from "@genesiscz/utils/json";
 import type { EditorTarget, RunResult, TerminalTarget } from "@genesiscz/utils/open-in";
@@ -25,20 +26,35 @@ import {
 } from "../extension/content-dom";
 import { targetFromHash } from "../extension/shared/route-target";
 import { actionValues, runAction } from "./actions";
+import { routerHostPermissions } from "./build";
 import { ConfigError, parseConfig } from "./config";
 import { type Deps, type RunOptions, routedRunner, spawnArgv } from "./deps";
 import { cliTail } from "./errors";
 import { explainHunk } from "./explain";
 import { dispatch } from "./host/dispatch";
 import { extensionIdFromKey, pinnedExtensionId } from "./host/install";
-import { type HostResponse, hostReplyDeadlineMs } from "./host/messages";
+import {
+    EXTENSION_PAGE_COMMANDS,
+    type HostResponse,
+    hostReplyDeadlineMs,
+    type PlainNavigationService,
+} from "./host/messages";
 import { encodeFrame, FrameReader } from "./host/protocol";
 import { openInHub } from "./hub";
+import { allowsPlainNavigation, loopbackPort, loopbackRegex, readPlainNavigationServices } from "./loopback";
 import { openFile } from "./open";
 import { parseForgeUrl, splitRefPath } from "./page-url";
 import { planReview, startReview } from "./review";
-import { explainLink, routeLink } from "./router";
+import {
+    checkRouterLink,
+    ensureLink,
+    explainLink,
+    plainNavigationServices,
+    type RouterHosts,
+    routeLink,
+} from "./router";
 import { checkPageValue, checkRelativePath, fillArgv } from "./values";
+import { loopbackGrantCheck } from "./verify";
 
 const base = makeTempDir("browser-extension-");
 const root = join(base, "app");
@@ -633,8 +649,59 @@ describe("extension profiles", () => {
     });
 });
 
+function service(port: number, name: string, allowed: boolean): PlainNavigationService {
+    return {
+        port,
+        name,
+        allowExecuteByPlainBrowserNavigationMightBeDangerous: allowed,
+        target: `http://localhost:${port}`,
+    };
+}
+
 /** Never the machine's router config: a test must not depend on this Mac. */
-const HOSTS = { linkHost: "links.example.test", hosts: ["dashboard"] };
+const HOSTS: RouterHosts = {
+    linkHost: "links.example.test",
+    hosts: ["dashboard"],
+    services: [
+        service(3000, "Personal Dashboard", true),
+        service(3096, "Artifact Library", true),
+        service(8317, "AI Proxy", false),
+    ],
+};
+
+/** What `tools browser-router explain --json` prints for a registered server's start and open. */
+function serviceDecision(port: number, name: string, url: string): string {
+    return SafeJSON.stringify({
+        kind: "run",
+        via: "route",
+        argv: ["tools", "browser-router", "ensure", String(port)],
+        url,
+        service: { port, name },
+    });
+}
+
+/** `explain` answers `decision`; `ensure` answers `ensured`, or THROWS when the test says nothing may start. */
+function routerDeps({
+    decision,
+    ensured,
+}: {
+    decision: string;
+    ensured?: { code: number; stdout: string; stderr: string };
+}) {
+    return fakeDeps({
+        tools: (args) => {
+            if (args[1] === "explain") {
+                return { code: 0, stdout: decision, stderr: "" };
+            }
+
+            if (args[1] === "ensure" && ensured) {
+                return ensured;
+            }
+
+            throw new Error(`nothing may start here, but it ran tools ${args.join(" ")}`);
+        },
+    });
+}
 
 describe("router", () => {
     it("hands a routed link to GenesisTools.app and keeps an unrouted one in the browser", async () => {
@@ -678,6 +745,7 @@ describe("router", () => {
         expect(await explainLink(started.deps, "http://dashboard/", HOSTS)).toMatchObject({
             handled: true,
             runs: false,
+            plainNavigation: true,
             summary: "start and open Personal Dashboard (http://localhost:3000/)",
         });
         // A saved route that runs something still waits for the click.
@@ -691,6 +759,263 @@ describe("router", () => {
         await expect(explainLink(saved.deps, "http://dashboard:8080/", HOSTS)).rejects.toThrow(
             "only the router's link host"
         );
+    });
+
+    it("reads a typed loopback address only when it is written out literally", () => {
+        expect(loopbackPort("http://127.0.0.1:3096/")).toBe(3096);
+        expect(loopbackPort("http://localhost:3096")).toBe(3096);
+        expect(loopbackPort("http://localhost:3096/a/notes/index?x=1#top")).toBe(3096);
+
+        for (const refused of [
+            "https://127.0.0.1:3096/",
+            "http://127.0.0.1:3096@evil.example/",
+            "http://user:secret@127.0.0.1:3096/",
+            "http://localhost.:3096/",
+            "http://127.0.0.1.:3096/",
+            "http://localhost.evil.example:3096/",
+            "http://127.0.0.1.evil.example:3096/",
+            "http://127.0.0.2:3096/",
+            "http://0.0.0.0:3096/",
+            "http://[::1]:3096/",
+            "http://2130706433:3096/",
+            "http://0x7f.0.0.1:3096/",
+            "http://127.1:3096/",
+            "http://LOCALHOST:3096/",
+            "http://localhost:03096/",
+            "http://localhost/",
+            "http://localhost:80/",
+            "http://localhost:3096\\a",
+            "file:///etc/hosts",
+            42,
+        ]) {
+            expect({ refused, port: loopbackPort(refused) }).toEqual({ refused, port: null });
+        }
+    });
+
+    it("routes a loopback address only for a port whose downloaded flag is true", () => {
+        expect(checkRouterLink("http://127.0.0.1:3096/", HOSTS)).toBe("http://127.0.0.1:3096/");
+        expect(checkRouterLink("http://localhost:3096/a/notes/index?x=1#top", HOSTS)).toBe(
+            "http://localhost:3096/a/notes/index?x=1#top"
+        );
+
+        for (const refused of [
+            "http://127.0.0.1:8317/",
+            "http://localhost:8317/",
+            "http://127.0.0.1:3097/",
+            "https://127.0.0.1:3096/",
+            "http://127.0.0.1:3096@evil.example/",
+            "http://localhost.:3096/",
+            "http://localhost.evil.example:3096/",
+            "http://127.0.0.1.evil.example:3096/",
+            "http://127.0.0.2:3096/",
+            "http://0.0.0.0:3096/",
+            "http://[::1]:3096/",
+            "http://2130706433:3096/",
+        ]) {
+            expect(() => checkRouterLink(refused, HOSTS)).toThrow("only the router's link host");
+        }
+
+        // The decision reads the downloaded list: the same address is refused once its flag reads false.
+        const flipped = { ...HOSTS, services: [service(3096, "Artifact Library", false)] };
+        expect(() => checkRouterLink("http://127.0.0.1:3096/", flipped)).toThrow("only the router's link host");
+        expect(allowsPlainNavigation(flipped.services, 3096)).toBe(false);
+    });
+
+    it("never starts a server whose flag is false, even when explain names its service", async () => {
+        const proxy = routerDeps({ decision: serviceDecision(8317, "AI Proxy", "http://localhost:8317/") });
+        await expect(ensureLink(proxy.deps, "http://127.0.0.1:8317/", HOSTS)).rejects.toThrow(
+            "only the router's link host"
+        );
+        await expect(explainLink(proxy.deps, "http://localhost:8317/", HOSTS)).rejects.toThrow(
+            "only the router's link host"
+        );
+        expect(proxy.calls.tools).toEqual([]);
+
+        // A dashboard name is the same decision: with its flag false it waits for a click and is never ensured here.
+        const closed = { ...HOSTS, services: [service(3000, "Personal Dashboard", false)] };
+        const named = routerDeps({ decision: serviceDecision(3000, "Personal Dashboard", "http://localhost:3000/") });
+        expect(await explainLink(named.deps, "https://dashboard/", closed)).toMatchObject({
+            runs: true,
+            plainNavigation: false,
+        });
+        await expect(ensureLink(named.deps, "https://dashboard/", closed)).rejects.toThrow("needs a click");
+        expect(named.calls.tools.filter((args) => args[1] === "ensure")).toEqual([]);
+
+        // A loopback address must name the port of the server it starts.
+        const elsewhere = routerDeps({
+            decision: serviceDecision(3000, "Personal Dashboard", "http://localhost:3000/"),
+        });
+        await expect(ensureLink(elsewhere.deps, "http://127.0.0.1:3096/", HOSTS)).rejects.toThrow("needs a click");
+        expect(elsewhere.calls.tools.filter((args) => args[1] === "ensure")).toEqual([]);
+    });
+
+    it("starts an allowed server and hands back the rewritten URL for the same tab, never to the app", async () => {
+        const target = "http://localhost:3096/a/notes/index?x=1#top";
+        const cold = routerDeps({
+            decision: serviceDecision(3096, "Artifact Library", target),
+            ensured: { code: 0, stdout: "started Artifact Library\n", stderr: "" },
+        });
+        expect(await ensureLink(cold.deps, "http://127.0.0.1:3096/a/notes/index?x=1#top", HOSTS)).toEqual({
+            port: 3096,
+            name: "Artifact Library",
+            started: true,
+            target,
+        });
+        expect(cold.calls.tools.map((args) => args.slice(0, 3))).toEqual([
+            ["browser-router", "explain", "http://127.0.0.1:3096/a/notes/index?x=1#top"],
+            ["browser-router", "ensure", "3096"],
+        ]);
+        expect(cold.calls.run).toEqual([]);
+        // Handing it to GenesisTools.app would open a second tab.
+        await expect(routeLink(cold.deps, "http://127.0.0.1:3096/", HOSTS)).rejects.toThrow("its own tab");
+        expect(cold.calls.run).toEqual([]);
+
+        // Something already listening is left alone and opened.
+        const warm = routerDeps({
+            decision: serviceDecision(3096, "Artifact Library", "http://localhost:3096/"),
+            ensured: { code: 0, stdout: "Artifact Library is up\n", stderr: "" },
+        });
+        expect(await ensureLink(warm.deps, "http://localhost:3096/", HOSTS)).toMatchObject({ started: false });
+
+        // A dashboard name whose flag is true starts the same way.
+        const named = routerDeps({
+            decision: serviceDecision(3000, "Personal Dashboard", "http://localhost:3000/"),
+            ensured: { code: 0, stdout: "started Personal Dashboard\n", stderr: "" },
+        });
+        expect(await ensureLink(named.deps, "https://dashboard/", HOSTS)).toMatchObject({
+            port: 3000,
+            target: "http://localhost:3000/",
+        });
+    });
+
+    it("a server that does not come up is an error naming its log, not a navigation", async () => {
+        const dead = routerDeps({
+            decision: serviceDecision(3096, "Artifact Library", "http://localhost:3096/"),
+            ensured: {
+                code: 1,
+                stdout: "",
+                stderr: "Artifact Library did not listen on 3096 within 20000ms. Log: /tmp/example/logs/day.log\n",
+            },
+        });
+        await expect(ensureLink(dead.deps, "http://127.0.0.1:3096/", HOSTS)).rejects.toThrow(
+            "Artifact Library did not start: Artifact Library did not listen on 3096 within 20000ms. Log: /tmp/example/logs/day.log"
+        );
+    });
+
+    it("downloads the flag per port from the router config's service routes, true only when every route says so", () => {
+        const route = (port: number, allowed?: boolean): RouteRule => ({
+            pattern: `https?://example-${port}/(.*)`,
+            action: {
+                type: "service",
+                port,
+                name: `Server ${port}`,
+                to: `http://localhost:${port}$1`,
+                ...(allowed === undefined ? {} : { allowExecuteByPlainBrowserNavigationMightBeDangerous: allowed }),
+            },
+        });
+        const config = {
+            ...defaultRouterConfig(),
+            routes: [
+                route(3096, true),
+                route(3096, true),
+                route(3000, true),
+                route(3000),
+                route(8317),
+                route(9886, false),
+            ],
+        };
+        expect(plainNavigationServices(config)).toEqual([
+            service(3000, "Server 3000", false),
+            service(3096, "Server 3096", true),
+            service(8317, "Server 8317", false),
+            service(9886, "Server 9886", false),
+        ]);
+        expect(plainNavigationServices(null)).toEqual([]);
+        // The reply the extension reads: anything that does not parse is dropped, and only a literal true counts.
+        expect(
+            readPlainNavigationServices({
+                services: [
+                    {
+                        port: 3096,
+                        name: "A",
+                        target: "http://localhost:3096",
+                        allowExecuteByPlainBrowserNavigationMightBeDangerous: true,
+                    },
+                    {
+                        port: 3000,
+                        name: "B",
+                        target: "http://localhost:3000",
+                        allowExecuteByPlainBrowserNavigationMightBeDangerous: "true",
+                    },
+                    { port: "8317", name: "C", target: "http://localhost:8317" },
+                    { port: 70_000, name: "D", target: "http://localhost:70000" },
+                ],
+            })
+        ).toEqual([service(3096, "A", true), service(3000, "B", false)]);
+    });
+
+    it("a build grants each allowed port its two loopback origins and never a wildcard", () => {
+        const config = {
+            ...defaultRouterConfig(),
+            linkHost: "links.example.test",
+            routes: [
+                {
+                    pattern: "x",
+                    action: {
+                        type: "service" as const,
+                        port: 3096,
+                        name: "Artifact Library",
+                        to: "http://localhost:3096$1",
+                        allowExecuteByPlainBrowserNavigationMightBeDangerous: true,
+                    },
+                },
+                {
+                    pattern: "y",
+                    action: { type: "service" as const, port: 8317, name: "AI Proxy", to: "http://localhost:8317$1" },
+                },
+            ],
+        };
+        const granted = routerHostPermissions(config);
+        expect(granted).toEqual([
+            "https://links.example.test/*",
+            "http://links.example.test/*",
+            "http://127.0.0.1:3096/*",
+            "http://localhost:3096/*",
+        ]);
+        expect(loopbackGrantCheck({ host_permissions: granted })).toMatchObject({
+            ok: true,
+            detail: "1 port(s): 3096",
+        });
+
+        for (const wide of [
+            "http://127.0.0.1/*",
+            "http://localhost/*",
+            "http://*/*",
+            "<all_urls>",
+            "http://[::1]:3096/*",
+        ]) {
+            expect(loopbackGrantCheck({ host_permissions: [...granted, wide] })).toMatchObject({ ok: false });
+        }
+
+        expect(
+            loopbackGrantCheck({
+                host_permissions: granted,
+                content_scripts: [{ matches: ["http://localhost:3096/*"] }],
+            })
+        ).toMatchObject({ ok: false });
+        expect(loopbackGrantCheck({ host_permissions: ["http://127.0.0.1:3096/*"] })).toMatchObject({ ok: false });
+        // The redirect names each port and both hosts, so a suffix host or another port never matches.
+        const rule = new RegExp(loopbackRegex([3096, 3000]));
+        expect(rule.test("http://127.0.0.1:3096/")).toBe(true);
+        expect(rule.test("http://localhost:3000/a?b")).toBe(true);
+        expect(rule.test("http://127.0.0.1:30960/")).toBe(false);
+        expect(rule.test("http://localhost.evil.example:3096/")).toBe(false);
+        expect(rule.test("http://127.0.0.1:8317/")).toBe(false);
+    });
+
+    it("the service list and the start are commands only the extension's own pages may send", () => {
+        expect(EXTENSION_PAGE_COMMANDS).toContain("router.services");
+        expect(EXTENSION_PAGE_COMMANDS).toContain("router.ensure");
     });
 });
 

@@ -5,7 +5,9 @@ import { ext } from "../chrome";
 export type BackgroundMessage =
     | { type: "host"; command: HostCommand; params?: Record<string, unknown> }
     | { type: "gitlab.sync" }
-    | { type: "router.bypass"; url: string };
+    | { type: "router.bypass"; url: string }
+    /** Downloads the router's service list and re-installs the loopback rule from it. */
+    | { type: "router.services" };
 
 /** Background -> content script: a context-menu entry (or the keyboard shortcut) fired on this tab. */
 export interface MenuMessage {
@@ -42,7 +44,11 @@ export function isBackgroundMessage(value: unknown): value is BackgroundMessage 
         return isHostCommand(value.command) && (value.params === undefined || isRecord(value.params));
     }
 
-    return value.type === "gitlab.sync" || (value.type === "router.bypass" && typeof value.url === "string");
+    return (
+        value.type === "gitlab.sync" ||
+        value.type === "router.services" ||
+        (value.type === "router.bypass" && typeof value.url === "string")
+    );
 }
 
 export function isMenuMessage(value: unknown): value is MenuMessage {

@@ -11,12 +11,14 @@ import {
     writeBuildInfo,
 } from "@genesiscz/utils/browser-extension/build-info";
 import type { UpdateRange } from "@genesiscz/utils/browser-extension/runtime/freshness";
-import { readRouterConfig } from "@genesiscz/utils/browser-router/config";
+import { type RouterConfig, readRouterConfig } from "@genesiscz/utils/browser-router/config";
 import { browserHosts } from "@genesiscz/utils/browser-router/services";
 import { createGit } from "@genesiscz/utils/git";
 import { SafeJSON } from "@genesiscz/utils/json";
 import { logger } from "@genesiscz/utils/logger";
 import { EXTENSION_SOURCE_DIR } from "./host/install";
+import { loopbackOrigins } from "./loopback";
+import { plainNavigationServices } from "./router";
 import { isRecord } from "./values";
 
 const REPO_ROOT = resolve(import.meta.dirname, "..", "..", "..");
@@ -77,10 +79,31 @@ async function bundle({
 export const ROUTER_HOSTS_FILE = "router-hosts.json";
 
 /**
+ * The host permissions a build adds for this router config. The link host, alias hosts and dashboard names on both
+ * protocols, and `http://127.0.0.1:<port>/*` with `http://localhost:<port>/*` for each port whose
+ * `allowExecuteByPlainBrowserNavigationMightBeDangerous` is true at build time. Never a loopback wildcard
+ * (`http://127.0.0.1/*`, `http://localhost/*`, `http://*` + `/*`) and never a port whose flag is false: a wildcard
+ * would let the extension fetch every local server, the AI proxy and the MCP gateway included. A permission is
+ * necessary for a redirect, never the authorization to start anything: the worker and the host read the live flag.
+ */
+export function routerHostPermissions(config: RouterConfig | null): string[] {
+    const wanted = browserHosts(config);
+    const loopback = plainNavigationServices(config)
+        .filter((service) => service.allowExecuteByPlainBrowserNavigationMightBeDangerous)
+        .flatMap((service) => loopbackOrigins(service.port));
+    return [
+        ...(wanted.linkHost ? [`https://${wanted.linkHost}/*`, `http://${wanted.linkHost}/*`] : []),
+        ...wanted.hosts.flatMap((host) => [`http://${host}/*`, `https://${host}/*`]),
+        ...loopback,
+    ];
+}
+
+/**
  * The hosts the router config wants caught in the browser (the link host, alias hosts, dashboard
- * names) are granted in the manifest, since a redirect rule only fires on a host the extension may
- * access, and listed in `router-hosts.json` for the worker. A config change needs a rebuild and a
- * Reload; `tools browser-router status` reports an older build.
+ * names, the loopback ports that allow a plain browser navigation) are granted in the manifest, since
+ * a redirect rule only fires on a host the extension may access. The names are listed in
+ * `router-hosts.json` for the worker; the loopback ports are not, since the worker downloads their
+ * flags. A config change needs a rebuild and a Reload; `tools browser-router status` reports an older build.
  */
 async function grantRouterHosts(outDir: string): Promise<string> {
     const manifestPath = join(outDir, "manifest.json");
@@ -90,16 +113,21 @@ async function grantRouterHosts(outDir: string): Promise<string> {
         throw new Error("manifest.json has no host_permissions array");
     }
 
-    const wanted = browserHosts(readRouterConfig());
-    const granted = [
-        ...(wanted.linkHost ? [`https://${wanted.linkHost}/*`, `http://${wanted.linkHost}/*`] : []),
-        ...wanted.hosts.flatMap((host) => [`http://${host}/*`, `https://${host}/*`]),
-    ];
+    const config = readRouterConfig();
+    const wanted = browserHosts(config);
+    const granted = routerHostPermissions(config);
     manifest.host_permissions = [...new Set([...manifest.host_permissions, ...granted])];
     await Bun.write(manifestPath, `${SafeJSON.stringify(manifest, null, 4)}\n`);
     const hostsPath = join(outDir, ROUTER_HOSTS_FILE);
     await Bun.write(hostsPath, `${SafeJSON.stringify(wanted, null, 4)}\n`);
-    log.info({ linkHost: wanted.linkHost, hosts: wanted.hosts.length }, "extension: granted router hosts");
+    log.info(
+        {
+            linkHost: wanted.linkHost,
+            hosts: wanted.hosts.length,
+            loopback: granted.filter((origin) => origin.startsWith("http://127.0.0.1:")).length,
+        },
+        "extension: granted router hosts"
+    );
     return hostsPath;
 }
 
