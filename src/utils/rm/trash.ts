@@ -70,12 +70,31 @@ export function trashItemName(index: number, path: string): string {
     return `${index}-${hash}-${name}`;
 }
 
+/**
+ * The configured trash root, resolved; throws when its name or what it resolves to (a symlink on the way) is not a
+ * plain path with a `GenesisTools` folder in it, so a root that points at the home folder deletes nothing.
+ */
+export function resolvedTrashRoot(config: RmConfig): string {
+    if (!isTrashRootName(config.trashRoot)) {
+        throw new Error(`rm: refusing the trash root ${config.trashRoot}: not a plain path with a GenesisTools folder`);
+    }
+
+    const real = realOrSelf(config.trashRoot);
+
+    if (!isTrashRootName(real)) {
+        throw new Error(`rm: refusing the trash root ${config.trashRoot}: it resolves to ${real}`);
+    }
+
+    return real;
+}
+
 /** The trash folder for `target`: the configured root on its volume, else `.GenesisTools-rm` at the target's mount. */
 export function trashRootFor(target: RmTarget, config: RmConfig): string {
     mkdirSync(config.trashRoot, { recursive: true });
+    const root = resolvedTrashRoot(config);
 
-    if (lstatSync(target.path).dev === statSync(config.trashRoot).dev) {
-        return realOrSelf(config.trashRoot);
+    if (lstatSync(target.path).dev === statSync(root).dev) {
+        return root;
     }
 
     return join(mountPointOf(dirname(target.path)), VOLUME_TRASH_DIR);
@@ -91,13 +110,9 @@ export function assertInsideTrash(path: string, config: RmConfig, level: "item" 
         throw new Error(`rm: refusing to delete ${SafeJSON.stringify(path)}: not an absolute plain path`);
     }
 
-    if (!isTrashRootName(config.trashRoot)) {
-        throw new Error(`rm: refusing to delete: the trash root ${config.trashRoot} has no GenesisTools folder in it`);
-    }
-
+    const configured = resolvedTrashRoot(config);
     const real = canonicalPath(path);
     const minDepth = level === "item" ? 2 : 1;
-    const configured = realOrSelf(config.trashRoot);
     const segments = pathSegments(real);
     const volumeIndex = segments.lastIndexOf(VOLUME_TRASH_DIR);
     let depth = -1;
@@ -385,7 +400,7 @@ const CLAIM_NAME = /^(.+)\.json\.(?:draining|restoring)-(\d+)$/;
  */
 export async function sweepOrphans(options: DrainOptions & { minAgeMs?: number }): Promise<DrainResult> {
     const paths = options.paths ?? defaultTrashPaths();
-    const root = realOrSelf(options.config.trashRoot);
+    const root = resolvedTrashRoot(options.config);
     const records = existsSync(paths.batchesDir) ? readdirSync(paths.batchesDir) : [];
     const known = new Set(
         records.map((name) => CLAIM_NAME.exec(name)?.[1] ?? (name.endsWith(".json") ? name.slice(0, -5) : name))

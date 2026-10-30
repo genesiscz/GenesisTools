@@ -237,10 +237,16 @@ function parseProfile(value: unknown): RmProfile | null {
 
 /**
  * A trash root must carry a `GenesisTools` folder in its path: the drain deletes everything inside the root, so a
- * root edited to `~` or `/` would turn it into a plain `rm -rf`. Any other value falls back to the default.
+ * root edited to `~` or `/` would turn it into a plain `rm -rf`. The path must be plain (no `.` or `..` step), since
+ * `/tmp/GenesisTools/../../home/alice` names the home folder. Any other value falls back to the default.
  */
 export function isTrashRootName(value: unknown): value is string {
-    return typeof value === "string" && isAbsolute(value) && /(^|[\\/])GenesisTools([\\/]|$)/.test(value);
+    if (typeof value !== "string" || !isAbsolute(value)) {
+        return false;
+    }
+
+    const segments = value.split(/[\\/]/).filter(Boolean);
+    return !segments.some((s) => s === "." || s === "..") && segments.includes("GenesisTools");
 }
 
 export function parseRmConfig(raw: unknown): RmConfig {

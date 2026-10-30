@@ -6,6 +6,7 @@ import {
     readdirSync,
     realpathSync,
     renameSync,
+    symlinkSync,
     unlinkSync,
     utimesSync,
     writeFileSync,
@@ -27,6 +28,7 @@ import {
     filterRmLedger,
     findNestedRepos,
     isInside,
+    isTrashRootName,
     listBatches,
     listRmRequests,
     loadRmRequest,
@@ -281,7 +283,7 @@ describe("trash", () => {
         expect(() => assertInsideTrash(`${config.trashRoot}/../x/y`, config, "batch")).toThrow(/plain path/);
         expect(() =>
             assertInsideTrash(join(config.trashRoot, "b", "i"), { ...config, trashRoot: base }, "item")
-        ).toThrow(/no GenesisTools folder/);
+        ).toThrow(/with a GenesisTools folder/);
         expect(() => assertInsideTrash(join(config.trashRoot, "b", "i"), config, "item")).not.toThrow();
     });
 
@@ -743,5 +745,23 @@ describe("security review fixes: config", () => {
         expect(presetsFor({ ...loaded, enabledPresets: ["shared-cache"] }).some((p) => p.id === "shared-cache")).toBe(
             true
         );
+    });
+});
+
+describe("security review fixes: trash root", () => {
+    test("a trash root with a .. step, or one that resolves outside a GenesisTools folder, is refused", () => {
+        const sneaky = "/tmp/GenesisTools/../../home/alice";
+
+        expect(isTrashRootName(sneaky)).toBe(false);
+        expect(parseRmConfig({ trashRoot: sneaky }).trashRoot).toBe(defaultRmConfig().trashRoot);
+
+        const victim = dir("victim-home");
+        const victimFile = file(join(victim, "batch", "item"), "keep");
+        const link = join(dir("linked", "GenesisTools"), "rm");
+        symlinkSync(victim, link);
+        const linked = { ...config, trashRoot: link };
+
+        expect(() => assertInsideTrash(victimFile, linked, "item")).toThrow(/resolves to/);
+        expect(existsSync(victimFile)).toBe(true);
     });
 });
