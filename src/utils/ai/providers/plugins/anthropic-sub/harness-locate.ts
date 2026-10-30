@@ -34,6 +34,7 @@ export const claudeLocate: TranscriptLocator = {
     ],
     // A `tools claude worker` writes only its own turn files.
     workerNative: () => null,
+    rootsOfHome: (home) => ({ claudeProjects: join(home, "projects"), claudeProjectsAll: [join(home, "projects")] }),
     // The `custom-title` rows of the transcripts written in the last `maxAgeDays`, within a time budget.
     titledSessions: ({ options, roots, now }) =>
         claudeSessions({ roots, maxAgeDays: options.maxAgeDays ?? 14, budgetMs: options.budgetMs ?? 8000, now }),

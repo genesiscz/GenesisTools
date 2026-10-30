@@ -25,6 +25,7 @@ export const grokLocate: TranscriptLocator = {
     ],
     // A `tools grok` worker writes only its own turn files.
     workerNative: () => null,
+    rootsOfHome: (home) => ({ grokHome: home }),
     // Each session folder's summary names its title.
     titledSessions: ({ roots }) => grokSessions(roots),
 };
