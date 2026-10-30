@@ -3,6 +3,22 @@
 Newest first. Each entry: date, symptom as the user saw it, cause, fix, commit. Generic lessons go to
 checklist.md or motion.md as well.
 
+- 2026-10-30 22:17 — **The alert popup's context ran under the option rows ("fix this overlap").**
+  - *Six lines of the decision's summary were laid out, nine were drawn, and the last three sat under option a.*
+    The summary was a selectable `Text` with `.lineLimit(6)`. A selectable `Text` draws its whole string while it is
+    being selected (the screenshot showed a selection on line two), past the frame the line limit laid out, so
+    anything under it is painted over. Off screen, with no selection, the same chain truncates correctly, which is why
+    a snapshot never showed it. Fix: no line limit on the summary (`WidgetPeekView.summaryText`); the sender already
+    cuts it near 600 characters (`decisionSummary` in `src/hub/lib/widget/snapshot.ts`), so the popup shows all of
+    it. Test: `testDecisionCardsShowTheOwnAnswerComposerAndTheRecordedOutcome` reads the last word of a long summary.
+    Shots (the cut at six lines, then the whole summary; the overlap itself shows only while a selection is dragged):
+    Widget/Screenshot/2026-10-30-2217-widget-popup-summary-{before,after}.png.
+  - The same shape is still on thirteen other texts (`.lineLimit` with `.textSelection(.enabled)`: the hub inbox title
+    and branch, PR titles, a timeline detail, a PR thread, the cmux session line, a task's cwd, the recording notice,
+    the local network prompt). Each
+    draws past its row while a long value is selected. `ux-scan.ts` now lists them (`selectable-line-limit`): drop
+    the limit, or the selection, or clip.
+
 - 2026-10-30 15:50 — **The rm approval window, round two (❓ DECISION 183: "what features might be sensible there?").**
   - *A person could only say yes to everything or no.* Now a checkbox per row (all on; the title follows, "Delete 3
     of 5 items"; the sensor pauses with nothing ticked), two ways out ("Move to the trash", "Delete permanently"),
