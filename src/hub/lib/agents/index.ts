@@ -16,6 +16,7 @@ import { attachCodexAgents, buildCodexParent, type CodexAgentRecord, recentCodex
 import { readParent, startedAtOf } from "./parent";
 import { type ParentRow, sortNodes, sortParents, withoutFullPrompts } from "./tree";
 import {
+    AGENT_HARNESSES,
     type AgentHarness,
     type AgentNode,
     type AgentParent,
@@ -152,7 +153,7 @@ async function parentsByIds({
     const resolved = new Map<string, ParentRow>();
     // Only "no session file" is a stable absence; a read error may clear on the next poll, so it is never cached.
     const unstable = new Set<string>();
-    for (const provider of ["claude", "codex"] as const) {
+    for (const provider of AGENT_HARNESSES) {
         if (missing.size === 0) {
             break;
         }
@@ -326,7 +327,7 @@ async function buildTree(options: HubAgentsOptions): Promise<AgentsTree> {
             options.session
                 ? Promise.resolve([])
                 : listAgentSessionRows({
-                      providers: ["claude", "codex"],
+                      providers: AGENT_HARNESSES,
                       refresh: options.refresh,
                       hours,
                       limit,
@@ -419,9 +420,8 @@ async function buildTree(options: HubAgentsOptions): Promise<AgentsTree> {
 
     const readClaudeParent = (row: ParentRow): AgentParent =>
         readParent(row, bySession.get(row.sessionId) ?? [], root, { now, promptChars: options.promptChars });
-    // How each harness's session becomes a parent: Codex from its agent records, Claude (and a row with no provider,
-    // which predates the field) from its transcript and workers. Grok sessions are not listed here; one would read
-    // as Claude did before this table.
+    // How each harness's session becomes a parent: Codex from its agent records; Claude (and a row with no provider,
+    // which predates the field) and Grok from their transcript and workers, Grok with no sub-agents on disk.
     const parentBuilders: Record<AgentHarness, (row: ParentRow) => AgentParent> = {
         claude: readClaudeParent,
         codex: (row) => buildCodexParent(row, codexTops.get(row.sessionId) ?? [], now, startedAtOf(row.filePath)),

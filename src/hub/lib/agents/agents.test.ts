@@ -272,6 +272,26 @@ describe("hub agents tree", () => {
         });
     });
 
+    test("a Grok session is a parent of its own harness, with no Claude sub-agents read for it", () => {
+        const home = mkdtempSync(join(tmpdir(), "gt-hub-agents-grok-"));
+        const file = join(home, "sessions", "%2Ftmp%2Fwork", "019a0000-0000-7000-8000-000000000001", "updates.jsonl");
+        mkdirSync(join(file, ".."), { recursive: true });
+        write(file, "", NOW - 5 * HOUR);
+        const parent = readParent(
+            {
+                ...row,
+                provider: "grok",
+                sessionId: "019a0000-0000-7000-8000-000000000001",
+                filePath: file,
+                mtime: NOW - 5 * HOUR,
+            },
+            [],
+            teams,
+            { now: NOW }
+        );
+        expect(parent).toMatchObject({ provider: "grok", children: [] });
+    });
+
     test("a parent with no agents and no recent write is not live", () => {
         const quiet = mkdtempSync(join(tmpdir(), "gt-hub-agents-quiet-"));
         const file = join(quiet, "11111111-0000-0000-0000-000000000000.jsonl");

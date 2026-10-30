@@ -191,7 +191,7 @@ export function buildParent(input: ParentInput, now: number): AgentParent {
     const children = sortNodes([...nestAgents(claude, calls), ...input.workers.map((worker) => worker.node)]);
     return {
         sessionId: input.row.sessionId,
-        provider: "claude",
+        provider: input.row.provider ?? "claude",
         title: input.row.title,
         project: input.row.project,
         cwd: input.row.cwd,
