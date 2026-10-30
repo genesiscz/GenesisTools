@@ -14,11 +14,31 @@ import {
     nativeHomePath,
     nativeSessionRoots,
     nativeSessionRootsForHome,
+    nativeSessionRootsWithLegacyHomes,
     nativeTranscriptMaxDepth,
     parseCodexHomeList,
     primaryCodexHome,
     transcriptStem,
 } from "./session-paths";
+
+describe("nativeSessionRootsWithLegacyHomes", () => {
+    test("codex adds the session roots of every legacy profile home; claude and grok keep their roots", async () => {
+        const root = mkdtempSync(join(tmpdir(), "gt-legacy-homes-"));
+        mkdirSync(join(root, ".codex-work"));
+        mkdirSync(join(root, ".codex.bak-1"));
+
+        await env.testing.withOverrides({ CLAUDE_CONFIG_DIR: "", CODEX_HOME: "", GROK_HOME: "" }, () => {
+            expect(nativeSessionRootsWithLegacyHomes("codex", root)).toEqual([
+                join(root, ".codex", "sessions"),
+                join(root, ".codex", "archived_sessions"),
+                join(root, ".codex-work", "sessions"),
+                join(root, ".codex-work", "archived_sessions"),
+            ]);
+            expect(nativeSessionRootsWithLegacyHomes("claude", root)).toEqual(nativeSessionRoots("claude", root));
+            expect(nativeSessionRootsWithLegacyHomes("grok", root)).toEqual(nativeSessionRoots("grok", root));
+        });
+    });
+});
 
 describe("nativeHome", () => {
     test("all providers fall back to their default home when overrides are empty", async () => {

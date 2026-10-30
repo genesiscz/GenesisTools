@@ -40,12 +40,98 @@ export function primaryCodexHome(): string | undefined {
 
 export type NativeSessionProvider = AccountProviderAlias;
 
-/** The folder each coding agent keeps under a user's home when no override names another one. */
-const DEFAULT_HOME_FOLDER: Record<NativeSessionProvider, string> = {
-    claude: ".claude",
-    codex: ".codex",
-    grok: ".grok",
+/**
+ * Where one coding agent keeps its home and its transcripts on disk. Each harness has one layout in
+ * `NATIVE_LAYOUTS`, and every function below reads it. The layouts stay in this file because lint-rules
+ * `no-hand-built-claude-home` and `no-hand-built-codex-grok-home` allow the home folder names here only; a new
+ * harness adds its layout to the table, and the compiler names the table until it does.
+ */
+interface NativeHomeLayout {
+    /** The folder under a user's home when no override names another one. */
+    readonly defaultFolder: string;
+    /** The home an environment variable names (`CLAUDE_CONFIG_DIR`, the primary `CODEX_HOME`, `GROK_HOME`). */
+    homeOverride(): string | undefined;
+    /** Every session root under a user's home, the overrides and the headless worker home included. */
+    sessionRoots(home: string): string[];
+    /** The session roots of ONE provider home, with no environment lookup. */
+    sessionRootsForHome(providerHome: string): string[];
+    isTranscript(fileName: string): boolean;
+    /** How deep under a session root a transcript can sit. */
+    readonly transcriptMaxDepth: number;
+    /** The session roots of legacy profile homes beside the default one (`~/.codex-work`). */
+    legacyRoots(root: string): string[];
+}
+
+/** Codex CLI 0.164 compresses its old rollouts to `rollout-….jsonl.zst` (single-frame zstd). */
+const CODEX_COMPRESSED_SUFFIX = ".jsonl.zst";
+
+const claudeLayout: NativeHomeLayout = {
+    defaultFolder: ".claude",
+    homeOverride: () => env.paths.getClaudeConfigDir(),
+    sessionRoots: (home) => {
+        const roots = [join(home, ".claude", "projects"), join(home, ".config", "claude", "projects")];
+        const configDir = env.paths.getClaudeConfigDir();
+        if (configDir) {
+            const extra = join(configDir, "projects");
+            if (!roots.includes(extra)) {
+                roots.push(extra);
+            }
+        }
+        return roots;
+    },
+    sessionRootsForHome: (providerHome) => [join(providerHome, "projects")],
+    isTranscript: (fileName) => fileName.endsWith(".jsonl"),
+    transcriptMaxDepth: 6,
+    legacyRoots: () => [],
 };
+
+const codexLayout: NativeHomeLayout = {
+    defaultFolder: ".codex",
+    homeOverride: () => primaryCodexHome(),
+    sessionRoots: (home) => {
+        const homes = codexHomeOverrides();
+        const bases = homes.length > 0 ? homes : [join(home, ".codex")];
+        const roots: string[] = [];
+        for (const base of bases) {
+            for (const dir of codexLayout.sessionRootsForHome(base)) {
+                if (!roots.includes(dir)) {
+                    roots.push(dir);
+                }
+            }
+        }
+        return roots;
+    },
+    sessionRootsForHome: (providerHome) => [join(providerHome, "sessions"), join(providerHome, "archived_sessions")],
+    isTranscript: (fileName) => fileName.endsWith(CODEX_COMPRESSED_SUFFIX) || fileName.endsWith(".jsonl"),
+    transcriptMaxDepth: 4,
+    legacyRoots: (root) => codexHomesIn(root).flatMap((home) => codexLayout.sessionRootsForHome(home)),
+};
+
+const grokLayout: NativeHomeLayout = {
+    defaultFolder: ".grok",
+    homeOverride: () => env.grok.getHomeOverride(),
+    sessionRoots: (home) => {
+        const grokHome = env.grok.getHomeOverride() ?? join(home, ".grok");
+        const roots = [join(grokHome, "sessions")];
+        const workerRoot = join(defaultWorkerHome(), "sessions");
+
+        if (!roots.includes(workerRoot)) {
+            roots.push(workerRoot);
+        }
+
+        return roots;
+    },
+    sessionRootsForHome: (providerHome) => [join(providerHome, "sessions")],
+    isTranscript: (fileName) => fileName === "updates.jsonl",
+    transcriptMaxDepth: 3,
+    legacyRoots: () => [],
+};
+
+const NATIVE_LAYOUTS = {
+    claude: claudeLayout,
+    codex: codexLayout,
+    grok: grokLayout,
+} satisfies Record<NativeSessionProvider, NativeHomeLayout>;
 
 /**
  * The agent's folder under a user's home, `~/.claude`, `~/.codex` or `~/.grok`, whatever `CLAUDE_CONFIG_DIR`,
@@ -54,7 +140,7 @@ const DEFAULT_HOME_FOLDER: Record<NativeSessionProvider, string> = {
  * caller asks `nativeHome`, which honours the overrides.
  */
 export function defaultNativeHome(kind: NativeSessionProvider, home = homedir()): string {
-    return join(home, DEFAULT_HOME_FOLDER[kind]);
+    return join(home, NATIVE_LAYOUTS[kind].defaultFolder);
 }
 
 /**
@@ -63,15 +149,7 @@ export function defaultNativeHome(kind: NativeSessionProvider, home = homedir())
  * `no-hand-built-codex-grok-home` point here.
  */
 export function nativeHome(kind: NativeSessionProvider, home = homedir()): string {
-    if (kind === "claude") {
-        return env.paths.getClaudeConfigDir() ?? defaultNativeHome(kind, home);
-    }
-
-    if (kind === "codex") {
-        return primaryCodexHome() ?? defaultNativeHome(kind, home);
-    }
-
-    return env.grok.getHomeOverride() ?? defaultNativeHome(kind, home);
+    return NATIVE_LAYOUTS[kind].homeOverride() ?? defaultNativeHome(kind, home);
 }
 
 /**
@@ -122,41 +200,7 @@ export function claudeJsonPathInConfigDir(configDir: string): string {
  * what we can find afterwards.
  */
 export function nativeSessionRoots(kind: NativeSessionProvider, home = homedir()): string[] {
-    if (kind === "claude") {
-        const roots = [join(home, ".claude", "projects"), join(home, ".config", "claude", "projects")];
-        const configDir = env.paths.getClaudeConfigDir();
-        if (configDir) {
-            const extra = join(configDir, "projects");
-            if (!roots.includes(extra)) {
-                roots.push(extra);
-            }
-        }
-        return roots;
-    }
-
-    if (kind === "codex") {
-        const homes = codexHomeOverrides();
-        const bases = homes.length > 0 ? homes : [join(home, ".codex")];
-        const roots: string[] = [];
-        for (const base of bases) {
-            for (const dir of [join(base, "sessions"), join(base, "archived_sessions")]) {
-                if (!roots.includes(dir)) {
-                    roots.push(dir);
-                }
-            }
-        }
-        return roots;
-    }
-
-    const grokHome = env.grok.getHomeOverride() ?? join(home, ".grok");
-    const roots = [join(grokHome, "sessions")];
-    const workerRoot = join(defaultWorkerHome(), "sessions");
-
-    if (!roots.includes(workerRoot)) {
-        roots.push(workerRoot);
-    }
-
-    return roots;
+    return NATIVE_LAYOUTS[kind].sessionRoots(home);
 }
 
 /**
@@ -171,15 +215,7 @@ export function nativeSessionRoots(kind: NativeSessionProvider, home = homedir()
  * overrides back in would attribute another home's transcripts to it.
  */
 export function nativeSessionRootsForHome(kind: NativeSessionProvider, home: string): string[] {
-    if (kind === "claude") {
-        return [join(home, "projects")];
-    }
-
-    if (kind === "codex") {
-        return [join(home, "sessions"), join(home, "archived_sessions")];
-    }
-
-    return [join(home, "sessions")];
+    return NATIVE_LAYOUTS[kind].sessionRootsForHome(home);
 }
 
 /**
@@ -193,19 +229,8 @@ export function nativeRootsKey(home = homedir()): string {
     ).join("\n");
 }
 
-/** Codex CLI 0.164 compresses its old rollouts to `rollout-….jsonl.zst` (single-frame zstd). */
-const CODEX_COMPRESSED_SUFFIX = ".jsonl.zst";
-
 export function isNativeTranscript(kind: NativeSessionProvider, fileName: string): boolean {
-    if (kind === "grok") {
-        return fileName === "updates.jsonl";
-    }
-
-    if (kind === "codex" && fileName.endsWith(CODEX_COMPRESSED_SUFFIX)) {
-        return true;
-    }
-
-    return fileName.endsWith(".jsonl");
+    return NATIVE_LAYOUTS[kind].isTranscript(fileName);
 }
 
 /** A transcript file name without `.jsonl` or `.jsonl.zst`: the id part, the same for both forms of one file. */
@@ -214,13 +239,7 @@ export function transcriptStem(fileName: string): string {
 }
 
 export function nativeTranscriptMaxDepth(kind: NativeSessionProvider): number {
-    if (kind === "claude") {
-        return 6;
-    }
-    if (kind === "grok") {
-        return 3;
-    }
-    return 4;
+    return NATIVE_LAYOUTS[kind].transcriptMaxDepth;
 }
 
 export function codexHomesIn(root: string): string[] {
@@ -250,8 +269,6 @@ export function codexHomesIn(root: string): string[] {
 /** History discovery includes legacy Codex profile homes without reading their credentials. */
 export function nativeSessionRootsWithLegacyHomes(kind: NativeSessionProvider, root = homedir()): string[] {
     const roots = nativeSessionRoots(kind, root);
-    if (kind !== "codex") {
-        return roots;
-    }
-    return [...new Set([...roots, ...codexHomesIn(root).flatMap((home) => nativeSessionRootsForHome("codex", home))])];
+    const legacy = NATIVE_LAYOUTS[kind].legacyRoots(root);
+    return legacy.length === 0 ? roots : [...new Set([...roots, ...legacy])];
 }
