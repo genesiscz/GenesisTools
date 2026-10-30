@@ -12,7 +12,34 @@ export interface HookPayload {
     harness: HarnessName;
     /** Files the harness's own renderer already drew, so we do not double-print them. */
     nativeDiffFiles: string[];
+    /**
+     * The typed hook fields. Every hook reads them here, never `raw.transcript_path` in a feature (lint-rules
+     * `no-hook-payload-read`): a harness that spells a field another way is one line in `parseHookPayload`.
+     */
+    transcriptPath?: string;
+    /** Stop hooks: the text of the reply the turn ended with, when the harness sends it. */
+    lastAssistantMessage?: string;
+    /** Stop hooks: true when this stop is already the result of a Stop hook's "continue". */
+    stopHookActive?: boolean;
+    /** The tool call's input as the harness sent it; `command` is its shell command when it has one. */
+    toolInput?: Record<string, unknown>;
+    /** PostToolUse: the tool's result as the harness sent it. */
+    toolResponse?: Record<string, unknown>;
+    /** Notification hooks: the harness's notification kind (`permission_prompt`, `idle_prompt`, …). */
+    notificationType?: string;
+    /** UserPromptSubmit: the prompt text. */
+    prompt?: string;
     raw: Record<string, unknown>;
+}
+
+function record(value: unknown): Record<string, unknown> | undefined {
+    return typeof value === "object" && value !== null && !Array.isArray(value)
+        ? (value as Record<string, unknown>)
+        : undefined;
+}
+
+function bool(value: unknown): boolean | undefined {
+    return typeof value === "boolean" ? value : undefined;
 }
 
 function str(value: unknown): string | undefined {
@@ -73,8 +100,8 @@ export function parseHookPayload(text: string): HookPayload | null {
     const harness = detectHarness(raw);
     const event = str(raw.hookEventName) ?? str(raw.hook_event_name) ?? "";
     const tool = str(raw.toolName) ?? str(raw.tool_name) ?? "";
-    const input = (raw.toolInput ?? raw.tool_input) as { command?: unknown } | undefined;
-    const response = (raw.toolResponse ?? raw.tool_response) as Record<string, unknown> | undefined;
+    const input = record(raw.toolInput ?? raw.tool_input);
+    const response = record(raw.toolResponse ?? raw.tool_response);
     const native = response?.bashEditDiff as { files?: { filePath?: unknown }[] } | undefined;
     const nativeDiffFiles: string[] = [];
 
@@ -100,6 +127,13 @@ export function parseHookPayload(text: string): HookPayload | null {
         model: str(raw.model) ?? "",
         harness,
         nativeDiffFiles,
+        transcriptPath: str(raw.transcriptPath) ?? str(raw.transcript_path),
+        lastAssistantMessage: str(raw.lastAssistantMessage) ?? str(raw.last_assistant_message),
+        stopHookActive: bool(raw.stopHookActive) ?? bool(raw.stop_hook_active),
+        toolInput: input,
+        toolResponse: response,
+        notificationType: str(raw.notificationType) ?? str(raw.notification_type),
+        prompt: str(raw.prompt),
         raw,
     };
 }
