@@ -1,6 +1,6 @@
 import { codexToolInputLine } from "@genesiscz/utils/agent-sessions/readers/codex-tool-inputs";
 import { codexNativeLinesToTurns, createCodexTurnParser } from "@genesiscz/utils/agent-sessions/readers/codex-turns";
-import { codexModelOf, toolInputKeysOf } from "@genesiscz/utils/ai/transcripts/native-scan";
+import { toolInputKeysOf } from "@genesiscz/utils/ai/transcripts/native-scan";
 import { parseTranscriptLine } from "@genesiscz/utils/ai/transcripts/parse-line";
 import { readTranscriptRecords } from "@genesiscz/utils/ai/transcripts/record-cache";
 import type { ResolvedTranscript } from "@genesiscz/utils/ai/transcripts/resolve";
@@ -12,11 +12,6 @@ import type { TranscriptParser } from "@genesiscz/utils/harness/parts";
 import type { WorkerEvent } from "@genesiscz/utils/worker/events";
 
 /** Codex transcripts to turns: a native rollout (folded append-only when large) or stored worker events. Moved from `TURN_READERS` in load.ts. */
-/** A window of rollout records to turns (`TranscriptFacts.windowTurns`). */
-export function codexWindowTurns(values: Record<string, unknown>[]): TranscriptTurn[] {
-    return codexNativeLinesToTurns(values);
-}
-
 export const codexParse: TranscriptParser = {
     fromFile: async (resolved, path, index) => {
         if (resolved.source !== "worker") {
@@ -34,8 +29,6 @@ export const codexParse: TranscriptParser = {
         return codexTurns(resolved, records, 1);
     },
     toolInputKeys: (text) => toolInputKeysOf(text, codexToolInputLine),
-    // A rollout's turns name no model, so insights takes the session's own. Moved from NATIVE_INSIGHTS.
-    nativeInsights: (text) => ({ native: null, defaultModel: codexModelOf(text) }),
 };
 
 function looksLikeCodexGt(records: unknown[]): boolean {
