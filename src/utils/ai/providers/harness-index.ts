@@ -2,6 +2,7 @@ import type { NativeSessionReader } from "@genesiscz/utils/agent-sessions/types"
 import { ACCOUNT_PROVIDER_ALIASES } from "@genesiscz/utils/ai/providers/alias-list";
 import type { HostResolver, LaunchRecipe, ProcessSignature } from "@genesiscz/utils/harness/parts";
 import { type HarnessDriver, type HarnessId, isPartNote } from "@genesiscz/utils/harness/types";
+import type { WorkerCapabilities } from "@genesiscz/utils/worker/capabilities";
 import { claudeHarness } from "./plugins/anthropic-sub/harness";
 import { grokHarness } from "./plugins/grok-sub/harness";
 import { codexHarness } from "./plugins/openai-sub/harness";
@@ -77,4 +78,24 @@ export function harnessProcess(id: HarnessId): ProcessSignature {
     }
 
     return slot;
+}
+
+/** What a `tools <agent>` worker of the harness can do; every harness has workers. */
+export function harnessWorker(id: HarnessId): WorkerCapabilities {
+    const slot = harnessDriver(id).parts.worker;
+
+    if (isPartNote(slot)) {
+        throw new Error(`The ${id} harness driver has no worker capabilities: ${slot.reason}`);
+    }
+
+    return slot;
+}
+
+/**
+ * A table with one entry per harness, each read from its driver. For an old `Record<HarnessId, T>` export whose
+ * callers index it by name: the table stays, its values come from the drivers, and the mapped type still refuses a
+ * harness without an entry.
+ */
+export function byHarness<T>(pick: (id: HarnessId) => T): Readonly<Record<HarnessId, T>> {
+    return { claude: pick("claude"), codex: pick("codex"), grok: pick("grok") };
 }

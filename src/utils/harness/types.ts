@@ -26,7 +26,7 @@ export type PendingContractPart = "live" | "hooks" | "statusline" | "compaction"
  * (`src/ai-spend`), MCP config (`src/mcp-manager`), the subagent tree (`src/hub`). The driver names the tool module
  * that owns the part's exhaustive table keyed by `HarnessId` (`toolOwned`).
  */
-export type ToolOwnedPart = "cmux" | "answer" | "worker" | "spend" | "mcp" | "subagents";
+export type ToolOwnedPart = "cmux" | "answer" | "spend" | "mcp" | "subagents";
 
 export type HarnessPartName = keyof HarnessPartContracts | PendingContractPart | ToolOwnedPart;
 

@@ -8,6 +8,7 @@
  */
 
 import type { AccountProviderAlias } from "@genesiscz/utils/ai/providers/alias-list";
+import { byHarness, harnessWorker } from "@genesiscz/utils/ai/providers/harness-index";
 
 export type WorkerBackend = AccountProviderAlias;
 
@@ -62,79 +63,5 @@ export function accountPinRefusal(backend: WorkerBackend, account: string): stri
     return reason === undefined ? undefined : `--account ${account} cannot be honoured: ${reason}`;
 }
 
-export const WORKER_CAPABILITIES: Record<WorkerBackend, WorkerCapabilities> = {
-    codex: {
-        approvals: "mid-turn",
-        sandbox: "workspace-write+roots",
-        readonlyMode: true,
-        structuredOutput: ["app-server JSON-RPC"],
-        steering: "mid-turn",
-        accountRequired: false,
-        turnGuardUnsupported: "Codex steering has no turn guard; omit --expect-turn.",
-        // A model-side `login --once` only blocked the turn and received the same mail twice; one held the
-        // identity's slot for 3+ minutes on 2026-10-13.
-        busMail: "turn-input",
-        // Jest failed before any test on watchman's `fchmod` (2026-10-13).
-        sandboxBlocksWatchman: true,
-        verbs: [
-            "spawn",
-            "steer",
-            "interrupt",
-            "rollback",
-            "read",
-            "review",
-            "approve",
-            "deny",
-            "status",
-            "sessions",
-            "logs",
-            "tail",
-            "stop",
-        ],
-        absentVerbs: {},
-    },
-    grok: {
-        approvals: "none",
-        sandbox: "cwd-jail",
-        readonlyMode: true,
-        structuredOutput: ["streaming-json (flat NDJSON)"],
-        steering: "between-turns",
-        accountRequired: false,
-        accountUnsupported:
-            "grok pins an auth FILE, not an account, so the flag would silently do nothing. Pass --auth subscription and point GROK_AUTH_PATH at that account's auth.json (references/grok.md).",
-        busMail: "login-once",
-        // The cwd jail leaves watchman's state directory writable.
-        sandboxBlocksWatchman: false,
-        verbs: ["spawn", "steer", "read", "tail", "status", "stop", "interrupt", "sessions"],
-        absentVerbs: {
-            approve: "grok has no approval channel (approvals: none) — the cwd jail and the brief are the only brakes",
-            deny: "grok has no approval channel (approvals: none)",
-        },
-    },
-    claude: {
-        approvals: "none",
-        sandbox: "none",
-        readonlyMode: false,
-        structuredOutput: ["stream-json (NDJSON)", "json"],
-        steering: "between-turns",
-        accountRequired: true,
-        busMail: "login-once",
-        // No sandbox at all.
-        sandboxBlocksWatchman: false,
-        verbs: [
-            "worker spawn",
-            "worker steer",
-            "worker read",
-            "worker tail",
-            "worker status",
-            "worker stop",
-            "worker interrupt",
-            "worker sessions",
-        ],
-        absentVerbs: {
-            approve:
-                "claude -p has no approval channel (approvals: none) and no sandbox — hold policy via the brief plus a git-status check",
-            deny: "claude -p has no approval channel (approvals: none)",
-        },
-    },
-};
+/** Each harness's worker capabilities, read from its driver's `worker` part (plugins/<plugin>/harness-worker.ts). */
+export const WORKER_CAPABILITIES: Readonly<Record<WorkerBackend, WorkerCapabilities>> = byHarness(harnessWorker);

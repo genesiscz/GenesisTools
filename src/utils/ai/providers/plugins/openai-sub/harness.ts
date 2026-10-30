@@ -2,6 +2,7 @@ import { isCodex, resolveCodexContext } from "@genesiscz/utils/agent/hosts/codex
 import type { HarnessDriver } from "@genesiscz/utils/harness/types";
 import { pending, toolOwned } from "@genesiscz/utils/harness/types";
 import { codexLaunch } from "./harness-launch";
+import { codexWorker } from "./harness-worker";
 
 /**
  * The Codex driver: what GenesisTools knows about the harness, part by part. Every part the plan has not moved yet
@@ -39,7 +40,7 @@ export const codexHarness: HarnessDriver<"codex"> = {
             "src/question/lib/decisions/deliver.ts",
             "the delivery ladder lives in the question tool (P6)"
         ),
-        worker: toolOwned("src/ai/commands/agent/spec.ts", "the worker drivers live in the agent tools (P6)"),
+        worker: codexWorker,
         spend: toolOwned("src/ai-spend/lib/drivers/index.ts", "MonitorDriver lives in the ai-spend tool (P5)"),
         mcp: toolOwned("src/mcp-manager/utils/providers/index.ts", "the MCP config writers live in mcp-manager (P6)"),
         subagents: toolOwned("src/hub/lib/agents/index.ts", "the agents tree lives in the hub tool (P6)"),

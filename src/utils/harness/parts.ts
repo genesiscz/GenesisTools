@@ -4,6 +4,7 @@ import type { NativeSessionReader } from "@genesiscz/utils/agent-sessions/types"
 import type { ResolvedTranscript } from "@genesiscz/utils/ai/transcripts/resolve";
 import type { TurnQuestionCall, TurnSnapshot, TurnStateInput } from "@genesiscz/utils/ai/transcripts/turn-state";
 import type { TranscriptTurn } from "@genesiscz/utils/ai/transcripts/types";
+import type { WorkerCapabilities } from "@genesiscz/utils/worker/capabilities";
 
 /**
  * The contracts of the coding-agent parts whose implementation can live in `@genesiscz/utils`, next to the
@@ -126,6 +127,8 @@ export interface LazyPartContracts {
  */
 export interface EagerPartContracts {
     launch: LaunchRecipe;
+    /** P: what a `tools <agent>` worker of the harness can do; the WorkerDriver that does it lives in the agent's tool. */
+    worker: WorkerCapabilities;
     exit: ExitCommand;
     host: HostResolver;
     process: ProcessSignature;
