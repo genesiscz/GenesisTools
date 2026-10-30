@@ -1,5 +1,6 @@
 import { statSync } from "node:fs";
 import { resolveSessionTranscript } from "@app/ai/lib/sessions/resolve-transcript";
+import { harnessTranscriptFacts } from "@genesiscz/utils/ai/providers/harness-index";
 import { transcriptByteSize, transcriptEnvelope, transcriptSnapshot } from "@genesiscz/utils/ai/transcripts/load";
 import type { ResolvedTranscript } from "@genesiscz/utils/ai/transcripts/resolve";
 import { pagesByTurnIndex } from "@genesiscz/utils/ai/transcripts/turn-index";
@@ -39,14 +40,8 @@ const POLL_MS = 5000;
  * The turn that was current before the send is excluded on its own (`baselineTurnStartedAt`).
  */
 export function sentAtSlackMs(alias: TurnProvider): number {
-    return SENT_AT_SLACK_MS[alias];
+    return harnessTranscriptFacts(alias).timestampResolutionMs;
 }
-
-const SENT_AT_SLACK_MS: Record<TurnProvider, number> = {
-    claude: 0,
-    codex: 0,
-    grok: 1000,
-};
 
 export interface WaitOptions {
     timeout?: string;
