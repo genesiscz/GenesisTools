@@ -6,6 +6,8 @@
  *
  * Usage: bun .claude/skills/swift/scripts/swift-scan.ts <file or folder>... [--max <hits per check, default 60>]
  */
+import { maskSwiftNonCode } from "../../../../scripts/ci/lint-rules.ts";
+import { swiftRowAudit } from "../../../../scripts/ci/swift-lint-rules.ts";
 import { type Check, type CountFact, type FileFact, runCli, type ScanSet } from "../../ux/scripts/scan-engine.ts";
 
 /** A view, a view model or anything on the main actor: where blocking work stalls the UI. */
@@ -232,6 +234,16 @@ const FILE_FACTS: FileFact[] = [
         name: "files that animate a list with withAnimation and no first-load guard",
         test: (text) =>
             /withAnimation\(/.test(text) && /ForEach/.test(text) && !/animates\(/.test(text) ? "" : undefined,
+    },
+    {
+        // The dense-row rules of 2026-10-29 (`.claude/plans/2026-10-29-SwiftLintRuleProposals/`): a row of a
+        // `ForEach` takes values, is Equatable and made with `.equatable()`, sets `.liveRow(selected:)` once, and its
+        // `==` names every stored value. Candidates, since a class reference in `==` and a short fixed list are fine.
+        name: "rows a ForEach makes that still carry a model, controls at rest, no Equatable, or a narrow ==",
+        test: (text) => {
+            const lines = swiftRowAudit(maskSwiftNonCode(text).split("\n"));
+            return lines.length > 0 ? `\n      ${lines.join("\n      ")}` : undefined;
+        },
     },
 ];
 

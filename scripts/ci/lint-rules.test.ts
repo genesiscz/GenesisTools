@@ -13,6 +13,7 @@ import {
     checkSource,
     checkSwiftSource,
     type Finding,
+    maskSwiftNonCode,
     namesToolCommand,
     namesTranscriptFormat,
     pluginsDisabledFor,
@@ -22,6 +23,13 @@ import {
 import { EFFORT_LIST_RATCHET, MODEL_ID_LITERAL_RATCHET, MODEL_PRICE_TABLE_RATCHET } from "./model-facts-ratchet";
 import { NATIVE_HOME_CLAUDE_RATCHET, NATIVE_HOME_CODEX_GROK_RATCHET } from "./native-home-ratchet";
 import { PROXY_PROVIDER_BRANCH_RATCHET } from "./proxy-provider-ratchet";
+import { swiftRowAudit } from "./swift-lint-rules";
+import {
+    SWIFT_EQUATABLE_SKIPS_RATCHET,
+    SWIFT_FORMATTER_IN_VIEW_RATCHET,
+    SWIFT_ROW_CONTROL_RATCHET,
+    SWIFT_ROW_OBSERVES_RATCHET,
+} from "./swift-row-ratchet";
 import { TOOL_COMMAND_RATCHET } from "./tool-command-ratchet";
 import { TRANSCRIPT_FORMAT_RATCHET } from "./transcript-format-ratchet";
 
@@ -35,6 +43,491 @@ import { TRANSCRIPT_FORMAT_RATCHET } from "./transcript-format-ratchet";
 function rules(source: string, file = "src/example.ts"): string[] {
     return checkSource(file, source).map((f) => f.rule);
 }
+
+describe("swift struct and chain rules (dense rows, Observation)", () => {
+    const swiftRules = (source: string) => checkSwiftSource("Sources/Example.swift", source).map((f) => f.rule);
+
+    test("a view that reads rowLive and applies .liveRow in its own body is flagged at the read", () => {
+        const source = [
+            "struct AgentProcsRow: View {",
+            "    @Environment(\\.rowLive) private var live",
+            "    var body: some View {",
+            '        HStack { if live { IconButton(systemName: "stop", tooltip: "Stop") {} } }',
+            "            .liveRow()",
+            "    }",
+            "}",
+        ].join("\n");
+        expect(checkSwiftSource("Sources/Example.swift", source)).toMatchObject([
+            { rule: "swift-rowlive-read-in-liverow-struct", line: 2, column: 5 },
+        ]);
+    });
+
+    test("a child view that reads rowLive inside a row that applies .liveRow is the fix, not a hit", () => {
+        const source = [
+            "struct AgentProcsRow: View {",
+            "    var body: some View {",
+            "        HStack { AgentProcsActions() }.liveRow()",
+            "    }",
+            "    private struct AgentProcsActions: View {",
+            "        @Environment(\\.rowLive) private var live",
+            '        var body: some View { if live { Text("x") } }',
+            "    }",
+            "}",
+        ].join("\n");
+        expect(swiftRules(source)).toEqual([]);
+    });
+
+    test(".liveRow before .rowButton or .instantTooltip in one chain is flagged; after them it is not", () => {
+        const wrong = [
+            "struct Row: View {",
+            "    var body: some View {",
+            "        label",
+            "            .liveRow(selected: selected)",
+            "            .rowButton { select() }",
+            "            .contextMenu { menu }",
+            "    }",
+            "}",
+        ].join("\n");
+        expect(checkSwiftSource("Sources/Example.swift", wrong)).toMatchObject([
+            { rule: "swift-liverow-outside-control", line: 5 },
+        ]);
+        const right = wrong.replace(
+            "            .liveRow(selected: selected)\n            .rowButton { select() }",
+            "            .rowButton { select() }\n            .instantTooltip(path)\n            .liveRow(selected: selected)"
+        );
+        expect(swiftRules(right)).toEqual([]);
+        expect(swiftRules('label.rowLive(true).instantTooltip("x")')).toEqual(["swift-liverow-outside-control"]);
+        expect(swiftRules('label.instantTooltip("x").rowLive(true)')).toEqual([]);
+    });
+
+    test("a control inside a closure of a later modifier, or in a new statement, does not count as the chain", () => {
+        const source = [
+            "struct Row: View {",
+            "    var body: some View {",
+            "        label",
+            "            .liveRow()",
+            "            .contextMenu {",
+            '                Button("Open") { open() }.instantTooltip("Opens it")',
+            "            }",
+            "        other.rowButton { select() }",
+            "    }",
+            "}",
+        ].join("\n");
+        expect(swiftRules(source)).toEqual([]);
+    });
+
+    test("a comment between two modifiers keeps the chain: .liveRow after a commented .rowButton is seen", () => {
+        // AgentDraftsList.swift:41 on 2026-10-29: the masked comment line ended the chain walk, and CI failed on a
+        // row that was already gated.
+        const source = [
+            "struct List: View {",
+            "    var body: some View {",
+            "        ForEach(drafts) { draft in",
+            "            AgentDraftRow(draft: draft)",
+            "                .rowButton(cornerRadius: 6) { reveal(draft.id) }",
+            "                // The button exists under the pointer or on the focused draft (`liveRow`).",
+            "                .liveRow(selected: focused == draft.id)",
+            "        }",
+            "    }",
+            "}",
+        ].join("\n");
+        expect(swiftRules(source)).toEqual([]);
+        expect(swiftRules(source.replace("                .liveRow(selected: focused == draft.id)\n", ""))).toEqual([
+            "swift-control-chained-to-row-construction",
+        ]);
+    });
+
+    test("a modifier after a trailing closure's closing brace is still the chain (`}.liveRow()`)", () => {
+        const source = [
+            "struct List: View {",
+            "    var body: some View {",
+            "        ForEach(rows) { row in",
+            "            SessionRow(row: row)",
+            "                .rowButton {",
+            "                    select(row)",
+            "                }.liveRow(selected: row.selected)",
+            "        }",
+            "    }",
+            "}",
+        ].join("\n");
+        expect(swiftRules(source)).toEqual([]);
+    });
+
+    test("an Observation onChange that never re-arms is flagged; a suppressed one-shot is not", () => {
+        const once = [
+            "final class Model {",
+            "    private func watchOnce() {",
+            "        withObservationTracking {",
+            "            _ = mode",
+            "        } onChange: { [weak self] in",
+            "            self?.modeChanged()",
+            "        }",
+            "    }",
+            "}",
+        ].join("\n");
+        expect(checkSwiftSource("Sources/Example.swift", once)).toMatchObject([
+            { rule: "swift-observation-no-rearm", line: 3 },
+        ]);
+        expect(
+            swiftRules(once.replace("self?.modeChanged()", "self?.modeChanged()\n            self?.watchOnce()"))
+        ).toEqual([]);
+        expect(
+            swiftRules(
+                once.replace(
+                    "        withObservationTracking {",
+                    "        // lint-rules-ignore: one shot on purpose, the test waits for the first change\n        withObservationTracking {"
+                )
+            )
+        ).toEqual([]);
+    });
+
+    test("an Observation re-arm inside DispatchQueue.main.async is flagged; a synchronous re-arm is not", () => {
+        const late = [
+            "final class Model {",
+            "    private func watchOwnPlace() {",
+            "        withObservationTracking {",
+            "            _ = (mode, selectedID)",
+            "        } onChange: { [weak self] in",
+            "            DispatchQueue.main.async {",
+            "                guard let self else { return }",
+            "                self.placeChanged()",
+            "                self.watchOwnPlace()",
+            "            }",
+            "        }",
+            "    }",
+            "}",
+        ].join("\n");
+        expect(checkSwiftSource("Sources/Example.swift", late)).toMatchObject([
+            { rule: "swift-observation-async-rearm", line: 9 },
+        ]);
+        const sync = [
+            "final class Model {",
+            "    private func watchOwnPlace() {",
+            "        withObservationTracking {",
+            "            _ = (mode, selectedID)",
+            "        } onChange: { [weak self] in",
+            "            guard let self else { return }",
+            "            self.placeChanged()",
+            "            self.watchOwnPlace()",
+            "            DispatchQueue.main.async { self.record() }",
+            "        }",
+            "    }",
+            "}",
+        ].join("\n");
+        expect(swiftRules(sync)).toEqual([]);
+        expect(
+            swiftRules(
+                late.replace(
+                    "                self.watchOwnPlace()",
+                    "                // lint-rules-ignore: fixture\n                self.watchOwnPlace()"
+                )
+            )
+        ).toEqual([]);
+    });
+});
+
+describe("swift row rules (a ForEach makes the rows)", () => {
+    const swiftRules = (source: string) => checkSwiftSource("Sources/Example.swift", source).map((f) => f.rule);
+    const list = (chain: string) =>
+        [
+            "struct List: View {",
+            "    var body: some View {",
+            "        ForEach(rows) { row in",
+            chain,
+            "        }",
+            "    }",
+            "}",
+        ].join("\n");
+
+    test("a .rowButton or .instantTooltip chained to a row's construction in a ForEach is flagged", () => {
+        expect(
+            checkSwiftSource(
+                "Sources/Example.swift",
+                list(
+                    "            SessionRow(row: row)\n                .rowButton { select(row) }\n                .id(row.id)"
+                )
+            )
+        ).toMatchObject([{ rule: "swift-control-chained-to-row-construction", line: 5 }]);
+        expect(swiftRules(list("            SessionRow(row: row).instantTooltip(row.path)"))).toEqual([
+            "swift-control-chained-to-row-construction",
+        ]);
+    });
+
+    test("the same chain is fine when it ends in .liveRow, and a plain construction is fine", () => {
+        expect(
+            swiftRules(
+                list(
+                    "            SessionRow(row: row)\n                .rowButton { select(row) }\n                .liveRow(selected: row.selected)"
+                )
+            )
+        ).toEqual([]);
+        expect(swiftRules(list("            SessionRow(row: row).equatable().id(row.id)"))).toEqual([]);
+        expect(swiftRules(list("            Text(row.title).instantTooltip(row.path)"))).toEqual([]);
+    });
+
+    test("a popover or sheet before .liveRow in one chain is flagged at the .liveRow", () => {
+        const source = [
+            "struct Row: View {",
+            "    var body: some View {",
+            "        label",
+            "            .popover(isPresented: $open) { Panel() }",
+            "            .liveRow(selected: selected)",
+            "    }",
+            "}",
+        ].join("\n");
+        expect(checkSwiftSource("Sources/Example.swift", source)).toMatchObject([
+            { rule: "swift-presentation-inside-liverow", line: 5 },
+        ]);
+        expect(
+            swiftRules(
+                source.replace(
+                    ".popover(isPresented: $open) { Panel() }\n            .liveRow(selected: selected)",
+                    ".liveRow(selected: selected)\n            .popover(isPresented: $open) { Panel() }"
+                )
+            )
+        ).toEqual([]);
+    });
+
+    test("a view that sets .liveRow and still passes live: or interactive: by hand is flagged", () => {
+        const source = [
+            "struct Row: View {",
+            "    var body: some View {",
+            "        HStack {",
+            '            LiveButton(live: live, tooltip: nil, action: open) { Text("Open") }',
+            "            ExternalLink(text: name, url: url, interactive: live)",
+            "            ExternalLink(text: other, url: url, interactive: false)",
+            "        }",
+            "        .liveRow(selected: selected)",
+            "    }",
+            "}",
+        ].join("\n");
+        expect(checkSwiftSource("Sources/Example.swift", source)).toMatchObject([
+            { rule: "swift-row-gates-control-itself", line: 4 },
+            { rule: "swift-row-gates-control-itself", line: 5 },
+        ]);
+        expect(
+            swiftRules(source.replace("LiveButton(live: live, ", "LiveButton(").replace(", interactive: live)", ")"))
+        ).toEqual([]);
+    });
+});
+
+describe("swift row gates (what a row a ForEach makes may not carry)", () => {
+    const swiftRules = (source: string, file = "Sources/Example.swift") =>
+        checkSwiftSource(file, source).map((f) => f.rule);
+    const listOf = (row: string, chain = "") =>
+        [
+            "struct List: View {",
+            "    var body: some View {",
+            "        ForEach(items) { item in",
+            `            ItemRow(item: item)${chain}`,
+            "        }",
+            "    }",
+            "}",
+            row,
+        ].join("\n");
+
+    test("a row that observes a store is flagged at the property; the same struct outside a ForEach is not", () => {
+        const row = [
+            "struct ItemRow: View {",
+            "    @ObservedObject var store: ItemStore",
+            "    let item: Item",
+            "    var body: some View { Text(item.title) }",
+            "}",
+        ].join("\n");
+        expect(checkSwiftSource("Sources/Example.swift", listOf(row))).toMatchObject([
+            { rule: "swift-row-observes-store", line: 9, subject: "ItemRow" },
+        ]);
+        expect(swiftRules(row)).toEqual([]);
+        expect(
+            swiftRules(listOf(row.replace("@ObservedObject var store: ItemStore", "let store = ItemStore.shared")))
+        ).toEqual(["swift-row-observes-store"]);
+        expect(swiftRules(listOf(row.replace("@ObservedObject var store: ItemStore", "let selected: Bool")))).toEqual(
+            []
+        );
+        expect(
+            swiftRules(
+                listOf(
+                    row.replace(
+                        "    @ObservedObject var store: ItemStore",
+                        "    // lint-rules-ignore: 3 rows, observes on purpose\n    @ObservedObject var store: ItemStore"
+                    )
+                )
+            )
+        ).toEqual([]);
+    });
+
+    test("a row with a control and no liveness is flagged; .liveRow inside, at the site, or a rowLive read passes", () => {
+        const row = (body: string) =>
+            ["struct ItemRow: View {", "    let item: Item", "    var body: some View {", body, "    }", "}"].join(
+                "\n"
+            );
+        const resting = row("        Text(item.title).instantTooltip(item.path)");
+        expect(checkSwiftSource("Sources/Example.swift", listOf(resting))).toMatchObject([
+            { rule: "swift-row-control-at-rest", line: 11, subject: "ItemRow" },
+        ]);
+        expect(swiftRules(listOf(row("        Text(item.title).instantTooltip(item.path).liveRow()")))).toEqual([]);
+        expect(swiftRules(listOf(resting, "\n                .liveRow(selected: item.selected)"))).toEqual([]);
+        expect(
+            swiftRules(
+                listOf(
+                    resting.replace(
+                        "    let item: Item",
+                        "    let item: Item\n    @Environment(\\.rowLive) private var live"
+                    )
+                )
+            )
+        ).toEqual([]);
+        expect(swiftRules(listOf(row("        Text(item.title)")))).toEqual([]);
+        expect(swiftRules(listOf(row('        Button("Open") { open(item) }')))).toEqual(["swift-row-control-at-rest"]);
+    });
+
+    test("an == that skips a stored value is flagged with the names; closures, class references and a marked property are not", () => {
+        const view = (equals: string, extra = "") =>
+            [
+                "final class ItemStore {}",
+                "struct ItemRow: View, Equatable {",
+                "    let item: Item",
+                "    let count: Int",
+                "    let store: ItemStore",
+                "    let model: HubModel",
+                "    let select: () -> Void",
+                "    var onHover: ((Bool) -> Void)? = nil",
+                extra,
+                "    static func == (a: ItemRow, b: ItemRow) -> Bool {",
+                `        ${equals}`,
+                "    }",
+                "    var body: some View { Text(item.title) }",
+                "}",
+            ].join("\n");
+        const narrow = checkSwiftSource("Sources/Example.swift", view("a.item == b.item"));
+        expect(narrow).toMatchObject([{ rule: "swift-equatable-eq-skips-value", line: 10, subject: "ItemRow" }]);
+        expect(narrow[0].message).toEndWith("Skipped: count.");
+        expect(swiftRules(view("a.item == b.item && a.count == b.count"))).toEqual([]);
+        expect(
+            swiftRules(view("a.item == b.item", "    // lint-rules-ignore: count follows item\n    let count: Int"))
+        ).toEqual(["swift-equatable-eq-skips-value"]);
+        expect(
+            swiftRules(
+                view("a.item == b.item").replace(
+                    "    let count: Int",
+                    "    // lint-rules-ignore: count follows item\n    let count: Int"
+                )
+            )
+        ).toEqual([]);
+    });
+
+    test("a formatter or a regex made in a view is flagged; a static let is not", () => {
+        const view = (line: string) =>
+            [
+                "struct StampLabel: View {",
+                "    let date: Date",
+                `    ${line}`,
+                "    var body: some View { Text(formatter.string(from: date)) }",
+                "}",
+            ].join("\n");
+        expect(
+            checkSwiftSource("Sources/Example.swift", view("private var formatter: DateFormatter { DateFormatter() }"))
+        ).toMatchObject([{ rule: "swift-formatter-in-view", line: 3, subject: "StampLabel" }]);
+        expect(swiftRules(view("private static let formatter = DateFormatter()"))).toEqual([]);
+        expect(
+            swiftRules(view('private var regex: NSRegularExpression? { try? NSRegularExpression(pattern: "x") }'))
+        ).toEqual(["swift-formatter-in-view"]);
+        expect(swiftRules("enum Stamps {\n    static func make() -> DateFormatter { DateFormatter() }\n}")).toEqual([]);
+    });
+});
+
+describe("the swift row ratchets (scripts/ci/swift-row-ratchet.ts)", () => {
+    const lists: Array<[string, ReadonlySet<string>]> = [
+        ["swift-row-observes-store", SWIFT_ROW_OBSERVES_RATCHET],
+        ["swift-row-control-at-rest", SWIFT_ROW_CONTROL_RATCHET],
+        ["swift-formatter-in-view", SWIFT_FORMATTER_IN_VIEW_RATCHET],
+        ["swift-equatable-eq-skips-value", SWIFT_EQUATABLE_SKIPS_RATCHET],
+    ];
+
+    test("every ratchet entry still trips its gate with the ratchet off, and passes with it on", async () => {
+        const stale: string[] = [];
+        const leaking: string[] = [];
+
+        for (const [rule, list] of lists) {
+            for (const key of list) {
+                const [file, subject] = key.split("#");
+                const source = await Bun.file(file).text();
+                const trips = checkSwiftSource(file, source, { ratchets: false }).some(
+                    (f) => f.rule === rule && f.subject === subject
+                );
+                const passes = !checkSwiftSource(file, source).some((f) => f.rule === rule && f.subject === subject);
+
+                if (!trips) {
+                    stale.push(`${rule}: ${key}`);
+                }
+
+                if (!passes) {
+                    leaking.push(`${rule}: ${key}`);
+                }
+            }
+        }
+
+        expect(stale).toEqual([]);
+        expect(leaking).toEqual([]);
+    });
+});
+
+describe("swiftRowAudit (the scanner's candidates)", () => {
+    test("names a row that observes a store, carries controls with no .liveRow, is not Equatable, and tracks hover", () => {
+        const source = [
+            "struct List: View {",
+            "    var body: some View {",
+            "        ForEach(items) { item in",
+            "            ItemRow(item: item)",
+            "        }",
+            "    }",
+            "}",
+            "struct ItemRow: View {",
+            "    @ObservedObject var store: ItemStore",
+            "    let item: Item",
+            "    @State private var hovering = false",
+            "    var body: some View {",
+            "        Text(item.title).instantTooltip(item.path)",
+            "    }",
+            "}",
+        ].join("\n");
+        const audit = swiftRowAudit(maskSwiftNonCode(source).split("\n"));
+        expect(audit).toEqual([
+            "ItemRow (L8-L15): observes a model or a shared store; a row takes values",
+            "ItemRow (L8-L15): controls at rest and no .liveRow(selected:) on the row",
+            "ItemRow (L8-L15): not Equatable (closures and class references defeat the automatic compare)",
+            "ItemRow (L8-L15): tracks its own hover (@State hovering); .liveRow does it",
+        ]);
+    });
+
+    test("a value row with .liveRow, Equatable, .equatable() and a full == is clean; a skipped field is named", () => {
+        const source = [
+            "struct List: View {",
+            "    var body: some View {",
+            "        ForEach(items) { item in",
+            "            ItemRow(item: item, selected: item.id == selectedID, select: { select(item) }).equatable()",
+            "        }",
+            "    }",
+            "}",
+            "struct ItemRow: View, Equatable {",
+            "    let item: Item",
+            "    let selected: Bool",
+            "    let select: () -> Void",
+            "    static func == (a: ItemRow, b: ItemRow) -> Bool {",
+            "        a.item == b.item && a.selected == b.selected",
+            "    }",
+            "    var body: some View {",
+            "        Text(item.title).rowButton(select).instantTooltip(item.path).liveRow(selected: selected)",
+            "    }",
+            "}",
+        ].join("\n");
+        expect(swiftRowAudit(maskSwiftNonCode(source).split("\n"))).toEqual([]);
+        const narrow = source.replace("a.item == b.item && a.selected == b.selected", "a.item == b.item");
+        expect(swiftRowAudit(maskSwiftNonCode(narrow).split("\n"))).toEqual([
+            "ItemRow (L8-L18): == skips selected (a value the body reads is stale)",
+        ]);
+    });
+});
 
 describe("swift-no-entry-macro", () => {
     const swiftRules = (source: string) => checkSwiftSource("Sources/Example.swift", source).map((f) => f.rule);

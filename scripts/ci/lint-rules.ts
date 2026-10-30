@@ -39,6 +39,7 @@ import { AGENT_PROCESS_MATCH_RATCHET, HARNESS_BRANCH_RATCHET, HOOK_PAYLOAD_READ_
 import { EFFORT_LIST_RATCHET, MODEL_ID_LITERAL_RATCHET, MODEL_PRICE_TABLE_RATCHET } from "./model-facts-ratchet";
 import { NATIVE_HOME_CLAUDE_RATCHET, NATIVE_HOME_CODEX_GROK_RATCHET } from "./native-home-ratchet";
 import { PROXY_PROVIDER_BRANCH_RATCHET } from "./proxy-provider-ratchet";
+import { checkSwiftRowRules, checkSwiftStructRules } from "./swift-lint-rules";
 import { TOOL_COMMAND_RATCHET } from "./tool-command-ratchet";
 import { TRANSCRIPT_FORMAT_RATCHET } from "./transcript-format-ratchet";
 
@@ -52,6 +53,8 @@ export interface Finding {
     severity: Severity;
     message: string;
     text: string;
+    /** The declaration the finding is about (a Swift struct), the key of a per-declaration ratchet. */
+    subject?: string;
 }
 
 interface Rule {
@@ -1143,7 +1146,7 @@ interface SwiftLintString {
 }
 
 /** Blank Swift comments, strings and hash-delimited regexes without moving code's line or column offsets. */
-function maskSwiftNonCode(source: string): string {
+export function maskSwiftNonCode(source: string): string {
     const masked = source.split("");
     let index = 0;
     let blockDepth = 0;
@@ -1227,11 +1230,21 @@ function maskSwiftNonCode(source: string): string {
     return masked.join("");
 }
 
-/** Swift has no grammar in the ast-grep napi package, so its rules are line regexes. */
-export function checkSwiftSource(file: string, source: string): Finding[] {
+/**
+ * Swift has no grammar in the ast-grep napi package, so its rules are line regexes, plus the brace-balanced
+ * struct and chain rules of swift-lint-rules.ts.
+ */
+export function checkSwiftSource(
+    file: string,
+    source: string,
+    { ratchets = true }: { ratchets?: boolean } = {}
+): Finding[] {
     const lines = source.split("\n");
     const codeLines = maskSwiftNonCode(source).split("\n");
-    const findings: Finding[] = [];
+    const findings: Finding[] = [
+        ...checkSwiftStructRules(file, lines, codeLines, isSuppressed),
+        ...checkSwiftRowRules(file, lines, codeLines, isSuppressed, ratchets),
+    ];
 
     for (const [index, text] of lines.entries()) {
         if (/^\s*\/\//.test(text) || isSuppressed(lines, index + 1)) {
@@ -1362,7 +1375,7 @@ export function pluginsDisabledFor(file: string): boolean {
  */
 export function checkSource(file: string, source: string, { ratchets = true }: { ratchets?: boolean } = {}): Finding[] {
     if (file.endsWith(".swift")) {
-        return checkSwiftSource(file, source);
+        return checkSwiftSource(file, source, { ratchets });
     }
 
     const lang = langFor(file);

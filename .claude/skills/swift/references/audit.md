@@ -42,6 +42,30 @@ so you know which files to read first. A line is a candidate, not a finding: for
 learn which thread runs it and how often. Walk every pass of the output. A file that tops several broad checks
 (a big view file, a model with many `@Published` properties) is where the costly defects cluster: read it whole.
 
+Since 2026-10-29 21:49 the scan also prints a **row audit** per file ("rows a ForEach makes that still carry …"):
+every `View` struct a `ForEach` constructs, with what it still carries (a model it observes, controls at rest with
+no `.liveRow(selected:)`, no `Equatable` or no `.equatable()` where it is made, an `==` that skips a stored value,
+its own `@State hovering`, a hover `.animation(` on the chain that sets its liveness), plus row builder methods
+(`func …Row(` with controls) and store reads repeated inside a `ForEach`. The engine is `swiftRowAudit` in
+`scripts/ci/swift-lint-rules.ts` (a brace-balanced struct and chain scanner over the masked source). The same module
+holds the CI **gates** `bun scripts/ci/lint-rules.ts` runs on every Swift file, each proven by a planted violation in
+`scripts/ci/lint-rules.test.ts`: `swift-liverow-outside-control` (`.liveRow(` before a `.rowButton` or
+`.instantTooltip(` in one chain), `swift-rowlive-read-in-liverow-struct` (a view reads `rowLive` and sets `.liveRow(`
+itself: it reads its parent's value), `swift-control-chained-to-row-construction` (a `.rowButton`/`.instantTooltip(`
+on a row's construction in a `ForEach` with no `.liveRow(` after it), `swift-presentation-inside-liverow` (a
+`.popover`/`.sheet` before `.liveRow(`: its content rests with the row), `swift-row-gates-control-itself`
+(`LiveButton(live:`/`interactive: x` in a view that sets its liveness), `swift-observation-async-rearm` and
+`swift-observation-no-rearm` (an `onChange` that never calls the enclosing function again). Since 2026-10-30 four
+more gates fence the defects themselves, each with a per-view ratchet in `scripts/ci/swift-row-ratchet.ts` (a key
+`<file>#<struct>` that only ever leaves; a stale key fails the tests): `swift-row-observes-store` (a row a `ForEach`
+makes holds `@ObservedObject`/`@EnvironmentObject`/`@StateObject` or `X.shared`), `swift-row-control-at-rest` (such a
+row carries a control and sets no `.liveRow`, neither inside nor where it is made, and reads no `rowLive`),
+`swift-equatable-eq-skips-value` (an `Equatable` view's `==` never names a stored value; a `…Model`/`…Store`, a
+class of the same file, a closure and a `// lint-rules-ignore:` property are skipped) and `swift-formatter-in-view`
+(a `DateFormatter()`, `NSRegularExpression(` or `Regex(` made inside a `View` struct, not `static`). Run on the
+files before the 2026-10-29 conversions, the first six gates fired twice and the ten fire 19 times, on the rows the
+proposals named. The proposals and their evidence: `.claude/plans/2026-10-29-SwiftLintRuleProposals/`.
+
 ## 1. The main thread
 
 - **Never read files, stat paths, encode JSON, run processes, decode images or query a database on the main thread**
