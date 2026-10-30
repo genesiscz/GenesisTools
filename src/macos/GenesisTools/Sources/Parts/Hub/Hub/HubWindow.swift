@@ -3,7 +3,7 @@ import Combine
 import SwiftUI
 
 // GenesisTools --hub [--mode sessions|worktrees|prs] [--session <provider:id or id prefix>|::procs] [--pr <n>]
-//                    [--tab transcript|changes|files|decisions] [--no-activate] [--snapshot <png>]
+//                    [--tab transcript|changes|files|decisions] [--no-activate] [--snapshot <png>] [--snapshot-tree]
 //                    [--bench <json>] [--panes transcript,changes,…] [--width <pt>] [--glass on|off]
 //                    [--file <repo-relative path>] [--height <pt>] [--style split|unified]
 //                    [--worktree <path>|cleanup|cleanup-blocked] [--set <key>=true|false]
@@ -30,6 +30,9 @@ import SwiftUI
 /// (Hub/HubSingleInstance.swift), so both paths parse it here.
 struct HubRequest {
     var snapshotPath: String?
+    /// With `--snapshot`: also write <shot>.tree.json for `tools control compare-tree` (`--snapshot-tree`). Opt-in,
+    /// because walking the accessibility tree costs about 0.7 ms per element (700 ms on a 1,050-element digest).
+    var snapshotTree = false
     var benchPath: String?
     var session: String?
     /// With `--session`: this sub-agent, teammate or worker of it opens in the Agents mode (`--agent <id|name>`).
@@ -145,6 +148,7 @@ struct HubRequest {
             let value = index + 1 < args.count ? args[index + 1] : nil
             switch args[index] {
             case "--snapshot": snapshotPath = value; index += 1
+            case "--snapshot-tree": snapshotTree = true
             case "--bench": benchPath = value; index += 1
             case "--session": session = value; index += 1
             case "--agent": agent = value; index += 1
@@ -386,6 +390,10 @@ package func runHub(_ args: [String]) -> Never {
                                     // The size, scale and build beside the PNG (Host/App/SnapshotGeometry.swift).
                                     SnapshotGeometry.write(png: snapshotPath, face: "hub", backingScale: window.backingScaleFactor,
                                                            points: window.contentView?.bounds.size)
+                                    // The view tree for `tools control compare-tree` (Host/App/SnapshotViewTree.swift).
+                                    if request.snapshotTree {
+                                        SnapshotViewTree.write(png: snapshotPath, face: "hub", window: window)
+                                    }
                                     exit(0)
                                 }
                             }
