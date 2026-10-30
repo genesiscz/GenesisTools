@@ -40,6 +40,12 @@ export interface ModsSettings {
     tmpUsage: { enabled: boolean; minutes: number };
     agentsBand: { enabled: boolean; warnMinutes: number };
     hooks: { tokens: boolean; dedupe: boolean };
+    /**
+     * `readings`: every refresh and reading goes to `mods-log/<feature>.jsonl` too (the git rows of each pass, the
+     * session files reading, the answers scans, the link candidates). Commands, failures and the hook ledger are
+     * always logged. Each append is a process, and the readings were 90% of them (2026-10-30).
+     */
+    log: { readings: boolean };
     sidebar: { hints: boolean; feedback: "line" | "toast" | "both"; focus: "command" | "always" | "never" };
     stall: { enabled: boolean; action: "button" | "auto"; minutes: number };
 }
@@ -68,6 +74,7 @@ export const MODS_DEFAULTS: ModsSettings = {
     tmpUsage: { enabled: false, minutes: 5 },
     agentsBand: { enabled: false, warnMinutes: 60 },
     hooks: { tokens: false, dedupe: false },
+    log: { readings: false },
     sidebar: { hints: true, feedback: "line", focus: "command" },
     stall: { enabled: false, action: "button", minutes: 5 },
 };
@@ -144,6 +151,7 @@ export function modsSettings(hooksFile: string | undefined): ModsSettings {
     const tmp = part("tmpUsage");
     const agents = part("agentsBand");
     const hooks = part("hooks");
+    const log = part("log");
     const sidebar = part("sidebar");
     const stall = part("stall");
     const enabled = (key: string, fallback: boolean) => bool(part(key).enabled, fallback);
@@ -246,6 +254,7 @@ export function modsSettings(hooksFile: string | undefined): ModsSettings {
                     ? sidebar.focus
                     : d.sidebar.focus,
         },
+        log: { readings: bool(log.readings, d.log.readings) },
         stall: {
             enabled: bool(stall.enabled, d.stall.enabled),
             action: stall.action === "button" || stall.action === "auto" ? stall.action : d.stall.action,

@@ -12,7 +12,7 @@
 import type { ToolCallInput } from "claude-code";
 import { sessionDirOf } from "./agents-band";
 import { decisionLink, genesisProbe } from "./genesis";
-import { agentsDir, type Host, isRecord, logMod, settingsOf } from "./shared";
+import { agentsDir, type Host, isRecord, logMod, logReading, settingsOf } from "./shared";
 import { pressed } from "./sidebar";
 
 export type DecisionStatus =
@@ -682,7 +682,12 @@ async function rowsFromIndex(
         indexedCalls = calls;
         rowsSize = size;
     }
-    await logMod(host, "answers", { event: "rows", scanned: parsed.scanned, asks: askRows.size, calls: calls.length });
+    await logReading(host, "answers", {
+        event: "rows",
+        scanned: parsed.scanned,
+        asks: askRows.size,
+        calls: calls.length,
+    });
     return true;
 }
 
@@ -865,7 +870,7 @@ END { if (NR && last == 1) emit(previous); print "__SEARCH_BYTES__" consumed + 0
 
     const newest = Math.max(Date.now(), ...entries.map((entry) => entry.at));
     recentCalls = calls.filter((call) => call.at >= newest - 2 * ENTRY_WINDOW_MS);
-    await logMod(host, "answers", { event: "search", from, to: searchedOffset, lines: lines.length });
+    await logReading(host, "answers", { event: "search", from, to: searchedOffset, lines: lines.length });
     await saveSearch(host, transcript);
 }
 
@@ -1016,7 +1021,7 @@ export function refreshAnswers(host: Host, why: string, force = false): Promise<
         held = read;
         heldStamp = stamp.own;
         lastReadAt = Date.now();
-        await logMod(host, "answers", { event: "read", why, own: ownMoved, slow, how: answer.how });
+        await logReading(host, "answers", { event: "read", why, own: ownMoved, slow, how: answer.how });
         await findRows(
             host,
             read.decisions.map((decision) => decision.n),

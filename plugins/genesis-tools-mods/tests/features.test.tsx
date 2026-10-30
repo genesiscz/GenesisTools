@@ -1787,7 +1787,8 @@ test("process log: session end flushes a final append batch", async ($, on) => {
 test("process log: idle timer flushes the append batch", async ($, on) => {
     const machine = processLogMachine(on);
     await $.command.run(gitCommand);
-    await machine.clock.advance(10_000);
+    // The git log's own append waits 10 s for more lines; its process row then waits another 10 s.
+    await machine.clock.advance(20_000);
     expect(processLogRows(machine.writes).some((row) => Array.isArray(row.argv) && row.argv[0] === "/bin/sh")).toBe(
         true
     );
@@ -1796,7 +1797,7 @@ test("process log: idle timer flushes the append batch", async ($, on) => {
 test("process log: session end waits for an in-flight timer writer", async ($, on) => {
     const machine = processLogMachine(on, { holdWrites: true });
     await $.command.run(gitCommand);
-    const advancing = machine.clock.advance(10_000);
+    const advancing = machine.clock.advance(20_000);
     await machine.writeStarted;
     // The timer has already selected its destination; avoid a second shutdown write masking the race.
     machine.hideHome();
@@ -1841,27 +1842,30 @@ test("process log: Finder button logs the open process", async ($, on) => {
     await ui.unmount();
 });
 
-test("process log: forty concurrent completions write two nonempty batches", async ($, on) => {
+test("mod log: forty events in one window are one append, and one process row", async ($, on) => {
     const machine = processLogMachine(on, { holdAppends: true });
     const commands = Array.from({ length: 40 }, () => $.command.run(gitCommand));
     await machine.clock.settle();
-    expect(machine.appends()).toBe(40);
+    expect(machine.appends()).toBe(0);
     machine.release();
     await Promise.all(commands);
     await machine.clock.advance(10_000);
+    expect(machine.appends()).toBe(1);
+    const append = machine.calls.find((argv) => argv.at(-1)?.endsWith("/mods-log/git.jsonl"));
+    expect(append?.[0]).toBe("/bin/sh");
+    await machine.clock.advance(10_000);
     const rows = processLogRows(machine.writes);
-    expect(machine.writes).toHaveLength(2);
     expect(
         rows.filter(
             (row) => Array.isArray(row.argv) && row.argv.includes("/home/test/.genesis-tools/agents/mods-log/git.jsonl")
         )
-    ).toHaveLength(40);
+    ).toHaveLength(1);
 });
 
 test("process log: unavailable metadata stays nonfatal and the folder is unknown", async ($, on) => {
     const machine = processLogMachine(on, { failCwd: true, failSession: true });
     const result = await $.command.run(gitCommand);
-    await machine.clock.advance(10_000);
+    await machine.clock.advance(20_000);
     expect(result.text).toContain("off");
     expect(
         processLogRows(machine.writes).some(
@@ -3375,6 +3379,12 @@ test("a git refresh requested during a read waits for roots added or removed dur
     let held: { entered: () => void; wait: Promise<void> } | undefined;
     const host: Host = {
         ...base,
+        // The refresh rows reach the log only with the readings setting on.
+        async read(path) {
+            return path.endsWith("/agents/hooks.json")
+                ? JSON.stringify({ mods: { git: { enabled: true }, log: { readings: true } } })
+                : base.read(path);
+        },
         async stat(file) {
             return file === "/work/wt-b" ? { kind: "dir", size: 0, mtimeMs: 0, isLink: false } : base.stat(file);
         },

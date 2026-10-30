@@ -388,6 +388,8 @@ export interface ModsConfig {
      * replaces a context block already given to the same loop since its last compaction with a one-line receipt.
      */
     hooks: { tokens: boolean; dedupe: boolean };
+    /** `readings`: the mods' routine refreshes and readings go to `mods-log/<feature>.jsonl` too (a process each). */
+    log: { readings: boolean };
     /**
      * The sidebars a band row opens: `hints` says in the status bar at a sidebar's foot what the focused button does,
      * `feedback` shows what a press did there (`line`), as a toast (`toast`), or both, and `focus` says when a docked
@@ -571,6 +573,7 @@ export const DEFAULT_HOOKS_CONFIG: HooksConfig = {
         tmpUsage: { enabled: false, minutes: 5 },
         agentsBand: { enabled: false, warnMinutes: 60 },
         hooks: { tokens: false, dedupe: false },
+        log: { readings: false },
         sidebar: { hints: true, feedback: "line", focus: "command" },
         stall: { enabled: false, action: "button", minutes: 5 },
     },
@@ -1175,6 +1178,7 @@ export function mergeMods(stored: unknown): ModsConfig {
     const tmp = partOf(held.tmpUsage);
     const agents = partOf(held.agentsBand);
     const hooks = partOf(held.hooks);
+    const log = partOf(held.log);
     const sidebar = partOf(held.sidebar);
     const stall = partOf(held.stall);
     const enabled = (key: string, fallback: boolean) => boolOr(partOf(held[key]).enabled, fallback);
@@ -1262,6 +1266,7 @@ export function mergeMods(stored: unknown): ModsConfig {
             ),
         },
         hooks: { tokens: boolOr(hooks.tokens, base.hooks.tokens), dedupe: boolOr(hooks.dedupe, base.hooks.dedupe) },
+        log: { readings: boolOr(log.readings, base.log.readings) },
         sidebar: {
             hints: boolOr(sidebar.hints, base.sidebar.hints),
             feedback:
