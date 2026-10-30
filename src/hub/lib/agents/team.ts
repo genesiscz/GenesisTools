@@ -46,6 +46,33 @@ export function readSessionTeam(sessionId: string, root: string = teamsRoot()): 
     return { name, root, members };
 }
 
+/**
+ * The inbox reads this process already logged, by path and error code. The hub reads every teammate's inbox on each
+ * refresh, and a teammate with no mail has no file: one debug line per read was 59,840 lines in 78 minutes
+ * (2026-10-30). Each path and failure is logged once; a failure other than a missing file is a warning.
+ */
+const loggedInboxFailures = new Set<string>();
+const LOGGED_INBOX_FAILURES_LIMIT = 2000;
+
+function logInboxFailure(path: string, error: unknown): void {
+    const code = error instanceof Error && "code" in error ? String(error.code) : "unknown";
+    const key = `${code}\u0000${path}`;
+    if (loggedInboxFailures.has(key)) {
+        return;
+    }
+
+    if (loggedInboxFailures.size >= LOGGED_INBOX_FAILURES_LIMIT) {
+        loggedInboxFailures.clear();
+    }
+
+    loggedInboxFailures.add(key);
+    if (code === "ENOENT") {
+        logger.debug({ path }, "[hub agents] no inbox (logged once per path)");
+    } else {
+        logger.warn({ error, path }, "[hub agents] inbox unreadable");
+    }
+}
+
 /** A teammate's inbox file (`inboxes/<name>.json`): mail the lead or a peer wrote for it. */
 export function readInbox(root: string, team: string, member: string): InboxEntry[] {
     const path = join(root, team, "inboxes", `${member}.json`);
@@ -53,7 +80,7 @@ export function readInbox(root: string, team: string, member: string): InboxEntr
     try {
         raw = readFileSync(path, "utf8");
     } catch (error) {
-        logger.debug({ error, path }, "[hub agents] no inbox");
+        logInboxFailure(path, error);
         return [];
     }
 

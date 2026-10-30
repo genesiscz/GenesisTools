@@ -8,6 +8,7 @@ import type { CodexSessionMeta } from "@app/codex/lib/store";
 import type { GrokSessionMeta } from "@app/grok/lib/store";
 import * as transcriptResolver from "@genesiscz/utils/ai/transcripts/resolve";
 import { SafeJSON } from "@genesiscz/utils/json";
+import { logger } from "@genesiscz/utils/logger";
 import { Command } from "commander";
 import { registerAgentsCommand } from "../../commands/agents";
 import { agentsMailDoor } from "../../server/doors/agents";
@@ -374,6 +375,26 @@ describe("hub agents mail", () => {
                 { from: "worker-two", at: "2026-03-10T11:01:00.000Z", text: "also not yet" },
             ],
         });
+    });
+    test("a teammate with no inbox file logs it once, and an unreadable inbox is a warning", () => {
+        const debug = spyOn(logger, "debug");
+        const warn = spyOn(logger, "warn");
+        try {
+            for (let read = 0; read < 3; read++) {
+                expect(unreadInbox(teams, TEAM, "no-mail-yet")).toEqual([]);
+            }
+            const missing = debug.mock.calls.filter(([, message]) => String(message).includes("no inbox"));
+            expect(missing).toHaveLength(1);
+
+            mkdirSync(join(teams, TEAM, "inboxes", "a-folder.json"), { recursive: true });
+            expect(unreadInbox(teams, TEAM, "a-folder")).toEqual([]);
+            expect(warn.mock.calls.filter(([, message]) => String(message).includes("inbox unreadable"))).toHaveLength(
+                1
+            );
+        } finally {
+            debug.mockRestore();
+            warn.mockRestore();
+        }
     });
 });
 
