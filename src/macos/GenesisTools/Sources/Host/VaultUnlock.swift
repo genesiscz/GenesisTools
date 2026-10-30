@@ -304,7 +304,7 @@ enum VaultSession {
         if let id = caller.args?.environmentValue("CLAUDE_CODE_SESSION_ID"), !id.isEmpty {
             info.sessionId = id
             info.title = claudeTitle(sessionId: id, claudeHome: caller.args?.environmentValue("CLAUDE_CONFIG_DIR") ?? claudeHome)
-        } else if let agent = caller.ancestors.first(where: { ["claude", "codex", "grok"].contains($0.command.split(separator: " ").first.map(String.init) ?? "") }) {
+        } else if let agent = caller.ancestors.first(where: { agent in Harness.allCases.contains { $0.binary == agent.command.split(separator: " ").first.map(String.init) } }) {
             info.agent = "\(agent.command) (pid \(agent.pid))"
         }
 

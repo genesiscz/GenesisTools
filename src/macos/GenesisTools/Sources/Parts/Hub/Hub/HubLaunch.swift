@@ -93,10 +93,10 @@ struct CmuxHost: TerminalHost {
         let span = HubPerf.begin("cmux.open", target.label)
         defer { span.end() }
         switch launch {
-        case .resume(let session) where session.provider == "claude":
+        case .resume(let session) where Harness(rawValue: session.provider)?.cmuxOpenSession == true:
             if let args = Self.openSessionArgs(target) {
                 do {
-                    let capture = try ToolsCLIRunner.capture(["claude", "cmux", "open-session", session.sessionId] + args + ["--json"])
+                    let capture = try ToolsCLIRunner.capture([session.provider, "cmux", "open-session", session.sessionId] + args + ["--json"])
                     return capture.status == 0 ? nil : Self.failure(of: capture)
                 } catch {
                     return "\(error)"
@@ -218,21 +218,11 @@ struct SessionTerminalSection: View {
 
 // MARK: - New session / resume sheet
 
-enum AgentHarness: String, CaseIterable {
-    case claude, codex, grok
-
+/// The harnesses the new-session sheet starts, in the drivers' order. The argv is `Harness.startArgs`, written from
+/// each TypeScript driver's launch recipe.
+extension Harness {
+    /// The segment title ("Claude", "Codex", "Grok").
     var title: String { rawValue.capitalized }
-
-    func newCommand(account: String, prompt: String? = nil) -> [String] {
-        let first = prompt.map { [$0] } ?? []
-        switch self {
-        case .claude:
-            let run = account.isEmpty ? ["tools", "claude", "run"] : ["tools", "claude", "run", account]
-            return run + (first.isEmpty ? [] : ["--"] + first)
-        case .codex: return ["codex"] + first
-        case .grok: return ["grok"] + first
-        }
-    }
 }
 
 /// How a `LaunchPicker` ended. Callers act on the case, never on the wording: a resume that failed
@@ -269,7 +259,7 @@ struct LaunchPicker: View {
     var returnStarts = true
     let done: (LaunchOutcome) -> Void
 
-    @State private var harness = AgentHarness.claude
+    @State private var harness = Harness.allCases[0]
     @GenReduceMotion private var reduceMotion
     @AppStorage("hub.launch.account") private var account = ""
     @StateObject private var model = TerminalTreeModel()
@@ -292,7 +282,7 @@ struct LaunchPicker: View {
 
     private var command: [String] {
         switch mode {
-        case .new(_, _, let prompt): return harness.newCommand(account: account.trimmed, prompt: prompt)
+        case .new(_, _, let prompt): return harness.startArgs(account: account.trimmed, prompt: prompt)
         case .resume(let session): return AgentLauncher.resumeCommand(for: session) ?? []
         }
     }
@@ -309,15 +299,15 @@ struct LaunchPicker: View {
             header
             if case .new = mode {
                 Picker("", selection: $harness) {
-                    ForEach(AgentHarness.allCases, id: \.self) { Text($0.title).tag($0) }
+                    ForEach(Harness.allCases, id: \.self) { Text($0.title).tag($0) }
                 }
                 .pickerStyle(.segmented)
                 .instantTooltip("Which agent to start")
-                if harness == .claude {
+                if harness.startPinsAccount {
                     TextField("Account (empty = pick in the terminal)", text: $account)
                         .textFieldStyle(.roundedBorder)
                         .font(.system(size: 12))
-                        .instantTooltip("tools claude run <account>")
+                        .instantTooltip(harness.startArgs(account: "<account>", prompt: nil).joined(separator: " "))
                 }
             }
             VStack(alignment: .leading, spacing: 4) {

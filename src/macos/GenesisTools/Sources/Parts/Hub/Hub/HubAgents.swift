@@ -47,10 +47,11 @@ struct AgentNode: Codable, Equatable, Identifiable, Sendable {
     var nested: [AgentNode] { children ?? [] }
 
     /// What `tools ai sessions tail` opens: the node's own file whenever the CLI gave one, so a codex
-    /// and a grok worker that share a name never open each other's transcript; else the worker's name.
+    /// and a grok worker that share a name never open each other's transcript; else the worker's name. A sub-agent of
+    /// a harness that keeps them as files beside the session (`Harness.subagentsOnDisk`) has no name to open by.
     var transcriptQuery: String? {
         if let filePath, !filePath.isEmpty { return filePath }
-        if harness == "claude" { return nil }
+        if Harness(rawValue: harness)?.subagentsOnDisk == true { return nil }
         return id.isEmpty ? nil : id
     }
 
@@ -92,9 +93,10 @@ struct AgentParent: Codable, Equatable, Identifiable, Sendable {
     var runningCount: Int { AgentTree.flatten(children).filter(\.isRunning).count }
     var totalCount: Int { AgentTree.flatten(children).count }
 
-    /// Where Claude Code writes this session's sub-agents: `<project>/<sessionId>/subagents/`.
+    /// Where a harness that keeps sub-agents on disk (`Harness.subagentsOnDisk`, Claude Code) writes this session's:
+    /// `<project>/<sessionId>/subagents/`.
     var sessionFolder: String? {
-        guard provider == "claude", let filePath, filePath.hasSuffix(".jsonl") else { return nil }
+        guard Harness(rawValue: provider)?.subagentsOnDisk == true, let filePath, filePath.hasSuffix(".jsonl") else { return nil }
         return (filePath as NSString).deletingPathExtension
     }
 }

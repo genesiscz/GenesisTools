@@ -1563,4 +1563,22 @@ final class HubLogicTests: XCTestCase {
         XCTAssertFalse(PRQuery("author:alice signup").matches(pr))
         XCTAssertTrue(PRQuery("login 57").matches(try queryPR(number: 3, title: "login 57", author: "bob")))
     }
+
+    /// The argv and labels the hub's harness sites had before they read `Harness` (2026-10-31).
+    func testHarnessSitesKeepTheirArgvAndLabels() {
+        XCTAssertEqual(Harness.allCases.map(\.title), ["Claude", "Codex", "Grok"])
+        XCTAssertEqual(Harness.claude.startArgs(account: "", prompt: nil), ["tools", "claude", "run"])
+        XCTAssertEqual(Harness.claude.startArgs(account: "work", prompt: nil), ["tools", "claude", "run", "work"])
+        XCTAssertEqual(Harness.claude.startArgs(account: "", prompt: "fix it"), ["tools", "claude", "run", "--", "fix it"])
+        XCTAssertEqual(Harness.claude.startArgs(account: "work", prompt: ""), ["tools", "claude", "run", "work", "--", ""])
+        XCTAssertEqual(Harness.codex.startArgs(account: "work", prompt: nil), ["codex"])
+        XCTAssertEqual(Harness.codex.startArgs(account: "", prompt: "fix it"), ["codex", "fix it"])
+        XCTAssertEqual(Harness.grok.startArgs(account: "work", prompt: "fix it"), ["grok", "fix it"])
+        XCTAssertEqual(Harness.allCases.filter(\.startPinsAccount), [.claude])
+        XCTAssertEqual(Harness.allCases.filter(\.cmuxOpenSession), [.claude])
+        XCTAssertEqual(HubSearchArgs.providers, ["claude", "codex", "grok"])
+        XCTAssertNil(AgentNode(id: "a1", harness: "claude", kind: "subagent", status: "done", lastAt: "").transcriptQuery)
+        XCTAssertEqual(AgentNode(id: "w1", harness: "codex", kind: "worker", status: "done", lastAt: "").transcriptQuery, "w1")
+        XCTAssertEqual(AgentNode(id: "w2", harness: "grok", kind: "worker", status: "done", lastAt: "").transcriptQuery, "w2")
+    }
 }

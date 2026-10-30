@@ -140,13 +140,10 @@ export const HARNESS_GUARD_ALLOWLIST: Readonly<Record<string, HarnessGuardCounts
         branch: 1,
         why: "the decision log's delivery channels (DeliveryChannel in src/question/lib/decisions/deliver.ts), a route axis: codex is the Codex worker route",
     },
-    "src/macos/GenesisTools/Sources/Host/RmApprove.swift": { branch: 1 },
-    "src/macos/GenesisTools/Sources/Host/VaultUnlock.swift": { list: 1 },
-    "src/macos/GenesisTools/Sources/Parts/Hub/Hub/HubAgents.swift": { branch: 2 },
-    "src/macos/GenesisTools/Sources/Parts/Hub/Hub/HubInbox.swift": { list: 1, branch: 2 },
-    "src/macos/GenesisTools/Sources/Parts/Hub/Hub/HubLaunch.swift": { list: 1, branch: 5 },
-    "src/macos/GenesisTools/Sources/Parts/Hub/Hub/HubSessionDetail.swift": { list: 1, branch: 1 },
-    "src/macos/GenesisTools/Sources/Parts/Hub/Hub/HubTranscriptSearch.swift": { list: 1 },
+    "src/macos/GenesisTools/Sources/Parts/Hub/Hub/HubInbox.swift": {
+        branch: 2,
+        why: "the decision log's delivery channels (DeliveryChannel in src/question/lib/decisions/deliver.ts), a route axis: codex is the Codex worker route",
+    },
     "src/mcp-manager/utils/harnesses.ts": {
         table: 1,
         why: "the MCP-client axis (Gemini and Cursor too) of the tool-owned mcp part: each client's stored default config home",

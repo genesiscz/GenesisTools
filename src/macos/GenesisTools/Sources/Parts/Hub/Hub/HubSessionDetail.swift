@@ -239,9 +239,10 @@ struct HubSessionDetailHost: View {
         return merged
     }
 
-    /// Off the main thread; at most once per 5 s (the live tail calls it on every append).
+    /// Off the main thread; at most once per 5 s (the live tail calls it on every append). Only a harness that writes
+    /// its sub-agents beside the session (`Harness.subagentsOnDisk`) has any to list.
     private func refreshSubagents() async {
-        guard !agentChild, session.provider == "claude", Date().timeIntervalSince(subagentsReadAt) >= 5 else { return }
+        guard !agentChild, Harness(rawValue: session.provider)?.subagentsOnDisk == true, Date().timeIntervalSince(subagentsReadAt) >= 5 else { return }
         subagentsReadAt = Date()
         let id = session.id
         let sessionId = session.sessionId
@@ -374,7 +375,7 @@ struct HubSessionDetailHost: View {
             actions.openInFinder = { PathOpener.finder(cwd) }
             actions.openInCursor = { PathOpener.cursor(cwd) }
         }
-        if session.cmux != nil, ["claude", "codex", "grok"].contains(session.provider) {
+        if session.cmux != nil, Harness(rawValue: session.provider) != nil {
             let id = session.sessionId
             let provider = session.provider
             // Off the main thread: it spawns `tools`, and a wait in a button action still spins the run loop.

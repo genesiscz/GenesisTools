@@ -67,7 +67,7 @@ enum HubSearchRange: String, CaseIterable, Sendable {
 }
 
 enum HubSearchArgs {
-    static let providers = ["claude", "codex", "grok"]
+    static let providers = Harness.allCases.map(\.rawValue)
 
     /// The `tools hub search` argv for the panel's state: every filter goes into the query.
     static func build(query: String, providers: Set<String>, project: String, range: HubSearchRange, limit: Int = 40) -> [String] {
