@@ -2,6 +2,7 @@ import { randomUUID } from "node:crypto";
 import { unlinkSync } from "node:fs";
 import { tmpdir } from "node:os";
 import { join } from "node:path";
+import { MODEL_ROLES } from "@genesiscz/utils/ai/catalog/roles";
 import { providerApiKey } from "@genesiscz/utils/ai/providers/resolve";
 import { TranscriptionManager } from "@genesiscz/utils/ai/transcription/TranscriptionManager";
 import type {
@@ -57,7 +58,7 @@ const CLOUD_TASKS: Record<CloudType, ReadonlySet<AITask>> = {
 const DEFAULT_LLM_MODELS: Record<LlmCloudType, string> = {
     groq: "groq/llama-3.3-70b-versatile",
     openrouter: "openrouter/meta-llama/llama-3-70b-instruct",
-    openai: "openai/gpt-4o-mini",
+    openai: `openai/${MODEL_ROLES.openai.small}`,
 };
 
 const FALLBACK_ORDER: ReadonlyArray<LlmCloudType> = ["groq", "openrouter", "openai"];

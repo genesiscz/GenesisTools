@@ -1,5 +1,7 @@
 import { homedir } from "node:os";
 import { join } from "node:path";
+import { resolveAnthropicSubModel } from "@genesiscz/utils/ai/anthropic/models";
+import { byId } from "@genesiscz/utils/ai/catalog";
 import type { AIAccountEntry } from "@genesiscz/utils/config/ai.types";
 import { env } from "@genesiscz/utils/env";
 import { SafeJSON } from "@genesiscz/utils/json";
@@ -21,10 +23,15 @@ import { atomicWriteFileSync } from "@genesiscz/utils/storage/storage";
  *     list, ungated by first-party, so "Fable 5.1" shows up in `/model` without
  *     the user typing it. `[1m]` selects the 1M-context Fable.
  */
-export const FABLE_MODEL_ID = "claude-fable-5-1";
-export const FABLE_MODEL_OPTION = "claude-fable-5-1[1m]";
-export const FABLE_MODEL_OPTION_NAME = "Fable 5.1";
-export const FABLE_MODEL_OPTION_DESCRIPTION = "Fable 5.1 · Most capable for hardest and longest-running tasks";
+export const FABLE_MODEL_ID = resolveAnthropicSubModel("fable");
+export const FABLE_MODEL_OPTION = `${FABLE_MODEL_ID}[1m]`;
+export const FABLE_MODEL_OPTION_NAME = (byId(FABLE_MODEL_ID, "anthropic")?.displayName ?? FABLE_MODEL_ID).replace(
+    /^Claude /,
+    ""
+);
+export const FABLE_MODEL_OPTION_DESCRIPTION = `${FABLE_MODEL_OPTION_NAME} · Most capable for hardest and longest-running tasks`;
+/** `cc opus`: the current Opus with its 1M window. */
+export const OPUS_MODEL_OPTION = `${resolveAnthropicSubModel("opus")}[1m]`;
 
 /**
  * Claude Code reads `.claude.json` from `$CLAUDE_CONFIG_DIR/.claude.json` when that

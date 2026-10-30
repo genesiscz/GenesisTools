@@ -3,6 +3,7 @@ import { dirname, join } from "node:path";
 import { isDeepStrictEqual } from "node:util";
 import type { YoutubeConfigInit, YoutubeConfigPatch } from "@app/youtube/lib/config.api.types";
 import type { YoutubeConfigShape } from "@app/youtube/lib/config.types";
+import { MODEL_ROLES } from "@genesiscz/utils/ai/catalog/roles";
 import { SafeJSON } from "@genesiscz/utils/json";
 import { logger } from "@genesiscz/utils/logger";
 import { withFileLock } from "@genesiscz/utils/storage";
@@ -53,7 +54,7 @@ export const DEFAULT_YOUTUBE_CONFIG: YoutubeConfigShape = {
     // throws on a provider that fails `supports("embed")` — an "all" default would
     // break every indexing run. Those two tasks keep their local, free defaults
     // (`darwinkit` / `local-hf`) unless explicitly configured.
-    ai: [{ provider: "grok", model: "grok-4.5", for: ["summary", "insights", "qa"] }],
+    ai: [{ provider: "grok", model: MODEL_ROLES.xai.default, for: ["summary", "insights", "qa"] }],
     referrals: { enabled: false, offers: [] },
     freeTier: { actionsPerMonth: null },
     defaultQuality: "720p",

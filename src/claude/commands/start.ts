@@ -8,6 +8,7 @@ import {
     FABLE_MODEL_OPTION,
     FABLE_MODEL_OPTION_DESCRIPTION,
     FABLE_MODEL_OPTION_NAME,
+    OPUS_MODEL_OPTION,
     pinnedLaunchEnv,
     subscriptionTypeOf,
 } from "@app/claude/lib/launch-env";
@@ -910,8 +911,7 @@ async function main(nameArg: string | undefined, opts: StartOptions, passthrough
     // `cc opus` / `cc fable` name a model as well as a strategy. An explicit
     // --model always wins.
     const modelId =
-        explicitModelId ??
-        (alias === "opus" ? "claude-opus-5-5[1m]" : alias === "fable" ? FABLE_MODEL_OPTION : undefined);
+        explicitModelId ?? (alias === "opus" ? OPUS_MODEL_OPTION : alias === "fable" ? FABLE_MODEL_OPTION : undefined);
 
     let accountName: string;
 

@@ -1,3 +1,5 @@
+import { resolveAnthropicSubModel } from "@genesiscz/utils/ai/anthropic/models";
+import { MODEL_ROLES } from "@genesiscz/utils/ai/catalog/roles";
 import { UpstreamStatusError } from "@genesiscz/utils/ai/http-auth";
 import {
     CC_VERSION,
@@ -33,12 +35,12 @@ export const FABLE_READING_INTERVAL_MS = 30 * 60_000;
 
 export const QUOTA_PROBE_URL = "https://api.anthropic.com/v1/messages";
 /** The only model whose answer carries the Fable window. */
-export const QUOTA_PROBE_MODEL = "claude-fable-5-1";
+export const QUOTA_PROBE_MODEL = resolveAnthropicSubModel("fable");
 /**
  * The cheap probe: the 5-hour and weekly windows, without Fable. Also the fallback for an account the
  * Fable model refuses.
  */
-export const QUOTA_PROBE_FALLBACK_MODEL = "claude-haiku-4-5-20251001";
+export const QUOTA_PROBE_FALLBACK_MODEL = MODEL_ROLES.anthropic.probe;
 /**
  * Probes allowed per account and model in 7 days. Martin's rule (2026-09-28): the probes may cost at most
  * 1 % of a weekly limit. A probe is about 34 input tokens, so the Haiku cap is about 204k Haiku input tokens

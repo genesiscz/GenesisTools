@@ -1,5 +1,6 @@
 import { basename, dirname } from "node:path";
 import type { AgentLauncher } from "@app/ai/commands/agent/spec";
+import { MODEL_ROLES } from "@genesiscz/utils/ai/catalog/roles";
 import type { AccountEntry } from "@genesiscz/utils/ai/config/schema";
 import { materialiseGrokGrant } from "@genesiscz/utils/ai/grok/grant-file";
 import { resolveGrokHome } from "@genesiscz/utils/ai/grok/paths";
@@ -101,7 +102,7 @@ export const grokLauncher: AgentLauncher = {
             ...(account === undefined ? {} : { account }),
             ...(legacy.prompt === undefined ? {} : { prompt: legacy.prompt }),
             ...(legacy.promptFile === undefined ? {} : { promptFile: legacy.promptFile }),
-            model: legacy.model ?? "grok-4.7",
+            model: legacy.model ?? MODEL_ROLES.xai.default,
             readOnly: legacy.readonly === true,
             ...(legacy.workerHome === undefined ? {} : { workerHome: legacy.workerHome }),
             ...(legacy.auth === undefined ? {} : { auth: legacy.auth }),

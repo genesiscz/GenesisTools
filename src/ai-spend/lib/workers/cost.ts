@@ -1,3 +1,4 @@
+import { resolveAnthropicSubModel } from "@genesiscz/utils/ai/anthropic/models";
 import { formatCost } from "@genesiscz/utils/format";
 import type { WorkerBackend } from "@genesiscz/utils/worker/capabilities";
 import type { WorkerAuthMode, WorkerUsagePart } from "@genesiscz/utils/worker/cost";
@@ -53,7 +54,11 @@ export interface WorkerCostCard {
 }
 
 /** The counterfactual: what the same tokens would cost on Claude. */
-export const CLAUDE_COUNTERFACTUAL = { opus: "claude-opus-5-5", sonnet: "claude-sonnet-5-5" } as const;
+/** The current Opus and Sonnet, through the catalog's family aliases. */
+export const CLAUDE_COUNTERFACTUAL = {
+    opus: resolveAnthropicSubModel("opus"),
+    sonnet: resolveAnthropicSubModel("sonnet"),
+} as const;
 
 /**
  * A turn's usage parts as ai-spend events: one per model call when the stream reported calls

@@ -1,5 +1,6 @@
 import { existsSync, readFileSync } from "node:fs";
 import { bookedCostLine, bookedTurnCost } from "@app/ai-spend/lib/workers/ledger";
+import { MODEL_ROLES } from "@genesiscz/utils/ai/catalog/roles";
 import { logger } from "@genesiscz/utils/logger";
 import { formatDotStatus, truncateDisplay } from "@genesiscz/utils/table";
 import { workerDeliveryExpectation } from "@genesiscz/utils/worker/delivery";
@@ -110,7 +111,7 @@ export const grokDriver: WorkerDriver<GrokSessionMeta> = {
             // through argv as `-p <whole file>` puts it under ARG_MAX for no gain. `--prompt-file`
             // is the form this tool's README documents as primary.
             ...promptInput(input.prompt, extras.promptFile),
-            model: input.model ?? "grok-4.7",
+            model: input.model ?? MODEL_ROLES.xai.default,
             readOnly: extras.readonly === true,
             ...(extras.workerHome === undefined ? {} : { workerHome: extras.workerHome }),
             ...(auth === undefined ? {} : { auth }),

@@ -21,6 +21,9 @@ const DEFAULT_VOICES_TTS_1: TTSVoice[] = [
     { id: "shimmer", name: "shimmer", description: "Warm female" },
 ];
 
+/** The first two TTS models take only the first six voices; every later one takes them all. */
+const LEGACY_TTS_MODELS: ReadonlySet<string> = new Set(["tts-1", "tts-1-hd"]);
+
 const GPT_4O_VOICES: TTSVoice[] = [
     ...DEFAULT_VOICES_TTS_1,
     { id: "ash", name: "ash" },
@@ -196,6 +199,6 @@ export class AIOpenAITextToSpeechProvider implements AITextToSpeechProvider {
 
     async listVoices(options?: { model?: string }): Promise<TTSVoice[]> {
         const model = options?.model ?? "tts-1";
-        return model.startsWith("gpt-4o") ? GPT_4O_VOICES : DEFAULT_VOICES_TTS_1;
+        return LEGACY_TTS_MODELS.has(model) ? DEFAULT_VOICES_TTS_1 : GPT_4O_VOICES;
     }
 }

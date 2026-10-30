@@ -1,4 +1,5 @@
 import { countTokens as claudeTokens } from "@anthropic-ai/tokenizer";
+import { resolveAnthropicSubModel } from "@genesiscz/utils/ai/anthropic/models";
 import { SafeJSON } from "@genesiscz/utils/json";
 import { countTokens, estimateTokens } from "@genesiscz/utils/tokens";
 
@@ -12,7 +13,8 @@ export interface TokenCount {
     method: TokenMethod;
 }
 
-export const DEFAULT_MODEL = "claude-opus-5";
+/** The current Opus, through the catalog's family alias. */
+export const DEFAULT_MODEL = resolveAnthropicSubModel("opus");
 
 /**
  * `claude-local` is `@anthropic-ai/tokenizer`, Anthropic's own BPE vocabulary, but
