@@ -1,6 +1,16 @@
 import { registerAccountLoginCommand } from "@app/ai/commands/accounts/login";
 import { runLogin } from "@app/ai/lib/accounts/run-login";
-import { type ClaudeConfig, DEFAULT_WARMUP, loadConfig, updateConfig } from "@app/claude/lib/config";
+import {
+    type ClaudeConfig,
+    CROSS_SESSION_INBOUND_VALUES,
+    claudeConfigPath,
+    crossSessionInboundSetting,
+    DEFAULT_WARMUP,
+    isCrossSessionInbound,
+    loadConfig,
+    setCrossSessionInbound,
+    updateConfig,
+} from "@app/claude/lib/config";
 import { partialRenameAdvice, renameClaudeAccount, resolveRenameTo } from "@app/claude/lib/rename-account";
 import { fetchUsage } from "@app/claude/lib/usage/api";
 import { clearPollGate } from "@app/claude/lib/usage/poll-gate";
@@ -770,6 +780,35 @@ export function registerConfigCommand(program: Command): void {
             const config = await loadConfig();
             const aiConfig = await AIConfig.load();
             await showConfig(config, aiConfig);
+        });
+
+    configCmd
+        .command("cross-messages [value]")
+        .description(
+            `Whether the sessions GenesisTools starts (${toolCommand("claude run")}, ${toolCommand("cmux agents new")} claude) ` +
+                `accept messages from other sessions and scripts without approval: ${CROSS_SESSION_INBOUND_VALUES.join(" | ")} ` +
+                "(default accept). Without a value, prints the current one and where it comes from"
+        )
+        .action(async (value: string | undefined) => {
+            if (value === undefined) {
+                const current = await crossSessionInboundSetting();
+                out.println(
+                    current.source === "default"
+                        ? `${current.value} (default)`
+                        : `${current.value} (${claudeConfigPath()})`
+                );
+                return;
+            }
+
+            if (!isCrossSessionInbound(value)) {
+                out.error(`Unknown value "${value}". Possible values: ${CROSS_SESSION_INBOUND_VALUES.join(", ")}.`);
+                out.info(toolCommand("claude config cross-messages", "accept"));
+                process.exitCode = 1;
+                return;
+            }
+
+            await setCrossSessionInbound(value);
+            out.println(`${value} (${claudeConfigPath()})`);
         });
 
     // OAuth login command (top-level, not under config). A door onto the shared

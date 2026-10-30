@@ -3,7 +3,7 @@ import { mkdtempSync, rmSync, writeFileSync } from "node:fs";
 import { tmpdir } from "node:os";
 import { join } from "node:path";
 import { NoSessionMatchError } from "@app/ai/lib/sessions/resolve-transcript";
-import { startPassthrough, withCrossMessages } from "@app/claude/lib/cross-messages";
+import { resolveCrossMessages, startPassthrough, withCrossMessages } from "@app/claude/lib/cross-messages";
 import type { ClaudeLiveSession, PeerSender } from "@genesiscz/utils/claude/peer-message";
 import {
     escapePeerBody,
@@ -531,6 +531,29 @@ test("--cross-messages puts the accept setting first and refuses a caller's own 
     expect(startPassthrough(true, ["--", "go"])).toEqual({
         args: ["--settings", '{"crossSessionInbound":"accept"}', "--", "go"],
     });
+});
+
+test("a per-run cross-messages flag wins over the saved launch preference, which decides without one", () => {
+    const plain = ["--", "go"];
+
+    expect(resolveCrossMessages({ flag: true, configured: "hold", passthrough: plain })).toBe(true);
+    expect(resolveCrossMessages({ flag: false, configured: "accept", passthrough: plain })).toBe(false);
+    expect(resolveCrossMessages({ flag: undefined, configured: "accept", passthrough: plain })).toBe(true);
+    expect(resolveCrossMessages({ flag: undefined, configured: "hold", passthrough: plain })).toBe(false);
+    // A caller's own --settings turns the default off rather than failing a command line that worked before.
+    const own = ["--settings", "/x.json"];
+    expect(resolveCrossMessages({ flag: undefined, configured: "accept", passthrough: own })).toBe(false);
+    expect(resolveCrossMessages({ flag: true, configured: "accept", passthrough: own })).toBe(true);
+
+    // The argv `tools claude run` passes on with the setting on and off.
+    const on = resolveCrossMessages({ flag: undefined, configured: "accept", passthrough: plain });
+    expect(startPassthrough(on, plain)).toEqual({
+        args: ["--settings", '{"crossSessionInbound":"accept"}', "--", "go"],
+    });
+    const off = resolveCrossMessages({ flag: undefined, configured: "hold", passthrough: plain });
+    expect(startPassthrough(off, plain)).toEqual({ args: ["--", "go"] });
+    const ownDefault = resolveCrossMessages({ flag: undefined, configured: "accept", passthrough: own });
+    expect(startPassthrough(ownDefault, own)).toEqual({ args: own });
 });
 
 test("a message longer than one socket write arrives whole (Bun sockets do not buffer)", async () => {

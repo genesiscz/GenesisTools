@@ -98,8 +98,15 @@ test("the run line quotes the account and the prompt, and omits -- when there is
     expect(agentRunCommand({ agent: "claude", account: "work", crossMessages: true })).toBe(
         `${TOOLS} 'claude' 'run' 'work' '--cross-messages'`
     );
+    // An explicit no is forwarded too; with neither, `tools claude run` reads the saved launch preference.
+    expect(agentRunCommand({ agent: "claude", account: "work", crossMessages: false })).toBe(
+        `${TOOLS} 'claude' 'run' 'work' '--no-cross-messages'`
+    );
     // Only Claude has the setting; another agent's line is unchanged.
     expect(agentRunCommand({ agent: "codex", account: "work", crossMessages: true })).toBe(
+        `${TOOLS} 'codex' 'run' 'work'`
+    );
+    expect(agentRunCommand({ agent: "codex", account: "work", crossMessages: false })).toBe(
         `${TOOLS} 'codex' 'run' 'work'`
     );
     expect(agentRunCommand({ agent: "claude", account: "work", promptFile: "/tmp/my prompt.md" })).toBe(
@@ -566,7 +573,7 @@ test("agents new prints the result JSON, records the session, and rejects a bad 
         tmuxSession: null,
         cwd: "/repo/app",
         command: withPidNote(
-            agentRunCommand({ agent: "claude", account: "work", prompt: "fix it", crossMessages: true }),
+            agentRunCommand({ agent: "claude", account: "work", prompt: "fix it" }),
             "/state/sessions/claude-app-ab12cd.pid"
         ),
     });
@@ -599,6 +606,19 @@ test("a codex session runs tools codex run with its only account, and a taken na
 
     await expect(runSessionNew("codex", { repo: "/repo/app", account: "side", name: "fix it" }, deps)).rejects.toThrow(
         'a session named "fix-it" is already open'
+    );
+});
+
+// Without either flag the run line carries none (the first test), so `tools claude run` reads the saved preference.
+test("agents new forwards an explicit --no-cross-messages to tools claude run", async () => {
+    const { io, calls } = harness();
+    const deps = { io, store: memoryStore(), accounts: ACCOUNTS };
+
+    await captureStdout(() =>
+        runSessionNew("claude", { repo: "/repo/app", account: "work", name: "Held", crossMessages: false }, deps)
+    );
+    expect(calls.find((call) => call[0] === "workspace")).toContain(
+        withPidNote(`${TOOLS} 'claude' 'run' 'work' '--no-cross-messages'`, "/state/sessions/held.pid")
     );
 });
 
