@@ -1,3 +1,4 @@
+import { createHash } from "node:crypto";
 import { ClaudeCodeTurn } from "@app/ai-proxy/lib/translators/formats/anthropic/claude-code-turns";
 import type { AnthropicUsage } from "@app/ai-proxy/lib/translators/formats/anthropic/openai-to-anthropic-responses";
 import { logger } from "@genesiscz/utils/logger";
@@ -90,7 +91,9 @@ export const threadContextMemory = new ThreadContextMemory();
 /**
  * The two stream options a provider passes to `responsesSseToAnthropic` for one request: the `message_start` usage
  * of its thread, and the hook that remembers the final usage for the next turn. `scope` separates clients (the
- * presented credential), the Claude Code thread key separates the main loop from each subagent.
+ * presented credential), the Claude Code thread key separates the main loop from each subagent type, and the text of
+ * the first message separates two subagents of one type: in session 8cf9eff2 (2026-10-30) parallel subagents shared
+ * one system prompt, and their remembered counts took turns (287K, 191K, 241K) under one thread key.
  */
 export function streamUsageOptions({
     scope,
@@ -102,8 +105,7 @@ export function streamUsageOptions({
     memory?: ThreadContextMemory;
 }): { startUsage: AnthropicUsage; onUsage: (usage: AnthropicUsage) => void } {
     const thread = ClaudeCodeTurn.read(body).threadKey;
-    const key = thread === undefined ? undefined : `${scope}\u0000${thread}`;
-
+    const key = thread === undefined ? undefined : `${scope}\u0000${thread}\u0000${firstMessageHash(body)}`;
     const estimate = estimateAnthropicBodyTokens(body);
     const held = key === undefined ? undefined : memory.recall(key);
     const startUsage = memory.startUsage(key, estimate);
@@ -125,6 +127,19 @@ export function streamUsageOptions({
             }
         },
     };
+}
+
+/** The text of the first message only, so a cache mark that moves onto it or off it does not change the hash. */
+function firstMessageHash(body: Record<string, unknown>): string {
+    const first = Array.isArray(body.messages) ? body.messages[0] : undefined;
+    const content = isObject(first) ? first.content : undefined;
+    const text =
+        typeof content === "string"
+            ? content
+            : Array.isArray(content)
+              ? content.map((block) => (isObject(block) && typeof block.text === "string" ? block.text : "")).join("\n")
+              : "";
+    return createHash("sha256").update(text).digest("hex").slice(0, 16);
 }
 
 /** Characters-per-token estimate of an Anthropic request: its system prompt, messages and tool definitions. */

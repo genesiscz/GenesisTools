@@ -91,6 +91,31 @@ describe("streamUsageOptions", () => {
         );
     });
 
+    it("keeps two subagents of one type apart, and one thread together when a cache mark moves", () => {
+        const memory = new ThreadContextMemory();
+        const task = (prompt: string, marked: boolean): Record<string, unknown> => ({
+            system: "You are a code reviewer.",
+            metadata: { user_id: SafeJSON.stringify({ session_id: SESSION }) },
+            messages: [
+                {
+                    role: "user",
+                    content: [
+                        { type: "text", text: prompt, ...(marked ? { cache_control: { type: "ephemeral" } } : {}) },
+                    ],
+                },
+            ],
+        });
+        const first = task("y".repeat(30_000), true);
+        const second = task("z".repeat(30_000), true);
+
+        streamUsageOptions({ scope: "alice", body: first, memory }).onUsage({ input_tokens: 9000, output_tokens: 1 });
+        streamUsageOptions({ scope: "alice", body: second, memory }).onUsage({ input_tokens: 8000, output_tokens: 1 });
+
+        const unmarked = task("y".repeat(30_000), false);
+        expect(streamUsageOptions({ scope: "alice", body: unmarked, memory }).startUsage.input_tokens).toBe(9000);
+        expect(streamUsageOptions({ scope: "alice", body: second, memory }).startUsage.input_tokens).toBe(8000);
+    });
+
     it("remembers nothing for a request that is not a Claude Code thread", () => {
         const memory = new ThreadContextMemory();
         const body = { messages: [{ role: "user", content: "hello" }] };
