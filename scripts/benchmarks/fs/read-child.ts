@@ -2,8 +2,6 @@
 import { FFIType } from "bun:ffi";
 import { closeSync, fstatSync, lstatSync, openSync, readSync, statSync } from "node:fs";
 import { open, stat } from "node:fs/promises";
-import { homedir } from "node:os";
-import { join } from "node:path";
 /**
  * One sample for `read-primitives.ts`: one way of doing one file job over real session files, twice in this fresh
  * process (cold, then warm), printed as `{ coldCpuMs, warmCpuMs, check }`. `check` must agree between the arms of a
@@ -22,6 +20,7 @@ import { defineSystemLibrary } from "@genesiscz/utils/bun/compiler";
 import { fastWalk } from "@genesiscz/utils/fs/native/fast-walk";
 import { readFirstLines, readLastLines } from "@genesiscz/utils/fs/read-lines";
 import { SafeJSON } from "@genesiscz/utils/json";
+import { nativeHomePath } from "@genesiscz/utils/providers/session-paths";
 import { READ_ARMS } from "./walk-trees";
 
 const BYTES = 64 * 1024;
@@ -47,14 +46,14 @@ const SEEK_END = 2;
 
 async function files(): Promise<string[]> {
     if (job === "head") {
-        const walked = await fastWalk({ roots: [join(homedir(), ".codex", "sessions")], endsWith: [".jsonl"] });
+        const walked = await fastWalk({ roots: [nativeHomePath("codex", "sessions")], endsWith: [".jsonl"] });
         return walked.entries.filter((entry) => entry.kind === "file").map((entry) => entry.path);
     }
 
     if (job === "tail") {
         const since = Date.now() - 24 * 3_600_000;
         const walked = await fastWalk({
-            roots: [join(homedir(), ".claude", "projects")],
+            roots: [nativeHomePath("claude", "projects")],
             endsWith: [".jsonl"],
             maxDepth: 1,
         });
@@ -65,9 +64,9 @@ async function files(): Promise<string[]> {
 
     const walked = await Promise.all(
         [
-            { root: join(homedir(), ".claude", "projects"), names: [], endsWith: [".jsonl"], maxDepth: 1 },
-            { root: join(homedir(), ".grok", "sessions"), names: ["chat_history.jsonl"], endsWith: [], maxDepth: 2 },
-            { root: join(homedir(), ".codex", "sessions"), names: [], endsWith: [".jsonl"], maxDepth: undefined },
+            { root: nativeHomePath("claude", "projects"), names: [], endsWith: [".jsonl"], maxDepth: 1 },
+            { root: nativeHomePath("grok", "sessions"), names: ["chat_history.jsonl"], endsWith: [], maxDepth: 2 },
+            { root: nativeHomePath("codex", "sessions"), names: [], endsWith: [".jsonl"], maxDepth: undefined },
         ].map((tree) =>
             fastWalk({ roots: [tree.root], names: tree.names, endsWith: tree.endsWith, maxDepth: tree.maxDepth })
         )

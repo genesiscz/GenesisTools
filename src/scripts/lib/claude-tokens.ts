@@ -23,11 +23,10 @@
  * a new OAuth client — that is the path that fails.
  */
 import { readFile } from "node:fs/promises";
-import { homedir } from "node:os";
-import { join } from "node:path";
 import { readKeychainPayload } from "@genesiscz/utils/claude/keychain";
 import { SafeJSON } from "@genesiscz/utils/json";
 import { logger } from "@genesiscz/utils/logger";
+import { nativeHomePath } from "@genesiscz/utils/providers/session-paths";
 
 export interface McpToken {
     serverName: string;
@@ -43,7 +42,7 @@ const SKEW_MS = 60_000;
 
 async function readCredentialsFile(): Promise<Record<string, unknown> | undefined> {
     try {
-        const raw = await readFile(join(homedir(), ".claude", ".credentials.json"), "utf-8");
+        const raw = await readFile(nativeHomePath("claude", ".credentials.json"), "utf-8");
         return SafeJSON.parse(raw, { strict: true }) as Record<string, unknown>;
     } catch (error) {
         logger.debug({ error }, "no ~/.claude/.credentials.json fallback");

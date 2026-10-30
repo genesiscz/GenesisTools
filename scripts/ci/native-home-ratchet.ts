@@ -10,23 +10,13 @@
  * `lint-rules.test.ts` fails when a listed file no longer offends, so the lists cannot go stale.
  */
 export const NATIVE_HOME_CLAUDE_RATCHET: ReadonlySet<string> = new Set<string>([
-    "scripts/benchmarks/fs/read-child.ts",
-    "scripts/benchmarks/fs/walk-trees.ts",
-    "scripts/benchmarks/json/parse-child.ts",
     "scripts/benchmarks/statusline/current-statusline.ts",
-    "src/ai/commands/statusline/index.ts",
     "src/claude/lib/launch-env.ts",
-    "src/learn-from-fable/commands/instruct.ts",
     "src/learn-from-fable/lib/config.ts",
-    "src/scripts/lib/claude-tokens.ts",
     "src/utils/cli/failures/caller.ts",
 ]);
 
 export const NATIVE_HOME_CODEX_GROK_RATCHET: ReadonlySet<string> = new Set<string>([
-    "scripts/benchmarks/fs/read-child.ts",
-    "scripts/benchmarks/fs/walk-trees.ts",
-    "src/ai/commands/config/account.ts",
     "src/codex/lib/spawn.ts",
     "src/utils/cli/failures/caller.ts",
-    "src/utils/session-changes/codex.ts",
 ]);
