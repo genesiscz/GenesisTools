@@ -15,6 +15,12 @@ import SwiftUI
 //                    (Hub/HubCommitLink.swift)
 // (`tools hub` builds the app when needed and runs this; a second launch goes to the running hub.)
 // `--snapshot` and `--bench` run off screen on a scratch copy of the hub's settings (HubDefaults).
+// The session view shows its panes SIDE BY SIDE, and the scratch copy starts from the live hub's open panes. `--tab`
+// only picks the focused pane and adds it to them: with transcript, changes and files open, `--tab changes` and
+// `--tab files` draw the same three panes, so a before/after pair taken with `--tab` showed identical afters for both.
+// One pane alone needs `--panes <name>`: `--session <id> --panes files --snapshot files.png`; two side by side need
+// `--panes transcript,changes`. A `--snapshot` waits for the overlays it opens (`--digest`, `--prompts`, `--handoff`,
+// `--rules`) to load, at most 20 s, and then prints `hub snapshot: still loading: <part>` (Hub/HubSnapshotLoads.swift).
 //
 // Every agent session in one window: live and recent sessions on the left (with the account each
 // one is pinned to), one session on the right with its transcript, the changes in its folder
