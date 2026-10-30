@@ -87,6 +87,23 @@ export interface LaunchRecipe {
     };
 }
 
+/** D, F, T: static facts about the shape of a harness's transcript, which readers and renderers branch on. */
+export interface TranscriptFacts {
+    /**
+     * Whether the transcript records a terminal event (a turn's end or error). A Claude session file records none, so
+     * a missing one says nothing about its state; for the others a missing one means the turn still runs.
+     */
+    readonly recordsTerminalEvent: boolean;
+    /**
+     * Whether the native session file is read by turn through the turn index (`turn-index.ts`), so a reader pages it
+     * without parsing the whole file. Only Claude's is (its rows carry the turn structure); Codex and Grok parse once
+     * per read and page from memory (`transcriptSnapshot`).
+     */
+    readonly pagesByTurnIndex: boolean;
+    /** Whether the harness writes a session's sub-agents beside it (Claude's `<session>/subagents/`). */
+    readonly subagentsOnDisk: boolean;
+}
+
 /** H: the slash command that ends an interactive session. */
 export interface ExitCommand {
     readonly command: string;
@@ -127,6 +144,7 @@ export interface LazyPartContracts {
  */
 export interface EagerPartContracts {
     launch: LaunchRecipe;
+    transcript: TranscriptFacts;
     /** P: what a `tools <agent>` worker of the harness can do; the WorkerDriver that does it lives in the agent's tool. */
     worker: WorkerCapabilities;
     exit: ExitCommand;

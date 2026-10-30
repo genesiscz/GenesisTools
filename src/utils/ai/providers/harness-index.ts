@@ -1,6 +1,6 @@
 import type { NativeSessionReader } from "@genesiscz/utils/agent-sessions/types";
 import { ACCOUNT_PROVIDER_ALIASES } from "@genesiscz/utils/ai/providers/alias-list";
-import type { HostResolver, LaunchRecipe, ProcessSignature } from "@genesiscz/utils/harness/parts";
+import type { HostResolver, LaunchRecipe, ProcessSignature, TranscriptFacts } from "@genesiscz/utils/harness/parts";
 import { type HarnessDriver, type HarnessId, isPartNote } from "@genesiscz/utils/harness/types";
 import type { WorkerCapabilities } from "@genesiscz/utils/worker/capabilities";
 import { claudeHarness } from "./plugins/anthropic-sub/harness";
@@ -98,4 +98,15 @@ export function harnessWorker(id: HarnessId): WorkerCapabilities {
  */
 export function byHarness<T>(pick: (id: HarnessId) => T): Readonly<Record<HarnessId, T>> {
     return { claude: pick("claude"), codex: pick("codex"), grok: pick("grok") };
+}
+
+/** The static facts about a harness's transcript shape; every harness has them. */
+export function harnessTranscriptFacts(id: HarnessId): TranscriptFacts {
+    const slot = harnessDriver(id).parts.transcript;
+
+    if (isPartNote(slot)) {
+        throw new Error(`The ${id} harness driver has no transcript facts: ${slot.reason}`);
+    }
+
+    return slot;
 }

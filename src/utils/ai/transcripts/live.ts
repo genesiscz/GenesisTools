@@ -4,7 +4,7 @@ import { logger } from "@genesiscz/utils/logger";
 import { transcriptEnvelope, transcriptSnapshot } from "./load";
 import type { ResolvedTranscript } from "./resolve";
 import { followTranscript } from "./tail";
-import { PAGES_BY_TURN_INDEX } from "./turn-index";
+import { pagesByTurnIndex } from "./turn-index";
 import {
     isTurnProvider,
     LIVE_STALL_MS,
@@ -319,7 +319,7 @@ export async function followTranscriptLive(resolved: ResolvedTranscript, options
     const drain = async (from: number): Promise<void> => {
         let at = Math.max(from, drainedTo);
         let open: number | null = null;
-        const snapshot = PAGES_BY_TURN_INDEX[resolved.provider] ? null : await transcriptSnapshot(resolved);
+        const snapshot = pagesByTurnIndex(resolved.provider) ? null : await transcriptSnapshot(resolved);
 
         while (!options.signal?.aborted) {
             const opts = { offset: at, limit: LIVE_WINDOW };

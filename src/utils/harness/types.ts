@@ -51,6 +51,7 @@ export const HARNESS_PARTS = [
     "mcp",
     "history",
     "subagents",
+    "transcript",
 ] as const satisfies readonly HarnessPartName[];
 
 /** Why a driver does not carry a part's implementation itself. Every variant carries a reason a person can read. */

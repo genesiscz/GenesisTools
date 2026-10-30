@@ -24,6 +24,7 @@ import {
     writeFileSync,
 } from "node:fs";
 import { join } from "node:path";
+import { harnessTranscriptFacts } from "@genesiscz/utils/ai/providers/harness-index";
 import { agentProgressToSubagent } from "@genesiscz/utils/claude/session.utils";
 import type { ConversationMessage, ProgressMessage } from "@genesiscz/utils/claude/types";
 import { SafeJSON } from "@genesiscz/utils/json";
@@ -356,21 +357,15 @@ export function indexedTurnAt(path: string, index: TurnIndex, position: number):
     }
 }
 
-/**
- * Whether a provider's native session file is read by turn through this index, so a reader pages it without parsing
- * the whole file. Only Claude's is (its rows carry the turn structure); Codex and Grok parse once per read and page
- * from memory (`transcriptSnapshot`).
- */
-export const PAGES_BY_TURN_INDEX: Record<TranscriptProvider, boolean> = {
-    claude: true,
-    codex: false,
-    grok: false,
-};
+/** Whether a provider's native session file is read by turn through this index: its driver's transcript facts. */
+export function pagesByTurnIndex(provider: TranscriptProvider): boolean {
+    return harnessTranscriptFacts(provider).pagesByTurnIndex;
+}
 
 /** The current index when `resolved` is a plain Claude session file large enough to have one. */
 export function turnIndexOfTranscript(resolved: ResolvedTranscript, options: TurnIndexOptions = {}): TurnIndex | null {
     if (
-        !PAGES_BY_TURN_INDEX[resolved.provider] ||
+        !pagesByTurnIndex(resolved.provider) ||
         resolved.source !== "native" ||
         (resolved.extraFiles?.length ?? 0) > 0
     ) {
