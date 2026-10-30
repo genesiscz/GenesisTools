@@ -516,7 +516,9 @@ final class ReviewModel: ObservableObject {
     /// Set when no checkout on disk holds the diff's head (a PR without a worktree, its head fetched
     /// into `repo`): this repository's files open on the host at that head (Review/ReviewRemoteHead.swift).
     var remoteHead: ReviewRemoteHead?
-    @Published var files: [DiffFile] = []
+    @Published var files: [DiffFile] = [] {
+        didSet { lookupCache = nil }
+    }
     /// The file list's filter text; the list's rows are rebuilt from it in the view.
     @Published var filter = "" {
         didSet {
@@ -572,7 +574,29 @@ final class ReviewModel: ObservableObject {
 
     /// The repositories this diff shows (Review/ReviewRoots.swift). The first is `repo`; the hub adds
     /// the session's ticked folders, and then every file sits under its root's folder name.
-    @Published private(set) var roots: [ReviewRoot]
+    @Published private(set) var roots: [ReviewRoot] {
+        didSet {
+            lookupCache = nil
+            if roots.count != oldValue.count || zip(roots, oldValue).contains(where: { !$0.sameSetup(as: $1) }) {
+                resolvedPaths = [:]
+            }
+        }
+    }
+    /// `files` and `roots` by id and path (`locate`, `file(atPath:)`, `repoPath`), built on the first lookup after
+    /// either changes: the file list and the Folders tree look up every row they draw.
+    private var lookupCache: ReviewFileLookup?
+    private var lookup: ReviewFileLookup {
+        if let lookupCache {
+            return lookupCache
+        }
+        let made = ReviewFileLookup(files: files, roots: roots)
+        lookupCache = made
+        return made
+    }
+    /// Absolute paths as `file(atPath:)` compares them (symlinks resolved, standardized), each read from disk once:
+    /// the Folders tree asks for every row it draws, and a body must not touch the disk per row. Dropped when the
+    /// roots move to other folders.
+    private var resolvedPaths: [String: String] = [:]
     /// The Files tree's root rows: tick or untick a root, or remove an added folder. Set by the hub.
     var rootActions: ReviewRootActions?
     /// Comments of the other roots, each anchored in its own repository (`comments` is `repo`'s).
@@ -780,9 +804,7 @@ final class ReviewModel: ObservableObject {
 
     /// A merged file id's root, and the file as its repository names it.
     func locate(fileID: String) -> (root: ReviewRoot, file: DiffFile)? {
-        guard let index = ReviewRoots.index(of: fileID, in: roots), let local = roots[index].local(fileID),
-              let file = roots[index].files.first(where: { $0.id == local }) else { return nil }
-        return (roots[index], file)
+        lookup.locate(fileID: fileID)
     }
 
     /// The file on disk: its root's repository plus its repo-relative path. Nil for this repository's
@@ -812,9 +834,22 @@ final class ReviewModel: ObservableObject {
 
     /// A file by an absolute path inside any root, or by a path relative to this repository.
     func file(atPath path: String) -> DiffFile? {
-        let normalized = path.hasPrefix("/") ? URL(fileURLWithPath: path).resolvingSymlinksInPath().standardizedFileURL.path : path
-        let wanted = ReviewRoots.global(path: normalized, in: roots)
-        return files.first { $0.path == wanted || $0.oldPath == wanted }
+        let normalized = path.hasPrefix("/") ? resolved(path) : path
+        return lookup.file(atMergedPath: ReviewRoots.global(path: normalized, in: roots))
+    }
+
+    /// An absolute path with its symlinks resolved, read from disk the first time only (`resolvedPaths`).
+    private func resolved(_ path: String) -> String {
+        if let known = resolvedPaths[path] {
+            return known
+        }
+        let made = URL(fileURLWithPath: path).resolvingSymlinksInPath().standardizedFileURL.path
+        // A bound for a long-lived hub whose Folders tree walked a big folder; the next lookups read again.
+        if resolvedPaths.count >= 20_000 {
+            resolvedPaths.removeAll(keepingCapacity: true)
+        }
+        resolvedPaths[path] = made
+        return made
     }
 
     /// The diff belongs to this PR/MR: its live threads load now (or on `start`) and sit on their lines.
