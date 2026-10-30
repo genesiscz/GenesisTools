@@ -31,7 +31,13 @@ A click shows a card in the bottom-left corner of the screen: the Genesis Tools 
 
 With the `local-services` preset, a click on `http://localhost:<port>/...` or `http://127.0.0.1:<port>/...` for a port in the dashboard registry (`src/utils/ui/dashboards.ts`) runs `tools browser-router ensure <port>` first. A running server opens at once. A stopped one is started, the card says "Starting <name>" until the port listens (20 s at most), then "Opening", and the page opens. On a timeout the card shows the error and the log path, and the dead page is not opened. These `service` routes run without a prompt, because they only start a known local server. With `dashboard-names`, `https://<key>/...` and `https://<linkHost>/<key>/...` do the same for a dashboard's registry key. An alias in the config (`{ "host": "dashboard", "base": "http://localhost:3096" }`) renames a host first.
 
-Example: an old note links `http://localhost:3042/qa`. The click starts the dev-dashboard and then opens the page.
+Example: an old note links `http://localhost:3042/qa`. The click starts the dev-dashboard and then opens the page. Check what a click will do before you paste such a link:
+
+```bash
+tools browser-router explain 'http://localhost:3042/qa'
+# run via route / tools browser-router ensure 3042 / approval: allow / notify: Starting Dev Dashboard
+tools browser-router ensure 3042   # the same start by hand: exit 0 when it listens, 1 on a timeout, 2 when the port is not registered or has no launch command
+```
 
 ## Many links, one click
 
@@ -42,7 +48,27 @@ Example: an old note links `http://localhost:3042/qa`. The click starts the dev-
 
 When you (Claude, Grok, a bot) would paste more than three links for the user to open together, mint one bundle link instead: `tools browser-router tabs mint --from-md <file>` or `tools browser-router tabs mint <url> <url> ...`, then paste `[Open all N](https://<linkHost>/t/<id>)`. Check `status --json` first; without the router, paste the plain list.
 
-Every clicked page is cleaned before it reaches the browser: Outlook safelinks, Google `/url?q=`, Slack and Teams redirectors are unwrapped, and `utm_*`, `fbclid`, `gclid` and `mc_eid` are removed. Set `"clean": false` in the config to turn it off.
+Example: five links from a standup note become one link.
+
+```bash
+tools browser-router tabs mint --from-md standup.md
+# https://<linkHost>/t/<id>   paste it as: [Open all 5](https://<linkHost>/t/<id>)
+tools browser-router tabs save morning https://boards.example.com/team https://errors.example.com/issues
+# https://<linkHost>/tabs/morning   a stable link that opens both pages every time
+```
+
+Brave asks "Close all?" before it closes a window with several tabs, so a bundle window that a script closes waits for that click.
+
+## Clicked links are cleaned
+
+Every clicked page is cleaned before it reaches the browser: Outlook safelinks, Google `/url?q=`, Slack and Teams redirectors are unwrapped, and `utm_*`, `fbclid`, `gclid` and `mc_eid` are removed. Set `"clean": false` in the config to turn it off. A bundle link is cleaned the same way, one page at a time.
+
+Example: `tools browser-router explain` prints the page the click opens.
+
+```bash
+tools browser-router explain 'https://eur01.safelinks.protection.outlook.com/?url=https%3A%2F%2Fexample.com%2Fdocs%3Fid%3D7%26utm_source%3Dmail&data=05%7C02'
+# forward via default / https://example.com/docs?id=7
+```
 
 ## Answer a DECISION with a click
 
