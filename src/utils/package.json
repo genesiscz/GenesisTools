@@ -63,6 +63,11 @@
             "types": "./ai/index.ts",
             "default": "./ai/index.ts"
         },
+        "./ai/catalog/roles": {
+            "bun": "./ai/catalog/roles.ts",
+            "types": "./ai/catalog/roles.ts",
+            "default": "./ai/catalog/roles.ts"
+        },
         "./array": {
             "bun": "./array.ts",
             "types": "./array.ts",
