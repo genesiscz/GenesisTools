@@ -26,7 +26,7 @@ import {
     sessionRepos,
     titleMatches,
 } from "./pr-repos";
-import { agentsDir, type Host, isRecord, logMod } from "./shared";
+import { agentsDir, type Host, isRecord, logReading } from "./shared";
 
 const DOC = new Set(["md", "mdx", "json", "jsonl", "yaml", "yml", "toml", "log", "txt", "csv"]);
 const CODE = new Set([
@@ -734,10 +734,20 @@ export async function linkLine(ctx: LinkContext, line: string): Promise<string> 
 }
 
 /** `messageCount`: the messages the request carried; later ones are this reply itself, which asks nothing earlier. */
-async function contextOf(host: Host, messageCount: number): Promise<LinkContext> {
-    const home = (await host.env("HOME")) ?? "";
-    const cwd = await host.cwd();
-    const sessionId = await host.sessionId();
+/** A cwd's checkout and forge project, remembered for 10 minutes: two git processes per reply before. */
+const checkoutProjects = new Map<string, { root: string | undefined; project: ForgeProject | undefined; at: number }>();
+const CHECKOUT_PROJECT_MS = 10 * 60_000;
+
+async function checkoutProject(
+    host: Host,
+    cwd: string
+): Promise<{ root: string | undefined; project: ForgeProject | undefined }> {
+    const known = checkoutProjects.get(cwd);
+
+    if (known && Date.now() - known.at < CHECKOUT_PROJECT_MS) {
+        return known;
+    }
+
     const top = await host
         .run(["git", "-C", cwd, "rev-parse", "--show-toplevel"], { timeoutMs: 3_000 })
         .catch(() => undefined);
@@ -748,6 +758,17 @@ async function contextOf(host: Host, messageCount: number): Promise<LinkContext>
               .catch(() => undefined)
         : undefined;
     const project = origin?.exitCode === 0 ? forgeProject(origin.stdout) : undefined;
+    const found = { root, project, at: Date.now() };
+    checkoutProjects.set(cwd, found);
+
+    return found;
+}
+
+async function contextOf(host: Host, messageCount: number): Promise<LinkContext> {
+    const home = (await host.env("HOME")) ?? "";
+    const cwd = await host.cwd();
+    const sessionId = await host.sessionId();
+    const { root, project } = await checkoutProject(host, cwd);
     const repo = project?.path;
     const askedBefore = new Set<number>();
     const messages = (await host.messages()).slice(0, messageCount);
@@ -883,7 +904,7 @@ export async function* linksStep(
         yield* flush();
 
         if (ctx && ctx.log.length > 0) {
-            await logMod(host, "links", { session: ctx.sessionId, turn: e.turnId, step: e.index, items: ctx.log });
+            await logReading(host, "links", { session: ctx.sessionId, turn: e.turnId, step: e.index, items: ctx.log });
         }
 
         // The recorded answer carries the links too, so a hook above and the transcript read what was shown.
