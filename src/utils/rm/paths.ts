@@ -1,4 +1,4 @@
-import { realpathSync, statSync } from "node:fs";
+import { chmodSync, lstatSync, mkdirSync, realpathSync, statSync } from "node:fs";
 import { tmpdir } from "node:os";
 import { basename, dirname, isAbsolute, join, relative, resolve, sep } from "node:path";
 
@@ -118,5 +118,54 @@ export function isMountPoint(path: string): boolean {
         return statSync(path).dev !== statSync(parent).dev;
     } catch {
         return false;
+    }
+}
+
+/**
+ * Creates `path` (mode 0700) and proves it is this user's alone: a real folder, not a link, owned by this user and
+ * closed to everyone else. With `ancestors`, every folder above it must belong to this user or root and, when others
+ * may write to it, be sticky (like /tmp), so no other user can swap it out. Throws otherwise; returns the realpath.
+ * Windows has no owner ids here, so it only creates the folder.
+ */
+export function ensurePrivateDir(path: string, options: { ancestors?: boolean } = {}): string {
+    mkdirSync(path, { recursive: true, mode: 0o700 });
+    const uid = process.getuid?.();
+
+    if (uid === undefined) {
+        return realpathSync(path);
+    }
+
+    const stat = lstatSync(path);
+
+    if (stat.isSymbolicLink() || !stat.isDirectory()) {
+        throw new Error(`rm: ${path} is not a plain folder`);
+    }
+
+    if (stat.uid !== uid) {
+        throw new Error(`rm: ${path} belongs to another user (uid ${stat.uid})`);
+    }
+
+    if ((stat.mode & 0o077) !== 0) {
+        chmodSync(path, 0o700);
+    }
+
+    const real = realpathSync(path);
+
+    if (!options.ancestors) {
+        return real;
+    }
+
+    for (let dir = dirname(real); ; dir = dirname(dir)) {
+        const above = statSync(dir);
+        const othersWrite = (above.mode & 0o022) !== 0;
+        const sticky = (above.mode & 0o1000) !== 0;
+
+        if ((above.uid !== uid && above.uid !== 0) || (othersWrite && !sticky)) {
+            throw new Error(`rm: ${dir} (above ${path}) lets another user replace it`);
+        }
+
+        if (dirname(dir) === dir) {
+            return real;
+        }
     }
 }

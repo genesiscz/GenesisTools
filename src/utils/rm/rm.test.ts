@@ -1,11 +1,13 @@
 import { afterAll, beforeAll, describe, expect, test } from "bun:test";
 import {
+    chmodSync,
     existsSync,
     mkdirSync,
     mkdtempSync,
     readdirSync,
     realpathSync,
     renameSync,
+    statSync,
     symlinkSync,
     unlinkSync,
     utimesSync,
@@ -763,5 +765,53 @@ describe("security review fixes: trash root", () => {
 
         expect(() => assertInsideTrash(victimFile, linked, "item")).toThrow(/resolves to/);
         expect(existsSync(victimFile)).toBe(true);
+    });
+});
+
+describe("security review fixes: private trash", () => {
+    test("the trash and aside folders are closed to other users, and a linked trash root moves nothing", () => {
+        const root = join(dir("private-trash", "GenesisTools"), "rm");
+        mkdirSync(root, { mode: 0o755 });
+        chmodSync(root, 0o755);
+        const own = { ...config, trashRoot: root };
+        // Its own records, so the suite's final drain (under the shared root) does not meet this root's batch.
+        const ownPaths = {
+            batchesDir: join(base, "private-state", "batches"),
+            lockPath: join(base, "private-state", "l"),
+        };
+        const victim = file(join(dir("private-src"), "draft.md"), "work");
+        const batch = moveToTrash([{ target: resolveTarget(victim, base), rule: "test" }], {
+            config: own,
+            caller: AGENT,
+            graceMinutes: 60,
+            paths: ownPaths,
+        });
+
+        expect(batch?.items).toHaveLength(1);
+        expect(statSync(root).mode & 0o777).toBe(0o700);
+
+        const elsewhere = dir("private-elsewhere");
+        const linkedRoot = join(dir("private-linked", "GenesisTools"), "rm");
+        symlinkSync(elsewhere, linkedRoot);
+        const kept = file(join(dir("private-src2"), "draft.md"), "work");
+
+        expect(() =>
+            moveToTrash([{ target: resolveTarget(kept, base), rule: "test" }], {
+                config: { ...config, trashRoot: linkedRoot },
+                caller: AGENT,
+                graceMinutes: 60,
+                paths: ownPaths,
+            })
+        ).toThrow(/not a plain folder|resolves to/);
+        expect(existsSync(kept)).toBe(true);
+
+        const asideRoot = dir("cc", "proj", "sess-1111", "private-aside");
+        chmodSync(asideRoot, 0o755);
+        const draft = file(join(dir("private-src3"), "draft.md"), "work");
+        const verdict = { kind: "ask" as const, rule: "default", reason: "test" };
+        const aside = moveAside([{ target: resolveTarget(draft, base), verdict }], AGENT, "b1", asideRoot);
+
+        expect(aside.moved).toHaveLength(1);
+        expect(statSync(asideRoot).mode & 0o777).toBe(0o700);
     });
 });

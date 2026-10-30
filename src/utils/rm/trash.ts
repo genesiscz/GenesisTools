@@ -23,7 +23,15 @@ import { isProcessAlive } from "@genesiscz/utils/process-alive";
 import { atomicWriteFileSync } from "@genesiscz/utils/storage/atomic-file";
 import { isTrashRootName, type RmConfig, rmDataDir } from "./config";
 import { appendRmLedger } from "./ledger";
-import { canonicalPath, isInside, mountPointOf, pathSegments, realOrSelf, VOLUME_TRASH_DIR } from "./paths";
+import {
+    canonicalPath,
+    ensurePrivateDir,
+    isInside,
+    mountPointOf,
+    pathSegments,
+    realOrSelf,
+    VOLUME_TRASH_DIR,
+} from "./paths";
 import type { RmCaller, RmTarget, RmTargetKind } from "./rules";
 
 export interface TrashItem {
@@ -90,14 +98,24 @@ export function resolvedTrashRoot(config: RmConfig): string {
 
 /** The trash folder for `target`: the configured root on its volume, else `.GenesisTools-rm` at the target's mount. */
 export function trashRootFor(target: RmTarget, config: RmConfig): string {
-    mkdirSync(config.trashRoot, { recursive: true });
+    // Checked before anything is created, then again once it exists and resolves.
+    resolvedTrashRoot(config);
+    // The default root sits in the machine-wide /tmp: closed to other users, who could read moved files or swap it.
+    ensurePrivateDir(config.trashRoot, { ancestors: true });
     const root = resolvedTrashRoot(config);
 
     if (lstatSync(target.path).dev === statSync(root).dev) {
         return root;
     }
 
-    return join(mountPointOf(dirname(target.path)), VOLUME_TRASH_DIR);
+    return volumeTrashDir(target.path);
+}
+
+/** `.GenesisTools-rm` at the mount point of the volume holding `path`, created closed to other users. */
+function volumeTrashDir(path: string): string {
+    const dir = join(mountPointOf(dirname(path)), VOLUME_TRASH_DIR);
+    ensurePrivateDir(dir);
+    return dir;
 }
 
 /**
@@ -178,7 +196,7 @@ export function moveToTrash(requests: readonly MoveRequest[], options: MoveOptio
 
             // The device check said one volume but the rename crossed two (a firmlink, a bind mount): fall back
             // to the trash at the target's own mount point, where the rename stays a rename.
-            stored = join(mountPointOf(dirname(request.target.path)), VOLUME_TRASH_DIR, batch.id, name);
+            stored = join(volumeTrashDir(request.target.path), batch.id, name);
             logger.debug({ path: request.target.path, stored }, "rm: cross-volume rename, using the volume's trash");
             mkdirSync(dirname(stored), { recursive: true });
             renameSync(request.target.path, stored);

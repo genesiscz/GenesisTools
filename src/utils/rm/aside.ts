@@ -2,7 +2,7 @@ import { existsSync, lstatSync, mkdirSync, renameSync } from "node:fs";
 import { dirname, join } from "node:path";
 import { logger } from "@genesiscz/utils/logger";
 import { appendRmLedger } from "./ledger";
-import { isSameOrInside, realOrSelf, sharedTempRoot } from "./paths";
+import { ensurePrivateDir, isSameOrInside, realOrSelf, sharedTempRoot } from "./paths";
 import { listRmRequests, type RmRequestTarget } from "./requests";
 import type { RmCaller, RmTarget, RmVerdict } from "./rules";
 import { measureBytes, trashItemName } from "./trash";
@@ -64,6 +64,16 @@ export function moveAside(
 ): AsideResult {
     const dir = join(root, batchId);
     const result: AsideResult = { dir, moved: [], kept: [] };
+
+    try {
+        // In the machine-wide /tmp: closed to other users, who could read what waits there or swap the folder.
+        ensurePrivateDir(root, { ancestors: true });
+    } catch (error) {
+        const reason = `the aside folder is not private (${error instanceof Error ? error.message : String(error)})`;
+        logger.warn({ root, error }, "rm: aside folder refused");
+        result.kept.push(...inputs.map((input) => ({ input, reason })));
+        return result;
+    }
 
     for (const [index, input] of inputs.entries()) {
         const stored = join(dir, trashItemName(index, input.target.path));
