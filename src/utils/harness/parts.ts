@@ -109,6 +109,11 @@ export interface TranscriptFacts {
     readonly timestampResolutionMs: number;
     /** Whether a turn id ends with `:<row uuid>`, so a message anchor finds its turn by the row's uuid (Claude). */
     readonly turnIdsEndWithRowUuid: boolean;
+    /**
+     * The second log the turn state needs beside a transcript, or null for none: Grok writes its permission prompts
+     * to `events.jsonl` in the session folder; Claude's go to its `Notification` hook and Codex persists none.
+     */
+    eventLog(transcriptPath: string): string | null;
 }
 
 /** H: the slash command that ends an interactive session. */

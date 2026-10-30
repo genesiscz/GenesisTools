@@ -18,13 +18,14 @@ import { existsSync, statSync } from "node:fs";
 import { resolveHistoryProvider } from "@genesiscz/utils/agent-sessions/provider";
 import type { NativeDialogPermission } from "@genesiscz/utils/agent-sessions/types";
 import { isZstdPath } from "@genesiscz/utils/compress/zstd";
+import type { HarnessId } from "@genesiscz/utils/harness/types";
 import { SafeJSON } from "@genesiscz/utils/json";
 import { logger } from "@genesiscz/utils/logger";
 import { type ActivityEvent, type ActivityState, classifyActivity, claudeRecordsToEvents } from "./activity";
 import { readTailAt } from "./native-scan";
 import { parseTranscriptLine } from "./parse-line";
 
-export type TurnProvider = "claude" | "grok" | "codex";
+export type TurnProvider = HarnessId;
 
 /** A turn's last records can hold a long tool result, so this is larger than the activity tail. */
 export const TURN_TAIL_BYTES = 256 * 1024;

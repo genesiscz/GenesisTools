@@ -30,6 +30,8 @@ export const claudeHarness: HarnessDriver<"claude"> = {
             subagentsOnDisk: true,
             timestampResolutionMs: 0,
             turnIdsEndWithRowUuid: true,
+            // Claude records no permission prompt in its transcript; only its `Notification` hook sees one.
+            eventLog: () => null,
         },
         exit: { command: "/exit" },
         hooks: pending("P4", "the claude entries of HARNESS_HOOK_FACTS and HOOK_INSTALLERS in src/agents"),

@@ -25,6 +25,8 @@ export const codexHarness: HarnessDriver<"codex"> = {
             subagentsOnDisk: false,
             timestampResolutionMs: 0,
             turnIdsEndWithRowUuid: false,
+            // Codex rollouts persist no approval request; only a live app-server client sees one.
+            eventLog: () => null,
         },
         exit: { command: "/quit" },
         hooks: pending("P4", "the codex entries of HARNESS_HOOK_FACTS and HOOK_INSTALLERS in src/agents"),
