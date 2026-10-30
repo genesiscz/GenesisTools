@@ -21,4 +21,6 @@ export const grokParse: TranscriptParser = {
             : grokNativeLinesToTurns(lines),
     // Grok's lines are not read for full inputs; its calls keep their preview.
     toolInputKeys: () => new Map(),
+    // Grok's chat history adds nothing to its turns (no usage, no model), so insights does not read it again.
+    nativeInsights: null,
 };
