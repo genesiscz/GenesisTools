@@ -20,7 +20,10 @@ export const grokHarness: HarnessDriver<"grok"> = {
         exit: pending("P3", "the grok entry of AGENTS in src/cmux/lib/session-agents.ts"),
         hooks: pending("P4", "the grok entries of HARNESS_HOOK_FACTS and HOOK_INSTALLERS in src/agents"),
         statusline: pending("P4", "the grok statusline host in src/ai/commands/statusline"),
-        compaction: pending("P5", "the grok entry of NATIVE_READERS in src/utils/ai/compact/sources.ts"),
+        compaction: pending(
+            "P5",
+            "compaction reads the history part today (src/utils/ai/compact/sources.ts); a contract of its own only if a harness needs one"
+        ),
         host: pending("P4", "src/utils/agent/hosts/grok.ts and AGENT_SESSION_KEYS in src/utils/agent/host.ts"),
         process: pending("P6", "the grok argv patterns in src/utils/process/classify.ts"),
         history: () => import("@genesiscz/utils/agent-sessions/compact-readers").then((m) => m.grokHistoryReader),

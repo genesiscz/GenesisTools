@@ -1,11 +1,7 @@
 import { dirname } from "node:path";
-import {
-    claudeHistoryReader,
-    codexHistoryReader,
-    grokHistoryReader,
-} from "@genesiscz/utils/agent-sessions/compact-readers";
 import type { NativeHistoryEntry, NativeSessionReader } from "@genesiscz/utils/agent-sessions/types";
 import { ACCOUNT_PROVIDER_ALIASES } from "@genesiscz/utils/ai/providers/alias-list";
+import { harnessHistory } from "@genesiscz/utils/ai/providers/harness-index";
 import { logger } from "@genesiscz/utils/logger";
 import { detectCompactFormat, parseCompactDocument } from "./format";
 import { type MessageRow, pairRows } from "./pairing";
@@ -34,12 +30,6 @@ export function parseCompactSource(value: unknown): CompactSource {
 export function isNativeSource(source: CompactSource): source is NativeCompactSource {
     return (NATIVE_COMPACT_SOURCES as readonly string[]).includes(source);
 }
-
-const NATIVE_READERS: Record<NativeCompactSource, NativeSessionReader> = {
-    claude: claudeHistoryReader,
-    codex: codexHistoryReader,
-    grok: grokHistoryReader,
-};
 
 /**
  * Turns the reader's flat entry list into message rows.
@@ -99,7 +89,7 @@ export async function readNativeTranscript(options: {
     filePath: string;
     signal?: AbortSignal;
 }): Promise<CompactMessage[]> {
-    const reader = NATIVE_READERS[options.source];
+    const reader = await harnessHistory(options.source);
     log.info({ source: options.source, filePath: options.filePath }, "Reading a native transcript for compaction");
     const transcript = await reader.read(sourceFor(reader, options.filePath), options.signal);
     if (transcript.issues.length) {

@@ -20,7 +20,10 @@ export const codexHarness: HarnessDriver<"codex"> = {
         exit: pending("P3", "the codex entry of AGENTS in src/cmux/lib/session-agents.ts"),
         hooks: pending("P4", "the codex entries of HARNESS_HOOK_FACTS and HOOK_INSTALLERS in src/agents"),
         statusline: pending("P4", "the codex statusline host in src/ai/commands/statusline"),
-        compaction: pending("P5", "the codex entry of NATIVE_READERS in src/utils/ai/compact/sources.ts"),
+        compaction: pending(
+            "P5",
+            "compaction reads the history part today (src/utils/ai/compact/sources.ts); a contract of its own only if a harness needs one"
+        ),
         host: pending("P4", "src/utils/agent/hosts/codex.ts and AGENT_SESSION_KEYS in src/utils/agent/host.ts"),
         process: pending("P6", "the codex argv patterns in src/utils/process/classify.ts"),
         history: () => import("@genesiscz/utils/agent-sessions/compact-readers").then((m) => m.codexHistoryReader),
