@@ -12,6 +12,7 @@ import { mkdtempSync, writeFileSync } from "node:fs";
 import { tmpdir } from "node:os";
 import { basename, join } from "node:path";
 import { SafeJSON } from "@genesiscz/utils/json";
+import { isAgentProcess } from "@genesiscz/utils/process/classify";
 
 export type CallSiteFrequency = "per-tool-call" | "per-poll" | "per-command" | "one-off";
 
@@ -135,7 +136,11 @@ async function withChildListener<T>(fn: (listener: { port: number; pid: number }
     }
 }
 
-const AGENT_SCAN = { alias: "claude" as const, classify: (args: string) => (args.includes("claude") ? "tui" : null) };
+const AGENT_SCAN_ALIAS = "claude" as const;
+const AGENT_SCAN = {
+    alias: AGENT_SCAN_ALIAS,
+    classify: (args: string) => (isAgentProcess(args, AGENT_SCAN_ALIAS) ? "tui" : null),
+};
 
 /*
  * Each entry imports its module when it runs (`await import(…)`), never at the top of this file. A benchmark sample is

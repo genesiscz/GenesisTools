@@ -1,5 +1,5 @@
 import type { AccountProviderAlias } from "@genesiscz/utils/ai/providers/alias-list";
-import { classifyCommand } from "@genesiscz/utils/process/classify";
+import { classifyCommand, runsAgent } from "@genesiscz/utils/process/classify";
 import type { ProcessEntry } from "@genesiscz/utils/process/processes";
 import { isShellProgram } from "@genesiscz/utils/shell/programs";
 
@@ -43,13 +43,6 @@ export function idleShellTtys(processes: ProcessEntry[], uid: number): Set<strin
     return idle;
 }
 
-/** The broad process classifier also names Codex services such as codex-gateway as agents. */
-function isCodexService(command: string): boolean {
-    return /^(?:\S*\/GenesisTools\.app\/Contents\/MacOS\/GenesisTools\s+)?(?:\S*\/)?codex-[\w-]+(?:\s|$)/.test(
-        command.trim()
-    );
-}
-
 /** The agent process a command line runs (`/…/claude --resume <id>`, `grok -r <id>`), its session lower-cased. */
 export function agentOfCommand(command: string): TtyAgent | undefined {
     const proc = classifyCommand(command);
@@ -58,7 +51,7 @@ export function agentOfCommand(command: string): TtyAgent | undefined {
     if (
         (proc.kind !== "agent" && proc.kind !== "wrapper") ||
         // A codex-* helper with no session is a service; a versioned codex binary resuming a session is the agent.
-        (proc.provider === "codex" && !proc.sessionId && isCodexService(command)) ||
+        proc.service ||
         (proc.provider !== "claude" && proc.provider !== "grok" && proc.provider !== "codex")
     ) {
         return undefined;
@@ -67,23 +60,9 @@ export function agentOfCommand(command: string): TtyAgent | undefined {
     return { kind: proc.provider, ...(proc.sessionId ? { sessionId: proc.sessionId.toLowerCase() } : {}) };
 }
 
-/** `tools <agent> run|start|resume …` from any checkout path: the launcher that starts the agent. */
-const TOOLS_AGENT_LAUNCHER = /(?:^|[\s/])tools\s+(claude|cc|grok|codex)\s+(?:run|start|resume)\b/;
-
 /** Does this command line run the agent, as its process or through the `tools <agent>` launcher? */
 export function commandRunsAgent(command: string, agent: AccountProviderAlias): boolean {
-    const proc = classifyCommand(command);
-
-    if (
-        (proc.kind === "agent" || proc.kind === "wrapper") &&
-        proc.provider === agent &&
-        !(proc.provider === "codex" && isCodexService(command))
-    ) {
-        return true;
-    }
-
-    const launcher = command.match(TOOLS_AGENT_LAUNCHER)?.[1];
-    return (launcher === "cc" ? "claude" : launcher) === agent;
+    return runsAgent(command, agent);
 }
 
 /** The agent each busy tty runs, from the first agent command line on it (`/…/grok -r <id>`, `claude --resume <id>`). */

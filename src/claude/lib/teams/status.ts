@@ -1,5 +1,5 @@
-import { toolCommand } from "@genesiscz/utils/cli/tool-command";
 import { logger } from "@genesiscz/utils/logger";
+import { isAgentProcess, runsAgent } from "@genesiscz/utils/process/classify";
 import { listProcesses, readProcessEnvironment } from "@genesiscz/utils/process/processes";
 import { profiler } from "@genesiscz/utils/profile";
 import { resolveTmuxBin } from "@genesiscz/utils/tmux/bin";
@@ -59,20 +59,9 @@ function listAllProcesses(): PsRow[] | null {
     }
 }
 
+/** Claude processes and the wrappers that start them; a grep or `tools claude teams` that only names claude is neither. */
 function listClaudeLikeProcesses(all: PsRow[]): PsRow[] {
-    return all.filter((row) => {
-        const command = row.command;
-        if (!/claude/i.test(command) && !/tools cc run/i.test(command)) {
-            return false;
-        }
-
-        // Skip our own helper greps / this command's process tree noise
-        if (/\brg\b|\bgrep\b|teams discover|claude\/index\.ts teams|claude teams/.test(command)) {
-            return false;
-        }
-
-        return true;
-    });
+    return all.filter((row) => runsAgent(row.command, "claude"));
 }
 
 function flagValue(cmd: string, flag: string): string | undefined {
@@ -205,15 +194,9 @@ export function listLiveTeammateProcesses(): LiveProcessScan {
             const teamName = flagValue(cmd, "--team-name");
 
             if (agentId && agentName && teamName) {
-                // Prefer real binary rows over bun wrappers
-                if (cmd.includes(`${toolCommand("cc run")}`) || cmd.includes("bun run") || cmd.includes("index.ts")) {
+                // The real binary row, never the bun wrapper that carries the same flags.
+                if (!isAgentProcess(cmd, "claude")) {
                     continue;
-                }
-
-                if (!/claude(?:-code)?(?:\s|$)/.test(cmd) && !cmd.includes("claude-code-darwin")) {
-                    if (!cmd.includes(`${toolCommand("cc run")}`) && !cmd.includes("claude/index.ts")) {
-                        continue;
-                    }
                 }
 
                 const pane = paneForPid(row.pid, panes, allProcesses);
@@ -234,16 +217,8 @@ export function listLiveTeammateProcesses(): LiveProcessScan {
                 continue;
             }
 
-            // Lead candidates: interactive claude binary without --agent-id
-            const isLeadClaude =
-                !cmd.includes("--agent-id") &&
-                !cmd.includes("claude mcp") &&
-                !cmd.includes(toolCommand("claude")) &&
-                !cmd.includes("index.ts") &&
-                !cmd.includes("bun run") &&
-                (cmd.includes("claude-code-darwin") ||
-                    cmd.includes("/.bun/bin/claude") ||
-                    /(?:^|[/\s])claude(?:\s|$)/.test(cmd));
+            // Lead candidates: the claude binary without --agent-id (its MCP door is a service, not a session).
+            const isLeadClaude = !cmd.includes("--agent-id") && isAgentProcess(cmd, "claude");
 
             if (!isLeadClaude) {
                 continue;

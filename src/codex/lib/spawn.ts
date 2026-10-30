@@ -1,7 +1,6 @@
 import { randomUUID } from "node:crypto";
 import { closeSync, openSync } from "node:fs";
-import { homedir } from "node:os";
-import { join, resolve } from "node:path";
+import { resolve } from "node:path";
 import { ensureSessionDir, sessionPaths } from "@app/agents/lib/paths";
 import { assignedSessionId, resolveAgentHost } from "@genesiscz/utils/agent/host";
 import { env } from "@genesiscz/utils/env";
@@ -9,7 +8,7 @@ import { type CheckoutKind, checkoutKindSync } from "@genesiscz/utils/git/worktr
 import { SafeJSON } from "@genesiscz/utils/json";
 import { logger } from "@genesiscz/utils/logger";
 import { classifyPid, readProcessCommand } from "@genesiscz/utils/process-identity";
-import { primaryCodexHome } from "@genesiscz/utils/providers/session-paths";
+import { nativeHome } from "@genesiscz/utils/providers/session-paths";
 import { atomicWriteFileSync } from "@genesiscz/utils/storage/storage";
 import { WorkerNameTakenError } from "@genesiscz/utils/worker/meta-store";
 import { CODEX_SCHEMA_VERSION } from "./_generated/protocol";
@@ -155,10 +154,13 @@ export function resolveWritableRoots(options: {
  * matches the `bun daemon.ts --name <name>` shape before trusting it.
  */
 export function isCodexDaemonPid(pid: number, name: string): boolean {
-    const identity = classifyPid(
-        pid,
-        (command) => command.includes(`--name ${name}`) && (command.includes("daemon") || command.includes("codex"))
-    );
+    const identity = classifyPid(pid, (command) => {
+        const tokens = command.split(/\s+/);
+        const at = tokens.indexOf("--name");
+
+        // The daemon's own entry (`…/codex/daemon.ts`) names it; the name token must be this session's exactly.
+        return at >= 0 && tokens[at + 1] === name && command.includes("daemon");
+    });
 
     if (identity.status === "foreign") {
         logger.warn(
@@ -321,7 +323,7 @@ export async function spawnCodexSession(options: SpawnOptions): Promise<CodexSpa
     // Always record the home this session will actually run in. Leaving it unset let the daemon
     // configure Computer Use against ~/.codex while the app-server inherited an ambient
     // CODEX_HOME, so the MCP runtime and the server it serves pointed at different directories.
-    const home = resolve(options.home ?? primaryCodexHome() ?? join(homedir(), ".codex"));
+    const home = resolve(options.home ?? nativeHome("codex"));
 
     const launch: LaunchConfig = {
         ...(options.computerUse ? { computerUse: true } : {}),
