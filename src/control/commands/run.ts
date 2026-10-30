@@ -1,10 +1,10 @@
-import { existsSync, readFileSync } from "node:fs";
 import { toolCommand } from "@genesiscz/utils/cli/tool-command";
 import { SafeJSON } from "@genesiscz/utils/json";
 import { logger, out } from "@genesiscz/utils/logger";
 import type { Command } from "commander";
 import pc from "picocolors";
 import { CaptureRunError } from "../lib/capture-runner";
+import { readPlanInput } from "../lib/plan-input";
 import { executePlan, type PlanStepResult, parsePlanDocument, stepLabel } from "../lib/plan-runner";
 import type { AxResult } from "../lib/runner";
 
@@ -81,7 +81,10 @@ export function registerRunCommand(program: Command): void {
   its result JSON and ms wall-clock timing.`)
         .option("--json", "raw JSON output")
         .option("--pretty", "indent JSON output (default compact)")
-        .option("--plan <json>", "the plan itself, inline — alternative to a path or to `-`")
+        .option(
+            "--plan <json|file>",
+            "the plan itself, inline (a value starting with `{`), or a path — alternative to the argument or `-`"
+        )
         .option("--stop-on-fail", "stop at the first failed step and report the rest as skipped")
         .option(
             "--steal-focus",
@@ -89,27 +92,16 @@ export function registerRunCommand(program: Command): void {
         )
         .option("--dry-run", "validate every step and resolve nothing else: prints what would run, touches no UI")
         .action(async (planPath: string | undefined, opts: RunOptions) => {
-            // Three doors to the same plan. An agent holds the plan in memory, so
-            // making a temp file the only way in meant every caller wrote one.
-            let planText: string;
+            let input: unknown;
 
-            if (opts.plan) {
-                planText = opts.plan;
-            } else if (planPath === "-") {
-                planText = await Bun.stdin.text();
-            } else if (planPath) {
-                if (!existsSync(planPath)) {
-                    logger.error(`plan file not found: ${planPath}`);
-                    process.exit(1);
-                }
-
-                planText = readFileSync(planPath, "utf-8");
-            } else {
-                logger.error("pass a plan file, `-` to read stdin, or --plan '<json>'");
+            try {
+                input = await readPlanInput({ positional: planPath, inline: opts.plan });
+            } catch (error) {
+                logger.error(error instanceof Error ? error.message : String(error));
                 process.exit(1);
             }
 
-            const plan = parsePlanDocument(SafeJSON.parse(planText));
+            const plan = parsePlanDocument(input);
             const onStep = opts.json
                 ? undefined
                 : (entry: PlanStepResult) => {

@@ -2017,3 +2017,55 @@ test("standalone OCR choices return current region refs and reject invented or s
         computer.close_session();
     }
 });
+test("workflow stopOnFail: the default stops at a step with no target; false runs on with a fresh observation", async () => {
+    const plan = formPlan();
+    plan.steps = [{ ...plan.steps[0], selector: { identifier: "missing" } }, plan.steps[1]];
+    const values = { nameValue: "Name", cityValue: "Town" };
+    const noModel: Evaluator = async () => {
+        throw new Error("Exact plan must not call model");
+    };
+
+    const stopped = formDriver();
+    const first = await replayWorkflow({ plan, driver: stopped.driver, values, evaluate: noModel });
+    expect(first.status).toBe("stopped");
+    expect(first.stopOnFail).toBe(true);
+    expect(first.steps.map((step) => step.status)).toEqual(["stopped"]);
+    expect(first.skippedSteps).toBe(1);
+    expect(stopped.calls).toHaveLength(0);
+
+    const goesOn = formDriver();
+    const second = await replayWorkflow({
+        plan: { ...plan, stopOnFail: false },
+        driver: goesOn.driver,
+        values,
+        evaluate: noModel,
+    });
+    expect(second.status).toBe("stopped");
+    expect(second.steps.map((step) => step.status)).toEqual(["stopped", "verified"]);
+    expect(second.failedSteps).toBe(1);
+    expect(second.skippedSteps).toBe(0);
+    expect(goesOn.calls.map((call) => call.candidate.element)).toEqual([1]);
+    // The skipped step re-observed before the next one was bound: initial observe, re-observe, readback.
+    expect(goesOn.observations()).toBeGreaterThanOrEqual(2);
+    expect(second.steps.every((step) => typeof step.ms === "number")).toBe(true);
+
+    const override = formDriver();
+    const third = await replayWorkflow({ plan, driver: override.driver, values, evaluate: noModel, stopOnFail: false });
+    expect(third.steps).toHaveLength(2);
+});
+test("workflow stopOnFail:false never runs on after uncertain delivery", async () => {
+    const fixture = formDriver({ failWrite: true });
+    const result = await replayWorkflow({
+        plan: { ...formPlan(), stopOnFail: false },
+        driver: fixture.driver,
+        values: { nameValue: "Name", cityValue: "Town" },
+        evaluate: chooseField([]),
+    });
+    expect(result.status).toBe("unknown");
+    expect(fixture.calls).toHaveLength(1);
+    expect(result.skippedSteps).toBe(1);
+});
+test("workflow run reads the plan inline through --plan '<json>' and refuses a non-plan before observing", async () => {
+    const result = await control(["workflow", "run", "--plan", '{"version":1,"app":"FormFixture","steps":[]}']);
+    expect(result.status).toBe(1);
+});

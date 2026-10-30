@@ -2,6 +2,7 @@ import type { Evaluator } from "@genesiscz/utils/ai/evaluation/service";
 import { SafeJSON } from "@genesiscz/utils/json";
 import { logger } from "@genesiscz/utils/logger";
 import type { OperationLimits } from "@genesiscz/utils/operation-budget";
+import { Stopwatch } from "@genesiscz/utils/Stopwatch";
 import { z } from "zod";
 import { actionParametersSchema, controlActions, nativeActionArguments } from "./action";
 import { exactAttributeSchema, judgeOutcome, resolveIntent } from "./decisions";
@@ -76,6 +77,12 @@ export const workflowPlanSchema = z
         app: z.string().trim().min(1).max(300),
         scope: z.enum(["window", "chrome"]).default("window"),
         windowTitle: z.string().max(500).optional(),
+        /**
+         * Default true: the first step that is not verified ends the run. false runs on after a step
+         * that found no target or whose postcondition did not verify, on a fresh observation. It never
+         * runs on after uncertain delivery, an unreadable write or authentication UI.
+         */
+        stopOnFail: z.boolean().optional(),
         steps: z.array(workflowStepSchema).min(1).max(50),
     })
     .strict()
@@ -203,6 +210,8 @@ export interface WorkflowTrace {
     suppliedValueVerified?: boolean;
     status: "verified" | "stopped" | "unknown";
     reason: string;
+    /** Wall time of this step: observation, choice, dispatch and postcondition. */
+    ms?: number;
 }
 export async function replayWorkflow(options: {
     plan: unknown;
@@ -213,8 +222,11 @@ export async function replayWorkflow(options: {
     evaluate: Evaluator;
     signal?: AbortSignal;
     limits?: OperationLimits;
+    /** Overrides the plan's own `stopOnFail`. */
+    stopOnFail?: boolean;
 }) {
     const plan = parseWorkflowPlan(options.plan);
+    const stopOnFail = options.stopOnFail ?? plan.stopOnFail ?? true;
     const values = z.record(valueKey, z.string().max(65536)).parse(options.values ?? {});
     for (const step of plan.steps) {
         for (const ref of [step.valueRef, step.postcondition.exact?.valueRef]) {
@@ -249,6 +261,7 @@ export async function replayWorkflow(options: {
         }
         for (const step of plan.steps) {
             const trace: WorkflowTrace = { id: step.id, binding: "none", status: "stopped", reason: "" };
+            const stepClock = new Stopwatch();
             steps.push(trace);
             if (authenticationBarrier(observation)) {
                 trace.reason = "Authentication or permission UI requires user input.";
@@ -282,7 +295,13 @@ export async function replayWorkflow(options: {
                         ? "Original selector is ambiguous."
                         : "No admitted fresh target for the recorded action.";
                 reason = trace.reason;
-                break;
+                trace.ms = stepClock.elapsedMs;
+                if (stopOnFail) {
+                    break;
+                }
+
+                observation = await session.observe();
+                continue;
             }
             trace.selected = candidateBinding(selected);
             const result = await session.dispatch({
@@ -300,6 +319,7 @@ export async function replayWorkflow(options: {
                     "Dispatch or readback is uncertain; this step will not be repeated.";
                 status = "unknown";
                 reason = trace.reason;
+                trace.ms = stepClock.elapsedMs;
                 break;
             }
             // The judge's own contract says a label offering an action is not proof it happened,
@@ -323,6 +343,7 @@ export async function replayWorkflow(options: {
                 if (!trace.suppliedValueVerified) {
                     trace.reason = "The supplied value could not be read back exactly.";
                     reason = trace.reason;
+                    trace.ms = stepClock.elapsedMs;
                     break;
                 }
             }
@@ -345,10 +366,17 @@ export async function replayWorkflow(options: {
             });
             // Exact expectations do not serialize supplied values into traces.
             trace.judgment = judgment;
+            trace.ms = stepClock.elapsedMs;
             if (judgment.status !== "verified") {
-                trace.reason = "Recorded postcondition is not verified; later steps were not executed.";
+                trace.reason = stopOnFail
+                    ? "Recorded postcondition is not verified; later steps were not executed."
+                    : "Recorded postcondition is not verified; stopOnFail is false, so the run went on.";
                 reason = trace.reason;
-                break;
+                if (stopOnFail) {
+                    break;
+                }
+
+                continue;
             }
             trace.status = "verified";
             trace.reason = "Fresh postcondition verified.";
@@ -361,7 +389,17 @@ export async function replayWorkflow(options: {
         logger.debug({ error }, "Resilient workflow stopped");
         reason = error instanceof Error ? error.message : "Workflow stopped.";
     }
-    return { status, reason, steps, repairs, metrics: session.report() };
+    const failedSteps = steps.filter((step) => step.status !== "verified").length;
+    return {
+        status,
+        reason,
+        stopOnFail,
+        failedSteps,
+        skippedSteps: plan.steps.length - steps.length,
+        steps,
+        repairs,
+        metrics: session.report(),
+    };
 }
 export function applyWorkflowRepairs(options: {
     plan: unknown;
