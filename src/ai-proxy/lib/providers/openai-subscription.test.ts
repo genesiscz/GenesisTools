@@ -33,8 +33,19 @@ import {
 import type { AiProxyAccountConfig, SessionsInConfig } from "@app/ai-proxy/lib/types";
 import { env } from "@genesiscz/utils/env";
 import { SafeJSON } from "@genesiscz/utils/json";
+import { isObject } from "@genesiscz/utils/object";
 
 describe("reasoning message identity", () => {
+    it("uses the shared JSON error helper for basic and typed envelopes", async () => {
+        const { jsonError } = await import("@app/ai-proxy/lib/http-error");
+        const basic = jsonError(502, "upstream failed");
+        expect(basic.status).toBe(502);
+        expect(basic.headers.get("content-type")).toBe("application/json");
+        expect(await basic.json()).toEqual({ error: { message: "upstream failed" } });
+        const typed = jsonError(403, "denied", { type: "forbidden", code: "not_allowed" });
+        expect(await typed.json()).toEqual({ error: { message: "denied", type: "forbidden", code: "not_allowed" } });
+    });
+
     it("replays a cache notice on the same historical message", async () => {
         const { preserveCacheReminders, resetCacheShapeForTests } = await import(
             "@app/ai-proxy/lib/sessions/cache-shape"
@@ -77,6 +88,27 @@ describe("reasoning message identity", () => {
         });
         await expect(whamSsePayloads(stream, 10).next()).rejects.toThrow("timed out");
         expect(cancelled).toBe(true);
+    });
+
+    it("does not restore ambiguous identical text from different reasoning replies", () => {
+        resetReasoningMemoryForTests();
+        const content = [{ type: "text", text: "Done." }];
+        const first = [
+            { type: "reasoning", id: "first" },
+            { type: "message", role: "assistant", content: "Done." },
+        ];
+        const second = [
+            { type: "reasoning", id: "second" },
+            { type: "message", role: "assistant", content: "Done." },
+        ];
+        rememberMessageItems("conversation", content, first);
+        rememberMessageItems("conversation", content, first);
+        expect(rememberedMessageItems("conversation", content)).toEqual(first);
+        rememberMessageItems("conversation", content, second);
+        expect(rememberedMessageItems("conversation", content)).toBeUndefined();
+        rememberMessageItems("conversation", content, first);
+        expect(rememberedMessageItems("conversation", content)).toBeUndefined();
+        resetReasoningMemoryForTests();
     });
 
     it("does not restore a tool call whose name or arguments changed", () => {
@@ -3020,6 +3052,195 @@ describe("tools that Claude Code's tool search loads, on the Codex agent", () =>
             ["TaskStop"],
         ]);
     });
+});
+
+describe("final reasoning reply at the next typed turn", () => {
+    function reasoningReply(status: "completed" | "incomplete" = "completed", text = "answer"): Response {
+        const reasoning = {
+            type: "reasoning",
+            id: "rs_final",
+            encrypted_content: "encrypted",
+            summary: [{ type: "summary_text", text: "think" }],
+        };
+        const message = { type: "message", content: [{ type: "output_text", text }] };
+        const events: Array<Record<string, unknown>> = [
+            { type: "response.output_item.added", output_index: 0, item: reasoning },
+            { type: "response.reasoning_summary_text.delta", output_index: 0, delta: "think" },
+            { type: "response.output_item.done", output_index: 0, item: reasoning },
+            { type: "response.output_item.added", output_index: 1, item: message },
+        ];
+        for (let offset = 0; offset < text.length; offset += 512) {
+            events.push({
+                type: "response.output_text.delta",
+                output_index: 1,
+                delta: text.slice(offset, offset + 512),
+            });
+        }
+        events.push(
+            { type: "response.output_item.done", output_index: 1, item: message },
+            { type: `response.${status}`, response: { id: "resp_final", status, output: [reasoning, message] } }
+        );
+        return new Response(events.map((event) => `data: ${SafeJSON.stringify(event)}\n\n`).join(""), {
+            headers: { "content-type": "text/event-stream" },
+        });
+    }
+
+    async function visibleContent(response: Response, stream: boolean): Promise<Array<Record<string, unknown>>> {
+        if (!stream) {
+            const body: unknown = await response.json();
+            return isObject(body) && Array.isArray(body.content) ? body.content.filter(isObject) : [];
+        }
+        const content: Array<Record<string, unknown>> = [];
+        for (const line of (await response.text()).split("\n")) {
+            if (!line.startsWith("data: ")) {
+                continue;
+            }
+            const event: unknown = SafeJSON.parse(line.slice(6), { strict: true });
+            if (!isObject(event) || typeof event.index !== "number") {
+                continue;
+            }
+            if (event.type === "content_block_start" && isObject(event.content_block)) {
+                content[event.index] = { ...event.content_block };
+            } else if (event.type === "content_block_delta" && isObject(event.delta)) {
+                const block = content[event.index];
+                if (!block) {
+                    continue;
+                }
+                if (event.delta.type === "thinking_delta") {
+                    block.thinking = String(block.thinking ?? "") + String(event.delta.thinking ?? "");
+                } else if (event.delta.type === "signature_delta") {
+                    block.signature = event.delta.signature;
+                } else if (event.delta.type === "text_delta") {
+                    block.text = String(block.text ?? "") + String(event.delta.text ?? "");
+                }
+            }
+        }
+        return content;
+    }
+
+    it("does not remember an incomplete streamed reply", async () => {
+        const { responsesSseToAnthropic } = await import(
+            "@app/ai-proxy/lib/translators/formats/anthropic/grok-responses-to-anthropic"
+        );
+        const body = reasoningReply("incomplete").body;
+        if (!body) {
+            throw new Error("fixture has no stream");
+        }
+        let called = false;
+        const stream = responsesSseToAnthropic(body, {
+            model: "test-model",
+            signReasoning: () => "signature",
+            onTextResponse: () => {
+                called = true;
+            },
+        });
+        await new Response(stream).text();
+        expect(called).toBe(false);
+    });
+
+    for (const stream of [true, false]) {
+        it(`delivers but does not remember an oversized ${stream ? "streamed" : "non-streamed"} reply`, async () => {
+            resetReasoningMemoryForTests();
+            const { MAX_REPLAY_RESPONSE_CHARS } = await import(
+                "@app/ai-proxy/lib/translators/formats/anthropic/grok-responses-to-anthropic"
+            );
+            const answer = "x".repeat(MAX_REPLAY_RESPONSE_CHARS + 1);
+            const sent: Array<Record<string, unknown>> = [];
+            globalThis.fetch = (async (_url: RequestInfo | URL, init?: RequestInit) => {
+                sent.push(SafeJSON.parse(String(init?.body)) as Record<string, unknown>);
+                return sent.length === 1 ? reasoningReply("completed", answer) : whamStreamResponse();
+            }) as typeof fetch;
+            const { OpenAiSubscriptionProvider } = await import("./openai-subscription");
+            const provider = await OpenAiSubscriptionProvider.create(account);
+            const context = { promptCacheKey: { key: `oversized-${stream}`, source: "client" as const } };
+            const send = async (messages: unknown[], streaming: boolean) => {
+                const body = SafeJSON.stringify({ model: "gpt-6.1-sol", stream: streaming, messages });
+                const result = await provider.messages?.(
+                    new Request("http://localhost/v1/messages", { method: "POST", body }),
+                    "gpt-6.1-sol",
+                    body,
+                    context
+                );
+                if (!result) {
+                    throw new Error("provider returned no response");
+                }
+                return result;
+            };
+            const first = [{ role: "user", content: "question" }];
+            const visible = await visibleContent(await send(first, stream), stream);
+            expect(visible.find((block) => block.type === "text")?.text).toBe(answer);
+            await (
+                await send(
+                    [
+                        ...first,
+                        { role: "assistant", content: visible.filter((block) => block.type !== "thinking") },
+                        { role: "user", content: "follow-up" },
+                    ],
+                    true
+                )
+            ).text();
+            const input = sent[1]?.input;
+            expect(Array.isArray(input)).toBe(true);
+            expect(Array.isArray(input) && input.some((item) => isObject(item) && item.type === "reasoning")).toBe(
+                false
+            );
+        });
+        for (const trusted of [true, false]) {
+            it(`${trusted ? "restores" : "does not restore"} reasoning from a final ${stream ? "streamed" : "non-streamed"} reply ${trusted ? "with a trusted identity" : "with a content-only identity"}`, async () => {
+                resetReasoningMemoryForTests();
+                const sent: Array<Record<string, unknown>> = [];
+                globalThis.fetch = (async (_url: RequestInfo | URL, init?: RequestInit) => {
+                    sent.push(SafeJSON.parse(String(init?.body)) as Record<string, unknown>);
+                    return sent.length === 1 ? reasoningReply() : whamStreamResponse();
+                }) as typeof fetch;
+                const { OpenAiSubscriptionProvider } = await import("./openai-subscription");
+                const provider = await OpenAiSubscriptionProvider.create(account);
+                const context = {
+                    promptCacheKey: {
+                        key: `reply-${stream}`,
+                        source: trusted ? ("client" as const) : ("content" as const),
+                    },
+                };
+                const send = async (messages: unknown[], streaming: boolean) => {
+                    const body = SafeJSON.stringify({ model: "gpt-6.1-sol", stream: streaming, messages });
+                    const result = await provider.messages?.(
+                        new Request("http://localhost/v1/messages", { method: "POST", body }),
+                        "gpt-6.1-sol",
+                        body,
+                        context
+                    );
+                    if (!result) {
+                        throw new Error("provider returned no response");
+                    }
+                    return result;
+                };
+                const first = [{ role: "user", content: "question" }];
+                const visible = await visibleContent(await send(first, stream), stream);
+                expect(visible.map((block) => block.type)).toEqual(["thinking", "text"]);
+                const next = [
+                    ...first,
+                    { role: "assistant", content: visible.filter((block) => block.type !== "thinking") },
+                    { role: "user", content: "follow-up" },
+                ];
+                await (await send(next, true)).text();
+                const input = sent[1]?.input;
+                expect(Array.isArray(input)).toBe(true);
+                const reasoning = Array.isArray(input)
+                    ? input.find((item) => isObject(item) && item.type === "reasoning" && item.id === "rs_final")
+                    : undefined;
+                if (trusted) {
+                    expect(reasoning).toEqual({
+                        type: "reasoning",
+                        id: "rs_final",
+                        encrypted_content: "encrypted",
+                        summary: [{ type: "summary_text", text: "think" }],
+                    });
+                } else {
+                    expect(reasoning).toBeUndefined();
+                }
+            });
+        }
+    }
 });
 
 describe("Claude Code's turn-start thinking flip, on the Codex agent", () => {

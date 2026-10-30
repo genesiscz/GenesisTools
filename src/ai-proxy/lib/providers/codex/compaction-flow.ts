@@ -1,5 +1,6 @@
 import { randomUUID } from "node:crypto";
-import { jsonError, readCompactionText } from "@app/ai-proxy/lib/providers/codex/wham-stream";
+import { jsonError } from "@app/ai-proxy/lib/http-error";
+import { readCompactionText } from "@app/ai-proxy/lib/providers/codex/wham-stream";
 import type { ProviderRequestContext } from "@app/ai-proxy/lib/providers/types";
 import { messageToAnthropicSse } from "@app/ai-proxy/lib/server-tools/web-search";
 import {

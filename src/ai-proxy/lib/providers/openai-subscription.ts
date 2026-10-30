@@ -2,6 +2,7 @@ import { randomUUID } from "node:crypto";
 import { accountConfigFingerprint } from "@app/ai-proxy/lib/account-config";
 import { codexModelInfo } from "@app/ai-proxy/lib/codex-catalog";
 import { captureUpstreamFailure } from "@app/ai-proxy/lib/debug-capture";
+import { jsonError } from "@app/ai-proxy/lib/http-error";
 import { clientAbortResponse } from "@app/ai-proxy/lib/providers/client-abort";
 import {
     CodexCompactionFlow,
@@ -22,7 +23,6 @@ import {
 } from "@app/ai-proxy/lib/providers/codex/wham-body";
 import {
     accumulateResponsesJson,
-    jsonError,
     tapCompletedUsage,
     whamErrorResponse,
 } from "@app/ai-proxy/lib/providers/codex/wham-stream";
@@ -90,6 +90,7 @@ import {
 import { ensureToolRequiredArrays } from "@app/ai-proxy/lib/translators/formats/anthropic/ensure-tool-required";
 import { toAnthropicErrorResponse } from "@app/ai-proxy/lib/translators/formats/anthropic/error-envelope";
 import {
+    MAX_REPLAY_RESPONSE_CHARS,
     responsesSseToAnthropic,
     responsesToAnthropicMessage,
 } from "@app/ai-proxy/lib/translators/formats/anthropic/grok-responses-to-anthropic";
@@ -853,6 +854,45 @@ export class OpenAiSubscriptionProvider implements ProxyProvider {
                 : codec.seal(item);
         };
 
+        const rememberTextResponse = (content: Record<string, unknown>[]): void => {
+            if (!conversation || (client.servedIdentity && accountHash8(client.servedIdentity) !== stamp.accountHash)) {
+                return;
+            }
+            let replayChars = content.length;
+            for (const block of content) {
+                for (const field of ["text", "thinking", "signature"]) {
+                    if (typeof block[field] === "string") {
+                        replayChars += block[field].length;
+                    }
+                }
+                if (replayChars > MAX_REPLAY_RESPONSE_CHARS) {
+                    return;
+                }
+            }
+            try {
+                const thinking = content.filter((block) => block.type === "thinking");
+                if (
+                    thinking.some((block) => {
+                        const opened = codec.open(block);
+                        return !opened.ok || this.deadReasoning.has(String(opened.item.id));
+                    })
+                ) {
+                    return;
+                }
+                const translated = anthropicToResponses({ messages: [{ role: "assistant", content }] }, concreteModel, {
+                    reasoningItem: (thinking) => {
+                        const opened = codec.open(thinking);
+                        return opened.ok && !this.deadReasoning.has(String(opened.item.id)) ? opened.item : undefined;
+                    },
+                });
+                if (Array.isArray(translated.input)) {
+                    rememberMessageItems(conversation, content, translated.input.filter(isObject));
+                }
+            } catch (error) {
+                logger.warn({ error }, "ai-proxy: could not remember a completed reasoning reply");
+            }
+        };
+
         const sessionAgents = new Set(context?.sessionAgents ?? []);
         const keepAgentModel = sessionAgentModelWins(sessionAgents);
         const toolInput =
@@ -872,6 +912,7 @@ export class OpenAiSubscriptionProvider implements ProxyProvider {
                 responsesSseToAnthropic(onUsage ? tapCompletedUsage(head.body, onUsage) : head.body, {
                     model,
                     signReasoning,
+                    onTextResponse: conversation ? rememberTextResponse : undefined,
                     label: "codex",
                     toolInput,
                     signal: req.signal,
@@ -894,6 +935,7 @@ export class OpenAiSubscriptionProvider implements ProxyProvider {
                 responsesToAnthropicMessage(isObject(envelope) ? envelope : {}, {
                     model,
                     signReasoning,
+                    onTextResponse: conversation ? rememberTextResponse : undefined,
                     label: "codex",
                     toolInput,
                 })

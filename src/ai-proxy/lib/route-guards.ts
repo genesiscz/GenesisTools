@@ -1,19 +1,14 @@
 import { resolveProxyRoute } from "@app/ai-proxy/lib/account-model-ref";
 import type { ResolvedClient } from "@app/ai-proxy/lib/clients";
 import { resolveClient, routeDenial } from "@app/ai-proxy/lib/clients";
+import { jsonError } from "@app/ai-proxy/lib/http-error";
 import { acquireProvider, providerUnavailableResponse } from "@app/ai-proxy/lib/providers/registry";
 import type { ProxyProvider } from "@app/ai-proxy/lib/providers/types";
 import type { AiProxyConfig, ResolvedRoute } from "@app/ai-proxy/lib/types";
 import { checkClientQuota } from "@app/ai-proxy/lib/usage/client-ledger";
-import { SafeJSON } from "@genesiscz/utils/json";
 import { logger } from "@genesiscz/utils/logger";
 
-export function jsonError(status: number, message: string, extra?: { type?: string; code?: string }): Response {
-    return new Response(SafeJSON.stringify({ error: { message, ...extra } }), {
-        status,
-        headers: { "Content-Type": "application/json" },
-    });
-}
+export { jsonError } from "@app/ai-proxy/lib/http-error";
 
 export interface GuardedRoute {
     client: ResolvedClient;

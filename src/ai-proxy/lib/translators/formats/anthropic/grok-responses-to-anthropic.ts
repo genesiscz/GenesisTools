@@ -72,11 +72,16 @@ function reasoningSummaryText(item: JsonRecord): string {
         .join("\n\n");
 }
 
+/** Maximum UTF-16 code units retained for replay of a completed reply. */
+export const MAX_REPLAY_RESPONSE_CHARS = 256 * 1024;
+
 /** What differs per upstream when a Responses output becomes an Anthropic message. */
 export interface ResponsesToAnthropicOptions {
     model: string;
     /** The thinking block's signature for a reasoning item (default: Grok's `grokrs1:`). */
     signReasoning?: (item: JsonRecord) => string;
+    /** Receive a completed text-only assistant reply, using the blocks sent to the client. */
+    onTextResponse?: (content: JsonRecord[]) => void;
     /** Names the upstream in log lines. */
     label?: string;
     /** Client request abort, which may reject the upstream read before output cancellation. */
@@ -179,6 +184,14 @@ export function responsesToAnthropicMessage(response: JsonRecord, options: Respo
         content.push({ type: "text", text: "" });
     }
 
+    if (
+        response.status === "completed" &&
+        content.some((block) => block.type === "thinking") &&
+        content.every((block) => block.type !== "tool_use")
+    ) {
+        options.onTextResponse?.(content);
+    }
+
     return {
         id: `msg_${typeof response.id === "string" ? response.id.replace(/^resp_/, "") : crypto.randomUUID()}`,
         type: "message",
@@ -204,11 +217,14 @@ interface ItemState {
     /** Set for a tool call whose input is rewritten: its arguments are held in `heldArgs`. */
     rewrite?: (input: unknown) => unknown;
     heldArgs: string;
+    clientBlock?: JsonRecord;
+    clientChunks?: string[];
 }
 
 interface StreamState {
     model: string;
     sign: (item: JsonRecord) => string;
+    onTextResponse?: (content: JsonRecord[]) => void;
     label: string;
     /** The kind of the last block opened, so a message never ends on a thinking block. */
     lastKind: BlockKind | undefined;
@@ -221,7 +237,28 @@ interface StreamState {
     sawFunctionCall: boolean;
     usage: AnthropicUsage | null;
     outputChars: number;
+    replayChars: number;
     finished: boolean;
+}
+
+function stopTextCapture(state: StreamState): void {
+    state.onTextResponse = undefined;
+    for (const item of state.items.values()) {
+        item.clientBlock = undefined;
+        item.clientChunks = undefined;
+    }
+}
+
+function reserveReplayChars(state: StreamState, chars: number): boolean {
+    if (!state.onTextResponse) {
+        return false;
+    }
+    if (state.replayChars + chars > MAX_REPLAY_RESPONSE_CHARS) {
+        stopTextCapture(state);
+        return false;
+    }
+    state.replayChars += chars;
+    return true;
 }
 
 function frameStart(state: StreamState): string {
@@ -277,6 +314,11 @@ function openItem(state: StreamState, outputIndex: number, item: JsonRecord): st
         return "";
     }
 
+    if (mapped.kind === "tool_use") {
+        stopTextCapture(state);
+    }
+    // Count each block too, so empty blocks cannot make replay capture unbounded.
+    const capture = reserveReplayChars(state, 1);
     const blockIndex = state.nextBlockIndex++;
     state.lastKind = mapped.kind;
     state.items.set(outputIndex, {
@@ -290,6 +332,8 @@ function openItem(state: StreamState, outputIndex: number, item: JsonRecord): st
                 ? state.toolInput?.(mapped.block.name)
                 : undefined,
         heldArgs: "",
+        clientBlock: capture ? { ...mapped.block } : undefined,
+        clientChunks: capture ? [] : undefined,
     });
 
     if (mapped.kind === "tool_use") {
@@ -310,6 +354,15 @@ function deltaFrame(state: StreamState, outputIndex: number, delta: JsonRecord, 
 
     item.streamedChars += chars;
     state.outputChars += chars;
+    const fragment =
+        delta.type === "thinking_delta" && typeof delta.thinking === "string"
+            ? delta.thinking
+            : delta.type === "text_delta" && typeof delta.text === "string"
+              ? delta.text
+              : "";
+    if (fragment.length > 0 && item.clientChunks && reserveReplayChars(state, fragment.length)) {
+        item.clientChunks.push(fragment);
+    }
 
     return anthropicSseFrame("content_block_delta", { index: item.blockIndex, delta });
 }
@@ -345,6 +398,9 @@ function closeItem(state: StreamState, outputIndex: number, doneItem: JsonRecord
             const signature = state.sign(doneItem);
 
             if (signature.length > 0) {
+                if (item.clientBlock && reserveReplayChars(state, signature.length)) {
+                    item.clientBlock.signature = signature;
+                }
                 out += anthropicSseFrame("content_block_delta", {
                     index: item.blockIndex,
                     delta: { type: "signature_delta", signature },
@@ -489,7 +545,31 @@ function handleEvent(state: StreamState, event: JsonRecord): string {
     }
 
     if (type === "response.completed" || type === "response.incomplete") {
-        return finishFrames(state, isObject(event.response) ? event.response : undefined);
+        const wasFinished = state.finished;
+        const frames = finishFrames(state, isObject(event.response) ? event.response : undefined);
+        if (!wasFinished && type === "response.completed" && !state.sawFunctionCall && state.onTextResponse) {
+            const content = [...state.items.values()]
+                .sort((left, right) => left.blockIndex - right.blockIndex)
+                .flatMap((item) => {
+                    if (!item.clientBlock) {
+                        return [];
+                    }
+                    const block = { ...item.clientBlock };
+                    if (item.kind === "thinking") {
+                        block.thinking = item.clientChunks?.join("") ?? "";
+                    } else if (item.kind === "text") {
+                        block.text = item.clientChunks?.join("") ?? "";
+                    }
+                    return [block];
+                });
+            if (content.some((block) => block.type === "thinking")) {
+                if (content.at(-1)?.type === "thinking") {
+                    content.push({ type: "text", text: "" });
+                }
+                state.onTextResponse(content);
+            }
+        }
+        return frames;
     }
 
     if (type === "response.failed" || type === "error") {
@@ -519,6 +599,7 @@ export function responsesSseToAnthropic(
     const state: StreamState = {
         model: options.model,
         sign: options.signReasoning ?? grokReasoningCodec.seal,
+        onTextResponse: options.onTextResponse,
         label,
         lastKind: undefined,
         messageId: `msg_${crypto.randomUUID()}`,
@@ -529,6 +610,7 @@ export function responsesSseToAnthropic(
         sawFunctionCall: false,
         usage: null,
         outputChars: 0,
+        replayChars: 0,
         finished: false,
     };
 

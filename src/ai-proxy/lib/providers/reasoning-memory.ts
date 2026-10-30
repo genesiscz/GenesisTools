@@ -16,7 +16,8 @@ import { isObject } from "@genesiscz/utils/object";
 
 const MAX_MESSAGES = 4096;
 
-const itemsByMessage = new Map<string, Array<Record<string, unknown>>>();
+// Null marks an ambiguous identity: two different reasoning histories have the same visible blocks.
+const itemsByMessage = new Map<string, Array<Record<string, unknown>> | null>();
 
 /** The blocks that identify an assistant message once its thinking is gone; undefined when nothing identifies it. */
 function messageKey(conversation: string, content: unknown[]): string | undefined {
@@ -52,8 +53,11 @@ export function rememberMessageItems(
         return;
     }
 
+    const previous = itemsByMessage.get(key);
+    const ambiguous =
+        previous === null || (previous !== undefined && SafeJSON.stringify(previous) !== SafeJSON.stringify(items));
     itemsByMessage.delete(key);
-    itemsByMessage.set(key, structuredClone(items));
+    itemsByMessage.set(key, ambiguous ? null : structuredClone(items));
 
     while (itemsByMessage.size > MAX_MESSAGES) {
         const oldest = itemsByMessage.keys().next().value;

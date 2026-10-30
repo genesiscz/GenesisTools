@@ -273,13 +273,6 @@ export async function accumulateResponsesJson(
     return { failed: false, body: SafeJSON.stringify({ ...completed, object: "response", output }) };
 }
 
-export function jsonError(status: number, message: string): Response {
-    return new Response(SafeJSON.stringify({ error: { message } }), {
-        status,
-        headers: { "Content-Type": "application/json" },
-    });
-}
-
 /** OpenAI-shaped error response for a failed WHAM request that is not about the account. */
 export function whamErrorResponse({ status, bodyText }: { status: number; bodyText: string }): Response {
     return new Response(SafeJSON.stringify(mapWhamError({ status, bodyText })), {
