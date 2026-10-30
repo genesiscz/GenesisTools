@@ -1,5 +1,6 @@
 import { describe, expect, it, spyOn } from "bun:test";
 import { createAnthropic } from "@ai-sdk/anthropic";
+import { anthropicToResponses } from "@app/ai-proxy/lib/translators/formats/anthropic/anthropic-to-responses";
 import {
     CLAUDE_CODE_AGENT_TOOL,
     CLAUDE_CODE_COMPACTION_MARK,
@@ -13,9 +14,11 @@ import {
     responsesToAnthropicMessage,
 } from "@app/ai-proxy/lib/translators/formats/anthropic/grok-responses-to-anthropic";
 import {
+    codexReasoningCodec,
     packReasoningSignature,
     unpackReasoningSignature,
 } from "@app/ai-proxy/lib/translators/formats/anthropic/reasoning-codec";
+import { accountHash8 } from "@app/ai-proxy/lib/translators/formats/anthropic/reasoning-envelope";
 import { extractUsageFromJsonBody } from "@app/ai-proxy/lib/usage/extract";
 import { SafeJSON } from "@genesiscz/utils/json";
 import { logger } from "@genesiscz/utils/logger";
@@ -756,5 +759,225 @@ describe("a custom (free-form) tool call as a client tool call", () => {
             { type: "tool_use", id: "call_exec", name: "Bash", input: { command: `RUN ${js}`, timeout: 1 } },
         ]);
         expect(message.stop_reason).toBe("tool_use");
+    });
+});
+
+/**
+ * A final reply, then a Monitor task notification as the next turn. Observed 2026-10-27 20:07 (Claude Code 2.1.311,
+ * gpt-6.1-sol through the Codex `/v1/messages` route): the final reply reached Claude Code as a text block and ended
+ * its turn. The notification queued meanwhile then started a new turn, and Claude Code asked "[Your previous response
+ * had no visible output…]" about THAT turn's reply: a thinking block with a signature only, an empty text block, and
+ * 6 output tokens outside the reasoning, which is the message framing with no text in it (a 28-character reply costs
+ * 11 to 12 in the same session). These pin both halves: the final text reaches the client once as a text block, the
+ * notification reaches the model as the newest input, and a reply with no text is still reported as empty.
+ */
+describe("a final reply, then a task notification as the next turn", () => {
+    const stamp = { provider: "codex", accountHash: accountHash8("work"), model: "gpt-6.1-sol", compHash: "0" };
+    const codex = { model: "gpt-6.1-sol", label: "codex", signReasoning: codexReasoningCodec(stamp).seal };
+    const FINAL = "⏳ PENDING\n\nThe test process still holds the shared checkout. Both repair heads pass CI.";
+    const NOTIFICATION =
+        "<system-reminder>\n<task-notification>\n<task-id>t1</task-id>\n<summary>Monitor event</summary>\n" +
+        "<event>[20:07:12] monitor watching app.log</event>\n</task-notification>\n</system-reminder>";
+
+    const reasoning = (id: string) => ({ type: "reasoning", id, summary: [], encrypted_content: `ENC_${id}` });
+    const message = (text: string) => ({
+        type: "message",
+        role: "assistant",
+        status: "completed",
+        content: [{ type: "output_text", text }],
+    });
+    const completed = (output: unknown[], usage: Record<string, unknown>) => ({
+        type: "response.completed",
+        response: { id: "resp_1", status: "completed", output, usage },
+    });
+    const reasoningFrames = (id: string) => [
+        { type: "response.output_item.added", output_index: 0, item: { type: "reasoning", id, summary: [] } },
+        { type: "response.output_item.done", output_index: 0, item: reasoning(id) },
+    ];
+    const finalUsage = { input_tokens: 308018, input_tokens_details: { cached_tokens: 306816 }, output_tokens: 351 };
+
+    interface Block {
+        type: string;
+        text: string;
+        thinking: string;
+        signature: string;
+    }
+
+    /** The message Claude Code builds from the frames: one block per index, its deltas appended. */
+    function assemble(frames: Frame[]): Block[] {
+        const blocks: Block[] = [];
+
+        for (const frame of frames) {
+            const index = frame.data.index;
+
+            if (typeof index !== "number") {
+                continue;
+            }
+
+            if (frame.event === "content_block_start") {
+                const start = frame.data.content_block as Record<string, unknown>;
+                blocks[index] = {
+                    type: String(start.type),
+                    text: typeof start.text === "string" ? start.text : "",
+                    thinking: "",
+                    signature: "",
+                };
+                continue;
+            }
+
+            const block = blocks[index];
+            const delta = frame.data.delta as Record<string, unknown> | undefined;
+
+            if (frame.event !== "content_block_delta" || block === undefined || delta === undefined) {
+                continue;
+            }
+
+            if (delta.type === "text_delta" && typeof delta.text === "string") {
+                block.text += delta.text;
+            }
+
+            if (delta.type === "thinking_delta" && typeof delta.thinking === "string") {
+                block.thinking += delta.thinking;
+            }
+
+            if (delta.type === "signature_delta" && typeof delta.signature === "string") {
+                block.signature += delta.signature;
+            }
+        }
+
+        return blocks;
+    }
+
+    /** Claude Code's recovery condition as observed: no text block with visible text and no tool call. */
+    function hasVisibleOutput(blocks: Block[]): boolean {
+        return blocks.some((block) => block.type === "tool_use" || (block.type === "text" && block.text.trim() !== ""));
+    }
+
+    function stopReason(frames: Frame[]): unknown {
+        const delta = frames.find((frame) => frame.event === "message_delta")?.data.delta;
+        return (delta as Record<string, unknown> | undefined)?.stop_reason;
+    }
+
+    const shapes: Array<[string, Array<Record<string, unknown>>]> = [
+        [
+            "deltas, then a done frame and a snapshot that repeat the text (the live WHAM shape)",
+            [
+                { type: "response.created", response: { id: "resp_1", status: "in_progress", output: [] } },
+                ...reasoningFrames("rs_final"),
+                { type: "response.output_item.added", output_index: 1, item: { type: "message", content: [] } },
+                {
+                    type: "response.content_part.added",
+                    output_index: 1,
+                    content_index: 0,
+                    part: { type: "output_text", text: "" },
+                },
+                { type: "response.output_text.delta", output_index: 1, content_index: 0, delta: FINAL.slice(0, 11) },
+                { type: "response.output_text.delta", output_index: 1, content_index: 0, delta: FINAL.slice(11, 40) },
+                { type: "response.output_text.delta", output_index: 1, content_index: 0, delta: FINAL.slice(40) },
+                { type: "response.output_text.done", output_index: 1, content_index: 0, text: FINAL },
+                { type: "response.output_item.done", output_index: 1, item: message(FINAL) },
+                completed([reasoning("rs_final"), message(FINAL)], finalUsage),
+            ],
+        ],
+        [
+            "the text on the done frame only",
+            [
+                ...reasoningFrames("rs_final"),
+                { type: "response.output_item.added", output_index: 1, item: { type: "message", content: [] } },
+                { type: "response.output_item.done", output_index: 1, item: message(FINAL) },
+                completed([reasoning("rs_final"), message(FINAL)], finalUsage),
+            ],
+        ],
+        [
+            "the message in the terminal snapshot only",
+            [...reasoningFrames("rs_final"), completed([reasoning("rs_final"), message(FINAL)], finalUsage)],
+        ],
+    ];
+
+    it.each(shapes)("the final text reaches the client once, as one text block: %s", async (_name, events) => {
+        const { frames } = await collect(responsesSseToAnthropic(sse(events), codex));
+        const blocks = assemble(frames);
+
+        expect(blocks.map((block) => block.type)).toEqual(["thinking", "text"]);
+        expect(blocks[0]?.thinking).toBe("");
+        expect(blocks[0]?.signature.startsWith("gtr1.codex.")).toBe(true);
+        expect(blocks[1]?.text).toBe(FINAL);
+        expect(frames.filter((frame) => frame.event === "message_stop")).toHaveLength(1);
+        expect(stopReason(frames)).toBe("end_turn");
+        expect(hasVisibleOutput(blocks)).toBe(true);
+    });
+
+    it("the notification turn carries the final reply once, with the notification as the newest input", () => {
+        const body = anthropicToResponses(
+            {
+                messages: [
+                    { role: "user", content: "check CI" },
+                    {
+                        role: "assistant",
+                        content: [
+                            { type: "thinking", thinking: "", signature: "sig" },
+                            { type: "text", text: FINAL },
+                        ],
+                    },
+                    { role: "user", content: [{ type: "text", text: NOTIFICATION }] },
+                ],
+            },
+            "gpt-6.1-sol",
+            { reasoningItem: () => undefined }
+        );
+
+        expect(body.input).toEqual([
+            { role: "user", content: [{ type: "input_text", text: "check CI" }] },
+            { role: "assistant", content: [{ type: "output_text", text: FINAL }] },
+            { role: "user", content: [{ type: "input_text", text: NOTIFICATION }] },
+        ]);
+    });
+
+    // The control: the reply to the notification as it came back (no message item, or one with no text). It is empty,
+    // so Claude Code's recovery request is the right answer, and the earlier final text does not come back in it.
+    const emptyUsage = {
+        input_tokens: 308651,
+        input_tokens_details: { cached_tokens: 308224 },
+        output_tokens: 73,
+        output_tokens_details: { reasoning_tokens: 67 },
+        total_tokens: 308724,
+    };
+    const emptyShapes: Array<[string, Array<Record<string, unknown>>]> = [
+        ["reasoning only", [...reasoningFrames("rs_quiet"), completed([reasoning("rs_quiet")], emptyUsage)]],
+        [
+            "reasoning, then a message with no text",
+            [
+                ...reasoningFrames("rs_quiet"),
+                { type: "response.output_item.added", output_index: 1, item: { type: "message", content: [] } },
+                { type: "response.output_item.done", output_index: 1, item: message("") },
+                completed([reasoning("rs_quiet"), message("")], emptyUsage),
+            ],
+        ],
+    ];
+
+    it.each(emptyShapes)("a genuinely empty reply stays empty: %s", async (_name, events) => {
+        const { frames, raw } = await collect(responsesSseToAnthropic(sse(events), codex));
+        const blocks = assemble(frames);
+
+        expect(frameSummary(frames)).toEqual([
+            "message_start",
+            "start[0]:thinking",
+            "delta[0]:signature_delta",
+            "stop[0]",
+            "start[1]:text",
+            "stop[1]",
+            "message_delta",
+            "message_stop",
+        ]);
+        expect(blocks.map((block) => block.text)).toEqual(["", ""]);
+        expect(raw.includes("PENDING")).toBe(false);
+        expect(frames.find((frame) => frame.event === "message_delta")?.data.usage).toEqual({
+            input_tokens: 427,
+            output_tokens: 73,
+            cache_read_input_tokens: 308224,
+            output_tokens_details: { reasoning_tokens: 67 },
+        });
+        expect(stopReason(frames)).toBe("end_turn");
+        expect(hasVisibleOutput(blocks)).toBe(false);
     });
 });
