@@ -15,6 +15,8 @@ export const HOST_COMMANDS = [
     "action.run",
     "router.explain",
     "router.route",
+    "router.services",
+    "router.ensure",
     "extension.status",
     "extension.build",
 ] as const;
@@ -30,6 +32,8 @@ export const EXTENSION_PAGE_COMMANDS: readonly HostCommand[] = [
     "action.run",
     "router.explain",
     "router.route",
+    "router.services",
+    "router.ensure",
     "extension.status",
     "extension.build",
 ];
@@ -62,6 +66,30 @@ export interface PingData {
     version: string;
     pid: number;
     configPath: string;
+}
+
+/**
+ * `router.services`: one registered server the router config names, as the extension downloads it. The
+ * worker intercepts a typed `http://localhost:<port>` only for a port whose flag is true here, and the
+ * host starts it only when the flag is still true when the navigation is decided.
+ */
+export interface PlainNavigationService {
+    port: number;
+    name: string;
+    /** True only when every service route for this port carries the literal `true`. */
+    allowExecuteByPlainBrowserNavigationMightBeDangerous: boolean;
+    /** Where the router sends this port: `http://localhost:<port>`. */
+    target: string;
+}
+
+/** `router.ensure`: the server listens, so the route page continues to `target` in its own tab. */
+export interface RouterEnsureData {
+    port: number;
+    name: string;
+    /** False when something already listened on the port: ensure leaves it alone. */
+    started: boolean;
+    /** The URL the router rewrote: `http://localhost:<port>` plus the captured path. */
+    target: string;
 }
 
 /** Native messaging's own limit for a host -> browser message. */

@@ -8,7 +8,7 @@ import { explainHunk } from "../explain";
 import { openInHub } from "../hub";
 import { describeCheckouts, openFile, openTerminal } from "../open";
 import { startReview } from "../review";
-import { explainLink, routeLink } from "../router";
+import { currentHosts, ensureLink, explainLink, routeLink } from "../router";
 import { isRecord, PageValueError } from "../values";
 import {
     type ExtensionStatusData,
@@ -56,6 +56,8 @@ const HANDLERS: Record<HostCommand, Handler> = {
         runAction(deps, { actionId: params.actionId, url: params.url, fields: params.fields }),
     "router.explain": (deps, params) => explainLink(deps, params.url),
     "router.route": (deps, params) => routeLink(deps, params.url),
+    "router.services": async () => ({ services: currentHosts().services }),
+    "router.ensure": (deps, params) => ensureLink(deps, params.url),
     "extension.status": async (_deps, params): Promise<ExtensionStatusData> => {
         const freshness = await extensionFreshness();
         const running = typeof params.running === "string" ? params.running : null;

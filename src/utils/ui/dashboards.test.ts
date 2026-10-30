@@ -60,6 +60,28 @@ describe("port registry", () => {
             })
         ).toBe(false);
     });
+
+    test("every dashboard writes allowExecuteByPlainBrowserNavigationMightBeDangerous as its own literal true", () => {
+        const flag = "allowExecuteByPlainBrowserNavigationMightBeDangerous";
+        const ports = Object.values(DASHBOARDS).map((entry) => entry.port);
+
+        expect(ports.toSorted((a, b) => a - b)).toEqual([
+            3000, 3042, 3069, 3071, 3072, 3073, 3074, 3075, 3076, 3077, 3088, 3096, 7243, 7251,
+        ]);
+
+        for (const entry of Object.values(DASHBOARDS)) {
+            expect({ key: entry.key, own: Object.hasOwn(entry, flag), value: entry[flag] }).toEqual({
+                key: entry.key,
+                own: true,
+                value: true,
+            });
+        }
+
+        // A web service never carries it: absent means a plain browser navigation must not start it.
+        for (const entry of Object.values(WEB_SERVICES)) {
+            expect({ key: entry.key, own: Object.hasOwn(entry, flag) }).toEqual({ key: entry.key, own: false });
+        }
+    });
 });
 
 describe("matchProcess", () => {

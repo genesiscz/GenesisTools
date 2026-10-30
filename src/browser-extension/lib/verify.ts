@@ -74,15 +74,73 @@ function isRecord(value: unknown): value is Record<string, unknown> {
     return typeof value === "object" && value !== null && !Array.isArray(value);
 }
 
+function strings(value: unknown): string[] {
+    return Array.isArray(value) ? value.filter((item): item is string => typeof item === "string") : [];
+}
+
+const LOOPBACK_PORT_ORIGIN = /^http:\/\/(?:127\.0\.0\.1|localhost):(\d+)\/\*$/;
+/** A pattern that reaches a loopback server without naming its port, or that names `[::1]` (never intercepted). */
+const WIDE_LOOPBACK = /^(?:<all_urls>|(?:\*|http):\/\/(?:\*|127\.0\.0\.1|localhost|\[::1\])(?::\*)?(?:\/.*)?)$|\[::1\]/;
+
+/**
+ * The build's loopback grants: one `http://127.0.0.1:<port>/*` and one `http://localhost:<port>/*` per port, no
+ * wildcard that would let the extension reach every local server (the AI proxy, the MCP gateway), and no content
+ * script on a loopback origin. Reads the built manifest only.
+ */
+export function loopbackGrantCheck(manifest: unknown): VerifyCheck {
+    const record = isRecord(manifest) ? manifest : {};
+    const granted = [...strings(record.host_permissions), ...strings(record.optional_host_permissions)];
+    const wide = granted.filter((origin) => WIDE_LOOPBACK.test(origin));
+    const scripts = Array.isArray(record.content_scripts) ? record.content_scripts : [];
+    const scripted = scripts
+        .flatMap((script) => (isRecord(script) ? strings(script.matches) : []))
+        .filter((match) => /localhost|127\.0\.0\.1|\[::1\]|<all_urls>|^\*:\/\/\*|^http:\/\/\*/.test(match));
+    const ports = new Map<string, number>();
+
+    for (const origin of granted) {
+        const port = LOOPBACK_PORT_ORIGIN.exec(origin)?.[1];
+
+        if (port) {
+            ports.set(port, (ports.get(port) ?? 0) + 1);
+        }
+    }
+
+    const halves = [...ports].filter(([, count]) => count !== 2).map(([port]) => port);
+    const problems = [
+        ...wide.map((origin) => `wildcard ${origin}`),
+        ...scripted.map((match) => `content script on ${match}`),
+        ...halves.map((port) => `port ${port} has only one of its two origins`),
+    ];
+    return {
+        name: "loopback grants are per port",
+        ok: problems.length === 0,
+        detail:
+            problems.length > 0
+                ? problems.join("; ")
+                : ports.size === 0
+                  ? "no loopback port is granted"
+                  : `${ports.size} port(s): ${[...ports.keys()].join(", ")}`,
+    };
+}
+
+function builtManifest(distDir: string): unknown {
+    try {
+        return SafeJSON.parse(readFileSync(join(distDir, "manifest.json"), "utf8"), { strict: true });
+    } catch (error) {
+        log.warn({ error, distDir }, "the built manifest does not read");
+        return null;
+    }
+}
+
 /**
  * Loads `dist` in a headless browser on a throwaway profile and checks what a user would notice:
  * the worker starts, the redirect rules install, and a router link lands on the route page. Never
  * touches the user's own browser.
  */
 export async function verifyExtension(distDir: string = DIST_DIR): Promise<VerifyCheck[]> {
+    const checks: VerifyCheck[] = [loopbackGrantCheck(builtManifest(distDir))];
     const headless = await launchWithExtension(distDir);
     let conn: Awaited<ReturnType<typeof connectBrowser>> | undefined;
-    const checks: VerifyCheck[] = [];
 
     try {
         conn = await connectBrowser(headless.port);

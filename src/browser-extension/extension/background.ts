@@ -6,12 +6,17 @@ import {
     hostReplyDeadlineMs,
     NATIVE_HOST_NAME,
 } from "../lib/host/messages";
+import { loopbackOrigins, loopbackRegex, readPlainNavigationServices } from "../lib/loopback";
 import { type ContextMenuInfo, type DnrRule, ext, type MessageSender, type Tab } from "./chrome";
 import { type BackgroundMessage, isBackgroundMessage, isHostResponse, isRecord, type MenuItem } from "./shared/bridge";
 import { freshnessFromReply, showFreshness } from "./shared/freshness";
 
 const ROUTER_RULE_ID = 1;
 const SHORTCUT_RULE_ID = 2;
+const LOOPBACK_RULE_ID = 3;
+/** When the worker last downloaded the service list; a worker woken again within the interval keeps that rule. */
+const LOOPBACK_SYNCED_KEY = "router.loopbackSyncedAt";
+const LOOPBACK_SYNC_INTERVAL_MS = 5 * 60_000;
 /** Search rules take ids from here up, one per short host, below the bypass range. */
 const SEARCH_RULE_BASE = 100;
 /**
@@ -196,6 +201,75 @@ async function installHostRule(hosts: string[]): Promise<void> {
     });
 }
 
+/**
+ * Typed `http://localhost:<port>` and `http://127.0.0.1:<port>` addresses open the route page, which starts the
+ * server and continues in the same tab. Caught are the ports whose flag in the DOWNLOADED service list is true and
+ * whose two origins this build was granted: a port flipped to false stops being caught on this download, and a port
+ * flipped to true after the build is not caught until the next build. No answer from the host catches nothing.
+ * A navigation a page on a loopback origin starts (a dashboard's own links) is not caught: it loads as it is.
+ */
+async function syncLoopbackRule(): Promise<HostResponse> {
+    const reply = await callNative({ command: "router.services" });
+    const services = reply.ok ? readPlainNavigationServices(reply.data) : [];
+    const ports: number[] = [];
+
+    for (const service of services) {
+        if (!service.allowExecuteByPlainBrowserNavigationMightBeDangerous) {
+            continue;
+        }
+
+        if (await ext.permissions.contains({ origins: loopbackOrigins(service.port) })) {
+            ports.push(service.port);
+        }
+    }
+
+    await ext.declarativeNetRequest.updateDynamicRules({
+        removeRuleIds: [LOOPBACK_RULE_ID],
+        addRules:
+            ports.length === 0
+                ? []
+                : [
+                      {
+                          id: LOOPBACK_RULE_ID,
+                          priority: 1,
+                          action: routeRedirect(),
+                          condition: {
+                              regexFilter: loopbackRegex(ports),
+                              resourceTypes: ["main_frame"],
+                              excludedInitiatorDomains: ["localhost", "127.0.0.1"],
+                          },
+                      },
+                  ],
+    });
+    await ext.storage.session.set({ [LOOPBACK_SYNCED_KEY]: Date.now() });
+
+    if (!reply.ok) {
+        console.warn("[genesis-tools] the service list did not download; no loopback address is caught", reply.error);
+        return reply;
+    }
+
+    return { ok: true, data: { services } };
+}
+
+/**
+ * On every worker start. An MV3 worker wakes for every tab load after 30 s idle, and each download starts the
+ * native host, so a start within the interval keeps the rule the last one installed. The route page downloads
+ * again for every navigation it decides, so the interval never delays what is authorized.
+ */
+async function syncLoopbackOnStart(): Promise<void> {
+    const last = (await ext.storage.session.get([LOOPBACK_SYNCED_KEY]))[LOOPBACK_SYNCED_KEY];
+
+    if (typeof last === "number" && Date.now() - last < LOOPBACK_SYNC_INTERVAL_MS) {
+        return;
+    }
+
+    await syncLoopbackRule();
+}
+
+void syncLoopbackOnStart().catch((error: unknown) => {
+    console.warn("[genesis-tools] loopback rule sync failed", error);
+});
+
 /** The pending bypass of each route page tab: its own rule, so two tabs never remove each other's. */
 const bypasses = new Map<number, { ruleId: number; expiry: ReturnType<typeof setTimeout> }>();
 let nextBypassRuleId = BYPASS_RULE_BASE;
@@ -236,6 +310,8 @@ async function allowOnce(url: string, tabId: number): Promise<void> {
     await staleBypassesCleared;
     const previous = bypasses.get(tabId);
     const ruleId = nextBypassRuleId++;
+    // A request carries no fragment: `/a#x` is requested as `/a`, so the rule matches the URL before `#`.
+    const [requested = url] = url.split("#");
     await ext.declarativeNetRequest.updateSessionRules({
         removeRuleIds: previous ? [previous.ruleId] : [],
         addRules: [
@@ -243,7 +319,11 @@ async function allowOnce(url: string, tabId: number): Promise<void> {
                 id: ruleId,
                 priority: 2,
                 action: { type: "allow" },
-                condition: { regexFilter: `^${escapeRegex(url)}$`, resourceTypes: ["main_frame"], tabIds: [tabId] },
+                condition: {
+                    regexFilter: `^${escapeRegex(requested)}(?:#.*)?$`,
+                    resourceTypes: ["main_frame"],
+                    tabIds: [tabId],
+                },
             },
         ],
     });
@@ -355,6 +435,8 @@ async function handle(message: BackgroundMessage, sender: MessageSender): Promis
             return callNative({ command: message.command, params: message.params });
         case "gitlab.sync":
             return { ok: true, data: await syncGitlabScripts() };
+        case "router.services":
+            return syncLoopbackRule();
         case "router.bypass":
             if (sender.tab?.id === undefined) {
                 return { ok: false, code: "invalid", error: "a router bypass needs the route page's tab" };
