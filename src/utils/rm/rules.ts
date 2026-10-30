@@ -27,6 +27,11 @@ export interface RmVerdict {
     rule: string;
     reason: string;
     presetId?: string;
+    /**
+     * Set on an ask: the path holds work that exists nowhere else (history, uncommitted or untracked changes, a
+     * clone's unpushed commits), so an aside move into /tmp, which a reboot clears, would risk it.
+     */
+    unsaved?: boolean;
 }
 
 export type RmTargetKind = "file" | "dir" | "symlink" | "missing";
@@ -66,6 +71,8 @@ export interface RmGitFacts {
     /** The work tree that contains the target (not the target itself), or null. */
     workTree: string | null;
     tracked: number;
+    /** Tracked files under the target with changes git has not committed, staged or not. */
+    dirty: number;
     untracked: number;
     /** Set when the target is a clone with work that exists nowhere else. */
     unsavedClone: string | null;
@@ -426,6 +433,27 @@ function nestedWorkVerdict(target: RmTarget, ctx: RmRuleContext): RmVerdict | nu
     return unsaved;
 }
 
+/** The rules whose ask always means unsaved work. */
+const UNSAVED_RULES = new Set(["git-history", "git-untracked", "unsaved-clone", "nested-repos"]);
+
+/**
+ * Whether an asked path holds work that exists nowhere else, whichever rule answered first: a tracked folder can
+ * hold edits git has not committed, untracked files, or a repository of its own.
+ */
+function holdsUnsavedWork(verdict: RmVerdict, target: RmTarget, ctx: RmRuleContext, git: () => RmGitFacts): boolean {
+    if (UNSAVED_RULES.has(verdict.rule)) {
+        return true;
+    }
+
+    const facts = git();
+
+    if (facts.dirty > 0 || facts.untracked > 0 || facts.unsavedClone) {
+        return true;
+    }
+
+    return target.kind === "dir" && ctx.nestedRepos(target).length > 0;
+}
+
 export function evaluateTarget(target: RmTarget, ctx: RmRuleContext): RmVerdict {
     let facts: RmGitFacts | undefined;
     const git = (): RmGitFacts => {
@@ -450,14 +478,23 @@ export function evaluateTarget(target: RmTarget, ctx: RmRuleContext): RmVerdict 
 
         if (verdict) {
             logger.debug({ path: target.path, rule: verdict.rule, kind: verdict.kind }, "rm: verdict");
-            return verdict;
+            return verdict.kind === "ask"
+                ? { ...verdict, unsaved: holdsUnsavedWork(verdict, target, once, git) }
+                : verdict;
         }
     }
 
     return { kind: "ask", rule: "default", reason: "no rule answered" };
 }
 
-const NO_GIT: RmGitFacts = { workTree: null, tracked: 0, untracked: 0, unsavedClone: null, linkedWorktreeOf: null };
+const NO_GIT: RmGitFacts = {
+    workTree: null,
+    tracked: 0,
+    dirty: 0,
+    untracked: 0,
+    unsavedClone: null,
+    linkedWorktreeOf: null,
+};
 
 function git(cwd: string, args: string[]): string | null {
     const proc = Bun.spawnSync(["git", "-C", cwd, ...args], { stdout: "pipe", stderr: "pipe", timeout: 30_000 });
@@ -499,8 +536,14 @@ export function probeGit(target: RmTarget): RmGitFacts {
 
     const rel = relative(realOrSelf(top), target.canonical);
     facts.workTree = top;
-    // Literal: `--` ends the options but not the globbing, so `draft[1].txt` would name `draft1.txt`.
+    // Literal: `--` ends the options but not the pathspec magic, so `:draft.txt` would name `draft.txt`.
     facts.tracked = countZ(git(top, ["--literal-pathspecs", "ls-files", "-z", "--", rel]));
+    facts.dirty =
+        facts.tracked > 0
+            ? countZ(
+                  git(top, ["--literal-pathspecs", "status", "--porcelain", "-z", "--untracked-files=no", "--", rel])
+              )
+            : 0;
     facts.untracked = countZ(
         git(top, ["--literal-pathspecs", "ls-files", "-z", "--others", "--exclude-standard", "--", rel])
     );

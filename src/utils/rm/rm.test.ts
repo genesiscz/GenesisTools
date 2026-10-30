@@ -707,3 +707,28 @@ describe("security review fixes: repositories inside the session's scratch", () 
         expect(verdictOf(withClean)).toEqual({ kind: "allow", rule: "session-scratch" });
     });
 });
+
+describe("security review fixes: unsaved work stays in place", () => {
+    test("an ask marks unsaved work whichever rule answered: dirty tracked files, untracked ones, a .git folder", () => {
+        const repo = dir("unsaved-repo");
+        git(repo, "init", "-q");
+        file(join(repo, "clean", "a.ts"), "a");
+        file(join(repo, "edited", "b.ts"), "b");
+        file(join(repo, "mixed", "c.ts"), "c");
+        git(repo, "add", ".");
+        git(repo, "-c", "user.email=t@example.com", "-c", "user.name=t", "commit", "-qm", "init");
+        file(join(repo, "edited", "b.ts"), "an edit no commit has");
+        file(join(repo, "mixed", "new.ts"), "new work");
+        const unsavedOf = (path: string) => {
+            const c = ctx();
+            const verdict = evaluateTarget(resolveTarget(path, c.cwd), c);
+            return { rule: verdict.rule, unsaved: verdict.unsaved ?? false };
+        };
+
+        expect(unsavedOf(join(repo, "clean"))).toEqual({ rule: "git-tracked", unsaved: false });
+        expect(unsavedOf(join(repo, "edited"))).toEqual({ rule: "git-tracked", unsaved: true });
+        expect(unsavedOf(join(repo, "edited", "b.ts"))).toEqual({ rule: "git-tracked", unsaved: true });
+        expect(unsavedOf(join(repo, "mixed"))).toEqual({ rule: "git-tracked", unsaved: true });
+        expect(unsavedOf(join(repo, ".git"))).toEqual({ rule: "git-history", unsaved: true });
+    });
+});

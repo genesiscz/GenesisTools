@@ -66,9 +66,6 @@ export interface ExecuteOptions {
     aside?: boolean;
 }
 
-/** Work that exists nowhere else: an aside move into /tmp would lose it on a reboot, so it stays put by default. */
-const UNSAVED_RULES = new Set(["git-untracked", "unsaved-clone", "nested-repos"]);
-
 export interface ExecuteResult {
     batches: TrashBatch[];
     requestId: string | null;
@@ -217,9 +214,7 @@ export async function executePlan(
  */
 function requestForAsked(asked: RmPlanItem[], ctx: RunContext, options: ExecuteOptions): string {
     const asideOn = options.aside ?? ctx.config.askAction === "aside";
-    const asideable = asideOn
-        ? asked.filter((item) => ctx.config.asideUnsaved || !UNSAVED_RULES.has(item.verdict.rule))
-        : [];
+    const asideable = asideOn ? asked.filter((item) => ctx.config.asideUnsaved || !item.verdict.unsaved) : [];
     const inPlace = asked.filter((item) => !asideable.includes(item));
     const aside = asideable.length > 0 ? moveAside(asideable, ctx.caller, newBatchId()) : null;
     const kept = [...inPlace, ...(aside?.kept.map((k) => k.input) ?? [])];
@@ -253,7 +248,7 @@ function requestForAsked(asked: RmPlanItem[], ctx: RunContext, options: ExecuteO
             out.println(pc.dim(`  kept in place ${shown(k.input.target.path, ctx.cwd)}: ${k.reason}`));
         }
 
-        for (const item of inPlace.filter((i) => asideOn && UNSAVED_RULES.has(i.verdict.rule))) {
+        for (const item of inPlace.filter((i) => asideOn && i.verdict.unsaved)) {
             out.println(
                 pc.dim(`  kept in place ${shown(item.target.path, ctx.cwd)}: unsaved work, /tmp loses it on reboot`)
             );

@@ -72,9 +72,9 @@ With `askAction` `aside` (the default) a path that needs the user is renamed int
 names where each one waits. `tools rm approve <id>` moves the aside copies into the trash; `tools rm deny <id>` moves
 them back. An aside request never expires, and `tools rm requests` shows where each path waits.
 
-- Unsaved work stays in place with a plain request: untracked files, clones with unpushed work and folders holding
-  repositories (rules `git-untracked`, `unsaved-clone`, `nested-repos`). /tmp is cleared on a reboot, and that work
-  exists nowhere else. A profile (or `aside-unsaved yes`) moves it aside too.
+- Unsaved work stays in place with a plain request: a `.git` folder, tracked files with uncommitted edits, untracked
+  files, clones with unpushed work and folders holding repositories, whichever rule asked. /tmp is cleared on a
+  reboot, and that work exists nowhere else. A profile (or `aside-unsaved yes`) moves it aside too.
 - A path on another volume stays in place: a rename across volumes would be a copy.
 - `--no-aside` leaves a run's paths in place; `--aside` moves them even for a person at a terminal.
 
