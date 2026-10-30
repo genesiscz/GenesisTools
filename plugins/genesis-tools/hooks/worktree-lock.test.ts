@@ -7,6 +7,7 @@ import {
     mkdirSync,
     mkdtempSync,
     openSync,
+    readFileSync,
     realpathSync,
     rmSync,
     symlinkSync,
@@ -796,5 +797,182 @@ describe("worktree-lock", () => {
 
         expect(outcome.get(wt)).toBe("locked");
         expect(parseLockReason(lockReason() ?? "")).toMatchObject({ kind: "session", sessionId: "s-start" });
+    });
+});
+
+describe("handoff h_grb12ao1: a command that only names a worktree never becomes its owner", () => {
+    /** The registration a session leaves when it waits in line for a worktree that another session holds. */
+    function userFile(worktree: string, sessionId: string): string {
+        const adminDir = linkedWorktreeOf(worktree)?.adminDir;
+
+        if (!adminDir) {
+            throw new Error(`${worktree} is not a linked worktree`);
+        }
+
+        return join(adminDir, "session-users", `${sessionId}.json`);
+    }
+
+    function recordDir(sessionId: string): string {
+        return join(
+            env.getTrimmed("GENESIS_TOOLS_HOME") ?? homedir(),
+            ".genesis-tools",
+            "claude-code",
+            "worktree-locks",
+            `${sessionId}.json.d`
+        );
+    }
+
+    it("a live owner keeps its lock when another session only names the worktree, and its SessionEnd unlocks", () => {
+        // A live lock planted by another harness, with no record of ours: a mention leaves it and registers nothing.
+        const planted = `codex session h1-planted pid ${me.pid} since ${new Date().toISOString()}`;
+        plantLock(planted);
+        lockWorktreesForToolUse(bash("h1-reader", `du -sk ${wt}`), { agent: me });
+
+        expect(lockReason()).toBe(planted);
+        expect(existsSync(userFile(wt, "h1-reader"))).toBe(false);
+
+        unlinkSync(join(admin, "locked"));
+
+        expect(lockWorktreesForPaths({ sessionId: "h1-owner", paths: [wt], agent: me }).get(wt)).toBe("locked");
+        const owned = lockReason();
+        // Positive control: the owner's own registration is where the reader's would be.
+        expect(existsSync(userFile(wt, "h1-owner"))).toBe(true);
+
+        lockWorktreesForToolUse(bash("h1-reader", `du -sk ${wt} && git -C ${wt} status --short`), { agent: me });
+
+        expect(lockReason()).toBe(owned);
+        expect(existsSync(userFile(wt, "h1-reader"))).toBe(false);
+        expect(existsSync(recordDir("h1-reader"))).toBe(false);
+
+        // Nobody waits in line, so the owner's SessionEnd unlocks instead of handing the lock to the reader.
+        expect(unlockSessionWorktrees("h1-owner")).toEqual([wt]);
+        expect(lockReason()).toBeNull();
+        expect(unlockSessionWorktrees("h1-reader")).toEqual([]);
+    });
+
+    it("a session that works in a live owner's worktree waits in line and receives the lock at the owner's SessionEnd", () => {
+        expect(lockWorktreesForPaths({ sessionId: "h2-owner", paths: [wt], agent: me }).get(wt)).toBe("locked");
+        const owned = lockReason();
+
+        lockWorktreesForToolUse(edit("h2-worker", join(wt, "a.ts")), { agent: me });
+
+        expect(lockReason()).toBe(owned);
+        expect(existsSync(userFile(wt, "h2-worker"))).toBe(true);
+
+        // The owner's SessionEnd hands the lock over, so it reports nothing unlocked.
+        expect(unlockSessionWorktrees("h2-owner")).toEqual([]);
+        expect(parseLockReason(lockReason() ?? "")).toMatchObject({
+            kind: "session",
+            sessionId: "h2-worker",
+            pid: me.pid,
+        });
+        expect(unlockSessionWorktrees("h2-worker")).toEqual([wt]);
+        expect(lockReason()).toBeNull();
+    });
+
+    it("a mention of a worktree nobody holds locks it, so a fresh `git worktree add` is protected until SessionEnd", () => {
+        const fresh = join(base, "wt-fresh");
+        git(["-C", "main", "worktree", "add", "-q", "--detach", "../wt-fresh"]);
+        const freshAdmin = linkedWorktreeOf(fresh)?.adminDir ?? "";
+
+        expect(freshAdmin).toBe(join(main, ".git", "worktrees", "wt-fresh"));
+        expect(readLockReason(freshAdmin)).toBeNull();
+
+        lockWorktreesForToolUse(bash("h3-creator", `git -C ${main} worktree add -q --detach ${fresh}`), {
+            agent: me,
+        });
+
+        expect(parseLockReason(readLockReason(freshAdmin) ?? "")).toMatchObject({
+            kind: "session",
+            sessionId: "h3-creator",
+            pid: me.pid,
+        });
+        expect(unlockSessionWorktrees("h3-creator")).toEqual([fresh]);
+        expect(readLockReason(freshAdmin)).toBeNull();
+        expect(existsSync(recordDir("h3-creator"))).toBe(false);
+    });
+
+    it("an explicit release by a reader or a waiting worker never touches the owner's lock, checkout or branch", () => {
+        expect(lockWorktreesForPaths({ sessionId: "h4-owner", paths: [wt], agent: me }).get(wt)).toBe("locked");
+        const owned = lockReason();
+        const head = readFileSync(join(admin, "HEAD"), "utf8");
+        // Uncommitted owner data; it also makes a planted regression's `git worktree remove` refuse.
+        const dirty = join(wt, "h4-uncommitted.txt");
+        writeFileSync(dirty, "the owner's uncommitted work\n");
+
+        try {
+            lockWorktreesForToolUse(bash("h4-reader", `ls ${wt}`), { agent: me });
+            lockWorktreesForToolUse(edit("h4-worker", join(wt, "b.ts")), { agent: me });
+
+            for (const sessionId of ["h4-reader", "h4-worker"]) {
+                expect(releaseSessionWorktree({ worktree: wt, sessionId })).toEqual({
+                    removed: false,
+                    detail: `locked by someone else: ${owned}`,
+                });
+                expect(lockReason()).toBe(owned);
+            }
+
+            expect(readFileSync(dirty, "utf8")).toBe("the owner's uncommitted work\n");
+            expect(readFileSync(join(admin, "HEAD"), "utf8")).toBe(head);
+        } finally {
+            unlinkSync(dirty);
+        }
+
+        expect(unlockSessionWorktrees("h4-owner")).toEqual([]);
+        expect(unlockSessionWorktrees("h4-worker")).toEqual([wt]);
+        expect(lockReason()).toBeNull();
+    });
+
+    it("h_grb12ao1: A holds, B names the checkout, A's pid dies; B's mentions leave A's stale lock, only B's work takes it", async () => {
+        // A has its own agent process, so its lock can turn stale while B's session stays alive.
+        const agentA = Bun.spawn([agentLink, "600"], { env: process.env, stdout: "ignore", stderr: "ignore" });
+        const head = readFileSync(join(admin, "HEAD"), "utf8");
+        const dirty = join(wt, "campaign-notes.txt");
+        writeFileSync(dirty, "campaign work in progress\n");
+
+        try {
+            const ownerA: AgentProcess = { harness: "claude", pid: agentA.pid };
+            expect(lockWorktreesForPaths({ sessionId: "h5-owner", paths: [wt], agent: ownerA }).get(wt)).toBe("locked");
+            const owned = lockReason();
+
+            // B inspects A's live checkout read-only. Before the fix this registered B as A's successor.
+            lockWorktreesForToolUse(bash("h5-reader", `git -C ${wt} status --short && du -sk ${wt}`), { agent: me });
+
+            expect(lockReason()).toBe(owned);
+
+            agentA.kill();
+            await agentA.exited;
+
+            expect(isLockStale(parseLockReason(owned ?? ""))).toBe(true);
+
+            // B names the checkout again. Before the fix the stale lock went to B here, the observed transition.
+            lockWorktreesForToolUse(bash("h5-reader", `git -C ${wt} log -1`), { agent: me });
+
+            expect(lockReason()).toBe(owned);
+            expect(existsSync(userFile(wt, "h5-reader"))).toBe(false);
+            expect(existsSync(recordDir("h5-reader"))).toBe(false);
+
+            // Only B's work in the checkout takes the stale lock over.
+            lockWorktreesForToolUse(edit("h5-reader", join(wt, "a.ts")), { agent: me });
+
+            expect(parseLockReason(lockReason() ?? "")).toMatchObject({
+                kind: "session",
+                sessionId: "h5-reader",
+                pid: me.pid,
+            });
+
+            // A's late SessionEnd drops its own record and never touches B's lock.
+            expect(unlockSessionWorktrees("h5-owner")).toEqual([]);
+            expect(parseLockReason(lockReason() ?? "")).toMatchObject({ sessionId: "h5-reader" });
+            expect(existsSync(recordDir("h5-owner"))).toBe(false);
+            expect(unlockSessionWorktrees("h5-reader")).toEqual([wt]);
+            expect(lockReason()).toBeNull();
+
+            expect(readFileSync(dirty, "utf8")).toBe("campaign work in progress\n");
+            expect(readFileSync(join(admin, "HEAD"), "utf8")).toBe(head);
+        } finally {
+            agentA.kill();
+            unlinkSync(dirty);
+        }
     });
 });
