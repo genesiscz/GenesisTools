@@ -4,7 +4,7 @@ export {
 } from "./claude";
 export { cleanPromptText, cleanTranscriptText } from "./clean-text";
 export { grokNativeLinesToTurns, grokWorkerTextToTurns } from "./grok";
-export { allTranscriptTurns, transcriptEnvelope, turnsFromLines } from "./load";
+export { allTranscriptTurns, transcriptEnvelope, transcriptParser } from "./load";
 export type {
     InterruptPromptPart,
     PromptPart,

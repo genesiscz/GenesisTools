@@ -25,7 +25,7 @@ import {
     type ResolvedTranscript,
     resolveTranscript,
     transcriptEnvelope,
-    turnsFromLines,
+    transcriptParser,
 } from "@genesiscz/utils/ai/transcripts";
 import { readTailBytes } from "@genesiscz/utils/claude/session.utils";
 import { isZstdPath, zstdContentBytes } from "@genesiscz/utils/compress/zstd";
@@ -523,12 +523,14 @@ export function lastClaudeAssistantText(filePath: string, size: number): Promise
  * The same for a Codex or Grok transcript (a native session or a worker's turn file), parsed by the turn parsers a
  * whole file gets, so a large one shows the result a small one does.
  */
-export function lastAssistantTextOf(resolved: ResolvedTranscript, size: number): Promise<string> {
+export async function lastAssistantTextOf(resolved: ResolvedTranscript, size: number): Promise<string> {
+    const parser = await transcriptParser(resolved.provider);
+
     return fromTail(
         resolved.filePath,
         size,
         (lines) =>
-            turnsFromLines(resolved, lines).findLast((turn) => turn.role === "assistant" && turn.text.trim())?.text
+            parser.fromLines(resolved, lines).findLast((turn) => turn.role === "assistant" && turn.text.trim())?.text
     );
 }
 

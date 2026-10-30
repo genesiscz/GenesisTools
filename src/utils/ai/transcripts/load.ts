@@ -1,16 +1,9 @@
-import { existsSync, readFileSync, statSync } from "node:fs";
-import { codexNativeLinesToTurns, createCodexTurnParser } from "@genesiscz/utils/agent-sessions/readers/codex-turns";
-import { ClaudeSession } from "@genesiscz/utils/claude/session";
-import { parseTurnEvents as parseClaudeTurnEvents } from "@genesiscz/utils/claude/worker-stream";
-import { toWorkerEvent as codexToWorkerEvent, type StoredCodexEvent } from "@genesiscz/utils/codex/worker-stream";
+import { statSync } from "node:fs";
+import { harnessDriver } from "@genesiscz/utils/ai/providers/harness-index";
+import type { TranscriptParser } from "@genesiscz/utils/harness/parts";
+import { isPartNote } from "@genesiscz/utils/harness/types";
 import { logger } from "@genesiscz/utils/logger";
-import type { WorkerEvent } from "@genesiscz/utils/worker/events";
-import { claudeMessagesToTurns } from "./claude";
-import { grokNativeLinesToTurns, grokWorkerTextToTurns } from "./grok";
-import { parseTranscriptLine } from "./parse-line";
-import { readRecordsAppendOnly } from "./record-cache";
 import type { ResolvedTranscript } from "./resolve";
-import { foldTurnsAppendOnly } from "./turn-fold-cache";
 import { indexedClaudeEnvelope } from "./turn-index";
 import {
     type SliceOptions,
@@ -21,109 +14,20 @@ import {
     terminatedOf,
     totalsOf,
 } from "./types";
-import { workerEventsToTurns } from "./worker-events";
 
-function readRecords(path: string): unknown[] {
-    if (!existsSync(path)) {
-        return [];
+/** The transcript parser of a provider: its harness driver's `parse` part, loaded on first use. */
+export async function transcriptParser(provider: TranscriptProvider): Promise<TranscriptParser> {
+    const slot = harnessDriver(provider).parts.parse;
+
+    if (isPartNote(slot)) {
+        throw new Error(`The ${provider} harness driver has no transcript parser: ${slot.reason}`);
     }
-    // A live Codex or Grok file is read again on every write: between 8 and 48 MB only its new lines are parsed;
-    // a larger file is parsed whole each time, to bound the cache's memory (record-cache.ts).
-    return readRecordsAppendOnly(path);
+
+    return slot();
 }
-
-function looksLikeCodexGt(records: unknown[]): boolean {
-    for (const record of records) {
-        if (record && typeof record === "object" && "method" in record) {
-            return true;
-        }
-    }
-    return false;
-}
-
-/** How each provider's transcript files turn into turns: a whole file, or some lines of its end. */
-interface TurnReader {
-    fromFile(resolved: ResolvedTranscript, path: string, index: number): Promise<TranscriptTurn[]>;
-    /**
-     * The turns of some of a transcript's lines (the end of a file too large to parse whole). Claude has its own tail
-     * reader (`lastClaudeAssistantText` in hub/lib/widget/snapshot.ts) and gets no turns here.
-     */
-    fromLines(resolved: ResolvedTranscript, lines: readonly string[]): TranscriptTurn[];
-}
-
-const TURN_READERS: Record<TranscriptProvider, TurnReader> = {
-    claude: {
-        fromFile: async (resolved, path, index) => {
-            if (resolved.source === "worker") {
-                // A `claude -p --output-format stream-json` turn file, not a session file.
-                return workerEventsToTurns(
-                    parseClaudeTurnEvents(readFileSync(path, "utf8"), resolved.sessionId),
-                    resolved.sessionId,
-                    index
-                );
-            }
-
-            const session = await ClaudeSession.fromFile(path);
-            return claudeMessagesToTurns(session.messages);
-        },
-        fromLines: () => [],
-    },
-    grok: {
-        fromFile: async (resolved, path, index) => {
-            if (resolved.source === "worker") {
-                return grokWorkerTextToTurns(readFileSync(path, "utf8"), resolved.sessionId, index);
-            }
-
-            return grokNativeLinesToTurns(readRecords(path));
-        },
-        fromLines: (resolved, lines) =>
-            resolved.source === "worker"
-                ? grokWorkerTextToTurns(lines.join("\n"), resolved.sessionId)
-                : grokNativeLinesToTurns(lines),
-    },
-    codex: {
-        fromFile: async (resolved, path, index) => {
-            if (resolved.source !== "worker") {
-                // A large native rollout keeps its parser between reads and parses only appended lines (turn-fold-cache.ts).
-                const folded = foldTurnsAppendOnly(path, createCodexTurnParser);
-                if (folded) {
-                    return folded;
-                }
-            }
-
-            return codexTurns(resolved, readRecords(path), index);
-        },
-        fromLines: (resolved, lines) => {
-            const records = lines.map(parseTranscriptLine).filter((record) => record !== null);
-            return codexTurns(resolved, records, 1);
-        },
-    },
-};
 
 async function turnsFromFile(resolved: ResolvedTranscript, path: string, index = 1): Promise<TranscriptTurn[]> {
-    return TURN_READERS[resolved.provider].fromFile(resolved, path, index);
-}
-
-function codexTurns(resolved: ResolvedTranscript, records: unknown[], index: number): TranscriptTurn[] {
-    if (resolved.source === "worker" || looksLikeCodexGt(records)) {
-        // The codex CLI's own event mapping, not a second guess at it: the
-        // stored notifications are `item/started`, `item/completed`,
-        // `turn/completed`, and a private matcher on method substrings dropped
-        // every one of them (PR #364 review).
-        const events = records
-            .map((record) => codexToWorkerEvent(record as StoredCodexEvent))
-            .filter((event): event is WorkerEvent => event !== null);
-        return workerEventsToTurns(events, resolved.sessionId, index);
-    }
-    return codexNativeLinesToTurns(records);
-}
-
-/**
- * The turns of some of a Codex or Grok transcript's lines (the end of a file too large to parse whole), by the same
- * parsers a whole file gets. A turn that began before the first line is missing its start. Claude gets none.
- */
-export function turnsFromLines(resolved: ResolvedTranscript, lines: readonly string[]): TranscriptTurn[] {
-    return TURN_READERS[resolved.provider].fromLines(resolved, lines);
+    return (await transcriptParser(resolved.provider)).fromFile(resolved, path, index);
 }
 
 /** Every turn of the transcript by a full parse, earlier chain files first; the array index is the global turn index. */

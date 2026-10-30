@@ -17,7 +17,7 @@ export const claudeHarness: HarnessDriver<"claude"> = {
     },
     parts: {
         locate: pending("P2", "the claude finders in src/utils/ai/transcripts/resolve.ts and session-paths.ts roots"),
-        parse: pending("P2", "the claude entry of the parser table in src/utils/ai/transcripts/load.ts"),
+        parse: () => import("./harness-parse").then((m) => m.claudeParse),
         turnState: pending("P2", "claudeTurnState and READERS in src/utils/ai/transcripts/turn-state.ts"),
         questions: pending("P2", "the claude question signals inside src/utils/ai/transcripts/turn-state.ts"),
         live: pending("P2", "the claude live tail in src/utils/ai/transcripts/live.ts and activity.ts"),
