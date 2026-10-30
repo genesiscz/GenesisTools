@@ -5,6 +5,7 @@ import { mcpFetchChecked, readJsonRecord } from "./fetch.ts";
 import { withRefreshLock } from "./lock.ts";
 import { secretPath } from "./paths.ts";
 import { safeTokenErrorCode } from "./redact.ts";
+import { classifyRefreshError, classifyRefreshResponse, TokenRefreshUnavailableError } from "./refresh-failure.ts";
 import { deleteSecret, readServerTokenSnapshot, writeServerTokensUnlocked } from "./secrets.ts";
 import { writeAuthStatus } from "./status.ts";
 
@@ -88,21 +89,38 @@ export async function accessTokenForRequest(
             body.set("client_secret", clientSecret);
         }
 
-        const response = await mcpFetchChecked(opts.tokenEndpoint, opts.trustBaseline, {
-            method: "POST",
-            headers: {
-                Accept: "application/json",
-                "Content-Type": "application/x-www-form-urlencoded",
-            },
-            body,
-        });
-        const { json } = await readJsonRecord(response);
+        let response: Response;
+        let json: Record<string, unknown> | undefined;
+
+        try {
+            response = await mcpFetchChecked(opts.tokenEndpoint, opts.trustBaseline, {
+                method: "POST",
+                headers: {
+                    Accept: "application/json",
+                    "Content-Type": "application/x-www-form-urlencoded",
+                },
+                body,
+            });
+            ({ json } = await readJsonRecord(response));
+        } catch (error) {
+            // No answer from the authorization server says nothing about the grant: the
+            // stored tokens stay, and the caller retries instead of opening a login.
+            const verdict = classifyRefreshError(error);
+
+            if (verdict.kind === "retry-later") {
+                throw new TokenRefreshUnavailableError(server, verdict.reason, error);
+            }
+
+            throw error;
+        }
+
         const accessToken = json?.access_token;
 
         if (!response.ok || typeof accessToken !== "string") {
             // `text.slice(0, 80)` used to land here, which put an arbitrary 80 bytes of a
             // provider response into auth-status.json AND onto the terminal.
             const err = safeTokenErrorCode(json?.error, response.status);
+            const verdict = classifyRefreshResponse(response.status, err);
             // Bounded values only. `error` and `error_description` are both
             // provider-controlled free text, and this refresh runs unattended inside the
             // gateway, so the day-stamped log file is the durable artifact nobody is
@@ -123,6 +141,11 @@ export async function accessTokenForRequest(
                 lastError: err,
                 expiresAt: current.expiresAt,
             });
+
+            if (verdict.kind === "retry-later") {
+                throw new TokenRefreshUnavailableError(server, verdict.reason);
+            }
+
             throw new Error(
                 `Refresh failed for ${server} (${err}). Run ${toolCommand("mcp-manager auth login", server)}`
             );

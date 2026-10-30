@@ -20,6 +20,7 @@ import {
 } from "./fetch.ts";
 import { CREDENTIALS_LOCK_WAIT_MS } from "./lock.ts";
 import { secretPath } from "./paths.ts";
+import { TokenRefreshUnavailableError } from "./refresh-failure.ts";
 import {
     deleteServerTokens,
     readSecret,
@@ -706,5 +707,62 @@ describe("credentials lock budget", () => {
         // The refresh holds the lock for one bounded request plus its vault write; an equal
         // budget expired just as the holder released, and logout then left the tokens stored.
         expect(MCP_CREDENTIAL_TIMEOUT_MS * 2).toBeLessThan(CREDENTIALS_LOCK_WAIT_MS);
+    });
+});
+
+describe("a refresh that never reached a verdict keeps the login", () => {
+    const opts = {
+        tokenEndpoint: "https://identity.shop.example/token",
+        resource: "https://mcp.shop.example/mcp",
+        trustBaseline: "https://mcp.shop.example/mcp",
+        allowRefresh: true,
+    };
+
+    beforeEach(async () => {
+        await writeServerTokens("shop", {
+            accessToken: "stale",
+            refreshToken: "refresh-1",
+            expiresAt: Date.now() - ACCESS_SKEW_MS,
+        });
+    });
+
+    test("a DNS failure on the token endpoint is retry-later and deletes nothing", async () => {
+        _setLookupForTest(async () => {
+            throw Object.assign(new Error("getaddrinfo ENOTFOUND"), { code: "ENOTFOUND" });
+        });
+
+        const failure = await accessTokenForRequest("shop", opts).catch((error: unknown) => error);
+
+        expect(failure).toBeInstanceOf(TokenRefreshUnavailableError);
+        expect(failure instanceof TokenRefreshUnavailableError && failure.reason).toBe("ENOTFOUND");
+        expect(tokenPosts).toBe(0);
+        expect((await peekAccessToken("shop")).hasRefresh).toBe(true);
+        expect(await readAuthStatus("shop")).toEqual({ server: "shop", updatedAt: 0 });
+    });
+
+    test("a refused connection is retry-later", async () => {
+        _setMcpFetchForTest(async () => {
+            throw Object.assign(new Error("connect ECONNREFUSED 203.0.113.7:443"), { code: "ECONNREFUSED" });
+        });
+
+        await expect(accessTokenForRequest("shop", opts)).rejects.toBeInstanceOf(TokenRefreshUnavailableError);
+        expect((await peekAccessToken("shop")).hasRefresh).toBe(true);
+    });
+
+    test("a 503 from the token endpoint is retry-later and keeps the refresh token", async () => {
+        _setMcpFetchForTest(async () => new Response("down", { status: 503 }));
+
+        await expect(accessTokenForRequest("shop", opts)).rejects.toBeInstanceOf(TokenRefreshUnavailableError);
+        expect((await peekAccessToken("shop")).hasRefresh).toBe(true);
+    });
+
+    test("invalid_grant still asks for a login", async () => {
+        _setMcpFetchForTest(async () => Response.json({ error: "invalid_grant" }, { status: 400 }));
+
+        const failure = await accessTokenForRequest("shop", opts).catch((error: unknown) => error);
+
+        expect(failure).toBeInstanceOf(Error);
+        expect(failure).not.toBeInstanceOf(TokenRefreshUnavailableError);
+        expect(failure instanceof Error && failure.message).toContain("auth login shop");
     });
 });
