@@ -1,6 +1,6 @@
 import type { NativeSessionReader } from "@genesiscz/utils/agent-sessions/types";
 import { ACCOUNT_PROVIDER_ALIASES } from "@genesiscz/utils/ai/providers/alias-list";
-import type { LaunchRecipe } from "@genesiscz/utils/harness/parts";
+import type { HostResolver, LaunchRecipe } from "@genesiscz/utils/harness/parts";
 import { type HarnessDriver, type HarnessId, isPartNote } from "@genesiscz/utils/harness/types";
 import { claudeHarness } from "./plugins/anthropic-sub/harness";
 import { grokHarness } from "./plugins/grok-sub/harness";
@@ -55,4 +55,15 @@ export async function harnessHistory(id: HarnessId): Promise<NativeSessionReader
     }
 
     return slot();
+}
+
+/** How a harness is recognised from the environment of a process it started; every harness has one. */
+export function harnessHost(id: HarnessId): HostResolver {
+    const slot = harnessDriver(id).parts.host;
+
+    if (isPartNote(slot)) {
+        throw new Error(`The ${id} harness driver has no host resolver: ${slot.reason}`);
+    }
+
+    return slot;
 }

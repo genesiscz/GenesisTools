@@ -1,3 +1,4 @@
+import { isCodex, resolveCodexContext } from "@genesiscz/utils/agent/hosts/codex";
 import type { HarnessDriver } from "@genesiscz/utils/harness/types";
 import { pending, toolOwned } from "@genesiscz/utils/harness/types";
 import { codexLaunch } from "./harness-launch";
@@ -24,7 +25,7 @@ export const codexHarness: HarnessDriver<"codex"> = {
             "P5",
             "compaction reads the history part today (src/utils/ai/compact/sources.ts); a contract of its own only if a harness needs one"
         ),
-        host: pending("P4", "src/utils/agent/hosts/codex.ts and AGENT_SESSION_KEYS in src/utils/agent/host.ts"),
+        host: { agent: "codex", sessionEnvKey: "CODEX_THREAD_ID", detects: isCodex, resolve: resolveCodexContext },
         process: pending("P6", "the codex argv patterns in src/utils/process/classify.ts"),
         history: () => import("@genesiscz/utils/agent-sessions/compact-readers").then((m) => m.codexHistoryReader),
         cmux: toolOwned(

@@ -1,3 +1,4 @@
+import { isClaude, resolveClaudeContext } from "@genesiscz/utils/agent/hosts/claude";
 import type { HarnessDriver } from "@genesiscz/utils/harness/types";
 import { pending, toolOwned } from "@genesiscz/utils/harness/types";
 import { claudeLaunch } from "./harness-launch";
@@ -29,7 +30,12 @@ export const claudeHarness: HarnessDriver<"claude"> = {
             "P5",
             "compaction reads the history part today (src/utils/ai/compact/sources.ts); a contract of its own only if a harness needs one"
         ),
-        host: pending("P4", "src/utils/agent/hosts/claude.ts and AGENT_SESSION_KEYS in src/utils/agent/host.ts"),
+        host: {
+            agent: "claude-code",
+            sessionEnvKey: "CLAUDE_CODE_SESSION_ID",
+            detects: isClaude,
+            resolve: resolveClaudeContext,
+        },
         process: pending("P6", "the claude argv patterns in src/utils/process/classify.ts"),
         history: () => import("@genesiscz/utils/agent-sessions/compact-readers").then((m) => m.claudeHistoryReader),
         cmux: toolOwned(

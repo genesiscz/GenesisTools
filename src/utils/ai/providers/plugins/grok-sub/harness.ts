@@ -1,3 +1,4 @@
+import { isGrok, resolveGrokContext } from "@genesiscz/utils/agent/hosts/grok";
 import type { HarnessDriver } from "@genesiscz/utils/harness/types";
 import { pending, toolOwned } from "@genesiscz/utils/harness/types";
 import { grokLaunch } from "./harness-launch";
@@ -24,7 +25,7 @@ export const grokHarness: HarnessDriver<"grok"> = {
             "P5",
             "compaction reads the history part today (src/utils/ai/compact/sources.ts); a contract of its own only if a harness needs one"
         ),
-        host: pending("P4", "src/utils/agent/hosts/grok.ts and AGENT_SESSION_KEYS in src/utils/agent/host.ts"),
+        host: { agent: "grok", sessionEnvKey: "GROK_SESSION_ID", detects: isGrok, resolve: resolveGrokContext },
         process: pending("P6", "the grok argv patterns in src/utils/process/classify.ts"),
         history: () => import("@genesiscz/utils/agent-sessions/compact-readers").then((m) => m.grokHistoryReader),
         cmux: toolOwned(
