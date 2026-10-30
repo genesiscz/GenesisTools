@@ -1,7 +1,7 @@
-import { join } from "node:path";
 import { toolCommand } from "@genesiscz/utils/cli/tool-command";
 import { env } from "@genesiscz/utils/env";
 import { logger } from "@genesiscz/utils/logger";
+import { nativeHome } from "@genesiscz/utils/providers/session-paths";
 import { WorkerMetaStore } from "@genesiscz/utils/worker/meta-store";
 import { workerMetaPath, workersDir } from "./paths";
 
@@ -34,7 +34,7 @@ export interface ClaudeWorkerMeta {
 }
 
 export function claudeWorkerSourceHome(meta?: Pick<ClaudeWorkerMeta, "sourceHome">): string {
-    return meta?.sourceHome ?? env.paths.getClaudeConfigDir() ?? join(env.paths.getHome(), ".claude");
+    return meta?.sourceHome ?? nativeHome("claude", env.paths.getHome());
 }
 
 function isNonEmpty(value: unknown): value is string {

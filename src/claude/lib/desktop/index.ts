@@ -3,9 +3,10 @@ import { homedir } from "node:os";
 import { join, resolve, sep } from "node:path";
 
 import { SafeJSON } from "@genesiscz/utils/json";
+import { nativeHomePath } from "@genesiscz/utils/providers/session-paths";
 import { atomicWriteFileSync } from "@genesiscz/utils/storage/storage";
 
-export const CLAUDE_CODE_SKILLS = join(homedir(), ".claude", "skills");
+export const CLAUDE_CODE_SKILLS = nativeHomePath("claude", "skills");
 export const CLAUDE_DESKTOP_BASE = join(
     homedir(),
     "Library",
