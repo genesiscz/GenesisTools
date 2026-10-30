@@ -10,6 +10,5 @@
  * longer names one, so the list cannot go stale.
  */
 export const TRANSCRIPT_FORMAT_RATCHET: ReadonlySet<string> = new Set<string>([
-    "src/utils/ai/openai/native-session-import.ts",
     "src/utils/ai/transcripts/turn-state.ts",
 ]);
