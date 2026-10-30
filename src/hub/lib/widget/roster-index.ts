@@ -6,6 +6,7 @@ import { HistoryDatabase } from "@genesiscz/utils/agent-sessions/database";
 import { catalogHistory } from "@genesiscz/utils/agent-sessions/open-service";
 import { resolveHistoryProvider } from "@genesiscz/utils/agent-sessions/provider";
 import { ACCOUNT_PROVIDER_ALIASES } from "@genesiscz/utils/ai/providers/alias-list";
+import { byHarness } from "@genesiscz/utils/ai/providers/harness-index";
 import type { HarnessId } from "@genesiscz/utils/harness/types";
 import { logger } from "@genesiscz/utils/logger";
 import { readDataVersion } from "@genesiscz/utils/workers/sqlite-wake";
@@ -261,7 +262,7 @@ function providerRoots(provider: WidgetRosterProvider): string[] {
 }
 
 export function widgetSessionRoots(): Record<WidgetRosterProvider, string[]> {
-    return { claude: providerRoots("claude"), codex: providerRoots("codex"), grok: providerRoots("grok") };
+    return byHarness(providerRoots);
 }
 
 function under(root: string, path: string): string | undefined {

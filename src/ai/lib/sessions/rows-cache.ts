@@ -3,6 +3,7 @@ import { dirname } from "node:path";
 import type { AgentSessionRow, AgentSessionRowsOptions } from "@app/ai/lib/sessions/agent-session-rows";
 import { computeCacheStatus } from "@app/claude/lib/usage/cache-clock";
 import { aiDataDir } from "@genesiscz/utils/ai/config/paths";
+import { harnessTranscriptFacts } from "@genesiscz/utils/ai/providers/harness-index";
 import { liveClaudeSessionIds } from "@genesiscz/utils/claude/peer-message";
 import { type TmuxCmuxLocation, tmuxCmuxLocations } from "@genesiscz/utils/cmux/tmux-host";
 import { SafeJSON } from "@genesiscz/utils/json";
@@ -172,13 +173,6 @@ async function withTmuxLocations(
     });
 }
 
-/** Whether a provider keeps a registry of its running sessions (Claude Code's `~/.claude/sessions`). */
-const LIVE_REGISTRY: Record<AgentSessionRow["provider"], boolean> = {
-    claude: true,
-    codex: false,
-    grok: false,
-};
-
 /**
  * Claude rows with `alive` read now from the session registry, never from the cached file: a cached answer may
  * be 90 s old, and a session that exited in that time would still read as running. Other providers have no
@@ -186,7 +180,7 @@ const LIVE_REGISTRY: Record<AgentSessionRow["provider"], boolean> = {
  */
 export function withLiveness(rows: AgentSessionRow[], live: Set<string> | null): AgentSessionRow[] {
     return rows.map((row) => {
-        if (!LIVE_REGISTRY[row.provider]) {
+        if (!harnessTranscriptFacts(row.provider).keepsLiveRegistry) {
             return row;
         }
 

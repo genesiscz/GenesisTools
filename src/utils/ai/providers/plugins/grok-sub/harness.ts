@@ -36,6 +36,7 @@ export const grokHarness: HarnessDriver<"grok"> = {
             // Grok stamps a message in whole seconds.
             timestampResolutionMs: 1000,
             turnIdsEndWithRowUuid: false,
+            keepsLiveRegistry: false,
             // Grok writes its permission prompts to `events.jsonl` in the session folder, never to `updates.jsonl`.
             eventLog: (transcriptPath) =>
                 /(^|[/\\])updates\.jsonl$/.test(transcriptPath)

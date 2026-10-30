@@ -116,6 +116,11 @@ export interface TranscriptFacts {
     /** Whether a turn id ends with `:<row uuid>`, so a message anchor finds its turn by the row's uuid (Claude). */
     readonly turnIdsEndWithRowUuid: boolean;
     /**
+     * Whether the harness keeps a registry of its running sessions (Claude Code's `~/.claude/sessions`), so a session
+     * row's liveness can be read from it instead of guessed.
+     */
+    readonly keepsLiveRegistry: boolean;
+    /**
      * The second log the turn state needs beside a transcript, or null for none: Grok writes its permission prompts
      * to `events.jsonl` in the session folder; Claude's go to its `Notification` hook and Codex persists none.
      */

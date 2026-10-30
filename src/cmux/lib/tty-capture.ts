@@ -1,6 +1,7 @@
 import { homedir } from "node:os";
 import { agentOfCommand } from "@app/cmux/lib/tab-process";
-import type { AccountProviderAlias } from "@genesiscz/utils/ai/providers/alias-list";
+
+import { byHarness } from "@genesiscz/utils/ai/providers/harness-index";
 import { listProcesses, readProcess } from "@genesiscz/utils/process/processes";
 import { isShellProgram } from "@genesiscz/utils/shell/programs";
 
@@ -62,11 +63,7 @@ export interface TtyCapture {
  */
 export async function collectTtyCapture(): Promise<TtyCapture> {
     const oldest = new Map<string, TtyProcess>();
-    const argvSessions: Record<AccountProviderAlias, Map<string, string>> = {
-        claude: new Map(),
-        codex: new Map(),
-        grok: new Map(),
-    };
+    const argvSessions = byHarness(() => new Map<string, string>());
 
     for (const entry of await readTtyProcessTable()) {
         const agent = agentOfCommand(entry.command);

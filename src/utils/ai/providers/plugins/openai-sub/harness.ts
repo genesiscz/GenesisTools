@@ -35,6 +35,7 @@ export const codexHarness: HarnessDriver<"codex"> = {
             subagentsOnDisk: false,
             timestampResolutionMs: 0,
             turnIdsEndWithRowUuid: false,
+            keepsLiveRegistry: false,
             // Codex rollouts persist no approval request; only a live app-server client sees one.
             eventLog: () => null,
         },
