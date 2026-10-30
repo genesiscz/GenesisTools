@@ -9,3 +9,13 @@ export async function noBackwardRead(): Promise<BackwardRead> {
 export async function noContinuedIn(): Promise<string | undefined> {
     return undefined;
 }
+
+/** `modelOfRow` for a test reader whose rows never name a model. */
+export function noModelOfRow(): string | undefined {
+    return undefined;
+}
+
+/** `indexesFile` for a test reader that no file watcher asks. */
+export function indexesNoFile(): boolean {
+    return false;
+}

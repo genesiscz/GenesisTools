@@ -1,12 +1,11 @@
 import { existsSync, realpathSync } from "node:fs";
-import { basename, sep } from "node:path";
+import { sep } from "node:path";
 import { type AgentSessionRow, listAgentSessionRows } from "@app/ai/lib/sessions/agent-session-rows";
 import { getSessionListing } from "@app/claude/lib/history/search";
 import { HistoryDatabase } from "@genesiscz/utils/agent-sessions/database";
 import { catalogHistory } from "@genesiscz/utils/agent-sessions/open-service";
 import { resolveHistoryProvider } from "@genesiscz/utils/agent-sessions/provider";
 import { logger } from "@genesiscz/utils/logger";
-import { isNativeTranscript } from "@genesiscz/utils/providers/session-paths";
 import { readDataVersion } from "@genesiscz/utils/workers/sqlite-wake";
 import { hubAgents } from "../agents";
 import type { AgentsTree } from "../agents/types";
@@ -146,8 +145,6 @@ export function widgetSessionRoots(): Record<WidgetRosterProvider, string[]> {
     return { claude: providerRoots("claude"), codex: providerRoots("codex"), grok: providerRoots("grok") };
 }
 
-const GROK_SOURCE_FILES = new Set(["chat_history.jsonl", "chatHistory.jsonl", "summary.json"]);
-
 function under(root: string, path: string): string | undefined {
     const prefix = root.endsWith(sep) ? root : root + sep;
     return path.startsWith(prefix) ? path.slice(prefix.length) : undefined;
@@ -202,16 +199,15 @@ export function widgetRosterChange({
 
     for (const root of roots.codex) {
         if (under(root, path) !== undefined) {
-            const name = basename(path);
-            // Codex 0.164 compresses a closed rollout to `rollout-….jsonl.zst`: the rename changes the index too.
-            return name.startsWith("rollout-") && isNativeTranscript("codex", name) ? "codex" : undefined;
+            // A rollout, plain or compressed (Codex 0.164 renames a closed one to `.jsonl.zst`): the index changes too.
+            return resolveHistoryProvider("codex").reader.indexesFile(path) ? "codex" : undefined;
         }
     }
 
     for (const root of roots.grok) {
         if (under(root, path) !== undefined) {
             // The files the grok reader indexes; its event, signal and rewind files change constantly and index nothing.
-            return GROK_SOURCE_FILES.has(basename(path)) ? "grok" : undefined;
+            return resolveHistoryProvider("grok").reader.indexesFile(path) ? "grok" : undefined;
         }
     }
 

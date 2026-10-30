@@ -5262,6 +5262,10 @@ describe("background Widget roster", () => {
         expect(change("/fixture/codex/sessions/2026/10/10/rollout-fixture.jsonl")).toBe("codex");
         expect(change("/fixture/grok/sessions/%2Ffixture/session-1/chat_history.jsonl")).toBe("grok");
         expect(change("/fixture/grok/sessions/%2Ffixture/session-1/chat_history.jsonl.lock")).toBeUndefined();
+        expect(change("/fixture/grok/sessions/%2Ffixture/session-1/summary.json")).toBe("grok");
+        expect(change("/fixture/grok/sessions/%2Ffixture/session-1/events.jsonl")).toBeUndefined();
+        expect(change("/fixture/codex/sessions/2026/10/10/rollout-fixture.jsonl.zst")).toBe("codex");
+        expect(change("/fixture/codex/sessions/2026/10/10/notes.jsonl")).toBeUndefined();
         expect(change("/fixture/elsewhere/file.jsonl")).toBeUndefined();
     });
 

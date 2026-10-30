@@ -1,7 +1,7 @@
 import { expect, test } from "bun:test";
 import type { CachedHistoryMetadata } from "./repository";
 import { searchHistorySource } from "./search-source";
-import { noBackwardRead, noContinuedIn } from "./testing/no-backward-read";
+import { indexesNoFile, noBackwardRead, noContinuedIn, noModelOfRow } from "./testing/no-backward-read";
 import type { HistorySourceRecord, NativeSessionReader, NativeSessionSource } from "./types";
 
 const START = "2026-09-01T10:00:00.000Z";
@@ -91,6 +91,8 @@ function reader(records: HistorySourceRecord[]): NativeSessionReader<string> {
         parserVersion: "fixture-v1",
         readBackward: noBackwardRead,
         continuedIn: noContinuedIn,
+        modelOfRow: noModelOfRow,
+        indexesFile: indexesNoFile,
         readTurnBoundary: async () => null,
         readForward: async () => ({ rows: [], file: null, endOffset: 0, issues: [] }),
         roots: () => [SOURCE.root],

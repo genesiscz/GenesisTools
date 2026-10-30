@@ -131,6 +131,18 @@ async function readSummary(options: {
     return read;
 }
 
+/** The chat history a Grok session folder holds, under either name a Grok release wrote. */
+const GROK_CHAT_FILES = ["chat_history.jsonl", "chatHistory.jsonl"];
+
+/**
+ * A Grok session's chat history or its `summary.json` (title, model, kind): what discovery and `read` use. The
+ * session's event, signal and rewind files change constantly and index nothing.
+ */
+export function grokIndexesFile(path: string): boolean {
+    const name = basename(path);
+    return GROK_CHAT_FILES.includes(name) || name === "summary.json";
+}
+
 export async function discoverGrokHistorySources(
     roots: string[],
     options: HistoryDiscoveryOptions = {}
@@ -150,7 +162,7 @@ export async function discoverGrokHistorySources(
         // transcript, and skipping them cut a filtered walk from 207 to 124 ms of CPU. A filtered
         // walk never prunes, so the unfiltered one keeps the full depth for the completeness check.
         ...(filtered ? { maxDepth: 2 } : {}),
-        includeFile: ({ path }) => ["chat_history.jsonl", "chatHistory.jsonl"].includes(basename(path)),
+        includeFile: ({ path }) => GROK_CHAT_FILES.includes(basename(path)),
     });
     const issues = [...walked.issues];
     const incompleteRoots = new Set<string>();

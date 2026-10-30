@@ -11,6 +11,7 @@ import {
     readGrokRecords,
     scanGrokRecords,
 } from "./grok";
+import { grokIndexesFile } from "./grok-discovery";
 
 const SESSION_ID = "11111111-2222-4333-8444-555555555555";
 const CWD = "/projects/shop";
@@ -787,4 +788,16 @@ test("Grok turn boundaries stay stable across replies and distinguish identical 
     const next = await reader.readTurnBoundary(source, {});
     expect(next).not.toEqual(first);
     expect(next?.timestamp).toBeUndefined();
+});
+
+test("modelOfRow names nothing, since Grok rows carry no model, and indexesFile takes the chat history and summary only", () => {
+    const { modelOfRow } = createGrokHistoryOperations();
+    expect(modelOfRow(SafeJSON.stringify({ type: "assistant", content: "hi", model: "grok-4.7" }))).toBeUndefined();
+
+    const folder = "/fixture/grok/sessions/%2Ffixture/session-1";
+    expect(grokIndexesFile(`${folder}/chat_history.jsonl`)).toBe(true);
+    expect(grokIndexesFile(`${folder}/chatHistory.jsonl`)).toBe(true);
+    expect(grokIndexesFile(`${folder}/summary.json`)).toBe(true);
+    expect(grokIndexesFile(`${folder}/events.jsonl`)).toBe(false);
+    expect(grokIndexesFile(`${folder}/updates.jsonl`)).toBe(false);
 });

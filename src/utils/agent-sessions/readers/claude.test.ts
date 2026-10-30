@@ -732,3 +732,19 @@ test("continuedIn is the trailing continued-in row's successor id, and nothing f
     writeFileSync(empty.path, "");
     expect(await createClaudeHistoryOperations().continuedIn(empty.source)).toBeUndefined();
 });
+
+test("modelOfRow names an assistant row's model, never a synthetic notice's, and indexesFile takes session transcripts only", () => {
+    const reader = claudeHistoryReader;
+    expect(
+        reader.modelOfRow(jsonl({ type: "assistant", message: { model: "claude-sonnet-5-5", content: [] } }).trim())
+    ).toBe("claude-sonnet-5-5");
+    expect(reader.modelOfRow(jsonl({ type: "assistant", message: { model: "<synthetic>" } }).trim())).toBeUndefined();
+    expect(reader.modelOfRow(jsonl({ type: "user", message: { model: "claude-sonnet-5-5" } }).trim())).toBeUndefined();
+    expect(reader.modelOfRow('{"type":"assistant","message":{"model":"claude-sonn')).toBeUndefined();
+
+    expect(reader.indexesFile("/fixture/projects/-fixture/11111111-2222-4333-8444-555555555555.jsonl")).toBe(true);
+    expect(reader.indexesFile("/fixture/projects/-fixture/lead/subagents/agent-a1.jsonl")).toBe(true);
+    expect(reader.indexesFile("/fixture/projects/-fixture/sessions-index.jsonl")).toBe(false);
+    expect(reader.indexesFile("/fixture/projects/-fixture/lead/subagents/workflows/wf_1/journal.jsonl")).toBe(false);
+    expect(reader.indexesFile("/fixture/projects/-fixture/memory.md")).toBe(false);
+});

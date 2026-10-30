@@ -10,6 +10,7 @@ import { asRecord, blocksMetadata, scanJsonlRecords } from "@genesiscz/utils/age
 import { isWrapperUserText } from "@genesiscz/utils/agent-sessions/user-text";
 import { readLastLines } from "@genesiscz/utils/fs/read-lines";
 import { SafeJSON } from "@genesiscz/utils/json";
+import { logger } from "@genesiscz/utils/logger";
 import { profiler } from "@genesiscz/utils/profile";
 import { boundHistoryText, HISTORY_METADATA_LIMITS } from "../metadata";
 import type {
@@ -638,6 +639,7 @@ export type ClaudeHistoryOperations = Pick<NativeSessionReader<"claude">, "parse
             | "readTurnBoundary"
             | "readForward"
             | "continuedIn"
+            | "modelOfRow"
         >
     >;
 
@@ -738,6 +740,32 @@ async function readClaudeContinuedIn(
 
 const CONTINUED_IN_TAIL_BYTES = 64 * 1024;
 
+/**
+ * The model an assistant row names. Claude Code writes its local notices (API errors, "No response.") as assistant rows
+ * whose model is a placeholder such as `<synthetic>`; they ran no model, so they name none.
+ */
+function claudeModelOfRow(row: string): string | undefined {
+    if (!row.includes('"model"')) {
+        return undefined;
+    }
+
+    let value: JsonRecord;
+
+    try {
+        value = asRecord(SafeJSON.parse(row, { strict: true }) as JsonValue);
+    } catch (error) {
+        logger.debug({ error }, "A Claude transcript row did not parse; it names no model");
+        return undefined;
+    }
+
+    if (value.type !== "assistant") {
+        return undefined;
+    }
+
+    const model = asRecord(value.message).model;
+    return typeof model === "string" && model && !model.startsWith("<") ? model : undefined;
+}
+
 export function createClaudeHistoryOperations(): ClaudeHistoryOperations {
     return {
         parserVersion: "7",
@@ -748,5 +776,6 @@ export function createClaudeHistoryOperations(): ClaudeHistoryOperations {
         readTurnBoundary: readClaudeTurnBoundary,
         readForward: readClaudeForward,
         continuedIn: readClaudeContinuedIn,
+        modelOfRow: claudeModelOfRow,
     };
 }

@@ -354,6 +354,19 @@ export interface NativeSessionReader<Kind extends string = AgentKind> {
      * a session to its live id (the cache band chip, `tools claude cmux focus`) asks here and never reads the row.
      */
     continuedIn(source: NativeSessionSource<Kind>, options?: ContinuedInOptions): Promise<string | undefined>;
+    /**
+     * The model id one raw row of this provider's transcript names for the turn it belongs to; undefined for a row
+     * that names none, a row that does not parse, and a provider whose rows never name one. A feature that already
+     * holds a head or a tail (the failure log's model, a sub-agent's model) asks per row and never names a record
+     * type.
+     */
+    modelOfRow(row: string): string | undefined;
+    /**
+     * Whether a change to this file, under one of `roots()`, can change what `discover` and `read` return: a session
+     * transcript or the metadata beside it, not a provider's side files (Grok's event and signal logs). A file watcher
+     * asks before it refreshes a listing.
+     */
+    indexesFile(path: string): boolean;
     importSession?(
         session: AgentSession<Kind>,
         context: NativeSessionImportContext

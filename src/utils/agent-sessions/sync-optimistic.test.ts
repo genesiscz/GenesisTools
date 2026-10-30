@@ -6,7 +6,7 @@ import { join } from "node:path";
 import { initializeCompactHistorySchema } from "./migrations";
 import { synchronizeHistory } from "./sync";
 import { HistorySyncRepository } from "./sync-repository";
-import { noBackwardRead, noContinuedIn } from "./testing/no-backward-read";
+import { indexesNoFile, noBackwardRead, noContinuedIn, noModelOfRow } from "./testing/no-backward-read";
 import type { HistoryMetadataRead, NativeSessionReader, NativeSessionSource, NativeSourceIssue } from "./types";
 
 const PROVIDER = "fixture-provider";
@@ -38,6 +38,8 @@ function fixture() {
         parserVersion: "fixture-v1",
         readBackward: noBackwardRead,
         continuedIn: noContinuedIn,
+        modelOfRow: noModelOfRow,
+        indexesFile: indexesNoFile,
         readTurnBoundary: async () => null,
         readForward: async () => ({ rows: [], file: null, endOffset: 0, issues: [] }),
         roots: () => [root],

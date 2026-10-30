@@ -727,6 +727,7 @@ export type GrokHistoryOperations = Pick<NativeSessionReader<"grok">, "parserVer
             | "readTurnBoundary"
             | "readForward"
             | "continuedIn"
+            | "modelOfRow"
         >
     >;
 
@@ -813,5 +814,8 @@ export function createGrokHistoryOperations(): GrokHistoryOperations {
         readForward: readGrokForward,
         // Grok's chat history stays in one folder for the life of the session; it writes no successor pointer.
         continuedIn: async () => undefined,
+        // Grok's chat history rows name no model: the session's model is `summary.json` `current_model_id`, which
+        // `readMetadata` reads, not a row.
+        modelOfRow: () => undefined,
     };
 }
