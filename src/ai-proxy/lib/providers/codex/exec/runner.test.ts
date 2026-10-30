@@ -200,6 +200,47 @@ describe("the exec runner's commands", () => {
         expect(normal.exit_code).toBe(0);
     });
 
+    (existsSync("/bin/dash") ? it : it.skip)("uses the control pipe with a dash supervisor", async () => {
+        const dir = realpathSync(mkdtempSync(join(tmpdir(), "exec-dash-")));
+        const normal = await runShellCommand(
+            { cmd: "printf normal", shell: "/bin/dash" },
+            { cwd: dir, supervisorShell: "/bin/dash" }
+        );
+        expect(normal.exit_code).toBe(0);
+        expect(normal.output).toBe("normal");
+        const isolated = await runShellCommand(
+            { cmd: "if (printf 'done\\n' >&3) 2>/dev/null; then exit 1; else printf isolated; fi", shell: "/bin/dash" },
+            { cwd: dir, supervisorShell: "/bin/dash" }
+        );
+        expect(isolated.exit_code).toBe(0);
+        expect(isolated.output).toBe("isolated");
+        await expect(
+            runShellCommand(
+                { cmd: "sleep 0.5; printf late > marker", shell: "/bin/dash" },
+                { cwd: dir, deadlineAt: performance.now() + 150, supervisorShell: "/bin/dash" }
+            )
+        ).rejects.toThrow("script deadline expired");
+        await Bun.sleep(600);
+        expect(existsSync(join(dir, "marker"))).toBe(false);
+        await expect(
+            runShellCommand(
+                { cmd: "exec >/dev/null 2>&1; sleep 0.5; printf late > marker", shell: "/bin/dash" },
+                { cwd: dir, deadlineAt: performance.now() + 150, supervisorShell: "/bin/dash" }
+            )
+        ).rejects.toThrow("script deadline expired");
+        await Bun.sleep(600);
+        expect(existsSync(join(dir, "marker"))).toBe(false);
+        await runShellCommand(
+            { cmd: 'kill -9 "$PPID"; sleep 0.5; printf late > marker', shell: "/bin/dash" },
+            { cwd: dir, deadlineAt: performance.now() + 150, supervisorShell: "/bin/dash" }
+        ).then(
+            (result) => expect(result.exit_code).not.toBe(0),
+            (error) => expect(String(error)).toContain("script deadline expired")
+        );
+        await Bun.sleep(600);
+        expect(existsSync(join(dir, "marker"))).toBe(false);
+    });
+
     it("times out a foreground command that closes both output streams", async () => {
         const dir = realpathSync(mkdtempSync(join(tmpdir(), "exec-closed-output-")));
         await expect(
@@ -277,7 +318,7 @@ describe("the exec runner's commands", () => {
         const allowed = await shellGuard({ config, model: "test-allow" });
         expect(denied.check("git checkout -- a.ts", "/tmp").outcome).toBe("block");
         expect(allowed.check("git checkout -- a.ts", "/tmp").outcome).toBe("allow");
-        expect(shellGuard({ config })).rejects.toThrow("requires the session model");
+        await expect(shellGuard({ config })).rejects.toThrow("requires the session model");
     });
 
     it("in shadow mode the guard only watches, as the hook does: the command runs", async () => {

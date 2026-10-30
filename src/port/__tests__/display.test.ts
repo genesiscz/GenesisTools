@@ -130,7 +130,7 @@ describe("displayPortTable", () => {
 
         expect(text).toMatch(/:3000\s+│\s+node\s+│\s+123\s+│\s+project\s+│\s+Next\.js\s+│\s+2h\s+│\s+● healthy/);
         expect(text).toContain("1 port active");
-        expect(text).toContain("tools port <number>");
+        expect(text).toContain("tools port '<number>'");
     });
 
     it("counts listeners in the plural and only offers --all when the list was filtered", () => {
@@ -204,7 +204,7 @@ describe("displayPortDetail", () => {
         expect(text).toContain(new Date("2026-06-02T08:30:00.000Z").toLocaleString());
         expect(text).toMatch(/Memory\s+64MB/);
         expect(text).toMatch(/Git Branch\s+feat\/ports/);
-        expect(text).toContain("tools port --kill <number>");
+        expect(text).toContain("tools port --kill '<number>'");
     });
 
     it("shows a dash for every location field the process does not report", () => {

@@ -190,7 +190,7 @@ describe("Local Network Access hint", () => {
             yes
         );
         expect(blocked[0]).toContain("blocked by Local Network Access (LocalNetworkAccessPermissionDenied)");
-        expect(blocked[0]).toContain("tools chrome-devtools grant --match <tab>");
+        expect(blocked[0]).toContain("tools chrome-devtools grant --match '<tab>'");
         const refused = renderEventLines(
             {
                 method: "Network.loadingFailed",

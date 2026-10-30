@@ -90,7 +90,7 @@ async function drain(reader: ReadableStreamDefaultReader<Uint8Array>, chunks: Bo
 /** Runs one command to its end in a shell, with no PTY and no stdin, and returns Codex's result shape. */
 export async function runShellCommand(
     args: ExecCommandArgs,
-    options: { cwd: string; deadlineAt?: number }
+    options: { cwd: string; deadlineAt?: number; supervisorShell?: string }
 ): Promise<ExecCommandResult> {
     const startedAt = performance.now();
     const shell = args.shell ?? env.paths.getShell();
@@ -101,10 +101,19 @@ export async function runShellCommand(
     }
     // The watcher remains in the owned group, pinning its identity until the control pipe closes.
     // Only an explicit normal-completion message suppresses cleanup on timeout or parent death.
+    // Dash replaces a background job's stdin before <&0; descriptor 3 keeps the control pipe available.
     const supervisor =
-        'group=$$; (IFS= read -r action; if [ "$action" != done ]; then kill -KILL -"$group"; fi) <&0 >/dev/null 2>&1 & watcher=$!; "$@" </dev/null & child=$!; wait "$child"; status=$?; exec 1>&- 2>&-; wait "$watcher"; exit "$status"';
+        'exec 3<&0; group=$$; (IFS= read -r action; if [ "$action" != done ]; then kill -KILL -"$group"; fi) <&3 >/dev/null 2>&1 & watcher=$!; exec 3<&-; "$@" </dev/null & child=$!; wait "$child"; status=$?; exec 1>&- 2>&-; wait "$watcher"; exit "$status"';
     const proc = Bun.spawn(
-        ["/bin/sh", "-c", supervisor, "exec-supervisor", shell, args.login === true ? "-lc" : "-c", args.cmd],
+        [
+            options.supervisorShell ?? "/bin/sh",
+            "-c",
+            supervisor,
+            "exec-supervisor",
+            shell,
+            args.login === true ? "-lc" : "-c",
+            args.cmd,
+        ],
         {
             cwd,
             stdin: "pipe",
