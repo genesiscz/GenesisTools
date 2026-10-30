@@ -36,26 +36,38 @@ provider, so a new provider is a list of members to fill in and no feature parse
   for the decision Stop hook's chat answers). A hook or tool reaches it with `readSessionBackward({ kind,
   transcriptPath, until })` (`src/utils/agent-sessions/session-backward.ts`). `readTurnBoundary` returns the latest
   real prompt's stable key and optional timestamp; `readSessionTurnBoundary` reaches it from a transcript path.
-  Timestamp-free Grok prompts use their absolute byte offset as the turn key.
+  Timestamp-free Grok prompts use their absolute byte offset as the turn key. Added 2026-10-30 (the ratchet
+  migration): `continuedIn` (the successor session id a transcript ends on; Codex and Grok keep none),
+  `modelOfRow` (the model an assistant row names; Grok's rows name none), `indexesFile` (whether a path under a
+  session root is this provider's transcript), and `rowAnchors` (the ids a row carries: uuid, message id, tool call
+  ids, the open Codex turn). `followSessionContinuations` (`session-backward.ts`) walks `continuedIn` to the live
+  id, so `tools claude cmux focus`, `send` and decision delivery reach a continued session.
 - **What a feature gets is normalized**: `NativeHistoryEntry` (role, text, timestamp, tool, paths). Logic over it
   (decision answers in `src/question/lib/decisions/chat-answers.ts`, a reply's decision blocks) is provider-neutral
   and never names a JSONL field such as `"type":"assistant"`, `response_item`, `continued-in` or `chat_history`.
-- **Legacy parsers still exist** (about 20 folders read transcript rows directly:
-  `src/claude/lib/usage/session-rows.ts` for `continued-in`, `src/utils/ai/transcripts/`). Do not copy them. When a
-  change touches one, move the fact it reads into a reader member first.
+- **The format parsers live beside the readers** (`src/utils/agent-sessions/readers/`: `codex-turns.ts`,
+  `codex-changes.ts`, `codex-import.ts`, `codex-usage.ts`, `grok-usage.ts`, `claude-tail-usage.ts`,
+  `claude-native-scan.ts`, moved there 2026-10-30). `src/utils/ai/transcripts/` keeps provider-neutral logic and
+  tables keyed by provider; `turn-state.ts` is the one file that still reads row types itself, and its fix is a
+  `turnState` reader member once the question hooks settle. Do not add a new parser outside the readers.
 - **Lint enforces it**: `no-transcript-format-outside-readers` in `scripts/ci/lint-rules.ts` fails a transcript record
   type or field literal (`"continued-in"`, `"turn_context"`, `'"type":"user"'`, …) outside the readers. The files that
-  still do it are listed in `scripts/ci/transcript-format-ratchet.ts`; a file only ever leaves that list.
-- **Four more lints guard the same seam** (2026-10-25), each with a list in `scripts/ci/` that only shrinks:
+  still do it are listed in `scripts/ci/transcript-format-ratchet.ts` (one left); a file only ever leaves that list.
+- **Four more lints guard the same seam** (2026-10-25). Their lists in `scripts/ci/` were emptied on 2026-10-30, so
+  a new offender fails the lint at once:
   - `no-hand-built-claude-home`, `no-hand-built-codex-grok-home` (`native-home-ratchet.ts`): a path into
-    `~/.claude`, `~/.codex`, `~/.grok` or their env overrides goes through `nativeHome(kind)` or
-    `nativeSessionRoots(kind)` in `src/utils/providers/session-paths.ts`.
+    `~/.claude`, `~/.codex`, `~/.grok` or their env overrides goes through `nativeHome(kind)`, `nativeHomePath(kind,
+    ...segments)`, `claudeJsonPath()`, `nativeSessionRoots(kind)` or `primaryCodexHome()` in
+    `src/utils/providers/session-paths.ts`. `CODEX_HOME` is a comma list; `CLAUDE_CONFIG_DIR` moves `.claude.json` too.
   - `no-harness-name-branch` (`harness-ratchet.ts`): `x.harness === "codex"` or a `case "grok":` in a tool is a
-    provider member instead.
+    provider member, or an exhaustive table keyed by the harness type (`satisfies Record<HarnessName, …>`), never a
+    comparison at the call site. Hook facts per harness are `HARNESS_HOOK_FACTS` in `src/agents/lib/hooks/payload.ts`;
+    worker facts are `WorkerCapabilities` in `src/utils/worker/capabilities.ts`.
   - `no-hook-payload-read`: a hook payload field (`transcript_path`, `tool_input`, …) is read in
-    `src/agents/lib/hooks/payload.ts` only; add a typed `HookPayload` field there.
+    `src/agents/lib/hooks/payload.ts` only; add a typed `HookPayload` field there. Claude's statusline input is a
+    different shape with its own owner, `StatuslineInput` in `src/utils/agents/hooks/statusline-input.ts`.
   - `no-agent-name-in-command-match`: finding a running agent by its command line goes through
-    `src/utils/process/classify.ts`.
+    `classifyCommand`, `isAgentProcess` or `runsAgent` in `src/utils/process/classify.ts`.
 - **A reader that caps or skips records says so in the log.** A byte cap, a timeout or a skipped row that hides
   newer records logs the path, the cap and what was missed, so a frozen age or a missing prompt is found from
   `~/.genesis-tools/logs/` and not by a user.
