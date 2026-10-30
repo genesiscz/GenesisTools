@@ -26,8 +26,8 @@ describe("parseRestoreSource", () => {
 });
 
 describe("parseAgentList", () => {
-    test("defaults to all three agents", () => {
-        expect(parseAgentList(undefined)).toEqual(["claude", "grok", "codex"]);
+    test("defaults to all three agents, in the canonical harness order", () => {
+        expect(parseAgentList(undefined)).toEqual(["claude", "codex", "grok"]);
     });
 
     test("parses a subset", () => {
