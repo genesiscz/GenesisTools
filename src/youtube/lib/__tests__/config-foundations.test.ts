@@ -4,6 +4,7 @@ import { tmpdir } from "node:os";
 import { join } from "node:path";
 import { resolveAiSpecForTask } from "@app/youtube/lib/ai-mapping";
 import { YoutubeConfig } from "@app/youtube/lib/config";
+import { MODEL_ROLES } from "@genesiscz/utils/ai/catalog/roles";
 
 let dir: string;
 let config: YoutubeConfig;
@@ -23,7 +24,9 @@ describe("config foundations (powerUsers / ai / referrals)", () => {
 
         expect(all.powerUsers).toEqual([]);
         expect(all.referrals).toEqual({ enabled: false, offers: [] });
-        expect(all.ai).toEqual([{ provider: "grok", model: "grok-4.5", for: ["summary", "insights", "qa"] }]);
+        expect(all.ai).toEqual([
+            { provider: "grok", model: MODEL_ROLES.xai.default, for: ["summary", "insights", "qa"] },
+        ]);
     });
 
     it("leaves embed and transcribe unmapped so they keep their local providers", async () => {
@@ -33,7 +36,7 @@ describe("config foundations (powerUsers / ai / referrals)", () => {
 
         expect(resolveAiSpecForTask(all, "embed")).toBeNull();
         expect(resolveAiSpecForTask(all, "transcribe")).toBeNull();
-        expect(resolveAiSpecForTask(all, "qa")).toBe("grok/grok-4.5");
+        expect(resolveAiSpecForTask(all, "qa")).toBe(`grok/${MODEL_ROLES.xai.default}`);
     });
 
     it("round-trips ai mappings and powerUsers through update()", async () => {

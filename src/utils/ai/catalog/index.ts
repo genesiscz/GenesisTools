@@ -17,6 +17,7 @@ export {
     toCatalogEntry,
 } from "./openrouter";
 export { effectivePricing, type PricingContext } from "./pricing";
+export { MODEL_ROLES } from "./roles";
 export {
     type QuoteChoice,
     quotesFor,

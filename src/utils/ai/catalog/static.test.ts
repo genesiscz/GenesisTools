@@ -1,5 +1,6 @@
 import { describe, expect, test } from "bun:test";
 import { effectivePricing } from "./pricing";
+import { MODEL_ROLES } from "./roles";
 import {
     aliasMapFor,
     byCapability,
@@ -187,6 +188,20 @@ describe("static catalog", () => {
             "claude-fable-5-1",
         ]) {
             expect(byId(id)?.provider).toBe("anthropic");
+        }
+    });
+});
+
+describe("model roles", () => {
+    /** `openai.chat` is OpenAI's own moving id (`gpt-5-chat-latest`), which the catalog has no entry for yet. */
+    test("every pinned role names a catalog model of its provider", () => {
+        for (const [provider, id] of [
+            ["anthropic", MODEL_ROLES.anthropic.probe],
+            ["anthropic", MODEL_ROLES.anthropic.countTokens],
+            ["openai", MODEL_ROLES.openai.small],
+            ["xai", MODEL_ROLES.xai.default],
+        ] as const) {
+            expect(byId(id, provider)?.id).toBe(id);
         }
     });
 });

@@ -1,3 +1,4 @@
+import { MODEL_ROLES } from "@genesiscz/utils/ai/catalog/roles";
 import { SafeJSON } from "@genesiscz/utils/json";
 import { logger } from "@genesiscz/utils/logger";
 
@@ -145,7 +146,7 @@ export async function sendLongLivedInferencePing(token: string): Promise<TokenVe
                 "user-agent": "claude-cli/2.1.214 (external, cli)",
             },
             body: SafeJSON.stringify({
-                model: "claude-haiku-4-5-20251001",
+                model: MODEL_ROLES.anthropic.probe,
                 max_tokens: 1,
                 messages: [{ role: "user", content: "hi" }],
             }),

@@ -20,6 +20,10 @@ Loaded by Claude Code when you read, write or edit a model list, a price table o
 
 `src/utils/ai/catalog/static.ts` (`STATIC_CATALOG`) holds every model fact: id, family, display name, context window, thinking mode, aliases, release date, and pricing. Pricing carries `rules` for a context band (`ctxFrom`), a service tier (`serviceTier: "priority"` or `"fast"`) and a date window (`from` / `to`, inclusive UTC dates). `effectivePricing()` applies the rules in order, and a rule overrides only the fields it names.
 
+A model picked for a fixed job (the cheap account probe, the token-count model, grok's default, a tool's default chat
+model) is a role in `MODEL_ROLES` (`src/utils/ai/catalog/roles.ts`), nested by provider. A default that should move
+with a family uses the family alias instead: `resolveAnthropicSubModel("opus")`, `resolveOpenAiSubModel("sol")`.
+
 These read the catalog and need no edit of their own:
 
 - `tools claude start -m` and its alias matching (`src/claude/lib/models.ts`): an Anthropic entry appears there only when it carries `flags.cli`. `flags.native1m` marks a 1M base window, and `flags.supports1m` marks a model that takes the `[1m]` suffix.

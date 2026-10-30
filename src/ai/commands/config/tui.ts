@@ -1,4 +1,5 @@
 import { AIConfig } from "@genesiscz/utils/ai/AIConfig";
+import { MODEL_ROLES } from "@genesiscz/utils/ai/catalog/roles";
 import { AiConfigStore } from "@genesiscz/utils/ai/config/AiConfigStore";
 import { type AccountEntry, TASK_NAMES } from "@genesiscz/utils/ai/config/schema";
 import { toolCommand } from "@genesiscz/utils/cli/tool-command";
@@ -256,7 +257,7 @@ async function defaultsMenu(): Promise<void> {
     const accounts = await currentAccounts();
     const modelRef = await p.text({
         message: 'Model id, "@account/<id>", or "@account/<id>:<model>":',
-        placeholder: accounts[0] ? `@account/${accounts[0].id}` : "gpt-5",
+        placeholder: accounts[0] ? `@account/${accounts[0].id}` : MODEL_ROLES.openai.chat,
     });
 
     const app = await p.text({ message: "Scope to one app (empty for global):", placeholder: "youtube" });

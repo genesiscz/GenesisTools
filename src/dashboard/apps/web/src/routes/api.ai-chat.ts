@@ -1,6 +1,6 @@
 import { SafeJSON } from "@dashboard/shared";
 import { chat, type ModelMessage, type StreamChunk, toServerSentEventsResponse } from "@tanstack/ai";
-import { createAnthropicChat } from "@tanstack/ai-anthropic";
+import { ANTHROPIC_MODELS, createAnthropicChat } from "@tanstack/ai-anthropic";
 import { createFileRoute } from "@tanstack/react-router";
 import { and, eq } from "drizzle-orm";
 import { aiConversations, aiMessages, db } from "@/drizzle";
@@ -8,6 +8,12 @@ import { getUserIdFromRequest } from "@/lib/auth/requireUser";
 import { isSameOrigin } from "@/lib/auth-server";
 import { env } from "@/lib/env";
 import { emitDomainEvent } from "@/lib/events/event-bus.server";
+
+/**
+ * The newest Sonnet the chat adapter knows. The adapter types its model against its own list, which has no Claude 5
+ * model yet, so the catalog's `sonnet` alias would not pass; this moves with each adapter release instead.
+ */
+const CHAT_MODEL = ANTHROPIC_MODELS.find((id) => id.startsWith("claude-sonnet-")) ?? ANTHROPIC_MODELS[0];
 
 export const Route = createFileRoute("/api/ai-chat")({
     server: {
@@ -111,7 +117,7 @@ export const Route = createFileRoute("/api/ai-chat")({
                     emitDomainEvent(safeUserId, "ai", { type: "conversation_changed" });
                 }
 
-                const adapter = createAnthropicChat("claude-sonnet-4-5", apiKey);
+                const adapter = createAnthropicChat(CHAT_MODEL, apiKey);
                 const abortController = new AbortController();
 
                 request.signal.addEventListener("abort", () => abortController.abort());

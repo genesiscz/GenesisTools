@@ -1,3 +1,5 @@
+import { MODEL_ROLES } from "@genesiscz/utils/ai/catalog/roles";
+
 export type ActionType = "say" | "ask" | "notify";
 
 export interface ContactConfig {
@@ -50,7 +52,7 @@ export const DEFAULTS = {
     typingIntervalMs: 4000,
     askTimeoutMs: 60_000,
     askProvider: "openai",
-    askModel: "gpt-5-chat-latest",
+    askModel: MODEL_ROLES.openai.chat,
     maxContextMessages: 30,
     historyFetchLimit: 100,
 } as const;

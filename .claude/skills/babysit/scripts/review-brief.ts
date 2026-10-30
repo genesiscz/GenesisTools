@@ -18,6 +18,7 @@
  */
 
 import { join } from "node:path";
+import { resolveOpenAiSubModel } from "@genesiscz/utils/ai/openai/sub-models";
 import { SafeJSON } from "@genesiscz/utils/json";
 import { shellWord } from "@genesiscz/utils/shell/quote";
 import { flag, has, loadRun, reviewScratch } from "./run";
@@ -87,7 +88,7 @@ export function reviewSpawnCommand({ pr, wt, base, briefPath, postMerge }: Revie
         : ["--base", `origin/${base}`];
     const argv = [
         ...["tools", "codex", "spawn", "--mode", "review", "--pr", String(pr), ...target],
-        ...["--name", `bs-${pr}-review`, "--model", "gpt-6.1-sol", "--write", "ask", "--cwd", wt],
+        ...["--name", `bs-${pr}-review`, "--model", resolveOpenAiSubModel("sol"), "--write", "ask", "--cwd", wt],
         ...["--label", `babysit pr${pr} review`, "--prompt-file", briefPath],
     ];
 

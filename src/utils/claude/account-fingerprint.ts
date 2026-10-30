@@ -1,3 +1,4 @@
+import { MODEL_ROLES } from "@genesiscz/utils/ai/catalog/roles";
 import { SafeJSON } from "@genesiscz/utils/json";
 import { logger } from "@genesiscz/utils/logger";
 
@@ -119,7 +120,7 @@ export async function fingerprintToken(account: string, token: string): Promise<
                 "user-agent": "claude-cli/2.1.214 (external, cli)",
             },
             body: SafeJSON.stringify({
-                model: "claude-haiku-4-5-20251001",
+                model: MODEL_ROLES.anthropic.probe,
                 max_tokens: 1,
                 messages: [{ role: "user", content: "hi" }],
             }),
@@ -165,8 +166,7 @@ export async function fingerprintToken(account: string, token: string): Promise<
 
 const COUNT_TOKENS_URL = "https://api.anthropic.com/v1/messages/count_tokens";
 
-/** Cheapest model every subscription tier can count against. */
-const ORG_PROBE_MODEL = "claude-sonnet-5";
+const ORG_PROBE_MODEL = MODEL_ROLES.anthropic.countTokens;
 
 export type OrgProbeVerdict =
     /** The org answered. `organizationUuid` is set. */
