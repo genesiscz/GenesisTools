@@ -1,7 +1,6 @@
 import { closeSync, openSync, readFileSync, readSync, statSync } from "node:fs";
-import { homedir } from "node:os";
-import { join } from "node:path";
 import { SafeJSON } from "@genesiscz/utils/json";
+import { nativeHomePath } from "@genesiscz/utils/providers/session-paths";
 import { hookDiag } from "./log";
 
 export interface ModelInfo {
@@ -79,7 +78,7 @@ export function readModelFromTranscript(transcriptPath: string | undefined, tail
     return null;
 }
 
-export function readModelFromSettings(path = join(homedir(), ".claude", "settings.json")): string | null {
+export function readModelFromSettings(path = nativeHomePath("claude", "settings.json")): string | null {
     try {
         const model = (SafeJSON.parse(readFileSync(path, "utf8")) as { model?: unknown } | null)?.model;
 
