@@ -218,9 +218,13 @@ calls, an idle one starts a turn. Sent from inside a Claude Code session, the me
 `cross-session-message` envelope that names that session and its permission mode (bypass or prompting), as
 Claude's own SendMessage does; the receiver delivers it at once when that mode matches its own and holds it
 for approval when they differ. A send from outside Claude Code names no mode, so a session in bypass mode
-holds it. A session started with `tools claude run --cross-messages` accepts everything (passes
-`--settings {"crossSessionInbound":"accept"}`; `tools cmux agents new claude` adds it unless
-`--no-cross-messages`). `--wait` waits for the end of the turn the message starts and prints one delivery
+holds it. A session that GenesisTools starts (`tools claude run`, and `tools cmux agents new claude` through it)
+accepts everything by default: it passes `--settings {"crossSessionInbound":"accept"}`. The default is the
+`launch.crossSessionInbound` key of `~/.genesis-tools/claude/config.json` (`accept` or `hold`, default `accept`);
+`tools claude config cross-messages` prints it and where it comes from, and `tools claude config cross-messages hold`
+saves another value. `hold` passes nothing, so Claude Code's own settings decide. Per run, `--cross-messages` or
+`--no-cross-messages` wins over the key, and a `--settings` of your own after `--` turns the default off (Claude Code
+takes one `--settings`). Sessions started by hand keep Claude Code's own setting. `--wait` waits for the end of the turn the message starts and prints one delivery
 line on stderr right after the send. `<session>` is a session id or
 8+ character prefix, the session name, or a `/rename` title; several matches fail with each candidate's
 exact command; part of the cmux tab or workspace title also works (`vybava` finds "vybava - grok"). Codex:
@@ -259,7 +263,9 @@ result names the rung in `channel`:
    app-server (`codex steer`, with an input receipt).
 2. `resume`: a Claude or Grok session that GenesisTools owns as a worker gets a resumed turn
    (`claude worker steer`, `grok steer`), acknowledged by a completed same-session turn.
-3. `claude-peer`: a live interactive Claude session gets the message on its cross-session socket.
+3. `claude-peer`: a live interactive Claude session gets the message on its cross-session socket. A session that
+   GenesisTools started accepts it at once by default (`launch.crossSessionInbound`, see `tools claude message`);
+   another session in bypass mode may hold it for approval.
 4. `cmux`: the last rung types into the session's pane with `tools claude cmux send --paste
    --exact-session`, after the dialog guard said no dialog is open.
 5. `queued`: no rung took it, or the guard refused; with a source home and a delivery key the
