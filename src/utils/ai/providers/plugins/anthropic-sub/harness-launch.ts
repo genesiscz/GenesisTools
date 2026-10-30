@@ -6,6 +6,8 @@ export const claudeLaunch: LaunchRecipe = {
         options.account
             ? ["tools", "claude", "start", options.account, "--", "--resume", sessionId]
             : ["claude", "--resume", sessionId],
+    resumeSyntax: { flags: ["--resume"], subcommand: false, render: (sessionId) => `--resume ${sessionId}` },
+    launcher: "cc",
     resumeFlags: {
         "--add-dir": "value",
         "--agent": "value",

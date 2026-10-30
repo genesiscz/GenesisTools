@@ -8,7 +8,8 @@ import {
     toolsRunLauncher,
 } from "@app/cmux/lib/launchers";
 import type { AccountProviderAlias } from "@genesiscz/utils/ai/providers/alias-list";
-import { toolCommand } from "@genesiscz/utils/cli/tool-command";
+import { harnessLaunch } from "@genesiscz/utils/ai/providers/harness-index";
+import type { LaunchRecipe } from "@genesiscz/utils/harness/parts";
 import { shellWords } from "@genesiscz/utils/session-changes/words";
 import { shellWord } from "@genesiscz/utils/shell/quote";
 
@@ -282,7 +283,7 @@ export function resumeTargetFromCommand(command: string): string | undefined {
         return native?.value?.replace(/"/g, "");
     }
 
-    if (NATIVE_RESUME[kind].subcommand) {
+    if (nativeResume(kind).subcommand) {
         const tokens = tokenizeCommand(original);
 
         if (tokens[1]?.value !== "resume") {
@@ -294,7 +295,7 @@ export function resumeTargetFromCommand(command: string): string | undefined {
         return target && !target.startsWith("-") ? target : undefined;
     }
 
-    const match = findResumeFlag(original, NATIVE_RESUME[kind].flags);
+    const match = findResumeFlag(original, nativeResume(kind).flags);
 
     return match?.value?.replace(/"/g, "");
 }
@@ -312,11 +313,11 @@ export function resumeQueryFromCommand(command: string): string | undefined {
     const kind = agentKindFromLauncher(original);
 
     // A `resume` subcommand (Codex) takes no search query.
-    if (!kind || NATIVE_RESUME[kind].subcommand || resumeTargetFromCommand(original)) {
+    if (!kind || nativeResume(kind).subcommand || resumeTargetFromCommand(original)) {
         return undefined;
     }
 
-    const match = findResumeFlag(original, NATIVE_RESUME[kind].flags);
+    const match = findResumeFlag(original, nativeResume(kind).flags);
 
     return match?.value?.replace(/"/g, "");
 }
@@ -339,11 +340,11 @@ export function bareResumeFlag(command: string): string | undefined {
         return undefined;
     }
 
-    if (NATIVE_RESUME[kind].subcommand) {
+    if (nativeResume(kind).subcommand) {
         return tokenizeCommand(original)[1]?.value === "resume" ? "resume" : undefined;
     }
 
-    const match = findResumeFlag(original, NATIVE_RESUME[kind].flags);
+    const match = findResumeFlag(original, nativeResume(kind).flags);
 
     return match && match.value === undefined ? match.flag : undefined;
 }
@@ -355,28 +356,12 @@ function passthroughStart(command: string): number | undefined {
     return separator?.end;
 }
 
-/**
- * How each agent's own binary reads a resume target (directly, or after a wrapper's `--`): a flag, or Codex's `resume`
- * subcommand; and the launcher that starts it (`<launcher> run <account>`).
- */
-const NATIVE_RESUME: Record<
-    AccountProviderAlias,
-    { flags: readonly string[]; subcommand: boolean; render: (sessionId: string) => string; launcher: string }
-> = {
-    claude: { flags: ["--resume"], subcommand: false, render: (sessionId) => `--resume ${sessionId}`, launcher: "cc" },
-    grok: {
-        flags: ["-r", "--resume"],
-        subcommand: false,
-        render: (sessionId) => `-r ${sessionId}`,
-        launcher: toolCommand("grok"),
-    },
-    codex: {
-        flags: [],
-        subcommand: true,
-        render: (sessionId) => `resume ${sessionId}`,
-        launcher: toolCommand("codex"),
-    },
-};
+/** How each agent's own binary reads a resume target, and its launcher: the driver's launch recipe. */
+function nativeResume(kind: AccountProviderAlias): LaunchRecipe["resumeSyntax"] & { launcher: string } {
+    const launch = harnessLaunch(kind);
+
+    return { ...launch.resumeSyntax, launcher: launch.launcher };
+}
 
 /** A wrapper's own resume flag, before `--`: it runs a search that can prompt, so it is never a replay target. */
 const WRAPPER_RESUME_FLAGS = ["-r", "--resume"] as const;
@@ -389,7 +374,7 @@ function nativeResumeAfter(
 ): ResumeFlagMatch | undefined {
     const tokens = tokenizeCommand(command).filter((token) => token.start >= separator);
 
-    if (NATIVE_RESUME[kind].subcommand) {
+    if (nativeResume(kind).subcommand) {
         const at = tokens.findIndex((token) => token.value === "resume");
 
         if (at < 0) {
@@ -402,7 +387,7 @@ function nativeResumeAfter(
             : { flag: "resume", start: tokens[at].start, end: tokens[at].end };
     }
 
-    const match = findResumeFlag(command.slice(separator), NATIVE_RESUME[kind].flags);
+    const match = findResumeFlag(command.slice(separator), nativeResume(kind).flags);
     return match ? { ...match, start: match.start + separator, end: match.end + separator } : undefined;
 }
 
@@ -449,7 +434,7 @@ function replaceToolsRunResume(input: {
     }
 
     if (!account) {
-        drift.push(`no account recorded for this session — ${NATIVE_RESUME[kind].launcher} run will ask for one`);
+        drift.push(`no account recorded for this session — ${nativeResume(kind).launcher} run will ask for one`);
     }
 
     // The wrapper's own resume flag, before `--`.
@@ -482,14 +467,14 @@ function replaceToolsRunResume(input: {
             );
         }
 
-        return { command: spliceFlag(command, native, NATIVE_RESUME[kind].render(sessionId)), drift };
+        return { command: spliceFlag(command, native, nativeResume(kind).render(sessionId)), drift };
     }
 
     if (!wrapper) {
-        drift.push(`-- ${NATIVE_RESUME[kind].render(sessionId)} added (session that was active in this pane)`);
+        drift.push(`-- ${nativeResume(kind).render(sessionId)} added (session that was active in this pane)`);
     }
 
     const tail = separator === undefined ? "-- " : "";
 
-    return { command: `${command.trimEnd()} ${tail}${NATIVE_RESUME[kind].render(sessionId)}`, drift };
+    return { command: `${command.trimEnd()} ${tail}${nativeResume(kind).render(sessionId)}`, drift };
 }
