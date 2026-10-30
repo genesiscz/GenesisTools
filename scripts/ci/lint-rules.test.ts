@@ -929,6 +929,14 @@ describe("no-proxy-provider-branch", () => {
         );
     });
 
+    test("the empty proxy provider baseline parses and rejects a new entry", async () => {
+        const baseline = await Bun.file("scripts/ci/proxy-provider-ratchet.ts").text();
+        const grown = 'export const PROXY_PROVIDER_BRANCH_RATCHET = new Map([["src/new.ts", 1]]);';
+
+        expect(ratchetAdditions(baseline, baseline)).toEqual([]);
+        expect(ratchetAdditions(baseline, grown)).toEqual(["PROXY_PROVIDER_BRANCH_RATCHET: src/new.ts"]);
+    });
+
     test("every count on the list is the file's real number of findings, so a fixed branch lowers its count", async () => {
         const stale: string[] = [];
 
