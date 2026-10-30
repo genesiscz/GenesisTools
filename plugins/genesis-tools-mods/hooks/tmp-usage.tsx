@@ -12,8 +12,8 @@ import { sessionDirOf } from "./agents-band";
 import { genesisProbe } from "./genesis";
 import { liveAgo } from "./live";
 import { bareDescription } from "./model-label";
-import { type Feature, type Host, isRecord, logMod, paceAfter, settingsOf } from "./shared";
-import { cliLacks } from "./shared-run";
+import { type Feature, type Host, isRecord, logMod, logReading, paceAfter, settingsOf } from "./shared";
+import { cliLacks, sharedRun } from "./shared-run";
 import { actionButton, type Kit, line, type Pressable, plural, pressed, sidebarFrame } from "./sidebar";
 
 let usage: TmpUsage = null;
@@ -99,13 +99,34 @@ export function sizeAgeText(path: string, now = Date.now()): string | undefined 
     return age.isBound ? `≤${text}` : text;
 }
 
-async function kbOf(host: Host, argv: string[], column: number): Promise<number | null> {
-    const done = await host.run(argv, { timeoutMs: 60_000 }).catch(() => undefined);
+/** The number in `column` of the last line of a command's output. */
+function kbFrom(done: { exitCode: number; stdout: string } | undefined, column: number): number | null {
     const lines = done?.stdout.trim().split("\n") ?? [];
     const token = lines[lines.length - 1]?.trim().split(/\s+/)[column] ?? "";
     const value = Number(token);
 
     return done?.exitCode === 0 && /^\d+$/.test(token) && Number.isFinite(value) ? value : null;
+}
+
+async function kbOf(host: Host, argv: string[], column: number): Promise<number | null> {
+    return kbFrom(await host.run(argv, { timeoutMs: 60_000 }).catch(() => undefined), column);
+}
+
+/** The disk's free KB: one `df -k /` per minute across the sessions of this Mac (one per session per reading before). */
+async function freeKb(host: Host): Promise<number | null> {
+    return kbFrom(await sharedRun(host, { argv: ["df", "-k", "/"], cwd: "/", ttlMs: 60_000, timeoutMs: 60_000 }), 3);
+}
+
+let uid: Promise<string | undefined> | undefined;
+
+/** The user's id, read once per process: it never changes, and `id -u` ran on every reading before. */
+function uidOf(host: Host): Promise<string | undefined> {
+    uid ??= host
+        .run(["id", "-u"], { timeoutMs: 5_000 })
+        .then((done) => done.stdout.trim() || undefined)
+        .catch(() => undefined);
+
+    return uid;
 }
 
 /** `du -sk <path>`, leaving out every folder named in `skip` (a basename mask, `du -I`). */
@@ -115,6 +136,23 @@ async function folderKb(host: Host, path: string, skip: readonly string[] = []):
     return (await host.exists(path)) ? kbOf(host, ["du", "-sk", ...masks, path], 0) : 0;
 }
 
+/** One `du -sk` over several folders: a size per folder `du` could read, by the path as it was given. */
+async function foldersKb(host: Host, paths: readonly string[], skip: readonly string[]): Promise<Map<string, number>> {
+    const masks = skip.flatMap((name) => ["-I", name]);
+    const done = await host.run(["du", "-sk", ...masks, ...paths], { timeoutMs: 60_000 }).catch(() => undefined);
+    const found = new Map<string, number>();
+
+    for (const line of done?.stdout.split("\n") ?? []) {
+        const [token = "", ...rest] = line.trim().split(/\s+/);
+
+        if (/^\d+$/.test(token) && rest.length > 0) {
+            found.set(rest.join(" "), Number(token));
+        }
+    }
+
+    return found;
+}
+
 /**
  * A folder of this session's own (scratch, task output), walked again after 5 minutes (ten times the walk's length
  * when that is longer), or about 10 s after a command that changes its size (`markSizeStale`). Its mtime does not
@@ -122,26 +160,53 @@ async function folderKb(host: Host, path: string, skip: readonly string[] = []):
  * of one 1.4 GB scratch folder in 30 minutes (31 s). The worktrees inside it are left out (`skip`): the worktree rule
  * measures them.
  */
-async function pacedKb(host: Host, path: string, skip: readonly string[] = []): Promise<number | null> {
-    if (!(await host.exists(path))) {
-        return 0;
-    }
-
-    const held = folderKbs.get(path);
+async function pacedKbs(
+    host: Host,
+    asks: readonly { path: string; skip: readonly string[] }[]
+): Promise<Map<string, number | null>> {
+    const sizes = new Map<string, number | null>();
+    const due: { path: string; skip: readonly string[]; mark: string }[] = [];
     const startedAt = Date.now();
-    const mark = skip.join("\n");
 
-    if (held && held.mark === mark && startedAt < held.nextAt && !forcedSince.has(path)) {
-        return held.kb;
+    for (const ask of asks) {
+        if (!(await host.exists(ask.path))) {
+            sizes.set(ask.path, 0);
+            continue;
+        }
+
+        const held = folderKbs.get(ask.path);
+        const mark = ask.skip.join("\n");
+
+        if (held && held.mark === mark && startedAt < held.nextAt && !forcedSince.has(ask.path)) {
+            sizes.set(ask.path, held.kb);
+            continue;
+        }
+
+        due.push({ ...ask, mark });
     }
 
-    const kb = await folderKb(host, path, skip);
-    folderKbs.set(path, { kb, mark, nextAt: paceAfter(SESSION_FOLDER_EVERY_MS, startedAt) });
-    forcedSince.delete(path);
-    walking.delete(path);
-    sizeAges.set(path, { at: startedAt, isBound: false });
+    if (due.length === 0) {
+        return sizes;
+    }
 
-    return kb;
+    // The folders that are due share one `du` (two processes per reading before, 102 in a quiet 19 minutes of 21
+    // sessions on 2026-10-30); a worktree's name masked for the scratch folder masks nothing in the task folder.
+    const found = await foldersKb(
+        host,
+        due.map((ask) => ask.path),
+        [...new Set(due.flatMap((ask) => ask.skip))]
+    );
+
+    for (const ask of due) {
+        const kb = found.get(ask.path) ?? null;
+        folderKbs.set(ask.path, { kb, mark: ask.mark, nextAt: paceAfter(SESSION_FOLDER_EVERY_MS, startedAt) });
+        forcedSince.delete(ask.path);
+        walking.delete(ask.path);
+        sizeAges.set(ask.path, { at: startedAt, isBound: false });
+        sizes.set(ask.path, kb);
+    }
+
+    return sizes;
 }
 
 /**
@@ -297,16 +362,31 @@ async function restoreWorktreeKb(host: Host): Promise<void> {
     }
 }
 
-/** The main checkout's folder name, so every worktree of one repository shares its /tmp/cc project folder. */
-async function projectOf(host: Host): Promise<string> {
+const projects = new Map<string, { project: string; main: string; at: number }>();
+const PROJECT_MS = 10 * 60_000;
+
+/**
+ * The cwd's main checkout, and its folder name, so every worktree of one repository shares its /tmp/cc project
+ * folder. Remembered for 10 minutes: a `git rev-parse` ran on every reading before (664 in a quiet 3 hours of 20
+ * sessions on 2026-10-30).
+ */
+async function projectOf(host: Host): Promise<{ project: string; main: string }> {
     const cwd = await host.cwd();
+    const known = projects.get(cwd);
+
+    if (known && Date.now() - known.at < PROJECT_MS) {
+        return known;
+    }
+
     const done = await host
         .run(["git", "-C", cwd, "rev-parse", "--path-format=absolute", "--git-common-dir"], { timeoutMs: 5_000 })
         .catch(() => undefined);
     const common = done?.exitCode === 0 ? done.stdout.trim() : "";
     const main = common.endsWith("/.git") ? common.slice(0, -5) : cwd;
+    const found = { project: main.split("/").filter(Boolean).pop() ?? "unknown", main, at: Date.now() };
+    projects.set(cwd, found);
 
-    return main.split("/").filter(Boolean).pop() ?? "unknown";
+    return found;
 }
 
 /** `/private/tmp/x` and `/tmp/x` are one folder; git prints the first, the scratch convention writes the second. */
@@ -376,7 +456,7 @@ async function subagentWorktrees(host: Host): Promise<Map<string, string>> {
 }
 
 /** Every worktree this session made or holds, with where it came from. Ones gone from disk are left out. */
-async function worktreesOf(host: Host, scratch: string): Promise<SessionWorktree[]> {
+async function worktreesOf(host: Host, scratch: string, main: string): Promise<SessionWorktree[]> {
     const from = await subagentWorktrees(host);
     const scratchTrees = await host.list(`${scratch}/worktrees`).catch(() => []);
 
@@ -386,9 +466,14 @@ async function worktreesOf(host: Host, scratch: string): Promise<SessionWorktree
         }
     }
 
-    const listed = await host
-        .run(["git", "-C", await host.cwd(), "worktree", "list", "--porcelain"], { timeoutMs: 10_000 })
-        .catch(() => undefined);
+    // The list is the same from every worktree of a repository, so it runs in the main checkout and the sessions of
+    // one repository share it for 2 minutes.
+    const listed = await sharedRun(host, {
+        argv: ["git", "-C", main, "worktree", "list", "--porcelain"],
+        cwd: main,
+        ttlMs: 120_000,
+        timeoutMs: 10_000,
+    });
     const locked = new Set(lockedToSession(listed?.stdout ?? "", await host.sessionId()));
 
     for (const path of locked) {
@@ -427,32 +512,30 @@ async function measure(host: Host): Promise<void> {
     }
 
     // lint-rules-ignore: /tmp/cc/<project>/<session> is the agents' scratch folder by convention, not a temp file.
-    const scratch = `/tmp/cc/${await projectOf(host)}/${await host.sessionId()}`;
+    const { project, main } = await projectOf(host);
+    const scratch = `/tmp/cc/${project}/${await host.sessionId()}`;
     const sessionDir = await sessionDirOf(host);
-    const uid = (await host.run(["id", "-u"], { timeoutMs: 5_000 }).catch(() => undefined))?.stdout.trim();
+    const uid = await uidOf(host);
     const projectFolder = sessionDir?.split("/").slice(-2, -1)[0];
     // lint-rules-ignore: Claude Code's own per-session task output folder, read only.
     const tasks = uid && projectFolder ? `/tmp/claude-${uid}/${projectFolder}/${await host.sessionId()}` : "";
-    const worktrees = await worktreesOf(host, scratch);
+    const worktrees = await worktreesOf(host, scratch, main);
     const inside = worktrees.filter((tree) => tree.path.startsWith(`${scratch}/`));
+    const sizes = await pacedKbs(host, [
+        { path: scratch, skip: inside.map((tree) => basename(tree.path)) },
+        ...(tasks ? [{ path: tasks, skip: [] }] : []),
+    ]);
     const reading: TmpReading = {
         at: Date.now(),
-        scratch: {
-            path: scratch,
-            kb: await pacedKb(
-                host,
-                scratch,
-                inside.map((tree) => basename(tree.path))
-            ),
-        },
-        tasks: { path: tasks, kb: tasks ? await pacedKb(host, tasks) : 0 },
+        scratch: { path: scratch, kb: sizes.get(scratch) ?? null },
+        tasks: { path: tasks, kb: tasks ? (sizes.get(tasks) ?? null) : 0 },
         worktrees,
-        freeKb: await kbOf(host, ["df", "-k", "/"], 3),
+        freeKb: await freeKb(host),
     };
 
     usage = reading;
     host.redraw();
-    await logMod(host, "tmp", {
+    await logReading(host, "tmp", {
         folder: scratch,
         totalKb: sessionTotalKb(reading),
         scratchKb: reading.scratch.kb,
