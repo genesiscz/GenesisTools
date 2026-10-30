@@ -3315,7 +3315,6 @@ struct FileSidebar: View {
             rows: model.fileListRows,
             tree: model.fileListIsTree,
             selectedID: model.selectedID,
-            collapsed: model.collapsed,
             drafts: model.openDraftsByFileID,
             roots: model.roots,
             rootActions: model.rootActions,
@@ -3334,10 +3333,10 @@ struct FileSidebar: View {
 struct FileSidebarRows: View, Equatable {
     /// The table's scroll handle: the same object for the shell's life, so it is no input of `==`.
     let box: GenTreeScrollBox
+    /// The rows, each with its own fold state (`ChangedFilesTreeRow.expanded`).
     let rows: [ChangedFilesTreeRow]
     let tree: Bool
     let selectedID: String?
-    let collapsed: Set<String>
     /// Undecided agent drafts per merged file id (`ReviewModel.openDraftsByFileID`).
     let drafts: [String: Int]
     let roots: [ReviewRoot]
@@ -3349,7 +3348,7 @@ struct FileSidebarRows: View, Equatable {
     let pathActions: (DiffFile) -> [ReviewPathAction]
 
     static func == (a: FileSidebarRows, b: FileSidebarRows) -> Bool {
-        a.rows == b.rows && a.tree == b.tree && a.selectedID == b.selectedID && a.collapsed == b.collapsed
+        a.rows == b.rows && a.tree == b.tree && a.selectedID == b.selectedID
             && a.drafts == b.drafts && a.roots == b.roots && (a.rootActions == nil) == (b.rootActions == nil)
             && a.pathActionsKey == b.pathActionsKey
     }
