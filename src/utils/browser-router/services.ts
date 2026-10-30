@@ -30,6 +30,18 @@ function pick(services: RegistryService[], only: string[] | undefined): Registry
     return only === undefined ? services : services.filter((service) => only.includes(service.key));
 }
 
+/**
+ * The flag as the saved action carries it: present only when true. `parseAction` keeps only a literal true, so a
+ * `false` written here never survived a reload and every sync then reported the six web services as drift.
+ */
+function plainNavigationFlag(
+    service: RegistryService
+): { allowExecuteByPlainBrowserNavigationMightBeDangerous: true } | Record<never, never> {
+    return service.allowExecuteByPlainBrowserNavigationMightBeDangerous
+        ? { allowExecuteByPlainBrowserNavigationMightBeDangerous: true }
+        : {};
+}
+
 /** The `local-services` preset: a click on `localhost:<port>` starts that registered server first. */
 export function localServiceRoutes(only?: string[]): RouteRule[] {
     return pick(registryServices(), only).map((service) => ({
@@ -41,8 +53,7 @@ export function localServiceRoutes(only?: string[]): RouteRule[] {
             port: service.port,
             name: service.name,
             to: `http://localhost:${service.port}$1`,
-            allowExecuteByPlainBrowserNavigationMightBeDangerous:
-                service.allowExecuteByPlainBrowserNavigationMightBeDangerous,
+            ...plainNavigationFlag(service),
         },
     }));
 }
@@ -87,8 +98,7 @@ export function dashboardNameRoutes({
     return dashboardNames({ only, names }).flatMap(({ name, service }) => {
         const action = {
             type: "service" as const,
-            allowExecuteByPlainBrowserNavigationMightBeDangerous:
-                service.allowExecuteByPlainBrowserNavigationMightBeDangerous,
+            ...plainNavigationFlag(service),
             port: service.port,
             name: service.name,
             to: `http://localhost:${service.port}$1`,
