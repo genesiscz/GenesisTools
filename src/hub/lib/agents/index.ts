@@ -15,7 +15,14 @@ import { openAgentSessionIds } from "../procs/sources";
 import { attachCodexAgents, buildCodexParent, type CodexAgentRecord, recentCodexAgentRecords } from "./codex-agents";
 import { readParent, startedAtOf } from "./parent";
 import { type ParentRow, sortNodes, sortParents, withoutFullPrompts } from "./tree";
-import { type AgentNode, type AgentsTree, DEFAULT_AGENTS_LIMIT, DEFAULT_AGENTS_SINCE_HOURS } from "./types";
+import {
+    type AgentHarness,
+    type AgentNode,
+    type AgentParent,
+    type AgentsTree,
+    DEFAULT_AGENTS_LIMIT,
+    DEFAULT_AGENTS_SINCE_HOURS,
+} from "./types";
 
 export { DEFAULT_AGENTS_LIMIT, DEFAULT_AGENTS_SINCE_HOURS } from "./types";
 
@@ -90,7 +97,7 @@ export function freshMtime(row: Pick<AgentSessionRow, "filePath" | "mtime">): nu
 
 function parentRow(row: AgentSessionRow): ParentRow {
     return {
-        provider: row.provider === "codex" ? "codex" : "claude",
+        provider: row.provider,
         sessionId: row.sessionId,
         title: row.title,
         project: row.project,
@@ -410,17 +417,18 @@ async function buildTree(options: HubAgentsOptions): Promise<AgentsTree> {
         }
     }
 
+    const readClaudeParent = (row: ParentRow): AgentParent =>
+        readParent(row, bySession.get(row.sessionId) ?? [], root, { now, promptChars: options.promptChars });
+    // How each harness's session becomes a parent: Codex from its agent records, Claude (and a row with no provider,
+    // which predates the field) from its transcript and workers. Grok sessions are not listed here; one would read
+    // as Claude did before this table.
+    const parentBuilders: Record<AgentHarness, (row: ParentRow) => AgentParent> = {
+        claude: readClaudeParent,
+        codex: (row) => buildCodexParent(row, codexTops.get(row.sessionId) ?? [], now, startedAtOf(row.filePath)),
+        grok: readClaudeParent,
+    };
     const parents = sortParents(
-        prof.measure("tree", () =>
-            parentRows.map((row) =>
-                row.provider === "codex"
-                    ? buildCodexParent(row, codexTops.get(row.sessionId) ?? [], now, startedAtOf(row.filePath))
-                    : readParent(row, bySession.get(row.sessionId) ?? [], root, {
-                          now,
-                          promptChars: options.promptChars,
-                      })
-            )
-        )
+        prof.measure("tree", () => parentRows.map((row) => parentBuilders[row.provider ?? "claude"](row)))
     )
         .map((parent) => ({ ...parent, open: open.has(parent.sessionId) }))
         .sort((left, right) => Number(right.open) - Number(left.open))

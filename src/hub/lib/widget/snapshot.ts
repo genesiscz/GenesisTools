@@ -36,7 +36,7 @@ import { profiler } from "@genesiscz/utils/profile";
 import { toolDataDir } from "@genesiscz/utils/storage/root";
 import { workerSourceHome } from "@genesiscz/utils/worker/delivery";
 import { hubAgents } from "../agents";
-import type { AgentNode, AgentsTree } from "../agents/types";
+import type { AgentHarness, AgentNode, AgentsTree } from "../agents/types";
 import { readAssetManifest } from "../composer/serialize";
 import { ImageLiftBudget, liftCardImages } from "./card-images";
 import { WIDGET_DISCOVERY_REUSE_MS, WIDGET_ROSTER_HOURS, WIDGET_ROSTER_LIMIT } from "./roster-index";
@@ -529,6 +529,16 @@ export function lastAssistantTextOf(resolved: ResolvedTranscript, size: number):
     );
 }
 
+/**
+ * The last reply of a transcript too large to parse whole, read from its tail. Claude has its own tail reader; Codex
+ * and Grok go through the turn parsers a whole file gets.
+ */
+const LARGE_FILE_REPLY: Record<AgentHarness, (filePath: string, size: number) => Promise<string>> = {
+    claude: lastClaudeAssistantText,
+    codex: async (filePath, size) => lastAssistantTextOf(await resolveTranscript(filePath, {}, "codex"), size),
+    grok: async (filePath, size) => lastAssistantTextOf(await resolveTranscript(filePath, {}, "grok"), size),
+};
+
 const resultCache = new Map<string, { mtime: number; text: string }>();
 async function widgetResult(node: AgentNode): Promise<string> {
     if (!node.filePath || !existsSync(node.filePath)) {
@@ -544,11 +554,8 @@ async function widgetResult(node: AgentNode): Promise<string> {
     const size = isZstdPath(node.filePath) ? (zstdContentBytes(node.filePath) ?? Number.POSITIVE_INFINITY) : stat.size;
     // A large transcript used to show "open Conversation or Hub": the widget must show the result itself.
     let text: string;
-    if (size > 8 * 1024 * 1024 && node.harness === "claude") {
-        text = (await lastClaudeAssistantText(node.filePath, size)).slice(0, 32_000);
-    } else if (size > 8 * 1024 * 1024) {
-        const resolved = await resolveTranscript(node.filePath, {}, node.harness);
-        text = (await lastAssistantTextOf(resolved, size)).slice(0, 32_000);
+    if (size > 8 * 1024 * 1024) {
+        text = (await LARGE_FILE_REPLY[node.harness](node.filePath, size)).slice(0, 32_000);
     } else {
         const resolved = await resolveTranscript(node.filePath, {}, node.harness);
         const envelope = await transcriptEnvelope(resolved, { limit: 20 });

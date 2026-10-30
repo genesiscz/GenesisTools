@@ -1,3 +1,4 @@
+import { canonicalAgent, type HandoffAgent } from "@app/handoff/targeting";
 import { gatherHarnessPoster } from "@genesiscz/utils/agent/runtime";
 import { routerLink } from "@genesiscz/utils/browser-router/router-link";
 import { toolCommand } from "@genesiscz/utils/cli/tool-command";
@@ -136,12 +137,22 @@ function letter(index: number): string {
     return String.fromCharCode(97 + index);
 }
 
+/** Whether a harness has a live session a router link can scroll to a decision (`tools claude cmux find`). */
+const FINDS_DECISIONS_IN_CHAT: Record<HandoffAgent, boolean> = {
+    claude: true,
+    codex: false,
+    grok: false,
+    copilot: false,
+};
+
 /**
  * A link that scrolls the live Claude session to where this decision was first asked, so a later
  * short re-ask can point back at its context. Null outside Claude and where the router cannot serve it.
  */
 function findLink(row: DecisionRecord): string | null {
-    if ((row.provider ?? "claude") !== "claude") {
+    const harness = canonicalAgent(row.provider ?? "claude");
+
+    if (!harness || !FINDS_DECISIONS_IN_CHAT[harness]) {
         return null;
     }
 
