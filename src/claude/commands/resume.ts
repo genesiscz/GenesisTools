@@ -155,9 +155,6 @@ export async function loadClaudeResumeCandidates(
     options: SessionPickOptions & { query?: string }
 ): Promise<DisplaySession[]> {
     const adapter = options.adapter ?? createClaudeAdapter();
-    if (adapter.kind !== "claude") {
-        throw new Error("Claude resume requires a Claude history provider");
-    }
 
     // A short listing is annoying; a session that resume cannot find is the one that costs an
     // evening, because the user knows the conversation exists and has no reason to connect its
@@ -351,7 +348,8 @@ export interface SessionPickOptions {
     allProjects?: boolean;
     limit?: number;
     cwd?: string;
-    adapter?: AgentSessionAdapter;
+    /** A Claude history adapter; the type admits no other provider's. */
+    adapter?: AgentSessionAdapter<"claude">;
     interactive?: boolean;
 }
 

@@ -96,19 +96,27 @@ export function transcriptOf({ context, processEnv, now = new Date(), home }: Ca
         return null;
     }
 
-    if (context.agent === "claude-code") {
-        const configDir = processEnv.CLAUDE_CONFIG_DIR?.trim() || defaultNativeHome("claude", home);
-        return claudeTranscript(context.sessionId, [context.cwd, context.repoRoot], configDir);
-    }
+    return CALLER_TRANSCRIPTS[context.agent]({ context, processEnv, now, home }, context.sessionId);
+}
 
-    if (context.agent === "codex") {
+/** Where each calling harness keeps the transcript of a session; Grok and Copilot sessions are not looked up. */
+const CALLER_TRANSCRIPTS: Record<
+    AgentRuntimeContext["agent"],
+    (inputs: CallerInputs & { now: Date }, sessionId: string) => string | null
+> = {
+    "claude-code": ({ context, processEnv, home }, sessionId) => {
+        const configDir = processEnv.CLAUDE_CONFIG_DIR?.trim() || defaultNativeHome("claude", home);
+        return claudeTranscript(sessionId, [context.cwd, context.repoRoot], configDir);
+    },
+    codex: ({ processEnv, now, home }, sessionId) => {
         // The caller's CODEX_HOME is a comma list; its Codex writes rollouts to the first entry.
         const codexHome = parseCodexHomeList(processEnv.CODEX_HOME)[0] ?? defaultNativeHome("codex", home);
-        return codexRollout(context.sessionId, codexHome, now);
-    }
-
-    return null;
-}
+        return codexRollout(sessionId, codexHome, now);
+    },
+    grok: () => null,
+    copilot: () => null,
+    unknown: () => null,
+};
 
 export function failureCaller(inputs: CallerInputs): FailureCaller {
     const { context, processEnv } = inputs;

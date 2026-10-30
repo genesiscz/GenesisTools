@@ -12,16 +12,12 @@
  * matching in `src/utils/process/classify.ts`.
  */
 export const HARNESS_BRANCH_RATCHET: ReadonlySet<string> = new Set<string>([
-    "src/claude/commands/resume.ts",
-    "src/cmux/lib/tab-process.ts",
-    "src/genesis-tools-mcp/lib/http-caller.ts",
     "src/question/lib/decisions/deliver.ts",
     "src/utils/ai/transcripts/around.ts",
     "src/utils/ai/transcripts/native-scan.ts",
     "src/utils/ai/transcripts/resolve.ts",
     "src/utils/ai/transcripts/session-title.ts",
     "src/utils/ai/transcripts/subagents.ts",
-    "src/utils/cli/failures/caller.ts",
 ]);
 
 export const HOOK_PAYLOAD_READ_RATCHET: ReadonlySet<string> = new Set<string>([]);

@@ -189,7 +189,7 @@ test("a name match older than the display limit is not hidden by a recent one", 
 test("content fallback keeps its own bounded result limit", async () => {
     // Regression test: PR #370 review thread 17 — exhaustive identity catalog limits leaked into full-text search.
     const seen: { list?: AgentSearchFilters; search?: AgentSearchFilters } = {};
-    const adapter: AgentSessionAdapter = {
+    const adapter: AgentSessionAdapter<"claude"> = {
         kind: "claude",
         list: async (filters) => {
             seen.list = filters;
@@ -355,7 +355,7 @@ test("a query that matches nothing still fails, and the home guard still refuses
 // to widen it.
 test("an empty current-folder listing names the folder and hints at --all-projects", async () => {
     const cwd = "/projects/nothing-here";
-    const adapter: AgentSessionAdapter = { kind: "claude", list: async () => [], search: async () => [] };
+    const adapter: AgentSessionAdapter<"claude"> = { kind: "claude", list: async () => [], search: async () => [] };
 
     const error = await pickSessionForResume(undefined, {
         cwd,
@@ -372,7 +372,7 @@ test("an empty current-folder listing names the folder and hints at --all-projec
 // Regression test: #453.1 — once a search already covers every project, repeating the
 // --all-projects hint would be wrong advice (there is nowhere wider left to search).
 test("an empty all-projects listing does not repeat the --all-projects hint", async () => {
-    const adapter: AgentSessionAdapter = { kind: "claude", list: async () => [], search: async () => [] };
+    const adapter: AgentSessionAdapter<"claude"> = { kind: "claude", list: async () => [], search: async () => [] };
 
     const error = await pickSessionForResume(undefined, {
         cwd: "/anywhere",
@@ -426,7 +426,7 @@ test("--list with a query lists only the sessions that match the query", async (
 // Regression test: #453.2 — an empty `--list` must name the same folder/hint as a plain
 // `tools cc`, not a bare "No Claude sessions match this selection."
 test("--list with nothing found throws the same folder-aware message as resume", async () => {
-    const adapter: AgentSessionAdapter = { kind: "claude", list: async () => [], search: async () => [] };
+    const adapter: AgentSessionAdapter<"claude"> = { kind: "claude", list: async () => [], search: async () => [] };
 
     await expect(
         listClaudeResumeSessions(undefined, { cwd: "/projects/nothing-here", adapter, allProjects: false })

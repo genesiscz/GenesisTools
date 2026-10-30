@@ -1,4 +1,4 @@
-import type { AccountProviderAlias } from "@genesiscz/utils/ai/providers/alias-list";
+import { type AccountProviderAlias, isAccountProviderAlias } from "@genesiscz/utils/ai/providers/alias-list";
 import { classifyCommand, runsAgent } from "@genesiscz/utils/process/classify";
 import type { ProcessEntry } from "@genesiscz/utils/process/processes";
 import { isShellProgram } from "@genesiscz/utils/shell/programs";
@@ -52,7 +52,8 @@ export function agentOfCommand(command: string): TtyAgent | undefined {
         (proc.kind !== "agent" && proc.kind !== "wrapper") ||
         // A codex-* helper with no session is a service; a versioned codex binary resuming a session is the agent.
         proc.service ||
-        (proc.provider !== "claude" && proc.provider !== "grok" && proc.provider !== "codex")
+        !proc.provider ||
+        !isAccountProviderAlias(proc.provider)
     ) {
         return undefined;
     }
