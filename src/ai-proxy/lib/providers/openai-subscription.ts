@@ -457,6 +457,8 @@ export class OpenAiSubscriptionProvider implements ProxyProvider {
         const nativeCompaction = compaction && !writtenCompaction && policy.mode === "native";
         const summaryWords = compaction && !nativeCompaction ? policy.words : undefined;
         const claudeSessionId = turn.sessionId;
+        const cacheScope = `${whamItemScope(req)}\u0000${stamp.accountHash}\u0000${conversationId ?? claudeSessionId ?? ""}`;
+        const cacheThread = `${cacheScope}\u0000${turn.threadKey ?? claudeSessionId ?? ""}`;
         const clientAgent = req.headers.get("user-agent") ?? undefined;
         const trace = new CompactionTrace({
             ...(context?.sessionId ? { session: context.sessionId } : {}),
@@ -576,7 +578,7 @@ export class OpenAiSubscriptionProvider implements ProxyProvider {
         // Codex keeps one cache per effort and model: say so where the cache was lost. A compaction turn is its own case.
         const cacheReset =
             claudeSessionId && !compaction
-                ? shapeChange(turn.threadKey ?? claudeSessionId, {
+                ? shapeChange(cacheThread, {
                       effort: effectiveEffort,
                       model: concreteModel,
                   })
@@ -588,7 +590,7 @@ export class OpenAiSubscriptionProvider implements ProxyProvider {
 
         if (claudeSessionId && Array.isArray(responsesBody.input)) {
             responsesBody.input = preserveCacheReminders(
-                turn.threadKey ?? claudeSessionId,
+                cacheThread,
                 responsesBody.input,
                 cacheReset ? cacheResetNotice(cacheReset) : undefined
             );
@@ -797,8 +799,8 @@ export class OpenAiSubscriptionProvider implements ProxyProvider {
                 ? parsed.messages.find((message) => isObject(message) && message.role === "user")
                 : undefined;
             const diagnosticThread = firstUser
-                ? `${whamItemScope(req)}\u0000${claudeSessionId}\u0000${contentHash(SafeJSON.stringify(firstUser))}`
-                : (turn.threadKey ?? claudeSessionId);
+                ? `${cacheScope}\u0000${claudeSessionId}\u0000${contentHash(SafeJSON.stringify(firstUser))}`
+                : cacheThread;
             setPrefixDiff(
                 req,
                 notePrefix(diagnosticThread, {

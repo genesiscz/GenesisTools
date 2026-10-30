@@ -15,6 +15,7 @@ export interface ThreadShape {
 }
 
 const MAX_THREADS = 1024;
+const MAX_REMINDERS_PER_THREAD = 128;
 
 const lastShape = new Map<string, ThreadShape>();
 const reminders = new Map<string, Array<{ index: number; hash: string; text: string }>>();
@@ -35,9 +36,11 @@ export function preserveCacheReminders(thread: string, input: unknown[], notice?
             retained.push({ index, hash: itemHash(input[index]), text: notice });
         }
     }
+    // Bound memory per thread. Evicting an old notice can cause one cache miss on a very long history.
+    const bounded = retained.slice(-MAX_REMINDERS_PER_THREAD);
     reminders.delete(thread);
-    if (retained.length > 0) {
-        reminders.set(thread, retained);
+    if (bounded.length > 0) {
+        reminders.set(thread, bounded);
     }
     while (reminders.size > MAX_THREADS) {
         const oldest = reminders.keys().next().value;
@@ -46,9 +49,15 @@ export function preserveCacheReminders(thread: string, input: unknown[], notice?
         }
         reminders.delete(oldest);
     }
+    const byIndex = new Map<number, string[]>();
+    for (const entry of bounded) {
+        const texts = byIndex.get(entry.index) ?? [];
+        texts.push(entry.text);
+        byIndex.set(entry.index, texts);
+    }
     return input.map((item, index) => {
-        const matches = retained.filter((entry) => entry.index === index);
-        if (matches.length === 0 || !isObject(item)) {
+        const matches = byIndex.get(index);
+        if (!matches || !isObject(item)) {
             return item;
         }
         const content =
@@ -57,8 +66,8 @@ export function preserveCacheReminders(thread: string, input: unknown[], notice?
                 : Array.isArray(item.content)
                   ? [...item.content]
                   : [];
-        for (const entry of matches) {
-            content.push({ type: "input_text", text: `<system-reminder>\n${entry.text}\n</system-reminder>` });
+        for (const text of matches) {
+            content.push({ type: "input_text", text: `<system-reminder>\n${text}\n</system-reminder>` });
         }
         return { ...item, content };
     });

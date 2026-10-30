@@ -50,6 +50,23 @@ describe("reasoning message identity", () => {
         });
     });
 
+    it("bounds the number of remembered notices per thread", async () => {
+        const { preserveCacheReminders, resetCacheShapeForTests } = await import(
+            "@app/ai-proxy/lib/sessions/cache-shape"
+        );
+        resetCacheShapeForTests();
+        const input: Array<{ role: string; content: string }> = [];
+        for (let index = 0; index < 130; index++) {
+            input.push({ role: "user", content: `message ${index}` });
+            preserveCacheReminders("thread", input, `notice ${index}`);
+        }
+        const restored = preserveCacheReminders("thread", input);
+        expect(restored[0]).toEqual(input[0]);
+        expect(restored[1]).toEqual(input[1]);
+        expect(SafeJSON.stringify(restored[2])).toContain("notice 2");
+        expect(SafeJSON.stringify(restored[129])).toContain("notice 129");
+    });
+
     it("times out an idle WHAM stream", async () => {
         const { whamSsePayloads } = await import("@app/ai-proxy/lib/providers/codex/wham-stream");
         let cancelled = false;
@@ -3024,10 +3041,16 @@ describe("a changed effort on one Claude Code thread, on the Codex agent", () =>
         setCompactionEventsPathForTests(undefined);
     });
 
-    async function send(effort: string | undefined, system = "Lead system prompt"): Promise<void> {
+    async function send(
+        effort: string | undefined,
+        system = "Lead system prompt",
+        identity: { accountName?: string; clientKey?: string; conversation?: string } = {}
+    ): Promise<unknown> {
         const { OpenAiSubscriptionProvider } = await import("./openai-subscription");
+        const { prefixDiffFor } = await import("@app/ai-proxy/lib/usage/prefix-diff");
         const provider = await OpenAiSubscriptionProvider.create({
             ...account,
+            name: identity.accountName ?? account.name,
             openaiSub: { defaultReasoningEffort: "low" },
         });
         const bodyText = SafeJSON.stringify({
@@ -3038,12 +3061,19 @@ describe("a changed effort on one Claude Code thread, on the Codex agent", () =>
             output_config: { effort },
             messages: [{ role: "user", content: "go on" }],
         });
+        const req = new Request("http://localhost/v1/messages", {
+            method: "POST",
+            body: bodyText,
+            headers: identity.clientKey ? { authorization: `Bearer ${identity.clientKey}` } : {},
+        });
         const res = await provider.messages?.(
-            new Request("http://localhost/v1/messages", { method: "POST", body: bodyText }),
+            req,
             "gpt-6.1-sol",
-            bodyText
+            bodyText,
+            identity.conversation ? { promptCacheKey: { key: identity.conversation, source: "client" } } : undefined
         );
         await res?.text();
+        return prefixDiffFor(req);
     }
 
     function events(): Array<Record<string, unknown>> {
@@ -3057,6 +3087,25 @@ describe("a changed effort on one Claude Code thread, on the Codex agent", () =>
             return [];
         }
     }
+
+    it("isolates shape, reminders and prefix diagnostics across accounts, clients and conversations", async () => {
+        const owner = { accountName: "work", clientKey: "client-a", conversation: "conversation-a" };
+        await send("high", undefined, owner);
+        await send("xhigh", undefined, owner);
+        expect(SafeJSON.stringify(sent[1]?.input)).toContain("<system-reminder>");
+        for (const other of [
+            { ...owner, accountName: "personal" },
+            { ...owner, clientKey: "client-b" },
+            { ...owner, conversation: "conversation-b" },
+        ]) {
+            const index = sent.length;
+            expect(await send("high", undefined, other)).toEqual({ part: "first" });
+            expect(SafeJSON.stringify(sent[index]?.input)).not.toContain("<system-reminder>");
+        }
+        expect(events().filter((event) => event.kind === "cache-reset")).toHaveLength(1);
+        await send("xhigh", undefined, owner);
+        expect(SafeJSON.stringify(sent.at(-1)?.input)).toContain("<system-reminder>");
+    });
 
     it("records a cache-reset event that names both efforts", async () => {
         await send("high");
