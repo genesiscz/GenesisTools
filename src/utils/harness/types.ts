@@ -18,7 +18,7 @@ export type HarnessPhase = "P1" | "P2" | "P3" | "P4" | "P5" | "P6" | "P7";
  * Parts implemented in `@genesiscz/utils` whose contract is written in the phase that moves them (plan section 3):
  * `live` (P2), `hooks`, `statusline` (P4), `compaction` (P5). Until then a driver can only declare them pending.
  */
-export type PendingContractPart = "live" | "statusline" | "compaction";
+export type PendingContractPart = "live" | "hooks" | "statusline" | "compaction";
 
 /**
  * Parts whose implementation lives in a tool, so the shared package can never import it: cmux capture and restore
