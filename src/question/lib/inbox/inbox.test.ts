@@ -3,6 +3,7 @@ import { existsSync, mkdtempSync, writeFileSync } from "node:fs";
 import { tmpdir } from "node:os";
 import { join } from "node:path";
 import type { AgentSessionRow } from "@app/ai/lib/sessions/agent-session-rows";
+import type { OpenQuestion } from "@genesiscz/utils/agents/dialogs/types";
 import type { TranscriptTurn } from "@genesiscz/utils/ai/transcripts/types";
 import { SafeJSON } from "@genesiscz/utils/json";
 import { answerGitWithoutSpawning } from "@genesiscz/utils/test/no-git";
@@ -23,6 +24,7 @@ import { type AskDeps, getAskForm, postAskForm } from "../pending/ask";
 import type { AskForm } from "../pending/types";
 import { answerInboxDecision, answerInboxDecisions, answerInboxForm } from "./answer";
 import { buildInbox, type InboxSessionInfo, inboxDelivery, scanTurns, sessionDecisions } from "./build";
+import { DIALOG_WATCH_WINDOW_MS, unnotified, watchedSessions } from "./dialogs";
 import { locateRef } from "./excerpts";
 import {
     type InboxDeps,
@@ -1267,5 +1269,94 @@ describe("inbox --session --all-items --since: the cursor", () => {
         expect(answer.full).toBe(true);
         expect(answer.decisions).toHaveLength(1);
         expect(typeof answer.cursor).toBe("string");
+    });
+});
+
+describe("structural questions in the inbox", () => {
+    const asked: OpenQuestion = {
+        provider: "claude",
+        sessionId: SESSION.sessionId,
+        toolCallId: "toolu_ask_9",
+        kind: "decision",
+        question: "Which parser?",
+        options: ["peg", "hand-written"],
+        askedAt: "2026-03-01T10:04:00.000Z",
+        source: "hook",
+    };
+
+    test("a turn that ends on AskUserQuestion with no ❓ DECISION text is listed and counted, under the record key", () => {
+        const permission: OpenQuestion = {
+            ...asked,
+            toolCallId: "permission:2026-03-01T10:04:30.000Z",
+            kind: "permission",
+            question: "Claude needs your permission to use Bash",
+        };
+        const closed: OpenQuestion = { ...asked, toolCallId: "toolu_old", closedAt: "2026-03-01T10:01:00.000Z" };
+        const scans = new Map([
+            [SESSION.sessionId, scanTurns([turn("assistant", "Pick one below.")]) ?? { at: null, blocks: [] }],
+        ]);
+        const inbox = buildInbox({
+            sessions: [SESSION],
+            scans,
+            rows: [],
+            forms: [],
+            // The same question from the hook and the watcher is one record already; listed twice it is still one item.
+            dialogs: [asked, asked, permission, closed],
+            now: Date.parse("2026-03-01T10:06:00.000Z"),
+        });
+
+        expect(inbox).toHaveLength(1);
+        expect(inbox[0]?.waiting).toBe(2);
+        expect(inbox[0]?.items.map((item) => [item.id, item.kind === "decision" ? item.source : null])).toEqual([
+            [`claude:${SESSION.sessionId}:toolu_ask_9`, "dialog"],
+            [`claude:${SESSION.sessionId}:permission:2026-03-01T10:04:30.000Z`, "dialog"],
+        ]);
+        const [first] = inbox[0]?.items ?? [];
+        expect(
+            first?.kind === "decision" ? [first.title, first.prompt, first.choices.map((c) => c.label)] : null
+        ).toEqual(["Question", "Which parser?", ["peg", "hand-written"]]);
+    });
+
+    test("loadInbox lists what InboxDeps.dialogs returns beside the transcript decisions", async () => {
+        const row = { ...SESSION, provider: "claude", cwdShort: "app", model: null, filePath: "/tmp/gt-inbox/q.jsonl" };
+        const deps: InboxDeps = {
+            sessions: async () => [row as AgentSessionRow],
+            tail: async () => [turn("assistant", ASK)],
+            stat: () => ({ size: 1, mtimeMs: 1 }),
+            rows: () => [],
+            forms: () => [],
+            dialogs: async () => [asked],
+            readCache: async () => null,
+            writeCache: async () => undefined,
+        };
+
+        const result = await loadInbox({ deps });
+
+        // Oldest first: the reply's decision at 10:00, the question tool at 10:04.
+        expect(result.sessions[0]?.items.map((item) => item.id)).toEqual([
+            `d_3_${SESSION.sessionId}`,
+            `claude:${SESSION.sessionId}:toolu_ask_9`,
+        ]);
+        expect(result.sessions[0]?.waiting).toBe(2);
+    });
+
+    test("the watcher reads only recent sessions of a harness that has the feature on, and each banner goes out once", () => {
+        const now = Date.parse("2026-03-02T10:00:00.000Z");
+        const rows = [
+            { ...SESSION, sessionId: "s-on", provider: "codex", filePath: "/tmp/a.jsonl", mtime: now - 60_000 },
+            { ...SESSION, sessionId: "s-off", provider: "claude", filePath: "/tmp/b.jsonl", mtime: now - 60_000 },
+            {
+                ...SESSION,
+                sessionId: "s-old",
+                provider: "codex",
+                filePath: "/tmp/c.jsonl",
+                mtime: now - DIALOG_WATCH_WINDOW_MS - 1,
+            },
+        ] as AgentSessionRow[];
+        const questions = { harnesses: { claude: false, codex: true, grok: false }, notify: true };
+
+        expect(watchedSessions(rows, questions, now).map((session) => session.sessionId)).toEqual(["s-on"]);
+        expect(unnotified([asked], new Set([`claude:${SESSION.sessionId}:toolu_ask_9`]))).toEqual([]);
+        expect(unnotified([asked], new Set())).toEqual([asked]);
     });
 });
