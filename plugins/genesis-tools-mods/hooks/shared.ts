@@ -109,8 +109,52 @@ export function forgetSettings(): void {
 }
 
 /** Appends one JSON line, `at` first, to a `.jsonl` file (`Host.append`); a line that could not be written is dropped. */
+/**
+ * Lines waiting for one append per file. Each append is a shell (`cat >>` in `register.tsx`), and in the quiet
+ * 15:00 to 18:00 of 2026-10-30 the mods' own logs made 2,315 of the 14,746 processes of 20 sessions. A file now
+ * gets every line of the last 10 s in one write; a host without a clock (a test) writes each line at once. A reload
+ * of the mods drops the lines still waiting, at most 10 s of a log.
+ */
+const queuedLog = new Map<string, string[]>();
+const LOG_FLUSH_MS = 10_000;
+const LOG_FLUSH_LINES = 100;
+
+async function flushLog(host: Host, path: string): Promise<void> {
+    const lines = queuedLog.get(path);
+    queuedLog.delete(path);
+
+    if (lines && lines.length > 0) {
+        await host.append(path, lines.join("")).catch(() => undefined);
+    }
+}
+
+/** Every waiting log line written now: the session ends. */
+export async function flushModLogs(host: Host): Promise<void> {
+    await Promise.all([...queuedLog.keys()].map((path) => flushLog(host, path)));
+}
+
 export async function appendJsonl(host: Host, path: string, record: Record<string, unknown>): Promise<void> {
-    await host.append(path, `${JSON.stringify({ at: new Date().toISOString(), ...record })}\n`).catch(() => undefined);
+    const line = `${JSON.stringify({ at: new Date().toISOString(), ...record })}\n`;
+
+    if (!host.sleep) {
+        await host.append(path, line).catch(() => undefined);
+        return;
+    }
+
+    const waiting = queuedLog.get(path);
+
+    if (waiting) {
+        waiting.push(line);
+
+        if (waiting.length >= LOG_FLUSH_LINES) {
+            await flushLog(host, path);
+        }
+
+        return;
+    }
+
+    queuedLog.set(path, [line]);
+    void host.sleep(LOG_FLUSH_MS).then(() => flushLog(host, path));
 }
 
 /**
@@ -122,6 +166,13 @@ export async function logMod(host: Host, feature: string, record: Record<string,
 
     if (dir) {
         await appendJsonl(host, `${dir}/mods-log/${feature}.jsonl`, record);
+    }
+}
+
+/** A routine reading (a refresh's rows, a measure): logged only with `mods.log.readings` on. */
+export async function logReading(host: Host, feature: string, record: Record<string, unknown>): Promise<void> {
+    if ((await settingsOf(host)).log.readings) {
+        await logMod(host, feature, record);
     }
 }
 

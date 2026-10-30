@@ -45,6 +45,7 @@ import {
     afterTools,
     agentsDir,
     type Feature,
+    flushModLogs,
     type Host,
     logMod,
     readHooksFile,
@@ -715,6 +716,7 @@ export const register: Register = (on) => {
 
     on("session.end", async ($, e, next) => {
         await markEnded(hostOf($));
+        await flushModLogs(hostOf($));
         await finishProcessLog($);
 
         return next(e);

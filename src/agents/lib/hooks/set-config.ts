@@ -90,6 +90,7 @@ export const SETTABLE_KEYS = [
     "mods.hooks.<tokens|dedupe>",
     "mods.sidebar.<hints|feedback|focus>",
     "mods.stall.<enabled|action|minutes>",
+    "mods.log.<readings>",
 ] as const;
 
 /** The flat keys of before 2026-10-23, still taken; `mods.<feature>` alone means its `enabled`. */
