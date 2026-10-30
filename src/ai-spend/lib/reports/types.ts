@@ -1,3 +1,4 @@
+import type { HarnessId } from "@genesiscz/utils/harness/types";
 import type { CodexContext } from "../drivers/codex-context";
 
 /**
@@ -25,7 +26,12 @@ export const SOURCE_IDS = [
     "jev",
 ] as const;
 
-export type SourceId = (typeof SOURCE_IDS)[number];
+/** A report source: an entry of `SOURCE_IDS`, and every coding-agent harness (the check below lists each one there). */
+export type SourceId = (typeof SOURCE_IDS)[number] | HarnessId;
+
+/** Refuses to compile while a harness is missing from `SOURCE_IDS`, whose order is ccusage's and so set by hand. */
+type EveryHarnessListed<Missing extends never> = Missing;
+export type HarnessSourcesListed = EveryHarnessListed<Exclude<HarnessId, (typeof SOURCE_IDS)[number]>>;
 
 export type PeriodGrain = "daily" | "weekly" | "monthly";
 export type ReportKind = PeriodGrain | "session" | "blocks" | "statusline" | "reviews";
