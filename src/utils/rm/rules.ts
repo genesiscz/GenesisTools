@@ -284,8 +284,9 @@ export const RM_RULES: readonly RmRule[] = [
     },
     {
         id: "git-history",
+        // The .git folder or anything in it (objects, HEAD, refs): git cannot see a work tree from in there.
         evaluate: (target) =>
-            basename(target.path) === ".git"
+            pathSegments(target.path).includes(".git") || pathSegments(target.canonical).includes(".git")
                 ? {
                       kind: "ask",
                       rule: "git-history",

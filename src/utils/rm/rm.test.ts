@@ -671,3 +671,17 @@ describe("security review fixes: detached HEAD", () => {
         expect(verdictOf(clone)).toEqual({ kind: "ask", rule: "unsaved-clone" });
     });
 });
+
+describe("security review fixes: git metadata", () => {
+    test("a path inside a .git folder needs the user, even in the session's scratch", () => {
+        const repo = join(dir("cc", "proj", "sess-1111"), "meta-clone");
+        git(base, "init", "-q", repo);
+        file(join(repo, "a.txt"), "a");
+        git(repo, "add", ".");
+        git(repo, "-c", "user.email=t@example.com", "-c", "user.name=t", "commit", "-qm", "init");
+
+        expect(verdictOf(join(repo, ".git", "objects"))).toEqual({ kind: "ask", rule: "git-history" });
+        expect(verdictOf(join(repo, ".git", "HEAD"))).toEqual({ kind: "ask", rule: "git-history" });
+        expect(verdictOf(join(repo, ".git"))).toEqual({ kind: "ask", rule: "git-history" });
+    });
+});
