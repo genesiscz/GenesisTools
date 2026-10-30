@@ -5,6 +5,7 @@ import { formatBytes } from "@genesiscz/utils/format";
 import { out } from "@genesiscz/utils/logger";
 import {
     appendRmLedger,
+    approvalDenyReason,
     createRmRequest,
     hardDenyReason,
     kickDrainer,
@@ -12,6 +13,8 @@ import {
     loadRmRequest,
     measureBytes,
     moveToTrash,
+    type RmRequestTarget,
+    recheckAfterWait,
     resolveTarget,
     returnAside,
     saveRmConfig,
@@ -120,12 +123,16 @@ export function registerRequestCommands(program: Command): void {
                 wanted: t,
                 target: resolveTarget(t.stored ?? t.path, request.cwd),
             }));
-            const blocked = entries.filter((e) => hardDenyReason(e.target, ctx.rules) !== null);
-            const openEntries = entries.filter((e) => !blocked.includes(e));
+            // A root is trusted, not deleted: only the hard-deny rules apply to it, not the worktree ones.
+            const denyOf = request.kind === "root" ? hardDenyReason : approvalDenyReason;
+            const blocked = entries
+                .map((e) => ({ ...e, denied: denyOf(e.target, ctx.rules) }))
+                .filter((e) => e.denied !== null);
+            const openEntries = entries.filter((e) => !blocked.some((b) => b.wanted === e.wanted));
             const open = openEntries.map((e) => e.target);
 
             for (const entry of blocked) {
-                out.println(pc.red(`refuse ${entry.wanted.path}: ${hardDenyReason(entry.target, ctx.rules)}`));
+                out.println(pc.red(`refuse ${entry.wanted.path}: ${entry.denied}`));
             }
 
             if (open.length === 0) {
@@ -155,8 +162,27 @@ export function registerRequestCommands(program: Command): void {
                 return;
             }
 
+            // The prompt can wait for minutes: each path must still name what the person was shown, and still pass
+            // the rules no approval overrides. A changed one stays in the request, which stays pending for it.
+            const unresolved = new Set<RmRequestTarget>();
+            const ready = openEntries.filter(({ wanted, target }) => {
+                const reason = recheckAfterWait(target, ctx.rules, denyOf);
+
+                if (reason) {
+                    out.println(pc.red(`refuse ${wanted.path}: ${reason}`));
+                    unresolved.add(wanted);
+                }
+
+                return reason === null;
+            });
+
+            if (ready.length === 0) {
+                process.exitCode = 1;
+                return;
+            }
+
             if (request.kind === "root") {
-                const roots = open.map((t) => ({
+                const roots = ready.map(({ target: t }) => ({
                     path: t.canonical,
                     note: request.reason ?? undefined,
                     addedAt: new Date().toISOString(),
@@ -176,14 +202,27 @@ export function registerRequestCommands(program: Command): void {
 
                 out.println(pc.green(`Trusted ${roots.map((r) => r.path).join(", ")}.`));
             } else {
+                const byTarget = new Map(ready.map((e) => [e.target, e.wanted]));
                 const batch = moveToTrash(
-                    openEntries.map(({ wanted, target }) => ({
+                    ready.map(({ wanted, target }) => ({
                         target,
                         rule: `approved ${id}`,
                         original: wanted.path,
                         bytes: wanted.bytes,
                     })),
-                    { config: ctx.config, caller: request.caller, graceMinutes: ctx.config.grace.otherMinutes }
+                    {
+                        config: ctx.config,
+                        caller: request.caller,
+                        graceMinutes: ctx.config.grace.otherMinutes,
+                        onRefused: (move, reason) => {
+                            out.println(pc.red(`refuse ${move.original ?? move.target.path}: ${reason}`));
+                            const wanted = byTarget.get(move.target);
+
+                            if (wanted) {
+                                unresolved.add(wanted);
+                            }
+                        },
+                    }
                 );
                 removeEmptyAsideDir(request.asideDir);
                 out.println(pc.green(`Moved ${batch?.items.length ?? 0} item(s) to the trash.`));
@@ -195,12 +234,19 @@ export function registerRequestCommands(program: Command): void {
                 kickDrainer(ctx.config);
             }
 
-            saveRmRequest({
-                ...request,
-                status: "approved",
-                decidedAt: new Date().toISOString(),
-                decidedVia: answer.via,
-            });
+            if (unresolved.size > 0) {
+                saveRmRequest({ ...request, targets: request.targets.filter((t) => unresolved.has(t)) });
+                out.println(pc.yellow(`Request ${id} stays pending for ${unresolved.size} path(s) that changed.`));
+                process.exitCode = 1;
+            } else {
+                saveRmRequest({
+                    ...request,
+                    status: "approved",
+                    decidedAt: new Date().toISOString(),
+                    decidedVia: answer.via,
+                });
+            }
+
             appendRmLedger({ action: "approve", requestId: id, via: answer.via, caller: ctx.caller });
         });
 

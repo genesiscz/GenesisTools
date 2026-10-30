@@ -5,7 +5,7 @@ import { appendRmLedger } from "./ledger";
 import { ensurePrivateDir, isSameOrInside, realOrSelf, sharedTempRoot } from "./paths";
 import { listRmRequests, type RmRequestTarget } from "./requests";
 import type { RmCaller, RmTarget, RmVerdict } from "./rules";
-import { measureBytes, trashItemName } from "./trash";
+import { measureBytes, RmTargetChangedError, renameVerified, trashItemName } from "./trash";
 
 /** The folder under the shared temp root each agent keeps its session scratch in. */
 export const AGENT_SCRATCH_DIRS: Readonly<Record<string, string>> = {
@@ -80,10 +80,15 @@ export function moveAside(
 
         try {
             mkdirSync(dirname(stored), { recursive: true });
-            renameSync(input.target.path, stored);
+            renameVerified(input.target, stored);
         } catch (error) {
             const code = (error as NodeJS.ErrnoException).code;
-            const reason = code === "EXDEV" ? "on another volume than the aside folder" : `the move failed (${code})`;
+            const reason =
+                error instanceof RmTargetChangedError
+                    ? error.message
+                    : code === "EXDEV"
+                      ? "on another volume than the aside folder"
+                      : `the move failed (${code})`;
             logger.debug({ path: input.target.path, stored, error }, "rm: kept in place instead of aside");
             result.kept.push({ input, reason });
             continue;

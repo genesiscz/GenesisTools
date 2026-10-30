@@ -10,6 +10,7 @@ import { pendingAsideDirs, pendingAsideFor, sessionScratchRoots } from "./aside"
 import type { RmConfig, RmPreset } from "./config";
 import {
     canonicalPath,
+    identityOf,
     isInside,
     isMountPoint,
     isSameOrInside,
@@ -43,6 +44,11 @@ export interface RmTarget {
     /** The realpath of the parent plus the name: a symlink names the link. */
     canonical: string;
     kind: RmTargetKind;
+    /**
+     * The device and inode the checks saw (`dev:ino`), or null when missing. The move refuses a path that names
+     * anything else by then: a file swapped in, or a parent turned into a symlink.
+     */
+    identity: string | null;
 }
 
 /** Who asks. `sessionId` scopes the session's own scratch folder and its own files. */
@@ -107,7 +113,27 @@ export function resolveTarget(input: string, cwd: string): RmTarget {
         kind = "missing";
     }
 
-    return { input, path, canonical: canonicalPath(path), kind };
+    return { input, path, canonical: canonicalPath(path), kind, identity: identityOf(path) };
+}
+
+/**
+ * Why `pinned` no longer names what was checked, or null: its parent resolves elsewhere now (a folder swapped for a
+ * symlink), or the path holds another file or folder (another device and inode).
+ */
+export function targetChangeReason(pinned: RmTarget): string | null {
+    if (pinned.identity === null) {
+        return "it did not exist when it was checked";
+    }
+
+    if (canonicalPath(pinned.path) !== pinned.canonical) {
+        return `its folder now resolves to ${dirname(canonicalPath(pinned.path))}`;
+    }
+
+    if (identityOf(pinned.path) !== pinned.identity) {
+        return "another file or folder is there now";
+    }
+
+    return null;
 }
 
 const POSIX_DENY_EXACT = [
@@ -452,6 +478,45 @@ function holdsUnsavedWork(verdict: RmVerdict, target: RmTarget, ctx: RmRuleConte
     }
 
     return target.kind === "dir" && ctx.nestedRepos(target).length > 0;
+}
+
+/**
+ * Why no approval may delete `target`, or null: the hard-deny rules, plus a linked worktree git still lists at the
+ * target or inside it. An approval overrides an ask, never these, so they are checked again once the person answers.
+ */
+export function approvalDenyReason(target: RmTarget, ctx: RmRuleContext): string | null {
+    const hard = hardDenyReason(target, ctx);
+
+    if (hard) {
+        return hard;
+    }
+
+    const owner = target.kind === "missing" ? null : ctx.git(target).linkedWorktreeOf;
+
+    if (owner) {
+        return `a linked worktree of ${owner}: use git worktree remove, which refuses uncommitted work`;
+    }
+
+    const nested = nestedWorkVerdict(target, ctx);
+    return nested?.kind === "deny" ? nested.reason : null;
+}
+
+/**
+ * After a wait for a person: why `pinned` must not be acted on now, or null. It must still name what was checked,
+ * and what it names now must pass `deny` (`approvalDenyReason` for a deletion).
+ */
+export function recheckAfterWait(
+    pinned: RmTarget,
+    ctx: RmRuleContext,
+    deny: (target: RmTarget, ctx: RmRuleContext) => string | null = approvalDenyReason
+): string | null {
+    const changed = targetChangeReason(pinned);
+
+    if (changed) {
+        return `changed while waiting: ${changed}`;
+    }
+
+    return deny(resolveTarget(pinned.path, ctx.cwd), ctx);
 }
 
 export function evaluateTarget(target: RmTarget, ctx: RmRuleContext): RmVerdict {

@@ -5,6 +5,7 @@ import {
     mkdirSync,
     mkdtempSync,
     readdirSync,
+    readFileSync,
     realpathSync,
     renameSync,
     statSync,
@@ -47,6 +48,7 @@ import {
     type RmConfig,
     type RmLedgerEntry,
     type RmRuleContext,
+    recheckAfterWait,
     resolveTarget,
     restoreBatch,
     returnAside,
@@ -813,5 +815,80 @@ describe("security review fixes: private trash", () => {
 
         expect(aside.moved).toHaveLength(1);
         expect(statSync(asideRoot).mode & 0o777).toBe(0o700);
+    });
+});
+
+describe("security review fixes: the path is checked, then moved", () => {
+    function moveOne(target: ReturnType<typeof resolveTarget>, hooks?: { beforeRename?: () => void }) {
+        const refused: string[] = [];
+        const batch = moveToTrash([{ target, rule: "test" }], {
+            config,
+            caller: AGENT,
+            graceMinutes: 60,
+            paths: trashPaths,
+            hooks,
+            onRefused: (_move, reason) => refused.push(reason),
+        });
+        return { batch, refused };
+    }
+
+    test("a file swapped in after the check is not trashed", () => {
+        const path = file(join(dir("race-file"), "draft.md"), "checked");
+        const target = resolveTarget(path, base);
+        renameSync(path, `${path}.moved`);
+        file(path, "a different file");
+
+        const { batch, refused } = moveOne(target);
+
+        expect(batch).toBeNull();
+        expect(refused[0]).toMatch(/another file or folder/);
+        expect(readFileSync(path, "utf8")).toBe("a different file");
+    });
+
+    test("a parent folder swapped for a symlink after the check moves nothing behind the link", () => {
+        const parent = dir("race-parent", "work");
+        file(join(parent, "out.log"), "checked");
+        const target = resolveTarget(join(parent, "out.log"), base);
+        const precious = file(join(dir("race-precious"), "out.log"), "precious");
+        renameSync(parent, `${parent}.old`);
+        symlinkSync(join(base, "race-precious"), parent);
+
+        const { batch, refused } = moveOne(target);
+
+        expect(batch).toBeNull();
+        expect(refused[0]).toMatch(/now resolves to/);
+        expect(readFileSync(precious, "utf8")).toBe("precious");
+    });
+
+    test("a swap inside the window between the last check and the rename is put back and refused", () => {
+        const path = file(join(dir("race-window"), "draft.md"), "checked");
+        const target = resolveTarget(path, base);
+        const swap = () => {
+            renameSync(path, `${path}.moved`);
+            file(path, "swapped in at the last moment");
+        };
+
+        const { batch, refused } = moveOne(target, { beforeRename: swap });
+
+        expect(batch).toBeNull();
+        expect(refused[0]).toMatch(/swapped during the move; put back/);
+        expect(readFileSync(path, "utf8")).toBe("swapped in at the last moment");
+    });
+
+    test("after the wait, a path that became a linked worktree is refused; an unchanged one passes", () => {
+        const origin = dir("race-origin");
+        git(origin, "init", "-q");
+        file(join(origin, "a.txt"), "a");
+        git(origin, "add", ".");
+        git(origin, "-c", "user.email=t@example.com", "-c", "user.name=t", "commit", "-qm", "init");
+        const later = dir("race-later");
+        const pinned = resolveTarget(later, base);
+        const c = ctx();
+
+        expect(recheckAfterWait(pinned, c)).toBeNull();
+
+        git(origin, "worktree", "add", "-q", "--detach", join(later, "wt"));
+
+        expect(recheckAfterWait(pinned, c)).toMatch(/linked worktree/);
     });
 });

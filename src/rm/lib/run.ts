@@ -22,6 +22,7 @@ import {
     type RmPlanItem,
     type RmRuleContext,
     type RmVerdictKind,
+    recheckAfterWait,
     rmCallerFromRuntime,
     type TrashBatch,
 } from "@genesiscz/utils/rm";
@@ -148,12 +149,25 @@ export async function executePlan(
             });
 
             if (outcome.approved) {
-                allowed.push(
-                    ...asked.map((item) => ({
-                        ...item,
-                        verdict: { ...item.verdict, rule: `confirmed ${item.verdict.rule}` },
-                    }))
-                );
+                // The prompt can wait: a path that changed meanwhile, or now hits a rule no approval overrides, stays.
+                for (const item of asked) {
+                    const reason = recheckAfterWait(item.target, ctx.rules);
+
+                    if (reason) {
+                        out.println(pc.red(`refuse ${shown(item.target.path, ctx.cwd)}: ${reason}`));
+                        appendRmLedger({
+                            action: "refuse",
+                            path: item.target.path,
+                            rule: "target-changed",
+                            reason,
+                            caller: ctx.caller,
+                        });
+                        result.refused++;
+                        continue;
+                    }
+
+                    allowed.push({ ...item, verdict: { ...item.verdict, rule: `confirmed ${item.verdict.rule}` } });
+                }
             } else {
                 out.println(pc.yellow(`Kept ${asked.length} path(s): ${outcome.detail}.`));
             }
@@ -173,7 +187,15 @@ export async function executePlan(
         const elapsed = createStopwatch();
         const batch = moveToTrash(
             items.map((item) => ({ target: item.target, rule: item.verdict.rule })),
-            { config: ctx.config, caller: ctx.caller, graceMinutes: minutes }
+            {
+                config: ctx.config,
+                caller: ctx.caller,
+                graceMinutes: minutes,
+                onRefused: (move, reason) => {
+                    out.println(pc.red(`refuse ${shown(move.target.path, ctx.cwd)}: ${reason}`));
+                    result.refused++;
+                },
+            }
         );
 
         if (batch) {
@@ -191,7 +213,7 @@ export async function executePlan(
     }
 
     kickDrainer(ctx.config);
-    process.exitCode = refused.length > 0 ? 1 : result.requestId ? 3 : 0;
+    process.exitCode = result.refused > 0 ? 1 : result.requestId ? 3 : 0;
 
     if (options.json) {
         out.result({

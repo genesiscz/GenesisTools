@@ -63,6 +63,16 @@ export function realOrSelf(path: string): string {
     }
 }
 
+/** The device and inode `path` itself names (a symlink names the link), or null when nothing is there. */
+export function identityOf(path: string): string | null {
+    try {
+        const stat = lstatSync(path, { bigint: true });
+        return `${stat.dev}:${stat.ino}`;
+    } catch {
+        return null;
+    }
+}
+
 /** True when `child` lies strictly inside `parent` (not equal to it). Works with either separator. */
 export function isInside(child: string, parent: string): boolean {
     const rel = relative(parent, child);

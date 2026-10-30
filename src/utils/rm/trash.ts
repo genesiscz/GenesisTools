@@ -26,13 +26,14 @@ import { appendRmLedger } from "./ledger";
 import {
     canonicalPath,
     ensurePrivateDir,
+    identityOf,
     isInside,
     mountPointOf,
     pathSegments,
     realOrSelf,
     VOLUME_TRASH_DIR,
 } from "./paths";
-import type { RmCaller, RmTarget, RmTargetKind } from "./rules";
+import { type RmCaller, type RmTarget, type RmTargetKind, targetChangeReason } from "./rules";
 
 export interface TrashItem {
     original: string;
@@ -146,6 +147,46 @@ export function assertInsideTrash(path: string, config: RmConfig, level: "item" 
     }
 }
 
+/** The path no longer names what the checks saw; nothing was moved (or it was put back). */
+export class RmTargetChangedError extends Error {
+    constructor(path: string, reason: string) {
+        super(`rm: refusing ${path}: ${reason}`);
+        this.name = "RmTargetChangedError";
+    }
+}
+
+/** A seam for the test that swaps the path inside the window between the last check and the rename. */
+export interface RenameHooks {
+    beforeRename?: () => void;
+}
+
+/**
+ * Renames `target` to `to` only while it still names what was checked: the same canonical folder and the same
+ * device and inode, checked right before the rename. Node has no `renameat`, so a swap can still land between that
+ * check and the rename; the moved item's inode is checked after it, and a stranger is put back and refused.
+ */
+export function renameVerified(target: RmTarget, to: string, hooks: RenameHooks = {}): void {
+    const before = targetChangeReason(target);
+
+    if (before) {
+        throw new RmTargetChangedError(target.path, before);
+    }
+
+    hooks.beforeRename?.();
+    renameSync(target.path, to);
+
+    if (identityOf(to) === target.identity) {
+        return;
+    }
+
+    if (identityOf(target.path) === null) {
+        renameSync(to, target.path);
+        throw new RmTargetChangedError(target.path, "it was swapped during the move; put back");
+    }
+
+    throw new RmTargetChangedError(target.path, `it was swapped during the move and waits at ${to}`);
+}
+
 export interface MoveRequest {
     target: RmTarget;
     rule: string;
@@ -161,6 +202,9 @@ export interface MoveOptions {
     graceMinutes: number;
     paths?: TrashPaths;
     now?: Date;
+    /** A path that no longer names what was checked: it stays where it is, and the run says so. */
+    onRefused?: (request: MoveRequest, reason: string) => void;
+    hooks?: RenameHooks;
 }
 
 /**
@@ -187,19 +231,31 @@ export function moveToTrash(requests: readonly MoveRequest[], options: MoveOptio
         let stored = join(trashRootFor(request.target, options.config), batch.id, name);
 
         try {
-            mkdirSync(dirname(stored), { recursive: true });
-            renameSync(request.target.path, stored);
+            try {
+                mkdirSync(dirname(stored), { recursive: true });
+                renameVerified(request.target, stored, options.hooks);
+            } catch (error) {
+                if ((error as NodeJS.ErrnoException).code !== "EXDEV") {
+                    throw error;
+                }
+
+                // The device check said one volume but the rename crossed two (a firmlink, a bind mount): fall
+                // back to the trash at the target's own mount point, where the rename stays a rename.
+                stored = join(volumeTrashDir(request.target.path), batch.id, name);
+                logger.debug(
+                    { path: request.target.path, stored },
+                    "rm: cross-volume rename, using the volume's trash"
+                );
+                mkdirSync(dirname(stored), { recursive: true });
+                renameVerified(request.target, stored, options.hooks);
+            }
         } catch (error) {
-            if ((error as NodeJS.ErrnoException).code !== "EXDEV") {
+            if (!(error instanceof RmTargetChangedError)) {
                 throw error;
             }
 
-            // The device check said one volume but the rename crossed two (a firmlink, a bind mount): fall back
-            // to the trash at the target's own mount point, where the rename stays a rename.
-            stored = join(volumeTrashDir(request.target.path), batch.id, name);
-            logger.debug({ path: request.target.path, stored }, "rm: cross-volume rename, using the volume's trash");
-            mkdirSync(dirname(stored), { recursive: true });
-            renameSync(request.target.path, stored);
+            refuseChanged(request, error.message, options);
+            continue;
         }
 
         const original = request.original ?? request.target.path;
@@ -218,7 +274,19 @@ export function moveToTrash(requests: readonly MoveRequest[], options: MoveOptio
         logger.debug({ path: request.target.path, stored, batch: batch.id }, "rm: moved aside");
     }
 
-    return batch;
+    return batch.items.length > 0 ? batch : null;
+}
+
+function refuseChanged(request: MoveRequest, reason: string, options: MoveOptions): void {
+    logger.warn({ path: request.target.path, reason }, "rm: the path changed since it was checked");
+    appendRmLedger({
+        action: "refuse",
+        path: request.original ?? request.target.path,
+        rule: "target-changed",
+        reason,
+        caller: options.caller,
+    });
+    options.onRefused?.(request, reason);
 }
 
 function batchFile(paths: TrashPaths, id: string): string {
