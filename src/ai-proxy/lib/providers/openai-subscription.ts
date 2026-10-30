@@ -500,6 +500,7 @@ export class OpenAiSubscriptionProvider implements ProxyProvider {
             toolResultImages: true,
             // A change of `tools` reads 0% of the WHAM cache, so tool search's loads go in as input items.
             deferredToolsAsInput: true,
+            deferredRecoveryScope: cacheThread,
             reasoningItem: (thinking) => {
                 const opened = codec.open(thinking);
 

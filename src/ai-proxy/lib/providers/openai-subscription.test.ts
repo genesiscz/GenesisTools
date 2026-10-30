@@ -2802,7 +2802,11 @@ describe("tools that Claude Code's tool search loads, on the Codex agent", () =>
         },
     ];
 
-    async function sentBody(messages: unknown[], tools: unknown[]): Promise<Record<string, unknown>> {
+    async function sentBody(
+        messages: unknown[],
+        tools: unknown[],
+        clientKey?: string
+    ): Promise<Record<string, unknown>> {
         const sent: Array<Record<string, unknown>> = [];
         globalThis.fetch = (async (_url: RequestInfo | URL, init?: RequestInit) => {
             sent.push(SafeJSON.parse(String(init?.body)) as Record<string, unknown>);
@@ -2812,7 +2816,11 @@ describe("tools that Claude Code's tool search loads, on the Codex agent", () =>
         const provider = await OpenAiSubscriptionProvider.create(account);
         const bodyText = SafeJSON.stringify({ model: "gpt-6.1-sol", stream: true, max_tokens: 1024, tools, messages });
         const res = await provider.messages?.(
-            new Request("http://localhost/v1/messages", { method: "POST", body: bodyText }),
+            new Request("http://localhost/v1/messages", {
+                method: "POST",
+                body: bodyText,
+                headers: clientKey ? { authorization: `Bearer ${clientKey}` } : {},
+            }),
             "gpt-6.1-sol",
             bodyText
         );
@@ -2863,6 +2871,54 @@ describe("tools that Claude Code's tool search loads, on the Codex agent", () =>
             (item) => item.type === "additional_tools"
         );
         expect(additions).toHaveLength(1);
+    });
+
+    it("keeps compacted introductions stable across later searches and new deferred tools", async () => {
+        const first = [
+            { role: "user", content: "This session is being continued.\n\nSummary: cache regression case." },
+        ];
+        const search = (id: string, name: string) => [
+            { role: "assistant", content: [{ type: "tool_use", id, name: "ToolSearch", input: { query: name } }] },
+            {
+                role: "user",
+                content: [
+                    { type: "tool_result", tool_use_id: id, content: [{ type: "tool_reference", tool_name: name }] },
+                ],
+            },
+        ];
+        const initialTools = [tool("Monitor", true), tool("ToolSearch")];
+        const nextTools = [tool("Monitor", true), tool("TaskStop", true), tool("ToolSearch")];
+        const afterMonitor = [...first, ...search("search-one", "Monitor")];
+        const afterTask = [...afterMonitor, ...search("search-two", "TaskStop")];
+        const initial = (await sentBody(first, initialTools)).input as Array<Record<string, unknown>>;
+        const second = (await sentBody(afterMonitor, nextTools)).input as Array<Record<string, unknown>>;
+        const third = (await sentBody(afterTask, nextTools)).input as Array<Record<string, unknown>>;
+        expect(second.slice(0, initial.length)).toEqual(initial);
+        expect(third.slice(0, second.length)).toEqual(second);
+        const names = third
+            .filter((item) => item.type === "additional_tools")
+            .map((item) => (item.tools as Array<{ name: string }>).map((entry) => entry.name));
+        expect(names).toEqual([["Monitor"], ["TaskStop"]]);
+    });
+
+    it("isolates remembered compacted introductions by client", async () => {
+        const history = [{ role: "user", content: "This session is being continued.\n\nSummary: separate clients." }];
+        const first = await sentBody(history, [tool("Monitor", true)], "client-a");
+        const second = await sentBody(history, [tool("TaskStop", true)], "client-b");
+        const names = (body: Record<string, unknown>) => {
+            const input = body.input as Array<Record<string, unknown>>;
+            return (input[0]?.tools as Array<{ name: string }> | undefined)?.map((entry) => entry.name);
+        };
+        expect(names(first)).toEqual(["Monitor"]);
+        expect(names(second)).toEqual(["TaskStop"]);
+    });
+
+    it("still introduces every tool when the recovery snapshot exceeds its memory limit", async () => {
+        const history = [{ role: "user", content: "This session is being continued.\n\nSummary: many tools." }];
+        const tools = Array.from({ length: 513 }, (_, index) => tool(`Deferred${index}`, true));
+        const body = await sentBody(history, tools);
+        const input = body.input as Array<Record<string, unknown>>;
+        expect((input[0]?.tools as unknown[] | undefined)?.length).toBe(513);
     });
 
     it("introduces a deferred tool whose search result is absent after compaction", async () => {

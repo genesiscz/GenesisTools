@@ -1,3 +1,4 @@
+import { createHash } from "node:crypto";
 import { grokReasoningCodec } from "@app/ai-proxy/lib/translators/formats/anthropic/reasoning-codec";
 import { SafeJSON } from "@genesiscz/utils/json";
 import { logger } from "@genesiscz/utils/logger";
@@ -42,6 +43,8 @@ export interface ResponsesTranslationHooks {
      * 42,227 tokens cached and the model called the tool. Off: loaded tools join `tools` (`stableToolOrder`).
      */
     deferredToolsAsInput?: boolean;
+    /** Account, client and conversation scope for remembered compaction introductions. */
+    deferredRecoveryScope?: string;
     /**
      * The items an assistant message produced earlier, when Claude Code sent it with its thinking. Asked only for a
      * message that carries no thinking now; a returned list replaces the message's own translation.
@@ -398,13 +401,13 @@ function isDeferredTool(tool: unknown): tool is JsonRecord {
     return isObject(tool) && tool.defer_loading === true && typeof tool.name === "string";
 }
 
-function hasCompactedHistory(messages: unknown): boolean {
+function compactedHistoryText(messages: unknown): string | undefined {
     if (!Array.isArray(messages)) {
-        return false;
+        return undefined;
     }
     const first = messages.find((message) => isObject(message) && message.role === "user");
     if (!isObject(first)) {
-        return false;
+        return undefined;
     }
     const text =
         typeof first.content === "string"
@@ -415,7 +418,37 @@ function hasCompactedHistory(messages: unknown): boolean {
                     .map((block) => (typeof block.text === "string" ? block.text : ""))
                     .join("\n")
               : "";
-    return text.startsWith("This session is being continued") || text.includes("[codex-compaction ");
+    return text.startsWith("This session is being continued") || text.includes("[codex-compaction ") ? text : undefined;
+}
+
+// A first observation fixes the compacted prefix. New tool references belong at their later search result.
+const recoveredByHistory = new Map<string, string[]>();
+const MAX_RECOVERED_HISTORIES = 1024;
+const MAX_RECOVERED_TOOLS = 512;
+
+function recoveredToolNames(scope: string, summary: string, deferred: DeferredTools, messages: unknown): string[] {
+    const key = createHash("sha256")
+        .update(SafeJSON.stringify([scope, summary]))
+        .digest("hex");
+    let names = recoveredByHistory.get(key);
+    if (!names) {
+        const referenced = new Set(referencedToolNames(messages));
+        names = [...deferred.byName.keys()].filter((name) => !referenced.has(name));
+        if (names.length > MAX_RECOVERED_TOOLS) {
+            logger.warn({ count: names.length }, "ai-proxy: too many recovered tools to remember their cache prefix");
+            return names;
+        }
+    }
+    recoveredByHistory.delete(key);
+    recoveredByHistory.set(key, names);
+    while (recoveredByHistory.size > MAX_RECOVERED_HISTORIES) {
+        const oldest = recoveredByHistory.keys().next().value;
+        if (oldest === undefined) {
+            break;
+        }
+        recoveredByHistory.delete(oldest);
+    }
+    return names;
 }
 
 function deferredTools(tools: unknown): DeferredTools {
@@ -519,18 +552,19 @@ export function anthropicToResponses(body: JsonRecord, model: string, hooks: Res
     const dropped = { thinking: 0 };
     const deferred = hooks.deferredToolsAsInput ? deferredTools(body.tools) : undefined;
 
-    if (deferred && hasCompactedHistory(body.messages)) {
-        const referenced = new Set(referencedToolNames(body.messages));
-        const orphaned = [...deferred.byName.entries()].filter(([name]) => !referenced.has(name));
-        if (orphaned.length > 0) {
-            input.push({
-                type: "additional_tools",
-                role: "developer",
-                tools: orphaned.map(([, tool]) => responsesTool(tool)),
-            });
-            for (const [name] of orphaned) {
+    const summary = deferred ? compactedHistoryText(body.messages) : undefined;
+    if (deferred && summary !== undefined) {
+        const names = recoveredToolNames(hooks.deferredRecoveryScope ?? "", summary, deferred, body.messages);
+        const tools: JsonRecord[] = [];
+        for (const name of names) {
+            const tool = deferred.byName.get(name);
+            if (tool) {
+                tools.push(responsesTool(tool));
                 deferred.sent.add(name);
             }
+        }
+        if (tools.length > 0) {
+            input.push({ type: "additional_tools", role: "developer", tools });
         }
     }
 
