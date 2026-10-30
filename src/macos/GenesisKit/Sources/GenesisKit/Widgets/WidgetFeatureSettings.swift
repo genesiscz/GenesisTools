@@ -294,6 +294,13 @@ private struct WidgetGeneralSettings: View {
                     }.labelsHidden().pickerStyle(.segmented).frame(width: 250, alignment: .trailing)
                 }
                 Divider()
+                NativeSettingsRow("Answer to an agent's dialog", detail: "An answer to an agent's own question dialog, such as Claude's AskUserQuestion: press the option's key in the live dialog, or refuse and leave the dialog to the terminal.") {
+                    Picker("Answer to an agent's dialog", selection: string("dialogAnswer", prefs?.dialogAnswer ?? "press")) {
+                        Text("Press the option").tag("press")
+                        Text("Refuse").tag("refuse")
+                    }.labelsHidden().pickerStyle(.segmented).frame(width: 250, alignment: .trailing)
+                }
+                Divider()
                 NativeSettingsToggle(
                     "Staged at start", detail: "When the widget starts with decisions staged and not sent, a popup lists them with Send now until you close it.",
                     isOn: boolean("stagedReminder", prefs?.stagedReminder ?? true))
