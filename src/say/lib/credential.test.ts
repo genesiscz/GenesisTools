@@ -1,10 +1,11 @@
-import { afterEach, beforeEach, describe, expect, test } from "bun:test";
+import { afterEach, beforeEach, describe, expect, mock, spyOn, test } from "bun:test";
 import { randomBytes } from "node:crypto";
 import { mkdtempSync } from "node:fs";
 import { tmpdir } from "node:os";
 import { join } from "node:path";
 import { AiConfigStore } from "@genesiscz/utils/ai/config/AiConfigStore";
 import type { AccountEntry } from "@genesiscz/utils/ai/config/schema";
+import { APPROVAL_TIMEOUT_MS } from "@genesiscz/utils/ai/gate/approve";
 import { ai } from "@genesiscz/utils/ai/tasks/facade";
 import { queryUsage } from "@genesiscz/utils/ai/usage";
 import { env } from "@genesiscz/utils/env";
@@ -23,6 +24,47 @@ import {
     SayAccountError,
     sayAccountKey,
 } from "./credential";
+
+// A copy: `mock.module` rewrites the live namespace, and the fake below calls the real execTool through it.
+const realCli = { ...(await import("@genesiscz/utils/cli")) };
+
+type ExecResult = Awaited<ReturnType<typeof realCli.execTool>>;
+
+const gateRequests: Array<{ args: string[]; timeout: number | undefined }> = [];
+
+mock.module("@genesiscz/utils/cli", () => ({
+    ...realCli,
+    // `tools ai gate request` waits for Touch ID in a child process. This one never answers, like a gate with nobody at
+    // the Mac or a child that never exits: it settles only through the caller's deadline, the way execTool's timeout
+    // settles a real child (collectOutput in src/utils/cli/tools.ts). Every other tool runs for real.
+    execTool: (...[args, options]: Parameters<typeof realCli.execTool>): Promise<ExecResult> => {
+        if (args[0] !== "ai" || args[1] !== "gate") {
+            return realCli.execTool(args, options);
+        }
+
+        gateRequests.push({ args, timeout: options?.timeout });
+
+        if (options?.timeout === undefined) {
+            return new Promise<ExecResult>(() => {});
+        }
+
+        return Promise.resolve({ success: false, stdout: "", stderr: "", exitCode: 124, timedOut: true });
+    },
+}));
+
+/** True when `work` settles within `ms`; false when it is still pending then. Leaves no timer behind. */
+async function settlesWithin(work: Promise<unknown>, ms: number): Promise<boolean> {
+    let timer: ReturnType<typeof setTimeout> | undefined;
+    const late = new Promise<false>((resolve) => {
+        timer = setTimeout(() => resolve(false), ms);
+    });
+
+    try {
+        return await Promise.race([work.then(() => true), late]);
+    } finally {
+        clearTimeout(timer);
+    }
+}
 
 /**
  * `tools say` spawned by Genesis.app has no shell exports, so the xAI key must
@@ -120,6 +162,7 @@ beforeEach(() => {
     AiConfigStore.invalidate();
 
     requests = [];
+    gateRequests.length = 0;
     const spy = async (input: RequestInfo | URL, init?: RequestInit): Promise<Response> => {
         const url = typeof input === "string" ? input : input instanceof URL ? input.href : input.url;
         requests.push({ url, authorization: new Headers(init?.headers).get("authorization") });
@@ -332,18 +375,68 @@ describe("tools say --account", () => {
         expect(hard.kind === "fail" ? hard.line : "").toStartWith("[say] account shop has no usable key.");
     });
 
+    test("a gate request that never answers ends at its deadline as a refused key, not a hang", async () => {
+        const gated = {
+            entry: account({ id: "acc_gated", name: "shop", tags: ["gate-only"] }),
+            provider: "xai" as const,
+        };
+        const check = checkSayAccountCredential({ account: gated, fallback: true });
+
+        expect(await settlesWithin(check, 400)).toBe(true);
+        const result = await check;
+        expect(result.kind).toBe("fallback");
+        expect(result.kind === "fallback" ? result.reason : "").toContain("no answer within");
+        expect(gateRequests).toHaveLength(1);
+        // The deadline outlasts the approval window, so a slow Touch ID is not cut short.
+        expect(gateRequests[0].timeout).toBeGreaterThan(APPROVAL_TIMEOUT_MS);
+    });
+
     test("a spoken call books usage on the chosen account", async () => {
         const chosen = { entry: account({ id: "acc_work", name: "work" }), provider: "xai" as const };
         const day = new Date().toISOString().slice(0, 10);
+        // Up to tomorrow, not a far year: queryUsage reads every day file in the range, and to 2999 that took 2.2 s of
+        // synchronous reads alone and up to 9 s in a parallel run, past the 5 s test timeout.
+        const tomorrow = new Date(Date.now() + 86_400_000).toISOString().slice(0, 10);
 
         await recordSayAccountUsage({ account: chosen, model: null, characters: 5 });
 
-        const result = queryUsage({ from: day, to: "2999-01-01", app: "say", accountId: "acc_work" });
+        const result = queryUsage({ from: day, to: tomorrow, app: "say", accountId: "acc_work" });
         expect(result.events).toHaveLength(1);
         expect(result.events[0]).toMatchObject({
             provider: "xai",
             modelId: "xai-tts",
             meta: { kind: "tts", characters: 5 },
         });
+    });
+});
+
+describe("tools say: child processes", () => {
+    // On the GitHub Linux runner (2026-10-14) the file lock under AiConfigStore asked `ps` for this process's command
+    // and start time, and from then on every test of this file timed out at 20 s on a child whose exit never came.
+    test("checking keys, finding an account and booking its usage start no child process", async () => {
+        const spawnSync = spyOn(Bun, "spawnSync");
+        const spawn = spyOn(Bun, "spawn");
+
+        try {
+            await addAccounts([
+                ENV_ONLY,
+                await vaultAccount({ id: "acc_work", name: "work", provider: "xai", key: VAULT_KEY }),
+            ]);
+            freshProcess();
+
+            expect(await checkSayCredential({ provider: "xai", fallback: false })).toEqual({ kind: "ok" });
+            const work = await findSayAccount("work");
+            expect(await checkSayAccountCredential({ account: work, fallback: false })).toEqual({
+                kind: "ok",
+                apiKey: VAULT_KEY,
+            });
+            await recordSayAccountUsage({ account: work, model: null, characters: 5 });
+
+            expect(spawnSync).not.toHaveBeenCalled();
+            expect(spawn).not.toHaveBeenCalled();
+        } finally {
+            spawnSync.mockRestore();
+            spawn.mockRestore();
+        }
     });
 });

@@ -1,4 +1,5 @@
 import { buildQaDeepLink } from "@app/dev-dashboard/lib/qa-deep-link";
+import { withTimeout } from "@genesiscz/utils/async";
 import { logger } from "@genesiscz/utils/logger";
 import type { NotificationAction } from "@genesiscz/utils/macos/notifications";
 import { removeNotifications } from "@genesiscz/utils/macos/notifications-app";
@@ -9,6 +10,14 @@ import { summarizeForm } from "./render";
 import type { AskForm } from "./types";
 
 const log = logger.child({ component: "question:pending-notify" });
+
+/**
+ * How long a post waits for its banner. A banner goes out in about 240 ms (terminal-notifier) or one app call, but a
+ * channel can start a child process that never exits (`tools say` reading the form aloud, or a grandchild holding
+ * that child's pipe open), and the agent that posted the form must not wait on it: the form is saved before the banner
+ * is sent. Past the deadline the post returns and the banner still arrives if its channel ever finishes.
+ */
+export const BANNER_DEADLINE_MS = 10_000;
 
 /**
  * Stable notification id for a form's banner, so it can be found again to retract or replace
@@ -136,9 +145,14 @@ export async function buildQaNotificationActions(form: AskForm): Promise<Notific
  * Deliver (or re-deliver) the "a question is waiting" banner for a pending form. Never throws:
  * the form is already persisted, so a banner that cannot be delivered must not lose the
  * question. Carries a stable {@link qaNotificationId} so {@link retractPendingNotification} can
- * find it again, and a (Yes…|No…) action button pair on a binary form.
+ * find it again, and a (Yes…|No…) action button pair on a binary form. Waits for the channels at most
+ * `deadlineMs` ({@link BANNER_DEADLINE_MS}).
  */
-export async function notifyPendingForm(form: AskForm, stillPending: () => boolean = () => true): Promise<void> {
+export async function notifyPendingForm(
+    form: AskForm,
+    stillPending: () => boolean = () => true,
+    { deadlineMs = BANNER_DEADLINE_MS }: { deadlineMs?: number } = {}
+): Promise<void> {
     try {
         // With GenesisTools.app installed the click opens the hub's Inbox at this form; without it, /qa.
         const hub = hubItemClickCommand("question", form.id);
@@ -151,15 +165,19 @@ export async function notifyPendingForm(form: AskForm, stillPending: () => boole
             return;
         }
 
-        await dispatchNotification({
-            app: "question",
-            title: "A question is waiting for you",
-            message: summarizeForm(form),
-            open,
-            ...(hub ? { execute: hub } : {}),
-            id: qaNotificationId(form.id),
-            actions,
-        });
+        await withTimeout(
+            dispatchNotification({
+                app: "question",
+                title: "A question is waiting for you",
+                message: summarizeForm(form),
+                open,
+                ...(hub ? { execute: hub } : {}),
+                id: qaNotificationId(form.id),
+                actions,
+            }),
+            deadlineMs,
+            new Error(`the banner channels did not finish within ${deadlineMs} ms`)
+        );
     } catch (err) {
         log.warn({ err, id: form.id }, "could not notify about a pending form; the form itself is fine");
     }
