@@ -133,7 +133,14 @@ describe("daily usage store", () => {
                 process.exit(0);
             `,
             ],
-            { cwd: join(import.meta.dir, "../../../.."), env: process.env, stdout: "pipe", stderr: "pipe" }
+            {
+                cwd: join(import.meta.dir, "../../../.."),
+                // The test's own zone: `bun test` runs in UTC and a child in the Mac's zone, so between local and UTC
+                // midnight the child's day file is not the day `getTodayUsageSummary` reads here (2026-10-31 00:55).
+                env: { ...process.env, TZ: Intl.DateTimeFormat().resolvedOptions().timeZone },
+                stdout: "pipe",
+                stderr: "pipe",
+            }
         );
         const [code, stderr] = await Promise.all([child.exited, new Response(child.stderr).text()]);
         expect(stderr).toBe("");
