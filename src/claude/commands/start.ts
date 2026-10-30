@@ -1,5 +1,6 @@
 import { nativeDiffState } from "@app/agents/lib/hooks/native-diff";
-import { startPassthrough } from "@app/claude/lib/cross-messages";
+import { launchPreferences } from "@app/claude/lib/config";
+import { resolveCrossMessages, startPassthrough } from "@app/claude/lib/cross-messages";
 import { accountOwningKeychain } from "@app/claude/lib/doctor";
 import { findRecentSessions, type SessionSummary } from "@app/claude/lib/history/limit-kill";
 import {
@@ -57,6 +58,7 @@ interface StartOptions {
     keychain?: boolean;
     cmux?: boolean;
     tmux?: boolean;
+    /** `--cross-messages` is true, `--no-cross-messages` false, neither leaves it unset for the saved preference. */
     crossMessages?: boolean;
     sdk?: boolean;
 }
@@ -1259,12 +1261,26 @@ export function registerStartCommand(program: Command): void {
         )
         .option(
             "--cross-messages",
-            `Deliver messages from other sessions and scripts (\`${toolCommand("claude message")}\`) without asking: passes --settings {"crossSessionInbound":"accept"}`
+            `Deliver messages from other sessions and scripts (\`${toolCommand("claude message")}\`) without asking: passes --settings {"crossSessionInbound":"accept"}. Without this flag or --no-cross-messages, the claude config's launch.crossSessionInbound decides (default accept; \`${toolCommand("claude config cross-messages")}\`)`
+        )
+        .option(
+            "--no-cross-messages",
+            "Do not pass the accept setting for this run, whatever launch.crossSessionInbound says: Claude Code's own settings decide"
         )
         .action(async (name: string | undefined, opts: StartOptions, command: Command) => {
             const split = splitStartOperands({ name, operands: command.args, argv: process.argv });
             const nameArg = split.nameArg;
-            const resolved = startPassthrough(opts.crossMessages, split.passthrough);
+            const launch = await launchPreferences();
+            const crossMessages = resolveCrossMessages({
+                flag: opts.crossMessages,
+                configured: launch.crossSessionInbound,
+                passthrough: split.passthrough,
+            });
+            logger.debug(
+                { flag: opts.crossMessages, configured: launch.crossSessionInbound, crossMessages },
+                "claude run: cross-session messages resolved"
+            );
+            const resolved = startPassthrough(crossMessages, split.passthrough);
 
             if ("error" in resolved) {
                 out.error(resolved.error);

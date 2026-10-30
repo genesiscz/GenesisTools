@@ -51,7 +51,7 @@ export interface SessionNewRequest {
     pidFile?: string;
     prompt?: string;
     promptFile?: string;
-    /** Claude: accept cross-session messages without approval (on by default from `agents new`). */
+    /** Claude: the per-run cross-messages flag; unset leaves it to `tools claude run`'s saved launch preference. */
     crossMessages?: boolean;
     name?: string;
     viaTmux?: boolean;

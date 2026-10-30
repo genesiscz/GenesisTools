@@ -68,9 +68,35 @@ export interface WarmupConfig {
     todayLog: WarmupTodayLog;
 }
 
+/**
+ * Claude Code's own `crossSessionInbound` values. "accept" delivers a cross-session message (from
+ * `tools claude message`, another agent, a script) without asking; "hold" keeps Claude Code's default, which holds a
+ * message whose sender attests no permission mode for approval in a session that bypasses prompts.
+ */
+export const CROSS_SESSION_INBOUND_VALUES = ["accept", "hold"] as const;
+
+export type CrossSessionInbound = (typeof CROSS_SESSION_INBOUND_VALUES)[number];
+
+/**
+ * How GenesisTools launches a Claude Code session on this machine (`tools claude run`, and `tools cmux agents new
+ * claude` through it). A launch-time choice of the Claude harness, so it lives in the claude tool's config and not in
+ * the AI config (accounts and models, shared by every provider) or Claude Code's own settings (every session).
+ */
+export interface LaunchPreferences {
+    /**
+     * "accept" passes `--settings {"crossSessionInbound":"accept"}` to every session GenesisTools starts; "hold" passes
+     * nothing, so Claude Code's own settings decide. A per-run `--cross-messages` / `--no-cross-messages` wins.
+     */
+    crossSessionInbound: CrossSessionInbound;
+}
+
+export const DEFAULT_LAUNCH: LaunchPreferences = { crossSessionInbound: "accept" };
+
 export interface ClaudeConfig {
     notifications: NotificationConfig;
     warmup?: WarmupConfig;
+    /** Absent on disk until a value is set, so a load-and-save never pins today's default into the file. */
+    launch?: Partial<LaunchPreferences>;
 }
 
 export const DEFAULT_WARMUP: WarmupConfig = {
@@ -102,6 +128,11 @@ const DEFAULT_CONFIG: ClaudeConfig = {
 
 const storage = new Storage("claude");
 
+/** `~/.genesis-tools/claude/config.json`, for messages that say where a setting was saved. */
+export function claudeConfigPath(): string {
+    return storage.getConfigPath();
+}
+
 /** Execute fn while holding an exclusive lock on the claude config file. */
 export function withConfigLock<T>(fn: () => Promise<T>, timeout?: number): Promise<T> {
     return storage.withConfigLock(fn, timeout);
@@ -128,7 +159,47 @@ export async function loadConfig(): Promise<ClaudeConfig> {
                   todayLog: saved.warmup.todayLog ?? DEFAULT_WARMUP.todayLog,
               }
             : undefined,
+        launch: saved.launch,
     };
+}
+
+export function isCrossSessionInbound(value: unknown): value is CrossSessionInbound {
+    return CROSS_SESSION_INBOUND_VALUES.some((known) => known === value);
+}
+
+/** `launch.crossSessionInbound` and where it came from: the config file, or the default when the file has none. */
+export async function crossSessionInboundSetting(): Promise<{
+    value: CrossSessionInbound;
+    source: "file" | "default";
+}> {
+    const saved: unknown = (await loadConfig()).launch?.crossSessionInbound;
+
+    if (saved === undefined) {
+        return { value: DEFAULT_LAUNCH.crossSessionInbound, source: "default" };
+    }
+
+    if (!isCrossSessionInbound(saved)) {
+        logger.warn(
+            { saved, file: storage.getConfigPath() },
+            `claude config launch.crossSessionInbound is not one of ${CROSS_SESSION_INBOUND_VALUES.join(", ")}; using the default`
+        );
+        return { value: DEFAULT_LAUNCH.crossSessionInbound, source: "default" };
+    }
+
+    return { value: saved, source: "file" };
+}
+
+/** The launch preferences with the defaults filled in, so callers never read the config shape themselves. */
+export async function launchPreferences(): Promise<LaunchPreferences> {
+    const inbound = await crossSessionInboundSetting();
+    return { ...DEFAULT_LAUNCH, crossSessionInbound: inbound.value };
+}
+
+/** Saves `launch.crossSessionInbound` through the locked read-modify-write; the other keys stay as they are. */
+export async function setCrossSessionInbound(value: CrossSessionInbound): Promise<void> {
+    await updateConfig((config) => {
+        config.launch = { ...config.launch, crossSessionInbound: value };
+    });
 }
 
 export async function saveConfig(config: ClaudeConfig): Promise<void> {
@@ -158,6 +229,7 @@ export function updateConfig(updater: (config: ClaudeConfig) => void): Promise<C
                 weekly: { ...DEFAULT_WARMUP.weekly, ...raw.warmup?.weekly },
                 todayLog: raw.warmup?.todayLog ?? DEFAULT_WARMUP.todayLog,
             },
+            launch: raw.launch,
         };
         updater(config);
         // Write back the full merged config

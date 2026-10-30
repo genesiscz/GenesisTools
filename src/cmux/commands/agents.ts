@@ -46,7 +46,7 @@ interface SessionNewFlags {
     name?: string;
     viaTmux?: boolean;
     focus?: string | boolean;
-    /** Commander's `--no-cross-messages`: true unless that flag is given. */
+    /** Commander's `--cross-messages` / `--no-cross-messages`: unset unless one of them is given. */
     crossMessages?: boolean;
     json?: boolean;
 }
@@ -190,7 +190,7 @@ export async function runSessionNew(
                 pidFile,
                 prompt,
                 promptFile: absolutePrompt,
-                crossMessages: options.crossMessages !== false,
+                crossMessages: options.crossMessages,
                 name: title,
                 viaTmux: options.viaTmux === true,
                 focus: focus.focus,
@@ -413,8 +413,12 @@ function addNewOptions(command: Command): Command {
         .option("--via-tmux", "Run the agent inside a detached tmux session and attach the workspace to it")
         .option("--focus [value]", "Focus the new workspace: true or false (default: false)")
         .option(
+            "--cross-messages",
+            `Claude: accept messages from ${toolCommand("claude message")} without approval for this session. Without this flag or --no-cross-messages, the launch.crossSessionInbound setting decides (default accept; ${toolCommand("claude config cross-messages")})`
+        )
+        .option(
             "--no-cross-messages",
-            `Claude: do not pass --cross-messages (messages from ${toolCommand("claude message")} then wait for approval in bypass mode)`
+            `Claude: do not accept them for this session (they then wait for approval in bypass mode)`
         )
         .option("--json", "Print name, agent, account, workspace, surface, window, tmuxSession, cwd, command as JSON");
 }

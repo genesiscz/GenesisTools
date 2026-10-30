@@ -45,7 +45,10 @@ export function agentRunCommand(input: {
     model?: string;
     prompt?: string;
     promptFile?: string;
-    /** Claude only: start it with `--cross-messages`, so `tools claude message` lands without approval. */
+    /**
+     * Claude only: `true` passes `--cross-messages`, `false` passes `--no-cross-messages`, and unset passes neither,
+     * so `tools claude run` applies the saved launch preference (`tools claude config cross-messages`).
+     */
     crossMessages?: boolean;
 }): string {
     const account = input.account.trim();
@@ -69,7 +72,9 @@ export function agentRunCommand(input: {
         "run",
         account,
         ...(input.model ? ["-m", input.model] : []),
-        ...(input.crossMessages && input.agent === "claude" ? ["--cross-messages"] : []),
+        ...(input.crossMessages !== undefined && input.agent === "claude"
+            ? [input.crossMessages ? "--cross-messages" : "--no-cross-messages"]
+            : []),
     ];
 
     if (input.promptFile) {
