@@ -1,8 +1,11 @@
 import { existsSync } from "node:fs";
 import { homedir } from "node:os";
 import { join } from "node:path";
+import { isAccountProviderAlias } from "@genesiscz/utils/ai/providers/alias-list";
+import { harnessDriver } from "@genesiscz/utils/ai/providers/harness-index";
 import { extensionProfiles } from "@genesiscz/utils/browser-extension/profiles";
 import { detectGenesisTools } from "@genesiscz/utils/cli/genesis-tools";
+import type { HarnessId } from "@genesiscz/utils/harness/types";
 import { SafeJSON } from "@genesiscz/utils/json";
 import { logger } from "@genesiscz/utils/logger";
 import { GENESIS_APP_BUNDLE_ID, genesisAppBundlePath } from "@genesiscz/utils/macos/genesis-app";
@@ -15,8 +18,7 @@ export type Capability =
     | "browser-extension:installed"
     | "platform:darwin"
     | "cmux:installed"
-    | "claude:installed"
-    | "codex:installed"
+    | `${HarnessId}:installed`
     | "genesis-tools:installed"
     | `app:${string}`
     | `file:${string}`;
@@ -53,6 +55,12 @@ function evaluate(capability: Capability): boolean {
         return appInstalled(capability.slice("app:".length));
     }
 
+    const harness = capability.endsWith(":installed") ? capability.slice(0, -":installed".length) : "";
+
+    if (isAccountProviderAlias(harness)) {
+        return Bun.which(harnessDriver(harness).identity.binary) !== null;
+    }
+
     switch (capability) {
         case "browser-router:installed":
             return existsSync(genesisAppBundlePath());
@@ -64,10 +72,7 @@ function evaluate(capability: Capability): boolean {
             return process.platform === "darwin";
         case "cmux:installed":
             return cmuxBinary() !== undefined;
-        case "claude:installed":
-            return Bun.which("claude") !== null;
-        case "codex:installed":
-            return Bun.which("codex") !== null;
+
         case "genesis-tools:installed":
             return detectGenesisTools() !== null;
         default:
