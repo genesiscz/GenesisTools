@@ -12,6 +12,7 @@ import { readHeadTailLines } from "@genesiscz/utils/claude/session.utils";
 import { suggestCommand } from "@genesiscz/utils/cli/executor";
 import { SafeJSON } from "@genesiscz/utils/json";
 import { logger, out } from "@genesiscz/utils/logger";
+import { nativeHomePath } from "@genesiscz/utils/providers/session-paths";
 import type { Command } from "commander";
 import pc from "picocolors";
 import { getActiveSessionIds, renderActiveSessionList, renderSessionList } from "../lib/tail-list";
@@ -31,7 +32,7 @@ function validatePositiveInt(value: string | undefined, name: string): number | 
     return parsed;
 }
 
-const STATUSLINE_DIR = resolve(homedir(), ".claude", "statusline");
+const STATUSLINE_DIR = nativeHomePath("claude", "statusline");
 
 function increaseCount(_value: string, previous: number): number {
     return previous + 1;

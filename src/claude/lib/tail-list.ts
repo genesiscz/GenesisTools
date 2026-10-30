@@ -1,5 +1,4 @@
 import { existsSync, readdirSync, statSync } from "node:fs";
-import { homedir } from "node:os";
 import { resolve } from "node:path";
 import { ClaudeSessionFormatter } from "@genesiscz/utils/claude/ClaudeSessionFormatter";
 import { IncludeSpec } from "@genesiscz/utils/claude/cli/dsl";
@@ -16,11 +15,12 @@ import { suggestCommand } from "@genesiscz/utils/cli/executor";
 import { formatRelativeTime } from "@genesiscz/utils/format";
 import { SafeJSON } from "@genesiscz/utils/json";
 import { out } from "@genesiscz/utils/logger";
+import { nativeHomePath } from "@genesiscz/utils/providers/session-paths";
 import { truncateText } from "@genesiscz/utils/string";
 import { renderCliHeader } from "@genesiscz/utils/table";
 import pc from "picocolors";
 
-const STATUSLINE_DIR = resolve(homedir(), ".claude", "statusline");
+const STATUSLINE_DIR = nativeHomePath("claude", "statusline");
 const ACTIVE_THRESHOLD_MS = 15 * 60 * 1000;
 const LIST_LIMIT = 15;
 

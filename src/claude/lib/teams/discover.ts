@@ -1,10 +1,10 @@
 import { existsSync, readdirSync, readFileSync, realpathSync, statSync } from "node:fs";
-import { homedir } from "node:os";
 import { join, resolve } from "node:path";
-import { CLAUDE_DIR, encodedProjectDir, PROJECTS_DIR } from "@genesiscz/utils/claude/projects";
+import { encodedProjectDir, PROJECTS_DIR } from "@genesiscz/utils/claude/projects";
 import { SafeJSON } from "@genesiscz/utils/json";
 import { logger } from "@genesiscz/utils/logger";
 import { profiler } from "@genesiscz/utils/profile";
+import { nativeHomePath } from "@genesiscz/utils/providers/session-paths";
 import { listLiveTeammateProcesses, matchLeadPane, matchLiveProcess } from "./status";
 import { indexProjectTranscripts } from "./transcripts";
 import type {
@@ -19,7 +19,7 @@ import type {
 const prof = profiler.scope("teams");
 
 export function teamsRoot(): string {
-    return join(CLAUDE_DIR || join(homedir(), ".claude"), "teams");
+    return nativeHomePath("claude", "teams");
 }
 
 export function readTeamConfig(teamName: string, root: string = teamsRoot()): TeamConfigFile | null {

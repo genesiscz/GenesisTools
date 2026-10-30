@@ -1,5 +1,3 @@
-import { homedir } from "node:os";
-import { join } from "node:path";
 import type { AIConfig } from "@genesiscz/utils/ai/AIConfig";
 import {
     backupKeychainPayload,
@@ -14,9 +12,8 @@ import {
 import type { AISecondaryLogin } from "@genesiscz/utils/config/ai.types";
 import { SafeJSON } from "@genesiscz/utils/json";
 import { logger } from "@genesiscz/utils/logger";
+import { claudeJsonPath } from "@genesiscz/utils/providers/session-paths";
 import { atomicWriteFileSync } from "@genesiscz/utils/storage/storage";
-
-const CLAUDE_JSON = join(homedir(), ".claude.json");
 
 export interface KeychainSessionPrep {
     /** Set when the keychain held a login not tracked by any account's secondary. */
@@ -144,13 +141,16 @@ async function restoreBackup(backupPath: string): Promise<void> {
 }
 
 /**
- * Best-effort ~/.claude.json patch: skip onboarding and seed oauthAccount
+ * Best-effort `.claude.json` patch (the one Claude Code reads, so `$CLAUDE_CONFIG_DIR/.claude.json` when that is
+ * set): skip onboarding and seed oauthAccount
  * identity so the TUI shows the right account immediately. Failures must
  * never block the launch.
  */
 async function seedClaudeJson(secondary: AISecondaryLogin): Promise<void> {
+    const claudeJson = claudeJsonPath();
+
     try {
-        const file = Bun.file(CLAUDE_JSON);
+        const file = Bun.file(claudeJson);
         const config = (await file.exists())
             ? (SafeJSON.parse(await file.text(), { strict: true }) as Record<string, unknown>)
             : {};
@@ -168,9 +168,9 @@ async function seedClaudeJson(secondary: AISecondaryLogin): Promise<void> {
         }
 
         // Claude Code owns this file: keep the replaced copy as .bak, and never publish a half-written one.
-        atomicWriteFileSync(CLAUDE_JSON, SafeJSON.stringify(config, null, 2), { backup: true });
-        logger.debug({ path: CLAUDE_JSON }, "Seeded oauthAccount + onboarding for keychain launch");
+        atomicWriteFileSync(claudeJson, SafeJSON.stringify(config, null, 2), { backup: true });
+        logger.debug({ path: claudeJson }, "Seeded oauthAccount + onboarding for keychain launch");
     } catch (error) {
-        logger.warn({ error, path: CLAUDE_JSON }, "Could not seed ~/.claude.json for keychain launch");
+        logger.warn({ error, path: claudeJson }, "Could not seed .claude.json for keychain launch");
     }
 }

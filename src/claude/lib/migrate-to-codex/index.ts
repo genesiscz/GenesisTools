@@ -11,10 +11,10 @@ import {
     statSync,
     symlinkSync,
 } from "node:fs";
-import { homedir } from "node:os";
 import { basename, dirname, extname, join, relative, resolve } from "node:path";
 
 import { SafeJSON } from "@genesiscz/utils/json";
+import { nativeHome } from "@genesiscz/utils/providers/session-paths";
 
 export type MigrationScope = "project" | "global" | "both";
 export type SingleScope = "project" | "global";
@@ -97,8 +97,8 @@ interface PluginDeclaration {
 
 const PROJECT_CLAUDE_DIRNAME = ".claude";
 const PROJECT_CLAUDE_PLUGIN_DIRNAME = ".claude-plugin";
-const GLOBAL_CLAUDE_DIR = join(homedir(), ".claude");
-const GLOBAL_CODEX_DIR = join(homedir(), ".codex");
+const GLOBAL_CLAUDE_DIR = nativeHome("claude");
+const GLOBAL_CODEX_DIR = nativeHome("codex");
 
 export function discoverMigrationSources(projectRoot: string): DiscoveredSources {
     const warnings: string[] = [];
