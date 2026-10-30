@@ -15,7 +15,9 @@ function isTranscriptLocator(value: unknown): value is TranscriptLocator {
         "workerNative" in value &&
         typeof value.workerNative === "function" &&
         "titledSessions" in value &&
-        typeof value.titledSessions === "function"
+        typeof value.titledSessions === "function" &&
+        "rootsOfHome" in value &&
+        typeof value.rootsOfHome === "function"
     );
 }
 
@@ -83,5 +85,6 @@ export function deferredLocator(meta: ImportMeta, module: string, exportName: st
         find: (query, roots, fs) => impl().find(query, roots, fs),
         workerNative: (worker, fs) => impl().workerNative(worker, fs),
         titledSessions: (search) => impl().titledSessions(search),
+        rootsOfHome: (home) => impl().rootsOfHome(home),
     };
 }

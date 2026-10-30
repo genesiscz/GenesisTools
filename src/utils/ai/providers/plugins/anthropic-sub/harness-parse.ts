@@ -2,6 +2,7 @@ import { readFileSync } from "node:fs";
 import { claudeToolInputLine } from "@genesiscz/utils/agent-sessions/readers/claude-tool-inputs";
 import { claudeMessagesToTurns } from "@genesiscz/utils/ai/transcripts/claude";
 import { toolInputKeysOf } from "@genesiscz/utils/ai/transcripts/native-scan";
+import { parseTranscriptLine } from "@genesiscz/utils/ai/transcripts/parse-line";
 import { isRecord } from "@genesiscz/utils/ai/transcripts/resolve-core";
 import type { TranscriptTurn } from "@genesiscz/utils/ai/transcripts/types";
 import { workerEventsToTurns } from "@genesiscz/utils/ai/transcripts/worker-events";
@@ -10,12 +11,12 @@ import type { ConversationMessage } from "@genesiscz/utils/claude/types";
 import { parseTurnEvents as parseClaudeTurnEvents } from "@genesiscz/utils/claude/worker-stream";
 import type { TranscriptParser } from "@genesiscz/utils/harness/parts";
 
-/** Claude transcripts to turns: a session file, or a `claude -p` worker turn file. Moved from `TURN_READERS` in load.ts. */
 /** A window of Claude transcript records to turns (`TranscriptFacts.windowTurns`): the conversation rows only. */
 export function claudeWindowTurns(values: Record<string, unknown>[]): TranscriptTurn[] {
     return claudeMessagesToTurns(values.filter(claudeMessage));
 }
 
+/** Claude transcripts to turns: a session file, or a `claude -p` worker turn file. Moved from `TURN_READERS` in load.ts. */
 export const claudeParse: TranscriptParser = {
     fromFile: async (resolved, path, index) => {
         if (resolved.source === "worker") {
@@ -30,7 +31,11 @@ export const claudeParse: TranscriptParser = {
         const session = await ClaudeSession.fromFile(path);
         return claudeMessagesToTurns(session.messages);
     },
-    fromLines: () => [],
+    // The end of a file too large to parse whole: a worker's stream-json events, or a session's conversation rows.
+    fromLines: (resolved, lines) =>
+        resolved.source === "worker"
+            ? workerEventsToTurns(parseClaudeTurnEvents(lines.join("\n"), resolved.sessionId), resolved.sessionId, 1)
+            : claudeWindowTurns(lines.map(parseTranscriptLine).filter(isRecord)),
     toolInputKeys: (text) => toolInputKeysOf(text, claudeToolInputLine),
 };
 

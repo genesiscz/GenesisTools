@@ -6213,6 +6213,41 @@ describe("widget agent result", () => {
         expect(await lastClaudeAssistantText(file, size)).toBe("Final highlights.");
     });
 
+    test("a large Claude session gives the same last answer through its turn parser as through the tail reader", async () => {
+        const dir = await mkdtemp(join(tmpdir(), "widget-result-"));
+        const file = join(dir, "0f0e0d0c-1111-4222-8333-444455556666.jsonl");
+        let n = 0;
+        const row = (type: "user" | "assistant", content: unknown) =>
+            SafeJSON.stringify({
+                type,
+                uuid: `00000000-0000-4000-8000-${String(++n).padStart(12, "0")}`,
+                timestamp: new Date(Date.UTC(2026, 9, 31, 0, 0, n)).toISOString(),
+                message: { role: type, content },
+            });
+        const lines = [
+            row("user", "first task"),
+            row("assistant", [{ type: "text", text: "An early answer." }]),
+            row("user", "second task"),
+            row("assistant", [{ type: "tool_use", id: "t1", name: "Bash", input: { command: "ls" } }]),
+            row("user", [{ type: "tool_result", tool_use_id: "t1", content: "x".repeat(4000) }]),
+            row("assistant", [{ type: "text", text: "Final highlights." }]),
+            ...Array.from({ length: 260 }, () =>
+                row("user", [{ type: "tool_result", tool_use_id: "t1", content: "x".repeat(4000) }])
+            ),
+        ];
+        writeFileSync(file, `${lines.join("\n")}\n`);
+        const size = (await files.stat(file)).size;
+        const resolved = {
+            provider: "claude" as const,
+            source: "native" as const,
+            sessionId: "fixture",
+            filePath: file,
+        };
+
+        expect(await lastClaudeAssistantText(file, size)).toBe("Final highlights.");
+        expect(await lastAssistantTextOf(resolved, size)).toBe("Final highlights.");
+    });
+
     // Codex and Grok, native sessions and worker turn files: each holds its answer before 1 MB of tool output, so a
     // 256 KB tail misses it and the window must grow, and an earlier answer must not win.
     const bulk = "x".repeat(4000);

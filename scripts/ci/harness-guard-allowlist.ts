@@ -137,9 +137,6 @@ export const HARNESS_GUARD_ALLOWLIST: Readonly<Record<string, HarnessGuardCounts
         table: 1,
         why: "the one table of the tool-owned subagents part that every driver names this file for: a parent is built from the hub's own agent records and workers",
     },
-    "src/hub/lib/widget/context.ts": { table: 2 },
-    "src/hub/lib/widget/roster-index.ts": { table: 1 },
-    "src/hub/lib/widget/snapshot.ts": { table: 2 },
     "src/macos/GenesisKit/Sources/GenesisKit/Sessions/ToolCalls/SessionNativeLog.swift": {
         branch: 3,
         why: "the Swift format owner of the Claude and Codex transcript lines it indexes (the TS readers' counterpart): the bytes of a line pick the indexer, not the harness set",
@@ -148,7 +145,6 @@ export const HARNESS_GUARD_ALLOWLIST: Readonly<Record<string, HarnessGuardCounts
         branch: 1,
         why: "the decision log's delivery channels (DeliveryChannel in src/question/lib/decisions/deliver.ts), a route axis: codex is the Codex worker route",
     },
-    "src/macos/GenesisTools/Sources/Host/RmApprove.swift": { branch: 1 },
     "src/macos/GenesisTools/Sources/Parts/Hub/Hub/HubInbox.swift": {
         branch: 2,
         why: "the decision log's delivery channels (DeliveryChannel in src/question/lib/decisions/deliver.ts), a route axis: codex is the Codex worker route",

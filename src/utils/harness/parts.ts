@@ -7,6 +7,7 @@ import type {
     LocateRoots,
     RankedHit,
     ResolvedTranscript,
+    TranscriptRoots,
     TranscriptSource,
 } from "@genesiscz/utils/ai/transcripts/resolve";
 import type { TitledSession, TitleSearch } from "@genesiscz/utils/ai/transcripts/session-title";
@@ -40,6 +41,8 @@ export interface TranscriptLocator {
     find(query: string, roots: LocateRoots, fs: FolderReads): RankedHit[];
     /** The native transcript a headless worker of the harness writes beside its own log, or null when it writes none. */
     workerNative(worker: ResolvedTranscript, fs: FolderReads): ResolvedTranscript | null;
+    /** The transcript roots inside one provider home of the harness (a session's own source home). */
+    rootsOfHome(home: string): TranscriptRoots;
     /** Every session the harness gave a title, read where it keeps titles (`findSessionsByTitle` ranks them). */
     titledSessions(search: TitleSearch): TitledSession[];
 }
@@ -50,7 +53,7 @@ export interface TranscriptParser {
     fromFile(resolved: ResolvedTranscript, path: string, index: number): Promise<TranscriptTurn[]>;
     /**
      * The turns of some of a transcript's lines (the end of a file too large to parse whole). Claude has its own tail
-     * reader (`lastClaudeAssistantText` in hub/lib/widget/snapshot.ts) and gets no turns here.
+     * reader too (`lastClaudeAssistantText` in hub/lib/widget/snapshot.ts), and the widget reads every harness here.
      */
     fromLines(resolved: ResolvedTranscript, lines: readonly string[]): TranscriptTurn[];
     /**
