@@ -1,11 +1,9 @@
-import { homedir } from "node:os";
-import { join } from "node:path";
 import { resolveAnthropicSubModel } from "@genesiscz/utils/ai/anthropic/models";
 import { byId } from "@genesiscz/utils/ai/catalog";
 import type { AIAccountEntry } from "@genesiscz/utils/config/ai.types";
-import { env } from "@genesiscz/utils/env";
 import { SafeJSON } from "@genesiscz/utils/json";
 import { logger } from "@genesiscz/utils/logger";
+import { claudeJsonPath, claudeJsonPathInConfigDir } from "@genesiscz/utils/providers/session-paths";
 import { atomicWriteFileSync } from "@genesiscz/utils/storage/storage";
 
 /**
@@ -36,10 +34,11 @@ export const OPUS_MODEL_OPTION = `${resolveAnthropicSubModel("opus")}[1m]`;
 /**
  * Claude Code reads `.claude.json` from `$CLAUDE_CONFIG_DIR/.claude.json` when that
  * env var is set (else `~/.claude.json`). The onboarding patch must target the same
- * file the launched claude will read, or it silently patches the wrong config.
+ * file the launched claude will read, or it silently patches the wrong config. An explicit
+ * config dir is the launch's own CLAUDE_CONFIG_DIR; without one, the owner answers.
  */
-function claudeJsonPath(configDir?: string): string {
-    return join(configDir ?? env.paths.getClaudeConfigDir() ?? homedir(), ".claude.json");
+function launchClaudeJsonPath(configDir?: string): string {
+    return configDir ? claudeJsonPathInConfigDir(configDir) : claudeJsonPath();
 }
 
 /**
@@ -51,7 +50,7 @@ export async function ensureOnboardingSkippedForOAuthToken(configDir?: string): 
     // Best-effort by contract: any fs/parse failure here (permissions, disk, foreign
     // ~/.claude.json) must log and return — never abort the actual claude launch.
     // `configDir`: the CLAUDE_CONFIG_DIR the child gets when it differs from this process's own.
-    const claudeJson = claudeJsonPath(configDir);
+    const claudeJson = launchClaudeJsonPath(configDir);
 
     try {
         const file = Bun.file(claudeJson);

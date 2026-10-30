@@ -99,11 +99,7 @@ export function transcriptOf({ context, processEnv, now = new Date(), home }: Ca
     return CALLER_TRANSCRIPTS[context.agent]({ context, processEnv, now, home }, context.sessionId);
 }
 
-/**
- * Where each calling harness keeps the transcript of a session; Grok and Copilot sessions are not looked up.
- * Harness-guard: keyed by the caller's runtime agent (with copilot and unknown), and built from the caller's own env
- * and cwd, so a failed run pays one path join instead of the locate part's walk over every session folder.
- */
+/** Where each calling harness keeps the transcript of a session; Grok and Copilot sessions are not looked up. */
 const CALLER_TRANSCRIPTS: Record<
     AgentRuntimeContext["agent"],
     (inputs: CallerInputs & { now: Date }, sessionId: string) => string | null
