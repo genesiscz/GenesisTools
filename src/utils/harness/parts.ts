@@ -78,8 +78,6 @@ export interface LaunchRecipe {
         readonly subcommand: boolean;
         render(sessionId: string): string;
     };
-    /** The command that starts the harness on an account (`<launcher> run <account>`), named in hint text. */
-    readonly launcher: string;
 }
 
 /** H: the slash command that ends an interactive session. */

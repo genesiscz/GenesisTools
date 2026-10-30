@@ -1,4 +1,3 @@
-import { toolCommand } from "@genesiscz/utils/cli/tool-command";
 import type { LaunchRecipe } from "@genesiscz/utils/harness/parts";
 
 /** How a codex session resumes, and the flags a resume carries over, read from `codex resume --help` (codex 0.13x, 2026-10-15). */
@@ -21,7 +20,7 @@ export const codexLaunch: LaunchRecipe = {
         ];
     },
     resumeSyntax: { flags: [], subcommand: true, render: (sessionId) => `resume ${sessionId}` },
-    launcher: toolCommand("codex"),
+
     resumeFlags: {
         "-a": "value",
         "--add-dir": "value",
