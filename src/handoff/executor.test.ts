@@ -751,6 +751,27 @@ describe("handoff project (a handoff names the project it is for)", () => {
         expect(listHandoffs({ project: "TestProj" }, env.depsFor(A)).handoffs).toHaveLength(0);
     });
 
+    test("a paged list says which rows the page holds, not only how many", () => {
+        const env = freshEnv();
+        postHandoff({ title: "First", tasks }, env.depsFor(A));
+        postHandoff({ title: "Second", tasks }, env.depsFor(A));
+        postHandoff({ title: "Third", tasks }, env.depsFor(A));
+
+        const first = listHandoffs({ limit: 2 }, env.depsFor(A));
+        expect(first.handoffs).toHaveLength(2);
+        expect(first.info[0]).toBe("3 handoffs matched; showing 2.");
+        expect(first.info.join(" ")).toContain("pass offset: 2");
+
+        const second = listHandoffs({ limit: 2, offset: 2 }, env.depsFor(A));
+        expect(second.handoffs).toHaveLength(1);
+        expect(second.info[0]).toBe("3 handoffs matched; showing rows 3-3 (offset 2 skipped the first 2).");
+        expect(second.info.join(" ")).not.toContain("More available");
+
+        const past = listHandoffs({ limit: 2, offset: 5 }, env.depsFor(A));
+        expect(past.handoffs).toHaveLength(0);
+        expect(past.info[0]).toBe("3 handoffs matched; showing none (offset 5 is past the last row).");
+    });
+
     test("a repository path resolves to its project: a folder outside git by its name, a subfolder by its repo", () => {
         const env = freshEnv();
         const plain = join(mkdtempSync(join(tmpdir(), "handoff-project-")), "acme-tools");
