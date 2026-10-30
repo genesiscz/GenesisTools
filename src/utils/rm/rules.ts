@@ -489,7 +489,8 @@ function unsavedCloneWork(repo: string): string | null {
         return `a clone with uncommitted changes (${status.trim().split("\n").length} path(s))`;
     }
 
-    const unpushed = git(repo, ["log", "--branches", "--not", "--remotes", "-1", "--format=%h"]);
+    // HEAD too: a commit made on a detached HEAD is on no branch, and no remote has it either.
+    const unpushed = git(repo, ["log", "HEAD", "--branches", "--not", "--remotes", "-1", "--format=%h"]);
 
     if (unpushed?.trim()) {
         return `a clone with commits on no remote (e.g. ${unpushed.trim()})`;

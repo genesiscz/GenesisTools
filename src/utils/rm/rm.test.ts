@@ -653,3 +653,21 @@ describe("security review fixes: git pathspecs", () => {
         expect(verdictOf(bracket, c)).toEqual({ kind: "ask", rule: "git-tracked" });
     });
 });
+
+describe("security review fixes: detached HEAD", () => {
+    test("a clean clone with a commit made on a detached HEAD has unsaved work", () => {
+        const origin = dir("detached-origin");
+        git(origin, "init", "-q");
+        file(join(origin, "a.txt"), "a");
+        git(origin, "add", ".");
+        git(origin, "-c", "user.email=t@example.com", "-c", "user.name=t", "commit", "-qm", "init");
+        const clone = join(dir("cc", "proj", "sess-1111"), "detached-clone");
+        git(origin, "clone", "-q", origin, clone);
+        git(clone, "checkout", "-q", "--detach");
+        file(join(clone, "b.txt"), "b");
+        git(clone, "add", ".");
+        git(clone, "-c", "user.email=t@example.com", "-c", "user.name=t", "commit", "-qm", "detached work");
+
+        expect(verdictOf(clone)).toEqual({ kind: "ask", rule: "unsaved-clone" });
+    });
+});
