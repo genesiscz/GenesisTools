@@ -177,6 +177,8 @@ function openLib() {
             args: [FFIType.ptr, FFIType.i32, FFIType.u64, FFIType.i32],
             returns: FFIType.ptr,
         },
+        // char* clonesize_dusize_json(const char* root, int threads)
+        clonesize_dusize_json: { args: [FFIType.ptr, FFIType.i32], returns: FFIType.ptr },
         clonesize_free: { args: [FFIType.ptr], returns: FFIType.void },
     });
 }
@@ -341,6 +343,56 @@ export function parseDuSize(json: string): DuSizeResult {
 }
 
 /** Read the volume's authoritative used/free bytes (ATTR_VOL_*) for a mount point. */
+export interface DuSizeResult {
+    /** What `du -sk` prints: allocated KiB, rounded up. */
+    kib: number;
+    bytes: number;
+    files: number;
+    dirs: number;
+    hardlinkedInodes: number;
+    walkMs: number;
+    deniedDirs: number;
+    readErrors: number;
+}
+
+/**
+ * What `du -sk root` reports, from the engine's listing walk: one parallel getattrlistbulk pass, no file opened, a
+ * hard-linked inode once. The dylib's own failures throw; a root that could not be read answers with `dirs` 0.
+ */
+export function duSize(root: string, threads = 0): DuSizeResult {
+    const { symbols } = getLib();
+    const rootBuf = Buffer.from(`${root}\0`, "utf8");
+    const end = prof.start("c-ffi.dusize");
+    const resPtr = symbols.clonesize_dusize_json(ptr(rootBuf), threads > 0 ? threads : 0);
+    end();
+    if (!resPtr) {
+        throw new Error("clonesize dylib returned NULL (du size failed)");
+    }
+
+    const json = new CString(resPtr).toString();
+    symbols.clonesize_free(resPtr);
+    const raw = SafeJSON.parse(json) as {
+        kib: number;
+        bytes: number;
+        files: number;
+        dirs: number;
+        hardlinked_inodes: number;
+        walk_ms: number;
+        denied_dirs: number;
+        read_errors: number;
+    };
+    return {
+        kib: raw.kib,
+        bytes: raw.bytes,
+        files: raw.files,
+        dirs: raw.dirs,
+        hardlinkedInodes: raw.hardlinked_inodes,
+        walkMs: raw.walk_ms,
+        deniedDirs: raw.denied_dirs,
+        readErrors: raw.read_errors,
+    };
+}
+
 export function readVolumeInfo(mount: string): VolumeInfo {
     const { symbols } = getLib();
     const buf = Buffer.from(`${mount}\0`, "utf8");
