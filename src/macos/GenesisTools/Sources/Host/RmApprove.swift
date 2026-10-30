@@ -342,13 +342,16 @@ private func rmLinks(_ request: RmApproveRequest?) -> [ApprovalLink] {
             try? open.run()
         },
     ]
-    if asker.provider == nil || asker.provider == "claude" {
+    // An asker that names no provider is a Claude Code session (the field came later); a provider with no harness
+    // driver has no `tools <agent> cmux focus`.
+    let harness: Harness? = asker.provider == nil ? .claude : asker.provider.flatMap(Harness.init(rawValue:))
+    if let harness {
         links.append(ApprovalLink(title: "Its terminal", symbol: "terminal") {
             logClick("rm.approve link=terminal session=\(sessionId)")
             // The launcher runs `tools` programs (`GenesisTools <program> [args]`), with the app's identity.
             let focus = Process()
             focus.executableURL = Bundle.main.executableURL
-            focus.arguments = ["claude", "cmux", "focus", sessionId]
+            focus.arguments = [harness.rawValue, "cmux", "focus", sessionId]
             try? focus.run()
         })
     }
