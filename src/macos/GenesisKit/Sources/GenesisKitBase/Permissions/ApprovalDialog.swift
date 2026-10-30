@@ -183,9 +183,9 @@ public struct ApprovalDialogView: View {
         .padding(20)
         // Rows with a name, a folder and three buttons need the room; a request of facts keeps the alert's width.
         .frame(width: model.items.isEmpty ? 480 : 580)
-        // The hosting controller insets its content by the hidden title bar; the strip stays draggable through
-        // `.titlebarZone()`, so the dialog uses the full height (Martin's screenshot showed an empty band on top).
-        .ignoresSafeArea()
+        // The hidden title bar is no safe area (`safeAreaRegions = []` on the hosting controller), so the dialog
+        // uses the full height and the panel's fitting size is the view's own; the strip stays draggable through
+        // `.titlebarZone()`.
         .accessibilityElement(children: .contain)
         .accessibilityIdentifier(model.identifier)
     }
@@ -407,6 +407,9 @@ public final class ApprovalPanelPresenter: NSObject, NSWindowDelegate {
     public func present(_ model: ApprovalDialogModel) {
         if NSApp == nil { _ = NSApplication.shared }
         let controller = NSHostingController(rootView: ApprovalDialogView(model: model).titlebarZone())
+        // No safe area for the hidden title bar: with it, `.ignoresSafeArea()` drew the view from the top, but the
+        // fitting size still carried the bar's 28 pt, which sat as an empty band under the buttons (2026-10-30).
+        controller.safeAreaRegions = []
         // The panel follows the view's size, so opening Details grows it and closing shrinks it back.
         controller.sizingOptions = [.preferredContentSize]
         let size = controller.view.fittingSize

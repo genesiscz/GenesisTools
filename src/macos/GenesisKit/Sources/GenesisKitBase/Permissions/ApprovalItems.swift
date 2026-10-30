@@ -59,11 +59,12 @@ struct ApprovalItemList: View {
                 rows.padding(.bottom, 4)
             }
             .frame(height: rowHeight * (CGFloat(visibleRows) + 0.5))
+            // The cut row fades out to nothing: at 15% it read as a row drawn wrong, not as "more below".
             .mask(alignment: .bottom) {
                 VStack(spacing: 0) {
                     Rectangle()
-                    LinearGradient(colors: [.black, .black.opacity(0.15)], startPoint: .top, endPoint: .bottom)
-                        .frame(height: 18)
+                    LinearGradient(colors: [.black, .clear], startPoint: .top, endPoint: .bottom)
+                        .frame(height: 28)
                 }
             }
             .overlay(alignment: .top) { Divider() }
