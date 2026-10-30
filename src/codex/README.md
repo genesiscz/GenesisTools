@@ -360,6 +360,26 @@ absolute outside it, and `paths` also names a move's destination. Where to read 
 
 These are reads of the session file: none of them answers a request. Only `approve` or `deny` does.
 
+`tools codex deny --name <n> --request <id> [--reason <text>] [--by parent|human|policy]` says who declined and why.
+Codex itself tells the worker only `Rejected("rejected by user")`, so on 2026-10-27 a lead's quality refusal read to
+the worker as a human permission decision, and the worker stopped that line of work. The two flags:
+
+- `--reason <text>`: why the request is declined. With it, `--by` defaults to `parent`.
+- `--by <actor>`: `parent` (the supervising session), `human` (a person at the CLI or the dashboard) or `policy` (the
+  session's write policy). Any other value is refused before anything is sent.
+
+With `--by parent` or `--by policy` the daemon declines the request first, then steers the worker a notice that names
+the actor ("the parent session that supervises you, not a human") and the reason. During a review or compact turn
+the notice waits for the turn boundary; a deny never interrupts the turn. The JSON answer is
+`{ "resolved": true, "attributed": true }`; it is `"attributed": false` when the steer failed, and the daemon logs a
+warning. The decline stands either way. `--by human` and a plain `deny` keep the human semantics: the worker gets
+Codex's own rejection and no notice, and a `--reason` given with `--by human` is not sent. A `--write deny` session
+declines every request itself and sends no notice.
+
+An answered request is gone. A later `approve` or `deny` for the same id, from the CLI or as a control message on the
+bus, fails with `Pending approval not found: <id>`, so a human refusal cannot be retried as a parent refusal or
+approved by another route.
+
 The driver joins the parent Claude Code swarm through `tools agents`. Use `--no-agents` to disable that integration,
 or `--session <id>` when the parent session cannot be discovered from `CLAUDE_CODE_SESSION_ID`.
 
