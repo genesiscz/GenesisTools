@@ -1,4 +1,4 @@
-import type { CodexContext } from "./codex-context";
+import type { CodexContext } from "@genesiscz/utils/agent-sessions/readers/codex-usage-context";
 
 export interface DriverUsageEvent {
     /**

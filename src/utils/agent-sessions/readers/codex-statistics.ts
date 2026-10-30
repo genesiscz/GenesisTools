@@ -1,6 +1,6 @@
-import { createCodexUsageParser } from "@genesiscz/utils/ai/usage/transcripts/codex";
 import type { HistoryReadOptions, HistoryStatisticsRead, NativeSessionSource } from "../types";
 import { readCodexMetadata, scanCodexRecords } from "./codex";
+import { createCodexUsageParser } from "./codex-usage";
 import { createIssueCollector, NativeStatisticsAccumulator, parseUsagePath } from "./native-statistics";
 
 export async function readCodexStatistics(

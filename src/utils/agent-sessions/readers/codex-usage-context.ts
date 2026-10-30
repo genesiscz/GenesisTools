@@ -1,4 +1,4 @@
-import { isRecord } from "./parse-helpers";
+import { isRecord } from "@genesiscz/utils/ai/usage/transcripts/parse-helpers";
 
 export type CodexActivity = "code-review" | "permission-review" | "other" | "unclassified";
 
