@@ -8,4 +8,4 @@
  * than its count, and `lint-rules.test.ts` fails a count above the file's real number. A provider difference belongs
  * in its `ProviderDefinition` (`src/ai-proxy/lib/providers/definition.ts`) or in its `ProxyProvider`.
  */
-export const PROXY_PROVIDER_BRANCH_RATCHET: ReadonlyMap<string, number> = new Map<string, number>();
+export const PROXY_PROVIDER_BRANCH_RATCHET: ReadonlyMap<string, number> = new Map<string, number>([]);
