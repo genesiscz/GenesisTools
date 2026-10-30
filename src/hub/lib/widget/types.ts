@@ -1,10 +1,14 @@
+import { ACCOUNT_PROVIDER_ALIASES } from "@genesiscz/utils/ai/providers/alias-list";
 import { logger } from "@genesiscz/utils/logger";
 import { videoSettingsSchema } from "@genesiscz/utils/video/types";
 import { z } from "zod";
 
+/** The providers a widget row can name: every harness, plus "unknown" for a row nothing claimed. */
+const WIDGET_PROVIDERS = [...ACCOUNT_PROVIDER_ALIASES, "unknown"] as const;
+
 export const widgetTargetSchema = z.object({
     hostId: z.literal("local").default("local"),
-    provider: z.enum(["claude", "codex", "grok", "unknown"]),
+    provider: z.enum(WIDGET_PROVIDERS),
     sessionId: z.string().min(1),
     sourceHome: z.string().default(""),
     cwd: z.string().default(""),
@@ -57,7 +61,7 @@ export const widgetPreferencesSchema = z.object({
     /** The hover list's rows show their waiting question under the session. */
     previewQuestion: z.boolean().default(true),
     display: z.string().default(""),
-    providers: z.array(z.enum(["claude", "codex", "grok", "unknown"])).default([]),
+    providers: z.array(z.enum(WIDGET_PROVIDERS)).default([]),
     quietSeconds: z.number().int().min(3).max(300).default(15),
     voiceProvider: z.string().default("xai"),
     voiceAccount: z.string().nullable().optional(),
