@@ -5,6 +5,7 @@ import { logger, out } from "@genesiscz/utils/logger";
 import type { Command } from "commander";
 import { z } from "zod";
 import { parseWorkflowPlan, replayWorkflow, type WorkflowPlan } from "../lib/decision/workflow";
+import { readPlanInput } from "../lib/plan-input";
 import { runAx } from "../lib/runner";
 import { diffSnapshots, type SnapshotRow } from "../lib/snapshot-diff";
 import { type ControlOptions, controlDriver, lazyEvaluator, observationOptions, withSigintAbort } from "./decision";
@@ -737,12 +738,19 @@ export function registerWorkflowRunCommand(program: Command): void {
 
     observationOptions(
         workflow
-            .command("run")
+            .command("run [plan]")
             .description(
-                "Replay a workflow plan file. Exact postconditions make no model call; a semantic postcondition or selector repair requires --jev."
+                "Replay a workflow plan: a path, `-` for stdin, or --plan '<json>'. Every step is bound and verified against a fresh observation the runner takes itself. Exact postconditions make no model call; a semantic postcondition or selector repair requires --jev."
             )
     )
-        .requiredOption("--plan <file>", "JSON workflow plan: {version:1, app, steps:[…]}")
+        .option(
+            "--plan <json|file>",
+            "JSON workflow plan {version:1, app, stopOnFail?, steps:[…]}, inline (starting with `{`) or a path"
+        )
+        .option(
+            "--continue-on-fail",
+            "run on after a step that found no target or whose postcondition did not verify (the plan's stopOnFail:false); never after uncertain delivery"
+        )
         .option("--values <file>", "JSON object of named values the plan refers to by valueRef; they stay local")
         .option("--jev", "Allow semantic postconditions and semantic selector choice")
         .option("--rebind", "Allow Jev to repair a selector that no longer matches; implies --jev")
@@ -750,8 +758,10 @@ export function registerWorkflowRunCommand(program: Command): void {
         .option("--max-requests <n>", "Maximum paid evaluations", "30")
         .action(
             async (
+                planArg: string | undefined,
                 options: ControlOptions & {
-                    plan: string;
+                    plan?: string;
+                    continueOnFail?: boolean;
                     values?: string;
                     jev?: boolean;
                     rebind?: boolean;
@@ -766,11 +776,12 @@ export function registerWorkflowRunCommand(program: Command): void {
                 // rejected a `{ semantic: plan }` envelope that replay accepts, threw a TypeError
                 // on a `null` file, and missed the schema's default scope.
                 let plan: WorkflowPlan;
+                const source = options.plan ?? planArg ?? "(no plan)";
 
                 try {
-                    plan = parseWorkflowPlan(SafeJSON.parse(await Bun.file(options.plan).text()));
+                    plan = parseWorkflowPlan(await readPlanInput({ positional: planArg, inline: options.plan }));
                 } catch (err) {
-                    logger.debug({ err, plan: options.plan }, "control: workflow plan did not parse");
+                    logger.debug({ err, plan: source }, "control: workflow plan did not parse");
                     const issue = err instanceof z.ZodError ? err.issues[0] : undefined;
                     const why = issue
                         ? `${issue.path.join(".") || "(root)"}: ${issue.message}`
@@ -779,7 +790,7 @@ export function registerWorkflowRunCommand(program: Command): void {
                           : String(err);
 
                     out.log.error(
-                        `${options.plan} is not a workflow plan like {"version":1,"app":"…","steps":[…]} — ${why}`
+                        `${source.length > 120 ? `${source.slice(0, 117)}...` : source} is not a workflow plan like {"version":1,"app":"…","steps":[…]} — ${why}`
                     );
                     process.exitCode = 1;
                     return;
@@ -812,6 +823,7 @@ export function registerWorkflowRunCommand(program: Command): void {
                         driver: controlDriver({ ...options, app, scope }),
                         evaluate: lazyEvaluator(program),
                         signal,
+                        stopOnFail: options.continueOnFail === true ? false : undefined,
                         limits: {
                             timeoutMs: Number(options.timeout),
                             maxActions: Number(options.maxSteps),
