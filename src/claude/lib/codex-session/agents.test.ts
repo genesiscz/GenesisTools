@@ -96,6 +96,26 @@ describe("sessionAgents", () => {
         expect(sessionAgents({ codexModel, claude: { fable: true } }).fable?.model).toMatch(/^claude-fable-/);
     });
 
+    it("lets each Codex agent write the report file its brief names, and keeps Claude Code's report rule otherwise", () => {
+        const deliverable =
+            'is the brief\'s deliverable: write it, also when the brief adds "if permitted" or names a fallback.';
+        const ccNote = '"Do NOT Write report/summary/findings/analysis .md files"';
+        const readOnly =
+            "When the brief names no output file or says the work is read-only, Claude Code's note holds: put the findings in your final message.";
+        const appended = { providers: { codex: { subagents: { systemNote: { append: "Prefer short notes." } } } } };
+
+        for (const agents of [sessionAgents({ codexModel }), sessionAgents({ codexModel, settings: appended })]) {
+            for (const name of ["sol", "sol-xhigh", "sol6", "astra", "terra", "luna"]) {
+                const prompt = agents[name]?.prompt ?? "";
+
+                expect(prompt).toContain(deliverable);
+                expect(prompt).toContain(ccNote);
+                expect(prompt).toContain(readOnly);
+                expect(prompt).toContain("Change files only when the brief asks for changes.");
+            }
+        }
+    });
+
     it("pins the codex-worker to the session's Codex login when it has one", () => {
         expect(sessionAgents({ codexModel, codexAccount: "work" })["codex-worker"].prompt).toContain(" -a work`");
         expect(sessionAgents({ codexModel })["codex-worker"].prompt).not.toContain(" -a ");

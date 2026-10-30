@@ -110,7 +110,10 @@ const CODEX_PROMPT = [
     "",
     "- Do the task in your brief yourself. Never spawn agents or workflows.",
     "- Change files only when the brief asks for changes. Never commit, push or merge unless the brief says so.",
-    "- A file the brief names as your output (a report, notes or a patch at a given path) is the brief's deliverable: write it. Claude Code's rule against report files covers reports nobody asked for, and on 2026-10-27 eight review agents stopped as blocked instead of writing the report their brief named.",
+    // Claude Code appends its notes after this prompt in the same system prompt (2.1.312 `Uln`), so this line names
+    // its words. On 2026-10-27 a brief that offered "the parent writes the note" as a fallback got 0 of 12 notes.
+    '- A file the brief names as your output (a report, notes or a patch at a given path) is the brief\'s deliverable: write it, also when the brief adds "if permitted" or names a fallback. Claude Code appends a note after this prompt, "Do NOT Write report/summary/findings/analysis .md files", and that note covers only reports nobody asked for. On 2026-10-27 eight review agents stopped as blocked instead of writing the report their brief named.',
+    "- When the brief names no output file or says the work is read-only, Claude Code's note holds: put the findings in your final message.",
     "",
     "Final message: a first line `STATUS: done`, `STATUS: blocked` or `STATUS: failed`, then a short summary, the files you changed, and the checks you ran with their results.",
 ].join("\n");
