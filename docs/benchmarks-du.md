@@ -1463,7 +1463,7 @@ Why: the mods' Session files row asks `tools du size <worktree> --max-cache-age 
 0.49 s, but every cold walk was the system `du`, single-threaded: 29 of 42 calls in a quiet 3 hours took 1.7 to 10 s on
 the 5 GB web app worktrees, 220 process-seconds. The dedupe scan's `naive_bytes` is the same figure as du, but that
 scan opens every candidate for its extents: 13.65 s cold (sys 140 s over 16 threads) against du's 5.5 s on
-`col-fe-marketplace-2.0-shared` (interleaved, load 5.8 to 13.6, 19:18).
+a 5 GB web app worktree (interleaved, load 5.8 to 13.6, 19:18).
 
 Totals, native against `du -sk` on the same tree, same minute (`compare.ts` in the session scratch, Bun 1.4.2):
 
@@ -1472,7 +1472,7 @@ Totals, native against `du -sk` on the same tree, same minute (`compare.ts` in t
 | fixture (hard links ×2, a 5 MB sparse file, a symlink) | 6 | 4 | 1,280 | 1,280 | 1 | 1.45 s (includes the dylib compile) | 2 ms |
 | `src/du` | 48 | 4 | 1,104 | 1,104 | 0 | 0 ms | 2 ms |
 | `node_modules` (warm) | 87,854 | 9,169 | 1,796,992 | 1,796,992 | 0 | 247 ms | 392 ms |
-| `col-fe-pr-7404-…` worktree, run 1 | 369,151 | 43,725 | 5,671,548 | 5,671,548 | 0 | 1.36 s | 3.73 s |
+| a 5.4 GB web app worktree, run 1 | 369,151 | 43,725 | 5,671,548 | 5,671,548 | 0 | 1.36 s | 3.73 s |
 | the same, run 2 | 369,151 | 43,725 | 5,671,548 | 5,671,548 | 0 | 1.26 s | 3.37 s |
 
 Load average 6.4 to 11.8 during the worktree runs (19:43). The byte totals agreed on every tree. The parity test is
