@@ -11,6 +11,7 @@ import { Storage } from "@genesiscz/utils/storage/storage.ts";
 import { formatTable } from "@genesiscz/utils/table.ts";
 import { Command } from "commander";
 import pc from "picocolors";
+import { registerCompletionsCommand } from "./commands/completions.ts";
 import { ALL_FEATURES, getFeature, getFeatureNames } from "./features/index.ts";
 import type { ZshConfig } from "./features/types.ts";
 import { generateHookScript, writeHookFile } from "./lib/hook-generator.ts";
@@ -41,6 +42,8 @@ program
 registerCaptureLifecycleCommands(
     program.command("cmux").description("Install and inspect durable cmux command capture")
 );
+
+registerCompletionsCommand(program);
 
 program
     .command("install")
