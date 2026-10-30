@@ -80,7 +80,7 @@ import { nativeDiffState } from "./native-diff";
 import { matchesGlob, resolveOutcome } from "./outcome";
 import { callDir, hookDataRoot, safeSegment, sessionDir } from "./paths";
 import type { HookPayload } from "./payload";
-import { parseHookPayload } from "./payload";
+import { HARNESS_HOOK_FACTS, harnessHookFacts, parseHookPayload } from "./payload";
 import { applyQuestionHookAction, questionHookAction } from "./questions";
 import { hasDialogRecords, QUESTION_TOOL_MATCHER } from "./questions-gate";
 import { checkRuleExamples, replayCorpus } from "./rules-check";
@@ -3606,5 +3606,30 @@ describe("the questions feature", () => {
         expect(existsSync(dialogsPath("claude", sessionId))).toBe(true);
         expect(hasDialogRecords("claude", sessionId)).toBe(true);
         expect(hasDialogRecords("claude", "../escape")).toBe(false);
+    });
+});
+
+describe("HARNESS_HOOK_FACTS", () => {
+    it("each harness names what its hooks may assume", () => {
+        expect(HARNESS_HOOK_FACTS.claude).toEqual({
+            diffLogFromTranscript: true,
+            transcriptMentions: true,
+            modsDrawDiffs: true,
+            settingsModel: true,
+        });
+        expect(HARNESS_HOOK_FACTS.grok).toEqual({
+            diffLogFromTranscript: true,
+            transcriptMentions: false,
+            modsDrawDiffs: false,
+            settingsModel: false,
+        });
+        expect(HARNESS_HOOK_FACTS.codex).toEqual({
+            diffLogFromTranscript: false,
+            transcriptMentions: false,
+            modsDrawDiffs: false,
+            settingsModel: false,
+        });
+        expect(harnessHookFacts("cursor")).toBeUndefined();
+        expect(harnessHookFacts("constructor")).toBeUndefined();
     });
 });

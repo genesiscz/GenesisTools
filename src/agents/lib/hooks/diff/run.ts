@@ -34,7 +34,7 @@ import { committedPaths, gitOut, lastHistoryMove, objectId, statusOf, untrackedF
 import { hookDiag } from "../log";
 import { modsPluginDisabled } from "../mods";
 import { callDir, safeSegment } from "../paths";
-import { type HookPayload, normalizeEvent } from "../payload";
+import { HARNESS_HOOK_FACTS, type HookPayload, isHarnessName, normalizeEvent } from "../payload";
 import {
     type Attribution,
     type AttributionContext,
@@ -779,7 +779,8 @@ export function modDrawsDiffs({
     isEnabled?: (sessionId: string | undefined) => boolean;
 }): boolean {
     return (
-        harness === "claude" &&
+        isHarnessName(harness) &&
+        HARNESS_HOOK_FACTS[harness].modsDrawDiffs &&
         config.mods.diff.fullDiff &&
         diffFor(config, harness).fullDiff !== "off" &&
         isEnabled(sessionId)

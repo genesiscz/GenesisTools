@@ -4,6 +4,7 @@ import { SafeJSON } from "@genesiscz/utils/json";
 import { nativeHomePath } from "@genesiscz/utils/providers/session-paths";
 import { stripAnsi } from "@genesiscz/utils/string";
 import { readSessionState } from "./diff/mentions";
+import { harnessHookFacts } from "./payload";
 
 /**
  * `tools agents hooks diff log`: what the Bash diff hook decided for each call, told against the
@@ -534,7 +535,7 @@ export function extendFromTranscripts(entries: DiffLogEntry[]): {
     const bySession = new Map<string, Map<string, DiffLogEntry>>();
 
     for (const entry of entries) {
-        if (entry.harness !== "claude" && entry.harness !== "grok") {
+        if (!harnessHookFacts(entry.harness)?.diffLogFromTranscript) {
             continue;
         }
 
