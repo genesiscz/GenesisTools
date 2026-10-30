@@ -1,6 +1,7 @@
 import { readFileSync } from "node:fs";
 import { aiDataDir } from "@genesiscz/utils/ai/config/paths";
 import { toolCommand } from "@genesiscz/utils/cli/tool-command";
+import type { HarnessId } from "@genesiscz/utils/harness/types";
 import { SafeJSON } from "@genesiscz/utils/json";
 import { logger } from "@genesiscz/utils/logger";
 import { nativeHomePath } from "@genesiscz/utils/providers/session-paths";
@@ -151,7 +152,7 @@ export function isStatuslineInstallCommand(command: string | null): boolean {
 }
 
 export function formatStatuslineInstallCommand(opts: {
-    host: "claude" | "codex" | "grok";
+    host: HarnessId;
     viaTools: boolean;
     bunPath?: string;
     entryPath?: string;

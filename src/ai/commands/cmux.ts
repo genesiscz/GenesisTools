@@ -1,11 +1,11 @@
-import type { AccountProviderAlias } from "@genesiscz/utils/ai/providers/alias-list";
+import { ACCOUNT_PROVIDER_ALIASES, type AccountProviderAlias } from "@genesiscz/utils/ai/providers/alias-list";
 import { suggestEnumFlag } from "@genesiscz/utils/cli";
 import { fetchAgentCmuxTree } from "@genesiscz/utils/cmux/agent-tree";
 import { printCmuxTree } from "@genesiscz/utils/cmux/tree-print";
 import { out } from "@genesiscz/utils/logger";
 import type { Command } from "commander";
 
-const AGENTS: readonly AccountProviderAlias[] = ["claude", "codex", "grok"];
+const AGENTS: readonly AccountProviderAlias[] = ACCOUNT_PROVIDER_ALIASES;
 
 function isAgent(name: string): name is AccountProviderAlias {
     return AGENTS.some((agent) => agent === name);

@@ -12,8 +12,8 @@ import { atomicWriteFileSync, Storage } from "@genesiscz/utils/storage/storage";
 import { accountIdForFile, resolveDriverRoots } from "./account-roots";
 import {
     AGENT_IDS,
-    AGENT_PLUGIN_IDS,
     type AgentId,
+    agentPluginId,
     type DriverUsageEvent,
     MONITOR_DRIVERS,
     type MonitorDriver,
@@ -695,7 +695,7 @@ function addSums(target: MonitorTotals, sums: DaySums): void {
 }
 
 function newAccountRow(agent: AgentId, rowId: string, accounts: readonly AccountEntry[]): MonitorAccountSpend {
-    const provider = AGENT_PLUGIN_IDS[agent];
+    const provider = agentPluginId(agent);
     const empty = emptyAgentTotals();
 
     if (rowId === CLAUDE_ALL_ACCOUNT_ID) {

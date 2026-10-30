@@ -1,4 +1,4 @@
-import { type CompactResult, compactSession, parseCompactSource } from "@genesiscz/utils/ai/compact";
+import { COMPACT_SOURCES, type CompactResult, compactSession, parseCompactSource } from "@genesiscz/utils/ai/compact";
 import { createEvaluator, type Evaluator } from "@genesiscz/utils/ai/evaluation/service";
 import { readWholeTextSync } from "@genesiscz/utils/fs/read-lines";
 import { logger } from "@genesiscz/utils/logger";
@@ -16,7 +16,7 @@ export const JEV_COMPACT_DESCRIPTION = [
 export const jevCompactInputSchema = z.object({
     text: z.string().min(1).optional().describe("The transcript itself. Either this or `file` is required."),
     file: z.string().min(1).optional().describe("Path to the transcript. Required for a native source."),
-    source: z.enum(["auto", "jsonl", "claude", "codex", "grok"]).optional().describe("Defaults to auto-detection."),
+    source: z.enum(COMPACT_SOURCES).optional().describe("Defaults to auto-detection."),
     keep: z.number().min(0).max(1).optional().describe("Target share of the input to keep. Default 0.5."),
     pin: z.number().int().min(0).optional().describe("Trailing messages protected from a drop. Default 6."),
     maxResult: z.number().int().min(1).optional().describe("Head characters kept on a truncated result. Default 800."),

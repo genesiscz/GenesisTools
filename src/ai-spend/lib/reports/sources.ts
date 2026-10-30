@@ -2,6 +2,7 @@ import { Database } from "bun:sqlite";
 import { existsSync } from "node:fs";
 import { basename, dirname, join } from "node:path";
 import { env } from "@genesiscz/utils/env";
+import type { HarnessId } from "@genesiscz/utils/harness/types";
 import { logger } from "@genesiscz/utils/logger";
 import { loadJevEvents } from "./jev";
 import {
@@ -847,7 +848,7 @@ export function loadGooseEvents(home: string): SpendEvent[] {
  * caller filters by id either way.
  */
 const LOADERS: Record<
-    Exclude<SourceId, "claude" | "codex" | "grok">,
+    Exclude<SourceId, HarnessId>,
     (home: string, onlySession?: string, minMtimeMs?: number) => SpendEvent[]
 > = {
     amp: loadAmpEvents,
@@ -867,7 +868,7 @@ const LOADERS: Record<
 };
 
 export function loadExtraSource(
-    source: Exclude<SourceId, "claude" | "codex" | "grok">,
+    source: Exclude<SourceId, HarnessId>,
     home: string,
     onlySession?: string,
     minMtimeMs?: number

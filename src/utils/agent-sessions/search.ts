@@ -1,3 +1,4 @@
+import { ACCOUNT_PROVIDER_ALIASES } from "@genesiscz/utils/ai/providers/alias-list";
 import { logger } from "@genesiscz/utils/logger";
 import { snippetAround } from "@genesiscz/utils/string";
 import { createCodexAdapter } from "./codex-sessions";
@@ -11,7 +12,7 @@ import type { AgentSearchFilters, AgentSearchHit, AgentSessionAdapter, NativeHis
 
 const log = logger.child({ component: "hub/search" });
 
-export const SEARCH_PROVIDERS = ["claude", "codex", "grok"] as const;
+export const SEARCH_PROVIDERS = ACCOUNT_PROVIDER_ALIASES;
 export type SearchProvider = (typeof SEARCH_PROVIDERS)[number];
 
 export const SEARCH_LIMITS = { default: 30, max: 200, snippets: 3, snippetChars: 180 };

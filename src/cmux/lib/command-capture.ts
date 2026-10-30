@@ -4,7 +4,7 @@ import { agentRunContext, agentRunLauncher } from "@app/cmux/lib/session-agents"
 import type { SurfaceSessionInfo } from "@app/cmux/lib/surface-sessions";
 import { resumeCommandLine } from "@genesiscz/utils/agent-sessions/resume-argv";
 import { carryAgentFlags } from "@genesiscz/utils/agent-sessions/resume-flags";
-import type { AccountProviderAlias } from "@genesiscz/utils/ai/providers/alias-list";
+import { ACCOUNT_PROVIDER_ALIASES, type AccountProviderAlias } from "@genesiscz/utils/ai/providers/alias-list";
 import { toolCommand } from "@genesiscz/utils/cli/tool-command";
 import { shellWord } from "@genesiscz/utils/shell/quote";
 
@@ -15,7 +15,7 @@ import { shellWord } from "@genesiscz/utils/shell/quote";
  */
 /** The line cmux types into a tab when it relaunches and resumes an agent from its own record. */
 const CMUX_RESTORE_RE = /^\s*cmux\s+restore\s+(\S+)\s+(\S+)\s*$/;
-const CMUX_RESTORE_KINDS: readonly AccountProviderAlias[] = ["claude", "grok", "codex"];
+const CMUX_RESTORE_KINDS: readonly AccountProviderAlias[] = ACCOUNT_PROVIDER_ALIASES;
 
 /**
  * The command a shell-journal line restores as.

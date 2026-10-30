@@ -12,10 +12,11 @@ import type { StatuslineCache } from "@genesiscz/utils/ai/statusline/cache";
 import { loadStatuslineConfig } from "@genesiscz/utils/ai/statusline/config";
 import { renderStatusline } from "@genesiscz/utils/ai/statusline/render";
 import type { StatuslineFeature } from "@genesiscz/utils/ai/statusline/types";
+import type { HarnessId } from "@genesiscz/utils/harness/types";
 import { SafeJSON } from "@genesiscz/utils/json";
 import { logger, out } from "@genesiscz/utils/logger";
 
-export type StatuslineHost = "claude" | "codex" | "grok";
+export type StatuslineHost = HarnessId;
 
 export interface RunStatuslineOptions {
     host: StatuslineHost;

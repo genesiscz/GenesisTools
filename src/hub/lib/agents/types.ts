@@ -3,10 +3,12 @@
  * `.claude/plans/2026-10-01-HubAgentsTab.md` ("JSON contract"); change both together.
  */
 
+import { ACCOUNT_PROVIDER_ALIASES } from "@genesiscz/utils/ai/providers/alias-list";
+
 export const DEFAULT_AGENTS_SINCE_HOURS = 24;
 export const DEFAULT_AGENTS_LIMIT = 50;
 
-export const AGENT_HARNESSES = ["claude", "codex", "grok"] as const;
+export const AGENT_HARNESSES = ACCOUNT_PROVIDER_ALIASES;
 export type AgentHarness = (typeof AGENT_HARNESSES)[number];
 
 export type AgentKind = "teammate" | "background" | "foreground" | "worker";

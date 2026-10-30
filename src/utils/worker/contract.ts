@@ -1,4 +1,5 @@
 import { type EffortRange, effortRange } from "@genesiscz/utils/ai/catalog/efforts";
+import { harnessLabel } from "@genesiscz/utils/ai/providers/harness-index";
 import { toolCommand } from "@genesiscz/utils/cli/tool-command";
 import { WORKER_CAPABILITIES, type WorkerBackend } from "./capabilities";
 
@@ -133,12 +134,6 @@ function reviewBlock(input: WorkerContractInput): string[] {
 /** The keys every worker's final message carries, in this order. `tools <backend> …` printers read RESULT. */
 export const WORKER_REPORT_KEYS = ["RESULT", "AT", "CHANGED", "VERIFY", "OPEN"] as const;
 
-const BACKEND_LABEL: Record<WorkerBackend, string> = {
-    codex: "Codex",
-    grok: "Grok",
-    claude: "Claude Code",
-};
-
 /** How mail reaches the worker: `WORKER_CAPABILITIES[backend].busMail`. */
 function receiveLines(backend: WorkerBackend, bus: WorkerBus, sessionFlag: string): string[] {
     if (WORKER_CAPABILITIES[backend].busMail === "turn-input") {
@@ -155,7 +150,7 @@ function receiveLines(backend: WorkerBackend, bus: WorkerBus, sessionFlag: strin
 }
 
 function channelLines(input: WorkerContractInput): string[] {
-    const label = BACKEND_LABEL[input.backend];
+    const label = harnessLabel(input.backend);
     const bus = input.bus;
 
     if (bus && input.sandbox === "read-only") {

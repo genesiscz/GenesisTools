@@ -1,5 +1,6 @@
 import { existsSync, readFileSync, realpathSync } from "node:fs";
 import { join } from "node:path";
+import { ACCOUNT_PROVIDER_ALIASES } from "@genesiscz/utils/ai/providers/alias-list";
 import { suggestCommand, suggestEnumFlag } from "@genesiscz/utils/cli";
 import { toolCommand } from "@genesiscz/utils/cli/tool-command";
 import { ui } from "@genesiscz/utils/cli/ui";
@@ -67,7 +68,7 @@ import { BUILT_IN_RULES } from "../lib/hooks/tool-rules";
 import { writeJsonFile } from "../lib/hooks/write-json";
 import { registerRuleCommands, registerRulePicker, ruleState, shortPath } from "./hooks-rules";
 
-const HARNESSES: readonly HarnessName[] = ["claude", "codex", "grok"];
+const HARNESSES: readonly HarnessName[] = ACCOUNT_PROVIDER_ALIASES;
 /** Grok has no hook file of its own: it runs the hooks in Claude's settings.json. */
 const INSTALLABLE = ["claude", "codex"] as const;
 

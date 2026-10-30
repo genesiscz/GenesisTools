@@ -26,6 +26,7 @@ import { ProfileNotFoundError, ProfileStore } from "@app/cmux/lib/store";
 import { loadSurfaceSessions } from "@app/cmux/lib/surface-sessions";
 import type { Profile } from "@app/cmux/lib/types";
 import * as p from "@clack/prompts";
+import { harnessLabel } from "@genesiscz/utils/ai/providers/harness-index";
 import { isInteractive, suggestCommand, suggestEnumFlag } from "@genesiscz/utils/cli";
 import { toolCommand } from "@genesiscz/utils/cli/tool-command";
 import { describeJournalJoin } from "@genesiscz/utils/cmux/journal-coverage";
@@ -262,12 +263,8 @@ async function runRestoreAfterRestart(flags: RestartFlags): Promise<void> {
         agents = await withCancel(
             p.multiselect({
                 message: "Which agents should get resume commands?",
-                options: [
-                    { value: "claude", label: "Claude Code" },
-                    { value: "grok", label: "Grok" },
-                    { value: "codex", label: "Codex" },
-                ],
-                initialValues: ["claude", "grok", "codex"],
+                options: ALL_RESTORE_AGENTS.map((value) => ({ value, label: harnessLabel(value) })),
+                initialValues: [...ALL_RESTORE_AGENTS],
                 required: true,
             })
         );

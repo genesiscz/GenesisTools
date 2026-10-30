@@ -5,6 +5,8 @@ import { getSessionListing } from "@app/claude/lib/history/search";
 import { HistoryDatabase } from "@genesiscz/utils/agent-sessions/database";
 import { catalogHistory } from "@genesiscz/utils/agent-sessions/open-service";
 import { resolveHistoryProvider } from "@genesiscz/utils/agent-sessions/provider";
+import { ACCOUNT_PROVIDER_ALIASES } from "@genesiscz/utils/ai/providers/alias-list";
+import type { HarnessId } from "@genesiscz/utils/harness/types";
 import { logger } from "@genesiscz/utils/logger";
 import { readDataVersion } from "@genesiscz/utils/workers/sqlite-wake";
 import { hubAgents } from "../agents";
@@ -24,9 +26,9 @@ export const WIDGET_DISCOVERY_REUSE_MS = 15_000;
  *   which are rollouts in the same tree).
  * - `claude-agents`: the Claude sub-agent listing, which only finds lead sessions outside the parents listing.
  */
-export type WidgetRosterScope = "all" | "claude" | "claude-agents" | "codex" | "grok";
+export type WidgetRosterScope = "all" | "claude-agents" | HarnessId;
 
-export const WIDGET_ROSTER_PROVIDERS = ["claude", "codex", "grok"] as const;
+export const WIDGET_ROSTER_PROVIDERS = ACCOUNT_PROVIDER_ALIASES;
 export type WidgetRosterProvider = (typeof WIDGET_ROSTER_PROVIDERS)[number];
 
 export interface WidgetRoster {
@@ -102,7 +104,10 @@ export async function refreshWidgetIndex(
         getSessionListing({ ...filters, mtimeFrom: since, refresh: true }).then(
             (listing) => listing.indexed + listing.staleRemoved
         );
-    const native = (provider: "codex" | "grok", filters: { excludeAgents?: boolean; agentsOnly?: boolean }) =>
+    const native = (
+        provider: Exclude<HarnessId, "claude">,
+        filters: { excludeAgents?: boolean; agentsOnly?: boolean }
+    ) =>
         catalogHistory({ provider, refresh: true, filters: { ...filters, mtimeFrom: since } }).then(
             ({ report }) => report.parsed + report.removed
         );
