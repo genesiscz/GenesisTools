@@ -530,10 +530,16 @@ Both refuse to run without a predicate.
 
 - 🛑 `/tmp` is shared machine-wide. Two agents sweeping in parallel overwrote each other's
   log at `/tmp/sweep-dry.log`. The CLI uses `scratchDir()`; scripts must too. Every scratch
-  and backup dir lives under `<tmp>/fable-replace/`, and every CLI run prunes that root:
-  age-only (older than 12 h), manifest-gated (only a dir this tool created and finished, or
-  an empty one), at most 50 per run, never the current run's dir. `--prune` runs it now. A
-  reboot empties the temp folder anyway; the prune matters on machines that stay up for weeks.
+  and backup dir lives in its session's own folder, `<tmp>/fable-replace/<session>/`, and
+  every CLI run prunes only that folder: age-only (older than 12 h), manifest-gated (only a
+  dir this tool created and finished, or an empty one), at most 50 per run, never the current
+  run's dir. `<session>` is `FABLE_REPLACE_SESSION`, else the harness session id
+  (`CLAUDE_CODE_SESSION_ID`, then `CODEX_THREAD_ID`), else `ppid-<parent pid>`. So a worker
+  that inherits its lead's TMPDIR never prunes another session's undo trail; give a worker its
+  own `FABLE_REPLACE_SESSION` when it must not share its lead's folder. `--prune` runs the same
+  session prune now. `--prune --all-sessions` sweeps every session's folder and the older
+  `<tmp>/fable-replace-*` layout under the same gate; nothing runs it for you. A reboot
+  empties the temp folder anyway; the prune matters on machines that stay up for weeks.
 - One spec or script per logical sweep, so the report maps to one reviewable change.
 - Every real CLI run, rollback and prune is journaled to `~/.genesis-tools/fable-replace/journal.jsonl`
   (a `--dry` run writes nothing at all, not even the journal, and never prunes)
