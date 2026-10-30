@@ -1,11 +1,13 @@
 import type { SourceMessage, TranscriptAnchor } from "@genesiscz/utils/agent/source-anchor";
+import type { HarnessId } from "@genesiscz/utils/harness/types";
 import type { ImageAttachment, ImageAttachmentInput } from "@genesiscz/utils/image/attachments";
 
 /** `message`: an agent-to-user message with no question (`inbox_send`, `tools question message`). */
 export type QaTag = "question" | "action" | "directive" | "message";
 /** `ask` marks an entry that came from answering a blocking pending form, not a log-after call. */
 export type QaSource = "question" | "mcp" | "skill" | "cli" | "ask";
-export type QaAgent = "claude-code" | "codex" | "grok" | "copilot" | "unknown";
+/** The runtime agent name (`AgentRuntimeContext.agent`): Claude is `claude-code`, the other harnesses keep their id. */
+export type QaAgent = "claude-code" | Exclude<HarnessId, "claude"> | "copilot" | "unknown";
 export interface QaRef {
     type: "commit" | "file" | "url" | "plan";
     value: string;

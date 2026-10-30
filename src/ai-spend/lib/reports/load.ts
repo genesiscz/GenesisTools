@@ -1,5 +1,6 @@
 import type { AccountEntry } from "@genesiscz/utils/ai/config/schema";
 import type { DiscoveredHome } from "@genesiscz/utils/ai/providers/account-features";
+import { ACCOUNT_PROVIDER_ALIASES } from "@genesiscz/utils/ai/providers/alias-list";
 import { UNBOUND_ACCOUNT_ID } from "@genesiscz/utils/ai/usage";
 import { logger } from "@genesiscz/utils/logger";
 import { type AgentId, spendAccountRowId } from "../drivers";
@@ -116,7 +117,7 @@ function loadExtraSources(
     return events;
 }
 
-const NATIVE_SOURCES: readonly NativeSourceId[] = ["claude", "codex", "grok"];
+const NATIVE_SOURCES: readonly NativeSourceId[] = ACCOUNT_PROVIDER_ALIASES;
 
 interface SessionLoadOptions {
     wanted: ReadonlySet<SourceId>;

@@ -1,3 +1,4 @@
+import type { HarnessId } from "@genesiscz/utils/harness/types";
 import type { SourceMessage } from "./source-anchor";
 
 /**
@@ -12,7 +13,8 @@ import type { SourceMessage } from "./source-anchor";
  * nothing to do with which CLI host owns this process.
  */
 export interface AgentRuntimeContext {
-    agent: "claude-code" | "codex" | "grok" | "copilot" | "unknown";
+    /** Claude is `claude-code` here; the other harnesses keep their id; Copilot is a host but no harness. */
+    agent: "claude-code" | Exclude<HarnessId, "claude"> | "copilot" | "unknown";
     sessionId: string | null;
     /** Native IDs provided by the calling harness, never inferred from transcript positions. */
     sourceMessage?: SourceMessage;

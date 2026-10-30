@@ -5,6 +5,7 @@ import { CursorProvider } from "@app/mcp-manager/utils/providers/cursor.js";
 import { GeminiProvider } from "@app/mcp-manager/utils/providers/gemini.js";
 import { GrokProvider } from "@app/mcp-manager/utils/providers/grok.js";
 import type { MCPProvider } from "@app/mcp-manager/utils/providers/types.js";
+import { ACCOUNT_PROVIDER_ALIASES } from "@genesiscz/utils/ai/providers/alias-list";
 import { toolCommand } from "@genesiscz/utils/cli/tool-command";
 import type { Command } from "commander";
 
@@ -56,7 +57,7 @@ function buildProviders(): MCPProvider[] {
  * (`command`, `args`, optional `env`), written by mcp-manager's GrokProvider, whose `installServer` reads the file and
  * replaces only that one server, so the rest of the config survives.
  */
-export const INSTALL_AGENTS = ["claude", "codex", "grok"] as const;
+export const INSTALL_AGENTS = ACCOUNT_PROVIDER_ALIASES;
 export type InstallAgent = (typeof INSTALL_AGENTS)[number];
 
 function isInstallAgent(value: string): value is InstallAgent {

@@ -1,6 +1,7 @@
 import type { TranscriptAnchor } from "@genesiscz/utils/agent/source-anchor";
 import { resolveHistoryProvider } from "@genesiscz/utils/agent-sessions/provider";
 import { codexNativeLinesToTurns } from "@genesiscz/utils/agent-sessions/readers/codex-turns";
+import { isAccountProviderAlias } from "@genesiscz/utils/ai/providers/alias-list";
 import type { ConversationMessage } from "@genesiscz/utils/claude/types";
 import { logger } from "@genesiscz/utils/logger";
 import { claudeMessagesToTurns } from "./claude";
@@ -162,7 +163,7 @@ export function transcriptAround({
     if (anchor.provider !== resolved.provider || anchor.sessionId !== resolved.sessionId) {
         throw new Error("The receipt and transcript have different provider/session identities");
     }
-    if (resolved.source !== "native" || !["claude", "codex", "grok"].includes(resolved.provider)) {
+    if (resolved.source !== "native" || !isAccountProviderAlias(resolved.provider)) {
         return {
             ...result,
             status: "unsupported",

@@ -562,7 +562,7 @@ export const DEFAULT_HOOKS_CONFIG: HooksConfig = {
         questionNudge: "off",
         chatAnswers: "off",
         maxBlocksPerSession: 2,
-        harnesses: ["claude", "codex", "grok"],
+        harnesses: [...ACCOUNT_PROVIDER_ALIASES],
         harvest: false,
         harvestListed: true,
         injectAnswers: false,
