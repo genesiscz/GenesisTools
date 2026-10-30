@@ -5,7 +5,7 @@ import type { ResolveDeps } from "@app/claude/lib/cmux/resolve";
 import { openHistoryService } from "@genesiscz/utils/agent-sessions/open-service";
 import type { AccountProviderAlias } from "@genesiscz/utils/ai/providers/alias-list";
 import { PROVIDER_ALIASES } from "@genesiscz/utils/ai/providers/aliases";
-import { logger } from "@genesiscz/utils/logger";
+import { logger, out } from "@genesiscz/utils/logger";
 import type { Command } from "commander";
 import type { AgentToolSpec } from "./spec";
 
@@ -55,6 +55,46 @@ async function lookupAgentSession(
     }
 }
 
+/**
+ * The agent's structured rung before the pane, when it has one (`spec.structuredSend`). True when it settled the send
+ * (delivered, or an unknown outcome that must not be typed again); false sends the text to the pane. A dry run, or
+ * `--no-enter` (the text must stay unsubmitted), goes to the pane only, because a prompt is always submitted.
+ */
+async function structuredSend(
+    spec: AgentToolSpec,
+    session: string,
+    text: string,
+    options: SendOptions
+): Promise<boolean> {
+    if (!spec.structuredSend || options.dryRun || options.enter === false) {
+        return false;
+    }
+
+    const sent = await spec.structuredSend({ session, text });
+    if (sent.kind === "absent") {
+        log.debug({ alias: spec.alias, session, reason: sent.reason }, "no structured rung took the text; typing it");
+        return false;
+    }
+
+    if (sent.kind === "delivered") {
+        if (options.json) {
+            out.result({ sent: true, rung: sent.rung, target: sent.target, query: session });
+        } else {
+            out.println(`sent through ${sent.target}`);
+        }
+    } else {
+        if (options.json) {
+            out.result({ sent: false, rung: sent.rung, reason: sent.reason, query: session });
+        }
+
+        out.error(`${sent.reason}. The text may have been received; check the session before sending again.`);
+        process.exitCode = 1;
+    }
+
+    await out.flush();
+    return true;
+}
+
 export function registerAgentCmuxCommand(program: Command, spec: AgentToolSpec): Command {
     const deps: ResolveDeps = { lookupSession: (query) => lookupAgentSession(spec.alias, query) };
     const cmux = program
@@ -82,6 +122,10 @@ export function registerAgentCmuxCommand(program: Command, spec: AgentToolSpec):
         .option("--json", "Emit the outcome as JSON instead of a status line")
         .option("--timeout <seconds>", "Give up after this long and exit 124 (the whole send: lookup, text, Enter)")
         .action(async (session: string, text: string, options: SendOptions) => {
+            if (await structuredSend(spec, session, text, options)) {
+                return;
+            }
+
             await sendDoor(session, text, options, deps);
         });
 
