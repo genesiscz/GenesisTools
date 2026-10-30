@@ -158,7 +158,9 @@ final class HubDigestModel: ObservableObject {
         loading = true
         error = nil
         let day = day
+        let loaded = HubSnapshotLoads.begin("digest")
         Task {
+            defer { loaded() }
             do {
                 let found = try await HubDailyCLI.decode(HubDigest.self, ["digest", "--json", "--date", day], span: "digest.load")
                 guard token == generation else { return }

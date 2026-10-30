@@ -440,6 +440,8 @@ struct HandoffComposerSheet: View {
         let request = self.request
         let wanted = range
         loading = true
+        let loaded = HubSnapshotLoads.begin("handoff")
+        defer { loaded() }
         let span = HubPerf.begin("handoff.preview", String(request.session.sessionId.prefix(8)), awaits: true)
         let result = await Task.detached(priority: .userInitiated) { Result { try HubHandoff.run(request, range: wanted) } }.value
         guard wanted == range else {

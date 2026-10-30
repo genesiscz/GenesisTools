@@ -122,6 +122,17 @@ struct HubRequest {
     /// Off screen, never active, on scratch settings.
     var isScripted: Bool { snapshotPath != nil || benchPath != nil }
 
+    /// The overlay loads a `--snapshot` waits for before it captures (Hub/HubSnapshotLoads.swift): each overlay the
+    /// request opens must finish its first load, so the shot shows the day's reading and not "Reading the day…".
+    var snapshotLoads: Set<String> {
+        var parts: Set<String> = []
+        if digest { parts.insert("digest") }
+        if prompts { parts.insert("prompts") }
+        if handoff { parts.insert("handoff") }
+        if rules { parts.insert("rules") }
+        return parts
+    }
+
     init(_ args: [String]) {
         var index = 0
         while index < args.count {
@@ -344,25 +355,31 @@ package func runHub(_ args: [String]) -> Never {
                 let review: @MainActor () -> ReviewModel? = { model.mode == .prs ? model.prs.review : model.review }
                 HubSnapshotFocus.whenReady(review: review, file: request.file, style: request.style, showsDiff: { model.snapshotShowsDiff }) {
                     DispatchQueue.main.asyncAfter(deadline: .now() + 2.5) {
-                        let web = (review()?.renderer as? PierreWebDiffRenderer)?.webView
-                        let showsDiff = model.mode == .prs || model.panes.contains(.changes)
-                        // A modal panel covers the diff: the web view's own image, drawn last, showed through it.
-                        let covered = request.digest || request.rules || request.prompts || request.handoff
-                            || request.sessionSearch != nil || request.palette != nil || request.find != nil
-                        if let rows = HubBench.transcriptRowsLine(in: window) {
-                            PerfLog.mark("hub.snapshot \(rows)")
-                            FileHandle.standardError.write(Data("hub snapshot: \(rows)\n".utf8))
-                        }
-                        // Where a click on the title bar row lands: the empty strip must reach the zone, no
-                        // control may start under the traffic lights or the title, and a mode with a header
-                        // has its first row up there with no empty band under it. A modal panel's dim layer
-                        // covers the strip on purpose.
-                        let titlebar = (covered ? "(a modal panel covers it) " : "")
-                            + HubPerf.measure("snapshot.audit") { WindowTitlebar.audit(window, expectsRow: model.showsTitlebarHeader).line }
-                        PerfLog.mark("hub.snapshot titlebar \(titlebar)")
-                        FileHandle.standardError.write(Data("hub snapshot: titlebar \(titlebar)\n".utf8))
-                        ReviewSnapshot.write(window: window, webView: showsDiff && !covered ? web : nil, to: snapshotPath) {
-                            exit(0)
+                        MainActor.assumeIsolated {
+                            // An overlay that loads after it appears (the digest's day reading) is waited for on its
+                            // own load signal, with a deadline (Hub/HubSnapshotLoads.swift).
+                            HubSnapshotLoads.afterLoads(request.snapshotLoads) {
+                                let web = (review()?.renderer as? PierreWebDiffRenderer)?.webView
+                                let showsDiff = model.mode == .prs || model.panes.contains(.changes)
+                                // A modal panel covers the diff: the web view's own image, drawn last, showed through it.
+                                let covered = request.digest || request.rules || request.prompts || request.handoff
+                                    || request.sessionSearch != nil || request.palette != nil || request.find != nil
+                                if let rows = HubBench.transcriptRowsLine(in: window) {
+                                    PerfLog.mark("hub.snapshot \(rows)")
+                                    FileHandle.standardError.write(Data("hub snapshot: \(rows)\n".utf8))
+                                }
+                                // Where a click on the title bar row lands: the empty strip must reach the zone, no
+                                // control may start under the traffic lights or the title, and a mode with a header
+                                // has its first row up there with no empty band under it. A modal panel's dim layer
+                                // covers the strip on purpose.
+                                let titlebar = (covered ? "(a modal panel covers it) " : "")
+                                    + HubPerf.measure("snapshot.audit") { WindowTitlebar.audit(window, expectsRow: model.showsTitlebarHeader).line }
+                                PerfLog.mark("hub.snapshot titlebar \(titlebar)")
+                                FileHandle.standardError.write(Data("hub snapshot: titlebar \(titlebar)\n".utf8))
+                                ReviewSnapshot.write(window: window, webView: showsDiff && !covered ? web : nil, to: snapshotPath) {
+                                    exit(0)
+                                }
+                            }
                         }
                     }
                 }
