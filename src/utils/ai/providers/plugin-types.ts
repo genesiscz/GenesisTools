@@ -1,4 +1,5 @@
 import type { NativeSessionReader } from "@genesiscz/utils/agent-sessions/types";
+import type { HarnessDriver } from "@genesiscz/utils/harness/types";
 import type { EmbeddingModel, ImageModel, LanguageModel, SpeechModel, TranscriptionModel } from "ai";
 import type { AccountEntry } from "../config/schema";
 import type { AccountFeatures } from "./account-features";
@@ -99,4 +100,10 @@ export interface ProviderPlugin {
     readonly accounts?: AccountFeatures;
     /** Native transcript discovery/reading/import, independent of account authentication. */
     readonly codingAgent?: NativeSessionReader<string>;
+    /**
+     * The coding-agent driver: identity plus one lazy slot per part (locate, turnState, launch, hooks, ...), each a
+     * loader or a note that says why the part is not here. Present exactly on the plugins that have `codingAgent`;
+     * the provider registry is the one registry of harnesses (`.claude/plans/2026-10-30-PlugenizeHarnesses.md`).
+     */
+    readonly harness?: HarnessDriver;
 }

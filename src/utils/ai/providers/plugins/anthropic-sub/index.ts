@@ -5,6 +5,7 @@ import { AnthropicSubResolver } from "../../../resolvers/AnthropicSubResolver";
 import type { AccountFeatures } from "../../account-features";
 import type { BindContext, ProviderBinding, ProviderPlugin } from "../../plugin-types";
 import { LIMIT_ORDER, PROMINENT_LIMITS } from "./buckets";
+import { claudeHarness } from "./harness";
 import { anthropicLogin } from "./login";
 import { anthropicLongLogin } from "./login-long";
 import { anthropicSecondaryLogin } from "./login-secondary";
@@ -37,6 +38,7 @@ const presentation: AccountFeatures["presentation"] = {
 export const anthropicSubPlugin: ProviderPlugin = {
     id: "anthropic-sub",
     codingAgent: claudeHistoryReader,
+    harness: claudeHarness,
     kind: "subscription",
     capabilities: new Set(["chat", "summarize", "translate"]),
     credential: {
