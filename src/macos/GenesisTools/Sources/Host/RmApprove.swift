@@ -165,7 +165,7 @@ struct RmWindowContent {
         return "Delete \(selected) of \(Plural.count(total, "item"))\(forWho)?"
     }
 
-    /// "Claude Code in shop (develop) wants to delete these. They go to the trash, and tools rm restore brings them
+    /// "Claude Code in col-fe (develop) wants to delete these. They go to the trash, and tools rm restore brings them
     /// back for 1 hour."
     static func purpose(_ request: RmApproveRequest) -> String {
         let who: String
@@ -342,16 +342,13 @@ private func rmLinks(_ request: RmApproveRequest?) -> [ApprovalLink] {
             try? open.run()
         },
     ]
-    // An asker that names no provider is a Claude Code session (the field came later); a provider with no harness
-    // driver has no `tools <agent> cmux focus`.
-    let harness: Harness? = asker.provider == nil ? .claude : asker.provider.flatMap(Harness.init(rawValue:))
-    if let harness {
+    if asker.provider == nil || asker.provider == "claude" {
         links.append(ApprovalLink(title: "Its terminal", symbol: "terminal") {
             logClick("rm.approve link=terminal session=\(sessionId)")
             // The launcher runs `tools` programs (`GenesisTools <program> [args]`), with the app's identity.
             let focus = Process()
             focus.executableURL = Bundle.main.executableURL
-            focus.arguments = [harness.rawValue, "cmux", "focus", sessionId]
+            focus.arguments = ["claude", "cmux", "focus", sessionId]
             try? focus.run()
         })
     }

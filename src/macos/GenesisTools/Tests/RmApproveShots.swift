@@ -71,17 +71,24 @@ final class RmApproveShots: XCTestCase {
 
     private func shot(_ items: [RmApproveItem], _ evaluator: StillEvaluator, to path: String) throws {
         let content = RmWindowContent.build(params(items), home: home, icons: false, markdownApp: true)
-        let shown = zip(content.items, items).map { item, raw in
-            ApprovalItem(path: item.path, location: item.location, name: item.name, folder: item.folder, size: item.size,
-                         reason: item.reason, gone: item.gone, aside: item.aside, isFolder: item.isFolder,
-                         opensInMarkdown: item.opensInMarkdown,
-                         icon: NSWorkspace.shared.icon(for: raw.kind == "dir" ? .folder : (UTType(filenameExtension: (raw.path as NSString).pathExtension) ?? .data)))
+        let shown = content.items.map { item in
+            let raw = items.first { $0.path == item.path }
+            return ApprovalItem(path: item.path, location: item.location, name: item.name, folder: item.folder, size: item.size,
+                                reason: item.reason, gone: item.gone, aside: item.aside, isFolder: item.isFolder,
+                                opensInMarkdown: item.opensInMarkdown,
+                                icon: NSWorkspace.shared.icon(for: raw?.kind == "dir" ? .folder : (UTType(filenameExtension: (item.path as NSString).pathExtension) ?? .data)),
+                                git: item.git, detail: item.detail, alsoIn: item.alsoIn)
         }
         let verifier = ApprovalVerifier(reason: "approve: fixture", evaluator: evaluator)
         let model = ApprovalDialogModel(
             title: content.title, purpose: content.purpose, symbol: "trash.fill", facts: content.facts, details: content.details,
-            warning: nil, footnote: content.footnote, rememberChoices: [], rememberNote: nil, allowTitle: "Use password…",
-            deadline: Date().addingTimeInterval(169), identifier: "rm-approve", items: shown, verifier: verifier)
+            warning: nil, footnote: content.footnote,
+            rememberChoices: [ApprovalRemember(seconds: nil, title: "Just this once"), ApprovalRemember(seconds: nil, title: "Always for this folder")],
+            rememberNote: nil, allowTitle: "Use password…",
+            deadline: Date().addingTimeInterval(169), identifier: "rm-approve", items: shown, verifier: verifier,
+            links: [ApprovalLink(title: "Open its inbox", symbol: "tray") {}, ApprovalLink(title: "Its terminal", symbol: "terminal") {}],
+            summary: content.summary, disposals: content.disposals, hint: "Esc denies · Space previews", selectable: content.selectable)
+        model.titleForSelection = { selected, total in RmWindowContent.title(selected: selected, total: total, who: "shop-admin-2.0") }
         try render(ApprovalDialogView(model: model), to: path)
         verifier.cancel()
     }

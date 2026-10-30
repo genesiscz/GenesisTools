@@ -193,6 +193,70 @@ describe("approve in the window", () => {
         expect(loadRmRequest(asideTwin.id)?.status).toBe("pending");
     });
 
+    test("an initially blocked aside item remains pending after another item is approved", () => {
+        const request = asideRequest("initially-blocked");
+        const entries = entriesOf(request);
+        const blocked = entries.slice(0, 1);
+        const approved = entries.slice(1);
+        const ctx = context();
+        const choices = { selected: null, disposal: "trash" as const, remember: "once" as const, note: null };
+        const { batch } = approveDelete({ ctx, request, approved, denied: [], choices });
+        saveApproved({
+            request,
+            answer: { approved: true, via: "touch-id", choices, deniedByPerson: false },
+            approved,
+            denied: [],
+            pending: blocked.map((entry) => entry.wanted),
+            batchId: batch?.id,
+            ctx,
+        });
+        const saved = loadRmRequest(request.id);
+        expect(saved?.status).toBe("pending");
+        expect(saved?.targets.map((target) => target.path)).toEqual([blocked[0]?.wanted.path]);
+        expect(pendingAsideDirs().some((entry) => entry.requestId === request.id)).toBe(true);
+        expect(existsSync(blocked[0]?.wanted.stored ?? "")).toBe(true);
+    });
+
+    test("an unavailable trash keeps the refused aside item pending after partial approval", () => {
+        const request = asideRequest("unwritable-volume");
+        const entries = entriesOf(request);
+        const ctx = context();
+        const choices = { selected: null, disposal: "trash" as const, remember: "once" as const, note: null };
+        const refused: ApproveEntry[] = [];
+        const { batch, back } = approveDelete({
+            ctx,
+            request,
+            approved: entries,
+            denied: [],
+            choices,
+            onRefused: (entry) => refused.push(entry),
+            hooks: {
+                beforeTrashRoot: (move) => {
+                    if (move.target.path === entries[0]?.target.path) {
+                        throw Object.assign(new Error("unwritable"), { code: "EACCES" });
+                    }
+                },
+            },
+        });
+        expect(back.kept).toEqual([]);
+        expect(refused).toEqual([entries[0]]);
+        expect(batch?.items.map((item) => item.original)).toEqual([entries[1]?.wanted.path]);
+        saveApproved({
+            request,
+            answer: { approved: true, via: "touch-id", choices, deniedByPerson: false },
+            approved: entries.filter((entry) => !refused.includes(entry)),
+            denied: [],
+            pending: refused.map((entry) => entry.wanted),
+            batchId: batch?.id,
+            ctx,
+        });
+        const saved = loadRmRequest(request.id);
+        expect(saved?.status).toBe("pending");
+        expect(saved?.targets.map((target) => target.path)).toEqual([entries[0]?.wanted.path]);
+        expect(pendingAsideDirs().some((entry) => entry.requestId === request.id)).toBe(true);
+        expect(existsSync(entries[0]?.wanted.stored ?? "")).toBe(true);
+    });
+
     test("failed put-backs stay protected and can be retried without losing the trash batch", () => {
         const request = asideRequest("partial-retry");
         const [a, b] = request.targets.map((target) => target.path);

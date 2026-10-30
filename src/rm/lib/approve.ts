@@ -14,6 +14,7 @@ import {
     hardDenyReason,
     isRootActive,
     listRmRequests,
+    type MoveOptions,
     measureBytes,
     moveToTrash,
     probeItemGit,
@@ -337,10 +338,12 @@ export function approveDelete(input: {
     choices: ApprovalChoices;
     /** An approved path the trash refused (unavailable, or changed since the check): it stays where it is. */
     onRefused?: (entry: ApproveEntry, reason: string) => void;
+    /** Test seams of the trash move (an unwritable trash root, a swap before the rename). */
+    hooks?: MoveOptions["hooks"];
 }): DeleteApproval {
     const { ctx, request, approved, denied, choices } = input;
     const byTarget = new Map(approved.map((entry) => [entry.target, entry]));
-    const shared = sharedRequests(request, approved);
+    const refused = new Set<ApproveEntry>();
     const graceMinutes = disposalGraceMinutes(choices.disposal);
     const batch = moveToTrash(
         [
@@ -355,11 +358,13 @@ export function approveDelete(input: {
             config: ctx.config,
             caller: request.caller,
             graceMinutes,
+            hooks: input.hooks,
             onRefused: (move, reason) => {
                 out.println(pc.red(`refuse ${move.original ?? move.target.path}: ${reason}`));
                 const entry = byTarget.get(move.target);
 
                 if (entry) {
+                    refused.add(entry);
                     input.onRefused?.(entry, reason);
                 }
             },
@@ -375,9 +380,11 @@ export function approveDelete(input: {
         removeEmptyAsideDir(request.asideDir);
     }
 
+    // A refused path stayed where it is: it settles no other request and adds no remembered root.
+    const completed = approved.filter((entry) => !refused.has(entry));
     printDisposal(request.id, batch, graceMinutes);
-    settleShared(shared, request, batch?.id);
-    saveRemembered(ctx, rememberedRoots(ctx, request, approved, choices.remember), request.id);
+    settleShared(sharedRequests(request, completed), request, batch?.id);
+    saveRemembered(ctx, rememberedRoots(ctx, request, completed, choices.remember), request.id);
     return { batch, back };
 }
 
