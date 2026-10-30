@@ -3,18 +3,14 @@ import { appendFileSync, mkdtempSync, readFileSync, statSync, writeFileSync } fr
 import { tmpdir } from "node:os";
 import { join } from "node:path";
 import { resolveHistoryProvider } from "@genesiscz/utils/agent-sessions/provider";
+import { claudeTurnState } from "@genesiscz/utils/agent-sessions/readers/claude-turn-state";
+import { codexTurnState } from "@genesiscz/utils/agent-sessions/readers/codex-turn-state";
+import { grokTurnState } from "@genesiscz/utils/agent-sessions/readers/grok-turn-state";
 import { compressBytes, SeekableZstdWriter } from "@genesiscz/utils/compress/zstd";
 import { SafeJSON } from "@genesiscz/utils/json";
 import { readHead, readTailAt } from "./native-scan";
-import {
-    claudeTurnState,
-    codexTurnState,
-    grokTurnState,
-    liveActivityOf,
-    readTurnState,
-    type TurnStateInput,
-    toolSummaryOf,
-} from "./turn-state";
+import { liveActivityOf, readTurnState, type TurnStateInput } from "./turn-state";
+import { toolSummaryOf } from "./turn-state-core";
 
 describe("provider-owned dialog facts", () => {
     it("lets every native reader describe its own dialog source", () => {

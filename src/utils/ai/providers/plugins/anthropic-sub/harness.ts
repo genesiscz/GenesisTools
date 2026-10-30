@@ -1,4 +1,5 @@
 import { isClaude, resolveClaudeContext } from "@genesiscz/utils/agent/hosts/claude";
+import { claudeTurnState } from "@genesiscz/utils/agent-sessions/readers/claude-turn-state";
 import type { HarnessDriver } from "@genesiscz/utils/harness/types";
 import { pending, toolOwned } from "@genesiscz/utils/harness/types";
 import { claudeLaunch } from "./harness-launch";
@@ -20,7 +21,7 @@ export const claudeHarness: HarnessDriver<"claude"> = {
     parts: {
         locate: pending("P2", "the claude finders in src/utils/ai/transcripts/resolve.ts and session-paths.ts roots"),
         parse: () => import("./harness-parse").then((m) => m.claudeParse),
-        turnState: pending("P2", "claudeTurnState and READERS in src/utils/ai/transcripts/turn-state.ts"),
+        turnState: { read: claudeTurnState },
         questions: pending("P2", "the claude question signals inside src/utils/ai/transcripts/turn-state.ts"),
         live: pending("P2", "the claude live tail in src/utils/ai/transcripts/live.ts and activity.ts"),
         launch: claudeLaunch,

@@ -13,8 +13,8 @@ import {
     readTurnState,
     type TurnProvider,
     type TurnSnapshot,
-    toolSummaryOf,
 } from "./turn-state";
+import { toolSummaryOf } from "./turn-state-core";
 import type { TranscriptEnvelope, TranscriptTurn } from "./types";
 
 /**

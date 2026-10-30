@@ -2,10 +2,12 @@ import { describe, expect, it, spyOn } from "bun:test";
 import { appendFileSync, mkdtempSync, writeFileSync } from "node:fs";
 import { tmpdir } from "node:os";
 import { join } from "node:path";
+import { codexTurnState } from "@genesiscz/utils/agent-sessions/readers/codex-turn-state";
+import { grokTurnState } from "@genesiscz/utils/agent-sessions/readers/grok-turn-state";
 import { SafeJSON } from "@genesiscz/utils/json";
 import type { ActivityState } from "./activity";
 import type { TurnSnapshot } from "./turn-state";
-import { codexTurnState, grokTurnState, readTurnState, TURN_TAIL_BYTES } from "./turn-state";
+import { readTurnState, TURN_TAIL_BYTES } from "./turn-state";
 import { looksLikeQuestion, questionOf, TRANSCRIPT_GONE_MS, turnAnswers, waitForTurn, watchTurn } from "./turn-wait";
 
 function snap(state: ActivityState, lastEventAt: number | null, turnStartedAt: number | null = null): TurnSnapshot {

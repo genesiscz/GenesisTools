@@ -1,4 +1,5 @@
 import { isCodex, resolveCodexContext } from "@genesiscz/utils/agent/hosts/codex";
+import { codexTurnState } from "@genesiscz/utils/agent-sessions/readers/codex-turn-state";
 import type { HarnessDriver } from "@genesiscz/utils/harness/types";
 import { pending, toolOwned } from "@genesiscz/utils/harness/types";
 import { codexLaunch } from "./harness-launch";
@@ -15,7 +16,7 @@ export const codexHarness: HarnessDriver<"codex"> = {
     parts: {
         locate: pending("P2", "the codex finders in src/utils/ai/transcripts/resolve.ts and session-paths.ts roots"),
         parse: () => import("./harness-parse").then((m) => m.codexParse),
-        turnState: pending("P2", "codexTurnState and READERS in src/utils/ai/transcripts/turn-state.ts"),
+        turnState: { read: codexTurnState },
         questions: pending("P2", "the codex question signals inside src/utils/ai/transcripts/turn-state.ts"),
         live: pending("P2", "the codex live tail in src/utils/ai/transcripts/live.ts and activity.ts"),
         launch: codexLaunch,

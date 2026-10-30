@@ -48,11 +48,12 @@ provider, so a new provider is a list of members to fill in and no feature parse
 - **The format parsers live beside the readers** (`src/utils/agent-sessions/readers/`: `codex-turns.ts`,
   `codex-changes.ts`, `codex-import.ts`, `codex-usage.ts`, `grok-usage.ts`, `claude-tail-usage.ts`,
   `claude-native-scan.ts`, moved there 2026-10-30). `src/utils/ai/transcripts/` keeps provider-neutral logic and
-  tables keyed by provider; `turn-state.ts` is the one file that still reads row types itself, and its fix is a
-  `turnState` reader member once the question hooks settle. Do not add a new parser outside the readers.
+  tables keyed by provider. The turn-state readers moved there too on 2026-10-30
+  (`readers/<harness>-turn-state.ts`), reached through each harness driver's `turnState` part
+  (`harnessTurnState(id)` in `src/utils/ai/providers/harness-index.ts`). Do not add a new parser outside the readers.
 - **Lint enforces it**: `no-transcript-format-outside-readers` in `scripts/ci/lint-rules.ts` fails a transcript record
-  type or field literal (`"continued-in"`, `"turn_context"`, `'"type":"user"'`, …) outside the readers. The files that
-  still do it are listed in `scripts/ci/transcript-format-ratchet.ts` (one left); a file only ever leaves that list.
+  type or field literal (`"continued-in"`, `"turn_context"`, `'"type":"user"'`, …) outside the readers. Its list in
+  `scripts/ci/transcript-format-ratchet.ts` was emptied on 2026-10-30, so a new offender fails the lint at once.
 - **Four more lints guard the same seam** (2026-10-25). Their lists in `scripts/ci/` were emptied on 2026-10-30, so
   a new offender fails the lint at once:
   - `no-hand-built-claude-home`, `no-hand-built-codex-grok-home` (`native-home-ratchet.ts`): a path into

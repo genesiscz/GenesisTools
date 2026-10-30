@@ -9,6 +9,4 @@
  * `NativeSessionReader` member (.claude/rules/agent-transcripts.md). `lint-rules.test.ts` fails when a listed file no
  * longer names one, so the list cannot go stale.
  */
-export const TRANSCRIPT_FORMAT_RATCHET: ReadonlySet<string> = new Set<string>([
-    "src/utils/ai/transcripts/turn-state.ts",
-]);
+export const TRANSCRIPT_FORMAT_RATCHET: ReadonlySet<string> = new Set<string>([]);

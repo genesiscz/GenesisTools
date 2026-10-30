@@ -6,6 +6,7 @@ import type {
     LaunchRecipe,
     ProcessSignature,
     TranscriptFacts,
+    TurnStateReader,
 } from "@genesiscz/utils/harness/parts";
 import { type HarnessDriver, type HarnessId, isPartNote } from "@genesiscz/utils/harness/types";
 import type { WorkerCapabilities } from "@genesiscz/utils/worker/capabilities";
@@ -62,6 +63,17 @@ export async function harnessHistory(id: HarnessId): Promise<NativeSessionReader
     }
 
     return slot();
+}
+
+/** The turn-state reader of a harness (its driver's `turnState` part); every harness has one. */
+export function harnessTurnState(id: HarnessId): TurnStateReader {
+    const slot = harnessDriver(id).parts.turnState;
+
+    if (isPartNote(slot)) {
+        throw new Error(`The ${id} harness driver has no turn-state reader: ${slot.reason}`);
+    }
+
+    return slot;
 }
 
 /** How a harness is recognised from the environment of a process it started; every harness has one. */

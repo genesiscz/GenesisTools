@@ -1,4 +1,5 @@
 import { isGrok, resolveGrokContext } from "@genesiscz/utils/agent/hosts/grok";
+import { grokTurnState } from "@genesiscz/utils/agent-sessions/readers/grok-turn-state";
 import type { HarnessDriver } from "@genesiscz/utils/harness/types";
 import { pending, toolOwned } from "@genesiscz/utils/harness/types";
 import { grokLaunch } from "./harness-launch";
@@ -15,7 +16,7 @@ export const grokHarness: HarnessDriver<"grok"> = {
     parts: {
         locate: pending("P2", "the grok finders in src/utils/ai/transcripts/resolve.ts and session-paths.ts roots"),
         parse: () => import("./harness-parse").then((m) => m.grokParse),
-        turnState: pending("P2", "grokTurnState and READERS in src/utils/ai/transcripts/turn-state.ts"),
+        turnState: { read: grokTurnState },
         questions: pending("P2", "the grok question signals inside src/utils/ai/transcripts/turn-state.ts"),
         live: pending("P2", "the grok live tail in src/utils/ai/transcripts/live.ts and activity.ts"),
         launch: grokLaunch,

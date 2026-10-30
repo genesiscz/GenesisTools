@@ -145,7 +145,6 @@ export interface ProcessSignature {
 export interface LazyPartContracts {
     locate: TranscriptLocator;
     parse: TranscriptParser;
-    turnState: TurnStateReader;
     questions: QuestionSignalReader;
     history: NativeSessionReader;
 }
@@ -162,6 +161,11 @@ export interface EagerPartContracts {
     exit: ExitCommand;
     host: HostResolver;
     process: ProcessSignature;
+    /**
+     * E: the turn state is read by synchronous callers (the dialog guard, `wait`, the live tail), so the reader is
+     * held directly; it is pure over parsed records and imports no parser.
+     */
+    turnState: TurnStateReader;
 }
 
 /**
