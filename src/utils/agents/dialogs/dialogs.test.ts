@@ -2,10 +2,11 @@ import { describe, expect, test } from "bun:test";
 import { appendFileSync, existsSync, mkdirSync, mkdtempSync, readFileSync, writeFileSync } from "node:fs";
 import { tmpdir } from "node:os";
 import { dirname, join } from "node:path";
+import { ACCOUNT_PROVIDER_ALIASES } from "@genesiscz/utils/ai/providers/alias-list";
 import type { TurnSnapshot } from "@genesiscz/utils/ai/transcripts/turn-state";
 import { SafeJSON } from "@genesiscz/utils/json";
 import { dialogFromRecords, dialogFromSnapshot, dialogRefusal, openDialogFor } from "./guard";
-import { DIALOG_KEY_MAPS, optionIndexOf, planDialogKeys } from "./keys";
+import { dialogKeysOf, optionIndexOf, planDialogKeys } from "./keys";
 import { closeQuestion, dialogsPath, openQuestions, readSessionQuestions, upsertQuestion } from "./store";
 import { type OpenQuestion, openQuestionKey } from "./types";
 import { DialogWatcher, questionFromSnapshot, syncSessionDialogs } from "./watcher";
@@ -506,6 +507,10 @@ describe("dialog option keys", () => {
         });
         expect(planDialogKeys(question({ provider: "codex" }), "a")).toMatchObject({ ok: false });
         expect(planDialogKeys(question({ provider: "grok" }), "a")).toMatchObject({ ok: false });
-        expect(Object.keys(DIALOG_KEY_MAPS).sort()).toEqual(["claude", "codex", "grok"]);
+        expect(ACCOUNT_PROVIDER_ALIASES.map((provider) => dialogKeysOf(provider).supported)).toEqual([
+            true,
+            false,
+            false,
+        ]);
     });
 });

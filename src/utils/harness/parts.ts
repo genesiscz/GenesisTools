@@ -1,6 +1,7 @@
 import type { AgentRuntimeContext } from "@genesiscz/utils/agent/context";
 import type { ResumeOptions } from "@genesiscz/utils/agent-sessions/resume-argv";
 import type { NativeSessionReader } from "@genesiscz/utils/agent-sessions/types";
+import type { DialogKeys } from "@genesiscz/utils/agents/dialogs/keys";
 import type { ResolvedTranscript } from "@genesiscz/utils/ai/transcripts/resolve";
 import type { TurnQuestionCall, TurnSnapshot, TurnStateInput } from "@genesiscz/utils/ai/transcripts/turn-state";
 import type { TranscriptTurn } from "@genesiscz/utils/ai/transcripts/types";
@@ -171,6 +172,8 @@ export interface EagerPartContracts {
      * held directly; it is pure over parsed records and imports no parser.
      */
     turnState: TurnStateReader;
+    /** The keys that answer the harness's question dialog in a terminal pane (`tools claude cmux send`, the inbox). */
+    dialog: DialogKeys;
 }
 
 /**

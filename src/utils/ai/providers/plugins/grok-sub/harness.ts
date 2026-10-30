@@ -1,7 +1,7 @@
 import { isGrok, resolveGrokContext } from "@genesiscz/utils/agent/hosts/grok";
 import { grokTurnState } from "@genesiscz/utils/agent-sessions/readers/grok-turn-state";
 import type { HarnessDriver } from "@genesiscz/utils/harness/types";
-import { pending, toolOwned } from "@genesiscz/utils/harness/types";
+import { pending, toolOwned, unsupported } from "@genesiscz/utils/harness/types";
 import { grokLaunch } from "./harness-launch";
 import { grokWorker } from "./harness-worker";
 
@@ -66,6 +66,9 @@ export const grokHarness: HarnessDriver<"grok"> = {
             "the delivery ladder lives in the question tool (P6)"
         ),
         worker: grokWorker,
+        dialog: unsupported(
+            "the keys of the Grok ask_user_question dialog were not measured live yet; answer it in the terminal"
+        ),
         spend: toolOwned("src/ai-spend/lib/drivers/index.ts", "MonitorDriver lives in the ai-spend tool (P5)"),
         mcp: toolOwned("src/mcp-manager/utils/providers/index.ts", "the MCP config writers live in mcp-manager (P6)"),
         subagents: toolOwned("src/hub/lib/agents/index.ts", "the agents tree lives in the hub tool (P6)"),

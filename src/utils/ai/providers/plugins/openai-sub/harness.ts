@@ -1,7 +1,7 @@
 import { isCodex, resolveCodexContext } from "@genesiscz/utils/agent/hosts/codex";
 import { codexTurnState } from "@genesiscz/utils/agent-sessions/readers/codex-turn-state";
 import type { HarnessDriver } from "@genesiscz/utils/harness/types";
-import { pending, toolOwned } from "@genesiscz/utils/harness/types";
+import { pending, toolOwned, unsupported } from "@genesiscz/utils/harness/types";
 import { codexLaunch } from "./harness-launch";
 import { codexWorker } from "./harness-worker";
 
@@ -60,6 +60,9 @@ export const codexHarness: HarnessDriver<"codex"> = {
             "the delivery ladder lives in the question tool (P6)"
         ),
         worker: codexWorker,
+        dialog: unsupported(
+            "the keys of the Codex request_user_input dialog were not measured live yet; answer it in the terminal"
+        ),
         spend: toolOwned("src/ai-spend/lib/drivers/index.ts", "MonitorDriver lives in the ai-spend tool (P5)"),
         mcp: toolOwned("src/mcp-manager/utils/providers/index.ts", "the MCP config writers live in mcp-manager (P6)"),
         subagents: toolOwned("src/hub/lib/agents/index.ts", "the agents tree lives in the hub tool (P6)"),

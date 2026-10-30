@@ -1,54 +1,35 @@
+import { harnessDriver } from "@genesiscz/utils/ai/providers/harness-index";
+import { isPartNote } from "@genesiscz/utils/harness/types";
 import type { DialogProvider, OpenQuestion } from "./types";
 
 /** One key press for a pane: a named key (`cmux send-key`) or a character typed as text (`cmux send`). */
 export type DialogKeyPress = { key: string } | { text: string };
 
+/** The keys that pick an option in a harness's question dialog: its driver's `dialog` part. */
+export interface DialogKeys {
+    /** The presses that pick the 0-based option `index` of a one-question dialog and submit it. */
+    select: (index: number) => DialogKeyPress[];
+    /** The highest option count the keys can reach. */
+    maxOptions: number;
+}
+
 /** The keys that pick an option in a harness's question dialog, or why this harness has none yet. */
-export type DialogKeyMap =
-    | {
-          supported: true;
-          /** The presses that pick the 0-based option `index` of a one-question dialog and submit it. */
-          select: (index: number) => DialogKeyPress[];
-          /** The highest option count the keys can reach. */
-          maxOptions: number;
-      }
-    | { supported: false; reason: string };
+export type DialogKeyMap = ({ supported: true } & DialogKeys) | { supported: false; reason: string };
 
 /**
- * Measured live on 2026-10-30 21:51 to 21:53 (Claude Code 2.1.314, Haiku, a scratch session in a background cmux
- * tab; the notes vault's Dev/Agents/DecisionDetection.md, section 2026-10-30 22:07). In the AskUserQuestion dialog:
- *
- * - The digit of an option, typed as text, picks that option AND submits it in one press, wherever the highlight is
- *   ("2" with the highlight on option 3 answered option 2). `cmux send-key 2` is refused ("Unknown key").
- * - Down and `j` move the highlight one row; Up and `k` move it back. Up on the first row wraps to "Type something.",
- *   Down stops on the last row ("Chat about this"). Tab and Home change nothing. Enter submits the highlighted row.
- * - With the highlight on "Chat about this" (a text row), a digit does nothing.
- * - A dialog with several questions takes one digit per question, then a review screen ("1. Submit answers").
- *
- * So the digit is the press: one key, independent of where the highlight is, and no Enter. When the dialog is
- * already gone, the digit stays in the prompt as one unsent character, while Enter would submit the prompt.
+ * The option keys of a harness: its driver's `dialog` part. A harness whose dialog keys were not measured live says so
+ * in an `unsupported` note; its answers then go as typed text through the normal delivery, which the dialog guard
+ * refuses while its dialog is open.
  */
-const CLAUDE_KEYS: DialogKeyMap = {
-    supported: true,
-    select: (index) => [{ text: String(index + 1) }],
-    maxOptions: 9,
-};
+export function dialogKeysOf(provider: DialogProvider): DialogKeyMap {
+    const slot = harnessDriver(provider).parts.dialog;
 
-/**
- * The option keys per harness. A harness whose dialog keys were not measured live says so; its answers then go as
- * typed text through the normal delivery, which the dialog guard refuses while its dialog is open.
- */
-export const DIALOG_KEY_MAPS: Record<DialogProvider, DialogKeyMap> = {
-    claude: CLAUDE_KEYS,
-    codex: {
-        supported: false,
-        reason: "the keys of the Codex request_user_input dialog were not measured live yet; answer it in the terminal",
-    },
-    grok: {
-        supported: false,
-        reason: "the keys of the Grok ask_user_question dialog were not measured live yet; answer it in the terminal",
-    },
-};
+    if (isPartNote(slot)) {
+        return { supported: false, reason: slot.reason };
+    }
+
+    return { supported: true, ...slot };
+}
 
 /** The letters of `count` options: a) b) c) and so on. */
 export function optionLetters(count: number): string[] {
@@ -80,7 +61,7 @@ export type DialogKeyPlan =
  * option past the list, and a harness whose keys are unknown.
  */
 export function planDialogKeys(question: OpenQuestion, option: string): DialogKeyPlan {
-    const keys = DIALOG_KEY_MAPS[question.provider];
+    const keys = dialogKeysOf(question.provider);
 
     if (!keys.supported) {
         return { ok: false, reason: keys.reason };
