@@ -9,7 +9,7 @@ import { SafeJSON } from "@genesiscz/utils/json";
 import { claudeHistoryReader } from "./compact-readers";
 import { initializeCompactHistorySchema } from "./migrations";
 import { createClaudeHistoryOperations } from "./readers/claude";
-import { discoverClaudeHistorySources } from "./readers/claude-discovery";
+import { claudeIndexesFile, discoverClaudeHistorySources } from "./readers/claude-discovery";
 import { fallbackTitle, HistoryService } from "./service";
 import { HistorySyncRepository } from "./sync-repository";
 import { type BaselineOracle, createBaselineOracle } from "./testing/baseline-oracle";
@@ -45,6 +45,7 @@ function createReader(options: { kind: string; roots: string[] }): NativeSession
             sessionAlive: () => null,
             registryDirectory: () => null,
         },
+        indexesFile: claudeIndexesFile,
         roots: () => options.roots,
         read: async () => {
             throw new Error("fixture reader does not read transcripts");

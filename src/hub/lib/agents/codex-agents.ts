@@ -2,6 +2,7 @@ import { closeSync, existsSync, mkdirSync, openSync, readFileSync, readSync, sta
 import { basename, dirname } from "node:path";
 import { POLLED_LISTING_REUSE_MS } from "@app/ai/lib/sessions/agent-session-rows";
 import { catalogHistory } from "@genesiscz/utils/agent-sessions/open-service";
+import { resolveHistoryProvider } from "@genesiscz/utils/agent-sessions/provider";
 import { readHead, readTailWindow } from "@genesiscz/utils/ai/transcripts/native-scan";
 import { isZstdPath } from "@genesiscz/utils/compress/zstd";
 import { readLinesSync } from "@genesiscz/utils/fs/read-lines";
@@ -203,16 +204,19 @@ export function codexAgentModel(path: string): string | null {
         return null;
     }
 
-    const at = text.indexOf('"type":"turn_context"');
+    const { reader } = resolveHistoryProvider("codex");
+    // Only whole rows: the last one may be cut by the read window.
+    const rows = text.slice(0, text.lastIndexOf("\n") + 1).split("\n");
 
-    if (at === -1) {
-        return null;
+    for (const row of rows) {
+        const model = reader.modelOfRow(row);
+
+        if (model) {
+            return model;
+        }
     }
 
-    const end = text.indexOf("\n", at);
-    const row = text.slice(text.lastIndexOf("\n", at) + 1, end === -1 ? undefined : end);
-
-    return field(row, "model");
+    return null;
 }
 
 interface ScanEntry {

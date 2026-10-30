@@ -8,6 +8,7 @@
  */
 import { closeSync, existsSync, fstatSync, openSync, readdirSync, readFileSync, readSync, statSync } from "node:fs";
 import { basename, dirname, join } from "node:path";
+import { resolveHistoryProvider } from "@genesiscz/utils/agent-sessions/provider";
 import { isMissingPathError } from "@genesiscz/utils/fs/canonical";
 import { SafeJSON } from "@genesiscz/utils/json";
 import { logger } from "@genesiscz/utils/logger";
@@ -201,19 +202,13 @@ function promptText(record: JsonRecord | null, maxChars: number): string | null 
     return text(unwrapped.slice(0, maxChars));
 }
 
-/** The model the last reply in the tail names. */
+/** The model the last reply in the tail names, as the Claude reader reads a row. */
 function lastModel(tail: string): string | null {
+    const { reader } = resolveHistoryProvider("claude");
     const lines = tail.split("\n");
     for (let index = lines.length - 1; index >= 0; index--) {
-        const line = lines[index];
-        if (!line.includes('"type":"assistant"') || !line.includes('"model"')) {
-            continue;
-        }
-
-        const record = parseLine(line.trim());
-        const message = record && isRecord(record.message) ? record.message : null;
-        const model = text(message?.model);
-        if (model && model !== "<synthetic>") {
+        const model = reader.modelOfRow(lines[index].trim());
+        if (model) {
             return model;
         }
     }

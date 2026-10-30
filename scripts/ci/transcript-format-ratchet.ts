@@ -10,13 +10,9 @@
  * longer names one, so the list cannot go stale.
  */
 export const TRANSCRIPT_FORMAT_RATCHET: ReadonlySet<string> = new Set<string>([
-    "src/hub/lib/agents/codex-agents.ts",
-    "src/hub/lib/widget/roster-index.ts",
     "src/utils/ai/openai/native-session-import.ts",
     "src/utils/ai/transcripts/around.ts",
     "src/utils/ai/transcripts/native-scan.ts",
-    "src/utils/ai/transcripts/subagents.ts",
     "src/utils/ai/transcripts/turn-state.ts",
-    "src/utils/cli/failures/caller.ts",
     "src/utils/session-changes/codex.ts",
 ]);

@@ -16,6 +16,7 @@ import {
     readCodexRecords,
     scanCodexRecords,
 } from "./codex";
+import { codexIndexesFile } from "./codex-discovery";
 
 const CHILD_ID = "11111111-2222-4333-8444-555555555555";
 const PARENT_ID = "aaaaaaaa-bbbb-4ccc-8ddd-eeeeeeeeeeee";
@@ -1361,4 +1362,17 @@ test("readTurnBoundary normalizes Codex response items and user-message events",
             timestamp,
         });
     }
+});
+
+test("modelOfRow names a turn_context row's model, and indexesFile takes rollouts plain or compressed", () => {
+    const { modelOfRow } = createCodexHistoryOperations();
+    expect(modelOfRow(SafeJSON.stringify({ type: "turn_context", payload: { model: "gpt-6.1-sol" } }))).toBe(
+        "gpt-6.1-sol"
+    );
+    expect(modelOfRow(SafeJSON.stringify({ type: "session_meta", payload: { model: "gpt-6.1-sol" } }))).toBeUndefined();
+    expect(modelOfRow('{"type":"turn_context","payload":{"model":"gpt-6')).toBeUndefined();
+
+    expect(codexIndexesFile("/fixture/sessions/2026/10/10/rollout-2026-10-10T00-00-00-fixture.jsonl")).toBe(true);
+    expect(codexIndexesFile("/fixture/sessions/2026/10/10/rollout-2026-10-10T00-00-00-fixture.jsonl.zst")).toBe(true);
+    expect(codexIndexesFile("/fixture/sessions/2026/10/10/history.jsonl")).toBe(false);
 });

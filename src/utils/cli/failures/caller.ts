@@ -2,9 +2,8 @@ import { existsSync, readdirSync } from "node:fs";
 import { homedir } from "node:os";
 import { join } from "node:path";
 import type { AgentRuntimeContext } from "@genesiscz/utils/agent/context";
+import { nativeHistoryReaders } from "@genesiscz/utils/agent-sessions/compact-readers";
 import { readLastLines } from "@genesiscz/utils/fs/read-lines";
-import { SafeJSON } from "@genesiscz/utils/json";
-import { logger } from "@genesiscz/utils/logger";
 import type { FailureCaller } from "./record";
 
 const TAIL_BYTES = 512 * 1024;
@@ -66,35 +65,18 @@ function codexRollout(threadId: string, codexHome: string, now: Date): string | 
     return null;
 }
 
-/** The newest model the transcript tail names: Claude's assistant `message.model`, Codex's `turn_context` model. */
+/**
+ * The newest model the transcript tail names, as its provider's reader reads a row (`NativeSessionReader.modelOfRow`).
+ * The tail's provider is not known here, and the formats do not overlap, so every reader is asked.
+ */
 export function modelInTranscriptLines(lines: string[]): string | null {
     for (let index = lines.length - 1; index >= 0; index--) {
-        const line = lines[index];
-        if (!line.includes('"model"')) {
-            continue;
-        }
+        for (const reader of nativeHistoryReaders) {
+            const model = reader.modelOfRow(lines[index]);
 
-        let entry: unknown;
-        try {
-            entry = SafeJSON.parse(line, { strict: true });
-        } catch (error) {
-            logger.debug({ error }, "failures: a transcript line did not parse");
-            continue;
-        }
-
-        if (typeof entry !== "object" || entry === null) {
-            continue;
-        }
-
-        const record = entry as { type?: unknown; message?: { model?: unknown }; payload?: { model?: unknown } };
-        const model =
-            record.type === "assistant"
-                ? record.message?.model
-                : record.type === "turn_context"
-                  ? record.payload?.model
-                  : undefined;
-        if (typeof model === "string" && model && !model.startsWith("<")) {
-            return model;
+            if (model) {
+                return model;
+            }
         }
     }
 

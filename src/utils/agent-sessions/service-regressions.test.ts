@@ -8,7 +8,7 @@ import { codexHistoryReader, grokHistoryReader } from "./compact-readers";
 import { initializeCompactHistorySchema } from "./migrations";
 import { HistoryService } from "./service";
 import { HistorySyncRepository } from "./sync-repository";
-import { noBackwardRead, noContinuedIn } from "./testing/no-backward-read";
+import { indexesNoFile, noBackwardRead, noContinuedIn, noModelOfRow } from "./testing/no-backward-read";
 import type { HistoryMetadataRecord, HistorySourceRecord, NativeSessionReader, NativeSessionSource } from "./types";
 
 interface FixtureSource {
@@ -133,6 +133,8 @@ function fixtureReader(options: {
         },
         readBackward: noBackwardRead,
         continuedIn: noContinuedIn,
+        modelOfRow: noModelOfRow,
+        indexesFile: indexesNoFile,
         readTurnBoundary: async () => null,
         readForward: async () => ({ rows: [], file: null, endOffset: 0, issues: [] }),
         roots: () => [...new Set(options.fixtures.map((fixture) => fixture.source.root))],

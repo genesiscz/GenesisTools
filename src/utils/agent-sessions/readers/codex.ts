@@ -1367,6 +1367,7 @@ export type CodexHistoryOperations = Pick<NativeSessionReader<"codex">, "parserV
             | "readTurnBoundary"
             | "readForward"
             | "continuedIn"
+            | "modelOfRow"
         >
     >;
 
@@ -1436,6 +1437,29 @@ async function readCodexTurnBoundary(
     });
 }
 
+/** The model a `turn_context` row names: Codex writes one as each turn starts, with the model that turn runs. */
+function codexModelOfRow(row: string): string | undefined {
+    if (!row.includes('"turn_context"')) {
+        return undefined;
+    }
+
+    let value: JsonRecord;
+
+    try {
+        value = asRecord(SafeJSON.parse(row, { strict: true }) as JsonValue);
+    } catch (error) {
+        logger.debug({ error }, "A Codex rollout row did not parse; it names no model");
+        return undefined;
+    }
+
+    if (value.type !== "turn_context") {
+        return undefined;
+    }
+
+    const model = asRecord(value.payload).model;
+    return typeof model === "string" && model ? model : undefined;
+}
+
 export function createCodexHistoryOperations(): CodexHistoryOperations {
     return {
         parserVersion: "7",
@@ -1448,5 +1472,6 @@ export function createCodexHistoryOperations(): CodexHistoryOperations {
         // Codex resumes a thread under its own id and never hands a conversation to a successor file, so a rollout
         // carries no pointer to another session.
         continuedIn: async () => undefined,
+        modelOfRow: codexModelOfRow,
     };
 }

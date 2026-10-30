@@ -365,6 +365,12 @@ function mergeMetadata(
     };
 }
 
+/** A Codex rollout, plain or compressed (`rollout-….jsonl` or `.jsonl.zst`): the only file Codex discovery reads. */
+export function codexIndexesFile(path: string): boolean {
+    const name = basename(path);
+    return name.startsWith("rollout-") && isNativeTranscript("codex", name);
+}
+
 export async function discoverCodexHistorySources(
     roots: string[],
     options: HistoryDiscoveryOptions = {}
@@ -380,7 +386,7 @@ export async function discoverCodexHistorySources(
         filtered,
         filePaths: options.filePaths,
         signal: options.signal,
-        includeFile: ({ path }) => basename(path).startsWith("rollout-") && isNativeTranscript("codex", basename(path)),
+        includeFile: ({ path }) => codexIndexesFile(path),
     });
     const issues = [...walked.issues];
     const incompleteRoots = new Set<string>();

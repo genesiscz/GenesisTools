@@ -3,14 +3,14 @@ import { nativeSessionRoots, nativeSessionRootsWithLegacyHomes } from "@genesisc
 import { readCompatibilityTranscript } from "./reader-compat";
 import { createClaudeHistoryOperations } from "./readers/claude";
 import { claudeDialog } from "./readers/claude-dialog";
-import { discoverClaudeHistorySources } from "./readers/claude-discovery";
+import { claudeIndexesFile, discoverClaudeHistorySources } from "./readers/claude-discovery";
 import { readClaudeStatistics } from "./readers/claude-statistics";
 import { createCodexHistoryOperations } from "./readers/codex";
-import { discoverCodexHistorySources } from "./readers/codex-discovery";
+import { codexIndexesFile, discoverCodexHistorySources } from "./readers/codex-discovery";
 import { readCodexStatistics } from "./readers/codex-statistics";
 import { createGrokHistoryOperations } from "./readers/grok";
 import { grokDialog } from "./readers/grok-dialog";
-import { discoverGrokHistorySources } from "./readers/grok-discovery";
+import { discoverGrokHistorySources, grokIndexesFile } from "./readers/grok-discovery";
 import { readGrokStatistics } from "./readers/grok-statistics";
 import type { AgentKind, NativeSessionReader } from "./types";
 
@@ -32,6 +32,7 @@ export const claudeHistoryReader = createCompactHistoryReader({
     dialog: claudeDialog,
     roots: () => nativeSessionRoots("claude"),
     discover: discoverClaudeHistorySources,
+    indexesFile: claudeIndexesFile,
     // One JSONL row per record, and a record's text reads only that row (a tool result's name,
     // which comes from an earlier row, never enters the searched text).
     lineLocalRecords: true,
@@ -50,6 +51,7 @@ export const codexHistoryReader = createCompactHistoryReader({
     },
     roots: () => nativeSessionRootsWithLegacyHomes("codex"),
     discover: discoverCodexHistorySources,
+    indexesFile: codexIndexesFile,
     searchMetadata: true,
     // Metadata comes from the first header plus the state sidecars; a record never replays a header.
     scanKeepsMetadata: true,
@@ -63,7 +65,19 @@ export const grokHistoryReader = createCompactHistoryReader({
     dialog: grokDialog,
     roots: () => nativeSessionRoots("grok"),
     discover: discoverGrokHistorySources,
+    indexesFile: grokIndexesFile,
     searchMetadata: true,
     ...createGrokHistoryOperations(),
     readStatistics: readGrokStatistics,
 });
+
+/**
+ * The three native readers, for code that holds a transcript row but not its provider (the failure log names the
+ * model of whichever session ran a tool) and must not load the provider registry on its synchronous path. Code that
+ * knows the provider asks `resolveHistoryProvider(kind)`.
+ */
+export const nativeHistoryReaders: readonly NativeSessionReader<AgentKind>[] = [
+    claudeHistoryReader,
+    codexHistoryReader,
+    grokHistoryReader,
+];
