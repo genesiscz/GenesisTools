@@ -19,6 +19,8 @@ import {
     readQuestionSnapshot,
 } from "@app/question/lib/read-model";
 import type { TranscriptAnchor } from "@genesiscz/utils/agent/source-anchor";
+import { isAccountProviderAlias } from "@genesiscz/utils/ai/providers/alias-list";
+import { harnessOfRuntimeAgent } from "@genesiscz/utils/ai/providers/harness-index";
 import {
     type ResolvedTranscript,
     resolveTranscript,
@@ -615,10 +617,12 @@ export async function discoverWidgetCatalog(
 
 /** The provider name a Widget session key carries: unsupported agents become "unknown". */
 export function widgetProvider(value: string | null | undefined): WidgetTarget["provider"] {
-    if (value === "claude" || value === "claude-code") {
-        return "claude";
+    if (!value) {
+        return "unknown";
     }
-    return value === "codex" || value === "grok" ? value : "unknown";
+
+    // A harness id, or a runtime agent name (`claude-code`) its host part reports.
+    return isAccountProviderAlias(value) ? value : (harnessOfRuntimeAgent(value) ?? "unknown");
 }
 function formProvider(form: AskForm): string | undefined {
     if (form.poster?.agent && form.poster.agent !== "unknown") {
