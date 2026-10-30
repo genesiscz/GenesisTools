@@ -1,5 +1,6 @@
 import { deliveryLabel } from "@app/dev-dashboard/lib/qa-decision-delivery";
 import { renderQaQuestionHtml } from "@app/dev-dashboard/lib/qa-render";
+import type { DeliveryChannel } from "@app/question/lib/decisions/deliver";
 import type { InboxAnswerResult } from "@app/question/lib/inbox/answer";
 import type { InboxDecision, InboxDialog, InboxSession } from "@app/question/lib/inbox/build";
 import { toolCommand } from "@genesiscz/utils/cli/tool-command";
@@ -64,18 +65,37 @@ function answerText(item: InboxDecision): string {
     return `${item.option ? `${item.option}) ` : ""}${text}`.trim();
 }
 
+/**
+ * The line for an answer that reached the agent, per channel: every delivery channel of `DeliveryChannel` (deliver.ts)
+ * plus the inbox's own `form` and `dry-run`, so a new channel fails the typecheck instead of reading as queued. Null
+ * for a channel that never delivers.
+ */
+const DELIVERED_LINES = {
+    cmux: () => "Delivered: typed into the session's cmux pane.",
+    // `codex` is a delivery channel (steered into a `tools codex` worker), not a harness.
+    codex: (result) =>
+        `Delivered: steered into the ${toolCommand("codex")} worker${result.detail ? ` ${result.detail}` : ""}.`,
+    "claude-peer": (result) =>
+        `Delivered: sent to the live Claude session${result.detail ? ` (${result.detail})` : ""}.`,
+    "grok-leader": (result) =>
+        `Delivered: prompted through the Grok leader${result.detail ? ` (${result.detail})` : ""}.`,
+    resume: (result) =>
+        `Delivered: the answers ride the first prompt of the resumed turn${result.detail ? ` (${result.detail})` : ""}.`,
+    prompt: () => "Delivered: the session sent the answers with its own prompt.",
+    form: (result) => `Delivered: ${result.detail ?? "the waiting agent receives it"}.`,
+    queued: null,
+    "dry-run": null,
+} satisfies Record<DeliveryChannel | InboxAnswerResult["channel"], ((result: InboxAnswerResult) => string) | null>;
+
 function deliveryLine(result: InboxAnswerResult): string {
     if (result.channel === "dry-run") {
         return `Preview only, nothing sent. The agent would receive: ${result.text}`;
     }
 
-    if (result.channel === "cmux" && result.delivered) {
-        return "Delivered: typed into the session's cmux pane.";
-    }
+    const delivered = result.delivered ? DELIVERED_LINES[result.channel] : null;
 
-    // `codex` is a delivery channel (`DeliveryChannel` in deliver.ts: steered into a `tools codex` worker), not a harness.
-    if (result.channel === "codex" && result.delivered) {
-        return `Delivered: steered into the ${toolCommand("codex")} worker${result.detail ? ` ${result.detail}` : ""}.`;
+    if (delivered) {
+        return delivered(result);
     }
 
     return `Queued: ${result.detail ?? "no live route"}. The session's next prompt picks the answers up.`;

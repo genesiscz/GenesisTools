@@ -120,10 +120,6 @@ export const HARNESS_GUARD_ALLOWLIST: Readonly<Record<string, HarnessGuardCounts
         table: 2,
         why: "the one tool-owned cmux table (CmuxAdapter) that every driver's cmux part names: its launch extras need the cmux and grok tools, which @genesiscz/utils cannot import",
     },
-    "src/dev-dashboard/ui/src/components/QaDecisionsTab.tsx": {
-        branch: 1,
-        why: "a DeliveryChannel value (steered into a tools codex worker), not a harness",
-    },
     "src/genesis-tools-mcp/lib/http-caller.ts": {
         table: 1,
         why: "SESSION_ID_OF, keyed by the gateway's runtime-agent caller axis (with copilot and unknown); its readers spawn lsof and read the session registry, which the hook-path drivers must not load",
