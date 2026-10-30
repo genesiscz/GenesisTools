@@ -5,6 +5,7 @@ import { logger } from "@genesiscz/utils/logger";
 import { GATEWAY_HEADER } from "../auth/constants.ts";
 import { isGatewayOauth, serverAuth } from "../auth/policy.ts";
 import { gatewayBaseUrl, gatewayListen } from "../auth/project.ts";
+import { TokenRefreshUnavailableError } from "../auth/refresh-failure.ts";
 import { ensureGatewayClientToken } from "../auth/secrets.ts";
 import { accessTokenForRequest } from "../auth/tokens.ts";
 import { autoLoginRefusal, type LoginLauncher, staticClientRefusal } from "./auto-login.ts";
@@ -95,6 +96,23 @@ async function loginRequiredResponse(
  */
 function loginNeededResponse(name: string): Response {
     return jsonRpcError(`${name} needs a login. Run ${toolCommand("mcp-manager auth login", name)}`);
+}
+
+/** Seconds a client should wait before it tries a server whose token endpoint could not be reached. */
+const RETRY_AFTER_SECONDS = 30;
+
+/**
+ * Answer a request whose token refresh never reached a verdict (no network, an outage). The stored login is fine,
+ * so nothing is opened: a 503 tells the client to come back, where a 401 would start its own auth flow.
+ */
+function retryLaterResponse(name: string, reason: string): Response {
+    const response = jsonRpcError(
+        `${name} could not reach its sign-in server (${reason}). The login is kept; retry in a moment. If this persists, run ${toolCommand("mcp-manager auth login", name)}`,
+        503
+    );
+    response.headers.set("Retry-After", String(RETRY_AFTER_SECONDS));
+
+    return response;
 }
 
 function serverNameFromPath(pathname: string): string | undefined {
@@ -232,6 +250,15 @@ export async function startGatewayServer(
                     allowRefresh: !diagnostic,
                 });
             } catch (error) {
+                if (error instanceof TokenRefreshUnavailableError) {
+                    logger.warn(
+                        { server: name, cause: error.reason },
+                        "gateway could not reach the token endpoint; answered retry-later, no login started"
+                    );
+
+                    return retryLaterResponse(name, error.reason);
+                }
+
                 logger.warn({ server: name, error, diagnostic }, "gateway could not obtain an upstream token");
 
                 return loginRequired();

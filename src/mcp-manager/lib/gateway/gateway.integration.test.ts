@@ -478,7 +478,14 @@ describe("gateway diagnostic probes", () => {
     let tokenPosts = 0;
     const logins: string[] = [];
 
-    async function gatewayWithExpiredToken(): Promise<GatewayHandle> {
+    async function gatewayWithExpiredToken(
+        tokenAnswer: () => Promise<Response> = async () =>
+            Response.json({
+                access_token: "refreshed-access",
+                refresh_token: "rotated-refresh",
+                expires_in: 3600,
+            })
+    ): Promise<GatewayHandle> {
         tokenPosts = 0;
         logins.length = 0;
         _setMcpFetchForTest(async (_input, init) => {
@@ -486,11 +493,7 @@ describe("gateway diagnostic probes", () => {
                 tokenPosts += 1;
             }
 
-            return Response.json({
-                access_token: "refreshed-access",
-                refresh_token: "rotated-refresh",
-                expires_in: 3600,
-            });
+            return tokenAnswer();
         });
         cleanup.push(() => _resetMcpFetchForTest());
         await writeServerTokens("shop", {
@@ -560,5 +563,45 @@ describe("gateway diagnostic probes", () => {
         expect(tokenPosts).toBe(1);
         expect(lastUpstreamAuth).toBe("Bearer refreshed-access");
         expect(await readRefreshToken("shop")).toBe("rotated-refresh");
+    });
+
+    test("a refresh that cannot reach the token endpoint answers retry-later and starts no login", async () => {
+        const handle = await gatewayWithExpiredToken(async () => {
+            throw Object.assign(new Error("getaddrinfo ENOTFOUND identity.example"), { code: "ENOTFOUND" });
+        });
+
+        const response = await fetch(`http://127.0.0.1:${handle.port}/mcp/shop`, {
+            method: "POST",
+            headers: { [GATEWAY_HEADER]: LOCAL },
+            body: "{}",
+        });
+        const body = await response.text();
+
+        expect(response.status).toBe(503);
+        expect(response.headers.get("retry-after")).toBe("30");
+        expect(body).toContain('"jsonrpc":"2.0"');
+        expect(body).toContain("ENOTFOUND");
+        expect(body).not.toContain("browser window");
+        await new Promise((resolve) => setTimeout(resolve, 0));
+        expect(logins).toEqual([]);
+        expect(upstreamHits).toBe(0);
+        expect(await readRefreshToken("shop")).toBe("refresh-1");
+    });
+
+    test("a refused grant still starts the login", async () => {
+        const handle = await gatewayWithExpiredToken(async () =>
+            Response.json({ error: "invalid_grant" }, { status: 400 })
+        );
+
+        const response = await fetch(`http://127.0.0.1:${handle.port}/mcp/shop`, {
+            method: "POST",
+            headers: { [GATEWAY_HEADER]: LOCAL },
+            body: "{}",
+        });
+
+        expect(response.status).toBe(401);
+        expect(await response.text()).toContain("a browser window is opening");
+        await new Promise((resolve) => setTimeout(resolve, 0));
+        expect(logins).toEqual(["shop"]);
     });
 });

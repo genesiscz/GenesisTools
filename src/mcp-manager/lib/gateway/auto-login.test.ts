@@ -2,7 +2,7 @@ import { describe, expect, test } from "bun:test";
 import { existsSync } from "node:fs";
 import { join } from "node:path";
 import { autoLoginRefusal, createLoginLauncher, staticClientRefusal } from "./auto-login.ts";
-import { loginSpawnArgs } from "./login-runner.ts";
+import { loginFailureReason, loginSpawnArgs, reopenLoginCommand } from "./login-runner.ts";
 import { gatewayRepoRoot } from "./service.ts";
 
 /** Resolve on the next macrotask, so an un-awaited launcher body has run to completion. */
@@ -463,5 +463,43 @@ describe("the gateway spawns mcp-manager directly", () => {
         expect(existsSync(join(root, "package.json"))).toBe(true);
         expect(existsSync(join(root, "tools"))).toBe(true);
         expect(existsSync(join(root, "src/mcp-manager/index.ts"))).toBe(true);
+    });
+});
+
+describe("the login banner's click route", () => {
+    test("a click reopens the login by absolute paths, in the background", () => {
+        const command = reopenLoginCommand("shop");
+
+        expect(command.startsWith(`'${process.execPath}' `)).toBe(true);
+        expect(command).toContain(`'${join(gatewayRepoRoot(), "src/mcp-manager/index.ts")}' 'auth' 'login' 'shop'`);
+        expect(command).not.toContain("--worker");
+        expect(command.endsWith(" >/dev/null 2>&1 &")).toBe(true);
+    });
+
+    test("a server name with shell characters stays one quoted word", () => {
+        expect(reopenLoginCommand("shop; touch /tmp/x")).toContain("'shop; touch /tmp/x'");
+    });
+});
+
+describe("why a login ended before its URL", () => {
+    test("the last ERROR line of the new log output is the reason", () => {
+        const lines = [
+            "discovering https://mcp.shop.example/mcp",
+            "ERROR: first",
+            "ERROR: getaddrinfo ENOTFOUND mcp.shop.example",
+            "",
+        ];
+
+        expect(loginFailureReason(lines)).toBe("getaddrinfo ENOTFOUND mcp.shop.example");
+    });
+
+    test("ANSI colour is stripped and a long reason is cut", () => {
+        expect(loginFailureReason(["\u001b[31mERROR: vault locked\u001b[39m"])).toBe("vault locked");
+        expect(loginFailureReason([`ERROR: ${"x".repeat(400)}`])?.length).toBe(160);
+    });
+
+    test("no ERROR line gives no reason", () => {
+        expect(loginFailureReason(["registered client", "waiting"])).toBeUndefined();
+        expect(loginFailureReason([])).toBeUndefined();
     });
 });
