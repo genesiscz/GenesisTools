@@ -165,7 +165,7 @@ struct RmWindowContent {
         return "Delete \(selected) of \(Plural.count(total, "item"))\(forWho)?"
     }
 
-    /// "Claude Code in col-fe (develop) wants to delete these. They go to the trash, and tools rm restore brings them
+    /// "Claude Code in shop (develop) wants to delete these. They go to the trash, and tools rm restore brings them
     /// back for 1 hour."
     static func purpose(_ request: RmApproveRequest) -> String {
         let who: String
