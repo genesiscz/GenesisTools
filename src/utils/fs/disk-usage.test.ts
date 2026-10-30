@@ -1,4 +1,4 @@
-import { describe, expect, it } from "bun:test";
+import { describe, expect, it, spyOn } from "bun:test";
 import { linkSync, mkdirSync, mkdtempSync, readdirSync, rmSync, symlinkSync, writeFileSync } from "node:fs";
 import { tmpdir } from "node:os";
 import { join } from "node:path";
@@ -127,6 +127,189 @@ describe("disk-usage per-file sizers + walkFiles", () => {
             expect(out.length).toBe(1); // a.txt yielded
             expect(dirMem.get(dir)?.dirMtimeNs).not.toBe(999n); // cache refreshed
         } finally {
+            rmSync(dir, { recursive: true, force: true });
+        }
+    });
+});
+
+import { isWalkTimeout, type WalkOptions } from "@genesiscz/utils/fs/disk-usage";
+import * as bulk from "@genesiscz/utils/macos/getattrlistbulk";
+
+/** `count` sibling directories under `root`, one small file each. */
+function makeSmallDirs(root: string, count: number): void {
+    for (let i = 0; i < count; i++) {
+        const dir = join(root, `d${String(i).padStart(3, "0")}`);
+        mkdirSync(dir);
+        writeFileSync(join(dir, "f.txt"), "x");
+    }
+}
+
+/** Walk to the end or to the thrown stop, keeping what was seen before it. */
+function walkUntilStop(
+    root: string,
+    opts: WalkOptions,
+    onFile: (path: string) => void = () => {}
+): { files: string[]; thrown: unknown } {
+    const files: string[] = [];
+
+    try {
+        for (const e of walkFiles(root, opts)) {
+            files.push(e.path);
+            onFile(e.path);
+        }
+    } catch (err) {
+        return { files, thrown: err };
+    }
+
+    return { files, thrown: null };
+}
+
+describe("walkFiles stops on a deadline or an abort", () => {
+    it("stops at deadlineAt across many small directories, with nothing entered or yielded past it", () => {
+        const dir = mkdtempSync(join(tmpdir(), "gt-walk-deadline-dirs-"));
+        let now = 1_000_000;
+        const clock = spyOn(Date, "now").mockImplementation(() => now);
+        try {
+            makeSmallDirs(dir, 200);
+            const deadlineAt = now + 20;
+            let entered = 0;
+            let enteredLate = 0;
+            let filesLate = 0;
+            const { files, thrown } = walkUntilStop(
+                dir,
+                {
+                    deadlineAt,
+                    // Each directory "costs" 1 ms of the fake clock, so the deadline lands 20 directories in.
+                    onDirEntered: () => {
+                        if (now >= deadlineAt) {
+                            enteredLate++;
+                        }
+
+                        entered++;
+                        now += 1;
+                    },
+                },
+                () => {
+                    if (now >= deadlineAt) {
+                        filesLate++;
+                    }
+                }
+            );
+
+            expect(isWalkTimeout(thrown)).toBe(true);
+            expect(entered).toBeLessThanOrEqual(21);
+            expect(files.length).toBeLessThan(200);
+            expect(enteredLate).toBe(0);
+            expect(filesLate).toBe(0);
+        } finally {
+            clock.mockRestore();
+            rmSync(dir, { recursive: true, force: true });
+        }
+    });
+
+    it("an abort between two yielded files stops before the next file", () => {
+        const dir = mkdtempSync(join(tmpdir(), "gt-walk-abort-flat-"));
+        try {
+            for (let i = 0; i < 50; i++) {
+                writeFileSync(join(dir, `f${i}.txt`), "x");
+            }
+
+            const controller = new AbortController();
+            const { files, thrown } = walkUntilStop(dir, { signal: controller.signal }, () => {
+                if (!controller.signal.aborted) {
+                    controller.abort();
+                }
+            });
+
+            expect(thrown).toBe(controller.signal.reason);
+            expect(files.length).toBe(1);
+        } finally {
+            rmSync(dir, { recursive: true, force: true });
+        }
+    });
+
+    it("a stop never sends a directory to a second listing (no directory entered twice, no file yielded twice)", () => {
+        const dir = mkdtempSync(join(tmpdir(), "gt-walk-abort-relist-"));
+        try {
+            writeFileSync(join(dir, "a.txt"), "a");
+            writeFileSync(join(dir, "b.txt"), "b");
+            for (const sub of ["s1", "s2", "s3"]) {
+                mkdirSync(join(dir, sub));
+                writeFileSync(join(dir, sub, `${sub}.txt`), sub);
+            }
+
+            const controller = new AbortController();
+            const entered: string[] = [];
+            const { files, thrown } = walkUntilStop(
+                dir,
+                { signal: controller.signal, onDirEntered: (d) => entered.push(d) },
+                (path) => {
+                    if (path.endsWith("s1.txt") || path.endsWith("s2.txt") || path.endsWith("s3.txt")) {
+                        controller.abort();
+                    }
+                }
+            );
+
+            expect(thrown).toBe(controller.signal.reason);
+            expect(new Set(files).size).toBe(files.length);
+            expect(new Set(entered).size).toBe(entered.length);
+        } finally {
+            rmSync(dir, { recursive: true, force: true });
+        }
+    });
+
+    it("deadlineAt never shortens a walk it does not reach", () => {
+        const dir = mkdtempSync(join(tmpdir(), "gt-walk-deadline-far-"));
+        try {
+            makeSmallDirs(dir, 20);
+            const { files, thrown } = walkUntilStop(dir, {
+                deadlineAt: Date.now() + 60_000,
+                signal: new AbortController().signal,
+            });
+
+            expect(thrown).toBeNull();
+            expect(files.length).toBe(20);
+        } finally {
+            rmSync(dir, { recursive: true, force: true });
+        }
+    });
+});
+
+describe.skipIf(skip.unlessMac)("walkFiles stops inside one getattrlistbulk listing", () => {
+    it("a deadline ends a long listing midway instead of after its last entry", () => {
+        const dir = mkdtempSync(join(tmpdir(), "gt-walk-deadline-listing-"));
+        let now = 1_000_000;
+        let read = 0;
+        const original = bulk.iterDir;
+        // The listing "costs" 1 ms of the fake clock per entry: a 300-entry directory takes 300 ms.
+        const listing = spyOn(bulk, "iterDir").mockImplementation(function* (path) {
+            for (const entry of original(path)) {
+                read++;
+                now += 1;
+                yield entry;
+            }
+        });
+        const clock = spyOn(Date, "now").mockImplementation(() => now);
+        try {
+            for (let i = 0; i < 300; i++) {
+                writeFileSync(join(dir, `f${i}.txt`), "x");
+            }
+
+            let entered = 0;
+            const { files, thrown } = walkUntilStop(dir, {
+                deadlineAt: now + 20,
+                onDirEntered: () => {
+                    entered++;
+                },
+            });
+
+            expect(isWalkTimeout(thrown)).toBe(true);
+            expect(read).toBeLessThanOrEqual(21);
+            expect(files.length).toBe(0);
+            expect(entered).toBe(0);
+        } finally {
+            clock.mockRestore();
+            listing.mockRestore();
             rmSync(dir, { recursive: true, force: true });
         }
     });

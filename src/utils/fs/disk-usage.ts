@@ -77,9 +77,21 @@ export interface WalkOptions {
      *  itself is always entered). Lets callers prune big subtrees
      *  (`node_modules`, `.git`, …) before any syscall is spent on them. */
     shouldEnter?: (dir: string) => boolean;
-    /** Aborts the walk between dirent reads. On abort the generator throws
-     *  `signal.reason` (or a generic `AbortError` if reason is unset). */
+    /** Aborts the walk. Checked when a directory is entered, at every entry of
+     *  its listing and before every file handed out, so the walk stops within
+     *  one entry. On abort the generator throws `signal.reason` (an
+     *  `AbortError` DOMException when no reason was given).
+     *
+     *  A timer signal (`AbortSignal.timeout()`) cannot fire while this SYNC
+     *  generator runs: its timer needs an event-loop turn the walk never gives
+     *  (bun 1.4.2: still `aborted: false` after a 300 ms synchronous loop). For
+     *  a time bound pass `deadlineAt`. */
     signal?: AbortSignal;
+    /** `Date.now()` time at which the walk stops, checked at the same points as
+     *  `signal`. Then the generator throws a `TimeoutError` DOMException, the
+     *  reason `AbortSignal.timeout()` aborts with; {@link isWalkTimeout} tells it
+     *  from a real failure. */
+    deadlineAt?: number;
     /** Called once per directory we successfully read, with its absolute
      *  path. Use a cheap callback (e.g. assign to a ref) — directories are
      *  enumerated at high rate; the CLI throttles spinner updates on top of
@@ -171,13 +183,108 @@ export function resolvePrivateSize(e: Pick<WalkEntry, "path" | "privateSize">): 
     return getPrivateSize(e.path);
 }
 
+/** True for the error a walk throws at its `deadlineAt`, and for an
+ *  `AbortSignal.timeout()` abort: both are a `TimeoutError` DOMException. */
+export function isWalkTimeout(err: unknown): boolean {
+    return err instanceof DOMException && err.name === "TimeoutError";
+}
+
+/** Throws when the walk must stop: `opts.signal` aborted, or `opts.deadlineAt` reached. */
+function throwIfWalkStopped(opts: WalkOptions): void {
+    opts.signal?.throwIfAborted();
+
+    if (opts.deadlineAt !== undefined && Date.now() >= opts.deadlineAt) {
+        throw new DOMException("walkFiles: deadline reached", "TimeoutError");
+    }
+}
+
+interface BulkFileEntry {
+    path: string;
+    size: bigint;
+    allocSize: bigint;
+    mtimeNs: bigint;
+    cloneId: bigint;
+    privateSize: bigint;
+}
+
+interface BulkListing {
+    children: Array<{ name: string; kind: "file" | "dir" | "symlink" }>;
+    files: BulkFileEntry[];
+    subdirs: string[];
+}
+
+/** One directory through `getattrlistbulk`, or null when the bulk path cannot
+ *  read it and readdir must take over. The whole listing is buffered before the
+ *  first yield, so the stop is checked at every entry: a deadline or an abort
+ *  ends a long listing midway instead of after its last entry. */
+function readBulkListing(root: string, opts: WalkOptions): BulkListing | null {
+    const listing: BulkListing = { children: [], files: [], subdirs: [] };
+
+    try {
+        for (const e of bulkWalker().iterDir(root)) {
+            throwIfWalkStopped(opts);
+
+            if (e.errorCode !== 0) {
+                opts.onError?.({ path: join(root, e.name), errno: `errno=${e.errorCode}` });
+                continue;
+            }
+
+            if (e.kind === "LNK") {
+                listing.children.push({ name: e.name, kind: "symlink" });
+                continue;
+            }
+
+            if (e.kind === "DIR") {
+                listing.children.push({ name: e.name, kind: "dir" });
+                listing.subdirs.push(join(root, e.name));
+                continue;
+            }
+
+            if (e.kind === "REG") {
+                listing.children.push({ name: e.name, kind: "file" });
+                listing.files.push({
+                    path: join(root, e.name),
+                    size: e.size,
+                    allocSize: e.allocSize,
+                    mtimeNs: e.mtimeNs,
+                    cloneId: e.cloneId,
+                    privateSize: e.privateSize,
+                });
+            }
+            // OTHER (sockets, fifos, …): skip silently
+        }
+    } catch (err) {
+        // A stop is the walk's end, never a reason to list the directory again.
+        throwIfWalkStopped(opts);
+
+        // Fall through to the readdir path on EVERY bulk failure, not only
+        // ENOTSUP. Returning here on ENOENT/EACCES/EMFILE silently dropped
+        // the whole subtree: under fd pressure (transient EMFILE from
+        // concurrent FSEvents watchers) a scan of a perfectly readable
+        // directory yielded ZERO entries and no error a caller would act
+        // on. readdirSync gets its own attempt below — a persistent
+        // condition still surfaces through the same onError, and a
+        // transient one heals instead of undercounting.
+        if (err instanceof bulkWalker().GetattrlistbulkUnsupportedError) {
+            logger.debug({ root }, "walkFiles: ENOTSUP, falling back to readdir+stat");
+        } else {
+            logger.debug({ root, errno: errnoOf(err) }, "walkFiles: bulk open failed, falling back to readdir");
+        }
+
+        return null;
+    }
+
+    return listing;
+}
+
 /** Recursively yields regular files under `root`. Never follows symlinks
  *  (readdirSync does not, and apfs syscalls use FSOPT_NOFOLLOW). Per-entry
  *  errors (EPERM/ENOENT mid-walk) are reported via opts.onError, not thrown.
- *  Honours `opts.shouldEnter` for directory pruning and `opts.signal` for
- *  cancellation (checked once per directory). */
+ *  Honours `opts.shouldEnter` for directory pruning, and `opts.signal` and
+ *  `opts.deadlineAt` for a stop: checked at every directory and every entry,
+ *  and the generator then throws (see {@link WalkOptions.signal}). */
 export function* walkFiles(root: string, opts: WalkOptions = {}): Generator<WalkEntry> {
-    opts.signal?.throwIfAborted();
+    throwIfWalkStopped(opts);
 
     // Dir-meta cache short-circuit (Phase 10). If the cache has a row for
     // this dir whose (dir_mtime_ns, ino) match the fresh stat, the
@@ -203,6 +310,7 @@ export function* walkFiles(root: string, opts: WalkOptions = {}): Generator<Walk
     ) {
         opts.onDirEntered?.(root);
         for (const child of cachedDir.childNames) {
+            throwIfWalkStopped(opts);
             const p = join(root, child.name);
             if (child.kind === "symlink") {
                 continue;
@@ -237,95 +345,49 @@ export function* walkFiles(root: string, opts: WalkOptions = {}): Generator<Walk
     // probe is lazy and memoized — it must never run at module load, where
     // it would tax every importer of this module (import-time syscalls
     // against an arbitrary directory cost up to seconds; see PROBE_DIR).
-    if (bulkWalker().isGetattrlistbulkSupported()) {
-        try {
-            const bulkChildren: Array<{ name: string; kind: "file" | "dir" | "symlink" }> = [];
-            const fileEntries: Array<{
-                path: string;
-                size: bigint;
-                allocSize: bigint;
-                mtimeNs: bigint;
-                cloneId: bigint;
-                privateSize: bigint;
-            }> = [];
-            const subdirs: string[] = [];
-            for (const e of bulkWalker().iterDir(root)) {
-                if (e.errorCode !== 0) {
-                    opts.onError?.({ path: join(root, e.name), errno: `errno=${e.errorCode}` });
-                    continue;
-                }
+    //
+    // Only the listing sits inside the fallback's try: an error from a
+    // nested walk, a callback or a stop must not send this directory to
+    // readdir for a second listing, which re-entered it and yielded its
+    // files twice.
+    const listing = bulkWalker().isGetattrlistbulkSupported() ? readBulkListing(root, opts) : null;
+    if (listing !== null) {
+        opts.onDirEntered?.(root);
 
-                if (e.kind === "LNK") {
-                    bulkChildren.push({ name: e.name, kind: "symlink" });
-                    continue;
-                }
-
-                if (e.kind === "DIR") {
-                    bulkChildren.push({ name: e.name, kind: "dir" });
-                    subdirs.push(join(root, e.name));
-                    continue;
-                }
-
-                if (e.kind === "REG") {
-                    bulkChildren.push({ name: e.name, kind: "file" });
-                    fileEntries.push({
-                        path: join(root, e.name),
-                        size: e.size,
-                        allocSize: e.allocSize,
-                        mtimeNs: e.mtimeNs,
-                        cloneId: e.cloneId,
-                        privateSize: e.privateSize,
-                    });
-                }
-                // OTHER (sockets, fifos, …): skip silently
-            }
-
-            opts.onDirEntered?.(root);
-
-            // Populate dir-meta cache from bulk result so warm reruns hit
-            // the Phase-10 short-circuit above without re-running bulk.
-            if (opts.cache?.setDir !== undefined && dirStat !== null) {
-                opts.cache.setDir(root, {
-                    dirMtimeNs: (dirStat as { mtimeNs: bigint }).mtimeNs,
-                    ino: (dirStat as { ino: bigint }).ino,
-                    childNames: bulkChildren,
-                    lastSeenAt: 0,
-                });
-            }
-
-            for (const fe of fileEntries) {
-                yield {
-                    path: fe.path,
-                    logical: Number(fe.size),
-                    allocated: Number(fe.allocSize),
-                    mtimeNs: fe.mtimeNs,
-                    cloneIdHex: fe.cloneId === 0n ? "" : fe.cloneId.toString(16),
-                    privateSize: Number(fe.privateSize),
-                };
-            }
-            for (const subPath of subdirs) {
-                if (opts.shouldEnter && !opts.shouldEnter(subPath)) {
-                    continue;
-                }
-
-                yield* walkFiles(subPath, opts);
-            }
-            return;
-        } catch (err) {
-            // Fall through to the readdir path on EVERY bulk failure, not only
-            // ENOTSUP. Returning here on ENOENT/EACCES/EMFILE silently dropped
-            // the whole subtree: under fd pressure (transient EMFILE from
-            // concurrent FSEvents watchers) a scan of a perfectly readable
-            // directory yielded ZERO entries and no error a caller would act
-            // on. readdirSync gets its own attempt below — a persistent
-            // condition still surfaces through the same onError, and a
-            // transient one heals instead of undercounting.
-            if (err instanceof bulkWalker().GetattrlistbulkUnsupportedError) {
-                logger.debug({ root }, "walkFiles: ENOTSUP, falling back to readdir+stat");
-            } else {
-                logger.debug({ root, errno: errnoOf(err) }, "walkFiles: bulk open failed, falling back to readdir");
-            }
+        // Populate dir-meta cache from bulk result so warm reruns hit
+        // the Phase-10 short-circuit above without re-running bulk.
+        if (opts.cache?.setDir !== undefined && dirStat !== null) {
+            opts.cache.setDir(root, {
+                dirMtimeNs: (dirStat as { mtimeNs: bigint }).mtimeNs,
+                ino: (dirStat as { ino: bigint }).ino,
+                childNames: listing.children,
+                lastSeenAt: 0,
+            });
         }
+
+        for (const fe of listing.files) {
+            throwIfWalkStopped(opts);
+            yield {
+                path: fe.path,
+                logical: Number(fe.size),
+                allocated: Number(fe.allocSize),
+                mtimeNs: fe.mtimeNs,
+                cloneIdHex: fe.cloneId === 0n ? "" : fe.cloneId.toString(16),
+                privateSize: Number(fe.privateSize),
+            };
+        }
+
+        for (const subPath of listing.subdirs) {
+            throwIfWalkStopped(opts);
+
+            if (opts.shouldEnter && !opts.shouldEnter(subPath)) {
+                continue;
+            }
+
+            yield* walkFiles(subPath, opts);
+        }
+
+        return;
     }
 
     let entries: Dirent[];
@@ -354,6 +416,7 @@ export function* walkFiles(root: string, opts: WalkOptions = {}): Generator<Walk
     }
 
     for (const entry of entries) {
+        throwIfWalkStopped(opts);
         const p = join(root, entry.name);
         if (entry.isSymbolicLink()) {
             continue;

@@ -1,5 +1,11 @@
 import { lstatSync, type Stats } from "node:fs";
-import { filePrivateSize, resolvePrivateSize, type WalkError, walkFiles } from "@genesiscz/utils/fs/disk-usage";
+import {
+    filePrivateSize,
+    isWalkTimeout,
+    resolvePrivateSize,
+    type WalkError,
+    walkFiles,
+} from "@genesiscz/utils/fs/disk-usage";
 import { logger } from "@genesiscz/utils/logger";
 
 const BLOCK_SIZE = 512;
@@ -76,7 +82,8 @@ export function measurePath(path: string, budget: MeasureBudget = {}): PathSize 
 
 function measureDir(root: string, rootMtimeMs: number, budget: MeasureBudget): PathSize {
     const maxEntries = budget.maxEntries ?? DEFAULT_MAX_ENTRIES;
-    const deadline = Date.now() + (budget.deadlineMs ?? DEFAULT_DEADLINE_MS);
+    const deadlineMs = budget.deadlineMs ?? DEFAULT_DEADLINE_MS;
+    const deadline = Date.now() + deadlineMs;
     const errors: WalkError[] = [];
 
     let allocated = 0;
@@ -98,49 +105,61 @@ function measureDir(root: string, rootMtimeMs: number, budget: MeasureBudget): P
     };
 
     if (withinBudget()) {
-        for (const entry of walkFiles(root, {
-            onError: (err) => errors.push(err),
-            shouldEnter: withinBudget,
-            onDirEntered: (dir) => {
-                visited++;
+        // The walk checks the deadline itself, inside a directory's listing too. The checks here run between
+        // yielded files, so alone they would see one big flat directory only after its whole listing.
+        try {
+            for (const entry of walkFiles(root, {
+                deadlineAt: deadline,
+                onError: (err) => errors.push(err),
+                shouldEnter: withinBudget,
+                onDirEntered: (dir) => {
+                    visited++;
+                    if (!withinBudget()) {
+                        return;
+                    }
+
+                    try {
+                        newest = Math.max(newest, lstatSync(dir).mtimeMs);
+                    } catch (err) {
+                        directoryErrors++;
+                        complete = false;
+                        logger.debug({ dir, err }, "cannot measure directory activity; tree is incomplete");
+                    }
+                },
+            })) {
                 if (!withinBudget()) {
-                    return;
+                    break;
                 }
 
-                try {
-                    newest = Math.max(newest, lstatSync(dir).mtimeMs);
-                } catch (err) {
-                    directoryErrors++;
-                    complete = false;
-                    logger.debug({ dir, err }, "cannot measure directory activity; tree is incomplete");
+                visited++;
+                entries += 1;
+                allocated += entry.allocated;
+                apparent += entry.logical;
+                const mtimeMs = Number(entry.mtimeNs / 1_000_000n);
+
+                if (mtimeMs > newest) {
+                    newest = mtimeMs;
                 }
-            },
-        })) {
-            if (!withinBudget()) {
-                break;
+
+                budget.onFile?.(entry.path);
+                const priv = resolvePrivateSize(entry);
+
+                if (priv !== null) {
+                    privateSeen = true;
+                    privateSum += priv;
+                }
+
+                if (!withinBudget()) {
+                    break;
+                }
+            }
+        } catch (err) {
+            if (!isWalkTimeout(err)) {
+                throw err;
             }
 
-            visited++;
-            entries += 1;
-            allocated += entry.allocated;
-            apparent += entry.logical;
-            const mtimeMs = Number(entry.mtimeNs / 1_000_000n);
-
-            if (mtimeMs > newest) {
-                newest = mtimeMs;
-            }
-
-            budget.onFile?.(entry.path);
-            const priv = resolvePrivateSize(entry);
-
-            if (priv !== null) {
-                privateSeen = true;
-                privateSum += priv;
-            }
-
-            if (!withinBudget()) {
-                break;
-            }
+            complete = false;
+            logger.debug({ root, deadlineMs }, "measurement deadline reached during discovery; tree is incomplete");
         }
     }
 
