@@ -66,7 +66,12 @@ export function realOrSelf(path: string): string {
 /** True when `child` lies strictly inside `parent` (not equal to it). Works with either separator. */
 export function isInside(child: string, parent: string): boolean {
     const rel = relative(parent, child);
-    return rel !== "" && !rel.startsWith("..") && !isAbsolute(rel);
+    return rel !== "" && !isParentStep(rel) && !isAbsolute(rel);
+}
+
+/** A relative path that climbs out (`..`, `../x`), not a child whose name starts with dots (`..important`). */
+function isParentStep(rel: string): boolean {
+    return rel === ".." || rel.startsWith("../") || rel.startsWith("..\\");
 }
 
 export function isSameOrInside(child: string, parent: string): boolean {

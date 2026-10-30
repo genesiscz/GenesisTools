@@ -26,6 +26,7 @@ import {
     evaluateTarget,
     filterRmLedger,
     findNestedRepos,
+    isInside,
     listBatches,
     listRmRequests,
     loadRmRequest,
@@ -619,5 +620,20 @@ describe("defaults", () => {
 
         expect(verdictOf(key, c)).toEqual({ kind: "deny", rule: "hard-deny" });
         expect(verdictOf(repoGit, c)).toEqual({ kind: "ask", rule: "git-history" });
+    });
+});
+
+describe("security review fixes", () => {
+    test("a child named ..name is inside its parent; a real .. step is not", () => {
+        expect(isInside("/work/app/dist/..important", "/work/app/dist")).toBe(true);
+        expect(isInside("/work/app/..dist", "/work/app")).toBe(true);
+        expect(isInside("/work/app", "/work/app/dist")).toBe(false);
+        expect(isInside("/work/other", "/work/app")).toBe(false);
+
+        const guarded = dir("dots", "dist", "..important");
+        file(join(base, "dots", "package.json"), "{}");
+        const c = ctx({ config: { ...config, protect: [guarded] } });
+
+        expect(verdictOf(join(base, "dots", "dist"), c)).toEqual({ kind: "deny", rule: "hard-deny" });
     });
 });
