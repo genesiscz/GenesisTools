@@ -93,6 +93,8 @@ export interface ExitCommand {
 
 /** O: whether this process runs inside the harness, and which session it is. */
 export interface HostResolver {
+    /** The harness's name in `AgentRuntimeContext.agent` (Claude is `claude-code` there). */
+    readonly agent: AgentRuntimeContext["agent"];
     /** The environment variable the harness sets to its own session id. */
     readonly sessionEnvKey: string;
     detects(env: NodeJS.ProcessEnv): boolean;

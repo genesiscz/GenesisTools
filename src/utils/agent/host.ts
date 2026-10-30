@@ -7,7 +7,7 @@
  * with no identity at all until 2026-08-29, even though `GROK_SESSION_ID` had
  * been sitting in the environment the whole time. GitHub Copilot CLI repeated the
  * bug exactly, with `COPILOT_AGENT_SESSION_ID`, until 2026-08-31. Adding a host
- * is now one entry here plus one `runtime-context.ts`.
+ * is now its harness driver's `host` part (a host that is not a harness, Copilot, is one entry here).
  *
  * This module is env-only on purpose. `getAgentRuntimeContext` adds git and
  * process-tree work on top; callers that only need "who am I" (the agents bus,
@@ -15,10 +15,8 @@
  */
 
 import type { AgentRuntimeContext } from "@genesiscz/utils/agent/context";
-import { resolveClaudeContext } from "@genesiscz/utils/agent/hosts/claude";
-import { isCodex, resolveCodexContext } from "@genesiscz/utils/agent/hosts/codex";
 import { isCopilot, resolveCopilotContext } from "@genesiscz/utils/agent/hosts/copilot";
-import { isGrok, resolveGrokContext } from "@genesiscz/utils/agent/hosts/grok";
+import { harnessDrivers, harnessHost } from "@genesiscz/utils/ai/providers/harness-index";
 
 export type AgentHostKind = AgentRuntimeContext["agent"];
 
@@ -34,14 +32,17 @@ export interface AgentSessionId {
  * Order is precedence when hosts are nested: a worker inherits its parent's
  * variables (`src/grok/lib/worker.ts` and `src/codex/lib/spawn.ts` both spread
  * the parent environment), so the OUTER host wins. That is deliberate — it is
- * what keeps a spawned worker in its parent's swarm instead of inventing one.
+ * what keeps a spawned worker in its parent's swarm instead of inventing one. The harnesses come first, in the
+ * canonical driver order (claude, codex, grok: the precedence this list always had), then the hosts that are not
+ * harnesses. A fourth harness that must not sit last in that order needs a precedence field on its host part.
  */
-export const AGENT_SESSION_KEYS = [
-    { agent: "claude-code", key: "CLAUDE_CODE_SESSION_ID" },
-    { agent: "codex", key: "CODEX_THREAD_ID" },
-    { agent: "grok", key: "GROK_SESSION_ID" },
+export const AGENT_SESSION_KEYS: readonly { agent: AgentHostKind; key: string }[] = [
+    ...harnessDrivers().map((driver) => ({
+        agent: harnessHost(driver.id).agent,
+        key: harnessHost(driver.id).sessionEnvKey,
+    })),
     { agent: "copilot", key: "COPILOT_AGENT_SESSION_ID" },
-] as const satisfies readonly { agent: AgentHostKind; key: string }[];
+];
 
 /**
  * Sessions assigned by whoever started this process, in order. `tools codex spawn`
@@ -67,16 +68,12 @@ export function assignedSessionId(env: NodeJS.ProcessEnv): string | null {
 
 /** The host chain. First match wins; see AGENT_SESSION_KEYS for why. */
 export function resolveAgentHost(env: NodeJS.ProcessEnv): Partial<AgentRuntimeContext> {
-    if (env.CLAUDE_CODE_SESSION_ID || env.CLAUDECODE) {
-        return resolveClaudeContext(env);
-    }
+    for (const driver of harnessDrivers()) {
+        const host = harnessHost(driver.id);
 
-    if (isCodex(env)) {
-        return resolveCodexContext(env);
-    }
-
-    if (isGrok(env)) {
-        return resolveGrokContext(env);
+        if (host.detects(env)) {
+            return host.resolve(env);
+        }
     }
 
     if (isCopilot(env)) {
