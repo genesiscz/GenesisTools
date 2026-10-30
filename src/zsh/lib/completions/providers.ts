@@ -3,6 +3,8 @@
  * script, how to ask its version, how the script must be wired, and the hand-made rc wiring it may already have.
  */
 
+import { toolCommand } from "@genesiscz/utils/cli/tool-command";
+
 /**
  * How the rc block makes zsh use the generated `_<cli>` file.
  *
@@ -56,7 +58,7 @@ export interface CompletionProvider {
     handWiring: readonly HandWiring[];
 }
 
-const TOOL_NOTE = "wired by tools zsh completions";
+const TOOL_NOTE = `wired by ${toolCommand("zsh completions")}`;
 
 function escapeRegExp(value: string): string {
     return value.replace(/[.*+?^${}()|[\]\\]/g, "\\$&");
