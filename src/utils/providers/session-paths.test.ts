@@ -7,6 +7,7 @@ import {
     claudeJsonPath,
     codexHomeOverrides,
     codexHomesIn,
+    defaultNativeHome,
     isNativeTranscript,
     nativeHome,
     nativeHomePath,
@@ -43,6 +44,19 @@ describe("nativeHome", () => {
             expect(nativeHome("codex", "/home/u")).toBe(join("/home/u", ".codex"));
             expect(nativeHome("grok", "/home/u")).toBe(join("/home/u", ".grok"));
         });
+    });
+});
+
+describe("defaultNativeHome", () => {
+    test("names the folder under the user's home and ignores every override", async () => {
+        await env.testing.withOverrides(
+            { CLAUDE_CONFIG_DIR: "/custom/claude", CODEX_HOME: "/a/codex,/b/codex", GROK_HOME: "/custom/grok" },
+            () => {
+                expect(defaultNativeHome("claude", "/home/u")).toBe(join("/home/u", ".claude"));
+                expect(defaultNativeHome("codex", "/home/u")).toBe(join("/home/u", ".codex"));
+                expect(defaultNativeHome("grok", "/home/u")).toBe(join("/home/u", ".grok"));
+            }
+        );
     });
 });
 

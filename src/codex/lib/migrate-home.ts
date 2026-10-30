@@ -10,7 +10,12 @@ import { readFirstLines, readWholeTextSync } from "@genesiscz/utils/fs/read-line
 import { SafeJSON } from "@genesiscz/utils/json";
 import { logger } from "@genesiscz/utils/logger";
 import { type OpenFilesQuery, type OpenFilesResult, openFiles } from "@genesiscz/utils/process/open-files";
-import { codexHomesIn, isNativeTranscript, transcriptStem } from "@genesiscz/utils/providers/session-paths";
+import {
+    codexHomesIn,
+    defaultNativeHome,
+    isNativeTranscript,
+    transcriptStem,
+} from "@genesiscz/utils/providers/session-paths";
 import { Storage } from "@genesiscz/utils/storage";
 
 const { log } = logger.scoped("codex-migrate-home");
@@ -993,7 +998,7 @@ export async function migrateHome(options: MigrateHomeOptions = {}): Promise<Mig
     const realpath = options.realpath ?? defaultRealpath;
     const inspect = options.inspectOpenFiles ?? openFiles;
     const stamp = options.stamp ?? migrationStamp();
-    const destination = resolve(options.to ?? join(homedir(), ".codex"));
+    const destination = resolve(options.to ?? defaultNativeHome("codex"));
     const report: MigrateHomeReport = {
         destination,
         stamp,

@@ -34,6 +34,23 @@ export function primaryCodexHome(): string | undefined {
 
 export type NativeSessionProvider = AccountProviderAlias;
 
+/** The folder each coding agent keeps under a user's home when no override names another one. */
+const DEFAULT_HOME_FOLDER: Record<NativeSessionProvider, string> = {
+    claude: ".claude",
+    codex: ".codex",
+    grok: ".grok",
+};
+
+/**
+ * The agent's folder under a user's home, `~/.claude`, `~/.codex` or `~/.grok`, whatever `CLAUDE_CONFIG_DIR`,
+ * `CODEX_HOME` or `GROK_HOME` say. Only for a caller that means that folder on purpose: the shared Codex home
+ * `tools codex run` starts accounts from, the home `tools codex migrate-home` merges its siblings into. Every other
+ * caller asks `nativeHome`, which honours the overrides.
+ */
+export function defaultNativeHome(kind: NativeSessionProvider, home = homedir()): string {
+    return join(home, DEFAULT_HOME_FOLDER[kind]);
+}
+
 /**
  * A coding agent's own home folder: `CLAUDE_CONFIG_DIR` or `~/.claude`, the primary `CODEX_HOME` or `~/.codex`,
  * `GROK_HOME` or `~/.grok`. The one place that builds these roots; lint-rules `no-hand-built-claude-home` and
@@ -41,14 +58,14 @@ export type NativeSessionProvider = AccountProviderAlias;
  */
 export function nativeHome(kind: NativeSessionProvider, home = homedir()): string {
     if (kind === "claude") {
-        return env.paths.getClaudeConfigDir() ?? join(home, ".claude");
+        return env.paths.getClaudeConfigDir() ?? defaultNativeHome(kind, home);
     }
 
     if (kind === "codex") {
-        return primaryCodexHome() ?? join(home, ".codex");
+        return primaryCodexHome() ?? defaultNativeHome(kind, home);
     }
 
-    return env.grok.getHomeOverride() ?? join(home, ".grok");
+    return env.grok.getHomeOverride() ?? defaultNativeHome(kind, home);
 }
 
 /**
