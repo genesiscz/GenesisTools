@@ -5,6 +5,7 @@ import { join } from "node:path";
 import { SafeJSON } from "@genesiscz/utils/json";
 import { withFileLock } from "@genesiscz/utils/storage/file-lock";
 import { answerGitWithoutSpawning } from "@genesiscz/utils/test/no-git";
+import { RELAYED_ANSWER_HEAD } from "../decisions/delivery-text";
 import { deliverDecisions, parseDecisionBlocks } from "../decisions/read";
 import {
     type DecisionRecord,
@@ -326,7 +327,7 @@ describe("sendDrafts", () => {
             "--exact-session",
             "--",
             "s",
-            "DECISION 1: a) a1\nDECISION 2: b) note",
+            `${RELAYED_ANSWER_HEAD}\nDECISION 1: a) a1\nDECISION 2: b) note`,
         ]);
         const rows = readDecisions(file);
         expect(rows.every((row: DecisionRecord) => row.state === "sent")).toBe(true);
@@ -376,7 +377,17 @@ describe("sendDrafts", () => {
 
         expect(slept).toEqual([1000, 1000]);
         expect(typed).toEqual([
-            ["claude", "cmux", "send", "--json", "--paste", "--exact-session", "--", "s", "DECISION 1: b) b1"],
+            [
+                "claude",
+                "cmux",
+                "send",
+                "--json",
+                "--paste",
+                "--exact-session",
+                "--",
+                "s",
+                `${RELAYED_ANSWER_HEAD}\nDECISION 1: b) b1`,
+            ],
         ]);
         expect(result).toMatchObject({ channel: "cmux", delivered: true, target: "cmux · gt-inbox-scratch · probe" });
         expect(readDecisions(file)[0]).toMatchObject({ state: "sent", delivery: { route: "cmux" } });

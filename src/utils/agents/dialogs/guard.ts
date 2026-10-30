@@ -36,7 +36,12 @@ export function dialogFromSnapshot(snapshot: TurnSnapshot | null): OpenDialog | 
         return null;
     }
 
-    return { kind: "decision", question: snapshot.question, signal: "turn-state" };
+    return {
+        kind: snapshot.questionCall?.kind ?? "decision",
+        question: snapshot.question,
+        toolCallId: snapshot.questionCall?.callId,
+        signal: "turn-state",
+    };
 }
 
 export interface OpenDialogQuery {

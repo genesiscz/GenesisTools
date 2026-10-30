@@ -11,6 +11,7 @@ import { Command } from "commander";
 import { type InboxCommandDeps, registerInboxCommand } from "../../commands/inbox";
 import { paneMiss } from "../decisions/deliver";
 import { livePaneTargets } from "../decisions/deliver.fixtures";
+import { RELAYED_ANSWER_HEAD } from "../decisions/delivery-text";
 import { decisionFiles } from "../decisions/paths";
 import { parseDecisionBlocks } from "../decisions/read";
 import {
@@ -630,11 +631,12 @@ describe("answerInboxDecision", () => {
             }
         );
 
-        const reply = "Reply to: Keep the cache?\nLedger decision 3 (d_3_s-alpha)\nb) drop it";
+        const answer = "Reply to: Keep the cache?\nLedger decision 3 (d_3_s-alpha)\nb) drop it";
+        const reply = `${RELAYED_ANSWER_HEAD}\n${answer}`;
         expect(delivered).toEqual([
             ["claude", "cmux", "send", "--json", "--paste", "--exact-session", "--", "s-alpha", reply],
         ]);
-        expect(result).toMatchObject({ channel: "cmux", delivered: true, text: reply });
+        expect(result).toMatchObject({ channel: "cmux", delivered: true, text: answer });
         expect(readDecisions(file)).toMatchObject([{ id: "d_3_s-alpha", state: "sent", option: "b", harvested: true }]);
     });
 
@@ -780,7 +782,7 @@ describe("answerInboxDecisions", () => {
                 "--exact-session",
                 "--",
                 "s-beta",
-                "DECISION 1: b) 4000\nDECISION 2: later",
+                `${RELAYED_ANSWER_HEAD}\nDECISION 1: b) 4000\nDECISION 2: later`,
             ],
         ]);
         expect(result).toMatchObject({ channel: "cmux", delivered: true });
