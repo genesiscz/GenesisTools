@@ -4,7 +4,7 @@ import { basename, resolve } from "node:path";
 import type { AgentRuntimeContext } from "@genesiscz/utils/agent/context";
 import { resolveAgentHost } from "@genesiscz/utils/agent/host";
 import { readCachedHistoryTitle } from "@genesiscz/utils/agent-sessions/cached-title";
-import { PROVIDER_ALIASES } from "@genesiscz/utils/ai/providers/aliases";
+import { harnessOfRuntimeAgent, harnessPluginId } from "@genesiscz/utils/ai/providers/harness-index";
 import { env as appEnv } from "@genesiscz/utils/env";
 import { logger } from "@genesiscz/utils/logger";
 import { resolveAncestorCwd } from "@genesiscz/utils/process/cwd";
@@ -178,7 +178,8 @@ export function getAgentRuntimeContext(
         merged.sourceMessage = undefined;
     }
 
-    const historyProvider = PROVIDER_ALIASES[merged.agent === "claude-code" ? "claude" : merged.agent];
+    const harness = harnessOfRuntimeAgent(merged.agent);
+    const historyProvider = harness ? harnessPluginId(harness) : undefined;
 
     if (!merged.sessionTitle && historyProvider && merged.sessionId) {
         try {

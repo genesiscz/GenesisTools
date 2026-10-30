@@ -1,4 +1,6 @@
 import { getAgentRuntimeContext } from "@genesiscz/utils/agent/runtime";
+import { isAccountProviderAlias } from "@genesiscz/utils/ai/providers/alias-list";
+import { harnessHost } from "@genesiscz/utils/ai/providers/harness-index";
 import { isInteractive, suggestCommand, suggestEnumFlag } from "@genesiscz/utils/cli";
 import { out } from "@genesiscz/utils/logger";
 import { profiler } from "@genesiscz/utils/profile";
@@ -191,7 +193,7 @@ export function registerAgentHistoryCommand(
             }
             if (options.excludeCurrent) {
                 const runtime = getAgentRuntimeContext();
-                const expected = adapter.kind === "claude" ? "claude-code" : adapter.kind;
+                const expected = isAccountProviderAlias(adapter.kind) ? harnessHost(adapter.kind).agent : adapter.kind;
 
                 if (runtime.agent !== expected || !runtime.sessionId) {
                     // The id is matched against THIS provider's transcripts, so another harness's
