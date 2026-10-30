@@ -46,6 +46,11 @@ export interface TranscriptParser {
      * reader (`lastClaudeAssistantText` in hub/lib/widget/snapshot.ts) and gets no turns here.
      */
     fromLines(resolved: ResolvedTranscript, lines: readonly string[]): TranscriptTurn[];
+    /**
+     * Tool call id -> its full input as one string, for the calls in `text` (a session file or its tail). A harness
+     * whose lines are not read for full inputs returns an empty map, and its calls keep their preview.
+     */
+    toolInputKeys(text: string): Map<string, string>;
 }
 
 /** E: the state of the newest turn, read from a bounded tail of the transcript. */

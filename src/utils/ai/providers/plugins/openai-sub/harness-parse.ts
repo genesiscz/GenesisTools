@@ -1,4 +1,6 @@
+import { codexToolInputLine } from "@genesiscz/utils/agent-sessions/readers/codex-tool-inputs";
 import { codexNativeLinesToTurns, createCodexTurnParser } from "@genesiscz/utils/agent-sessions/readers/codex-turns";
+import { toolInputKeysOf } from "@genesiscz/utils/ai/transcripts/native-scan";
 import { parseTranscriptLine } from "@genesiscz/utils/ai/transcripts/parse-line";
 import { readTranscriptRecords } from "@genesiscz/utils/ai/transcripts/record-cache";
 import type { ResolvedTranscript } from "@genesiscz/utils/ai/transcripts/resolve";
@@ -26,6 +28,7 @@ export const codexParse: TranscriptParser = {
         const records = lines.map(parseTranscriptLine).filter((record) => record !== null);
         return codexTurns(resolved, records, 1);
     },
+    toolInputKeys: (text) => toolInputKeysOf(text, codexToolInputLine),
 };
 
 function looksLikeCodexGt(records: unknown[]): boolean {

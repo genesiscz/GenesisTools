@@ -1,5 +1,7 @@
 import { readFileSync } from "node:fs";
+import { claudeToolInputLine } from "@genesiscz/utils/agent-sessions/readers/claude-tool-inputs";
 import { claudeMessagesToTurns } from "@genesiscz/utils/ai/transcripts/claude";
+import { toolInputKeysOf } from "@genesiscz/utils/ai/transcripts/native-scan";
 import { workerEventsToTurns } from "@genesiscz/utils/ai/transcripts/worker-events";
 import { ClaudeSession } from "@genesiscz/utils/claude/session";
 import { parseTurnEvents as parseClaudeTurnEvents } from "@genesiscz/utils/claude/worker-stream";
@@ -21,4 +23,5 @@ export const claudeParse: TranscriptParser = {
         return claudeMessagesToTurns(session.messages);
     },
     fromLines: () => [],
+    toolInputKeys: (text) => toolInputKeysOf(text, claudeToolInputLine),
 };

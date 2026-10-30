@@ -1,8 +1,6 @@
 import { closeSync, fstatSync, openSync, readSync } from "node:fs";
 import { isZstdPath, readZstdFramesSync, zstdContentBytes } from "@genesiscz/utils/compress/zstd";
-import { SafeJSON } from "@genesiscz/utils/json";
 import { parseTranscriptLine } from "./parse-line";
-import type { TranscriptProvider } from "./types";
 
 // The provider's own session file, for what `tools ai sessions tail` turns leave out: per-call
 // usage with cache writes and the model (Claude turns carry no usage at all), exact tool timing
@@ -10,7 +8,7 @@ import type { TranscriptProvider } from "./types";
 // "same call again" test. Mirrors the hub's Swift `SessionNativeLog` scan, which reads the same
 // fields for the rows it draws.
 
-function isRecord(value: unknown): value is Record<string, unknown> {
+export function isRecord(value: unknown): value is Record<string, unknown> {
     return typeof value === "object" && value !== null && !Array.isArray(value);
 }
 
@@ -42,59 +40,20 @@ export function eachLine(text: string, visit: (line: string) => void): void {
 }
 
 /**
- * Tool call id → its full input as one string, for the calls in `text` (a session file or its
- * tail). The transcript's `inputPreview` is only the key argument (an Edit's path), so five
- * different edits of one file would read as one call repeated five times.
+ * Tool call id → its full input as one string, for the calls in `text` (a session file or its tail), read line by line
+ * with one harness's line reader (its parse part's `toolInputKeys`). The transcript's `inputPreview` is only the key
+ * argument (an Edit's path), so five different edits of one file would read as one call repeated five times.
  */
-export function toolInputKeys(text: string, provider: TranscriptProvider): Map<string, string> {
+export function toolInputKeysOf(
+    text: string,
+    readLine: (line: string, keys: Map<string, string>) => void
+): Map<string, string> {
     const keys = new Map<string, string>();
-    const read = TOOL_INPUT_LINES[provider];
 
-    eachLine(text, (line) => read(line, keys));
+    eachLine(text, (line) => readLine(line, keys));
 
     return keys;
 }
-
-/** One provider's reading of a transcript line into `tool call id → full input`. */
-const TOOL_INPUT_LINES: Record<TranscriptProvider, (line: string, keys: Map<string, string>) => void> = {
-    claude: (line, keys) => {
-        if (!line.includes('"tool_use"')) {
-            return;
-        }
-
-        const record = parseTranscriptLine(line);
-        const message = record && isRecord(record.message) ? record.message : null;
-        const content = message && Array.isArray(message.content) ? message.content.filter(isRecord) : [];
-
-        for (const block of content) {
-            if (block.type === "tool_use" && typeof block.id === "string") {
-                keys.set(block.id, SafeJSON.stringify(block.input ?? null, { strict: true }) ?? "");
-            }
-        }
-    },
-    codex: (line, keys) => {
-        if (!line.includes('"call_id"')) {
-            return;
-        }
-
-        const record = parseTranscriptLine(line);
-        const payload = record && isRecord(record.payload) ? record.payload : null;
-
-        if (
-            payload &&
-            (payload.type === "function_call" || payload.type === "custom_tool_call") &&
-            typeof payload.call_id === "string"
-        ) {
-            const input = payload.arguments ?? payload.input ?? null;
-            keys.set(
-                payload.call_id,
-                typeof input === "string" ? input : (SafeJSON.stringify(input, { strict: true }) ?? "")
-            );
-        }
-    },
-    // Grok's lines are not read for full inputs; its calls keep their preview.
-    grok: () => undefined,
-};
 
 /** The last `bytes` of a file as text, starting at a line boundary. Throws when the file cannot be read. */
 export function readTail(path: string, bytes: number): string {

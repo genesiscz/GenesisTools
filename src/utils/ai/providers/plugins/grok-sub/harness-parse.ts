@@ -16,4 +16,6 @@ export const grokParse: TranscriptParser = {
         resolved.source === "worker"
             ? grokWorkerTextToTurns(lines.join("\n"), resolved.sessionId)
             : grokNativeLinesToTurns(lines),
+    // Grok's lines are not read for full inputs; its calls keep their preview.
+    toolInputKeys: () => new Map(),
 };

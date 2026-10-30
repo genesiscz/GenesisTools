@@ -2,7 +2,7 @@ import { describe, expect, test } from "bun:test";
 import { codexHistoryReader } from "@genesiscz/utils/agent-sessions/compact-readers";
 import { scanClaudeNative } from "@genesiscz/utils/agent-sessions/readers/claude-native-scan";
 import { SafeJSON } from "@genesiscz/utils/json";
-import { toolInputKeys } from "./native-scan";
+import { transcriptParser } from "./load";
 import { buildToolStats, buildTurnCosts, type CallPricer } from "./turn-cost";
 import type { TranscriptTool, TranscriptTurn } from "./types";
 
@@ -132,7 +132,7 @@ describe("scanClaudeNative", () => {
         expect(scan.branch).toBe("feat/b");
     });
 
-    test("full tool inputs tell two edits of one file apart", () => {
+    test("full tool inputs tell two edits of one file apart", async () => {
         const text = [
             line({
                 type: "assistant",
@@ -161,7 +161,7 @@ describe("scanClaudeNative", () => {
                 },
             }),
         ].join("\n");
-        const keys = toolInputKeys(text, "claude");
+        const keys = (await transcriptParser("claude")).toolInputKeys(text);
 
         expect(keys.get("e1")).not.toBe(keys.get("e2"));
         expect(

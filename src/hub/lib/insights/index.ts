@@ -22,7 +22,8 @@ import {
     transcriptEnvelope,
 } from "@genesiscz/utils/ai/transcripts";
 import type { NativeScan } from "@genesiscz/utils/ai/transcripts/insights-types";
-import { readTail, toolInputKeys } from "@genesiscz/utils/ai/transcripts/native-scan";
+import { transcriptParser } from "@genesiscz/utils/ai/transcripts/load";
+import { readTail } from "@genesiscz/utils/ai/transcripts/native-scan";
 import { buildToolStats, buildTurnCosts, type CallPricer } from "@genesiscz/utils/ai/transcripts/turn-cost";
 import { concurrentMap } from "@genesiscz/utils/async";
 import { toolCommand } from "@genesiscz/utils/cli/tool-command";
@@ -166,7 +167,7 @@ async function stuckOf(resolved: ResolvedTranscript, thresholds: StuckThresholds
     let inputKeys: Map<string, string> | undefined;
 
     try {
-        inputKeys = toolInputKeys(readTail(resolved.filePath, TAIL_BYTES), resolved.provider);
+        inputKeys = (await transcriptParser(resolved.provider)).toolInputKeys(readTail(resolved.filePath, TAIL_BYTES));
     } catch (err) {
         log.debug({ err, path: resolved.filePath }, "stuck: no tail for full tool inputs; comparing key arguments");
     }
