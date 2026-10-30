@@ -28,7 +28,7 @@ import * as path from "node:path";
 import { fileURLToPath } from "node:url";
 import { format } from "node:util";
 import { printApi } from "./api";
-import { pruneScratch, rollback, scratchDir, scratchRoot } from "./backup-and-rollback";
+import { pruneScratch, rollback, scratchDir } from "./backup-and-rollback";
 import { FableReplaceError } from "./internal";
 import { appendJournal, estimateTokens, type JournalEntry, printHistory, printStats } from "./journal";
 import { parseSpec } from "./spec";
@@ -46,7 +46,8 @@ usage: bun cli.ts [--dry] [--diff] [--verify "<cmd>"] [--cwd <dir>] [--partial] 
 housekeeping (below the fold on purpose):
        bun cli.ts --history [N]          # the last N journaled runs (default 20): outcome, tokens, verify, backup dir
        bun cli.ts --stats [days]         # counts per outcome, tokens written and read back, tokens wasted on failed runs
-       bun cli.ts --prune                # remove backup dirs older than 12 h under <tmp>/fable-replace/ (every sweep does this too)
+       bun cli.ts --prune                # remove this session's backup dirs older than 12 h, under <tmp>/fable-replace/<session>/ (every sweep does this too)
+       bun cli.ts --prune --all-sessions # the same gate over every session's folder and the old <tmp>/fable-replace-* layout
        Every real run (never --dry), rollback and prune is journaled to ~/.genesis-tools/fable-replace/journal.jsonl
        (GENESIS_TOOLS_HOME or FABLE_REPLACE_HOME move it). The spec text is saved beside the backup, never there.
 
@@ -93,7 +94,18 @@ A MISS names the line to re-read; a spec error names the spec line.
 
 const VALUE_FLAGS = ["--verify", "--cwd", "--spec", "--rollback"];
 const OPTIONAL_VALUE_FLAGS = ["--api", "--history", "--stats"];
-const BOOL_FLAGS = ["--dry", "--diff", "--partial", "--quiet", "--no-backup", "--force", "--prune", "--help", "-h"];
+const BOOL_FLAGS = [
+    "--dry",
+    "--diff",
+    "--partial",
+    "--quiet",
+    "--no-backup",
+    "--force",
+    "--prune",
+    "--all-sessions",
+    "--help",
+    "-h",
+];
 const argv = process.argv.slice(2);
 const values = new Map<string, string>();
 const flags = new Set<string>();
@@ -169,7 +181,9 @@ process.on("exit", () => {
     // backup dir excluded. Silent unless it removed something.
     const pruned = pruneScratch({ keep: entry.backupDir === undefined ? [] : [entry.backupDir] });
     if (pruned.removed > 0) {
-        console.log(`pruned ${pruned.removed} stale scratch dir(s) older than 12 h under ${scratchRoot()}`);
+        console.log(
+            `pruned ${pruned.removed} stale scratch dir(s) older than 12 h under ${pruned.roots.join(" and ")}`
+        );
         appendJournal({
             ...entry,
             kind: "prune",

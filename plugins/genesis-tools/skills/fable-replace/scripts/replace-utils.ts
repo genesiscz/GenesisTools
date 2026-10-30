@@ -44,6 +44,8 @@ export {
     rollback,
     scratchDir,
     scratchRoot,
+    scratchSessionKey,
+    sessionScratchRoot,
     writeBackup,
 } from "./backup-and-rollback";
 export { applyDeleteLines, applyDropComments, deleteLines, dropComments, removeSpans, scanComments } from "./comments";
