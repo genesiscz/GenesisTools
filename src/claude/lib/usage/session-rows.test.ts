@@ -37,6 +37,28 @@ mock.module("@genesiscz/utils/claude/session.utils", () => ({
     },
 }));
 
+/** What the Claude reader answers for `continuedIn`, by transcript path; the reader's own test reads the row. */
+const successors = new Map<string, string>();
+const continuedInAsks: string[][] = [];
+const continuedIn = { fails: false };
+
+mock.module("@genesiscz/utils/agent-sessions/session-backward", () => ({
+    readSessionsContinuedIn: async ({ transcriptPaths }: { transcriptPaths: readonly string[] }) => {
+        continuedInAsks.push([...transcriptPaths]);
+
+        if (continuedIn.fails) {
+            throw new Error("discovery failed");
+        }
+
+        return new Map(
+            transcriptPaths.flatMap((path) => {
+                const successor = successors.get(path);
+                return successor ? [[path, successor] as const] : [];
+            })
+        );
+    },
+}));
+
 const pins = new Map<string, { account: string | null }>();
 const cmuxRefs = new Map<string, { surfaceId: string | null; at: number }>();
 
@@ -137,6 +159,9 @@ describe("listSessionRows", () => {
         pins.clear();
         cmuxRefs.clear();
         tailReads.length = 0;
+        successors.clear();
+        continuedInAsks.length = 0;
+        continuedIn.fails = false;
     });
 
     test("an unchanged session file is not read again; a changed one is", async () => {
@@ -516,15 +541,32 @@ describe("listSessionRows", () => {
 
     test("a transcript that continued in another session is compacted and names its continuation", async () => {
         const path = "/tmp/continued.jsonl";
-        const moved =
-            '{"type":"continued-in","timestamp":"2026-10-14T00:01:00.637Z","sessionId":"old","continuedInSessionId":"f2899264-7b99-443e-b4ab-37adbe7ad942"}';
 
         listing.sessions = [record({ filePath: path, sessionId: "old", mtime: NOW - 5 * MIN })];
-        tails.set(path, [OPUS_LINE, '{"type":"cost-state","totalCostUSD":1}', moved]);
+        tails.set(path, [OPUS_LINE, '{"type":"cost-state","totalCostUSD":1}']);
+        successors.set(path, "f2899264-7b99-443e-b4ab-37adbe7ad942");
 
         const rows = await listSessionRows({ hours: 6, now: NOW });
         expect(rows[0]?.continuedIn).toBe("f2899264-7b99-443e-b4ab-37adbe7ad942");
         expect(rows[0]?.compacted).toBe(true);
+        expect(rows[0]?.model).toBe("opus");
+    });
+
+    test("the continued-in pointers of a batch of tails are asked in one read", async () => {
+        listing.sessions = [
+            record({ filePath: "/tmp/one.jsonl", sessionId: "one", mtime: NOW - 5 * MIN }),
+            record({ filePath: "/tmp/two.jsonl", sessionId: "two", mtime: NOW - 6 * MIN }),
+        ];
+        tails.set("/tmp/one.jsonl", [OPUS_LINE]);
+        tails.set("/tmp/two.jsonl", [OPUS_LINE]);
+        successors.set("/tmp/two.jsonl", "33333333-4444-4555-8666-777777777777");
+
+        const rows = await listSessionRows({ hours: 6, now: NOW });
+        expect(continuedInAsks).toEqual([["/tmp/one.jsonl", "/tmp/two.jsonl"]]);
+        expect(rows.map((row) => [row.sessionId, row.continuedIn])).toEqual([
+            ["one", null],
+            ["two", "33333333-4444-4555-8666-777777777777"],
+        ]);
     });
 
     test("a compact_boundary older than the last turn changes nothing", async () => {
@@ -629,6 +671,34 @@ describe("the saved tail cache", () => {
         listing.sessions = [];
         tails.clear();
         tailReads.length = 0;
+        successors.clear();
+        continuedInAsks.length = 0;
+        continuedIn.fails = false;
+    });
+
+    test("a tail whose continued-in pointer could not be read is not cached, so the next listing asks again", async () => {
+        const path = join(mkdtempSync(join(tmpdir(), "gt-tail-continued-")), "session.jsonl");
+        writeFileSync(path, `${OPUS_LINE}\n`);
+        listing.sessions = [record({ filePath: path, sessionId: "moved-id", mtime: NOW - 5 * MIN })];
+        tails.set(path, [OPUS_LINE]);
+        successors.set(path, "44444444-5555-4666-8777-888888888888");
+        continuedIn.fails = true;
+
+        const first = await listSessionRows({ hours: 6, now: NOW });
+        expect(first[0]?.continuedIn).toBeNull();
+        expect(first[0]?.model).toBe("opus");
+
+        continuedIn.fails = false;
+        const second = await listSessionRows({ hours: 6, now: NOW });
+        expect(second[0]?.continuedIn).toBe("44444444-5555-4666-8777-888888888888");
+        expect(second[0]?.compacted).toBe(true);
+
+        const asks = continuedInAsks.length;
+        __forgetTailCacheForTests();
+        expect((await listSessionRows({ hours: 6, now: NOW }))[0]?.continuedIn).toBe(
+            "44444444-5555-4666-8777-888888888888"
+        );
+        expect(continuedInAsks.length).toBe(asks);
     });
 
     test("a new process reads an unchanged tail from the saved cache, and a changed one again", async () => {
