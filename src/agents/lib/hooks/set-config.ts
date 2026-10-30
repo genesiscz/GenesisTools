@@ -75,6 +75,9 @@ export const SETTABLE_KEYS = [
     "decisions.harvestListed",
     "decisions.injectAnswers",
     "decisions.staleness.<warnAfterMinutes|alarmAfterMinutes|notify>",
+    "questions",
+    "questions.<claude|codex|grok>",
+    "questions.notify",
     "agentsTalk.hint",
     "mods.diff.<fullDiff|collapseGitSync>",
     "mods.idleCompact.<enabled|minutes|minTokens>",
@@ -246,6 +249,49 @@ function withDecisions(next: HooksConfig, key: string, value: string): HooksConf
         default:
             throw new Error(`unknown key: ${key}. Settable: ${SETTABLE_KEYS.join(", ")}`);
     }
+}
+
+/** `on` and `off`, or `true` and `false`: a feature switch reads either way. */
+function asSwitch(key: string, value: string): boolean {
+    if (value === "on" || value === "off") {
+        return value === "on";
+    }
+
+    return asBoolean(key, value);
+}
+
+/**
+ * `questions on|off` switches every harness; `questions.<harness>` (or `questions.harnesses.<harness>`) one of them;
+ * `questions.notify` the hub watcher's banner. Turning a harness on needs `tools agents hooks install --write`
+ * afterwards for the Claude and Grok hook entries.
+ */
+function withQuestions(next: HooksConfig, key: string, value: string): HooksConfig {
+    const questions = { ...next.questions, harnesses: { ...next.questions.harnesses } };
+    next.questions = questions;
+
+    if (key === "questions") {
+        const on = asSwitch(key, value);
+
+        for (const harness of HARNESSES) {
+            questions.harnesses[harness] = on;
+        }
+
+        return next;
+    }
+
+    if (key === "questions.notify") {
+        questions.notify = asBoolean(key, value);
+        return next;
+    }
+
+    const harness = HARNESSES.find((name) => key === `questions.${name}` || key === `questions.harnesses.${name}`);
+
+    if (!harness) {
+        throw new Error(`unknown key: ${key}. Settable: ${SETTABLE_KEYS.join(", ")}`);
+    }
+
+    questions.harnesses[harness] = asSwitch(key, value);
+    return next;
 }
 
 function asBoolean(key: string, value: string): boolean {
@@ -539,6 +585,10 @@ export function applySetting(
 
     if (key.startsWith("decisions.")) {
         return withDecisions(next, key, value);
+    }
+
+    if (key === "questions" || key.startsWith("questions.")) {
+        return withQuestions(next, key, value);
     }
 
     if (key === "agentsTalk.hint") {

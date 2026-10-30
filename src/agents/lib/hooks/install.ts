@@ -13,8 +13,16 @@ import { homedir } from "node:os";
 import { dirname, join, resolve } from "node:path";
 import { SafeJSON } from "@genesiscz/utils/json";
 import { shellQuote } from "@genesiscz/utils/shell/quote";
-import { agentsDataDir, decisionHooksWanted, diffFor, loadHooksConfig, stopOnlyDecisionsWanted } from "./config";
+import {
+    agentsDataDir,
+    decisionHooksWanted,
+    diffFor,
+    loadHooksConfig,
+    questionHooksWanted,
+    stopOnlyDecisionsWanted,
+} from "./config";
 import { hookDiag } from "./log";
+import { QUESTION_TOOL_MATCHER } from "./questions-gate";
 import { writeJsonFile } from "./write-json";
 
 /**
@@ -55,6 +63,31 @@ export interface StopFeatures {
     questionNudge?: boolean;
 }
 
+/** Every optional feature `entriesFor` can wire; each omitted one is off. */
+export interface HookFeatures extends StopFeatures {
+    /** The questions feature's entries (`questions.harnesses.claude` or `.grok`). */
+    questions?: boolean;
+}
+
+/**
+ * The questions feature: one entrypoint, `hook-question.ts`, on every event that opens or closes a dialog record.
+ * PostToolUse has no matcher because a permission prompt can stand before any tool; the hook exits after one `stat`
+ * for a session that recorded nothing. Notification is matched to `permission_prompt`, so an idle notification starts
+ * no process.
+ */
+function questionEntries(script: (name: string) => string): { event: string; entry: HookEntry }[] {
+    const hooks = [{ type: "command", command: script("hook-question.ts"), timeout: 10 }];
+
+    return [
+        { event: "PreToolUse", entry: { matcher: QUESTION_TOOL_MATCHER, hooks } },
+        { event: "PostToolUse", entry: { hooks } },
+        { event: "PostToolUseFailure", entry: { hooks } },
+        { event: "Notification", entry: { matcher: "permission_prompt", hooks } },
+        { event: "UserPromptSubmit", entry: { hooks } },
+        { event: "SessionEnd", entry: { hooks } },
+    ];
+}
+
 /**
  * The Stop entry serves three features, the decision hub, the unpushed reminder and the question
  * nudge, so it is wired while any of them is on. UserPromptSubmit belongs to the decision hub alone.
@@ -80,7 +113,7 @@ function stopEntries(script: (name: string) => string, options: StopFeatures): {
     ];
 }
 
-export function entriesFor(dist: string, options: StopFeatures = {}): { event: string; entry: HookEntry }[] {
+export function entriesFor(dist: string, options: HookFeatures = {}): { event: string; entry: HookEntry }[] {
     // The harness runs each command through a shell, so a `dist` under a home directory or a
     // `--dist` with a space in it split into two arguments and every hook call failed. The
     // quoted form still contains INSTALL_MARKER, so a re-install converges an older entry.
@@ -125,6 +158,7 @@ export function entriesFor(dist: string, options: StopFeatures = {}): { event: s
                 hooks: [{ type: "command", command: script("hook-session-end.ts"), timeout: 15 }],
             },
         },
+        ...(options.questions ? questionEntries(script) : []),
     ];
 }
 
@@ -434,6 +468,12 @@ export function sameEntry(a: HookEntry, b: HookEntry): boolean {
     });
 }
 
+/** Whether `list[index]` exists and is the same entry. */
+function sameEntryAt(list: readonly HookEntry[], index: number, entry: HookEntry): boolean {
+    const existing = list[index];
+    return existing !== undefined && sameEntry(existing, entry);
+}
+
 /**
  * CONVERGES on the desired wiring rather than bailing out when anything of ours is present.
  *
@@ -460,6 +500,8 @@ export function installHooks(options: {
     replaceSubagentLine?: boolean;
     /** Wire the Stop hook for the question nudge and the chat answers. Omitted: whether either is on. */
     questionNudge?: boolean;
+    /** Wire the questions feature's entries. Omitted: `questions.harnesses.claude` or `.grok` from the hooks config. */
+    questions?: boolean;
 }): InstallResult {
     const dist = options.dist ?? hooksDistPath();
     const settingsPath = options.settingsPath ?? claudeSettingsPath();
@@ -474,8 +516,17 @@ export function installHooks(options: {
         decisions: options.decisions ?? decisionHooksWanted(config),
         unpushed: options.unpushed ?? config.unpushed.enabled,
         questionNudge: options.questionNudge ?? stopOnlyDecisionsWanted(config),
+        questions: options.questions ?? questionHooksWanted(config),
     });
-    const wantedEvents = new Set(wanted.map((item) => item.event));
+    // An event can carry more than one entry of ours (the guard's `Bash` PreToolUse and the question tools'), so the
+    // wanted entries are compared per event as a list, in order.
+    const wantedByEvent = new Map<string, HookEntry[]>();
+
+    for (const { event, entry } of wanted) {
+        wantedByEvent.set(event, [...(wantedByEvent.get(event) ?? []), entry]);
+    }
+
+    const wantedEvents = new Set(wantedByEvent.keys());
 
     settings.hooks ??= {};
 
@@ -488,20 +539,21 @@ export function installHooks(options: {
         }
     }
 
-    for (const { event, entry } of wanted) {
+    for (const [event, entries] of wantedByEvent) {
         settings.hooks[event] ??= [];
 
         const list = settings.hooks[event];
         const ours = list.filter(isOurs);
+        const same = ours.length === entries.length && entries.every((entry, index) => sameEntryAt(ours, index, entry));
 
-        if (ours.length === 1 && ours[0] !== undefined && sameEntry(ours[0], entry)) {
+        if (same) {
             // Already exactly right. The list is left ALONE, so an entry that sits in the
             // middle keeps its position and the file does not churn.
             unchanged.push(event);
             continue;
         }
 
-        settings.hooks[event] = [...list.filter((existing) => !isOurs(existing)), entry];
+        settings.hooks[event] = [...list.filter((existing) => !isOurs(existing)), ...entries];
         (ours.length === 0 ? added : updated).push(event);
     }
 
@@ -598,7 +650,7 @@ export interface WiringStatus {
  * install (the post hook on `Bash` only) read as fine while no Edit or Write call reached the
  * session change log.
  */
-export function wiringStatus(options: { dist?: string; settingsPath?: string } & StopFeatures = {}): WiringStatus {
+export function wiringStatus(options: { dist?: string; settingsPath?: string } & HookFeatures = {}): WiringStatus {
     const settingsPath = options.settingsPath ?? claudeSettingsPath();
 
     if (!existsSync(settingsPath) || !SafeJSON.stringify(readSettings(settingsPath)).includes(INSTALL_MARKER)) {

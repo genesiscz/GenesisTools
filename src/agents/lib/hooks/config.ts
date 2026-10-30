@@ -416,10 +416,28 @@ export interface UnpushedConfig {
     remindEveryMinutes: number;
 }
 
+/**
+ * The agents' own structural questions (`tools agents hooks set questions on`): a question tool (Claude
+ * `AskUserQuestion`, Codex `request_user_input`, Grok `ask_user_question`), a plan to approve, or a permission prompt,
+ * recorded as one dialog record per question (`~/.genesis-tools/agents/dialogs/`, identity
+ * `provider:sessionId:toolCallId`) that the hub inbox, the widget and the answer guard read. Everything ships OFF.
+ *
+ * Per harness, because each one exposes the questions differently: Claude through its hooks (PreToolUse and
+ * PostToolUse on the question tools, Notification for a permission prompt); Grok through the same entries (it runs
+ * Claude's `settings.json` hooks) plus the hub watcher for its permission prompts, which no Grok hook sees; Codex
+ * through the hub watcher only, since its hooks reach shell calls alone.
+ */
+export interface QuestionsConfig {
+    harnesses: Record<HarnessName, boolean>;
+    /** A banner when the hub watcher sees a newly recorded question that waits for the user. */
+    notify: boolean;
+}
+
 export interface HooksConfig {
     guard: GuardConfig;
     diff: DiffConfig;
     decisions: DecisionsHookConfig;
+    questions: QuestionsConfig;
     agentsTalk: AgentsTalkConfig;
     mods: ModsConfig;
     unpushed: UnpushedConfig;
@@ -548,6 +566,7 @@ export const DEFAULT_HOOKS_CONFIG: HooksConfig = {
         injectAnswers: false,
         staleness: { warnAfterMinutes: 30, alarmAfterMinutes: 120, notify: true },
     },
+    questions: { harnesses: { claude: false, codex: false, grok: false }, notify: true },
     agentsTalk: { hint: true },
     // Every mod past the full diff and the idle compaction starts off: `tools agents hooks mods enable <name> --write`.
     mods: {
@@ -1132,6 +1151,7 @@ export function mergeStoredConfig(stored: StoredHooksConfig): HooksConfig {
         },
         diff: mergeDiff(stored.diff),
         decisions: mergeDecisions(stored.decisions),
+        questions: mergeQuestions(stored.questions),
         agentsTalk: { hint: boolOr(stored.agentsTalk?.hint, DEFAULT_HOOKS_CONFIG.agentsTalk.hint) },
         mods: mergeMods(stored.mods),
         unpushed: mergeUnpushed(stored.unpushed),
@@ -1293,6 +1313,21 @@ function minutesOr(field: string, value: unknown, fallback: number, max: number)
     return minutes <= max ? minutes : fallback;
 }
 
+function mergeQuestions(stored: unknown): QuestionsConfig {
+    const base = DEFAULT_HOOKS_CONFIG.questions;
+    const part = partOf(stored);
+    const harnesses = partOf(part.harnesses);
+
+    return {
+        harnesses: {
+            claude: boolOr(harnesses.claude, base.harnesses.claude),
+            codex: boolOr(harnesses.codex, base.harnesses.codex),
+            grok: boolOr(harnesses.grok, base.harnesses.grok),
+        },
+        notify: boolOr(part.notify, base.notify),
+    };
+}
+
 function mergeUnpushed(stored: Partial<UnpushedConfig> | undefined): UnpushedConfig {
     const base = DEFAULT_HOOKS_CONFIG.unpushed;
 
@@ -1372,6 +1407,14 @@ export function decisionStopWanted(config: HooksConfig): boolean {
 /** The decision checks that need only the Stop entry: the question nudge and the chat answers. */
 export function stopOnlyDecisionsWanted(config: HooksConfig): boolean {
     return config.decisions.questionNudge !== "off" || config.decisions.chatAnswers !== "off";
+}
+
+/**
+ * Whether Claude's `settings.json` needs the question hooks: Claude reads them, and so does Grok, which runs Claude's
+ * hooks. Codex is served by the hub watcher alone.
+ */
+export function questionHooksWanted(config: HooksConfig): boolean {
+    return config.questions.harnesses.claude || config.questions.harnesses.grok;
 }
 
 /** Whether this run should record the command verbatim in the decision log. */

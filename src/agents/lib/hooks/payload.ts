@@ -27,6 +27,8 @@ export interface HookPayload {
     toolResponse?: Record<string, unknown>;
     /** Notification hooks: the harness's notification kind (`permission_prompt`, `idle_prompt`, …). */
     notificationType?: string;
+    /** Notification hooks: the text the harness shows ("Claude needs your permission to use Bash"). */
+    notificationMessage?: string;
     /** UserPromptSubmit: the prompt text. */
     prompt?: string;
     raw: Record<string, unknown>;
@@ -133,6 +135,7 @@ export function parseHookPayload(text: string): HookPayload | null {
         toolInput: input,
         toolResponse: response,
         notificationType: str(raw.notificationType) ?? str(raw.notification_type),
+        notificationMessage: str(raw.message),
         prompt: str(raw.prompt),
         raw,
     };

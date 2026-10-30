@@ -195,8 +195,11 @@ function toEpochMs(value: unknown): number | undefined {
     return undefined;
 }
 
-/** The first question in a question tool's input: `questions[0].question`, else its `title` or `header`. */
-function questionTextOf(input: unknown): string | null {
+/**
+ * The first question in a question tool's input: `questions[0].question`, else its `title` or `header`. Exported for
+ * the question hooks, which read the same input from the harness payload.
+ */
+export function questionTextOf(input: unknown): string | null {
     let value = input;
 
     if (typeof input === "string") {
@@ -226,7 +229,7 @@ function questionTextOf(input: unknown): string | null {
 }
 
 /** The option labels of a question tool's first question: `questions[0].options[]`, each a string or `{label}`. */
-function questionOptionsOf(input: unknown): string[] | undefined {
+export function questionOptionsOf(input: unknown): string[] | undefined {
     const value = typeof input === "string" ? parseTranscriptLine(input) : input;
     const first = isRecord(value) && Array.isArray(value.questions) ? value.questions[0] : undefined;
     const options: unknown[] = isRecord(first) && Array.isArray(first.options) ? first.options : [];
