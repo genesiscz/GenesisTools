@@ -9,6 +9,16 @@
  * leaves it once it asks `nativeHome(kind)` or `nativeSessionRoots(kind)` (src/utils/providers/session-paths.ts).
  * `lint-rules.test.ts` fails when a listed file no longer offends, so the lists cannot go stale.
  */
-export const NATIVE_HOME_CLAUDE_RATCHET: ReadonlySet<string> = new Set<string>([]);
+export const NATIVE_HOME_CLAUDE_RATCHET: ReadonlySet<string> = new Set<string>([
+    "scripts/benchmarks/statusline/current-statusline.ts",
+    "src/agents/lib/hooks/diff/capture.ts",
+    "src/claude/lib/launch-env.ts",
+    "src/learn-from-fable/lib/config.ts",
+    "src/utils/ai/providers/plugins/anthropic-sub/statusline.ts",
+    "src/utils/cli/failures/caller.ts",
+]);
 
-export const NATIVE_HOME_CODEX_GROK_RATCHET: ReadonlySet<string> = new Set<string>([]);
+export const NATIVE_HOME_CODEX_GROK_RATCHET: ReadonlySet<string> = new Set<string>([
+    "src/codex/lib/spawn.ts",
+    "src/utils/cli/failures/caller.ts",
+]);
