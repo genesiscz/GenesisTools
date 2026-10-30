@@ -9,9 +9,12 @@ import { waitingBlock } from "@app/question/lib/inbox/load";
 import { type AskDeps, answerAskForm, checkAskAnswer, getAskForm } from "@app/question/lib/pending/ask";
 import { attachImageFiles, MAX_ANSWER_IMAGE_BYTES } from "@app/question/lib/pending/form";
 import type { AskAnswer, AskForm } from "@app/question/lib/pending/types";
+import { isAccountProviderAlias } from "@genesiscz/utils/ai/providers/alias-list";
+import { harnessWorker } from "@genesiscz/utils/ai/providers/harness-index";
 import { SafeJSON } from "@genesiscz/utils/json";
 import { logger } from "@genesiscz/utils/logger";
 import { boundedCommand } from "@genesiscz/utils/process/bounded-command";
+import type { WorkerCapabilities } from "@genesiscz/utils/worker/capabilities";
 import type { WidgetAsset, WidgetOutgoing } from "../widget/types";
 import type { OutboxDispatcher } from "./engine";
 
@@ -20,11 +23,33 @@ export function widgetDeliverDeps(signal?: AbortSignal): DeliverDeps {
     return { runTool: (args: string[]) => runWidgetDelivery({ args, signal }) };
 }
 
+/** The `tools` verb path of the cmux transport (`tools claude cmux send`): a command path, not a harness branch. */
+const CMUX_TRANSPORT = ["claude", "cmux"] as const;
+
+/**
+ * The worker capabilities of the harness whose worker a transport run drives (`tools claude worker steer`,
+ * `tools codex steer`, `tools grok steer`): `args[0]` names the harness's tool, and `args[1]` opens one of the
+ * worker verbs its driver's `worker` part lists. Undefined for any other run.
+ */
+function workerRun(args: readonly string[]): WorkerCapabilities | undefined {
+    const tool = args[0] ?? "";
+    if (!isAccountProviderAlias(tool)) {
+        return undefined;
+    }
+
+    const worker = harnessWorker(tool);
+    return worker.verbs.some((verb) => verb.split(" ")[0] === args[1]) ? worker : undefined;
+}
+
+/** A worker that steers between turns runs a whole native turn before it answers, so its run may take minutes. */
+function runsNativeTurn(args: readonly string[]): boolean {
+    return workerRun(args)?.steering === "between-turns";
+}
+
 async function runWidgetDelivery({ args, signal }: { args: string[]; signal?: AbortSignal }) {
-    const nativeTurn = (args[0] === "claude" && args[1] === "worker") || args[0] === "grok";
     const result = await boundedCommand({
         command: [process.execPath, resolve(import.meta.dir, "../../../../widget-tools"), ...args],
-        timeoutMs: nativeTurn ? 15 * 60_000 : 60_000,
+        timeoutMs: runsNativeTurn(args) ? 15 * 60_000 : 60_000,
         signal,
     });
     return widgetDeliveryReceipt({ args, result });
@@ -33,9 +58,9 @@ async function runWidgetDelivery({ args, signal }: { args: string[]; signal?: Ab
 /**
  * Turns one transport run into a receipt, or throws DeliveryUnknownError when nobody can tell whether text
  * reached the agent. `claude cmux send --json` exits 1 with `{"sent":false}` when no pane matched: nothing was
- * typed, so that is a certain "not sent" (the message waits for a route) rather than an unknown outcome. A native
- * turn (`claude worker`, `grok`) and `codex` report a refusal through a nonzero exit with a readable answer, so
- * their exit status is the receipt.
+ * typed, so that is a certain "not sent" (the message waits for a route) rather than an unknown outcome. A worker
+ * run of any harness (`claude worker steer`, `codex steer`, `grok steer`) reports a refusal through a nonzero exit
+ * with a readable answer, so its exit status is the receipt.
  */
 export function widgetDeliveryReceipt({
     args,
@@ -51,9 +76,8 @@ export function widgetDeliveryReceipt({
         throw unknown;
     }
 
-    const nativeTurn = (args[0] === "claude" && args[1] === "worker") || args[0] === "grok";
-    if (!(args[0] === "claude" && args[1] === "cmux")) {
-        if (result.status !== 0 && !nativeTurn && args[0] !== "codex") {
+    if (!CMUX_TRANSPORT.every((word, index) => args[index] === word)) {
+        if (result.status !== 0 && !workerRun(args)) {
             throw unknown;
         }
 
