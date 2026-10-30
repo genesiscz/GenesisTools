@@ -1,7 +1,6 @@
-import { homedir } from "node:os";
-import { join } from "node:path";
 import { SafeJSON } from "@genesiscz/utils/json";
 import { logger } from "@genesiscz/utils/logger";
+import { nativeHomePath } from "@genesiscz/utils/providers/session-paths";
 import { atomicWriteFileSync } from "@genesiscz/utils/storage/atomic-file";
 import { generatePkcePair } from "../oauth/pkce";
 
@@ -66,8 +65,8 @@ export interface CodexTokens {
     idToken?: string;
 }
 
-/** Default path for Codex CLI's auth cache */
-export const CODEX_AUTH_PATH = join(homedir(), ".codex", "auth.json");
+/** Default path for Codex CLI's auth cache: `auth.json` in the home `codex login` writes to (the first CODEX_HOME). */
+export const CODEX_AUTH_PATH = nativeHomePath("codex", "auth.json");
 
 /**
  * Read tokens from ~/.codex/auth.json (written by `codex login`).

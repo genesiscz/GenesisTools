@@ -1,11 +1,11 @@
 import { existsSync } from "node:fs";
 import { readFile } from "node:fs/promises";
-import { homedir } from "node:os";
 import { dirname, join } from "node:path";
 import { env } from "@genesiscz/utils/env";
 import { SafeJSON } from "@genesiscz/utils/json";
 import { logger } from "@genesiscz/utils/logger";
 import { completeCaChain } from "@genesiscz/utils/net/ca-chain";
+import { claudeJsonPath } from "@genesiscz/utils/providers/session-paths";
 import type { SentryLocation } from "./debug-id.ts";
 
 const { log } = logger.scoped("ts:sourcemaps:sentry");
@@ -29,7 +29,7 @@ interface ClaudeConfig {
 export async function claudeMcpServer(
     name: string,
     cwd: string,
-    configPath = join(homedir(), ".claude.json")
+    configPath = claudeJsonPath()
 ): Promise<McpServerConfig | null> {
     const config: ClaudeConfig = existsSync(configPath)
         ? (SafeJSON.parse(await readFile(configPath, "utf8"), { strict: true }) as ClaudeConfig)
