@@ -1,4 +1,5 @@
 import type { TranscriptAnchor } from "@genesiscz/utils/agent/source-anchor";
+import { resolveHistoryProvider } from "@genesiscz/utils/agent-sessions/provider";
 import { codexNativeLinesToTurns } from "@genesiscz/utils/agent-sessions/readers/codex-turns";
 import type { ConversationMessage } from "@genesiscz/utils/claude/types";
 import { logger } from "@genesiscz/utils/logger";
@@ -39,10 +40,6 @@ function record(value: unknown): Record<string, unknown> {
         : {};
 }
 
-function strings(values: unknown[]): string[] {
-    return values.filter((value): value is string => typeof value === "string" && value.length > 0);
-}
-
 function findNativeRecord({
     rows,
     anchor,
@@ -50,51 +47,9 @@ function findNativeRecord({
     rows: LocatedRecord[];
     anchor: Extract<TranscriptAnchor, { kind: "native" }>;
 }): number {
-    let activeCodexTurn: string | undefined;
+    const anchorsOf = resolveHistoryProvider(anchor.provider).reader.rowAnchors();
     for (const [index, { value: row, gapBefore }] of rows.entries()) {
-        if (gapBefore) {
-            activeCodexTurn = undefined;
-        }
-        const payload = record(row.payload);
-        const message = record(row.message);
-        const update = record(record(row.params).update);
-        let messageIds: string[] = [];
-        let toolCallIds: string[] = [];
-        let turnIds: string[] = [];
-        if (anchor.provider === "claude" && ["user", "assistant"].includes(String(row.type))) {
-            messageIds = strings([row.uuid, message.id]);
-            const content = Array.isArray(message.content) ? message.content.map(record) : [];
-            toolCallIds = strings(content.filter((part) => part.type === "tool_use").map((part) => part.id));
-        } else if (anchor.provider === "codex") {
-            const startsTurn =
-                row.type === "turn_context" || (row.type === "event_msg" && payload.type === "task_started");
-            const endsTurn = row.type === "event_msg" && payload.type === "task_complete";
-            const usage = row.type === "token_usage_record";
-            const directTurn = strings([payload.turn_id])[0];
-            if (startsTurn) {
-                activeCodexTurn = directTurn;
-            }
-            if (startsTurn || endsTurn || usage) {
-                turnIds = strings([directTurn]);
-            } else if (row.type === "response_item") {
-                turnIds = [...new Set(strings([directTurn, activeCodexTurn]))];
-                if (payload.type === "message") {
-                    messageIds = strings([payload.id]);
-                }
-                if (payload.type === "function_call" || payload.type === "custom_tool_call") {
-                    toolCallIds = strings([payload.call_id]);
-                }
-            }
-            if (endsTurn && directTurn === activeCodexTurn) {
-                activeCodexTurn = undefined;
-            }
-        } else if (anchor.provider === "grok") {
-            messageIds = strings([update.messageId]);
-            turnIds = strings([update.turnId]);
-            if (update.sessionUpdate === "tool_call") {
-                toolCallIds = strings([update.toolCallId]);
-            }
-        }
+        const { messageIds, toolCallIds, turnIds } = anchorsOf(row, gapBefore);
         // Every supplied identity must be supported at this record. A broad turn match cannot
         // substitute for a missing tool/message ID, and contradictory enclosing turns are rejected.
         if (

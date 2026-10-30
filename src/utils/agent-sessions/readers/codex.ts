@@ -28,6 +28,8 @@ import type {
     NativeSourceIssue,
     ReadBackwardOptions,
     ReadForwardOptions,
+    RowAnchorIds,
+    RowAnchorWalk,
     TurnBoundary,
 } from "../types";
 import {
@@ -1368,6 +1370,7 @@ export type CodexHistoryOperations = Pick<NativeSessionReader<"codex">, "parserV
             | "readForward"
             | "continuedIn"
             | "modelOfRow"
+            | "rowAnchors"
         >
     >;
 
@@ -1460,6 +1463,62 @@ function codexModelOfRow(row: string): string | undefined {
     return typeof model === "string" && model ? model : undefined;
 }
 
+function anchorRecord(value: unknown): Record<string, unknown> {
+    return typeof value === "object" && value !== null && !Array.isArray(value)
+        ? Object.fromEntries(Object.entries(value))
+        : {};
+}
+
+function anchorStrings(values: unknown[]): string[] {
+    return values.filter((value): value is string => typeof value === "string" && value.length > 0);
+}
+
+/**
+ * A turn starts at `turn_context` or a `task_started` event and ends at `task_complete`; the rows between it name no
+ * turn of their own, so the walk carries the open turn to them until the end or a gap. A message names its item id,
+ * a function or custom tool call its `call_id`.
+ */
+function codexRowAnchors(): RowAnchorWalk {
+    let activeTurn: string | undefined;
+
+    return (row, gapBefore) => {
+        if (gapBefore) {
+            activeTurn = undefined;
+        }
+
+        const payload = anchorRecord(row.payload);
+        const startsTurn = row.type === "turn_context" || (row.type === "event_msg" && payload.type === "task_started");
+        const endsTurn = row.type === "event_msg" && payload.type === "task_complete";
+        const usage = row.type === "token_usage_record";
+        const directTurn = anchorStrings([payload.turn_id])[0];
+        const ids: RowAnchorIds = { messageIds: [], toolCallIds: [], turnIds: [] };
+
+        if (startsTurn) {
+            activeTurn = directTurn;
+        }
+
+        if (startsTurn || endsTurn || usage) {
+            ids.turnIds = anchorStrings([directTurn]);
+        } else if (row.type === "response_item") {
+            ids.turnIds = [...new Set(anchorStrings([directTurn, activeTurn]))];
+
+            if (payload.type === "message") {
+                ids.messageIds = anchorStrings([payload.id]);
+            }
+
+            if (payload.type === "function_call" || payload.type === "custom_tool_call") {
+                ids.toolCallIds = anchorStrings([payload.call_id]);
+            }
+        }
+
+        if (endsTurn && directTurn === activeTurn) {
+            activeTurn = undefined;
+        }
+
+        return ids;
+    };
+}
+
 export function createCodexHistoryOperations(): CodexHistoryOperations {
     return {
         parserVersion: "7",
@@ -1473,5 +1532,6 @@ export function createCodexHistoryOperations(): CodexHistoryOperations {
         // carries no pointer to another session.
         continuedIn: async () => undefined,
         modelOfRow: codexModelOfRow,
+        rowAnchors: codexRowAnchors,
     };
 }
