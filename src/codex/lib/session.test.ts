@@ -1,4 +1,4 @@
-import { describe, expect, test } from "bun:test";
+import { describe, expect, spyOn, test } from "bun:test";
 import { mkdirSync, mkdtempSync, writeFileSync } from "node:fs";
 import { tmpdir } from "node:os";
 import { join } from "node:path";
@@ -7,9 +7,11 @@ import { AiConfigStore } from "@genesiscz/utils/ai/config/AiConfigStore";
 import { CONFIG_VERSION } from "@genesiscz/utils/ai/config/schema";
 import { env } from "@genesiscz/utils/env";
 import { SafeJSON } from "@genesiscz/utils/json";
+import { getLogger } from "@genesiscz/utils/logger";
 import type { ThreadTurnsListParams, Turn } from "./_generated/protocol";
 import { CodexAccountBinding } from "./account";
 import { isOwnBusCommand, isReadOnlyCommand } from "./bus-approval";
+import { type ApprovalRefusal, parseControlBody, refusalNotice } from "./control";
 import {
     fullRequestCommand,
     LIST_PREVIEW_LINES,
@@ -137,6 +139,35 @@ function makeMeta(home: string): CodexSessionMeta {
         codexVersion: "0.144.5",
         pendingApprovals: {},
         home,
+    };
+}
+
+/** An `ask` worker inside its first turn, so a steer merges into turn-1 and is the next `turn/start` the fake sees. */
+async function startAskWorker(home: string) {
+    const store = new CodexSessionStore();
+    const meta = { ...makeMeta(home), writePolicy: "ask" as const, approvalPolicy: "untrusted" as const };
+    store.writeMeta(meta);
+    const client = new FakeRpcClient();
+    const runtime = new CodexSessionRuntime({ client, store, meta });
+    await runtime.start({ prompt: "Begin" });
+    return { store, client, runtime };
+}
+
+/** Parks one command approval; `answer` is what Codex gets back for the worker's tool call. */
+async function parkApproval(runtime: CodexSessionRuntime, id: string): Promise<{ answer: Promise<unknown> }> {
+    const answer = runtime.handleServerRequest({
+        id,
+        method: "item/commandExecution/requestApproval",
+        params: { command: "git push origin HEAD", cwd: "/repo" },
+    });
+    await Bun.sleep(0);
+    return { answer };
+}
+
+function steeredTurn(text: string) {
+    return {
+        method: "turn/start",
+        params: { threadId: "thread-1", input: [{ type: "text", text, text_elements: [] }] },
     };
 }
 
@@ -653,6 +684,177 @@ describe("CodexSessionRuntime", () => {
                 }
             }
             await runtime.close();
+        });
+    });
+
+    test("a parent or policy refusal declines the request, then the worker's next input names the actor", async () => {
+        const home = mkdtempSync(join(tmpdir(), "gt-codex-refusal-parent-"));
+        await env.testing.withOverrides({ GENESIS_TOOLS_HOME: home }, async () => {
+            const { store, client, runtime } = await startAskWorker(home);
+            const cases: Array<{ id: string; refusal: ApprovalRefusal; actor: string }> = [
+                {
+                    id: "7",
+                    refusal: { by: "parent", reason: "the dump does not prove full coverage; read the bounded files" },
+                    actor: "declined by the parent session that supervises you, not a human",
+                },
+                { id: "8", refusal: { by: "policy" }, actor: "declined by this session's write policy, not a human" },
+            ];
+
+            for (const { id, refusal, actor } of cases) {
+                const { answer } = await parkApproval(runtime, id);
+                const sent = client.requests.length;
+
+                await expect(runtime.execute({ op: "deny", requestId: id, refusal })).resolves.toEqual({
+                    resolved: true,
+                    attributed: true,
+                });
+                // Codex's own answer stays the plain decline; the attribution travels beside it as turn input.
+                await expect(answer).resolves.toEqual({ decision: "decline" });
+                expect(store.readMeta("reviewer")?.pendingApprovals[id]).toBeUndefined();
+                const notice = refusalNotice(id, refusal);
+                expect(client.requests.slice(sent)).toEqual([steeredTurn(notice)]);
+                expect(notice).toContain(actor);
+                expect(notice.includes(`Reason: ${refusal.reason}`)).toBe(refusal.reason !== undefined);
+            }
+        });
+    });
+
+    test("a human refusal, or a deny that names no actor, declines the request and steers nothing", async () => {
+        const home = mkdtempSync(join(tmpdir(), "gt-codex-refusal-human-"));
+        await env.testing.withOverrides({ GENESIS_TOOLS_HOME: home }, async () => {
+            const { store, client, runtime } = await startAskWorker(home);
+            const { answer: human } = await parkApproval(runtime, "7");
+            const { answer: bare } = await parkApproval(runtime, "8");
+            const sent = client.requests.length;
+
+            await expect(
+                runtime.execute({ op: "deny", requestId: "7", refusal: { by: "human", reason: "not on this branch" } })
+            ).resolves.toEqual({ resolved: true });
+            await expect(runtime.execute({ op: "deny", requestId: "8" })).resolves.toEqual({ resolved: true });
+
+            await expect(human).resolves.toEqual({ decision: "decline" });
+            await expect(bare).resolves.toEqual({ decision: "decline" });
+            expect(client.requests.slice(sent)).toEqual([]);
+            expect(store.readMeta("reviewer")?.pendingApprovals).toEqual({});
+        });
+    });
+
+    test("the write policy's own refusal declines at once, parks nothing and steers nothing", async () => {
+        const home = mkdtempSync(join(tmpdir(), "gt-codex-refusal-policy-"));
+        await env.testing.withOverrides({ GENESIS_TOOLS_HOME: home }, async () => {
+            const store = new CodexSessionStore();
+            const meta = { ...makeMeta(home), writePolicy: "deny" as const };
+            store.writeMeta(meta);
+            const client = new FakeRpcClient();
+            const runtime = new CodexSessionRuntime({ client, store, meta });
+            await runtime.start({ prompt: "Begin" });
+            const sent = client.requests.length;
+
+            await expect(
+                runtime.handleServerRequest({
+                    id: "9",
+                    method: "item/fileChange/requestApproval",
+                    params: { itemId: "file-1" },
+                })
+            ).resolves.toEqual({ decision: "decline" });
+
+            expect(client.requests.slice(sent)).toEqual([]);
+            expect(store.readMeta("reviewer")?.pendingApprovals).toEqual({});
+            // Nothing waits, so no later control can attribute the refusal or overturn it.
+            for (const control of [
+                { op: "deny", requestId: "9", refusal: { by: "parent", reason: "late" } },
+                { op: "approve", requestId: "9" },
+            ] as const) {
+                await expect(runtime.execute(control)).rejects.toThrow("Pending approval not found: 9");
+            }
+        });
+    });
+
+    test("a refusal notice the server refuses still declines, answers attributed false and logs a warning", async () => {
+        const home = mkdtempSync(join(tmpdir(), "gt-codex-refusal-steer-failed-"));
+        await env.testing.withOverrides({ GENESIS_TOOLS_HOME: home }, async () => {
+            const { store, client, runtime } = await startAskWorker(home);
+            const { answer } = await parkApproval(runtime, "7");
+            client.rejectNextTurn = new Error("no active turn to steer");
+            const warn = spyOn(getLogger(), "warn").mockImplementation(() => undefined);
+
+            try {
+                await expect(
+                    runtime.execute({ op: "deny", requestId: "7", refusal: { by: "parent", reason: "wrong file" } })
+                ).resolves.toEqual({ resolved: true, attributed: false });
+                await expect(answer).resolves.toEqual({ decision: "decline" });
+                const warned = warn.mock.calls.filter(
+                    (call) => call[1] === "the refusal reason could not be steered to the worker"
+                );
+                expect(warned).toHaveLength(1);
+                expect(warned[0]?.[0]).toMatchObject({ name: "reviewer", requestId: "7" });
+                expect(store.readMeta("reviewer")?.pendingApprovals).toEqual({});
+                expect(store.readMeta("reviewer")?.queuedSteers).toBeUndefined();
+            } finally {
+                warn.mockRestore();
+            }
+        });
+    });
+
+    test("a refusal notice during a turn that takes no steering waits for the boundary, then reaches the worker", async () => {
+        const home = mkdtempSync(join(tmpdir(), "gt-codex-refusal-queued-"));
+        await env.testing.withOverrides({ GENESIS_TOOLS_HOME: home }, async () => {
+            const { store, client, runtime } = await startAskWorker(home);
+            const { answer } = await parkApproval(runtime, "7");
+            const refusal: ApprovalRefusal = { by: "parent", reason: "split the review dump" };
+            client.rejectNextTurn = new Error(
+                "failed to submit turn input: ActiveTurnNotSteerable { turn_kind: Review }"
+            );
+
+            // A deny never forces: the notice is queued, never an interrupt of the running turn.
+            await expect(runtime.execute({ op: "deny", requestId: "7", refusal })).resolves.toEqual({
+                resolved: true,
+                attributed: true,
+            });
+            await expect(answer).resolves.toEqual({ decision: "decline" });
+            expect(client.requests.some((request) => request.method === "turn/interrupt")).toBe(false);
+            expect(store.readMeta("reviewer")?.queuedSteers).toEqual([
+                { body: refusalNotice("7", refusal), force: false },
+            ]);
+
+            await runtime.handleNotification({ method: "turn/completed", params: { turn: { id: "turn-1" } } });
+
+            expect(client.requests.at(-1)).toEqual(steeredTurn(refusalNotice("7", refusal)));
+            expect(store.readMeta("reviewer")?.queuedSteers).toEqual([]);
+        });
+    });
+
+    test("an answered request is gone: no later approve or deny reaches it, whichever actor it claims", async () => {
+        const home = mkdtempSync(join(tmpdir(), "gt-codex-refusal-no-retry-"));
+        await env.testing.withOverrides({ GENESIS_TOOLS_HOME: home }, async () => {
+            const { client, runtime } = await startAskWorker(home);
+            // The wire forms the CLI and a bus message send; both end in the same execute().
+            const retries = (id: string) => [
+                `{"op":"approve","requestId":"${id}"}`,
+                `{"op":"deny","requestId":"${id}","refusal":{"by":"parent","reason":"retry as the lead"}}`,
+                `{"op":"deny","requestId":"${id}","refusal":{"by":"policy"}}`,
+                `{"op":"deny","requestId":"${id}"}`,
+            ];
+            const firsts: Array<{ id: string; refusal: ApprovalRefusal }> = [
+                { id: "7", refusal: { by: "human" } },
+                { id: "8", refusal: { by: "parent", reason: "wrong file" } },
+            ];
+
+            for (const { id, refusal } of firsts) {
+                const { answer } = await parkApproval(runtime, id);
+                await runtime.execute({ op: "deny", requestId: id, refusal });
+                await expect(answer).resolves.toEqual({ decision: "decline" });
+                const sent = client.requests.length;
+
+                for (const body of retries(id)) {
+                    await expect(runtime.execute(parseControlBody(body))).rejects.toThrow(
+                        `Pending approval not found: ${id}`
+                    );
+                }
+
+                // A retry steers nothing, so a human decision never turns into the lead's guidance afterwards.
+                expect(client.requests.slice(sent)).toEqual([]);
+            }
         });
     });
 
