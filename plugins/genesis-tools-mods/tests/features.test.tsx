@@ -1410,13 +1410,13 @@ test("links: a one-checkout session links a bare number in its checkout as befor
     expect(titleMatches("fix", "fix(tools): replace")).toBe(false);
     expect(
         titleMatches(
-            "fix(tools): replace prompts with clack searchSelect)",
+            "fix(tools): replace prompts with clack searchSelect",
             "fix(tools): replace prompts with clack autocomplete"
         )
     ).toBe(false);
     expect(
         titleMatches(
-            "fix(tools): replace prompts with clack searchSelect)",
+            "fix(tools): replace prompts with clack searchSelect",
             "fix(tools): replace prompts with clack searchSelect"
         )
     ).toBe(true);
@@ -4183,6 +4183,9 @@ test("links: an older tools CLI falls back to gh and remembers the missing optio
     expect(await linkLine(one, "#901.\n")).toContain("first title");
     expect(await linkLine(one, "#902.\n")).toContain("second title");
     expect(asked.map((argv) => argv[0])).toEqual(["tools", "gh", "gh"]);
+    forgetPullRequests();
+    await linkLine(one, "#903.\n");
+    expect(asked.map((argv) => argv[0])).toEqual(["tools", "gh", "gh", "tools", "gh"]);
 });
 
 for (const interactive of [true, false]) {
@@ -4199,3 +4202,59 @@ for (const interactive of [true, false]) {
         await machine.clock.settle();
     });
 }
+
+test("links: title extraction stops at the matching parenthesis", async () => {
+    forgetPullRequests();
+    const { ctx } = twoCheckouts(
+        {
+            "acme/Toolbox#910": "feat(scope): support nested (items)",
+            "acme/Toolbox#911": "fix: trailing )",
+            "acme/Playground#910": "different title",
+            "acme/Playground#911": "different title",
+        },
+        GH_ONLY
+    );
+    expect(await linkLine(ctx, "#910 (feat(scope): support nested (items)), then more.\n")).toContain(
+        "[#910](https://github.com/acme/Toolbox/pull/910)"
+    );
+    expect(await linkLine(ctx, "#911 (fix: trailing )), next.\n")).toContain(
+        "[#911](https://github.com/acme/Toolbox/pull/911)"
+    );
+});
+
+test("links: candidate PR lookups start concurrently", async () => {
+    forgetPullRequests();
+    const { ctx } = twoCheckouts(
+        { "acme/Toolbox#912": "matching title", "acme/Playground#912": "other title" },
+        GH_ONLY
+    );
+    const run = ctx.host.run;
+    let count = 0;
+    let release = () => {};
+    const barrier = new Promise<void>((resolve) => {
+        release = resolve;
+    });
+    let bothStarted = () => {};
+    const started = new Promise<void>((resolve) => {
+        bothStarted = resolve;
+    });
+    ctx.host.run = async (argv, init) => {
+        if (argv[0] === "gh") {
+            count++;
+            if (count === 2) {
+                bothStarted();
+            }
+            await barrier;
+        }
+        return run(argv, init);
+    };
+    const result = linkLine(ctx, "#912 (matching title).\n");
+    const simultaneous = await Promise.race([
+        started.then(() => true),
+        new Promise<boolean>((resolve) => setTimeout(() => resolve(false), 500)),
+    ]);
+    release();
+    const text = await result;
+    expect(simultaneous).toBe(true);
+    expect(text).toContain("[#912](https://github.com/acme/Toolbox/pull/912)");
+});

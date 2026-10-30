@@ -203,7 +203,7 @@ export function titleMatches(written: string, title: string): boolean {
             .trim()
             .toLowerCase();
     const truncated = /\.\.\.|…/.test(written);
-    const said = norm((written.split(/\.\.\.|…/)[0] ?? "").replace(/\)\s*$/, truncated ? ")" : ""));
+    const said = norm(written.split(/\.\.\.|…/)[0] ?? "");
     const real = norm(title);
 
     return said.length >= 8 && (truncated ? real.startsWith(said) : said === real);

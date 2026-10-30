@@ -239,9 +239,10 @@ const PR_MISSING_TTL_S = String(PR_MISSING_TTL_MS / 1000);
 const pullRequests = new Map<string, { at: number; pr: PullRequest | null }>();
 let prIncludeMissing = false;
 
-/** Forgets the PR answers this module holds (tests); the shared files stay. */
+/** Forgets PR answers and CLI capability (tests); shared files stay. */
 export function forgetPullRequests(): void {
     pullRequests.clear();
+    prIncludeMissing = false;
 }
 
 /** The PR numbers the mod linked since the last note to the model, keyed `<repo>#<n>`. */
@@ -337,6 +338,27 @@ async function mentionProject(ctx: LinkContext, mention: RepoMention): Promise<F
  * GitLab project there, nothing names a GitHub one, or the session works in several and no evidence picks one
  * (`pr-repos.ts`). `after`: the text right after the number, where a reply writes the PR's title.
  */
+function writtenTitle(after: string): string | undefined {
+    if (!after.startsWith(" (")) {
+        return undefined;
+    }
+
+    let depth = 1;
+    for (let i = 2; i < after.length && after[i] !== "\n"; i++) {
+        if (after[i] === "(") {
+            depth++;
+        } else if (after[i] === ")") {
+            if (depth === 1 && after[i + 1] === ")") {
+                continue;
+            }
+            if (--depth === 0) {
+                return after.slice(2, i) || undefined;
+            }
+        }
+    }
+    return after.slice(2).split("\n")[0] || undefined;
+}
+
 async function prRepo(
     ctx: LinkContext,
     n: number,
@@ -379,16 +401,11 @@ async function prRepo(
     }
 
     // Several checkouts and no word of the reply picks one: the PR lookup is the evidence.
-    const written = /^ \(([^\n]+)/.exec(after)?.[1];
-    const found: { project: ForgeProject; pr: PullRequest }[] = [];
-
-    for (const project of candidates) {
-        const pr = await pullRequest(ctx, project, String(n));
-
-        if (pr) {
-            found.push({ project, pr });
-        }
-    }
+    const written = writtenTitle(after);
+    const looked = await Promise.all(
+        candidates.map(async (project) => ({ project, pr: await pullRequest(ctx, project, String(n)) }))
+    );
+    const found = looked.flatMap(({ project, pr }) => (pr ? [{ project, pr }] : []));
 
     const titled = written ? found.filter((hit) => titleMatches(written, hit.pr.title)) : [];
 
