@@ -294,6 +294,13 @@ describe("failure records", () => {
     });
 });
 
+/**
+ * The zone this test process runs in. `bun test` runs in UTC while a child spawned from it runs in the Mac's zone, so
+ * between local and UTC midnight the child's day file and the day this test reads differ (red at 2026-10-31 00:37
+ * local). The children get the test's zone.
+ */
+const TEST_ZONE = Intl.DateTimeFormat().resolvedOptions().timeZone;
+
 describe("a crash another uncaughtException listener takes", () => {
     function crashWith(handler: string): Array<[string, boolean, number | null, string | null]> {
         const home = mkdtempSync(join(tmpdir(), "gt-failures-crash-"));
@@ -305,7 +312,7 @@ describe("a crash another uncaughtException listener takes", () => {
         ].join("\n");
         const fromDay = formatLocalDate(new Date());
         Bun.spawnSync([process.execPath, "-e", script], {
-            env: { ...process.env, GENESIS_TOOLS_HOME: home },
+            env: { ...process.env, GENESIS_TOOLS_HOME: home, TZ: TEST_ZONE },
             stdout: "ignore",
             stderr: "ignore",
         });
@@ -454,7 +461,7 @@ describe("a tool that handles its own interrupt under the tools wrapper", () => 
         ].join("\n");
         const startedAt = new Date();
         const child = Bun.spawnSync([process.execPath, "-e", script], {
-            env: { ...process.env, GENESIS_TOOLS_HOME: home, [RUN_ID_ENV]: "run-wrapped" },
+            env: { ...process.env, GENESIS_TOOLS_HOME: home, [RUN_ID_ENV]: "run-wrapped", TZ: TEST_ZONE },
             stdout: "pipe",
             stderr: "ignore",
         });
