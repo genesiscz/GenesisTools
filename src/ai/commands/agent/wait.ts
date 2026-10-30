@@ -2,7 +2,7 @@ import { statSync } from "node:fs";
 import { resolveSessionTranscript } from "@app/ai/lib/sessions/resolve-transcript";
 import { transcriptByteSize, transcriptEnvelope, transcriptSnapshot } from "@genesiscz/utils/ai/transcripts/load";
 import type { ResolvedTranscript } from "@genesiscz/utils/ai/transcripts/resolve";
-import { PAGES_BY_TURN_INDEX } from "@genesiscz/utils/ai/transcripts/turn-index";
+import { pagesByTurnIndex } from "@genesiscz/utils/ai/transcripts/turn-index";
 import { readTurnState, type TurnProvider, type TurnSnapshot } from "@genesiscz/utils/ai/transcripts/turn-state";
 import { type TurnWaitOutcome, turnAnswers, watchTurn } from "@genesiscz/utils/ai/transcripts/turn-wait";
 import {
@@ -272,7 +272,7 @@ export type TranscriptPager = (opts: SliceOptions) => Promise<TranscriptEnvelope
 
 /** Claude reads only the requested turns (turn-index.ts); the others parse once per read and page from memory. */
 async function transcriptPager(resolved: ResolvedTranscript): Promise<TranscriptPager> {
-    if (PAGES_BY_TURN_INDEX[resolved.provider]) {
+    if (pagesByTurnIndex(resolved.provider)) {
         return (opts) => transcriptEnvelope(resolved, opts);
     }
 

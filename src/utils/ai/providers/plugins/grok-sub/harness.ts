@@ -19,6 +19,7 @@ export const grokHarness: HarnessDriver<"grok"> = {
         questions: pending("P2", "the grok question signals inside src/utils/ai/transcripts/turn-state.ts"),
         live: pending("P2", "the grok live tail in src/utils/ai/transcripts/live.ts and activity.ts"),
         launch: grokLaunch,
+        transcript: { recordsTerminalEvent: true, pagesByTurnIndex: false, subagentsOnDisk: false },
         exit: pending("P3", "the grok entry of AGENTS in src/cmux/lib/session-agents.ts"),
         hooks: pending("P4", "the grok entries of HARNESS_HOOK_FACTS and HOOK_INSTALLERS in src/agents"),
         statusline: pending("P4", "the grok statusline host in src/ai/commands/statusline"),

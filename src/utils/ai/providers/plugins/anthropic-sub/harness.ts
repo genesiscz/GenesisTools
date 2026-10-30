@@ -24,6 +24,7 @@ export const claudeHarness: HarnessDriver<"claude"> = {
         questions: pending("P2", "the claude question signals inside src/utils/ai/transcripts/turn-state.ts"),
         live: pending("P2", "the claude live tail in src/utils/ai/transcripts/live.ts and activity.ts"),
         launch: claudeLaunch,
+        transcript: { recordsTerminalEvent: false, pagesByTurnIndex: true, subagentsOnDisk: true },
         exit: pending("P3", "the claude entry of AGENTS in src/cmux/lib/session-agents.ts"),
         hooks: pending("P4", "the claude entries of HARNESS_HOOK_FACTS and HOOK_INSTALLERS in src/agents"),
         statusline: pending("P4", "the claude statusline host in src/ai/commands/statusline"),
