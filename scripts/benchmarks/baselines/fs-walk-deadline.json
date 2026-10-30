@@ -1,0 +1,38 @@
+{
+    "name": "fs-walk-deadline",
+    "capturedAt": "2026-10-30T19:20:47.256Z",
+    "commit": "c79e364dee",
+    "loadAvg": [
+        13.923828125,
+        15.22216796875,
+        12.55078125
+    ],
+    "hostname": "MacBook-Pro-2262.local",
+    "metrics": {
+        "node_modules.full.cpuMs": 968.891,
+        "node_modules.full.files": 87854,
+        "node_modules.signal.cpuMs": 781.438,
+        "node_modules.signal.files": 87854,
+        "node_modules.far.cpuMs": 710.379,
+        "node_modules.far.files": 87854,
+        "node_modules.deadline.cpuMs": 698.369,
+        "node_modules.deadline.files": 87854,
+        "node_modules.deadline.overrunMs": 643,
+        "node_modules.doctor.cpuMs": 50.3,
+        "node_modules.doctor.files": 6319,
+        "node_modules.doctor.overrunMs": 0,
+        "Cache_Data.full.cpuMs": 660.621,
+        "Cache_Data.full.files": 27813,
+        "Cache_Data.signal.cpuMs": 391.5,
+        "Cache_Data.signal.files": 27813,
+        "Cache_Data.far.cpuMs": 390.401,
+        "Cache_Data.far.files": 27813,
+        "Cache_Data.deadline.cpuMs": 374.625,
+        "Cache_Data.deadline.files": 27813,
+        "Cache_Data.deadline.overrunMs": 321,
+        "Cache_Data.doctor.cpuMs": 369.32,
+        "Cache_Data.doctor.files": 0,
+        "Cache_Data.doctor.overrunMs": 315
+    },
+    "notes": "trees /Users/Martin/Tresors/Projects/GenesisTools/node_modules, /Users/Martin/Library/Caches/BraveSoftware/Brave-Browser/Default/Cache/Cache_Data, read-only; warm vnode cache; deadline 50 ms | commit c79e364dee | uptime 20:20  up 11 days, 11:13, 33 users, load averages: 13.92 15.22 12.55"
+}

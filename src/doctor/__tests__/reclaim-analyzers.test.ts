@@ -39,6 +39,7 @@ import {
 import { env } from "@genesiscz/utils/env";
 import * as diskUsage from "@genesiscz/utils/fs/disk-usage";
 import { SafeJSON } from "@genesiscz/utils/json";
+import * as bulk from "@genesiscz/utils/macos/getattrlistbulk";
 
 describe("measurement safety", () => {
     it.each(["entries", "deadline", "zero"])("bounds empty-directory discovery by %s", (bound) => {
@@ -81,6 +82,41 @@ describe("measurement safety", () => {
             rmSync(root, { recursive: true, force: true });
         }
     });
+
+    it.skipIf(process.platform !== "darwin")(
+        "stops one directory listing that outlasts a 50 ms deadline, mid-listing",
+        () => {
+            const root = mkdtempSync(join(tmpdir(), "doctor-listing-deadline-"));
+            for (let i = 0; i < 400; i++) {
+                writeFileSync(join(root, `f${i}`), "x");
+            }
+
+            let now = Date.now();
+            let read = 0;
+            const original = bulk.iterDir;
+            // A slow listing: every entry costs 1 ms of the fake clock, so this directory takes 400 ms to list.
+            const listing = spyOn(bulk, "iterDir").mockImplementation(function* (path) {
+                for (const entry of original(path)) {
+                    read++;
+                    now += 1;
+                    yield entry;
+                }
+            });
+            const clock = spyOn(Date, "now").mockImplementation(() => now);
+            try {
+                const start = now;
+                const size = measurePath(root, { deadlineMs: 50 });
+
+                expect(size).toMatchObject({ complete: false, entries: 0 });
+                expect(read).toBeLessThanOrEqual(51);
+                expect(now - start).toBeLessThanOrEqual(51);
+            } finally {
+                clock.mockRestore();
+                listing.mockRestore();
+                rmSync(root, { recursive: true, force: true });
+            }
+        }
+    );
 
     it("marks traversal errors and unreadable aggregate paths incomplete", () => {
         const dir = mkdtempSync(join(tmpdir(), "doctor-measure-errors-"));
