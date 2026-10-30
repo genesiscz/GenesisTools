@@ -134,14 +134,6 @@ function grokAccount(lookup: (home: string) => string | undefined, home: string)
     }
 }
 
-/**
- * Grok can answer from the session's own home. Codex cannot answer at all on its own, so it
- * falls back to the SessionStart pin its launcher's `TOOLS_CODEX_ACCOUNT` produced.
- *
- * `grokLookup` is resolved ONCE per listing, outside the per-row loop: `AiConfigStore.readOnly()`
- * has no cache the way `load()`'s process singleton does, and a listing calls this once per grok
- * row — thousands on this machine, all resolving the same handful of homes.
- */
 function lastCacheAtMs(record: { lastTimestamp?: string | null; mtime: number }): number {
     if (record.lastTimestamp) {
         const parsed = Date.parse(record.lastTimestamp);
@@ -154,18 +146,36 @@ function lastCacheAtMs(record: { lastTimestamp?: string | null; mtime: number })
     return record.mtime;
 }
 
-function accountOf(
-    alias: Exclude<AccountProviderAlias, "claude">,
-    record: { sessionId: string | null; sourceHome?: string | null },
-    pins: Map<string, SessionPin>,
-    grokLookup: (home: string) => string | undefined
-): string | null {
-    if (alias === "grok") {
-        return record.sourceHome ? grokAccount(grokLookup, record.sourceHome) : null;
-    }
+/** One listed session's account, from the row or the SessionStart pins. */
+type RowAccount = (record: { sessionId: string | null; sourceHome?: string | null }) => string | null;
 
-    return (record.sessionId ? pins.get(record.sessionId)?.account : null) ?? null;
+/** What differs between the providers `nativeRows` lists straight off the history index. */
+interface NativeRowSpec {
+    /** The prompt-cache lifetime the row's cache chip counts down from. */
+    cacheTtlMs: number;
+    /**
+     * The row's account, resolved ONCE per listing, outside the per-row loop: `AiConfigStore.readOnly()` has no cache
+     * the way `load()`'s process singleton does, and a listing has thousands of rows over a handful of homes.
+     */
+    accountOf(pins: Map<string, SessionPin>): Promise<RowAccount>;
 }
+
+const NATIVE_ROW_SPECS: Record<Exclude<AccountProviderAlias, "claude">, NativeRowSpec> = {
+    // Codex cannot name the account on its own, so it falls back to the SessionStart pin its launcher's
+    // `TOOLS_CODEX_ACCOUNT` produced.
+    codex: {
+        cacheTtlMs: CODEX_CACHE_TTL_MS,
+        accountOf: async (pins) => (record) => (record.sessionId ? pins.get(record.sessionId)?.account : null) ?? null,
+    },
+    // Grok answers from the session's own home.
+    grok: {
+        cacheTtlMs: GROK_CACHE_TTL_MS,
+        accountOf: async () => {
+            const lookup = await grokAccountNameLookup();
+            return (record) => (record.sourceHome ? grokAccount(lookup, record.sourceHome) : null);
+        },
+    },
+};
 
 /**
  * The journal location for this row, or null when the newest line is another agent's or names
@@ -228,8 +238,8 @@ async function nativeRows(
         ...(options.maxDiscoveryAgeMs === undefined ? {} : { maxDiscoveryAgeMs: options.maxDiscoveryAgeMs }),
         ...(options.refresh === undefined ? {} : { refresh: options.refresh }),
     });
-    // One config read for the whole listing, not one per grok row.
-    const grokLookup = alias === "grok" ? await grokAccountNameLookup() : () => undefined;
+    const spec = NATIVE_ROW_SPECS[alias];
+    const accountOf = await spec.accountOf(pins);
     const refs = loadAllSessionCmuxRefs();
     const rows: AgentSessionRow[] = [];
 
@@ -244,16 +254,13 @@ async function nativeRows(
 
         const cwd = record.cwd ?? "";
         const lastCacheAt = lastCacheAtMs(record);
-        const cache: Partial<AgentSessionRow> = {};
-        const ttlMs = alias === "codex" ? CODEX_CACHE_TTL_MS : alias === "grok" ? GROK_CACHE_TTL_MS : undefined;
-
-        if (ttlMs !== undefined) {
-            const { status, ttlSec } = computeCacheStatus(lastCacheAt, now, ttlMs);
-            cache.lastCacheAt = lastCacheAt;
-            cache.cacheStatus = status;
-            cache.cacheTtlSec = ttlSec;
-            cache.cacheLifetimeSec = Math.ceil(ttlMs / 1000);
-        }
+        const { status, ttlSec } = computeCacheStatus(lastCacheAt, now, spec.cacheTtlMs);
+        const cache: Partial<AgentSessionRow> = {
+            lastCacheAt,
+            cacheStatus: status,
+            cacheTtlSec: ttlSec,
+            cacheLifetimeSec: Math.ceil(spec.cacheTtlMs / 1000),
+        };
 
         rows.push({
             provider: alias,
@@ -265,7 +272,7 @@ async function nativeRows(
             gitBranch: record.gitBranch,
             mtime: record.mtime,
             model: null,
-            account: accountOf(alias, record, pins, grokLookup),
+            account: accountOf(record),
             filePath: record.filePath,
             ...(record.sourceHome ? { sourceHome: record.sourceHome } : {}),
             archived: record.archived,
@@ -356,6 +363,28 @@ async function exactPathsByProvider(filePaths: string[]): Promise<ExactPathScope
     return { paths, failures };
 }
 
+/** Claude's rows come from its own listing (`listSessionRows`), which also reads usage and the cache from transcripts. */
+async function claudeRows(options: AgentSessionRowsOptions): Promise<AgentSessionRow[]> {
+    const claude = await listSessionRows({
+        ...(options.hours === undefined ? {} : { hours: options.hours }),
+        ...(options.filePaths === undefined ? {} : { filePaths: options.filePaths }),
+        ...(options.minRows === undefined ? {} : { minRows: options.minRows }),
+        ...(options.now === undefined ? {} : { now: options.now }),
+        ...(options.withUsage === undefined ? {} : { withUsage: options.withUsage }),
+        ...(options.maxDiscoveryAgeMs === undefined ? {} : { maxDiscoveryAgeMs: options.maxDiscoveryAgeMs }),
+        ...(options.refresh === undefined ? {} : { refresh: options.refresh }),
+    });
+
+    return claude.map((row) => ({ ...row, provider: "claude" as const }));
+}
+
+/** How each provider's rows are listed: Claude by its own listing, Codex and Grok off the shared history index. */
+const ROW_LISTERS: Record<AccountProviderAlias, (options: AgentSessionRowsOptions) => Promise<AgentSessionRow[]>> = {
+    claude: claudeRows,
+    codex: (options) => nativeRows("codex", options),
+    grok: (options) => nativeRows("grok", options),
+};
+
 /** Every provider's sessions in one list, newest first. */
 export async function listAgentSessionRows(options: AgentSessionRowsOptions = {}): Promise<AgentSessionRow[]> {
     const wanted = options.providers ?? ALL;
@@ -371,23 +400,7 @@ export async function listAgentSessionRows(options: AgentSessionRowsOptions = {}
                 }
 
                 const scopedOptions = scopes ? { ...options, filePaths: scopes.paths.get(alias) ?? [] } : options;
-                if (alias === "claude") {
-                    const claude = await listSessionRows({
-                        ...(options.hours === undefined ? {} : { hours: options.hours }),
-                        ...(scopedOptions.filePaths === undefined ? {} : { filePaths: scopedOptions.filePaths }),
-                        ...(options.minRows === undefined ? {} : { minRows: options.minRows }),
-                        ...(options.now === undefined ? {} : { now: options.now }),
-                        ...(options.withUsage === undefined ? {} : { withUsage: options.withUsage }),
-                        ...(options.maxDiscoveryAgeMs === undefined
-                            ? {}
-                            : { maxDiscoveryAgeMs: options.maxDiscoveryAgeMs }),
-                        ...(options.refresh === undefined ? {} : { refresh: options.refresh }),
-                    });
-
-                    return claude.map((row) => ({ ...row, provider: "claude" as const }));
-                }
-
-                return await nativeRows(alias, scopedOptions);
+                return await ROW_LISTERS[alias](scopedOptions);
             } catch (error) {
                 // One provider's index being unreadable must not blank the other two.
                 logger.warn({ error, provider: alias }, "[ai] could not list this provider's sessions");

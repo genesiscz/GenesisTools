@@ -16,6 +16,7 @@ import {
     type SliceOptions,
     sliceTurns,
     type TranscriptEnvelope,
+    type TranscriptProvider,
     type TranscriptTurn,
     terminatedOf,
     totalsOf,
@@ -40,35 +41,67 @@ function looksLikeCodexGt(records: unknown[]): boolean {
     return false;
 }
 
+/** How each provider's transcript files turn into turns: a whole file, or some lines of its end. */
+interface TurnReader {
+    fromFile(resolved: ResolvedTranscript, path: string, index: number): Promise<TranscriptTurn[]>;
+    /**
+     * The turns of some of a transcript's lines (the end of a file too large to parse whole). Claude has its own tail
+     * reader (`lastClaudeAssistantText` in hub/lib/widget/snapshot.ts) and gets no turns here.
+     */
+    fromLines(resolved: ResolvedTranscript, lines: readonly string[]): TranscriptTurn[];
+}
+
+const TURN_READERS: Record<TranscriptProvider, TurnReader> = {
+    claude: {
+        fromFile: async (resolved, path, index) => {
+            if (resolved.source === "worker") {
+                // A `claude -p --output-format stream-json` turn file, not a session file.
+                return workerEventsToTurns(
+                    parseClaudeTurnEvents(readFileSync(path, "utf8"), resolved.sessionId),
+                    resolved.sessionId,
+                    index
+                );
+            }
+
+            const session = await ClaudeSession.fromFile(path);
+            return claudeMessagesToTurns(session.messages);
+        },
+        fromLines: () => [],
+    },
+    grok: {
+        fromFile: async (resolved, path, index) => {
+            if (resolved.source === "worker") {
+                return grokWorkerTextToTurns(readFileSync(path, "utf8"), resolved.sessionId, index);
+            }
+
+            return grokNativeLinesToTurns(readRecords(path));
+        },
+        fromLines: (resolved, lines) =>
+            resolved.source === "worker"
+                ? grokWorkerTextToTurns(lines.join("\n"), resolved.sessionId)
+                : grokNativeLinesToTurns(lines),
+    },
+    codex: {
+        fromFile: async (resolved, path, index) => {
+            if (resolved.source !== "worker") {
+                // A large native rollout keeps its parser between reads and parses only appended lines (turn-fold-cache.ts).
+                const folded = foldTurnsAppendOnly(path, createCodexTurnParser);
+                if (folded) {
+                    return folded;
+                }
+            }
+
+            return codexTurns(resolved, readRecords(path), index);
+        },
+        fromLines: (resolved, lines) => {
+            const records = lines.map(parseTranscriptLine).filter((record) => record !== null);
+            return codexTurns(resolved, records, 1);
+        },
+    },
+};
+
 async function turnsFromFile(resolved: ResolvedTranscript, path: string, index = 1): Promise<TranscriptTurn[]> {
-    if (resolved.provider === "claude") {
-        if (resolved.source === "worker") {
-            // A `claude -p --output-format stream-json` turn file, not a session file.
-            return workerEventsToTurns(
-                parseClaudeTurnEvents(readFileSync(path, "utf8"), resolved.sessionId),
-                resolved.sessionId,
-                index
-            );
-        }
-
-        const session = await ClaudeSession.fromFile(path);
-        return claudeMessagesToTurns(session.messages);
-    }
-    if (resolved.provider === "grok") {
-        if (resolved.source === "worker") {
-            return grokWorkerTextToTurns(readFileSync(path, "utf8"), resolved.sessionId, index);
-        }
-        return grokNativeLinesToTurns(readRecords(path));
-    }
-    if (resolved.source !== "worker") {
-        // A large native rollout keeps its parser between reads and parses only appended lines (turn-fold-cache.ts).
-        const folded = foldTurnsAppendOnly(path, createCodexTurnParser);
-        if (folded) {
-            return folded;
-        }
-    }
-
-    return codexTurns(resolved, readRecords(path), index);
+    return TURN_READERS[resolved.provider].fromFile(resolved, path, index);
 }
 
 function codexTurns(resolved: ResolvedTranscript, records: unknown[], index: number): TranscriptTurn[] {
@@ -87,22 +120,10 @@ function codexTurns(resolved: ResolvedTranscript, records: unknown[], index: num
 
 /**
  * The turns of some of a Codex or Grok transcript's lines (the end of a file too large to parse whole), by the same
- * parsers a whole file gets. A turn that began before the first line is missing its start. Claude has its own tail
- * reader (`lastClaudeAssistantText` in hub/lib/widget/snapshot.ts) and gets no turns here.
+ * parsers a whole file gets. A turn that began before the first line is missing its start. Claude gets none.
  */
 export function turnsFromLines(resolved: ResolvedTranscript, lines: readonly string[]): TranscriptTurn[] {
-    if (resolved.provider === "grok") {
-        return resolved.source === "worker"
-            ? grokWorkerTextToTurns(lines.join("\n"), resolved.sessionId)
-            : grokNativeLinesToTurns(lines);
-    }
-
-    if (resolved.provider === "codex") {
-        const records = lines.map(parseTranscriptLine).filter((record) => record !== null);
-        return codexTurns(resolved, records, 1);
-    }
-
-    return [];
+    return TURN_READERS[resolved.provider].fromLines(resolved, lines);
 }
 
 /** Every turn of the transcript by a full parse, earlier chain files first; the array index is the global turn index. */

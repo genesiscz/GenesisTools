@@ -18,6 +18,42 @@ import { logger } from "@genesiscz/utils/logger";
 const { log } = logger.scoped("agent-wait");
 
 /**
+ * A headless worker's native transcript, when its harness writes one: a `tools codex spawn` worker runs a real native
+ * thread, and its rollout (in the worker's own Codex home) is the transcript to wait on. Claude and Grok workers write
+ * only their own turn files.
+ */
+const WORKER_NATIVE_TRANSCRIPTS: Record<
+    TurnProvider,
+    (worker: ResolvedTranscript, query: string) => ResolvedTranscript | null
+> = {
+    claude: () => null,
+    codex: (worker, query) => resolveCodexNative(worker.sessionId, { codexHome: workerCodexHome(worker, query) }),
+    grok: () => null,
+};
+
+/** The worker's home from its `.meta.json` beside the turn files; undefined when it records none. */
+function workerCodexHome(worker: ResolvedTranscript, query: string): string | undefined {
+    try {
+        const meta: unknown = SafeJSON.parse(readFileSync(worker.filePath.replace(/\.jsonl$/, ".meta.json"), "utf8"));
+
+        if (meta && typeof meta === "object" && "home" in meta && typeof meta.home === "string") {
+            return meta.home;
+        }
+    } catch (err) {
+        log.debug({ err, query }, "worker metadata unavailable while resolving its Codex home");
+    }
+
+    return undefined;
+}
+
+/** The commands that read a headless worker of each harness. */
+const WORKER_READ_VERBS: Record<TurnProvider, string> = {
+    claude: toolCommand("claude worker", "status|tail", "--name", "<name>"),
+    codex: "tools codex status|read --name <name>",
+    grok: "tools grok status|read --name <name>",
+};
+
+/**
  * The native session id of the newest session `tools cmux agents new --name <query>` started for this agent, open
  * or closed, through the cmux-refs journal. A cmux name is not a `/rename` title, so the other lookups never find it
  * (2026-10-13: `tools grok wait mcp-verify-grok` failed for a session `agents new` had just started).
@@ -128,33 +164,15 @@ export async function resolveSessionTranscript(
     }
 
     if (resolved.source === "worker") {
-        // A `tools codex spawn` worker runs a real native thread: its rollout is the transcript to wait on.
-        let codexHome: string | undefined;
+        const native = WORKER_NATIVE_TRANSCRIPTS[resolved.provider](resolved, query);
 
-        if (resolved.provider === "codex") {
-            try {
-                const meta: unknown = SafeJSON.parse(
-                    readFileSync(resolved.filePath.replace(/\.jsonl$/, ".meta.json"), "utf8")
-                );
-                if (meta && typeof meta === "object" && "home" in meta && typeof meta.home === "string") {
-                    codexHome = meta.home;
-                }
-            } catch (err) {
-                log.debug({ err, query }, "worker metadata unavailable while resolving its Codex home");
-            }
+        if (native) {
+            return native;
         }
 
-        const rollout = resolved.provider === "codex" ? resolveCodexNative(resolved.sessionId, { codexHome }) : null;
-
-        if (rollout) {
-            return rollout;
-        }
-
-        const verbs =
-            alias === "claude"
-                ? toolCommand("claude worker", "status|tail", "--name", "<name>")
-                : `tools ${alias} status|read --name <name>`;
-        throw new Error(`"${query}" is a headless worker session with no native transcript yet. Use \`${verbs}\`.`);
+        throw new Error(
+            `"${query}" is a headless worker session with no native transcript yet. Use \`${WORKER_READ_VERBS[alias]}\`.`
+        );
     }
 
     return resolved;

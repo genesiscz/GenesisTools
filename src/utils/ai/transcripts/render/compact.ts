@@ -1,7 +1,7 @@
 import { formatTokens } from "@genesiscz/utils/format";
 import { sliceWhole } from "@genesiscz/utils/string";
 import type { PromptPart } from "../prompt-parts";
-import type { TranscriptEnvelope, TranscriptTool, TranscriptTurn } from "../types";
+import { RECORDS_TERMINAL_EVENT, type TranscriptEnvelope, type TranscriptTool, type TranscriptTurn } from "../types";
 import { type RenderContext, settledTurns, TranscriptRenderer, windowStart } from "./renderer";
 
 export const SHORT_THOUGHT_CHARS = 200;
@@ -74,8 +74,7 @@ export function formatTotals(envelope: TranscriptEnvelope): string {
         `in ${formatTokens(totals.inputTokens ?? 0)} (cache ${formatTokens(totals.cacheReadTokens ?? 0)}) · ` +
         `out ${formatTokens(totals.outputTokens ?? 0)} (reasoning ${formatTokens(totals.reasoningTokens ?? 0)})`;
     const cost = totals.costUsd !== undefined ? ` · $${totals.costUsd.toFixed(4)}` : "";
-    // A Claude session file records no terminal event, so a missing one says nothing about its state.
-    const ended = envelope.terminated ?? (envelope.provider === "claude" ? null : "running");
+    const ended = envelope.terminated ?? (RECORDS_TERMINAL_EVENT[envelope.provider] ? "running" : null);
     return `${totals.modelCalls} model calls · ${tokens}${cost}${ended ? ` · ended: ${ended}` : ""}`;
 }
 
