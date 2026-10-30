@@ -1,7 +1,7 @@
 import { describe, expect, test } from "bun:test";
 import { SafeJSON } from "@genesiscz/utils/json";
 import { DASHBOARDS, WEB_SERVICES } from "@genesiscz/utils/ui/dashboards";
-import { applyPresets, presets } from "./presets";
+import { applyPresets, presetDrift, presets } from "./presets";
 import { defaultRouterConfig, parseConfig, type RouteAction, type RouterConfig, route } from "./route";
 import { registryServices } from "./services";
 
@@ -101,6 +101,17 @@ describe("allowExecuteByPlainBrowserNavigationMightBeDangerous on the registry s
         expect(serviceActions(reread, CLOSED_WEB_SERVICES["ai-proxy"]).map((action) => action[FLAG] === true)).toEqual([
             false,
         ]);
+
+        // A service without the flag has no key at all, so the saved action equals the preset's and nothing drifts.
+        for (const action of serviceActions(reread, CLOSED_WEB_SERVICES["ai-proxy"])) {
+            expect(FLAG in action).toBe(false);
+        }
+
+        for (const preset of presets({ config: reread, check: () => true })) {
+            if (preset.id === "local-services" || preset.id === "dashboard-names") {
+                expect(presetDrift(reread, preset)).toEqual([]);
+            }
+        }
     });
 
     test("an external click still starts a server whose flag is false", () => {
