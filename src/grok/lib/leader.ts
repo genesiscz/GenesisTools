@@ -7,6 +7,7 @@ import { GrokAcpClient, GrokAcpError, GrokAcpRefusedError, type GrokLeaderSessio
 import { logger } from "@genesiscz/utils/logger";
 import { nativeHomePath } from "@genesiscz/utils/providers/session-paths";
 import { toolDataDir } from "@genesiscz/utils/storage/root";
+import { isTestProcess } from "@genesiscz/utils/test-process";
 
 const { log } = logger.scoped("grok-leader");
 
@@ -153,7 +154,8 @@ export async function sendToGrokLeader(
     input: { sessionId: string; text: string; cwd?: string },
     deps: GrokLeaderSendDeps = {}
 ): Promise<GrokLeaderSend> {
-    const sockets = (deps.sockets ?? ((id) => leaderSocketsFor(id)))(input.sessionId);
+    // A test never reaches a real leader (the default socket may be the user's own); it passes `deps.sockets`.
+    const sockets = (deps.sockets ?? ((id) => (isTestProcess() ? [] : leaderSocketsFor(id))))(input.sessionId);
     const open = deps.client ?? ((socket: string) => new GrokAcpClient(0, { leader: { socket } }));
     const misses: string[] = [];
 

@@ -1,11 +1,11 @@
-import { expect, test } from "bun:test";
+import { expect, spyOn, test } from "bun:test";
 import { mkdtempSync } from "node:fs";
 import { tmpdir } from "node:os";
 import { join } from "node:path";
 import { codexSpec } from "@app/codex/lib/spec";
 import { grokSpec } from "@app/grok/lib/spec";
 import type { AgentSessionAdapter } from "@genesiscz/utils/agent-sessions/types";
-import { logger } from "@genesiscz/utils/logger";
+import { logger, out } from "@genesiscz/utils/logger";
 import { WORKER_CAPABILITIES } from "@genesiscz/utils/worker/capabilities";
 import type { WorkerDriver, WorkerMeta } from "@genesiscz/utils/worker/driver";
 import { WorkerMetaStore } from "@genesiscz/utils/worker/meta-store";
@@ -163,4 +163,52 @@ test("a tool with no worker driver gets no worker verbs, rather than stubs that 
     expect(worker).toBeDefined();
     expect(verbsOf(noWorker)).not.toContain("spawn");
     expect(verbsOf(noWorker)).toContain("run");
+});
+
+test("cmux send tries the spec's structured rung first, and an unknown outcome types nothing", async () => {
+    const asked: unknown[] = [];
+    const results: unknown[] = [];
+    const errors: string[] = [];
+    const resultSpy = spyOn(out, "result").mockImplementation((value: unknown) => {
+        results.push(value);
+    });
+    const errorSpy = spyOn(out, "error").mockImplementation((message: unknown) => {
+        errors.push(String(message));
+    });
+    const outcomes = [
+        { kind: "delivered" as const, rung: "grok-leader", target: "Grok leader · session s1" },
+        { kind: "unknown" as const, rung: "grok-leader", reason: "no queue acknowledgement" },
+    ];
+    const spec: AgentToolSpec = {
+        ...kimiSpec,
+        structuredSend: async (input) => {
+            asked.push(input);
+            return outcomes.shift() ?? { kind: "absent", reason: "unexpected third send" };
+        },
+    };
+
+    try {
+        for (let attempt = 0; attempt < 2; attempt++) {
+            const program = new Command();
+            registerAgentTool(program, spec);
+            await program.parseAsync(["node", "tool", "cmux", "send", "s1", "hello", "--json"]);
+        }
+
+        expect(asked).toEqual([
+            { session: "s1", text: "hello" },
+            { session: "s1", text: "hello" },
+        ]);
+        expect(results).toEqual([
+            { sent: true, rung: "grok-leader", target: "Grok leader · session s1", query: "s1" },
+            { sent: false, rung: "grok-leader", reason: "no queue acknowledgement", query: "s1" },
+        ]);
+        expect(errors).toEqual([
+            "no queue acknowledgement. The text may have been received; check the session before sending again.",
+        ]);
+        expect(process.exitCode).toBe(1);
+    } finally {
+        resultSpy.mockRestore();
+        errorSpy.mockRestore();
+        process.exitCode = 0;
+    }
 });

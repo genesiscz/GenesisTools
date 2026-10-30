@@ -98,6 +98,12 @@ export interface AgentToolSpec {
      * shared. Absent: no `who` verb, which is the honest answer for an agent whose launcher exports no account.
      */
     processScan?: Omit<AgentWhoSource, "alias">;
+    /**
+     * A rung `tools <alias> cmux send` tries before it types into the pane: a channel the session itself reads (Grok:
+     * the leader its TUI runs in). `absent` sends nothing, so the pane is tried next; `unknown` may have delivered, so
+     * nothing else is tried. Absent member: the pane only.
+     */
+    structuredSend?: (input: { session: string; text: string }) => Promise<StructuredSendResult>;
     /** Per-tool `--help` wording for the pinned doors; each has a usable default. */
     help?: {
         usage?: string;
@@ -106,6 +112,11 @@ export interface AgentToolSpec {
     /** Verbs the tool implements itself. Declared here so a deviation is visible, never accidental. */
     overrides?: Partial<Record<SharedVerb, (program: Command, spec: AgentToolSpec) => void>>;
 }
+
+export type StructuredSendResult =
+    | { kind: "delivered"; rung: string; target: string }
+    | { kind: "absent"; reason: string }
+    | { kind: "unknown"; rung: string; reason: string };
 
 export function toolName(spec: AgentToolSpec): string {
     return `tools ${spec.alias}`;

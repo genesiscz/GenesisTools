@@ -12,6 +12,7 @@ import {
 import { ClaudeWorkerStore, claudeWorkerSourceHome } from "@app/claude/lib/worker/store";
 import { isCodexDaemonPid } from "@app/codex/lib/spawn";
 import { CodexSessionStore, codexWorkerHome } from "@app/codex/lib/store";
+import { type GrokLeaderClient, leaderSocketsFor, sendToGrokLeader } from "@app/grok/lib/leader";
 import { GrokSessionStore } from "@app/grok/lib/store";
 import { canonicalAgent } from "@app/handoff/targeting";
 import {
@@ -53,10 +54,11 @@ const { log } = logger.scoped("question-deliver");
 
 /**
  * How the answers reach the agent: typed into its cmux pane, steered into its Codex worker, sent
- * as the first prompt of a resumed session, or left for its next prompt.
+ * as the first prompt of a resumed session, prompted through the Grok leader the session runs in,
+ * or left for its next prompt.
  */
 /** `prompt`: the session sent the answers itself, through its own prompt (the mods Decisions sidebar). */
-export type DeliveryChannel = "cmux" | "codex" | "claude-peer" | "resume" | "queued" | "prompt";
+export type DeliveryChannel = "cmux" | "codex" | "claude-peer" | "grok-leader" | "resume" | "queued" | "prompt";
 
 export interface DeliveryResult {
     channel: DeliveryChannel;
@@ -138,7 +140,12 @@ export type DeliveryTarget =
     | { kind: "codex"; label: string; worker: string }
     | { kind: "worker"; label: string; worker: NativeDeliveryWorker }
     | { kind: "claude-peer"; label: string; peer: ClaudeLiveSession }
+    /** The Grok leader sockets that may hold the session; which one does is asked when the answer is sent. */
+    | { kind: "grok-leader"; label: string; sockets: string[] }
     | { kind: "none"; reason: string };
+
+/** What the cmux pane rung alone resolves to. */
+type PaneTarget = Extract<DeliveryTarget, { kind: "cmux" | "none" }>;
 
 export interface NativeDeliveryWorker {
     provider: "claude" | "grok";
@@ -233,6 +240,10 @@ export interface DeliverDeps {
     snapshot?: () => Promise<CmuxLiveSnapshot>;
     /** Is a dialog open in the receiving session? Asked before text is typed into a pane; tests pass a fake. */
     openDialog?: (input: OpenDialogInput) => Promise<OpenDialog | null> | OpenDialog | null;
+    /** The Grok leader sockets to ask for a session (its record's, then the default); tests pass a fake. */
+    grokLeaderSockets?: (sessionId: string) => string[];
+    /** An ACP client on one leader socket; tests pass a fake leader. */
+    grokLeaderClient?: (socket: string) => GrokLeaderClient;
 }
 
 export interface OpenDialogInput {
@@ -300,7 +311,7 @@ function isLive(target: FocusTarget, snapshot: CmuxLiveSnapshot | undefined): bo
     );
 }
 
-function named(target: FocusTarget, snapshot: CmuxLiveSnapshot | undefined): DeliveryTarget {
+function named(target: FocusTarget, snapshot: CmuxLiveSnapshot | undefined): PaneTarget {
     const pane = snapshot?.panes.find((candidate) => candidate.id === target.paneId);
     const workspace = snapshot?.workspaces.find(
         (candidate) => candidate.id === (pane?.workspaceId ?? target.workspaceId)
@@ -395,9 +406,22 @@ function claudePeerRoute({ session, sourceHome }: RouteQuery, deps: DeliverDeps)
 }
 
 /**
+ * The Grok leader the session may run in (`tools cmux agents new grok` records its socket; the default socket is
+ * asked too). Only a socket file that exists counts, so a session with no leader falls through to cmux at once.
+ */
+function grokLeaderRoute({ session }: RouteQuery, deps: DeliverDeps): DeliveryTarget | undefined {
+    const sockets = deps.grokLeaderSockets
+        ? deps.grokLeaderSockets(session)
+        : isTestProcess()
+          ? []
+          : leaderSocketsFor(session);
+    return sockets.length > 0 ? { kind: "grok-leader", label: "Grok leader", sockets } : undefined;
+}
+
+/**
  * Each harness's structured routes, tried before the cmux pane: Codex only through its `tools codex` worker (it is
- * never typed into); Claude through an owned worker, then its own peer socket; Grok through an owned worker.
- * Undefined falls through to cmux.
+ * never typed into); Claude through an owned worker, then its own peer socket; Grok through an owned worker, then
+ * the leader its TUI runs in. Undefined falls through to cmux.
  */
 const STRUCTURED_ROUTES: Record<
     AccountProviderAlias,
@@ -410,7 +434,7 @@ const STRUCTURED_ROUTES: Record<
             : { kind: "none", reason: `no live ${toolCommand("codex")} worker runs this thread` };
     },
     claude: async (query, deps) => ownedWorkerRoute("claude", query, deps) ?? claudePeerRoute(query, deps),
-    grok: async (query, deps) => ownedWorkerRoute("grok", query, deps),
+    grok: async (query, deps) => ownedWorkerRoute("grok", query, deps) ?? grokLeaderRoute(query, deps),
 };
 
 /**
@@ -430,6 +454,11 @@ export async function resolveDeliveryTarget(
         return structured;
     }
 
+    return resolvePaneTarget(session, deps);
+}
+
+/** The cmux pane rung alone: the one pane that demonstrably runs this session, checked against the live tree. */
+async function resolvePaneTarget(session: string, deps: DeliverDeps): Promise<PaneTarget> {
     const find = deps.findTargets ?? ((id, opts) => findSessionTargets(id, opts));
     const snapshotOf = deps.snapshot ?? (() => fetchCmuxLiveSnapshot({ previews: "none", allWindows: true }));
     let result = await find(session, {});
@@ -567,7 +596,35 @@ export async function deliverToSession(
         return undelivered("An earlier attempt already saved this message for this exact session.");
     }
 
-    const target = await resolveDeliveryTarget({ session, provider, sourceHome }, deps);
+    const resolved = await resolveDeliveryTarget({ session, provider, sourceHome }, deps);
+
+    if (resolved.kind === "grok-leader") {
+        const sockets = resolved.sockets;
+        const sent = await sendToGrokLeader(
+            { sessionId: session, text },
+            { sockets: () => sockets, ...(deps.grokLeaderClient ? { client: deps.grokLeaderClient } : {}) }
+        );
+
+        if (sent.kind === "delivered") {
+            // The leader queued the prompt in this exact session; the turn runs there and the TUI renders it.
+            return {
+                channel: "grok-leader",
+                delivered: true,
+                target: `Grok leader · session ${sent.sessionId}${sent.promptId ? ` · prompt ${sent.promptId}` : ""}`,
+            };
+        }
+
+        if (sent.kind === "unknown") {
+            throw new DeliveryUnknownError(
+                "The Grok leader may have queued the answer without acknowledging it. Check the conversation before retrying."
+            );
+        }
+
+        log.info({ session, reason: sent.reason }, "no Grok leader took the answer; trying the cmux pane");
+    }
+
+    // No leader took a Grok answer: the guarded pane is the next rung.
+    const target = resolved.kind === "grok-leader" ? await resolvePaneTarget(session, deps) : resolved;
 
     if (target.kind === "none") {
         log.info({ session, provider, reason: target.reason }, "no live target; the answers stay queued");

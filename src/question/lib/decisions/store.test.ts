@@ -3,6 +3,7 @@ import { appendFileSync, existsSync, mkdtempSync, readFileSync, writeFileSync } 
 import { tmpdir } from "node:os";
 import { join } from "node:path";
 import { type CodexSessionMeta, CodexSessionStore } from "@app/codex/lib/store";
+import { type GrokLeaderClient, matchLeaderSession } from "@app/grok/lib/leader";
 import {
     createWidgetTask,
     editWidgetTask,
@@ -14,6 +15,7 @@ import {
 import { runAsCaller } from "@genesiscz/utils/agent/runtime";
 import { listSessionMessages } from "@genesiscz/utils/agent-sessions/message-queue";
 import type { NativeHistoryEntry } from "@genesiscz/utils/agent-sessions/types";
+import { GrokAcpRefusedError } from "@genesiscz/utils/ai/grok/acp";
 import { withTimeout } from "@genesiscz/utils/async";
 import { listClaudeSessionInventory } from "@genesiscz/utils/claude/peer-message";
 import { standInSender } from "@genesiscz/utils/claude/peer-sender";
@@ -1158,6 +1160,138 @@ describe("delivery routes", () => {
                 "DECISION 1: a) yes\nDECISION 2: b) no",
             ],
         ]);
+    });
+
+    /** A leader on one socket that lists `listed` and acknowledges a prompt as `ack` does. */
+    function fakeLeader(listed: string[], ack: "queued" | "silent" | "refused" = "queued") {
+        const prompts: { socket: string; sessionId: string; text: string }[] = [];
+        let closed = 0;
+        const client = (socket: string): GrokLeaderClient => ({
+            listSessions: async () => listed.map((sessionId) => ({ sessionId, cwd: "/fixture/repo" })),
+            promptSession: async (sessionId, text) => {
+                prompts.push({ socket, sessionId, text });
+                if (ack === "silent") {
+                    throw new Error("no queue acknowledgement within 30000 ms; it may have been accepted");
+                }
+
+                if (ack === "refused") {
+                    throw new GrokAcpRefusedError("Path not found (FS_NOT_FOUND)");
+                }
+
+                return { outcome: "queued", promptId: "p-1" };
+            },
+            reset: () => {
+                closed += 1;
+            },
+        });
+        return { client, prompts, closed: () => closed };
+    }
+
+    const GROK_SESSION = "11111111-1111-4111-8111-111111111111";
+
+    test("a Grok session in a leader gets the answer as a prompt there, with no keystrokes", async () => {
+        const leader = fakeLeader([GROK_SESSION]);
+        const never = async (): Promise<never> => {
+            throw new Error("must not type when the leader took the answer");
+        };
+        const result = await deliverToSession(
+            { session: GROK_SESSION, provider: "grok", text: "DECISION 4: b) keep it" },
+            {
+                runTool: never,
+                nativeWorkers: () => [],
+                findTargets: livePaneTargets,
+                grokLeaderSockets: () => ["/state/leaders/shop.sock"],
+                grokLeaderClient: leader.client,
+            }
+        );
+
+        expect(result).toEqual({
+            channel: "grok-leader",
+            delivered: true,
+            target: `Grok leader · session ${GROK_SESSION} · prompt p-1`,
+        });
+        expect(leader.prompts).toEqual([
+            { socket: "/state/leaders/shop.sock", sessionId: GROK_SESSION, text: "DECISION 4: b) keep it" },
+        ]);
+        expect(leader.closed()).toBe(1);
+    });
+
+    test.each([
+        ["no leader socket exists", [] as string[], [GROK_SESSION]],
+        [
+            "the leader holds other sessions only",
+            ["/state/leaders/shop.sock"],
+            ["22222222-2222-4222-8222-222222222222"],
+        ],
+    ])("when %s, the Grok answer is typed into its pane (guarded) instead", async (_label, sockets, listed) => {
+        const leader = fakeLeader(listed);
+        const { calls, runTool } = spy({ success: true, stdout: '{"sent":true}' });
+        const result = await deliverToSession(
+            { session: GROK_SESSION, provider: "grok", text: "DECISION 5: a) yes" },
+            {
+                runTool,
+                nativeWorkers: () => [],
+                findTargets: livePaneTargets,
+                openDialog: () => null,
+                grokLeaderSockets: () => sockets,
+                grokLeaderClient: leader.client,
+            }
+        );
+
+        expect(result).toMatchObject({ channel: "cmux", delivered: true, target: "cmux · work · agent" });
+        expect(leader.prompts).toEqual([]);
+        expect(calls).toEqual([
+            [
+                "claude",
+                "cmux",
+                "send",
+                "--json",
+                "--paste",
+                "--exact-session",
+                "--",
+                GROK_SESSION,
+                "DECISION 5: a) yes",
+            ],
+        ]);
+    });
+
+    test("a leader refusal falls back to the pane, and a missing acknowledgement is unknown and types nothing", async () => {
+        const refused = fakeLeader([GROK_SESSION], "refused");
+        const { calls, runTool } = spy({ success: true, stdout: '{"sent":true}' });
+        const deps = {
+            nativeWorkers: () => [],
+            findTargets: livePaneTargets,
+            openDialog: () => null,
+            grokLeaderSockets: () => ["/state/leaders/shop.sock"],
+        };
+        const request = { session: GROK_SESSION, provider: "grok", text: "DECISION 6: c) later" };
+
+        expect(await deliverToSession(request, { ...deps, runTool, grokLeaderClient: refused.client })).toMatchObject({
+            channel: "cmux",
+            delivered: true,
+        });
+        expect(calls).toHaveLength(1);
+
+        const silent = fakeLeader([GROK_SESSION], "silent");
+        const never = async (): Promise<never> => {
+            throw new Error("must not type after an unacknowledged leader prompt");
+        };
+        await expect(
+            deliverToSession(request, { ...deps, runTool: never, grokLeaderClient: silent.client })
+        ).rejects.toBeInstanceOf(DeliveryUnknownError);
+        expect(silent.prompts).toHaveLength(1);
+    });
+
+    test("a leader session matches by id, else by the one session in the folder", () => {
+        const sessions = [
+            { sessionId: "a", cwd: "/fixture/one" },
+            { sessionId: "b", cwd: "/fixture/two" },
+            { sessionId: "c", cwd: "/fixture/two" },
+        ];
+        expect(matchLeaderSession(sessions, { sessionId: "b", cwd: "/fixture/one" })?.sessionId).toBe("b");
+        expect(matchLeaderSession(sessions, { sessionId: "zzz", cwd: "/fixture/one" })?.sessionId).toBe("a");
+        expect(matchLeaderSession(sessions, { sessionId: "zzz", cwd: "/fixture/two" })).toBeUndefined();
+        expect(matchLeaderSession(sessions, { sessionId: "zzz" })).toBeUndefined();
     });
 
     test("an open dialog stops the typed rung before any keystroke; the answer is queued with the reason", async () => {
