@@ -48,50 +48,53 @@ export function eachLine(text: string, visit: (line: string) => void): void {
  */
 export function toolInputKeys(text: string, provider: TranscriptProvider): Map<string, string> {
     const keys = new Map<string, string>();
+    const read = TOOL_INPUT_LINES[provider];
 
-    eachLine(text, (line) => {
-        if (provider === "claude") {
-            if (!line.includes('"tool_use"')) {
-                return;
-            }
-
-            const record = parseTranscriptLine(line);
-            const message = record && isRecord(record.message) ? record.message : null;
-            const content = message && Array.isArray(message.content) ? message.content.filter(isRecord) : [];
-
-            for (const block of content) {
-                if (block.type === "tool_use" && typeof block.id === "string") {
-                    keys.set(block.id, SafeJSON.stringify(block.input ?? null, { strict: true }) ?? "");
-                }
-            }
-
-            return;
-        }
-
-        if (provider === "codex") {
-            if (!line.includes('"call_id"')) {
-                return;
-            }
-
-            const record = parseTranscriptLine(line);
-            const payload = record && isRecord(record.payload) ? record.payload : null;
-
-            if (
-                payload &&
-                (payload.type === "function_call" || payload.type === "custom_tool_call") &&
-                typeof payload.call_id === "string"
-            ) {
-                const input = payload.arguments ?? payload.input ?? null;
-                keys.set(
-                    payload.call_id,
-                    typeof input === "string" ? input : (SafeJSON.stringify(input, { strict: true }) ?? "")
-                );
-            }
-        }
-    });
+    eachLine(text, (line) => read(line, keys));
 
     return keys;
 }
+
+/** One provider's reading of a transcript line into `tool call id → full input`. */
+const TOOL_INPUT_LINES: Record<TranscriptProvider, (line: string, keys: Map<string, string>) => void> = {
+    claude: (line, keys) => {
+        if (!line.includes('"tool_use"')) {
+            return;
+        }
+
+        const record = parseTranscriptLine(line);
+        const message = record && isRecord(record.message) ? record.message : null;
+        const content = message && Array.isArray(message.content) ? message.content.filter(isRecord) : [];
+
+        for (const block of content) {
+            if (block.type === "tool_use" && typeof block.id === "string") {
+                keys.set(block.id, SafeJSON.stringify(block.input ?? null, { strict: true }) ?? "");
+            }
+        }
+    },
+    codex: (line, keys) => {
+        if (!line.includes('"call_id"')) {
+            return;
+        }
+
+        const record = parseTranscriptLine(line);
+        const payload = record && isRecord(record.payload) ? record.payload : null;
+
+        if (
+            payload &&
+            (payload.type === "function_call" || payload.type === "custom_tool_call") &&
+            typeof payload.call_id === "string"
+        ) {
+            const input = payload.arguments ?? payload.input ?? null;
+            keys.set(
+                payload.call_id,
+                typeof input === "string" ? input : (SafeJSON.stringify(input, { strict: true }) ?? "")
+            );
+        }
+    },
+    // Grok's lines are not read for full inputs; its calls keep their preview.
+    grok: () => undefined,
+};
 
 /** The model a Codex rollout ran with: the last `turn_context` line's `model`. */
 export function codexModelOf(text: string): string | null {

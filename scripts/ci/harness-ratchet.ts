@@ -11,14 +11,7 @@
  * (`ProviderPlugin`, `NativeSessionReader`), a payload field in `src/agents/lib/hooks/payload.ts`, and process
  * matching in `src/utils/process/classify.ts`.
  */
-export const HARNESS_BRANCH_RATCHET: ReadonlySet<string> = new Set<string>([
-    "src/question/lib/decisions/deliver.ts",
-    "src/utils/ai/transcripts/around.ts",
-    "src/utils/ai/transcripts/native-scan.ts",
-    "src/utils/ai/transcripts/resolve.ts",
-    "src/utils/ai/transcripts/session-title.ts",
-    "src/utils/ai/transcripts/subagents.ts",
-]);
+export const HARNESS_BRANCH_RATCHET: ReadonlySet<string> = new Set<string>(["src/question/lib/decisions/deliver.ts"]);
 
 export const HOOK_PAYLOAD_READ_RATCHET: ReadonlySet<string> = new Set<string>([]);
 

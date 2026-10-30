@@ -14,6 +14,7 @@ import { SafeJSON } from "@genesiscz/utils/json";
 import { logger } from "@genesiscz/utils/logger";
 import { scanClaudeToolCalls } from "./file-scan";
 import type { ResolvedTranscript } from "./resolve";
+import type { TranscriptProvider } from "./types";
 
 /**
  * - `running`: the last record is a prompt, a tool result or a tool call, and the file was written
@@ -379,11 +380,18 @@ function readAgentFresh(
     }
 }
 
+/** Whether a provider writes a session's sub-agents beside it (Claude's `<session>/subagents/`). */
+const SUBAGENTS_ON_DISK: Record<TranscriptProvider, boolean> = {
+    claude: true,
+    codex: false,
+    grok: false,
+};
+
 /** Every sub-agent of a Claude session, oldest first. Other providers have none on disk: an empty list. */
 export function listSubagents(resolved: ResolvedTranscript, options: ListSubagentsOptions = {}): SessionSubagents {
     const now = options.now ?? Date.now();
     const staleAfterMs = options.staleAfterMs ?? DEFAULT_STALE_MS;
-    if (resolved.provider !== "claude") {
+    if (!SUBAGENTS_ON_DISK[resolved.provider]) {
         return { sessionId: resolved.sessionId, subagents: [] };
     }
 

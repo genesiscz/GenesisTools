@@ -8,7 +8,7 @@ import { grokNativeLinesToTurns } from "./grok";
 import { readTailWindow } from "./native-scan";
 import { parseTranscriptLine } from "./parse-line";
 import type { ResolvedTranscript } from "./resolve";
-import { isoFromRecordTimestamp, type TranscriptTurn } from "./types";
+import { isoFromRecordTimestamp, type TranscriptProvider, type TranscriptTurn } from "./types";
 
 export interface TranscriptAround {
     status: "native" | "receipt-time" | "native-not-found" | "unanchored" | "unsupported";
@@ -74,6 +74,20 @@ function claudeMessage(value: Record<string, unknown>): value is Record<string, 
     return Array.isArray(message.content) && message.content.every((part) => typeof record(part).type === "string");
 }
 
+/** One provider's turns of a window of its native records. */
+const WINDOW_TURNS: Record<TranscriptProvider, (values: Record<string, unknown>[]) => TranscriptTurn[]> = {
+    claude: (values) => claudeMessagesToTurns(values.filter(claudeMessage)),
+    codex: codexNativeLinesToTurns,
+    grok: grokNativeLinesToTurns,
+};
+
+/** Whether a provider's turn ids end with `:<row uuid>`, so a message anchor finds its turn by the row's uuid. */
+const TURN_IDS_END_WITH_ROW_UUID: Record<TranscriptProvider, boolean> = {
+    claude: true,
+    codex: false,
+    grok: false,
+};
+
 function turns({
     records,
     resolved,
@@ -84,12 +98,7 @@ function turns({
     toolCallId?: string;
 }): { turns: TranscriptTurn[]; truncated: boolean } {
     const values = records.map((item) => item.value);
-    const result =
-        resolved.provider === "claude"
-            ? claudeMessagesToTurns(values.filter(claudeMessage))
-            : resolved.provider === "codex"
-              ? codexNativeLinesToTurns(values)
-              : grokNativeLinesToTurns(values);
+    const result = WINDOW_TURNS[resolved.provider](values);
     const truncated = result.some(
         (turn) => turn.text.length > 8_000 || (turn.reasoning?.length ?? 0) > 2_000 || turn.tools.length > 12
     );
@@ -241,7 +250,12 @@ export function transcriptAround({
             anchor.kind === "native" && anchor.toolCallId
                 ? window.findIndex((turn) => turn.tools.some((tool) => tool.id === anchor.toolCallId))
                 : -1;
-        if (turnIndex < 0 && anchor.kind === "native" && anchor.messageId && resolved.provider === "claude") {
+        if (
+            turnIndex < 0 &&
+            anchor.kind === "native" &&
+            anchor.messageId &&
+            TURN_IDS_END_WITH_ROW_UUID[resolved.provider]
+        ) {
             const uuid = anchorRow.value.uuid;
             turnIndex = window.findIndex((turn) => typeof uuid === "string" && turn.id.endsWith(`:${uuid}`));
         }

@@ -263,23 +263,19 @@ export function rankByTitle(query: string, sessions: readonly TitledSession[]): 
     return [...tier].sort((a, b) => b.mtime - a.mtime);
 }
 
+/** Where each provider keeps its session titles: Claude's transcripts, Grok's session folders, Codex's title index. */
+const TITLED_SESSIONS: Record<
+    FindByTitleOptions["provider"],
+    (input: { options: FindByTitleOptions; roots: string[]; now: number }) => TitledSession[]
+> = {
+    claude: ({ options, roots, now }) =>
+        claudeSessions({ roots, maxAgeDays: options.maxAgeDays ?? 14, budgetMs: options.budgetMs ?? 8000, now }),
+    grok: ({ roots }) => grokSessions(roots),
+    codex: ({ options }) => codexSessions(options.codexIndexPath ? [options.codexIndexPath] : codexIndexPaths()),
+};
+
 export function findSessionsByTitle(query: string, options: FindByTitleOptions): TitledSession[] {
     const now = options.now ?? Date.now();
     const roots = options.roots ?? nativeSessionRoots(options.provider);
-    let sessions: TitledSession[];
-
-    if (options.provider === "claude") {
-        sessions = claudeSessions({
-            roots,
-            maxAgeDays: options.maxAgeDays ?? 14,
-            budgetMs: options.budgetMs ?? 8000,
-            now,
-        });
-    } else if (options.provider === "grok") {
-        sessions = grokSessions(roots);
-    } else {
-        sessions = codexSessions(options.codexIndexPath ? [options.codexIndexPath] : codexIndexPaths());
-    }
-
-    return rankByTitle(query, sessions);
+    return rankByTitle(query, TITLED_SESSIONS[options.provider]({ options, roots, now }));
 }
