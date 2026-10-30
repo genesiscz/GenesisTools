@@ -304,8 +304,9 @@ const AGENT_HARNESS_WORD = /claude|codex|grok/i;
 const COMPARE_OPS = new Set(["===", "!==", "==", "!="]);
 const AGENT_OPERAND = /harness|provider|alias|kind|agent|backend|source|resolved|target|basename|argv0|^base$|\.base$/i;
 const AGENT_SUBJECT = /command|cmd|argv|\bargs\b|\bcomm\b|process|\bproc\b/i;
+/** The process matchers own agent names in command lines, and so does each harness driver's `process` part. */
 const AGENT_SESSION_OWNERS =
-    /(?:^|\/)src\/(?:utils\/process\/|utils\/claude\/peer-message\.ts$|codex\/lib\/process-scan\.ts$|grok\/lib\/process-scan\.ts$|claude\/lib\/active-sessions\.ts$)/;
+    /(?:^|\/)src\/(?:utils\/process\/|utils\/ai\/providers\/plugins\/[\w-]+\/harness\.ts$|utils\/claude\/peer-message\.ts$|codex\/lib\/process-scan\.ts$|grok\/lib\/process-scan\.ts$|claude\/lib\/active-sessions\.ts$)/;
 /**
  * What a literal is compared with: the other side of `===`, `!==`, `==` or `!=`, or the value a `case` literal is
  * switched on. Undefined when the literal is not compared at all.
