@@ -13,6 +13,19 @@ export interface RmRoot {
     addedAt: string;
     /** How it was added: `cli` (`tools rm roots add`) or `request:<id>` (an approved agent request). */
     via: string;
+    /** Only this agent session may use it ("this session, this folder" in the approval window); unset: every caller. */
+    session?: string;
+    /** When it stops counting (ISO time); unset: it never expires. */
+    expiresAt?: string;
+}
+
+/** A root counts for this caller now: not expired, and not scoped to another session. */
+export function isRootActive(root: RmRoot, sessionId: string | null, now = Date.now()): boolean {
+    if (root.expiresAt && Date.parse(root.expiresAt) <= now) {
+        return false;
+    }
+
+    return !root.session || root.session === sessionId;
 }
 
 /**
@@ -164,6 +177,8 @@ function parseRoot(value: unknown): RmRoot | null {
         note: typeof value.note === "string" ? value.note : undefined,
         addedAt: typeof value.addedAt === "string" ? value.addedAt : "",
         via: typeof value.via === "string" ? value.via : "cli",
+        session: typeof value.session === "string" && value.session ? value.session : undefined,
+        expiresAt: typeof value.expiresAt === "string" && value.expiresAt ? value.expiresAt : undefined,
     };
 }
 

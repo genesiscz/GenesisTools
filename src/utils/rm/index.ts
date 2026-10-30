@@ -21,6 +21,7 @@ import { listBatches, type TrashPaths, trashHasEntries } from "./trash";
 export * from "./approval";
 export * from "./aside";
 export * from "./config";
+export * from "./item-facts";
 export * from "./ledger";
 export * from "./paths";
 export * from "./presets";

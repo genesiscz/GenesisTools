@@ -100,6 +100,12 @@ func emitResult(_ result: [String: Any]) -> Never {
     exit(0)
 }
 
+/// The reply now and the process later: a window that stays a moment to say what happens (the rm window's
+/// "Approved: moving to the trash"). The caller exits once it is done.
+func emitResultAndStay(_ result: [String: Any]) {
+    emit(["ok": true, "result": result])
+}
+
 /// How long a method may wait on `usernoted` before this process gives up and says so.
 ///
 /// Every method exits through `emitResult` or `emitError`, so a method that finishes simply beats

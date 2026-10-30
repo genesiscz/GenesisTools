@@ -103,6 +103,86 @@ final class RmApproveTests: XCTestCase {
         XCTAssertNil(old.request)
     }
 
+    /// ❓ DECISION 183: a checkbox per row with the title following, a total line, the two ways out, the git state, a
+    /// folder's contents, the other requests naming a path, when it was asked, and gone items last.
+    func testTheRowsCarryTheirStateAndTheWindowOffersTheWaysOut() {
+        let now = RmWindowContent.parseDate("2026-10-30T15:00:00Z")!
+        let items = [
+            RmApproveItem(path: "/Users/someone/Notes/old.txt", kind: "missing", bytes: nil, empty: nil, storedAt: nil, reason: "Gone"),
+            RmApproveItem(path: "/Users/someone/Notes/Design/Dark 2", kind: "dir", bytes: 4096, empty: false, storedAt: nil,
+                          reason: "Outside this session's scratch", git: RmApproveGit(state: "untracked", repo: "/Users/someone/Notes", lastCommit: nil),
+                          folderStats: RmApproveFolderStats(files: 12, newestAt: "2026-10-30T13:00:00Z"), alsoIn: ["6xwa9r"]),
+            RmApproveItem(path: "/Users/someone/Notes/Design/Export.md", kind: "file", bytes: 30_000, empty: nil, storedAt: nil,
+                          reason: "Holds 3 files", git: RmApproveGit(state: "clean", repo: "/Users/someone/Notes", lastCommit: "a5fed04 2 days ago: exports")),
+        ]
+        var params = request(items)
+        params.request?.askedAt = "2026-10-30T14:57:00Z"
+        params.request?.asker?.sessionId = "2f320c19-ff19-4746-9b67-6cbab603080e"
+        let content = RmWindowContent.build(params, home: "/Users/someone", icons: false, markdownApp: false, now: now)
+
+        XCTAssertEqual(content.items.map(\.name), ["Dark 2", "Export.md", "old.txt"], "gone items last")
+        XCTAssertEqual(content.items[0].git, ApprovalGitState(state: "untracked", lastCommit: nil))
+        XCTAssertEqual(content.items[1].git?.lastCommit, "a5fed04 2 days ago: exports")
+        XCTAssertEqual(content.items[0].detail, "12 files, newest 2 hours ago.")
+        XCTAssertNil(content.items[1].detail, "a file has no folder detail")
+        XCTAssertEqual(content.items[0].alsoIn, ["6xwa9r"])
+        XCTAssertEqual(content.facts.map(\.label), ["Reason", "Folder", "Asked"])
+        XCTAssertEqual(content.facts.last?.value.hasPrefix("3 minutes ago (2026-10-30 "), true, content.facts.last?.value ?? "")
+        XCTAssertEqual(content.summary, "3 items, 34 kB, 1 already gone")
+        XCTAssertTrue(content.selectable)
+        XCTAssertEqual(content.disposals.map(\.id), ["trash", "permanent"])
+        XCTAssertEqual(content.disposals.first?.detail, "deleted after 1 hour; tools rm restore brings it back until then")
+        XCTAssertEqual(RmWindowContent.disposals(graceMinutes: 10).first?.detail, "deleted after 10 minutes; tools rm restore brings it back until then")
+
+        XCTAssertEqual(RmWindowContent.title(selected: 3, total: 3, who: "shop-admin"), "Delete 3 items for shop-admin?")
+        XCTAssertEqual(RmWindowContent.title(selected: 1, total: 3, who: "shop-admin"), "Delete 1 of 3 items for shop-admin?")
+        XCTAssertEqual(RmWindowContent.ago(now.addingTimeInterval(-2), now: now), "just now")
+
+        let noReason = RmWindowContent.build(RmApproveParams(
+            title: "t", lines: [], caller: nil, folder: nil,
+            request: RmApproveRequest(id: "x", kind: "delete", why: "  ", cwd: "/w", graceMinutes: 10, askedAt: nil,
+                                      asker: RmApproveAsker(agent: "Codex"), items: [])), home: "/Users/someone", icons: false, markdownApp: false)
+        XCTAssertEqual(noReason.facts.first?.value, "No reason given")
+        XCTAssertTrue(noReason.facts.first?.dimmed ?? false)
+        XCTAssertFalse(noReason.selectable, "one row or none has nothing to untick")
+
+        let root = RmWindowContent.build(request([], kind: "root", grace: nil), icons: false, markdownApp: false)
+        XCTAssertTrue(root.disposals.isEmpty)
+        XCTAssertNil(root.summary)
+    }
+
+    @MainActor func testTheSelectionDrivesTheTitleAndPausesTheSensor() {
+        let items = ["a", "b"].map {
+            ApprovalItem(path: "/w/\($0)", name: $0, folder: "/w", size: nil, reason: "r", gone: false, isFolder: false)
+        }
+        let model = ApprovalDialogModel(title: "Delete 2 items for shop?", purpose: "p", symbol: "trash.fill", facts: [], details: [],
+                                        warning: nil, footnote: "f", rememberChoices: [], rememberNote: nil, allowTitle: "a",
+                                        deadline: nil, identifier: "rm-approve", items: items,
+                                        disposals: RmWindowContent.disposals(graceMinutes: 10), selectable: true)
+        model.titleForSelection = { selected, total in RmWindowContent.title(selected: selected, total: total, who: "shop") }
+        XCTAssertEqual(model.displayTitle, "Delete 2 items for shop?")
+        XCTAssertEqual(model.disposal, "trash")
+        model.setSelected(items[0], false)
+        XCTAssertEqual(model.displayTitle, "Delete 1 of 2 items for shop?")
+        XCTAssertEqual(model.selectedItems.map(\.name), ["b"])
+    }
+
+    func testTheNewKeysDecodeAndOldPayloadsStillDo() throws {
+        let json = #"""
+        {"title":"t","lines":[],"request":{"id":"abc234","kind":"delete","cwd":"/w","graceMinutes":10,"askedAt":"2026-10-30T14:57:00Z",
+        "asker":{"agent":"Claude Code","sessionId":"2f32","provider":"claude"},
+        "items":[{"path":"/w/a","kind":"dir","bytes":4096,"reason":"Outside","git":{"state":"untracked"},
+        "folderStats":{"files":12,"newestAt":"2026-10-30T13:00:00Z"},"alsoIn":["6xwa9r"]}]},
+        "remember":[{"id":"once","title":"Just this once"},{"id":"folder","title":"Always for this folder"}]}
+        """#
+        let params = try JSONDecoder().decode(RmApproveParams.self, from: Data(json.utf8))
+        XCTAssertEqual(params.request?.items.first?.git?.state, "untracked")
+        XCTAssertEqual(params.request?.items.first?.folderStats?.files, 12)
+        XCTAssertEqual(params.request?.items.first?.alsoIn, ["6xwa9r"])
+        XCTAssertEqual(params.request?.asker?.sessionId, "2f32")
+        XCTAssertEqual(params.remember?.map(\.id), ["once", "folder"])
+    }
+
     /// A failed or cancelled touch lets the person try again; only Touch ID being out sends them to the password.
     func testAFailedTouchNeverDenies() {
         XCTAssertEqual(ApprovalVerifier.outcome(for: .authenticationFailed),

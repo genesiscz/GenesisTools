@@ -7,14 +7,17 @@ public struct ApprovalFact: Identifiable, Equatable {
     public let value: String
     public let help: String?
     public let monospaced: Bool
+    /// A value shown dimmed ("No reason given").
+    public let dimmed: Bool
 
     public var id: String { label }
 
-    public init(_ label: String, _ value: String, help: String? = nil, monospaced: Bool = false) {
+    public init(_ label: String, _ value: String, help: String? = nil, monospaced: Bool = false, dimmed: Bool = false) {
         self.label = label
         self.value = value
         self.help = help
         self.monospaced = monospaced
+        self.dimmed = dimmed
     }
 }
 
@@ -28,6 +31,49 @@ public struct ApprovalRemember: Identifiable, Hashable {
     public init(seconds: Int?, title: String) {
         self.seconds = seconds
         self.title = title
+    }
+}
+
+/// One way out of a request the person picks before confirming (the rm window: "Move to the trash" or "Delete
+/// permanently"). `id` goes back to the caller as it is.
+public struct ApprovalChoice: Identifiable, Hashable {
+    public let id: String
+    public let title: String
+    public let detail: String?
+
+    public init(id: String, title: String, detail: String? = nil) {
+        self.id = id
+        self.title = title
+        self.detail = detail
+    }
+}
+
+/// A small link under the purpose ("Open its inbox", "Its terminal"): where the person can look before deciding.
+public struct ApprovalLink: Identifiable {
+    public let title: String
+    public let symbol: String
+    public let action: () -> Void
+
+    public var id: String { title }
+
+    public init(title: String, symbol: String, action: @escaping () -> Void) {
+        self.title = title
+        self.symbol = symbol
+        self.action = action
+    }
+}
+
+/// What the footer says once the request is answered and the caller is doing the work ("Approved: moving to the
+/// trash"), with a command the person may copy (`tools rm restore utqzn9`).
+public struct ApprovalFinish {
+    public let headline: String
+    public let detail: String
+    public let copy: String?
+
+    public init(headline: String, detail: String, copy: String? = nil) {
+        self.headline = headline
+        self.detail = detail
+        self.copy = copy
     }
 }
 
@@ -55,10 +101,29 @@ public final class ApprovalDialogModel: ObservableObject {
     /// Touch ID inside the window: the sensor listens from the first frame and a touch approves (`onVerified`).
     /// nil keeps the Allow button, whose `onAllow` runs the host's own authentication.
     public let verifier: ApprovalVerifier?
+    /// Links under the purpose (the asking session's inbox and terminal).
+    public let links: [ApprovalLink]
+    /// One line under the rows ("5 items, 34 kB, 1 already gone").
+    public let summary: String?
+    /// The ways out the person picks from before confirming; empty shows none, the first is picked.
+    public let disposals: [ApprovalChoice]
+    /// The keys that work ("Esc denies · Space previews"), under the buttons.
+    public let hint: String?
+    /// Rows carry a checkbox, all on at first; `selected` holds the ids of the rows still on.
+    public let selectable: Bool
+    /// The title for the rows still selected ("Delete 3 of 5 items for shop?"); nil keeps `title`.
+    public var titleForSelection: ((_ selected: Int, _ total: Int) -> String)?
 
     @Published public var rememberIndex = 0
     @Published public var showsDetails = false
     @Published public private(set) var answered = false
+    @Published public var disposal: String
+    @Published public var selected: Set<String>
+    /// The person's words on a deny ("keep it, my notes"), read by the host in `onDeny`.
+    @Published public var denyNote = ""
+    /// "Deny…" was pressed: the note field is open.
+    @Published public var denying = false
+    @Published public private(set) var finish: ApprovalFinish?
 
     public var onAllow: @MainActor (ApprovalRemember?) -> Void = { _ in }
     public var onDeny: @MainActor () -> Void = {}
@@ -68,7 +133,8 @@ public final class ApprovalDialogModel: ObservableObject {
     public init(title: String, purpose: String, command: String? = nil, symbol: String, facts: [ApprovalFact], details: [ApprovalFact],
                 warning: String?, footnote: String, rememberChoices: [ApprovalRemember], rememberNote: String?,
                 allowTitle: String, deadline: Date?, identifier: String, items: [ApprovalItem] = [],
-                verifier: ApprovalVerifier? = nil) {
+                verifier: ApprovalVerifier? = nil, links: [ApprovalLink] = [], summary: String? = nil,
+                disposals: [ApprovalChoice] = [], hint: String? = nil, selectable: Bool = false) {
         self.title = title
         self.purpose = purpose
         self.command = command
@@ -84,7 +150,25 @@ public final class ApprovalDialogModel: ObservableObject {
         self.identifier = identifier
         self.items = items
         self.verifier = verifier
+        self.links = links
+        self.summary = summary
+        self.disposals = disposals
+        self.hint = hint
+        self.selectable = selectable
+        self.disposal = disposals.first?.id ?? ""
+        self.selected = Set(items.map(\.id))
         verifier?.onVerified = { [weak self] method in self?.verified(method: method) }
+    }
+
+    /// The title with the live count when rows can be unticked.
+    public var displayTitle: String {
+        guard selectable, let titleForSelection else { return title }
+        return titleForSelection(selected.count, items.count)
+    }
+
+    /// The rows still on, in their order.
+    public var selectedItems: [ApprovalItem] {
+        items.filter { selected.contains($0.id) }
     }
 
     public func allow() {
@@ -100,6 +184,36 @@ public final class ApprovalDialogModel: ObservableObject {
         onDeny()
     }
 
+    /// Opens the deny note; a second press with the note open denies with it.
+    public func denyWithNote() {
+        if denying {
+            deny()
+        } else {
+            denying = true
+        }
+    }
+
+    /// The host says what happens now; the footer shows it until the window closes.
+    public func finished(_ finish: ApprovalFinish) {
+        self.finish = finish
+    }
+
+    /// Ticks or unticks a row; with nothing ticked the sensor pauses, and it listens again with the first tick.
+    public func setSelected(_ item: ApprovalItem, _ on: Bool) {
+        if on {
+            selected.insert(item.id)
+        } else {
+            selected.remove(item.id)
+        }
+
+        // Nothing picked: the sensor must not approve an empty request; it listens again once a row is on.
+        if selected.isEmpty {
+            verifier?.pause()
+        } else if selected.count == 1, on {
+            verifier?.resume()
+        }
+    }
+
     private func verified(method: String) {
         guard !answered else { return }
         answered = true
@@ -111,6 +225,8 @@ public final class ApprovalDialogModel: ObservableObject {
 /// reader sees, a column of facts, the rest folded, and the buttons on the trailing edge with the default last.
 public struct ApprovalDialogView: View {
     @ObservedObject package var model: ApprovalDialogModel
+    /// The row under the pointer, for the space bar's Quick Look.
+    @State private var hoveredPath: String?
 
     public init(model: ApprovalDialogModel) {
         self.model = model
@@ -121,7 +237,7 @@ public struct ApprovalDialogView: View {
             HStack(alignment: .top, spacing: 14) {
                 icon
                 VStack(alignment: .leading, spacing: 4) {
-                    Text(model.title)
+                    Text(model.displayTitle)
                         .font(.system(size: 13, weight: .semibold))
                         .accessibilityAddTraits(.isHeader)
                     Text(model.purpose)
@@ -130,6 +246,9 @@ public struct ApprovalDialogView: View {
                         .textSelection(.enabled)
                     if let command = model.command {
                         ApprovalCommandText(command: command).padding(.top, 3)
+                    }
+                    if !model.links.isEmpty {
+                        links.padding(.top, 2)
                     }
                 }
                 .frame(maxWidth: .infinity, alignment: .leading)
@@ -141,8 +260,18 @@ public struct ApprovalDialogView: View {
             }
 
             if !model.items.isEmpty {
-                ApprovalItemList(items: model.items, identifier: model.identifier)
-                    .padding(.leading, 66)
+                VStack(alignment: .leading, spacing: 6) {
+                    ApprovalItemList(items: model.items, identifier: model.identifier,
+                                     selection: model.selectable ? selectionBinding : nil, hovered: $hoveredPath)
+                    if let summary = model.summary {
+                        Text(summary)
+                            .font(.system(size: 11))
+                            .foregroundStyle(.secondary)
+                            .padding(.top, 4)
+                            .accessibilityIdentifier("\(model.identifier)-summary")
+                    }
+                }
+                .padding(.leading, 66)
             }
 
             if !model.details.isEmpty {
@@ -167,6 +296,10 @@ public struct ApprovalDialogView: View {
                     .accessibilityIdentifier("\(model.identifier)-warning")
             }
 
+            if !model.disposals.isEmpty {
+                disposals
+            }
+
             Text(model.footnote)
                 .font(.system(size: 11))
                 .foregroundStyle(.secondary)
@@ -174,7 +307,9 @@ public struct ApprovalDialogView: View {
                 .padding(.leading, 66)
 
             remember
-            if let verifier = model.verifier {
+            if let finish = model.finish {
+                ApprovalFinishedFooter(model: model, finish: finish)
+            } else if let verifier = model.verifier {
                 ApprovalVerifyFooter(model: model, verifier: verifier)
             } else {
                 buttons
@@ -186,8 +321,26 @@ public struct ApprovalDialogView: View {
         // The hidden title bar is no safe area (`safeAreaRegions = []` on the hosting controller), so the dialog
         // uses the full height and the panel's fitting size is the view's own; the strip stays draggable through
         // `.titlebarZone()`.
+        .focusable()
+        .focusEffectDisabled()
+        .onKeyPress(.space) {
+            guard let path = hoveredPath, let item = model.items.first(where: { $0.id == path }), !item.gone else {
+                return .ignored
+            }
+
+            ApprovalQuickLook.toggle(item.location)
+            return .handled
+        }
         .accessibilityElement(children: .contain)
         .accessibilityIdentifier(model.identifier)
+    }
+
+    private var selectionBinding: Binding<Set<String>> {
+        Binding(get: { model.selected }, set: { next in
+            for item in model.items where model.selected.contains(item.id) != next.contains(item.id) {
+                model.setSelected(item, next.contains(item.id))
+            }
+        })
     }
 
     private var icon: some View {
@@ -207,6 +360,22 @@ public struct ApprovalDialogView: View {
         .accessibilityHidden(true)
     }
 
+    private var links: some View {
+        HStack(spacing: 14) {
+            ForEach(model.links) { link in
+                Button(action: link.action) {
+                    Label(link.title, systemImage: link.symbol)
+                        .font(.system(size: 11))
+                        .foregroundStyle(Color.accentColor)
+                }
+                .buttonStyle(.plain)
+                .pointerCursor()
+                .accessibilityIdentifier("\(model.identifier)-link-\(link.title.lowercased().replacingOccurrences(of: " ", with: "-"))")
+            }
+        }
+        .disabled(model.answered)
+    }
+
     private func facts(_ rows: [ApprovalFact]) -> some View {
         Grid(alignment: .leadingFirstTextBaseline, horizontalSpacing: 10, verticalSpacing: 5) {
             ForEach(rows) { fact in
@@ -217,6 +386,7 @@ public struct ApprovalDialogView: View {
                         .gridColumnAlignment(.trailing)
                     Text(verbatim: fact.value)
                         .font(fact.monospaced ? .system(size: 11, design: .monospaced) : .system(size: 12))
+                        .foregroundStyle(fact.dimmed ? Color.secondary : Color.primary)
                         .lineLimit(3)
                         .truncationMode(.middle)
                         // Without it the grid measured one line and cut a path in the middle while the window had room.
@@ -227,6 +397,37 @@ public struct ApprovalDialogView: View {
                 }
             }
         }
+    }
+
+    /// The ways out, as radio buttons: the first is picked, and the touch applies the picked one.
+    private var disposals: some View {
+        VStack(alignment: .leading, spacing: 4) {
+            ForEach(model.disposals) { choice in
+                Button {
+                    model.disposal = choice.id
+                } label: {
+                    HStack(alignment: .firstTextBaseline, spacing: 6) {
+                        Image(systemName: model.disposal == choice.id ? "largecircle.fill.circle" : "circle")
+                            .font(.system(size: 12))
+                            .foregroundStyle(model.disposal == choice.id ? Color.accentColor : Color.secondary)
+                        Text(choice.title)
+                            .font(.system(size: 12))
+                        if let detail = choice.detail {
+                            Text(detail)
+                                .font(.system(size: 11))
+                                .foregroundStyle(.secondary)
+                        }
+                    }
+                    .contentShape(Rectangle())
+                }
+                .buttonStyle(.plain)
+                .pointerCursor()
+                .accessibilityAddTraits(model.disposal == choice.id ? [.isSelected] : [])
+                .accessibilityIdentifier("\(model.identifier)-disposal-\(choice.id)")
+            }
+        }
+        .padding(.leading, 66)
+        .disabled(model.answered)
     }
 
     /// Its own row, so the buttons keep their full titles (the first layout cut "Allow with Touch ID" short).
@@ -290,6 +491,7 @@ public struct ApprovalDialogView: View {
 struct ApprovalVerifyFooter: View {
     @ObservedObject var model: ApprovalDialogModel
     @ObservedObject var verifier: ApprovalVerifier
+    @FocusState private var noteFocused: Bool
 
     var body: some View {
         VStack(alignment: .leading, spacing: 12) {
@@ -306,16 +508,28 @@ struct ApprovalVerifyFooter: View {
                             .foregroundStyle(message.isProblem ? Color.orange : Color.secondary)
                             .fixedSize(horizontal: false, vertical: true)
                     }
-                    if let deadline = model.deadline {
-                        (Text("Denies itself in ") + Text(timerInterval: Date()...max(Date(), deadline), countsDown: true))
-                            .font(.system(size: 11).monospacedDigit())
-                            .foregroundStyle(.secondary)
-                            .lineLimit(1)
+                    HStack(spacing: 6) {
+                        if let deadline = model.deadline {
+                            (Text("Denies itself in ") + Text(timerInterval: Date()...max(Date(), deadline), countsDown: true))
+                                .font(.system(size: 11).monospacedDigit())
+                                .foregroundStyle(.secondary)
+                                .lineLimit(1)
+                        }
+                        if let hint = model.hint {
+                            Text(verbatim: "· \(hint)")
+                                .font(.system(size: 11))
+                                .foregroundStyle(.tertiary)
+                                .lineLimit(1)
+                        }
                     }
                 }
                 .frame(maxWidth: .infinity, alignment: .leading)
                 .accessibilityElement(children: .combine)
-                buttons
+                if model.denying {
+                    denyNote
+                } else {
+                    buttons
+                }
             }
         }
         .disabled(model.answered)
@@ -326,6 +540,12 @@ struct ApprovalVerifyFooter: View {
         switch verifier.state {
         case .unavailable, .password:
             Image(systemName: "lock.fill")
+                .font(.system(size: 18, weight: .medium))
+                .foregroundStyle(.secondary)
+                .frame(width: 32, height: 32)
+                .accessibilityHidden(true)
+        case .paused:
+            Image(systemName: "checklist")
                 .font(.system(size: 18, weight: .medium))
                 .foregroundStyle(.secondary)
                 .frame(width: 32, height: 32)
@@ -346,6 +566,7 @@ struct ApprovalVerifyFooter: View {
     private var headline: String {
         switch verifier.state {
         case .idle, .listening, .failed: return "Touch ID to approve"
+        case .paused: return "Nothing selected"
         case .password: return "Waiting for your password"
         case .unavailable: return "Approve with your password"
         case .verified: return "Approved"
@@ -356,9 +577,33 @@ struct ApprovalVerifyFooter: View {
         switch verifier.state {
         case .failed(let text): return (text, true)
         case .unavailable(let text): return (text, false)
+        case .paused: return ("Tick at least one row, or deny.", false)
         case .password: return ("The system asks for your password in its own window.", false)
         default: return nil
         }
+    }
+
+    /// The deny note: one line the agent reads, Deny sends it, Cancel keeps the request open.
+    private var denyNote: some View {
+        HStack(spacing: 8) {
+            TextField("Why? The agent reads it", text: $model.denyNote)
+                .textFieldStyle(.roundedBorder)
+                .font(.system(size: 12))
+                .frame(width: 220)
+                .focused($noteFocused)
+                .onSubmit(model.deny)
+                .accessibilityIdentifier("\(model.identifier)-deny-note")
+            Button("Deny", action: model.deny)
+                .pointerCursor()
+                .accessibilityIdentifier("\(model.identifier)-deny")
+            Button("Cancel") { model.denying = false }
+                .pointerCursor()
+                .accessibilityIdentifier("\(model.identifier)-deny-cancel")
+        }
+        .fixedSize()
+        .controlSize(.regular)
+        .environment(\.controlActiveState, .key)
+        .onAppear { noteFocused = true }
     }
 
     private var buttons: some View {
@@ -375,18 +620,63 @@ struct ApprovalVerifyFooter: View {
                     .accessibilityIdentifier("\(model.identifier)-password")
             } else {
                 Button("Use password…", action: verifier.usePassword)
-                    .disabled(verifier.state == .password)
+                    .disabled(verifier.state == .password || verifier.state == .paused)
                     .pointerCursor(verifier.state != .password)
                     .accessibilityIdentifier("\(model.identifier)-password")
             }
-            Button("Deny", action: model.deny)
+            Button("Deny…", action: model.denyWithNote)
                 .keyboardShortcut(.cancelAction)
                 .pointerCursor()
+                .help("Deny, with a word for the agent. Esc denies at once.")
                 .accessibilityIdentifier("\(model.identifier)-deny")
         }
         .fixedSize()
         .controlSize(.regular)
         // The panel is non-activating, so its app is never active while it shows; keep the key look (see `buttons`).
+        .environment(\.controlActiveState, .key)
+    }
+}
+
+/// The footer after the answer: what happens now, and a command to copy.
+struct ApprovalFinishedFooter: View {
+    @ObservedObject var model: ApprovalDialogModel
+    let finish: ApprovalFinish
+
+    var body: some View {
+        VStack(alignment: .leading, spacing: 12) {
+            Divider().padding(.horizontal, -20)
+            HStack(alignment: .center, spacing: 12) {
+                Image(systemName: "checkmark.circle.fill")
+                    .font(.system(size: 22, weight: .medium))
+                    .foregroundStyle(.green)
+                    .frame(width: 32, height: 32)
+                    .accessibilityHidden(true)
+                VStack(alignment: .leading, spacing: 2) {
+                    Text(finish.headline)
+                        .font(.system(size: 13, weight: .semibold))
+                        .accessibilityIdentifier("\(model.identifier)-verify-state")
+                    Text(finish.detail)
+                        .font(.system(size: 11))
+                        .foregroundStyle(.secondary)
+                        .fixedSize(horizontal: false, vertical: true)
+                }
+                .frame(maxWidth: .infinity, alignment: .leading)
+                .accessibilityElement(children: .combine)
+                if let copy = finish.copy {
+                    Button {
+                        Clipboard.copy(copy, what: "command")
+                    } label: {
+                        Label(copy, systemImage: "doc.on.doc")
+                            .font(.system(size: 11, design: .monospaced))
+                            .lineLimit(1)
+                    }
+                    .pointerCursor()
+                    .help("Copy the command")
+                    .accessibilityIdentifier("\(model.identifier)-copy")
+                }
+            }
+        }
+        .controlSize(.regular)
         .environment(\.controlActiveState, .key)
     }
 }
@@ -450,6 +740,19 @@ public final class ApprovalPanelPresenter: NSObject, NSWindowDelegate {
         panel?.delegate = nil
         panel?.orderOut(nil)
         panel = nil
+    }
+
+    /// The request is answered and the window stays a moment to say what happens (`ApprovalFinish`): the reminder
+    /// stops now, the panel closes after `seconds`.
+    public func linger(seconds: TimeInterval, then done: @escaping @MainActor () -> Void) {
+        reminder?.stop()
+        reminder = nil
+        DispatchQueue.main.asyncAfter(deadline: .now() + seconds) { [weak self] in
+            MainActor.assumeIsolated {
+                self?.close()
+                done()
+            }
+        }
     }
 
     /// A click on the reminder: the panel moves to the screen under the pointer and comes to the front, still without

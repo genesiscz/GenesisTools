@@ -1,46 +1,91 @@
-import { existsSync, readdirSync, rmdirSync } from "node:fs";
-import { resolve } from "node:path";
-import { toolCommand } from "@genesiscz/utils/cli";
 import { formatBytes } from "@genesiscz/utils/format";
-import { logger, out } from "@genesiscz/utils/logger";
+import { out } from "@genesiscz/utils/logger";
 import {
-    type ApprovalItem,
     appendRmLedger,
-    approvalAsker,
-    approvalItemReason,
     createRmRequest,
     hardDenyReason,
     kickDrainer,
     listRmRequests,
     loadRmRequest,
-    measureBytes,
-    moveToTrash,
+    type RmRequest,
+    rememberOptions,
     resolveTarget,
-    returnAside,
-    saveRmConfig,
     saveRmRequest,
 } from "@genesiscz/utils/rm";
 import type { Command } from "commander";
 import pc from "picocolors";
-import { printRequestHint, requirePerson, runContext, shown } from "../lib/run";
+import {
+    type ApproveEntry,
+    approvalItems,
+    approvalRequestInfo,
+    approveDelete,
+    approveRoots,
+    denyRequest,
+    splitBySelection,
+} from "../lib/approve";
+import { type PersonAnswer, printRequestHint, type RunContext, requirePerson, runContext, shown } from "../lib/run";
 
-/** An aside batch folder that the decision emptied; a non-empty one (something kept) stays. */
-function removeEmptyAsideDir(dir: string | undefined): void {
-    if (!dir || !existsSync(dir) || readdirSync(dir).length > 0) {
-        return;
+/** The decision lines under a request in `tools rm requests`. */
+function printDecision(request: RmRequest): void {
+    if (request.decided && request.decided.denied.length > 0) {
+        out.println(
+            pc.dim(`  decided: ${request.decided.approved.length} approved, ${request.decided.denied.length} put back`)
+        );
     }
 
-    rmdirSync(dir);
+    if (request.batchId) {
+        out.println(pc.dim(`  batch: ${request.batchId}`));
+    }
+
+    if (request.deniedNote) {
+        out.println(`  denied: ${request.deniedNote}`);
+    }
 }
 
-/** True for a folder with nothing in it; an unreadable folder is not called empty. */
-function isEmptyDir(dir: string): boolean {
-    try {
-        return readdirSync(dir).length === 0;
-    } catch (error) {
-        logger.debug({ error, dir }, "rm: could not list a folder for the approval window");
-        return false;
+function approvalLines(
+    request: RmRequest,
+    entries: readonly ApproveEntry[],
+    ctx: RunContext,
+    sizes: (number | undefined)[]
+) {
+    const lines = entries.map(({ wanted }, index) => {
+        const bytes = sizes[index];
+        const size = bytes === undefined ? "" : `  ${formatBytes(bytes)}`;
+        const where = wanted.stored ? ", moved aside" : "";
+        return `${shown(wanted.path, ctx.cwd)}${size}  (${wanted.reason}${where})`;
+    });
+
+    if (request.reason) {
+        lines.unshift(`Why: ${request.reason}`, "");
     }
+
+    return lines;
+}
+
+/** Records the decision on the request: approved (with the ticked and the put-back paths) and its batch. */
+function saveApproved(input: {
+    request: RmRequest;
+    answer: PersonAnswer;
+    approved: readonly ApproveEntry[];
+    denied: readonly ApproveEntry[];
+    batchId?: string;
+    ctx: RunContext;
+}): void {
+    const { request, answer, approved, denied, batchId, ctx } = input;
+    saveRmRequest({
+        ...request,
+        status: "approved",
+        decidedAt: new Date().toISOString(),
+        decidedVia: answer.via,
+        decided: {
+            approved: approved.map((entry) => entry.wanted.path),
+            denied: denied.map((entry) => entry.wanted.path),
+            disposal: request.kind === "delete" ? answer.choices.disposal : undefined,
+            remember: request.kind === "delete" ? answer.choices.remember : undefined,
+        },
+        batchId,
+    });
+    appendRmLedger({ action: "approve", requestId: request.id, via: answer.via, caller: ctx.caller, batchId });
 }
 
 export function registerRequestCommands(program: Command): void {
@@ -82,6 +127,8 @@ export function registerRequestCommands(program: Command): void {
                         out.println(pc.dim(`    waits aside at ${target.stored}${size}`));
                     }
                 }
+
+                printDecision(request);
             }
         });
 
@@ -129,117 +176,68 @@ export function registerRequestCommands(program: Command): void {
             }
 
             // An aside item is approved where it waits (its stored copy); the original path is what gets recorded.
-            const entries = request.targets.map((t) => ({
+            const entries: ApproveEntry[] = request.targets.map((t) => ({
                 wanted: t,
                 target: resolveTarget(t.stored ?? t.path, request.cwd),
             }));
             const blocked = entries.filter((e) => hardDenyReason(e.target, ctx.rules) !== null);
             const openEntries = entries.filter((e) => !blocked.includes(e));
-            const open = openEntries.map((e) => e.target);
 
             for (const entry of blocked) {
                 out.println(pc.red(`refuse ${entry.wanted.path}: ${hardDenyReason(entry.target, ctx.rules)}`));
             }
 
-            if (open.length === 0) {
+            if (openEntries.length === 0) {
                 process.exitCode = 1;
                 return;
             }
 
-            const asker = approvalAsker(request.caller);
-            const who = asker ? (asker.session ?? asker.project ?? asker.agent) : "an agent";
-            const items: ApprovalItem[] = openEntries.map(({ wanted, target }) => {
-                const isDelete = request.kind === "delete" && target.kind !== "missing";
-                return {
-                    path: wanted.path,
-                    kind: target.kind,
-                    bytes: isDelete ? (wanted.bytes ?? measureBytes(target.path)) : undefined,
-                    empty: target.kind === "dir" ? isEmptyDir(target.path) : undefined,
-                    storedAt: wanted.stored,
-                    reason: approvalItemReason(wanted.rule, wanted.reason),
-                };
-            });
-            const lines = openEntries.map(({ wanted }, index) => {
-                const bytes = items[index]?.bytes;
-                const size = bytes === undefined ? "" : `  ${formatBytes(bytes)}`;
-                const where = wanted.stored ? ", moved aside" : "";
-                return `${shown(wanted.path, ctx.cwd)}${size}  (${wanted.reason}${where})`;
-            });
-
-            if (request.reason) {
-                lines.unshift(`Why: ${request.reason}`, "");
-            }
-
+            const items = await approvalItems(request, openEntries);
+            const info = approvalRequestInfo(request, items);
+            const who = info.asker ? (info.asker.session ?? info.asker.project ?? info.asker.agent) : "an agent";
             const verb =
                 request.kind === "delete"
-                    ? `Delete ${open.length === 1 ? "1 item" : `${open.length} items`}`
-                    : `Trust ${shown(open[0]?.path ?? "", ctx.cwd)}`;
+                    ? `Delete ${openEntries.length === 1 ? "1 item" : `${openEntries.length} items`}`
+                    : `Trust ${shown(openEntries[0]?.target.path ?? "", ctx.cwd)}`;
             const answer = await requirePerson(ctx, {
                 title: `${verb} for ${who}?`,
-                lines,
+                lines: approvalLines(
+                    request,
+                    openEntries,
+                    ctx,
+                    items.map((item) => item.bytes)
+                ),
                 code: id,
-                request: {
-                    id,
-                    kind: request.kind,
-                    why: request.reason,
-                    cwd: request.cwd,
-                    graceMinutes: request.kind === "delete" ? ctx.config.grace.otherMinutes : undefined,
-                    asker,
-                    items,
-                },
+                request: info,
+                remember: rememberOptions(request.kind, request.caller),
             });
 
             if (!answer.approved) {
+                if (answer.deniedByPerson) {
+                    denyRequest(request, { caller: ctx.caller, via: answer.via, note: answer.choices.note });
+                    out.println(`Request ${id} denied.`);
+                }
+
+                return;
+            }
+
+            const { approved, denied } = splitBySelection(openEntries, answer.choices.selected);
+
+            if (approved.length === 0) {
+                denyRequest(request, { caller: ctx.caller, via: answer.via, note: answer.choices.note });
+                out.println(`Nothing was ticked: request ${id} denied.`);
                 return;
             }
 
             if (request.kind === "root") {
-                const roots = open.map((t) => ({
-                    path: t.canonical,
-                    note: request.reason ?? undefined,
-                    addedAt: new Date().toISOString(),
-                    via: `request:${id}`,
-                }));
-                saveRmConfig({ ...ctx.base, roots: [...ctx.base.roots, ...roots] });
-
-                for (const root of roots) {
-                    appendRmLedger({
-                        action: "root-add",
-                        path: root.path,
-                        requestId: id,
-                        via: answer.via,
-                        caller: ctx.caller,
-                    });
-                }
-
-                out.println(pc.green(`Trusted ${roots.map((r) => r.path).join(", ")}.`));
-            } else {
-                const batch = moveToTrash(
-                    openEntries.map(({ wanted, target }) => ({
-                        target,
-                        rule: `approved ${id}`,
-                        original: wanted.path,
-                        bytes: wanted.bytes,
-                    })),
-                    { config: ctx.config, caller: request.caller, graceMinutes: ctx.config.grace.otherMinutes }
-                );
-                removeEmptyAsideDir(request.asideDir);
-                out.println(pc.green(`Moved ${batch?.items.length ?? 0} item(s) to the trash.`));
-
-                if (batch) {
-                    out.println(pc.dim(`  undo: ${toolCommand("rm")} restore ${batch.id}`));
-                }
-
-                kickDrainer(ctx.config);
+                approveRoots(ctx, request, approved, answer.via);
+                saveApproved({ request, answer, approved, denied, ctx });
+                return;
             }
 
-            saveRmRequest({
-                ...request,
-                status: "approved",
-                decidedAt: new Date().toISOString(),
-                decidedVia: answer.via,
-            });
-            appendRmLedger({ action: "approve", requestId: id, via: answer.via, caller: ctx.caller });
+            const { batch } = approveDelete({ ctx, request, approved, denied, choices: answer.choices });
+            saveApproved({ request, answer, approved, denied, batchId: batch?.id, ctx });
+            kickDrainer(ctx.config);
         });
 
     program
@@ -256,22 +254,7 @@ export function registerRequestCommands(program: Command): void {
                 return;
             }
 
-            const back = returnAside(request.targets, ctx.caller, id);
-
-            for (const path of back.returned) {
-                out.println(pc.green(`put back ${path}`));
-            }
-
-            for (const kept of back.kept) {
-                out.println(pc.yellow(`not put back ${kept.path}: ${kept.reason}`));
-            }
-
-            if (back.kept.length === 0) {
-                removeEmptyAsideDir(request.asideDir);
-            }
-
-            saveRmRequest({ ...request, status: "denied", decidedAt: new Date().toISOString(), decidedVia: "cli" });
-            appendRmLedger({ action: "deny", requestId: id, caller: ctx.caller, path: resolve(request.cwd) });
+            const back = denyRequest(request, { caller: ctx.caller, via: "cli" });
             out.println(`Request ${id} denied.`);
             process.exitCode = back.kept.length > 0 ? 1 : 0;
         });
