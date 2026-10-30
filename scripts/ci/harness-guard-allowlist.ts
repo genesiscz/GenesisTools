@@ -106,7 +106,7 @@ export const HARNESS_GUARD_ALLOWLIST: Readonly<Record<string, HarnessGuardCounts
     "src/utils/ai/transcripts/native-scan.ts": { table: 2 },
     "src/utils/ai/transcripts/resolve.ts": { list: 1, table: 4 },
     "src/utils/ai/transcripts/session-title.ts": { table: 1 },
-    "src/utils/ai/transcripts/turn-state.ts": { list: 1, table: 4 },
+    "src/utils/ai/transcripts/turn-state.ts": { table: 2 },
     "src/utils/cli/failures/caller.ts": { table: 1 },
     "src/utils/env/envVariables.ts": { table: 1 },
     "src/utils/providers/session-paths.ts": { table: 2, branch: 11 },

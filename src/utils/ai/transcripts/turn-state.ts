@@ -15,15 +15,17 @@
  * no process spawn and no write.
  */
 import { existsSync, statSync } from "node:fs";
-import { basename, dirname, join } from "node:path";
+
+import { harnessTranscriptFacts } from "@genesiscz/utils/ai/providers/harness-index";
 import { isZstdPath } from "@genesiscz/utils/compress/zstd";
+import type { HarnessId } from "@genesiscz/utils/harness/types";
 import { SafeJSON } from "@genesiscz/utils/json";
 import { logger } from "@genesiscz/utils/logger";
 import { type ActivityEvent, type ActivityState, classifyActivity, claudeRecordsToEvents } from "./activity";
 import { readTailAt } from "./native-scan";
 import { parseTranscriptLine } from "./parse-line";
 
-export type TurnProvider = "claude" | "grok" | "codex";
+export type TurnProvider = HarnessId;
 
 /** A turn's last records can hold a long tool result, so this is larger than the activity tail. */
 export const TURN_TAIL_BYTES = 256 * 1024;
@@ -1111,26 +1113,12 @@ export function turnStateOf(provider: TurnProvider, input: TurnStateInput): Turn
 }
 
 /**
- * Where each provider keeps the second log its turn state needs beside the transcript, or null for none. One entry
- * per provider, so the next provider states its answer here.
- */
-const EVENT_LOGS: Record<TurnProvider, (transcriptPath: string) => string | null> = {
-    // Claude records no permission prompt in its transcript; only its `Notification` hook sees one.
-    claude: () => null,
-    // Codex rollouts persist no approval request; only a live app-server client sees one.
-    codex: () => null,
-    // Grok writes its permission prompts to `events.jsonl` in the session folder, never to `updates.jsonl`.
-    grok: (transcriptPath) =>
-        basename(transcriptPath) === "updates.jsonl" ? join(dirname(transcriptPath), "events.jsonl") : null,
-};
-
-/**
  * Every file `readTurnState` reads for this transcript: the transcript, and the provider's event log when it has
  * one. A caller that skips an unchanged session stats these, so a Grok permission prompt (written only to
  * `events.jsonl`) still counts as a change.
  */
 export function turnStateSources(provider: TurnProvider, transcriptPath: string): string[] {
-    const eventLog = EVENT_LOGS[provider](transcriptPath);
+    const eventLog = harnessTranscriptFacts(provider).eventLog(transcriptPath);
     return eventLog ? [transcriptPath, eventLog] : [transcriptPath];
 }
 
@@ -1159,7 +1147,7 @@ function tailRecords(tail: { raw: Buffer; start: number }): { records: JsonRecor
 
 /** The tail of the provider's event log beside the transcript, or undefined when it has none or it cannot be read. */
 function readEventLog(provider: TurnProvider, transcriptPath: string): JsonRecord[] | undefined {
-    const path = EVENT_LOGS[provider](transcriptPath);
+    const path = harnessTranscriptFacts(provider).eventLog(transcriptPath);
 
     if (!path || !existsSync(path)) {
         return undefined;
