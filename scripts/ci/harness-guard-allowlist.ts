@@ -113,18 +113,12 @@ export const HARNESS_GUARD_ALLOWLIST: Readonly<Record<string, HarnessGuardCounts
         table: 1,
         why: "the worker store readers in listing order; they import the worker tools' stores (@app/codex, @app/grok, @app/claude), which the spend table must not load",
     },
-    "src/ai/commands/statusline/run.ts": {
-        table: 1,
-        why: "the statusline host table (HOST_FEATURES) that the drivers' pending statusline part names: the hot entry imports the Claude feature itself, so a render pays no driver hop",
-    },
+    "src/ai/commands/statusline/run.ts": { branch: 1 },
     "src/ai/lib/agent-message/delivery.ts": {
         table: 2,
         why: "the one table of the message part: each MessageDriver is this tool's code (peer channel, thread queue, Grok leader), which src/utils cannot import",
     },
-    "src/ai/lib/sessions/agent-session-rows.ts": {
-        table: 1,
-        why: "ROW_LISTERS, the one tool-owned session-row table: Claude's listing and the cache clocks are the claude tool's (@app/claude/lib/usage/session-rows), which a driver cannot import",
-    },
+    "src/ai/lib/sessions/agent-session-rows.ts": { table: 3 },
     "src/cmux/lib/session-agents.ts": {
         table: 2,
         why: "the one tool-owned cmux table (CmuxAdapter) that every driver's cmux part names: its launch extras need the cmux and grok tools, which @genesiscz/utils cannot import",
@@ -133,10 +127,9 @@ export const HARNESS_GUARD_ALLOWLIST: Readonly<Record<string, HarnessGuardCounts
         table: 1,
         why: "SESSION_ID_OF, keyed by the gateway's runtime-agent caller axis (with copilot and unknown); its readers spawn lsof and read the session registry, which the hook-path drivers must not load",
     },
-    "src/hub/lib/agents/index.ts": {
-        table: 1,
-        why: "the one table of the tool-owned subagents part that every driver names this file for: a parent is built from the hub's own agent records and workers",
-    },
+    "src/hub/lib/agents/index.ts": { table: 2 },
+    "src/hub/lib/widget/context.ts": { table: 2 },
+    "src/hub/lib/widget/snapshot.ts": { table: 2 },
     "src/macos/GenesisKit/Sources/GenesisKit/Sessions/ToolCalls/SessionNativeLog.swift": {
         branch: 3,
         why: "the Swift format owner of the Claude and Codex transcript lines it indexes (the TS readers' counterpart): the bytes of a line pick the indexer, not the harness set",
@@ -157,18 +150,9 @@ export const HARNESS_GUARD_ALLOWLIST: Readonly<Record<string, HarnessGuardCounts
         table: 1,
         why: "ANSWER_ROUTES, the one table of the tool-owned answer part that every driver names (src/question owns the delivery ladder; @genesiscz/utils cannot import it)",
     },
-    "src/utils/agent-sessions/readers/codex-import.ts": {
-        branch: 1,
-        why: "the Codex importer's own precondition, in the Codex reader files beside the other readers: another harness's session is refused",
-    },
-    "src/utils/agent-sessions/search.ts": {
-        table: 1,
-        why: "the SearchAdapters map type, filled from the canonical list (SEARCH_PROVIDERS); it holds no fact per harness",
-    },
-    "src/utils/cli/failures/caller.ts": {
-        table: 1,
-        why: "CALLER_TRANSCRIPTS, keyed by the caller's runtime agent (with copilot and unknown); it joins the caller's own env and cwd, so a failed run skips the locate part's folder walk",
-    },
+    "src/utils/agent-sessions/readers/codex-import.ts": { branch: 1 },
+    "src/utils/agent-sessions/search.ts": { table: 1 },
+    "src/utils/cli/failures/caller.ts": { table: 1 },
     "src/utils/env/envVariables.ts": {
         table: 1,
         why: "a false positive: the env accessor object has get/has/isFlag members, not harness names",
@@ -176,6 +160,10 @@ export const HARNESS_GUARD_ALLOWLIST: Readonly<Record<string, HarnessGuardCounts
     "src/utils/providers/session-paths.ts": {
         table: 2,
         why: "the native-home lint owner: the home folder names may appear only here, so the per-harness NativeHomeLayout objects and their exhaustive table stay in this file",
+    },
+    "src/utils/rm/approval.ts": {
+        table: 1,
+        why: "keyed by the runtime agent of the caller (claude-code, codex, grok, cursor, gemini), a wider set than the harnesses",
     },
     "src/utils/rm/aside.ts": {
         table: 1,

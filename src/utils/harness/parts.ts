@@ -149,6 +149,11 @@ export interface TranscriptFacts {
      * to `events.jsonl` in the session folder; Claude's go to its `Notification` hook and Codex persists none.
      */
     eventLog(transcriptPath: string): string | null;
+    /**
+     * The turns of a window of native records (a receipt's context in `around.ts`). A driver holds a
+     * `deferredWindowTurns` (`deferred.ts`) that loads its turn parser on the first call.
+     */
+    windowTurns(values: Record<string, unknown>[]): TranscriptTurn[];
 }
 
 /** H: the slash command that ends an interactive session. */
