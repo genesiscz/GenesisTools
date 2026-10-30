@@ -1,4 +1,3 @@
-import { relative } from "node:path";
 import { formatCostLine } from "@app/ai-spend/lib/workers/cost";
 import { recordWorkerTurnCost, type WorkerCostRow } from "@app/ai-spend/lib/workers/ledger";
 import { withTimeout } from "@genesiscz/utils/async";
@@ -25,11 +24,19 @@ import type {
 } from "./_generated/protocol";
 import type { CodexAccountBinding } from "./account";
 import type { RpcNotification, RpcServerRequest } from "./app-server-client";
-import type { CodexControl } from "./control";
+import { type ApprovalRefusal, type CodexControl, refusalNotice } from "./control";
 import { assignThreadToProject, type CodexProject, resolveProjectSelector } from "./desktop-project";
+import {
+    fileChangesFromItem,
+    fileChangesFromLegacy,
+    fullRequestCommand,
+    isFileChangeApproval,
+    NOTICE_PREVIEW_LINES,
+    renderFileChanges,
+} from "./pending-approval";
 import { markReviewShallow, recordReviewTurn } from "./review/controller";
 import { buildAgentInstructions, contractSandbox } from "./seed-instructions";
-import type { CodexSessionMeta, CodexSessionStore } from "./store";
+import type { CodexSessionMeta, CodexSessionStore, PendingApproval, PendingFileChange } from "./store";
 
 const log = logger.child({ component: "codex:session" });
 
@@ -125,8 +132,8 @@ export class CodexSessionRuntime {
     private chosenProject?: CodexProject;
     private filingAttempts = 0;
     private readonly reviewThreadIds = new Set<string>();
-    /** Paths of the file-change items in flight, by item id: their approval request carries only the id. */
-    private readonly fileChangePaths = new Map<string, string[]>();
+    /** File-change items in flight with their proposed content, by item id: their approval carries only the id. */
+    private readonly fileChanges = new Map<string, PendingFileChange[]>();
     /** Per-turn usage, tool calls and login, for the worker cost ledger. */
     private readonly costTracker: CodexTurnCostTracker;
     /** The cost line of the last booked turn, for the lead's `turn_completed` bus event. */
@@ -307,8 +314,9 @@ export class CodexSessionRuntime {
             case "review":
                 return this.review(control);
             case "approve":
+                return this.resolveApproval(control.requestId, true);
             case "deny":
-                return this.resolveApproval(control.requestId, control.op === "approve");
+                return this.resolveApproval(control.requestId, false, control.refusal);
             case "stop":
                 throw new Error(`Control op ${control.op} is not available in this runtime phase`);
         }
@@ -338,33 +346,46 @@ export class CodexSessionRuntime {
         // Even a prior approval for a seemingly read-only command can authorize an unsandboxed retry.
         // Hold every ask request for an explicit lead decision; command text does not prove confinement.
         const requestId = String(request.id);
-        const detail = this.describeApproval(request);
         const params = isRecord(request.params) ? request.params : {};
+        const changes = this.approvalChanges(request);
+        const paths = changes?.flatMap((change) => (change.movePath ? [change.path, change.movePath] : [change.path]));
+        const detail = this.describeApproval(request, paths);
         const commandRequest =
             request.method === "item/commandExecution/requestApproval" || request.method === "execCommandApproval";
-        const pendingApprovals = {
-            ...this.meta.pendingApprovals,
-            [requestId]: {
-                rpcId: request.id,
-                method: request.method,
-                detail,
-                paths: this.approvalPaths(request),
-                command: commandRequest ? approvalCommand(params.command) : undefined,
-                cwd: commandRequest && typeof params.cwd === "string" ? params.cwd : undefined,
-                requestedAt: new Date().toISOString(),
-            },
+        const record: PendingApproval = {
+            rpcId: request.id,
+            method: request.method,
+            detail,
+            paths,
+            changes,
+            command: commandRequest ? approvalCommand(params.command) : undefined,
+            cwd: commandRequest && typeof params.cwd === "string" ? params.cwd : undefined,
+            requestedAt: new Date().toISOString(),
         };
-        await this.updateMeta({ pendingApprovals });
+        await this.updateMeta({ pendingApprovals: { ...this.meta.pendingApprovals, [requestId]: record } });
 
         const response = new Promise<unknown>((resolve) => {
             this.pendingApprovalDecisions.set(requestId, { method: request.method, resolve });
         });
+        // A file change carries what it would write, cut to a few lines; the marker names the command for the rest.
+        const preview = isFileChangeApproval(request.method)
+            ? {
+                  preview: renderFileChanges({
+                      name: this.meta.name,
+                      requestId,
+                      approval: record,
+                      maxLines: NOTICE_PREVIEW_LINES,
+                  }).join("\n"),
+                  fullRequest: fullRequestCommand(this.meta.name, requestId),
+              }
+            : {};
         await this.onApprovalRequest?.({
             event: "approval_request",
             op: "approval_request",
             requestId,
             method: request.method,
             detail,
+            ...preview,
         });
         return response;
     }
@@ -397,42 +418,57 @@ export class CodexSessionRuntime {
         });
     }
 
-    /** Keeps a file-change item's paths from its start to its end, for the approval asked in between. */
+    /**
+     * Keeps a file-change item's files and proposed content from its start to its end, for the approval asked in
+     * between. `item/fileChange/patchUpdated` replaces them when Codex revises the patch of an item in flight.
+     */
     private trackFileChange(notification: RpcNotification): void {
-        const item = isRecord(notification.params) ? notification.params.item : undefined;
+        const params = isRecord(notification.params) ? notification.params : {};
+
+        if (notification.method === "item/fileChange/patchUpdated") {
+            if (typeof params.itemId === "string" && Array.isArray(params.changes)) {
+                this.fileChanges.set(params.itemId, fileChangesFromItem(params.changes, this.meta.cwd));
+            }
+
+            return;
+        }
+
+        const item = params.item;
 
         if (!isRecord(item) || item.type !== "fileChange" || typeof item.id !== "string") {
             return;
         }
 
         if (notification.method === "item/completed") {
-            this.fileChangePaths.delete(item.id);
+            this.fileChanges.delete(item.id);
             return;
         }
 
         if (notification.method === "item/started" && Array.isArray(item.changes)) {
-            const paths = item.changes.flatMap((change) =>
-                isRecord(change) && typeof change.path === "string"
-                    ? [relative(this.meta.cwd, change.path) || change.path]
-                    : []
-            );
-            this.fileChangePaths.set(item.id, paths);
+            this.fileChanges.set(item.id, fileChangesFromItem(item.changes, this.meta.cwd));
         }
     }
 
-    private approvalPaths(request: RpcServerRequest): string[] | undefined {
+    /** What a file-change request would write: from its item for the v2 request, inline for the legacy one. */
+    private approvalChanges(request: RpcServerRequest): PendingFileChange[] | undefined {
         const params = isRecord(request.params) ? request.params : {};
-        return request.method === "item/fileChange/requestApproval" && typeof params.itemId === "string"
-            ? this.fileChangePaths.get(params.itemId)
-            : undefined;
+
+        if (request.method === "item/fileChange/requestApproval" && typeof params.itemId === "string") {
+            return this.fileChanges.get(params.itemId);
+        }
+
+        if (request.method === "applyPatchApproval" && isRecord(params.fileChanges)) {
+            return fileChangesFromLegacy(params.fileChanges, this.meta.cwd);
+        }
+
+        return undefined;
     }
 
     /** What the lead reads for an approval: a file change names the files it writes, not its item id. */
-    private describeApproval(request: RpcServerRequest): string {
+    private describeApproval(request: RpcServerRequest, paths: string[] | undefined): string {
         const params = isRecord(request.params) ? request.params : {};
-        const paths = this.approvalPaths(request);
 
-        if (request.method === "item/fileChange/requestApproval" && paths && paths.length > 0) {
+        if (isFileChangeApproval(request.method) && paths && paths.length > 0) {
             const reason = typeof params.reason === "string" && params.reason ? ` (${params.reason})` : "";
 
             return `edit ${paths.join(", ")}${reason}`;
@@ -623,8 +659,13 @@ export class CodexSessionRuntime {
         return { cost: this.lastTurnCost.line };
     }
 
+    /**
+     * Synchronous on purpose: the store writes synchronously, and an `await` before the assignment left `this.meta`
+     * stale for a microtask, so two approval requests arriving together each spread the old `pendingApprovals` and the
+     * second write dropped the first request from every lead-visible surface while its decision still waited.
+     */
     private async updateMeta(update: Partial<CodexSessionMeta>): Promise<void> {
-        this.meta = await this.store.updateMeta(this.meta.name, update);
+        this.meta = this.store.updateMeta(this.meta.name, update);
     }
 
     private threadId(): string {
@@ -720,9 +761,20 @@ export class CodexSessionRuntime {
         return turns.slice(0, count);
     }
 
+    /**
+     * The thread snapshot. Codex's own snapshot did not show the proposed file of a change still waiting for
+     * approval (handoff h_qi7aydaj, 2026-10-30), so the pending requests ride along with their content while any wait.
+     */
     private async read(): Promise<unknown> {
         const params: ThreadReadParams = { threadId: this.threadId(), includeTurns: true };
-        return this.client.request("thread/read", params);
+        const snapshot = await this.client.request<unknown>("thread/read", params);
+        const pendingApprovals = this.meta.pendingApprovals;
+
+        if (Object.keys(pendingApprovals).length === 0) {
+            return snapshot;
+        }
+
+        return isRecord(snapshot) ? { ...snapshot, pendingApprovals } : { snapshot, pendingApprovals };
     }
 
     private async deliverQueuedSteer(): Promise<void> {
@@ -750,7 +802,11 @@ export class CodexSessionRuntime {
         return { turnId: result.turn.id, reviewThreadId: result.reviewThreadId };
     }
 
-    private async resolveApproval(requestId: string, approved: boolean): Promise<{ resolved: boolean }> {
+    private async resolveApproval(
+        requestId: string,
+        approved: boolean,
+        refusal?: ApprovalRefusal
+    ): Promise<{ resolved: boolean; attributed?: boolean }> {
         const pending = this.pendingApprovalDecisions.get(requestId);
         if (!pending) {
             throw new Error(`Pending approval not found: ${requestId}`);
@@ -761,7 +817,20 @@ export class CodexSessionRuntime {
         delete pendingApprovals[requestId];
         await this.updateMeta({ pendingApprovals });
         pending.resolve(approvalResponse(pending.method, approved));
-        return { resolved: true };
+
+        if (approved || !refusal || refusal.by === "human") {
+            return { resolved: true };
+        }
+
+        // Codex tells the worker only `Rejected("rejected by user")`. The actor and the reason follow in words, as
+        // a steer, so a lead's quality refusal is never read as a human permission decision.
+        try {
+            await this.steer(refusalNotice(requestId, refusal), false);
+            return { resolved: true, attributed: true };
+        } catch (err) {
+            log.warn({ err, name: this.meta.name, requestId }, "the refusal reason could not be steered to the worker");
+            return { resolved: true, attributed: false };
+        }
     }
 }
 
