@@ -3,16 +3,22 @@
 import { existsSync, mkdirSync, readFileSync, statSync } from "node:fs";
 import { homedir } from "node:os";
 import { SafeJSON } from "@genesiscz/utils/json";
+import { listPsRows } from "@genesiscz/utils/process/ps";
+import { genesisToolsDir } from "@genesiscz/utils/storage/root";
 
 export const APP = `${homedir()}/Applications/GenesisTools.app/Contents/MacOS/GenesisTools`;
-export const LOG = `${homedir()}/.genesis-tools/logs/app-perf.log`;
+export const LOG = genesisToolsDir("logs", "app-perf.log");
 
 export const sh = (argv: string[]) => {
     const p = Bun.spawnSync(argv, { stdout: "pipe", stderr: "pipe", timeout: 60_000 });
     return `${p.stdout}${p.stderr}`;
 };
 
-export const hubPid = () => sh(["pgrep", "-f", "MacOS/GenesisTools --hub"]).trim().split("\n")[0];
+/// The live hub's pid (the process table through the kit's reader, not a `pgrep` per call).
+export async function hubPid(): Promise<string> {
+    const row = (await listPsRows()).find((r) => r.command.includes("MacOS/GenesisTools --hub"));
+    return row ? String(row.pid) : "";
+}
 
 /// The flags that open a mode with something to resize: `--pr <ref>` for PRs, `--worktree <path>` for Worktrees.
 export function modeArgs(mode: string, opts: { pr?: string; worktree?: string }): string[] {
@@ -32,8 +38,8 @@ export const openHub = (mode: string, opts: { pr?: string; worktree?: string }) 
 export type Edge = { desc: string; x: number; y: number; w: number; h: number };
 
 /// The resize edges of the live hub: the accessibility elements labelled "Resize <title>", long and thin.
-export function resizeEdges(): Edge[] {
-    const out = sh(["tools", "control", "dump", "--app", hubPid()]);
+export async function resizeEdges(): Promise<Edge[]> {
+    const out = sh(["tools", "control", "dump", "--app", await hubPid()]);
     const j = SafeJSON.parse(out.slice(out.indexOf("{")), { strict: true }) as { elements: Edge[] };
     return j.elements.filter(
         (e) => typeof e.desc === "string" && /^Resize /.test(e.desc) && e.w > 0 && e.h > 0 && Math.max(e.w, e.h) > 100
@@ -52,7 +58,7 @@ export function dragGeometry(e: Edge) {
 /// The pointer-drag binary, built once from pointer-drag.swift into the user's cache (a test never makes an
 /// executable per run: a fresh file's first start waits on syspolicyd, which froze the Mac on 2026-10-14).
 export function dragBinary(): string {
-    const dir = `${homedir()}/.genesis-tools/cache/swift-scripts`;
+    const dir = genesisToolsDir("cache", "swift-scripts");
     const bin = `${dir}/pointer-drag`;
     const src = `${import.meta.dir}/pointer-drag.swift`;
     if (!existsSync(bin) || statSync(bin).mtimeMs < statSync(src).mtimeMs) {

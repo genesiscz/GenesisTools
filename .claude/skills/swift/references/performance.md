@@ -50,6 +50,22 @@ are in [genesistools.md](genesistools.md)). Add a new entry at the end of its se
   Rows take values, not observable models; buttons, tooltips and hover sensors exist only on the
   hovered row. Measure clicks with an accessibility client attached; without one the numbers lie
   (2-18× lower).
+- **The check lives in the components, not in the callers (2026-10-29 21:32).** A row sets its liveness once:
+  `.liveRow(selected: selected || replying || expanded)` on its outer view (GenesisKitBase `Style/LiveRow.swift`:
+  an `EnvironmentValues.rowLive`, the modifier tracks the pointer itself). `rowButton`, `IconButton`,
+  `instantTooltip` (so every badge), `PathLabel`, `MenuButton`, `LiveButton`, the hub's `ExternalLink`, `CIBadge`,
+  `PRStateIcon` and `PRReadinessBadge` read it and draw the same label with no responder in a resting row
+  (`restingButton` keeps them pressable for VoiceOver and `tools control`). A row never writes `live ? x : nil`, an
+  `interactive:` argument or an `if live { Button } else { Image }` of its own; a raw `Button` or `Toggle` is a
+  `LiveButton`. Measured before the mechanism, with per-call gating of the same controls: the PRs sidebar drag
+  stalls of 0.4 to 2.5 s gone, step p95 540 → 54 ms (40 rows × button + tooltip + link). The first version put a
+  `live` parameter on every component and a `hovering` state in every row: five agents wrote the same twenty lines
+  in fifteen rows, and Martin asked for the check inside the component (2026-10-29 21:30).
+- Rules of the environment: it applies to what is INSIDE the modifier, so the row's own body still reads the
+  parent's value (a piece of layout that differs by liveness is a small child view with
+  `@Environment(\.rowLive)`); `.liveRow` goes outside the row's `rowButton` and tooltips; a control that must stay
+  live in a resting row gets `.rowLive(true)`; a resting `IconButton` keeps the button's footprint (glyph + 3 pt),
+  so nothing moves on hover; the hover fill appears on the next pointer move after the row turns live.
 - A plain `VStack` is right for tens of rows when exact heights matter (anchoring that survives a width
   change); a lazy stack estimates rows above the viewport and moves the visible ones as it measures.
 - What Apple documents behind these rules, and what stays our observation: [sources.md](sources.md) "How SwiftUI decides to re-run a body".
@@ -69,6 +85,22 @@ are in [genesistools.md](genesistools.md)). Add a new entry at the end of its se
   by 899 ms; three new openings measured 94.3 / 37.9 / 57.2 ms to first callback and 414.5 / 412.3 /
   411.4 ms total transition time. These are callback timings, not compositor frames or proof that
   search, selection and dismissal all work; verify those interactions separately.
+
+### `@Observable` instead of `ObservableObject` for a window-wide model (2026-10-29 21:32)
+- **Symptom:** every view that observes the hub model re-renders on every publish: 4 to 6 body runs per mode
+  switch for the root, the mode rail and the session list; PR thread rows (each `@ObservedObject var store`) ran
+  54 times for a 5-thread PR (`RenderProbe.hit` counts on the `slow-main` lines).
+- **Why:** `@Published` publishes `objectWillChange` on every set, equal value included, and `@ObservedObject`
+  re-renders on any publish, whatever the body reads. One mode switch sets 3 to 5 properties.
+- **Fix:** `@Observable final class HubModel` (36 `@Published` dropped; the `$selectedID`-style publishers of the
+  sub-models stay Combine for now): a body re-runs only when a property it read changes. `@ObservedObject var model`
+  becomes `var model`, `@Bindable` where a `$binding` is taken, `withObservationTracking` for a recorder that
+  watched the publishers (gotchas.md "Observation migration"). Rows that observed a store take values from the
+  parent (one read per row) and are `Equatable` with `.equatable()`.
+- **Measured (probe sweep, same Mac, load 11 to 20):** `hub.root.body` 3 to 5 → 1 per switch; mode.prs 394 →
+  381 ms, mode.inbox 207 → 178, mode.timeline 243 → 188, mode.agents 234 → 193, mode.worktrees 292 → 253.
+  `RenderProbe.watch` (which counted `objectWillChange`) has nothing to count on an `@Observable` model; the
+  `bodies[…]` list on every busy line is the replacement.
 
 ### A dragged panel: one value per step, one leaf reads it (2026-10-29 19:41)
 - **Symptom:** a sidebar drag costs 30 to 60 ms per step with an accessibility client; a drag of a list edge costs

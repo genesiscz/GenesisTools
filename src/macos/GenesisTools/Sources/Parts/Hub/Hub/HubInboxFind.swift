@@ -6,7 +6,7 @@ import SwiftUI
 // under its header; this view adds the find itself over the sessions InboxMain shows.
 
 struct InboxFindHost: View {
-    @ObservedObject var model: HubModel
+    var model: HubModel
     @ObservedObject var inbox: HubInboxModel
     @AppStorage("hub.inbox.sort") private var sortKey = InboxSort.recent.rawValue
     @State private var find = PanelFindModel(scope: "inbox", title: "the inbox")

@@ -39,6 +39,8 @@ struct AgentDraftsList: View {
                         ForEach(drafts, id: \.id) { draft in
                             AgentDraftRow(draft: draft, focused: model.focusedCard == "draft:\(draft.id)")
                                 .rowButton(cornerRadius: 6) { model.revealDraft(draft.id) }
+                                // The button exists under the pointer or on the focused draft (`liveRow`).
+                                .liveRow(selected: model.focusedCard == "draft:\(draft.id)")
                         }
                     }
                 }

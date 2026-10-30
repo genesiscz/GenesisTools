@@ -12,7 +12,7 @@ import SwiftUI
 // (Martin, 2026-10-02: "No changed files … I should be able to swap … to the files of the selected folders").
 
 struct HubFilesPane: View {
-    @ObservedObject var model: HubModel
+    var model: HubModel
 
     var body: some View {
         VStack(spacing: 0) {
@@ -45,7 +45,7 @@ enum HubFileListMode: String {
 
 /// The hub's file list: "Changed" / "Folders" chips and the add-folder button over the list they pick.
 struct HubFileList: View {
-    @ObservedObject var model: HubModel
+    var model: HubModel
     @ObservedObject var review: ReviewModel
     @AppStorage(HubFileListMode.key, store: HubDefaults.store) private var mode = HubFileListMode.changed.rawValue
     // Here, not in `HubFolderTrees`: that view leaves while Changed shows, and its open folders with it.
@@ -315,7 +315,7 @@ private struct HubFolderTreeHeader: View {
 }
 
 struct HubChangesPane: View {
-    @ObservedObject var model: HubModel
+    var model: HubModel
 
     var body: some View {
         VStack(spacing: 0) {

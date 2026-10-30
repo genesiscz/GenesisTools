@@ -8,7 +8,7 @@ const [mode, edgeName, deltaArg, out] = process.argv.slice(2);
 const opts = { pr: flag("--pr"), worktree: flag("--worktree") };
 openHub(mode, opts);
 await Bun.sleep(Number(flag("--settle") ?? (mode === "prs" ? 25_000 : 6000)));
-const e = resizeEdges().find((x) => x.desc === edgeName);
+const e = (await resizeEdges()).find((x) => x.desc === edgeName);
 if (!e) {
     console.log(`no edge "${edgeName}" in ${mode}`);
     process.exit(1);
@@ -18,7 +18,7 @@ await Bun.sleep(500);
 const since = logSize();
 const run = drag(e, Number(deltaArg), 2.4, 0.1);
 await Bun.sleep(2300);
-const sample = Bun.spawn(["sample", hubPid(), "1", "1", "-mayDie", "-file", out], {
+const sample = Bun.spawn(["sample", await hubPid(), "1", "1", "-mayDie", "-file", out], {
     stdout: "ignore",
     stderr: "ignore",
 });

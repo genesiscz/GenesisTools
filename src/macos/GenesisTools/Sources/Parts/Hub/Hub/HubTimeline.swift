@@ -942,10 +942,11 @@ extension HubModel {
 // MARK: - Sidebar
 
 struct TimelineListView: View {
-    @ObservedObject var model: HubModel
+    var model: HubModel
     @ObservedObject var timeline: HubTimelineModel
 
     var body: some View {
+        let _ = RenderProbe.hit("timeline.list.body")
         ScrollView {
             VStack(alignment: .leading, spacing: 2) {
                 sectionTitle("Range")
@@ -990,29 +991,24 @@ struct TimelineListView: View {
 
     private func rangeRow(_ range: TimelineRange) -> some View {
         let selected = timeline.range == range
-        let subtitle: String? = range == .sinceLastVisit ? (timeline.lastVisit == nil ? "no earlier visit: last 24 hours" : "") : nil
-        return HStack(spacing: 8) {
-            Image(systemName: selected ? "largecircle.fill.circle" : "circle")
-                .foregroundColor(selected ? ReviewPalette.renamed : ReviewPalette.dim)
-                .frame(width: 16)
-            // The subtitle goes under the title, so a narrow sidebar never cuts the range's name.
-            VStack(alignment: .leading, spacing: 1) {
-                Text(range.title).font(.system(size: 12.5, weight: selected ? .semibold : .regular)).lineLimit(1).fixedSize()
-                if let subtitle {
-                    LiveAgo(date: timeline.lastVisit, fallback: subtitle) { timeline.lastVisit == nil ? $0 : "from \($0)" }
-                        .font(.system(size: 10.5)).foregroundColor(ReviewPalette.dim).lineLimit(2)
-                }
-            }
-            Spacer(minLength: 0)
-        }
-        .padding(.horizontal, 10)
-        .padding(.vertical, subtitle == nil ? 0 : 4)
-        .frame(minHeight: 26)
-        .background(RoundedRectangle(cornerRadius: 7).fill(selected ? Color.white.opacity(0.08) : Color.clear))
-        .contentShape(Rectangle())
-        .rowButton { timeline.range = range }
-        .padding(.horizontal, 6)
-        .instantTooltip(range == .sinceLastVisit ? "Everything since the last time this feed was open in an earlier run of the hub" : "Show \(range.title.lowercased())")
+        let since = range == .sinceLastVisit
+            ? TimelineFilterRow.Since(
+                lastVisit: timeline.lastVisit,
+                fallback: timeline.lastVisit == nil ? "no earlier visit: last 24 hours" : ""
+            )
+            : nil
+        return TimelineFilterRow(
+            look: .range(since: since),
+            title: range.title,
+            symbol: selected ? "largecircle.fill.circle" : "circle",
+            symbolColor: selected ? ReviewPalette.renamed : ReviewPalette.dim,
+            selected: selected,
+            tooltip: range == .sinceLastVisit
+                ? "Everything since the last time this feed was open in an earlier run of the hub"
+                : "Show \(range.title.lowercased())",
+            select: { timeline.range = range }
+        )
+        .equatable()
     }
 
     private var customDates: some View {
@@ -1028,65 +1024,161 @@ struct TimelineListView: View {
     }
 
     private var needsMeRow: some View {
-        let on = timeline.needsMe
-        return HStack(spacing: 8) {
-            Image(systemName: on ? "checkmark.square.fill" : "square")
-                .foregroundColor(on ? ReviewPalette.modified : ReviewPalette.dim)
-            Image(systemName: "hand.raised").foregroundColor(ReviewPalette.modified).frame(width: 16)
-            Text("Only what needs me").font(.system(size: 12.5))
-            Spacer()
-        }
-        .padding(.horizontal, 10)
-        .frame(height: 26)
-        .contentShape(Rectangle())
-        .rowButton { timeline.needsMe.toggle() }
-        .padding(.horizontal, 6)
-        .instantTooltip("Open decisions, failed CI on my PRs, and review threads on my PRs whose last word is not mine")
+        TimelineFilterRow(
+            look: .toggle(on: timeline.needsMe, color: ReviewPalette.modified),
+            title: "Only what needs me",
+            symbol: "hand.raised",
+            symbolColor: ReviewPalette.modified,
+            tooltip: "Open decisions, failed CI on my PRs, and review threads on my PRs whose last word is not mine",
+            select: { timeline.needsMe.toggle() }
+        )
+        .equatable()
     }
 
     private func kindRow(_ kind: TimelineKind) -> some View {
         let on = !timeline.hidden.contains(kind.rawValue)
-        return HStack(spacing: 8) {
-            Image(systemName: on ? "checkmark.square.fill" : "square")
-                .foregroundColor(on ? kind.color : ReviewPalette.dim)
-            Image(systemName: kind.symbol).foregroundColor(kind.color).frame(width: 16)
-            Text(kind.title).font(.system(size: 12.5))
-            Spacer()
-            Text(verbatim: timeline.pageCount(timeline.count(kind)))
-                .font(.system(size: 10.5, design: .monospaced))
-                .foregroundColor(ReviewPalette.dim)
-        }
-        .padding(.horizontal, 10)
-        .frame(height: 26)
-        .contentShape(Rectangle())
-        .rowButton {
-            if on { timeline.hidden.insert(kind.rawValue) } else { timeline.hidden.remove(kind.rawValue) }
-        }
-        .padding(.horizontal, 6)
-        .instantTooltip((on ? "Hide \(kind.title.lowercased())" : "Show \(kind.title.lowercased())") + (timeline.hasMore ? "\nThe count is of the loaded events; Load older at the end of the feed reads more." : ""))
+        let more = timeline.hasMore ? "\nThe count is of the loaded events; Load older at the end of the feed reads more." : ""
+        return TimelineFilterRow(
+            look: .toggle(on: on, color: kind.color),
+            title: kind.title,
+            symbol: kind.symbol,
+            symbolColor: kind.color,
+            count: timeline.pageCount(timeline.count(kind)),
+            tooltip: (on ? "Hide \(kind.title.lowercased())" : "Show \(kind.title.lowercased())") + more,
+            select: {
+                // Read at the click, not from `on`: an equal row keeps the closure it was first made with.
+                if timeline.hidden.contains(kind.rawValue) {
+                    timeline.hidden.remove(kind.rawValue)
+                } else {
+                    timeline.hidden.insert(kind.rawValue)
+                }
+            }
+        )
+        .equatable()
     }
 
     private func projectRow(name: String?, count: Int) -> some View {
         let selected = timeline.project == name
-        return HStack(spacing: 8) {
-            Image(systemName: name == nil ? "square.stack.3d.up" : "folder")
-                .foregroundColor(ReviewPalette.dim)
+        return TimelineFilterRow(
+            look: .project,
+            title: name ?? "Every project",
+            symbol: name == nil ? "square.stack.3d.up" : "folder",
+            symbolColor: ReviewPalette.dim,
+            count: timeline.pageCount(count),
+            selected: selected,
+            tooltip: name.map { "Only \($0)" } ?? "Every project",
+            select: { timeline.project = name }
+        )
+        .equatable()
+    }
+}
+
+/// A filter row of the Activity sidebar (a range, "Only what needs me", a kind, a project), from values: the sidebar
+/// reads the feed once and passes what each row shows. Live (`liveRow`: the row button with its hover fill, the
+/// tooltip) while the pointer is on it or it is picked; at rest it draws the same labels with no control, so an
+/// accessibility client's responder walk no longer visits the 27 rows' buttons and tooltips per changed node
+/// (performance.md, "Dense lists and accessibility clients"; the Activity sidebar release cost 216 ms, 2026-10-29).
+/// VoiceOver still presses it (the resting `rowButton`).
+struct TimelineFilterRow: View, Equatable {
+    /// How the row draws its marks and its name.
+    enum Look: Equatable {
+        /// A range: the radio mark is the icon, the name is never cut, and "Since last visit" has a line under it.
+        case range(since: Since?)
+        /// A filter that toggles (Only what needs me, a kind): a checkbox in `color` while on, then the icon.
+        case toggle(on: Bool, color: Color)
+        /// A project: the icon, and a name that truncates.
+        case project
+    }
+
+    /// The line under "Since last visit": the age of the last visit, or `fallback` when there was none.
+    struct Since: Equatable {
+        let lastVisit: Date?
+        let fallback: String
+    }
+
+    let look: Look
+    let title: String
+    let symbol: String
+    let symbolColor: Color
+    /// The number at the trailing edge: "200+" while more pages exist (`HubTimelineModel.pageCount`).
+    var count: String? = nil
+    /// The picked range or project: the row's fill and a semibold name. A toggle shows its state in the checkbox.
+    var selected = false
+    let tooltip: String
+    let select: () -> Void
+
+    static func == (a: TimelineFilterRow, b: TimelineFilterRow) -> Bool {
+        a.look == b.look && a.title == b.title && a.symbol == b.symbol && a.symbolColor == b.symbolColor
+            && a.count == b.count && a.selected == b.selected && a.tooltip == b.tooltip
+    }
+
+    private var isRange: Bool {
+        if case .range = look { return true }
+        return false
+    }
+
+    private var since: Since? {
+        if case .range(let since) = look { return since }
+        return nil
+    }
+
+    private var check: (on: Bool, color: Color)? {
+        if case .toggle(let on, let color) = look { return (on, color) }
+        return nil
+    }
+
+    var body: some View {
+        let _ = RenderProbe.hit("timeline.filterRow.body")
+        let check = check
+        HStack(spacing: 8) {
+            if let check {
+                Image(systemName: check.on ? "checkmark.square.fill" : "square")
+                    .foregroundColor(check.on ? check.color : ReviewPalette.dim)
+            }
+            Image(systemName: symbol)
+                .foregroundColor(symbolColor)
                 .frame(width: 16)
-            Text(name ?? "Every project")
-                .font(.system(size: 12.5, weight: selected ? .semibold : .regular))
-                .lineLimit(1)
-            Spacer()
-            Text(verbatim: timeline.pageCount(count))
-                .font(.system(size: 10.5, design: .monospaced))
-                .foregroundColor(ReviewPalette.dim)
+            name
+            Spacer(minLength: isRange ? 0 : nil)
+            if let count {
+                Text(verbatim: count)
+                    .font(.system(size: 10.5, design: .monospaced))
+                    .foregroundColor(ReviewPalette.dim)
+            }
         }
         .padding(.horizontal, 10)
-        .frame(height: 26)
+        .padding(.vertical, since == nil ? 0 : 4)
+        .frame(minHeight: 26)
+        // A toggle or project row stays 26 pt; a range row grows with its "since" line.
+        .frame(height: isRange ? nil : 26)
         .background(RoundedRectangle(cornerRadius: 7).fill(selected ? Color.white.opacity(0.08) : Color.clear))
         .contentShape(Rectangle())
-        .rowButton { timeline.project = name }
+        .rowButton { select() }
+        .accessibilityLabel(Text(verbatim: count.map { "\(title), \($0)" } ?? title))
+        .accessibilityAddTraits(selected || check?.on == true ? .isSelected : [])
         .padding(.horizontal, 6)
-        .instantTooltip(name.map { "Only \($0)" } ?? "Every project")
+        .instantTooltip(tooltip)
+        .liveRow(selected: selected)
+    }
+
+    @ViewBuilder
+    private var name: some View {
+        let weight: Font.Weight = selected ? .semibold : .regular
+        switch look {
+        case .range(let since):
+            // The subtitle goes under the title, so a narrow sidebar never cuts the range's name.
+            VStack(alignment: .leading, spacing: 1) {
+                Text(title).font(.system(size: 12.5, weight: weight)).lineLimit(1).fixedSize()
+                if let since {
+                    LiveAgo(date: since.lastVisit, fallback: since.fallback) { since.lastVisit == nil ? $0 : "from \($0)" }
+                        .font(.system(size: 10.5)).foregroundColor(ReviewPalette.dim).lineLimit(2)
+                }
+            }
+        case .toggle:
+            Text(title).font(.system(size: 12.5))
+        case .project:
+            Text(title).font(.system(size: 12.5, weight: weight)).lineLimit(1)
+        }
     }
 }
 
@@ -1149,7 +1241,7 @@ struct TimelineDay: Identifiable {
 }
 
 struct TimelineMain: View {
-    @ObservedObject var model: HubModel
+    var model: HubModel
     @ObservedObject var timeline: HubTimelineModel
     /// The rows' branch and author links; read here, so a landing fact redraws only its repository's rows.
     @ObservedObject private var repos = RepoFactsStore.shared
@@ -1180,6 +1272,7 @@ struct TimelineMain: View {
     }()
 
     var body: some View {
+        let _ = RenderProbe.hit("timeline.main.body")
         let events = timeline.shown(filter: model.filter)
         let days = TimelineDay.group(events)
         VStack(spacing: 0) {
@@ -1215,6 +1308,7 @@ struct TimelineMain: View {
                                         projectPicked: event.project != nil && timeline.project == event.project,
                                         forge: event.repo.flatMap { repos.facts(for: $0)?.forge }
                                     )
+                                    .equatable()
                                     .swrFlash(timeline.changed.contains(event.id), cornerRadius: 6)
                                     .findRow(event.rowID)
                                         .padding(.horizontal, 10)
@@ -1420,7 +1514,10 @@ struct TimelineMain: View {
 /// accessibility client running (the live hub always has one), SwiftUI walks every responder of the
 /// window for each accessibility node a redraw touches; one filter click redrew every realized row
 /// and cost 1.6 s of main thread (`--bench` `activity` with `GENESIS_HUB_BENCH_AX=1`, 2026-09-25).
-struct TimelineRowView: View {
+/// `Equatable` on those inputs, so a redraw of the feed skips the rows it did not change (43 row bodies per switch
+/// to Activity, 2026-10-29). `model` and `timeline` stay out of `==`: they are the window's one hub and feed, and
+/// what the body reads from `model` (the actions' session) is tracked by Observation, which redraws the row itself.
+struct TimelineRowView: View, Equatable {
     let model: HubModel
     let timeline: HubTimelineModel
     let event: TimelineEvent
@@ -1432,7 +1529,11 @@ struct TimelineRowView: View {
     /// The repository's web pages (`RepoFactsStore`), for the branch and author links.
     let forge: ForgeWeb?
     @State private var popover: TimelinePopover?
-    @State private var hovering = false
+
+    static func == (a: TimelineRowView, b: TimelineRowView) -> Bool {
+        a.event == b.event && a.compact == b.compact && a.expanded == b.expanded
+            && a.projectPicked == b.projectPicked && a.forge == b.forge
+    }
 
     private static let timeFormat: DateFormatter = {
         let formatter = DateFormatter()
@@ -1466,28 +1567,19 @@ struct TimelineRowView: View {
         }
     }
 
-    /// Controls where a click can land: the hovered row, the open one, the one with a popover. The
-    /// others draw the same labels with no button, hover sensor or tooltip. Every control is a
-    /// responder, and with an accessibility client SwiftUI walks all of them once per accessibility
-    /// node an update touches, so the cost of a filter click grew with rows × controls × rows: 1.25 to
-    /// 1.5 s with every row live, 0.1 s with only the hovered one (`--bench` `activity`, AX client on).
-    private var live: Bool { hovering || expanded || popover != nil }
-
     var body: some View {
+        let _ = RenderProbe.hit("timeline.row.body")
+        let _ = RenderProbe.explaining ? Self._printChanges() : ()
         let kind = event.timelineKind
         let actions = model.timelineActions(for: event, timeline: timeline)
-        let live = live
         VStack(alignment: .leading, spacing: 0) {
             HStack(alignment: .center, spacing: 8) {
-                if live {
-                    IconButton(systemName: expanded ? "chevron.down" : "chevron.right", tooltip: expanded ? "Fold the details" : "Show the details (loaded once, on demand)", size: 10) {
-                        timeline.toggle(event)
-                    }
-                } else {
-                    Image(systemName: "chevron.right")
-                        .font(.system(size: 10))
-                        .frame(width: 16, height: 16)
-                        .padding(3)
+                IconButton(
+                    systemName: expanded ? "chevron.down" : "chevron.right",
+                    tooltip: expanded ? "Fold the details" : "Show the details (loaded once, on demand)",
+                    size: 10
+                ) {
+                    timeline.toggle(event)
                 }
                 Text(verbatim: event.date.map { Self.timeFormat.string(from: $0) } ?? "")
                     .font(.system(size: 11, design: .monospaced))
@@ -1497,15 +1589,15 @@ struct TimelineRowView: View {
                     .font(.system(size: 11.5))
                     .foregroundColor(kind.color)
                     .frame(width: 16)
-                    .liveTooltip(live, kind.title)
+                    .instantTooltip(kind.title)
                 if event.waitsForMe {
                     Image(systemName: "hand.raised.fill")
                         .font(.system(size: 10))
                         .foregroundColor(ReviewPalette.modified)
-                        .liveTooltip(live, "Waits for you")
+                        .instantTooltip("Waits for you")
                 }
                 if let project = event.project {
-                    LiveButton(live: live, tooltip: projectPicked ? "Show every project again" : "Only \(project)") {
+                    LiveButton(tooltip: projectPicked ? "Show every project again" : "Only \(project)") {
                         timeline.project = projectPicked ? nil : project
                     } label: {
                         FindText(project, field: "project")
@@ -1519,7 +1611,7 @@ struct TimelineRowView: View {
                     }
                 }
                 // The title may be cut: its tooltip carries it whole, then what a click does.
-                LiveButton(live: live, tooltip: "\(event.title)\n\(openTooltip)") {
+                LiveButton(tooltip: "\(event.title)\n\(openTooltip)") {
                     model.openTimelineEvent(event)
                 } label: {
                     FindText(event.title, field: "title")
@@ -1529,14 +1621,14 @@ struct TimelineRowView: View {
                         .truncationMode(.tail)
                 }
                 if let detail = event.detail {
-                    detailLabel(detail, kind: kind, live: live)
+                    detailLabel(detail, kind: kind)
                 }
                 if let branch = event.branch, kind != .push, !compact {
-                    branchLabel(branch, live: live)
+                    branchLabel(branch)
                 }
                 Spacer(minLength: 6)
                 if let author = event.author, kind != .session, kind != .sessionStart {
-                    authorLabel(author, live: live)
+                    authorLabel(author)
                 }
                 LiveAgo(date: event.date, style: .brief)
                     .font(.system(size: 10.5))
@@ -1544,36 +1636,23 @@ struct TimelineRowView: View {
                     .lineLimit(1)
                     .fixedSize()
                     .frame(minWidth: 52, alignment: .trailing)
-                HStack(spacing: 2) {
-                    // The same glyphs in the same boxes when the row is not live; the context menu lists
-                    // every action on every row.
-                    if live {
-                        ForEach(actions) { action in
-                            IconButton(systemName: action.symbol, tooltip: action.title, size: 11) { run(action) }
-                                .disabled(action.disabled)
-                                .opacity(action.disabled ? 0.35 : 1)
-                        }
-                    } else {
-                        ForEach(actions) { action in
-                            // Faint at rest: the same glyphs come alive as buttons under the pointer, so at full
-                            // strength they read as six decorations per row (H19).
-                            Image(systemName: action.symbol)
-                                .font(.system(size: 11))
-                                .frame(width: 16, height: 16)
-                                .padding(3)
-                                .opacity(action.disabled ? 0.4 * 0.35 : 0.4)
-                        }
-                        .accessibilityHidden(true)
-                    }
-                }
-                // Faint until the row is hovered: at 0.55 every row's five glyphs made the list busy.
-                .opacity(live ? 1 : 0.25)
+                TimelineRowActions(actions: actions) { run($0) }
             }
             .padding(.horizontal, 8)
             .frame(minHeight: 26)
             .contentShape(Rectangle())
-            .onHover { hovering = $0 }
-            .background(RoundedRectangle(cornerRadius: 7).fill(hovering || expanded ? Color.white.opacity(0.05) : Color.clear))
+            // Controls where a click can land: the hovered row, the open one, the one with a popover. The
+            // others draw the same labels with no button, hover sensor or tooltip (`rowLive`). Every control is a
+            // responder, and with an accessibility client SwiftUI walks all of them once per accessibility
+            // node an update touches, so the cost of a filter click grew with rows × controls × rows: 1.25 to
+            // 1.5 s with every row live, 0.1 s with only the hovered one (`--bench` `activity`, AX client on).
+            .transformEnvironment(\.rowLive) { live in
+                if expanded || popover != nil { live = true }
+            }
+            // Outside the transform, so the fill sees the pointer alone: hovered or open, not for a popover alone.
+            .background(TimelineRowFill(expanded: expanded))
+            // The popover below sits outside, so its pickers keep their controls with the pointer away from the row.
+            .liveRow()
             .contextMenu {
                 Button(openTooltip) { model.openTimelineEvent(event) }
                 Divider()
@@ -1628,7 +1707,7 @@ struct TimelineRowView: View {
 
     /// The detail text. For a PR, comment or CI row it opens the host page; for a commit, its commit page.
     @ViewBuilder
-    private func detailLabel(_ detail: String, kind: TimelineKind, live: Bool) -> some View {
+    private func detailLabel(_ detail: String, kind: TimelineKind) -> some View {
         let base = FindText(detail, field: "detail")
             .font(.system(size: 11, design: kind == .commit || kind == .push ? .monospaced : .default))
             .foregroundColor(ReviewPalette.dim)
@@ -1638,7 +1717,8 @@ struct TimelineRowView: View {
             ? AnyView(base.frame(maxWidth: 200, alignment: .leading).layoutPriority(-1))
             : AnyView(base.fixedSize())
         if kind == .pr || kind == .ci || kind == .thread || kind == .commit {
-            LiveButton(live: live, tooltip: kind == .commit ? "Open the commit on the host" : "Open \(event.pr?.ref ?? "the PR") on the host") {
+            let tooltip = kind == .commit ? "Open the commit on the host" : "Open \(event.pr?.ref ?? "the PR") on the host"
+            LiveButton(tooltip: tooltip) {
                 if let url = model.timelineHostURL(event) {
                     ExternalOpener.open(url)
                 } else {
@@ -1649,27 +1729,33 @@ struct TimelineRowView: View {
             }
         } else {
             // A cut detail can be read whole.
-            text.liveTooltip(live, detail)
+            text.instantTooltip(detail)
         }
     }
 
     /// The branch a session or commit row belongs to, linked to its host page when the origin is known.
-    private func branchLabel(_ branch: String, live: Bool) -> some View {
+    private func branchLabel(_ branch: String) -> some View {
         let url = forge?.branch(branch)
-        return ExternalLink(text: branch, url: url, font: .system(size: 10.5, design: .monospaced), glyph: .onHover, tooltip: "Branch \(branch)", findField: "branch", interactive: live)
-            .lineLimit(1)
-            .frame(maxWidth: 160, alignment: .leading)
-            .layoutPriority(-2)
+        return ExternalLink(
+            text: branch, url: url, font: .system(size: 10.5, design: .monospaced), glyph: .onHover,
+            tooltip: "Branch \(branch)", findField: "branch"
+        )
+        .lineLimit(1)
+        .frame(maxWidth: 160, alignment: .leading)
+        .layoutPriority(-2)
     }
 
-    private func authorLabel(_ author: String, live: Bool) -> some View {
+    private func authorLabel(_ author: String) -> some View {
         let forge = event.pr == nil ? nil : forge
         return HStack(spacing: 3) {
             Image(systemName: event.isMine ? "person.crop.circle.fill" : "person.crop.circle")
                 .font(.system(size: 10))
                 .foregroundColor(ReviewPalette.dim)
             if let url = forge?.user(author) {
-                ExternalLink(text: author, url: url, font: .system(size: 11), glyph: .onHover, tooltip: event.isMine ? "\(author) (you)" : "\(author)'s profile", findField: "author", interactive: live)
+                ExternalLink(
+                    text: author, url: url, font: .system(size: 11), glyph: .onHover,
+                    tooltip: event.isMine ? "\(author) (you)" : "\(author)'s profile", findField: "author"
+                )
             } else {
                 FindText(author, field: "author")
                     .font(.system(size: 11))
@@ -1677,7 +1763,7 @@ struct TimelineRowView: View {
                     .lineLimit(1)
             }
         }
-        .liveTooltip(live, event.isMine ? "\(author) (you)" : author)
+        .instantTooltip(event.isMine ? "\(author) (you)" : author)
     }
 
     private func run(_ action: TimelineAction) {
@@ -1706,6 +1792,40 @@ struct TimelineRowView: View {
                 if let notice { model.post(notice.text, notice.tone) }
             }
         }
+    }
+}
+
+/// A timeline row's fill: on while the pointer is on the row (`rowLive` from its `liveRow()`) or the row is open.
+/// The row's own body cannot read the pointer, since the environment value applies to what is inside the modifier.
+private struct TimelineRowFill: View {
+    let expanded: Bool
+    @Environment(\.rowLive) private var hovered
+
+    var body: some View {
+        RoundedRectangle(cornerRadius: 7).fill(hovered || expanded ? Color.white.opacity(0.05) : Color.clear)
+    }
+}
+
+/// The action glyphs at a timeline row's trailing edge: buttons while the row is live, the same glyphs in the same
+/// boxes at rest (`IconButton` draws itself so). The context menu and the accessibility actions list every action
+/// on every row, so a resting strip is hidden from VoiceOver.
+private struct TimelineRowActions: View {
+    let actions: [TimelineAction]
+    let run: (TimelineAction) -> Void
+    @Environment(\.rowLive) private var live
+
+    var body: some View {
+        HStack(spacing: 2) {
+            ForEach(actions) { action in
+                IconButton(systemName: action.symbol, tooltip: action.title, size: 11) { run(action) }
+                    .disabled(action.disabled)
+                    .opacity(action.disabled ? 0.35 : 1)
+            }
+        }
+        // Faint until the row is hovered: at 0.55 every row's five glyphs made the list busy, and at rest they read
+        // as six decorations per row at full strength (H19). 0.1 is the old 0.4 of the glyph times 0.25 of the strip.
+        .opacity(live ? 1 : 0.1)
+        .accessibilityHidden(!live)
     }
 }
 

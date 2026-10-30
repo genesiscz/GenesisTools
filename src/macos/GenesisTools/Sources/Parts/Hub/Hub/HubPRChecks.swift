@@ -130,8 +130,52 @@ private func checkRank(_ status: String?) -> Int {
     }
 }
 
+/// One check: its CI state, its name (a link to the job) and, on a failed one, Log. A value row: the section owns
+/// which logs are open and passes it. It is live (`liveRow`) under the pointer or while its log is open: the badge's
+/// tooltip, the link and Log exist only then, and at rest it draws the same labels. VoiceOver still opens the log
+/// (`restingButton`). Every control of a PR's checks was a responder an accessibility client walks per update
+/// (`PRRow`).
+struct PRCheckRow: View, Equatable {
+    let check: HubPRDetail.Check
+    /// Its failing log shows below it.
+    let logOpen: Bool
+    /// Shows or hides the failing log.
+    let toggleLog: () -> Void
+
+    static func == (a: PRCheckRow, b: PRCheckRow) -> Bool {
+        a.check == b.check && a.logOpen == b.logOpen
+    }
+
+    var body: some View {
+        let _ = RenderProbe.hit("prs.checkRow.body")
+        let canLog = check.status == "failed" && check.url != nil
+        HStack(spacing: 8) {
+            CIBadge(ci: check.status)
+            ExternalLink(text: check.name, url: check.url.flatMap(URL.init(string:)), glyph: .onHover)
+            Spacer(minLength: 4)
+            if canLog {
+                LiveButton(tooltip: logOpen ? "Hide the failing log" : "Show the failing part of this check's job log",
+                           pressable: true) {
+                    toggleLog()
+                } label: {
+                    HStack(spacing: 4) {
+                        Text(logOpen ? "Hide log" : "Log")
+                        Image(systemName: "chevron.right")
+                            .font(.system(size: 9, weight: .semibold))
+                            .rotationEffect(.degrees(logOpen ? 90 : 0))
+                    }
+                    .font(.system(size: 11.5))
+                    .foregroundColor(ReviewPalette.dim)
+                    .contentShape(Rectangle())
+                }
+            }
+        }
+        .liveRow(selected: logOpen)
+    }
+}
+
 struct PRChecksSection: View {
-    @ObservedObject var model: HubModel
+    var model: HubModel
     let pr: HubPR
     let checks: [HubPRDetail.Check]
     @Binding var folded: Bool
@@ -172,9 +216,11 @@ struct PRChecksSection: View {
                 .foregroundColor(ReviewPalette.removed)
         )) {
             ForEach(sorted) { check in
-                row(check)
+                let open = expanded.contains(check.id)
+                PRCheckRow(check: check, logOpen: open) { toggle(check) }
+                    .equatable()
                     .findRow("check:\(check.id)", cornerRadius: 6)
-                if expanded.contains(check.id), let url = check.url {
+                if open, let url = check.url {
                     logPanel(check, url: url).transition(.genReveal)
                 }
             }
@@ -184,33 +230,6 @@ struct PRChecksSection: View {
             guard Self.snapshotOpensLogs else { return }
             for check in checks where check.status == "failed" && check.url != nil && !expanded.contains(check.id) {
                 toggle(check)
-            }
-        }
-    }
-
-    private func row(_ check: HubPRDetail.Check) -> some View {
-        let open = expanded.contains(check.id)
-        let canLog = check.status == "failed" && check.url != nil
-        return HStack(spacing: 8) {
-            CIBadge(ci: check.status)
-            ExternalLink(text: check.name, url: check.url.flatMap(URL.init(string:)), glyph: .onHover)
-            Spacer(minLength: 4)
-            if canLog {
-                Button {
-                    toggle(check)
-                } label: {
-                    HStack(spacing: 4) {
-                        Text(open ? "Hide log" : "Log")
-                        Image(systemName: "chevron.right")
-                            .font(.system(size: 9, weight: .semibold))
-                            .rotationEffect(.degrees(open ? 90 : 0))
-                    }
-                    .font(.system(size: 11.5))
-                    .foregroundColor(ReviewPalette.dim)
-                    .contentShape(Rectangle())
-                }
-                .buttonStyle(.genHoverPlain())
-                .instantTooltip(open ? "Hide the failing log" : "Show the failing part of this check's job log")
             }
         }
     }
@@ -335,7 +354,7 @@ struct PRChecksSection: View {
 /// "Send to agent" for one failed check: the shared task form (Review/FixThreads.swift) with the
 /// `tools hub pr fix-check` verb, which puts the failing log into the task file.
 struct CheckSendForm: View {
-    @ObservedObject var model: HubModel
+    var model: HubModel
     let pr: HubPR
     let check: HubPRDetail.Check
     let close: () -> Void

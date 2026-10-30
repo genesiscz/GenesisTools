@@ -229,7 +229,7 @@ final class HubDigestModel: ObservableObject {
 }
 
 struct HubDigestPanel: View {
-    @ObservedObject var hub: HubModel
+    var hub: HubModel
     let close: () -> Void
     @StateObject private var model = HubDigestModel()
 

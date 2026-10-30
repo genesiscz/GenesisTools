@@ -556,18 +556,17 @@ final class HubLogicTests: XCTestCase {
         model.initialMode = .worktrees
         model.mode = .worktrees
         model.loadingWorktrees = true
-        let added = expectation(description: "linked checkout is in the sidebar")
-        let observation = model.$worktrees.filter { rows in rows.contains { $0.path == root } }.prefix(1).sink { _ in
-            added.fulfill()
-        }
-        defer { observation.cancel() }
-
         // The commit resolves after discovery captured its inputs, but before its empty result lands.
         model.showCommit(repo: root, sha: sha, title: "linked commit")
         model.worktrees = []
         model.loadingWorktrees = false
         model.addWorktreesIfMissing(root, intoEmptyList: true)
-        await fulfillment(of: [added], timeout: 5)
+        // The model is Observation-tracked, not a publisher: wait for the row the way a view would see it.
+        let sidebarDeadline = Date().addingTimeInterval(5)
+        while !model.worktrees.contains(where: { $0.path == root }) && Date() < sidebarDeadline {
+            try await Task.sleep(nanoseconds: 50_000_000)
+        }
+        XCTAssertTrue(model.worktrees.contains { $0.path == root }, "linked checkout is in the sidebar")
 
         XCTAssertEqual(model.selectedWorktree, root)
         XCTAssertNotNil(model.worktrees.first { $0.path == model.selectedWorktree })

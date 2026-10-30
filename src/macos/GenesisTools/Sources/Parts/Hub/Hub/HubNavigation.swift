@@ -255,7 +255,7 @@ enum HubNavInput {
 /// The back and forward arrows above the mode switch, and the history list beside them. The tooltips name where
 /// each arrow goes and who took the hub there.
 struct HubNavButtons: View {
-    @ObservedObject var model: HubModel
+    var model: HubModel
 
     var body: some View {
         let history = model.history
@@ -292,7 +292,7 @@ struct HubNavButtons: View {
 
 /// The clock beside the arrows: every place, newest first, with who went there and why; a click hops there.
 struct HubHistoryButton: View {
-    @ObservedObject var model: HubModel
+    @Bindable var model: HubModel
 
     var body: some View {
         IconButton(systemName: "clock.arrow.circlepath", tooltip: HubKeymap.hint("History", "hub.go.history"), size: 12) {

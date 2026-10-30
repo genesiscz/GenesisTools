@@ -20,16 +20,28 @@ public struct IconButton: View {
         self.action = action
     }
 
+    // In a row at rest (`liveRow`): the glyph in the button's footprint, no button, no tooltip sensor; a disabled
+    // one still reads disabled (the hover style dims its label to 0.4).
+    @Environment(\.rowLive) private var live
+    @Environment(\.isEnabled) private var isEnabled
+
     public var body: some View {
-        Button(action: action) {
-            Image(systemName: systemName)
-                .font(.system(size: size))
-                .foregroundColor(tint)
-                .frame(width: 16, height: 16)
-                .contentShape(Rectangle())
+        let glyph = Image(systemName: systemName)
+            .font(.system(size: size))
+            .foregroundColor(tint)
+            .frame(width: 16, height: 16)
+            .contentShape(Rectangle())
+        if live {
+            Button(action: action) { glyph }
+                .buttonStyle(.genHoverIcon(accent: accent ?? KitTheme.accent))
+                .instantTooltip(tooltip)
+                .accessibilityLabel(Text(tooltip))
+        } else {
+            glyph
+                .padding(3)
+                .opacity(isEnabled ? 1 : 0.4)
+                .restingButton(enabled: isEnabled, action: action)
+                .accessibilityLabel(Text(tooltip))
         }
-        .buttonStyle(.genHoverIcon(accent: accent ?? KitTheme.accent))
-        .instantTooltip(tooltip)
-        .accessibilityLabel(Text(tooltip))
     }
 }

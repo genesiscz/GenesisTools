@@ -9,7 +9,7 @@ const opts = { pr: flag("--pr"), worktree: flag("--worktree") };
 mkdirSync(out, { recursive: true });
 openHub(mode, opts);
 await Bun.sleep(mode === "prs" ? 25_000 : 6000);
-const e = resizeEdges().find((x) => x.desc.startsWith(edgeName));
+const e = (await resizeEdges()).find((x) => x.desc.startsWith(edgeName));
 if (!e) {
     console.log(`no edge "${edgeName}" in ${mode}`);
     process.exit(1);

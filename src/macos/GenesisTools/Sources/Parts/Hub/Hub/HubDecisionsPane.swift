@@ -6,7 +6,7 @@ import SwiftUI
 // other way round. ⌘F: the shared panel find (Hub/HubPanelFind.swift).
 
 struct DecisionsView: View {
-    @ObservedObject var model: HubModel
+    var model: HubModel
     @ObservedObject var inbox: HubInboxModel
     @AppStorage("hub.decisions.filter") private var filter = "open"
     @State private var find = PanelFindModel(scope: "decisions", title: "the decisions")
@@ -80,6 +80,7 @@ struct DecisionsView: View {
                     if let session {
                         ForEach(shown) { item in
                             InboxDecisionCard(model: model, inbox: inbox, session: session, item: item)
+                                .liveRow()
                         }
                         InboxSendBar(model: model, inbox: inbox, session: session, claimsShortcut: true)
                     }

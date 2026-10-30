@@ -272,14 +272,20 @@ final class AgentProcsStore: ObservableObject {
 }
 
 struct AgentProcsView: View {
-    @ObservedObject var model: HubModel
+    var model: HubModel
     @ObservedObject private var store = AgentProcsStore.shared
     @State private var pending: [ProcGroup]?
     @State private var find = PanelFindModel(scope: "procs", title: "the agent processes")
     @GenReduceMotion private var reduceMotion
 
     var body: some View {
+        let _ = RenderProbe.hit("procs.view.body")
         let groups = store.report?.groups ?? []
+        // Read once per body and handed to every row as values: a row whose values did not change skips its body.
+        let expanded = store.expanded
+        let stopping = store.stopping
+        let energy = store.report?.energy ?? false
+        let launchdUnknown = store.report?.launchdUnknown ?? false
         VStack(spacing: 0) {
             header
             PanelFindBar(find: find)
@@ -293,14 +299,15 @@ struct AgentProcsView: View {
                         ForEach(groups) { group in
                             AgentProcsRow(
                                 group: group,
-                                expanded: store.expanded.contains(group.id),
-                                stopping: store.stopping.contains(group.rootPid),
-                                energy: store.report?.energy ?? false,
-                                launchdUnknown: store.report?.launchdUnknown ?? false,
+                                expanded: expanded.contains(group.id),
+                                stopping: stopping.contains(group.rootPid),
+                                energy: energy,
+                                launchdUnknown: launchdUnknown,
                                 toggle: { toggle(group) },
                                 reveal: { reveal(group) },
                                 stop: { pending = [group] }
                             )
+                            .equatable()
                             .findRow(group.id, cornerRadius: 8)
                         }
                     }
@@ -439,8 +446,11 @@ struct AgentProcsView: View {
     }
 }
 
-/// One tree: values only (no store, no model), and its buttons only while the pointer is on it.
-struct AgentProcsRow: View {
+/// One tree: values only (no store, no model), and its buttons, tooltips and path link only while it is live (the
+/// pointer is on it, or it is open: `.liveRow`). At rest the kit's components draw the same glyphs and text with no
+/// responder, so an accessibility client's walk of the window's responders stays short (performance.md, "Dense lists
+/// and accessibility clients").
+struct AgentProcsRow: View, Equatable {
     let group: ProcGroup
     let expanded: Bool
     let stopping: Bool
@@ -449,7 +459,11 @@ struct AgentProcsRow: View {
     let toggle: () -> Void
     let reveal: () -> Void
     let stop: () -> Void
-    @State private var hovering = false
+
+    static func == (a: AgentProcsRow, b: AgentProcsRow) -> Bool {
+        a.group == b.group && a.expanded == b.expanded && a.stopping == b.stopping && a.energy == b.energy
+            && a.launchdUnknown == b.launchdUnknown
+    }
 
     private var reallyStoppable: Bool { group.stoppable(launchdUnknown: launchdUnknown) }
 
@@ -468,6 +482,7 @@ struct AgentProcsRow: View {
     }
 
     var body: some View {
+        let _ = RenderProbe.hit("procs.row.body")
         VStack(alignment: .leading, spacing: 4) {
             HStack(alignment: .top, spacing: 10) {
                 Circle().fill(tone).frame(width: 8, height: 8).padding(.top, 5)
@@ -509,7 +524,8 @@ struct AgentProcsRow: View {
                 }
                 Spacer(minLength: 8)
                 numbers
-                actions
+                AgentProcsActions(expanded: expanded, stopping: stopping, revealable: group.session != nil,
+                                  stoppable: reallyStoppable, toggle: toggle, reveal: reveal, stop: stop)
             }
             if expanded {
                 ForEach(group.processes) { entry in
@@ -519,12 +535,16 @@ struct AgentProcsRow: View {
                 .transition(.genReveal)
             }
         }
+        // An open tree keeps its controls, as before; the hover fill below stays the pointer's alone.
+        .transformEnvironment(\.rowLive) { live in
+            if expanded { live = true }
+        }
         .clipped()
         .padding(.horizontal, 12)
         .padding(.vertical, 7)
-        .background(RoundedRectangle(cornerRadius: 8).fill(hovering ? Color.white.opacity(0.04) : Color.clear))
+        .background(AgentProcsHoverFill())
         .contentShape(Rectangle())
-        .onHover { hovering = $0 }
+        .liveRow()
         // The buttons appear on hover; keyboard and VoiceOver users get the same three as the row's actions.
         .accessibilityElement(children: .combine)
         .accessibilityActions {
@@ -565,27 +585,6 @@ struct AgentProcsRow: View {
         }
     }
 
-    @ViewBuilder
-    private var actions: some View {
-        HStack(spacing: 4) {
-            if hovering || expanded {
-                IconButton(systemName: expanded ? "chevron.up" : "chevron.down", tooltip: expanded ? "Hide the processes" : "Show every process of the tree") { toggle() }
-                if group.session != nil {
-                    IconButton(systemName: "arrow.right.circle", tooltip: "Show this session in the Sessions list", action: reveal)
-                }
-                if reallyStoppable {
-                    IconButton(systemName: "stop.circle", tooltip: "Stop this tree: SIGTERM, then SIGKILL after \(AgentProcs.graceSeconds) s (asks first)", action: stop)
-                        .disabled(stopping)
-                }
-            } else if stopping {
-                ProgressView().controlSize(.mini)
-            } else {
-                Color.clear.frame(width: 16, height: 16)
-            }
-        }
-        .frame(width: 64, alignment: .trailing)
-    }
-
     private func processLine(_ entry: ProcEntry) -> some View {
         HStack(spacing: 8) {
             Text(verbatim: String(repeating: "  ", count: entry.depth) + (entry.depth == 0 ? "" : "└ ") + entry.label)
@@ -603,9 +602,51 @@ struct AgentProcsRow: View {
     }
 }
 
+/// A tree's buttons, only while its row is live (`rowLive`: the pointer is on it, or it is open); at rest nothing,
+/// or the spinner of a stop in flight. A child view, since the row's own body cannot read the row's liveness.
+private struct AgentProcsActions: View {
+    let expanded: Bool
+    let stopping: Bool
+    let revealable: Bool
+    let stoppable: Bool
+    let toggle: () -> Void
+    let reveal: () -> Void
+    let stop: () -> Void
+    @Environment(\.rowLive) private var live
+
+    var body: some View {
+        HStack(spacing: 4) {
+            if live {
+                IconButton(systemName: expanded ? "chevron.up" : "chevron.down", tooltip: expanded ? "Hide the processes" : "Show every process of the tree") { toggle() }
+                if revealable {
+                    IconButton(systemName: "arrow.right.circle", tooltip: "Show this session in the Sessions list", action: reveal)
+                }
+                if stoppable {
+                    IconButton(systemName: "stop.circle", tooltip: "Stop this tree: SIGTERM, then SIGKILL after \(AgentProcs.graceSeconds) s (asks first)", action: stop)
+                        .disabled(stopping)
+                }
+            } else if stopping {
+                ProgressView().controlSize(.mini)
+            } else {
+                Color.clear.frame(width: 16, height: 16)
+            }
+        }
+        .frame(width: 64, alignment: .trailing)
+    }
+}
+
+/// A tree row's hover fill: the pointer's alone (`.liveRow()` without `selected`), so an open tree is not filled.
+private struct AgentProcsHoverFill: View {
+    @Environment(\.rowLive) private var hovering
+
+    var body: some View {
+        RoundedRectangle(cornerRadius: 8).fill(hovering ? Color.white.opacity(0.04) : Color.clear)
+    }
+}
+
 /// The Sessions list's first row: opens the process pane, with the orphan count once known.
 struct AgentProcsEntry: View {
-    @ObservedObject var model: HubModel
+    var model: HubModel
     @ObservedObject private var store = AgentProcsStore.shared
 
     var body: some View {

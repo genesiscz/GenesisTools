@@ -417,17 +417,23 @@ public struct InstantTooltip: ViewModifier {
     // accessibility focus updates: folding a PR group with #424 open cost 900 ms of main thread, 440 ms
     // without the sensors (2026-09-24, `HubMainBusy` "groups.prs.repos.toggle").
     @State private var hovering = false
+    // In a row at rest (`liveRow`) there is no hover sensor at all: the tooltip exists while the row is live.
+    @Environment(\.rowLive) private var rowLive
 
     public func body(content: Content) -> some View {
-        content
-            .onHover { inside in
-                if hovering != inside { hovering = inside }
-            }
-            .overlay {
-                if hovering {
-                    TooltipHoverSensor(content: tooltip, below: below)
+        if rowLive {
+            content
+                .onHover { inside in
+                    if hovering != inside { hovering = inside }
                 }
-            }
+                .overlay {
+                    if hovering {
+                        TooltipHoverSensor(content: tooltip, below: below)
+                    }
+                }
+        } else {
+            content
+        }
     }
 }
 

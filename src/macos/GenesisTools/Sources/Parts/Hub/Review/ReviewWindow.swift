@@ -2585,6 +2585,7 @@ struct ReviewRootView: View {
     private var contextSqueezed: Bool { width > 0 && width * Self.contextFraction < Self.contextMinWidth }
 
     var body: some View {
+        let _ = RenderProbe.hit("review.root.body")
         SideSplit(panelEdge: .leading, maxFraction: Self.contextFraction) {
             if showsContext {
                 ResizableSidePanel(key: ReviewContextPanel.key, edge: .leading, title: "Context", defaultWidth: 420,
@@ -2740,6 +2741,7 @@ private struct ReviewHeader: View {
     final class WidthBox { var value: CGFloat = 0 }
 
     var body: some View {
+        let _ = RenderProbe.hit("review.header.body")
         // One row of one height at every width. It used to wrap its controls to a second row in a
         // narrow pane: 44 pt ↔ 61 pt, and a drag across that width moved the whole diff up and
         // down (9 flips in one sweep, measured with --bench). Now only the controls condense.
@@ -3553,19 +3555,19 @@ struct FileSidebarRows: View, Equatable {
                 additions: additions,
                 deletions: deletions,
                 tree: tree,
-                collapsed: !row.expanded
+                collapsed: !row.expanded,
+                toggle: { toggle(row.id) }
             )
-            .rowButton(cornerRadius: 6) {
-                toggle(row.id)
-            }
+            .equatable()
             // The gap above a flat-list group sits outside the button, so the
             // hover box covers the folder name and nothing above it.
             .padding(.horizontal, 6)
             .padding(.top, tree ? 0 : 8)
         case .file(let file):
-            FileRow(file: file, selected: file.id == selectedID, depth: row.depth, drafts: drafts[file.id] ?? 0)
+            FileRow(file: file, selected: file.id == selectedID, depth: row.depth, drafts: drafts[file.id] ?? 0,
+                    select: { select(file.id) })
+                .equatable()
                 .id(file.id)
-                .rowButton(cornerRadius: 6) { select(file.id) }
                 .contextMenu { fileMenu(file) }
                 .padding(.horizontal, 6)
         }
@@ -3741,15 +3743,24 @@ private struct RootFolderRow: View {
     }
 }
 
-private struct DirectoryRow: View {
+/// A folder of the file list, from values: live (its row button, the name's tooltip) under the pointer, the same
+/// glyphs with no control at rest (`liveRow`; a diff has up to hundreds of rows).
+private struct DirectoryRow: View, Equatable {
     let name: String
     let depth: Int
     let additions: Int
     let deletions: Int
     let tree: Bool
     let collapsed: Bool
+    let toggle: () -> Void
+
+    static func == (a: DirectoryRow, b: DirectoryRow) -> Bool {
+        a.name == b.name && a.depth == b.depth && a.additions == b.additions && a.deletions == b.deletions
+            && a.tree == b.tree && a.collapsed == b.collapsed
+    }
 
     var body: some View {
+        let _ = RenderProbe.hit("review.directoryRow.body")
         HStack(spacing: 6) {
             if tree {
                 Image(systemName: "chevron.right")
@@ -3778,17 +3789,29 @@ private struct DirectoryRow: View {
         .padding(.trailing, 6)
         .frame(height: 24)
         .contentShape(Rectangle())
+        .rowButton(cornerRadius: 6, toggle)
+        .accessibilityValue(Text(collapsed ? "folded" : "open"))
+        .liveRow()
     }
 }
 
-private struct FileRow: View {
+/// A file of the file list, from values: live (its row button, the path and draft tooltips) under the pointer or
+/// when selected (`liveRow`), the same labels with no control at rest.
+private struct FileRow: View, Equatable {
     let file: DiffFile
     let selected: Bool
     var depth = 0
     /// Undecided agent drafts on this file.
     var drafts = 0
+    let select: () -> Void
+
+    static func == (a: FileRow, b: FileRow) -> Bool {
+        a.file == b.file && a.selected == b.selected && a.depth == b.depth && a.drafts == b.drafts
+    }
 
     var body: some View {
+        let _ = RenderProbe.hit("review.fileRow.body")
+        let _ = RenderProbe.explaining ? Self._printChanges() : ()
         HStack(spacing: 8) {
             Circle()
                 .fill(ReviewPalette.color(file.status))
@@ -3832,7 +3855,9 @@ private struct FileRow: View {
                 }
         )
         .contentShape(Rectangle())
+        .rowButton(cornerRadius: 6, select)
         .instantTooltip(file.path)
+        .liveRow(selected: selected)
     }
 }
 

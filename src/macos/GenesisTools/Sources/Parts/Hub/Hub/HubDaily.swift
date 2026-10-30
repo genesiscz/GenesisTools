@@ -104,7 +104,7 @@ struct HubDailyChip: View {
 }
 
 private struct HubDailyOverlays: ViewModifier {
-    @ObservedObject var model: HubModel
+    var model: HubModel
     @ObservedObject var daily = HubDailyModel.shared
 
     func body(content: Content) -> some View {

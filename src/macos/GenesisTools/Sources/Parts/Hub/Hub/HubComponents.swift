@@ -50,12 +50,13 @@ struct ExternalLink: View {
     /// The key a panel find row lists this text under (a row with several links names each one).
     var findField = "link"
     /// False draws the same label with no button, hover or tooltip: a dense list's rows away from the
-    /// pointer (`TimelineRowView`), where every control is a responder SwiftUI walks per update.
-    var interactive = true
+    /// pointer, where every control is a responder SwiftUI walks per update. Nil follows the row (`liveRow`).
+    var interactive: Bool?
     @State private var hovering = false
+    @Environment(\.rowLive) private var rowLive
 
     var body: some View {
-        if let url, !interactive {
+        if let url, !(interactive ?? rowLive) {
             HStack(spacing: 3) {
                 if let icon {
                     Image(systemName: icon)
@@ -106,66 +107,9 @@ struct ExternalLink: View {
     }
 }
 
-/// A text-like button of a dense row or card (`genHoverPlain`, a tooltip) while its row is live; the bare label
-/// otherwise, drawn the same (the style adds no padding or background at rest, and dims a disabled label to 0.4).
-/// Every control is a responder, and with an accessibility client SwiftUI walks all of them once per accessibility
-/// node an update touches. `pressable` keeps the bare label a button to VoiceOver (`restingButton`).
-struct LiveButton<Label: View>: View {
-    let live: Bool
-    let tooltip: String?
-    var enabled = true
-    var pressable = false
-    let action: () -> Void
-    @ViewBuilder let label: () -> Label
-
-    var body: some View {
-        if live {
-            Button(action: action, label: label)
-                .buttonStyle(.genHoverPlain())
-                .disabled(!enabled)
-                .liveTooltip(true, tooltip)
-        } else if pressable {
-            label()
-                .opacity(enabled ? 1 : 0.4)
-                .restingButton(enabled: enabled, action: action)
-        } else {
-            label()
-        }
-    }
-}
-
-extension View {
-    /// `.instantTooltip` only while the row is live (`LiveButton`).
-    @ViewBuilder
-    func liveTooltip(_ live: Bool, _ text: String?) -> some View {
-        if live, let text {
-            instantTooltip(text)
-        } else {
-            self
-        }
-    }
-
-    /// The same for a rich tooltip (`TooltipContent`).
-    @ViewBuilder
-    func liveTooltip(_ live: Bool, _ content: TooltipContent?) -> some View {
-        if live, let content {
-            instantTooltip(content)
-        } else {
-            self
-        }
-    }
-
-    /// A control at rest, drawn without its `Button`, hover sensor and tooltip: still a button to VoiceOver and the
-    /// accessibility clients, which press it through its default action.
-    func restingButton(enabled: Bool, action: @escaping () -> Void) -> some View {
-        disabled(!enabled)
-            .accessibilityElement(children: .combine)
-            .accessibilityAddTraits(.isButton)
-            .accessibilityAction {
-                if enabled { action() }
-            }
-    }
-}
+// `LiveButton`, `restingButton` and `liveTooltip` (the controls of a dense row that exist only while the row is
+// live) moved to GenesisKit (Style/LiveControls.swift, Style/InstantTooltip.swift) on 2026-10-29, so the widget's
+// rows use the same three.
 
 /// What `tools hub repo --json` says about a folder: checkout, branch, origin web pages, PR/MR.
 /// The TypeScript side owns remote parsing and host rules (src/review/lib/repo.ts,
@@ -736,28 +680,29 @@ struct GroupHeader: View {
         let key = key ?? title
         let isCollapsed = prefs.collapsed.contains(key)
         let isPinned = prefs.pinned.contains(key)
+        // Live under the pointer (`liveRow`): the fold button and the icon buttons exist then. At rest the header
+        // draws the same glyphs with no control (a sidebar has 3 to 25 headers, each a button, three icon buttons
+        // and a tooltip, and an accessibility client walks every responder per changed node; performance.md "Dense
+        // lists and accessibility clients"). VoiceOver folds and pins it through the header's own actions below.
+        let fold = { GenMotion.perform(expanding: isCollapsed, reduceMotion: reduceMotion) { prefs.toggleCollapsed(key) } }
+        let foldLabel = HStack(spacing: 6) {
+            Image(systemName: "chevron.right")
+                .font(.system(size: 9, weight: .semibold))
+                .rotationEffect(.degrees(isCollapsed ? 0 : 90))
+            Text(title).font(.system(size: 11.5, weight: .semibold))
+            if isPinned && !starred {
+                Image(systemName: "pin.fill").font(.system(size: 9)).foregroundColor(ReviewPalette.modified)
+            }
+            Spacer()
+        }
+        .contentShape(Rectangle())
         HStack(spacing: 6) {
             // A real button, so the keyboard and VoiceOver can fold the group. The copy button stays
             // outside it: a button inside a button leaves both ambiguous.
-            Button {
-                GenMotion.perform(expanding: isCollapsed, reduceMotion: reduceMotion) { prefs.toggleCollapsed(key) }
-            } label: {
-                HStack(spacing: 6) {
-                    Image(systemName: "chevron.right")
-                        .font(.system(size: 9, weight: .semibold))
-                        .rotationEffect(.degrees(isCollapsed ? 0 : 90))
-                    Text(title).font(.system(size: 11.5, weight: .semibold))
-                    if isPinned && !starred {
-                        Image(systemName: "pin.fill").font(.system(size: 9)).foregroundColor(ReviewPalette.modified)
-                    }
-                    Spacer()
-                }
-                .contentShape(Rectangle())
-            }
-            .buttonStyle(.genHoverPlain())
-            .accessibilityLabel(Text(title))
-            .accessibilityValue(Text(isCollapsed ? "collapsed, \(Plural.count(count, "item"))" : "expanded, \(Plural.count(count, "item"))"))
-            .accessibilityHint(Text(isCollapsed ? "Expands the group" : "Collapses the group"))
+            LiveButton(tooltip: nil, action: fold) { foldLabel }
+                .accessibilityLabel(Text(title))
+                .accessibilityValue(Text(isCollapsed ? "collapsed, \(Plural.count(count, "item"))" : "expanded, \(Plural.count(count, "item"))"))
+                .accessibilityHint(Text(isCollapsed ? "Expands the group" : "Collapses the group"))
             if let remove {
                 IconButton(systemName: "eye.slash", tooltip: "Hide \(title) again (it stays under More projects)", size: 9.5, action: remove)
             }
@@ -805,6 +750,7 @@ struct GroupHeader: View {
             }
         }
         .instantTooltip("Click to fold; drag onto another group to reorder; right-click to pin")
+        .liveRow()
         // One accessible button: VoiceOver and `tools control` can fold it, and pin it through a named
         // action, instead of meeting an unlabelled group with a tap gesture on it.
         .accessibilityElement(children: .ignore)

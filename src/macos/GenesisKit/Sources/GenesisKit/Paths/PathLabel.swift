@@ -41,18 +41,28 @@ public struct PathLabel: View {
         PathDisplay.tilde(path)
     }
 
+    @Environment(\.rowLive) private var live
+
     public var body: some View {
         let display = Self.display(path)
+        let text = KitFindText(text: title ?? display, field: findField).font(font).foregroundColor(color).lineLimit(1).truncationMode(.middle)
+        let open = {
+            GenesisKit.log("pathLabel.click \(display)")
+            PathOpener.primary(path, line: line)
+        }
         HStack(spacing: 2) {
-            Button {
-                GenesisKit.log("pathLabel.click \(display)")
-                PathOpener.primary(path, line: line)
-            } label: {
-                KitFindText(text: title ?? display, field: findField).font(font).foregroundColor(color).lineLimit(1).truncationMode(.middle)
+            if live {
+                Button(action: open) { text }
+                    .buttonStyle(.genHoverPlain())
+                    .instantTooltip("\(display)\(line.map { ":\($0)" } ?? "")\nClick to open it. Right-click for Finder, Cursor, cmux and copy.")
+                    .contextMenu { PathActionsMenu(path: path, line: line) }
+            } else {
+                // A row at rest (`liveRow`): the text with no button; the menu stays (no responder until opened).
+                text
+                    .restingButton(action: open)
+                    .accessibilityLabel(Text(verbatim: display))
+                    .contextMenu { PathActionsMenu(path: path, line: line) }
             }
-            .buttonStyle(.genHoverPlain())
-            .instantTooltip("\(display)\(line.map { ":\($0)" } ?? "")\nClick to open it. Right-click for Finder, Cursor, cmux and copy.")
-            .contextMenu { PathActionsMenu(path: path, line: line) }
             if showIcons {
                 IconButton(systemName: "doc.on.doc", tooltip: "Copy path", size: 10) { PathOpener.copy(path, what: "path") }
                 IconButton(systemName: "folder", tooltip: "Reveal in Finder", size: 10) { PathOpener.reveal(path) }

@@ -106,17 +106,31 @@ final class PRSessionsStore: ObservableObject {
     }
 }
 
-/// One session row: provider, title, age, why it matched, Open and Resume.
-struct PRSessionRow: View {
-    @ObservedObject var model: HubModel
+/// One session row: provider, title, age, why it matched, Open and Resume. A value row: the section passes the
+/// session and its evidence, and opening it or the Resume outcome go back through `open` and `resumed`, so the row
+/// holds no model. It is live (`liveRow`) under the pointer or while its Resume popover is up: the provider and
+/// reason tooltips and the Open and Resume buttons exist only then, and at rest it draws the same labels. VoiceOver
+/// still opens it (`restingButton`) and resumes it (a named action). Every control of a PR's session list was a
+/// responder an accessibility client walks per update (`PRRow`).
+struct PRSessionRow: View, Equatable {
     let session: HubSession
     let reasons: [String]
     var files: [String] = []
     var fileCount = 0
     var commits: [String] = []
+    /// Shows the session in the hub.
+    let open: () -> Void
+    /// The Resume popover closed with this outcome (the hub's notice line shows it).
+    let resumed: (LaunchOutcome) -> Void
     @State private var resuming = false
 
+    static func == (a: PRSessionRow, b: PRSessionRow) -> Bool {
+        a.session == b.session && a.reasons == b.reasons && a.files == b.files && a.fileCount == b.fileCount
+            && a.commits == b.commits
+    }
+
     var body: some View {
+        let _ = RenderProbe.hit("prs.sessionRow.body")
         HStack(spacing: 8) {
             ProviderBadge(provider: session.provider, size: 16, tooltip: session.provider.capitalized)
             FindText(session.displayTitle, field: "title").font(.system(size: 12)).lineLimit(1).truncationMode(.tail)
@@ -129,19 +143,26 @@ struct PRSessionRow: View {
                 reasonChip(reason)
             }
             Spacer(minLength: 4)
-            Button("Open") { open() }
-                .buttonStyle(.genHoverPlain())
-                .instantTooltip("Show this session in the hub")
-            Button("Resume") { resuming = true }
-                .buttonStyle(.genHoverPlain())
-                .instantTooltip("Resume it in a terminal pane you pick")
-                .popover(isPresented: $resuming, arrowEdge: .bottom) {
-                    LaunchPicker(mode: .resume(session)) { outcome in
-                        resuming = false
-                        if let notice = outcome.notice { model.notice = notice }
-                    }
+            LiveButton(tooltip: "Show this session in the hub", pressable: true) {
+                open()
+            } label: {
+                Text("Open")
+            }
+            .accessibilityAction(named: Text("Resume")) { resuming = true }
+            LiveButton(tooltip: "Resume it in a terminal pane you pick") {
+                resuming = true
+            } label: {
+                Text("Resume")
+            }
+            .popover(isPresented: $resuming, arrowEdge: .bottom) {
+                LaunchPicker(mode: .resume(session)) { outcome in
+                    resuming = false
+                    resumed(outcome)
                 }
+            }
         }
+        // The popover's anchor stays a button while it is up, with the pointer inside the popover.
+        .liveRow(selected: resuming)
         .contextMenu {
             Button("Copy session id") { PathOpener.copy(session.sessionId) }
             Button("Copy folder") { PathOpener.copy(session.cwd) }
@@ -154,18 +175,6 @@ struct PRSessionRow: View {
         formatter.timeStyle = .medium
         return formatter
     }()
-
-    private func open() {
-        if let known = model.sessions.first(where: { $0.sessionId == session.sessionId }) {
-            model.openSession(known)
-        } else {
-            // Older than the list's window: a row made on the spot, as history search does.
-            model.mode = .sessions
-            model.openHistory(HubHistoryHit(kind: session.provider, sessionId: session.sessionId, title: session.title,
-                                            cwd: session.cwd, project: session.project, gitBranch: session.gitBranch,
-                                            mtime: session.lastActivity.map { HubFormat.isoPlain.string(from: $0) }, matchedText: nil))
-        }
-    }
 
     private func reasonChip(_ reason: String) -> some View {
         let (text, tip): (String, String) = {

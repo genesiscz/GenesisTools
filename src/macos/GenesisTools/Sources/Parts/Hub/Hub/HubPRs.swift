@@ -1597,7 +1597,7 @@ final class PRsModel: ObservableObject {
 // MARK: - Sidebar list
 
 struct PRListView: View {
-    @ObservedObject var model: HubModel
+    var model: HubModel
     @ObservedObject var prs: PRsModel
     @StateObject private var prefs = GroupPrefs(key: "prs.repos")
     @ObservedObject private var readiness = PRReadinessStore.shared
@@ -1647,6 +1647,7 @@ struct PRListView: View {
     }
 
     var body: some View {
+        let _ = RenderProbe.hit("prs.list.body")
         let groups = groups
         VStack(spacing: 0) {
             // One row when the sidebar is wide enough; two below that. At about 215 pt the single row
@@ -1825,31 +1826,21 @@ struct PRListView: View {
     }
 
     private func moreProjectRow(_ project: HubPRProject) -> some View {
+        // A value row (`MoreProjectRow`, `Equatable`): its star and load buttons exist only under the pointer.
         let starred = prefs.pinned.contains(project.project)
-        return HStack(spacing: 6) {
-            IconButton(systemName: starred ? "star.fill" : "star", tooltip: starred ? "Unstar \(project.repo)" : "Star \(project.repo): its PRs/MRs load with every list", size: 10) {
+        return MoreProjectRow(
+            project: project,
+            starred: starred,
+            loading: prs.projectLoading.contains(project.project),
+            star: {
                 prefs.togglePin(project.project)
                 if !starred {
                     prs.loadProject(project)
                 }
-            }
-            Button { prs.loadProject(project) } label: {
-                HStack(spacing: 6) {
-                    Text(project.repo).font(.system(size: 12)).foregroundColor(Color.white.opacity(0.85)).lineLimit(1)
-                    Text(project.project.replacingOccurrences(of: "https://", with: ""))
-                        .font(.system(size: 10.5)).foregroundColor(ReviewPalette.dim).lineLimit(1).truncationMode(.middle)
-                    Spacer(minLength: 0)
-                    if prs.projectLoading.contains(project.project) {
-                        ProgressView().controlSize(.mini)
-                    }
-                }
-                .contentShape(Rectangle())
-            }
-            .buttonStyle(.genHoverPlain())
-            .instantTooltip("Load \(project.repo)'s PRs/MRs (\(project.root))")
-        }
-        .padding(.horizontal, 14)
-        .padding(.vertical, 3)
+            },
+            load: { prs.loadProject(project) }
+        )
+        .equatable()
     }
 
     private func row(_ pr: HubPR) -> some View {
@@ -1867,11 +1858,55 @@ struct PRListView: View {
     }
 }
 
+/// One project under "More projects", from values. Its star and load buttons and their tooltips exist only while the
+/// pointer is on it (`live`); at rest it draws the same star glyph and labels, and VoiceOver still loads it
+/// (`restingButton`) and stars it (a named action). A filter lists every cloned project it matches, and with an
+/// accessibility client each button and tooltip of the list is a responder SwiftUI walks per update (`PRRow`).
+struct MoreProjectRow: View, Equatable {
+    let project: HubPRProject
+    let starred: Bool
+    /// Its PRs/MRs are being fetched.
+    let loading: Bool
+    let star: () -> Void
+    let load: () -> Void
+
+    static func == (a: MoreProjectRow, b: MoreProjectRow) -> Bool {
+        a.project == b.project && a.starred == b.starred && a.loading == b.loading
+    }
+
+    var body: some View {
+        let _ = RenderProbe.hit("prs.moreProjectRow.body")
+        HStack(spacing: 6) {
+            IconButton(systemName: starred ? "star.fill" : "star",
+                       tooltip: starred ? "Unstar \(project.repo)" : "Star \(project.repo): its PRs/MRs load with every list",
+                       size: 10, action: star)
+            LiveButton(tooltip: "Load \(project.repo)'s PRs/MRs (\(project.root))", pressable: true) {
+                load()
+            } label: {
+                HStack(spacing: 6) {
+                    Text(project.repo).font(.system(size: 12)).foregroundColor(Color.white.opacity(0.85)).lineLimit(1)
+                    Text(project.project.replacingOccurrences(of: "https://", with: ""))
+                        .font(.system(size: 10.5)).foregroundColor(ReviewPalette.dim).lineLimit(1).truncationMode(.middle)
+                    Spacer(minLength: 0)
+                    if loading {
+                        ProgressView().controlSize(.mini)
+                    }
+                }
+                .contentShape(Rectangle())
+            }
+            .accessibilityAction(named: Text(starred ? "Unstar" : "Star"), star)
+        }
+        .padding(.horizontal, 14)
+        .padding(.vertical, 3)
+        .liveRow()
+    }
+}
+
 /// One PR of the list, from values. The row is live (a button with its hover fill, tooltips, the CI link) while
-/// the pointer is on it or it is selected; at rest it draws the same labels with no control, so the window's
-/// responder tree stays small with an accessibility client attached (performance.md, "Dense lists and
+/// the pointer is on it or it is selected (`liveRow`); at rest it draws the same labels with no control, so the
+/// window's responder tree stays small with an accessibility client attached (performance.md, "Dense lists and
 /// accessibility clients": a walk visited every row's buttons per changed node, 100 to 300 ms each during a
-/// sidebar drag in PRs mode, 2026-10-29). VoiceOver still presses it (`restingButton`).
+/// sidebar drag in PRs mode, 2026-10-29). VoiceOver still presses it (`restingButton` inside `rowButton`).
 struct PRRow: View, Equatable {
     let pr: HubPR
     let selected: Bool
@@ -1879,20 +1914,18 @@ struct PRRow: View, Equatable {
     let flash: Bool
     let readiness: PRReadiness?
     let select: () -> Void
-    @State private var hovering = false
 
     static func == (a: PRRow, b: PRRow) -> Bool {
         a.pr == b.pr && a.selected == b.selected && a.flash == b.flash && a.readiness == b.readiness
     }
 
-    private var live: Bool { hovering || selected }
-
     var body: some View {
-        let live = live
+        let _ = RenderProbe.hit("prs.row.body")
+        let _ = RenderProbe.explaining ? Self._printChanges() : ()
         // The badges sit at the end of the meta line: as a right-hand column they took ~70 pt from a
         // title that already had ~150, so most titles read "feat(flexi, col-…".
-        let labels = HStack(alignment: .top, spacing: 8) {
-            PRStateIcon(pr: pr, live: live)
+        HStack(alignment: .top, spacing: 8) {
+            PRStateIcon(pr: pr)
             VStack(alignment: .leading, spacing: 3) {
                 Text(pr.title)
                     .font(.system(size: 12.5, weight: .medium))
@@ -1901,7 +1934,7 @@ struct PRRow: View, Equatable {
                     .frame(maxWidth: .infinity, alignment: .leading)
                 // The author gives way first: whole, then truncated to at least a few letters, then
                 // gone. Squeezed by the badges it read "q" or "c" (video 2026-09-30 14:07).
-                metaLine(live: live)
+                metaLine
                 .font(.system(size: 11))
                 .foregroundColor(ReviewPalette.dim)
                 .lineLimit(1)
@@ -1913,27 +1946,16 @@ struct PRRow: View, Equatable {
         // New and updated rows after a refresh flash once.
         .swrFlash(flash)
         .contentShape(Rectangle())
-        Group {
-            if live {
-                labels
-                    .rowButton(cornerRadius: 8) { select() }
-                    .liveTooltip(true, "\(pr.label) \(pr.headBranch) → \(pr.baseBranch)\nRight-click for its web pages")
-            } else {
-                labels
-                    .restingButton(enabled: true, action: select)
-                    .accessibilityLabel(Text(verbatim: "\(pr.label) \(pr.title)"))
-            }
-        }
+        .rowButton(cornerRadius: 8) { select() }
+        .instantTooltip("\(pr.label) \(pr.headBranch) → \(pr.baseBranch)\nRight-click for its web pages")
         .padding(.horizontal, 6)
-        .onHover { inside in
-            if inside != hovering { hovering = inside }
-        }
+        .liveRow(selected: selected)
         // The row stays one button (select); its labels' web pages live here, since a link inside
         // the row would turn a click meant to select into a browser tab.
         .contextMenu { linksMenu }
     }
 
-    private func metaLine(live: Bool) -> some View {
+    private var metaLine: some View {
         PRMetaLineLayout {
             Text(verbatim: pr.label).font(.system(size: 11, design: .monospaced))
             // Flexible and clipped, so a zero width hides it instead of drawing an ellipsis.
@@ -1943,27 +1965,27 @@ struct PRRow: View, Equatable {
             Text(verbatim: "·").frame(maxWidth: .infinity).clipped()
             // Whole, so the author truncates and the age never reads "4 hr. a…".
             LiveAgo(date: pr.updated, style: .brief)
-            badges(live: live)
+            badges
         }
     }
 
     @ViewBuilder
-    private func badges(live: Bool) -> some View {
+    private var badges: some View {
         HStack(spacing: 5) {
             if let proposal = pr.proposal {
                 Label("\(proposal.pending)", systemImage: "text.bubble")
                     .font(.system(size: 10.5, weight: .semibold))
                     .foregroundColor(proposal.pending > 0 ? ReviewPalette.modified : ReviewPalette.dim)
-                    .liveTooltip(live, "Agent review (\(proposal.decision.replacingOccurrences(of: "_", with: " "))): \(proposal.pending) of \(proposal.drafts) draft comments undecided")
+                    .instantTooltip("Agent review (\(proposal.decision.replacingOccurrences(of: "_", with: " "))): \(proposal.pending) of \(proposal.drafts) draft comments undecided")
             }
             if pr.localWorktree != nil {
                 Image(systemName: "externaldrive.badge.checkmark")
                     .font(.system(size: 10))
                     .foregroundColor(ReviewPalette.dim)
-                    .liveTooltip(live, "The branch is checked out locally: New session here works in its worktree")
+                    .instantTooltip("The branch is checked out locally: New session here works in its worktree")
             }
-            PRReadinessBadge(readiness: readiness, live: live)
-            CIBadge(ci: pr.ci, live: live)
+            PRReadinessBadge(readiness: readiness)
+            CIBadge(ci: pr.ci)
         }
         .fixedSize()
     }
@@ -2060,8 +2082,6 @@ struct PRMetaLineLayout: Layout {
 
 struct PRStateIcon: View {
     let pr: HubPR
-    /// The tooltip exists only while the row is live (`PRRow`); a lone icon elsewhere is always live.
-    var live = true
 
     var body: some View {
         let tone = PRStateTone(pr: pr)
@@ -2069,7 +2089,7 @@ struct PRStateIcon: View {
             .font(.system(size: 12, weight: .semibold))
             .foregroundColor(tone.color)
             .frame(width: 16)
-            .liveTooltip(live, tone.title)
+            .instantTooltip(tone.title)
             .accessibilityElement(children: .ignore)
             .accessibilityLabel(Text(verbatim: tone.title))
     }
@@ -2098,10 +2118,10 @@ struct PRLabelPill: View {
 
 struct CIBadge: View {
     let ci: String?
-    /// Its link and tooltip exist only while the row is live (`PRRow`); alone, it is always live.
-    var live = true
     /// The checks page; the badge opens it when set.
     var url: URL?
+    /// Its link and tooltip exist only while its row is live (`liveRow`); alone, it is always live.
+    @Environment(\.rowLive) private var live
 
     var body: some View {
         if let ci {
@@ -2139,7 +2159,7 @@ struct CIBadge: View {
                     .accessibilityAddTraits(.isLink)
                     .accessibilityValue(Text(url.absoluteString))
             } else {
-                icon.liveTooltip(live, sentence)
+                icon.instantTooltip(sentence)
                     .accessibilityElement(children: .ignore)
                     .accessibilityLabel(Text(verbatim: sentence))
             }
@@ -2149,10 +2169,11 @@ struct CIBadge: View {
 
 /// The main area in PRs mode; observes `PRsModel` so a selection redraws it.
 struct PRsMain: View {
-    @ObservedObject var model: HubModel
+    var model: HubModel
     @ObservedObject var prs: PRsModel
 
     var body: some View {
+        let _ = RenderProbe.hit("prs.main.body")
         if let pr = prs.selected {
             PRDetailView(model: model, prs: prs, pr: pr)
                 .id(pr.id)
@@ -2171,7 +2192,7 @@ struct PRsMain: View {
 // MARK: - Detail
 
 struct PRDetailView: View {
-    @ObservedObject var model: HubModel
+    var model: HubModel
     @ObservedObject var prs: PRsModel
     let pr: HubPR
     @AppStorage("hub.prs.showDiff") private var showDiff = true
@@ -2198,6 +2219,7 @@ struct PRDetailView: View {
     private static let overviewMinWidth: CGFloat = 320
 
     var body: some View {
+        let _ = RenderProbe.hit("prs.detail.body")
         VStack(spacing: 0) {
             header
             if showDiff, let review = prs.review {
@@ -2516,6 +2538,7 @@ struct PRDetailView: View {
                                     PRCommitRow(pr: pr, commit: commit, selected: false, inApp: false, showsAuthor: authors) {
                                         if let url = pr.commitURL(commit.sha) { ExternalOpener.open(url) }
                                     }
+                                    .equatable()
                                 }
                             }
                         }
@@ -2727,14 +2750,17 @@ struct PRCommitsSection: View {
                 PRCommitRow(pr: pr, commit: commit, selected: commit.sha == shown || range.contains(commit.sha), inApp: true, showsAuthor: authors) {
                     if prs.showCommit(commit) { revealDiff() }
                 }
+                .equatable()
             }
         }
     }
 }
 
 /// One commit: short sha, title, author, age. The row shows it in the hub (or opens it on the host
-/// when there is no local checkout); ↗ and the context menu open the host page.
-struct PRCommitRow: View {
+/// when there is no local checkout); ↗ and the context menu open the host page. A value row: its button, tooltip
+/// and ↗ exist only while it is live (hovered or selected, `liveRow`), so a PR's commits (68 on a long one) are
+/// labels at rest, not three responders each that an accessibility client walks per update (`PRRow`).
+struct PRCommitRow: View, Equatable {
     let pr: HubPR
     let commit: HubPRDetail.Commit
     let selected: Bool
@@ -2744,53 +2770,62 @@ struct PRCommitRow: View {
     var showsAuthor = true
     let action: () -> Void
 
+    static func == (a: PRCommitRow, b: PRCommitRow) -> Bool {
+        a.pr == b.pr && a.commit == b.commit && a.selected == b.selected && a.inApp == b.inApp
+            && a.showsAuthor == b.showsAuthor
+    }
+
     /// More than one author among the commits: only then does a row name its author.
     static func showsAuthors(_ commits: [HubPRDetail.Commit]) -> Bool {
         Set(commits.compactMap(\.author)).count > 1
     }
 
     var body: some View {
+        let _ = RenderProbe.hit("prs.commitRow.body")
         let hostURL = pr.commitURL(commit.sha)
-        HStack(spacing: 4) {
-            HStack(spacing: 8) {
-                FindText(String(commit.sha.prefix(8)), field: "sha")
-                    .font(.system(size: 11, design: .monospaced))
-                    .foregroundColor(selected ? Color(red: 0.62, green: 0.78, blue: 1) : ReviewPalette.dim)
-                    .fixedSize()
-                FindText(commit.title, field: "title")
-                    .font(.system(size: 12))
-                    .foregroundColor(Color.white.opacity(0.9))
-                    .lineLimit(1)
-                    .truncationMode(.tail)
-                    .layoutPriority(1)
-                if commit.body != nil {
-                    Image(systemName: "text.alignleft")
-                        .font(.system(size: 9))
-                        .foregroundColor(ReviewPalette.dim)
-                        .accessibilityHidden(true)
-                }
-                Spacer(minLength: 6)
-                if showsAuthor, let author = commit.author {
-                    FindText(author, field: "author").font(.system(size: 11)).foregroundColor(ReviewPalette.dim).lineLimit(1)
-                }
-                LiveAgo(date: commit.when, style: .brief)
-                    .font(.system(size: 11))
+        let labels = HStack(spacing: 8) {
+            FindText(String(commit.sha.prefix(8)), field: "sha")
+                .font(.system(size: 11, design: .monospaced))
+                .foregroundColor(selected ? Color(red: 0.62, green: 0.78, blue: 1) : ReviewPalette.dim)
+                .fixedSize()
+            FindText(commit.title, field: "title")
+                .font(.system(size: 12))
+                .foregroundColor(Color.white.opacity(0.9))
+                .lineLimit(1)
+                .truncationMode(.tail)
+                .layoutPriority(1)
+            if commit.body != nil {
+                Image(systemName: "text.alignleft")
+                    .font(.system(size: 9))
                     .foregroundColor(ReviewPalette.dim)
-                    .fixedSize()
+                    .accessibilityHidden(true)
             }
-            .padding(.horizontal, 6)
-            .padding(.vertical, 3)
-            .background(RoundedRectangle(cornerRadius: 6).fill(selected ? Color.white.opacity(0.08) : Color.clear))
-            .contentShape(Rectangle())
-            .rowButton(cornerRadius: 6, action)
-            .findRow(commit.sha, cornerRadius: 6)
-            .instantTooltip(tooltip)
+            Spacer(minLength: 6)
+            if showsAuthor, let author = commit.author {
+                FindText(author, field: "author").font(.system(size: 11)).foregroundColor(ReviewPalette.dim).lineLimit(1)
+            }
+            LiveAgo(date: commit.when, style: .brief)
+                .font(.system(size: 11))
+                .foregroundColor(ReviewPalette.dim)
+                .fixedSize()
+        }
+        .padding(.horizontal, 6)
+        .padding(.vertical, 3)
+        .background(RoundedRectangle(cornerRadius: 6).fill(selected ? Color.white.opacity(0.08) : Color.clear))
+        .contentShape(Rectangle())
+        HStack(spacing: 4) {
+            labels
+                .rowButton(cornerRadius: 6, action)
+                .findRow(commit.sha, cornerRadius: 6)
+                .instantTooltip(tooltip)
             if let hostURL {
-                IconButton(systemName: "arrow.up.right.square", tooltip: "Open commit \(commit.sha.prefix(8)) on the host", size: 10) {
+                IconButton(systemName: "arrow.up.right.square", tooltip: "Open commit \(commit.sha.prefix(8)) on the host",
+                           size: 10) {
                     ExternalOpener.open(hostURL)
                 }
             }
         }
+        .liveRow(selected: selected)
         .contextMenu {
             if let hostURL {
                 Button("Open on the host") { ExternalOpener.open(hostURL) }
@@ -2830,7 +2865,7 @@ struct PRCommitRow: View {
 /// Every agent session that touched the PR. The hub's own recent rows show at once; `tools hub pr
 /// sessions` adds older ones and the commit and file evidence when it answers.
 struct PRSessionsSection: View {
-    @ObservedObject var model: HubModel
+    var model: HubModel
     @ObservedObject var prs: PRsModel
     @ObservedObject var store: PRSessionsStore
     let pr: HubPR
@@ -2876,6 +2911,7 @@ struct PRSessionsSection: View {
     }
 
     var body: some View {
+        let _ = RenderProbe.hit("prs.sessions.body")
         let rows = rows
         let loading = store.loading.contains(pr.id)
         PRSection(title: "Sessions", count: rows.count, folded: $folded, trailing: AnyView(
@@ -2901,8 +2937,13 @@ struct PRSessionsSection: View {
                     .foregroundColor(ReviewPalette.dim)
             }
             ForEach(rows) { row in
-                PRSessionRow(model: model, session: row.session, reasons: row.reasons, files: row.files,
-                             fileCount: row.fileCount, commits: row.commits)
+                // A value row (`PRSessionRow`, `Equatable`): it holds no model; opening and the Resume outcome come
+                // back here.
+                PRSessionRow(session: row.session, reasons: row.reasons, files: row.files, fileCount: row.fileCount,
+                             commits: row.commits, open: { open(row.session) }, resumed: { outcome in
+                                 if let notice = outcome.notice { model.notice = notice }
+                             })
+                    .equatable()
                     .findRow("session:\(row.id)", cornerRadius: 6)
             }
             if let error = store.errors[pr.id] {
@@ -2913,6 +2954,20 @@ struct PRSessionsSection: View {
                     .textSelection(.enabled)
                     .instantTooltip(error)
             }
+        }
+    }
+
+    /// Shows a session in the hub: the list's own row when it has the session, else a row made on the spot, as
+    /// history search does (older than the list's window).
+    private func open(_ session: HubSession) {
+        if let known = model.sessions.first(where: { $0.sessionId == session.sessionId }) {
+            model.openSession(known)
+        } else {
+            let mtime = session.lastActivity.map { HubFormat.isoPlain.string(from: $0) }
+            model.mode = .sessions
+            model.openHistory(HubHistoryHit(kind: session.provider, sessionId: session.sessionId, title: session.title,
+                                            cwd: session.cwd, project: session.project, gitBranch: session.gitBranch,
+                                            mtime: mtime, matchedText: nil))
         }
     }
 

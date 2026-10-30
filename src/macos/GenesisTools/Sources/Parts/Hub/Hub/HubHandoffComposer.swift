@@ -26,7 +26,7 @@ final class HubHandoffRequests: ObservableObject {
 
 /// Hosts the composer that `tools hub --handoff` asks for, above every pane.
 private struct HubHandoffModifier: ViewModifier {
-    @ObservedObject var model: HubModel
+    var model: HubModel
     @ObservedObject private var requests = HubHandoffRequests.shared
     @State private var composer: HandoffComposerRequest?
 

@@ -118,7 +118,7 @@ final class HubHistoryModel: ObservableObject {
 }
 
 struct HubHistorySection: View {
-    @ObservedObject var model: HubModel
+    var model: HubModel
     @ObservedObject var history: HubHistoryModel
     /// Sessions the list already shows for this filter: not repeated here.
     let shown: Set<String>

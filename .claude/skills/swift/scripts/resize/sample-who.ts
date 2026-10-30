@@ -29,6 +29,7 @@ if (i < 0) {
     console.log("no main thread");
     process.exit(1);
 }
+const headerIndex = i;
 const total = Number(lines[i].match(/(\d+) Thread_/)![1]);
 const totals = new Map<string, number>();
 const stack: { depth: number; hit: Set<string> }[] = [];
@@ -58,6 +59,42 @@ for (i++; i < lines.length; i++) {
     stack.push({ depth, hit: inherited });
 }
 console.log(`main thread: ${total} samples`);
+if (process.argv.includes("--ours")) {
+    // Our own frames, by their largest inclusive count: which view, store or layout owns the busy time.
+    const ours = new Map<string, number>();
+    let depthLimit = -1;
+    for (let k = headerIndex + 1; k < lines.length; k++) {
+        const line = lines[k];
+        if (/^ {4}\d+ Thread_/.test(line) || line.trim() === "") {
+            break;
+        }
+        const m = line.match(/^([ +!:|]*)(\d+) (.*?)\s+\(in (GenesisTools|GenesisKit\w*)\)/);
+        if (!m) {
+            continue;
+        }
+        const count = Number(m[2]);
+        if (count < 5) {
+            continue;
+        }
+        const sym = m[3]
+            .replace(
+                /^(partial apply for |specialized |closure #\d+ in |protocol witness for |reabstraction thunk helper .*?to )+/g,
+                "~ "
+            )
+            .slice(0, 110);
+        if (
+            /GenesisTools_main|runHost|AppParts\.run|runHub|MainStackSampler|assumeIsolated|@escaping @callee/.test(sym)
+        ) {
+            continue;
+        }
+        ours.set(sym, Math.max(ours.get(sym) ?? 0, count));
+        depthLimit = Math.max(depthLimit, m[1].length);
+    }
+    console.log("== our frames (max inclusive samples)");
+    for (const [sym, count] of [...ours.entries()].sort((a, b) => b[1] - a[1]).slice(0, 40)) {
+        console.log(`${String(count).padStart(6)}  ${sym}`);
+    }
+}
 for (const [name] of patterns) {
     const n = totals.get(name);
     if (n) {

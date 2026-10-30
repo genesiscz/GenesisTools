@@ -185,7 +185,7 @@ extension HubSearchResult {
 }
 
 struct HubTranscriptSearchPanel: View {
-    @ObservedObject var hub: HubModel
+    var hub: HubModel
     let seed: String
     let close: () -> Void
     @StateObject private var search = HubTranscriptSearchModel()
