@@ -4,11 +4,16 @@
  * only shrink: a phase of `.claude/plans/2026-10-30-PlugenizeHarnesses.md` that moves a site into its driver
  * lowers the count here in the same commit. The inventory with the part letter of each site is the plan note
  * `GenesisTools/2026-10-08-PlugenizeTheHarnesses.plan.md` (section of 2026-10-30).
+ *
+ * An entry whose sites are deliberately not a harness fact (an upstream-route axis, a standalone plugin copy that
+ * cannot import the package) says why in `why`, one line; the writer keeps it. `--strict` fails on an entry
+ * without one, so the list ends as the justified entries only (plan P8).
  */
 export interface HarnessGuardCounts {
     list?: number;
     table?: number;
     branch?: number;
+    why?: string;
 }
 
 export const HARNESS_GUARD_ALLOWLIST: Readonly<Record<string, HarnessGuardCounts>> = {

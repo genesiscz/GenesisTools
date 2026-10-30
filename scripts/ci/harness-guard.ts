@@ -292,9 +292,10 @@ export function updateAllowlist(
 
     for (const file of named) {
         const now = counts.get(file);
+        const why = merged.get(file)?.why;
 
         if (now) {
-            merged.set(file, now);
+            merged.set(file, why ? { ...now, why } : now);
         } else {
             merged.delete(file);
         }
@@ -349,6 +350,11 @@ function renderAllowlist(counts: ReadonlyMap<string, HarnessGuardCounts>): strin
         .sort(([a], [b]) => a.localeCompare(b))
         .map(([file, entry]) => {
             const fields = KINDS.filter((kind) => entry[kind] !== undefined).map((kind) => `${kind}: ${entry[kind]}`);
+
+            if (entry.why) {
+                fields.push(`why: ${SafeJSON.stringify(entry.why)}`);
+            }
+
             return `    "${file}": { ${fields.join(", ")} },`;
         });
 
@@ -359,11 +365,16 @@ function renderAllowlist(counts: ReadonlyMap<string, HarnessGuardCounts>): strin
         " * only shrink: a phase of `.claude/plans/2026-10-30-PlugenizeHarnesses.md` that moves a site into its driver",
         " * lowers the count here in the same commit. The inventory with the part letter of each site is the plan note",
         " * `GenesisTools/2026-10-08-PlugenizeTheHarnesses.plan.md` (section of 2026-10-30).",
+        " *",
+        " * An entry whose sites are deliberately not a harness fact (an upstream-route axis, a standalone plugin copy that",
+        " * cannot import the package) says why in `why`, one line; the writer keeps it. `--strict` fails on an entry",
+        " * without one, so the list ends as the justified entries only (plan P8).",
         " */",
         "export interface HarnessGuardCounts {",
         "    list?: number;",
         "    table?: number;",
         "    branch?: number;",
+        "    why?: string;",
         "}",
         "",
         "export const HARNESS_GUARD_ALLOWLIST: Readonly<Record<string, HarnessGuardCounts>> = {",
@@ -406,6 +417,14 @@ function main(): void {
     }
 
     if (args.has("--write-allowlist")) {
+        for (const [file, entry] of counts) {
+            const why = HARNESS_GUARD_ALLOWLIST[file]?.why;
+
+            if (why) {
+                counts.set(file, { ...entry, why });
+            }
+        }
+
         writeFileSync(join(import.meta.dirname, "harness-guard-allowlist.ts"), renderAllowlist(counts));
         process.stdout.write(`harness-guard: wrote ${counts.size} files, ${hits.length} sites\n`);
         return;
@@ -436,13 +455,23 @@ function main(): void {
         );
     }
 
+    const unjustified = [...counts.keys()].filter((file) => !HARNESS_GUARD_ALLOWLIST[file]?.why);
+    const unjustifiedSites = hits.filter((hit) => unjustified.includes(hit.file)).length;
+
+    if (strict) {
+        for (const file of unjustified) {
+            process.stdout.write(`harness-guard: UNJUSTIFIED ${file}: move its sites into a driver part, or say why\n`);
+        }
+    }
+
     const mode = strict ? "strict" : "report";
     process.stdout.write(
         `harness-guard (${mode}): ${counts.size} files, ${hits.length} sites (${byKind}); ` +
+            `${unjustifiedSites} sites in ${unjustified.length} files without a why; ` +
             `${verdict.added.length} new, ${verdict.stale.length} stale\n`
     );
 
-    if (strict && (verdict.added.length > 0 || verdict.stale.length > 0)) {
+    if (strict && (verdict.added.length > 0 || verdict.stale.length > 0 || unjustified.length > 0)) {
         process.exitCode = 1;
     }
 }
