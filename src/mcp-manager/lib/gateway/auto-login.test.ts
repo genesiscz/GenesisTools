@@ -403,7 +403,7 @@ describe("auto-login refuses a static-client server with no stored app", () => {
     test("no stored app: the refusal names auth client and the redirect URL", async () => {
         const reason = await staticClientRefusal("crm", crm, async () => false);
 
-        expect(reason).toContain("auth client crm --client-id <id>");
+        expect(reason).toContain("auth client crm --client-id '<id>'");
         expect(reason).toContain("http://127.0.0.1:8320/callback");
     });
 

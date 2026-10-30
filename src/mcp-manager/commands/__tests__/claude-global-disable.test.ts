@@ -234,7 +234,7 @@ describe("claude provider TRUE global disable", () => {
                 expect.stringContaining("tools mcp-manager enable serena -p claude --clear-project-overrides")
             );
             expect(logger.warn).toHaveBeenCalledWith(
-                expect.stringContaining("tools mcp-manager enable serena -p claude --project <path>")
+                expect.stringContaining("tools mcp-manager enable serena -p claude --project '<path>'")
             );
         });
 

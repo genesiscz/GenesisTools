@@ -8,6 +8,7 @@ import { tmpdir } from "node:os";
 import { dirname, join, resolve } from "node:path";
 import { DeliveryUnknownError } from "@app/question/lib/decisions/deliver";
 import { livePaneTargets } from "@app/question/lib/decisions/deliver.fixtures";
+import { RELAYED_ANSWER_HEAD } from "@app/question/lib/decisions/delivery-text";
 import { decisionFiles, deliverDecisions } from "@app/question/lib/decisions/read";
 import {
     createTodo,
@@ -872,7 +873,7 @@ describe("widget source and delivery contracts", () => {
                 "--exact-session",
                 "--",
                 "original-session",
-                `Reply to: Chat DECISION 4: next token kinds\nLedger decision 2 (${row.id})\n${media}`,
+                `${RELAYED_ANSWER_HEAD}\nReply to: Chat DECISION 4: next token kinds\nLedger decision 2 (${row.id})\n${media}`,
             ],
         ]);
         expect(readDecisions(files.file).map((entry) => [entry.sessionId, entry.number, entry.state])).toEqual([
