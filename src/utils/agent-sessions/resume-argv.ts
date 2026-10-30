@@ -1,4 +1,4 @@
-import type { AccountProviderAlias } from "@genesiscz/utils/ai/providers/alias-list";
+import { harnessLaunch } from "@genesiscz/utils/ai/providers/harness-index";
 import { escapeShellArg } from "@genesiscz/utils/string";
 import type { AgentKind } from "./types";
 
@@ -8,38 +8,6 @@ export interface ResumeOptions {
     cwd?: string;
     model?: string;
 }
-
-/**
- * One recipe per coding agent. Exhaustive on purpose: a fourth agent fails to compile here
- * instead of silently falling through to another agent's binary.
- */
-const RESUME_RECIPES: Record<AccountProviderAlias, (sessionId: string, options: ResumeOptions) => string[]> = {
-    // `tools grok run <account>` sets the account's GROK_HOME; a bare `grok -r` resumes in the default home, where
-    // another account's session does not exist.
-    grok: (sessionId, options) =>
-        options.account ? ["tools", "grok", "run", options.account, "--", "-r", sessionId] : ["grok", "-r", sessionId],
-    codex: (sessionId, options) => {
-        if (!options.account) {
-            return ["codex", "resume", sessionId];
-        }
-        return [
-            "tools",
-            "codex",
-            "run",
-            options.account,
-            ...(options.home ? ["--home", options.home] : []),
-            ...(options.cwd ? ["--cwd", options.cwd] : []),
-            ...(options.model ? ["--model", options.model] : []),
-            "--",
-            "resume",
-            sessionId,
-        ];
-    },
-    claude: (sessionId, options) =>
-        options.account
-            ? ["tools", "claude", "start", options.account, "--", "--resume", sessionId]
-            : ["claude", "--resume", sessionId],
-};
 
 /**
  * Argv that resumes an interactive TUI session. Shared by cmux replay,
@@ -54,7 +22,7 @@ export function resumeArgv(
         typeof accountOrOptions === "object" && accountOrOptions !== null
             ? accountOrOptions
             : { account: accountOrOptions };
-    return RESUME_RECIPES[kind](sessionId, options);
+    return harnessLaunch(kind).resumeArgv(sessionId, options);
 }
 
 export function resumeCommandLine(

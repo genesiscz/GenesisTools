@@ -1,5 +1,6 @@
 import type { HarnessDriver } from "@genesiscz/utils/harness/types";
 import { pending, toolOwned } from "@genesiscz/utils/harness/types";
+import { codexLaunch } from "./harness-launch";
 
 /**
  * The Codex driver: what GenesisTools knows about the harness, part by part. Every part the plan has not moved yet
@@ -15,7 +16,7 @@ export const codexHarness: HarnessDriver<"codex"> = {
         turnState: pending("P2", "codexTurnState and READERS in src/utils/ai/transcripts/turn-state.ts"),
         questions: pending("P2", "the codex question signals inside src/utils/ai/transcripts/turn-state.ts"),
         live: pending("P2", "the codex live tail in src/utils/ai/transcripts/live.ts and activity.ts"),
-        launch: pending("P3", "the codex entry of RESUME_RECIPES in src/utils/agent-sessions/resume-argv.ts"),
+        launch: codexLaunch,
         exit: pending("P3", "the codex entry of AGENTS in src/cmux/lib/session-agents.ts"),
         hooks: pending("P4", "the codex entries of HARNESS_HOOK_FACTS and HOOK_INSTALLERS in src/agents"),
         statusline: pending("P4", "the codex statusline host in src/ai/commands/statusline"),

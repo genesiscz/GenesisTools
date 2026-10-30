@@ -105,8 +105,6 @@ export const HARNESS_GUARD_ALLOWLIST: Readonly<Record<string, HarnessGuardCounts
     "src/utils/agent-sessions/history-cli.ts": { branch: 1 },
     "src/utils/agent-sessions/reader-compat.ts": { branch: 1 },
     "src/utils/agent-sessions/readers/codex-import.ts": { branch: 1 },
-    "src/utils/agent-sessions/resume-argv.ts": { table: 2 },
-    "src/utils/agent-sessions/resume-flags.ts": { table: 2 },
     "src/utils/agent-sessions/search.ts": { table: 2 },
     "src/utils/agent/context.ts": { list: 1 },
     "src/utils/agent/source-anchor.ts": { list: 2 },

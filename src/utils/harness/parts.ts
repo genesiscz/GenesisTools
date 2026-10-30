@@ -1,4 +1,5 @@
 import type { AgentRuntimeContext } from "@genesiscz/utils/agent/context";
+import type { ResumeOptions } from "@genesiscz/utils/agent-sessions/resume-argv";
 import type { NativeSessionReader } from "@genesiscz/utils/agent-sessions/types";
 import type { TurnQuestionCall, TurnSnapshot, TurnStateInput } from "@genesiscz/utils/ai/transcripts/turn-state";
 import type { SliceOptions, TranscriptEnvelope, TranscriptTurn } from "@genesiscz/utils/ai/transcripts/types";
@@ -53,12 +54,21 @@ export interface QuestionSignalReader {
     open(input: TurnStateInput): TurnQuestionCall[];
 }
 
-/** G: the command lines that start and resume a session. Single source for TS and the Swift generator. */
+/** How a flag takes its value: none, a required next word (or `=value`), or only an `=value`. */
+export type FlagArity = "none" | "value" | "optional";
+
+/** G: the command line that resumes a session. Single source for TS and (P7) the Swift generator. */
 export interface LaunchRecipe {
-    runArgv(input: { account?: string; model?: string; prompt?: string }): string[];
-    resumeArgv(input: { sessionId: string; account?: string }): string[];
-    /** The longest prompt the harness accepts on its command line, in bytes. */
-    readonly promptLimitBytes: number;
+    /** Argv that resumes an interactive TUI session, through `tools <agent>` when an account is pinned. */
+    resumeArgv(sessionId: string, options: ResumeOptions): string[];
+    /**
+     * The flags the agent itself accepts and a resume may carry over from the command that started the tab, read
+     * from the agent's own `--help`. Left out on purpose: the model (a session can switch models, so the tab's start
+     * flag would pin the wrong one), every resume, continue, fork and session-id flag (the resume sets its own),
+     * headless output (`-p`, `--print`, `--output-format`), the directory (the restore types its own `cd`), and help
+     * or version.
+     */
+    readonly resumeFlags: Readonly<Record<string, FlagArity>>;
 }
 
 /** H: the slash command that ends an interactive session. */
@@ -80,18 +90,28 @@ export interface ProcessSignature {
     sessionIdFromCommand?(command: string): string | null;
 }
 
-/**
- * The parts whose contract is written here, by name. `types.ts` adds the parts whose contract is not written yet
- * (`PendingContractPart`), so a driver can only declare those pending.
- */
-export interface HarnessPartContracts {
+/** Parts that wrap parsers and readers: a driver holds a loader, so reading the driver never loads them. */
+export interface LazyPartContracts {
     locate: TranscriptLocator;
     parse: TranscriptParser;
     turnState: TurnStateReader;
     questions: QuestionSignalReader;
+    history: NativeSessionReader;
+}
+
+/**
+ * Parts that are small pure data or functions (argv builders, flag tables): a driver holds them directly, because
+ * their callers are synchronous and a part this small costs nothing to import.
+ */
+export interface EagerPartContracts {
     launch: LaunchRecipe;
     exit: ExitCommand;
     host: HostResolver;
     process: ProcessSignature;
-    history: NativeSessionReader;
 }
+
+/**
+ * The parts whose contract is written here, by name. `types.ts` adds the parts whose contract is not written yet
+ * (`PendingContractPart`), so a driver can only declare those pending.
+ */
+export type HarnessPartContracts = LazyPartContracts & EagerPartContracts;
