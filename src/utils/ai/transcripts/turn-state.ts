@@ -1116,6 +1116,16 @@ const EVENT_LOGS: Record<TurnProvider, (transcriptPath: string) => string | null
         basename(transcriptPath) === "updates.jsonl" ? join(dirname(transcriptPath), "events.jsonl") : null,
 };
 
+/**
+ * Every file `readTurnState` reads for this transcript: the transcript, and the provider's event log when it has
+ * one. A caller that skips an unchanged session stats these, so a Grok permission prompt (written only to
+ * `events.jsonl`) still counts as a change.
+ */
+export function turnStateSources(provider: TurnProvider, transcriptPath: string): string[] {
+    const eventLog = EVENT_LOGS[provider](transcriptPath);
+    return eventLog ? [transcriptPath, eventLog] : [transcriptPath];
+}
+
 /** Every whole JSON line of a raw tail, with the byte offset where it starts. */
 function tailRecords(tail: { raw: Buffer; start: number }): { records: JsonRecord[]; offsets: number[] } {
     const records: JsonRecord[] = [];

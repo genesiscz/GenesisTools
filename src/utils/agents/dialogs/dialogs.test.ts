@@ -1,5 +1,5 @@
 import { describe, expect, test } from "bun:test";
-import { existsSync, mkdtempSync, readFileSync, writeFileSync } from "node:fs";
+import { appendFileSync, existsSync, mkdtempSync, readFileSync, writeFileSync } from "node:fs";
 import { tmpdir } from "node:os";
 import { join } from "node:path";
 import type { TurnSnapshot } from "@genesiscz/utils/ai/transcripts/turn-state";
@@ -7,6 +7,7 @@ import { SafeJSON } from "@genesiscz/utils/json";
 import { dialogFromRecords, dialogFromSnapshot, dialogRefusal, openDialogFor } from "./guard";
 import { closeQuestion, dialogsPath, openQuestions, readSessionQuestions, upsertQuestion } from "./store";
 import { type OpenQuestion, openQuestionKey } from "./types";
+import { DialogWatcher, questionFromSnapshot, syncSessionDialogs } from "./watcher";
 
 const SESSION = "fixture-session-1";
 
@@ -186,3 +187,121 @@ describe("dialog guard", () => {
         );
     });
 });
+
+describe("the hub-side dialog watcher", () => {
+    const at = Date.parse("2026-10-30T10:00:00.000Z");
+    const session = { provider: "codex" as const, sessionId: SESSION, transcriptPath: "/unused" };
+    const waiting = snapshot({
+        asksQuestion: true,
+        question: "Which branch?",
+        questionCall: { kind: "decision", callId: "call_q1", options: ["main", "dev"] },
+        lastEventAt: at,
+    });
+
+    test("a question the transcript shows is recorded once, as the watcher's, and closed when it is answered", () => {
+        const dir = root();
+        const first = syncSessionDialogs(session, { now: at, root: dir, snapshot: waiting });
+
+        expect(first.opened.map(openQuestionKey)).toEqual([`codex:${SESSION}:call_q1`]);
+        expect(openQuestions("codex", SESSION, dir)[0]).toMatchObject({
+            kind: "decision",
+            question: "Which branch?",
+            options: ["main", "dev"],
+            source: "watcher",
+        });
+        expect(syncSessionDialogs(session, { now: at, root: dir, snapshot: waiting }).opened).toEqual([]);
+
+        const answered = syncSessionDialogs(session, { now: at + 5_000, root: dir, snapshot: snapshot({}) });
+        expect(answered.closed).toEqual([`codex:${SESSION}:call_q1`]);
+        expect(openQuestions("codex", SESSION, dir)).toEqual([]);
+    });
+
+    test("hook and watcher post the same question as one record, and the watcher never closes the hook's", () => {
+        const dir = root();
+        upsertQuestion(question({ provider: "codex", toolCallId: "call_q1", source: "hook" }), dir);
+        upsertQuestion(
+            question({ provider: "codex", toolCallId: "permission:x", kind: "permission", source: "hook" }),
+            dir
+        );
+
+        expect(syncSessionDialogs(session, { now: at, root: dir, snapshot: waiting }).opened).toEqual([]);
+        expect(readSessionQuestions("codex", SESSION, dir)).toHaveLength(2);
+        expect(syncSessionDialogs(session, { now: at, root: dir, snapshot: snapshot({}) }).closed).toEqual([]);
+        expect(openQuestions("codex", SESSION, dir).map((open) => open.source)).toEqual(["hook", "hook"]);
+    });
+
+    test("an unreadable transcript changes nothing, and a closed one waits on nobody", () => {
+        const dir = root();
+        syncSessionDialogs(session, { now: at, root: dir, snapshot: waiting });
+
+        expect(syncSessionDialogs(session, { now: at, root: dir, snapshot: null })).toEqual({ opened: [], closed: [] });
+        expect(openQuestions("codex", SESSION, dir)).toHaveLength(1);
+        expect(questionFromSnapshot(session, { ...waiting, state: "FINISHED" }, at)).toBeNull();
+    });
+
+    test("a live Grok permission prompt opens a record, an unchanged session is not read again, the answer closes it", () => {
+        const dir = root();
+        const folder = mkdtempSync(join(tmpdir(), "agents-dialogs-grok-"));
+        const updates = join(folder, "updates.jsonl");
+        const events = join(folder, "events.jsonl");
+        const seconds = Math.floor(at / 1000);
+        const line = (value: unknown) => `${SafeJSON.stringify(value)}\n`;
+        const update = (sec: number, body: Record<string, unknown>) =>
+            line({ timestamp: seconds + sec, method: "_x.ai/session/update", params: { update: body } });
+        const call = {
+            toolCallId: "call-g1",
+            rawInput: { command: "git push", description: "Push the branch" },
+            _meta: { "x.ai/tool": { name: "run_terminal_command", kind: "execute" } },
+        };
+
+        writeFileSync(
+            updates,
+            update(0, { sessionUpdate: "user_message_chunk", content: { type: "text", text: "go" } }) +
+                update(1, { sessionUpdate: "tool_call", ...call })
+        );
+        writeFileSync(
+            events,
+            line({
+                ts: new Date(at + 1_200).toISOString(),
+                type: "permission_requested",
+                tool_name: "run_terminal_command",
+            })
+        );
+        const grok = { provider: "grok" as const, sessionId: "grok-fixture-1", transcriptPath: updates };
+        const watcher = new DialogWatcher();
+
+        expect(watcher.sync([grok], { now: at + 30_000, root: dir }).opened).toMatchObject([
+            { kind: "permission", toolCallId: "call-g1", question: "run_terminal_command: Push the branch" },
+        ]);
+        // Nothing changed on disk: the record stays, and nothing is read again.
+        writeFileSync(join(dir, "grok", "grok-fixture-1.json"), "[]");
+        expect(watcher.sync([grok], { now: at + 31_000, root: dir })).toEqual({ opened: [], closed: [] });
+        expect(readSessionQuestions("grok", "grok-fixture-1", dir)).toEqual([]);
+
+        upsertQuestion({ ...questionFromSnapshotFixture(), sessionId: "grok-fixture-1" }, dir);
+        appendFileSync(
+            events,
+            line({
+                ts: new Date(at + 40_000).toISOString(),
+                type: "permission_resolved",
+                tool_name: "run_terminal_command",
+                decision: "allow",
+                wait_ms: 38_800,
+            })
+        );
+        appendFileSync(updates, update(41, { sessionUpdate: "tool_call_update", status: "completed", ...call }));
+
+        expect(watcher.sync([grok], { now: at + 45_000, root: dir }).closed).toEqual(["grok:grok-fixture-1:call-g1"]);
+    });
+});
+
+/** The watcher record the Grok test puts back after it emptied the file, to see the answer close it. */
+function questionFromSnapshotFixture(): OpenQuestion {
+    return question({
+        provider: "grok",
+        toolCallId: "call-g1",
+        kind: "permission",
+        question: "run_terminal_command: Push the branch",
+        source: "watcher",
+    });
+}
