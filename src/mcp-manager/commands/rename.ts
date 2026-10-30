@@ -286,81 +286,9 @@ async function renameServerInProvider(
     // IMPORTANT: syncServers only adds/updates servers, it doesn't remove servers not in the map
     // We need to explicitly remove the old server name from the provider config after syncing
     if (hasOldServer && oldName !== newName) {
-        await removeServerFromProvider(provider, oldName);
+        // Each provider removes a name from every place its own config keeps it (global, projects, exclusions).
+        await provider.removeServers([oldName]);
     }
 
     return true;
-}
-
-/**
- * Remove a server from a provider's configuration
- */
-async function removeServerFromProvider(provider: MCPProvider, serverName: string): Promise<void> {
-    const config = await provider.readConfig();
-    const providerName = provider.getName();
-
-    // Remove server based on provider-specific structure
-    switch (providerName) {
-        case "claude": {
-            const claudeConfig = config as Record<string, unknown>;
-            // Remove from global mcpServers
-            if ((claudeConfig.mcpServers as Record<string, unknown>)?.[serverName]) {
-                delete (claudeConfig.mcpServers as Record<string, unknown>)[serverName];
-            }
-            // Remove from disabledMcpServers array
-            if (claudeConfig.disabledMcpServers) {
-                claudeConfig.disabledMcpServers = (claudeConfig.disabledMcpServers as string[]).filter(
-                    (name: string) => name !== serverName
-                );
-            }
-            // Remove from project-specific configs
-            if (claudeConfig.projects) {
-                for (const projectConfig of Object.values(claudeConfig.projects) as Record<string, unknown>[]) {
-                    if ((projectConfig.mcpServers as Record<string, unknown>)?.[serverName]) {
-                        delete (projectConfig.mcpServers as Record<string, unknown>)[serverName];
-                    }
-                    if (projectConfig.disabledMcpServers) {
-                        projectConfig.disabledMcpServers = (projectConfig.disabledMcpServers as string[]).filter(
-                            (name: string) => name !== serverName
-                        );
-                    }
-                }
-            }
-            await provider.writeConfig(claudeConfig);
-            break;
-        }
-        case "codex": {
-            const codexConfig = config as Record<string, unknown>;
-            if ((codexConfig.mcp_servers as Record<string, unknown>)?.[serverName]) {
-                delete (codexConfig.mcp_servers as Record<string, unknown>)[serverName];
-            }
-            await provider.writeConfig(codexConfig);
-            break;
-        }
-        case "cursor": {
-            const cursorConfig = config as Record<string, unknown>;
-            if ((cursorConfig.mcpServers as Record<string, unknown>)?.[serverName]) {
-                delete (cursorConfig.mcpServers as Record<string, unknown>)[serverName];
-            }
-            await provider.writeConfig(cursorConfig);
-            break;
-        }
-        case "gemini": {
-            const geminiConfig = config as Record<string, unknown>;
-            // Remove from mcpServers
-            if ((geminiConfig.mcpServers as Record<string, unknown>)?.[serverName]) {
-                delete (geminiConfig.mcpServers as Record<string, unknown>)[serverName];
-            }
-            // Remove from excluded list
-            if ((geminiConfig.mcp as Record<string, unknown>)?.excluded) {
-                (geminiConfig.mcp as Record<string, unknown>).excluded = (
-                    (geminiConfig.mcp as Record<string, unknown>).excluded as string[]
-                ).filter((name: string) => name !== serverName);
-            }
-            await provider.writeConfig(geminiConfig);
-            break;
-        }
-        default:
-            logger.warn(`Unknown provider: ${providerName}. Cannot remove server.`);
-    }
 }

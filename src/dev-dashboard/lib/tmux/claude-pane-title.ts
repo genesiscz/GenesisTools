@@ -55,11 +55,14 @@ export function tmuxSessionNameFromTopic(topic: string): string {
     return topic.replace(/[:.]/g, "-").replace(/\s+/g, " ").trim();
 }
 
+/** The program names tmux reports for a pane whose foreground process is Claude Code. */
+const CLAUDE_PROGRAMS: ReadonlySet<string> = new Set(["claude", "claude-code"]);
+
 export function isClaudeForegroundCommand(command: string | undefined): boolean {
     if (!command) {
         return false;
     }
 
     const base = command.trim().split("/").pop()?.toLowerCase() ?? "";
-    return base === "claude" || base === "claude-code";
+    return CLAUDE_PROGRAMS.has(base);
 }

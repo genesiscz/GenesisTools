@@ -37,6 +37,18 @@ export interface WorkerCapabilities {
      * and the hidden `--expect-turn` flag both quote.
      */
     turnGuardUnsupported?: string;
+    /**
+     * How bus mail addressed to the worker reaches it. `turn-input`: the daemon delivers it as turn input (merged
+     * into a running turn, or a new turn when idle), so the worker must never poll for it. `login-once`: the worker
+     * checks with `tools agents login --once`.
+     */
+    busMail: "turn-input" | "login-once";
+    /**
+     * Whether the sandbox denies watchman's state directory (`~/.local/state/watchman`), so Jest must run with
+     * `--watchman=false`. The fix is the flag, not a writable root: that directory also holds watchman triggers,
+     * which run commands outside the sandbox.
+     */
+    sandboxBlocksWatchman: boolean;
     /** Verbs the GenesisTools CLI exposes for this backend. */
     verbs: string[];
     /** Verbs deliberately absent, with the reason. */
@@ -59,6 +71,11 @@ export const WORKER_CAPABILITIES: Record<WorkerBackend, WorkerCapabilities> = {
         steering: "mid-turn",
         accountRequired: false,
         turnGuardUnsupported: "Codex steering has no turn guard; omit --expect-turn.",
+        // A model-side `login --once` only blocked the turn and received the same mail twice; one held the
+        // identity's slot for 3+ minutes on 2026-10-13.
+        busMail: "turn-input",
+        // Jest failed before any test on watchman's `fchmod` (2026-10-13).
+        sandboxBlocksWatchman: true,
         verbs: [
             "spawn",
             "steer",
@@ -85,6 +102,9 @@ export const WORKER_CAPABILITIES: Record<WorkerBackend, WorkerCapabilities> = {
         accountRequired: false,
         accountUnsupported:
             "grok pins an auth FILE, not an account, so the flag would silently do nothing. Pass --auth subscription and point GROK_AUTH_PATH at that account's auth.json (references/grok.md).",
+        busMail: "login-once",
+        // The cwd jail leaves watchman's state directory writable.
+        sandboxBlocksWatchman: false,
         verbs: ["spawn", "steer", "read", "tail", "status", "stop", "interrupt", "sessions"],
         absentVerbs: {
             approve: "grok has no approval channel (approvals: none) — the cwd jail and the brief are the only brakes",
@@ -98,6 +118,9 @@ export const WORKER_CAPABILITIES: Record<WorkerBackend, WorkerCapabilities> = {
         structuredOutput: ["stream-json (NDJSON)", "json"],
         steering: "between-turns",
         accountRequired: true,
+        busMail: "login-once",
+        // No sandbox at all.
+        sandboxBlocksWatchman: false,
         verbs: [
             "worker spawn",
             "worker steer",

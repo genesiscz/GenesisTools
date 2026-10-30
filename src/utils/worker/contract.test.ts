@@ -54,6 +54,7 @@ describe("buildWorkerContract", () => {
         expect(buildWorkerContract({ backend: "codex", sandbox: "workspace-write" })).toContain("--watchman=false");
         expect(buildWorkerContract({ backend: "codex", sandbox: "read-only" })).toContain("--watchman=false");
         expect(buildWorkerContract({ backend: "grok", sandbox: "workspace-write" })).not.toContain("watchman");
+        expect(buildWorkerContract({ backend: "claude", sandbox: "workspace-write" })).not.toContain("watchman");
     });
 
     test("bus: a codex worker receives through its daemon, never with a blocking login --once", () => {
@@ -65,6 +66,9 @@ describe("buildWorkerContract", () => {
 
         const grok = buildWorkerContract({ backend: "grok", bus, sandbox: "workspace-write" });
         expect(grok).toContain("tools agents login --agent-name codex_task --once --session s-1");
+
+        const claude = buildWorkerContract({ backend: "claude", bus, sandbox: "workspace-write" });
+        expect(claude).toContain("tools agents login --agent-name codex_task --once --session s-1");
     });
 
     test("bus in a read-only sandbox: narrate, never run tools agents", () => {

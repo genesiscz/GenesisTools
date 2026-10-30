@@ -54,6 +54,11 @@ export interface HistoryCorpusManifest {
     sources: HistoryCorpusSourceManifest[];
 }
 
+/** The corpus files one provider wrote, in manifest order. */
+export function corpusSourcesOf(corpus: HistoryCorpusManifest, kind: AgentKind): HistoryCorpusSourceManifest[] {
+    return corpus.sources.filter((source) => source.provider === kind);
+}
+
 interface LogicalSession {
     id: string;
     parentId: string;
