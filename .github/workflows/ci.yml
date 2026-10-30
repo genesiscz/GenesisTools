@@ -547,6 +547,12 @@ jobs:
         timeout-minutes: 1
         run: bun scripts/ci/check-package-boundaries.ts
 
+      # REPORT mode until phase P8 of .claude/plans/2026-10-30-PlugenizeHarnesses.md: it prints every list, table
+      # and branch over claude/codex/grok outside the drivers that is not in harness-guard-allowlist.ts, and exits 0.
+      - name: Harness list guard (report)
+        timeout-minutes: 1
+        run: bun scripts/ci/harness-guard.ts
+
       # A plugin is copied out of the checkout and run elsewhere, where @genesiscz/* and
       # @app/* do not resolve. Tests and eval fixtures are exempt: they only run from here.
       - name: Plugin standalone guard
