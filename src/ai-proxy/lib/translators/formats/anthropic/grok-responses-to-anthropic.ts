@@ -253,6 +253,8 @@ interface ItemState {
     heldArgs: string;
     clientBlock?: JsonRecord;
     clientChunks?: string[];
+    completeCustomInput?: string;
+    customBlock?: JsonRecord;
 }
 
 interface StreamState {
@@ -385,6 +387,7 @@ function openItem(state: StreamState, outputIndex: number, item: JsonRecord): st
                 ? state.toolInput?.(mapped.block.name)
                 : undefined,
         customInput: mapped.customInput,
+        customBlock: mapped.customInput ? mapped.block : undefined,
         heldArgs: "",
         clientBlock: capture ? { ...mapped.block } : undefined,
         clientChunks: capture ? [] : undefined,
@@ -392,6 +395,10 @@ function openItem(state: StreamState, outputIndex: number, item: JsonRecord): st
 
     if (mapped.kind === "tool_use") {
         state.sawFunctionCall = true;
+    }
+
+    if (mapped.customInput) {
+        return frameStart(state);
     }
 
     return (
@@ -431,8 +438,16 @@ function closeItem(state: StreamState, outputIndex: number, doneItem: JsonRecord
     let out = "";
 
     if (item.customInput) {
-        const raw = typeof doneItem?.input === "string" && doneItem.input.length > 0 ? doneItem.input : item.heldArgs;
+        const raw = typeof doneItem?.input === "string" ? doneItem.input : item.completeCustomInput;
+        if (raw === undefined) {
+            state.finished = true;
+            return anthropicSseFrame("error", {
+                error: { type: "api_error", message: "upstream custom tool input was incomplete" },
+            });
+        }
+
         const json = SafeJSON.stringify(item.customInput(raw));
+        out += anthropicSseFrame("content_block_start", { index: item.blockIndex, content_block: item.customBlock });
         out += deltaFrame(state, outputIndex, { type: "input_json_delta", partial_json: json }, json.length);
     }
 
@@ -499,8 +514,6 @@ function finishFrames(state: StreamState, response: JsonRecord | undefined): str
         return "";
     }
 
-    state.finished = true;
-
     let out = frameStart(state);
 
     // Items the stream never opened (terminal-snapshot-only) are synthesized
@@ -516,14 +529,23 @@ function finishFrames(state: StreamState, response: JsonRecord | undefined): str
             out += openItem(state, i, raw);
         }
 
-        out += closeItem(state, i, raw);
+        const incompleteCustom = state.items.get(i)?.customInput && response?.status !== "completed";
+        out += closeItem(state, i, incompleteCustom ? undefined : raw);
+        if (state.finished) {
+            return out;
+        }
     }
 
     for (const [outputIndex, item] of state.items) {
         if (!item.closed) {
             out += closeItem(state, outputIndex, undefined);
+            if (state.finished) {
+                return out;
+            }
         }
     }
+
+    state.finished = true;
 
     // Claude Code drops a thinking block that ends a message, and with it the reasoning a next turn would replay.
     if (state.lastKind === "thinking") {
@@ -605,6 +627,15 @@ function handleEvent(state: StreamState, event: JsonRecord): string {
 
         if (held?.customInput) {
             held.heldArgs += event.delta;
+        }
+
+        return "";
+    }
+
+    if (type === "response.custom_tool_call_input.done" && typeof event.input === "string") {
+        const held = state.items.get(outputIndex);
+        if (held?.customInput) {
+            held.completeCustomInput = event.input;
         }
 
         return "";

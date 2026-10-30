@@ -1,4 +1,5 @@
 import { describe, expect, it, spyOn } from "bun:test";
+import { createAnthropic } from "@ai-sdk/anthropic";
 import {
     CLAUDE_CODE_AGENT_TOOL,
     CLAUDE_CODE_COMPACTION_MARK,
@@ -662,24 +663,74 @@ describe("a custom (free-form) tool call as a client tool call", () => {
         expect(call.stop).toBe("tool_use");
     });
 
-    it("streaming: a call seen only in the terminal snapshot, or with no done frame, still comes whole", async () => {
+    it("streaming: a completed snapshot or input-done frame supplies the complete script", async () => {
         const snapshotOnly = await collect(
             responsesSseToAnthropic(
                 sse([{ type: "response.completed", response: { status: "completed", output: [item] } }]),
                 { model: "gpt-6.1-sol", customToolCall }
             )
         );
-        const deltasOnly = await collect(
-            responsesSseToAnthropic(sse(streamed.slice(0, 3)), { model: "gpt-6.1-sol", customToolCall })
+        const inputDone = await collect(
+            responsesSseToAnthropic(sse(streamed.slice(0, 4)), { model: "gpt-6.1-sol", customToolCall })
         );
 
-        for (const { frames } of [snapshotOnly, deltasOnly]) {
+        for (const { frames } of [snapshotOnly, inputDone]) {
             expect(SafeJSON.parse(toolUse(frames).input, { strict: true })).toEqual({
                 command: `RUN ${js}`,
                 timeout: 1,
             });
             expect(toolUse(frames).stop).toBe("tool_use");
         }
+    });
+
+    it("streaming: partial custom input fails without producing an executable tool call", async () => {
+        for (const events of [
+            streamed.slice(0, 3),
+            [
+                ...streamed.slice(0, 3),
+                { type: "response.incomplete", response: { status: "incomplete", output: [item] } },
+            ],
+        ]) {
+            const { frames } = await collect(
+                responsesSseToAnthropic(sse(events), { model: "gpt-6.1-sol", customToolCall })
+            );
+            expect(frames.some((frame) => frame.event === "error")).toBe(true);
+            expect(toolUse(frames).start).toBeUndefined();
+            expect(toolUse(frames).input).toBe("");
+            expect(toolUse(frames).stop).toBeUndefined();
+        }
+    });
+
+    it("the Anthropic client reports incomplete input as an error and never yields a tool call", async () => {
+        async function clientParts(events: Array<Record<string, unknown>>) {
+            const provider = createAnthropic({
+                apiKey: "test-key",
+                fetch: Object.assign(
+                    async () =>
+                        new Response(responsesSseToAnthropic(sse(events), { model: "gpt-6.1-sol", customToolCall }), {
+                            headers: { "content-type": "text/event-stream" },
+                        }),
+                    { preconnect: fetch.preconnect }
+                ),
+            });
+            const result = await provider("claude-test").doStream({
+                prompt: [{ role: "user", content: [{ type: "text", text: "test" }] }],
+            });
+            const parts = [];
+            for await (const part of result.stream) {
+                parts.push(part);
+            }
+            return parts;
+        }
+
+        const incomplete = await clientParts(streamed.slice(0, 3));
+        expect(incomplete.some((part) => part.type === "error")).toBe(true);
+        expect(incomplete.some((part) => part.type === "tool-call")).toBe(false);
+        const complete = await clientParts([
+            ...streamed,
+            { type: "response.completed", response: { status: "completed", output: [item] } },
+        ]);
+        expect(complete.some((part) => part.type === "tool-call")).toBe(true);
     });
 
     it("streaming: without a mapping the custom call is skipped and the turn ends normally", async () => {

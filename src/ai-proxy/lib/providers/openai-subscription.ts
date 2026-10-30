@@ -501,6 +501,7 @@ export class OpenAiSubscriptionProvider implements ProxyProvider {
             tools: parsed.tools,
             sessionsIn: context?.sessionsIn,
             sessionId: turn.sessionId,
+            model: concreteModel,
         });
 
         // System messages stay in place (`appendDeveloperMessage`): hoisted, they broke the prompt cache.

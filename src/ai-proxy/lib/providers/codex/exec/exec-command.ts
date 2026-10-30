@@ -1,3 +1,4 @@
+import { EXEC_BASH_TIMEOUT_MS } from "@app/ai-proxy/lib/providers/codex/exec/bash-command";
 import type {
     CommandGuard,
     ExecCommand,
@@ -19,6 +20,10 @@ export function truncateMiddle(text: string, maxChars: number): { text: string; 
     }
 
     const marker = (cut: number) => `\n…${cut} chars truncated…\n`;
+    if (maxChars <= marker(text.length).length) {
+        return { text: marker(text.length).slice(0, Math.max(0, maxChars)), truncated: true };
+    }
+
     const room = Math.max(0, maxChars - marker(text.length).length);
     const head = Math.ceil(room / 2);
     const tail = room - head;
@@ -27,47 +32,123 @@ export function truncateMiddle(text: string, maxChars: number): { text: string; 
     return { text: `${text.slice(0, head)}${marker(cut)}${tail > 0 ? text.slice(-tail) : ""}`, truncated: true };
 }
 
-/** Reads a stream into `chunks` as it arrives, so stdout and stderr interleave the way a terminal shows them. */
-async function drain(stream: ReadableStream<Uint8Array>, chunks: string[]): Promise<void> {
+/** Retains only a bounded prefix and suffix while counting every decoded character. */
+export class BoundedOutput {
+    private head = "";
+    private tail = "";
+    length = 0;
+
+    constructor(private readonly limit: number) {}
+
+    append(value: string): void {
+        this.length += value.length;
+        const missing = Math.max(0, this.limit - this.head.length);
+        this.head += value.slice(0, missing);
+        this.tail = (this.tail + value.slice(-this.limit)).slice(-this.limit);
+    }
+
+    result(): { text: string; truncated: boolean } {
+        if (this.length <= this.limit) {
+            return { text: this.head, truncated: false };
+        }
+
+        const marker = `\n…${this.length} chars truncated…\n`;
+        if (marker.length >= this.limit) {
+            return { text: marker.slice(0, this.limit), truncated: true };
+        }
+
+        const room = this.limit - marker.length;
+        const headLength = Math.ceil(room / 2);
+        const tailLength = room - headLength;
+        const actualMarker = `\n…${this.length - room} chars truncated…\n`;
+        return {
+            text: this.head.slice(0, headLength) + actualMarker + (tailLength ? this.tail.slice(-tailLength) : ""),
+            truncated: true,
+        };
+    }
+}
+
+/** Drain both pipes concurrently, retaining a bounded output sample. */
+async function drain(reader: ReadableStreamDefaultReader<Uint8Array>, chunks: BoundedOutput): Promise<void> {
     const decoder = new TextDecoder();
 
-    for await (const chunk of stream) {
-        chunks.push(decoder.decode(chunk, { stream: true }));
+    while (true) {
+        const { done, value } = await reader.read();
+        if (done) {
+            break;
+        }
+        chunks.append(decoder.decode(value, { stream: true }));
     }
 
     const rest = decoder.decode();
 
     if (rest.length > 0) {
-        chunks.push(rest);
+        chunks.append(rest);
     }
 }
 
 /** Runs one command to its end in a shell, with no PTY and no stdin, and returns Codex's result shape. */
-export async function runShellCommand(args: ExecCommandArgs, options: { cwd: string }): Promise<ExecCommandResult> {
+export async function runShellCommand(
+    args: ExecCommandArgs,
+    options: { cwd: string; deadlineAt?: number }
+): Promise<ExecCommandResult> {
     const startedAt = performance.now();
     const shell = args.shell ?? env.paths.getShell();
     const cwd = args.workdir ?? options.cwd;
+    const deadlineAt = options.deadlineAt ?? startedAt + EXEC_BASH_TIMEOUT_MS - 10_000;
+    if (deadlineAt <= performance.now()) {
+        throw new Error("exec_command failed: the script deadline expired before the command started");
+    }
     const proc = Bun.spawn([shell, args.login === true ? "-lc" : "-c", args.cmd], {
         cwd,
         stdin: "ignore",
         stdout: "pipe",
         stderr: "pipe",
+        detached: true,
     });
-    const chunks: string[] = [];
+    const requestedTokens = args.max_output_tokens ?? DEFAULT_COMMAND_TOKENS;
+    const maxChars = Math.min(
+        1_000_000,
+        Math.max(1, Number.isFinite(requestedTokens) ? requestedTokens : DEFAULT_COMMAND_TOKENS) * CHARS_PER_TOKEN
+    );
+    const chunks = new BoundedOutput(maxChars);
 
-    await Promise.all([drain(proc.stdout, chunks), drain(proc.stderr, chunks)]);
-    const exitCode = await proc.exited;
-    const output = chunks.join("");
-    const maxChars = Math.max(1, args.max_output_tokens ?? DEFAULT_COMMAND_TOKENS) * CHARS_PER_TOKEN;
-    const cut = truncateMiddle(output, maxChars);
+    const stdout = proc.stdout.getReader();
+    const stderr = proc.stderr.getReader();
+    let timer: ReturnType<typeof setTimeout> | undefined;
+    const timeout = new Promise<null>((resolve) => {
+        timer = setTimeout(() => resolve(null), Math.max(0, deadlineAt - performance.now()));
+    });
+    const finished = Promise.all([drain(stdout, chunks), drain(stderr, chunks), proc.exited]);
+    let exitCode: number;
+    try {
+        const result = await Promise.race([finished, timeout]);
+        if (result === null) {
+            try {
+                // The detached command owns this process group, including children retaining its pipes.
+                process.kill(-proc.pid, "SIGKILL");
+            } catch (error) {
+                logger.debug({ error, pid: proc.pid }, "ai-proxy exec: command group already exited");
+            }
+            void stdout.cancel().catch((error) => logger.debug({ error }, "ai-proxy exec: stdout cancellation failed"));
+            void stderr.cancel().catch((error) => logger.debug({ error }, "ai-proxy exec: stderr cancellation failed"));
+            throw new Error(
+                "exec_command failed: the script deadline expired; termination of the command group was requested"
+            );
+        }
+        exitCode = result[2];
+    } finally {
+        clearTimeout(timer);
+    }
+    const cut = chunks.result();
 
-    logger.debug({ cwd, shell, exitCode, chars: output.length }, "ai-proxy exec: ran a nested command");
+    logger.debug({ cwd, shell, exitCode, chars: chunks.length }, "ai-proxy exec: ran a nested command");
 
     return {
         output: cut.text,
         exit_code: exitCode,
         wall_time_seconds: Math.round((performance.now() - startedAt) / 100) / 10,
-        ...(cut.truncated ? { original_token_count: Math.ceil(output.length / CHARS_PER_TOKEN) } : {}),
+        ...(cut.truncated ? { original_token_count: Math.ceil(chunks.length / CHARS_PER_TOKEN) } : {}),
     };
 }
 
@@ -75,10 +156,12 @@ export async function runShellCommand(args: ExecCommandArgs, options: { cwd: str
 export function guardedExecCommand({
     guard,
     cwd,
-    run = (args) => runShellCommand(args, { cwd }),
+    deadlineAt,
+    run = (args) => runShellCommand(args, { cwd, deadlineAt }),
 }: {
     guard: CommandGuard;
     cwd: string;
+    deadlineAt?: number;
     run?: ExecCommand;
 }): ExecCommand {
     return async (args) => {

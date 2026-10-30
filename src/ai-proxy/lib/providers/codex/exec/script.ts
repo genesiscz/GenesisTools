@@ -1,4 +1,4 @@
-import { CHARS_PER_TOKEN, truncateMiddle } from "@app/ai-proxy/lib/providers/codex/exec/exec-command";
+import { BoundedOutput, CHARS_PER_TOKEN } from "@app/ai-proxy/lib/providers/codex/exec/exec-command";
 import type { ExecCommand, ExecCommandArgs, ExecStore } from "@app/ai-proxy/lib/providers/codex/exec/types";
 import { SafeJSON } from "@genesiscz/utils/json";
 import { logger } from "@genesiscz/utils/logger";
@@ -108,14 +108,26 @@ export async function runExecScript({
 }: RunExecScriptOptions): Promise<string> {
     const startedAt = now();
     const pragma = parseExecPragma(source);
-    const items: string[] = [];
+    const budget = Math.min(EXEC_OUTPUT_CHARS, (pragma.maxOutputTokens ?? Number.POSITIVE_INFINITY) * CHARS_PER_TOKEN);
+    const items = new BoundedOutput(Math.max(1, Math.floor(budget)));
+    let itemCount = 0;
+    const append = (value: string) => {
+        if (itemCount++ > 0) {
+            items.append("\n");
+        }
+        items.append(value);
+    };
     const timers = new Set<ReturnType<typeof setTimeout>>();
     let failure: string | undefined;
+    let rejectTimer: (error: unknown) => void = () => {};
+    const timerFailure = new Promise<never>((_, reject) => {
+        rejectTimer = reject;
+    });
 
     const helpers: Record<string, unknown> = {
         tools: { exec_command: (input: unknown) => execCommand(commandArgs(input)) },
         text: (value: unknown) => {
-            items.push(textItem(value));
+            append(textItem(value));
         },
         exit: () => {
             throw new ExitSignal();
@@ -123,10 +135,14 @@ export async function runExecScript({
         store: (key: unknown, value: unknown) => store.store(String(key), value),
         load: (key: unknown) => store.load(String(key)),
         ALL_TOOLS: NESTED_TOOLS,
-        setTimeout: (callback: () => void, delayMs?: number) => {
+        setTimeout: (callback: () => unknown, delayMs?: number) => {
             const timer = setTimeout(() => {
                 timers.delete(timer);
-                callback();
+                try {
+                    Promise.resolve(callback()).catch(rejectTimer);
+                } catch (error) {
+                    rejectTimer(error);
+                }
             }, delayMs);
             timers.add(timer);
             return timer;
@@ -142,22 +158,23 @@ export async function runExecScript({
     try {
         const names = [...Object.keys(helpers), ...HIDDEN_GLOBALS];
         const body = new Function(...names, `return (async () => {\n${source}\n})();`);
-        await body(...Object.values(helpers), ...HIDDEN_GLOBALS.map(() => undefined));
+        await Promise.race([body(...Object.values(helpers), ...HIDDEN_GLOBALS.map(() => undefined)), timerFailure]);
     } catch (error) {
         if (!(error instanceof ExitSignal)) {
             failure = error instanceof Error ? error.message : String(error);
         }
-    }
-
-    // Pending timeouts do not keep a script alive.
-    for (const timer of timers) {
-        clearTimeout(timer);
+    } finally {
+        // Pending timeouts do not keep a script alive.
+        for (const timer of timers) {
+            clearTimeout(timer);
+        }
     }
 
     const seconds = Math.max(0, (now() - startedAt) / 1000).toFixed(1);
     const header = `Script ${failure === undefined ? "completed" : "failed"}\nWall time ${seconds} seconds\nOutput:\n`;
-    const all = failure === undefined ? items : [...items, `Script error:\n${failure}`];
-    const budget = Math.min(EXEC_OUTPUT_CHARS, (pragma.maxOutputTokens ?? Number.POSITIVE_INFINITY) * CHARS_PER_TOKEN);
+    if (failure !== undefined) {
+        append(`Script error:\n${failure}`);
+    }
 
-    return header + truncateMiddle(all.join("\n"), Math.max(1, Math.floor(budget))).text;
+    return header + items.result().text;
 }

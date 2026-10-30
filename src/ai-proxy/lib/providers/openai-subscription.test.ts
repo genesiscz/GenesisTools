@@ -3808,7 +3808,13 @@ describe("Codex's exec tool: the model's call reaches Claude Code as one Bash ca
         expect(toolUse.name).toBe("Bash");
         expect(toolUse.id).toBe("call_exec");
         expect(toolUse.input).toEqual({
-            ...execBashInput({ js, bun: process.execPath, runner: EXEC_RUNNER_PATH, sessionId: "sess-exec-1" }),
+            ...execBashInput({
+                js,
+                bun: process.execPath,
+                runner: EXEC_RUNNER_PATH,
+                sessionId: "sess-exec-1",
+                model: "gpt-6.1-sol",
+            }),
         });
         expect(parseExecBashCommand(String(toolUse.input.command))).toBe(js);
     });
@@ -3822,7 +3828,13 @@ describe("Codex's exec tool: the model's call reaches Claude Code as one Bash ca
                 type: "tool_use",
                 id: "call_exec",
                 name: "Bash",
-                input: execBashInput({ js, bun: process.execPath, runner: EXEC_RUNNER_PATH, sessionId: "sess-exec-1" }),
+                input: execBashInput({
+                    js,
+                    bun: process.execPath,
+                    runner: EXEC_RUNNER_PATH,
+                    sessionId: "sess-exec-1",
+                    model: "gpt-6.1-sol",
+                }),
             },
         ]);
         expect(message.stop_reason).toBe("tool_use");

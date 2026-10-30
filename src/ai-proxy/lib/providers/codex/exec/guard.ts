@@ -14,7 +14,7 @@ const ALLOW_ALL: CommandGuard = { check: () => ({ outcome: "allow" }) };
  * the hook caps them per session and the runner has no session counter.
  */
 export async function shellGuard(
-    options: { config?: HooksConfig; rules?: readonly ShellRule[] } = {}
+    options: { config?: HooksConfig; rules?: readonly ShellRule[]; model?: string } = {}
 ): Promise<CommandGuard> {
     if (env.agents.areHooksDisabled()) {
         return ALLOW_ALL;
@@ -26,11 +26,15 @@ export async function shellGuard(
         return ALLOW_ALL;
     }
 
+    if (!options.model && Object.keys(config.guard.models).length > 0) {
+        throw new Error("exec: the shell guard requires the session model when model rules are configured");
+    }
+
     const rules = options.rules ?? (await guardRules(config)).rules;
 
     return {
         check(cmd, cwd) {
-            const verdict = evaluateCommand(cmd, config, { harness: "claude", cwd, rules });
+            const verdict = evaluateCommand(cmd, config, { harness: "claude", cwd, rules, model: options.model });
 
             if (verdict.outcome === "block" || verdict.outcome === "warn") {
                 return { outcome: verdict.outcome, message: verdict.message, rules: verdict.tags };

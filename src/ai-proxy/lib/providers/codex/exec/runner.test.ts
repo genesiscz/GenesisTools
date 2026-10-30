@@ -1,5 +1,5 @@
 import { describe, expect, it } from "bun:test";
-import { mkdtempSync, realpathSync } from "node:fs";
+import { existsSync, mkdtempSync, realpathSync } from "node:fs";
 import { tmpdir } from "node:os";
 import { join } from "node:path";
 import { DEFAULT_HOOKS_CONFIG } from "@app/agents/lib/hooks/config";
@@ -77,6 +77,16 @@ describe("the exec runner's script", () => {
         expect(output).toBe("Script failed\nWall time 1.5 seconds\nOutput:\npartial\nScript error:\nboom");
     });
 
+    it("handles synchronous and asynchronous timer failures and exit", async () => {
+        for (const callback of ['throw new Error("boom")', 'return Promise.reject(new Error("boom"))']) {
+            const output = await run(`await new Promise(() => setTimeout(() => { ${callback}; }, 0));`);
+            expect(output).toContain("Script failed");
+            expect(output).toContain("Script error:\nboom");
+        }
+
+        expect(await run("await new Promise(() => setTimeout(() => exit(), 0));")).toContain("Script completed");
+    });
+
     it("a syntax error fails the script and names the error", async () => {
         const output = await run("const = ;");
 
@@ -141,6 +151,9 @@ describe("the exec runner's commands", () => {
 
     it("cuts a long output in the middle to max_output_tokens and reports the original size", () => {
         expect(truncateMiddle("short", 100)).toEqual({ text: "short", truncated: false });
+        for (const budget of [0, 1, 4, 10]) {
+            expect(truncateMiddle("x".repeat(100), budget).text.length).toBeLessThanOrEqual(budget);
+        }
 
         const cut = truncateMiddle(`HEAD${"m".repeat(1000)}TAIL`, 100);
 
@@ -148,6 +161,43 @@ describe("the exec runner's commands", () => {
         expect(cut.text.length).toBeLessThanOrEqual(100);
         expect(cut.text.startsWith("HEAD")).toBe(true);
         expect(cut.text.endsWith("TAIL")).toBe(true);
+    });
+
+    it("drains large output within the budget and reports the original count", async () => {
+        const result = await runShellCommand(
+            { cmd: "printf HEAD; printf '%0100000d' 0; printf TAIL", shell: "/bin/sh", max_output_tokens: 25 },
+            { cwd: "/tmp" }
+        );
+        expect(result.exit_code).toBe(0);
+        expect(result.output.length).toBeLessThanOrEqual(100);
+        expect(result.output.startsWith("HEAD")).toBe(true);
+        expect(result.output.endsWith("TAIL")).toBe(true);
+        expect(result.original_token_count).toBe(25002);
+    });
+
+    it("times out a background child holding pipes and prevents its later side effect", async () => {
+        const dir = realpathSync(mkdtempSync(join(tmpdir(), "exec-timeout-")));
+        const started = performance.now();
+        await expect(
+            runShellCommand(
+                { cmd: "(sleep 0.5; printf child > marker) &", shell: "/bin/sh" },
+                { cwd: dir, deadlineAt: performance.now() + 150 }
+            )
+        ).rejects.toThrow("script deadline expired");
+        expect(performance.now() - started).toBeLessThan(1500);
+        await Bun.sleep(600);
+        expect(existsSync(join(dir, "marker"))).toBe(false);
+        await expect(
+            runShellCommand(
+                { cmd: "printf late > marker", shell: "/bin/sh" },
+                { cwd: dir, deadlineAt: performance.now() - 1 }
+            )
+        ).rejects.toThrow("before the command started");
+        expect(existsSync(join(dir, "marker"))).toBe(false);
+
+        const normal = await runShellCommand({ cmd: "printf normal", shell: "/bin/sh" }, { cwd: dir });
+        expect(normal.output).toBe("normal");
+        expect(normal.exit_code).toBe(0);
     });
 
     it("the shell guard blocks a nested command before it runs, and the script sees the deny as an error", async () => {
@@ -171,6 +221,24 @@ describe("the exec runner's commands", () => {
             uncaught.startsWith("Script failed\nWall time 1.5 seconds\nOutput:\nScript error:\nexec_command failed")
         ).toBe(true);
         expect(inner.calls).toHaveLength(1);
+    });
+
+    it("applies model-specific guard outcomes and fails closed without a model", async () => {
+        const config = {
+            ...LIVE_CONFIG,
+            guard: {
+                ...LIVE_CONFIG.guard,
+                models: {
+                    "test-deny": { "git-checkout-overwrites-file": "block" as const },
+                    "test-allow": { "git-checkout-overwrites-file": "allow" as const },
+                },
+            },
+        };
+        const denied = await shellGuard({ config, model: "test-deny" });
+        const allowed = await shellGuard({ config, model: "test-allow" });
+        expect(denied.check("git checkout -- a.ts", "/tmp").outcome).toBe("block");
+        expect(allowed.check("git checkout -- a.ts", "/tmp").outcome).toBe("allow");
+        expect(shellGuard({ config })).rejects.toThrow("requires the session model");
     });
 
     it("in shadow mode the guard only watches, as the hook does: the command runs", async () => {
@@ -229,6 +297,19 @@ describe("the exec runner entry", () => {
         expect({ code, stderr: code === 0 ? "" : stderr }).toEqual({ code: 0, stderr: "" });
         expect(stdout).toMatch(/^Script completed\nWall time \d+\.\d seconds\nOutput:\n/);
         expect(stdout.endsWith(`${dir} 0`)).toBe(true);
+    });
+
+    it("flushes the full output before exiting when stdout is consumed later", async () => {
+        const proc = Bun.spawn([process.execPath, join(import.meta.dir, "runner.ts")], {
+            env: process.env,
+            stdin: new TextEncoder().encode(`text("x".repeat(${EXEC_OUTPUT_CHARS}));`),
+            stdout: "pipe",
+            stderr: "pipe",
+        });
+        await Bun.sleep(100);
+        const [code, stdout] = await Promise.all([proc.exited, new Response(proc.stdout).text()]);
+        expect(code).toBe(0);
+        expect(stdout.endsWith("x".repeat(EXEC_OUTPUT_CHARS))).toBe(true);
     });
 
     it("writes its log lines to the day log only, never to stderr, so Codex's header stays the first line the model reads", async () => {
