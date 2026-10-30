@@ -3,11 +3,12 @@ import { mapTerminalSurfaces, profileSurfaces } from "@app/cmux/lib/profile-walk
 import { cleanLaunchCommand } from "@app/cmux/lib/tty-capture";
 import type { Profile } from "@app/cmux/lib/types";
 import type { AgentKind } from "@genesiscz/utils/agent-sessions/types";
+import { ACCOUNT_PROVIDER_ALIASES, isAccountProviderAlias } from "@genesiscz/utils/ai/providers/alias-list";
 import { type CoverageTab, type JournalCoverage, journalCoverage } from "@genesiscz/utils/cmux/journal-coverage";
 
 export type RestoreRestartSource = "previous" | "live" | "profile";
 
-export const ALL_RESTORE_AGENTS: AgentKind[] = ["claude", "grok", "codex"];
+export const ALL_RESTORE_AGENTS: readonly AgentKind[] = ACCOUNT_PROVIDER_ALIASES;
 
 /** Commander sets a bare `--flag` to `true` when the option is `--flag [value]`. */
 export function isMissingEnumFlag(raw: unknown): boolean {
@@ -34,8 +35,8 @@ export function parseAgentList(raw: string | undefined): AgentKind[] {
             continue;
         }
 
-        if (trimmed !== "claude" && trimmed !== "grok" && trimmed !== "codex") {
-            throw new Error(`--agents must be a comma list of claude, grok, codex (got "${raw}")`);
+        if (!isAccountProviderAlias(trimmed)) {
+            throw new Error(`--agents must be a comma list of ${ALL_RESTORE_AGENTS.join(", ")} (got "${raw}")`);
         }
 
         if (!kinds.includes(trimmed)) {
@@ -44,7 +45,7 @@ export function parseAgentList(raw: string | undefined): AgentKind[] {
     }
 
     if (kinds.length === 0) {
-        throw new Error(`--agents must be a comma list of claude, grok, codex (got "${raw}")`);
+        throw new Error(`--agents must be a comma list of ${ALL_RESTORE_AGENTS.join(", ")} (got "${raw}")`);
     }
 
     return kinds;

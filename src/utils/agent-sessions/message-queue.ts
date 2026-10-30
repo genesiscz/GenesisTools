@@ -1,6 +1,7 @@
 import { createHash, randomUUID } from "node:crypto";
 import { existsSync, mkdirSync, readFileSync } from "node:fs";
 import { isAbsolute, join } from "node:path";
+import { ACCOUNT_PROVIDER_ALIASES } from "@genesiscz/utils/ai/providers/alias-list";
 import { SafeJSON } from "@genesiscz/utils/json";
 import { logger } from "@genesiscz/utils/logger";
 import { withFileLock } from "@genesiscz/utils/storage/file-lock";
@@ -10,7 +11,7 @@ import { workerSourceHome } from "@genesiscz/utils/worker/delivery";
 import { z } from "zod";
 
 const targetSchema = z.object({
-    provider: z.enum(["claude", "codex", "grok"]),
+    provider: z.enum(ACCOUNT_PROVIDER_ALIASES),
     sessionId: z.string().trim().min(1),
     sourceHome: z.string().trim().min(1).refine(isAbsolute, "An absolute source home is required"),
 });

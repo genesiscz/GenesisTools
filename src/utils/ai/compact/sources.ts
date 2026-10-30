@@ -5,6 +5,7 @@ import {
     grokHistoryReader,
 } from "@genesiscz/utils/agent-sessions/compact-readers";
 import type { NativeHistoryEntry, NativeSessionReader } from "@genesiscz/utils/agent-sessions/types";
+import { ACCOUNT_PROVIDER_ALIASES } from "@genesiscz/utils/ai/providers/alias-list";
 import { logger } from "@genesiscz/utils/logger";
 import { detectCompactFormat, parseCompactDocument } from "./format";
 import { type MessageRow, pairRows } from "./pairing";
@@ -12,10 +13,10 @@ import type { CompactFormat, CompactMessage } from "./schema";
 
 const log = logger.child({ component: "ai:compact:sources" });
 
-export const COMPACT_SOURCES = ["auto", "jsonl", "claude", "codex", "grok"] as const;
+export const COMPACT_SOURCES = ["auto", "jsonl", ...ACCOUNT_PROVIDER_ALIASES] as const;
 export type CompactSource = (typeof COMPACT_SOURCES)[number];
 
-export const NATIVE_COMPACT_SOURCES = ["claude", "codex", "grok"] as const;
+export const NATIVE_COMPACT_SOURCES = ACCOUNT_PROVIDER_ALIASES;
 export type NativeCompactSource = (typeof NATIVE_COMPACT_SOURCES)[number];
 
 export function parseCompactSource(value: unknown): CompactSource {

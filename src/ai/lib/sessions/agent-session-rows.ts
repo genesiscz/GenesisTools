@@ -14,8 +14,11 @@ import type { SessionPin } from "@genesiscz/utils/agent-sessions/pins";
 import { loadPins } from "@genesiscz/utils/agent-sessions/pins";
 import { historyPathUnderRoot } from "@genesiscz/utils/agent-sessions/project-scope";
 import { resolveHistoryProvider } from "@genesiscz/utils/agent-sessions/provider";
-import type { AccountProviderAlias } from "@genesiscz/utils/ai/providers/aliases";
-import { PROVIDER_ALIASES } from "@genesiscz/utils/ai/providers/aliases";
+import {
+    ACCOUNT_PROVIDER_ALIASES,
+    type AccountProviderAlias,
+    PROVIDER_ALIASES,
+} from "@genesiscz/utils/ai/providers/aliases";
 import { grokAccountNameLookup } from "@genesiscz/utils/ai/providers/plugins/grok-sub/discover";
 import { loadAllSessionCmuxRefs, resolveRefsProvider, type SessionCmuxRefs } from "@genesiscz/utils/cmux/session-refs";
 import { logger } from "@genesiscz/utils/logger";
@@ -108,7 +111,7 @@ export interface AgentSessionRowsOptions {
     failClosed?: boolean;
 }
 
-const ALL: readonly AccountProviderAlias[] = ["claude", "codex", "grok"];
+const ALL: readonly AccountProviderAlias[] = ACCOUNT_PROVIDER_ALIASES;
 
 export { POLLED_LISTING_REUSE_MS } from "./listing-reuse";
 

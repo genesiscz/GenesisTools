@@ -1,5 +1,7 @@
 import { readFileSync } from "node:fs";
 import { join } from "node:path";
+import { ACCOUNT_PROVIDER_ALIASES } from "@genesiscz/utils/ai/providers/alias-list";
+import type { HarnessId } from "@genesiscz/utils/harness/types";
 import { SafeJSON } from "@genesiscz/utils/json";
 import { genesisToolsDir, toolDataDir } from "@genesiscz/utils/storage/root";
 import type { DiffCategory } from "./diff/classify";
@@ -7,8 +9,8 @@ import { FULL_DIFF_MODES, type FullDiffMode } from "./diff/full";
 import { DIFF_THEMES, type DiffThemeName } from "./diff/theme";
 
 export type HookOutcome = "allow" | "context" | "warn" | "block";
-export type HarnessName = "claude" | "codex" | "grok";
-export const HARNESS_NAMES: readonly HarnessName[] = ["claude", "codex", "grok"];
+export type HarnessName = HarnessId;
+export const HARNESS_NAMES: readonly HarnessName[] = ACCOUNT_PROVIDER_ALIASES;
 
 /**
  * A configured MB figure in bytes. Decimal, because these caps are read against file sizes

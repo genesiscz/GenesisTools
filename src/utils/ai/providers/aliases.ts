@@ -1,4 +1,5 @@
 import { ACCOUNT_PROVIDER_ALIASES, type AccountProviderAlias } from "./alias-list";
+import { harnessDrivers } from "./harness-index";
 import { registeredProviderIds, UnknownProviderError } from "./registry";
 
 export { ACCOUNT_PROVIDER_ALIASES, type AccountProviderAlias, isAccountProviderAlias } from "./alias-list";
@@ -7,14 +8,12 @@ export { ACCOUNT_PROVIDER_ALIASES, type AccountProviderAlias, isAccountProviderA
  * CLI aliases for the subscription plugins that have account features (spec 2026-09-04,
  * section 2.3). `tools ai accounts --provider codex` and `--provider openai-sub` are the same
  * thing; help text lists the aliases first. The dashboard shows the alias as the display
- * name and the plugin id in tooltips. One map, one file: the dev-dashboard `provider-meta.ts`
- * and the Genesis `AIProviderMeta.swift` mirror it and must stay in sync.
+ * name and the plugin id in tooltips. Built from the harness drivers (`identity.plugin`), so a new harness adds
+ * itself; the dev-dashboard `provider-meta.ts` and the Genesis `AIProviderMeta.swift` still mirror it (plan P7).
  */
-export const PROVIDER_ALIASES: Readonly<Record<string, string>> = {
-    claude: "anthropic-sub",
-    codex: "openai-sub",
-    grok: "grok-sub",
-};
+export const PROVIDER_ALIASES: Readonly<Record<string, string>> = Object.fromEntries(
+    harnessDrivers().map((driver) => [driver.id, driver.identity.plugin])
+);
 
 const ID_TO_ALIAS: Readonly<Record<string, AccountProviderAlias>> = Object.fromEntries(
     ACCOUNT_PROVIDER_ALIASES.map((alias) => [PROVIDER_ALIASES[alias], alias])

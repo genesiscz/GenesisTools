@@ -1,3 +1,4 @@
+import { ACCOUNT_PROVIDER_ALIASES, isAccountProviderAlias } from "@genesiscz/utils/ai/providers/alias-list";
 import { logger } from "@genesiscz/utils/logger";
 import { prof } from "../prof";
 import { type LoadOptions, loadEvents } from "./load";
@@ -14,8 +15,8 @@ const WORKER_TIMEOUT_MS = 5 * 60_000;
 
 /** The three native agents each get a thread; every other source shares one. */
 function jobGroups(wanted: readonly SourceId[]): SourceId[][] {
-    const native = (["claude", "codex", "grok"] as const).filter((id) => wanted.includes(id)).map((id) => [id]);
-    const rest = wanted.filter((id) => id !== "claude" && id !== "codex" && id !== "grok");
+    const native: SourceId[][] = ACCOUNT_PROVIDER_ALIASES.filter((id) => wanted.includes(id)).map((id) => [id]);
+    const rest = wanted.filter((id) => !isAccountProviderAlias(id));
 
     return rest.length > 0 ? [...native, rest] : native;
 }

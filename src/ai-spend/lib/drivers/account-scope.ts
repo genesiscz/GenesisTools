@@ -2,7 +2,7 @@ import { dirname } from "node:path";
 import type { AccountEntry } from "@genesiscz/utils/ai/config/schema";
 import { tryProviderPlugin } from "@genesiscz/utils/ai/providers/registry";
 import { logger } from "@genesiscz/utils/logger";
-import { AGENT_PLUGIN_IDS, type AgentId, type DriverRoot } from "./types";
+import { type AgentId, agentPluginId, type DriverRoot } from "./types";
 
 /**
  * The one place a driver asks a provider plugin where an account's transcripts
@@ -36,7 +36,7 @@ export interface SpendScopeRootsOptions {
 }
 
 export function spendScopeRoots(options: SpendScopeRootsOptions): DriverRoot[] {
-    const pluginId = AGENT_PLUGIN_IDS[options.agent];
+    const pluginId = agentPluginId(options.agent);
     const spendScope = tryProviderPlugin(pluginId)?.accounts?.spendScope;
 
     if (!spendScope) {

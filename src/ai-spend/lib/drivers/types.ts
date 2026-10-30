@@ -13,6 +13,7 @@
 
 import type { AccountEntry } from "@genesiscz/utils/ai/config/schema";
 import { ACCOUNT_PROVIDER_ALIASES, type AccountProviderAlias } from "@genesiscz/utils/ai/providers/alias-list";
+import { harnessPluginId } from "@genesiscz/utils/ai/providers/harness-index";
 import { CLAUDE_ALL_ACCOUNT_ID, UNBOUND_ACCOUNT_ID } from "@genesiscz/utils/ai/usage";
 import type { CreateParserOptions, DriverLineParser } from "@genesiscz/utils/ai/usage/transcripts/types";
 
@@ -28,17 +29,13 @@ export type AgentId = AccountProviderAlias;
 export const AGENT_IDS: readonly AgentId[] = ACCOUNT_PROVIDER_ALIASES;
 
 /**
- * The provider plugin that owns each agent's accounts.
- *
- * An agent is a transcript dialect; a plugin is a login. They are one-to-one
- * today and this map is the only place that says so, so a driver never hardcodes
- * a plugin id and the accounts wiring never hardcodes an agent id.
+ * The provider plugin that owns an agent's accounts. An agent is a transcript dialect; a plugin is a login. The
+ * harness driver names its plugin (`identity.plugin`), so a driver never hardcodes a plugin id and the accounts wiring
+ * never hardcodes an agent id.
  */
-export const AGENT_PLUGIN_IDS: Record<AgentId, string> = {
-    claude: "anthropic-sub",
-    codex: "openai-sub",
-    grok: "grok-sub",
-};
+export function agentPluginId(agent: AgentId): string {
+    return harnessPluginId(agent);
+}
 
 /**
  * The one account row all of an agent's spend lands in, when its transcripts record no login; null when each

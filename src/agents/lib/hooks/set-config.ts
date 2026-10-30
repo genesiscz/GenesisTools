@@ -3,6 +3,7 @@ import {
     DECISION_CHAT_ANSWERS,
     DEFAULT_HOOKS_CONFIG,
     FILL_MODES,
+    HARNESS_NAMES,
     type HarnessName,
     HIGHLIGHT_MODES,
     HIGHLIGHTERS,
@@ -23,7 +24,7 @@ import { type SubagentLinePlan, wireSubagentLine } from "./install";
 import { BUILT_IN_RULES } from "./tool-rules";
 
 const OUTCOMES: readonly HookOutcome[] = ["allow", "context", "warn", "block"];
-const HARNESSES: readonly HarnessName[] = ["claude", "codex", "grok"];
+const HARNESSES: readonly HarnessName[] = HARNESS_NAMES;
 const NUMERIC_DIFF = [
     "maxFiles",
     "maxLinesPerFile",
