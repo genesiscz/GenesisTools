@@ -2,11 +2,11 @@ import { readFileSync } from "node:fs";
 import { claudeMessagesToTurns } from "@genesiscz/utils/ai/transcripts/claude";
 import { toolInputKeysOf } from "@genesiscz/utils/ai/transcripts/native-scan";
 import { parseTranscriptLine } from "@genesiscz/utils/ai/transcripts/parse-line";
-import { isRecord } from "@genesiscz/utils/ai/transcripts/resolve-core";
 import { workerEventsToTurns } from "@genesiscz/utils/ai/transcripts/worker-events";
 import { ClaudeSession } from "@genesiscz/utils/claude/session";
 import { parseTurnEvents as parseClaudeTurnEvents } from "@genesiscz/utils/claude/worker-stream";
 import type { TranscriptParser } from "@genesiscz/utils/harness/parts";
+import { isObject } from "@genesiscz/utils/object";
 import { claudeToolInputLine } from "./claude-tool-inputs";
 import { claudeWindowTurns } from "./claude-window-turns";
 
@@ -29,6 +29,6 @@ export const claudeParse: TranscriptParser = {
     fromLines: (resolved, lines) =>
         resolved.source === "worker"
             ? workerEventsToTurns(parseClaudeTurnEvents(lines.join("\n"), resolved.sessionId), resolved.sessionId, 1)
-            : claudeWindowTurns(lines.map(parseTranscriptLine).filter(isRecord)),
+            : claudeWindowTurns(lines.map(parseTranscriptLine).filter(isObject)),
     toolInputKeys: (text) => toolInputKeysOf(text, claudeToolInputLine),
 };
