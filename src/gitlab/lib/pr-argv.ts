@@ -11,7 +11,12 @@
  *   pr https://host/g/p/-/merge_requests/7412 review
  *                                   → pr review 7412 --host https://host --project g/p
  *
- * A first word that is not an MR (`stale`, `touching`, `--help`) leaves the argv unchanged.
+ * The verb may also come first when it names a group: `pr review 7412 --give` and `pr comments
+ * 7412` get the group's default leaf like their MR-first twins. A verb-first leaf (`pr comments
+ * reply 7412 T03`) already is the internal form and is left alone.
+ *
+ * A first word that is neither an MR nor a group followed by one (`stale`, `touching`, `--help`)
+ * leaves the argv unchanged.
  */
 
 /** A command group as the rewrite sees it: its subcommand names and the leaf a bare group runs. */
@@ -103,6 +108,25 @@ export function rewriteArgv(args: string[], root: CommandNode): string[] {
     return withDefaultLeaves(args, root);
 }
 
+/** The longest run of `words` that names a command path under `root`, and the node it ends at. */
+function walkPath(root: CommandNode, words: string[]): { path: string[]; node: CommandNode } {
+    const path: string[] = [];
+    let node = root;
+
+    while (path.length < words.length) {
+        const child = node.children.get(words[path.length]);
+
+        if (!child) {
+            break;
+        }
+
+        path.push(words[path.length]);
+        node = child;
+    }
+
+    return { path, node };
+}
+
 export function rewritePrArgv(args: string[], pr: CommandNode): string[] {
     const at = firstWord(args);
 
@@ -113,29 +137,32 @@ export function rewritePrArgv(args: string[], pr: CommandNode): string[] {
     const refAt = at + 1;
     const ref = args[refAt];
 
-    if (ref === undefined || !isMrRef(ref)) {
+    if (ref === undefined) {
         return args;
+    }
+
+    if (!isMrRef(ref)) {
+        // Verb first: `pr review 42 --give` is read as `pr 42 review --give`, but only for a group,
+        // since a leaf followed by the MR already is the internal form.
+        const verbs = walkPath(pr, args.slice(refAt));
+        const mr = args[refAt + verbs.path.length];
+
+        if (verbs.path.length === 0 || !verbs.node.defaultChild || mr === undefined || !isMrRef(mr)) {
+            return args;
+        }
+
+        return rewritePrArgv(
+            [...args.slice(0, refAt), mr, ...verbs.path, ...args.slice(refAt + verbs.path.length + 1)],
+            pr
+        );
     }
 
     const { iids, host, project } = parseMrRef(ref);
     const rest = args.slice(refAt + 1);
-    const path: string[] = [];
-    let node = pr;
-    let index = 0;
-
-    while (index < rest.length) {
-        const child = node.children.get(rest[index]);
-
-        if (!child) {
-            break;
-        }
-
-        path.push(rest[index]);
-        node = child;
-        index++;
-    }
-
-    const tail = rest.slice(index);
+    const walked = walkPath(pr, rest);
+    const path = walked.path;
+    let node = walked.node;
+    const tail = rest.slice(path.length);
 
     // `pr 42 review --help` asks what the group can do, so it gets the group's help, not its default leaf's.
     if (node.defaultChild && (hasOption(tail, "--help") || hasOption(tail, "-h"))) {

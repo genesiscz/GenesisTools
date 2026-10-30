@@ -95,6 +95,34 @@ describe("rewritePrArgv", () => {
         expect(rewritePrArgv(["pr", "7412", "comments", "--help"], PR)).toEqual(["pr", "comments", "--help"]);
     });
 
+    test("the verb may come first when it names a group; a verb-first leaf and a group without a default stay as typed", () => {
+        expect(rewritePrArgv(["pr", "comments", "!7412", "--unresolved"], PR)).toEqual([
+            "pr",
+            "comments",
+            "list",
+            "7412",
+            "--unresolved",
+        ]);
+        expect(
+            rewritePrArgv(["pr", "comments", "https://gitlab.example.com/group/app/-/merge_requests/42"], PR)
+        ).toEqual(["pr", "comments", "list", "42", "--host", "https://gitlab.example.com", "--project", "group/app"]);
+        expect(rewritePrArgv(["pr", "comments", "7412", "--help"], PR)).toEqual(["pr", "comments", "--help"]);
+        expect(rewritePrArgv(["pr", "comments", "reply", "7412", "T03"], PR)).toEqual([
+            "pr",
+            "comments",
+            "reply",
+            "7412",
+            "T03",
+        ]);
+        expect(rewritePrArgv(["pr", "stale", "7412"], PR)).toEqual(["pr", "stale", "7412"]);
+        expect(rewritePrArgv(["pr", "comments", "--unresolved", "7412"], PR)).toEqual([
+            "pr",
+            "comments",
+            "--unresolved",
+            "7412",
+        ]);
+    });
+
     test("--help after the MR asks for that leaf's help", () => {
         expect(rewritePrArgv(["pr", "7412", "comments", "reply", "--help"], PR)).toEqual([
             "pr",

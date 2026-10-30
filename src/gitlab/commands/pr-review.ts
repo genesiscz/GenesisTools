@@ -126,10 +126,6 @@ const GIVE_ONLY = [
 ] as const;
 const RECEIVE_ONLY = ["anchors", "schemaFormat", "schemaFile", "reportFile", "confirm"] as const;
 
-function reviewCommand(iid: string | number = "<iid>"): string {
-    return toolCommand("gitlab pr", String(iid), "review");
-}
-
 function flagOf(cmd: Command, key: string): string {
     return cmd.options.find((option) => option.attributeName() === key)?.flags ?? key;
 }
@@ -568,10 +564,16 @@ async function runPrReview(mrIid: string, opts: Options, door: ReviewDoor): Prom
         progress(`ℹ  facts  → ${jsonPath}`);
     }
 
-    const target = [opts.host ? `--host ${opts.host}` : "", opts.project ? `--project ${opts.project}` : ""]
-        .filter(Boolean)
-        .join(" ");
-    const command = `${reviewCommand(iid)} --give${target ? ` ${target}` : ""}`;
+    // The --llm view's next steps re-run this command; `--out` moved the saved facts that `--expand` reads.
+    const command = toolCommand(
+        "gitlab pr",
+        String(iid),
+        "review",
+        "--give",
+        ...(opts.host ? ["--host", opts.host] : []),
+        ...(opts.project ? ["--project", opts.project] : []),
+        ...(opts.out ? ["--out", reportPath] : [])
+    );
 
     if (opts.expand) {
         out.print(expandRefs(facts, opts.expand.split(",").filter(Boolean)));
