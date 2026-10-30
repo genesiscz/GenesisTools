@@ -1,5 +1,6 @@
 import { basename } from "node:path";
 import { resolveAgentHost } from "@genesiscz/utils/agent/host";
+import { harnessDrivers, harnessHost } from "@genesiscz/utils/ai/providers/harness-index";
 import { env } from "@genesiscz/utils/env";
 import { logger } from "@genesiscz/utils/logger";
 import { ancestry, readExecutablePath } from "@genesiscz/utils/process/processes";
@@ -41,12 +42,14 @@ export interface CallerContext {
 const MAX_ANCESTRY_DEPTH = 20;
 const MAX_COMMAND_CHARS = 240;
 
-const AGENT_BASENAMES: Record<string, string> = {
-    claude: "claude-code",
-    codex: "codex",
-    grok: "grok",
-    copilot: "copilot",
-};
+/**
+ * An agent binary's basename → the runtime agent name it reports. Each harness's binary and runtime name come from
+ * its driver (Claude's binary is `claude`, its runtime name `claude-code`); Copilot is no harness and keeps its name.
+ */
+const AGENT_BASENAMES: ReadonlyMap<string, string> = new Map([
+    ...harnessDrivers().map((driver): [string, string] => [driver.identity.binary, harnessHost(driver.id).agent]),
+    ["copilot", "copilot"],
+]);
 
 const SHELL_BASENAMES = new Set(["zsh", "bash", "sh", "fish", "dash"]);
 const RUNTIME_BASENAMES = new Set(["bun", "node"]);
@@ -130,7 +133,7 @@ function argv0Basename(command: string): string {
 /** The agent binary nearest to the caller in the chain, when the environment did not say. */
 export function agentFromAncestry(frames: AncestryFrame[]): string {
     for (const frame of frames) {
-        const agent = AGENT_BASENAMES[argv0Basename(frame.command)];
+        const agent = AGENT_BASENAMES.get(argv0Basename(frame.command));
 
         if (agent) {
             return agent;
@@ -183,7 +186,7 @@ export function describeAncestry(frames: AncestryFrame[]): string {
             continue;
         }
 
-        if (AGENT_BASENAMES[base]) {
+        if (AGENT_BASENAMES.has(base)) {
             labels.push(`${base}[${frame.pid}]`);
             continue;
         }

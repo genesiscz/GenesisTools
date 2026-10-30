@@ -148,7 +148,8 @@ export type DeliveryTarget =
 type PaneTarget = Extract<DeliveryTarget, { kind: "cmux" | "none" }>;
 
 export interface NativeDeliveryWorker {
-    provider: "claude" | "grok";
+    /** A harness whose answer route resumes a session by a worker turn (`ANSWER_ROUTES[provider].workers`). */
+    provider: AccountProviderAlias;
     name: string;
     sessionId: string;
     sourceHome: string;
@@ -212,14 +213,9 @@ function grokNativeWorkers(): NativeDeliveryWorker[] {
     });
 }
 
-/** The owned headless workers of each harness that resumes a session by a worker turn (Codex has its own route). */
-const NATIVE_WORKERS: Record<NativeDeliveryWorker["provider"], () => NativeDeliveryWorker[]> = {
-    claude: claudeNativeWorkers,
-    grok: grokNativeWorkers,
-};
-
-function nativeWorkers(provider: NativeDeliveryWorker["provider"]): NativeDeliveryWorker[] {
-    return NATIVE_WORKERS[provider]();
+/** The owned headless workers of a harness that resumes a session by a worker turn; none for Codex, which has its own route. */
+function nativeWorkers(provider: AccountProviderAlias): NativeDeliveryWorker[] {
+    return ANSWER_ROUTES[provider].workers?.list() ?? [];
 }
 
 export interface DeliverDeps {
@@ -228,7 +224,7 @@ export interface DeliverDeps {
     queueRoot?: string;
     /** The `tools codex` worker name that runs this Codex thread, or null. */
     codexWorkerFor?: (sessionId: string, sourceHome?: string) => string | null;
-    nativeWorkers?: (provider: "claude" | "grok") => NativeDeliveryWorker[];
+    nativeWorkers?: (provider: AccountProviderAlias) => NativeDeliveryWorker[];
     claudePeers?: (sourceHome?: string) => ClaudeLiveSession[];
     sendClaudePeer?: typeof sendClaudePeerMessage;
     /** The receiving Claude session's permission class; read from its transcript by default. */
@@ -282,7 +278,10 @@ function codexWorkerFor(sessionId: string, sourceHome?: string): string | null {
 }
 
 async function runTool(args: string[]): Promise<ToolRun> {
-    const resumed = (args[0] === "claude" && args[1] === "worker") || args[0] === "grok";
+    // A worker steer resumes a whole turn and waits for it, so it gets a turn's time; every other send is quick.
+    const resumed = Object.values(ANSWER_ROUTES).some(
+        (route) => route.workers?.steer.every((word, index) => args[index] === word) ?? false
+    );
     return execTool(args, { timeout: resumed ? 15 * 60_000 : 60_000 });
 }
 
@@ -418,23 +417,42 @@ function grokLeaderRoute({ session }: RouteQuery, deps: DeliverDeps): DeliveryTa
     return sockets.length > 0 ? { kind: "grok-leader", label: "Grok leader", sockets } : undefined;
 }
 
+/** How the answers of one harness's sessions travel before the cmux pane. */
+interface AnswerRoute {
+    /** The structured routes, tried before the cmux pane; undefined falls through to cmux. */
+    structured(query: RouteQuery, deps: DeliverDeps): Promise<DeliveryTarget | undefined>;
+    /**
+     * The owned headless workers that resume a session by a worker turn, and the `tools` verb that steers one with the
+     * exact session and turn it expects; null for a harness whose worker has a route of its own.
+     */
+    workers: { list(): NativeDeliveryWorker[]; steer: readonly string[] } | null;
+}
+
 /**
- * Each harness's structured routes, tried before the cmux pane: Codex only through its `tools codex` worker (it is
- * never typed into); Claude through an owned worker, then its own peer socket; Grok through an owned worker, then
- * the leader its TUI runs in. Undefined falls through to cmux.
+ * Each harness's answer route: the drivers' tool-owned `answer` part (each driver names this module), the one table
+ * keyed by harness in the delivery code. Codex only through its `tools codex` worker (it is never typed into);
+ * Claude through an owned worker, then its own peer socket; Grok through an owned worker, then the leader its TUI
+ * runs in.
  */
-const STRUCTURED_ROUTES: Record<
-    AccountProviderAlias,
-    (query: RouteQuery, deps: DeliverDeps) => Promise<DeliveryTarget | undefined>
-> = {
-    codex: async ({ session, sourceHome }, deps) => {
-        const worker = (deps.codexWorkerFor ?? codexWorkerFor)(session, sourceHome);
-        return worker
-            ? { kind: "codex", label: `codex worker ${worker}`, worker }
-            : { kind: "none", reason: `no live ${toolCommand("codex")} worker runs this thread` };
+const ANSWER_ROUTES: { readonly [Id in AccountProviderAlias]: AnswerRoute } = {
+    codex: {
+        structured: async ({ session, sourceHome }, deps) => {
+            const worker = (deps.codexWorkerFor ?? codexWorkerFor)(session, sourceHome);
+            return worker
+                ? { kind: "codex", label: `codex worker ${worker}`, worker }
+                : { kind: "none", reason: `no live ${toolCommand("codex")} worker runs this thread` };
+        },
+        // `tools codex steer` is the Codex route itself, with its own receipt.
+        workers: null,
     },
-    claude: async (query, deps) => ownedWorkerRoute("claude", query, deps) ?? claudePeerRoute(query, deps),
-    grok: async (query, deps) => ownedWorkerRoute("grok", query, deps) ?? grokLeaderRoute(query, deps),
+    claude: {
+        structured: async (query, deps) => ownedWorkerRoute("claude", query, deps) ?? claudePeerRoute(query, deps),
+        workers: { list: claudeNativeWorkers, steer: ["claude", "worker", "steer"] },
+    },
+    grok: {
+        structured: async (query, deps) => ownedWorkerRoute("grok", query, deps) ?? grokLeaderRoute(query, deps),
+        workers: { list: grokNativeWorkers, steer: ["grok", "steer"] },
+    },
 };
 
 /**
@@ -448,7 +466,7 @@ export async function resolveDeliveryTarget(
     deps: DeliverDeps = {}
 ): Promise<DeliveryTarget> {
     const harness = nativeHarness(provider);
-    const structured = harness ? await STRUCTURED_ROUTES[harness]({ session, sourceHome }, deps) : undefined;
+    const structured = harness ? await ANSWER_ROUTES[harness].structured({ session, sourceHome }, deps) : undefined;
 
     if (structured) {
         return structured;
@@ -512,12 +530,6 @@ async function resolvePaneTarget(session: string, deps: DeliverDeps): Promise<Pa
 export function paneText(text: string): string {
     return text;
 }
-
-/** The `tools` verb that steers an owned worker of each harness, with the exact session and turn it expects. */
-const WORKER_STEER: Record<NativeDeliveryWorker["provider"], string[]> = {
-    claude: ["claude", "worker", "steer"],
-    grok: ["grok", "steer"],
-};
 
 /** The backend a `tools codex steer` receipt names: the Codex route's own worker. */
 const CODEX_WORKER_BACKEND: AccountProviderAlias = "codex";
@@ -676,11 +688,16 @@ export async function deliverToSession(
 
     if (target.kind === "worker") {
         const { worker } = target;
+        const prefix = ANSWER_ROUTES[worker.provider].workers?.steer;
+
+        if (!prefix) {
+            return undelivered(`A ${worker.provider} session has no owned worker to steer; no prompt was sent.`);
+        }
+
         const directory = mkdtempSync(join(tmpdir(), "worker-delivery-"));
         const promptFile = join(directory, "prompt.txt");
         try {
             writeFileSync(promptFile, text, { mode: 0o600 });
-            const prefix = WORKER_STEER[worker.provider];
             const result = await run([
                 ...prefix,
                 "--name",

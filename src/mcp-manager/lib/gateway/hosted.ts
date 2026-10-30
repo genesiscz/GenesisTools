@@ -1,7 +1,10 @@
 import { mkdirSync } from "node:fs";
 import { join, resolve } from "node:path";
+import { callerSessionReadable } from "@app/genesis-tools-mcp/lib/http-caller";
 import type { UnifiedMCPServerConfig } from "@app/mcp-manager/utils/providers/types.js";
 import type { MCPProviderName } from "@app/mcp-manager/utils/types.js";
+import { ACCOUNT_PROVIDER_ALIASES } from "@genesiscz/utils/ai/providers/alias-list";
+import { harnessHost } from "@genesiscz/utils/ai/providers/harness-index";
 import { moduleDir } from "@genesiscz/utils/fs/module-dir";
 import { SafeJSON } from "@genesiscz/utils/json";
 import { logger } from "@genesiscz/utils/logger";
@@ -43,10 +46,13 @@ export interface HostedServer {
 
 /**
  * Harnesses whose MCP client the gateway can identify per request (the process that owns the
- * socket, plus its session file). Cursor sends no identity, and grok and copilot carry their
+ * socket, plus its session file): the ones whose caller session the HTTP door can read
+ * (`callerSessionReadable`). Cursor sends no identity, and grok and copilot carry their
  * session ids only in a stdio child's env, so they keep stdio.
  */
-export const HOSTED_HTTP_PROVIDERS: ReadonlySet<MCPProviderName> = new Set<MCPProviderName>(["claude", "codex"]);
+export const HOSTED_HTTP_PROVIDERS: ReadonlySet<MCPProviderName> = new Set<MCPProviderName>(
+    ACCOUNT_PROVIDER_ALIASES.filter((id) => callerSessionReadable(harnessHost(id).agent))
+);
 
 const SOURCE_ROOT = resolve(moduleDir(import.meta), "../../..");
 /**

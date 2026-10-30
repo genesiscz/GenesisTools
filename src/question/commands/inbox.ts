@@ -1,3 +1,4 @@
+import { ACCOUNT_PROVIDER_ALIASES, isAccountProviderAlias } from "@genesiscz/utils/ai/providers/alias-list";
 import { SafeJSON } from "@genesiscz/utils/json";
 import { logger, out } from "@genesiscz/utils/logger";
 import type { Command } from "commander";
@@ -215,12 +216,6 @@ interface InboxListOptions {
     transcriptProvider?: string;
 }
 
-const PROVIDERS = ["claude", "codex", "grok"] as const;
-
-function isProvider(value: string): value is (typeof PROVIDERS)[number] {
-    return PROVIDERS.some((provider) => provider === value);
-}
-
 /**
  * `inbox --session <id> --json --all-items [--since <cursor>]`. With a cursor whose inputs did not move, it answers
  * "nothing changed" without loading the stores (`lib/inbox/session-cursor.ts` says why that cannot skip a change);
@@ -230,8 +225,8 @@ async function sessionInboxAnswer(options: InboxListOptions & { session: string 
     const { session, since } = options;
     const provider = options.transcriptProvider ?? "claude";
 
-    if (!isProvider(provider)) {
-        throw new Error(`--transcript-provider takes ${PROVIDERS.join(", ")}; got "${provider}"`);
+    if (!isAccountProviderAlias(provider)) {
+        throw new Error(`--transcript-provider takes ${ACCOUNT_PROVIDER_ALIASES.join(", ")}; got "${provider}"`);
     }
 
     const cursors = await import("../lib/inbox/session-cursor");

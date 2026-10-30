@@ -15,6 +15,16 @@ export interface ConfigJsonOptions {
 type ClientType = "standard" | "cursor" | "claude";
 
 /**
+ * What each output format writes beside `mcpServers`. A format of this command, not a harness fact: only Claude's
+ * config file has a `disabledMcpServers` list; the standard and Cursor formats carry the servers alone.
+ */
+const CLIENT_FORMATS: Record<ClientType, { listsDisabled: boolean }> = {
+    standard: { listsDisabled: false },
+    cursor: { listsDisabled: false },
+    claude: { listsDisabled: true },
+};
+
+/**
  * Check if a server is enabled for a specific client based on _meta.enabled
  */
 function isServerEnabledForClient(serverConfig: UnifiedMCPServerConfig, client: ClientType): boolean {
@@ -100,9 +110,8 @@ export async function configJson(options: ConfigJsonOptions = {}): Promise<void>
     // Build output based on client type
     let output: unknown;
 
-    if (client === "claude") {
-        // Claude format includes disabledMcpServers
-        const disabledServers = getDisabledServers(config.mcpServers, "claude");
+    if (CLIENT_FORMATS[client].listsDisabled) {
+        const disabledServers = getDisabledServers(config.mcpServers, client);
         // Only include disabled servers that are actually in our output
         const relevantDisabled = disabledServers.filter((name) => name in strippedServers);
 

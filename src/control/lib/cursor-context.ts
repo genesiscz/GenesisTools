@@ -1,4 +1,5 @@
 import { agentSessionIds } from "@genesiscz/utils/agent/host";
+import { harnessOfRuntimeAgent } from "@genesiscz/utils/ai/providers/harness-index";
 import { logger } from "@genesiscz/utils/logger";
 import { ancestry, readExecutablePath } from "@genesiscz/utils/process/processes";
 import { processBasename } from "@genesiscz/utils/process/ps";
@@ -18,12 +19,20 @@ export const CURSOR_SESSION_ENV = "GENESIS_CONTROL_CURSOR_SESSION";
 /** Optional agent name a caller or a spawner sets ("reviewer", "fixer-2"); no host publishes one. */
 export const AGENT_NAME_ENV = "GENESIS_AGENT_NAME";
 
-const HOST_LABELS: Record<string, string> = {
-    "claude-code": "Claude",
-    codex: "Codex",
-    grok: "Grok",
-    copilot: "Copilot",
-};
+/**
+ * The short host name on the label: a harness by its id in title case ("Claude", shorter than its driver's "Claude
+ * Code"), found from the runtime agent name its host part reports; Copilot, which is no harness, by name; anything
+ * else as reported.
+ */
+function hostLabel(agent: string): string {
+    const harness = harnessOfRuntimeAgent(agent);
+
+    if (harness) {
+        return `${harness.charAt(0).toUpperCase()}${harness.slice(1)}`;
+    }
+
+    return agent === "copilot" ? "Copilot" : agent;
+}
 
 /** Shells, runtimes and wrappers between a person's app and this process; the label skips them. */
 const PLUMBING = new Set([
@@ -65,7 +74,7 @@ export function cursorSessionLabel({
     const name = environment[AGENT_NAME_ENV]?.trim() || undefined;
     const [host] = agentSessionIds(environment);
     if (host) {
-        return [HOST_LABELS[host.agent] ?? host.agent, host.id.slice(0, 8), name].filter(Boolean).join(" · ");
+        return [hostLabel(host.agent), host.id.slice(0, 8), name].filter(Boolean).join(" · ");
     }
 
     const parent = ancestors?.().find((command) => !PLUMBING.has(command));

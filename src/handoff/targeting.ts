@@ -11,13 +11,17 @@
  * to stop, not prevented from continuing when its user says to.
  */
 
+import type { AgentRuntimeContext } from "@genesiscz/utils/agent/context";
+import { ACCOUNT_PROVIDER_ALIASES, isAccountProviderAlias } from "@genesiscz/utils/ai/providers/alias-list";
+import { harnessDrivers, harnessHost } from "@genesiscz/utils/ai/providers/harness-index";
+import type { HarnessId } from "@genesiscz/utils/harness/types";
 import { targetMatchesSession } from "./fold";
 import type { HandoffEventBy, HandoffTarget } from "./types";
 
-/** Documented recipient harness names — the values `target.agent` compares against. */
-export const HANDOFF_AGENTS = ["claude", "codex", "grok", "copilot"] as const;
+/** Documented recipient harness names: every harness, then Copilot, which is no harness but receives handoffs. */
+export const HANDOFF_AGENTS: readonly HandoffAgent[] = [...ACCOUNT_PROVIDER_ALIASES, "copilot"];
 
-export type HandoffAgent = (typeof HANDOFF_AGENTS)[number];
+export type HandoffAgent = HarnessId | "copilot";
 
 export const HANDOFF_AGENTS_LIST = HANDOFF_AGENTS.join(", ");
 
@@ -25,21 +29,20 @@ export const HANDOFF_AGENTS_LIST = HANDOFF_AGENTS.join(", ");
  * Spelling → canonical harness. The runtime context calls the Claude host
  * "claude-code" (AgentRuntimeContext.agent) while posters write "claude", so the
  * two must land on the same value or every claude session would read as a
- * mismatch against every claude-targeted handoff.
+ * mismatch against every claude-targeted handoff. Each harness's own spellings
+ * come from its driver (id, binary, aliases, runtime agent name); the extra
+ * entries are spellings posters wrote that no driver lists.
  */
-const AGENT_ALIASES: Record<string, HandoffAgent> = {
-    claude: "claude",
-    "claude-code": "claude",
-    claude_code: "claude",
-    claudecode: "claude",
-    "claude-cli": "claude",
-    codex: "codex",
-    "codex-cli": "codex",
-    grok: "grok",
-    "grok-cli": "grok",
-    copilot: "copilot",
-    "github-copilot": "copilot",
-};
+const AGENT_ALIASES: ReadonlyMap<string, HandoffAgent> = new Map<string, HandoffAgent>([
+    ...harnessDrivers().flatMap((driver) =>
+        [driver.id, driver.identity.binary, harnessHost(driver.id).agent, ...driver.identity.aliases].map(
+            (name): [string, HandoffAgent] => [name, driver.id]
+        )
+    ),
+    ...["claudecode", "claude-cli"].map((name): [string, HandoffAgent] => [name, "claude"]),
+    ["copilot", "copilot"],
+    ["github-copilot", "copilot"],
+]);
 
 /** Canonical harness name, or null when the value names no documented harness. */
 export function canonicalAgent(raw: string | null | undefined): HandoffAgent | null {
@@ -49,8 +52,16 @@ export function canonicalAgent(raw: string | null | undefined): HandoffAgent | n
 
     const key = raw.trim().toLowerCase();
 
-    // Own-property check: "constructor" or "__proto__" must not read as a harness.
-    return Object.hasOwn(AGENT_ALIASES, key) ? AGENT_ALIASES[key] : null;
+    // A Map, so "constructor" or "__proto__" cannot read as a harness.
+    return AGENT_ALIASES.get(key) ?? null;
+}
+
+/**
+ * The runtime-context agent name of a recipient harness (`AgentRuntimeContext.agent`): each harness's host part names
+ * its own (Claude is `claude-code`); Copilot keeps its name.
+ */
+export function runtimeAgentName(agent: HandoffAgent): AgentRuntimeContext["agent"] {
+    return isAccountProviderAlias(agent) ? harnessHost(agent).agent : agent;
 }
 
 export function isKnownAgent(raw: string | null | undefined): boolean {

@@ -73,6 +73,7 @@ function deliveryLine(result: InboxAnswerResult): string {
         return "Delivered: typed into the session's cmux pane.";
     }
 
+    // `codex` is a delivery channel (`DeliveryChannel` in deliver.ts: steered into a `tools codex` worker), not a harness.
     if (result.channel === "codex" && result.delivered) {
         return `Delivered: steered into the ${toolCommand("codex")} worker${result.detail ? ` ${result.detail}` : ""}.`;
     }

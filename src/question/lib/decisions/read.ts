@@ -137,13 +137,11 @@ function letter(index: number): string {
     return String.fromCharCode(97 + index);
 }
 
-/** Whether a harness has a live session a router link can scroll to a decision (`tools claude cmux find`). */
-const FINDS_DECISIONS_IN_CHAT: Record<HandoffAgent, boolean> = {
-    claude: true,
-    codex: false,
-    grok: false,
-    copilot: false,
-};
+/**
+ * The router preset that scrolls a harness's live session to a decision (`tools claude cmux find`). Only Claude's live
+ * chat has one; a harness without a preset gets no link.
+ */
+const DECISION_FIND_PRESETS: Partial<Record<HandoffAgent, "claude-find">> = { claude: "claude-find" };
 
 /**
  * A link that scrolls the live Claude session to where this decision was first asked, so a later
@@ -152,12 +150,14 @@ const FINDS_DECISIONS_IN_CHAT: Record<HandoffAgent, boolean> = {
 function findLink(row: DecisionRecord): string | null {
     const harness = canonicalAgent(row.provider ?? "claude");
 
-    if (!harness || !FINDS_DECISIONS_IN_CHAT[harness]) {
+    const preset = harness ? DECISION_FIND_PRESETS[harness] : undefined;
+
+    if (!preset) {
         return null;
     }
 
     return routerLink({
-        preset: "claude-find",
+        preset,
         action: "decision",
         data: { session: row.sessionId, decision: row.number },
         render: ({ link }) => `[show in chat](${link})`,

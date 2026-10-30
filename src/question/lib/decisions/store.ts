@@ -1,7 +1,7 @@
 import { randomUUID } from "node:crypto";
 import { appendFileSync, closeSync, existsSync, mkdirSync, openSync, readFileSync, readSync, statSync } from "node:fs";
 import { dirname, isAbsolute, resolve } from "node:path";
-import { canonicalAgent, type HandoffAgent } from "@app/handoff/targeting";
+import { canonicalAgent, runtimeAgentName } from "@app/handoff/targeting";
 import {
     type AgentRuntimeContext,
     callerCwd,
@@ -400,21 +400,13 @@ function providerName(value: string | undefined): string | undefined {
     return trimmed ? (canonicalAgent(trimmed) ?? trimmed) : undefined;
 }
 
-/** The runtime-context agent name a transcript anchor carries for each harness (it calls Claude `claude-code`). */
-const ANCHOR_AGENTS: Record<HandoffAgent, AgentRuntimeContext["agent"]> = {
-    claude: "claude-code",
-    codex: "codex",
-    grok: "grok",
-    copilot: "copilot",
-};
-
 /**
  * The anchor's agent for a row's provider. Never the poster's harness for a provider override it does not match:
  * the anchor would name a transcript that is not this row's.
  */
 function anchorAgent(provider: string | undefined): AgentRuntimeContext["agent"] {
     const canonical = canonicalAgent(provider);
-    return canonical ? ANCHOR_AGENTS[canonical] : "unknown";
+    return canonical ? runtimeAgentName(canonical) : "unknown";
 }
 
 export type PostedDecision = z.infer<typeof postedDecisionSchema>;

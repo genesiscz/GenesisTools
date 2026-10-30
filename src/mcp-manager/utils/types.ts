@@ -1,7 +1,10 @@
+import type { HarnessId } from "@genesiscz/utils/harness/types";
+
 /**
- * Provider names that can be used for enabling/disabling MCP servers
+ * Provider names that can be used for enabling/disabling MCP servers: every harness, plus the MCP clients that are no
+ * harness (Gemini, Cursor).
  */
-export type MCPProviderName = "claude" | "gemini" | "codex" | "cursor" | "grok";
+export type MCPProviderName = HarnessId | "gemini" | "cursor";
 
 /**
  * Per-project enabled state for providers that support project-specific configuration (e.g., Claude)

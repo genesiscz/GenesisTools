@@ -3,6 +3,10 @@ import type { UnifiedMCPConfig } from "@app/mcp-manager/utils/providers/types.js
 import type { HarnessSyncDirection, HarnessSyncMap, MCPProviderName } from "@app/mcp-manager/utils/types.js";
 import { env } from "@genesiscz/utils/env";
 
+/**
+ * The MCP config home of each MCP client, harness or not (the tool-owned `mcp` part of the drivers): an MCP-client
+ * axis that also holds Gemini and Cursor, and the stored `harnesses` sync map takes these literal `~` paths.
+ */
 export const DEFAULT_HARNESS_HOMES: Record<MCPProviderName, string[]> = {
     claude: ["~/.claude.json"],
     gemini: ["~/.gemini/settings.json"],
@@ -11,7 +15,10 @@ export const DEFAULT_HARNESS_HOMES: Record<MCPProviderName, string[]> = {
     grok: ["~/.grok"],
 };
 
-const HARNESS_NAMES: MCPProviderName[] = ["claude", "gemini", "cursor", "codex", "grok"];
+/** Every MCP client, in the table's order. */
+const HARNESS_NAMES = Object.keys(DEFAULT_HARNESS_HOMES).filter((name): name is MCPProviderName =>
+    Object.hasOwn(DEFAULT_HARNESS_HOMES, name)
+);
 
 function hasHomes(direction?: HarnessSyncDirection): boolean {
     return Boolean(direction?.homes && direction.homes.length > 0);

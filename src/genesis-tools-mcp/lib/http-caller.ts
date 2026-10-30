@@ -1,6 +1,7 @@
 import { readFileSync } from "node:fs";
 import { join } from "node:path";
 import type { AgentCaller } from "@genesiscz/utils/agent/runtime";
+import { harnessDrivers, harnessHost } from "@genesiscz/utils/ai/providers/harness-index";
 import { claudeSessionsDir } from "@genesiscz/utils/claude/peer-message";
 import { SafeJSON } from "@genesiscz/utils/json";
 import { logger } from "@genesiscz/utils/logger";
@@ -14,13 +15,17 @@ import {
 
 const log = logger.child({ component: "genesis-tools-mcp:http-caller" });
 
-/** Executable names of the harnesses that speak MCP over HTTP to the gateway. */
-const HARNESS_BY_NAME: Record<string, AgentCaller["agent"]> = {
-    claude: "claude-code",
-    codex: "codex",
-    grok: "grok",
-    copilot: "copilot",
-};
+/**
+ * Executable names of the harnesses that speak MCP over HTTP to the gateway → the runtime agent name each reports. The
+ * binary and the runtime name come from each harness's driver; Copilot is no harness and keeps its name.
+ */
+const HARNESS_BY_NAME: ReadonlyMap<string, AgentCaller["agent"]> = new Map([
+    ...harnessDrivers().map((driver): [string, AgentCaller["agent"]] => [
+        driver.identity.binary,
+        harnessHost(driver.id).agent,
+    ]),
+    ["copilot", "copilot"],
+]);
 
 /**
  * Claude Code writes `~/.claude/sessions/<pid>.json` for each running process and keeps
@@ -84,20 +89,30 @@ export function codexThreadIdFromOpenFiles(paths: string[]): string | null {
     return ids.size === 1 ? [...ids][0] : null;
 }
 
+type SessionIdReader = (info: ProcessInfo, claudeSessionsDir: string) => string | null;
+
 /**
- * How a calling process names its session: Claude by its session registry, Codex by the one rollout it holds open.
- * Grok and Copilot leave no trace this lookup can read.
+ * How a calling process names its session: Claude by its session registry, Codex by the one rollout it holds open;
+ * null where the process leaves no trace this lookup can read (Grok and Copilot keep their ids in a stdio child's
+ * env). Keyed by runtime agent name, the gateway's caller axis, and kept in this tool: the readers spawn `lsof` and
+ * read the session registry, which the hook-path drivers must not load. `callerSessionReadable` derives the
+ * gateway's HTTP set from it.
  */
-const SESSION_ID_OF: Record<AgentCaller["agent"], (info: ProcessInfo, claudeSessionsDir: string) => string | null> = {
+const SESSION_ID_OF: Record<AgentCaller["agent"], SessionIdReader | null> = {
     "claude-code": (info, claudeSessionsDir) => claudeSessionId(info, claudeSessionsDir),
     codex: (info) => codexThreadIdFromOpenFiles(readOpenFilePaths(info.pid)),
-    grok: () => null,
-    copilot: () => null,
-    unknown: () => null,
+    grok: null,
+    copilot: null,
+    unknown: null,
 };
 
 function sessionIdFor(agent: AgentCaller["agent"], info: ProcessInfo, claudeSessionsDir: string): string | null {
-    return SESSION_ID_OF[agent](info, claudeSessionsDir);
+    return SESSION_ID_OF[agent]?.(info, claudeSessionsDir) ?? null;
+}
+
+/** Whether the gateway can name the session of a calling process of this runtime agent, so its MCP client may use HTTP. */
+export function callerSessionReadable(agent: AgentCaller["agent"]): boolean {
+    return SESSION_ID_OF[agent] !== null;
 }
 
 const UNKNOWN: ResolvedCaller = { agent: "unknown", sessionId: null, cwd: null, pid: null, processName: null };
@@ -110,7 +125,7 @@ export function resolveCallerFromPeer(opts: {
 }): ResolvedCaller {
     const pids = findLoopbackClientPids({ clientPort: opts.clientPort, serverPort: opts.serverPort });
     const infos = pids.map(readProcessInfo).filter((info): info is ProcessInfo => info !== null);
-    const harness = infos.find((info) => HARNESS_BY_NAME[info.name] !== undefined);
+    const harness = infos.find((info) => HARNESS_BY_NAME.has(info.name));
     const chosen = harness ?? (infos.length === 1 ? infos[0] : undefined);
 
     if (!chosen) {
@@ -118,7 +133,7 @@ export function resolveCallerFromPeer(opts: {
         return UNKNOWN;
     }
 
-    const agent = HARNESS_BY_NAME[chosen.name] ?? "unknown";
+    const agent = HARNESS_BY_NAME.get(chosen.name) ?? "unknown";
     const sessionId = sessionIdFor(agent, chosen, opts.claudeSessionsDir ?? claudeSessionsDir());
 
     return {
