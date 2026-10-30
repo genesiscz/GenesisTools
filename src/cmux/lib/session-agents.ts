@@ -1,14 +1,15 @@
 import { isAgentLauncher } from "@app/cmux/lib/launchers";
 import { grokLeaderSocket } from "@app/grok/lib/leader";
 import type { AccountEntry } from "@genesiscz/utils/ai/config/schema";
-import { PROVIDER_ALIASES } from "@genesiscz/utils/ai/providers/aliases";
+import { ACCOUNT_PROVIDER_ALIASES } from "@genesiscz/utils/ai/providers/alias-list";
+import { harnessExit, harnessLaunch, harnessPluginId } from "@genesiscz/utils/ai/providers/harness-index";
 import { toolsEntrypoint } from "@genesiscz/utils/cli/tools";
 import { shellWords } from "@genesiscz/utils/session-changes/words";
 import { shellCommandLine, shellQuote } from "@genesiscz/utils/shell/quote";
 import type { SessionProviderBlocks } from "./session-store";
 
-/** The agents `tools cmux agents new` can start. Each one has a `tools <id> run` door with the same shape. */
-export const SESSION_AGENT_IDS = ["claude", "grok", "codex"] as const;
+/** The agents `tools cmux agents new` can start: every harness. Each one has a `tools <id> run` door with the same shape. */
+export const SESSION_AGENT_IDS = ACCOUNT_PROVIDER_ALIASES;
 
 export type SessionAgentId = (typeof SESSION_AGENT_IDS)[number];
 
@@ -45,31 +46,14 @@ function grokLaunchExtras({ account, sessionId }: { account: string; sessionId: 
     };
 }
 
-const AGENTS: Record<SessionAgentId, SessionAgent> = {
-    claude: {
-        id: "claude",
-        provider: PROVIDER_ALIASES.claude,
-        exitCommand: "/exit",
-        crossMessages: true,
-        resumeSubcommand: null,
-        launchExtras: null,
-    },
-    grok: {
-        id: "grok",
-        provider: PROVIDER_ALIASES.grok,
-        exitCommand: "/exit",
-        crossMessages: false,
-        resumeSubcommand: null,
-        launchExtras: grokLaunchExtras,
-    },
-    codex: {
-        id: "codex",
-        provider: PROVIDER_ALIASES.codex,
-        exitCommand: "/quit",
-        crossMessages: false,
-        resumeSubcommand: "resume",
-        launchExtras: null,
-    },
+/**
+ * What only the cmux tool knows about an agent: its `tools <id> run` door's flags and the launch extras. The plugin
+ * id, the exit command and the resume subcommand come from the harness driver (`sessionAgent`).
+ */
+const CMUX_AGENTS: Record<SessionAgentId, Pick<SessionAgent, "crossMessages" | "launchExtras">> = {
+    claude: { crossMessages: true, launchExtras: null },
+    codex: { crossMessages: false, launchExtras: null },
+    grok: { crossMessages: false, launchExtras: grokLaunchExtras },
 };
 
 export function isSessionAgentId(value: string): value is SessionAgentId {
@@ -77,7 +61,13 @@ export function isSessionAgentId(value: string): value is SessionAgentId {
 }
 
 export function sessionAgent(id: SessionAgentId): SessionAgent {
-    return AGENTS[id];
+    return {
+        id,
+        provider: harnessPluginId(id),
+        exitCommand: harnessExit(id).command,
+        resumeSubcommand: harnessLaunch(id).resumeSyntax.subcommand ? "resume" : null,
+        ...CMUX_AGENTS[id],
+    };
 }
 
 /** An inline prompt is typed into the terminal, so it stays small; a longer one goes through --prompt-file. */
@@ -122,7 +112,7 @@ export function agentRunCommand(input: {
         "run",
         account,
         ...(input.model ? ["-m", input.model] : []),
-        ...(input.crossMessages !== undefined && AGENTS[input.agent].crossMessages
+        ...(input.crossMessages !== undefined && CMUX_AGENTS[input.agent].crossMessages
             ? [input.crossMessages ? "--cross-messages" : "--no-cross-messages"]
             : []),
         ...(input.agentArgs ?? []),
@@ -261,7 +251,7 @@ export function agentRunLauncher(
 
     // Native options and Codex's resume subcommand are not an initial task to remove.
     const firstArgument = passthrough ? shellWords(passthrough)[0] : undefined;
-    const resume = AGENTS[agent].resumeSubcommand;
+    const resume = sessionAgent(agent).resumeSubcommand;
     const native = firstArgument?.value.startsWith("-") || (resume !== null && firstArgument?.value === resume);
     const prefix = words.map(bareShellWord).join(" ");
     const launcher = native ? `${prefix} --${passthrough}` : prefix;
