@@ -1159,6 +1159,95 @@ describe("delivery routes", () => {
         ]);
     });
 
+    test("an open dialog stops the typed rung before any keystroke; the answer is queued with the reason", async () => {
+        const queueRoot = mkdtempSync(join(tmpdir(), "dialog-guard-queue-"));
+        const asked: unknown[] = [];
+        const never = async (): Promise<never> => {
+            throw new Error("must not type while a dialog is open");
+        };
+        const request = {
+            session: "dialog-session",
+            provider: "claude",
+            sourceHome: "/fixture/home",
+            deliveryKey: "dialog-key",
+            text: "DECISION 3: b) no",
+        };
+        const result = await deliverToSession(request, {
+            runTool: never,
+            nativeWorkers: () => [],
+            claudePeers: () => [],
+            findTargets: livePaneTargets,
+            queueRoot,
+            openDialog: (input) => {
+                asked.push(input);
+                return { kind: "decision", question: "Ship it?", signal: "turn-state" };
+            },
+        });
+
+        expect(result).toMatchObject({ channel: "queued", delivered: false, queueId: expect.any(String) });
+        expect(result.error).toStartWith("a question dialog is open in the session (Ship it?)");
+        expect(asked).toEqual([{ provider: "claude", sessionId: "dialog-session", sourceHome: "/fixture/home" }]);
+        expect(
+            listSessionMessages({
+                target: { provider: "claude", sessionId: "dialog-session", sourceHome: "/fixture/home" },
+                root: queueRoot,
+            }).map((message) => message.text)
+        ).toEqual(["DECISION 3: b) no"]);
+
+        // force types anyway and never asks the guard.
+        const { calls, runTool } = spy({ success: true, stdout: '{"sent":true}' });
+        const forced = await deliverToSession(
+            { session: "dialog-session", provider: "claude", text: "DECISION 3: b) no", force: true },
+            {
+                runTool,
+                nativeWorkers: () => [],
+                claudePeers: () => [],
+                findTargets: livePaneTargets,
+                openDialog: () => {
+                    throw new Error("force must not ask the dialog guard");
+                },
+            }
+        );
+        expect(forced).toMatchObject({ channel: "cmux", delivered: true });
+        expect(calls).toHaveLength(1);
+        expect(calls[0]?.slice(0, 3)).toEqual(["claude", "cmux", "send"]);
+    });
+
+    test("the structural Claude peer rung is never guarded: a dialog cannot swallow a socket message", async () => {
+        const peer = {
+            pid: 42,
+            sessionId: "peer-session",
+            name: "fixture",
+            cwd: "/fixture/project",
+            status: "waiting",
+            kind: "interactive",
+            socketPath: "/fixture/receiver.sock",
+            file: "/fixture/home/sessions/42.json",
+        };
+        let socketWrites = 0;
+        const result = await deliverToSession(
+            { session: peer.sessionId, provider: "claude", text: "DECISION 1: a) yes" },
+            {
+                nativeWorkers: () => [],
+                claudePeers: () => [peer],
+                peerToken: () => null,
+                receiverMode: async () => "prompting",
+                sendClaudePeer: async () => {
+                    socketWrites++;
+                },
+                openDialog: () => {
+                    throw new Error("the peer rung must not ask the dialog guard");
+                },
+                runTool: async () => {
+                    throw new Error("the peer rung must not type");
+                },
+            }
+        );
+
+        expect(result).toMatchObject({ channel: "claude-peer", delivered: true });
+        expect(socketWrites).toBe(1);
+    });
+
     test("a closed pane is found BEFORE anything is typed: nothing runs, the reason is one sentence", async () => {
         const never = async (): Promise<never> => {
             throw new Error("must not type when no pane is live");
