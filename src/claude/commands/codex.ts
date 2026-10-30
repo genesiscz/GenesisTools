@@ -55,6 +55,7 @@ import { mergeCodexModelRecords, readCodexModelsCache } from "@genesiscz/utils/a
 import { resolveOpenAiSubModel } from "@genesiscz/utils/ai/openai/sub-models";
 import { pollAccounts } from "@genesiscz/utils/ai/usage-poll/poll";
 import { isInteractive } from "@genesiscz/utils/cli";
+import type { HarnessId } from "@genesiscz/utils/harness/types";
 import { logger, out } from "@genesiscz/utils/logger";
 import { processStartMs } from "@genesiscz/utils/process-identity";
 import type { Command } from "commander";
@@ -98,7 +99,7 @@ function sessionsPerLogin(agent: SessionAgent): Record<string, number> {
 }
 
 async function codexOrGrokAccount(
-    agent: "codex" | "grok",
+    agent: Exclude<HarnessId, "claude">,
     spec: string,
     config: AiProxyConfig,
     store: AiConfigStore

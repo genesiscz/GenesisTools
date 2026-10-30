@@ -1,4 +1,5 @@
 import { homedir } from "node:os";
+import { ACCOUNT_PROVIDER_ALIASES } from "@genesiscz/utils/ai/providers/alias-list";
 import { suggestEnumFlag } from "@genesiscz/utils/cli";
 import { formatDuration, formatTokens } from "@genesiscz/utils/format";
 import { out } from "@genesiscz/utils/logger";
@@ -25,7 +26,7 @@ import {
 } from "./stats";
 
 const TOOL = "tools ai-spend workers";
-const BACKENDS: readonly WorkerBackend[] = ["codex", "grok", "claude"];
+const BACKENDS: readonly WorkerBackend[] = ACCOUNT_PROVIDER_ALIASES;
 const DEFAULT_DIMENSIONS: readonly WorkerStatsDimension[] = ["backend", "model"];
 
 interface WorkersFlags {

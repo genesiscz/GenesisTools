@@ -11,6 +11,7 @@ import {
     readSync,
 } from "node:fs";
 import { dirname } from "node:path";
+import { ACCOUNT_PROVIDER_ALIASES } from "@genesiscz/utils/ai/providers/alias-list";
 import { toolCommand } from "@genesiscz/utils/cli/tool-command";
 import { SafeJSON } from "@genesiscz/utils/json";
 import { logger } from "@genesiscz/utils/logger";
@@ -274,7 +275,7 @@ const rowSchema = z.object({
     v: z.literal(1),
     priced: amount.optional(),
     ts: z.string().refine((value) => Number.isFinite(Date.parse(value))),
-    backend: z.enum(["codex", "grok", "claude"]),
+    backend: z.enum(ACCOUNT_PROVIDER_ALIASES),
     name: z.string().min(1),
     sessionId: z.string().nullable(),
     turn: amount.int().nullable(),
