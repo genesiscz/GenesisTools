@@ -8,7 +8,7 @@ import { type DiffConfig, defaultLogPath, megabytes } from "../config";
 import { gitOut, isDeleted, isUntrackedDirectory, objectId, statusEntries, untrackedFilesIn } from "../git";
 import { hookDiag } from "../log";
 import { callDir, hookDataRoot, safeSegment } from "../paths";
-import type { HookPayload } from "../payload";
+import { HARNESS_HOOK_FACTS, type HookPayload } from "../payload";
 import { actorOf } from "./attribution";
 import { commandDirs, namedArguments } from "./command-paths";
 import { canonical, coverage, mentionsOf, refreshMentions } from "./mentions";
@@ -390,7 +390,7 @@ export function capturePre(payload: HookPayload, config: DiffConfig): CaptureRes
     // that a later command's post phase must recognise as this session's.
     const mentions = refreshMentions({
         sessionId: payload.sessionId,
-        transcript: payload.harness === "claude" ? transcriptOf(payload) : null,
+        transcript: HARNESS_HOOK_FACTS[payload.harness].transcriptMentions ? transcriptOf(payload) : null,
         current: { tool: "Bash", input: { command: payload.command }, cwd: payload.cwd },
         roots,
     });
