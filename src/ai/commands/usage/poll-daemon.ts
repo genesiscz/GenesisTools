@@ -13,6 +13,7 @@ import type { AccountUsageSnapshot } from "@genesiscz/utils/ai/usage-poll/types"
 import { execTool } from "@genesiscz/utils/cli";
 import { recordRunOnExit } from "@genesiscz/utils/cli/run-record";
 import { toolCommand } from "@genesiscz/utils/cli/tool-command";
+import { env } from "@genesiscz/utils/env";
 import { SafeJSON } from "@genesiscz/utils/json";
 import { logger, out } from "@genesiscz/utils/logger";
 import { isObject } from "@genesiscz/utils/object";
@@ -129,7 +130,8 @@ async function refreshSessionRows(): Promise<void> {
         // The resident hub server answers with warm caches (directory walk, metadata, rows); this process
         // starts cold every minute. Its `--fresh` answer is the same `sessionRowsJson` the CLI prints.
         const remote = async (query: AgentSessionRowsOptions): Promise<AgentSessionRow[] | null> => {
-            if (query.providers && query.providers.length > 0) {
+            // `GENESIS_HUB_SERVER=0` turns the server off for the app and the CLI; this daemon follows it too.
+            if (!env.tools.hubServerEnabled() || (query.providers && query.providers.length > 0)) {
                 return null;
             }
 

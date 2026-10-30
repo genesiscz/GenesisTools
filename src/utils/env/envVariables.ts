@@ -249,6 +249,8 @@ export const env = {
         getTraceId: () => getTrimmed("GENESIS_TOOLS_TRACE_ID"),
         /** The resident hub server (`tools hub serve`) drains and exits above this physical footprint, in MB. */
         getHubServerMaxMb: () => parseIntEnv("GENESIS_HUB_SERVER_MAX_MB", 512),
+        /** `GENESIS_HUB_SERVER=0` keeps a CLI command from asking the resident hub server first (the app's switch too). */
+        hubServerEnabled: () => getTrimmed("GENESIS_HUB_SERVER") !== "0",
         getQdrantPort: () => parseIntEnv("GENESIS_QDRANT_PORT", 16_335),
         getQdrantGrpcPort: () => parseIntEnv("GENESIS_QDRANT_GRPC_PORT", 16_336),
         /** Comma-delimited capability filter for `tools claude mcp` (e.g. "question_answer,handoff"). */
