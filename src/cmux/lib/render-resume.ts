@@ -8,6 +8,7 @@ import {
     toolsRunLauncher,
 } from "@app/cmux/lib/launchers";
 import type { AccountProviderAlias } from "@genesiscz/utils/ai/providers/alias-list";
+import { toolCommand } from "@genesiscz/utils/cli/tool-command";
 import { shellWords } from "@genesiscz/utils/session-changes/words";
 import { shellWord } from "@genesiscz/utils/shell/quote";
 
@@ -367,9 +368,14 @@ const NATIVE_RESUME: Record<
         flags: ["-r", "--resume"],
         subcommand: false,
         render: (sessionId) => `-r ${sessionId}`,
-        launcher: "tools grok",
+        launcher: toolCommand("grok"),
     },
-    codex: { flags: [], subcommand: true, render: (sessionId) => `resume ${sessionId}`, launcher: "tools codex" },
+    codex: {
+        flags: [],
+        subcommand: true,
+        render: (sessionId) => `resume ${sessionId}`,
+        launcher: toolCommand("codex"),
+    },
 };
 
 /** A wrapper's own resume flag, before `--`: it runs a search that can prompt, so it is never a replay target. */
