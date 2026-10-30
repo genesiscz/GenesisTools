@@ -1,0 +1,20 @@
+{
+    "name": "agent-sessions-widget-refresh",
+    "capturedAt": "2026-10-30T22:51:20.483Z",
+    "commit": "380c47575d",
+    "loadAvg": [
+        48.25537109375,
+        41.93505859375,
+        46.2109375
+    ],
+    "hostname": "MacBook-Pro-2262.local",
+    "metrics": {
+        "tick.claudeMs": 63.360999999999876,
+        "tick.claudeAgentsMs": 107.51299999999992,
+        "tick.allMs": 461.4310000000005,
+        "metadata.grownSmallMs": 13.375,
+        "metadata.grownLargeMs": 8.15900000000056,
+        "liveMainBytes": 131981925
+    },
+    "notes": "scratch copy of the live history index; live session roots read only; liveMainBytes is context | commit 380c47575d | uptime 23:51  up 11 days, 14:44, 31 users, load averages: 48.26 41.94 46.21"
+}
