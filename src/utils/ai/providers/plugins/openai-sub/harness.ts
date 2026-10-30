@@ -8,7 +8,7 @@ import { pending, toolOwned } from "@genesiscz/utils/harness/types";
  */
 export const codexHarness: HarnessDriver<"codex"> = {
     id: "codex",
-    identity: { label: "Codex", binary: "codex", aliases: ["codex-cli"] },
+    identity: { label: "Codex", binary: "codex", plugin: "openai-sub", aliases: ["codex-cli"] },
     parts: {
         locate: pending("P2", "the codex finders in src/utils/ai/transcripts/resolve.ts and session-paths.ts roots"),
         parse: pending("P2", "the codex entry of the parser table in src/utils/ai/transcripts/load.ts"),

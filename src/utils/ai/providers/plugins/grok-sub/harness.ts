@@ -8,7 +8,7 @@ import { pending, toolOwned } from "@genesiscz/utils/harness/types";
  */
 export const grokHarness: HarnessDriver<"grok"> = {
     id: "grok",
-    identity: { label: "Grok", binary: "grok", aliases: ["grok-cli"] },
+    identity: { label: "Grok", binary: "grok", plugin: "grok-sub", aliases: ["grok-cli"] },
     parts: {
         locate: pending("P2", "the grok finders in src/utils/ai/transcripts/resolve.ts and session-paths.ts roots"),
         parse: pending("P2", "the grok entry of the parser table in src/utils/ai/transcripts/load.ts"),

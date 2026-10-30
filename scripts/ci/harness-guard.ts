@@ -15,7 +15,9 @@
  * Every file that does it today is in `harness-guard-allowlist.ts` with its counts. The allowlist may only shrink:
  * a count above the allowance is NEW, a count below it (or a file that no longer offends) is STALE and must be
  * lowered in the same commit. REPORT mode (the default, P0 to P7) prints both and exits 0; `--strict` (P8) exits 1
- * on either. `--write-allowlist` rewrites the allowlist from the tree, for P0 and for a phase that shrinks it.
+ * on either. `--write-allowlist` rewrites the allowlist from the tree (P0 only: it also takes in whatever another
+ * session has uncommitted). `--update-allowlist <file>...` sets the entries of the named files to what they hold now
+ * and leaves every other entry alone, which is what a phase that fixes those files runs.
  *
  * Exit codes: 0 report or clean, 1 strict violation, 2 a broken scan (`git ls-files` failed).
  */
@@ -64,7 +66,7 @@ export const HARNESS_TYPE_NAMES: ReadonlySet<string> = new Set([
 
 /** The drivers and the canonical list own the names; tests and fixtures spell them on purpose. */
 const OWNERS =
-    /^(?:src\/utils\/harness\/|src\/utils\/ai\/providers\/(?:plugins\/|alias-list\.ts$)|scripts\/ci\/harness-guard)/;
+    /^(?:src\/utils\/harness\/|src\/utils\/ai\/providers\/(?:plugins\/|alias-list\.ts$|harness-index\.ts$)|scripts\/ci\/harness-guard)/;
 const TESTS = /\.test\.tsx?$|(?:^|\/)__tests__\/|(?:^|\/)(?:testing|fixtures?|Tests)\/|\/Generated\//;
 const TS_SCOPE = /^(?:src|scripts|plugins)\/.*\.tsx?$/;
 const SWIFT_SCOPE = /^src\/macos\/.*\/Sources\/.*\.swift$/;
@@ -345,6 +347,25 @@ function main(): void {
     const repoRoot = join(import.meta.dirname, "..", "..");
     const hits = scanRepo(repoRoot);
     const counts = countsOf(hits);
+
+    if (args.has("--update-allowlist")) {
+        const named = process.argv.slice(2).filter((arg) => !arg.startsWith("--"));
+        const merged = new Map<string, HarnessGuardCounts>(Object.entries(HARNESS_GUARD_ALLOWLIST));
+
+        for (const file of named) {
+            const now = counts.get(file);
+
+            if (now) {
+                merged.set(file, now);
+            } else {
+                merged.delete(file);
+            }
+        }
+
+        writeFileSync(join(import.meta.dirname, "harness-guard-allowlist.ts"), renderAllowlist(merged));
+        process.stdout.write(`harness-guard: updated ${named.length} entries, ${merged.size} files listed\n`);
+        return;
+    }
 
     if (args.has("--write-allowlist")) {
         writeFileSync(join(import.meta.dirname, "harness-guard-allowlist.ts"), renderAllowlist(counts));

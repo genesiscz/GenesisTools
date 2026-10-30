@@ -78,6 +78,8 @@ export interface HarnessIdentity {
     readonly label: string;
     /** The executable a user starts. */
     readonly binary: string;
+    /** The id of the provider plugin that carries this driver (`anthropic-sub`, `openai-sub`, `grok-sub`). */
+    readonly plugin: string;
     /** Other spellings a user or another tool writes for the harness ("claude-code", "codex-cli"). */
     readonly aliases: readonly string[];
 }
