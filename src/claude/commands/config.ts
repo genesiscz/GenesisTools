@@ -542,6 +542,14 @@ async function showConfig(config: ClaudeConfig, aiConfig: AIConfig): Promise<voi
         }
     }
 
+    const inbound = await crossSessionInboundSetting();
+    lines.push(pc.bold("Launch:"));
+    lines.push(
+        `  Cross-session messages: ${inbound.value}${inbound.source === "default" ? pc.dim(" (default)") : ""} ` +
+            pc.dim(`(${toolCommand("claude config cross-messages")} accept | hold)`)
+    );
+    lines.push("");
+
     lines.push(pc.bold("Notifications:"));
     lines.push(`  Session thresholds: ${config.notifications.sessionThresholds.join(", ")}%`);
     lines.push(`  Weekly thresholds:  ${config.notifications.weeklyThresholds.join(", ")}%`);
