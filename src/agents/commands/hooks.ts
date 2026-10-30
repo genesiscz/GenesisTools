@@ -131,6 +131,79 @@ function printInstallResult(result: InstallResult, write: boolean, file: string)
     }
 }
 
+interface InstallOptions {
+    dist: string;
+    target?: string;
+    write?: boolean;
+    replaceSubagentLine?: boolean;
+}
+
+/** How `install` and `uninstall` wire each harness: Claude's settings.json, Codex's hooks.json. */
+const HOOK_INSTALLERS: Record<
+    InstallableHarness,
+    {
+        install(options: InstallOptions): void;
+        uninstall(write: boolean): { removed: number };
+        /** What a written uninstall records afterwards. */
+        afterUninstall(): void;
+    }
+> = {
+    claude: {
+        install(options) {
+            const { dist } = options;
+            const target = options.target ?? repoRoot();
+            // The symlink is only ours to manage when it IS ours. A `--dist` pointing
+            // somewhere else is the caller's path, and silently repointing it would be a
+            // surprise; it is reported instead.
+            const managed = dist === hooksDistPath();
+            const result = installAndPoint({
+                dist,
+                target,
+                write: Boolean(options.write),
+                replaceSubagentLine: Boolean(options.replaceSubagentLine),
+            });
+
+            ui.raw(`${pc.bold("dist")}       ${dist}${managed ? ` → ${target}` : pc.dim(" (yours, not repointed)")}`);
+
+            if (options.write) {
+                // Also when nothing changed: the file then gains every setting and the record.
+                recordInstallState({ dist, target: managed ? target : null });
+            }
+
+            printInstallResult(result, Boolean(options.write), "the settings file");
+
+            if (options.write) {
+                ui.raw(`${pc.bold("config")}     ${hooksConfigPath()} (every setting, plus what was installed)`);
+            }
+        },
+        uninstall: (write) => uninstallHooks({ write }),
+        afterUninstall() {
+            recordInstallState({ dist: hooksDistPath(), target: null });
+            ui.raw(`${pc.bold("recorded")}  ${hooksConfigPath()}`);
+        },
+    },
+    codex: {
+        install(options) {
+            const { dist } = options;
+            const result = installCodexHooks({ dist, write: Boolean(options.write) });
+
+            ui.raw(`${pc.bold("file")}       ${codexHooksPath()}`);
+            printInstallResult(result, Boolean(options.write), "the hooks file");
+
+            if (result.changed && options.write) {
+                ui.raw(
+                    pc.dim(
+                        "Codex trusts each hook by its position and content: it asks to review a new or changed one at its next interactive start, and does not run it before that."
+                    )
+                );
+            }
+        },
+        uninstall: (write) => uninstallCodexHooks({ write }),
+        // Codex keeps no install record.
+        afterUninstall() {},
+    },
+};
+
 /** Rules switched off for every harness, and rules only some harnesses allow. */
 function ruleOverrides(config: HooksConfig, rules: readonly ShellRule[]): { off: string; perHarness: string } {
     const states = rules.map((rule) => ({ id: rule.id, state: ruleState(config, rule.id) }));
@@ -409,51 +482,7 @@ export function registerHooksCommands(program: Command): void {
                     return;
                 }
 
-                const dist = options.dist ?? hooksDistPath();
-
-                if (harness === "codex") {
-                    const result = installCodexHooks({ dist, write: Boolean(options.write) });
-
-                    ui.raw(`${pc.bold("file")}       ${codexHooksPath()}`);
-                    printInstallResult(result, Boolean(options.write), "the hooks file");
-
-                    if (result.changed && options.write) {
-                        ui.raw(
-                            pc.dim(
-                                "Codex trusts each hook by its position and content: it asks to review a new or changed one at its next interactive start, and does not run it before that."
-                            )
-                        );
-                    }
-
-                    return;
-                }
-
-                const target = options.target ?? repoRoot();
-                // The symlink is only ours to manage when it IS ours. A `--dist` pointing
-                // somewhere else is the caller's path, and silently repointing it would be a
-                // surprise; it is reported instead.
-                const managed = dist === hooksDistPath();
-                const result = installAndPoint({
-                    dist,
-                    target,
-                    write: Boolean(options.write),
-                    replaceSubagentLine: Boolean(options.replaceSubagentLine),
-                });
-
-                ui.raw(
-                    `${pc.bold("dist")}       ${dist}${managed ? ` → ${target}` : pc.dim(" (yours, not repointed)")}`
-                );
-
-                if (options.write) {
-                    // Also when nothing changed: the file then gains every setting and the record.
-                    recordInstallState({ dist, target: managed ? target : null });
-                }
-
-                printInstallResult(result, Boolean(options.write), "the settings file");
-
-                if (options.write) {
-                    ui.raw(`${pc.bold("config")}     ${hooksConfigPath()} (every setting, plus what was installed)`);
-                }
+                HOOK_INSTALLERS[harness].install({ ...options, dist: options.dist ?? hooksDistPath() });
             }
         );
 
@@ -469,10 +498,7 @@ export function registerHooksCommands(program: Command): void {
                 return;
             }
 
-            const result =
-                harness === "codex"
-                    ? uninstallCodexHooks({ write: Boolean(options.write) })
-                    : uninstallHooks({ write: Boolean(options.write) });
+            const result = HOOK_INSTALLERS[harness].uninstall(Boolean(options.write));
 
             ui.raw(`${pc.bold("entries")}   ${result.removed}`);
 
@@ -481,10 +507,7 @@ export function registerHooksCommands(program: Command): void {
                 return;
             }
 
-            if (harness === "claude") {
-                recordInstallState({ dist: hooksDistPath(), target: null });
-                ui.raw(`${pc.bold("recorded")}  ${hooksConfigPath()}`);
-            }
+            HOOK_INSTALLERS[harness].afterUninstall();
 
             ui.raw(
                 pc.dim("⚠️ Hook config is snapshotted at session start; a running session keeps calling the old path.")

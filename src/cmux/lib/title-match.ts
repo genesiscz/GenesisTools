@@ -43,10 +43,16 @@ function stripEllipsis(value: string): string {
     return value.replace(/(\u2026|\.{2,}|…)+$/u, "").trim();
 }
 
+/** What each harness adds around a session title in a tab: a suffix (Grok, Codex) or a spinner glyph (Claude). */
+const TITLE_DECORATION: Record<AgentKind, (title: string) => string> = {
+    claude: stripClaudeGlyph,
+    codex: stripCodexSuffix,
+    grok: stripGrokSuffix,
+};
+
 /** Keys to try against a generated session title, most specific first. */
 export function titleMatchKeys(title: string, kind: AgentKind): string[] {
-    const base =
-        kind === "grok" ? stripGrokSuffix(title) : kind === "codex" ? stripCodexSuffix(title) : stripClaudeGlyph(title);
+    const base = TITLE_DECORATION[kind](title);
     const stripped = stripEllipsis(base.replace(SPINNER_PREFIX, "").trim());
     const parts = stripped
         .split(/\s+-\s+/)
