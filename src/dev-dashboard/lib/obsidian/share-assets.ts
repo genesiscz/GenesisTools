@@ -761,33 +761,51 @@ export function noteSection(text: string, fragment: string): string {
     }
 
     const wanted = headingSlug(fragment);
-    const start = lines.findIndex((line) => {
-        const match = HEADING_LINE_RE.exec(line);
+    let fence: string | null = null;
+    let start = -1;
+    let level = 0;
+    let end = lines.length;
 
-        return match !== null && headingSlug(match[2]) === wanted;
-    });
+    for (let index = 0; index < lines.length; index++) {
+        const line = lines[index].replace(/\r$/, "");
+        const marker = /^ {0,3}(`{3,}|~{3,})(.*)$/.exec(line);
 
-    if (start === -1) {
-        return "";
+        if (fence) {
+            if (marker && marker[1][0] === fence[0] && marker[1].length >= fence.length && !marker[2].trim()) {
+                fence = null;
+            }
+            continue;
+        }
+
+        if (marker && (marker[1][0] !== "`" || !marker[2].includes("`"))) {
+            fence = marker[1];
+            continue;
+        }
+
+        const heading = HEADING_LINE_RE.exec(line);
+        if (!heading) {
+            continue;
+        }
+
+        if (start === -1 && headingSlug(heading[2]) === wanted) {
+            start = index;
+            level = heading[1].length;
+        } else if (start !== -1 && heading[1].length <= level) {
+            end = index;
+            break;
+        }
     }
 
-    const level = HEADING_LINE_RE.exec(lines[start])?.[1].length ?? 1;
-    const end = lines.findIndex((line, index) => {
-        const match = index > start ? HEADING_LINE_RE.exec(line) : null;
-
-        return match !== null && match[1].length <= level;
-    });
-
-    return lines.slice(start, end === -1 ? undefined : end).join("\n");
+    return start === -1 ? "" : lines.slice(start, end).join("\n");
 }
 
 /** An embedded note or section, rendered like the side panel: its own links, images and embeds stay text. */
-export function renderTransclusionHtml(text: string, fragment: string): string {
+export function renderTransclusionHtml(text: string, fragment: string, idPrefix = ""): string {
     const section = noteSection(text, fragment);
 
     if (!section.trim()) {
         return `<p class="dd-md-transclusion-missing">${fragment ? "This section is not in the note." : "The note is empty."}</p>`;
     }
 
-    return renderMarkdown(section, { resolveWikilink: () => null, inertLocalLinks: true }).html;
+    return renderMarkdown(section, { resolveWikilink: () => null, inertLocalLinks: true, idPrefix }).html;
 }

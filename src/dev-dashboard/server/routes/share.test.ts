@@ -7,6 +7,7 @@ import { publishNote } from "@app/dev-dashboard/lib/obsidian/publish";
 import {
     buildShareBundle,
     buildShareEmbed,
+    noteSection,
     SHARE_BUNDLE_MAX_BYTES,
     type ShareEmbed,
 } from "@app/dev-dashboard/lib/obsidian/share-assets";
@@ -15,6 +16,7 @@ import { shareRoutes } from "@app/dev-dashboard/server/routes/share";
 import type { RouteContext, RouteResult } from "@app/dev-dashboard/server/types";
 import { env } from "@genesiscz/utils/env";
 import { unzip } from "@genesiscz/utils/fs/unzip";
+import * as zipFunctions from "@genesiscz/utils/fs/zip";
 import { zip, zipAsync } from "@genesiscz/utils/fs/zip";
 import { SafeJSON } from "@genesiscz/utils/json";
 
@@ -82,6 +84,7 @@ const CLIP = Buffer.from("\u0000\u0000\u0000\u0018ftypmp42 fake-mp4");
 const PDF = Buffer.from("%PDF-1.4 fake pdf body");
 const MEDIA_NOTE = [
     "# Media",
+    "# Shared\n\nhost note[^host]\n\n[^host]: host footnote",
     "```mermaid\ngraph TD; A-->B\n```",
     "$x^2$",
     "![[talk.mp3]]",
@@ -91,6 +94,8 @@ const MEDIA_NOTE = [
     "![[wrap#Wrap]]",
     "![[wrap#No such heading]]",
     "![[Pub]]",
+    "![[embedded]]",
+    "![[embedded]]",
 ].join("\n\n");
 
 function sha(bytes: Buffer | string): string {
@@ -133,6 +138,10 @@ describe("GET /share/:slug assets", () => {
         writeFileSync(join(vault, "Notes/clip.mp4"), CLIP);
         writeFileSync(join(vault, "Notes/doc.pdf"), PDF);
         writeFileSync(join(vault, "Notes/Media.md"), MEDIA_NOTE);
+        writeFileSync(
+            join(vault, "Notes/embedded.md"),
+            "# Shared\n\n[[#Shared]]\n\ntext[^x] ^block\n\n[^x]: embedded footnote"
+        );
         symlinkSync(join(dir, "outside/escape.png"), join(vault, "Notes/sub/escape.png"));
 
         env.testing.set("GENESIS_TOOLS_HOME", join(dir, "home"));
@@ -505,6 +514,48 @@ describe("GET /share/:slug assets", () => {
         expect(res.body).not.toContain("url(fonts/");
     });
 
+    test("concurrent downloads are bounded and release their slots", async () => {
+        let startCount = 0;
+        let ready = () => {};
+        let release = (_value: Uint8Array) => {};
+        const started = new Promise<void>((resolve) => {
+            ready = resolve;
+        });
+        const pending = new Promise<Uint8Array>((resolve) => {
+            release = resolve;
+        });
+        const worker = spyOn(zipFunctions, "zipAsync").mockImplementation(() => {
+            if (++startCount === 2) {
+                ready();
+            }
+            return pending;
+        });
+        let timeout: ReturnType<typeof setTimeout> | undefined;
+        try {
+            const first = get({ download: "zip" });
+            const second = get({ download: "zip" });
+            await Promise.race([
+                started,
+                new Promise<void>((_, reject) => {
+                    timeout = setTimeout(() => reject(new Error("downloads did not start")), 2000);
+                }),
+            ]);
+            const rejected = await get({ download: "html" });
+            expect(rejected).toMatchObject({ status: 429 });
+            release(new Uint8Array());
+            expect(await first).toMatchObject({ status: 200 });
+            expect(await second).toMatchObject({ status: 200 });
+            expect(await get({ download: "html" })).toMatchObject({ status: 200 });
+            worker.mockRejectedValueOnce(new Error("worker failed"));
+            expect(await get({ download: "zip" })).toMatchObject({ status: 500 });
+            expect(await get({ download: "html" })).toMatchObject({ status: 200 });
+        } finally {
+            clearTimeout(timeout);
+            release(new Uint8Array());
+            worker.mockRestore();
+        }
+    });
+
     test("both downloads count source bytes without attachments", async () => {
         const index = { byTarget: new Map(), byHash: new Map() };
         const sourceBytes = SHARE_BUNDLE_MAX_BYTES + 1;
@@ -547,6 +598,34 @@ describe("GET /share/:slug assets", () => {
         expect(panels[`?asset=${sha(DATA)}|`].raw).toBe(
             `data:application/json;charset=utf-8;base64,${Buffer.from(DATA).toString("base64")}`
         );
+    });
+
+    test("repeated transclusions have independent heading, block and footnote IDs", async () => {
+        const page = await get({}, "text/html", mediaSlug);
+        expect(page.kind).toBe("raw");
+        if (page.kind !== "raw") {
+            return;
+        }
+
+        const ids = [...page.body.matchAll(/\bid="([^"]+)"/g)].map((match) => match[1]);
+        expect(new Set(ids).size).toBe(ids.length);
+        expect(page.body).toContain('id=":transclusion-5-shared"');
+        expect(page.body).toContain('href="#:transclusion-5-shared"');
+        expect(page.body).toContain('id=":transclusion-6-^block"');
+        expect(page.body).toContain('href="#:transclusion-6-fn-1"');
+        expect(page.body).toContain('id="fn-1"');
+    });
+
+    test("section lookup handles CRLF and ignores headings inside fences", () => {
+        const note =
+            "# Top\r\n\r\n## Setup\r\n````sh\r\n# install\r\n```\r\n# still code\r\n````\r\n~~~txt\r\n# not a heading\r\n~~~\r\nmore\r\n## Next\r\nend";
+        const section = noteSection(note, "Setup");
+        expect(section).toContain("# install\r\n");
+        expect(section).toContain("# still code\r\n");
+        expect(section).toContain("# not a heading\r\n");
+        expect(section).toContain("more\r");
+        expect(section).not.toContain("## Next");
+        expect(noteSection(note, "install")).toBe("");
     });
 
     test("audio, video and PDF embeds render as a player, a sized video and a PDF frame with its fragment", async () => {
@@ -599,7 +678,7 @@ describe("GET /share/:slug assets", () => {
         const html = page.kind === "raw" ? page.body : "";
         const blocks = html.split('<div class="dd-md-transclusion">').slice(1);
 
-        expect(blocks).toHaveLength(4);
+        expect(blocks).toHaveLength(6);
         expect(html).not.toMatch(/<p>\s*<div class="dd-md-transclusion">/);
         expect(blocks[0]).toContain("Target paragraph on line eight.");
         expect(blocks[0]).toContain('<span class="dd-md-inert-link">s</span>');

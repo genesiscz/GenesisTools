@@ -32,6 +32,8 @@ const { log } = logger.scoped("share");
 
 const NOT_FOUND_HTML = "<!doctype html><meta charset=utf-8><title>Not found</title><h1>Not found</h1>";
 const ASSET_CACHE_LIMIT = 64;
+const MAX_ACTIVE_DOWNLOADS = 2;
+let activeDownloads = 0;
 
 const NOT_FOUND: RouteResult = {
     kind: "raw",
@@ -179,6 +181,22 @@ export function shareRoutes(): RouteDef[] {
             pattern: "/share/:slug",
             handler: async (ctx): Promise<RouteResult> => {
                 const slug = ctx.params.slug;
+                const download = ctx.query.get("download");
+                const isDownload = download === "zip" || download === "html";
+
+                if (isDownload && activeDownloads >= MAX_ACTIVE_DOWNLOADS) {
+                    return {
+                        kind: "raw",
+                        status: 429,
+                        contentType: "text/plain; charset=utf-8",
+                        headers: { "Retry-After": "5" },
+                        body: "too many downloads in progress",
+                    };
+                }
+
+                if (isDownload) {
+                    activeDownloads++;
+                }
 
                 try {
                     const requestedHash = ctx.query.get("asset");
@@ -218,8 +236,6 @@ export function shareRoutes(): RouteDef[] {
                     });
                     const title = (note.vaultPath.split("/").pop() ?? note.vaultPath).replace(/\.md$/, "");
                     const fileBase = title.replace(/[\\/:*?"<>|]/g, "_") || "note";
-                    const download = ctx.query.get("download");
-
                     if (download === "zip") {
                         const bundle = await buildShareBundle({
                             vaultRoot: obsidianVault,
@@ -327,6 +343,7 @@ export function shareRoutes(): RouteDef[] {
 
                     const published = await listPublished();
                     const publishedByPath = new Map(published.map((entry) => [entry.vaultPath, entry.slug]));
+                    let transclusionIndex = 0;
                     const rendered = renderMarkdown(markdown, {
                         pageBaseUrl: pageBase,
                         resolveWikilink: (name) => {
@@ -352,7 +369,14 @@ export function shareRoutes(): RouteDef[] {
                             const transclusion =
                                 noteText === undefined
                                     ? {}
-                                    : { embed: () => renderTransclusionHtml(noteText, decodeFragment(section)) };
+                                    : {
+                                          embed: () =>
+                                              renderTransclusionHtml(
+                                                  noteText,
+                                                  decodeFragment(section),
+                                                  `:transclusion-${++transclusionIndex}-`
+                                              ),
+                                      };
                             const publishedSlug =
                                 asset.kind === "markdown" ? publishedByPath.get(asset.vaultPath) : undefined;
 
@@ -433,6 +457,10 @@ export function shareRoutes(): RouteDef[] {
                         contentType: "text/plain; charset=utf-8",
                         body: err instanceof Error ? err.message : String(err),
                     };
+                } finally {
+                    if (isDownload) {
+                        activeDownloads--;
+                    }
                 }
             },
         },

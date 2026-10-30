@@ -31,7 +31,10 @@ async function offlineCss(): Promise<string> {
 }
 
 export async function offlineShareAssets(hasMermaid: boolean): Promise<OfflineShareAssets> {
-    cssPromise ??= offlineCss();
+    cssPromise ??= offlineCss().catch((error: unknown) => {
+        cssPromise = undefined;
+        throw error;
+    });
     if (hasMermaid) {
         mermaidPromise ??= readFile(
             new URL(
@@ -39,7 +42,11 @@ export async function offlineShareAssets(hasMermaid: boolean): Promise<OfflineSh
                 import.meta.url
             ),
             "utf8"
-        );
+        ).catch((error: unknown) => {
+            mermaidPromise = undefined;
+            throw error;
+        });
     }
-    return { css: await cssPromise, mermaid: hasMermaid ? await mermaidPromise : undefined };
+    const [css, mermaid] = await Promise.all([cssPromise, hasMermaid ? mermaidPromise : undefined]);
+    return { css, mermaid };
 }

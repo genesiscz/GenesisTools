@@ -546,6 +546,17 @@ test.describe("staged pill + picker re-answer", () => {
 });
 
 test.describe("shared diagram isolation", () => {
+    test("unmatched raw tags cannot cover the page footer", async ({ page }) => {
+        const source =
+            '</div>\n\n<div align="center">\n\ninside\n\n</div>\n\n<a href="https://example.test">open\n\ntext';
+        const rendered = renderMarkdown(source, { resolveWikilink: () => null });
+        await page.setContent(renderSharePage({ title: "Note", source, rendered }));
+        await expect(page.locator("article div[align=center]")).toContainText("inside");
+        await expect(page.locator(".dd-share-footer")).toBeVisible();
+        expect(await page.locator(".dd-share-footer").evaluate((footer) => footer.closest("a"))).toBeNull();
+        expect(await page.locator(".dd-share-toolbar").evaluate((toolbar) => toolbar.closest("a"))).toBeNull();
+    });
+
     test("renders a normal diagram offline", async ({ page, context }) => {
         const source = "```mermaid\ngraph TD; A-->B\n```\n\n$x^2$";
         const rendered = renderMarkdown(source, { resolveWikilink: () => null });
@@ -587,10 +598,14 @@ test.describe("shared diagram isolation", () => {
         expect(
             await page
                 .locator("[style]")
-                .evaluateAll((elements) => elements.some((el) => (el as HTMLElement).style.position === "fixed"))
+                .evaluateAll((elements) =>
+                    elements.some(
+                        (el) => (el instanceof HTMLElement || el instanceof SVGElement) && el.style.position === "fixed"
+                    )
+                )
         ).toBe(false);
         expect(await page.locator("form, [onload], [onclick], [onerror]").count()).toBe(0);
-        expect(await page.evaluate(() => (window as Window & { bad?: number }).bad)).toBeUndefined();
+        expect(await page.evaluate(() => Reflect.get(window, "bad"))).toBeUndefined();
         expect(
             await frame.locator("body").evaluate(() => {
                 try {
@@ -604,7 +619,11 @@ test.describe("shared diagram isolation", () => {
         expect(
             await frame
                 .locator("[style]")
-                .evaluateAll((elements) => elements.some((el) => (el as HTMLElement).style.position === "fixed"))
+                .evaluateAll((elements) =>
+                    elements.some(
+                        (el) => (el instanceof HTMLElement || el instanceof SVGElement) && el.style.position === "fixed"
+                    )
+                )
         ).toBe(true);
     });
 });

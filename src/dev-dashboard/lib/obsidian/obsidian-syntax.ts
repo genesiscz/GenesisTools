@@ -79,6 +79,8 @@ function lineStart(src: string, linePattern: string): number | undefined {
 
 /** One render's footnotes: ids defined anywhere in the note, numbers in the order they are first cited. */
 export class FootnoteBook {
+    constructor(readonly idPrefix = "") {}
+
     readonly defined = new Set<string>();
     private readonly numbers = new Map<string, number>();
     private readonly bodies = new Map<string, string>();
@@ -116,7 +118,7 @@ export class FootnoteBook {
 
         const items = [...this.numbers].map(
             ([id, number]) =>
-                `<li id="fn-${number}">${this.bodies.get(id) ?? ""} <a href="#fnref-${number}" class="footnote-backref" aria-label="Back to the text">↩</a></li>`
+                `<li id="${escapeHtml(this.idPrefix)}fn-${number}">${this.bodies.get(id) ?? ""} <a href="#${escapeHtml(this.idPrefix)}fnref-${number}" class="footnote-backref" aria-label="Back to the text">↩</a></li>`
         );
 
         return `<section class="footnotes" aria-label="Footnotes"><hr><ol>${items.join("")}</ol></section>`;
@@ -236,7 +238,7 @@ export function obsidianSyntaxExtension(book: FootnoteBook): MarkedExtension {
                     return match ? { type: "lineBlockId", raw: match[0], id: match[1] } : undefined;
                 },
                 renderer(token: Tokens.Generic): string {
-                    return `<span class="dd-block-id" id="^${escapeHtml((token as unknown as BlockIdToken).id)}"></span>`;
+                    return `<span class="dd-block-id" id="${escapeHtml(book.idPrefix)}^${escapeHtml((token as unknown as BlockIdToken).id)}"></span>`;
                 },
             },
             {
@@ -301,9 +303,10 @@ export function obsidianSyntaxExtension(book: FootnoteBook): MarkedExtension {
                         book.setBody(t.id, this.parser.parseInline(t.tokens));
                     }
 
-                    const idAttr = first ? ` id="fnref-${number}"` : "";
+                    const prefix = escapeHtml(book.idPrefix);
+                    const idAttr = first ? ` id="${prefix}fnref-${number}"` : "";
 
-                    return `<sup class="footnote-ref"><a href="#fn-${number}"${idAttr}>${number}</a></sup>`;
+                    return `<sup class="footnote-ref"><a href="#${prefix}fn-${number}"${idAttr}>${number}</a></sup>`;
                 },
             },
             {
@@ -316,7 +319,7 @@ export function obsidianSyntaxExtension(book: FootnoteBook): MarkedExtension {
                     return match ? { type: "inlineBlockId", raw: match[0], id: match[1] } : undefined;
                 },
                 renderer(token: Tokens.Generic): string {
-                    return `<span class="dd-block-id" id="^${escapeHtml((token as unknown as BlockIdToken).id)}"></span>`;
+                    return `<span class="dd-block-id" id="${escapeHtml(book.idPrefix)}^${escapeHtml((token as unknown as BlockIdToken).id)}"></span>`;
                 },
             },
         ],

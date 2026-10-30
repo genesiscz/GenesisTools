@@ -1,7 +1,24 @@
-import { describe, expect, test } from "bun:test";
+import { describe, expect, spyOn, test } from "bun:test";
+import * as fsPromises from "node:fs/promises";
 import { renderMarkdown } from "@app/dev-dashboard/lib/obsidian/markdown";
+import { offlineShareAssets } from "@app/dev-dashboard/lib/obsidian/offline-assets";
 
 const noop = { resolveWikilink: () => null };
+
+test("offline asset reads retry after transient failures", async () => {
+    const read = spyOn(fsPromises, "readFile");
+    try {
+        read.mockRejectedValueOnce(new Error("temporary CSS read failure"));
+        await expect(offlineShareAssets(false)).rejects.toThrow("temporary CSS read failure");
+        expect((await offlineShareAssets(false)).css).toContain("data:font/woff2;base64,");
+
+        read.mockRejectedValueOnce(new Error("temporary Mermaid read failure"));
+        await expect(offlineShareAssets(true)).rejects.toThrow("temporary Mermaid read failure");
+        expect((await offlineShareAssets(true)).mermaid?.length).toBeGreaterThan(0);
+    } finally {
+        read.mockRestore();
+    }
+});
 
 describe("renderMarkdown", () => {
     test("renders basic markdown", () => {
@@ -395,6 +412,17 @@ describe("Obsidian syntax", () => {
         expect(html).not.toContain('style="position:fixed"');
         expect(html).not.toContain(' onclick="window.bad=3"');
         expect(html).toContain("&lt;img src=x onerror=window.bad=4&gt;");
+    });
+
+    test("unmatched HTML closes cannot escape, and open tags close before footnotes", () => {
+        const { html } = renderMarkdown(
+            '</div>\n\n<div align="center">\n\ntext\n\n</div>\n\n<a href="https://example.test">open\n\ntext[^x]\n\n[^x]: footnote',
+            noop
+        );
+        expect(html).not.toMatch(/^<\/div>/);
+        expect(html).toContain('<div align="center">');
+        expect(html).toMatch(/<\/div>[\s\S]*<a href=/);
+        expect(html.indexOf('</a><section class="footnotes"')).toBeGreaterThan(-1);
     });
 
     test("a folded callout is a native fold: [!note]- closed, [!tip]+ open", () => {

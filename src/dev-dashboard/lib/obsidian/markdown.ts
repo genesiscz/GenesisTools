@@ -67,6 +67,7 @@ interface RenderOptions {
     resolveAsset?: (target: string) => ResolvedAsset | null;
     /** Relative and file: links and images render as plain text, so a rendered attachment cannot reach further files. */
     inertLocalLinks?: boolean;
+    idPrefix?: string;
     /** Wrap each top-level block in `data-line-start`/`data-line-end` (1-based source lines, frontmatter counted). */
     lineAnchors?: boolean;
     /** Prefix for `/share/<slug>` links; a saved copy of a page sets the dashboard's public origin. */
@@ -363,7 +364,7 @@ function wikilinkExtension(opts: RenderOptions): MarkedExtension {
                         t.display !== t.target || !fragment ? t.display : note ? `${note} > ${fragment}` : fragment;
 
                     if (!note && fragment) {
-                        return `<a href="#${escapeHtml(anchorFor(fragment))}" class="dd-wikilink">${escapeHtml(display)}</a>`;
+                        return `<a href="#${escapeHtml(opts.idPrefix ?? "")}${escapeHtml(anchorFor(fragment))}" class="dd-wikilink">${escapeHtml(display)}</a>`;
                     }
 
                     // The whole target first, so a `#L12` line link still reaches its asset; then the note alone.
@@ -778,7 +779,7 @@ function resolveWikilinkHtml(opts: RenderOptions, target: string, display: strin
     return null;
 }
 
-function buildMarked(opts: RenderOptions, book: FootnoteBook): Marked {
+function buildMarked(opts: RenderOptions, book: FootnoteBook, openHtml: string[]): Marked {
     const usedSlugs = new Map<string, number>();
 
     return new Marked(
@@ -799,12 +800,15 @@ function buildMarked(opts: RenderOptions, book: FootnoteBook): Marked {
                     }
 
                     // Raw HTML is rebuilt from an allowlist (note-html.ts); an `<img>` renders like a markdown image.
-                    return sanitizeNoteHtml(text, (img) =>
-                        renderImage(opts, {
-                            href: img.src,
-                            alt: img.alt,
-                            size: { width: img.width, height: img.height },
-                        })
+                    return sanitizeNoteHtml(
+                        text,
+                        (img) =>
+                            renderImage(opts, {
+                                href: img.src,
+                                alt: img.alt,
+                                size: { width: img.width, height: img.height },
+                            }),
+                        openHtml
                     );
                 },
                 // An embedded note is block content; a paragraph that holds only that embed drops its <p>,
@@ -822,7 +826,7 @@ function buildMarked(opts: RenderOptions, book: FootnoteBook): Marked {
                     const base = headingSlug(token.text);
                     const seen = usedSlugs.get(base) ?? 0;
                     usedSlugs.set(base, seen + 1);
-                    const id = seen === 0 ? base : `${base}-${seen}`;
+                    const id = `${opts.idPrefix ?? ""}${seen === 0 ? base : `${base}-${seen}`}`;
 
                     return `<h${token.depth} id="${escapeHtml(id)}">${this.parser.parseInline(token.tokens)}</h${token.depth}>\n`;
                 },
@@ -964,8 +968,9 @@ export function renderCodeLines(options: {
 
 export function renderMarkdown(source: string, opts: RenderOptions): RenderResult {
     const metadata = extractMetadata(source);
-    const book = new FootnoteBook();
-    const md = buildMarked(opts, book);
+    const book = new FootnoteBook(opts.idPrefix);
+    const openHtml: string[] = [];
+    const md = buildMarked(opts, book, openHtml);
     const body = opts.lineAnchors
         ? renderWithLineAnchors(
               md,
@@ -978,7 +983,10 @@ export function renderMarkdown(source: string, opts: RenderOptions): RenderResul
     const hasMermaid = body.includes('<div class="mermaid">');
 
     return {
-        html: `${tagsHeader}${renderProperties(metadata.properties)}${body}${book.renderSection()}`,
+        html: `${tagsHeader}${renderProperties(metadata.properties)}${body}${openHtml
+            .reverse()
+            .map((name) => `</${name}>`)
+            .join("")}${book.renderSection()}`,
         hasMath,
         hasMermaid,
         tags: metadata.tags,

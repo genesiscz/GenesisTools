@@ -179,7 +179,7 @@ function openTag(name: string, attrs: Map<string, string>): string {
 }
 
 /** The note's HTML with every tag rebuilt or escaped; `image` renders an `<img>` like a markdown image. */
-export function sanitizeNoteHtml(html: string, image: (img: NoteHtmlImage) => string): string {
+export function sanitizeNoteHtml(html: string, image: (img: NoteHtmlImage) => string, open: string[] = []): string {
     let out = "";
     let last = 0;
 
@@ -214,7 +214,18 @@ export function sanitizeNoteHtml(html: string, image: (img: NoteHtmlImage) => st
             continue;
         }
 
-        out += closing ? `</${name}>` : openTag(name, attributes(match[3]));
+        if (closing) {
+            const index = open.lastIndexOf(name);
+
+            if (index !== -1) {
+                while (open.length > index) {
+                    out += `</${open.pop()}>`;
+                }
+            }
+        } else {
+            out += openTag(name, attributes(match[3]));
+            open.push(name);
+        }
     }
 
     return out + escapeText(html.slice(last));
