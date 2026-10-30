@@ -1,9 +1,9 @@
 import { closeSync, existsSync, openSync, readFileSync, statSync } from "node:fs";
-import { homedir } from "node:os";
-import { join, resolve } from "node:path";
+import { resolve } from "node:path";
 import { formatCostLine } from "@app/ai-spend/lib/workers/cost";
 import { recordWorkerTurnCost } from "@app/ai-spend/lib/workers/ledger";
 import { assignedSessionId, resolveAgentHost } from "@genesiscz/utils/agent/host";
+import { grokAuthPath } from "@genesiscz/utils/ai/grok/paths";
 import { toolCommand } from "@genesiscz/utils/cli/tool-command";
 import { env } from "@genesiscz/utils/env";
 import { defaultWorkerHomeFor, managedHomeSkillsPolicy } from "@genesiscz/utils/grok/worker-paths";
@@ -74,7 +74,7 @@ export function subscriptionAuthPath(baseEnv: Record<string, string | undefined>
         return baseEnv.GROK_AUTH_PATH;
     }
 
-    return join(baseEnv.GROK_HOME ?? join(homedir(), ".grok"), "auth.json");
+    return grokAuthPath(baseEnv.GROK_HOME);
 }
 
 /** An explicit request wins; otherwise subscription when the login file exists, else the API key. */

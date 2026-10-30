@@ -1,5 +1,3 @@
-import { homedir } from "node:os";
-import { join } from "node:path";
 import { isInteractive, suggestCommand } from "@genesiscz/utils/cli";
 import { toolCommand } from "@genesiscz/utils/cli/tool-command";
 import { formatBytes } from "@genesiscz/utils/format";
@@ -7,6 +5,7 @@ import { logger, out } from "@genesiscz/utils/logger";
 import { expandTilde } from "@genesiscz/utils/paths";
 import type { OpenFilesQuery, OpenFilesResult } from "@genesiscz/utils/process/open-files";
 import * as p from "@genesiscz/utils/prompts/p";
+import { defaultNativeHome } from "@genesiscz/utils/providers/session-paths";
 import {
     createBoxTable,
     formatDotStatus,
@@ -273,7 +272,7 @@ export async function runMigrateHome(
     options: MigrateHomeCliOptions,
     interaction: MigrateHomeInteraction = terminalInteraction
 ): Promise<void> {
-    const destination = expandTilde(options.to ?? join(homedir(), ".codex"));
+    const destination = expandTilde(options.to ?? defaultNativeHome("codex"));
     const from = homeList(options.from);
     const interactive = interaction.interactive();
     const base: MigrateHomeOptions = {

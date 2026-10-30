@@ -1,8 +1,7 @@
 #!/usr/bin/env bun
 
 import { appendFileSync, mkdirSync, readFileSync } from "node:fs";
-import { homedir } from "node:os";
-import { dirname, join } from "node:path";
+import { dirname } from "node:path";
 import { watchFileFeed } from "@genesiscz/utils/fs/file-feed-watcher";
 import { SafeJSON } from "@genesiscz/utils/json";
 import { logger } from "@genesiscz/utils/logger";
@@ -17,7 +16,7 @@ import { sessionControlPath, sessionDaemonLogPath, sessionLaunchPath } from "./l
 import { escalateCodexReview } from "./lib/review/escalate";
 import { CodexSessionRuntime } from "./lib/session";
 import type { LaunchConfig } from "./lib/spawn";
-import { CodexSessionStore } from "./lib/store";
+import { CodexSessionStore, codexWorkerHome } from "./lib/store";
 
 const log = logger.child({ component: "codex:daemon" });
 
@@ -42,7 +41,7 @@ async function run(): Promise<void> {
     const launch = SafeJSON.parse(readFileSync(sessionLaunchPath(name), "utf8"), { strict: true }) as LaunchConfig;
     const config = [`sandbox_mode=${meta.sandbox}`];
     if (launch.computerUse) {
-        config.push(...computerUseOverrides({ home: meta.home ?? join(homedir(), ".codex") }));
+        config.push(...computerUseOverrides({ home: codexWorkerHome(meta) }));
     }
     if (launch.writableRoots.length > 0) {
         config.push(

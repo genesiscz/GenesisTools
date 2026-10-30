@@ -4,7 +4,7 @@ import { tmpdir } from "node:os";
 import { join } from "node:path";
 import { env } from "@genesiscz/utils/env";
 import { WorkerNameTakenError } from "@genesiscz/utils/worker/meta-store";
-import { type CodexSessionMeta, CodexSessionStore, deriveSessionStatus } from "./store";
+import { type CodexSessionMeta, CodexSessionStore, codexWorkerHome, deriveSessionStatus } from "./store";
 
 function makeMeta(now: number): CodexSessionMeta {
     return {
@@ -24,6 +24,18 @@ function makeMeta(now: number): CodexSessionMeta {
         pendingApprovals: {},
     };
 }
+
+describe("codexWorkerHome", () => {
+    test("a worker without its own home runs in the first CODEX_HOME entry, never the whole comma list", async () => {
+        await env.testing.withOverrides({ CODEX_HOME: "/a/codex,/b/codex", HOME: "/home/u" }, () => {
+            expect(codexWorkerHome({})).toBe("/a/codex");
+            expect(codexWorkerHome({ home: "/own/codex" })).toBe("/own/codex");
+        });
+        await env.testing.withOverrides({ CODEX_HOME: "", HOME: "/home/u" }, () => {
+            expect(codexWorkerHome({})).toBe(join("/home/u", ".codex"));
+        });
+    });
+});
 
 describe("CodexSessionStore", () => {
     test("persists metadata atomically and lists sessions", async () => {

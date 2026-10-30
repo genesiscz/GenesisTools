@@ -1,6 +1,5 @@
 import { realpath } from "node:fs/promises";
-import { homedir } from "node:os";
-import { join, resolve } from "node:path";
+import { resolve } from "node:path";
 import * as p from "@clack/prompts";
 import { resumeCommandLine } from "@genesiscz/utils/agent-sessions/resume-argv";
 import type { AgentSession } from "@genesiscz/utils/agent-sessions/types";
@@ -15,6 +14,7 @@ import { toolCommand } from "@genesiscz/utils/cli/tool-command";
 import { env } from "@genesiscz/utils/env";
 import { logger, out } from "@genesiscz/utils/logger";
 import { profiler } from "@genesiscz/utils/profile";
+import { defaultNativeHome } from "@genesiscz/utils/providers/session-paths";
 import { CodexAccountBinding } from "./account";
 import { formatActiveWriter, inspectActiveWriter, isActiveWriterError } from "./active-writer";
 import { type AppServerProcess, spawnAppServer } from "./app-server-client";
@@ -36,7 +36,7 @@ const HOME_BUSY_ATTEMPTS = 3;
 
 /** The shared Codex home a `run` targets: `--home`, else `~/.codex` regardless of an inherited CODEX_HOME. */
 export function sharedCodexHome(home: string | undefined): string {
-    return resolve(home ?? join(homedir(), ".codex"));
+    return resolve(home ?? defaultNativeHome("codex"));
 }
 
 /** A recorded home may be gone since the index last saw it; compare it as written then. */

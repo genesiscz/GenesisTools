@@ -1,10 +1,10 @@
 import { existsSync, readFileSync } from "node:fs";
-import { join } from "node:path";
 import { toolCommand } from "@genesiscz/utils/cli/tool-command";
 import { env } from "@genesiscz/utils/env";
 import { parseJsonl } from "@genesiscz/utils/jsonl";
 import { JsonlWriter } from "@genesiscz/utils/log-session/jsonl-writer";
 import { logger } from "@genesiscz/utils/logger";
+import { nativeHome } from "@genesiscz/utils/providers/session-paths";
 import { WorkerMetaStore } from "@genesiscz/utils/worker/meta-store";
 import { sessionEventsPath, sessionMetaPath, sessionsDir } from "./paths";
 import type { CodexReviewConfig } from "./review/types";
@@ -110,7 +110,7 @@ export interface CodexEventRecord {
 
 /** The CODEX_HOME a worker's native thread lives in: its own, else the one a plain `codex` would use. */
 export function codexWorkerHome(meta: Pick<CodexSessionMeta, "home">): string {
-    return meta.home ?? env.codex.getHomeOverride() ?? join(env.paths.getHome(), ".codex");
+    return meta.home ?? nativeHome("codex", env.paths.getHome());
 }
 
 export function deriveSessionStatus(meta: CodexSessionMeta, now = Date.now(), stallMs = 120_000): CodexStatus {
