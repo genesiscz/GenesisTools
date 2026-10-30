@@ -785,7 +785,13 @@ export function listHandoffs(input: ListHandoffsInput = {}, deps: HandoffDeps = 
             return row;
         });
 
-        const info: string[] = [`${total} handoff${total === 1 ? "" : "s"} matched; showing ${page.length}.`];
+        const shown =
+            offset === 0
+                ? `showing ${page.length}`
+                : page.length === 0
+                  ? `showing none (offset ${offset} is past the last row)`
+                  : `showing rows ${offset + 1}-${offset + page.length} (offset ${offset} skipped the first ${offset})`;
+        const info: string[] = [`${total} handoff${total === 1 ? "" : "s"} matched; ${shown}.`];
 
         if (agentFilter !== undefined) {
             info.push(
