@@ -2,7 +2,13 @@ import type { AgentRuntimeContext } from "@genesiscz/utils/agent/context";
 import type { ResumeOptions } from "@genesiscz/utils/agent-sessions/resume-argv";
 import type { NativeSessionReader } from "@genesiscz/utils/agent-sessions/types";
 import type { DialogKeys } from "@genesiscz/utils/agents/dialogs/keys";
-import type { ResolvedTranscript } from "@genesiscz/utils/ai/transcripts/resolve";
+import type {
+    FolderReads,
+    LocateRoots,
+    RankedHit,
+    ResolvedTranscript,
+    TranscriptSource,
+} from "@genesiscz/utils/ai/transcripts/resolve";
 import type { TurnQuestionCall, TurnSnapshot, TurnStateInput } from "@genesiscz/utils/ai/transcripts/turn-state";
 import type { TranscriptTurn } from "@genesiscz/utils/ai/transcripts/types";
 import type { WorkerCapabilities } from "@genesiscz/utils/worker/capabilities";
@@ -19,23 +25,18 @@ import type { WorkerCapabilities } from "@genesiscz/utils/worker/capabilities";
  * imports `@app/*`; the driver then names the tool owner (`toolOwned`, `types.ts`).
  */
 
-/** C: where a harness keeps its transcripts, and how a path or an id prefix maps to a session. */
+/**
+ * C: where a harness keeps its transcripts, and how a query or an absolute path maps to a session. Synchronous,
+ * because `resolveTranscriptsWith` and `resolveCodexNative` are; each locator reads its own fields of the shared
+ * `TranscriptRoots` and only folder reads (`FolderReads`), so the batch memo counts every read.
+ */
 export interface TranscriptLocator {
-    /** The default native roots, honouring the harness's own home override. */
-    roots(): string[];
-    /** The session id a transcript path names, or null when the path is not this harness's transcript. */
-    idFromPath(path: string): string | null;
-    /** Sessions whose id equals or starts with `query`, newest first. */
-    find(query: string, roots?: readonly string[]): Promise<LocatedTranscript[]>;
-    /** Roots of the transcripts `tools <agent> run --worker` writes, when the harness has workers. */
-    workerRoots?(): string[];
-}
-
-export interface LocatedTranscript {
-    sessionId: string;
-    filePath: string;
-    /** Sibling files that belong to the same session (Grok's `events.jsonl`, Claude subagent files). */
-    extraFiles?: string[];
+    /** The roots a transcript path of the harness can sit under, in the order a path is matched against them. */
+    pathRoots(roots: LocateRoots): { root: string; source: TranscriptSource }[];
+    /** The session a transcript file of the harness names. */
+    sessionOfPath(file: { source: TranscriptSource; stem: string; filePath: string }): ResolvedTranscript;
+    /** Every transcript of the harness whose id equals or starts with `query`, with its modification time. */
+    find(query: string, roots: LocateRoots, fs: FolderReads): RankedHit[];
 }
 
 /** D: transcript lines to the provider-neutral turns every renderer reads. */
@@ -174,7 +175,6 @@ export interface ProcessSignature {
 
 /** Parts that wrap parsers and readers: a driver holds a loader, so reading the driver never loads them. */
 export interface LazyPartContracts {
-    locate: TranscriptLocator;
     parse: TranscriptParser;
     questions: QuestionSignalReader;
     history: NativeSessionReader;
@@ -199,6 +199,11 @@ export interface EagerPartContracts {
     turnState: TurnStateReader;
     /** The keys that answer the harness's question dialog in a terminal pane (`tools claude cmux send`, the inbox). */
     dialog: DialogKeys;
+    /**
+     * C: synchronous, because `resolveTranscriptsWith` is; a driver holds a `deferredLocator` (`deferred.ts`) that loads
+     * its finders on the first call, so the finders cost the hook path nothing.
+     */
+    locate: TranscriptLocator;
 }
 
 /**

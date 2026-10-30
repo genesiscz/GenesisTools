@@ -3,7 +3,8 @@ import { FileTailer } from "@genesiscz/utils/fs/file-tailer";
 import { SafeJSON } from "@genesiscz/utils/json";
 import { logger } from "@genesiscz/utils/logger";
 import { transcriptEnvelope } from "./load";
-import { type ResolvedTranscript, rescanWorkerTurns } from "./resolve";
+import type { ResolvedTranscript } from "./resolve";
+import { rescanWorkerTurns } from "./resolve-core";
 import type { SliceOptions, TranscriptEnvelope } from "./types";
 
 export interface FollowTranscriptOptions {

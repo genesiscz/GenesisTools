@@ -1,9 +1,11 @@
 import { isGrok, resolveGrokContext } from "@genesiscz/utils/agent/hosts/grok";
 import { grokTurnState } from "@genesiscz/utils/agent-sessions/readers/grok-turn-state";
 import { interpreterScriptIndex } from "@genesiscz/utils/harness/interpreter-entry";
+import { deferredLocator } from "@genesiscz/utils/harness/deferred";
 import type { HarnessDriver } from "@genesiscz/utils/harness/types";
 import { pending, toolOwned, unsupported } from "@genesiscz/utils/harness/types";
 import { grokLaunch } from "./harness-launch";
+
 import { grokWorker } from "./harness-worker";
 
 /**
@@ -27,7 +29,7 @@ export const grokHarness: HarnessDriver<"grok"> = {
         },
     },
     parts: {
-        locate: pending("P2", "the grok finders in src/utils/ai/transcripts/resolve.ts and session-paths.ts roots"),
+        locate: deferredLocator(import.meta, "harness-locate", "grokLocate"),
         parse: () => import("./harness-parse").then((m) => m.grokParse),
         turnState: { read: grokTurnState },
         questions: pending(

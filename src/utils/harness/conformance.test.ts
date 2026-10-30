@@ -7,10 +7,12 @@ import {
     harnessDriver,
     harnessDrivers,
     harnessLaunch,
+    harnessLocate,
     harnessTurnState,
 } from "@genesiscz/utils/ai/providers/harness-index";
 import { registerBuiltInPlugins } from "@genesiscz/utils/ai/providers/plugins";
 import { allProviderPlugins } from "@genesiscz/utils/ai/providers/registry";
+import { defaultTranscriptRoots, directReads } from "@genesiscz/utils/ai/transcripts/resolve";
 import { moduleDir } from "@genesiscz/utils/fs/module-dir";
 import { HARNESS_SWIFT_PATH, renderHarnessSwift } from "../../../scripts/gen-harness-swift";
 import { HARNESS_PARTS, type HarnessDriver, isPartNote } from "./types";
@@ -152,6 +154,28 @@ describe("turnState: an empty tail of every harness", () => {
             expect(stale.openTools).toEqual([]);
             expect(stale.lastText).toBe("");
             expect(stale.asksQuestion).toBe(false);
+        });
+    }
+});
+
+describe("locate: the deferred finders of every harness", () => {
+    for (const driver of harnessDrivers()) {
+        test(`${driver.id} loads its finders on the first call and finds nothing under empty roots`, () => {
+            const locate = harnessLocate(driver.id);
+            const empty = join(REPO_ROOT, ".no-such-transcript-root");
+            const resolved = Object.fromEntries(
+                Object.entries(defaultTranscriptRoots()).map(([key, value]) => [
+                    key,
+                    Array.isArray(value) ? [empty] : empty,
+                ])
+            );
+            const roots = { injected: {}, resolved: { ...defaultTranscriptRoots(), ...resolved } };
+
+            expect(locate.find("0123456789abcdef", roots, directReads)).toEqual([]);
+            expect(locate.pathRoots(roots).length).toBeGreaterThan(0);
+            expect(
+                locate.sessionOfPath({ source: "worker", stem: "probe", filePath: join(empty, "probe.jsonl") })
+            ).toMatchObject({ provider: driver.id, source: "worker" });
         });
     }
 });

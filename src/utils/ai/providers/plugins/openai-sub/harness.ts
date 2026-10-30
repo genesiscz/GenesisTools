@@ -1,9 +1,11 @@
 import { isCodex, resolveCodexContext } from "@genesiscz/utils/agent/hosts/codex";
 import { codexTurnState } from "@genesiscz/utils/agent-sessions/readers/codex-turn-state";
 import { interpreterScriptIndex } from "@genesiscz/utils/harness/interpreter-entry";
+import { deferredLocator } from "@genesiscz/utils/harness/deferred";
 import type { HarnessDriver } from "@genesiscz/utils/harness/types";
 import { pending, toolOwned, unsupported } from "@genesiscz/utils/harness/types";
 import { codexLaunch } from "./harness-launch";
+
 import { codexWorker } from "./harness-worker";
 
 /**
@@ -27,7 +29,7 @@ export const codexHarness: HarnessDriver<"codex"> = {
         },
     },
     parts: {
-        locate: pending("P2", "the codex finders in src/utils/ai/transcripts/resolve.ts and session-paths.ts roots"),
+        locate: deferredLocator(import.meta, "harness-locate", "codexLocate"),
         parse: () => import("./harness-parse").then((m) => m.codexParse),
         turnState: { read: codexTurnState },
         questions: pending(

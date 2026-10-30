@@ -152,7 +152,6 @@ export const HARNESS_GUARD_ALLOWLIST: Readonly<Record<string, HarnessGuardCounts
     "src/utils/agent-sessions/readers/codex-import.ts": { branch: 1 },
     "src/utils/agent-sessions/search.ts": { table: 1 },
     "src/utils/ai/transcripts/around.ts": { table: 2 },
-    "src/utils/ai/transcripts/resolve.ts": { table: 4 },
     "src/utils/ai/transcripts/session-title.ts": { table: 1 },
     "src/utils/cli/failures/caller.ts": { table: 1 },
     "src/utils/env/envVariables.ts": {

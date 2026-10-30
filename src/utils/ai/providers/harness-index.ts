@@ -6,6 +6,7 @@ import type {
     LaunchRecipe,
     ProcessSignature,
     TranscriptFacts,
+    TranscriptLocator,
     TurnStateReader,
 } from "@genesiscz/utils/harness/parts";
 import { type HarnessDriver, type HarnessId, isPartNote } from "@genesiscz/utils/harness/types";
@@ -63,6 +64,17 @@ export async function harnessHistory(id: HarnessId): Promise<NativeSessionReader
     }
 
     return slot();
+}
+
+/** Where a harness keeps its transcripts (its driver's `locate` part); every harness has one. */
+export function harnessLocate(id: HarnessId): TranscriptLocator {
+    const slot = harnessDriver(id).parts.locate;
+
+    if (isPartNote(slot)) {
+        throw new Error(`The ${id} harness driver has no transcript locator: ${slot.reason}`);
+    }
+
+    return slot;
 }
 
 /** The turn-state reader of a harness (its driver's `turnState` part); every harness has one. */

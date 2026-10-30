@@ -1,17 +1,17 @@
 import { describe, expect, test } from "bun:test";
 import { mkdirSync, mkdtempSync, utimesSync, writeFileSync } from "node:fs";
 import { tmpdir } from "node:os";
-import { join } from "node:path";
+import { dirname, join } from "node:path";
 import { SafeJSON } from "@genesiscz/utils/json";
 import {
     directReads,
     type FolderReads,
-    rescanWorkerTurns,
     resolveCodexNative,
     resolveTranscript,
     resolveTranscripts,
     resolveTranscriptsWith,
 } from "./resolve";
+import { rescanWorkerTurns } from "./resolve-core";
 
 function fixtureRoot(): string {
     return mkdtempSync(join(tmpdir(), "gt-transcript-"));
@@ -300,6 +300,46 @@ describe("resolveTranscript: sub-agent ids and absolute paths", () => {
 
         const codex = await resolveTranscript(join(root, "codex-w", "probe.jsonl"), roots(root));
         expect(codex).toMatchObject({ provider: "codex", source: "worker", sessionId: "probe" });
+    });
+
+    test("absolute native paths take their provider and id from the root they live under", async () => {
+        const root = fixtureRoot();
+        const thread = "019a0000-1111-7222-8333-444455556666";
+        const rollout = join(
+            root,
+            "codex",
+            "sessions",
+            "2026",
+            "10",
+            "30",
+            `rollout-2026-10-30T10-00-00-${thread}.jsonl`
+        );
+        const updates = join(root, "grok", "sessions", "-tmp-proj", "grok-session-1", "updates.jsonl");
+        const turn = join(root, "claude-w", "probe.turn1.jsonl");
+
+        for (const file of [rollout, updates, turn]) {
+            mkdirSync(dirname(file), { recursive: true });
+            writeFileSync(file, "{}\n");
+        }
+
+        expect(await resolveTranscript(rollout, roots(root))).toEqual({
+            provider: "codex",
+            source: "native",
+            sessionId: thread,
+            filePath: rollout,
+        });
+        expect(await resolveTranscript(updates, roots(root))).toEqual({
+            provider: "grok",
+            source: "native",
+            sessionId: "grok-session-1",
+            filePath: updates,
+        });
+        expect(await resolveTranscript(turn, roots(root))).toMatchObject({
+            provider: "claude",
+            source: "worker",
+            sessionId: "probe",
+            filePath: turn,
+        });
     });
 
     test("an absolute path under no known root needs a provider", async () => {
