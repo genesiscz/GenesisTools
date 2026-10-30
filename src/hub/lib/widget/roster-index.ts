@@ -71,16 +71,103 @@ export async function readWidgetRoster(): Promise<WidgetRoster> {
     return { rows, agents };
 }
 
+/** The transcripts that changed, by the scope they ask for; a scope without an entry refreshes its whole listing. */
+export type WidgetRosterPaths = ReadonlyMap<WidgetRosterScope, readonly string[]>;
+
+/** Above this many changed transcripts in one scope, the scope's own listing costs less than the exact refresh. */
+export const WIDGET_EXACT_PATHS_LIMIT = 64;
+
+/** The provider whose index a provider scope refreshes. */
+const SCOPE_PROVIDER = {
+    claude: "claude",
+    "claude-agents": "claude",
+    codex: "codex",
+    grok: "grok",
+} as const satisfies Record<Exclude<WidgetRosterScope, "all">, HarnessId>;
+
+function isProviderScope(key: string): key is keyof typeof SCOPE_PROVIDER {
+    return Object.hasOwn(SCOPE_PROVIDER, key);
+}
+
+/** The changed transcripts a roster request carries (a plain object, as a worker message holds it), as a map. */
+export function widgetRosterPaths(paths: Partial<Record<WidgetRosterScope, string[]>>): WidgetRosterPaths {
+    const map = new Map<WidgetRosterScope, string[]>();
+    for (const [scope, files] of Object.entries(paths)) {
+        if (isProviderScope(scope) && files) {
+            map.set(scope, files);
+        }
+    }
+
+    return map;
+}
+
+function canonical(path: string): string | undefined {
+    try {
+        return realpathSync(path);
+    } catch (error) {
+        logger.trace({ error, path }, "Widget exact refresh: the changed file is gone");
+        return undefined;
+    }
+}
+
+/**
+ * The scopes with a changed file that still exists (`canonical` names it) and is no index row: the exact refresh
+ * could not place that change, so the scope's whole listing must look.
+ */
+export function unplacedScopes({
+    changes,
+    rows,
+    canonical,
+}: {
+    changes: Array<{ scope: WidgetRosterScope; paths: readonly string[] }>;
+    rows: ReadonlySet<string>;
+    canonical: (path: string) => string | undefined;
+}): WidgetRosterScope[] {
+    return changes
+        .filter((change) =>
+            change.paths.some((path) => {
+                const file = canonical(path);
+                return file !== undefined && !rows.has(file);
+            })
+        )
+        .map((change) => change.scope);
+}
+
+/**
+ * Refreshes exactly the changed transcripts of one provider (one stat and one metadata read each, no walk), and
+ * returns how many rows it wrote or removed, plus the scopes whose change it could not place: a changed file that
+ * still exists and is not a transcript row afterwards (a Claude sub-agent's `.meta.json`, a Grok `summary.json`,
+ * a transcript with no record yet). Those scopes refresh their whole listing, as before.
+ */
+async function refreshExact(
+    provider: HarnessId,
+    changes: Array<{ scope: WidgetRosterScope; paths: readonly string[] }>
+): Promise<{ written: number; unplaced: WidgetRosterScope[] }> {
+    const filePaths = [...new Set(changes.flatMap((change) => change.paths))];
+    const { metadata, report } = await catalogHistory({ provider, refresh: true, filters: { filePaths } });
+    const unplaced = unplacedScopes({ changes, rows: new Set(metadata.map((row) => row.filePath)), canonical });
+    if (unplaced.length > 0) {
+        logger.debug({ provider, unplaced, paths: filePaths.length }, "Widget exact refresh left a change unplaced");
+    }
+
+    return { written: report.parsed + report.removed, unplaced };
+}
+
 /**
  * Brings the given parts of the shared index up to date, in this process. `all` is the full discovery; a provider
- * scope refreshes only that listing, which is what a change under that provider's session root can affect.
- * A provider scope never reuses another process's recent refresh: it runs because a file just changed.
+ * scope refreshes only that listing, which is what a change under that provider's session root can affect, and a
+ * scope with `paths` refreshes only those transcripts. A provider scope never reuses another process's recent
+ * refresh: it runs because a file just changed.
+ *
+ * A scope's whole listing walks its roots and stats every transcript in the window: 63 ms of CPU for the Claude
+ * listing and 108 ms for the Claude sub-agents on 2026-10-30 (3,734 and 12,456 files), at every write of a live
+ * session. The exact refresh is what a change of a known transcript costs.
  *
  * Returns whether any index row was written or removed; a full refresh always counts as a change.
  */
 export async function refreshWidgetIndex(
     scopes: ReadonlySet<WidgetRosterScope>,
-    { now = Date.now() }: { now?: number } = {}
+    { now = Date.now(), paths = new Map() }: { now?: number; paths?: WidgetRosterPaths } = {}
 ): Promise<boolean> {
     if (scopes.has("all")) {
         await Promise.all([
@@ -96,6 +183,33 @@ export async function refreshWidgetIndex(
         return true;
     }
 
+    const whole = new Set<Exclude<WidgetRosterScope, "all">>();
+    const exact = new Map<HarnessId, Array<{ scope: WidgetRosterScope; paths: readonly string[] }>>();
+    for (const scope of scopes) {
+        if (scope === "all") {
+            continue;
+        }
+
+        const changed = paths.get(scope);
+        if (changed && changed.length > 0 && changed.length <= WIDGET_EXACT_PATHS_LIMIT) {
+            const provider = SCOPE_PROVIDER[scope];
+            exact.set(provider, [...(exact.get(provider) ?? []), { scope, paths: changed }]);
+        } else {
+            whole.add(scope);
+        }
+    }
+
+    // One exact refresh per provider: a Claude transcript and a sub-agent's in one tick share it.
+    let written = 0;
+    for (const result of await Promise.all([...exact].map(([provider, changes]) => refreshExact(provider, changes)))) {
+        written += result.written;
+        for (const scope of result.unplaced) {
+            if (scope !== "all") {
+                whole.add(scope);
+            }
+        }
+    }
+
     const since = now - WIDGET_ROSTER_HOURS * 3_600_000;
     const tasks: Promise<number>[] = [];
     const claude = (filters: { excludeSubagents?: boolean; subagentsOnly?: boolean }) =>
@@ -106,24 +220,24 @@ export async function refreshWidgetIndex(
         catalogHistory({ provider, refresh: true, filters: { ...filters, mtimeFrom: since } }).then(
             ({ report }) => report.parsed + report.removed
         );
-    if (scopes.has("claude")) {
+    if (whole.has("claude")) {
         tasks.push(claude({ excludeSubagents: true }));
     }
 
-    if (scopes.has("claude-agents")) {
+    if (whole.has("claude-agents")) {
         tasks.push(claude({ subagentsOnly: true }));
     }
 
-    if (scopes.has("codex")) {
+    if (whole.has("codex")) {
         tasks.push(native("codex", { excludeAgents: true }), native("codex", { agentsOnly: true }));
     }
 
-    if (scopes.has("grok")) {
+    if (whole.has("grok")) {
         tasks.push(native("grok", { excludeAgents: true }));
     }
 
-    const written = await Promise.all(tasks);
-    return written.some((count) => count > 0);
+    const counts = await Promise.all(tasks);
+    return written > 0 || counts.some((count) => count > 0);
 }
 
 /** One provider's native session roots, as its history reader walks them; canonical, as file events name them. */

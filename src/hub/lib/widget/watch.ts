@@ -501,6 +501,8 @@ async function watchSessionRoots({
 }): Promise<boolean> {
     const onEvents = (events: { path: string }[]) => {
         const scopes = new Set<WidgetRosterScope>();
+        // The changed files by scope, so the roster refreshes those transcripts instead of the scope's whole listing.
+        const paths = new Map<WidgetRosterScope, Set<string>>();
         let read = false;
         let listed: Set<string> | undefined;
         const listedParent = (sessionId: string) => {
@@ -513,10 +515,11 @@ async function watchSessionRoots({
                 read = true;
             } else if (change) {
                 scopes.add(change);
+                paths.set(change, (paths.get(change) ?? new Set()).add(event.path));
             }
         }
         if (read || scopes.size > 0) {
-            roster.request(scopes, { read });
+            roster.request(scopes, { read, paths });
         }
     };
     const all = [...new Set([...roots.claude, ...roots.codex, ...roots.grok])];

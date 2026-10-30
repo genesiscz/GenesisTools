@@ -11,6 +11,8 @@ import type { WidgetRosterScope } from "./roster-index";
 export interface WidgetRosterRequest {
     id: number;
     index?: WidgetRosterScope[];
+    /** The changed transcripts of a scope in `index`; a scope without an entry refreshes its whole listing. */
+    paths?: Partial<Record<WidgetRosterScope, string[]>>;
     onlyIfChanged?: boolean;
 }
 
@@ -61,6 +63,8 @@ export class WidgetRosterReader {
     private stopped = false;
     /** Index scopes requested since the last run started. */
     private readonly waiting = new Set<WidgetRosterScope>();
+    /** Their changed transcripts; null once a request asked for the scope's whole listing. */
+    private readonly waitingPaths = new Map<WidgetRosterScope, Set<string> | null>();
     private wanted = false;
     /** A requested run must read the roster even when its index refresh changes nothing. */
     private readWanted = false;
@@ -119,17 +123,33 @@ export class WidgetRosterReader {
      * A run caused by a change: refresh these index scopes, then read the roster. Changes coalesce into one run per
      * pause, the pause grows with the cost of the previous run, and a run is never started while another is
      * pending. A run whose refresh changes no index row skips the read unless a request asked for one (`read`, or
-     * no scope at all). `immediate` skips the pause (the first full refresh after start-up).
+     * no scope at all). `immediate` skips the pause (the first full refresh after start-up). `paths` names the
+     * transcripts that changed in a scope, so the run refreshes only those; a scope requested without them, by any
+     * request of the pause, refreshes its whole listing.
      */
     request(
         scopes: Iterable<WidgetRosterScope>,
-        { immediate = false, read = false }: { immediate?: boolean; read?: boolean } = {}
+        {
+            immediate = false,
+            read = false,
+            paths,
+        }: { immediate?: boolean; read?: boolean; paths?: ReadonlyMap<WidgetRosterScope, Iterable<string>> } = {}
     ): void {
         if (this.stopped) {
             return;
         }
         let any = false;
         for (const scope of scopes) {
+            const known = this.waiting.has(scope) ? this.waitingPaths.get(scope) : new Set<string>();
+            const changed = paths?.get(scope);
+            if (known === null || known === undefined || changed === undefined) {
+                this.waitingPaths.set(scope, null);
+            } else {
+                for (const path of changed) {
+                    known.add(path);
+                }
+                this.waitingPaths.set(scope, known);
+            }
             this.waiting.add(scope);
             any = true;
         }
@@ -161,7 +181,15 @@ export class WidgetRosterReader {
         }
         const index = [...this.waiting];
         const onlyIfChanged = index.length > 0 && !this.readWanted && !index.includes("all");
+        const paths: Partial<Record<WidgetRosterScope, string[]>> = {};
+        for (const [scope, changed] of this.waitingPaths) {
+            if (changed && changed.size > 0) {
+                paths[scope] = [...changed];
+            }
+        }
+        const withPaths = Object.keys(paths).length > 0 ? { paths } : {};
         this.waiting.clear();
+        this.waitingPaths.clear();
         this.wanted = false;
         this.readWanted = false;
         this.immediate = false;
@@ -204,7 +232,11 @@ export class WidgetRosterReader {
                 this.options.timeoutMs ?? 120_000
             );
             const request: WidgetRosterRequest =
-                index.length === 0 ? { id } : onlyIfChanged ? { id, index, onlyIfChanged } : { id, index };
+                index.length === 0
+                    ? { id }
+                    : onlyIfChanged
+                      ? { id, index, ...withPaths, onlyIfChanged }
+                      : { id, index, ...withPaths };
             this.worker.postMessage(request);
         } catch (error) {
             this.fail(error instanceof Error ? error.message : String(error));

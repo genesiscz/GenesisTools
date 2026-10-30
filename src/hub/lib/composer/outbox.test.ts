@@ -56,8 +56,8 @@ import {
 import { readWidgetReceiptContext } from "../widget/context";
 import { createWidgetHandoff } from "../widget/handoff";
 import { readWidgetRosterCache, writeWidgetRosterCache } from "../widget/roster-cache";
-import { WidgetRosterReads, widgetRosterChange } from "../widget/roster-index";
-import { WidgetRosterReader, type WidgetRosterReply } from "../widget/roster-reader";
+import { unplacedScopes, WidgetRosterReads, widgetRosterChange } from "../widget/roster-index";
+import { WidgetRosterReader, type WidgetRosterReply, type WidgetRosterRequest } from "../widget/roster-reader";
 import {
     classifyScreenshot,
     parseUiSoundSetting,
@@ -5088,7 +5088,7 @@ describe("background Widget roster", () => {
         let now = 0;
         let cpu = 0;
         const timers: { at: number; run: () => void; cancelled: boolean }[] = [];
-        const requests: { id: number; index?: string[]; onlyIfChanged?: boolean }[] = [];
+        const requests: WidgetRosterRequest[] = [];
         const workers: Pick<Worker, "postMessage" | "terminate" | "onmessage" | "onerror">[] = [];
         let changes = 0;
         const reader = new WidgetRosterReader({
@@ -5170,6 +5170,53 @@ describe("background Widget roster", () => {
             f.reader.request(["claude"], { read: true });
             f.advance(4000);
             expect(f.requests[2]).toEqual({ id: 3, index: ["claude"] });
+        } finally {
+            f.reader.stop();
+        }
+    });
+
+    test("an exact refresh hands a scope to its whole listing when a changed file that still exists has no row", () => {
+        const rows = new Set(["/fixture/projects/-shop/a.jsonl"]);
+        const canonical = (path: string) => (path.includes("gone") ? undefined : path);
+        expect(
+            unplacedScopes({
+                changes: [
+                    {
+                        scope: "claude",
+                        paths: ["/fixture/projects/-shop/a.jsonl", "/fixture/projects/-shop/gone.jsonl"],
+                    },
+                    { scope: "claude-agents", paths: ["/fixture/projects/-shop/lead/subagents/agent-a1.meta.json"] },
+                    { scope: "grok", paths: ["/fixture/grok/gone/summary.json"] },
+                ],
+                rows,
+                canonical,
+            })
+        ).toEqual(["claude-agents"]);
+    });
+
+    test("a burst names its changed transcripts, and one request without them asks for the scope's whole listing", () => {
+        const f = scheduled();
+        try {
+            f.reader.request(["claude"], { paths: new Map([["claude", ["/fixture/a.jsonl"]]]) });
+            f.reader.request(["claude", "grok"], {
+                paths: new Map([
+                    ["claude", ["/fixture/b.jsonl", "/fixture/a.jsonl"]],
+                    ["grok", ["/fixture/grok/summary.json"]],
+                ]),
+            });
+            f.advance(250);
+            expect(f.requests[0]).toEqual({
+                id: 1,
+                index: ["claude", "grok"],
+                paths: { claude: ["/fixture/a.jsonl", "/fixture/b.jsonl"], grok: ["/fixture/grok/summary.json"] },
+                onlyIfChanged: true,
+            });
+            f.reply(1);
+            f.reader.request(["codex"], { paths: new Map([["codex", ["/fixture/rollout.jsonl"]]]) });
+            f.reader.request(["codex"]);
+            f.reader.request(["codex"], { paths: new Map([["codex", ["/fixture/other.jsonl"]]]) });
+            f.advance(4000);
+            expect(f.requests[1]).toEqual({ id: 2, index: ["codex"], onlyIfChanged: true });
         } finally {
             f.reader.stop();
         }

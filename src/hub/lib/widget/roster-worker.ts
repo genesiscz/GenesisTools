@@ -1,5 +1,5 @@
 import { profiler } from "@genesiscz/utils/profile";
-import { readWidgetRoster, refreshWidgetIndex, WidgetRosterReads } from "./roster-index";
+import { readWidgetRoster, refreshWidgetIndex, WidgetRosterReads, widgetRosterPaths } from "./roster-index";
 import type { WidgetRosterReply, WidgetRosterRequest } from "./roster-reader";
 
 declare const self: Worker;
@@ -7,7 +7,7 @@ const prof = profiler.scope("widget");
 const reads = new WidgetRosterReads();
 
 self.onmessage = async (event: MessageEvent<WidgetRosterRequest>) => {
-    const { id, index = [], onlyIfChanged = false } = event.data;
+    const { id, index = [], paths = {}, onlyIfChanged = false } = event.data;
     try {
         if (index.length > 0) {
             // Resident, so the walk and transcript caches stay warm: a refresh here costs a fraction of a new
@@ -16,9 +16,9 @@ self.onmessage = async (event: MessageEvent<WidgetRosterRequest>) => {
             await prof.measureAsync(
                 "background index",
                 async () => {
-                    changed = await refreshWidgetIndex(new Set(index));
+                    changed = await refreshWidgetIndex(new Set(index), { paths: widgetRosterPaths(paths) });
                 },
-                () => ({ scopes: index.join(","), changed })
+                () => ({ scopes: index.join(","), exact: Object.values(paths).flat().length, changed })
             );
             // This refresh writing nothing is not enough: another process may have written since the last read.
             if (onlyIfChanged && !reads.needed(changed)) {
