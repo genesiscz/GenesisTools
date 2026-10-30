@@ -4,10 +4,12 @@ import { tmpdir } from "node:os";
 import { join } from "node:path";
 import { env } from "@genesiscz/utils/env";
 import {
+    claudeJsonPath,
     codexHomeOverrides,
     codexHomesIn,
     isNativeTranscript,
     nativeHome,
+    nativeHomePath,
     nativeSessionRoots,
     nativeSessionRootsForHome,
     nativeTranscriptMaxDepth,
@@ -40,6 +42,28 @@ describe("nativeHome", () => {
             expect(nativeHome("claude", "/home/u")).toBe(join("/home/u", ".claude"));
             expect(nativeHome("codex", "/home/u")).toBe(join("/home/u", ".codex"));
             expect(nativeHome("grok", "/home/u")).toBe(join("/home/u", ".grok"));
+        });
+    });
+});
+
+describe("nativeHomePath and claudeJsonPath", () => {
+    test("a path inside the home follows the same override as the home itself", async () => {
+        await env.testing.withOverrides(
+            { CLAUDE_CONFIG_DIR: "/custom/claude", CODEX_HOME: "/a/codex,/b/codex", GROK_HOME: "" },
+            () => {
+                expect(nativeHomePath("claude", "teams")).toBe(join("/custom/claude", "teams"));
+                expect(nativeHomePath("codex", "config.toml")).toBe(join("/a/codex", "config.toml"));
+                expect(nativeHomePath("grok")).toBe(nativeHome("grok"));
+            }
+        );
+    });
+
+    test(".claude.json sits in the config dir when it is overridden, else in the home folder", async () => {
+        await env.testing.withOverrides({ CLAUDE_CONFIG_DIR: "/custom/claude" }, () => {
+            expect(claudeJsonPath("/home/u")).toBe(join("/custom/claude", ".claude.json"));
+        });
+        await env.testing.withOverrides({ CLAUDE_CONFIG_DIR: "" }, () => {
+            expect(claudeJsonPath("/home/u")).toBe(join("/home/u", ".claude.json"));
         });
     });
 });

@@ -1,8 +1,7 @@
-import { homedir } from "node:os";
-import { join } from "node:path";
 import { generatePkcePair } from "@genesiscz/utils/ai/oauth/pkce";
 import { SafeJSON } from "@genesiscz/utils/json";
 import { logger } from "@genesiscz/utils/logger";
+import { claudeJsonPath } from "@genesiscz/utils/providers/session-paths";
 
 export interface OAuthProfileAccount {
     uuid: string;
@@ -333,7 +332,7 @@ export async function fetchOAuthProfile(accessToken: string): Promise<OAuthProfi
 
 export async function getClaudeJsonAccount(): Promise<ClaudeJsonAccount | undefined> {
     try {
-        const file = Bun.file(join(homedir(), ".claude.json"));
+        const file = Bun.file(claudeJsonPath());
         const data = await file.json();
         const acct = data?.oauthAccount;
         if (!acct) {
