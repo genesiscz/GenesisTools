@@ -7,10 +7,6 @@ import { isZstdPath, readZstdFramesSync, zstdContentBytes } from "@genesiscz/uti
 // "same call again" test. Mirrors the hub's Swift `SessionNativeLog` scan, which reads the same
 // fields for the rows it draws.
 
-export function isRecord(value: unknown): value is Record<string, unknown> {
-    return typeof value === "object" && value !== null && !Array.isArray(value);
-}
-
 /** `claude-opus-5-5` → `opus`: the family word the session list and the transcript use. */
 export function shortModel(model: string): string {
     for (const family of ["fable", "opus", "sonnet", "haiku"]) {
