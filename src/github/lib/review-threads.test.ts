@@ -1,6 +1,7 @@
 import { beforeEach, describe, expect, mock, test } from "bun:test";
 import * as realOctokit from "@genesiscz/utils/github/octokit";
 import type { ParsedReviewThread, ReviewThread } from "@genesiscz/utils/github/types";
+import { formatReviewLLM, formatThreadExpanded } from "./review-output";
 
 type GraphqlCall = { query: string; variables: Record<string, unknown> };
 type ReadCall = { kind: string; cursor: string | undefined; variables: Record<string, unknown> };
@@ -85,6 +86,7 @@ const {
     batchReplyAndResolve,
     batchResolveThreads,
     calculateReviewStats,
+    classifyReviewComment,
     fetchPRReviewThreads,
     markThreadResolved,
     parseThreads,
@@ -622,5 +624,101 @@ describe("calculateReviewStats", () => {
 
     test("no threads gives all zeros", () => {
         expect(calculateReviewStats([])).toEqual({ total: 0, resolved: 0, unresolved: 0, high: 0, medium: 0, low: 0 });
+    });
+});
+
+describe("declared severity and category", () => {
+    const eve = (header: string, text = "Resolve the snapped timestamp for both rows") =>
+        `${header}\n\n_⚠️ Potential issue_\n\n**${text}**\n\n<details><summary>🧩 Analysis</summary>\n\nGrep evidence\n</details>`;
+    const coderabbit = (label: string, category: string) =>
+        `<!-- coderabbit-ai-generated:v1 -->\n\n**<picture><img src="https://example.com/icons/${label.toLowerCase()}-16.svg" width="16" height="16" align="absmiddle" alt=""></picture> ${label}** · **${category}** · **Quick win**\n\n**Do not drop the change**`;
+
+    test.each([
+        ["eve High", eve("🧹 Quality | 🟠 High · confidence 91/100"), "high", "quality"],
+        [
+            "eve Medium with a confidence suffix (PR 605 t1)",
+            eve("🧹 Quality | 🟡 Medium · confidence 98/100", "Keep the pin duration consistent with the timestamps"),
+            "medium",
+            "quality",
+        ],
+        ["a confidence suffix without a space", eve("🧹 Quality | 🟡 Medium · confidence96/100"), "medium", "quality"],
+        [
+            "eve Low over a medium word",
+            eve("📝 Docs | 🔵 Low · confidence 70/100", "Refactor the example"),
+            "low",
+            "docs",
+        ],
+        ["eve Security High", eve("🔒 Security | 🟠 High · confidence 95/100"), "high", "security"],
+        [
+            "eve Security Medium over the words security vulnerability",
+            eve("🔒 Security | 🟡 Medium · confidence 90/100", "This security vulnerability needs a local attacker"),
+            "medium",
+            "security",
+        ],
+        [
+            "eve Security Low",
+            eve("🔒 Security | 🔵 Low · confidence 80/100", "A bug only in debug builds"),
+            "low",
+            "security",
+        ],
+        ["an emoji category label", eve("♿ Accessibility | 🟡 Medium · confidence 88/100"), "medium", "accessibility"],
+        ["a lowercase header", eve("🔎 correctness | 🟡 medium · confidence 85/100"), "medium", "correctness"],
+        ["a lowercase header without emoji", "quality | high\n\nfix it", "high", "quality"],
+        ["CodeRabbit Major", coderabbit("Major", "Functional Correctness"), "high", "functional correctness"],
+        ["CodeRabbit Minor", coderabbit("Minor", "Security & Privacy"), "medium", "security & privacy"],
+        [
+            "CodeRabbit Trivial",
+            coderabbit("Trivial", "Maintainability & Code Quality"),
+            "low",
+            "maintainability & code quality",
+        ],
+        [
+            "the older CodeRabbit header",
+            "_⚠️ Potential issue_ | _🟠 Major_\n\n**Guard the empty list**",
+            "high",
+            "potential issue",
+        ],
+        [
+            "a badge over the words",
+            "![medium](https://example.com/medium-priority.svg)\n\nA bug in this loop",
+            "medium",
+            null,
+        ],
+        ["two labels on the first line fall back to the words", "low | high\n\nconsider a refactor", "medium", null],
+        [
+            "a header after the first line falls back to the words",
+            "Thanks.\n\n🧹 Quality | 🟠 High · confidence 90/100",
+            "low",
+            null,
+        ],
+        ["a plain comment falls back to the words", "there is a bug in the loop", "high", null],
+    ] as const)("%s", (_name, body, severity, category) => {
+        expect(classifyReviewComment(body)).toEqual({ severity, category });
+        expect(parseOne({ body }).severity).toBe(severity);
+    });
+
+    test("the PR 605 t1 header counts as MED in the session stats and reads MEDIUM when expanded", () => {
+        const thread = parseOne({
+            body: eve(
+                "🧹 Quality | 🟡 Medium · confidence 98/100",
+                "Keep the pin duration consistent with the timestamps"
+            ),
+        });
+        const compact = formatReviewLLM(
+            {
+                owner: "acme",
+                repo: "widgets",
+                prNumber: 77,
+                title: "Pin timestamps",
+                state: "OPEN",
+                threads: [thread],
+                stats: calculateReviewStats([thread]),
+            },
+            "sess-1"
+        );
+
+        expect(compact).toContain("| HIGH: 0 | MED: 1 | LOW: 0\n");
+        expect(compact).toContain("  t1  UNRESOLVED  MEDIUM  src/a.ts:12  ");
+        expect(formatThreadExpanded(thread, "sess-1")).toContain("Status: UNRESOLVED | Severity: MEDIUM\n");
     });
 });
