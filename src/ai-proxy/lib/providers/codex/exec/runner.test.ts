@@ -12,6 +12,7 @@ import { shellGuard } from "@app/ai-proxy/lib/providers/codex/exec/guard";
 import { EXEC_OUTPUT_CHARS, parseExecPragma, runExecScript } from "@app/ai-proxy/lib/providers/codex/exec/script";
 import { fileExecStore, memoryExecStore } from "@app/ai-proxy/lib/providers/codex/exec/store";
 import type { ExecCommandArgs, ExecCommandResult } from "@app/ai-proxy/lib/providers/codex/exec/types";
+import { SafeJSON } from "@genesiscz/utils/json";
 import type { ShellRule } from "@genesiscz/utils/shell/rules/types";
 
 /** The shipped hooks config with the guard live: shipped, it runs in shadow mode and only logs. */
@@ -357,6 +358,49 @@ describe("the exec runner's commands", () => {
 });
 
 describe("the exec runner entry", () => {
+    async function entry(source: string, session?: string): Promise<{ stdout: string; stderr: string; code: number }> {
+        const proc = Bun.spawn(
+            [process.execPath, join(import.meta.dir, "runner.ts"), ...(session ? ["--session", session] : [])],
+            {
+                env: process.env,
+                stdin: new TextEncoder().encode(source),
+                stdout: "pipe",
+                stderr: "pipe",
+            }
+        );
+        const [stdout, stderr, code] = await Promise.all([
+            new Response(proc.stdout).text(),
+            new Response(proc.stderr).text(),
+            proc.exited,
+        ]);
+        return { stdout, stderr, code };
+    }
+
+    it("isolates sessionless stores while preserving named session persistence", async () => {
+        const key = `entry-${crypto.randomUUID()}`;
+        const session = crypto.randomUUID();
+        expect((await entry(`store(${SafeJSON.stringify(key)}, "private");`)).code).toBe(0);
+        expect((await entry(`text(load(${SafeJSON.stringify(key)}));`)).stdout).toEndWith("undefined");
+        expect((await entry(`text(load(${SafeJSON.stringify(key)}));`, "no-session")).stdout).toEndWith("undefined");
+        expect((await entry(`store(${SafeJSON.stringify(key)}, "invalid");`, "bad!id")).code).toBe(0);
+        expect((await entry(`text(load(${SafeJSON.stringify(key)}));`, "badid")).stdout).toEndWith("undefined");
+        expect((await entry(`store(${SafeJSON.stringify(key)}, "saved");`, session)).code).toBe(0);
+        expect((await entry(`text(load(${SafeJSON.stringify(key)}));`, session)).stdout).toEndWith("saved");
+    });
+
+    it("discards an unawaited rejection without losing the result", async () => {
+        const result = await entry(
+            'Promise.reject(new Error("background")); await new Promise(r => setTimeout(r, 20)); text("done");'
+        );
+        expect(result.code).toBe(0);
+        expect(result.stderr).toBe("");
+        expect(result.stdout).toMatch(/^Script completed\nWall time \d+\.\d seconds\nOutput:\ndone$/);
+        const awaited = await entry('await Promise.reject(new Error("awaited"));');
+        expect(awaited.code).toBe(0);
+        expect(awaited.stdout).toContain("Script failed");
+        expect(awaited.stdout).toContain("Script error:\nawaited");
+    });
+
     it("reads the script from stdin in any folder and prints the result with exit code 0", async () => {
         const dir = realpathSync(mkdtempSync(join(tmpdir(), "exec-entry-")));
         const proc = Bun.spawn([process.execPath, join(import.meta.dir, "runner.ts"), "--session", "entry-test"], {

@@ -7,7 +7,7 @@ import { EXEC_BASH_TIMEOUT_MS } from "@app/ai-proxy/lib/providers/codex/exec/bas
 import { guardedExecCommand } from "@app/ai-proxy/lib/providers/codex/exec/exec-command";
 import { shellGuard } from "@app/ai-proxy/lib/providers/codex/exec/guard";
 import { runExecScript } from "@app/ai-proxy/lib/providers/codex/exec/script";
-import { execStorePath, fileExecStore } from "@app/ai-proxy/lib/providers/codex/exec/store";
+import { execStorePath, fileExecStore, memoryExecStore } from "@app/ai-proxy/lib/providers/codex/exec/store";
 import { logger, setConsoleLevel } from "@genesiscz/utils/logger";
 
 // Claude Code's Bash result carries stderr too, so a console log line would sit above Codex's `Script completed`
@@ -29,14 +29,24 @@ const source = await Bun.stdin.text();
 
 logger.debug({ cwd, sessionId, chars: source.length }, "ai-proxy exec: running a script");
 
-const output = await runExecScript({
-    source,
-    execCommand: guardedExecCommand({ guard: await shellGuard({ model }), cwd, deadlineAt }),
-    store: fileExecStore(execStorePath(sessionId)),
-});
+// This process runs exactly one script. Discard its unawaited rejections without affecting the proxy process.
+const discardUnhandled = () => logger.debug("ai-proxy exec: discarded an unawaited rejection");
+process.on("unhandledRejection", discardUnhandled);
+try {
+    const output = await runExecScript({
+        source,
+        execCommand: guardedExecCommand({ guard: await shellGuard({ model }), cwd, deadlineAt }),
+        store:
+            sessionId && sessionId !== "no-session" && /^[A-Za-z0-9_-]+$/.test(sessionId)
+                ? fileExecStore(execStorePath(sessionId))
+                : memoryExecStore(),
+    });
 
-await new Promise<void>((resolve, reject) => {
-    process.stdout.write(output, (error) => (error ? reject(error) : resolve()));
-});
+    await new Promise<void>((resolve, reject) => {
+        process.stdout.write(output, (error) => (error ? reject(error) : resolve()));
+    });
+} finally {
+    process.off("unhandledRejection", discardUnhandled);
+}
 // Unawaited promises of the script end with it, as in Codex.
 process.exit(0);
