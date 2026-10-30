@@ -1,6 +1,7 @@
-import { wakefulSleep, withTimeout } from "@genesiscz/utils/async";
+import { withTimeout } from "@genesiscz/utils/async";
 import { logger } from "@genesiscz/utils/logger";
 import { dispatchNotification } from "@genesiscz/utils/notifications";
+import { wakefulSleep } from "@genesiscz/utils/wakeful";
 import { loadConfig } from "./config";
 import { computeNextRunAt, parseInterval } from "./interval";
 import { listRunsForTask } from "./log-reader";

@@ -1,6 +1,5 @@
 import { existsSync, readFileSync } from "node:fs";
 import { basename, dirname, join } from "node:path";
-import { startWakefulInterval, type WakefulInterval } from "@genesiscz/utils/async";
 import { SafeJSON } from "@genesiscz/utils/json";
 import { logger } from "@genesiscz/utils/logger";
 import { listOpenFiles, type NetworkSnapshot, readNetworkSnapshot } from "@genesiscz/utils/process/process-files";
@@ -14,6 +13,7 @@ import { batchCwd, captureSync, type PsRow } from "@genesiscz/utils/process/ps";
 import { listSockets, type SocketEntry } from "@genesiscz/utils/process/sockets";
 import { isProcessAlive } from "@genesiscz/utils/process-alive";
 import { readProcessCommand } from "@genesiscz/utils/process-identity";
+import { startWakefulInterval, type WakefulInterval } from "@genesiscz/utils/wakeful";
 import type { KillResult, PortProcess, PortSnapshot, ProcessSnapshot, ProcessStatus } from "./types";
 
 const IS_WINDOWS = process.platform === "win32";

@@ -1,9 +1,11 @@
 /**
  * Shared async utilities for CLI tools.
  * Consolidates retry, debounce, throttle, and withTimeout.
+ *
+ * No logger import here, and no re-export of a module that has one: the dashboard web client reaches this file
+ * through `net/pinned-fetch.ts`, and `logger/client-isolation.test.ts` fails when it pulls the Node logger in.
+ * `AsyncOpQueue` (async-op-queue.ts) and the wakeful helpers (wakeful.ts) log, so they live in their own modules.
  */
-
-import { logger } from "@genesiscz/utils/logger";
 
 // ============= Retry =============
 
@@ -223,91 +225,6 @@ export function untilAborted<T>(promise: Promise<T>, signal?: AbortSignal): Prom
             }
         );
     });
-}
-
-export {
-    startWakefulInterval,
-    WAKEFUL_JUMP_THRESHOLD_MS,
-    WAKEFUL_TICK_MS,
-    type WakefulInterval,
-    type WakefulIntervalOptions,
-    type WakefulSleepOptions,
-    wakefulSleep,
-} from "./wakeful";
-
-// ============= AsyncOpQueue =============
-
-/**
- * A queue that buffers async operations and drains them sequentially.
- * Used by vector stores that wrap async backends behind a sync interface.
- */
-export class AsyncOpQueue {
-    private pendingOps: Array<() => Promise<void>> = [];
-    private flushPromise: Promise<void> | null = null;
-    private label: string;
-    private firstError: unknown = null;
-
-    constructor(label: string = "AsyncOpQueue") {
-        this.label = label;
-    }
-
-    enqueue(op: () => Promise<void>): void {
-        this.pendingOps.push(op);
-        this.scheduleFlush();
-    }
-
-    async flush(): Promise<void> {
-        while (this.flushPromise || this.pendingOps.length > 0) {
-            if (this.flushPromise) {
-                await this.flushPromise;
-            }
-
-            if (this.pendingOps.length > 0) {
-                this.scheduleFlush();
-                await this.flushPromise;
-            }
-        }
-
-        if (this.firstError) {
-            const err = this.firstError;
-            this.firstError = null;
-            throw err;
-        }
-    }
-
-    get pending(): number {
-        return this.pendingOps.length;
-    }
-
-    private scheduleFlush(): void {
-        if (this.flushPromise) {
-            return;
-        }
-
-        this.flushPromise = this.drainQueue().finally(() => {
-            this.flushPromise = null;
-
-            if (this.pendingOps.length > 0) {
-                this.scheduleFlush();
-            }
-        });
-    }
-
-    private async drainQueue(): Promise<void> {
-        while (this.pendingOps.length > 0) {
-            const op = this.pendingOps.shift()!;
-
-            try {
-                await op();
-            } catch (err) {
-                logger.error({ err, label: this.label }, "background queue error");
-
-                if (!this.firstError) {
-                    this.firstError = err;
-                }
-            }
-        }
-    }
 }
 
 // ============= Concurrent Map =============

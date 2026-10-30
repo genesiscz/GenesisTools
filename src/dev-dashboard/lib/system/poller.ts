@@ -1,6 +1,6 @@
-import { startWakefulInterval, type WakefulInterval } from "@genesiscz/utils/async";
 import { SafeJSON } from "@genesiscz/utils/json";
 import { logger } from "@genesiscz/utils/logger";
+import { startWakefulInterval, type WakefulInterval } from "@genesiscz/utils/wakeful";
 import { collectPulse } from "./collector";
 import { PulseHistoryDb } from "./history-db";
 import type { PulseSeries, PulseSnapshot } from "./types";
