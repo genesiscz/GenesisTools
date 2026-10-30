@@ -281,7 +281,7 @@ export function resumeTargetFromCommand(command: string): string | undefined {
         return native?.value?.replace(/"/g, "");
     }
 
-    if (kind === "codex") {
+    if (NATIVE_RESUME[kind].subcommand) {
         const tokens = tokenizeCommand(original);
 
         if (tokens[1]?.value !== "resume") {
@@ -293,7 +293,7 @@ export function resumeTargetFromCommand(command: string): string | undefined {
         return target && !target.startsWith("-") ? target : undefined;
     }
 
-    const match = findResumeFlag(original, kind === "grok" ? ["-r", "--resume"] : ["--resume"]);
+    const match = findResumeFlag(original, NATIVE_RESUME[kind].flags);
 
     return match?.value?.replace(/"/g, "");
 }
@@ -310,11 +310,12 @@ export function resumeQueryFromCommand(command: string): string | undefined {
     const original = command.trim();
     const kind = agentKindFromLauncher(original);
 
-    if (!kind || kind === "codex" || resumeTargetFromCommand(original)) {
+    // A `resume` subcommand (Codex) takes no search query.
+    if (!kind || NATIVE_RESUME[kind].subcommand || resumeTargetFromCommand(original)) {
         return undefined;
     }
 
-    const match = findResumeFlag(original, kind === "grok" ? ["-r", "--resume"] : ["--resume"]);
+    const match = findResumeFlag(original, NATIVE_RESUME[kind].flags);
 
     return match?.value?.replace(/"/g, "");
 }
@@ -337,11 +338,11 @@ export function bareResumeFlag(command: string): string | undefined {
         return undefined;
     }
 
-    if (kind === "codex") {
+    if (NATIVE_RESUME[kind].subcommand) {
         return tokenizeCommand(original)[1]?.value === "resume" ? "resume" : undefined;
     }
 
-    const match = findResumeFlag(original, kind === "grok" ? ["-r", "--resume"] : ["--resume"]);
+    const match = findResumeFlag(original, NATIVE_RESUME[kind].flags);
 
     return match && match.value === undefined ? match.flag : undefined;
 }
@@ -353,13 +354,23 @@ function passthroughStart(command: string): number | undefined {
     return separator?.end;
 }
 
-/** How each agent's own binary reads a resume target, after a wrapper's `--`. */
-const NATIVE_RESUME: Record<AccountProviderAlias, { flags: readonly string[]; render: (sessionId: string) => string }> =
-    {
-        claude: { flags: ["--resume"], render: (sessionId) => `--resume ${sessionId}` },
-        grok: { flags: ["-r", "--resume"], render: (sessionId) => `-r ${sessionId}` },
-        codex: { flags: [], render: (sessionId) => `resume ${sessionId}` },
-    };
+/**
+ * How each agent's own binary reads a resume target (directly, or after a wrapper's `--`): a flag, or Codex's `resume`
+ * subcommand; and the launcher that starts it (`<launcher> run <account>`).
+ */
+const NATIVE_RESUME: Record<
+    AccountProviderAlias,
+    { flags: readonly string[]; subcommand: boolean; render: (sessionId: string) => string; launcher: string }
+> = {
+    claude: { flags: ["--resume"], subcommand: false, render: (sessionId) => `--resume ${sessionId}`, launcher: "cc" },
+    grok: {
+        flags: ["-r", "--resume"],
+        subcommand: false,
+        render: (sessionId) => `-r ${sessionId}`,
+        launcher: "tools grok",
+    },
+    codex: { flags: [], subcommand: true, render: (sessionId) => `resume ${sessionId}`, launcher: "tools codex" },
+};
 
 /** A wrapper's own resume flag, before `--`: it runs a search that can prompt, so it is never a replay target. */
 const WRAPPER_RESUME_FLAGS = ["-r", "--resume"] as const;
@@ -372,7 +383,7 @@ function nativeResumeAfter(
 ): ResumeFlagMatch | undefined {
     const tokens = tokenizeCommand(command).filter((token) => token.start >= separator);
 
-    if (kind === "codex") {
+    if (NATIVE_RESUME[kind].subcommand) {
         const at = tokens.findIndex((token) => token.value === "resume");
 
         if (at < 0) {
@@ -432,9 +443,7 @@ function replaceToolsRunResume(input: {
     }
 
     if (!account) {
-        drift.push(
-            `no account recorded for this session — ${kind === "claude" ? "cc" : `tools ${kind}`} run will ask for one`
-        );
+        drift.push(`no account recorded for this session — ${NATIVE_RESUME[kind].launcher} run will ask for one`);
     }
 
     // The wrapper's own resume flag, before `--`.

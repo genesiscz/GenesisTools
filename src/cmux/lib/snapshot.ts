@@ -14,6 +14,7 @@ import { collectTtyCapture } from "@app/cmux/lib/tty-capture";
 import type { Pane, Profile, ProfileScope, ScreenSnapshot, Surface, Window, Workspace } from "@app/cmux/lib/types";
 import { PROFILE_VERSION } from "@app/cmux/lib/types";
 import { resolveWindowId } from "@app/cmux/lib/window-ref";
+import type { AccountProviderAlias } from "@genesiscz/utils/ai/providers/alias-list";
 import { runCmux, runCmuxJSON } from "@genesiscz/utils/cmux/lib/cli";
 import { identifyCmux } from "@genesiscz/utils/cmux/lib/place";
 import {
@@ -45,6 +46,9 @@ interface SurfaceListEntry {
  * per tty), cmux's autosave (surface uuid → tty), and the claude session journals
  * (surface uuid → session id + account). All readable without the cmux socket.
  */
+
+/** The harness whose sessions `collectTtyCapture().claudeSessions` reads off a tty's `--resume <uuid>` argv. */
+const ARGV_SESSION_PROVIDER: AccountProviderAlias = "claude";
 export interface CommandCaptureContext {
     ttyCommands: Map<string, string>;
     panelTty: Map<string, string>;
@@ -145,13 +149,13 @@ export async function buildCommandCaptureContext(options: { commands?: boolean }
                         // argv, so the provider is known. Leaving it undefined made the replay path
                         // drop this entry at its `preferred?.kind === kind` gate and fall back to the
                         // fuzzy title match this branch exists to beat.
-                        provider: "claude",
+                        provider: ARGV_SESSION_PROVIDER,
                         // Only a Claude account may attach to a Claude session id. A nested codex or
                         // grok run started from this pane leaves its own record on the surface, and
                         // an ungated fallback relaunched the pane under that other agent's account.
                         account:
                             argvAccounts.get(argvSession) ??
-                            (surfaceSession?.provider === "claude" ? surfaceSession.account : undefined),
+                            (surfaceSession?.provider === ARGV_SESSION_PROVIDER ? surfaceSession.account : undefined),
                     });
                 }
             }

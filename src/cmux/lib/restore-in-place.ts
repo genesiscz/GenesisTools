@@ -6,6 +6,7 @@ import { type RestoreOptions, replayTerminal } from "@app/cmux/lib/restore";
 import { agentsOnTtys, idleShellTtys, runningAgentSessions, type TtyAgent } from "@app/cmux/lib/tab-process";
 import { classifyPrompt, isShellPromptReady, waitForTerminalText } from "@app/cmux/lib/terminal-ready";
 import type { Profile, TerminalSurface } from "@app/cmux/lib/types";
+import type { AccountProviderAlias } from "@genesiscz/utils/ai/providers/alias-list";
 import { concurrentMap } from "@genesiscz/utils/async";
 import { runCmux, runCmuxJSON, runCmuxOk, sendSurfaceText } from "@genesiscz/utils/cmux/lib/cli";
 import { cmuxIdKey } from "@genesiscz/utils/cmux/lib/target";
@@ -90,6 +91,16 @@ export interface InPlaceLiveState {
 const TYPABLE_EVIDENCE: ReadonlySet<string> = new Set(["journal", "typed", "title"]);
 
 const GROK_TRUST_PROMPT = /Do you trust the contents of this directory\?[\s\S]*No, quit\s+n\b/;
+
+/**
+ * The prompt a harness waits at before it opens anything, which a restore may quit through: Grok asks whether to
+ * trust the folder. Claude and Codex start without one that this restore recognises.
+ */
+const TRUST_PROMPTS: Record<AccountProviderAlias, RegExp | null> = {
+    claude: null,
+    codex: null,
+    grok: GROK_TRUST_PROMPT,
+};
 
 function lastLine(screen: string): string {
     return (
@@ -181,10 +192,12 @@ function decide(surface: TerminalSurface, live: LiveTab | undefined, state: InPl
 
         // cmux's own relaunch restore can start a stale session in the tab. While that agent still waits at
         // its trust prompt it has opened nothing, so quitting it loses nothing.
-        if (agent && running?.kind === "grok" && screen !== undefined && GROK_TRUST_PROMPT.test(screen)) {
+        const trustPrompt = running ? TRUST_PROMPTS[running.kind] : null;
+
+        if (agent && running && trustPrompt && screen !== undefined && trustPrompt.test(screen)) {
             return {
                 prepare: "quit-stale-agent",
-                prepareNote: `quits grok ${running.sessionId ?? "(no session)"}, which waits at its trust prompt; the surface journal names this tab's session`,
+                prepareNote: `quits ${running.kind} ${running.sessionId ?? "(no session)"}, which waits at its trust prompt; the surface journal names this tab's session`,
             };
         }
 

@@ -1,5 +1,6 @@
 import { homedir } from "node:os";
 import { agentOfCommand } from "@app/cmux/lib/tab-process";
+import type { AccountProviderAlias } from "@genesiscz/utils/ai/providers/alias-list";
 import { listProcesses, readProcess } from "@genesiscz/utils/process/processes";
 import { isShellProgram } from "@genesiscz/utils/shell/programs";
 
@@ -61,13 +62,17 @@ export interface TtyCapture {
  */
 export async function collectTtyCapture(): Promise<TtyCapture> {
     const oldest = new Map<string, TtyProcess>();
-    const claudeSessions = new Map<string, string>();
+    const argvSessions: Record<AccountProviderAlias, Map<string, string>> = {
+        claude: new Map(),
+        codex: new Map(),
+        grok: new Map(),
+    };
 
     for (const entry of await readTtyProcessTable()) {
         const agent = agentOfCommand(entry.command);
-        const sessionId = agent?.kind === "claude" ? agent.sessionId : undefined;
-        if (sessionId && !claudeSessions.has(entry.tty)) {
-            claudeSessions.set(entry.tty, sessionId);
+        const sessions = agent ? argvSessions[agent.kind] : undefined;
+        if (agent?.sessionId && sessions && !sessions.has(entry.tty)) {
+            sessions.set(entry.tty, agent.sessionId);
         }
 
         if (isShellProgram(entry.command, { orLogin: true })) {
@@ -85,7 +90,7 @@ export async function collectTtyCapture(): Promise<TtyCapture> {
         launchCommands.set(tty, cleanLaunchCommand(entry.command));
     }
 
-    return { launchCommands, claudeSessions };
+    return { launchCommands, claudeSessions: argvSessions.claude };
 }
 
 /**

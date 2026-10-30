@@ -16,12 +16,34 @@ export interface SessionAgent {
     provider: string;
     /** What the agent's TUI quits on. `close` types it before it closes the workspace. */
     exitCommand: string;
+    /** Whether its `tools <id> run` door takes `--cross-messages` / `--no-cross-messages` (Claude's peer channel). */
+    crossMessages: boolean;
+    /** The native subcommand that resumes a session (`codex resume <id>`); null when a flag does it. */
+    resumeSubcommand: string | null;
 }
 
 const AGENTS: Record<SessionAgentId, SessionAgent> = {
-    claude: { id: "claude", provider: PROVIDER_ALIASES.claude, exitCommand: "/exit" },
-    grok: { id: "grok", provider: PROVIDER_ALIASES.grok, exitCommand: "/exit" },
-    codex: { id: "codex", provider: PROVIDER_ALIASES.codex, exitCommand: "/quit" },
+    claude: {
+        id: "claude",
+        provider: PROVIDER_ALIASES.claude,
+        exitCommand: "/exit",
+        crossMessages: true,
+        resumeSubcommand: null,
+    },
+    grok: {
+        id: "grok",
+        provider: PROVIDER_ALIASES.grok,
+        exitCommand: "/exit",
+        crossMessages: false,
+        resumeSubcommand: null,
+    },
+    codex: {
+        id: "codex",
+        provider: PROVIDER_ALIASES.codex,
+        exitCommand: "/quit",
+        crossMessages: false,
+        resumeSubcommand: "resume",
+    },
 };
 
 export function isSessionAgentId(value: string): value is SessionAgentId {
@@ -72,7 +94,7 @@ export function agentRunCommand(input: {
         "run",
         account,
         ...(input.model ? ["-m", input.model] : []),
-        ...(input.crossMessages !== undefined && input.agent === "claude"
+        ...(input.crossMessages !== undefined && AGENTS[input.agent].crossMessages
             ? [input.crossMessages ? "--cross-messages" : "--no-cross-messages"]
             : []),
     ];
@@ -210,7 +232,8 @@ export function agentRunLauncher(
 
     // Native options and Codex's resume subcommand are not an initial task to remove.
     const firstArgument = passthrough ? shellWords(passthrough)[0] : undefined;
-    const native = firstArgument?.value.startsWith("-") || (agent === "codex" && firstArgument?.value === "resume");
+    const resume = AGENTS[agent].resumeSubcommand;
+    const native = firstArgument?.value.startsWith("-") || (resume !== null && firstArgument?.value === resume);
     const prefix = words.map(bareShellWord).join(" ");
     const launcher = native ? `${prefix} --${passthrough}` : prefix;
     if (native && !isAgentLauncher(launcher)) {
