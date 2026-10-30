@@ -3,6 +3,7 @@ import { logger, out } from "@genesiscz/utils/logger";
 import { isProcessAlive } from "@genesiscz/utils/process-alive";
 import type { Command } from "commander";
 import pc from "picocolors";
+import { type FocusStealingVerb, guardFocusSteal } from "../lib/focus-guard";
 import { type AxResult, runAx } from "../lib/runner";
 import { addTargetOptions, targetArgs, targetLabel } from "../lib/target";
 
@@ -76,6 +77,32 @@ export function ocrReport(result: AxResult): string[] {
     return [`OCR of ${source}${size}: ${count}`, ...blocks.map((b) => String(b.text ?? ""))];
 }
 
+/**
+ * Runs the focus-steal guard for one legacy verb and, on a refusal, prints it and exits 1 before
+ * anything is posted. `--json` gets the refusal object on stdout, so a caller can read `frontmost`.
+ */
+async function refuseFocusStealOrContinue(
+    verb: FocusStealingVerb,
+    opts: { app?: string; toPid?: string; stealFocus?: boolean; json?: boolean; pretty?: boolean }
+): Promise<void> {
+    const refusal = await guardFocusSteal({ verb, app: opts.app, toPid: opts.toPid, stealFocus: opts.stealFocus });
+
+    if (refusal === null) {
+        return;
+    }
+
+    if (opts.json) {
+        out.println(SafeJSON.stringify(refusal, null, opts.pretty ? 2 : 0));
+    } else {
+        logger.error(String(refusal.error));
+    }
+
+    process.exit(1);
+}
+
+const STEAL_FOCUS_HELP =
+    "run even while another app is frontmost (a demonstration the user asked for); config: focusStealGuard";
+
 function noteLegacyKeyboardVerb(verb: string): void {
     out.log.warn(
         `\`control ${verb}\` posts global keyboard events and can land in whatever window is frontmost. ` +
@@ -135,9 +162,11 @@ export function registerInteractCommands(program: Command): void {
             .requiredOption("--app <name>", "app process name")
             .requiredOption("--value <text>", "value to set")
     )
+        .option("--steal-focus", STEAL_FOCUS_HELP)
         .option("--json", "raw JSON output")
         .option("--pretty", "indent JSON output (default compact)")
-        .action((opts) => {
+        .action(async (opts) => {
+            await refuseFocusStealOrContinue("set", opts);
             const result = runAx(["set", "--app", opts.app, ...targetArgs(opts), "--value", opts.value]);
             if (opts.json) {
                 out.println(SafeJSON.stringify(result, null, opts.pretty ? 2 : 0));
@@ -259,9 +288,10 @@ export function registerInteractCommands(program: Command): void {
         .option("--return", "press Return after typing")
         .option("--delay <ms>", "ms between keystrokes (default 8)")
         .option("--to-pid <pid>", "deliver the keystrokes to THIS process only, not the global HID tap")
+        .option("--steal-focus", STEAL_FOCUS_HELP)
         .option("--json", "raw JSON output")
         .option("--pretty", "indent JSON output (default compact)")
-        .action((opts) => {
+        .action(async (opts) => {
             noteLegacyKeyboardVerb("type");
             const pidError = validateToPid(opts.toPid);
 
@@ -269,6 +299,8 @@ export function registerInteractCommands(program: Command): void {
                 logger.error(pidError);
                 process.exit(1);
             }
+
+            await refuseFocusStealOrContinue("type", opts);
 
             const axArgs = ["type", "--app", opts.app, "--text", opts.text, ...targetArgs(opts)];
             if (opts.toPid) {
@@ -313,9 +345,10 @@ export function registerInteractCommands(program: Command): void {
         .option("--app <name>", "activate this app before sending keys")
         .option("--hold <ms>", "ms between key down and up")
         .option("--to-pid <pid>", "deliver the combo to THIS process only, not the global HID tap")
+        .option("--steal-focus", STEAL_FOCUS_HELP)
         .option("--json", "raw JSON output")
         .option("--pretty", "indent JSON output (default compact)")
-        .action((opts) => {
+        .action(async (opts) => {
             noteLegacyKeyboardVerb("hotkey");
             const pidError = validateToPid(opts.toPid);
 
@@ -323,6 +356,8 @@ export function registerInteractCommands(program: Command): void {
                 logger.error(pidError);
                 process.exit(1);
             }
+
+            await refuseFocusStealOrContinue("hotkey", opts);
 
             const axArgs = ["hotkey", "--keys", opts.keys];
             if (opts.app) {
