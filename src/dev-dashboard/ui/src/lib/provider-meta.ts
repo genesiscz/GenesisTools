@@ -1,7 +1,9 @@
+import { HARNESS_META } from "./harness-meta.generated";
+
 /**
- * Display vocabulary per provider plugin id. Colours are category accents in the
- * dd palette family; the id to alias map mirrors `PROVIDER_ALIASES` in the AI
- * layer (spec section 2.3) and must stay in sync with it.
+ * Display vocabulary per provider plugin id. A harness's plugin takes its letter and colour from its driver
+ * (`harness-meta.generated.ts`, written by scripts/gen-harness-web.ts), so the dashboard draws a harness in the same
+ * one colour as the apps' badge.
  */
 export interface ProviderMeta {
     id: string;
@@ -9,17 +11,27 @@ export interface ProviderMeta {
     displayName: string;
     /** One glyph for tight spaces (menubar, chips). */
     glyph: string;
-    /** Category accent. */
+    /** The harness's colour, a CSS colour. */
     color: string;
 }
 
-export const PROVIDER_META: readonly ProviderMeta[] = [
-    { id: "anthropic-sub", alias: "claude", displayName: "Claude", glyph: "C", color: "#fbbf24" },
-    { id: "openai-sub", alias: "codex", displayName: "Codex", glyph: "X", color: "#60a5fa" },
-    { id: "grok-sub", alias: "grok", displayName: "Grok", glyph: "G", color: "#c084fc" },
-];
+/** One entry per harness, in the drivers' order. */
+export const PROVIDER_META: readonly ProviderMeta[] = HARNESS_META.map((harness) => ({
+    id: harness.plugin,
+    alias: harness.id,
+    displayName: harness.id.charAt(0).toUpperCase() + harness.id.slice(1),
+    glyph: harness.letter,
+    color: harness.color,
+}));
 
-const UNKNOWN: ProviderMeta = { id: "unknown", alias: "unknown", displayName: "Unknown", glyph: "?", color: "#8b96a0" };
+/** A provider with no harness driver: the dashboard's secondary text colour. */
+const UNKNOWN: ProviderMeta = {
+    id: "unknown",
+    alias: "unknown",
+    displayName: "Unknown",
+    glyph: "?",
+    color: "var(--dd-text-secondary)",
+};
 
 export function providerMeta(idOrAlias: string): ProviderMeta {
     return PROVIDER_META.find((m) => m.id === idOrAlias || m.alias === idOrAlias) ?? { ...UNKNOWN, id: idOrAlias };

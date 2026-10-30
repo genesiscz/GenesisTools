@@ -179,29 +179,37 @@ export function renderHarnessSwift(): string {
     ].join("\n");
 }
 
-function main(): void {
-    const rendered = renderHarnessSwift();
-
+/**
+ * Writes a generated file, or with `--check` exits 1 when the committed copy differs from what the drivers give.
+ * Shared by `gen-harness-swift.ts` and `gen-harness-web.ts`.
+ */
+export function writeOrCheckGenerated({
+    tool,
+    path,
+    rendered,
+}: {
+    tool: string;
+    path: string;
+    rendered: string;
+}): void {
     if (process.argv.includes("--check")) {
-        const current = existsSync(HARNESS_SWIFT_PATH) ? readFileSync(HARNESS_SWIFT_PATH, "utf8") : "";
+        const current = existsSync(path) ? readFileSync(path, "utf8") : "";
 
         if (current !== rendered) {
-            process.stderr.write(
-                `gen-harness-swift: ${HARNESS_SWIFT_PATH} is stale; run bun scripts/gen-harness-swift.ts\n`
-            );
+            process.stderr.write(`${tool}: ${path} is stale; run bun scripts/${tool}.ts\n`);
             process.exitCode = 1;
             return;
         }
 
-        process.stdout.write("gen-harness-swift: Harness.swift matches the drivers\n");
+        process.stdout.write(`${tool}: ${path} matches the drivers\n`);
         return;
     }
 
-    mkdirSync(dirname(HARNESS_SWIFT_PATH), { recursive: true });
-    writeFileSync(HARNESS_SWIFT_PATH, rendered);
-    process.stdout.write(`gen-harness-swift: wrote ${HARNESS_SWIFT_PATH}\n`);
+    mkdirSync(dirname(path), { recursive: true });
+    writeFileSync(path, rendered);
+    process.stdout.write(`${tool}: wrote ${path}\n`);
 }
 
 if (import.meta.main) {
-    main();
+    writeOrCheckGenerated({ tool: "gen-harness-swift", path: HARNESS_SWIFT_PATH, rendered: renderHarnessSwift() });
 }
