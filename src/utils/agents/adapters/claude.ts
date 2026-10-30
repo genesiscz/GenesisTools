@@ -8,6 +8,7 @@
 import { extractProjectName } from "@genesiscz/utils/claude/projects";
 import type {
     AssistantMessage,
+    BaseMessage,
     ContentBlock,
     ConversationMessage,
     ImageBlock,
@@ -359,22 +360,23 @@ function parseTimestamp(ts: string | undefined): Date | undefined {
     return date;
 }
 
-function buildMeta(msg: ConversationMessage): Record<string, unknown> {
+/** The row identity every rendered message carries; the typed fields of `BaseMessage`, read only when set. */
+function buildMeta(msg: BaseMessage): Record<string, unknown> {
     const meta: Record<string, unknown> = {};
 
-    if ("uuid" in msg && msg.uuid) {
+    if (msg.uuid) {
         meta.uuid = msg.uuid;
     }
 
-    if ("sessionId" in msg && msg.sessionId) {
+    if (msg.sessionId) {
         meta.sessionId = msg.sessionId;
     }
 
-    if ("gitBranch" in msg && msg.gitBranch) {
+    if (msg.gitBranch) {
         meta.gitBranch = msg.gitBranch;
     }
 
-    if ("isSidechain" in msg && msg.isSidechain) {
+    if (msg.isSidechain) {
         meta.isSidechain = true;
     }
 
