@@ -1,0 +1,101 @@
+import { describe, expect, test } from "bun:test";
+import { existsSync } from "node:fs";
+import { join } from "node:path";
+import { ACCOUNT_PROVIDER_ALIASES } from "@genesiscz/utils/ai/providers/alias-list";
+import { providerAliasOf } from "@genesiscz/utils/ai/providers/aliases";
+import { registerBuiltInPlugins } from "@genesiscz/utils/ai/providers/plugins";
+import { allProviderPlugins } from "@genesiscz/utils/ai/providers/registry";
+import { moduleDir } from "@genesiscz/utils/fs/module-dir";
+import { HARNESS_PARTS, type HarnessDriver, isPartNote, type PartSlot } from "./types";
+
+/**
+ * The conformance suite of the harness drivers (plan `.claude/plans/2026-10-30-PlugenizeHarnesses.md`, P0). For every
+ * provider plugin that is a coding agent and every part, the part either loads or the driver says why it is not
+ * there. A fourth harness gets every check by adding its plugin; nothing here names one.
+ *
+ * Contract tests per part (locate finds a fixture by prefix, turnState reads RUNNING on a fixture, ...) join this file
+ * in the phase that moves the part, and P8 turns a `pending` note into a failure.
+ */
+registerBuiltInPlugins();
+
+const REPO_ROOT = join(moduleDir(import.meta), "..", "..", "..");
+
+const codingAgents = allProviderPlugins().filter((plugin) => plugin.codingAgent !== undefined);
+
+function driverOf(pluginId: string): HarnessDriver {
+    const driver = allProviderPlugins().find((plugin) => plugin.id === pluginId)?.harness;
+
+    if (!driver) {
+        throw new Error(`${pluginId} has a codingAgent but no harness driver`);
+    }
+
+    return driver;
+}
+
+describe("harness drivers hang off the provider plugins", () => {
+    test("a plugin has a harness driver exactly when it has a coding agent", () => {
+        const withDriver = allProviderPlugins()
+            .filter((plugin) => plugin.harness !== undefined)
+            .map((plugin) => plugin.id);
+
+        expect(withDriver.sort()).toEqual(codingAgents.map((plugin) => plugin.id).sort());
+    });
+
+    test("each driver's id is its plugin's alias, and every alias has one driver", () => {
+        const ids = codingAgents.map((plugin) => {
+            const id: string = driverOf(plugin.id).id;
+            expect(id).toBe(providerAliasOf(plugin.id));
+            return id;
+        });
+
+        expect(ids.sort()).toEqual([...ACCOUNT_PROVIDER_ALIASES].sort());
+    });
+
+    test("identity is filled in", () => {
+        for (const plugin of codingAgents) {
+            const { identity } = driverOf(plugin.id);
+
+            expect(identity.label.length).toBeGreaterThan(0);
+            expect(identity.binary.length).toBeGreaterThan(0);
+            expect(identity.aliases).not.toContain(driverOf(plugin.id).id);
+        }
+    });
+});
+
+describe("every part of every driver loads or says why not", () => {
+    for (const plugin of codingAgents) {
+        for (const part of HARNESS_PARTS) {
+            test(`${plugin.id} ${part}`, async () => {
+                const slot: PartSlot<unknown> = driverOf(plugin.id).parts[part];
+
+                if (isPartNote(slot)) {
+                    expect(slot.reason.trim().length).toBeGreaterThan(0);
+
+                    if (slot.kind === "tool-owned") {
+                        expect(existsSync(join(REPO_ROOT, slot.owner))).toBe(true);
+                    }
+
+                    return;
+                }
+
+                const loaded = await slot();
+                expect(loaded).toBeTruthy();
+            });
+        }
+    }
+
+    test("the history part is the plugin's own coding agent reader", async () => {
+        for (const plugin of codingAgents) {
+            const slot = driverOf(plugin.id).parts.history;
+
+            if (isPartNote(slot)) {
+                throw new Error(`${plugin.id} declares no history part, but its plugin has a reader`);
+            }
+
+            const reader: unknown = await slot();
+            const own: unknown = plugin.codingAgent;
+            expect(reader).toBe(own);
+            expect(plugin.codingAgent?.kind).toBe(driverOf(plugin.id).id);
+        }
+    });
+});
