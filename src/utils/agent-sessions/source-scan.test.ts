@@ -314,3 +314,31 @@ test("a .jsonl.zst rollout scans and folds like its plain form, and a second fol
     // The second one comes from the kept fold: a compressed rollout never grows.
     expect(resumedFold(compressed, storePath)).toEqual(expected);
 });
+
+test("a head fold stops at its bound, and a file that only grew past it parses no new bytes", async () => {
+    const root = mkdtempSync(join(tmpdir(), "gt-jsonl-head-"));
+    const path = join(root, "transcript.jsonl");
+    const storePath = join(root, "head-store.json");
+    const ranges: Array<{ from: number; to: number }> = [];
+    const head = () =>
+        foldJsonlResumable<unknown[]>({
+            path,
+            storePath,
+            initial: () => [],
+            validState: (state): state is unknown[] => Array.isArray(state),
+            copy: (list) => [...list],
+            apply: (list, row) => list.push(row),
+            onIssue: () => {},
+            onFolded: (range) => ranges.push(range),
+            maxRecords: 3,
+        });
+
+    writeFileSync(path, '{"n":1}\n\n{"n":2}\n');
+    expect(head()).toEqual([{ n: 1 }, { n: 2 }]);
+    appendFileSync(path, '{"n":3}\n{"n":4}\n');
+    expect(head()).toEqual([{ n: 1 }, { n: 2 }, { n: 3 }]);
+    expect(ranges.at(-1)).toEqual({ from: 17, to: 25 });
+    appendFileSync(path, '{"n":5}\n');
+    expect(head()).toEqual([{ n: 1 }, { n: 2 }, { n: 3 }]);
+    expect(ranges.at(-1)).toEqual({ from: 25, to: 25 });
+});

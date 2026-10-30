@@ -1,5 +1,5 @@
 import { expect, spyOn, test } from "bun:test";
-import { mkdirSync, mkdtempSync, writeFileSync } from "node:fs";
+import { appendFileSync, mkdirSync, mkdtempSync, renameSync, truncateSync, writeFileSync } from "node:fs";
 import { tmpdir } from "node:os";
 import { join } from "node:path";
 import { SafeJSON } from "@genesiscz/utils/json";
@@ -770,4 +770,71 @@ test("rowAnchors names a row's uuid, its message id and its tool calls", () => {
         )
     ).toEqual({ messageIds: ["row-1", "msg-1"], toolCallIds: ["toolu-1"], turnIds: [] });
     expect(walk({ type: "system", uuid: "row-2" }, false)).toEqual({ messageIds: [], toolCallIds: [], turnIds: [] });
+});
+
+/** The metadata of `source` beside a cold read of a byte-equal copy at another path, where no kept fold applies. */
+async function resumedAndCold(source: NativeSessionSource<"claude">) {
+    const copy = fixture();
+    writeFileSync(copy.path, await Bun.file(source.filePath).bytes());
+    const [resumed, cold] = [await readClaudeMetadata(source), await readClaudeMetadata(copy.source)];
+    const comparable = (read: typeof resumed) => {
+        const { filePath: _file, root: _root, sourceHome: _home, mtime: _mtime, ...rest } = read.metadata ?? {};
+        return { complete: read.complete, issues: read.issues.map((issue) => issue.message), ...rest };
+    };
+    return { resumed: comparable(resumed), cold: comparable(cold) };
+}
+
+function row(index: number, extra: object = {}): object {
+    return {
+        type: index % 2 === 0 ? "user" : "assistant",
+        sessionId: MAIN_ID,
+        cwd: "/projects/shop",
+        gitBranch: `branch-${Math.floor(index / 10)}`,
+        timestamp: new Date(Date.UTC(2026, 8, 1, 10, 0, index)).toISOString(),
+        message: { content: `message ${index}` },
+        ...extra,
+    };
+}
+
+test("a transcript that grew, was cut short, or was replaced reads the same metadata as a cold read", async () => {
+    const { path, source } = fixture();
+    writeFileSync(path, jsonl(...Array.from({ length: 40 }, (_, index) => row(index))));
+    await readClaudeMetadata(source);
+
+    appendFileSync(path, jsonl(row(40, { type: "custom-title", customTitle: "Refund flow" }), row(41)));
+    let pair = await resumedAndCold(source);
+    expect(pair.resumed).toEqual(pair.cold);
+    expect(pair.resumed).toMatchObject({ customTitle: "Refund flow", gitBranch: "branch-4", firstPrompt: "message 0" });
+
+    // Unchanged: the kept fold answers alone.
+    pair = await resumedAndCold(source);
+    expect(pair.resumed).toEqual(pair.cold);
+
+    // Cut short below the kept end: read again from the start.
+    truncateSync(path, 200);
+    appendFileSync(path, `\n${jsonl(row(50, { message: { content: "after the cut" } }))}`);
+    pair = await resumedAndCold(source);
+    expect(pair.resumed).toEqual(pair.cold);
+
+    // Replaced by another file of the same name (another inode), longer than the kept end.
+    const other = `${path}.next`;
+    writeFileSync(other, jsonl(...Array.from({ length: 60 }, (_, index) => row(index + 100))));
+    renameSync(other, path);
+    pair = await resumedAndCold(source);
+    expect(pair.resumed).toEqual(pair.cold);
+    expect(pair.resumed).toMatchObject({ firstPrompt: "message 100" });
+});
+
+test("a transcript above the full-read bound keeps its head and reads only the tail again", async () => {
+    const { path, source } = fixture();
+    const padding = "p".repeat(64 * 1024);
+    const head = Array.from({ length: 220 }, (_, index) => row(index, { padding }));
+    writeFileSync(path, jsonl(...head));
+    expect(Bun.file(path).size).toBeGreaterThan(10 * 1024 * 1024);
+    await readClaudeMetadata(source);
+
+    appendFileSync(path, jsonl(row(300, { type: "ai-title", aiTitle: "Late title" }), row(301)));
+    const pair = await resumedAndCold(source);
+    expect(pair.resumed).toEqual(pair.cold);
+    expect(pair.resumed).toMatchObject({ summary: "Late title", firstPrompt: "message 0" });
 });

@@ -12,6 +12,8 @@ import { readLastLines } from "@genesiscz/utils/fs/read-lines";
 import { SafeJSON } from "@genesiscz/utils/json";
 import { logger } from "@genesiscz/utils/logger";
 import { profiler } from "@genesiscz/utils/profile";
+import { genesisToolsDir } from "@genesiscz/utils/storage/root";
+import { foldJsonlResumable } from "../jsonl-fold";
 import { boundHistoryText, HISTORY_METADATA_LIMITS } from "../metadata";
 import type {
     BackwardRead,
@@ -437,23 +439,144 @@ function isSubagent(source: NativeSessionSource<"claude">): boolean {
     return isClaudeSubagentPath(source.filePath);
 }
 
+/**
+ * What a metadata read keeps of the rows it has read: plain JSON, because a resumable fold of a large transcript is
+ * stored between processes (`jsonl-fold.ts`). The sessions index values (`source.metadata`) are applied after the
+ * fold, so a kept fold stays right when the index changes.
+ */
+interface ClaudeMetadataFold {
+    validRecords: number;
+    sessionId: string | null;
+    customTitle: string | null;
+    summary: string | null;
+    firstPrompt: string | null;
+    gitBranch: string | null;
+    cwd: string | null;
+    firstTimestamp: string | null;
+    lastTimestamp: string | null;
+    userTexts: string[];
+    userTextLength: number;
+    allUserTextBounded: boolean;
+}
+
+function initialMetadataFold(): ClaudeMetadataFold {
+    return {
+        validRecords: 0,
+        sessionId: null,
+        customTitle: null,
+        summary: null,
+        firstPrompt: null,
+        gitBranch: null,
+        cwd: null,
+        firstTimestamp: null,
+        lastTimestamp: null,
+        userTexts: [],
+        userTextLength: 0,
+        allUserTextBounded: false,
+    };
+}
+
+function copyMetadataFold(fold: ClaudeMetadataFold): ClaudeMetadataFold {
+    return { ...fold, userTexts: [...fold.userTexts] };
+}
+
+function nullableText(value: unknown): boolean {
+    return value === null || typeof value === "string";
+}
+
+function validClaudeMetadataFold(value: unknown): value is ClaudeMetadataFold {
+    if (value === null || typeof value !== "object") {
+        return false;
+    }
+
+    const fold: Record<string, unknown> = { ...value };
+    return (
+        typeof fold.validRecords === "number" &&
+        typeof fold.userTextLength === "number" &&
+        typeof fold.allUserTextBounded === "boolean" &&
+        Array.isArray(fold.userTexts) &&
+        fold.userTexts.every((text) => typeof text === "string") &&
+        [
+            "sessionId",
+            "customTitle",
+            "summary",
+            "firstPrompt",
+            "gitBranch",
+            "cwd",
+            "firstTimestamp",
+            "lastTimestamp",
+        ].every((key) => nullableText(fold[key]))
+    );
+}
+
+/** One row, in file order. */
+function foldClaudeMetadataRow(fold: ClaudeMetadataFold, row: JsonRecord): void {
+    fold.validRecords++;
+    if (autoTitleOf(row)) {
+        fold.summary = autoTitleOf(row);
+    }
+    if (row.type === "custom-title" && asText(row.customTitle)) {
+        fold.customTitle = asText(row.customTitle);
+    }
+    if (!fold.sessionId && asText(row.sessionId)) {
+        fold.sessionId = asText(row.sessionId);
+    }
+    // The newest branch wins, as in the search path: a session that moved from one branch to another
+    // listed the branch it started on for days (the hub's Inbox showed a week-old branch).
+    if (asText(row.gitBranch)) {
+        fold.gitBranch = asText(row.gitBranch);
+    }
+    if (!fold.cwd && asText(row.cwd)) {
+        fold.cwd = asText(row.cwd);
+    }
+    // An unparsable string stored here becomes `new Date(...)` = Invalid Date downstream, and
+    // every NaN comparison is false, so the session would slip past every --since and --until.
+    // The grok reader already refuses one; this reader storing it raw is what let a bad
+    // timestamp reach `toISOString()` and abort a whole statistics read.
+    const stamp = parsableTimestamp(asText(row.timestamp));
+
+    if (stamp) {
+        fold.firstTimestamp ??= stamp;
+        fold.lastTimestamp = stamp;
+    }
+
+    const text = userText(row);
+
+    if (!text || isWrapperUserText(text)) {
+        return;
+    }
+    fold.firstPrompt ??= text;
+    if (fold.userTextLength >= HISTORY_METADATA_LIMITS.allUserTextCollectedChars) {
+        fold.allUserTextBounded = true;
+        return;
+    }
+
+    const remaining = HISTORY_METADATA_LIMITS.allUserTextCollectedChars - fold.userTextLength;
+    fold.userTexts.push(text.slice(0, remaining));
+    fold.userTextLength += text.length;
+    fold.allUserTextBounded ||= text.length > remaining;
+}
+
 /** One Claude transcript's metadata, timed as `metadata.claude` (the hub's listings read it for every changed file). */
 export async function readClaudeMetadata(
     source: NativeSessionSource<"claude">,
     options: HistoryReadOptions = {}
 ): Promise<HistoryMetadataRead> {
+    const parsed = { bytes: 0 };
     return profiler.scope("agent-sessions").measureAsync(
         "metadata.claude",
-        () => readClaudeMetadataUncounted(source, options),
+        () => readClaudeMetadataUncounted(source, options, parsed),
         () => ({
             file: basename(source.filePath),
+            parsed: parsed.bytes,
         })
     );
 }
 
 async function readClaudeMetadataUncounted(
     source: NativeSessionSource<"claude">,
-    options: HistoryReadOptions = {}
+    options: HistoryReadOptions,
+    parsed: { bytes: number }
 ): Promise<HistoryMetadataRead> {
     const issues: NativeSourceIssue[] = [];
 
@@ -472,91 +595,59 @@ async function readClaudeMetadataUncounted(
         return { metadata: null, issues, complete: false };
     }
     const completeCoverage = fileStat.size <= LARGE_METADATA_FILE_BYTES;
-    let validRecords = 0;
-    let sessionId: string | null = null;
-    let customTitle: string | null = source.metadata?.title ?? null;
-    let summary: string | null = source.metadata?.summary ?? null;
-    let firstPrompt: string | null = null;
-    let gitBranch: string | null = null;
-    let cwd: string | null = source.metadata?.cwd ?? null;
-    let firstTimestamp: string | null = null;
-    let lastTimestamp: string | null = null;
-    const userTexts: string[] = [];
-    let userTextLength = 0;
-    let allUserTextBounded = !completeCoverage;
-
-    function apply(row: JsonRecord): void {
-        validRecords++;
-        if (autoTitleOf(row)) {
-            summary = autoTitleOf(row);
-        }
-        if (row.type === "custom-title" && asText(row.customTitle)) {
-            customTitle = asText(row.customTitle);
-        }
-        if (!sessionId && asText(row.sessionId)) {
-            sessionId = asText(row.sessionId);
-        }
-        // The newest branch wins, as in the search path: a session that moved from one branch to another
-        // listed the branch it started on for days (the hub's Inbox showed a week-old branch).
-        if (asText(row.gitBranch)) {
-            gitBranch = asText(row.gitBranch);
-        }
-        if (!cwd && asText(row.cwd)) {
-            cwd = asText(row.cwd);
-        }
-        // An unparsable string stored here becomes `new Date(...)` = Invalid Date downstream, and
-        // every NaN comparison is false, so the session would slip past every --since and --until.
-        // The grok reader already refuses one; this reader storing it raw is what let a bad
-        // timestamp reach `toISOString()` and abort a whole statistics read.
-        const stamp = parsableTimestamp(asText(row.timestamp));
-
-        if (stamp) {
-            firstTimestamp ??= stamp;
-            lastTimestamp = stamp;
-        }
-
-        const text = userText(row);
-
-        if (!text || isWrapperUserText(text)) {
-            return;
-        }
-        firstPrompt ??= text;
-        if (userTextLength >= HISTORY_METADATA_LIMITS.allUserTextCollectedChars) {
-            allUserTextBounded = true;
-            return;
-        }
-
-        const remaining = HISTORY_METADATA_LIMITS.allUserTextCollectedChars - userTextLength;
-        userTexts.push(text.slice(0, remaining));
-        userTextLength += text.length;
-        allUserTextBounded ||= text.length > remaining;
-    }
+    const resumable = {
+        path: source.filePath,
+        initial: initialMetadataFold,
+        validState: validClaudeMetadataFold,
+        copy: copyMetadataFold,
+        apply: foldClaudeMetadataRow,
+        onIssue: (message: string) => issue(sourceIssue(source.filePath, message)),
+        onFolded: ({ from, to }: { from: number; to: number }) => {
+            parsed.bytes += to - from;
+        },
+        signal: options.signal,
+    };
+    let fold: ClaudeMetadataFold | null;
 
     if (completeCoverage) {
-        for await (const parsed of iterateClaudeRows(source, { ...options, onIssue: issue })) {
-            apply(parsed.row);
-        }
+        // Resumable (jsonl-fold.ts): a transcript that only grew is parsed from its last complete line.
+        fold = foldJsonlResumable({
+            ...resumable,
+            storePath: genesisToolsDir("claude-history", "claude-metadata-fold.json"),
+        });
     } else {
-        await scanMetadataSegment({
-            source,
+        // The head is the first records, which a growing transcript never changes: kept like a whole fold, so a live
+        // 130 MB transcript stops parsing its first 1.6 MB again on every append. The tail is read as before.
+        fold = foldJsonlResumable({
+            ...resumable,
+            storePath: genesisToolsDir("claude-history", "claude-metadata-head-fold.json"),
             maxRecords: METADATA_HEAD_RECORDS,
-            signal: options.signal,
-            onRow: apply,
-            onIssue: issue,
         });
-        await scanMetadataSegment({
-            source,
-            start: Math.max(0, fileStat.size - METADATA_TAIL_BYTES),
-            skipFirst: fileStat.size > METADATA_TAIL_BYTES,
-            signal: options.signal,
-            onRow: apply,
-            onIssue: issue,
-        });
+        const head = fold;
+
+        if (head) {
+            parsed.bytes += Math.min(fileStat.size, METADATA_TAIL_BYTES);
+            await scanMetadataSegment({
+                source,
+                start: Math.max(0, fileStat.size - METADATA_TAIL_BYTES),
+                skipFirst: fileStat.size > METADATA_TAIL_BYTES,
+                signal: options.signal,
+                onRow: (row) => foldClaudeMetadataRow(head, row),
+                onIssue: issue,
+            });
+        }
     }
 
-    if (validRecords === 0 && issues.length > 0) {
+    if (!fold || (fold.validRecords === 0 && issues.length > 0)) {
         return { metadata: null, issues, complete: false };
     }
+
+    const { sessionId, firstPrompt, gitBranch, firstTimestamp, lastTimestamp, userTexts } = fold;
+    // The sessions index names a title, a summary and a folder before any row does; a row's own title still wins.
+    const customTitle = fold.customTitle ?? source.metadata?.title ?? null;
+    const summary = fold.summary ?? source.metadata?.summary ?? null;
+    const cwd = source.metadata?.cwd ?? fold.cwd;
+    const allUserTextBounded = fold.allUserTextBounded || !completeCoverage;
 
     const subagent = isSubagent(source);
     const publicSessionId = sessionId ?? basename(source.filePath, ".jsonl");

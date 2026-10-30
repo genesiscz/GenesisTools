@@ -28,6 +28,8 @@ interface StoredFold<S> {
     mark: string;
     /** Issue messages found before `consumed`, in order: reported again on every read, as a full scan would. */
     issues: string[];
+    /** Non-empty lines up to `consumed`; absent in a store written before `maxRecords` existed. */
+    records?: number;
     state: S;
 }
 
@@ -42,11 +44,16 @@ const STORE_FILES = 20;
 const RESUME_MIN_BYTES = 8 * 1024 * 1024;
 const CHUNK_BYTES = 8 * 1024 * 1024;
 /**
- * Every fold of this process, any size, by path: the store above skips files under 8 MB, so a resident process (the
- * hub server) parsed each live 5-6 MB Codex sub-agent rollout from its start on every change, 35-40 ms each and
- * about 130 reads in 12 minutes (2026-10-08). A kept fold is checked like a stored one before it is used.
+ * Every fold of this process, any size, by store and path: the store above skips files under 8 MB, so a resident
+ * process (the hub server) parsed each live 5-6 MB Codex sub-agent rollout from its start on every change, 35-40 ms
+ * each and about 130 reads in 12 minutes (2026-10-08). A kept fold is checked like a stored one before it is used.
+ * The store is part of the key: two kinds of read of one file (a whole fold and a head fold) keep separate states.
  */
 const memoryFolds = new Map<string, StoredFold<unknown>>();
+
+function memoryKey(storePath: string, path: string): string {
+    return `${storePath}\u0000${path}`;
+}
 const MEMORY_FILES = 64;
 
 function readStore(path: string): FoldStore {
@@ -97,6 +104,7 @@ function validFold<S>(value: unknown, validState: (state: unknown) => state is S
         "issues" in value &&
         Array.isArray(value.issues) &&
         value.issues.every((issue: unknown) => typeof issue === "string") &&
+        (!("records" in value) || (typeof value.records === "number" && Number.isSafeInteger(value.records))) &&
         "state" in value &&
         validState(value.state)
     );
@@ -131,6 +139,13 @@ export interface FoldJsonlOptions<S> {
     signal?: AbortSignal;
     /** Files smaller than this resume only in memory (default 8 MB; tests pass 0). */
     resumeMinBytes?: number;
+    /**
+     * Fold only the first this many non-empty lines (a head read), like a line reader that stops there. A fold that
+     * reached the bound reads nothing more of a file that only grew: its prefix is checked, and the state returned.
+     */
+    maxRecords?: number;
+    /** The byte range this call parsed (`from` is where a kept fold resumed, 0 for a fold from the start). */
+    onFolded?: (range: { from: number; to: number }) => void;
 }
 
 /**
@@ -164,19 +179,23 @@ export function foldJsonlResumable<S>(options: FoldJsonlOptions<S>): S | null {
         const { size, ino } = initialStatus;
         const resumable = size >= (options.resumeMinBytes ?? RESUME_MIN_BYTES);
         const store: FoldStore = resumable ? readStore(options.storePath) : { version: 1, files: {} };
-        const inMemory: unknown = memoryFolds.get(options.path);
+        const memory = memoryKey(options.storePath, options.path);
+        const inMemory: unknown = memoryFolds.get(memory);
         const stored: unknown = store.files[options.path];
         const candidates = [inMemory, stored];
         const kept = candidates.find(
             (candidate): candidate is StoredFold<S> =>
-                validFold(candidate, options.validState) && candidate.ino === ino && candidate.consumed <= size
+                validFold(candidate, options.validState) &&
+                candidate.ino === ino &&
+                candidate.consumed <= size &&
+                (options.maxRecords === undefined || candidate.records !== undefined)
         );
         let prefix = readPrefixMark(fd, kept?.consumed ?? 0);
         const usable = kept !== undefined && prefix.digest() === kept.mark;
         const fold: StoredFold<S> =
             usable && kept
-                ? { ...kept, issues: [...kept.issues], state: options.copy(kept.state) }
-                : { ino, consumed: 0, line: 0, mark: "", issues: [], state: options.initial() };
+                ? { ...kept, records: kept.records ?? 0, issues: [...kept.issues], state: options.copy(kept.state) }
+                : { ino, consumed: 0, line: 0, mark: "", issues: [], records: 0, state: options.initial() };
         if (!usable) {
             prefix = readPrefixMark(fd, 0);
         }
@@ -188,11 +207,13 @@ export function foldJsonlResumable<S>(options: FoldJsonlOptions<S>): S | null {
         const fold1 = (text: string, line: number, partial: boolean, into: S, issues: string[] | null): void =>
             foldLine(options, { text, line, partial, into, issues });
 
+        const resumedAt = fold.consumed;
         // Complete lines, in chunks, cut at newline bytes.
+        const full = () => options.maxRecords !== undefined && (fold.records ?? 0) >= options.maxRecords;
         let position = fold.consumed;
         let carried = Buffer.alloc(0);
         const chunk = Buffer.allocUnsafe(Math.max(1, Math.min(CHUNK_BYTES, size - fold.consumed)));
-        for (;;) {
+        while (!full()) {
             options.signal?.throwIfAborted();
             const read = readSync(fd, chunk, 0, chunk.length, position);
             if (read === 0) {
@@ -204,23 +225,28 @@ export function foldJsonlResumable<S>(options: FoldJsonlOptions<S>): S | null {
                 carried.length > 0 ? Buffer.concat([carried, chunk.subarray(0, read)]) : chunk.subarray(0, read);
             let start = 0;
             let newline = bytes.indexOf(10, start);
-            while (newline !== -1) {
+            while (newline !== -1 && !full()) {
                 fold.line++;
-                fold1(bytes.toString("utf8", start, newline), fold.line, false, fold.state, fold.issues);
+                const text = bytes.toString("utf8", start, newline);
+                fold1(text, fold.line, false, fold.state, fold.issues);
+                if (text.trim()) {
+                    fold.records = (fold.records ?? 0) + 1;
+                }
+
                 fold.consumed += newline + 1 - start;
                 start = newline + 1;
                 newline = bytes.indexOf(10, start);
             }
 
             prefix.update(bytes.subarray(0, start));
-            carried = Buffer.from(bytes.subarray(start));
+            carried = full() ? Buffer.alloc(0) : Buffer.from(bytes.subarray(start));
         }
 
         const checkpoint = prefix.finish();
-        memoryFolds.delete(options.path);
+        memoryFolds.delete(memory);
         if (checkpoint.stable) {
             fold.mark = checkpoint.digest;
-            memoryFolds.set(options.path, { ...fold, issues: [...fold.issues], state: options.copy(fold.state) });
+            memoryFolds.set(memory, { ...fold, issues: [...fold.issues], state: options.copy(fold.state) });
             if (memoryFolds.size > MEMORY_FILES) {
                 const oldest = memoryFolds.keys().next().value;
                 if (oldest !== undefined) {
@@ -241,6 +267,7 @@ export function foldJsonlResumable<S>(options: FoldJsonlOptions<S>): S | null {
             fold1(carried.toString("utf8"), fold.line + 1, true, result, null);
         }
 
+        options.onFolded?.({ from: resumedAt, to: fold.consumed + carried.length });
         return result;
     } catch (error) {
         options.signal?.throwIfAborted();
@@ -293,7 +320,8 @@ function foldCompressed<S>(options: FoldJsonlOptions<S>): S | null {
     const mark = `zst:${status.size}:${status.mtimeMs}`;
     const resumable = status.size >= (options.resumeMinBytes ?? RESUME_MIN_BYTES) / 4;
     const store: FoldStore = resumable ? readStore(options.storePath) : { version: 1, files: {} };
-    const kept = [memoryFolds.get(options.path), store.files[options.path]].find(
+    const memory = memoryKey(options.storePath, options.path);
+    const kept = [memoryFolds.get(memory), store.files[options.path]].find(
         (candidate): candidate is StoredFold<S> =>
             validFold(candidate, options.validState) && candidate.ino === status.ino && candidate.mark === mark
     );
@@ -351,8 +379,8 @@ function foldCompressed<S>(options: FoldJsonlOptions<S>): S | null {
         return null;
     }
 
-    memoryFolds.delete(options.path);
-    memoryFolds.set(options.path, { ...fold, issues: [...fold.issues], state: options.copy(fold.state) });
+    memoryFolds.delete(memory);
+    memoryFolds.set(memory, { ...fold, issues: [...fold.issues], state: options.copy(fold.state) });
     if (memoryFolds.size > MEMORY_FILES) {
         const oldest = memoryFolds.keys().next().value;
         if (oldest !== undefined) {
