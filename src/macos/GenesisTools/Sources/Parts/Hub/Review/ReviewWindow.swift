@@ -1786,16 +1786,17 @@ final class ReviewModel: ObservableObject {
     /// The comments go to the agent: written into one outbox file, then, when there is a target (the
     /// window's session, or the one picked for this PR), one line naming the file is typed into that
     /// session's pane, and only then they read "Sent to <it>". With no target they are queued, which says
-    /// what happened: written, nobody told. `afterSend` runs when a pane got them; `finished` always, once.
-    func sendToAgent(ids: [String], to chosen: AgentTarget? = nil, afterSend: (() -> Void)? = nil, finished: (() -> Void)? = nil) {
+    /// what happened: written, nobody told. `afterSend` runs when a pane got them; `finished` always, once, with true
+    /// when the comments reached the outbox (sent or queued) and false when nothing was written.
+    func sendToAgent(ids: [String], to chosen: AgentTarget? = nil, afterSend: (() -> Void)? = nil, finished: ((Bool) -> Void)? = nil) {
         guard !ids.isEmpty else {
             notice = "No comments waiting for the agent."
-            finished?()
+            finished?(false)
             return
         }
 
         guard let written = writeOutbox(ids) else {
-            finished?()
+            finished?(false)
             return
         }
 
@@ -1805,7 +1806,7 @@ final class ReviewModel: ObservableObject {
             }
             pushComments()
             notice = "Queued \(ids.count) \(ids.count == 1 ? "comment" : "comments"), not sent: no agent is picked for this review. Send… in the header picks one."
-            finished?()
+            finished?(true)
             return
         }
 
@@ -1828,7 +1829,7 @@ final class ReviewModel: ObservableObject {
             }
             pushComments()
             notice = AgentDelivery.notice(outcome, count: ids.count, host: host.name, error: error)
-            finished?()
+            finished?(true)
         }
     }
 
@@ -2241,7 +2242,8 @@ final class ReviewModel: ObservableObject {
             return finished(false)
         }
         commentOwner(comment.id)?.store.link(comment.id, thread: live.id)
-        sendToAgent(ids: [comment.id], finished: { finished(true) })
+        // Only a written outbox lets the page drop its reply box; a failed write keeps the reader's text.
+        sendToAgent(ids: [comment.id], finished: finished)
     }
 
     private func updateThread(_ id: String, editedReply: String? = nil, replyStatus: String? = nil, providerId: String? = nil) {
@@ -2362,7 +2364,7 @@ final class ReviewModel: ObservableObject {
                 commentOwner(comment.id)?.store.link(comment.id, thread: thread)
             }
             sendingSuggestions.insert(id)
-            sendToAgent(ids: [comment.id], finished: { [weak self] in
+            sendToAgent(ids: [comment.id], finished: { [weak self] _ in
                 self?.sendingSuggestions.remove(id)
             })
         case .prDraft, .prComment:
