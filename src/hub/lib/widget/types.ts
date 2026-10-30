@@ -105,6 +105,11 @@ export const widgetPreferencesSchema = z.object({
      * with Send ("confirm"), or only says the field is empty ("nothing").
      */
     ownAnswerEmptyReturn: z.enum(["send", "confirm", "nothing"]).default("send"),
+    /**
+     * An answer to an agent's own question dialog (an inbox item from a dialog record, such as Claude's
+     * AskUserQuestion): press the option's key in the live dialog ("press"), or refuse and leave it to the terminal.
+     */
+    dialogAnswer: z.enum(["press", "refuse"]).default("press"),
     /** Width in points of the rail's hover list (the agents preview). */
     previewWidth: z.number().min(260).max(560).default(324),
     /** When the widget starts with staged decisions, a popup lists them with Send now, until it is closed. */
