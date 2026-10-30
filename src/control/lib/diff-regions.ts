@@ -172,10 +172,14 @@ function mergeNearBoxes(boxes: Box[], distance: number): Box[] {
     return list;
 }
 
+/** Red marks a real change, amber a difference only the data explains (a before/after report's two colours). */
+export const CHANGE_COLOR = "#ff5a5f";
+export const DATA_COLOR = "#ffb020";
+
 /** The regions as `tools control draw` annotations: one outlined box each, labelled "1", "2", …. */
 export function regionAnnotations(
     regions: Array<AnnotationRect & { label?: string }>,
-    style: { stroke: string; strokeWidth?: number } = { stroke: "#ff5a5f" }
+    style: { stroke: string; strokeWidth?: number } = { stroke: CHANGE_COLOR }
 ): Annotation[] {
     return regions.map((region, index) => ({
         kind: "box",
