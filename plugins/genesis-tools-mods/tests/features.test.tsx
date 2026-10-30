@@ -3170,7 +3170,8 @@ test("agent details retry aborted metadata reads and rendering facts starts no d
             return base.read(file);
         },
         async stat(file) {
-            return file.endsWith(".meta.json")
+            // The agent's transcript is there (a missing one is never tailed).
+            return file.endsWith(".meta.json") || file.endsWith(".jsonl")
                 ? { kind: "file", size: 1, mtimeMs: 123, isLink: false }
                 : base.stat(file);
         },

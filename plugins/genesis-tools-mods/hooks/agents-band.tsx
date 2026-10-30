@@ -42,12 +42,15 @@ const pendingMetas = new Map<string, Promise<void>>();
 const transcripts = new Map<string, string>();
 let refreshing: Promise<void> | undefined;
 /** The end of each agent's transcript: its last words, read at most every 5 s. */
-const tails = new Map<string, { at: number; said: string }>();
+/** What the selected agent said last, with the transcript's size and mtime the tail was read at. */
+const tails = new Map<string, { at: number; said: string; mark?: string }>();
 const BUSY = new Set(["pending", "running", "waiting"]);
 const MAX_ROWS = 6;
 const FOLD_OVER = 3;
 /** The session's transcript folder, `<projects>/<encoded cwd>/<session id>`, from a classic hook's `transcript_path`. */
 let sessionDir: string | undefined;
+/** When the projects folder was last searched for the session's transcript, so a session without one is searched once a minute. */
+let sessionDirSearchedAt = 0;
 /** The person's fold of the band; null folds it past `FOLD_OVER` agents. */
 let expanded: boolean | null = null;
 let selected: string | undefined;
@@ -308,8 +311,35 @@ export async function sessionDirOf(host: Host): Promise<string | undefined> {
     }
 
     const cwd = await host.cwd();
+    const session = await host.sessionId();
+    const projects = `${home}/.claude/projects`;
+    const guess = `${projects}/${cwd.replace(/[^A-Za-z0-9]/g, "-")}/${session}`;
 
-    return `${home}/.claude/projects/${cwd.replace(/[^A-Za-z0-9]/g, "-")}/${await host.sessionId()}`;
+    if (await host.exists(`${guess}.jsonl`).catch(() => false)) {
+        sessionDir = guess;
+        return guess;
+    }
+
+    // A session that changed its folder (a `cd` into a subfolder) keeps its transcript under the folder it started in:
+    // on 2026-10-30 one such session asked `tail` for a transcript under the wrong project folder every 10 s. The
+    // folder that holds `<session>.jsonl` is searched for at most once a minute.
+    if (Date.now() - sessionDirSearchedAt < 60_000) {
+        return guess;
+    }
+
+    sessionDirSearchedAt = Date.now();
+
+    for (const entry of await host.list(projects).catch(() => [])) {
+        if (
+            entry.kind === "dir" &&
+            (await host.exists(`${projects}/${entry.name}/${session}.jsonl`).catch(() => false))
+        ) {
+            sessionDir = `${projects}/${entry.name}/${session}`;
+            return sessionDir;
+        }
+    }
+
+    return guess;
 }
 
 async function transcriptOf(host: Host, agentId: string): Promise<string | undefined> {
@@ -393,13 +423,25 @@ async function loadTail(host: Host, agentId: string): Promise<void> {
         return;
     }
 
-    tails.set(agentId, { at: Date.now(), said: held?.said ?? "" });
     const path = transcripts.get(agentId);
+    // A transcript that did not change since the last read keeps its tail: the selected agent is read every 10 s,
+    // and a finished agent's transcript never changes again (one session read 128 KB of one 1,024 times in a quiet
+    // 3 hours on 2026-10-30).
+    // Null: no such transcript (the folder was guessed wrong, or the agent has not written yet): nothing to tail.
+    const stat = path ? await host.stat(path).catch(() => null) : undefined;
+    const mark = stat ? `${stat.mtimeMs}:${stat.size}` : stat === null ? "missing" : undefined;
+
+    if ((held && mark !== undefined && held.mark === mark) || stat === null) {
+        tails.set(agentId, { at: Date.now(), said: held?.said ?? "", mark });
+        return;
+    }
+
+    tails.set(agentId, { at: Date.now(), said: held?.said ?? "", mark: held?.mark });
     const done = path ? await host.run(["tail", "-c", "131072", path], { timeoutMs: 5_000 }) : undefined;
     const said = done?.exitCode === 0 ? lastSaidOf(done.stdout) : "";
+    tails.set(agentId, { at: Date.now(), said, mark });
 
     if (said !== held?.said) {
-        tails.set(agentId, { at: Date.now(), said });
         host.redraw();
     }
 }
