@@ -91,4 +91,32 @@ describe("Swift audit scanner candidates", () => {
         expect(candidates).not.toContain("Targets.swift:3");
         expect(candidates).not.toContain("Targets.swift:4");
     });
+
+    it("keeps a selectable text only when a line limit sits in the same chain", () => {
+        const root = mkdtempSync(join(tmpdir(), "swift-selectable-scan-"));
+        writeFileSync(
+            join(root, "Texts.swift"),
+            [
+                "Text(summary)",
+                "    .lineLimit(6)",
+                "    .textSelection(.enabled)",
+                "Spacer()",
+                "Spacer()",
+                "Spacer()",
+                "Spacer()",
+                "Spacer()",
+                "Spacer()",
+                "Text(title)",
+                "    .textSelection(.enabled)",
+            ].join("\n")
+        );
+        const result = Bun.spawnSync([process.execPath, new URL("./ux-scan.ts", import.meta.url).pathname, root], {
+            env: process.env,
+        });
+        expect(result.exitCode).toBe(0);
+        const candidates = result.stdout.toString().split("- selectable-line-limit")[1]?.split("\n- ")[0];
+        expect(candidates).toContain("[1]");
+        expect(candidates).toContain("Texts.swift:3");
+        expect(candidates).not.toContain("Texts.swift:11");
+    });
 });

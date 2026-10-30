@@ -1300,6 +1300,17 @@ final class WidgetVisibilityTests: XCTestCase {
         seen = try read("peek", WidgetPeekView(model: model, item: peek))
         XCTAssertTrue(seen.contains("Decision 8"), "read: \(seen)")
         XCTAssertTrue(seen.contains("Pick a parser"), "read: \(seen)")
+        // The whole summary is laid out, never cut at a line count: a selectable Text draws its full string while it
+        // is being selected, so a six-line limit put the last three lines under the options (2026-10-30). The sender
+        // keeps it near 600 characters, and the popup shows all of it.
+        let long = WidgetInboxItem(id: "decision:d_9_fixture-session", sourceId: "d_9_fixture-session",
+            kind: "decision", key: key, at: Date().timeIntervalSince1970 * 1000, needsAnswer: true,
+            title: "A decision with its whole context", number: 9,
+            summary: String(repeating: "The re-run shows an unrelated publish at 4995 rows and a selection at 10 ms. ", count: 7)
+                + "The last word is ZEBRA.",
+            options: ["Stop at steps 1 and 2", "Do steps 3 to 8"])
+        seen = try read("peek-long-summary", WidgetPeekView(model: model, item: long))
+        XCTAssertTrue(seen.contains("ZEBRA"), "the end of a long summary is laid out, not cut at six lines: \(seen)")
         // The card fills a pane taller than itself (the rail sets the panel's height) with one inset on every side.
         let pane = WidgetPeekView(model: model, item: peek).padding(WidgetPeekView.inset)
             .frame(width: 324, height: 270, alignment: .top)

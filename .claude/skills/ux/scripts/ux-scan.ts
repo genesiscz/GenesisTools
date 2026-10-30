@@ -264,6 +264,14 @@ const CHECKS: Check[] = [
     },
     {
         pass: "Layout",
+        name: "selectable-line-limit",
+        pattern: /\.textSelection\(\.enabled\)/,
+        hint: "a selectable text with a line limit draws its whole string past its frame while it is selected (the alert popup, 2026-10-30): drop the limit, or the selection, or clip",
+        with: /\.lineLimit\(/,
+        near: 6,
+    },
+    {
+        pass: "Layout",
         name: "native-segmented",
         pattern: /pickerStyle\(\.segmented\)/,
         hint: "the kit has GenSegmentedTabs; a native one greys out in a non-key window",
