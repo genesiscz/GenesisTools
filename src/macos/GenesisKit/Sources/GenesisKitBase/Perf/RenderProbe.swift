@@ -12,7 +12,11 @@ import Foundation
 
 /// Named counters: `hit("row.body")` in a body, `take()` in the test.
 public enum RenderProbe {
-    public nonisolated(unsafe) static var enabled = ProcessInfo.processInfo.environment["GENESIS_RENDER_PROBE"] == "1"
+    public nonisolated(unsafe) static var enabled = ["1", "2"].contains(ProcessInfo.processInfo.environment["GENESIS_RENDER_PROBE"] ?? "")
+    /// `GENESIS_RENDER_PROBE=2`: a body that asks (`let _ = RenderProbe.explaining ? Self._printChanges() : ()`) also
+    /// prints what SwiftUI says changed, on stdout, so a body that runs twice per creation names its cause (the value
+    /// rows of the hub ran about twice per mode switch after the `.liveRow` change, 2026-10-29).
+    public nonisolated(unsafe) static var explaining = ProcessInfo.processInfo.environment["GENESIS_RENDER_PROBE"] == "2"
     nonisolated(unsafe) private static var counts: [String: Int] = [:]
     private static let lock = NSLock()
 

@@ -63,7 +63,8 @@ struct WidgetTasksModuleView: View {
         VStack(alignment: .leading, spacing: 4) {
             ForEach(store.tasks.prefix(4)) { task in
                 HStack(spacing: 8) {
-                    WidgetTaskCheckbox(task: task, store: store)
+                    WidgetTaskCheckbox(task: task, state: store.shownState(task),
+                                       busy: store.mutatingIDs.contains(task.id)) { store.toggle(task) }
                     Text(task.title).font(.system(size: 12)).lineLimit(1)
                         .strikethrough(store.shownState(task) == "implemented")
                         .foregroundStyle(store.shownState(task) == "implemented" ? .secondary : .primary)
@@ -158,11 +159,11 @@ struct WidgetTasksModuleView: View {
                             .font(.system(size: 11)).foregroundStyle(.secondary).multilineTextAlignment(.center)
                     }.frame(maxWidth: .infinity).padding(.vertical, 30)
                 }
-                ForEach(store.tasks) { task in WidgetTaskRow(task: task, store: store) }
+                ForEach(store.tasks) { task in row(task).equatable() }
                 if !store.recent.isEmpty {
                     Text("Just changed · click the box to undo").font(.system(size: 10, weight: .medium))
                         .foregroundStyle(.secondary).padding(.top, 4)
-                    ForEach(store.recent) { task in WidgetTaskRow(task: task, store: store) }
+                    ForEach(store.recent) { task in row(task).equatable() }
                 }
                 if store.snapshot?.truncated == true {
                     Text("Showing \(store.tasks.count) of \(store.snapshot?.total ?? 0) matching tasks. Narrow the filters to see more.")
@@ -174,29 +175,51 @@ struct WidgetTasksModuleView: View {
         }
         .scrollOverflowHints()
     }
+
+    /// One task as values: the row observes no store, so a publish re-renders only the rows whose task, shown state
+    /// or busy flag changed.
+    private func row(_ task: WidgetTask) -> WidgetTaskRow {
+        WidgetTaskRow(
+            task: task, state: store.shownState(task), busy: store.mutatingIDs.contains(task.id),
+            toggle: { store.toggle(task) }, perform: { store.perform($0, on: task) },
+            hasSource: { store.sourceSession(for: task) != nil }, openSource: { store.openSource(task) },
+            save: { session in session.save(in: store) })
+    }
 }
 
-/// The one-click tick: an unfinished task becomes done, a finished one opens again. The new state shows at once.
+/// The one-click tick: an unfinished task becomes done, a finished one opens again. The new state shows at once. A
+/// `genHoverIcon` button with its tooltip only while its row is live (`rowLive`); at rest the same glyph in the style's
+/// padding, which VoiceOver still presses. Not a `LiveButton`: its plain style would drop the mint hover disc and the
+/// 3 pt padding, and the glyph would move when the row turns live.
 struct WidgetTaskCheckbox: View {
     let task: WidgetTask
-    @ObservedObject var store: WidgetTasksStore
+    /// `WidgetTasksStore.shownState(task)`.
+    let state: String
+    /// A change of this task is in flight.
+    let busy: Bool
+    let toggle: () -> Void
+    @Environment(\.rowLive) private var live
 
     var body: some View {
-        let state = store.shownState(task)
-        let busy = store.mutatingIDs.contains(task.id)
-        Button {
-            store.toggle(task)
-        } label: {
-            Image(systemName: symbol(state))
-                .font(.system(size: 15, weight: .regular))
-                .foregroundStyle(color(state))
-                .opacity(busy ? 0.55 : 1)
-                .frame(width: 22, height: 22)
-                .contentShape(Rectangle())
+        let enabled = !busy && task.toggleAction != nil
+        let glyph = Image(systemName: symbol(state))
+            .font(.system(size: 15, weight: .regular))
+            .foregroundStyle(color(state))
+            .opacity(busy ? 0.55 : 1)
+            .frame(width: 22, height: 22)
+            .contentShape(Rectangle())
+        Group {
+            if live {
+                Button(action: toggle) { glyph }
+                    .buttonStyle(.genHoverIcon(accent: .mint, diameter: 24))
+                    .disabled(!enabled)
+                    .instantTooltip(task.toggleAction == .reopen ? "Open this task again" : "Mark this task done")
+            } else {
+                // `genHoverIcon`'s 3 pt padding and its disabled dimming, without the button.
+                glyph.padding(3).opacity(enabled ? 1 : 0.4)
+                    .restingButton(enabled: enabled, action: toggle)
+            }
         }
-        .buttonStyle(.genHoverIcon(accent: .mint, diameter: 24))
-        .disabled(busy || task.toggleAction == nil)
-        .instantTooltip(task.toggleAction == .reopen ? "Open this task again" : "Mark this task done")
         .accessibilityLabel((task.toggleAction == .reopen ? "Reopen " : "Mark done: ") + task.title)
         .accessibilityValue(task.statusLabel)
         .accessibilityIdentifier("tasks.toggle." + task.id)
@@ -299,19 +322,39 @@ private struct WidgetTaskComposer: View {
     }
 }
 
-private struct WidgetTaskRow: View {
+/// One task of the list, from values. Its controls (the checkbox, the Details disclosure, the actions menu and their
+/// tooltips) exist only while it is live (`liveRow`: hovered, its details open, or its editor open). At rest it draws
+/// the same glyphs and text with no control, so a store publish re-renders only the rows whose values changed and an
+/// accessibility client walks no buttons of up to 200 rows at rest (swift skill, "Dense lists and accessibility
+/// clients"). VoiceOver still presses each of them (`restingButton`). The editor's session is made when Edit… is
+/// picked: a `@StateObject` per row made one observable object per task for editors that were almost never opened.
+private struct WidgetTaskRow: View, Equatable {
     let task: WidgetTask
-    @ObservedObject var store: WidgetTasksStore
+    /// `WidgetTasksStore.shownState(task)`: a tick shows before the ledger confirms it.
+    let state: String
+    /// A change of this task is in flight.
+    let busy: Bool
+    let toggle: () -> Void
+    let perform: (WidgetTaskAction) -> Void
+    /// The task's session is in the widget's list; asked when the menu or the details are built.
+    let hasSource: () -> Bool
+    let openSource: () -> Void
+    let save: (WidgetTaskEditSession) -> Void
     @State private var expanded = false
-    @StateObject private var edit = WidgetTaskEditSession()
+    /// The open editor; nil while the row shows its title.
+    @State private var edit: WidgetTaskEditSession?
+
+    static func == (a: WidgetTaskRow, b: WidgetTaskRow) -> Bool {
+        a.task == b.task && a.state == b.state && a.busy == b.busy
+    }
 
     var body: some View {
-        let state = store.shownState(task)
+        let _ = RenderProbe.hit("widget.tasks.row.body")
         HStack(alignment: .top, spacing: 8) {
-            WidgetTaskCheckbox(task: task, store: store)
+            WidgetTaskCheckbox(task: task, state: state, busy: busy, toggle: toggle)
             VStack(alignment: .leading, spacing: 5) {
-                if edit.isOpen {
-                    editor
+                if let edit {
+                    WidgetTaskEditor(edit: edit, busy: busy, save: { save(edit) }, close: { self.edit = nil })
                 } else {
                     Text(task.title).font(.system(size: 12, weight: .semibold)).lineLimit(3)
                         .strikethrough(state == "implemented" || state == "dismissed")
@@ -320,41 +363,28 @@ private struct WidgetTaskRow: View {
                         .padding(.top, 3)
                 }
                 Text(meta(state)).font(.system(size: 10)).foregroundStyle(.secondary).lineLimit(1)
-                GenDisclosure("Details", isExpanded: $expanded, minHeight: 22, identifier: "tasks.details." + task.id) {
-                    details(for: task)
-                }
-                .font(.system(size: 10.5))
+                WidgetTaskDetailsDisclosure(expanded: $expanded, identifier: "tasks.details." + task.id) { details }
+                    .font(.system(size: 10.5))
             }
             Spacer(minLength: 0)
             MenuButton(style: .genHoverIcon(), items: menuItems) {
                 Image(systemName: "ellipsis").font(.system(size: 12, weight: .medium)).frame(width: 18, height: 18)
+                    .modifier(WidgetRestingIconPadding())
             }
             .instantTooltip("More actions")
-            .disabled(store.mutatingIDs.contains(task.id))
+            .disabled(busy)
             .accessibilityLabel("Actions for \(task.title)")
         }
         .padding(.horizontal, 10).padding(.vertical, 9)
         .background(.white.opacity(0.045), in: RoundedRectangle(cornerRadius: 11))
         .accessibilityElement(children: .contain)
+        .liveRow(selected: expanded || edit != nil)
     }
 
-    private var editor: some View {
-        VStack(alignment: .leading, spacing: 6) {
-            TextField("Title", text: $edit.title).textFieldStyle(.roundedBorder).font(.system(size: 12))
-                .onSubmit(save)
-            TextField("Details (optional)", text: $edit.details, axis: .vertical).textFieldStyle(.roundedBorder)
-                .font(.system(size: 11.5)).lineLimit(2...6)
-            HStack(spacing: 8) {
-                Button("Save", action: save).buttonStyle(.genHover(accent: .mint)).font(.system(size: 11, weight: .semibold))
-                    .disabled(edit.title.trimmingCharacters(in: .whitespaces).isEmpty || store.mutatingIDs.contains(task.id))
-                Button("Cancel") { edit.cancel() }.buttonStyle(.genHoverPlain()).font(.system(size: 11))
-                    .keyboardShortcut(.cancelAction)
-            }
-        }
-    }
-
-    private func save() {
-        edit.save(in: store)
+    private func beginEdit() {
+        let session = WidgetTaskEditSession()
+        session.begin(task)
+        edit = session
     }
 
     private func meta(_ state: String) -> String {
@@ -370,7 +400,7 @@ private struct WidgetTaskRow: View {
         return parts.joined(separator: " · ")
     }
 
-    @ViewBuilder private func details(for task: WidgetTask) -> some View {
+    @ViewBuilder private var details: some View {
         VStack(alignment: .leading, spacing: 6) {
             if task.summary != task.title {
                 WidgetMarkdown(text: task.summary)
@@ -388,8 +418,8 @@ private struct WidgetTaskRow: View {
                     Text(cwd).font(.caption2).foregroundStyle(.secondary).textSelection(.enabled).lineLimit(1)
                         .truncationMode(.middle)
                 }
-                if store.sourceSession(for: task) != nil {
-                    Button("Open source session") { store.openSource(task) }.buttonStyle(.genHoverPlain())
+                if hasSource() {
+                    Button("Open source session", action: openSource).buttonStyle(.genHoverPlain())
                         .font(.system(size: 11, weight: .medium)).foregroundStyle(SessionPalette.blue)
                 } else {
                     Text("The source session is not in the widget's list.").font(.caption2).foregroundStyle(.secondary)
@@ -400,14 +430,91 @@ private struct WidgetTaskRow: View {
 
     private func menuItems() -> [MenuButtonItem] {
         var items: [MenuButtonItem] = task.actions.map { action in
-            .action(action == .acknowledge ? "Start" : action.title) { store.perform(action, on: task) }
+            .action(action == .acknowledge ? "Start" : action.title) { perform(action) }
         }
         if task.editable {
-            items += [.divider, .action("Edit…") { edit.begin(task) }]
+            items += [.divider, .action("Edit…") { beginEdit() }]
         }
-        if store.sourceSession(for: task) != nil {
-            items += [.divider, .action("Open source session") { store.openSource(task) }]
+        if hasSource() {
+            items += [.divider, .action("Open source session") { openSource() }]
         }
         return items.isEmpty ? [.note("No actions for this task")] : items
+    }
+}
+
+/// The task's Details: `GenDisclosure` while the row is live (`rowLive`); at rest (always closed, since an open one
+/// keeps the row live) its closed header drawn the same (chevron, title, the full-width row), which VoiceOver still
+/// opens. A view of its own because the row's body cannot read `rowLive` and `GenDisclosure` does not read it.
+private struct WidgetTaskDetailsDisclosure<Content: View>: View {
+    @Binding var expanded: Bool
+    let identifier: String
+    @ViewBuilder let content: () -> Content
+    @Environment(\.rowLive) private var live
+    @GenReduceMotion private var reduceMotion
+    @Environment(\.genExpansionHost) private var host
+
+    var body: some View {
+        if live {
+            GenDisclosure("Details", isExpanded: $expanded, minHeight: 22, identifier: identifier) { content() }
+        } else {
+            HStack(spacing: 7) {
+                Image(systemName: "chevron.right").font(.system(size: 9, weight: .semibold))
+                    .foregroundStyle(.secondary).frame(width: 10)
+                Text("Details")
+                Spacer(minLength: 0)
+            }
+            .padding(.horizontal, 6)
+            .frame(maxWidth: .infinity, minHeight: 22, alignment: .leading)
+            .contentShape(Rectangle())
+            .restingButton {
+                host?.willChange(true)
+                GenMotion.perform(expanding: true, reduceMotion: reduceMotion) { expanded = true }
+            }
+            .accessibilityLabel("Details")
+            .accessibilityValue("Collapsed")
+            .accessibilityIdentifier(identifier)
+        }
+    }
+}
+
+/// `genHoverIcon`'s 3 pt padding and disabled dimming for a label that `MenuButton` draws bare in a resting row, so the
+/// glyph does not move by 3 pt when its row turns live.
+private struct WidgetRestingIconPadding: ViewModifier {
+    @Environment(\.rowLive) private var live
+    @Environment(\.isEnabled) private var enabled
+
+    func body(content: Content) -> some View {
+        if live {
+            content
+        } else {
+            content.padding(3).opacity(enabled ? 1 : 0.4)
+        }
+    }
+}
+
+/// A task row's open editor. Save sends through the row's store; the session closes itself on the ledger's
+/// confirmation or Cancel, and the row then drops it. It observes the session, so only an open editor does.
+private struct WidgetTaskEditor: View {
+    @ObservedObject var edit: WidgetTaskEditSession
+    let busy: Bool
+    let save: () -> Void
+    let close: () -> Void
+
+    var body: some View {
+        VStack(alignment: .leading, spacing: 6) {
+            TextField("Title", text: $edit.title).textFieldStyle(.roundedBorder).font(.system(size: 12))
+                .onSubmit(save)
+            TextField("Details (optional)", text: $edit.details, axis: .vertical).textFieldStyle(.roundedBorder)
+                .font(.system(size: 11.5)).lineLimit(2...6)
+            HStack(spacing: 8) {
+                Button("Save", action: save).buttonStyle(.genHover(accent: .mint)).font(.system(size: 11, weight: .semibold))
+                    .disabled(edit.title.trimmingCharacters(in: .whitespaces).isEmpty || busy)
+                Button("Cancel") { edit.cancel() }.buttonStyle(.genHoverPlain()).font(.system(size: 11))
+                    .keyboardShortcut(.cancelAction)
+            }
+        }
+        .onChange(of: edit.isOpen) { _, open in
+            if !open { close() }
+        }
     }
 }

@@ -298,7 +298,9 @@ final class HubInboxUXTests: XCTestCase {
     static func read(card item: InboxItem) throws -> String {
         let model = HubModel(wantedSession: nil, tab: .transcript)
         let inbox = HubInboxModel()
+        // As the list draws it: under `.liveRow()`, at rest (no pointer in an off-screen render).
         let view = InboxDecisionCard(model: model, inbox: inbox, session: session("s1", items: [item]), item: item)
+            .liveRow()
             .frame(width: 760)
             .padding(10)
             .background(Color.black)

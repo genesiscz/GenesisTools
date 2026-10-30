@@ -133,6 +133,7 @@ struct StoredProposalsList: View {
                         ForEach(choices) { choice in
                             StoredProposalRow(choice: choice)
                                 .rowButton(cornerRadius: 6) { model.attachProposal(path: choice.path) }
+                                .liveRow()
                         }
                     }
                 }

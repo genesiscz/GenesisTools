@@ -43,7 +43,8 @@ Each of these contradicts a measurement in this skill or a fact of this codebase
 - "Never use GCD" / "migrate to Swift concurrency first": the app builds in Swift 5 mode with 225
   `DispatchQueue.main.async` sites; migrate per measured need, not as a sweep.
 - "Prefer SwiftUI over AppKit bridging": the measured fixes here are AppKit (layer animations, `NSPanel`).
-- "A per-row `@Observable` model for list rows": not applicable to `ObservableObject`; rows take values.
+- "A per-row `@Observable` model for list rows": rows take values and are `Equatable`; their controls exist only
+  while the row is live (`.liveRow`, performance.md "Dense lists and accessibility clients").
 - "`ImageRenderer` for view images": see the snapshot rules in `.claude/rules/macos-app.md`.
 - A flat "use a lazy stack from 50 items": measure; the `LazyVStack` cost per scroll event is in
   [performance.md](performance.md).
@@ -52,8 +53,10 @@ Each of these contradicts a measurement in this skill or a fact of this codebase
 ## Later (needs `@Observable`, Swift 6, or macOS 15, 26 or 27)
 
 - Move hot `ObservableObject` types to `@Observable`: a view then updates only for the properties its body reads.
-  It needs a replacement for `RenderProbe.watch`, which counts `objectWillChange`. It would fix
-  whole-window redraws from one shared model at the root.
+  Done for the hub's `HubModel` on 2026-10-29 (performance.md "`@Observable` instead of `ObservableObject`": root
+  body 3 to 5 → 1 per mode switch); the `bodies[…]` counts on the busy lines replaced `RenderProbe.watch`. Open:
+  `ReviewModel` (40 `@Published`, four manual `objectWillChange.send()` for its proposal and comment stores: those
+  need a revision property the readers observe), `PRsModel`, `HubAgentsModel`, `PRThreadsStore`.
 - After that: `@ObservationIgnored` caches, Equatable stored types, flattened dependencies, AppKit observation
   tracking in `layout()` and `draw(_:)` (macOS 26), `Observations { }` (macOS 26).
 - Swift 6 mode: `@concurrent`, isolated conformances, static isolation over `MainActor.run`, per-target migration.

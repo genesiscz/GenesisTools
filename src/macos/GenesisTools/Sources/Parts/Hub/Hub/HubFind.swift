@@ -154,7 +154,7 @@ final class HubFindModel: ObservableObject {
 }
 
 struct HubFindPanel: View {
-    @ObservedObject var hub: HubModel
+    var hub: HubModel
     let roots: [String]
     @StateObject private var find = HubFindModel()
     @FocusState private var focused: Bool

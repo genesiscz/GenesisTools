@@ -33,13 +33,23 @@ public struct MenuButton<Label: View, Style: ButtonStyle>: View {
         self.label = label
     }
 
+    @Environment(\.rowLive) private var live
+
     public var body: some View {
-        Button {
-            MenuButtonPresenter.pop(items())
-        } label: {
+        if live {
+            Button {
+                MenuButtonPresenter.pop(items())
+            } label: {
+                label().contentShape(Rectangle())
+            }
+            .buttonStyle(style)
+        } else {
+            // A row at rest (`liveRow`): the label with no button, in the button's footprint (the hover style pads
+            // its label, so a bare label moved by 3 pt when the row turned live); VoiceOver still opens the menu.
             label().contentShape(Rectangle())
+                .padding((style as? GenHoverButtonStyle)?.padding ?? EdgeInsets())
+                .restingButton { MenuButtonPresenter.pop(items()) }
         }
-        .buttonStyle(style)
     }
 }
 

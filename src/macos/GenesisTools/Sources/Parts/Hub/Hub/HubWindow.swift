@@ -557,34 +557,38 @@ enum HubTab: String, CaseIterable {
 
 // MARK: - Model
 
-final class HubModel: ObservableObject {
+/// Observation (`@Observable`): a view re-runs only for the properties it read. As an `ObservableObject` every one of
+/// its 35 published writes re-ran the root, every list and the review column (4 to 6 times per mode switch, probe sweep
+/// 2026-10-29), because `@ObservedObject` re-renders on any publish.
+@Observable
+final class HubModel {
     static let recentHours = 72
     static let pageSize = 80
 
-    @Published var sessions: [HubSession] = [] {
+    var sessions: [HubSession] = [] {
         didSet {
             worktreeSessions = nil
             sessionSearchText = Dictionary(sessions.map { ($0.id, Self.searchText($0)) }, uniquingKeysWith: { first, _ in first })
         }
     }
     private var sessionSearchText: [String: String] = [:]
-    @Published var loadingSessions = false
+    var loadingSessions = false
     /// The list on screen is the last run's, from disk, and the fresh one is loading (Hub/HubSWR.swift).
-    @Published private(set) var showingCachedSessions = false
+    private(set) var showingCachedSessions = false
     /// Sessions the last refresh added or moved; their rows flash once.
-    @Published private(set) var changedSessions = Set<String>()
-    @Published var error: String?
+    private(set) var changedSessions = Set<String>()
+    var error: String?
     /// The sidebar's filter text, which every mode's list applies.
-    @Published var filter = "" {
+    var filter = "" {
         didSet {
             if filter != oldValue {
                 MainActor.assumeIsolated { HubMainBusy.measure("filter.\(mode.rawValue)") }
             }
         }
     }
-    @Published var selectedID: String?
+    var selectedID: String?
     /// The pane that was asked for last (`--tab`, "Open diff"); it is always among `panes`.
-    @Published var tab: HubTab {
+    var tab: HubTab {
         didSet {
             if !panes.contains(tab) {
                 panes = tabOrder.filter { panes.contains($0) || $0 == tab }
@@ -592,7 +596,7 @@ final class HubModel: ObservableObject {
         }
     }
     /// The panes shown side by side (transcript, changes, decisions), saved between launches.
-    @Published var panes: [HubTab] = (HubDefaults.store.stringArray(forKey: "hub.panes") ?? ["transcript"]).compactMap(HubTab.init(rawValue:)) {
+    var panes: [HubTab] = (HubDefaults.store.stringArray(forKey: "hub.panes") ?? ["transcript"]).compactMap(HubTab.init(rawValue:)) {
         didSet {
             HubDefaults.store.set(panes.map(\.rawValue), forKey: "hub.panes")
             // The header's totals chip shows once the transcript pane closes; `select` skipped its list.
@@ -605,7 +609,7 @@ final class HubModel: ObservableObject {
     /// in `SessionDetailView`). Independent of `HubTab.allCases`' declaration order once the
     /// user has dragged anything. A case added after someone already saved an order (`.files`,
     /// here) is appended rather than dropped.
-    @Published var tabOrder: [HubTab] = {
+    var tabOrder: [HubTab] = {
         let saved = (HubDefaults.store.stringArray(forKey: "hub.tabOrder") ?? []).compactMap(HubTab.init(rawValue:))
         return saved + HubTab.allCases.filter { !saved.contains($0) }
     }() {
@@ -635,20 +639,20 @@ final class HubModel: ObservableObject {
             tab = pane
         }
     }
-    @Published var transcript: [TranscriptItem] = []
-    @Published var transcriptLimit = HubModel.pageSize
-    @Published var transcriptTruncated = false
-    @Published var transcriptTotals: String?
-    @Published var transcriptEnded: String?
-    @Published var loadingTranscript = false
-    @Published var transcriptError: String?
-    @Published var expandedTools: Set<String> = []
-    @Published var decisions: [InboxItem] = []
+    var transcript: [TranscriptItem] = []
+    var transcriptLimit = HubModel.pageSize
+    var transcriptTruncated = false
+    var transcriptTotals: String?
+    var transcriptEnded: String?
+    var loadingTranscript = false
+    var transcriptError: String?
+    var expandedTools: Set<String> = []
+    var decisions: [InboxItem] = []
     /// `tools question inbox --session` is running for the selected session (Hub/HubDecisionsSource.swift).
-    @Published var loadingDecisions = false
+    var loadingDecisions = false
     /// Bumped per decisions load: only the newest one may publish (Hub/HubDecisionsSource.swift).
     var decisionsRequest = 0
-    @Published var review: ReviewModel? {
+    var review: ReviewModel? {
         // A worktree or a timeline commit that replaces the session's review makes the next click on that
         // session set it up again, or the Changes pane kept the worktree's or the commit's diff.
         didSet {
@@ -659,17 +663,17 @@ final class HubModel: ObservableObject {
     }
     /// The review `select` built for the selected session.
     private weak var sessionReview: ReviewModel?
-    @Published var mode = HubMode.sessions
-    @Published var worktrees: [HubWorktree] = [] {
+    var mode = HubMode.sessions
+    var worktrees: [HubWorktree] = [] {
         didSet { worktreeSessions = nil }
     }
     /// Sessions per worktree path, built once per change of `sessions` or `worktrees`; rows read it
     /// on every body pass, and the raw match is sessions × worktrees per row.
     private var worktreeSessions: [String: [HubSession]]?
-    @Published var loadingWorktrees = false
-    @Published var selectedWorktree: String?
+    var loadingWorktrees = false
+    var selectedWorktree: String?
     /// The note in the panes' headers, with the tone the code that posted it knows (`post(_:_:)`).
-    @Published var headerNotice: HubNotice?
+    var headerNotice: HubNotice?
     /// The note as plain text, for panes that still set a `String`: it gets the tone the headers used to guess.
     var notice: String? {
         get { headerNotice?.text }
@@ -684,7 +688,7 @@ final class HubModel: ObservableObject {
     /// Only the latest commit lookup may navigate, and any later selection invalidates it.
     var commitLinkRequest = UUID()
     /// ⌘⇧F / palette "grep": the find-in-files panel is open with this query ("" = empty field).
-    @Published var findQuery: String? {
+    var findQuery: String? {
         didSet {
             if findQuery == nil {
                 findRoot = nil
@@ -692,18 +696,18 @@ final class HubModel: ObservableObject {
         }
     }
     /// The project folder a palette "<project> grep" named; it replaces `findRoots` until the panel closes.
-    @Published var findRoot: String?
+    var findRoot: String?
     /// `--palette <text>`: the root view opens the palette with this text, then clears it.
-    @Published var paletteRequest: String?
+    var paletteRequest: String?
     /// `--transcript-query <text>`: the transcript opens with this search applied.
-    @Published var transcriptQuery: String?
+    var transcriptQuery: String?
 
     /// Folders added in Files for the selected session ("Add folder"), each with its own changes.
-    @Published private(set) var extraFolders: [String] = []
+    private(set) var extraFolders: [String] = []
     /// The git repository of each added folder that is inside one, keyed by folder.
-    @Published private(set) var folderRepos: [String: String] = [:]
+    private(set) var folderRepos: [String: String] = [:]
     /// Which roots Changes shows (the session's folder and added ones); empty = only the session's.
-    @Published private(set) var changesRoots: Set<String> = []
+    private(set) var changesRoots: Set<String> = []
 
     var onSettled: (() -> Void)?
     var initialMode = HubMode.sessions
@@ -730,11 +734,11 @@ final class HubModel: ObservableObject {
 
     /// Back, forward and the History list (Hub/HubNavigation.swift). Taken from the published selection itself, so
     /// every path that changes it (rows, the palette, a handed-over `--session`, "Open", a link) is recorded.
-    @Published private(set) var history = HubNavHistory()
+    private(set) var history = HubNavHistory()
     /// The History popover (⌘Y, the clock beside the arrows).
-    @Published var historyOpen = false
+    var historyOpen = false
     /// The commit a link or an Activity row shows in the Worktrees diff: part of that place in the history.
-    @Published private(set) var shownCommit: HubShownCommit?
+    private(set) var shownCommit: HubShownCommit?
     /// The commit a link selected in a PR's review: part of that PR's place while it stays selected.
     private var prLinkedCommit: (prID: String, commit: String)?
     /// The place an agent or a link asked for, with who and why, until the hub shows it.
@@ -785,23 +789,42 @@ final class HubModel: ObservableObject {
     @MainActor
     private func startNavRecorder() {
         let changes: [AnyPublisher<Void, Never>] = [
-            $mode.map { _ in () }.eraseToAnyPublisher(),
-            $selectedID.map { _ in () }.eraseToAnyPublisher(),
-            $selectedWorktree.map { _ in () }.eraseToAnyPublisher(),
             prs.$selectedID.map { _ in () }.eraseToAnyPublisher(),
             inbox.$selectedID.map { _ in () }.eraseToAnyPublisher(),
             agents.$selectedID.map { _ in () }.eraseToAnyPublisher(),
-            $shownCommit.map { _ in () }.eraseToAnyPublisher(),
         ]
         navRecorder = Publishers.MergeMany(changes).sink { [weak self] in
-            if self?.settlingLaunch == false {
-                self?.commitLinkRequest = UUID()
+            self?.placeChanged()
+        }
+        watchOwnPlace()
+    }
+
+    /// The model's own part of the place (mode, selection, worktree, shown commit) through Observation: one
+    /// callback per change of any of them, re-armed after each (`withObservationTracking` fires once).
+    @MainActor
+    private func watchOwnPlace() {
+        withObservationTracking {
+            _ = (mode, selectedID, selectedWorktree, shownCommit)
+        } onChange: { [weak self] in
+            // Fires on the mutating thread (the main actor) before the change lands, as `@Published` did: the commit
+            // link request flips at once, so a lookup started before the change sees itself superseded, and the record
+            // is taken on the next turn (`scheduleNavRecord`). Re-armed here, since one registration fires once.
+            guard let self else { return }
+            MainActor.assumeIsolated {
+                self.placeChanged()
+                self.watchOwnPlace()
             }
-            self?.scheduleNavRecord()
         }
     }
 
-    /// `@Published` announces a change before it lands, and one click often changes two values
+    private func placeChanged() {
+        if !settlingLaunch {
+            commitLinkRequest = UUID()
+        }
+        scheduleNavRecord()
+    }
+
+    /// Observation and `@Published` both announce a change before it lands, and one click often changes two values
     /// (mode and selection), so the place is taken once, on the next turn of the main queue.
     private func scheduleNavRecord() {
         guard !navRecordPending else { return }
@@ -2158,7 +2181,7 @@ final class HubModel: ObservableObject {
 
 /// The palette re-reads the PR list when it lands: in a fresh window "gt pr" said to open the PRs mode first.
 private struct HubPaletteHost: View {
-    @ObservedObject var model: HubModel
+    var model: HubModel
     @ObservedObject var prs: PRsModel
     @Binding var isPresented: Bool
     let seed: String
@@ -2173,7 +2196,7 @@ private struct HubPaletteHost: View {
 }
 
 struct HubRootView: View {
-    @ObservedObject var model: HubModel
+    var model: HubModel
 
     /// The open screen in words: mode, what is selected, and the session panes.
     private var perfArea: String {
@@ -2222,6 +2245,7 @@ struct HubRootView: View {
     }
 
     var body: some View {
+        let _ = RenderProbe.hit("hub.root.body")
         // The session list gets what the panes leave; with no room left it folds to a rail you can
         // still see (and open as a drawer), instead of pushing the panes out of the window.
         let sidebarRoom = width - mainMinWidth - 1
@@ -2385,7 +2409,7 @@ enum SessionGrouping: String, CaseIterable {
 /// control, not a `Picker`: a segmented Picker takes one tooltip for the whole row, so every
 /// segment said the same thing; here each segment names its own mode.
 private struct HubModePicker: View {
-    @ObservedObject var model: HubModel
+    var model: HubModel
     @ObservedObject var inbox: HubInboxModel
 
     static let symbols: [HubMode: String] = [
@@ -2479,10 +2503,11 @@ private struct AgentsLaunchRow: View {
 /// The mode switch in the folded sidebar's rail: the six modes as one column of icons. At 900 pt the
 /// sidebar folds and the switch used to fold with it, so reaching Worktrees took two clicks (H13).
 private struct HubModeRail: View {
-    @ObservedObject var model: HubModel
+    var model: HubModel
     @ObservedObject var inbox: HubInboxModel
 
     var body: some View {
+        let _ = RenderProbe.hit("hub.modeRail.body")
         let waiting = inbox.waitingCount
         VStack(spacing: 4) {
             ForEach(HubMode.allCases, id: \.self) { mode in
@@ -2507,7 +2532,7 @@ private struct HubModeRail: View {
 }
 
 private struct SessionListView: View {
-    @ObservedObject var model: HubModel
+    @Bindable var model: HubModel
     @StateObject private var history = HubHistoryModel()
     @AppStorage("hub.sessions.grouping") private var grouping = SessionGrouping.time.rawValue
     @StateObject private var prefs = GroupPrefs(key: "sessions.groups")
@@ -2573,6 +2598,7 @@ private struct SessionListView: View {
     }
 
     var body: some View {
+        let _ = RenderProbe.hit("sessions.list.body")
         let sections = sections
         VStack(spacing: 0) {
             // Back and forward sit in the band under the title bar, right above the mode switch:
@@ -2700,11 +2726,11 @@ private struct SessionListView: View {
                                         ForEach(section.rows) { session in
                                             let activity = SessionRowActivity(work: live.work[session.sessionId], isLive: session.isLive)
                                             let selected = session.id == model.selectedID
-                                            SessionRowView(session: session, selected: selected, stuck: stuck.verdicts[session.sessionId], activity: activity)
-                                                .rowButton {
-                                                    listFocused = true
-                                                    model.select(session.id)
-                                                }
+                                            SessionRowView(session: session, selected: selected, stuck: stuck.verdicts[session.sessionId], activity: activity) {
+                                                listFocused = true
+                                                model.select(session.id)
+                                            }
+                                                .equatable()
                                                 // The dot's state in words for VoiceOver; the label is the row's text.
                                                 .accessibilityValue(Text(activity?.word ?? ""))
                                                 .accessibilityAddTraits(selected ? .isSelected : [])
@@ -2840,15 +2866,24 @@ enum SessionRowActivity: Equatable {
     var showsWord: Bool { self != .live }
 }
 
-/// The provider's letter on its colour (session rows, the Inbox).
-private struct SessionRowView: View {
+/// One session of the list, from values. Live (its row button, the provider tooltip) under the pointer or when
+/// selected (`liveRow`); the same labels with no control at rest, so the 69-row list adds two responders, not 140,
+/// to the accessibility walks a sidebar drag pays for (`PRRow` in Hub/HubPRs.swift, 2026-10-29).
+private struct SessionRowView: View, Equatable {
     let session: HubSession
     let selected: Bool
     var stuck: StuckVerdict?
     /// The dot: working or waiting from the open transcript's follow, else live from the list; nil for a quiet row.
     var activity: SessionRowActivity?
+    let select: () -> Void
+
+    static func == (a: SessionRowView, b: SessionRowView) -> Bool {
+        a.session == b.session && a.selected == b.selected && a.stuck == b.stuck && a.activity == b.activity
+    }
 
     var body: some View {
+        let _ = RenderProbe.hit("sessions.row.body")
+        let _ = RenderProbe.explaining ? Self._printChanges() : ()
         HStack(alignment: .top, spacing: 9) {
             ZStack(alignment: .bottomTrailing) {
                 ProviderBadge(provider: session.provider)
@@ -2908,6 +2943,8 @@ private struct SessionRowView: View {
         )
         .padding(.horizontal, 6)
         .contentShape(Rectangle())
+        .rowButton(select)
+        .liveRow(selected: selected)
     }
 }
 
@@ -2915,7 +2952,7 @@ private struct SessionRowView: View {
 /// on the selected session. The Agents mode passes `agent`: the transcript pane then shows that agent's
 /// own file and the header its facts, while the other panes stay the lead session's.
 struct SessionDetailView: View {
-    @ObservedObject var model: HubModel
+    var model: HubModel
     @ObservedObject private var repos = RepoFactsStore.shared
     @ObservedObject private var stuck = HubStuckStore.shared
     let session: HubSession
@@ -3211,7 +3248,7 @@ enum PaneBadge: Equatable {
 /// another button and the two swap places. The target glows while something hovers over it.
 private struct PaneToggle: View {
     let tab: HubTab
-    @ObservedObject var model: HubModel
+    var model: HubModel
     let badge: PaneBadge
     @State private var targeted = false
     @GenReduceMotion private var reduceMotion

@@ -17,7 +17,7 @@ final class HubWidgetDestinationStore: ObservableObject {
 }
 
 private struct HubWidgetDestinationModifier: ViewModifier {
-    @ObservedObject var model: HubModel
+    var model: HubModel
     @ObservedObject private var store = HubWidgetDestinationStore.shared
     func body(content: Content) -> some View {
         content.sheet(item: $store.request) { request in
@@ -33,7 +33,7 @@ extension View {
 }
 
 private struct HubWidgetDestinationSheet: View {
-    @ObservedObject var model: HubModel
+    var model: HubModel
     let request: HubWidgetDestinationRequest
     let close: () -> Void
     private var session: HubSession? {

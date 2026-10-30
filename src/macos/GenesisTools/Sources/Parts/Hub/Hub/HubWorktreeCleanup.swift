@@ -433,7 +433,7 @@ enum CleanupFormat {
 }
 
 struct WorktreeCleanupView: View {
-    @ObservedObject var model: HubModel
+    var model: HubModel
     @ObservedObject private var store = WorktreeCleanupStore.shared
     @AppStorage(WorktreeCleanup.showBlockedKey) private var showBlocked = false
     @GenReduceMotion private var reduceMotion
@@ -900,7 +900,7 @@ struct WorktreeCleanupView: View {
 
 /// The Worktrees list's first row: opens the cleanup panel, with the removable count once known.
 struct WorktreeCleanupEntry: View {
-    @ObservedObject var model: HubModel
+    var model: HubModel
     @ObservedObject private var store = WorktreeCleanupStore.shared
 
     var body: some View {

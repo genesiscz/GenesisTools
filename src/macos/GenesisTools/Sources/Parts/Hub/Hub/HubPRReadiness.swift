@@ -197,8 +197,6 @@ struct PRReadinessBadge: View {
     let readiness: PRReadiness?
     /// "blocked" instead of "4 open", where the reason is shown beside it.
     var verdictWord = false
-    /// The tooltip exists only while the row is live (`PRRow`); alone, the badge is always live.
-    var live = true
 
     var body: some View {
         if let readiness, readiness.verdict != "closed" {
@@ -209,7 +207,7 @@ struct PRReadinessBadge: View {
                 .foregroundColor(color)
                 .lineLimit(1)
                 .fixedSize()
-                .liveTooltip(live, readiness.tooltip)
+                .instantTooltip(readiness.tooltip)
         }
     }
 

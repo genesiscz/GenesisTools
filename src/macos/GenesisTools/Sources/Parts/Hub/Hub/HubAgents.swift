@@ -638,9 +638,11 @@ final class HubAgentsModel: ObservableObject {
             switch result {
             case .success(let envelope):
                 span.end("\(envelope.parents.count) parents")
-                error = nil
+                // A `@Published` set publishes even when equal, and every publish re-renders the list and the open
+                // detail (`agents.list.body` 3 per refresh, 2026-10-29): write only what changed.
+                if error != nil { error = nil }
                 if scope == nil {
-                    showingCached = false
+                    if showingCached { showingCached = false }
                     lastFullList = Date()
                     if let data = try? JSONEncoder().encode(envelope) {
                         let cache = cache
@@ -654,7 +656,7 @@ final class HubAgentsModel: ObservableObject {
                 HubPerf.log("agents.list failed: \(failure)")
             }
             if !loaded || scope == nil {
-                loaded = true
+                if !loaded { loaded = true }
                 onLoaded?()
                 onLoaded = nil
             }
@@ -1112,7 +1114,7 @@ enum AgentStatusFilter: String, CaseIterable {
 }
 
 struct AgentsListView: View {
-    @ObservedObject var model: HubModel
+    var model: HubModel
     @ObservedObject var agents: HubAgentsModel
     @AppStorage("hub.agents.statusFilter") private var statusRaw = AgentStatusFilter.active.rawValue
     /// Parents whose finished children show beyond the first `shownPerParent`.
@@ -1212,6 +1214,9 @@ struct AgentsListView: View {
     var body: some View {
         let _ = RenderProbe.hit("agents.list.body")
         let sections = sections
+        // Read once per body and handed to every row as a value, so a row whose values did not change skips its
+        // body (`.equatable()` on each row type in `row(_:selectedID:)`).
+        let selectedID = agents.selectedID
         Group {
             if !agents.loaded && agents.parents.isEmpty {
                 SkeletonRows(count: 10, leading: .dot)
@@ -1240,7 +1245,7 @@ struct AgentsListView: View {
                             ForEach(sections, id: \.title) { section in
                                 Section {
                                     ForEach(section.rows) { item in
-                                        row(item)
+                                        row(item, selectedID: selectedID)
                                             .transition(SWR.rowTransition)
                                     }
                                     if section.title == "Live", section.rows.isEmpty {
@@ -1320,48 +1325,43 @@ struct AgentsListView: View {
         .hubSurface(.bar)
     }
 
+    /// Each row is a value with its actions as closures and `.equatable()` here: a refresh that changes nothing a
+    /// row draws skips its body (`agents.childRow.body` ran 21 to 25 times per refresh, 2026-10-29).
     @ViewBuilder
-    private func row(_ item: AgentListItem) -> some View {
+    private func row(_ item: AgentListItem, selectedID: String?) -> some View {
         switch item {
         case .parent(let parent, let open, let running, let total):
-            // Only the chevron folds; the rest of the row opens the lead session.
-            HStack(alignment: .top, spacing: 0) {
-                Button {
-                    GenMotion.perform(expanding: !open, reduceMotion: reduceMotion) { agents.toggle(parent) }
-                } label: {
-                    Image(systemName: open ? "chevron.down" : "chevron.right")
-                        .font(.system(size: 9, weight: .semibold))
-                        .foregroundColor(ReviewPalette.dim)
-                        .frame(width: 22, height: 26)
-                        .contentShape(Rectangle())
-                }
-                .buttonStyle(.genHoverPlain())
-                .instantTooltip(open ? "Fold its agents (Left)" : "Unfold its agents (Right)")
-                AgentParentRow(parent: parent, running: running, total: total, live: agents.isPresent(parent))
-                    .rowButton {
-                        listFocused = true
-                        agents.openMain(parent)
-                    }
-            }
-            .padding(.leading, 6)
-            .padding(.top, 4)
-            .contextMenu {
-                Button("Show in Widget") { WidgetLaunch.pin(session: parent.sessionId, provider: parent.provider) }
-            }
-        case .main(let parent):
-            AgentMainRow(parent: parent, live: agents.isPresent(parent), selected: agents.selectedID == AgentTree.mainKey(parent.sessionId))
-                .rowButton {
+            AgentParentRow(
+                parent: parent, open: open, running: running, total: total, present: agents.isPresent(parent),
+                reduceMotion: reduceMotion,
+                toggle: { agents.toggle(parent) },
+                select: {
                     listFocused = true
                     agents.openMain(parent)
                 }
+            )
+            .equatable()
+        case .main(let parent):
+            AgentMainRow(
+                parent: parent, present: agents.isPresent(parent),
+                selected: selectedID == AgentTree.mainKey(parent.sessionId),
+                select: {
+                    listFocused = true
+                    agents.openMain(parent)
+                }
+            )
+            .equatable()
         case .child(let node, let parent, let depth):
             let key = AgentTree.key(parent: parent, child: node.id)
-            AgentChildRow(node: node, depth: depth, selected: agents.selectedID == key, showsProject: parent == nil)
-                .rowButton {
+            AgentChildRow(
+                node: node, depth: depth, selected: selectedID == key, showsProject: parent == nil,
+                select: {
                     HubMainBusy.measure("agents.select")
                     listFocused = true
                     agents.selectedID = key
                 }
+            )
+            .equatable()
         case .more(let parent, let hidden):
             Button {
                 expandedAll.insert(parent)
@@ -1379,33 +1379,86 @@ struct AgentsListView: View {
     }
 }
 
-/// Hub navigation supplies values to the same rows used by the Widget session picker.
-private struct AgentParentRow: View {
+// The three rows below are values (no model) and live only under the pointer or while selected (`.liveRow` on the
+// row's outer view): the chevron, the row button and every tooltip exist then, and at rest the kit's components draw
+// the same glyphs with no responder (VoiceOver still presses them). With every row live the Agents sidebar drag cost
+// 119 ms a step with a 1.8 s stall, the other sidebars 10 to 20 ms (2026-10-29; performance.md, "Dense lists and
+// accessibility clients"). Hub navigation supplies values to the same rows used by the Widget session picker.
+
+/// A session: the chevron folds its agents, the rest of the row opens the lead session. No selection of its own
+/// (the open lead session is its Main row), so it is live only under the pointer.
+private struct AgentParentRow: View, Equatable {
     let parent: AgentParent
+    let open: Bool
     let running: Int
     let total: Int
-    let live: Bool
+    /// In the Live group (`HubAgentsModel.isPresent`): the badge's green dot. Not the row's liveness.
+    let present: Bool
+    let reduceMotion: Bool
+    let toggle: () -> Void
+    let select: () -> Void
+
+    /// The fields the row draws, not `children`: the counts come as values, and a child's tick must not draw the
+    /// parent's row again.
+    static func == (a: AgentParentRow, b: AgentParentRow) -> Bool {
+        a.parent.sessionId == b.parent.sessionId && a.parent.title == b.parent.title
+            && a.parent.provider == b.parent.provider && a.parent.project == b.parent.project
+            && a.parent.account == b.parent.account && a.parent.lastAt == b.parent.lastAt
+            && a.open == b.open && a.running == b.running && a.total == b.total && a.present == b.present
+            && a.reduceMotion == b.reduceMotion
+    }
 
     var body: some View {
         let _ = RenderProbe.hit("agents.parentRow.body")
-        AgentRosterGroupLabel(title: parent.displayTitle, provider: parent.provider, project: parent.project,
-                              account: parent.account, total: total, running: running, live: live, lastAt: parent.last)
-            .padding(.leading, 2).padding(.trailing, 16).padding(.vertical, 6)
+        HStack(alignment: .top, spacing: 0) {
+            LiveButton(tooltip: open ? "Fold its agents (Left)" : "Unfold its agents (Right)", pressable: true) {
+                GenMotion.perform(expanding: !open, reduceMotion: reduceMotion) { toggle() }
+            } label: {
+                Image(systemName: open ? "chevron.down" : "chevron.right")
+                    .font(.system(size: 9, weight: .semibold))
+                    .foregroundColor(ReviewPalette.dim)
+                    .frame(width: 22, height: 26)
+                    .contentShape(Rectangle())
+            }
+            AgentRosterGroupLabel(title: parent.displayTitle, provider: parent.provider, project: parent.project,
+                                  account: parent.account, total: total, running: running, live: present,
+                                  lastAt: parent.last)
+                .padding(.leading, 2).padding(.trailing, 16).padding(.vertical, 6)
+                .rowButton { select() }
+        }
+        .padding(.leading, 6)
+        .padding(.top, 4)
+        .liveRow()
+        .contextMenu {
+            Button("Show in Widget") { WidgetLaunch.pin(session: parent.sessionId, provider: parent.provider) }
+        }
     }
 }
 
-private struct AgentMainRow: View {
+/// A session's own Main row: opens the lead session.
+private struct AgentMainRow: View, Equatable {
     let parent: AgentParent
-    let live: Bool
+    /// In the Live group: drawn as "running".
+    let present: Bool
     let selected: Bool
+    let select: () -> Void
+
+    /// The fields the row draws, not `children`.
+    static func == (a: AgentMainRow, b: AgentMainRow) -> Bool {
+        a.parent.sessionId == b.parent.sessionId && a.parent.provider == b.parent.provider
+            && a.parent.model == b.parent.model && a.parent.account == b.parent.account
+            && a.parent.lastAt == b.parent.lastAt && a.present == b.present && a.selected == b.selected
+    }
 
     var body: some View {
         let _ = RenderProbe.hit("agents.mainRow.body")
         AgentRosterRow(title: "Main", provider: parent.provider, role: "lead", model: parent.model,
-                       account: parent.account, status: live ? "running" : "recent", lastAt: parent.last,
+                       account: parent.account, status: present ? "running" : "recent", lastAt: parent.last,
                        selected: selected, showsRunningLabel: true)
             .padding(.leading, 30).padding(.trailing, 10).padding(.vertical, 5)
             .background(selectionBackground).padding(.horizontal, 6)
+            .rowButton { select() }
+            .liveRow(selected: selected)
     }
 
     private var selectionBackground: some View {
@@ -1416,11 +1469,17 @@ private struct AgentMainRow: View {
 
 typealias AgentStatusStyle = AgentRosterStyle
 
-private struct AgentChildRow: View {
+/// One agent: opens its transcript.
+private struct AgentChildRow: View, Equatable {
     let node: AgentNode
     let depth: Int
     let selected: Bool
     let showsProject: Bool
+    let select: () -> Void
+
+    static func == (a: AgentChildRow, b: AgentChildRow) -> Bool {
+        a.node == b.node && a.depth == b.depth && a.selected == b.selected && a.showsProject == b.showsProject
+    }
 
     var body: some View {
         let _ = RenderProbe.hit("agents.childRow.body")
@@ -1435,13 +1494,15 @@ private struct AgentChildRow: View {
                 RoundedRectangle(cornerRadius: 8).fill(selected ? Color.white.opacity(0.08) : .clear)
                     .overlay(RoundedRectangle(cornerRadius: 8).stroke(selected ? Color.accentColor.opacity(0.55) : .clear))
             ).padding(.horizontal, 6)
+            .rowButton { select() }
+            .liveRow(selected: selected)
     }
 }
 
 // MARK: - Detail
 
 struct AgentsMain: View {
-    @ObservedObject var model: HubModel
+    var model: HubModel
     @ObservedObject var agents: HubAgentsModel
 
     var body: some View {
@@ -1494,7 +1555,7 @@ struct AgentPaneContext {
 /// session: the same Transcript, Changes, Files and Decisions panes, the same "Open diff". Only the transcript
 /// pane differs, when an agent is open: it shows that agent's own file, and the header carries its facts.
 private struct AgentLeadScreen: View {
-    @ObservedObject var model: HubModel
+    var model: HubModel
     /// Passed on, not observed: this screen reads nothing of it, and observing it re-ran the lead's screen on
     /// every list refresh of any parent. `parent` and `node` bring the changes that matter.
     let agents: HubAgentsModel
@@ -1523,7 +1584,7 @@ private struct AgentLeadScreen: View {
 
 /// A worker that belongs to no lead session: its header and transcript only.
 private struct AgentDetailView: View {
-    @ObservedObject var model: HubModel
+    var model: HubModel
     @ObservedObject var agents: HubAgentsModel
     let node: AgentNode
 
@@ -1598,7 +1659,7 @@ struct AgentChildTitle: View {
 }
 
 struct AgentCopyIdButton: View {
-    @ObservedObject var model: HubModel
+    var model: HubModel
     let node: AgentNode
 
     var body: some View {

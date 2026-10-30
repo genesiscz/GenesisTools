@@ -185,18 +185,23 @@ public enum TitleFormatter {
     ///
     /// The arguments are read from the span between this command name and the next one, so a
     /// turn carrying several invocations keeps each one's arguments with the right command.
+    // Compiled once: `displayTitle` runs this for every session row body, and a compile per call put
+    // `NSRegularExpression.init` in the Sessions switch sample (7 of the row's samples, 2026-10-29).
+    private static let commandNameRegex = try? NSRegularExpression(
+        pattern: #"<command-name>\s*([^<]+?)\s*</command-name>"#,
+        options: .caseInsensitive
+    )
+    private static let commandArgsRegex = try? NSRegularExpression(
+        pattern: #"<command-args>([\s\S]*?)</command-args>"#,
+        options: .caseInsensitive
+    )
+
     public static func slashInvocations(in text: String) -> [SlashInvocation] {
-        guard let nameRegex = try? NSRegularExpression(
-            pattern: #"<command-name>\s*([^<]+?)\s*</command-name>"#,
-            options: .caseInsensitive
-        ) else { return [] }
+        guard let nameRegex = commandNameRegex else { return [] }
 
         let ns = text as NSString
         let matches = nameRegex.matches(in: text, options: [], range: NSRange(location: 0, length: ns.length))
-        let argsRegex = try? NSRegularExpression(
-            pattern: #"<command-args>([\s\S]*?)</command-args>"#,
-            options: .caseInsensitive
-        )
+        let argsRegex = commandArgsRegex
 
         var invocations: [SlashInvocation] = []
         for (index, match) in matches.enumerated() where match.numberOfRanges >= 2 {

@@ -7,14 +7,15 @@ struct WidgetCmuxButton: View {
     @ObservedObject var model: WidgetModel
     let session: WidgetSession
     var size: CGFloat = 11
-    /// In a list, false on every row but the hovered or selected one: the row then carries no button, tooltip or
-    /// hover sensor, because an accessibility client walks every control of every row per update (swift skill,
-    /// "Dense lists and accessibility clients"). The popover stays attached, so an open one survives the pointer leaving.
-    var live = true
     /// The list this button sits in ("sessions"), so a row's accessibility action (`WidgetModel.requestCmux`) opens the
     /// popover of this row's button and not of another button for the same session elsewhere on screen.
     var requestScope: String?
     @State private var open = false
+    /// In a list, false on every row but the hovered or selected one (`liveRow`): the row then carries no button,
+    /// tooltip, hover sensor or popover, because an accessibility client walks every control of every row per update
+    /// (swift skill, "Dense lists and accessibility clients"). An open popover keeps its button while the pointer is
+    /// in it, and its panel stays live (`.rowLive(true)`) when the row behind it rests.
+    @Environment(\.rowLive) private var live
 
     var body: some View {
         Group {
@@ -24,12 +25,12 @@ struct WidgetCmuxButton: View {
                 }
                 .accessibilityLabel("cmux for " + session.title)
                 .accessibilityIdentifier("widget.cmux." + session.key)
+                .popover(isPresented: $open, arrowEdge: .trailing) {
+                    WidgetCmuxPanel(model: model, session: session).padding(14).frame(width: 380).rowLive(true)
+                }
             } else {
                 Color.clear.frame(width: size + 13, height: size + 13).accessibilityHidden(true)
             }
-        }
-        .popover(isPresented: $open, arrowEdge: .trailing) {
-            WidgetCmuxPanel(model: model, session: session).padding(14).frame(width: 380)
         }
         // The popover takes the pointer out of the edge panel; while it is open the panel must not collapse. Its own
         // flag, as the session chooser has one: closing it must never release a window the host opened.
@@ -42,16 +43,6 @@ struct WidgetCmuxButton: View {
             model.cmuxRequest = nil
             open = true
         }
-    }
-}
-
-/// A list row that knows whether the pointer is on it, for `WidgetCmuxButton(live:)` and its other row-only controls.
-struct WidgetHoverRow<Content: View>: View {
-    @ViewBuilder let content: (Bool) -> Content
-    @State private var hovering = false
-
-    var body: some View {
-        content(hovering).onHover { hovering = $0 }
     }
 }
 

@@ -38,9 +38,25 @@ private struct RowButtonBody: View {
 
 public extension View {
     /// A clickable list row: a real button (keyboard, VoiceOver, automation) with the row hover,
-    /// instead of an `onTapGesture` that none of them see.
+    /// instead of an `onTapGesture` that none of them see. While its row is at rest (`rowLive`, see
+    /// `liveRow`) it is the label as a resting button, with no responder.
     func rowButton(cornerRadius: CGFloat = 8, _ action: @escaping () -> Void) -> some View {
-        Button(action: action) { self }
-            .buttonStyle(RowButtonStyle(cornerRadius: cornerRadius))
+        RowButtonHost(cornerRadius: cornerRadius, action: action, label: self)
+    }
+}
+
+private struct RowButtonHost<Label: View>: View {
+    let cornerRadius: CGFloat
+    let action: () -> Void
+    let label: Label
+    @Environment(\.rowLive) private var live
+
+    var body: some View {
+        if live {
+            Button(action: action) { label }
+                .buttonStyle(RowButtonStyle(cornerRadius: cornerRadius))
+        } else {
+            label.restingButton(action: action)
+        }
     }
 }

@@ -206,65 +206,124 @@ struct AgentWidgetPreview: View {
     }
 
     private func row(_ session: WidgetSession) -> some View {
-        let question = Self.pendingQuestion(model.inboxFor(session.key)?.pendingItem,
+        let inbox = model.inboxFor(session.key)
+        let question = Self.pendingQuestion(inbox?.pendingItem,
             enabled: model.snapshot?.state.preferences.previewQuestion ?? true)
-        return WidgetHoverRow { hovering in HStack(spacing: 4) {
-            Button {
-                model.openInboxNotification(on: surface, key: session.key)
-            } label: {
-                HStack(spacing: 9) {
-                    AIProviderGlyph(meta: AIProviders.meta(for: session.target.provider), size: 21)
-                    VStack(alignment: .leading, spacing: 3) {
-                        Text(session.title).font(.system(size: 11.5, weight: .medium)).lineLimit(1)
-                        HStack(spacing: 5) {
-                            Text(session.project.isEmpty ? session.target.provider.capitalized : session.project)
-                                .lineLimit(1)
-                            Text("·")
-                            Text(session.visualStatus.label).lineLimit(1)
-                        }.font(.system(size: 11)).foregroundStyle(.white.opacity(0.6))
-                        WidgetSessionTimes(session: session, inbox: model.inboxFor(session.key))
-                        // The waiting question itself, so an alert that folded can be found again here (Martin,
-                        // 2026-10-25: "I can't seem to find that same stuff anywhere").
-                        if let question {
-                            Text(question)
-                                .font(.system(size: 11)).foregroundStyle(Color.orange.opacity(0.9)).lineLimit(1)
-                        }
-                    }
-                    Spacer(minLength: 2)
-                    if let inbox = model.inboxFor(session.key), inbox.unread + inbox.needsAnswer > 0 {
-                        WidgetInboxCount(count: inbox.unread + inbox.needsAnswer, needsAnswer: inbox.needsAnswer > 0,
-                            pulse: model.inboxPulseFor(session.key), reduceMotion: model.effectiveReduceMotion,
-                            complete: model.inbox.complete)
-                    } else {
-                        WidgetActivityIndicator(status: session.visualStatus, animate: !model.effectiveReduceMotion)
-                            .frame(width: 12, height: 12)
-                    }
-                }
-                .padding(.horizontal, 9).padding(.vertical, 9)
-                .frame(maxWidth: .infinity, alignment: .leading)
-                .contentShape(Rectangle())
-            }
-            .buttonStyle(RowButtonStyle(cornerRadius: 10))
-            .accessibilityLabel(Self.rowAccessibilityLabel(session, question: question))
-            WidgetCmuxButton(model: model, session: session, live: hovering)
-        } }
-        .padding(.trailing, 4)
-        .accessibilityAction(named: "Open cmux for " + session.title) { cmuxPanelKey = session.key }
-        .popover(isPresented: Binding(get: { cmuxPanelKey == session.key }, set: { if !$0 { cmuxPanelKey = nil } }),
-                 arrowEdge: .trailing) {
-            WidgetCmuxPanel(model: model, session: session).padding(14).frame(width: 380)
-        }
-        .background(
-            model.inboxFor(session.key).map { $0.needsAnswer > 0 } == true || session.status == "waiting"
-                ? Color.orange.opacity(0.065) : .white.opacity(0.025),
-            in: RoundedRectangle(cornerRadius: 10))
-        .attentionPulse(trigger: model.attentionTrigger(session.key), style: rowAttention, since: model.attentionStart(session.key))
+        return WidgetPreviewRosterRow(
+            session: session, inbox: inbox, question: question, pulse: model.inboxPulseFor(session.key),
+            reduceMotion: model.effectiveReduceMotion, complete: model.inbox.complete,
+            panelOpen: cmuxPanelKey == session.key, model: model,
+            open: { model.openInboxNotification(on: surface, key: session.key) },
+            openPanel: { cmuxPanelKey = session.key }, closePanel: { cmuxPanelKey = nil })
+            .equatable()
+            .attentionPulse(trigger: model.attentionTrigger(session.key), style: rowAttention,
+                            since: model.attentionStart(session.key))
     }
 
     private var rowAttention: AttentionPulseStyle {
         var style = model.attentionStyle
         style.cornerRadius = 10
         return style
+    }
+}
+
+/// One session of the peek roster, from values. The row is a button (open its inbox) only while live (`liveRow`:
+/// hovered, or its cmux popover open). At rest it draws the same labels with no control, and the popover its
+/// accessibility action opens is not attached, so a model publish re-renders only the rows whose values changed and an
+/// accessibility client walks no buttons of the rows at rest (swift skill, "Dense lists and accessibility clients").
+/// VoiceOver still presses it (`rowButton`). The attention pulse stays with `AgentWidgetPreview.row`.
+struct WidgetPreviewRosterRow: View, Equatable {
+    let session: WidgetSession
+    let inbox: WidgetInboxSession?
+    /// The waiting question shown under the row (`AgentWidgetPreview.pendingQuestion`).
+    let question: String?
+    let pulse: Int
+    let reduceMotion: Bool
+    /// The inbox snapshot holds every item; else the count reads "n+".
+    let complete: Bool
+    /// The row's own cmux popover (its accessibility action) is open.
+    let panelOpen: Bool
+    /// Not observed by the row: the cmux button and the cmux panel use it.
+    let model: WidgetModel
+    let open: () -> Void
+    let openPanel: () -> Void
+    let closePanel: () -> Void
+
+    static func == (a: WidgetPreviewRosterRow, b: WidgetPreviewRosterRow) -> Bool {
+        a.session == b.session && a.inbox == b.inbox && a.question == b.question && a.pulse == b.pulse
+            && a.reduceMotion == b.reduceMotion && a.complete == b.complete && a.panelOpen == b.panelOpen
+    }
+
+    var body: some View {
+        let _ = RenderProbe.hit("widget.peek.row.body")
+        HStack(spacing: 4) {
+            labels
+                .rowButton(cornerRadius: 10) { open() }
+                .accessibilityLabel(AgentWidgetPreview.rowAccessibilityLabel(session, question: question))
+            WidgetCmuxButton(model: model, session: session)
+        }
+        .padding(.trailing, 4)
+        .accessibilityAction(named: "Open cmux for " + session.title) { openPanel() }
+        .background {
+            WidgetRowPopoverAnchor(open: panelOpen, close: closePanel) {
+                WidgetCmuxPanel(model: model, session: session).padding(14).frame(width: 380)
+            }
+        }
+        .background(
+            inbox.map { $0.needsAnswer > 0 } == true || session.status == "waiting"
+                ? Color.orange.opacity(0.065) : .white.opacity(0.025),
+            in: RoundedRectangle(cornerRadius: 10))
+        .liveRow(selected: panelOpen)
+    }
+
+    private var labels: some View {
+        HStack(spacing: 9) {
+            AIProviderGlyph(meta: AIProviders.meta(for: session.target.provider), size: 21)
+            VStack(alignment: .leading, spacing: 3) {
+                Text(session.title).font(.system(size: 11.5, weight: .medium)).lineLimit(1)
+                HStack(spacing: 5) {
+                    Text(session.project.isEmpty ? session.target.provider.capitalized : session.project)
+                        .lineLimit(1)
+                    Text("·")
+                    Text(session.visualStatus.label).lineLimit(1)
+                }.font(.system(size: 11)).foregroundStyle(.white.opacity(0.6))
+                WidgetSessionTimes(session: session, inbox: inbox)
+                // The waiting question itself, so an alert that folded can be found again here (Martin,
+                // 2026-10-25: "I can't seem to find that same stuff anywhere").
+                if let question {
+                    Text(question)
+                        .font(.system(size: 11)).foregroundStyle(Color.orange.opacity(0.9)).lineLimit(1)
+                }
+            }
+            Spacer(minLength: 2)
+            if let inbox, inbox.unread + inbox.needsAnswer > 0 {
+                WidgetInboxCount(count: inbox.unread + inbox.needsAnswer, needsAnswer: inbox.needsAnswer > 0,
+                    pulse: pulse, reduceMotion: reduceMotion, complete: complete)
+            } else {
+                WidgetActivityIndicator(status: session.visualStatus, animate: !reduceMotion)
+                    .frame(width: 12, height: 12)
+            }
+        }
+        .padding(.horizontal, 9).padding(.vertical, 9)
+        .frame(maxWidth: .infinity, alignment: .leading)
+        .contentShape(Rectangle())
+    }
+}
+
+/// A row's popover, attached only while the row is live (`rowLive`; an open popover keeps its row live through
+/// `liveRow(selected:)`), so a resting row carries no presentation host. Its content stays live (`.rowLive(true)`).
+private struct WidgetRowPopoverAnchor<Content: View>: View {
+    let open: Bool
+    let close: () -> Void
+    @ViewBuilder let content: () -> Content
+    @Environment(\.rowLive) private var live
+
+    var body: some View {
+        if live {
+            Color.clear.popover(isPresented: Binding(get: { open }, set: { if !$0 { close() } }), arrowEdge: .trailing) {
+                content().rowLive(true)
+            }
+        }
     }
 }
 

@@ -20,7 +20,7 @@ let missed = 0;
 for (const mode of modes) {
     openHub(mode, opts);
     await Bun.sleep(mode === "prs" ? Math.max(settle, 25_000) : settle);
-    const edges = resizeEdges();
+    const edges = await resizeEdges();
     console.log(
         `## ${mode}: ${edges.map((e) => `${e.desc} @${e.x},${e.y} ${e.w}x${e.h}`).join("; ") || "no resize edges"}`
     );

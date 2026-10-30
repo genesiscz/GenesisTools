@@ -167,9 +167,15 @@ time over the next 600 ms, which is what an append or a reload really costs on s
 🛑 The live hub always has an accessibility client, and then SwiftUI walks every responder of the
 window once per accessibility node an update touches: a click's cost grows with rows × controls per
 row × rows (stall stacks: `AccessibilityNode.updateFocusResponder`). Rows of a dense list take values,
-not the hub's models (`TimelineRowView`), and carry buttons, hover sensors and tooltips only while the
-pointer is on them (its `live`, `ExternalLink(interactive:)`). A list that inserts rows above the
-viewport holds it with `TranscriptScrollAnchor` (GenesisKit Sessions/Transcript/TranscriptScrollAnchor.swift).
+not the hub's models, are `Equatable` with `.equatable()`, and set their liveness once:
+`.liveRow(selected:)` on the row's outer view (GenesisKitBase `Style/LiveRow.swift`). The shared controls
+(`rowButton`, `IconButton`, `instantTooltip` and so every badge, `PathLabel`, `MenuButton`, `LiveButton`,
+`ExternalLink`, `CIBadge`, `PRStateIcon`, `PRReadinessBadge`) read `rowLive` and draw the same label with no
+responder in a resting row; a row never gates a control itself (`live ? x : nil`, `interactive:`,
+`if live { Button } else { Image }` are the defect), and a raw `Button` or `Toggle` in a row is a `LiveButton`.
+A new shared control reads `rowLive` before it ships (`PRRow` in Hub/HubPRs.swift is the reference). A list
+that inserts rows above the viewport holds it with `TranscriptScrollAnchor` (GenesisKit
+Sessions/Transcript/TranscriptScrollAnchor.swift).
 
 🛑 Moving a SwiftUI `List`'s viewport inside the resize of a row insert (a frame-change observer that
 scrolls at once, as `TranscriptScrollAnchor` does to stay still) stops AppKit re-measuring the rows on

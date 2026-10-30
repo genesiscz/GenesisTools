@@ -335,7 +335,7 @@ final class ProcessCancelHandle: @unchecked Sendable {
 // MARK: - Views
 
 struct WorktreeListView: View {
-    @ObservedObject var model: HubModel
+    var model: HubModel
     @StateObject private var prefs = GroupPrefs(key: "worktrees.repos")
 
     private var groups: [(repo: String, rows: [HubWorktree])] {
@@ -346,6 +346,7 @@ struct WorktreeListView: View {
     }
 
     var body: some View {
+        let _ = RenderProbe.hit("worktrees.list.body")
         let groups = groups
         ScrollViewReader { proxy in
             ScrollView {
@@ -362,8 +363,14 @@ struct WorktreeListView: View {
                         Section {
                             if !prefs.collapsed.contains(group.repo) {
                                 ForEach(group.rows) { worktree in
-                                    row(worktree)
-                                        .id(worktree.path)
+                                    WorktreeRow(
+                                        worktree: worktree,
+                                        count: model.sessionCount(for: worktree),
+                                        selected: model.selectedWorktree == worktree.path,
+                                        select: { model.selectWorktree(worktree) }
+                                    )
+                                    .equatable()
+                                    .id(worktree.path)
                                 }
                             }
                         } header: {
@@ -388,11 +395,26 @@ struct WorktreeListView: View {
             ))
         }
     }
+}
 
-    private func row(_ worktree: HubWorktree) -> some View {
-        let count = model.sessionCount(for: worktree)
-        let selected = model.selectedWorktree == worktree.path
-        return HStack(spacing: 8) {
+/// One worktree of the sidebar, from values. Live (`liveRow`: the row button with its hover fill, the tooltips) while
+/// the pointer is on it or it is selected; at rest it draws the same labels with no control, so an accessibility
+/// client's responder walk no longer visits 38 rows of button, tooltips and count badge per changed node
+/// (`mode.worktrees` 253 ms per switch, 2026-10-29). VoiceOver still presses it (the resting `rowButton`).
+struct WorktreeRow: View, Equatable {
+    let worktree: HubWorktree
+    /// Agent sessions that worked in the folder.
+    let count: Int
+    let selected: Bool
+    let select: () -> Void
+
+    static func == (a: WorktreeRow, b: WorktreeRow) -> Bool {
+        a.worktree == b.worktree && a.count == b.count && a.selected == b.selected
+    }
+
+    var body: some View {
+        let _ = RenderProbe.hit("worktrees.row.body")
+        HStack(spacing: 8) {
             Image(systemName: worktree.isMain ? "house" : "arrow.triangle.branch")
                 .font(.system(size: 11))
                 .foregroundColor(ReviewPalette.dim)
@@ -418,9 +440,13 @@ struct WorktreeListView: View {
         .background(RoundedRectangle(cornerRadius: 8).fill(selected ? Color.white.opacity(0.08) : Color.clear))
         .padding(.horizontal, 6)
         .contentShape(Rectangle())
-        .rowButton { model.selectWorktree(worktree) }
+        .rowButton { select() }
+        .accessibilityLabel(Text(verbatim: count > 0
+            ? "\(worktree.branch), \(worktree.name), \(count) agent sessions worked here"
+            : "\(worktree.branch), \(worktree.name)"))
         // The branch and the folder truncate in the row; the tooltip and the menu carry them whole.
         .instantTooltip("\(worktree.branch)\n\(PathLabel.display(worktree.path))")
+        .liveRow(selected: selected)
         .contextMenu {
             Button("Copy branch") { PathOpener.copy(worktree.branch, what: "branch") }
             Divider()
@@ -430,13 +456,14 @@ struct WorktreeListView: View {
 }
 
 struct WorktreeDetailView: View {
-    @ObservedObject var model: HubModel
+    var model: HubModel
     @ObservedObject private var repos = RepoFactsStore.shared
     let worktree: HubWorktree
     @State private var launchingNew = false
     @State private var resuming: HubSession?
 
     var body: some View {
+        let _ = RenderProbe.hit("worktrees.detail.body")
         let touching = model.sessions(for: worktree)
         let facts = repos.facts(for: worktree.path, pr: true)
         VStack(spacing: 0) {

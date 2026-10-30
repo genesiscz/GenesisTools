@@ -3,6 +3,36 @@
 Newest first. Each entry: date, symptom as the user saw it, cause, fix, commit. Generic lessons go to
 checklist.md or motion.md as well.
 
+- 2026-10-30 15:50 — **The rm approval window, round two (❓ DECISION 183: "what features might be sensible there?").**
+  - *A person could only say yes to everything or no.* Now a checkbox per row (all on; the title follows, "Delete 3
+    of 5 items"; the sensor pauses with nothing ticked), two ways out ("Move to the trash", "Delete permanently"),
+    a remember picker from the CLI's choices, and "Deny…" with a one-line note the agent reads.
+  - *Nothing said who asked or let the person look.* Links to the session's inbox and terminal, "No reason given"
+    dimmed, "Asked 3 minutes ago", a git badge per row (untracked / modified / ignored / clean with its last commit),
+    a folder's "12 files, newest 2 hours ago", "Also asked by request …" for a duplicated path, gone items last, a
+    total line, Quick Look on the eye button or the space bar, and the keys under the countdown.
+  - *The window vanished the moment the sensor answered.* It stays 4 s with "Approved: moving to the trash" and
+    `tools rm restore <id>` to copy; the reply goes out at once (`emitResultAndStay`).
+  - The CLI side (selected rows, disposal, remember roots, deny note, git state, duplicates) is in
+    `src/utils/rm/approval.ts` and `src/rm/commands/requests.ts`; the contract is in
+    `.claude/plans/2026-10-30-RmApprovalWindowFeatures.md`. Shots:
+    Approvals/Screenshot/2026-10-30-1548-approvals-rm-window-features{,-list}.png.
+
+- 2026-10-30 15:25 — **The rm approval window (GenesisTools.app `rm.approve`): "the touchid confirmation is unpolished".**
+  - *The Touch ID glyph was huge, cut by the window's left edge and drawn under the buttons.* `LAAuthenticationView`
+    was made with `controlSize: .regular` (64 pt) and centred in a 32 pt host with no size constraints, so it drew at
+    64 pt whatever the frame. Fix: `.small` (32 pt, the size of the lock and checkmark it alternates with), pinned to
+    its `fittingSize`, and the host reports that size (swift gotchas, "Dialogs").
+  - *An empty band under the buttons.* The 28 pt band the first version had on top had moved: `.ignoresSafeArea()`
+    drew the view from the top, but the hosting controller's fitting size still carried the hidden title bar, so
+    the panel was 28 pt too tall. Fix: `controller.safeAreaRegions = []`, no `.ignoresSafeArea()`. The vault and
+    account windows share the presenter, so they lose the band too.
+  - *The half row at the end of a long list looked drawn wrong.* The scroll cue faded the cut row to 15% over 18 pt.
+    Fix: to clear over 28 pt.
+  - To see the window without spending an approval: the request's rows through the `rm.approve` RPC, the answer
+    ignored (`tools rm approve` itself is refused for an agent by the shell guard, and a touch there would delete).
+    Shots: Approvals/Screenshot/2026-10-30-1521-approvals-rm-window-{,list-}{before,after}.png.
+
 - 2026-10-29 19:41 — **Hub resizing, judged after Opus's pass: the right side of a dragged panel jumped, releases hitched, the monitor cried loop.**
   - *Right-aligned content jumped and was cut while the sidebar was dragged.* Opus laid the panel's content out in 12 pt
     buckets of the live width (`5dbafec4b5`), so times, chips and badges sat up to 12 pt past or short of the edge and
@@ -405,3 +435,15 @@ checklist.md or motion.md as well.
   reads Genesis Markdown's `~/.genesis/logs/perf.log`. Rule: work that starts processes per item is queued per shared
   resource, and the launcher counts what it starts.
 - 2026-10-24 20:29 — **Second correction: the hover list's real cause was alpha passthrough, not SwiftUI's hover.** The 19:43 tracking-area fix still flapped (open and close about once a second, 20:25 to 20:27), because the edge panel's clear window gave its alpha-0 pixels to the window below while the list laid out. `ignoresMouseEvents = false` on the panel (3e80832422) fixed it; the list then stayed open under a resting pointer. Rule: a clear window that must keep the pointer sets `ignoresMouseEvents = false` explicitly; check that the window hides with `orderOut`, so no invisible window keeps taking clicks.
+- 2026-10-29 21:32 — **A row's controls exist only while the row is live, and the row says so once.** Dense lists
+  (PRs, sessions, worktrees, agents, PR commits and threads, the widget's sessions, tasks and inbox) carried a button,
+  a tooltip and a link per row at rest; with an accessibility client every update walked all of them (PRs sidebar
+  drag stalls of 0.4 to 2.5 s). Now a row puts `.liveRow(selected:)` on its outer view and the shared components
+  (`rowButton`, `IconButton`, `instantTooltip`, badges, `PathLabel`, `MenuButton`, `LiveButton`, `ExternalLink`) draw
+  the same label with no control until the pointer arrives or the row is selected, open or replying. What the user
+  sees: nothing moves on hover (a resting glyph keeps the button's footprint), the hover fill and tooltips appear on
+  the first pointer move over the row, VoiceOver and `tools control` still press every control (`restingButton`).
+  Rule: a new control in a row needs no gating of its own; a new shared control reads `rowLive` before it ships;
+  a per-call `live ? x : nil` is the defect (Martin, 2026-10-29 21:30: "doing those checks INSIDE some util or
+  component instead of every caller").
+

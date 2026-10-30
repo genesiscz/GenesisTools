@@ -203,7 +203,7 @@ final class PromptLibraryStore: ObservableObject {
 
 /// ⌘⇧P on the hub window toggles the picker (`HubKeymap`). This hosts it over the window.
 private struct HubPromptsModifier: ViewModifier {
-    @ObservedObject var model: HubModel
+    var model: HubModel
     @ObservedObject private var store = PromptLibraryStore.shared
 
     func body(content: Content) -> some View {

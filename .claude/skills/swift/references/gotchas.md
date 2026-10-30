@@ -364,9 +364,17 @@ Keep measured findings separate from hypotheses; faster CPU numbers alone do not
   never ran; the caller's own 180 s timeout killed the window with no audit line, and the caller asked again. Fix:
   a non-modal panel (GenesisKit `ApprovalPanelPresenter`) and the deadline as a cancellable `DispatchWorkItem`.
 - **`NSHostingController` in a `.fullSizeContentView` window insets its content by the hidden title bar.** The
-  first approval panel had an empty 28 pt band on top. `.ignoresSafeArea()` on the root view; the strip still
-  drags through `.titlebarZone()`. `controller.sizingOptions = [.preferredContentSize]` makes the panel follow the
-  view, so a disclosure grows and shrinks it.
+  first approval panel had an empty 28 pt band on top. `.ignoresSafeArea()` on the root view moved the band: the
+  view drew from the top, but the controller's fitting size still carried the bar's 28 pt, so the panel was 28 pt
+  too tall and the band sat under the buttons (the rm window, 2026-10-30). The fix is `controller.safeAreaRegions =
+  []` (macOS 13.3+): no inset, no `.ignoresSafeArea()`, the fitting size is the view's own. The strip still drags
+  through `.titlebarZone()`. `controller.sizingOptions = [.preferredContentSize]` makes the panel follow the view,
+  so a disclosure grows and shrinks it.
+- **`LAAuthenticationView` draws at its control size, whatever frame it gets.** Measured 2026-10-30: `.mini` 16 pt,
+  `.small` 32, `.regular` 64, `.large` 128 (`fittingSize`; `intrinsicContentSize` is -1). A `.regular` glyph centred
+  in a 32 pt host spilled over the window's edge and under the buttons. Pin its width and height to `fittingSize`,
+  report that as the host's intrinsic size, and pick the control size for the line it sits on (`.small` beside a
+  13 pt headline).
 - **A `Text` in a `Grid` cut a path in the middle at one line while the window had room for two.** The grid measured
   the row once at one line. `.fixedSize(horizontal: false, vertical: true)` with the `lineLimit` you want.
 - **Five controls in one row of a 480 pt dialog cut the default button's title** ("Allow with…") and wrapped a
@@ -581,3 +589,31 @@ Keep measured findings separate from hypotheses; faster CPU numbers alone do not
 - **A file view that follows the selection must keep its last answer.** When the open tab is a file outside any
   repository, the repository list kept showing the previous repository (`lastRepo`) instead of "not in a git
   repository".
+
+## Observation migration, and rows that are live only under the pointer — 2026-10-29 21:32
+
+- **`withObservationTracking`'s `onChange` fires once, on `willSet`, on the mutating thread, as `@Published` did.**
+  Re-arm it inside `onChange` (synchronously), and do the work there too when a reader expects the old timing: the
+  hub's commit-link request id flipped on every place change in the publisher's `sink`; a `DispatchQueue.main.async`
+  re-arm flipped it one turn late, and 15 navigation tests failed (`XCTAssertNotEqual` on the id, the review scope
+  cleared). The record that must see the landed value is scheduled from there (`scheduleNavRecord`).
+- **Combine `$property` publishers vanish with `@Observable`.** A test that `model.$worktrees.sink`s must poll the
+  value (50 ms, deadline 5 s), a recorder that merged `$mode`, `$selectedID` becomes `withObservationTracking`,
+  and `@Bindable var model` replaces `@ObservedObject` only where a `$binding` is taken. The others become `var`.
+- **Observation fires on an equal set too.** `if x != y { x = y }` stays the rule (gotchas "An `@Published`
+  assignment publishes even when the value does not change").
+- **`RenderProbe.watch` counts `objectWillChange` and sees nothing on an `@Observable` model.** The `bodies[…]`
+  counts on the busy lines (`GENESIS_RENDER_PROBE=1`, `RenderProbe.hit` at the top of each body) are the measure.
+- **The row's own body cannot read the environment its own modifier sets.** `.liveRow(selected:)` sets `rowLive` for
+  the row's content; `@Environment(\.rowLive)` in the row struct reads the parent's value (true). The components
+  inside read it; a row-level layout decision is a child view.
+- **A control that is a `Button` only while live gets its hover fill on the next pointer move.** The button is made
+  when the row turns live, and AppKit reports `mouseEntered` to a new tracking area on the next event, not at once.
+  Nobody saw it in use; a drag or a click-on-arrival test would.
+- **A resting glyph must keep the button's footprint.** `genHoverIcon` pads the 16 pt glyph by 3 pt; a bare `Image`
+  at rest moved the row's text by 6 pt on hover. `IconButton` pads itself at rest; `genHoverPlain` and
+  `RowButtonStyle` add nothing, so their labels need no padding.
+- **Five agents hand-gating fifteen rows wrote the same twenty lines fifteen times.** When the same check appears in
+  every caller, the component is the place for it (an environment value a row sets once), and the second agent
+  should have been the signal, not the fifth (Martin, 2026-10-29 21:30).
+

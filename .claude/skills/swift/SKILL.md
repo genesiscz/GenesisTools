@@ -55,7 +55,7 @@ that is wrong for this app, and the rules that wait for `@Observable`, Swift 6 o
 | Symptom | Cause | Fix |
 | --- | --- | --- |
 | Idle window at 5-25% CPU | SwiftUI `repeatForever` animation lays the window out every frame | Core Animation layer animation in an `NSViewRepresentable` |
-| Click 2-18× slower in real use than in tests | An accessibility client is attached | Bench with one attached; value rows; controls only on hover |
+| Click 2-18× slower in real use than in tests | An accessibility client is attached | Bench with one attached; value rows with `.liveRow`, the kit's controls gate themselves |
 | 140 ms - 1.2 s on opening a pane | `WKWebView` created on the click | A fresh spare made in a quiet moment |
 | 1.4 s stall when a list arrives | `withAnimation` around a first load | Animate only small changes to a list on screen |
 | Refresh re-reads unchanged files | No memory of the last answer | File-identity caches; resume append-only files |

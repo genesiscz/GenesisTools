@@ -302,7 +302,7 @@ enum TimelineDetailFind {
 // MARK: - Views
 
 struct TimelineDetailView: View {
-    @ObservedObject var model: HubModel
+    var model: HubModel
     @ObservedObject var timeline: HubTimelineModel
     let event: TimelineEvent
 
@@ -374,7 +374,7 @@ private enum DetailFormat {
 }
 
 struct TimelineSessionDetailView: View {
-    @ObservedObject var model: HubModel
+    var model: HubModel
     @ObservedObject var timeline: HubTimelineModel
     let event: TimelineEvent
     let detail: TimelineSessionDetail
@@ -483,7 +483,7 @@ struct TimelineSessionDetailView: View {
 }
 
 struct TimelineCommitDetailView: View {
-    @ObservedObject var model: HubModel
+    var model: HubModel
     @ObservedObject var timeline: HubTimelineModel
     let event: TimelineEvent
     let detail: TimelineCommitDetail
@@ -601,7 +601,7 @@ struct TimelineCommitDetailView: View {
 }
 
 struct TimelinePushDetailView: View {
-    @ObservedObject var model: HubModel
+    var model: HubModel
     let event: TimelineEvent
     let detail: TimelinePushDetail
 
@@ -671,7 +671,7 @@ struct TimelinePushDetailView: View {
 }
 
 struct TimelinePRDetailView: View {
-    @ObservedObject var model: HubModel
+    var model: HubModel
     let event: TimelineEvent
     let detail: TimelinePRDetail
 
@@ -764,7 +764,7 @@ struct TimelinePRDetailView: View {
 }
 
 struct TimelineThreadDetailView: View {
-    @ObservedObject var model: HubModel
+    var model: HubModel
     let event: TimelineEvent
     let detail: TimelineThreadDetail
 

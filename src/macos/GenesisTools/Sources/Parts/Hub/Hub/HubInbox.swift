@@ -1321,13 +1321,14 @@ final class HubInboxModel: ObservableObject {
 // MARK: - Sidebar
 
 struct InboxListView: View {
-    @ObservedObject var model: HubModel
+    var model: HubModel
     @ObservedObject var inbox: HubInboxModel
     @AppStorage("hub.inbox.sort") private var sortKey = InboxSort.recent.rawValue
 
     private var sort: InboxSort { InboxSort(rawValue: sortKey) ?? .recent }
 
     var body: some View {
+        let _ = RenderProbe.hit("inbox.list.body")
         let rows = inbox.sorted(sort, filter: model.filter)
         VStack(spacing: 0) {
             HStack(spacing: 6) {
@@ -1375,9 +1376,13 @@ struct InboxListView: View {
                     // An empty Inbox says so once, in the main pane, with the header's one reload (P6).
                     let older = rows.filter(\.isStale)
                     ForEach(rows.filter { !$0.isStale }) { session in
-                        InboxSessionRow(session: session, selected: session.id == inbox.selectedID)
-                            .rowButton { inbox.selectedID = session.id }
-                            .accessibilityAddTraits(session.id == inbox.selectedID ? .isSelected : [])
+                        InboxSessionRow(
+                            session: session,
+                            selected: session.id == inbox.selectedID,
+                            select: { inbox.selectedID = session.id }
+                        )
+                        .equatable()
+                        .accessibilityAddTraits(session.id == inbox.selectedID ? .isSelected : [])
                     }
                     if !older.isEmpty {
                         // The header alone is the disclosure, inset like the rows; the rows keep their own insets.
@@ -1393,9 +1398,13 @@ struct InboxListView: View {
                         .instantTooltip("Nothing moved in these sessions for three days. Their questions stay answerable here; they no longer count as waiting.")
                         if inbox.showsQuiet {
                             ForEach(older) { session in
-                                InboxSessionRow(session: session, selected: session.id == inbox.selectedID)
-                                    .rowButton { inbox.selectedID = session.id }
-                                    .accessibilityAddTraits(session.id == inbox.selectedID ? .isSelected : [])
+                                InboxSessionRow(
+                                    session: session,
+                                    selected: session.id == inbox.selectedID,
+                                    select: { inbox.selectedID = session.id }
+                                )
+                                .equatable()
+                                .accessibilityAddTraits(session.id == inbox.selectedID ? .isSelected : [])
                             }
                         }
                     }
@@ -1425,9 +1434,19 @@ private struct InboxLoadFailure: View {
     }
 }
 
-private struct InboxSessionRow: View {
+/// One waiting session of the Inbox sidebar, from values. Live (`liveRow`: the row button with its hover fill, the
+/// tooltips) while the pointer is on it or it is selected; at rest it draws the same labels with no control, so an
+/// accessibility client's responder walk no longer visits every row's button, provider badge and count tooltip per
+/// changed node (40 row bodies per switch to the Inbox, 178 ms, 2026-10-29). VoiceOver still presses it (the
+/// resting `rowButton`).
+private struct InboxSessionRow: View, Equatable {
     let session: InboxSession
     let selected: Bool
+    let select: () -> Void
+
+    static func == (a: InboxSessionRow, b: InboxSessionRow) -> Bool {
+        a.session == b.session && a.selected == b.selected
+    }
 
     /// What the badge counts: questions that wait for the user's answer, never "answers waiting" (F13).
     private var waitingText: String {
@@ -1439,7 +1458,16 @@ private struct InboxSessionRow: View {
     /// Decisions staged here and not sent: blue, the widget's colour for Staged (F2).
     private var staged: Int { session.draftedItems.count }
 
+    /// What VoiceOver reads for the row: what the labels show, without the age.
+    private var spokenLabel: String {
+        var parts = [session.displayTitle, session.projectName]
+        if staged > 0 { parts.append("\(staged) staged") }
+        parts.append(session.waiting > 0 ? waitingText : "Waiting to send")
+        return parts.joined(separator: ", ")
+    }
+
     var body: some View {
+        let _ = RenderProbe.hit("inbox.sessionRow.body")
         HStack(alignment: .top, spacing: 9) {
             ProviderBadge(provider: session.provider ?? "?")
                 .padding(.top, 1)
@@ -1488,6 +1516,9 @@ private struct InboxSessionRow: View {
         )
         .padding(.horizontal, 6)
         .contentShape(Rectangle())
+        .rowButton { select() }
+        .accessibilityLabel(Text(verbatim: spokenLabel))
+        .liveRow(selected: selected)
     }
 }
 
@@ -1498,7 +1529,7 @@ enum InboxStyle {
 // MARK: - Main
 
 struct InboxMain: View {
-    @ObservedObject var model: HubModel
+    var model: HubModel
     @ObservedObject var inbox: HubInboxModel
     @AppStorage("hub.inbox.sort") private var sortKey = InboxSort.recent.rawValue
     /// The list has the keyboard: Up and Down move the key card, 1 to 9 pick its options, Return opens its note (F8).
@@ -1506,6 +1537,7 @@ struct InboxMain: View {
     @GenReduceMotion private var reduceMotion
 
     var body: some View {
+        let _ = RenderProbe.hit("inbox.main.body")
         let rows = inbox.sorted(InboxSort(rawValue: sortKey) ?? .recent, filter: model.filter)
         VStack(spacing: 0) {
             header(rows)
@@ -1679,6 +1711,7 @@ struct InboxMain: View {
                                       keyed: keysFocused && inbox.keyCardID == item.id,
                                       state: inbox.cardState(for: item, in: session, hubSession: hubSession(session)))
                         .equatable()
+                        .liveRow()
                 }
             }
             .attentionPulse(trigger: inbox.revealCounts[item.id] ?? 0,
@@ -1816,7 +1849,7 @@ enum InboxListRow: Identifiable {
 /// A session's header in the Inbox: provider, title, project, branch, the session's details, its cmux pane and its
 /// transcript.
 private struct InboxSessionHeader: View {
-    @ObservedObject var model: HubModel
+    var model: HubModel
     @ObservedObject var inbox: HubInboxModel
     let session: InboxSession
     let hubSession: HubSession?
@@ -1888,7 +1921,7 @@ private struct InboxSessionHeader: View {
 /// (or why it did not, with Resume elsewhere). Shared by the Inbox section and the Decisions pane, so
 /// both send the same way: every staged answer as one message through `tools question inbox send`.
 struct InboxSendBar: View {
-    @ObservedObject var model: HubModel
+    var model: HubModel
     @ObservedObject var inbox: HubInboxModel
     let session: InboxSession
     /// The Decisions pane shows one session's bar, whatever the Inbox has selected, so that bar takes ⌘↩.
@@ -2112,8 +2145,8 @@ struct InboxDecisionCard: View, Equatable {
     @State private var showAsk = false
     @State private var showReply = false
     @State private var showsDeliveryDetails = false
-    /// The pointer is on the card.
-    @State private var hovering = false
+    /// The pointer is on the card: the list sets it (`.liveRow()` around each card), so the card's own body can read it.
+    @Environment(\.rowLive) private var hovering
     /// A click or a VoiceOver press on the resting note asked for the real field (`openNote`).
     @State private var noteOpen = false
     @FocusState private var noteFocused: Bool
@@ -2125,7 +2158,8 @@ struct InboxDecisionCard: View, Equatable {
     /// The card's options, footer and note field are real controls (buttons with hover styles and tooltips, a text
     /// field) only while the pointer is on it, it is the key card, or its note has or asked for the keyboard; otherwise
     /// the same labels, which VoiceOver still presses (`restingButton`, `restingNote`). Each control is a responder that
-    /// SwiftUI walks per changed accessibility node (F1).
+    /// SwiftUI walks per changed accessibility node (F1). The kit's controls read it through `rowLive` (set on the
+    /// card's content below); the body's own two decisions (the note field, the option buttons) read it here.
     private var live: Bool { hovering || state.keyCard || noteFocused || noteOpen }
     private var sessionSending: Bool { state.sessionSending }
     private var pickable: Bool { item.isOpen && session.sessionId != nil }
@@ -2163,6 +2197,7 @@ struct InboxDecisionCard: View, Equatable {
     }
 
     var body: some View {
+        let _ = RenderProbe.hit("inbox.decisionCard.body")
         VStack(alignment: .leading, spacing: 9) {
             headerRow
             if let ask = session.reply?.ask, !ask.isEmpty, item.source == "transcript" {
@@ -2206,11 +2241,8 @@ struct InboxDecisionCard: View, Equatable {
         // The main list's key card: the system's focus colour, as the widget's keyboard option draws it.
         .overlay(RoundedRectangle(cornerRadius: 11).strokeBorder(keyed ? Color(nsColor: .keyboardFocusIndicatorColor) : .clear,
                                                                  lineWidth: 1.5).allowsHitTesting(false))
-        .onHover { inside in
-            if hovering != inside { hovering = inside }
-        }
-        // A card that scrolls out from under a still pointer gets no exit event (`RowButtonStyle` does the same).
-        .onDisappear { hovering = false }
+        // The key card and an open note keep the controls live without the pointer.
+        .rowLive(live)
         .findRow(item.id, cornerRadius: 11)
         .onAppear {
             if !noteSeeded {
@@ -2270,11 +2302,11 @@ struct InboxDecisionCard: View, Equatable {
             if let confidence = item.confidence {
                 // Was a raw "[medium]" beside the title.
                 Badge("\(confidence.capitalized) confidence", color: Self.confidenceColor(confidence), look: .filled)
-                    .liveTooltip(live, "How sure the agent is of its recommended option")
+                    .instantTooltip("How sure the agent is of its recommended option")
             }
             if staged {
                 Badge("Staged", color: SessionPalette.blue, look: .filled)
-                    .liveTooltip(live, "Picked and not sent yet: Send now sends it, or Send all staged with the others")
+                    .instantTooltip("Picked and not sent yet: Send now sends it, or Send all staged with the others")
             }
             Spacer(minLength: 8)
             if item.isOpen {
@@ -2311,7 +2343,7 @@ struct InboxDecisionCard: View, Equatable {
 
     private func askRow(_ ask: String) -> some View {
         VStack(alignment: .leading, spacing: 2) {
-            LiveButton(live: live, tooltip: "The prompt that led to this reply", pressable: true) {
+            LiveButton(tooltip: "The prompt that led to this reply", pressable: true) {
                 let opening = !showAsk
                 GenMotion.perform(expanding: opening, reduceMotion: reduceMotion) { showAsk = opening }
             } label: {
@@ -2341,7 +2373,7 @@ struct InboxDecisionCard: View, Equatable {
                 Text("Context").font(.system(size: 10.5, weight: .semibold)).foregroundColor(ReviewPalette.dim)
                 Spacer()
                 if contextOverflows || showContext {
-                    LiveButton(live: live, tooltip: nil, pressable: true) {
+                    LiveButton(tooltip: nil, pressable: true) {
                         let revealing = !contextRevealed
                         GenMotion.perform(expanding: revealing, reduceMotion: reduceMotion) { showContext = revealing }
                     } label: {
@@ -2385,7 +2417,7 @@ struct InboxDecisionCard: View, Equatable {
         VStack(alignment: .leading, spacing: 6) {
             Text("Code").font(.system(size: 10.5, weight: .semibold)).foregroundColor(ReviewPalette.dim)
             ForEach(Array(item.excerptRefs.enumerated()), id: \.offset) { index, ref in
-                InboxExcerptCard(ref: ref, cwd: session.cwd, field: "ref:\(index)", live: live)
+                InboxExcerptCard(ref: ref, cwd: session.cwd, field: "ref:\(index)")
             }
         }
     }
@@ -2550,7 +2582,7 @@ struct InboxDecisionCard: View, Equatable {
                     .fixedSize()
                     .disabled(sessionSending || writing)
                     .instantTooltip(sessionSending ? "This session's send is running" : "Send this staged decision alone, without the others")
-                    LiveButton(live: live, tooltip: "Take the pick and the note off the staged list; the note stays here",
+                    LiveButton(tooltip: "Take the pick and the note off the staged list; the note stays here",
                                enabled: !(sessionSending || writing), pressable: true) {
                         inbox.unstage(item, in: session, keeping: note)
                         noteDirty = !note.isEmpty
@@ -2565,14 +2597,14 @@ struct InboxDecisionCard: View, Equatable {
                 }
                 Spacer(minLength: 6)
                 if session.reply != nil {
-                    LiveButton(live: live, tooltip: nil, pressable: true) { showReply = true } label: {
+                    LiveButton(tooltip: nil, pressable: true) { showReply = true } label: {
                         Text("Open the whole reply")
                     }
                         .font(.system(size: 11))
                         .foregroundColor(ReviewPalette.renamed)
                 }
                 if let hubSession = state.hubSession {
-                    LiveButton(live: live, tooltip: "Open the session and search the transcript for this decision",
+                    LiveButton(tooltip: "Open the session and search the transcript for this decision",
                                pressable: true) {
                         model.transcriptQuery = "DECISION \(item.number ?? 0)"
                         model.openSession(hubSession)
@@ -2584,7 +2616,7 @@ struct InboxDecisionCard: View, Equatable {
                 }
                 // The routine destructive action: quiet, last, apart from the send (P13).
                 if item.isOpen, state.heldDismiss {
-                    LiveButton(live: live, tooltip: "Keep this decision; nothing was written yet", pressable: true) {
+                    LiveButton(tooltip: "Keep this decision; nothing was written yet", pressable: true) {
                         inbox.undoDismiss(item)
                     } label: {
                         Text("Dismissed · Undo")
@@ -2593,7 +2625,7 @@ struct InboxDecisionCard: View, Equatable {
                         .foregroundColor(ReviewPalette.renamed)
                         .padding(.leading, 8)
                 } else if item.isOpen {
-                    LiveButton(live: live, tooltip: "Drop this decision without sending an answer; Undo stays for a few seconds",
+                    LiveButton(tooltip: "Drop this decision without sending an answer; Undo stays for a few seconds",
                                pressable: true) {
                         inbox.dismiss(item, in: session)
                     } label: {
@@ -2698,8 +2730,6 @@ private struct InboxExcerptCard: View {
     let cwd: String?
     /// The ⌘F field key of this excerpt's path (`ref:<index>`).
     let field: String
-    /// Its card is live: the path is a button with a tooltip only then (F1).
-    let live: Bool
 
     private var displayPath: String {
         ref.line.map { "\(ref.path):\($0)" } ?? ref.path
@@ -2712,6 +2742,7 @@ private struct InboxExcerptCard: View {
     }
 
     var body: some View {
+        let _ = RenderProbe.hit("inbox.excerptCard.body")
         VStack(alignment: .leading, spacing: 3) {
             HStack(spacing: 6) {
                 if ref.missing == true {
@@ -2724,9 +2755,9 @@ private struct InboxExcerptCard: View {
                     Label(note.label, systemImage: "questionmark.folder")
                         .font(.system(size: 10.5))
                         .foregroundColor(ReviewPalette.dim)
-                        .liveTooltip(live, note.detail)
+                        .instantTooltip(note.detail)
                 } else {
-                    LiveButton(live: live, tooltip: "Open \(absolute)\(ref.line.map { ":\($0)" } ?? "") in Cursor",
+                    LiveButton(tooltip: "Open \(absolute)\(ref.line.map { ":\($0)" } ?? "") in Cursor",
                                pressable: true) {
                         PathOpener.cursor(absolute, line: ref.line ?? 1)
                     } label: {
@@ -2811,7 +2842,7 @@ func inboxHubSession(_ session: InboxSession, in model: HubModel) -> HubSession?
 /// R3: the rich session view behind the `# id` chip. Identity, place, cmux, cost and files, loaded
 /// from what the inbox already knows plus the shared stores (repo facts, spend), off the main thread.
 private struct SessionInfoPopover: View {
-    @ObservedObject var model: HubModel
+    var model: HubModel
     @ObservedObject var inbox: HubInboxModel
     @ObservedObject private var repos = RepoFactsStore.shared
     let session: InboxSession
@@ -2945,7 +2976,7 @@ private struct SessionInfoPopover: View {
 /// R4: "This session is not open anywhere. Where should it resume?" Reuses the LaunchPicker in resume
 /// mode; once it reopens the session, the answers are queued and ride its first prompt.
 struct InboxResumeSheet: View {
-    @ObservedObject var model: HubModel
+    var model: HubModel
     @ObservedObject var inbox: HubInboxModel
     let session: InboxSession
     @Environment(\.dismiss) private var dismiss
@@ -3122,6 +3153,7 @@ private struct InboxFormCard: View {
     }
 
     var body: some View {
+        let _ = RenderProbe.hit("inbox.formCard.body")
         VStack(alignment: .leading, spacing: 10) {
             HStack(spacing: 8) {
                 Image(systemName: "questionmark.bubble.fill").foregroundColor(ReviewPalette.renamed)
