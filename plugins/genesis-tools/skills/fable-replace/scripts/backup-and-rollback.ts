@@ -228,11 +228,30 @@ export const rollback = ({ backupDir, force = false, only }: RollbackParams): Ro
     return report;
 };
 
-/** One root for every scratch and backup dir, so a listing and a prune stay cheap and scoped. */
+/** One root for every session's scratch and backup dirs, so a listing and a sweep stay cheap and scoped. */
 export const scratchRoot = (): string => path.join(os.tmpdir(), "fable-replace");
 
+const SESSION_KEY_UNSAFE = /[^A-Za-z0-9._-]/g;
+const SESSION_KEY_MAX = 80;
+
 /**
- * A collision-proof scratch directory under `<tmp>/fable-replace/`.
+ * The session this process edits for. A worker inherits its lead's TMPDIR, so every session on the machine shares
+ * one root; the per-session folder keeps one session's prune away from another session's undo trail (2026-10-27: a
+ * worker's ordinary edit pruned 50 directories under the shared root). `FABLE_REPLACE_SESSION` names it outright;
+ * else the harness session id; else the parent process, which is the agent for a CLI run.
+ */
+export const scratchSessionKey = (): string => {
+    const named =
+        process.env.FABLE_REPLACE_SESSION || process.env.CLAUDE_CODE_SESSION_ID || process.env.CODEX_THREAD_ID;
+    const key = named && named.trim().length > 0 ? named.trim() : `ppid-${process.ppid}`;
+    return key.replace(SESSION_KEY_UNSAFE, "_").slice(0, SESSION_KEY_MAX);
+};
+
+/** This session's own folder under the root: the only place an ordinary run writes or prunes. */
+export const sessionScratchRoot = (): string => path.join(scratchRoot(), scratchSessionKey());
+
+/**
+ * A collision-proof scratch directory under `<tmp>/fable-replace/<session>/`.
  *
  * /tmp is shared machine-wide. Two agents running similar sweeps in parallel both
  * reached for `/tmp/sweep-dry.log` and one silently overwrote the other's evidence,
@@ -240,7 +259,7 @@ export const scratchRoot = (): string => path.join(os.tmpdir(), "fable-replace")
  * a generic /tmp path for a backupDir or a log.
  */
 export const scratchDir = (label: string): string => {
-    const root = scratchRoot();
+    const root = sessionScratchRoot();
     fs.mkdirSync(root, { recursive: true });
     // mkdtemp, not a timestamp: two calls in the same millisecond must not collide.
     return fs.mkdtempSync(path.join(root, `${label}-${process.pid}-`));
@@ -316,22 +335,30 @@ export const pruneScratch = ({
     maxRemovals = PRUNE_MAX_REMOVALS,
     keep = [],
     now = Date.now(),
+    scope = "session",
 }: PruneParams = {}): PruneReport => {
     // One root only: the temp dir THIS process writes to. A launchd job with no TMPDIR has
     // os.tmpdir() === /tmp and prunes /tmp itself. Sweeping /tmp from every process as well
     // made a TMPDIR-redirected run (the selftest, a sandbox) delete backups it never wrote.
+    // Within that root, an ordinary run sweeps only its own session's folder; the whole root
+    // (every session's folder, plus the layouts before sessions) needs `all-sessions`.
     const temp = os.tmpdir();
-    const candidates = [
-        ...listDirs(path.join(temp, "fable-replace"), () => true),
-        ...listDirs(temp, (name) => name.startsWith(LEGACY_PREFIX)),
-    ];
+    const root = path.join(temp, "fable-replace");
+    const sessionRoot = sessionScratchRoot();
+    const candidates =
+        scope === "session"
+            ? listDirs(sessionRoot, () => true)
+            : [
+                  ...listDirs(root, () => true).flatMap((dir) => [dir, ...listDirs(dir, () => true)]),
+                  ...listDirs(temp, (name) => name.startsWith(LEGACY_PREFIX)),
+              ];
 
     const keepSet = new Set(keep.map((dir) => path.resolve(dir)));
     const report: PruneReport = {
         scanned: candidates.length,
         removed: 0,
         bytes: 0,
-        roots: [path.join(temp, "fable-replace")],
+        roots: [scope === "session" ? sessionRoot : root],
     };
     for (const dir of candidates) {
         if (report.removed >= maxRemovals) {

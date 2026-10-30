@@ -216,7 +216,7 @@ if (flag("--stats")) {
     process.exit(0);
 }
 if (flag("--prune")) {
-    const report = pruneScratch();
+    const report = pruneScratch({ scope: flag("--all-sessions") ? "all-sessions" : "session" });
     console.log(
         `pruned ${report.removed} stale scratch dir(s), ${Math.round(report.bytes / 1024)} KB, older than 12 h, under ${report.roots.join(" and ")} (${report.scanned} scanned)`
     );

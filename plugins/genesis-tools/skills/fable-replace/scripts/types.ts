@@ -354,6 +354,12 @@ export interface PruneParams {
     keep?: string[];
     /** The clock, for tests. */
     now?: number;
+    /**
+     * `session` (default): only this session's own scratch folder. `all-sessions`: every session's folder and the
+     * legacy layout, for an explicit `--prune --all-sessions`; an ordinary run never sweeps another session's undo
+     * trail (2026-10-27: a worker that inherited the lead's TMPDIR pruned 50 directories of other sessions).
+     */
+    scope?: "session" | "all-sessions";
 }
 
 export interface PruneReport {
@@ -361,7 +367,7 @@ export interface PruneReport {
     removed: number;
     /** Sum of the file sizes in the removed dirs. */
     bytes: number;
-    /** The `<tmp>/fable-replace` root that was swept: one, the temp dir this process writes to. */
+    /** The root that was swept: this session's folder under `<tmp>/fable-replace`, or that root with `all-sessions`. */
     roots: string[];
 }
 
