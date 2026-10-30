@@ -5,6 +5,7 @@ import { grokSessionsRoot } from "@genesiscz/utils/agent-sessions/grok-sessions"
 import { createNativeHistoryAdapter } from "@genesiscz/utils/agent-sessions/native-adapter";
 import { loadPins } from "@genesiscz/utils/agent-sessions/pins";
 import type { AgentKind } from "@genesiscz/utils/agent-sessions/types";
+import type { HarnessId } from "@genesiscz/utils/harness/types";
 import { nativeSessionRoots } from "@genesiscz/utils/providers/session-paths";
 
 /** The Claude, Grok and Codex sessions a restore may resume, read from each agent's history for the tabs' folders. */
@@ -23,7 +24,8 @@ export interface ReplayCatalog {
 }
 
 async function loadNativeCatalog(options: {
-    kind: "codex" | "grok";
+    /** A harness whose catalog is the native history index; Claude's comes from its own listing. */
+    kind: Exclude<HarnessId, "claude">;
     cwds: string[];
     roots: string[];
     /** Read only what is already indexed. The rescue path must not sync or write. */
