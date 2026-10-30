@@ -24,9 +24,22 @@ export interface GenesisProbe {
 const NO_LINKS: Record<LinkKind, boolean> = { md: false, finder: false, hub: false, "claude-find": false };
 const NOTHING: GenesisProbe = { tools: false, linkHost: null, opens: NO_LINKS };
 const MAX_AGE_MS = 30 * 60_000;
+/** The probe answers in about 0.3 s (p50 317 ms over 116 runs on 2026-10-30) and bounds its own lookups at 2 s. */
+const PROBE_TIMEOUT_MS = 15_000;
+/**
+ * After a run past its deadline, no run for this long, doubled per further timeout up to the maximum. A loaded Mac
+ * once got the probe from every session on every link and every `tools` control (137 runs in a quiet 3 hours, most of
+ * them in the loaded minutes), each one adding to the load that made the last one slow.
+ */
+const BACKOFF_MS = 60_000;
+const BACKOFF_MAX_MS = 10 * 60_000;
+
+/** The clock the answer and the backoff are dated by; a test moves it. */
+export const genesisProbeClock = { now: (): number => Date.now() };
 
 let held: { at: number; value: GenesisProbe } | undefined;
 let pending: Promise<GenesisProbe> | undefined;
+let backoff: { until: number; ms: number } | undefined;
 
 function isRecord(value: unknown): value is Record<string, unknown> {
     return typeof value === "object" && value !== null && !Array.isArray(value);
@@ -60,11 +73,13 @@ export function probeOf(stdout: string): GenesisProbe | undefined {
     };
 }
 
-/** Undefined when the run was cut off (the hook that started it was replaced), which says nothing about this Mac. */
-async function runProbe(host: Host): Promise<GenesisProbe | undefined> {
+/**
+ * `aborted` when the run was cut off (the hook that started it was replaced), `timeout` when it ran past its
+ * deadline: neither says anything about this Mac.
+ */
+async function runProbe(host: Host): Promise<GenesisProbe | "aborted" | "timeout"> {
     try {
-        // The probe answers in about 0.3 s and bounds each of its own lookups at 2 s; 5 s is the most it may take.
-        const run = await host.run(["tools", "genesis-tools", "probe", "--json"], { timeoutMs: 5_000 });
+        const run = await host.run(["tools", "genesis-tools", "probe", "--json"], { timeoutMs: PROBE_TIMEOUT_MS });
 
         if (run.exitCode === 0) {
             // A GenesisTools from before the probe (2026-10-23) prints help: its CLI runs, its links stay unknown.
@@ -77,7 +92,7 @@ async function runProbe(host: Host): Promise<GenesisProbe | undefined> {
         // A render hook's `$` calls are aborted when a newer render replaces it (the live clock redraws each
         // second): that run never reached `tools`, so nothing is remembered and the next caller asks again.
         if (String(error).includes("aborted")) {
-            return undefined;
+            return "aborted";
         }
 
         // No `tools` on PATH: the spawn itself fails.
@@ -85,9 +100,8 @@ async function runProbe(host: Host): Promise<GenesisProbe | undefined> {
             return NOTHING;
         }
 
-        // A run past its deadline (a busy Mac) says nothing about this Mac either: the next caller asks again,
-        // instead of every link and `tools` control staying off for 30 minutes.
-        return undefined;
+        // A run past its deadline (a busy Mac): the last answer stands, and the next run waits for the backoff.
+        return "timeout";
     }
 }
 
@@ -95,11 +109,19 @@ function probeWith(host: Host): Promise<GenesisProbe> {
     pending ??= runProbe(host).then((value) => {
         pending = undefined;
 
-        if (value === undefined) {
+        if (value === "aborted") {
             return held?.value ?? NOTHING;
         }
 
-        held = { at: Date.now(), value };
+        if (value === "timeout") {
+            const ms = Math.min(BACKOFF_MAX_MS, backoff ? backoff.ms * 2 : BACKOFF_MS);
+            backoff = { until: genesisProbeClock.now() + ms, ms };
+
+            return held?.value ?? NOTHING;
+        }
+
+        backoff = undefined;
+        held = { at: genesisProbeClock.now(), value };
         return value;
     });
 
@@ -119,17 +141,24 @@ export function primeGenesisProbe(host: Host): void {
 
 /** What this Mac has: the last answer, or the run in flight; concurrent callers share one run. */
 export async function genesisProbe(host: Host): Promise<GenesisProbe> {
-    if (held && (Date.now() - held.at < MAX_AGE_MS || pending)) {
+    const now = genesisProbeClock.now();
+
+    if (held && (now - held.at < MAX_AGE_MS || pending)) {
         return held.value;
+    }
+
+    if (backoff && now < backoff.until) {
+        return held?.value ?? NOTHING;
     }
 
     return probeWith(host);
 }
 
-/** Drops the remembered probe: a test sets up another Mac. */
+/** Drops the remembered probe and the backoff: a test sets up another Mac. */
 export function forgetGenesisProbe(): void {
     held = undefined;
     pending = undefined;
+    backoff = undefined;
 }
 
 /** A path for a link: `encodeURI`, plus the parentheses a markdown link target cannot hold. */
