@@ -18,7 +18,7 @@ import { toolCommand } from "@genesiscz/utils/cli/tool-command";
 import { logger } from "@genesiscz/utils/logger";
 import { Storage } from "@genesiscz/utils/storage/storage";
 import { loadPricing } from "./config";
-import { AGENT_IDS, type AgentId, type MonitorDriver, spendAccountRowId } from "./drivers";
+import { AGENT_IDS, type AgentId, type ByAgent, type MonitorDriver, spendAccountRowId } from "./drivers";
 import {
     AI_SPEND_SERIES_RETENTION_DAYS,
     type CompactEvent,
@@ -64,7 +64,7 @@ export interface SpendSeriesOptions {
     /** Enabled accounts, so a bound home's events carry a real account id. */
     accounts?: readonly AccountEntry[];
     /** Homes from `--all-homes`; the caller awaited `discoverHomes()`. */
-    discoveredHomes?: Partial<Record<AgentId, readonly DiscoveredHome[]>>;
+    discoveredHomes?: Partial<ByAgent<readonly DiscoveredHome[]>>;
     drivers?: readonly MonitorDriver[];
     timeZone?: string;
     now?: Date;

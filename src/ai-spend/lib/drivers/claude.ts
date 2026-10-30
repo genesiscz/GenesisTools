@@ -1,5 +1,6 @@
 import { stripModelVariantSuffix } from "@genesiscz/utils/ai/catalog";
 import type { AccountEntry } from "@genesiscz/utils/ai/config/schema";
+import { CLAUDE_ALL_ACCOUNT_ID } from "@genesiscz/utils/ai/usage";
 import {
     isNativeTranscript,
     nativeSessionRoots,
@@ -98,4 +99,10 @@ export const claudeDriver: MonitorDriver = {
 
         return base ? [model, base] : [model];
     },
+
+    // `~/.claude/projects` records no login (decision D6), so all Claude spend is the "claude (all accounts)" row.
+    sharedAccountRow: CLAUDE_ALL_ACCOUNT_ID,
+
+    // ai-spend keys Claude usage by the session id itself.
+    spendSessionId: (sessionId) => sessionId,
 };

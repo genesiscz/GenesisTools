@@ -4,7 +4,7 @@ import type { DiscoveredHome } from "@genesiscz/utils/ai/providers/account-featu
 import { registerBuiltInPlugins } from "@genesiscz/utils/ai/providers/plugins";
 import { tryProviderPlugin } from "@genesiscz/utils/ai/providers/registry";
 import { logger } from "@genesiscz/utils/logger";
-import { AGENT_IDS, type AgentId, agentPluginId } from "./drivers";
+import { AGENT_IDS, agentPluginId, type ByAgent } from "./drivers";
 
 /**
  * What every ai-spend command needs before it can attribute a transcript to an
@@ -23,7 +23,7 @@ import { AGENT_IDS, type AgentId, agentPluginId } from "./drivers";
 export interface SpendAccountsContext {
     accounts: AccountEntry[];
     /** Present only under `--all-homes`. */
-    discoveredHomes?: Partial<Record<AgentId, DiscoveredHome[]>>;
+    discoveredHomes?: Partial<ByAgent<DiscoveredHome[]>>;
 }
 
 export interface LoadSpendAccountsOptions {
@@ -51,8 +51,8 @@ async function loadAgentAccounts(): Promise<AccountEntry[]> {
     }
 }
 
-async function discoverHomes(accounts: AccountEntry[]): Promise<Partial<Record<AgentId, DiscoveredHome[]>>> {
-    const homes: Partial<Record<AgentId, DiscoveredHome[]>> = {};
+async function discoverHomes(accounts: AccountEntry[]): Promise<Partial<ByAgent<DiscoveredHome[]>>> {
+    const homes: Partial<ByAgent<DiscoveredHome[]>> = {};
 
     for (const agent of AGENT_IDS) {
         const discover = tryProviderPlugin(agentPluginId(agent))?.accounts?.discoverHomes;

@@ -1,8 +1,6 @@
-import { basename } from "node:path";
-import { transcriptStem } from "@genesiscz/utils/providers/session-paths";
-import { findCodexRollout } from "@genesiscz/utils/session-changes/codex";
 import type { WorkerBackend } from "@genesiscz/utils/worker/capabilities";
 import { addTokens, EMPTY_TOKENS, type WorkerAuthMode, type WorkerTokens } from "@genesiscz/utils/worker/cost";
+import { spendDriver } from "../drivers";
 import { DEFAULT_PRICING } from "../pricing";
 import { inDayWindow, zonedDay } from "../reports/dates";
 import { dedupEvents } from "../reports/load";
@@ -99,21 +97,6 @@ function sessionKey(backend: WorkerBackend, sessionId: string | null, name: stri
 }
 
 /**
- * The id ai-spend keys a worker session's usage by, from its native session id. Codex keys usage by the rollout's
- * file name (`rollout-<time>-<thread id>`), so the thread's rollout is looked up on disk (null when it is not there);
- * Claude and Grok key it by the session id itself.
- */
-const SPEND_SESSION_ID: Record<WorkerBackend, (sessionId: string, home: string | null | undefined) => string | null> = {
-    claude: (sessionId) => sessionId,
-    codex: (sessionId, home) => {
-        const rollout = findCodexRollout(sessionId, home ? [home] : undefined);
-
-        return rollout ? transcriptStem(basename(rollout)) : null;
-    },
-    grok: (sessionId) => sessionId,
-};
-
-/**
  * One worker session's transcript events, through ai-spend's own loader. The session's home is
  * handed over as a discovered home, because a worker may run in one ai-spend never walks by
  * default (`--worker-home`, `worker-home-noskills`, a codex `--home`). null when no transcript
@@ -128,7 +111,7 @@ export function loadWorkerSessionEvents(
     }
 
     const homes = session.home ? [{ home: session.home }] : [];
-    const id = SPEND_SESSION_ID[session.backend](session.sessionId, session.home);
+    const id = spendDriver(session.backend).spendSessionId(session.sessionId, session.home);
 
     if (id === null) {
         return null;

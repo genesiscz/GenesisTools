@@ -152,12 +152,21 @@ function claudeSessions(): WorkerSessionInfo[] {
     });
 }
 
-export function listWorkerSessions(backends?: readonly WorkerBackend[]): WorkerSessionInfo[] {
-    const wanted = new Set<WorkerBackend>(backends ?? ["codex", "grok", "claude"]);
+/**
+ * Each backend's worker store reader, in listing order (Codex, Grok, Claude). The readers open the worker tools' own
+ * stores (`@app/codex`, `@app/grok`, `@app/claude`), so they stay here and not on the spend drivers, which the
+ * monitor loads on every refresh.
+ */
+const WORKER_SESSION_READERS: { readonly [Backend in WorkerBackend]: () => WorkerSessionInfo[] } = {
+    codex: codexSessions,
+    grok: grokSessions,
+    claude: claudeSessions,
+};
 
-    return [
-        ...(wanted.has("codex") ? codexSessions() : []),
-        ...(wanted.has("grok") ? grokSessions() : []),
-        ...(wanted.has("claude") ? claudeSessions() : []),
-    ];
+export function listWorkerSessions(backends?: readonly WorkerBackend[]): WorkerSessionInfo[] {
+    const wanted = backends ? new Set<string>(backends) : null;
+
+    return Object.entries(WORKER_SESSION_READERS).flatMap(([backend, read]) =>
+        !wanted || wanted.has(backend) ? read() : []
+    );
 }

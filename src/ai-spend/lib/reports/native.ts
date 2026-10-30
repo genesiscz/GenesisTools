@@ -9,7 +9,7 @@ import { claudeDriver } from "../drivers/claude";
 import { codexDriver } from "../drivers/codex";
 import { grokDriver } from "../drivers/grok";
 import { num } from "../drivers/parse-helpers";
-import type { AgentId, DriverRoot, DriverUsageEvent, MonitorDriver } from "../drivers/types";
+import type { AgentId, ByAgent, DriverRoot, DriverUsageEvent, MonitorDriver } from "../drivers/types";
 import { findRecentTranscripts } from "../monitor";
 import { prof } from "../prof";
 import { asRecord, asString, parseJsonValue } from "./jsonl";
@@ -556,7 +556,7 @@ function pathNamedRead(driver: MonitorDriver, layout: PathLayout): NativeRead {
     };
 }
 
-const NATIVE_READS: Record<NativeSourceId, NativeRead> = {
+const NATIVE_READS: ByAgent<NativeRead> = {
     claude: {
         driver: claudeDriver,
         parseChunk: parseClaudeChunk,

@@ -1,5 +1,10 @@
 import type { CodexContext } from "../drivers/codex-context";
 
+/**
+ * The report sources, in ccusage's order: ccusage's agent adapters plus Jev, three of them harnesses. The tables keyed
+ * by `SourceId` below mirror what ccusage's CLI offers per source (`parity.test.ts` compares the JSON), so they are
+ * the report-source axis, not harness facts (harness guard).
+ */
 export const SOURCE_IDS = [
     "claude",
     "codex",

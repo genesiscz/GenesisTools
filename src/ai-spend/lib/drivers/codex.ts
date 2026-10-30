@@ -1,3 +1,4 @@
+import { basename } from "node:path";
 import { createCodexUsageParser } from "@genesiscz/utils/agent-sessions/readers/codex-usage";
 import { stripModelVariantSuffix } from "@genesiscz/utils/ai/catalog";
 import type { AccountEntry } from "@genesiscz/utils/ai/config/schema";
@@ -5,7 +6,9 @@ import {
     isNativeTranscript,
     nativeSessionRoots,
     nativeTranscriptMaxDepth,
+    transcriptStem,
 } from "@genesiscz/utils/providers/session-paths";
+import { findCodexRollout } from "@genesiscz/utils/session-changes/codex";
 import { spendScopeRoots } from "./account-scope";
 import type { DriverRoot, MonitorDriver } from "./types";
 
@@ -94,4 +97,17 @@ export const codexDriver: MonitorDriver = {
     createParser: createCodexUsageParser,
 
     priceCandidates: codexPriceCandidates,
+
+    // Each Codex home belongs to its own account.
+    sharedAccountRow: null,
+
+    /**
+     * Codex keys usage by the rollout's file name (`rollout-<time>-<thread id>`), so the thread's rollout is looked up
+     * on disk, in the worker's home when known.
+     */
+    spendSessionId(sessionId, home) {
+        const rollout = findCodexRollout(sessionId, home ? [home] : undefined);
+
+        return rollout ? transcriptStem(basename(rollout)) : null;
+    },
 };

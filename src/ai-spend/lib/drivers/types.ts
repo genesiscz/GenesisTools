@@ -14,7 +14,6 @@
 import type { AccountEntry } from "@genesiscz/utils/ai/config/schema";
 import { ACCOUNT_PROVIDER_ALIASES, type AccountProviderAlias } from "@genesiscz/utils/ai/providers/alias-list";
 import { harnessPluginId } from "@genesiscz/utils/ai/providers/harness-index";
-import { CLAUDE_ALL_ACCOUNT_ID, UNBOUND_ACCOUNT_ID } from "@genesiscz/utils/ai/usage";
 import type { CreateParserOptions, DriverLineParser } from "@genesiscz/utils/ai/usage/transcripts/types";
 
 export type {
@@ -29,31 +28,18 @@ export type AgentId = AccountProviderAlias;
 export const AGENT_IDS: readonly AgentId[] = ACCOUNT_PROVIDER_ALIASES;
 
 /**
+ * One value per agent: a data container (the monitor's per-agent totals and cache, the homes `--all-homes` found),
+ * built by `byHarness` or filled by a loop over `AGENT_IDS`. It names no agent, so a new harness needs no edit here.
+ */
+export type ByAgent<T> = { [Id in AgentId]: T };
+
+/**
  * The provider plugin that owns an agent's accounts. An agent is a transcript dialect; a plugin is a login. The
  * harness driver names its plugin (`identity.plugin`), so a driver never hardcodes a plugin id and the accounts wiring
  * never hardcodes an agent id.
  */
 export function agentPluginId(agent: AgentId): string {
     return harnessPluginId(agent);
-}
-
-/**
- * The one account row all of an agent's spend lands in, when its transcripts record no login; null when each
- * transcript home belongs to its own account. Claude's `~/.claude/projects` names no account (decision D6), so its
- * spend is the synthetic "claude (all accounts)" row and the per-account split lives in the call log.
- */
-const AGENT_SHARED_ACCOUNT_ROW: Record<AgentId, string | null> = {
-    claude: CLAUDE_ALL_ACCOUNT_ID,
-    codex: null,
-    grok: null,
-};
-
-/**
- * Which account row a transcript's spend lands in: the agent's shared row, else the account that claims the
- * transcript's home, else the unbound row (spend on an unbound home is still spend, so it is never dropped).
- */
-export function spendAccountRowId(agent: AgentId, fileAccountId: string | undefined): string {
-    return AGENT_SHARED_ACCOUNT_ROW[agent] ?? fileAccountId ?? UNBOUND_ACCOUNT_ID;
 }
 
 /**
@@ -97,4 +83,15 @@ export interface MonitorDriver {
      * that matches nothing is unpriced and costs $0 — never a guessed rate.
      */
     priceCandidates(model: string): string[];
+    /**
+     * The one account row all of the agent's spend lands in, when its transcripts record no login; null when each
+     * transcript home belongs to its own account. Claude's `~/.claude/projects` names no account (decision D6), so
+     * its spend is the synthetic "claude (all accounts)" row and the per-account split lives in the call log.
+     */
+    sharedAccountRow: string | null;
+    /**
+     * The id ai-spend keys a headless worker session's usage by, from the worker's native session id (`home` is the
+     * worker's provider home, when known); null when the transcript that names it is not on disk.
+     */
+    spendSessionId(sessionId: string, home: string | null | undefined): string | null;
 }

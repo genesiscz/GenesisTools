@@ -3,7 +3,7 @@ import type { DiscoveredHome } from "@genesiscz/utils/ai/providers/account-featu
 import { ACCOUNT_PROVIDER_ALIASES } from "@genesiscz/utils/ai/providers/alias-list";
 import { UNBOUND_ACCOUNT_ID } from "@genesiscz/utils/ai/usage";
 import { logger } from "@genesiscz/utils/logger";
-import { type AgentId, spendAccountRowId } from "../drivers";
+import { type AgentId, type ByAgent, spendAccountRowId } from "../drivers";
 import { prof } from "../prof";
 import type { PricingTable } from "../types";
 import { priceCandidates as defaultCandidates, eventCost } from "./cost";
@@ -30,7 +30,7 @@ export interface LoadOptions {
     /** Enabled accounts, so native events carry the account whose home they sat in. */
     accounts?: readonly AccountEntry[];
     /** Homes from `--all-homes`; the caller already awaited `discoverHomes()`. */
-    discoveredHomes?: Partial<Record<AgentId, readonly DiscoveredHome[]>>;
+    discoveredHomes?: Partial<ByAgent<readonly DiscoveredHome[]>>;
     /**
      * Only this session's events are wanted (`session --id`). Every source that
      * names its files after the session reads only those; the rest load whole.

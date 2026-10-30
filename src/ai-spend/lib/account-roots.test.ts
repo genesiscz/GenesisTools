@@ -21,6 +21,8 @@ function fakeDriver(options: {
         maxDepth: 4,
         createParser: () => ({ parseLine: () => undefined, snapshot: () => undefined }),
         priceCandidates: (model) => [model],
+        sharedAccountRow: null,
+        spendSessionId: (sessionId) => sessionId,
     };
 }
 

@@ -3,6 +3,7 @@ import { homedir } from "node:os";
 import { join } from "node:path";
 import type { AccountEntry } from "@genesiscz/utils/ai/config/schema";
 import type { DiscoveredHome } from "@genesiscz/utils/ai/providers/account-features";
+import { byHarness } from "@genesiscz/utils/ai/providers/harness-index";
 import { CLAUDE_ALL_ACCOUNT_ID, CLAUDE_ALL_ACCOUNT_NAME } from "@genesiscz/utils/ai/usage";
 import { isZstdPath } from "@genesiscz/utils/compress/zstd";
 import { readWholeTextSync } from "@genesiscz/utils/fs/read-lines";
@@ -14,6 +15,7 @@ import {
     AGENT_IDS,
     type AgentId,
     agentPluginId,
+    type ByAgent,
     type DriverUsageEvent,
     MONITOR_DRIVERS,
     type MonitorDriver,
@@ -87,7 +89,7 @@ export interface MonitorReport {
     last7dStart: string;
     timezone: string;
     /** Per-agent split of the same windows. Sums to the top level. */
-    agents: Record<AgentId, AgentTotals>;
+    agents: ByAgent<AgentTotals>;
     /**
      * Per-account split, when the caller passed accounts. Sums to the top level
      * as well, so `today.cost` never moves because this key appeared — the
@@ -251,7 +253,7 @@ interface AgentCache {
  */
 interface MonitorCache {
     version: 10;
-    agents: Record<AgentId, AgentCache>;
+    agents: ByAgent<AgentCache>;
 }
 
 /**
@@ -275,7 +277,7 @@ function freshAgentCache(): AgentCache {
 function freshCache(): MonitorCache {
     return {
         version: 10,
-        agents: { claude: freshAgentCache(), codex: freshAgentCache(), grok: freshAgentCache() },
+        agents: byHarness(() => freshAgentCache()),
     };
 }
 
@@ -538,7 +540,7 @@ export interface BuildMonitorOptions {
      * `plugin.accounts.discoverHomes()` — this function stays synchronous, and
      * every reader of the monitor with it.
      */
-    discoveredHomes?: Partial<Record<AgentId, readonly DiscoveredHome[]>>;
+    discoveredHomes?: Partial<ByAgent<readonly DiscoveredHome[]>>;
     /**
      * Report only these account rows, and only their spend. `"(unbound)"` and
      * `"claude-all"` are valid entries. Absent means every account, which is
@@ -733,11 +735,7 @@ export function buildMonitorReport(options: BuildMonitorOptions): MonitorReport 
     // that true even if the week start ever moves.
     const minMtimeMs = Math.min(weekStartDate.getTime(), last7dStartDate.getTime());
     const sweepTtlMs = options.sweepTtlMs ?? SWEEP_TTL_MS;
-    const agents: Record<AgentId, AgentTotals> = {
-        claude: emptyAgentTotals(),
-        codex: emptyAgentTotals(),
-        grok: emptyAgentTotals(),
-    };
+    const agents: ByAgent<AgentTotals> = byHarness(() => emptyAgentTotals());
     let parsedFiles = 0;
     let recentFiles = 0;
     let dirty = false;

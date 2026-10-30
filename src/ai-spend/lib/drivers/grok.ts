@@ -122,4 +122,10 @@ export const grokDriver: MonitorDriver = {
     },
 
     priceCandidates: grokPriceCandidates,
+
+    // Each Grok home belongs to its own account.
+    sharedAccountRow: null,
+
+    // ai-spend keys Grok usage by the session id itself (the session folder's name).
+    spendSessionId: (sessionId) => sessionId,
 };

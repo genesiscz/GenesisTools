@@ -6,7 +6,7 @@ import { SafeJSON } from "@genesiscz/utils/json";
 import { logger } from "@genesiscz/utils/logger";
 import { atomicWriteFileSync, type Storage } from "@genesiscz/utils/storage/storage";
 import { accountIdForFile, resolveDriverRoots } from "./account-roots";
-import { type AgentId, MONITOR_DRIVERS, type MonitorDriver } from "./drivers";
+import { type AgentId, type ByAgent, MONITOR_DRIVERS, type MonitorDriver } from "./drivers";
 import { findRecentTranscripts, readTail } from "./monitor";
 import { priceFor } from "./pricing";
 import { totalTokensOf } from "./reports/cost";
@@ -104,7 +104,7 @@ export interface CollectSeriesEventsOptions {
     /** Transcripts older than this are never opened (append-only files). */
     minMtimeMs: number;
     accounts?: readonly AccountEntry[];
-    discoveredHomes?: Partial<Record<AgentId, readonly DiscoveredHome[]>>;
+    discoveredHomes?: Partial<ByAgent<readonly DiscoveredHome[]>>;
     /** Injectable, so a test can assert an unchanged file is never re-read. */
     readTailFn?: typeof readTail;
     /** Driver subset; tests supply fixture drivers that bind roots to accounts. */
