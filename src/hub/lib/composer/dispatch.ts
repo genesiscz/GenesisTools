@@ -1,4 +1,5 @@
 import { resolve } from "node:path";
+import { canonicalAgent } from "@app/handoff/targeting";
 import { type DeliverDeps, DeliveryUnknownError, deliverToSession } from "@app/question/lib/decisions/deliver";
 import { decisionFiles } from "@app/question/lib/decisions/read";
 import { sendAnsweredDecisions } from "@app/question/lib/decisions/send";
@@ -161,9 +162,8 @@ export function widgetDispatcher({
                     kindOf(row) !== "decision" ||
                     row.sessionId !== message.target.sessionId ||
                     row.number !== payload.number ||
-                    (row.provider &&
-                        row.provider !== message.target.provider &&
-                        !(row.provider === "claude-code" && message.target.provider === "claude")) ||
+                    // A row may spell the harness `claude-code` (the runtime context's name); compare canonical names.
+                    (row.provider && (canonicalAgent(row.provider) ?? row.provider) !== message.target.provider) ||
                     (row.revision ?? 1) !== payload.expectedRevision ||
                     // A refused transport leaves this message's answer stored `answered`; a Retry sends that
                     // answer again, and a canonical delivery from Hub settles it (see dispatch).

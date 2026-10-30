@@ -8,6 +8,7 @@ import { getStoredEntryById } from "@app/question/lib/read-model";
 import type { TranscriptAnchor } from "@genesiscz/utils/agent/source-anchor";
 import { type TranscriptAround, transcriptAround } from "@genesiscz/utils/ai/transcripts/around";
 import { resolveTranscript, type TranscriptRoots } from "@genesiscz/utils/ai/transcripts/resolve";
+import type { TranscriptProvider } from "@genesiscz/utils/ai/transcripts/types";
 import { logger } from "@genesiscz/utils/logger";
 import { profiler } from "@genesiscz/utils/profile";
 import { toolDataDir } from "@genesiscz/utils/storage/root";
@@ -67,6 +68,13 @@ function sourceStamp(source: NonNullable<WidgetCard["sourceContext"]>): NonNulla
 }
 
 /** Reads the stored receipt in its exact provider/session scope; it does not refresh the Widget roster. */
+/** The transcript roots inside a session's own source home, per harness. */
+const ROOTS_OF_HOME: Record<TranscriptProvider, (home: string) => TranscriptRoots> = {
+    claude: (home) => ({ claudeProjects: join(home, "projects"), claudeProjectsAll: [join(home, "projects")] }),
+    codex: (home) => ({ codexHome: home }),
+    grok: (home) => ({ grokHome: home }),
+};
+
 export async function readWidgetReceiptContext({
     key,
     id,
@@ -158,16 +166,7 @@ export async function readWidgetReceiptContext({
     if (anchor.provider !== target.provider || anchor.sessionId !== target.sessionId) {
         throw new Error("The stored receipt anchor belongs to a different provider/session");
     }
-    const roots: TranscriptRoots = target.sourceHome
-        ? target.provider === "claude"
-            ? {
-                  claudeProjects: join(target.sourceHome, "projects"),
-                  claudeProjectsAll: [join(target.sourceHome, "projects")],
-              }
-            : target.provider === "codex"
-              ? { codexHome: target.sourceHome }
-              : { grokHome: target.sourceHome }
-        : {};
+    const roots: TranscriptRoots = target.sourceHome ? ROOTS_OF_HOME[anchor.provider](target.sourceHome) : {};
     try {
         const resolved = await resolveTranscript(target.sessionId, roots, anchor.provider);
         signal?.throwIfAborted();
