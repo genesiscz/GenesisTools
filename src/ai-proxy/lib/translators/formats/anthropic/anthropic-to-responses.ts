@@ -197,6 +197,25 @@ function loadedToolsItem(result: JsonRecord, deferred: DeferredTools | undefined
     return tools.length > 0 ? { type: "additional_tools", role: "developer", tools } : undefined;
 }
 
+/** Introduce an offered deferred tool immediately before its first surviving call. */
+function introduceUsedTools(input: JsonRecord[], content: unknown, deferred: DeferredTools | undefined): void {
+    if (!deferred || !Array.isArray(content)) {
+        return;
+    }
+
+    for (const part of content) {
+        if (!isObject(part) || part.type !== "tool_use" || typeof part.name !== "string") {
+            continue;
+        }
+        const tool = deferred.byName.get(part.name);
+        if (!tool || deferred.sent.has(part.name)) {
+            continue;
+        }
+        deferred.sent.add(part.name);
+        input.push({ type: "additional_tools", role: "developer", tools: [responsesTool(tool)] });
+    }
+}
+
 function appendUserMessage(
     input: JsonRecord[],
     content: unknown,
@@ -522,6 +541,7 @@ export function anthropicToResponses(body: JsonRecord, model: string, hooks: Res
             }
 
             if (message.role === "assistant") {
+                introduceUsedTools(input, message.content, deferred);
                 appendAssistantMessage(input, message.content, dropped, hooks);
             } else if (message.role === "system") {
                 appendDeveloperMessage(input, message.content);

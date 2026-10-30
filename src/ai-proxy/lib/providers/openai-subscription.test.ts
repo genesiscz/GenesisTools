@@ -2826,6 +2826,45 @@ describe("tools that Claude Code's tool search loads, on the Codex agent", () =>
         expect(input.some((item) => item.type === "additional_tools")).toBe(false);
     });
 
+    it("introduces a surviving tool use once without changing earlier input prefixes", async () => {
+        const tools = [tool("Monitor", true), tool("TaskStop", true)];
+        const first = [{ role: "user", content: "check status" }];
+        const call = (name: string, id: string) => ({
+            role: "assistant",
+            content: [{ type: "tool_use", id, name, input: {} }],
+        });
+        const result = (id: string) => ({
+            role: "user",
+            content: [{ type: "tool_result", tool_use_id: id, content: "done" }],
+        });
+        const used = [...first, call("Monitor", "call-one"), result("call-one")];
+        const more = [...used, call("Monitor", "call-two"), result("call-two"), call("TaskStop", "call-three")];
+        const initial = (await sentBody(first, tools)).input as Array<Record<string, unknown>>;
+        const second = (await sentBody(used, tools)).input as Array<Record<string, unknown>>;
+        const third = (await sentBody(more, tools)).input as Array<Record<string, unknown>>;
+        expect(second.slice(0, initial.length)).toEqual(initial);
+        expect(third.slice(0, second.length)).toEqual(second);
+        const additions = third.filter((item) => item.type === "additional_tools");
+        expect(additions.map((item) => (item.tools as Array<{ name: string }>).map((entry) => entry.name))).toEqual([
+            ["Monitor"],
+            ["TaskStop"],
+        ]);
+        const monitor = third.findIndex((item) => item.type === "function_call" && item.name === "Monitor");
+        expect(third[monitor - 1]?.type).toBe("additional_tools");
+    });
+
+    it("does not reintroduce a tool whose search reference survived", async () => {
+        const history = [
+            ...loaded,
+            { role: "assistant", content: [{ type: "tool_use", id: "m1", name: "Monitor", input: {} }] },
+        ];
+        const body = await sentBody(history, [tool("Monitor", true), tool("ToolSearch")]);
+        const additions = (body.input as Array<Record<string, unknown>>).filter(
+            (item) => item.type === "additional_tools"
+        );
+        expect(additions).toHaveLength(1);
+    });
+
     it("introduces a deferred tool whose search result is absent after compaction", async () => {
         const body = await sentBody(
             [{ role: "user", content: "This session is being continued.\n\nSummary:\nMonitor was loaded." }],
