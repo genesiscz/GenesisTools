@@ -277,28 +277,44 @@ function resolvePath(
     const resolvedProvider = provider ?? hit?.provider ?? "claude";
     const source = hit?.source ?? "native";
 
-    if (source === "worker" && resolvedProvider !== "codex") {
-        // The turn chain, so a steer's next turn file is followed (`rescanWorkerTurns`).
-        const name = stem.replace(/\.turn\d+$/, "");
-        const self: ResolvedTranscript = { provider: resolvedProvider, source, sessionId: name, filePath };
-        return { ...self, ...(rescanWorkerTurns(self) ?? {}) };
-    }
+    return PATH_SESSIONS[resolvedProvider]({ source, stem, filePath });
+}
 
-    if (resolvedProvider === "codex") {
-        return {
-            provider: "codex",
-            source,
-            sessionId: source === "native" ? codexNativeSessionId(filePath) : stem,
-            filePath,
-        };
-    }
+/**
+ * How each provider names the session of a transcript file. Claude and Grok workers write one turn file per turn, so
+ * their chain is followed (`rescanWorkerTurns`); a Codex worker's file is its own session.
+ */
+const PATH_SESSIONS: Record<
+    TranscriptProvider,
+    (file: { source: TranscriptSource; stem: string; filePath: string }) => ResolvedTranscript
+> = {
+    claude: ({ source, stem, filePath }) =>
+        source === "worker"
+            ? workerTurnChain({ provider: "claude", stem, filePath })
+            : { provider: "claude", source, sessionId: stem.replace(/^agent-/, ""), filePath },
+    codex: ({ source, stem, filePath }) => ({
+        provider: "codex",
+        source,
+        sessionId: source === "native" ? codexNativeSessionId(filePath) : stem,
+        filePath,
+    }),
+    // Native grok is `<cwd>/<sessionId>/updates.jsonl`: the id is the folder.
+    grok: ({ source, stem, filePath }) =>
+        source === "worker"
+            ? workerTurnChain({ provider: "grok", stem, filePath })
+            : { provider: "grok", source, sessionId: basename(dirname(filePath)), filePath },
+};
 
-    if (resolvedProvider === "grok") {
-        // Native grok is `<cwd>/<sessionId>/updates.jsonl`: the id is the folder.
-        return { provider: "grok", source, sessionId: basename(dirname(filePath)), filePath };
-    }
-
-    return { provider: "claude", source, sessionId: stem.replace(/^agent-/, ""), filePath };
+/** A worker's turn file, with the chain after it, so a steer's next turn file is followed. */
+function workerTurnChain(input: { provider: TranscriptProvider; stem: string; filePath: string }): ResolvedTranscript {
+    const name = input.stem.replace(/\.turn\d+$/, "");
+    const self: ResolvedTranscript = {
+        provider: input.provider,
+        source: "worker",
+        sessionId: name,
+        filePath: input.filePath,
+    };
+    return { ...self, ...(rescanWorkerTurns(self) ?? {}) };
 }
 
 function findGrokNative(query: string, grokHome: string, fs: FolderReads): RankedHit[] {
@@ -620,21 +636,23 @@ function resolveWith({
         return byPath;
     }
 
-    const hits: RankedHit[] = [];
-    if (!provider || provider === "claude") {
-        for (const root of claudeRoots) {
-            hits.push(...findClaude(query, root, fs));
-        }
-        hits.push(...findClaudeWorker(query, resolved.claudeWorker, fs));
-    }
-    if (!provider || provider === "grok") {
-        hits.push(...findGrokNative(query, resolved.grokHome, fs));
-        hits.push(...findGrokWorker(query, resolved.grokWorker, fs));
-    }
-    if (!provider || provider === "codex") {
-        hits.push(...findCodexNative(query, resolved.codexHome, fs));
-        hits.push(...findCodexWorker(query, resolved.codexWorker, fs));
-    }
+    const finders: Record<TranscriptProvider, () => RankedHit[]> = {
+        claude: () => [
+            ...claudeRoots.flatMap((root) => findClaude(query, root, fs)),
+            ...findClaudeWorker(query, resolved.claudeWorker, fs),
+        ],
+        grok: () => [
+            ...findGrokNative(query, resolved.grokHome, fs),
+            ...findGrokWorker(query, resolved.grokWorker, fs),
+        ],
+        codex: () => [
+            ...findCodexNative(query, resolved.codexHome, fs),
+            ...findCodexWorker(query, resolved.codexWorker, fs),
+        ],
+    };
+    // The search order of the providers when none is given; ties in `mtime` keep it.
+    const searched: TranscriptProvider[] = provider ? [provider] : ["claude", "grok", "codex"];
+    const hits: RankedHit[] = searched.flatMap((name) => finders[name]());
     if (hits.length === 0) {
         throw new Error(`No session file found for "${query}"`);
     }
