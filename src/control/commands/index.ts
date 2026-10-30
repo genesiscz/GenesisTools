@@ -20,6 +20,7 @@ import { registerPermissionsCommands, registerPermissionsRequestCommand } from "
 import { registerRecordPlanCommand } from "./record-plan";
 import { registerReplayCommand } from "./replay";
 import { registerReplayPlanCommand } from "./replay-plan";
+import { registerReportCommand } from "./report";
 import { registerResilienceCommand } from "./resilience";
 import { registerRunCommand } from "./run";
 import { registerSequenceCommand } from "./sequence";
@@ -57,6 +58,7 @@ export function registerControlCommands(program: Command): void {
     registerSimulatorCommands(program);
     registerReplayCommand(program);
     registerReplayPlanCommand(program);
+    registerReportCommand(program);
     registerResilienceCommand(program);
     registerStateCommands(program);
     registerVerifyCommands(program);
