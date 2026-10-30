@@ -52,6 +52,7 @@ describe("isAgentCommand", () => {
         expect(isAgentCommand("cursor")).toBe(true);
         expect(isAgentCommand("codex")).toBe(true);
         expect(isAgentCommand("aider")).toBe(true);
+        expect(isAgentCommand("grok")).toBe(true);
         expect(isAgentCommand(" claude ")).toBe(true);
         expect(isAgentCommand("vim")).toBe(false);
         expect(isAgentCommand("bash")).toBe(false);

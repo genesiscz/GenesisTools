@@ -1,7 +1,11 @@
 import type { AttentionItem, BuildAttentionInput } from "@app/dev-dashboard/lib/attention/types";
+import { harnessDrivers } from "@genesiscz/utils/ai/providers/harness-index";
 
-/** Foreground commands we treat as "an AI agent is running here" (extend as new CLIs land). */
-export const AGENT_COMMANDS = new Set(["claude", "cursor", "codex", "aider"]);
+/**
+ * Foreground commands we treat as "an AI agent is running here": every harness driver's binary, plus the agent CLIs
+ * GenesisTools does not drive.
+ */
+export const AGENT_COMMANDS = new Set([...harnessDrivers().map((driver) => driver.identity.binary), "cursor", "aider"]);
 
 export function isAgentCommand(command: string | undefined): command is string {
     if (!command) {
