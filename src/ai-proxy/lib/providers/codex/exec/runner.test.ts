@@ -200,6 +200,24 @@ describe("the exec runner's commands", () => {
         expect(normal.exit_code).toBe(0);
     });
 
+    it("times out a foreground command that closes both output streams", async () => {
+        const dir = realpathSync(mkdtempSync(join(tmpdir(), "exec-closed-output-")));
+        await expect(
+            runShellCommand(
+                { cmd: "exec >/dev/null 2>&1; sleep 0.5; printf late > marker", shell: "/bin/sh" },
+                { cwd: dir, deadlineAt: performance.now() + 150 }
+            )
+        ).rejects.toThrow("script deadline expired");
+        await Bun.sleep(600);
+        expect(existsSync(join(dir, "marker"))).toBe(false);
+        const normal = await runShellCommand(
+            { cmd: "exec >/dev/null 2>&1; printf complete > marker", shell: "/bin/sh" },
+            { cwd: dir }
+        );
+        expect(normal.exit_code).toBe(0);
+        expect(existsSync(join(dir, "marker"))).toBe(true);
+    });
+
     it("does not signal a recycled group if the supervisor dies", async () => {
         const dir = realpathSync(mkdtempSync(join(tmpdir(), "exec-leader-")));
         const kill = spyOn(process, "kill").mockImplementation(() => {

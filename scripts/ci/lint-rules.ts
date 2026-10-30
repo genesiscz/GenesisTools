@@ -1531,8 +1531,8 @@ function arrayEntries(array: SgNode): SgNode[] {
 
 /**
  * Read data, never execute a historical module. A list is `new Set([...paths])` (a file only leaves) or
- * `new Map([[path, count], ...])` (a count only goes down); null stands for "listed" in a Set. Any other shape fails
- * closed.
+ * `new Map([[path, count], ...])` (a count only goes down). A no-argument constructor is an empty list;
+ * null stands for "listed" in a Set. Any other shape fails closed.
  */
 function ratchetLists(source: string): Map<string, Map<string, number | null>> {
     const root = parse(Lang.TypeScript, source).root();
@@ -1550,11 +1550,20 @@ function ratchetLists(source: string): Map<string, Map<string, number | null>> {
             value
                 ?.field("arguments")
                 ?.children()
-                .filter((child) => child.isNamed()) ?? [];
+                .filter((child) => child.isNamed() && child.kind() !== "comment") ?? [];
         const array = args[0];
         const collection = value?.field("constructor")?.text();
 
-        if (value?.kind() !== "new_expression" || array?.kind() !== "array") {
+        if (value?.kind() !== "new_expression" || (collection !== "Set" && collection !== "Map")) {
+            throw new Error(`lint-rules: ${name} must be a literal new Set([...]) or new Map([...])`);
+        }
+
+        if (args.length === 0) {
+            lists.set(name, new Map());
+            continue;
+        }
+
+        if (args.length !== 1 || array?.kind() !== "array") {
             throw new Error(`lint-rules: ${name} must be a literal new Set([...]) or new Map([...])`);
         }
 
@@ -1567,10 +1576,6 @@ function ratchetLists(source: string): Map<string, Map<string, number | null>> {
 
             lists.set(name, new Map(entries.map((entry) => [unquote(entry), null])));
             continue;
-        }
-
-        if (collection !== "Map") {
-            throw new Error(`lint-rules: ${name} must be a literal new Set([...]) or new Map([...])`);
         }
 
         const counts = new Map<string, number | null>();

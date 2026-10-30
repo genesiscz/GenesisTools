@@ -767,6 +767,24 @@ describe("the agent and model ratchet rules (❓ DECISION 22 b)", () => {
         );
     });
 
+    test("empty constructor ratchets reject growth and accept equivalent empty literals", () => {
+        for (const kind of ["Set", "Map"]) {
+            const empty = `const EXAMPLE_RATCHET = new ${kind}();`;
+            const literal = `const EXAMPLE_RATCHET = new ${kind}([]);`;
+            const entry = kind === "Set" ? '"src/new.ts"' : '["src/new.ts", 1]';
+            const grown = `const EXAMPLE_RATCHET = new ${kind}([${entry}]);`;
+            expect(ratchetAdditions(empty, literal)).toEqual([]);
+            expect(ratchetAdditions(literal, empty)).toEqual([]);
+            expect(ratchetAdditions(empty, grown)).toEqual(["EXAMPLE_RATCHET: src/new.ts"]);
+            expect(ratchetAdditions(`const EXAMPLE_RATCHET = new ${kind}(/* empty */);`, literal)).toEqual([]);
+            expect(() => ratchetAdditions(empty, `const EXAMPLE_RATCHET = new ${kind}(external);`)).toThrow("literal");
+            expect(() => ratchetAdditions(empty, `const EXAMPLE_RATCHET = new ${kind}([], external);`)).toThrow(
+                "literal"
+            );
+        }
+        expect(() => ratchetAdditions("", "const EXAMPLE_RATCHET = new WeakMap();")).toThrow("literal");
+    });
+
     test("changing any imported ratchet rescans an unchanged offender and rejects growth against the base", () => {
         const dir = mkdtempSync(join(tmpdir(), "lint-ratchet-"));
         const run = (args: string[]) => {
