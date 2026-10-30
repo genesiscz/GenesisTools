@@ -284,6 +284,39 @@ function appendUserMessage(
     pushUserMessage(input, parts);
 }
 
+/** The call ids of the function and custom tool calls among `items`, in item order. */
+function callIdsOf(items: JsonRecord[]): string[] {
+    return items.flatMap((item) =>
+        (item.type === "function_call" || item.type === "custom_tool_call") && typeof item.call_id === "string"
+            ? [item.call_id]
+            : []
+    );
+}
+
+/**
+ * The user message's `tool_result` blocks in the order of the calls they answer, each in a slot a result held before.
+ * Claude Code appends results in completion order (two parallel Agent launches that finished out of order, session
+ * 2026-10-27), which Anthropic reads by `tool_use_id`. A Responses model pairs outputs with calls by position: given
+ * the outputs of the PR 603 and PR 604 launches swapped, GPT-6.1 Sol filed each agent id under the other PR.
+ * codex-rs drains its in-flight calls in call order (`FuturesOrdered`), so this is the order the model expects.
+ * A result whose call is not in `calls` keeps its place after the known ones.
+ */
+function inCallOrder(content: unknown, calls: readonly string[]): unknown {
+    if (!Array.isArray(content) || calls.length < 2) {
+        return content;
+    }
+
+    const isResult = (part: unknown): part is JsonRecord => isObject(part) && part.type === "tool_result";
+    const rank = (part: JsonRecord) => {
+        const index = calls.indexOf(String(part.tool_use_id));
+        return index < 0 ? calls.length : index;
+    };
+    const ordered = content.filter(isResult).sort((a, b) => rank(a) - rank(b));
+    let next = 0;
+
+    return content.map((part) => (isResult(part) ? ordered[next++] : part));
+}
+
 /** Notes the call ids of the `custom_tool_call` items among `items`, whose results go up as custom outputs. */
 function noteCustomCalls(items: JsonRecord[], customCalls: Set<unknown>): void {
     for (const item of items) {
@@ -593,6 +626,8 @@ export function anthropicToResponses(body: JsonRecord, model: string, hooks: Res
     const dropped = { thinking: 0 };
     const deferred = hooks.deferredToolsAsInput ? deferredTools(body.tools) : undefined;
     const customCalls = new Set<unknown>();
+    // The calls the last assistant message made, whose results the next user message carries.
+    let calls: string[] = [];
 
     const summary = deferred ? compactedHistoryText(body.messages) : undefined;
     if (deferred && summary !== undefined) {
@@ -618,11 +653,13 @@ export function anthropicToResponses(body: JsonRecord, model: string, hooks: Res
 
             if (message.role === "assistant") {
                 introduceUsedTools(input, message.content, deferred);
+                const start = input.length;
                 appendAssistantMessage(input, message.content, dropped, hooks, customCalls);
+                calls = callIdsOf(input.slice(start));
             } else if (message.role === "system") {
                 appendDeveloperMessage(input, message.content);
             } else {
-                appendUserMessage(input, message.content, hooks, deferred, customCalls);
+                appendUserMessage(input, inCallOrder(message.content, calls), hooks, deferred, customCalls);
             }
         }
     }

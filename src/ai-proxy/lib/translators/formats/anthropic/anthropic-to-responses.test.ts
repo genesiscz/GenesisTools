@@ -4,11 +4,14 @@ import {
     anthropicToResponses,
     stripReasoningInput,
 } from "@app/ai-proxy/lib/translators/formats/anthropic/anthropic-to-responses";
+import { responsesSseToAnthropic } from "@app/ai-proxy/lib/translators/formats/anthropic/grok-responses-to-anthropic";
 import {
     packReasoningSignature,
     REASONING_SIGNATURE_PREFIX,
     unpackReasoningSignature,
 } from "@app/ai-proxy/lib/translators/formats/anthropic/reasoning-codec";
+import { SafeJSON } from "@genesiscz/utils/json";
+import { isObject } from "@genesiscz/utils/object";
 
 describe("packReasoningSignature / unpackReasoningSignature", () => {
     it("round-trips id and encrypted content", () => {
@@ -374,5 +377,181 @@ describe("anthropicToResponses: a client tool call the model made as a custom to
         );
 
         expect(output?.type).toBe("custom_tool_call_output");
+    });
+});
+
+describe("anthropicToResponses: a parallel batch of Agent calls", () => {
+    // Four launches, each with its own label. The model streams them interleaved, Claude Code launches one agent per
+    // tool_use and answers in the order the launches finished (2nd, 1st, 4th, 3rd), as it did on 2026-10-27.
+    const launches = [
+        { callId: "call_d4", label: "PR 701", agentId: "agent-701" },
+        { callId: "call_a1", label: "PR 702", agentId: "agent-702" },
+        { callId: "call_c3", label: "PR 703", agentId: "agent-703" },
+        { callId: "call_b2", label: "PR 704", agentId: "agent-704" },
+    ];
+    const finishedOrder = [1, 0, 3, 2];
+    const argumentsOf = (label: string) =>
+        SafeJSON.stringify({ description: `Review ${label}`, prompt: `Own ${label} and nothing else.` });
+    const receiptOf = (agentId: string) => `Async agent launched successfully.\nagentId: ${agentId}`;
+
+    function upstream(): ReadableStream<Uint8Array> {
+        const events: Array<Record<string, unknown>> = [];
+        const call = (index: number, args: string) => ({
+            type: "function_call",
+            call_id: launches[index].callId,
+            name: "Agent",
+            arguments: args,
+        });
+
+        for (const index of launches.keys()) {
+            events.push({ type: "response.output_item.added", output_index: index, item: call(index, "") });
+        }
+
+        for (const half of [0, 1]) {
+            for (const index of [2, 0, 3, 1]) {
+                const args = argumentsOf(launches[index].label);
+                const cut = Math.floor(args.length / 2);
+                const delta = half === 0 ? args.slice(0, cut) : args.slice(cut);
+                events.push({ type: "response.function_call_arguments.delta", output_index: index, delta });
+            }
+        }
+
+        for (const index of [3, 1, 0, 2]) {
+            const done = call(index, argumentsOf(launches[index].label));
+            events.push({ type: "response.output_item.done", output_index: index, item: done });
+        }
+
+        events.push({ type: "response.completed", response: { status: "completed" } });
+        const text = events.map((event) => `event: ${event.type}\ndata: ${SafeJSON.stringify(event)}\n\n`).join("");
+
+        return new ReadableStream({
+            start(controller) {
+                controller.enqueue(new TextEncoder().encode(text));
+                controller.close();
+            },
+        });
+    }
+
+    /** The tool_use blocks Claude Code assembles from the translated stream, in block order. */
+    async function toolUses(): Promise<Array<{ type: "tool_use"; id: string; name: string; input: unknown }>> {
+        const raw = await new Response(
+            responsesSseToAnthropic(upstream(), { model: "gpt-6.1-sol", label: "codex" })
+        ).text();
+        const blocks = new Map<number, { id: string; name: string; json: string }>();
+
+        for (const chunk of raw.split("\n\n")) {
+            const line = chunk.split("\n").find((candidate) => candidate.startsWith("data: "));
+            const data: unknown = line ? SafeJSON.parse(line.slice(6), { strict: true }) : undefined;
+
+            if (!isObject(data) || typeof data.index !== "number") {
+                continue;
+            }
+
+            const block = data.content_block;
+
+            if (data.type === "content_block_start" && isObject(block) && block.type === "tool_use") {
+                blocks.set(data.index, { id: String(block.id), name: String(block.name), json: "" });
+            }
+
+            const open = blocks.get(data.index);
+            const delta = data.delta;
+
+            if (data.type === "content_block_delta" && open && isObject(delta) && delta.type === "input_json_delta") {
+                open.json += String(delta.partial_json);
+            }
+        }
+
+        return [...blocks.entries()]
+            .sort(([a], [b]) => a - b)
+            .map(([, block]) => ({
+                type: "tool_use",
+                id: block.id,
+                name: block.name,
+                input: SafeJSON.parse(block.json, { strict: true }),
+            }));
+    }
+
+    it("gives each tool_use id its own call's input, however the stream interleaves the calls", async () => {
+        const uses = await toolUses();
+
+        expect(uses.map((use) => [use.id, use.name, use.input])).toEqual(
+            launches.map((launch) => [
+                launch.callId,
+                "Agent",
+                { description: `Review ${launch.label}`, prompt: `Own ${launch.label} and nothing else.` },
+            ])
+        );
+    });
+
+    it("sends the results in call order, so pairing by position gives each call its own agent", async () => {
+        const uses = await toolUses();
+        const results = finishedOrder.map((index) => ({
+            type: "tool_result",
+            tool_use_id: launches[index].callId,
+            content: [{ type: "text", text: receiptOf(launches[index].agentId) }],
+        }));
+        const out = anthropicToResponses(
+            {
+                messages: [
+                    { role: "user", content: "review the four PRs" },
+                    { role: "assistant", content: uses },
+                    { role: "user", content: [...results, { type: "text", text: "continue" }] },
+                ],
+            },
+            "gpt-6.1-sol",
+            { reasoningItem: () => undefined, toolResultImages: true }
+        );
+        const items = Array.isArray(out.input) ? out.input.filter(isObject) : [];
+        const calls = items.filter((item) => item.type === "function_call");
+        const outputs = items.filter((item) => item.type === "function_call_output");
+
+        // By call id, as Anthropic reads them: every receipt stays with the call Claude Code answered.
+        expect(Object.fromEntries(outputs.map((item) => [item.call_id, item.output]))).toEqual(
+            Object.fromEntries(launches.map((launch) => [launch.callId, receiptOf(launch.agentId)]))
+        );
+
+        // By position, as the Responses model reads them: the n-th output answers the n-th call.
+        expect(outputs.map((item) => item.call_id)).toEqual(calls.map((item) => item.call_id));
+        expect(
+            calls.map((call, index) => [
+                String(call.arguments).match(/PR \d+/)?.[0],
+                String(outputs[index]?.output).match(/agent-\d+/)?.[0],
+            ])
+        ).toEqual(launches.map((launch) => [launch.label, launch.agentId]));
+
+        expect(items.at(-1)).toEqual({ role: "user", content: [{ type: "input_text", text: "continue" }] });
+    });
+
+    it("keeps a result whose call it does not know after the known ones, in its own order", () => {
+        const out = anthropicToResponses(
+            {
+                messages: [
+                    {
+                        role: "assistant",
+                        content: [
+                            { type: "tool_use", id: "call_first", name: "Agent", input: {} },
+                            { type: "tool_use", id: "call_second", name: "Agent", input: {} },
+                        ],
+                    },
+                    {
+                        role: "user",
+                        content: [
+                            { type: "tool_result", tool_use_id: "call_stray", content: "stray" },
+                            { type: "tool_result", tool_use_id: "call_second", content: "second" },
+                            { type: "tool_result", tool_use_id: "call_first", content: "first" },
+                        ],
+                    },
+                ],
+            },
+            "gpt-6.1-sol",
+            { reasoningItem: () => undefined }
+        );
+        const items = Array.isArray(out.input) ? out.input.filter(isObject) : [];
+
+        expect(items.filter((item) => item.type === "function_call_output").map((item) => item.call_id)).toEqual([
+            "call_first",
+            "call_second",
+            "call_stray",
+        ]);
     });
 });
