@@ -1,10 +1,11 @@
 //
-//  MarkdownWindowContentView.swift
+//  GenOverlayHost.swift
 //  GenesisKit
 //
-//  The viewer window's content: the SwiftUI root in a hosting view, and AppKit views laid over slots the root keeps
-//  for them (the file tree's table, `MarkdownTreeTable`). An overlay is this view's subview, not the root's, so its
-//  own layout requests never reach SwiftUI.
+//  A window's content: the SwiftUI root in a hosting view, and AppKit views laid over slots the root keeps for them
+//  (a tree's table, `GenTreeTable`). An overlay is this view's subview, not the root's, so its own layout requests
+//  never reach SwiftUI. First the markdown viewer's window (`MarkdownWindowContentView`, now a typealias of this one);
+//  moved here 2026-10-30 with `GenTreeTable`.
 //
 //  Why: a scrolling table inside any SwiftUI host made that host lay out on every scroll frame (its cells and its
 //  scroll view ask for layout through AppKit's constraint pass, and SwiftUI's host of the table forwarded it). That
@@ -17,7 +18,7 @@ import AppKit
 import SwiftUI
 
 /// Hosts the SwiftUI root beside AppKit overlays whose scrolling must not relayout that root.
-final class MarkdownWindowContentView: NSView {
+final class GenOverlayContentView: NSView {
     /// The SwiftUI root; it states no sizes of its own (`MarkdownDocumentWindowController.contentView`).
     let root: NSView
     /// The root's hosting sizing (none: the window's minimum is `MarkdownWindowMinimum`).
@@ -30,7 +31,7 @@ final class MarkdownWindowContentView: NSView {
     }
 
     /// Installs the sizing-free SwiftUI root beneath the overlay layer.
-    init<Root: View>(root: MarkdownRootHostingView<Root>) {
+    init<Root: View>(root: GenRootHostingView<Root>) {
         self.root = root
         rootSizingOptions = { [unowned root] in root.sizingOptions }
         super.init(frame: .zero)
@@ -71,7 +72,7 @@ final class MarkdownWindowContentView: NSView {
     /// the overlay's own superviews, which are not SwiftUI's).
     func overlayFrame(over slot: NSView) -> NSRect {
         var frame = slot.convert(slot.bounds, to: self).integral
-        if let height = (slot as? MarkdownOverlaySlot)?.contentHeight?(), height < frame.height {
+        if let height = (slot as? GenOverlaySlot)?.contentHeight?(), height < frame.height {
             frame.origin.y = isFlipped ? frame.minY : frame.maxY - height
             frame.size.height = height
         }
@@ -95,7 +96,7 @@ final class MarkdownWindowContentView: NSView {
 }
 
 /// Measurements of overlay placement used by the divider drag diagnostics.
-extension MarkdownWindowContentView {
+extension GenOverlayContentView {
     /// The largest distance, in points, between an overlay's frame and its slot's (0 when every overlay sits on its
     /// slot). For the divider's drag log.
     func overlayDrift() -> CGFloat {
@@ -110,22 +111,22 @@ extension MarkdownWindowContentView {
 }
 
 /// The root's hosting view: after it lays out, the overlays follow their slots.
-final class MarkdownRootHostingView<Content: View>: NSHostingView<Content> {
+final class GenRootHostingView<Content: View>: NSHostingView<Content> {
     /// Repositions sibling overlays after SwiftUI finishes laying out the root.
     override func layout() {
         super.layout()
-        (superview as? MarkdownWindowContentView)?.placeOverlays()
+        (superview as? GenOverlayContentView)?.placeOverlays()
     }
 }
 
-/// A place in the SwiftUI root for an AppKit view that lives outside it: inside a `MarkdownWindowContentView` the
+/// A place in the SwiftUI root for an AppKit view that lives outside it: inside a `GenOverlayContentView` the
 /// view is laid over this slot; anywhere else (a test that hosts the root alone) it is the slot's own subview.
-final class MarkdownOverlaySlot: NSView {
+final class GenOverlaySlot: NSView {
     /// The AppKit content drawn over this placeholder slot.
     let overlay: NSView
     /// The overlay's content height (the table's rows); the overlay covers no more of the slot than that.
     var contentHeight: (() -> CGFloat)?
-    private weak var content: MarkdownWindowContentView?
+    private weak var content: GenOverlayContentView?
 
     /// Creates a placeholder for AppKit content that may be reparented outside SwiftUI.
     init(overlay: NSView) {
@@ -201,7 +202,7 @@ final class MarkdownOverlaySlot: NSView {
             leave()
             return
         }
-        let found = sequence(first: superview, next: { $0?.superview }).compactMap { $0 as? MarkdownWindowContentView }.first
+        let found = sequence(first: superview, next: { $0?.superview }).compactMap { $0 as? GenOverlayContentView }.first
         if let found {
             if content !== found { content?.detach(overlay) }
             content = found
