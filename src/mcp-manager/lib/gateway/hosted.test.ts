@@ -5,6 +5,7 @@ import { join } from "node:path";
 import { moduleDir } from "@genesiscz/utils/fs/module-dir";
 import { SafeJSON } from "@genesiscz/utils/json";
 import { logger } from "@genesiscz/utils/logger";
+import { isProcessAlive } from "@genesiscz/utils/process-alive";
 import { HostedSupervisor } from "./hosted";
 
 const CHILD_LIBRARY = join(moduleDir(import.meta), "hosted-child.ts");
@@ -189,7 +190,7 @@ describe("HostedSupervisor start failures", () => {
             expect(body.error.data.failure).toBe("timeout");
             expect(body.error.message).toContain("still running");
             expect(body.error.message).toContain(`pid ${body.error.data.pid}`);
-            expect(() => process.kill(body.error.data.pid, 0)).not.toThrow();
+            expect(isProcessAlive(body.error.data.pid)).toBe(true);
             const logged = loggedFields(warn, "hosted child not ready by the call's deadline; it keeps starting");
             expect(logged?.pid).toBe(body.error.data.pid);
             expect(typeof logged?.stderr).toBe("string");
