@@ -2,6 +2,7 @@ import type { TranscriptAnchor } from "@genesiscz/utils/agent/source-anchor";
 import { resolveHistoryProvider } from "@genesiscz/utils/agent-sessions/provider";
 import { codexNativeLinesToTurns } from "@genesiscz/utils/agent-sessions/readers/codex-turns";
 import { isAccountProviderAlias } from "@genesiscz/utils/ai/providers/alias-list";
+import { harnessTranscriptFacts } from "@genesiscz/utils/ai/providers/harness-index";
 import type { ConversationMessage } from "@genesiscz/utils/claude/types";
 import { logger } from "@genesiscz/utils/logger";
 import { claudeMessagesToTurns } from "./claude";
@@ -80,13 +81,6 @@ const WINDOW_TURNS: Record<TranscriptProvider, (values: Record<string, unknown>[
     claude: (values) => claudeMessagesToTurns(values.filter(claudeMessage)),
     codex: codexNativeLinesToTurns,
     grok: grokNativeLinesToTurns,
-};
-
-/** Whether a provider's turn ids end with `:<row uuid>`, so a message anchor finds its turn by the row's uuid. */
-const TURN_IDS_END_WITH_ROW_UUID: Record<TranscriptProvider, boolean> = {
-    claude: true,
-    codex: false,
-    grok: false,
 };
 
 function turns({
@@ -255,7 +249,7 @@ export function transcriptAround({
             turnIndex < 0 &&
             anchor.kind === "native" &&
             anchor.messageId &&
-            TURN_IDS_END_WITH_ROW_UUID[resolved.provider]
+            harnessTranscriptFacts(resolved.provider).turnIdsEndWithRowUuid
         ) {
             const uuid = anchorRow.value.uuid;
             turnIndex = window.findIndex((turn) => typeof uuid === "string" && turn.id.endsWith(`:${uuid}`));

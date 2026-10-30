@@ -24,6 +24,7 @@ export const codexHarness: HarnessDriver<"codex"> = {
             pagesByTurnIndex: false,
             subagentsOnDisk: false,
             timestampResolutionMs: 0,
+            turnIdsEndWithRowUuid: false,
         },
         exit: pending("P3", "the codex entry of AGENTS in src/cmux/lib/session-agents.ts"),
         hooks: pending("P4", "the codex entries of HARNESS_HOOK_FACTS and HOOK_INSTALLERS in src/agents"),

@@ -29,6 +29,7 @@ export const claudeHarness: HarnessDriver<"claude"> = {
             pagesByTurnIndex: true,
             subagentsOnDisk: true,
             timestampResolutionMs: 0,
+            turnIdsEndWithRowUuid: true,
         },
         exit: pending("P3", "the claude entry of AGENTS in src/cmux/lib/session-agents.ts"),
         hooks: pending("P4", "the claude entries of HARNESS_HOOK_FACTS and HOOK_INSTALLERS in src/agents"),

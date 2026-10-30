@@ -107,6 +107,8 @@ export interface TranscriptFacts {
      * (Grok), so a wait compares a send time with that much slack.
      */
     readonly timestampResolutionMs: number;
+    /** Whether a turn id ends with `:<row uuid>`, so a message anchor finds its turn by the row's uuid (Claude). */
+    readonly turnIdsEndWithRowUuid: boolean;
 }
 
 /** H: the slash command that ends an interactive session. */
