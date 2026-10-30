@@ -2161,7 +2161,13 @@ void clonesize_free(char *p) { free(p); }
 // caller reading the pipe can drive a spinner while the walk runs.
 // ---------------------------------------------------------------------------
 typedef struct { char *path; uint64_t dlen, alloc, fileid, mtime_ns; uint32_t nlink; int cloud; } BigRec;
-typedef struct { BigRec *recs; size_t n, cap; uint64_t files, dirs; } BigOut;
+// --dusize: a hard-linked inode seen by one thread; the names of one inode meet when the threads' lists are merged.
+typedef struct { uint64_t fileid, alloc; } LinkRec;
+typedef struct {
+    BigRec *recs; size_t n, cap; uint64_t files, dirs;
+    // --dusize only: the allocated bytes of this thread's single-name files, and its hard-linked inodes.
+    uint64_t alloc_sum; LinkRec *links; size_t nlinks, linkcap;
+} BigOut;
 
 #define BIG_PROGRESS_EVERY 200000ULL
 #define MAX_PRUNE_NAMES 64
@@ -2175,6 +2181,8 @@ static uint64_t g_big_progress = 0;   // files listed so far, all workers (atomi
 // --cloudfiles (`tools du downloaded`): list only cloud-backed files that are on
 // disk (inside a File Provider domain, not dataless, allocated), so they can be evicted.
 static int g_big_cloud_only = 0;
+// --dusize (`tools du size`): sum what du counts and keep no record per file.
+static int g_big_sum_only = 0;
 static uint64_t g_big_dataless_skipped = 0;   // dataless files left out of a --bigfiles listing
 
 static void big_setup_attrlist(void) {
@@ -2293,6 +2301,25 @@ static void big_process_dir(BigOut *o, const char *dirpath, int dircloud) {
                 fprintf(stderr, "{\"progress\":true,\"files\":%llu,\"dir\":\"%s\"}\n",
                         (unsigned long long)seen, desc);
                 free(desc);
+            }
+            if (g_big_sum_only) {
+                // What du counts: the allocated blocks of every regular file, a hard-linked inode once (its names are
+                // kept per thread and summed once at the end). A placeholder's blocks count as reported, as du does.
+                if (alloc > 0) {
+                    if (nlink > 1) {
+                        if (o->nlinks == o->linkcap) {
+                            o->linkcap = o->linkcap ? o->linkcap * 2 : 256;
+                            o->links = realloc(o->links, o->linkcap * sizeof(LinkRec));
+                            if (!o->links) { perror("realloc dusize links"); exit(1); }
+                        }
+                        o->links[o->nlinks].fileid = fileid;
+                        o->links[o->nlinks].alloc = (uint64_t)alloc;
+                        o->nlinks++;
+                    } else {
+                        o->alloc_sum += (uint64_t)alloc;
+                    }
+                }
+                continue;
             }
             if (g_big_cloud_only) {
                 // On disk and evictable: inside a domain, not a placeholder, blocks allocated.
@@ -2465,6 +2492,86 @@ char *clonesize_cloudfiles_json(const char *root, int threads, unsigned long lon
     g_nexcludes = 0;
     const char *roots[1] = { root };
     return big_run_json(roots, 1, threads, min_bytes, NULL, 0, 1);
+}
+
+static int cmp_linkrec(const void *a, const void *b) {
+    uint64_t x = ((const LinkRec *)a)->fileid, y = ((const LinkRec *)b)->fileid;
+    return x < y ? -1 : x > y;
+}
+
+/**
+ * `tools du size`: what `du -sk <root>` reports, from the listing walk alone. du sums the allocated blocks of every
+ * regular file and counts a hard-linked inode once; so does this, from one parallel getattrlistbulk pass that never
+ * opens a file and never asks for PRIVATESIZE. The dedupe scan's `naive_bytes` is the same figure, but that scan
+ * opens every candidate for its extents (13.6 s cold against du's 5.5 s on a 5 GB worktree, 2026-10-30). A foreign
+ * mount inside the root is not entered, where du would cross it. `kib` rounds up, as du does.
+ */
+__attribute__((visibility("default")))
+char *clonesize_dusize_json(const char *root, int threads) {
+    g_skip_cloud = 1;
+    g_walk_cloud_roots = 0;
+    g_nexcludes = 0;
+    g_big_cloud_only = 0;
+    g_big_dataless_skipped = 0;
+    g_big_sum_only = 1;
+    g_nthreads = threads;
+    g_big_min = 0;
+    g_nprune = 0;
+    g_profile = getenv("PROFILE") ? 1 : 0;
+    int nthreads = resolve_threads();
+
+    reset_state();
+    big_setup_attrlist();
+    reset_foreign_mounts();
+    add_foreign_mounts(root);
+    g_big_progress = 0;
+    double t0 = now_s();
+    g_big_outs = calloc(nthreads, sizeof(BigOut));
+    pthread_t *th = calloc(nthreads, sizeof(pthread_t));
+    if (!g_big_outs || !th) { perror("calloc dusize"); exit(1); }
+    q_push(strdup(root), -1, -1, 0, root_domain_bucket(root));
+    for (int i = 0; i < nthreads; i++) pthread_create(&th[i], NULL, big_worker, &g_big_outs[i]);
+    for (int i = 0; i < nthreads; i++) pthread_join(th[i], NULL);
+    free(th);
+
+    uint64_t bytes = 0, files = 0, dirs = 0;
+    size_t nlinks = 0;
+    for (int i = 0; i < nthreads; i++) {
+        bytes += g_big_outs[i].alloc_sum;
+        files += g_big_outs[i].files;
+        dirs += g_big_outs[i].dirs;
+        nlinks += g_big_outs[i].nlinks;
+    }
+    LinkRec *links = malloc((nlinks ? nlinks : 1) * sizeof(LinkRec));
+    if (!links) { perror("malloc dusize links"); exit(1); }
+    size_t k = 0;
+    for (int i = 0; i < nthreads; i++) {
+        for (size_t j = 0; j < g_big_outs[i].nlinks; j++) links[k++] = g_big_outs[i].links[j];
+        free(g_big_outs[i].links);
+        free(g_big_outs[i].recs);
+    }
+    free(g_big_outs); g_big_outs = NULL;
+    g_big_sum_only = 0;
+    // One inode, many names: du counts it once.
+    qsort(links, nlinks, sizeof(LinkRec), cmp_linkrec);
+    uint64_t inodes = 0;
+    for (size_t i = 0; i < nlinks; i++) {
+        if (i == 0 || links[i].fileid != links[i - 1].fileid) { bytes += links[i].alloc; inodes++; }
+    }
+    free(links);
+    double walk_s = now_s() - t0;
+    if (g_profile) fprintf(stderr, "[dusize] walk %.2fs files=%llu dirs=%llu threads=%d\n", walk_s,
+                           (unsigned long long)files, (unsigned long long)dirs, nthreads);
+
+    char *out = malloc(512);
+    if (!out) { perror("malloc dusize json"); exit(1); }
+    snprintf(out, 512,
+             "{\"kib\":%llu,\"bytes\":%llu,\"files\":%llu,\"dirs\":%llu,\"hardlinked_inodes\":%llu,\"threads\":%d,"
+             "\"walk_ms\":%llu,\"denied_dirs\":%llu,\"read_errors\":%llu}\n",
+             (unsigned long long)((bytes + 1023) / 1024), (unsigned long long)bytes, (unsigned long long)files,
+             (unsigned long long)dirs, (unsigned long long)inodes, nthreads, (unsigned long long)(walk_s * 1000.0),
+             (unsigned long long)g_denied_dirs, (unsigned long long)g_read_errors);
+    return out;
 }
 
 // ---------------------------------------------------------------------------

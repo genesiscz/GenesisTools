@@ -1447,3 +1447,35 @@ Two regressions fail against the old production source. The corrected checks rej
 ## 2026-10-28 02:38 — `tools du size`: callers that miss together share one walk
 
 The scan engines and the `du -sk` wrapper are unchanged, so no benchmark was rerun and the totals cannot move. `folderKb` now passes `shareInFlight` to `cached()`: when a caller accepts a cached size (`--max-cache-age` above 0), identical calls that miss at the same time run one `du -sk` and the others wait for its answer (`singleFlight`, src/utils/storage/single-flight.ts, a file lock plus a 10 s shared answer). The genesis-tools-mods Session files row now walks a worktree about 10 s after an install, build, checkout, clean or recursive removal in it, accepting only a size measured since that command, so several sessions that watch one worktree ask together. `--max-cache-age 0` still runs its own walk.
+
+## 2026-10-30 19:45 — `tools du size` answers from the engine's listing walk, `du -sk` only as the fallback
+
+The scan engines are untouched; this adds one entry to the native core, `clonesize_dusize_json(root, threads)`, and
+no scan total can move. It is the `--bigfiles` listing walk (`big_process_dir`, one parallel getattrlistbulk pass, no
+file opened, no PRIVATESIZE) with a sum-only mode (`g_big_sum_only`): the allocated bytes of every regular file, a
+hard-linked inode counted once (its names are kept per thread as `LinkRec`s and merged by fileid at the end), `kib`
+rounded up as du does. `folderKb` (`src/du/lib/size-command.ts`) walks natively first and runs `du -sk` only when the
+walk cannot answer: the path is a file, the dylib cannot compile (no Xcode tools), or the root could not be read
+(`dirs` 0). Differences from du, by design: a foreign mount inside the root is pruned where du crosses it, and a
+symlink's own blocks are not counted (du counts a few hundred bytes per link).
+
+Why: the mods' Session files row asks `tools du size <worktree> --max-cache-age 1800` and the cache answers in 0.13 to
+0.49 s, but every cold walk was the system `du`, single-threaded: 29 of 42 calls in a quiet 3 hours took 1.7 to 10 s on
+the 5 GB web app worktrees, 220 process-seconds. The dedupe scan's `naive_bytes` is the same figure as du, but that
+scan opens every candidate for its extents: 13.65 s cold (sys 140 s over 16 threads) against du's 5.5 s on
+`col-fe-marketplace-2.0-shared` (interleaved, load 5.8 to 13.6, 19:18).
+
+Totals, native against `du -sk` on the same tree, same minute (`compare.ts` in the session scratch, Bun 1.4.2):
+
+| tree | files | dirs | native KiB | du KiB | hard-linked inodes | native | du |
+|---|---|---|---|---|---|---|---|
+| fixture (hard links ×2, a 5 MB sparse file, a symlink) | 6 | 4 | 1,280 | 1,280 | 1 | 1.45 s (includes the dylib compile) | 2 ms |
+| `src/du` | 48 | 4 | 1,104 | 1,104 | 0 | 0 ms | 2 ms |
+| `node_modules` (warm) | 87,854 | 9,169 | 1,796,992 | 1,796,992 | 0 | 247 ms | 392 ms |
+| `col-fe-pr-7404-…` worktree, run 1 | 369,151 | 43,725 | 5,671,548 | 5,671,548 | 0 | 1.36 s | 3.73 s |
+| the same, run 2 | 369,151 | 43,725 | 5,671,548 | 5,671,548 | 0 | 1.26 s | 3.37 s |
+
+Load average 6.4 to 11.8 during the worktree runs (19:43). The byte totals agreed on every tree. The parity test is
+`cache.test.ts` "the native walk prints what du -sk prints" (darwin only): a fixture with two hard links of one file, a
+sparse file and a symlink, `duSize(root).kib` against `du -sk`, and `folderKb` serving the same figure. `bench.sh` was
+not rerun: the hot loop of the scan is unchanged, and `bench.sh` measures the scan.
