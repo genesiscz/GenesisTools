@@ -422,8 +422,7 @@ async function buildTree(options: HubAgentsOptions): Promise<AgentsTree> {
         readParent(row, bySession.get(row.sessionId) ?? [], root, { now, promptChars: options.promptChars });
     // How each harness's session becomes a parent: Codex from its agent records; Claude (and a row with no provider,
     // which predates the field) and Grok from their transcript and workers, Grok with no sub-agents on disk.
-    // Harness-guard: the one table of the tool-owned `subagents` part, which every driver names this file for.
-    const parentBuilders: { readonly [Harness in AgentHarness]: (row: ParentRow) => AgentParent } = {
+    const parentBuilders: Record<AgentHarness, (row: ParentRow) => AgentParent> = {
         claude: readClaudeParent,
         codex: (row) => buildCodexParent(row, codexTops.get(row.sessionId) ?? [], now, startedAtOf(row.filePath)),
         grok: readClaudeParent,
