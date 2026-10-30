@@ -4,6 +4,7 @@ import { loadHooksConfig } from "@app/agents/lib/hooks/config";
 import type { AgentSessionRow, AgentSessionRowsOptions } from "@app/ai/lib/sessions/agent-session-rows";
 import { POLLED_LISTING_REUSE_MS } from "@app/ai/lib/sessions/listing-reuse";
 import { readCachedSessionCwd } from "@genesiscz/utils/agent-sessions/cached-title";
+import { type OpenQuestion, openQuestionKey } from "@genesiscz/utils/agents/dialogs/types";
 import { transcriptEnvelope } from "@genesiscz/utils/ai/transcripts/load";
 import { type ResolvedTranscript, resolveTranscript } from "@genesiscz/utils/ai/transcripts/resolve";
 import type { TranscriptTurn } from "@genesiscz/utils/ai/transcripts/types";
@@ -33,6 +34,7 @@ import {
     sessionDecisions,
     type TranscriptScan,
 } from "./build";
+import { listedDialogs, notifyOpenQuestions, unnotified } from "./dialogs";
 import { fillExcerpts, tracedReadDeps } from "./excerpts";
 import type { InboxTrace } from "./session-cursor";
 import { stagedSendText } from "./staged";
@@ -44,6 +46,8 @@ const TAIL_TURNS = 6;
 // v2: the parser now keeps each block's context, per-option rationale and recommended letter, so a
 // scan cached by the old parser (header and options only) must be discarded, not reused.
 const CACHE_KEY = "inbox/scans-v2.json";
+/** The dialog record keys a banner already went out for, so each open question raises one. */
+const DIALOG_BANNERS_KEY = "inbox/dialog-banners.json";
 
 /** One scanned file, reused while its size and mtime are unchanged. */
 interface CachedScan {
@@ -71,6 +75,11 @@ export interface InboxDeps {
         at: string | null;
     }) => Promise<number>;
     forms: () => AskForm[] | Promise<AskForm[]>;
+    /**
+     * The open dialog records of the listed sessions (the agents' own question tools, plan approvals and permission
+     * prompts), after the hub watcher's pass; it raises a banner for a newly open one. Absent: none are listed.
+     */
+    dialogs?: (sessions: AgentSessionRow[]) => Promise<OpenQuestion[]>;
     readCache: () => Promise<ScanCache | null>;
     writeCache: (cache: ScanCache) => Promise<void>;
 }
@@ -122,9 +131,42 @@ export const realInboxDeps: InboxDeps = {
         return stored.length;
     },
     forms: async () => (await import("../pending/ask")).listPendingForms({}, 200),
+    dialogs: async (sessions) => {
+        const { questions } = loadHooksConfig();
+        const open = listedDialogs({ rows: sessions, questions });
+
+        if (!questions.notify) {
+            return open;
+        }
+
+        const notified = new Set((await storage().getCacheFile<string[]>(DIALOG_BANNERS_KEY, "7 days")) ?? []);
+        const fresh = unnotified(open, notified);
+
+        if (fresh.length > 0) {
+            await notifyOpenQuestions(fresh, sessions);
+            // Only the keys still open: a question asked again under the same key is new again.
+            await storage().putCacheFile(DIALOG_BANNERS_KEY, open.map(openQuestionKey), "7 days");
+        }
+
+        return open;
+    },
     readCache: () => storage().getCacheFile<ScanCache>(CACHE_KEY, "7 days"),
     writeCache: (cache) => storage().putCacheFile(CACHE_KEY, cache, "7 days"),
 };
+
+/** The dialog records `InboxDeps.dialogs` lists; a failure lists none and is logged, the rest of the inbox stands. */
+async function listDialogs(sessions: AgentSessionRow[], deps: InboxDeps): Promise<OpenQuestion[]> {
+    if (!deps.dialogs) {
+        return [];
+    }
+
+    try {
+        return await deps.dialogs(sessions);
+    } catch (error) {
+        log.warn({ error }, "inbox: could not list the agents' open questions");
+        return [];
+    }
+}
 
 /**
  * The listed sessions' unposted `❓ DECISION N` blocks, stored as open decisions (`InboxDeps.harvest`), so the widget,
@@ -489,7 +531,8 @@ export async function loadInbox({
     const listed = deps.rows();
     const harvested = await harvestListed({ sessions, scans, rows: listed, deps });
     const rows = harvested > 0 ? deps.rows() : listed;
-    const inbox = buildInbox({ sessions, scans, rows, forms: await deps.forms() }).map((session) => ({
+    const dialogs = await listDialogs(sessions, deps);
+    const inbox = buildInbox({ sessions, scans, rows, forms: await deps.forms(), dialogs }).map((session) => ({
         ...session,
         items: session.items.map((item) =>
             item.kind === "decision" ? { ...item, refs: fillExcerpts(item.refs, session.cwd ?? undefined) } : item

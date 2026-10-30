@@ -1,3 +1,4 @@
+import { type OpenQuestion, openQuestionKey } from "@genesiscz/utils/agents/dialogs/types";
 import { isTaskReport } from "@genesiscz/utils/ai/transcripts/prompt-parts";
 import type { TranscriptTurn } from "@genesiscz/utils/ai/transcripts/types";
 import { looksLikeDump, whySentence } from "../decisions/delivery-text";
@@ -14,7 +15,9 @@ import type { AskForm } from "../pending/types";
 
 /**
  * The "Waiting for you" inbox: every session whose last reply asks a ❓ DECISION, every open or
- * drafted decision in the store, and every pending question form, grouped by session. Pure: the
+ * drafted decision in the store, every structural question an agent still waits on (its own question
+ * tool, a plan approval or a permission prompt, from the dialog records), and every pending question
+ * form, grouped by session. Pure: the
  * loader (load.ts) gathers the inputs, the hub renders the result, `drafts.ts` and `answer.ts`
  * write back.
  */
@@ -80,7 +83,12 @@ export interface InboxDecision {
      */
     answeredVia: AnsweredVia | null;
     /** `transcript`: read from the session's last reply only. `store`: a posted or harvested row. */
-    source: "transcript" | "store";
+    /**
+     * Where the item comes from: the last reply's `❓ DECISION` block, the decision log, or a dialog record (an
+     * agent's own question tool, plan approval or permission prompt; `number` is 0, and `id` is the record's
+     * `provider:sessionId:toolCallId`).
+     */
+    source: "transcript" | "store" | "dialog";
     at: string;
     /** The reply text that leads to this decision (markdown): the findings for the first block, the lead-in for the rest. */
     context: string | null;
@@ -416,6 +424,46 @@ function fromRecord(row: DecisionRecord): InboxDecision {
     };
 }
 
+const DIALOG_TITLES: Record<OpenQuestion["kind"], string> = {
+    decision: "Question",
+    plan: "Plan approval",
+    permission: "Permission prompt",
+};
+
+/**
+ * An open dialog record as an inbox decision, under the record's own key, so the hub, the widget and the answer guard
+ * name one item. It has no decision number: the agent asked through its harness, not with `❓ DECISION N`.
+ */
+export function fromDialog(question: OpenQuestion): InboxDecision {
+    return {
+        kind: "decision",
+        id: openQuestionKey(question),
+        number: 0,
+        title: DIALOG_TITLES[question.kind],
+        prompt: question.question || DIALOG_TITLES[question.kind],
+        choices: choicesOf(question.options ?? [], undefined, null),
+        recommended: null,
+        blocking: true,
+        status: "waiting",
+        option: null,
+        answer: null,
+        answeredVia: null,
+        source: "dialog",
+        at: question.askedAt,
+        context: null,
+        notes: null,
+        proposal: null,
+        reasoning: null,
+        confidence: null,
+        excerpt: null,
+        refs: [],
+        draftOption: null,
+        draft: null,
+        delivery: null,
+        revision: 1,
+    };
+}
+
 function fromBlock(sessionId: string, block: HarvestedDecision, at: string): InboxDecision {
     return {
         kind: "decision",
@@ -510,6 +558,8 @@ export interface BuildInboxInput {
     scans: ReadonlyMap<string, TranscriptScan>;
     rows: readonly DecisionRecord[];
     forms: readonly AskForm[];
+    /** The open dialog records of the listed sessions (`~/.genesis-tools/agents/dialogs/`); a closed one is skipped. */
+    dialogs?: readonly OpenQuestion[];
     /** The clock items age against (`stale`); tests pass a fixed one. */
     now?: number;
 }
@@ -530,7 +580,14 @@ interface Group {
  * the agent replies. A dismissed decision is never listed. Sessions are ordered newest first; the
  * hub re-sorts on the user's choice.
  */
-export function buildInbox({ sessions, scans, rows, forms, now = Date.now() }: BuildInboxInput): InboxSession[] {
+export function buildInbox({
+    sessions,
+    scans,
+    rows,
+    forms,
+    dialogs = [],
+    now = Date.now(),
+}: BuildInboxInput): InboxSession[] {
     const known = new Map(sessions.map((session) => [session.sessionId, session]));
     const groups = new Map<string, Group>();
 
@@ -595,6 +652,22 @@ export function buildInbox({ sessions, scans, rows, forms, now = Date.now() }: B
         target.info.cwd ??= row.cwd ?? null;
         target.info.project ??= row.project ?? null;
         target.info.branch ??= row.branch ?? null;
+    }
+
+    for (const question of dialogs) {
+        if (question.closedAt !== undefined) {
+            continue;
+        }
+
+        const item = fromDialog(question);
+        const target = group(question.sessionId, question.sessionId);
+
+        if (target.items.some((existing) => existing.id === item.id)) {
+            continue;
+        }
+
+        target.items.push(item);
+        target.info.provider ??= question.provider;
     }
 
     for (const form of forms) {
