@@ -3,7 +3,6 @@ import type { NativeDialogPermission } from "@genesiscz/utils/agent-sessions/typ
 import type { ActivityEvent } from "@genesiscz/utils/ai/transcripts/activity";
 import {
     firstLine,
-    isRecord,
     questionCallOf,
     questionTextOf,
     snapshotOf,
@@ -19,11 +18,12 @@ import type {
     TurnSnapshot,
     TurnStateInput,
 } from "@genesiscz/utils/ai/transcripts/turn-state-types";
+import { isObject } from "@genesiscz/utils/object";
 
 /** What a Grok `updates.jsonl` line says, or null when it is not an update line. */
 function grokUpdateOf(record: JsonRecord): { kind: string; update: JsonRecord; ts: number | undefined } | null {
-    const params = isRecord(record.params) ? record.params : null;
-    const update = params && isRecord(params.update) ? params.update : null;
+    const params = isObject(record.params) ? record.params : null;
+    const update = params && isObject(params.update) ? params.update : null;
     const kind = update?.sessionUpdate;
 
     if (!update || typeof kind !== "string") {
@@ -34,7 +34,7 @@ function grokUpdateOf(record: JsonRecord): { kind: string; update: JsonRecord; t
 }
 
 function grokText(content: unknown): string {
-    if (isRecord(content) && content.type === "text" && typeof content.text === "string") {
+    if (isObject(content) && content.type === "text" && typeof content.text === "string") {
         return content.text;
     }
 
@@ -92,8 +92,8 @@ function grokPermissionQuestion(
 }
 
 function grokToolMeta(update: JsonRecord): JsonRecord | null {
-    const meta = isRecord(update._meta) ? update._meta : null;
-    return meta && isRecord(meta["x.ai/tool"]) ? meta["x.ai/tool"] : null;
+    const meta = isObject(update._meta) ? update._meta : null;
+    return meta && isObject(meta["x.ai/tool"]) ? meta["x.ai/tool"] : null;
 }
 
 function grokToolKind(update: JsonRecord): string | null {
