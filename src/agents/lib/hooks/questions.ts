@@ -1,6 +1,6 @@
 import { closeQuestion, openQuestions, upsertQuestion } from "@genesiscz/utils/agents/dialogs/store";
 import { type OpenQuestion, openQuestionKey } from "@genesiscz/utils/agents/dialogs/types";
-import { questionCountOf, questionOptionsOf, questionTextOf } from "@genesiscz/utils/ai/transcripts/turn-state-core";
+import { questionCountOf, questionOptionsOf, questionTextOf } from "@genesiscz/utils/ai/transcripts/turn-state";
 import type { HooksConfig } from "./config";
 import { type HookPayload, normalizeEvent } from "./payload";
 import { QUESTION_TOOL_KINDS } from "./questions-gate";

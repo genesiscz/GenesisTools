@@ -4,6 +4,7 @@ import { logger, out } from "@genesiscz/utils/logger";
 import type { Command } from "commander";
 import type { PromptReceipt } from "../lib/decisions/store";
 import type { AnswerDecisionDeps, DecisionAnswer, InboxAnswerResult } from "../lib/inbox/answer";
+import type { DialogAnswerDeps } from "../lib/inbox/dialog-answer";
 import type { AskDeps } from "../lib/pending/ask";
 import type { AskAnswer } from "../lib/pending/types";
 import { collect } from "./options";
@@ -23,6 +24,8 @@ interface AnswerFlags {
     option?: string;
     text?: string;
     form?: string;
+    /** An inbox item from a dialog record (`provider:session:toolCallId`): press `--option`'s key in that dialog. */
+    dialog?: string;
     answers?: string;
     /** `itemId=path`, repeatable: files read straight into that item's `AskAnswer.images`. */
     image?: string[];
@@ -138,6 +141,7 @@ function batchAnswers(raw: string): DecisionAnswer[] {
 export interface InboxCommandDeps {
     decisions?: () => AnswerDecisionDeps;
     forms?: AskDeps;
+    dialogs?: DialogAnswerDeps;
 }
 
 async function realDecisionDeps(): Promise<AnswerDecisionDeps> {
@@ -174,8 +178,18 @@ async function answer(flags: AnswerFlags, deps: InboxCommandDeps): Promise<Inbox
         });
     }
 
+    if (flags.dialog) {
+        if (!flags.option) {
+            throw new Error("--dialog needs --option <letter>: a dialog is answered by its option key, never by text");
+        }
+
+        const { answerDialogItem } = await import("../lib/inbox/dialog-answer");
+
+        return answerDialogItem({ key: flags.dialog, option: flags.option, dryRun }, deps.dialogs ?? {});
+    }
+
     if (!flags.session) {
-        throw new Error("pass --session with --decision or --batch, or --form");
+        throw new Error("pass --session with --decision or --batch, or --form, or --dialog");
     }
 
     const { answerInboxDecisions } = await import("../lib/inbox/answer");
@@ -331,6 +345,10 @@ export function registerInboxCommand(program: Command, deps: InboxCommandDeps = 
         .option("--option <letter>", "The chosen option, a-z")
         .option("--text <answer>", "A free-text answer, or a note after the option")
         .option("--form <id>", "Answer this pending form instead")
+        .option(
+            "--dialog <id>",
+            "Answer this agent question dialog (an inbox item from a dialog record, provider:session:toolCallId) by pressing --option's key in it"
+        )
         .option("--answers <json>", 'With --form: [{"itemId":"q1","selectedChoices":["c1"],"freeText":"…"}]')
         .option("--image <spec>", "With --form: attach an image file to an item, itemId=path (repeatable)", collect, [])
         .option(

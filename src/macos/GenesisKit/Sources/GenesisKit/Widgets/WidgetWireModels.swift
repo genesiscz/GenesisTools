@@ -323,6 +323,9 @@ public struct WidgetPreferences: Codable, Equatable, Sendable {
     public var ownAnswerReturn: String?
     /// Return on a staged decision's empty own answer: "send" (default), "confirm" (a note with Send) or "nothing".
     public var ownAnswerEmptyReturn: String?
+    /// An answer to an agent's own question dialog (Claude's AskUserQuestion): "press" (default, the option's key in
+    /// the live dialog) or "refuse" (answer it in the terminal).
+    public var dialogAnswer: String?
     /// Width in points of the rail's hover list (the agents preview). Default 324, 260 to 560.
     public var previewWidth: Double?
     /// At start, a popup lists the staged decisions with Send now until it is closed. Default true.
