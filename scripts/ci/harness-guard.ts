@@ -64,6 +64,13 @@ export const HARNESS_TYPE_NAMES: ReadonlySet<string> = new Set([
     "AgentProvider",
 ]);
 
+/**
+ * P8 of `.claude/plans/2026-10-30-PlugenizeHarnesses.md` flips this one line: the guard then runs `--strict` by itself
+ * (the CI step needs no edit), and `scripts/ci/lint-rules.ts` reports every violation as an error, so a local lint
+ * fails before a push. False until every allowlisted file is gone or says why.
+ */
+export const HARNESS_GUARD_STRICT = false;
+
 /** The drivers and the canonical list own the names; tests and fixtures spell them on purpose. */
 const OWNERS =
     /^(?:src\/utils\/harness\/|src\/utils\/ai\/providers\/(?:plugins\/|alias-list\.ts$|harness-index\.ts$|harness-hooks\.ts$)|scripts\/ci\/harness-guard)/;
@@ -384,6 +391,25 @@ function renderAllowlist(counts: ReadonlyMap<string, HarnessGuardCounts>): strin
     ].join("\n");
 }
 
+/**
+ * What `--strict` refuses, one line each: a file above its allowance (NEW), an allowance above the file (STALE), and
+ * an allowlisted file without a `why` (UNJUSTIFIED). For lint-rules, which runs it only while `HARNESS_GUARD_STRICT`.
+ */
+export function strictViolations(repoRoot: string): string[] {
+    const counts = countsOf(scanRepo(repoRoot));
+    const verdict = compare(counts, HARNESS_GUARD_ALLOWLIST);
+
+    return [
+        ...verdict.added.map(
+            (entry) => `${entry.file}: ${entry.found} ${entry.kind} over its allowance of ${entry.allowed}`
+        ),
+        ...verdict.stale.map((entry) => `${entry.file}: allows ${entry.allowed} ${entry.kind}, has ${entry.found}`),
+        ...[...counts.keys()]
+            .filter((file) => !HARNESS_GUARD_ALLOWLIST[file]?.why)
+            .map((file) => `${file}: harness names outside the drivers, and its allowlist entry says no why`),
+    ];
+}
+
 function main(): void {
     const args = new Set(process.argv.slice(2));
     const repoRoot = join(import.meta.dirname, "..", "..");
@@ -436,7 +462,7 @@ function main(): void {
     }
 
     const verdict = compare(counts, HARNESS_GUARD_ALLOWLIST);
-    const strict = args.has("--strict");
+    const strict = HARNESS_GUARD_STRICT || args.has("--strict");
     const byKind = KINDS.map((kind) => `${hits.filter((hit) => hit.kind === kind).length} ${kind}`).join(", ");
 
     for (const entry of verdict.added) {

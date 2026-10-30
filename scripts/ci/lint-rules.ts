@@ -35,6 +35,7 @@ import { existsSync, readdirSync, readFileSync } from "node:fs";
 import { join } from "node:path";
 import { findInFiles, Lang, type NapiConfig, parse, type SgNode } from "@ast-grep/napi";
 import { SafeJSON } from "@genesiscz/utils/json";
+import { HARNESS_GUARD_STRICT, strictViolations } from "./harness-guard";
 import { AGENT_PROCESS_MATCH_RATCHET, HARNESS_BRANCH_RATCHET, HOOK_PAYLOAD_READ_RATCHET } from "./harness-ratchet";
 import { EFFORT_LIST_RATCHET, MODEL_ID_LITERAL_RATCHET, MODEL_PRICE_TABLE_RATCHET } from "./model-facts-ratchet";
 import { NATIVE_HOME_CLAUDE_RATCHET, NATIVE_HOME_CODEX_GROK_RATCHET } from "./native-home-ratchet";
@@ -2025,12 +2026,19 @@ if (import.meta.main) {
         console.log(render(finding));
     }
 
-    const errors = findings.filter((f) => f.severity === "error").length;
-    const warnings = findings.length - errors;
+    // The harness list guard joins the lint in P8 (`HARNESS_GUARD_STRICT`); until then it runs as its own CI step.
+    const harnessViolations = HARNESS_GUARD_STRICT ? strictViolations(process.cwd()) : [];
+
+    for (const violation of harnessViolations) {
+        console.log(`error harness-guard: ${violation} (bun scripts/ci/harness-guard.ts)`);
+    }
+
+    const errors = findings.filter((f) => f.severity === "error").length + harnessViolations.length;
+    const warnings = findings.length - (errors - harnessViolations.length);
 
     const timing = `boot ${boot}ms, list ${listed - started}ms, scan ${scanned - listed}ms`;
 
-    if (findings.length === 0) {
+    if (findings.length === 0 && harnessViolations.length === 0) {
         console.log(`lint-rules: OK (${files.length} files, 23 repo rules) [${timing}]`);
     } else {
         console.log(`\nlint-rules: ${errors} error(s), ${warnings} warning(s) across ${files.length} files`);
