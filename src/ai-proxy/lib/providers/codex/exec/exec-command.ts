@@ -99,13 +99,20 @@ export async function runShellCommand(
     if (deadlineAt <= performance.now()) {
         throw new Error("exec_command failed: the script deadline expired before the command started");
     }
-    const proc = Bun.spawn([shell, args.login === true ? "-lc" : "-c", args.cmd], {
-        cwd,
-        stdin: "ignore",
-        stdout: "pipe",
-        stderr: "pipe",
-        detached: true,
-    });
+    // The watcher remains in the owned group, pinning its identity until the control pipe closes.
+    // Only an explicit normal-completion message suppresses cleanup on timeout or parent death.
+    const supervisor =
+        'group=$$; (IFS= read -r action; if [ "$action" != done ]; then kill -KILL -"$group"; fi) <&0 >/dev/null 2>&1 & watcher=$!; "$@" </dev/null & child=$!; wait "$child"; status=$?; exec 1>&- 2>&-; wait "$watcher"; exit "$status"';
+    const proc = Bun.spawn(
+        ["/bin/sh", "-c", supervisor, "exec-supervisor", shell, args.login === true ? "-lc" : "-c", args.cmd],
+        {
+            cwd,
+            stdin: "pipe",
+            stdout: "pipe",
+            stderr: "pipe",
+            detached: true,
+        }
+    );
     const requestedTokens = args.max_output_tokens ?? DEFAULT_COMMAND_TOKENS;
     const maxChars = Math.min(
         1_000_000,
@@ -119,24 +126,28 @@ export async function runShellCommand(
     const timeout = new Promise<null>((resolve) => {
         timer = setTimeout(() => resolve(null), Math.max(0, deadlineAt - performance.now()));
     });
-    const finished = Promise.all([drain(stdout, chunks), drain(stderr, chunks), proc.exited]);
+    const finished = Promise.all([drain(stdout, chunks), drain(stderr, chunks)]).then(async () => {
+        await proc.stdin.write("done\n");
+        await proc.stdin.end();
+        return proc.exited;
+    });
     let exitCode: number;
     try {
         const result = await Promise.race([finished, timeout]);
         if (result === null) {
             try {
-                // The detached command owns this process group, including children retaining its pipes.
-                process.kill(-proc.pid, "SIGKILL");
+                await proc.stdin.write("stop\n");
+                await proc.stdin.end();
             } catch (error) {
-                logger.debug({ error, pid: proc.pid }, "ai-proxy exec: command group already exited");
+                logger.debug({ error }, "ai-proxy exec: group watcher was unavailable");
             }
             void stdout.cancel().catch((error) => logger.debug({ error }, "ai-proxy exec: stdout cancellation failed"));
             void stderr.cancel().catch((error) => logger.debug({ error }, "ai-proxy exec: stderr cancellation failed"));
             throw new Error(
-                "exec_command failed: the script deadline expired; termination of the command group was requested"
+                "exec_command failed: the script deadline expired; group cleanup may be incomplete if its watcher exited"
             );
         }
-        exitCode = result[2];
+        exitCode = result;
     } finally {
         clearTimeout(timer);
     }

@@ -1,4 +1,4 @@
-import { describe, expect, it } from "bun:test";
+import { describe, expect, it, spyOn } from "bun:test";
 import { existsSync, mkdtempSync, realpathSync } from "node:fs";
 import { tmpdir } from "node:os";
 import { join } from "node:path";
@@ -198,6 +198,27 @@ describe("the exec runner's commands", () => {
         const normal = await runShellCommand({ cmd: "printf normal", shell: "/bin/sh" }, { cwd: dir });
         expect(normal.output).toBe("normal");
         expect(normal.exit_code).toBe(0);
+    });
+
+    it("does not signal a recycled group if the supervisor dies", async () => {
+        const dir = realpathSync(mkdtempSync(join(tmpdir(), "exec-leader-")));
+        const kill = spyOn(process, "kill").mockImplementation(() => {
+            throw new Error("the parent must not signal a numeric pid");
+        });
+        try {
+            await runShellCommand(
+                { cmd: 'kill -9 "$PPID"; sleep 0.5; printf child > marker', shell: "/bin/sh" },
+                { cwd: dir, deadlineAt: performance.now() + 150 }
+            ).then(
+                (result) => expect(result.exit_code).not.toBe(0),
+                (error) => expect(String(error)).toContain("script deadline expired")
+            );
+            await Bun.sleep(600);
+            expect(existsSync(join(dir, "marker"))).toBe(false);
+            expect(kill).not.toHaveBeenCalled();
+        } finally {
+            kill.mockRestore();
+        }
     });
 
     it("the shell guard blocks a nested command before it runs, and the script sees the deny as an error", async () => {
