@@ -13,13 +13,14 @@ public struct ProviderBadge: View {
         self.tooltip = tooltip
     }
 
+    /// A harness draws the mark its TypeScript driver names (`Harness.markLetter`, `Harness.markColor`).
     public static func style(for provider: String) -> (letter: String, color: Color) {
-        switch provider.lowercased() {
-        case "claude": return ("C", Color(red: 0.85, green: 0.47, blue: 0.34))
-        case "codex": return ("X", Color(red: 0.55, green: 0.75, blue: 0.95))
-        case "grok": return ("G", Color(red: 0.75, green: 0.75, blue: 0.78))
-        default: return (String(provider.prefix(1)).uppercased(), KitPalette.dim)
+        guard let harness = Harness(rawValue: provider.lowercased()) else {
+            return (String(provider.prefix(1)).uppercased(), KitPalette.dim)
         }
+
+        let rgb = harness.markColor
+        return (harness.markLetter, Color(red: rgb.red, green: rgb.green, blue: rgb.blue))
     }
 
     public var body: some View {

@@ -58,6 +58,18 @@ export function renderHarnessSwift(): string {
         ...switchOverHarnesses((driver) => swiftString(driver.identity.label)),
         "    }",
         "",
+        "    /// The letter of the harness's badge.",
+        "    public var markLetter: String {",
+        ...switchOverHarnesses((driver) => swiftString(driver.identity.mark.letter)),
+        "    }",
+        "",
+        "    /// The colour of the harness's badge, sRGB with each channel 0 to 1.",
+        "    public var markColor: (red: Double, green: Double, blue: Double) {",
+        ...switchOverHarnesses(
+            ({ identity: { mark } }) => `(${mark.color.red}, ${mark.color.green}, ${mark.color.blue})`
+        ),
+        "    }",
+        "",
         "    /// The executable a user starts.",
         "    public var binary: String {",
         ...switchOverHarnesses((driver) => swiftString(driver.identity.binary)),

@@ -12,12 +12,21 @@ import { codexWorker } from "./harness-worker";
  */
 export const codexHarness: HarnessDriver<"codex"> = {
     id: "codex",
-    identity: { label: "Codex", binary: "codex", plugin: "openai-sub", aliases: ["codex-cli"] },
+    identity: {
+        label: "Codex",
+        binary: "codex",
+        plugin: "openai-sub",
+        aliases: ["codex-cli"],
+        mark: { letter: "X", color: { red: 0.55, green: 0.75, blue: 0.95 } },
+    },
     parts: {
         locate: pending("P2", "the codex finders in src/utils/ai/transcripts/resolve.ts and session-paths.ts roots"),
         parse: () => import("./harness-parse").then((m) => m.codexParse),
         turnState: { read: codexTurnState },
-        questions: pending("P2", "the codex question signals inside src/utils/ai/transcripts/turn-state.ts"),
+        questions: pending(
+            "P2",
+            "the codex question signals inside src/utils/agent-sessions/readers/codex-turn-state.ts (TurnSnapshot.questionCall)"
+        ),
         live: pending("P2", "the codex live tail in src/utils/ai/transcripts/live.ts and activity.ts"),
         launch: codexLaunch,
         transcript: {

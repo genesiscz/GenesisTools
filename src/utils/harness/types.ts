@@ -88,6 +88,14 @@ export interface HarnessIdentity {
     readonly plugin: string;
     /** Other spellings a user or another tool writes for the harness ("claude-code", "codex-cli"). */
     readonly aliases: readonly string[];
+    /** How the apps draw the harness: the letter and colour of its badge (`ProviderBadge`, via `Harness.swift`). */
+    readonly mark: HarnessMark;
+}
+
+/** A harness's badge: one letter on a square of one colour (sRGB, each channel 0 to 1). */
+export interface HarnessMark {
+    readonly letter: string;
+    readonly color: { readonly red: number; readonly green: number; readonly blue: number };
 }
 
 /**

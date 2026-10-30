@@ -3,7 +3,12 @@ import { existsSync, readFileSync } from "node:fs";
 import { join } from "node:path";
 import { ACCOUNT_PROVIDER_ALIASES } from "@genesiscz/utils/ai/providers/alias-list";
 import { providerAliasOf } from "@genesiscz/utils/ai/providers/aliases";
-import { harnessDriver, harnessDrivers, harnessLaunch } from "@genesiscz/utils/ai/providers/harness-index";
+import {
+    harnessDriver,
+    harnessDrivers,
+    harnessLaunch,
+    harnessTurnState,
+} from "@genesiscz/utils/ai/providers/harness-index";
 import { registerBuiltInPlugins } from "@genesiscz/utils/ai/providers/plugins";
 import { allProviderPlugins } from "@genesiscz/utils/ai/providers/registry";
 import { moduleDir } from "@genesiscz/utils/fs/module-dir";
@@ -61,6 +66,12 @@ describe("harness drivers hang off the provider plugins", () => {
             expect(identity.binary.length).toBeGreaterThan(0);
             expect(identity.aliases).not.toContain(driverOf(plugin.id).id);
             expect(identity.plugin).toBe(plugin.id);
+            expect(identity.mark.letter).toHaveLength(1);
+
+            for (const channel of Object.values(identity.mark.color)) {
+                expect(channel).toBeGreaterThanOrEqual(0);
+                expect(channel).toBeLessThanOrEqual(1);
+            }
         }
     });
 
@@ -124,6 +135,23 @@ describe("launch: the resume command of every harness", () => {
             expect(launch.resumeArgv("s-1", {})).toContain("s-1");
             expect(launch.resumeArgv("s-1", { account: "work" }).slice(0, 2)).toEqual(["tools", driver.id]);
             expect(Object.keys(launch.resumeFlags).length).toBeGreaterThan(0);
+        });
+    }
+});
+
+describe("turnState: an empty tail of every harness", () => {
+    for (const driver of harnessDrivers()) {
+        test(`${driver.id} reads a tail with no whole record from the modification time alone`, () => {
+            const reader = harnessTurnState(driver.id);
+            const base = { records: [], now: 600_000, stallTimeoutMs: 60_000 };
+            const stale = reader.read({ ...base, lastModified: 0 });
+            const fresh = reader.read({ ...base, lastModified: 599_000 });
+
+            expect(stale.state).toBe("STALLED");
+            expect(fresh.state).toBe("RUNNING");
+            expect(stale.openTools).toEqual([]);
+            expect(stale.lastText).toBe("");
+            expect(stale.asksQuestion).toBe(false);
         });
     }
 });

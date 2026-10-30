@@ -12,12 +12,21 @@ import { grokWorker } from "./harness-worker";
  */
 export const grokHarness: HarnessDriver<"grok"> = {
     id: "grok",
-    identity: { label: "Grok", binary: "grok", plugin: "grok-sub", aliases: ["grok-cli"] },
+    identity: {
+        label: "Grok",
+        binary: "grok",
+        plugin: "grok-sub",
+        aliases: ["grok-cli"],
+        mark: { letter: "G", color: { red: 0.75, green: 0.75, blue: 0.78 } },
+    },
     parts: {
         locate: pending("P2", "the grok finders in src/utils/ai/transcripts/resolve.ts and session-paths.ts roots"),
         parse: () => import("./harness-parse").then((m) => m.grokParse),
         turnState: { read: grokTurnState },
-        questions: pending("P2", "the grok question signals inside src/utils/ai/transcripts/turn-state.ts"),
+        questions: pending(
+            "P2",
+            "the grok question signals inside src/utils/agent-sessions/readers/grok-turn-state.ts (TurnSnapshot.questionCall)"
+        ),
         live: pending("P2", "the grok live tail in src/utils/ai/transcripts/live.ts and activity.ts"),
         launch: grokLaunch,
         transcript: {

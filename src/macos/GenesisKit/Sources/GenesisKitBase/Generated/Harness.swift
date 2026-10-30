@@ -16,6 +16,24 @@ public enum Harness: String, CaseIterable, Sendable {
         }
     }
 
+    /// The letter of the harness's badge.
+    public var markLetter: String {
+        switch self {
+        case .claude: return "C"
+        case .codex: return "X"
+        case .grok: return "G"
+        }
+    }
+
+    /// The colour of the harness's badge, sRGB with each channel 0 to 1.
+    public var markColor: (red: Double, green: Double, blue: Double) {
+        switch self {
+        case .claude: return (0.85, 0.47, 0.34)
+        case .codex: return (0.55, 0.75, 0.95)
+        case .grok: return (0.75, 0.75, 0.78)
+        }
+    }
+
     /// The executable a user starts.
     public var binary: String {
         switch self {

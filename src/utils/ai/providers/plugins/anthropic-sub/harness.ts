@@ -17,12 +17,16 @@ export const claudeHarness: HarnessDriver<"claude"> = {
         binary: "claude",
         plugin: "anthropic-sub",
         aliases: ["claude-code", "claude_code", "cc"],
+        mark: { letter: "C", color: { red: 0.85, green: 0.47, blue: 0.34 } },
     },
     parts: {
         locate: pending("P2", "the claude finders in src/utils/ai/transcripts/resolve.ts and session-paths.ts roots"),
         parse: () => import("./harness-parse").then((m) => m.claudeParse),
         turnState: { read: claudeTurnState },
-        questions: pending("P2", "the claude question signals inside src/utils/ai/transcripts/turn-state.ts"),
+        questions: pending(
+            "P2",
+            "the claude question signals inside src/utils/agent-sessions/readers/claude-turn-state.ts (TurnSnapshot.questionCall)"
+        ),
         live: pending("P2", "the claude live tail in src/utils/ai/transcripts/live.ts and activity.ts"),
         launch: claudeLaunch,
         transcript: {
