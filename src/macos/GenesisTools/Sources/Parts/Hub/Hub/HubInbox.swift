@@ -123,6 +123,22 @@ struct InboxQuestion: Decodable, Hashable {
 }
 
 /// One thing a session waits on: a decision (`number`, `choices`) or a question form (`questions`).
+/// Where a pick on an inbox decision goes, by the item's `source`, decided here once. A decision of the log
+/// (`transcript`, `store`) is staged or sent through the log. An agent's own question dialog (`dialog`, a dialog record
+/// keyed `provider:session:toolCallId`) has no log row: a pick is answered at once by pressing the option's key in the
+/// live dialog (the widget action `dialog-answer`, which the widget setting `dialogAnswer` may set to refuse).
+enum InboxAnswerRoute: Equatable {
+    case ledger
+    case dialog
+
+    init(source: String?) {
+        switch source {
+        case "dialog": self = .dialog
+        default: self = .ledger
+        }
+    }
+}
+
 struct InboxItem: Decodable, Identifiable, Hashable {
     let kind: String
     let id: String
@@ -136,7 +152,8 @@ struct InboxItem: Decodable, Identifiable, Hashable {
     let blocking: Bool?
     let option: String?
     let answer: String?
-    /// A decision: `transcript` or `store`. A form: who posted it.
+    /// A decision: `transcript`, `store`, or `dialog` (an agent's own question dialog, `InboxAnswerRoute`). A form: who
+    /// posted it.
     let source: String?
     let questions: [InboxQuestion]?
     /// A form's resolved cwd (`AskForm.cwd`): `@file` tags and the file-browse picker both root
@@ -164,6 +181,7 @@ struct InboxItem: Decodable, Identifiable, Hashable {
 
     var isForm: Bool { kind == "form" }
     var isOpen: Bool { status == "waiting" || status == "drafted" }
+    var answerRoute: InboxAnswerRoute { InboxAnswerRoute(source: source) }
     /// The recorded answer's own words, when they say more than the picked options do. Nil when the answer only repeats
     /// a picked option ("b", "b) Keep it", "Keep it"), so a closed card never prints the same option twice (F7).
     var answerBeyondPick: String? {
@@ -782,6 +800,11 @@ final class HubInboxModel: ObservableObject {
     /// `note`: the card's note when the user changed it since it was saved, else nil, so a click never writes back a
     /// stale copy over a note staged in the widget or the session's sidebar.
     func choose(_ item: InboxItem, in session: InboxSession, letter: String, note: String?, shift: Bool, command: Bool) {
+        if item.answerRoute == .dialog {
+            keyCardID = item.id
+            answerDialog(item, letter: letter)
+            return
+        }
         let plan = Self.clickPlan(letters: letters(item), letter: letter, shift: shift,
                                   stages: DecisionAnswering.clickStages(freshPreferences(), command: command))
         keyCardID = item.id
@@ -802,6 +825,7 @@ final class HubInboxModel: ObservableObject {
     /// nothing to stage or send: an input hint, drawn quiet and gone on the next key, never as an error (P12).
     @discardableResult
     func submitNote(_ item: InboxItem, in session: InboxSession, note: String, command: Bool) -> String? {
+        if item.answerRoute == .dialog { return "This dialog takes an option: pick one." }
         let stages = DecisionAnswering.returnStages(freshPreferences(), command: command)
         if let hint = Self.emptyNoteHint(note: note, stored: item.draft, letters: letters(item), stages: stages) {
             return hint
@@ -1263,14 +1287,34 @@ final class HubInboxModel: ObservableObject {
         return args
     }
 
-    private func run(_ args: [String], item: InboxItem, staged: [String] = []) {
-        guard !sending.contains(item.id) else { return }
+    /// A pick on an agent's own question dialog (`InboxAnswerRoute.dialog`): the widget action `dialog-answer` presses
+    /// the option's key in the session's live dialog, or refuses (no dialog open, `dialogAnswer` set to refuse). The
+    /// hub reads the setting, so the widget and this Inbox obey the same one.
+    func answerDialog(_ item: InboxItem, letter: String) {
+        let file = FileManager.default.temporaryDirectory
+            .appendingPathComponent("hub-inbox-dialog-\(UUID().uuidString).json")
+        let request: WidgetJSON = ["action": "dialog-answer", "key": .string(item.id), "option": .string(letter)]
+        do {
+            try JSONEncoder().encode(request).write(to: file)
+        } catch {
+            deliveries[item.id] = .failure("Nothing was pressed: the hub could not write the request.", raw: "\(error)")
+            return
+        }
+        run(["hub", "widget", "call", "--input", file.path], item: item, removing: file)
+    }
+
+    private func run(_ args: [String], item: InboxItem, staged: [String] = [], removing file: URL? = nil) {
+        guard !sending.contains(item.id) else {
+            file.map { try? FileManager.default.removeItem(at: $0) }
+            return
+        }
         sending.insert(item.id)
         deliveries[item.id] = nil
         HubPerf.log("inbox.answer \(item.id)")
         DispatchQueue.global(qos: .userInitiated).async {
             let span = HubPerf.begin("inbox.answer")
             let delivery: InboxDelivery
+            defer { file.map { try? FileManager.default.removeItem(at: $0) } }
             do {
                 let capture = try ToolsCLIRunner.capture(args)
                 delivery = (try? JSONDecoder().decode(InboxDelivery.self, from: capture.stdout))
