@@ -13,8 +13,7 @@ const { log } = logger.scoped("cmux-dialog-guard");
  * "input needed"` while a question dialog is open, and `idle` or `busy` otherwise (observed live on 2.1.312,
  * 2026-10-30). It is the one signal that sees an open `AskUserQuestion` before it is answered: Claude Code writes the
  * assistant record that holds the tool call only after the tool returns, so the transcript's turn state cannot. The
- * entry does not say which dialog it is, so the kind stays `decision`. `turn-state` is the closest source name: the
- * entry is Claude's own turn state, and `OpenQuestionSource` has no registry member yet.
+ * entry does not say which dialog it is, so the kind stays `decision`; the signal is `registry`.
  */
 export function claudeRegistryDialog(
     sessionId: string,
@@ -24,7 +23,7 @@ export function claudeRegistryDialog(
         (session) => session.sessionId === sessionId && session.status === "waiting" && !session.parkedJobId
     );
 
-    return waiting ? { kind: "decision", question: null, signal: "turn-state" } : null;
+    return waiting ? { kind: "decision", question: null, signal: "registry" } : null;
 }
 
 /**

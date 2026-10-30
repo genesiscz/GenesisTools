@@ -571,7 +571,7 @@ test("Claude's registry status `waiting` is an open dialog for that session only
     expect(claudeRegistryDialog(SESSION_A, () => [entry])).toEqual({
         kind: "decision",
         question: null,
-        signal: "turn-state",
+        signal: "registry",
     });
     expect(claudeRegistryDialog(SESSION_A, () => [{ ...entry, status: "idle" }])).toBeNull();
     expect(claudeRegistryDialog(SESSION_A, () => [{ ...entry, status: "busy" }])).toBeNull();
