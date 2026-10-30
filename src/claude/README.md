@@ -238,6 +238,37 @@ finally the working directory. A weak match with more than one candidate is refu
 than guessed at, because typing into the wrong agent session is worse than not typing;
 `--first` overrides that for the non-weak cases. `--no-enter` leaves the text in the prompt
 without submitting it, and `--dry-run` prints the pane it would type into and stops.
+Multi-line text always goes as one `cmux paste --submit` (typed keystrokes turned every newline
+into its own prompt); `--paste` asks for the paste for a single line too.
+
+`send` refuses to type while the session shows a question, plan or permission dialog, because
+the text plus Enter would pick an option the user never chose (a live paste into an open
+`AskUserQuestion` picked its first option, 2026-10-30) or land in the dialog's text field. It
+asks state signals only, never the screen: the dialog records the hooks write
+(`~/.genesis-tools/agents/dialogs/<provider>/<session>.json`), then the transcript's turn state,
+then Claude Code's own registry entry (`status: "waiting"`), which is the one signal that sees
+an open `AskUserQuestion`: the transcript gets that tool call only after it is answered. A
+refusal exits 1; `--json` prints `{ sent: false, reason, dialog }`. `--force` types anyway and
+passes `--force` to `cmux paste`.
+
+A decision answer from the inbox (`tools question decisions send`, the hub) is delivered by
+`deliverToSession` (`src/question/lib/decisions/deliver.ts`) down a ladder of rungs, and the
+result names the rung in `channel`:
+
+1. `codex`: a Codex thread that a live `tools codex` worker runs is steered through the
+   app-server (`codex steer`, with an input receipt).
+2. `resume`: a Claude or Grok session that GenesisTools owns as a worker gets a resumed turn
+   (`claude worker steer`, `grok steer`), acknowledged by a completed same-session turn.
+3. `claude-peer`: a live interactive Claude session gets the message on its cross-session socket.
+4. `cmux`: the last rung types into the session's pane with `tools claude cmux send --paste
+   --exact-session`, after the dialog guard said no dialog is open.
+5. `queued`: no rung took it, or the guard refused; with a source home and a delivery key the
+   message is saved for this exact session with the reason.
+
+Only the `cmux` rung types, so only it is guarded; the other rungs are structural and a dialog
+cannot swallow them. The delivered text opens with one line that says it is the user's own answer
+relayed from the decision inbox (`RELAYED_ANSWER_HEAD` in `delivery-text.ts`), then
+`DECISION <n>: <letter>) <the user's words>` per answer.
 
 Each pane runs `cd <session cwd> && tools claude start <account> -- --resume <id>`. The
 `--resume` sits after `--` so claude gets the id verbatim; before it, `tools claude start`

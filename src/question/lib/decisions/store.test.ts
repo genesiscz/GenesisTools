@@ -1269,6 +1269,51 @@ describe("delivery routes", () => {
         expect(socketWrites).toBe(1);
     });
 
+    test("the ladder takes the peer socket over a live pane, and the pane only when no peer claims the session", async () => {
+        const peer = {
+            pid: 42,
+            sessionId: "ladder-session",
+            name: "fixture",
+            cwd: "/fixture/project",
+            status: "idle",
+            kind: "interactive",
+            socketPath: "/fixture/receiver.sock",
+            file: "/fixture/home/sessions/42.json",
+        };
+        const rungs: string[] = [];
+        const deps = {
+            nativeWorkers: () => [],
+            peerToken: () => null,
+            receiverMode: async () => "prompting" as const,
+            sendClaudePeer: async () => {
+                rungs.push("socket");
+            },
+            findTargets: (session: string) => {
+                rungs.push("pane lookup");
+                return livePaneTargets(session);
+            },
+            openDialog: () => null,
+            runTool: async () => {
+                rungs.push("typed");
+                return { success: true, stdout: '{"sent":true}', stderr: "" };
+            },
+        };
+        const request = { session: peer.sessionId, provider: "claude", text: "DECISION 1: a) yes" };
+
+        expect(await deliverToSession(request, { ...deps, claudePeers: () => [peer] })).toMatchObject({
+            channel: "claude-peer",
+            delivered: true,
+        });
+        expect(rungs).toEqual(["socket"]);
+
+        rungs.length = 0;
+        expect(await deliverToSession(request, { ...deps, claudePeers: () => [] })).toMatchObject({
+            channel: "cmux",
+            delivered: true,
+        });
+        expect(rungs).toEqual(["pane lookup", "typed"]);
+    });
+
     test("a closed pane is found BEFORE anything is typed: nothing runs, the reason is one sentence", async () => {
         const never = async (): Promise<never> => {
             throw new Error("must not type when no pane is live");
