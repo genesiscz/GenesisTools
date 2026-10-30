@@ -3,11 +3,11 @@ import { existsSync } from "node:fs";
 import { join } from "node:path";
 import { ACCOUNT_PROVIDER_ALIASES } from "@genesiscz/utils/ai/providers/alias-list";
 import { providerAliasOf } from "@genesiscz/utils/ai/providers/aliases";
-import { harnessDriver, harnessDrivers } from "@genesiscz/utils/ai/providers/harness-index";
+import { harnessDriver, harnessDrivers, harnessLaunch } from "@genesiscz/utils/ai/providers/harness-index";
 import { registerBuiltInPlugins } from "@genesiscz/utils/ai/providers/plugins";
 import { allProviderPlugins } from "@genesiscz/utils/ai/providers/registry";
 import { moduleDir } from "@genesiscz/utils/fs/module-dir";
-import { HARNESS_PARTS, type HarnessDriver, isPartNote, type PartSlot } from "./types";
+import { HARNESS_PARTS, type HarnessDriver, isPartNote } from "./types";
 
 /**
  * The conformance suite of the harness drivers (plan `.claude/plans/2026-10-30-PlugenizeHarnesses.md`, P0). For every
@@ -79,7 +79,7 @@ describe("every part of every driver loads or says why not", () => {
     for (const plugin of codingAgents) {
         for (const part of HARNESS_PARTS) {
             test(`${plugin.id} ${part}`, async () => {
-                const slot: PartSlot<unknown> = driverOf(plugin.id).parts[part];
+                const slot = driverOf(plugin.id).parts[part];
 
                 if (isPartNote(slot)) {
                     expect(slot.reason.trim().length).toBeGreaterThan(0);
@@ -91,7 +91,8 @@ describe("every part of every driver loads or says why not", () => {
                     return;
                 }
 
-                const loaded = await slot();
+                // A lazy part is a loader; an eager part (launch, exit, host, process) is the value itself.
+                const loaded = typeof slot === "function" ? await slot() : slot;
                 expect(loaded).toBeTruthy();
             });
         }
@@ -111,4 +112,17 @@ describe("every part of every driver loads or says why not", () => {
             expect(plugin.codingAgent?.kind).toBe(driverOf(plugin.id).id);
         }
     });
+});
+
+describe("launch: the resume command of every harness", () => {
+    for (const driver of harnessDrivers()) {
+        test(`${driver.id} resumes with its own binary, and through tools when an account is pinned`, () => {
+            const launch = harnessLaunch(driver.id);
+
+            expect(launch.resumeArgv("s-1", {})[0]).toBe(driver.identity.binary);
+            expect(launch.resumeArgv("s-1", {})).toContain("s-1");
+            expect(launch.resumeArgv("s-1", { account: "work" }).slice(0, 2)).toEqual(["tools", driver.id]);
+            expect(Object.keys(launch.resumeFlags).length).toBeGreaterThan(0);
+        });
+    }
 });

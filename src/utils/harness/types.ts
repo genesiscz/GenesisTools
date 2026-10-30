@@ -1,5 +1,5 @@
 import type { AccountProviderAlias } from "@genesiscz/utils/ai/providers/alias-list";
-import type { HarnessPartContracts } from "./parts";
+import type { EagerPartContracts, HarnessPartContracts, LazyPartContracts } from "./parts";
 
 /**
  * A coding agent this repo drives (Claude Code, Codex, Grok). It is `AccountProviderAlias`, not a second name type:
@@ -56,19 +56,24 @@ export const HARNESS_PARTS = [
 /** Why a driver does not carry a part's implementation itself. Every variant carries a reason a person can read. */
 export type PartNote =
     /** The harness cannot have the part ("Codex rollouts do not persist approval requests"). */
-    | { readonly kind: "unsupported"; readonly reason: string }
+    | { readonly note: true; readonly kind: "unsupported"; readonly reason: string }
     /** The part still lives at its old sites; `phase` moves it here. */
-    | { readonly kind: "pending"; readonly phase: HarnessPhase; readonly reason: string }
+    | { readonly note: true; readonly kind: "pending"; readonly phase: HarnessPhase; readonly reason: string }
     /** A tool owns the part; `owner` is the repo-relative module with the table keyed by `HarnessId`. */
-    | { readonly kind: "tool-owned"; readonly owner: string; readonly reason: string };
+    | { readonly note: true; readonly kind: "tool-owned"; readonly owner: string; readonly reason: string };
 
+/** A lazy part: a loader, or a note. */
 export type PartSlot<T> = Lazy<T> | PartNote;
+/** An eager part: the value itself, or a note (`note: true` tells them apart). */
+export type EagerSlot<T> = T | PartNote;
 
 /**
  * Every part is a required key, so the compiler names each driver that says nothing about a part. A part with a
  * contract is a lazy loader or a note; a part without one can only be a note.
  */
-export type HarnessParts = { readonly [P in keyof HarnessPartContracts]: PartSlot<HarnessPartContracts[P]> } & {
+export type HarnessParts = { readonly [P in keyof LazyPartContracts]: PartSlot<LazyPartContracts[P]> } & {
+    readonly [P in keyof EagerPartContracts]: EagerSlot<EagerPartContracts[P]>;
+} & {
     readonly [P in PendingContractPart | ToolOwnedPart]: PartNote;
 };
 
@@ -95,17 +100,17 @@ export interface HarnessDriver<Id extends HarnessId = HarnessId> {
 }
 
 export function unsupported(reason: string): PartNote {
-    return { kind: "unsupported", reason };
+    return { note: true, kind: "unsupported", reason };
 }
 
 export function pending(phase: HarnessPhase, reason: string): PartNote {
-    return { kind: "pending", phase, reason };
+    return { note: true, kind: "pending", phase, reason };
 }
 
 export function toolOwned(owner: string, reason: string): PartNote {
-    return { kind: "tool-owned", owner, reason };
+    return { note: true, kind: "tool-owned", owner, reason };
 }
 
-export function isPartNote<T>(slot: PartSlot<T>): slot is PartNote {
-    return typeof slot !== "function";
+export function isPartNote(slot: unknown): slot is PartNote {
+    return typeof slot === "object" && slot !== null && "note" in slot && slot.note === true;
 }

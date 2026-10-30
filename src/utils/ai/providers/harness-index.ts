@@ -1,5 +1,6 @@
 import { ACCOUNT_PROVIDER_ALIASES } from "@genesiscz/utils/ai/providers/alias-list";
-import type { HarnessDriver, HarnessId } from "@genesiscz/utils/harness/types";
+import type { LaunchRecipe } from "@genesiscz/utils/harness/parts";
+import { type HarnessDriver, type HarnessId, isPartNote } from "@genesiscz/utils/harness/types";
 import { claudeHarness } from "./plugins/anthropic-sub/harness";
 import { grokHarness } from "./plugins/grok-sub/harness";
 import { codexHarness } from "./plugins/openai-sub/harness";
@@ -31,4 +32,15 @@ export function harnessLabel(id: HarnessId): string {
 
 export function harnessPluginId(id: HarnessId): string {
     return harnessDriver(id).identity.plugin;
+}
+
+/** The launch recipe of a harness; every harness has one, so a note here is a broken driver. */
+export function harnessLaunch(id: HarnessId): LaunchRecipe {
+    const slot = harnessDriver(id).parts.launch;
+
+    if (isPartNote(slot)) {
+        throw new Error(`The ${id} harness driver has no launch recipe: ${slot.reason}`);
+    }
+
+    return slot;
 }
