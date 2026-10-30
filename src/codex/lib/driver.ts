@@ -257,10 +257,13 @@ export const codexDriver: WorkerDriver<CodexSessionMeta> = {
     row(meta) {
         const status = deriveSessionStatus(meta);
         const tone = status === "running" || status === "ready" ? "ok" : status === "failed" ? "err" : "dim";
+        // A worker waiting on the lead reads as waiting here; `tools codex requests` shows what it asks.
+        const pending = Object.keys(meta.pendingApprovals ?? {}).length;
+        const label = pending > 0 ? `${status}, ${pending} pending approval${pending === 1 ? "" : "s"}` : status;
 
         return [
             meta.name,
-            formatDotStatus(tone, status),
+            formatDotStatus(pending > 0 ? "warn" : tone, label),
             String(meta.daemonPid),
             meta.threadId ?? "—",
             truncateDisplay(meta.cwd, 40),

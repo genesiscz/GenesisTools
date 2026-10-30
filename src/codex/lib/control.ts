@@ -12,8 +12,53 @@ export type CodexControl =
     | { op: "rollback"; turns: number }
     | { op: "read" }
     | { op: "review"; base?: string; scope?: "auto" | "working-tree" | "branch"; adversarial?: string[] }
-    | { op: "approve" | "deny"; requestId: string }
+    | { op: "approve"; requestId: string }
+    | { op: "deny"; requestId: string; refusal?: ApprovalRefusal }
     | { op: "stop" };
+
+/**
+ * Who declined a worker's request and why. Codex itself tells the worker only `Rejected("rejected by user")`, so on
+ * 2026-10-27 a lead's quality refusal read as a human permission decision and the worker stopped that line of work.
+ * `parent` is the supervising session, `human` a person at the dashboard or CLI, `policy` the session's own
+ * write policy. A refusal with a reason is also steered to the worker in words, naming the actor.
+ */
+export interface ApprovalRefusal {
+    by: ApprovalActor;
+    reason?: string;
+}
+
+export type ApprovalActor = "parent" | "human" | "policy";
+
+export const APPROVAL_ACTORS: readonly ApprovalActor[] = ["parent", "human", "policy"];
+
+/** The words the worker gets after a non-human refusal, so it knows who declined and what to change. */
+export function refusalNotice(requestId: string, refusal: ApprovalRefusal): string {
+    const actor =
+        refusal.by === "parent"
+            ? "the parent session that supervises you, not a human"
+            : "this session's write policy, not a human";
+    const reason = refusal.reason ? ` Reason: ${refusal.reason}` : "";
+
+    return `Request ${requestId} was declined by ${actor}. Codex reports it as "rejected by user"; treat it as the lead's guidance, not as a permission decision: fix what the reason names and continue.${reason}`;
+}
+
+export function parseApprovalRefusal(value: unknown): ApprovalRefusal | undefined {
+    if (value === undefined) {
+        return undefined;
+    }
+
+    if (!isRecord(value) || typeof value.by !== "string" || !APPROVAL_ACTORS.includes(value.by as ApprovalActor)) {
+        throw new Error(`refusal.by must be one of ${APPROVAL_ACTORS.join(", ")}`);
+    }
+
+    const reason = value.reason;
+
+    if (reason !== undefined && typeof reason !== "string") {
+        throw new Error("refusal.reason must be a string");
+    }
+
+    return { by: value.by as ApprovalActor, ...(reason ? { reason } : {}) };
+}
 
 function isRecord(value: unknown): value is Record<string, unknown> {
     return typeof value === "object" && value !== null && !Array.isArray(value);
@@ -92,8 +137,11 @@ function parseStructuredControl(value: Record<string, unknown>): CodexControl {
             };
         }
         case "approve":
-        case "deny":
-            return { op: value.op, requestId: requiredRequestId(value.requestId) };
+            return { op: "approve", requestId: requiredRequestId(value.requestId) };
+        case "deny": {
+            const refusal = parseApprovalRefusal(value.refusal);
+            return { op: "deny", requestId: requiredRequestId(value.requestId), ...(refusal ? { refusal } : {}) };
+        }
         case "stop":
             return { op: "stop" };
         default:

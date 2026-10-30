@@ -17,12 +17,26 @@ export type CodexApprovalPolicy = "never" | "untrusted";
 export type PersistedCodexStatus = "starting" | "ready" | "running" | "closed" | "failed";
 export type CodexStatus = PersistedCodexStatus | "stalled";
 
+/** One file a pending file-change approval would write, with what Codex proposes for it. */
+export interface PendingFileChange {
+    /** Relative to the session cwd inside it, absolute outside it. */
+    path: string;
+    /** Codex's patch kind: `add`, `delete` or `update`. */
+    kind: string;
+    /** Where an `update` moves the file, in the same form as `path`. */
+    movePath?: string;
+    /** The whole new file for `add`, the removed file for `delete`, a unified diff for `update`; absent when Codex sent none. */
+    diff?: string;
+}
+
 export interface PendingApproval {
     rpcId: string | number;
     method: string;
     detail: string;
     /** Exact file-change paths for authorization; detail is only a display label. */
     paths?: string[];
+    /** What a file-change request would write, so the lead can read it before approving; absent when unknown. */
+    changes?: PendingFileChange[];
     /** Actual executable command and cwd from the RPC, never inferred from its display reason. */
     command?: string;
     cwd?: string;

@@ -10,6 +10,13 @@ import { SafeJSON } from "@genesiscz/utils/json";
 import type { ThreadTurnsListParams, Turn } from "./_generated/protocol";
 import { CodexAccountBinding } from "./account";
 import { isOwnBusCommand, isReadOnlyCommand } from "./bus-approval";
+import {
+    fullRequestCommand,
+    LIST_PREVIEW_LINES,
+    listPendingRequests,
+    NOTICE_PREVIEW_LINES,
+    renderPendingApproval,
+} from "./pending-approval";
 import { readReviewRecords } from "./review/ledger";
 import type { RpcClient } from "./session";
 import { CodexSessionRuntime } from "./session";
@@ -711,6 +718,176 @@ describe("CodexSessionRuntime", () => {
                 await runtime.execute({ op: "deny", requestId: "command-context" });
                 await expect(pending).resolves.toEqual({ decision: "decline" });
             }
+        });
+    });
+
+    test("a pending file change shows its path and exact proposed content before the lead decides", async () => {
+        const home = mkdtempSync(join(tmpdir(), "gt-codex-approval-content-"));
+        await env.testing.withOverrides({ GENESIS_TOOLS_HOME: home }, async () => {
+            const store = new CodexSessionStore();
+            // The worker's cwd is a scratch folder, and the file it proposes lives only there.
+            const scratch = join(home, "scratch");
+            const meta = {
+                ...makeMeta(home),
+                cwd: scratch,
+                writePolicy: "ask" as const,
+                approvalPolicy: "untrusted" as const,
+            };
+            store.writeMeta(meta);
+            const notices: Array<Record<string, unknown>> = [];
+            const client = new FakeRpcClient();
+            const runtime = new CodexSessionRuntime({
+                client,
+                store,
+                meta,
+                onApprovalRequest: (notice) => {
+                    notices.push(notice);
+                },
+            });
+            await runtime.start({});
+            const content = `${Array.from({ length: 60 }, (_, i) => `spec line ${i + 1}`).join("\n")}\n`;
+
+            await runtime.handleNotification({
+                method: "item/started",
+                params: {
+                    threadId: "thread-1",
+                    item: {
+                        type: "fileChange",
+                        id: "patch-1",
+                        changes: [{ path: join(scratch, "spec.md"), kind: { type: "add" }, diff: content }],
+                        status: "inProgress",
+                    },
+                },
+            });
+            let settled = false;
+            const pending = runtime.handleServerRequest({
+                id: 9,
+                method: "item/fileChange/requestApproval",
+                params: { threadId: "thread-1", turnId: "turn-1", itemId: "patch-1", startedAtMs: 0 },
+            });
+            void pending.then(() => {
+                settled = true;
+            });
+            await Bun.sleep(0);
+
+            // The security boundary holds: nothing answers the request until an explicit control does.
+            expect(settled).toBe(false);
+            const record = store.readMeta(meta.name)?.pendingApprovals["9"];
+            expect(record?.detail).toBe("edit spec.md");
+            expect(record?.paths).toEqual(["spec.md"]);
+            expect(record?.changes).toEqual([{ path: "spec.md", kind: "add", diff: content }]);
+
+            const full = fullRequestCommand(meta.name, "9");
+            expect(full).toBe("tools codex request --name reviewer --request 9 --full");
+            expect(notices[0]).toMatchObject({ requestId: "9", detail: "edit spec.md", fullRequest: full });
+            expect(String(notices[0].preview).split("\n")).toEqual([
+                "=== add spec.md: proposed file, 60 lines ===",
+                ...Array.from({ length: NOTICE_PREVIEW_LINES }, (_, i) => `spec line ${i + 1}`),
+                `… ${60 - NOTICE_PREVIEW_LINES} more lines, ${full}`,
+            ]);
+
+            // `tools codex requests`: the list view cuts the content with an explicit marker.
+            const [listed] = listPendingRequests(store, meta.name);
+            const listView = renderPendingApproval({ ...listed, name: listed.session, maxLines: LIST_PREVIEW_LINES });
+            expect(listView).toContain("spec line 40");
+            expect(listView).not.toContain("spec line 41");
+            expect(listView).toContain(`… 20 more lines, ${full}`);
+            expect(listView.at(-1)).toBe(
+                "answer: tools codex approve --name reviewer --request 9 or tools codex deny --name reviewer --request 9"
+            );
+
+            // `tools codex request --full` and the thread snapshot carry every proposed line.
+            const fullView = renderPendingApproval({ ...listed, name: listed.session }).join("\n");
+            expect(fullView).toContain(`=== add spec.md: proposed file, 60 lines ===\n${content}`);
+            expect(fullView).not.toContain("more lines");
+            const snapshot = await runtime.execute({ op: "read" });
+            expect(snapshot).toMatchObject({
+                thread: { id: "thread-1" },
+                pendingApprovals: { "9": { changes: [{ path: "spec.md", kind: "add", diff: content }] } },
+            });
+
+            await runtime.execute({ op: "deny", requestId: "9" });
+            await expect(pending).resolves.toEqual({ decision: "decline" });
+            expect(listPendingRequests(store, meta.name)).toEqual([]);
+            expect(await runtime.execute({ op: "read" })).toEqual({ thread: { id: "thread-1", turns: [] } });
+        });
+    });
+
+    test("a revised patch, a legacy patch and a write outside the cwd each show what they would write", async () => {
+        const home = mkdtempSync(join(tmpdir(), "gt-codex-approval-legacy-"));
+        await env.testing.withOverrides({ GENESIS_TOOLS_HOME: home }, async () => {
+            const store = new CodexSessionStore();
+            const scratch = join(home, "scratch");
+            const meta = {
+                ...makeMeta(home),
+                cwd: scratch,
+                writePolicy: "ask" as const,
+                approvalPolicy: "untrusted" as const,
+            };
+            store.writeMeta(meta);
+            const runtime = new CodexSessionRuntime({ client: new FakeRpcClient(), store, meta });
+            await runtime.start({});
+            const outside = join(home, "elsewhere", "notes.md");
+            const diff = "@@ -1 +1 @@\n-old\n+new\n";
+
+            await runtime.handleNotification({
+                method: "item/started",
+                params: {
+                    threadId: "thread-1",
+                    item: { type: "fileChange", id: "patch-2", changes: [{ path: outside, kind: { type: "add" } }] },
+                },
+            });
+            await runtime.handleNotification({
+                method: "item/fileChange/patchUpdated",
+                params: {
+                    threadId: "thread-1",
+                    itemId: "patch-2",
+                    changes: [{ path: outside, kind: { type: "update", move_path: join(scratch, "b.md") }, diff }],
+                },
+            });
+            const revised = runtime.handleServerRequest({
+                id: "revised",
+                method: "item/fileChange/requestApproval",
+                params: { threadId: "thread-1", itemId: "patch-2" },
+            });
+            const legacy = runtime.handleServerRequest({
+                id: "legacy",
+                method: "applyPatchApproval",
+                params: {
+                    conversationId: "thread-1",
+                    callId: "call-1",
+                    fileChanges: {
+                        [join(scratch, "new.md")]: { type: "add", content: "hello\n" },
+                        [join(scratch, "gone.md")]: { type: "delete", content: "bye\n" },
+                    },
+                    reason: null,
+                    grantRoot: null,
+                },
+            });
+            await Bun.sleep(0);
+
+            const records = store.readMeta(meta.name)?.pendingApprovals ?? {};
+            // A path outside the cwd stays absolute, and a move names its destination too.
+            expect(records.revised.paths).toEqual([outside, "b.md"]);
+            expect(records.revised.changes).toEqual([{ path: outside, kind: "update", movePath: "b.md", diff }]);
+            expect(records.legacy.detail).toBe("edit new.md, gone.md");
+            expect(records.legacy.changes).toEqual([
+                { path: "new.md", kind: "add", diff: "hello\n" },
+                { path: "gone.md", kind: "delete", diff: "bye\n" },
+            ]);
+            expect(
+                renderPendingApproval({ name: meta.name, requestId: "legacy", approval: records.legacy }).slice(2, 6)
+            ).toEqual([
+                "=== add new.md: proposed file, 1 lines ===",
+                "hello",
+                "=== delete gone.md: file to delete, 1 lines ===",
+                "bye",
+            ]);
+
+            await runtime.execute({ op: "approve", requestId: "revised" });
+            await runtime.execute({ op: "deny", requestId: "legacy" });
+            await expect(revised).resolves.toEqual({ decision: "accept" });
+            await expect(legacy).resolves.toEqual({ decision: "denied" });
         });
     });
 

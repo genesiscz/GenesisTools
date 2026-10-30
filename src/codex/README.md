@@ -251,6 +251,8 @@ tools codex steer --name reviewer --prompt "Focus on the auth path"
 tools codex interrupt --name reviewer
 tools codex rollback --name reviewer --turns 1  # revert the persisted history through thread/revert; file changes stay
 tools codex read --name reviewer
+tools codex requests [--name reviewer] [--lines 40] [--json]   # pending approvals with each file's proposed content
+tools codex request --name reviewer --request <id> [--full] [--json]
 tools codex review --name reviewer --scope working-tree
 tools codex review --name reviewer --base main --scope branch --adversarial auth rollback
 tools codex stop --name reviewer
@@ -338,6 +340,25 @@ redirection, expansion or background job. Codex's own read-only set does not par
 this an `ask` worker sent every `cat` and `sed -n` to the lead (44 approvals in one 9-minute turn, 2026-10-14). A
 file-change approval names the files it writes (`edit src/a.ts, README.md`); the request itself carries only an
 item id.
+
+The lead reads what a file change would write before it answers. The daemon keeps each in-flight `fileChange` item's
+`changes` (the whole new file for `add`, the removed file for `delete`, a unified diff for `update`, replaced by
+`item/fileChange/patchUpdated`), and a legacy `applyPatchApproval` brings them inline. The pending record in the
+session meta holds them as `changes: [{ path, kind, movePath?, diff }]`; `path` is relative to the cwd inside it and
+absolute outside it, and `paths` also names a move's destination. Where to read them:
+
+- `tools codex requests [--name <n>]`: every pending request (of one session, or of all), with its command and cwd or
+  its files and content. A request shows `--lines` content lines (default 40) in total; a file cut short ends with
+  `… N more lines, tools codex request --name <n> --request <id> --full`.
+- `tools codex request --name <n> --request <id> --full`: one request with every proposed line. `--json` (here and on
+  `requests`) answers with the stored record itself, so the content is exact, never a preview.
+- The `approval_request` bus message to `lead` carries a `preview` (the first 12 lines) and `fullRequest` (the
+  command above).
+- `tools codex read --name <n>`: while a request waits, the thread snapshot carries `pendingApprovals` with the same
+  records, because Codex's own snapshot did not show the proposed file before approval. `tools codex status --name <n>
+  --json` has them too, and `tools codex sessions` marks a worker with `N pending approvals`.
+
+These are reads of the session file: none of them answers a request. Only `approve` or `deny` does.
 
 The driver joins the parent Claude Code swarm through `tools agents`. Use `--no-agents` to disable that integration,
 or `--session <id>` when the parent session cannot be discovered from `CLAUDE_CODE_SESSION_ID`.
