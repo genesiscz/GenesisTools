@@ -18,6 +18,14 @@ final class HubInboxUXTests: XCTestCase {
         XCTAssertEqual(DecisionsView.emptyText(filter: "all", hasAny: false), "No decisions recorded for this session.")
     }
 
+    /// h_bgj1m68y t7: a dialog item's pick presses its key in the live dialog; every other decision goes the log's way.
+    func testAnInboxItemsSourcePicksItsAnswerRoute() {
+        XCTAssertEqual(InboxAnswerRoute(source: "dialog"), .dialog)
+        XCTAssertEqual(InboxAnswerRoute(source: "transcript"), .ledger)
+        XCTAssertEqual(InboxAnswerRoute(source: "store"), .ledger)
+        XCTAssertEqual(InboxAnswerRoute(source: nil), .ledger)
+    }
+
     /// F19: Cancel on a slow send stops its `tools` child at once instead of letting it run out its two minutes.
     func testACancelledCaptureTerminatesItsChildAtOnce() async throws {
         let process = Process()
