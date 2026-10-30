@@ -10,6 +10,7 @@ import { costOf, DEFAULT_PRICING, priceFor, resolvePrice } from "@app/ai-spend/l
 import { DASHBOARD_ACTOR, type HandoffDeps, type PostHandoffResponse, postHandoff } from "@app/handoff/executor";
 import { resumeCommandLine } from "@genesiscz/utils/agent-sessions";
 import { readCachedHistoryTitle } from "@genesiscz/utils/agent-sessions/cached-title";
+import { scanClaudeNative } from "@genesiscz/utils/agent-sessions/readers/claude-native-scan";
 import { cleanSessionTitle } from "@genesiscz/utils/agent-sessions/user-text";
 import { PROVIDER_ALIASES } from "@genesiscz/utils/ai/providers/aliases";
 import {
@@ -21,7 +22,7 @@ import {
     transcriptEnvelope,
 } from "@genesiscz/utils/ai/transcripts";
 import type { NativeScan } from "@genesiscz/utils/ai/transcripts/insights-types";
-import { codexModelOf, readTail, scanClaudeNative, toolInputKeys } from "@genesiscz/utils/ai/transcripts/native-scan";
+import { codexModelOf, readTail, toolInputKeys } from "@genesiscz/utils/ai/transcripts/native-scan";
 import { buildToolStats, buildTurnCosts, type CallPricer } from "@genesiscz/utils/ai/transcripts/turn-cost";
 import { concurrentMap } from "@genesiscz/utils/async";
 import { toolCommand } from "@genesiscz/utils/cli/tool-command";
