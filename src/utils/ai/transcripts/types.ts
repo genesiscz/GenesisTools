@@ -4,6 +4,16 @@ import type { PromptPart } from "./prompt-parts";
 
 export type TranscriptProvider = AccountProviderAlias;
 
+/**
+ * Whether a provider's transcript records a terminal event (a turn's end or error). A Claude session file records
+ * none, so a missing one says nothing about its state; for the others a missing one means the turn still runs.
+ */
+export const RECORDS_TERMINAL_EVENT: Record<TranscriptProvider, boolean> = {
+    claude: false,
+    codex: true,
+    grok: true,
+};
+
 export type TranscriptRole = "user" | "assistant" | "system";
 
 export interface TranscriptTool {

@@ -2,6 +2,7 @@ import { statSync } from "node:fs";
 import { resolveSessionTranscript } from "@app/ai/lib/sessions/resolve-transcript";
 import { transcriptByteSize, transcriptEnvelope, transcriptSnapshot } from "@genesiscz/utils/ai/transcripts/load";
 import type { ResolvedTranscript } from "@genesiscz/utils/ai/transcripts/resolve";
+import { PAGES_BY_TURN_INDEX } from "@genesiscz/utils/ai/transcripts/turn-index";
 import { readTurnState, type TurnProvider, type TurnSnapshot } from "@genesiscz/utils/ai/transcripts/turn-state";
 import { type TurnWaitOutcome, turnAnswers, watchTurn } from "@genesiscz/utils/ai/transcripts/turn-wait";
 import {
@@ -38,8 +39,14 @@ const POLL_MS = 5000;
  * The turn that was current before the send is excluded on its own (`baselineTurnStartedAt`).
  */
 export function sentAtSlackMs(alias: TurnProvider): number {
-    return alias === "grok" ? 1000 : 0;
+    return SENT_AT_SLACK_MS[alias];
 }
+
+const SENT_AT_SLACK_MS: Record<TurnProvider, number> = {
+    claude: 0,
+    codex: 0,
+    grok: 1000,
+};
 
 export interface WaitOptions {
     timeout?: string;
@@ -265,7 +272,7 @@ export type TranscriptPager = (opts: SliceOptions) => Promise<TranscriptEnvelope
 
 /** Claude reads only the requested turns (turn-index.ts); the others parse once per read and page from memory. */
 async function transcriptPager(resolved: ResolvedTranscript): Promise<TranscriptPager> {
-    if (resolved.provider === "claude") {
+    if (PAGES_BY_TURN_INDEX[resolved.provider]) {
         return (opts) => transcriptEnvelope(resolved, opts);
     }
 

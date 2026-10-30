@@ -172,6 +172,13 @@ async function withTmuxLocations(
     });
 }
 
+/** Whether a provider keeps a registry of its running sessions (Claude Code's `~/.claude/sessions`). */
+const LIVE_REGISTRY: Record<AgentSessionRow["provider"], boolean> = {
+    claude: true,
+    codex: false,
+    grok: false,
+};
+
 /**
  * Claude rows with `alive` read now from the session registry, never from the cached file: a cached answer may
  * be 90 s old, and a session that exited in that time would still read as running. Other providers have no
@@ -179,7 +186,7 @@ async function withTmuxLocations(
  */
 export function withLiveness(rows: AgentSessionRow[], live: Set<string> | null): AgentSessionRow[] {
     return rows.map((row) => {
-        if (row.provider !== "claude") {
+        if (!LIVE_REGISTRY[row.provider]) {
             return row;
         }
 

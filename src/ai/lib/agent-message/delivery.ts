@@ -484,12 +484,14 @@ export async function pasteIntoSurface(input: {
     };
 }
 
-export function messageDriverFor(alias: TurnProvider): MessageDriver {
-    if (alias === "claude") {
-        return claudeMessageDriver();
-    }
+const MESSAGE_DRIVERS: Record<TurnProvider, () => MessageDriver> = {
+    claude: claudeMessageDriver,
+    codex: codexMessageDriver,
+    grok: grokMessageDriver,
+};
 
-    return alias === "codex" ? codexMessageDriver() : grokMessageDriver();
+export function messageDriverFor(alias: TurnProvider): MessageDriver {
+    return MESSAGE_DRIVERS[alias]();
 }
 
 /**
