@@ -12,17 +12,21 @@ import {
     loadRmConfig,
     loadRmRequest,
     moveAside,
+    moveToTrash,
     newBatchId,
     pendingAsideDirs,
+    presetsFor,
     priorDenials,
     type RmCaller,
     type RmConfig,
     type RmRequest,
     resolveTarget,
+    restoreBatch,
     saveRmConfig,
     stillAside,
 } from "@genesiscz/utils/rm";
 import { saveApproved } from "../commands/requests";
+import { applyRmSetting, saveRmSetting } from "../commands/settings";
 import { type ApproveEntry, approveDelete, denyRequest, splitBySelection } from "./approve";
 import type { RunContext } from "./run";
 
@@ -180,6 +184,70 @@ describe("approve in the window", () => {
         expect(loadRmRequest(asideTwin.id)?.status).toBe("pending");
     });
 
+    test("an initially blocked aside item remains pending after another item is approved", () => {
+        const request = asideRequest("initially-blocked");
+        const entries = entriesOf(request);
+        const blocked = entries.slice(0, 1);
+        const approved = entries.slice(1);
+        const ctx = context();
+        const choices = { selected: null, disposal: "trash" as const, remember: "once" as const, note: null };
+        const { batch } = approveDelete({ ctx, request, approved, denied: [], choices });
+        saveApproved({
+            request,
+            answer: { approved: true, via: "touch-id", choices, deniedByPerson: false },
+            approved,
+            denied: [],
+            pending: blocked.map((entry) => entry.wanted),
+            batchId: batch?.id,
+            ctx,
+        });
+        const saved = loadRmRequest(request.id);
+        expect(saved?.status).toBe("pending");
+        expect(saved?.targets.map((target) => target.path)).toEqual([blocked[0]?.wanted.path]);
+        expect(pendingAsideDirs().some((entry) => entry.requestId === request.id)).toBe(true);
+        expect(existsSync(blocked[0]?.wanted.stored ?? "")).toBe(true);
+    });
+
+    test("an unavailable trash keeps the refused aside item pending after partial approval", () => {
+        const request = asideRequest("unwritable-volume");
+        const entries = entriesOf(request);
+        const ctx = context();
+        const choices = { selected: null, disposal: "trash" as const, remember: "once" as const, note: null };
+        const refused: ApproveEntry[] = [];
+        const { batch, back } = approveDelete({
+            ctx,
+            request,
+            approved: entries,
+            denied: [],
+            choices,
+            onRefused: (entry) => refused.push(entry),
+            hooks: {
+                beforeTrashRoot: (move) => {
+                    if (move.target.path === entries[0]?.target.path) {
+                        throw Object.assign(new Error("unwritable"), { code: "EACCES" });
+                    }
+                },
+            },
+        });
+        expect(back.kept).toEqual([]);
+        expect(refused).toEqual([entries[0]]);
+        expect(batch?.items.map((item) => item.original)).toEqual([entries[1]?.wanted.path]);
+        saveApproved({
+            request,
+            answer: { approved: true, via: "touch-id", choices, deniedByPerson: false },
+            approved: entries.filter((entry) => !refused.includes(entry)),
+            denied: [],
+            pending: refused.map((entry) => entry.wanted),
+            batchId: batch?.id,
+            ctx,
+        });
+        const saved = loadRmRequest(request.id);
+        expect(saved?.status).toBe("pending");
+        expect(saved?.targets.map((target) => target.path)).toEqual([entries[0]?.wanted.path]);
+        expect(pendingAsideDirs().some((entry) => entry.requestId === request.id)).toBe(true);
+        expect(existsSync(entries[0]?.wanted.stored ?? "")).toBe(true);
+    });
+
     test("failed put-backs stay protected and can be retried without losing the trash batch", () => {
         const request = asideRequest("partial-retry");
         const [a, b] = request.targets.map((target) => target.path);
@@ -333,5 +401,56 @@ describe("approve in the window", () => {
                 listRmRequests({ all: true })
             ).map((denial) => denial.note)
         ).toEqual(["these are fixtures", "these are fixtures"]);
+    });
+});
+
+describe("config set", () => {
+    test("enable-preset turns on a custom opt-in preset, not only a shipped one", () => {
+        const custom = { id: "shared-cache", description: "a shared cache", names: ["cache"], optIn: true };
+        const config = { ...defaultRmConfig(), customPresets: [custom] };
+        const next = applyRmSetting(config, "enable-preset", "shared-cache");
+
+        expect(presetsFor(config).some((p) => p.id === "shared-cache")).toBe(false);
+        expect(presetsFor(next).some((p) => p.id === "shared-cache")).toBe(true);
+        expect(applyRmSetting(config, "enable-preset", "no-such-preset").enabledPresets).toEqual(config.enabledPresets);
+    });
+
+    test("a trash-root move is checked again at the save, against the config and the trash as they are then", () => {
+        const configPath = join(base, "settings-recheck", "config.json");
+        const paths = {
+            batchesDir: join(base, "settings-recheck", "batches"),
+            lockPath: join(base, "settings-recheck", "lock"),
+        };
+        const oldRoot = join(base, "settings-recheck", "GenesisTools", "rm");
+        const newRoot = join(base, "settings-recheck", "other", "GenesisTools", "rm");
+        const own = { ...defaultRmConfig(), trashRoot: oldRoot };
+        saveRmConfig(own, configPath);
+        // While the person decided: a batch reached the old root, and another setting was saved.
+        const target = resolveTarget(file(join(base, "settings-recheck", "late.txt")), base);
+        const batch = moveToTrash([{ target, rule: "test" }], { config: own, caller: AGENT, graceMinutes: 60, paths });
+        saveRmConfig({ ...own, approval: "code" }, configPath);
+
+        const blocked = saveRmSetting({
+            key: "trash-root",
+            value: newRoot,
+            drainCommand: "drain-now",
+            paths,
+            configPath,
+        });
+
+        expect(blocked).toEqual({ blocked: expect.stringContaining("drain-now") });
+        expect(loadRmConfig(configPath).trashRoot).toBe(oldRoot);
+
+        restoreBatch(batch?.id ?? "", { config: own, paths });
+        const saved = saveRmSetting({
+            key: "trash-root",
+            value: newRoot,
+            drainCommand: "drain-now",
+            paths,
+            configPath,
+        });
+
+        expect("saved" in saved && saved.saved.trashRoot).toBe(newRoot);
+        expect(loadRmConfig(configPath)).toMatchObject({ trashRoot: newRoot, approval: "code" });
     });
 });

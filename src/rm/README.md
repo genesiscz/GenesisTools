@@ -159,7 +159,7 @@ The typed code and the dialog answer for all paths, to the trash, just this once
 These are safe to delete (the next install refills them), but another install or a running app may be reading one, so
 each is off until `tools rm config set enable-preset <id>`: `bun-cache`, `npm-cache`, `pnpm-store`, `yarn-cache`,
 `homebrew-cache`, and `user-caches` (each app's folder in `~/Library/Caches`; quit the app first). `tools rm presets`
-marks them. Then `tools rm preset bun-cache --in ~/.bun/install/cache` empties that cache.
+marks them. Then `tools rm preset bun-cache` empties that cache.
 
 ## Configuration
 
