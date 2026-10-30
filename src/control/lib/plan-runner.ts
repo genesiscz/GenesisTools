@@ -3,7 +3,7 @@ import type { Plan } from "./capture-plan";
 import { type RunResult, runCapturePlan } from "./capture-runner";
 import { assertEl, waitFor } from "./conditions";
 import { guardFocusSteal, isFocusStealingVerb } from "./focus-guard";
-import { type AxResult, runAx } from "./runner";
+import { type AxResult, type AxRun, runAx } from "./runner";
 
 /**
  * The declarative plan runner behind `control run`, the `control_run` MCP tool and any later door.
@@ -265,7 +265,7 @@ export type PlanOutcome =
 
 /** Everything that reaches the machine, injectable so the runner is testable without a Mac in any state. */
 export interface PlanRunDeps {
-    run: (args: string[], timeoutMs?: number) => AxResult;
+    run: AxRun;
     waitFor: typeof waitFor;
     assertEl: typeof assertEl;
     guard: typeof guardFocusSteal;
@@ -457,7 +457,7 @@ async function runSteps({
 }): Promise<PlanRunReport> {
     const timeline = steps.some((s) => typeof s.atMs === "number");
     const delay = plan.delayMs ?? 200;
-    const snapshot: AxResult | null = plan.restore ? deps.run(["snapshot"]) : null;
+    const snapshot: AxResult | null = plan.restore ? await deps.run(["snapshot"]) : null;
     const startedAt = deps.now();
     const results: PlanStepResult[] = [];
     const saved = new Map<string, AxResult>();
@@ -541,6 +541,7 @@ async function runSteps({
                   app: app || undefined,
                   toPid: step["to-pid"] == null ? undefined : String(step["to-pid"]),
                   stealFocus,
+                  run: deps.run,
               })
             : null;
 
@@ -560,7 +561,7 @@ async function runSteps({
                     await deps.sleep(retryDelay);
                 }
 
-                result = deps.run(args);
+                result = await deps.run(args);
             } while (!result.ok && attempts < maxAttempts);
         }
 
@@ -586,7 +587,7 @@ async function runSteps({
     }
 
     if (plan.restore && snapshot?.ok) {
-        deps.run(["restore", "--snapshot", SafeJSON.stringify(snapshot)]);
+        await deps.run(["restore", "--snapshot", SafeJSON.stringify(snapshot)]);
     }
 
     // A skipped step is not a failure: counting it in both failedSteps and skippedSteps reported

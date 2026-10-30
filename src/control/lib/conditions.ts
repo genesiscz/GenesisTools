@@ -1,4 +1,4 @@
-import { type AxResult, runAx } from "./runner";
+import { type AxResult, type AxRun, runAx } from "./runner";
 
 /** One element condition: `wait` polls it, `assert` checks it once. The CLI, the plan runner and the MCP twin share it. */
 export interface CheckOpts {
@@ -9,11 +9,11 @@ export interface CheckOpts {
     value?: string;
     contains?: string;
     /** The native read; injected by tests so no condition ever reaches the real window server. */
-    run?: (args: string[]) => AxResult;
+    run?: AxRun;
 }
 
-function checkOnce(o: CheckOpts): { pass: boolean; state: AxResult } {
-    const state = (o.run ?? runAx)(["get", "--app", o.app, ...o.target]);
+async function checkOnce(o: CheckOpts): Promise<{ pass: boolean; state: AxResult }> {
+    const state = await (o.run ?? runAx)(["get", "--app", o.app, ...o.target]);
     if (o.gone) {
         return { pass: !state.ok, state };
     }
@@ -65,7 +65,7 @@ export async function waitFor(o: CheckOpts & { timeout: number; interval: number
     let last: { pass: boolean; state: AxResult } = { pass: false, state: { ok: false } };
     let polls = 0;
     while (performance.now() - t0 < o.timeout) {
-        last = checkOnce(o);
+        last = await checkOnce(o);
         polls++;
         if (last.pass) {
             return {
@@ -97,8 +97,8 @@ export async function waitFor(o: CheckOpts & { timeout: number; interval: number
 }
 
 /** Single-shot condition check. Shared by the CLI command and run steps. */
-export function assertEl(o: CheckOpts): AxResult {
-    const { pass, state } = checkOnce(o);
+export async function assertEl(o: CheckOpts): Promise<AxResult> {
+    const { pass, state } = await checkOnce(o);
     if (pass) {
         return { ok: true, action: "assert", ...(o.gone ? { gone: true } : { element: state }) };
     }

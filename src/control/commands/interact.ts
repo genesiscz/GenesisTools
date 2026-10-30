@@ -4,6 +4,7 @@ import { isProcessAlive } from "@genesiscz/utils/process-alive";
 import type { Command } from "commander";
 import pc from "picocolors";
 import { type FocusStealingVerb, guardFocusSteal } from "../lib/focus-guard";
+import { elementQueryArgs } from "../lib/query";
 import { type AxResult, runAx } from "../lib/runner";
 import { addTargetOptions, targetArgs, targetLabel } from "../lib/target";
 
@@ -131,7 +132,7 @@ export function registerInteractCommands(program: Command): void {
         .option("--json", "raw JSON output")
         .option("--pretty", "indent JSON output (default compact)")
         .action((opts) => {
-            const result = runAx(["get", "--app", opts.app, ...targetArgs(opts)]);
+            const result = runAx(elementQueryArgs({ verb: "get", app: opts.app, target: opts }));
             if (opts.json) {
                 out.println(SafeJSON.stringify(result, null, opts.pretty ? 2 : 0));
                 process.exit(result.ok === false ? 1 : 0);

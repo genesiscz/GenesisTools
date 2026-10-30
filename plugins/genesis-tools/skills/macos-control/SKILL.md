@@ -23,8 +23,11 @@ Check the command named by help, not just exit zero. Do not guess command plural
 
 ## Choose the interface
 
+**From an agent, prefer the genesis-tools MCP tools** (capability `control`): no flags to re-learn, no temp file, and the same core as the CLI. `control_workflow_run` runs a versioned see/act plan inline (each step bound to a fresh observation and verified before the next, `stopOnFail` default true); `control_find` and `control_get` read elements without raising anything; `control_run` runs a `control run` plan object and returns per-step `ms`, `failedSteps` and `stoppedAtStep`. The CLI twins are `tools control workflow run --plan '<json>'` (or `-` for stdin) and `tools control run --plan '<json>'`.
+
 | Need | Interface |
 | --- | --- |
+| A multi-step see/act sequence from an agent | MCP `control_workflow_run` (CLI: `control workflow run --plan '<json>'`) |
 | Several adaptive actions with fresh state and one deadline | `tools computer-use run --file task.ts --json` |
 | Persistent agent session | `tools computer-use mcp` or `mcp --repl` (`computer` is preloaded) |
 | One validated CLI action | `control see` → `control act --refresh` |
@@ -41,6 +44,7 @@ The user keeps working while an agent drives their Mac. A call that brings an ap
 
 - **The background is the default.** `click` without `physical` or `prepare` uses AXPress or a window-addressed click. Use `press_key({..., activate:false})`, `set_value` without `prepare`, `fill_form({..., activate:false})` and `launch_app({path, activate:false})` (or `bundle_id`). `scroll` posts to the window. Open URLs and files with `open -g`, never with a bare `open -a` or `open -R`.
 - **These take focus or the pointer:** `prepare:true`, `physical:true` on a browser page, `press_key` and `launch_app` with their default `activate:true`, `drag({background:false})`, and hover. Use them only for a visible demonstration the user asked for.
+- **The legacy keyboard verbs refuse while another app is frontmost.** `control type`, `set` and `hotkey` (and the same steps in `control run` / MCP `control_run`) exit 1 with `refusal:"focus_steal"`, name the frontmost app, post nothing, and name the see/act substitute. Use that substitute. `--steal-focus` (MCP `steal_focus`) lifts it for one call the user asked for; the saved setting `focusStealGuard` (`always` default, `agents`, `off`) is set with `tools control config set focusStealGuard <value>`.
 - **Under an agent, ax-tool refuses them while the user works.** A key, click, move or scroll in the last 5 s gives refusal `user_active` with `dispatchState:"not_started"`: nothing was sent. Do not retry in front; take the background path the error names. For a demonstration the user asked for, pass `allow_foreground:true` (CLI `--allow-foreground`, or `GENESIS_CONTROL_ALLOW_FOREGROUND=1` for a whole run). `GENESIS_CONTROL_FOREGROUND_IDLE=<seconds>` sets the quiet time, and `0` turns the check off. A person running a command is never refused.
 - **A background click can do nothing.** A window-addressed click into an app that is not in front lands in a window that is not key. A SwiftUI control there (a sheet's "Cancel") takes it as the activation click and does nothing, yet the call returns `ok:true` with an `effectNote`. AXPress (a click without `physical`) acts without focus, but it sends no mouse event, so an app's NSEvent monitor does not see it. Check the postcondition after every background click.
 - **Start apps with `launch_app`.** It goes through LaunchServices, as a Finder double-click does, so the app is its own process: its menu-bar item and its privacy prompts belong to it, not to the terminal. Do not run an app's binary from a shell, and do not open it through Finder's `AXOpen` (AX -25205 on a list item, and `/Applications` exceeds the observation budget).

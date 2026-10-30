@@ -176,6 +176,8 @@ One `preflight` call returns screens with their scale and origins, the frontmost
 
 ⚠️ **`type` prints "typed" only after a readback.** With `--app` alone it reads the app's focused element before and after typing. A value that did not change fails (exit 1) and names the focused element and where the keys were posted; an element with no readable value prints `UNVERIFIED` and exits 2 (the JSON carries `ok:false, unverified:true`, and a `--return` is not sent after unverified text). The computer API's `type_text` reads the field back too: `verification.status` is `verified` only when the text was seen in the field, and text that did not appear, or could not be read back, returns `ok:false` (the latter as `UNVERIFIED`). Both verbs verify an insertion by a NEW occurrence of the text, so a field that already held it and changed for another reason is not a pass. A paste into a field whose value cannot be read returns `ok:false` as uncertain, never a success. An open or save panel runs out of process and can drop typed text (measured 2026-09-28 on Brave's "Load unpacked" panel); put the text on the clipboard and send `hotkey --keys cmd,v` instead. `type` and `hotkey` post to the global keyboard tap, so with `--app` both check the front again at the moment of posting and stop (exit 1, naming the app that took it) instead of sending the rest of the keys to whatever is in front.
 
+🛑 **`type`, `set` and `hotkey` refuse while another app is frontmost** (`src/control/lib/focus-guard.ts`). They exit 1 before posting anything, with `refusal:"focus_steal"`, the frontmost app, and the see/act substitute; a target that already is frontmost runs as before. `--steal-focus` lifts it for one call; the saved setting `focusStealGuard` (`always` default, `agents` for agent runs only, `off`) is `tools control config set focusStealGuard <value>`. The same guard covers `control run` steps and the MCP `control_run` tool.
+
 ⚠️ **`hotkey --app` activates the target first and refuses if it cannot become frontmost.** That refusal is a feature: a key combo delivered to the wrong app is worse than a failure.
 
 ### Capturing
@@ -207,6 +209,10 @@ One `preflight` call returns screens with their scale and origins, the frontmost
 | `build` | Build a plan |
 
 ---
+
+## MCP twin
+
+The genesis-tools MCP server (capability `control`) serves `control_workflow_run` (the validated see/act workflow, the same `replayWorkflow` as `control workflow run`), `control_run` (the `control run` plan object inline, the same `executePlan`), and the read-only `control_find` / `control_get` (`src/control/mcp/genesis-tools.ts`). Its native calls are async so a resident server is not blocked; the workflow twin makes no model call.
 
 ## The plan contract
 

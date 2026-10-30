@@ -65,8 +65,8 @@ export function registerVerifyCommands(program: Command): void {
         .option("--gone", "assert the element does NOT exist (a never-existing element passes)")
         .option("--json", "raw JSON output")
         .option("--pretty", "indent JSON output (default compact)")
-        .action((opts) => {
-            const result = assertEl(conditionOpts(opts));
+        .action(async (opts) => {
+            const result = await assertEl(conditionOpts(opts));
             if (opts.json) {
                 out.println(SafeJSON.stringify(result, null, opts.pretty ? 2 : 0));
                 process.exit(conditionExitCode(result));

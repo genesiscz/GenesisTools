@@ -112,3 +112,21 @@ describe("filterRegistryByCapabilities", () => {
         expect(withCapabilities("boards")).toEqual([]);
     });
 });
+
+describe("the control capability", () => {
+    test("control enables the control_* family and nothing else", () => {
+        const withControl = registry(
+            "question_answer",
+            "control_run",
+            "control_workflow_run",
+            "control_find",
+            "jev_live"
+        );
+
+        expect(Object.keys(filterRegistryByCapabilities(withControl, ["control"])).sort()).toEqual([
+            "control_find",
+            "control_run",
+            "control_workflow_run",
+        ]);
+    });
+});

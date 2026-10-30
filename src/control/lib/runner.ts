@@ -148,6 +148,9 @@ export interface AxResult {
     [key: string]: unknown;
 }
 
+/** One native command, sync (`runAx`, the CLI) or async (`runAxAsync`, a resident server that must not block). */
+export type AxRun = (args: string[], timeoutMs?: number) => AxResult | Promise<AxResult>;
+
 /** Recovery never renews the snapshot or changes its target fingerprint. */
 export class PreparedActionRecovery {
     private readonly clock = new Stopwatch();
