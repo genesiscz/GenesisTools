@@ -18,7 +18,7 @@ import { bandTree } from "./band";
 import { cacheBand, cacheRow, markEnded } from "./cache-band";
 import { decisions, decisionsChip } from "./decisions";
 import { primeGenesisProbe } from "./genesis";
-import { gitBand, gitRows } from "./git-band";
+import { gitBand, gitRows, recordCheckout } from "./git-band";
 import { hookLedger, hooksChip, hooksChipWidth, ledgerClassic } from "./hook-ledger";
 import {
     compactionEndsIdleWait,
@@ -736,6 +736,9 @@ export const register: Register = (on) => {
         try {
             const result = await next(e);
 
+            await recordCheckout(host, e).catch((error) =>
+                logMod(host, "git", { event: "checkout-failed", error: String(error) }).catch(() => undefined)
+            );
             afterTools({ host, event: e, features: liveFeatures() });
 
             // The PR numbers the links mod linked in the message that asked for this call: the model reads which

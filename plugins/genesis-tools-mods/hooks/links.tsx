@@ -27,6 +27,7 @@ import {
     titleMatches,
 } from "./pr-repos";
 import { agentsDir, type Host, isRecord, logMod } from "./shared";
+import { cliLacks } from "./shared-run";
 
 const DOC = new Set(["md", "mdx", "json", "jsonl", "yaml", "yml", "toml", "log", "txt", "csv"]);
 const CODE = new Set([
@@ -236,6 +237,7 @@ const PR_MISSING_TTL_MS = 10 * 60_000;
 const PR_MISSING_TTL_S = String(PR_MISSING_TTL_MS / 1000);
 
 const pullRequests = new Map<string, { at: number; pr: PullRequest | null }>();
+let prIncludeMissing = false;
 
 /** Forgets the PR answers this module holds (tests); the shared files stay. */
 export function forgetPullRequests(): void {
@@ -394,10 +396,6 @@ async function prRepo(
         return { project: titled[0].project, why: "its title there matches the title the reply wrote" };
     }
 
-    if (!written && found.length === 1 && found[0]) {
-        return { project: found[0].project, why: "the only repository the session works in with that PR" };
-    }
-
     ctx.log.push({
         kind: "pr-unsure",
         token: `#${n}`,
@@ -486,17 +484,25 @@ async function pullRequest(ctx: LinkContext, project: ForgeProject, n: string): 
 
     // With the GenesisTools CLI, `tools github pr --include` answers from the cache every tool on this Mac shares
     // (asked for at most the miss TTL, since this file already keeps a found PR longer); without it, gh.
-    const argv = ctx.probe.tools
+    let useTools = ctx.probe.tools && !prIncludeMissing;
+    const gh = ["gh", "pr", "view", n, "--repo", repo, "--json", "title,url"];
+    const argv = useTools
         ? ["tools", "github", "pr", n, "--repo", repo, "--include", "title,url", "--max-cache-age", PR_MISSING_TTL_S]
-        : ["gh", "pr", "view", n, "--repo", repo, "--json", "title,url"];
-    const run = await ctx.host.run(argv, { timeoutMs: 15_000 }).catch(() => undefined);
+        : gh;
+    let run = await ctx.host.run(argv, { timeoutMs: 15_000 }).catch(() => undefined);
+
+    if (useTools && cliLacks(run)) {
+        prIncludeMissing = true;
+        useTools = false;
+        run = await ctx.host.run(gh, { timeoutMs: 15_000 }).catch(() => undefined);
+    }
 
     // A run that timed out, could not start, or failed for another reason than "no such PR" (network, auth) is
     // asked again on the next reply instead of keeping the number unlinked for the whole session.
     if (
         !run ||
         (run.exitCode !== 0 &&
-            (ctx.probe.tools || !/no pull requests? found|could not resolve to a pull ?request/i.test(run.stderr)))
+            (useTools || !/no pull requests? found|could not resolve to a pull ?request/i.test(run.stderr)))
     ) {
         return null;
     }
@@ -506,7 +512,7 @@ async function pullRequest(ctx: LinkContext, project: ForgeProject, n: string): 
     try {
         const answer: unknown = run.exitCode === 0 ? JSON.parse(run.stdout) : undefined;
         // `tools github pr --include` prints `{ pr }`, with `pr: null` for a number that is no PR.
-        const parsed: unknown = ctx.probe.tools && isRecord(answer) ? answer.pr : answer;
+        const parsed: unknown = useTools && isRecord(answer) ? answer.pr : answer;
 
         if (isRecord(parsed) && typeof parsed.title === "string" && typeof parsed.url === "string") {
             found = { title: parsed.title.replace(/^Draft: /, ""), url: parsed.url };

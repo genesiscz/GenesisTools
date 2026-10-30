@@ -163,7 +163,15 @@ export function namesIn(line: string, known: readonly ForgeProject[]): RepoMenti
         }
 
         const held = byName.get(name);
-        byName.set(name, held && held.path.toLowerCase() !== project.path.toLowerCase() ? null : project);
+        byName.set(
+            name,
+            held === null ||
+                (held &&
+                    (held.host.toLowerCase() !== project.host.toLowerCase() ||
+                        held.path.toLowerCase() !== project.path.toLowerCase()))
+                ? null
+                : project
+        );
     }
 
     const found: RepoMention[] = [];
@@ -194,11 +202,11 @@ export function titleMatches(written: string, title: string): boolean {
             .replace(/\s+/g, " ")
             .trim()
             .toLowerCase();
-    const said = norm(written.split(/\.\.\.|…/)[0] ?? "");
+    const truncated = /\.\.\.|…/.test(written);
+    const said = norm((written.split(/\.\.\.|…/)[0] ?? "").replace(/\)\s*$/, truncated ? ")" : ""));
     const real = norm(title);
-    const k = Math.min(said.length, real.length, 40);
 
-    return k >= 8 && said.slice(0, k) === real.slice(0, k);
+    return said.length >= 8 && (truncated ? real.startsWith(said) : said === real);
 }
 
 /**

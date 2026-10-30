@@ -1380,10 +1380,10 @@ test("links: in a two-checkout session the written title decides, and no evidenc
         titleWritten: false,
     });
     // Only one of them has a #105.
-    expect(await linkLine(ctx, "And #105.\n")).toBe("And [#105 (five)](https://github.com/acme/Toolbox/pull/105).\n");
+    expect(await linkLine(ctx, "And #105.\n")).toBe("And #105.\n");
     const note = takeLinkedPullRequestNote() ?? "";
     expect(note).toContain("#103 -> https://github.com/acme/Playground/pull/103, in acme/Playground: its title there");
-    expect(note).toContain("#105 -> https://github.com/acme/Toolbox/pull/105, in acme/Toolbox: the only repository");
+    expect(note).not.toContain("#105 ->");
 });
 
 test("links: a one-checkout session links a bare number in its checkout as before, and names count as words", async () => {
@@ -1408,6 +1408,31 @@ test("links: a one-checkout session links a bare number in its checkout as befor
     expect(titleMatches("fix(tools): replace prompts with ...", "fix(tools): replace prompts with clack")).toBe(true);
     expect(titleMatches("feat(hub): another", "fix(tools): replace")).toBe(false);
     expect(titleMatches("fix", "fix(tools): replace")).toBe(false);
+    expect(
+        titleMatches(
+            "fix(tools): replace prompts with clack searchSelect)",
+            "fix(tools): replace prompts with clack autocomplete"
+        )
+    ).toBe(false);
+    expect(
+        titleMatches(
+            "fix(tools): replace prompts with clack searchSelect)",
+            "fix(tools): replace prompts with clack searchSelect"
+        )
+    ).toBe(true);
+    expect(
+        namesIn("web", [
+            { kind: "github", host: "github.com", path: "acme/web" },
+            { kind: "github", host: "github.com", path: "sample/web" },
+            { kind: "github", host: "github.com", path: "acme/web" },
+        ])
+    ).toEqual([]);
+    expect(
+        namesIn("web", [
+            { kind: "github", host: "github.com", path: "acme/web" },
+            { kind: "github", host: "enterprise.example", path: "acme/web" },
+        ])
+    ).toEqual([]);
 });
 
 test("links: PR answers are shared through one file per owner/repo#n, a PR for hours and a missing one briefly", async () => {
@@ -1644,6 +1669,8 @@ function machine({
 function processLogMachine(
     on: On,
     options: {
+        gitOff?: boolean;
+        observeStore?: boolean;
         failCwd?: boolean;
         failSession?: boolean;
         holdAppends?: boolean;
@@ -1656,7 +1683,16 @@ function processLogMachine(
     forgetCheckouts();
     forgetGenesisProbe();
     const clock = mock.clock(on);
-    mock.store(on);
+    const store = new Map<string, unknown>();
+    if (options.observeStore) {
+        on("store.get", async (_$, e) => ({ value: store.get(e.key) }));
+        on("store.set", async (_$, e) => {
+            store.set(e.key, e.value);
+            return { value: undefined };
+        });
+    } else {
+        mock.store(on);
+    }
     let failEnvironment = false;
     let hideHome = false;
     on("env.get", async (_$, e) => {
@@ -1686,7 +1722,11 @@ function processLogMachine(
     });
     on("fs.read", async (_$, e) => {
         if (e.path.endsWith("/agents/hooks.json")) {
-            return { value: JSON.stringify({ mods: { git: { enabled: true, expand: "all" } } }) };
+            return {
+                value: JSON.stringify({
+                    mods: { git: { enabled: !options.gitOff, expand: "all" }, links: { enabled: true } },
+                }),
+            };
         }
 
         throw new Error("no file");
@@ -1737,6 +1777,7 @@ function processLogMachine(
 
     return {
         clock,
+        store,
         writes,
         calls,
         appends: () => appends,
@@ -4117,3 +4158,44 @@ test("a reloaded session starts its features at a random point of the next 30 s,
     await machine.clock.settle();
     expect(gitRuns()).toBeGreaterThan(0);
 });
+
+test("links: an older tools CLI falls back to gh and remembers the missing option", async () => {
+    forgetPullRequests();
+    const { ctx, asked } = twoCheckouts(
+        { "acme/Toolbox#901": "first title", "acme/Toolbox#902": "second title" },
+        ALL_LINKS
+    );
+    const run = ctx.host.run;
+    ctx.host.run = async (argv, init) => {
+        if (argv[0] === "tools") {
+            asked.push([...argv]);
+            return {
+                exitCode: 1,
+                stdout: "",
+                stderr: "unknown option --include",
+                isStdoutTruncated: false,
+                isStderrTruncated: false,
+            };
+        }
+        return run(argv, init);
+    };
+    const one = { ...ctx, worked: [] };
+    expect(await linkLine(one, "#901.\n")).toContain("first title");
+    expect(await linkLine(one, "#902.\n")).toContain("second title");
+    expect(asked.map((argv) => argv[0])).toEqual(["tools", "gh", "gh"]);
+});
+
+for (const interactive of [true, false]) {
+    test(`checkout tracking survives a disabled git panel (interactive=${interactive})`, async ($, on) => {
+        const machine = processLogMachine(on, { gitOff: true, observeStore: true });
+        on("session.start", async (_$, e) => ({ cwd: e.cwd }));
+        on("command.register", async (_$, e) => ({ value: { command: e.name } }));
+        on("tool.call", async () => ({ result: { stdout: "", stderr: "", interrupted: false, isImage: false } }));
+
+        await $.session.start({ cwd: "/repo", surface: interactive ? "terminal" : null, isInteractive: interactive });
+        await $.tool.call({ tool: "Bash", command: "git -C /work/wt-a commit -m test" });
+        const ledger = machine.store.get("git-band-checkouts");
+        expect(ledger).toMatchObject({ "sess-log": [{ root: "/work/wt-a" }] });
+        await machine.clock.settle();
+    });
+}

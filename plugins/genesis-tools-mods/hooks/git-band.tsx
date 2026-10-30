@@ -671,6 +671,12 @@ async function command(host: Host, args: string): Promise<string> {
     return USAGE;
 }
 
+const checkoutMoves = new WeakMap<object, boolean>();
+
+export async function recordCheckout(host: Host, input: object): Promise<void> {
+    checkoutMoves.set(input, await noteToolCall(host, input));
+}
+
 export const gitBand: Feature = {
     panelOnly: true,
     async start(host) {
@@ -739,7 +745,7 @@ export const gitBand: Feature = {
         }
 
         try {
-            const moved = await noteToolCall(host, e);
+            const moved = checkoutMoves.get(e) ?? false;
 
             // Read, Grep, Glob and the like, and a shell command that only reads, change nothing git shows.
             if (!moved && (!TOOLS_THAT_WRITE.has(e.tool) || (e.tool === "Bash" && onlyReads(e.command)))) {
