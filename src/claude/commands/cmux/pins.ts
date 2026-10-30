@@ -40,8 +40,7 @@ export async function pinsCommand(opts: PinsOptions): Promise<void> {
     // ENUMERATES it rather than keying by a Claude session id. Unfiltered, their sessions printed
     // under "Claude session pins" with `account: null` rendered as `keychain` — a Claude-only
     // auth concept that means nothing for either.
-    const all = await loadPins({ readOnly: true });
-    const pins = new Map([...all].filter(([, pin]) => (pin.provider ?? "claude") === "claude"));
+    const pins = await loadPins({ readOnly: true, provider: "claude" });
     const limit = positiveIntFlag(opts.limit, "--limit");
     const recent = [...pins.values()].sort((a, b) => b.at - a.at).slice(0, limit);
 
@@ -53,7 +52,8 @@ export async function pinsCommand(opts: PinsOptions): Promise<void> {
     if (pins.size === 0) {
         out.printlnErr(pc.yellow("No session pins recorded yet."));
         out.printlnErr(pc.dim(`  Journal: ${pinsPath()}`));
-        out.printlnErr(pc.dim(emptyPinsNote(all.size)));
+        // Only an empty view reads the whole journal, to say whether other providers' pins are in it.
+        out.printlnErr(pc.dim(emptyPinsNote((await loadPins({ readOnly: true })).size)));
         return;
     }
 

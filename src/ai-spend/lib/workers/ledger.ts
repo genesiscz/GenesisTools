@@ -317,6 +317,11 @@ export function readWorkerCostRows(): WorkerCostRow[] {
     return scanWorkerCostLedger().rows;
 }
 
+/** The ledger rows of one backend's workers. */
+export function readWorkerCostRowsOf(backend: WorkerBackend): WorkerCostRow[] {
+    return readWorkerCostRows().filter((row) => row.backend === backend);
+}
+
 /** The rows and the byte length they were read at, for a rewrite that must not lose a late append. */
 export function readWorkerCostLedger(): { rows: WorkerCostRow[]; bytes: number; hash: string } {
     return scanWorkerCostLedger({ snapshot: true });

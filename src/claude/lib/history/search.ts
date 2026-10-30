@@ -215,13 +215,13 @@ export interface ConversationStats {
     conversationLengths: number[];
 }
 
+/** The Claude reader (`resolveHistoryProvider("claude")`) with its statistics member. */
 type ClaudeStatisticsReader = NativeSessionReader<string> & {
-    kind: "claude";
     readStatistics: NonNullable<NativeSessionReader<string>["readStatistics"]>;
 };
 
 function isClaudeStatisticsReader(reader: NativeSessionReader<string>): reader is ClaudeStatisticsReader {
-    return reader.kind === "claude" && reader.readStatistics !== undefined;
+    return reader.readStatistics !== undefined;
 }
 
 function claudeStatisticsReader(): ClaudeStatisticsReader {
