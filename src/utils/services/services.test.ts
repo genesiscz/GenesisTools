@@ -397,7 +397,7 @@ describe("the fleet: services up and down", () => {
         expect(OUTSIDE_THE_FLEET.has("mcp-gateway")).toBe(true);
     });
 
-    test("the real registry's default set leaves out the artifact server, whose launch command names no folder", () => {
+    test("the real registry's default set leaves out the artifact server, the scratch server for one folder", () => {
         expect(selectFleet().entries.map((candidate) => candidate.key)).not.toContain("artifact");
         expect(selectFleet({ keys: ["artifact"] }).entries.map((candidate) => candidate.key)).toEqual(["artifact"]);
     });
