@@ -12,7 +12,7 @@ import {
     subJobsFolder,
 } from "./jobs";
 import { findTriggeredBuilds, jobFullName, trackPipeline } from "./track-pipeline";
-import { analyzeUrl, parseBuildUrl } from "./url-analyzer";
+import { analyzeUrl, isJenkinsTarget, parseBuildUrl } from "./url-analyzer";
 import { findNode, formatSummary, lastMatch, summarize } from "./wfapi";
 
 const BASE = "https://jenkins.example.invalid";
@@ -72,6 +72,14 @@ describe("parseBuildUrl", () => {
         expect(parseBuildUrl(APP)?.jobPath).toBe(APP);
         expect(parseBuildUrl("not a url")).toBeNull();
         expect(parseBuildUrl(`${BASE}/manage/`)).toBeNull();
+    });
+
+    it("treats a URL and a job path, with or without a leading slash, as a Jenkins target", () => {
+        expect(isJenkinsTarget(`${BASE}/${APP}/12/`)).toBe(true);
+        expect(isJenkinsTarget(APP)).toBe(true);
+        expect(isJenkinsTarget(`/${APP}/12/`)).toBe(true);
+        expect(isJenkinsTarget("jobs")).toBe(false);
+        expect(isJenkinsTarget("monitor")).toBe(false);
     });
 });
 

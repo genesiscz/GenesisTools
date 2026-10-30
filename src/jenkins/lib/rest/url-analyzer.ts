@@ -39,8 +39,9 @@ export function parseBuildUrl(input: string): ParsedBuildUrl | null {
     };
 }
 
+/** A URL, or a `job/...` path with or without a leading slash (an empty `$JENKINS_URL` prefix leaves one). */
 export function isJenkinsTarget(input: string): boolean {
-    return input.startsWith("http://") || input.startsWith("https://") || input.startsWith("job/");
+    return input.startsWith("http://") || input.startsWith("https://") || /^\/?job\//.test(input);
 }
 
 function downstreamNames(jobPath: string, ctx: JobContext): string {
