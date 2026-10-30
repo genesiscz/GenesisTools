@@ -75,7 +75,7 @@ export interface ExecuteResult {
 
 /**
  * Carries out a plan: refused paths are reported, paths that need a person become a request (or, for a person at a
- * terminal, a typed confirmation), and allowed paths move to the trash for the background drain.
+ * terminal, a confirmation by person), and allowed paths move to the trash for the background drain.
  */
 export async function executePlan(
     plan: RmPlanItem[],

@@ -2,7 +2,7 @@ import { isInteractive } from "@genesiscz/utils/cli";
 import { logger } from "@genesiscz/utils/logger";
 import { type GenesisAppRpcOutcome, genesisAppRpc } from "@genesiscz/utils/macos/genesis-app-rpc";
 import * as p from "@genesiscz/utils/prompts/p";
-import type { RmApproval } from "./config";
+import { type RmApproval, rmConfigPath } from "./config";
 import type { RmCaller } from "./rules";
 
 export type ApprovalVia = "tty" | "dialog" | "touch-id" | "password";
@@ -144,9 +144,10 @@ const DEFAULT_DEPS: ApprovalDeps = {
 /**
  * Asks a person, never an agent. With Touch ID allowed (`approval` `auto` or `touch-id`) GenesisTools.app shows the
  * request and confirms with Touch ID: an agent can open the window but cannot touch the sensor. Without the app,
- * `auto` falls back to the code: outside an agent on a terminal the person types it; inside an agent (or with no
- * terminal) a macOS dialog asks instead, since a terminal an agent fakes (`script`, a pty) could type the code.
- * With neither, the answer is no.
+ * `auto` asks with the macOS dialog, never the typed code: "not in an agent" is read from environment variables an
+ * agent can clear, and a terminal an agent fakes (`script`, a pty) types a code as well as a person. On a platform
+ * without the app or the dialog, `auto` refuses, since nothing there proves a person answered. Only `code`, which
+ * the person writes into the config file, accepts the typed code on a terminal outside an agent.
  */
 export async function confirmByPerson(
     prompt: ApprovalPrompt,
@@ -165,14 +166,14 @@ export async function confirmByPerson(
             return { approved: false, via: "none", detail: `Touch ID needs GenesisTools.app (${answer.detail})` };
         }
 
-        logger.debug({ detail: answer.detail }, "rm: no Touch ID window, asking for the code");
+        logger.debug({ detail: answer.detail }, "rm: no Touch ID window, asking with the dialog");
     }
 
     if (approval === "touch-id") {
         return { approved: false, via: "none", detail: "Touch ID needs GenesisTools.app on macOS" };
     }
 
-    if (!prompt.caller.isInAgent && deps.interactive()) {
+    if (approval === "code" && !prompt.caller.isInAgent && deps.interactive()) {
         const approved = await deps.typed(prompt);
         return { approved, via: "tty", detail: approved ? "typed the code" : "the code was not typed" };
     }
@@ -186,5 +187,13 @@ export async function confirmByPerson(
         };
     }
 
-    return { approved: false, via: "none", detail: "a person must confirm on a terminal (or the macOS dialog)" };
+    if (approval === "auto") {
+        return {
+            approved: false,
+            via: "none",
+            detail: `nothing on ${deps.platform} proves a person answered; to accept a typed code on a terminal, set "approval": "code" in ${rmConfigPath()} yourself`,
+        };
+    }
+
+    return { approved: false, via: "none", detail: "a person must type the code on a terminal, outside an agent" };
 }

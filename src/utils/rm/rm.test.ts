@@ -393,9 +393,9 @@ describe("requests and approval", () => {
         const prompt = { title: "t", lines: [], code: "abc" };
 
         expect((await confirmByPerson({ ...prompt, caller: AGENT }, deps)).via).toBe("dialog");
-        expect((await confirmByPerson({ ...prompt, caller: { ...AGENT, isInAgent: false } }, deps)).approved).toBe(
-            true
-        );
+        const person = { ...AGENT, isInAgent: false };
+
+        expect((await confirmByPerson({ ...prompt, approval: "code", caller: person }, deps)).approved).toBe(true);
         expect(calls).toEqual(["dialog", "typed"]);
         expect((await confirmByPerson({ ...prompt, caller: AGENT }, { ...deps, platform: "linux" })).via).toBe("none");
     });
@@ -986,5 +986,49 @@ describe("security review fixes: deny", () => {
 
         expect(again.returned).toEqual([src]);
         expect(loadRmRequest(request.id, requestsDir)?.status).toBe("denied");
+    });
+});
+
+describe("security review fixes: a typed code is not proof of a person", () => {
+    const person: RmCaller = { agent: "person", sessionId: null, isInAgent: false };
+    const prompt = { title: "t", lines: ["/x"], code: "delete", caller: person };
+
+    function deps(platform: NodeJS.Platform, calls: string[]): ApprovalDeps {
+        return {
+            interactive: () => true,
+            platform,
+            typed: async () => {
+                calls.push("typed");
+                return true;
+            },
+            dialog: () => {
+                calls.push("dialog");
+                return false;
+            },
+            app: async () => ({ kind: "missing", detail: "no app" }),
+        };
+    }
+
+    test("auto never takes the typed code: the macOS dialog asks, other platforms refuse", async () => {
+        const calls: string[] = [];
+        const mac = await confirmByPerson(prompt, deps("darwin", calls));
+        const linux = await confirmByPerson(prompt, deps("linux", calls));
+        const windows = await confirmByPerson(prompt, deps("win32", calls));
+
+        expect(mac.via).toBe("dialog");
+        expect(linux).toMatchObject({ approved: false, via: "none" });
+        expect(linux.detail).toMatch(/"approval": "code"/);
+        expect(windows.approved).toBe(false);
+        expect(calls).toEqual(["dialog"]);
+    });
+
+    test("code, which the person sets, accepts the typed code outside an agent and never inside one", async () => {
+        const calls: string[] = [];
+        const typed = await confirmByPerson({ ...prompt, approval: "code" }, deps("linux", calls));
+        const agent = await confirmByPerson({ ...prompt, approval: "code", caller: AGENT }, deps("linux", calls));
+
+        expect(typed).toMatchObject({ approved: true, via: "tty" });
+        expect(agent.approved).toBe(false);
+        expect(calls).toEqual(["typed"]);
     });
 });

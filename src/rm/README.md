@@ -63,7 +63,7 @@ The first rule that answers decides.
 13. **root** (allow): inside a folder the user trusts (`tools rm roots add`).
 14. **default** (ask).
 
-A person at a terminal (not inside an agent) gets a typed confirmation for an ask instead of a request.
+A person at a terminal (not inside an agent) is asked to confirm an ask at once (see below) instead of a request.
 
 ## Aside: out of the agent's way until the user decides
 
@@ -113,12 +113,15 @@ project, and the operating-system user for a person. `tools rm log` prints the n
 - the shell guard rule `rm-user-verbs` blocks them in an agent's shell call (Claude Code, Codex, Grok);
 - the verb itself asks. With GenesisTools.app installed, a window shows the paths and who asked, and "Approve with
   Touch ID" goes on only after Touch ID (or the account password). An agent can open the window but cannot touch the
-  sensor. Without the app: outside an agent on a terminal you type the code it shows; inside an agent, or without a
-  terminal, a macOS dialog asks and only a click on Approve goes on. A terminal an agent fakes still gets the dialog.
+  sensor. Without the app a macOS dialog asks, and only a click on Approve goes on. The default never takes a typed
+  code: "outside an agent" is read from environment variables an agent can clear, and a terminal an agent fakes
+  types a code as well as a person.
 
-The setting `approval` picks the way: `auto` (the default: Touch ID when the installed app offers it, else the code),
-`touch-id` (refuse without the app) or `code` (never Touch ID). `tools rm config set approval code` asks the person
-the current way first.
+The setting `approval` picks the way: `auto` (the default: Touch ID when the installed app offers it, else the
+dialog; on Linux and Windows, which have neither, it refuses), `touch-id` (refuse without the app) or `code` (never
+Touch ID: the typed code on a terminal outside an agent, else the macOS dialog). `tools rm config set approval code`
+asks the person the current way first. On Linux and Windows, where `auto` cannot ask, the person accepts the typed
+code by writing `"approval": "code"` into `~/.genesis-tools/rm/config.json` by hand.
 
 In Claude Code, run `! tools rm approve <id>` from the prompt.
 
