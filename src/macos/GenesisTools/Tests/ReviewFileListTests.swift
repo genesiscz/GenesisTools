@@ -3,8 +3,9 @@ import XCTest
 @testable import GenesisToolsHost
 @testable import GenesisToolsHub
 
-/// The file list's lookups are built once per change of what they read, not per row: they give the answers the
-/// searches over every file gave.
+/// The file list's lookups and rows are built once per change of what they read, not per row or per body: the
+/// lookups give the answers the searches over every file gave, the cached rows follow every input, and the rows'
+/// value is equal across a publish that changes nothing a row draws (so `.equatable()` draws no row).
 @MainActor
 final class ReviewFileListTests: XCTestCase {
     private var base: URL!
@@ -101,5 +102,69 @@ final class ReviewFileListTests: XCTestCase {
             XCTAssertTrue(lookup.ids(repoPath: path).contains(id), "\(id) is found by its repo path \(path)")
         }
         XCTAssertEqual(lookup.ids(repoPath: "nothing.md"), [])
+    }
+
+    func testTheCachedRowsFollowEveryInputTheyAreBuiltFrom() {
+        let model = twoRootModel()
+        func fresh() -> [SidebarRow] {
+            sidebarRows(model.filteredFiles, tree: model.fileListIsTree, collapsed: model.collapsed, roots: model.roots)
+        }
+        var last = model.fileListRows
+        XCTAssertEqual(last, fresh())
+
+        let changes: [(String, () -> Void)] = [
+            ("fold a folder", { model.collapsed.insert("dir:tools/src") }),
+            ("fold a root", { model.collapsed.insert(model.roots[1].rowID) }),
+            ("open them again", { model.collapsed = [] }),
+            ("flat list", { model.treeMode = false }),
+            ("tree again", { model.treeMode = true }),
+            ("filter", { model.filter = "readme" }),
+            ("no filter", { model.filter = "" }),
+            ("untick a root", {
+                model.setRoots([model.roots[0], ReviewRoot(folder: model.roots[1].folder, repo: model.roots[1].repo, shown: false, removable: true)])
+            }),
+            ("new files", { model.files = Array(model.files.dropLast()) }),
+        ]
+        for (name, change) in changes {
+            change()
+            let rows = model.fileListRows
+            XCTAssertEqual(rows, fresh(), "\(name): the cached rows are the rows of the model as it is now")
+            XCTAssertNotEqual(rows, last, "\(name): a positive control, the change shows in the rows")
+            last = rows
+        }
+    }
+
+    func testAPublishThatChangesNoRowInputLeavesTheRowsValueEqual() {
+        let model = twoRootModel()
+        let first = FileSidebar.rows(of: model) { _ in }
+
+        model.notice = "Saved"
+        model.commentCount = 4
+        model.loading = true
+        model.lastLoaded = Date()
+        model.objectWillChange.send()
+        let unrelated = FileSidebar.rows(of: model) { _ in }
+        XCTAssertTrue(first == unrelated, "nothing a row draws changed, so the rows view draws nothing again")
+
+        var previous = unrelated
+        let inputs: [(String, () -> Void)] = [
+            ("selection", { model.selectedID = "notes/README.md" }),
+            ("fold", { model.collapsed.insert("dir:tools/src") }),
+            ("tree mode", { model.treeMode = false }),
+            ("filter", { model.filter = "a" }),
+            ("root actions", { model.rootActions = ReviewRootActions(setShown: { _, _ in }, remove: { _ in }) }),
+            ("remote head", {
+                model.remoteHead = ReviewRemoteHead(branch: "feat/x", sha: "0123456789abcdef", base: nil) { _, _, _ in nil }
+            }),
+            ("roots", {
+                model.setRoots([model.roots[0], ReviewRoot(folder: model.roots[1].folder, repo: model.roots[1].repo, shown: false, removable: true)])
+            }),
+        ]
+        for (name, change) in inputs {
+            change()
+            let next = FileSidebar.rows(of: model) { _ in }
+            XCTAssertFalse(previous == next, "\(name): a row input changed, so the rows draw again")
+            previous = next
+        }
     }
 }
