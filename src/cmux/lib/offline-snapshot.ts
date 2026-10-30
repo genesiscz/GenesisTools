@@ -8,7 +8,7 @@ import {
     readAutosaveSession,
 } from "@app/cmux/lib/autosave";
 import { type CapturedCommand, loadCapturedCommands } from "@app/cmux/lib/capture-journal";
-import { loadGrokCatalog, type ReplayCatalogSession } from "@app/cmux/lib/replay-catalog";
+import { loadReplayCatalogFor, type ReplayCatalogSession } from "@app/cmux/lib/replay-catalog";
 import { resolveTabSession } from "@app/cmux/lib/resolve-tab";
 import { loadSavedScreens, preferredScreenText, type SavedSurfaceScreen } from "@app/cmux/lib/screen-cache";
 import { lastCommandFromCapture } from "@app/cmux/lib/shell-probe";
@@ -16,7 +16,7 @@ import { loadSurfaceSessions, type SurfaceSessionInfo } from "@app/cmux/lib/surf
 import { collectTtyLaunchCommands } from "@app/cmux/lib/tty-capture";
 import type { Pane, Profile, Surface, Window, Workspace } from "@app/cmux/lib/types";
 import { PROFILE_VERSION } from "@app/cmux/lib/types";
-import { grokSessionsRoot } from "@genesiscz/utils/agent-sessions/grok-sessions";
+
 import type { AccountProviderAlias } from "@genesiscz/utils/ai/providers/alias-list";
 import { cmuxIdKey } from "@genesiscz/utils/cmux/lib/target";
 import { env } from "@genesiscz/utils/env";
@@ -73,7 +73,8 @@ function nativeResumeRecord(panel: AutosavePanel): NativeResumeRecord | undefine
 export interface OfflineCaptureDeps {
     ttyCommands: Map<string, string>;
     surfaceSessions: Map<string, SurfaceSessionInfo>;
-    grokSessions?: ReplayCatalogSession[];
+    /** Replay candidates of every harness under the session's folders (it used to hold Grok's only). */
+    catalogSessions?: ReplayCatalogSession[];
     surfaceCommands?: Map<string, CapturedCommand>;
     surfaceScreens?: Map<string, SavedSurfaceScreen>;
     captureScreen?: boolean;
@@ -107,15 +108,15 @@ export async function captureOfflineProfile(options: OfflineCaptureOptions): Pro
     const callerSurfaceId = env.getProcessEnv().CMUX_SURFACE_ID?.toLowerCase() || undefined;
     const [ttyCommands, surfaceSessions] = await Promise.all([collectTtyLaunchCommands(), loadSurfaceSessions()]);
     // This is the livelock rescue: the shared history database may be held by a starving process,
-    // and a full grok discovery walks tens of thousands of files. Read the index or read nothing.
-    const grokSessions = await loadGrokCatalog(cwds, grokSessionsRoot(), { cached: true });
+    // and a full discovery walks tens of thousands of files. Read the index or read nothing, for every harness.
+    const { sessions: catalogSessions } = await loadReplayCatalogFor(cwds, { cached: true });
 
     return buildOfflineProfile(
         session,
         {
             ttyCommands,
             surfaceSessions,
-            grokSessions,
+            catalogSessions,
             surfaceCommands: loadCapturedCommands({ surfaceIds: panelsById(session).keys() }),
             surfaceScreens: options.captureScreen === false ? undefined : loadSavedScreens(),
             ...(callerSurfaceId === undefined ? {} : { callerSurfaceId }),
@@ -243,7 +244,7 @@ export function buildOfflinePanes(
                           }
                         : undefined,
                 },
-                { sessions: deps.grokSessions ?? [] }
+                { sessions: deps.catalogSessions ?? [] }
             );
 
             surfaces.push({

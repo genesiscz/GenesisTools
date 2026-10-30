@@ -132,7 +132,11 @@ export function collectProfileCwds(profile: Profile): string[] {
  * make. The cost is that a preview can name fewer resume commands than the run it previews.
  */
 export async function loadReplayCatalog(profile: Profile, options: { cached?: boolean } = {}): Promise<ReplayCatalog> {
-    const cwds = collectProfileCwds(profile);
+    return loadReplayCatalogFor(collectProfileCwds(profile), options);
+}
+
+/** Every harness's replay candidates under these folders; the offline rescue passes `cached` and reads only the index. */
+export async function loadReplayCatalogFor(cwds: string[], options: { cached?: boolean } = {}): Promise<ReplayCatalog> {
     const [grok, claude, codex] = await Promise.all([
         loadGrokCatalog(cwds, grokSessionsRoot(), { cached: options.cached }),
         loadClaudeCatalog({ cached: options.cached }),

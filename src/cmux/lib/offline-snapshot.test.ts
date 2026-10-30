@@ -343,7 +343,7 @@ describe("buildOfflinePanes", () => {
         const panes = buildOfflinePanes(ws, FRAME, {
             ttyCommands: new Map(),
             surfaceSessions: new Map(),
-            grokSessions: [
+            catalogSessions: [
                 {
                     kind: "grok",
                     sessionId: "01a05cc5-0ecf-7d40-945e-977e45b3f935",
@@ -358,6 +358,29 @@ describe("buildOfflinePanes", () => {
         if (surface.type === "terminal") {
             expect(surface.command).toBe("grok -r 01a05cc5-0ecf-7d40-945e-977e45b3f935");
             expect(surface.command_source).toBe("offline");
+        }
+    });
+
+    test("infers codex resume from the tab title when the catalog holds a Codex session", () => {
+        const ws = workspaceFixture();
+        ws.panels[4] = { id: "e", type: "terminal", title: "Fix the flaky test - codex", directory: "/tmp/four" };
+        const panes = buildOfflinePanes(ws, FRAME, {
+            ttyCommands: new Map(),
+            surfaceSessions: new Map(),
+            catalogSessions: [
+                {
+                    kind: "codex",
+                    sessionId: "019a05cc-0ecf-7d40-945e-977e45b3f935",
+                    cwd: "/tmp/four",
+                    title: "Fix the flaky test",
+                },
+            ],
+        });
+
+        const surface = panes[2].surfaces[0];
+        expect(surface.type).toBe("terminal");
+        if (surface.type === "terminal") {
+            expect(surface.command).toBe("codex resume 019a05cc-0ecf-7d40-945e-977e45b3f935");
         }
     });
 });
