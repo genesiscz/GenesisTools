@@ -105,14 +105,15 @@ export interface HarnessColor {
     readonly blue: number;
 }
 
-/** The one palette of a harness in the apps: every colour and glyph that stands for it. */
+/** How the apps draw a harness: its letter, its one colour and its logo. */
 export interface HarnessMark {
     /** The letter of its badge (`ProviderBadge`) when no logo is drawn. */
     readonly letter: string;
-    /** The badge's square (`ProviderBadge`). */
+    /**
+     * The harness's one colour in the apps (`Harness.color`): the badge square (`ProviderBadge`), the roster tag
+     * (`AgentRosterStyle.harnessColor`) and the provider rows (`AIProviders.known`).
+     */
     readonly color: HarnessColor;
-    /** The tag beside an agent's name in the agent rosters (`AgentRosterStyle.harnessColor`). */
-    readonly accent: HarnessColor;
     /**
      * The logo as one SVG path in a 24 x 24 box, filled even-odd (`AIProviderMark`), or null to keep the letter. The
      * paths come from LobeHub's icon set (MIT, `@lobehub/icons-static-svg`).

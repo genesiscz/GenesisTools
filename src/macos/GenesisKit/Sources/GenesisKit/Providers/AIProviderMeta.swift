@@ -1,7 +1,7 @@
 import SwiftUI
 
-/// Display vocabulary per provider plugin id. Mirrors `provider-meta.ts` in the GenesisTools
-/// dev-dashboard so the two surfaces name and colour a provider the same way.
+/// Display vocabulary per provider plugin id. A harness's plugin takes its name, letter and colour from its driver
+/// (`Harness`, written from the TypeScript drivers), so every surface draws a harness in one colour.
 public struct AIProviderMeta: Equatable, Sendable {
     public var id: String
     public var alias: String
@@ -19,15 +19,28 @@ public struct AIProviderMeta: Equatable, Sendable {
     }
 }
 
+extension Harness {
+    /// The harness's one colour in SwiftUI (`markColor`): its badge, its roster tag and its provider rows.
+    public var color: Color {
+        let rgb = markColor
+        return Color(red: rgb.red, green: rgb.green, blue: rgb.blue)
+    }
+}
+
 public enum AIProviders {
     /// The only provider the legacy Claude-only cache and the scored ranker can describe.
     public static let anthropicSubscription = "anthropic-sub"
 
-    public static let known: [AIProviderMeta] = [
-        AIProviderMeta(id: "anthropic-sub", alias: "claude", displayName: "Claude", glyph: "C", color: Color(red: 0.984, green: 0.749, blue: 0.141)),
-        AIProviderMeta(id: "openai-sub", alias: "codex", displayName: "Codex", glyph: "X", color: Color(red: 0.376, green: 0.647, blue: 0.980)),
-        AIProviderMeta(id: "grok-sub", alias: "grok", displayName: "Grok", glyph: "G", color: Color(red: 0.753, green: 0.518, blue: 0.988)),
-    ]
+    /// One row per harness, in the drivers' order.
+    public static let known: [AIProviderMeta] = Harness.allCases.map { harness in
+        AIProviderMeta(
+            id: harness.plugin,
+            alias: harness.rawValue,
+            displayName: harness.rawValue.capitalized,
+            glyph: harness.markLetter,
+            color: harness.color
+        )
+    }
 
     /// Metadata for a plugin id. Unknown providers use the names a usage cache carries, else the id
     /// itself. (GenesisAIMonitorKit adds `meta(for:file:)` over its `AIProviderUsage`.)

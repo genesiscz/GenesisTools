@@ -87,7 +87,7 @@ export const testbotHarness: HarnessDriver<"testbot"> = {
         plugin: "testbot-sub",
         aliases: ["testbot-cli"],
         vendor: "Example",
-        mark: { letter: "T", color: { red: 0.5, green: 0.5, blue: 0.5 }, accent: { red: 0.5, green: 0.5, blue: 0.5 }, logo: null },
+        mark: { letter: "T", color: { red: 0.5, green: 0.5, blue: 0.5 }, logo: null },
     },
     parts: {
         launch: {

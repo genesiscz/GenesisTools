@@ -47,15 +47,22 @@ final class ForgeBadgeTests: XCTestCase {
         XCTAssertNil(AIProviderMark.Kind(provider: "gemini"), "an agent with no mark keeps its letter")
     }
 
-    /// The colours, logos and spellings the Swift sites had before they read `Harness` (2026-10-31), pinned so the
-    /// drivers' palette changes nothing on screen.
-    func testHarnessPaletteKeepsTheColoursAndMarksTheSitesHad() {
+    /// One palette (2026-10-31): the badge, the roster tag and the provider rows draw a harness in its one colour,
+    /// and the logos and spellings stay what the sites had before they read `Harness`.
+    func testOneHarnessPaletteFeedsTheBadgeTheRosterAndTheProviderRows() {
         XCTAssertEqual(Harness.allCases.map(\.rawValue), ["claude", "codex", "grok"])
-        XCTAssertEqual(AgentRosterStyle.harnessColor("claude"), Color(red: 0.9, green: 0.6, blue: 0.4))
-        XCTAssertEqual(AgentRosterStyle.harnessColor("codex"), Color(red: 0.45, green: 0.8, blue: 0.75))
-        XCTAssertEqual(AgentRosterStyle.harnessColor("grok"), Color(red: 0.75, green: 0.6, blue: 0.95))
-        XCTAssertEqual(AgentRosterStyle.harnessColor("cursor"), Color(red: 0.9, green: 0.6, blue: 0.4))
-        XCTAssertEqual(AgentRosterStyle.harnessColor("Codex"), Color(red: 0.9, green: 0.6, blue: 0.4), "the roster matches the exact id")
+        for harness in Harness.allCases {
+            let badge = ProviderBadge.style(for: harness.rawValue)
+            XCTAssertEqual(badge.color, harness.color, harness.rawValue)
+            XCTAssertEqual(AgentRosterStyle.harnessColor(harness.rawValue), badge.color, harness.rawValue)
+            let row = AIProviders.meta(for: harness.plugin)
+            XCTAssertEqual(row.color, badge.color, harness.plugin)
+            XCTAssertEqual(row.glyph, badge.letter, harness.plugin)
+            XCTAssertEqual(AIProviders.meta(for: harness.rawValue), row, "the alias finds the same row")
+        }
+        XCTAssertEqual(AIProviders.known.map(\.displayName), ["Claude", "Codex", "Grok"])
+        XCTAssertEqual(AIProviders.known.map(\.id), ["anthropic-sub", "openai-sub", "grok-sub"])
+        XCTAssertEqual(AgentRosterStyle.harnessColor("cursor"), KitPalette.dim, "an agent with no driver gets the badge's grey")
         let marks: [String: AIProviderMark.Kind] = [
             "claude": .claude, "anthropic": .claude, "anthropic-sub": .claude,
             "codex": .codex, "openai": .codex, "openai-sub": .codex,

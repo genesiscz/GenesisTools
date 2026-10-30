@@ -25,21 +25,12 @@ public enum Harness: String, CaseIterable, Sendable {
         }
     }
 
-    /// The colour of the harness's badge, sRGB with each channel 0 to 1.
+    /// The harness's one colour (badge, roster tag, provider rows), sRGB with each channel 0 to 1.
     public var markColor: (red: Double, green: Double, blue: Double) {
         switch self {
         case .claude: return (0.85, 0.47, 0.34)
         case .codex: return (0.55, 0.75, 0.95)
         case .grok: return (0.75, 0.75, 0.78)
-        }
-    }
-
-    /// The colour of the tag beside an agent's name in the agent rosters, sRGB with each channel 0 to 1.
-    public var markAccent: (red: Double, green: Double, blue: Double) {
-        switch self {
-        case .claude: return (0.9, 0.6, 0.4)
-        case .codex: return (0.45, 0.8, 0.75)
-        case .grok: return (0.75, 0.6, 0.95)
         }
     }
 
