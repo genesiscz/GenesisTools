@@ -52,6 +52,7 @@ import { collectStaleCaptures, parseHorizon } from "./gc";
 import { evaluateCommand, evaluateGuard } from "./guard";
 import { lastSeenPerHarness } from "./harnesses";
 import {
+    claudeSettingsPath,
     entriesFor,
     hooksDistPath,
     installAndPoint,
@@ -65,6 +66,7 @@ import {
     wiringStatus,
 } from "./install";
 import { logDecision, releaseRotationLock, setDiagLogPath, setMaxLogBytes, takeRotationLock } from "./log";
+import { readModelFromSettings } from "./model";
 import {
     MODS_PLUGIN,
     modsPluginDisabled,
@@ -209,6 +211,20 @@ describe("parseHookPayload", () => {
 });
 
 describe("hook data paths", () => {
+    it("settings.json and the model fallback follow CLAUDE_CONFIG_DIR, as Claude Code does", async () => {
+        const dir = mkdtempSync(join(tmpdir(), "gt-hooks-claude-home-"));
+
+        try {
+            writeFileSync(join(dir, "settings.json"), SafeJSON.stringify({ model: "fixture-model" }));
+            await env.testing.withOverrides({ CLAUDE_CONFIG_DIR: dir }, () => {
+                expect(claudeSettingsPath()).toBe(join(dir, "settings.json"));
+                expect(readModelFromSettings()).toBe("fixture-model");
+            });
+        } finally {
+            rmSync(dir, { recursive: true, force: true });
+        }
+    });
+
     it("nests a call under its harness and session", () => {
         expect(callDir("claude", "sess", "call")).toBe(`${hookDataRoot()}/claude/sess/diff/call`);
     });

@@ -9,9 +9,9 @@ import {
     rmSync,
     symlinkSync,
 } from "node:fs";
-import { homedir } from "node:os";
 import { dirname, join, resolve } from "node:path";
 import { SafeJSON } from "@genesiscz/utils/json";
+import { nativeHomePath } from "@genesiscz/utils/providers/session-paths";
 import { shellQuote } from "@genesiscz/utils/shell/quote";
 import {
     agentsDataDir,
@@ -39,8 +39,9 @@ export function repoRoot(): string {
     return resolve(import.meta.dir, "..", "..", "..", "..");
 }
 
+/** Claude Code's user settings, `<claude home>/settings.json`: CLAUDE_CONFIG_DIR moves it, as it moves Claude Code's. */
 export function claudeSettingsPath(): string {
-    return join(homedir(), ".claude", "settings.json");
+    return nativeHomePath("claude", "settings.json");
 }
 
 export interface HookEntry {

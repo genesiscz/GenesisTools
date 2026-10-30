@@ -1,8 +1,6 @@
 import { readFileSync } from "node:fs";
-import { homedir } from "node:os";
-import { join } from "node:path";
-import { env } from "@genesiscz/utils/env";
 import { SafeJSON } from "@genesiscz/utils/json";
+import { claudeJsonPath, nativeHomePath } from "@genesiscz/utils/providers/session-paths";
 
 /**
  * How a diff block looks. Every `claude*` theme copies Claude Code's own Bash diff: a full-width
@@ -142,14 +140,13 @@ function themeIn(path: string): { found: true; theme: string | undefined } | { f
  * does for a user-intent key. A `theme` that is present but not a string does not fall through.
  */
 function claudeCodeTheme(): string | undefined {
-    const configDir = env.paths.getClaudeConfigDir();
-    const settings = themeIn(join(configDir ?? join(homedir(), ".claude"), "settings.json"));
+    const settings = themeIn(nativeHomePath("claude", "settings.json"));
 
     if (settings.found) {
         return settings.theme;
     }
 
-    const legacy = themeIn(join(configDir ?? homedir(), ".claude.json"));
+    const legacy = themeIn(claudeJsonPath());
 
     return legacy.found ? legacy.theme : undefined;
 }

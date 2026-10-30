@@ -1,14 +1,10 @@
 import { type Dirent, readdirSync, readFileSync, statSync } from "node:fs";
-import { homedir } from "node:os";
 import { join } from "node:path";
 import { SafeJSON } from "@genesiscz/utils/json";
+import { nativeHomePath } from "@genesiscz/utils/providers/session-paths";
 
 /** A transcript larger than this is skipped: reading it costs more than its commands buy. */
 export const MAX_TRANSCRIPT_BYTES = 40_000_000;
-
-export function claudeProjectsDir(): string {
-    return join(homedir(), ".claude", "projects");
-}
 
 interface ToolUseBlock {
     type?: string;
@@ -85,7 +81,7 @@ function bashCommandsIn(line: string): string[] {
  * The commands are whatever was typed, inline secrets included: callers keep them in memory and
  * show at most a short first line.
  */
-export function recentBashCommands(limit: number, root = claudeProjectsDir()): string[] {
+export function recentBashCommands(limit: number, root = nativeHomePath("claude", "projects")): string[] {
     const seen = new Set<string>();
     const commands: string[] = [];
 
