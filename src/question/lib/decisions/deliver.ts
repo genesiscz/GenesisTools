@@ -13,6 +13,7 @@ import { ClaudeWorkerStore, claudeWorkerSourceHome } from "@app/claude/lib/worke
 import { isCodexDaemonPid } from "@app/codex/lib/spawn";
 import { CodexSessionStore, codexWorkerHome } from "@app/codex/lib/store";
 import { GrokSessionStore } from "@app/grok/lib/store";
+import { canonicalAgent } from "@app/handoff/targeting";
 import {
     enqueueSessionMessage,
     findKeyedSessionMessage,
@@ -22,6 +23,7 @@ import {
 } from "@genesiscz/utils/agent-sessions/message-queue";
 import { dialogRefusal } from "@genesiscz/utils/agents/dialogs/guard";
 import type { DialogProvider, OpenDialog } from "@genesiscz/utils/agents/dialogs/types";
+import { type AccountProviderAlias, isAccountProviderAlias } from "@genesiscz/utils/ai/providers/alias-list";
 
 import {
     type ClaudeLiveSession,
@@ -148,32 +150,37 @@ export interface NativeDeliveryWorker {
     reason?: string;
 }
 
-function nativeWorkers(provider: "claude" | "grok"): NativeDeliveryWorker[] {
-    const busy = (active?: { ownerPid: number; childPid?: number }) =>
-        Boolean(active && (isProcessAlive(active.ownerPid) || (active.childPid && isProcessAlive(active.childPid))));
-    if (provider === "claude") {
-        const store = new ClaudeWorkerStore();
-        return store.listNames().flatMap((name) => {
-            const meta = store.readMeta(name);
-            if (!meta) {
-                return [];
-            }
-            const running = busy(meta.activeTurn);
-            return [
-                {
-                    provider,
-                    name,
-                    sessionId: meta.sessionId,
-                    sourceHome: claudeWorkerSourceHome(meta),
-                    turns: meta.turns,
-                    ready: !running && meta.turns > 0,
-                    reason: running
-                        ? "The Claude worker is busy; the answer remains queued for a later turn."
-                        : "The original Claude worker session has not started.",
-                },
-            ];
-        });
-    }
+function busy(active?: { ownerPid: number; childPid?: number }): boolean {
+    return Boolean(active && (isProcessAlive(active.ownerPid) || (active.childPid && isProcessAlive(active.childPid))));
+}
+
+function claudeNativeWorkers(): NativeDeliveryWorker[] {
+    const provider = "claude" as const;
+    const store = new ClaudeWorkerStore();
+    return store.listNames().flatMap((name) => {
+        const meta = store.readMeta(name);
+        if (!meta) {
+            return [];
+        }
+        const running = busy(meta.activeTurn);
+        return [
+            {
+                provider,
+                name,
+                sessionId: meta.sessionId,
+                sourceHome: claudeWorkerSourceHome(meta),
+                turns: meta.turns,
+                ready: !running && meta.turns > 0,
+                reason: running
+                    ? "The Claude worker is busy; the answer remains queued for a later turn."
+                    : "The original Claude worker session has not started.",
+            },
+        ];
+    });
+}
+
+function grokNativeWorkers(): NativeDeliveryWorker[] {
+    const provider = "grok" as const;
     const store = new GrokSessionStore();
     return store.listNames().flatMap((name) => {
         const meta = store.readMeta(name);
@@ -196,6 +203,16 @@ function nativeWorkers(provider: "claude" | "grok"): NativeDeliveryWorker[] {
             },
         ];
     });
+}
+
+/** The owned headless workers of each harness that resumes a session by a worker turn (Codex has its own route). */
+const NATIVE_WORKERS: Record<NativeDeliveryWorker["provider"], () => NativeDeliveryWorker[]> = {
+    claude: claudeNativeWorkers,
+    grok: grokNativeWorkers,
+};
+
+function nativeWorkers(provider: NativeDeliveryWorker["provider"]): NativeDeliveryWorker[] {
+    return NATIVE_WORKERS[provider]();
 }
 
 export interface DeliverDeps {
@@ -307,6 +324,95 @@ function named(target: FocusTarget, snapshot: CmuxLiveSnapshot | undefined): Del
     };
 }
 
+/** A decision row's provider as a harness; the runtime context spells Claude `claude-code`. */
+function nativeHarness(provider: string | undefined): AccountProviderAlias | undefined {
+    const name = provider ? (canonicalAgent(provider) ?? provider) : undefined;
+    return name && isAccountProviderAlias(name) ? name : undefined;
+}
+
+interface RouteQuery {
+    session: string;
+    sourceHome?: string;
+}
+
+/** An owned Claude or Grok worker that runs this session, when one does. */
+function ownedWorkerRoute(
+    provider: NativeDeliveryWorker["provider"],
+    { session, sourceHome }: RouteQuery,
+    deps: DeliverDeps
+): DeliveryTarget | undefined {
+    const owned = (deps.nativeWorkers ?? nativeWorkers)(provider).filter(
+        (worker) => worker.provider === provider && worker.sessionId === session
+    );
+    const matching = owned.filter(
+        (worker) => !sourceHome || workerSourceHome(worker.sourceHome) === workerSourceHome(sourceHome)
+    );
+    if (owned.length > 0 && matching.length !== 1) {
+        return {
+            kind: "none",
+            reason:
+                matching.length > 1
+                    ? "Several owned workers match this session; none was picked."
+                    : "The owned worker belongs to another source home; no prompt was sent.",
+        };
+    }
+    const worker = matching[0];
+    if (worker) {
+        return worker.ready
+            ? { kind: "worker", label: `${worker.provider} worker ${worker.name}`, worker }
+            : { kind: "none", reason: worker.reason ?? "The worker is not ready for another turn." };
+    }
+
+    return undefined;
+}
+
+/** The live Claude session itself, through its peer socket. */
+function claudePeerRoute({ session, sourceHome }: RouteQuery, deps: DeliverDeps): DeliveryTarget | undefined {
+    const peers = deps.claudePeers
+        ? deps.claudePeers(sourceHome)
+        : isTestProcess()
+          ? []
+          : liveClaudePeers(session, sourceHome);
+    const matching = peers.filter((peer) => peer.sessionId === session);
+    if (matching.length > 0) {
+        const picked = pickClaudePeer(matching);
+        if ("reason" in picked) {
+            return { kind: "none", reason: picked.reason };
+        }
+
+        const { peer, others } = picked;
+        if (sourceHome && workerSourceHome(dirname(dirname(peer.file))) !== workerSourceHome(sourceHome)) {
+            return { kind: "none", reason: "The native Claude receiver belongs to another source home." };
+        }
+        const label =
+            others > 0
+                ? `the Claude terminal active last (pid ${peer.pid}; ${others} older copy idle)`
+                : "original Claude session";
+        return { kind: "claude-peer", label, peer };
+    }
+
+    return undefined;
+}
+
+/**
+ * Each harness's structured routes, tried before the cmux pane: Codex only through its `tools codex` worker (it is
+ * never typed into); Claude through an owned worker, then its own peer socket; Grok through an owned worker.
+ * Undefined falls through to cmux.
+ */
+const STRUCTURED_ROUTES: Record<
+    AccountProviderAlias,
+    (query: RouteQuery, deps: DeliverDeps) => Promise<DeliveryTarget | undefined>
+> = {
+    codex: async ({ session, sourceHome }, deps) => {
+        const worker = (deps.codexWorkerFor ?? codexWorkerFor)(session, sourceHome);
+        return worker
+            ? { kind: "codex", label: `codex worker ${worker}`, worker }
+            : { kind: "none", reason: `no live ${toolCommand("codex")} worker runs this thread` };
+    },
+    claude: async (query, deps) => ownedWorkerRoute("claude", query, deps) ?? claudePeerRoute(query, deps),
+    grok: async (query, deps) => ownedWorkerRoute("grok", query, deps),
+};
+
 /**
  * The live place a session's answers can go, decided BEFORE anything is typed. A recorded pane
  * ref is checked against the panes that exist now: the ref outlives a closed workspace, and typing
@@ -317,61 +423,11 @@ export async function resolveDeliveryTarget(
     { session, provider, sourceHome }: { session: string; provider?: string; sourceHome?: string },
     deps: DeliverDeps = {}
 ): Promise<DeliveryTarget> {
-    if (provider === "codex") {
-        const worker = (deps.codexWorkerFor ?? codexWorkerFor)(session, sourceHome);
-        return worker
-            ? { kind: "codex", label: `codex worker ${worker}`, worker }
-            : { kind: "none", reason: `no live ${toolCommand("codex")} worker runs this thread` };
-    }
+    const harness = nativeHarness(provider);
+    const structured = harness ? await STRUCTURED_ROUTES[harness]({ session, sourceHome }, deps) : undefined;
 
-    const nativeProvider = provider === "claude-code" ? "claude" : provider;
-    if (nativeProvider === "claude" || nativeProvider === "grok") {
-        const owned = (deps.nativeWorkers ?? nativeWorkers)(nativeProvider).filter(
-            (worker) => worker.provider === nativeProvider && worker.sessionId === session
-        );
-        const matching = owned.filter(
-            (worker) => !sourceHome || workerSourceHome(worker.sourceHome) === workerSourceHome(sourceHome)
-        );
-        if (owned.length > 0 && matching.length !== 1) {
-            return {
-                kind: "none",
-                reason:
-                    matching.length > 1
-                        ? "Several owned workers match this session; none was picked."
-                        : "The owned worker belongs to another source home; no prompt was sent.",
-            };
-        }
-        const worker = matching[0];
-        if (worker) {
-            return worker.ready
-                ? { kind: "worker", label: `${worker.provider} worker ${worker.name}`, worker }
-                : { kind: "none", reason: worker.reason ?? "The worker is not ready for another turn." };
-        }
-    }
-
-    if (nativeProvider === "claude") {
-        const peers = deps.claudePeers
-            ? deps.claudePeers(sourceHome)
-            : isTestProcess()
-              ? []
-              : liveClaudePeers(session, sourceHome);
-        const matching = peers.filter((peer) => peer.sessionId === session);
-        if (matching.length > 0) {
-            const picked = pickClaudePeer(matching);
-            if ("reason" in picked) {
-                return { kind: "none", reason: picked.reason };
-            }
-
-            const { peer, others } = picked;
-            if (sourceHome && workerSourceHome(dirname(dirname(peer.file))) !== workerSourceHome(sourceHome)) {
-                return { kind: "none", reason: "The native Claude receiver belongs to another source home." };
-            }
-            const label =
-                others > 0
-                    ? `the Claude terminal active last (pid ${peer.pid}; ${others} older copy idle)`
-                    : "original Claude session";
-            return { kind: "claude-peer", label, peer };
-        }
+    if (structured) {
+        return structured;
     }
 
     const find = deps.findTargets ?? ((id, opts) => findSessionTargets(id, opts));
@@ -428,6 +484,15 @@ export function paneText(text: string): string {
     return text;
 }
 
+/** The `tools` verb that steers an owned worker of each harness, with the exact session and turn it expects. */
+const WORKER_STEER: Record<NativeDeliveryWorker["provider"], string[]> = {
+    claude: ["claude", "worker", "steer"],
+    grok: ["grok", "steer"],
+};
+
+/** The backend a `tools codex steer` receipt names: the Codex route's own worker. */
+const CODEX_WORKER_BACKEND: AccountProviderAlias = "codex";
+
 /**
  * Resolve an exact owned worker before the optional cmux route. Claude/Grok receipts require a
  * completed same-session turn; Codex requires a provider input acknowledgement. With a source
@@ -454,13 +519,9 @@ export async function deliverToSession(
     deps: DeliverDeps = {}
 ): Promise<DeliveryResult> {
     const run = deps.runTool ?? runTool;
-    const nativeProvider = provider === "claude-code" ? "claude" : provider;
-    const queueTarget: { provider: "claude" | "codex" | "grok"; sessionId: string; sourceHome: string } | undefined =
-        deliveryKey &&
-        sourceHome &&
-        (nativeProvider === "claude" || nativeProvider === "codex" || nativeProvider === "grok")
-            ? { provider: nativeProvider, sessionId: session, sourceHome }
-            : undefined;
+    const harness = nativeHarness(provider);
+    const queueTarget: { provider: AccountProviderAlias; sessionId: string; sourceHome: string } | undefined =
+        deliveryKey && sourceHome && harness ? { provider: harness, sessionId: session, sourceHome } : undefined;
     const undelivered = async (reason: string): Promise<DeliveryResult> => {
         if (queueTarget && deliveryKey) {
             try {
@@ -562,7 +623,7 @@ export async function deliverToSession(
         const promptFile = join(directory, "prompt.txt");
         try {
             writeFileSync(promptFile, text, { mode: 0o600 });
-            const prefix = worker.provider === "claude" ? ["claude", "worker", "steer"] : ["grok", "steer"];
+            const prefix = WORKER_STEER[worker.provider];
             const result = await run([
                 ...prefix,
                 "--name",
@@ -621,7 +682,8 @@ export async function deliverToSession(
         }
     }
 
-    if (target.kind === "codex") {
+    // The routes that returned above leave two: a `tools codex` worker, or the cmux pane below.
+    if (target.kind !== "cmux") {
         const directory = mkdtempSync(join(tmpdir(), "worker-delivery-"));
         const promptFile = join(directory, "prompt.txt");
         let steered: ToolRun;
@@ -657,7 +719,7 @@ export async function deliverToSession(
             "kind" in receipt &&
             receipt.kind === "rejected" &&
             "backend" in receipt &&
-            receipt.backend === "codex" &&
+            receipt.backend === CODEX_WORKER_BACKEND &&
             "name" in receipt &&
             receipt.name === target.worker &&
             "error" in receipt &&
@@ -694,9 +756,9 @@ export async function deliverToSession(
 
     // The last rung types free text into the pane, so it is the only one a dialog can swallow. Structural rungs
     // (the Claude peer socket, an owned worker, the Codex app-server) answered above and never reach this.
-    if (!force && (nativeProvider === "claude" || nativeProvider === "codex" || nativeProvider === "grok")) {
+    if (!force && harness) {
         const dialog = await (deps.openDialog ?? defaultOpenDialog)({
-            provider: nativeProvider,
+            provider: harness,
             sessionId: session,
             sourceHome,
         });
