@@ -9,10 +9,20 @@
 
 import { afterAll, describe, expect, it } from "bun:test";
 import { execFileSync } from "node:child_process";
-import { mkdirSync, mkdtempSync, readdirSync, readFileSync, rmSync, writeFileSync } from "node:fs";
+import {
+    linkSync,
+    mkdirSync,
+    mkdtempSync,
+    readdirSync,
+    readFileSync,
+    rmSync,
+    symlinkSync,
+    truncateSync,
+    writeFileSync,
+} from "node:fs";
 import { tmpdir } from "node:os";
 import { join, resolve } from "node:path";
-import { scanWithCFfi } from "./engine";
+import { duSize, scanWithCFfi } from "./engine";
 import { folderKb } from "./size-command";
 import type { ClonesizeResult } from "./types";
 
@@ -50,6 +60,40 @@ describe("du size command", () => {
         expect(await folderKb({ path: absolute, maxCacheAgeSeconds: 60, run })).toEqual({ value: 42, hit: true });
         expect(commands).toEqual([["du", "-sk", absolute]]);
     });
+
+    it.skipIf(process.platform !== "darwin")(
+        "the native walk prints what du -sk prints: hard links once, a sparse file as allocated",
+        async () => {
+            const root = mkdtempSync(join(tmpdir(), "du-size-native-"));
+
+            try {
+                mkdirSync(join(root, "a", "b"), { recursive: true });
+                mkdirSync(join(root, "c"));
+                writeFileSync(join(root, "a", "one.bin"), Buffer.alloc(300_000, 7));
+                writeFileSync(join(root, "a", "b", "two.bin"), Buffer.alloc(70_000, 3));
+                linkSync(join(root, "a", "one.bin"), join(root, "c", "one-link.bin"));
+                linkSync(join(root, "a", "one.bin"), join(root, "a", "one-again.bin"));
+                writeFileSync(join(root, "c", "sparse.bin"), "");
+                truncateSync(join(root, "c", "sparse.bin"), 5_000_000);
+                symlinkSync("a/one.bin", join(root, "c", "sym"));
+                writeFileSync(join(root, "c", "tiny.txt"), "x");
+
+                const du = Number(execFileSync("du", ["-sk", root], { encoding: "utf8" }).trim().split(/\s+/)[0]);
+                const walked = duSize(root);
+
+                expect(walked.kib).toBe(du);
+                expect(walked.files).toBe(6);
+                expect(walked.hardlinkedInodes).toBe(1);
+                // A size the cache serves comes from the same walk.
+                await expect(folderKb({ path: root, maxCacheAgeSeconds: 0 })).resolves.toEqual({
+                    value: du,
+                    hit: false,
+                });
+            } finally {
+                rmSync(root, { recursive: true, force: true });
+            }
+        }
+    );
 });
 
 const isDarwin = process.platform === "darwin";
