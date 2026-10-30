@@ -4,6 +4,7 @@ import { tmpdir } from "node:os";
 import { join } from "node:path";
 import type { AgentSessionRow } from "@app/ai/lib/sessions/agent-session-rows";
 import { QaDialogItem } from "@app/dev-dashboard/ui/src/components/QaDialogItem";
+import { closeQuestion, upsertQuestion } from "@genesiscz/utils/agents/dialogs/store";
 import type { OpenQuestion } from "@genesiscz/utils/agents/dialogs/types";
 import type { TranscriptTurn } from "@genesiscz/utils/ai/transcripts/types";
 import { SafeJSON } from "@genesiscz/utils/json";
@@ -28,6 +29,7 @@ import { type AskDeps, getAskForm, postAskForm } from "../pending/ask";
 import type { AskForm } from "../pending/types";
 import { answerInboxDecision, answerInboxDecisions, answerInboxForm } from "./answer";
 import { buildInbox, type InboxSessionInfo, inboxDelivery, scanTurns, sessionDecisions } from "./build";
+import { answerDialogItem, parseDialogKey } from "./dialog-answer";
 import { DIALOG_WATCH_WINDOW_MS, notifiedAfterDelivery, unnotified, watchedSessions } from "./dialogs";
 import { locateRef } from "./excerpts";
 import {
@@ -1381,5 +1383,124 @@ describe("structural questions in the inbox", () => {
         expect(watchedSessions(rows, questions, now).map((session) => session.sessionId)).toEqual(["s-on"]);
         expect(unnotified([asked], new Set([`claude:${SESSION.sessionId}:toolu_ask_9`]))).toEqual([]);
         expect(unnotified([asked], new Set())).toEqual([asked]);
+    });
+});
+
+describe("answering a dialog item by its option key", () => {
+    const DIALOG_SESSION = "fixture-dialog-session";
+    const KEY = `claude:${DIALOG_SESSION}:toolu_pick_1`;
+
+    function recordsRoot(overrides: Partial<OpenQuestion> = {}): string {
+        const root = mkdtempSync(join(tmpdir(), "inbox-dialog-answer-"));
+        upsertQuestion(
+            {
+                provider: "claude",
+                sessionId: DIALOG_SESSION,
+                toolCallId: "toolu_pick_1",
+                kind: "decision",
+                question: "Which colour?",
+                options: ["Red", "Green", "Blue"],
+                questionCount: 1,
+                askedAt: "2026-10-30T20:00:00.000Z",
+                source: "hook",
+                ...overrides,
+            },
+            root
+        );
+        return root;
+    }
+
+    function fakeTool(stdout: string) {
+        const calls: string[][] = [];
+        return {
+            calls,
+            runTool: async (args: string[]) => {
+                calls.push(args);
+                return { success: true, stdout, stderr: "" };
+            },
+        };
+    }
+
+    test("the key splits into provider, session and a tool call id that may hold colons", () => {
+        expect(parseDialogKey("claude:s1:permission:2026-10-30T20:00:00.000Z")).toEqual({
+            provider: "claude",
+            sessionId: "s1",
+            toolCallId: "permission:2026-10-30T20:00:00.000Z",
+        });
+        expect(parseDialogKey("d_4_s1")).toBeNull();
+    });
+
+    test("a pick goes through cmux send --option for that exact session and reports the option", async () => {
+        const tool = fakeTool(SafeJSON.stringify({ sent: true, label: "Green" }));
+        const result = await answerDialogItem({ key: KEY, option: "b" }, { recordsRoot: recordsRoot(), ...tool });
+
+        expect(tool.calls).toEqual([
+            ["claude", "cmux", "send", DIALOG_SESSION, "--option", "b", "--exact-session", "--json"],
+        ]);
+        expect(result).toMatchObject({ session: DIALOG_SESSION, delivered: true, channel: "cmux", text: "b) Green" });
+    });
+
+    test("refusals start no process: the refuse setting, a closed dialog, a bad option, a harness without keys", async () => {
+        const tool = fakeTool("");
+        const root = recordsRoot();
+
+        expect(
+            await answerDialogItem({ key: KEY, option: "b", mode: "refuse" }, { recordsRoot: root, ...tool })
+        ).toMatchObject({
+            delivered: false,
+            error: expect.stringContaining("set to refuse"),
+        });
+        expect(await answerDialogItem({ key: KEY, option: "z" }, { recordsRoot: root, ...tool })).toMatchObject({
+            delivered: false,
+            error: expect.stringContaining("its options are a) Red, b) Green, c) Blue"),
+        });
+
+        const codexKey = `codex:${DIALOG_SESSION}:call_1`;
+        const codexRoot = recordsRoot({ provider: "codex", toolCallId: "call_1" });
+        expect(
+            await answerDialogItem({ key: codexKey, option: "a" }, { recordsRoot: codexRoot, ...tool })
+        ).toMatchObject({
+            delivered: false,
+            error: expect.stringContaining("not measured live"),
+        });
+
+        closeQuestion({ provider: "claude", sessionId: DIALOG_SESSION, toolCallId: "toolu_pick_1" }, undefined, root);
+        expect(await answerDialogItem({ key: KEY, option: "b" }, { recordsRoot: root, ...tool })).toMatchObject({
+            delivered: false,
+            error: "the dialog is no longer open; nothing was pressed",
+        });
+        expect(tool.calls).toEqual([]);
+    });
+
+    test("a pane that refuses the press is reported with its reason", async () => {
+        const tool = fakeTool(SafeJSON.stringify({ sent: false, reason: "no question dialog is open in the session" }));
+        expect(
+            await answerDialogItem({ key: KEY, option: "a" }, { recordsRoot: recordsRoot(), ...tool })
+        ).toMatchObject({
+            delivered: false,
+            error: "no question dialog is open in the session",
+        });
+
+        const weak = fakeTool(SafeJSON.stringify({ sent: false, ambiguous: true, source: "titles", matches: [{}] }));
+        expect(
+            await answerDialogItem({ key: KEY, option: "a" }, { recordsRoot: recordsRoot(), ...weak })
+        ).toMatchObject({
+            delivered: false,
+            error: expect.stringContaining("not identified exactly"),
+        });
+    });
+
+    test("the CLI door answers --dialog with --option and refuses it without one", async () => {
+        const tool = fakeTool(SafeJSON.stringify({ sent: true }));
+        const deps: InboxCommandDeps = { dialogs: { recordsRoot: recordsRoot(), ...tool } };
+
+        expect(await runInboxAnswer(["--dialog", KEY, "--option", "c"], deps)).toMatchObject({
+            delivered: true,
+            text: "c) Blue",
+        });
+        expect(await runInboxAnswer(["--dialog", KEY], deps)).toMatchObject({
+            error: expect.stringContaining("--dialog needs --option"),
+        });
+        expect(tool.calls).toHaveLength(1);
     });
 });

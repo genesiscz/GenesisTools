@@ -226,6 +226,14 @@ export function questionTextOf(input: unknown): string | null {
     return null;
 }
 
+/** How many questions a question tool's input asks (`questions[]`), or undefined when it lists none. */
+export function questionCountOf(input: unknown): number | undefined {
+    const value = typeof input === "string" ? parseTranscriptLine(input) : input;
+    return isRecord(value) && Array.isArray(value.questions) && value.questions.length > 0
+        ? value.questions.length
+        : undefined;
+}
+
 /** The option labels of a question tool's first question: `questions[0].options[]`, each a string or `{label}`. */
 export function questionOptionsOf(input: unknown): string[] | undefined {
     const value = typeof input === "string" ? parseTranscriptLine(input) : input;

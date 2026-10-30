@@ -1804,6 +1804,20 @@ test("staging keys default to Return stages, ⌘ does the other, and a reminder 
     expect(widgetPreferencesSchema.safeParse({ ownAnswerReturn: "later" }).success).toBe(false);
 });
 
+test("a widget answer to an agent's own dialog presses its option by default; the refuse setting starts nothing", async () => {
+    expect(widgetPreferencesSchema.parse({}).dialogAnswer).toBe("press");
+    expect(widgetPreferencesSchema.safeParse({ dialogAnswer: "type" }).success).toBe(false);
+
+    const directory = await root();
+    await performWidgetAction({ root: directory, input: { action: "preferences", patch: { dialogAnswer: "refuse" } } });
+    expect(
+        await performWidgetAction({
+            root: directory,
+            input: { action: "dialog-answer", key: "claude:fixture-session:toolu_fixture", option: "a" },
+        })
+    ).toMatchObject({ delivered: false, error: expect.stringContaining("set to refuse") });
+});
+
 test("an open TODO does not mark its session as waiting for an answer", async () => {
     const directory = await root();
     const file = join(directory, "decisions.jsonl");

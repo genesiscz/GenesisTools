@@ -3522,6 +3522,7 @@ describe("the questions feature", () => {
             kind: "decision",
             question: "Ship it?",
             options: ["Yes", "No"],
+            questionCount: 1,
             askedAt: now,
             source: "hook",
         });

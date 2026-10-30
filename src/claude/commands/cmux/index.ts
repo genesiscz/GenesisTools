@@ -82,8 +82,10 @@ export function registerCmuxCommand(program: Command): void {
             }
         });
 
-    cmux.command("send <session> <text>")
-        .description("Type text into the cmux pane a session is running in, then press Enter")
+    cmux.command("send <session> [text]")
+        .description(
+            "Type text into the cmux pane a session is running in, then press Enter; or answer its open question dialog with --option"
+        )
         .option("--first", "Take the best match instead of failing when several panes match")
         .option("--include-self", "Also consider the pane this command runs in (excluded by default)")
         .option("--no-enter", "Send the text only, leave it unsubmitted at the prompt")
@@ -93,12 +95,16 @@ export function registerCmuxCommand(program: Command): void {
             "--force",
             "Type even while the session shows a question, plan or permission dialog (by default the send refuses, because the text would land in the dialog)"
         )
+        .option(
+            "--option <letter>",
+            "Answer the session's open question dialog: press this option's key (a letter, or a 1-based position) instead of typing text; refuses when no dialog record is open"
+        )
         .option("--enter-delay <ms>", "Wait this long between the text and Enter", "500")
         .option("--dry-run", "Print what would receive the text and stop")
         .option("--json", "Emit the outcome as JSON instead of a status line")
         .option("--timeout <seconds>", "Give up after this long and exit 124 (the whole send: lookup, text, Enter)")
-        .action(async (query: string, text: string, opts: SendOptions) => {
-            await sendDoor(query, text, opts);
+        .action(async (query: string, text: string | undefined, opts: SendOptions) => {
+            await sendDoor(query, text ?? "", opts);
         });
 
     cmux.command("snapshot [name]")

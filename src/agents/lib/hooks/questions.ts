@@ -1,6 +1,6 @@
 import { closeQuestion, openQuestions, upsertQuestion } from "@genesiscz/utils/agents/dialogs/store";
 import { type OpenQuestion, openQuestionKey } from "@genesiscz/utils/agents/dialogs/types";
-import { questionOptionsOf, questionTextOf } from "@genesiscz/utils/ai/transcripts/turn-state";
+import { questionCountOf, questionOptionsOf, questionTextOf } from "@genesiscz/utils/ai/transcripts/turn-state";
 import type { HooksConfig } from "./config";
 import { type HookPayload, normalizeEvent } from "./payload";
 import { QUESTION_TOOL_KINDS } from "./questions-gate";
@@ -45,6 +45,7 @@ export function questionHookAction(payload: HookPayload, now: string): QuestionH
         }
 
         const options = toolKind === "decision" ? questionOptionsOf(payload.toolInput) : undefined;
+        const questionCount = toolKind === "decision" ? questionCountOf(payload.toolInput) : undefined;
 
         return {
             ask: {
@@ -54,6 +55,7 @@ export function questionHookAction(payload: HookPayload, now: string): QuestionH
                 kind: toolKind,
                 question: (toolKind === "plan" ? PLAN_QUESTION : questionTextOf(payload.toolInput)) ?? "",
                 ...(options ? { options } : {}),
+                ...(questionCount ? { questionCount } : {}),
                 askedAt: now,
                 source: "hook",
             },

@@ -182,6 +182,7 @@ tools claude cmux tree                  # live window → workspace → pane →
 tools claude cmux open-session <id> --workspace workspace:1   # resume as a new pane there
 tools claude cmux send <id> "run the tests"   # type into the session's own pane
 tools claude cmux send <id> "/compact" --no-enter --dry-run
+tools claude cmux send <id> --option b       # answer the open AskUserQuestion by its option key
 tools claude cmux read <id> --lines 40       # print that pane's text
 tools claude cmux find <id> --decision 7     # transcript view (ctrl+o) scrolled to DECISION 7, tab raised after a hit
 tools claude wait <id|title> [--timeout S] [--next] [--stream] [--json]   # block until the turn ends
@@ -255,6 +256,19 @@ an open `AskUserQuestion`: the transcript gets that tool call only after it is a
 refusal exits 1; `--json` prints `{ sent: false, reason, dialog }`. `--force` types anyway and
 passes `--force` to `cmux paste`.
 
+`send <id> --option <letter>` answers the session's open question dialog by key presses, never
+by text. It reads the newest open dialog record of the session (only a record carries the
+options), maps the letter (or a 1-based position) to the option, presses its key, and closes the
+record. It refuses, with nothing pressed, when no record is open, when the record has no options
+(a plan or permission prompt), when it asks several questions, when the letter is past the list,
+or when the harness has no measured keys. The keys per harness are `DIALOG_KEY_MAPS` in
+`src/utils/agents/dialogs/keys.ts`. Claude's are measured (2.1.314, 2026-10-30): the option's digit,
+typed with `cmux send --force`, picks and submits it wherever the highlight is. Codex and Grok are
+"unknown" there, so their dialogs refuse. An inbox item from a dialog record (`source: "dialog"`)
+is answered through this path: `tools question inbox answer --dialog <provider:session:toolCallId>
+--option <letter>`, or the widget action `dialog-answer`, which the widget setting `dialogAnswer`
+(`press` by default, or `refuse`) governs.
+
 A decision answer from the inbox (`tools question decisions send`, the hub) is delivered by
 `deliverToSession` (`src/question/lib/decisions/deliver.ts`) down a ladder of rungs, and the
 result names the rung in `channel`:
@@ -266,9 +280,18 @@ result names the rung in `channel`:
 3. `claude-peer`: a live interactive Claude session gets the message on its cross-session socket. A session that
    GenesisTools started accepts it at once by default (`launch.crossSessionInbound`, see `tools claude message`);
    another session in bypass mode may hold it for approval.
-4. `cmux`: the last rung types into the session's pane with `tools claude cmux send --paste
+4. `grok-leader`: an interactive Grok TUI that runs inside a shared Grok leader (`tools cmux agents new grok`
+   starts it as `tools grok run --leader-socket <sock> --session-id <uuid>` and records both under the session
+   record's `providers.grok.leader`) gets the answer as an ACP `session/prompt`, sent by a second client
+   (`grok agent --leader --leader-socket <sock> stdio`, `GrokAcpClient` in `src/utils/ai/grok/acp.ts`). The
+   socket comes from the record, else the default `~/.grok/leader.sock`; the session is matched by id through
+   `session/list`. Delivered means the leader queued the prompt (`_x.ai/queue/changed`); the turn then runs in the
+   leader and the TUI shows the prompt and the answer. No socket, no listed session, or a refusal falls through to
+   the pane; a prompt with no acknowledgement is an unknown outcome and is not typed again. `tools grok cmux send`
+   tries the same rung first (`structuredSend` in `src/grok/lib/spec.ts`), except with `--dry-run` or `--no-enter`.
+5. `cmux`: the last rung types into the session's pane with `tools claude cmux send --paste
    --exact-session`, after the dialog guard said no dialog is open.
-5. `queued`: no rung took it, or the guard refused; with a source home and a delivery key the
+6. `queued`: no rung took it, or the guard refused; with a source home and a delivery key the
    message is saved for this exact session with the reason.
 
 Only the `cmux` rung types, so only it is guarded; the other rungs are structural and a dialog

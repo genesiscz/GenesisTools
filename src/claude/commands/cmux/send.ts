@@ -1,4 +1,4 @@
-import { sessionOpenDialog } from "@app/claude/lib/cmux/dialog-guard";
+import { sessionOpenDialog, sessionOpenRecords } from "@app/claude/lib/cmux/dialog-guard";
 import { describeMatch, type FocusTarget, isUnambiguous, sessionIdsIn } from "@app/claude/lib/cmux/focus";
 import {
     findSessionTargets,
@@ -9,7 +9,9 @@ import {
     tmuxMissHint,
 } from "@app/claude/lib/cmux/resolve";
 import { dialogRefusal } from "@genesiscz/utils/agents/dialogs/guard";
-import type { OpenDialog } from "@genesiscz/utils/agents/dialogs/types";
+import { type DialogKeyPress, planDialogKeys } from "@genesiscz/utils/agents/dialogs/keys";
+import { closeQuestion } from "@genesiscz/utils/agents/dialogs/store";
+import { type OpenDialog, type OpenQuestion, openQuestionKey } from "@genesiscz/utils/agents/dialogs/types";
 import { suggestCommand } from "@genesiscz/utils/cli";
 import { runCmuxOk } from "@genesiscz/utils/cmux/lib/cli";
 import { surfaceTargetArgs } from "@genesiscz/utils/cmux/lib/target";
@@ -27,6 +29,11 @@ export interface SendOptions {
     exactSession?: boolean;
     /** Type even while a dialog is open in the session; see `openDialogFor` in `@genesiscz/utils/agents/dialogs`. */
     force?: boolean;
+    /**
+     * Answer the session's open question dialog with this option (a letter, or a 1-based position) by key presses
+     * instead of typing text; see `planDialogKeys` in `@genesiscz/utils/agents/dialogs/keys`.
+     */
+    option?: string;
     enterDelay?: string;
     dryRun?: boolean;
     json?: boolean;
@@ -100,6 +107,10 @@ export async function sendDoor(
 export interface SendCommandDeps extends ResolveDeps {
     /** Is a dialog open in this session? Asked before any text is typed; defaults to `sessionOpenDialog`. */
     openDialog?: (sessionId: string) => Promise<OpenDialog | null>;
+    /** The session's open dialog records, newest first; defaults to `sessionOpenRecords`. */
+    openRecords?: (sessionId: string) => OpenQuestion[];
+    /** Closes a record once its option was pressed; defaults to the dialog store's `closeQuestion`. */
+    closeRecord?: (record: OpenQuestion) => void;
 }
 
 /**
@@ -279,6 +290,123 @@ async function refuseOpenDialog({
     return true;
 }
 
+/** The option path's refusal: nothing was pressed. */
+function refuseOption({
+    query,
+    sessionId,
+    reason,
+    opts,
+}: {
+    query: string;
+    sessionId?: string;
+    reason: string;
+    opts: SendOptions;
+}): false {
+    log.warn({ query, sessionId, option: opts.option, reason }, "send --option refused; no key was pressed");
+    process.exitCode = 1;
+
+    if (opts.json) {
+        out.result(SafeJSON.stringify({ query, sent: false, option: opts.option, reason, sessionId }, null, 2));
+        return false;
+    }
+
+    out.error(pc.red(`Nothing was pressed: ${reason}.`));
+    return false;
+}
+
+async function press(where: string[], presses: readonly DialogKeyPress[]): Promise<void> {
+    for (const key of presses) {
+        // `--force`: the dialog is the target here, so cmux's own draft and dialog check must not stop the press.
+        if ("key" in key) {
+            await runCmuxOk(["send-key", ...where, "--force", key.key]);
+        } else {
+            await runCmuxOk(["send", ...where, "--force", "--", key.text]);
+        }
+    }
+}
+
+/**
+ * `--option`: answer the session's open question dialog by its option key, never by free text (handoff h_bgj1m68y
+ * t7). The newest open dialog record of the session names the options; the harness key map (`planDialogKeys`) turns
+ * the letter into presses. Refuses with no open record, a record without options, an option past the list, or a
+ * harness whose keys are unknown. The pressed record is closed at once; the PostToolUse hook closes the same key.
+ */
+async function pressDialogOption({
+    target,
+    surfaceId,
+    query,
+    opts,
+    deps,
+    source,
+}: {
+    target: FocusTarget;
+    surfaceId: string;
+    query: string;
+    opts: SendOptions & { option: string };
+    deps: SendCommandDeps;
+    source: string;
+}): Promise<boolean> {
+    const sessionId = sessionIdsIn(query)[0] ?? target.sessionIds[0];
+
+    if (!sessionId) {
+        return refuseOption({
+            query,
+            reason: "the matched pane names no session, so no dialog record can be read",
+            opts,
+        });
+    }
+
+    const [record] = (deps.openRecords ?? sessionOpenRecords)(sessionId);
+
+    if (!record) {
+        return refuseOption({
+            query,
+            sessionId,
+            reason: "no question dialog is open in the session; send the answer as text instead",
+            opts,
+        });
+    }
+
+    const plan = planDialogKeys(record, opts.option);
+
+    if (!plan.ok) {
+        return refuseOption({ query, sessionId, reason: plan.reason, opts });
+    }
+
+    await press(surfaceTargetArgs(surfaceId, target.workspaceId), plan.presses);
+    (deps.closeRecord ?? ((done: OpenQuestion) => closeQuestion(done)))(record);
+    const dialog = openQuestionKey(record);
+    log.info({ sessionId, dialog, index: plan.index, presses: plan.presses, surfaceId }, "dialog option pressed");
+
+    if (opts.json) {
+        out.result(
+            SafeJSON.stringify(
+                {
+                    query,
+                    sent: true,
+                    option: opts.option,
+                    index: plan.index,
+                    label: plan.label,
+                    dialog,
+                    presses: plan.presses,
+                    target,
+                    surfaceId,
+                    source,
+                },
+                null,
+                2
+            )
+        );
+        return true;
+    }
+
+    out.printlnErr(
+        `${pc.green("✔")} picked ${pc.bold(plan.label)} in the dialog of ${pc.bold(target.workspaceName)} ` +
+            pc.dim(`${target.paneId} ${surfaceId}`)
+    );
+    return true;
+}
+
 /**
  * Type text into the pane a session is running in, then press Enter.
  *
@@ -296,6 +424,16 @@ export async function sendCommand(
     deps: SendCommandDeps = {}
 ): Promise<boolean> {
     const queryTrim = query.trim();
+    const option = opts.option?.trim();
+
+    if (option !== undefined && text.trim()) {
+        throw new Error("--option answers the open dialog by key presses only; leave out the text");
+    }
+
+    if (option === undefined && !text) {
+        throw new Error("give the text to send, or --option <letter> to answer the session's open dialog");
+    }
+
     const enter = opts.enter !== false;
     const enterDelayMs = Number(opts.enterDelay ?? "500");
 
@@ -342,7 +480,13 @@ export async function sendCommand(
     let surfaceId = deliverySurfaceId(target, result.snapshot?.panes ?? []);
 
     if (opts.dryRun) {
-        const plan = { query: queryTrim, wouldSendTo: target, surfaceId, text, enter, source: result.source };
+        const plan = {
+            query: queryTrim,
+            wouldSendTo: target,
+            surfaceId,
+            ...(option !== undefined ? { option } : { text, enter }),
+            source: result.source,
+        };
 
         if (opts.json) {
             out.result(SafeJSON.stringify(plan, null, 2));
@@ -358,6 +502,25 @@ export async function sendCommand(
 
     // Multi-line text always goes as one paste: typed keystrokes turn each newline into Enter, so the agent got
     // every line as its own prompt. A single line keeps the typed path unless --paste asks for the paste.
+    if (option !== undefined) {
+        if (!surfaceId) {
+            return refuseOption({
+                query: queryTrim,
+                reason: "the matched pane has no live surface to press keys in",
+                opts,
+            });
+        }
+
+        return pressDialogOption({
+            target,
+            surfaceId,
+            query: queryTrim,
+            opts: { ...opts, option },
+            deps,
+            source: result.source,
+        });
+    }
+
     const paste = opts.paste === true || text.includes("\n");
     const force = opts.force === true;
 
