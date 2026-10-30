@@ -11,4 +11,4 @@
  */
 export const NATIVE_HOME_CLAUDE_RATCHET: ReadonlySet<string> = new Set<string>([]);
 
-export const NATIVE_HOME_CODEX_GROK_RATCHET: ReadonlySet<string> = new Set<string>(["src/codex/lib/spawn.ts"]);
+export const NATIVE_HOME_CODEX_GROK_RATCHET: ReadonlySet<string> = new Set<string>([]);
