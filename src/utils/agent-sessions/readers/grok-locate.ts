@@ -2,13 +2,20 @@ import { existsSync, readFileSync } from "node:fs";
 import { basename, dirname, join } from "node:path";
 import { grokTitleOf } from "@genesiscz/utils/agent-sessions/readers/grok-title";
 import type { FolderReads, RankedHit } from "@genesiscz/utils/ai/transcripts/resolve";
-import { findTurnFileWorker, idMatches, isRecord, workerTurnChain } from "@genesiscz/utils/ai/transcripts/resolve-core";
-import { listDir, mtimeOf, type TitledSession } from "@genesiscz/utils/ai/transcripts/session-title";
+import {
+    findTurnFileWorker,
+    idMatches,
+    listDir,
+    mtimeOf,
+    workerTurnChain,
+} from "@genesiscz/utils/ai/transcripts/resolve-core";
+import type { TitledSession } from "@genesiscz/utils/ai/transcripts/session-title";
 import { env } from "@genesiscz/utils/env";
 import { sessionsDir } from "@genesiscz/utils/grok/worker-paths";
 import type { TranscriptLocator } from "@genesiscz/utils/harness/parts";
 import { SafeJSON } from "@genesiscz/utils/json";
 import { logger } from "@genesiscz/utils/logger";
+import { isObject } from "@genesiscz/utils/object";
 
 /** The Grok driver's `locate` part: `<cwd>/<sessionId>/updates.jsonl` under the Grok home, and worker turn files. */
 export const grokLocate: TranscriptLocator = {
@@ -82,7 +89,7 @@ export function grokSessions(roots: string[]): TitledSession[] {
 
                 try {
                     const summary: unknown = SafeJSON.parse(readFileSync(summaryPath, "utf8"), { strict: true });
-                    const title = isRecord(summary) ? grokTitleOf(summary) : null;
+                    const title = isObject(summary) ? grokTitleOf(summary) : null;
 
                     if (title) {
                         found.push({ sessionId: id, title, mtime: mtimeOf(updates), locator: updates });

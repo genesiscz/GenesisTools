@@ -1,13 +1,14 @@
 import { join } from "node:path";
 import { lastClaudeTitleIn } from "@genesiscz/utils/agent-sessions/readers/claude-title";
 import type { FolderReads, RankedHit } from "@genesiscz/utils/ai/transcripts/resolve";
-import { findTurnFileWorker, idMatches, workerTurnChain } from "@genesiscz/utils/ai/transcripts/resolve-core";
 import {
-    type FindByTitleOptions,
+    findTurnFileWorker,
+    idMatches,
     listDir,
     mtimeOf,
-    type TitledSession,
-} from "@genesiscz/utils/ai/transcripts/session-title";
+    workerTurnChain,
+} from "@genesiscz/utils/ai/transcripts/resolve-core";
+import type { FindByTitleOptions, TitledSession } from "@genesiscz/utils/ai/transcripts/session-title";
 import { workersDir } from "@genesiscz/utils/claude/worker-paths";
 import type { TranscriptLocator } from "@genesiscz/utils/harness/parts";
 import { logger } from "@genesiscz/utils/logger";
