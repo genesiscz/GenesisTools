@@ -1,10 +1,9 @@
 import { spawnSync } from "node:child_process";
 import { chmodSync, type Dirent, lstatSync, readdirSync, type Stats, writeFileSync } from "node:fs";
-import { homedir } from "node:os";
 import { dirname, join } from "node:path";
-import { env } from "@genesiscz/utils/env";
 import type { StatusEntry } from "@genesiscz/utils/git/porcelain";
 import { SafeJSON } from "@genesiscz/utils/json";
+import { nativeHomePath } from "@genesiscz/utils/providers/session-paths";
 import { type DiffConfig, defaultLogPath, megabytes } from "../config";
 import { gitOut, isDeleted, isUntrackedDirectory, objectId, statusEntries, untrackedFilesIn } from "../git";
 import { hookDiag } from "../log";
@@ -27,7 +26,7 @@ export function harnessOwnFile(path: string): boolean {
     const forms = new Set([path, canonical(path)]);
     const log = defaultLogPath();
     const scratch = dirname(hookDataRoot());
-    const transcripts = join(env.paths.getClaudeConfigDir() ?? join(homedir(), ".claude"), "projects");
+    const transcripts = nativeHomePath("claude", "projects");
 
     for (const form of forms) {
         if (form === log || form.startsWith(`${log}.`)) {
@@ -50,9 +49,7 @@ export function harnessOwnFile(path: string): boolean {
 
 /** The Claude transcript this call belongs to, from the payload. */
 export function transcriptOf(payload: HookPayload): string | null {
-    const value = payload.raw.transcript_path ?? payload.raw.transcriptPath;
-
-    return typeof value === "string" && value.length > 0 ? value : null;
+    return payload.transcriptPath || null;
 }
 
 export interface CaptureResult {

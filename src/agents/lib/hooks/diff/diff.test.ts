@@ -2732,9 +2732,7 @@ describe("a change another session made", () => {
         const lifecycle = join(shared, "src", "lifecycle.ts");
 
         writeFileSync(lifecycle, "one\nOTHER-SESSION\nthree\n");
-        noteFileToolInput(
-            payload({ sessionId: "gt-attr-other", tool: "Write", raw: { tool_input: { file_path: lifecycle } } })
-        );
+        noteFileToolInput(payload({ sessionId: "gt-attr-other", tool: "Write", toolInput: { file_path: lifecycle } }));
 
         const decision = runDiffPost({ payload: mine, config: plain });
 
@@ -2779,7 +2777,7 @@ describe("a change another session made", () => {
         writeFileSync(transcript, line({ file_path: "src/plan.md" }, "Read"));
 
         const theirs = other({ command: "bun run gen" });
-        const mine = own({ command: "bun run build", raw: { transcript_path: transcript } });
+        const mine = own({ command: "bun run build", transcriptPath: transcript });
 
         writeFileSync(plan, "one\nMENTIONED-EARLIER\nthree\n");
 
@@ -4894,14 +4892,15 @@ describe("the misfires of 2026-10-14", () => {
             runDiffPost({
                 payload: {
                     ...started,
-                    raw: { transcript_path: transcript, tool_response: { backgroundTaskId: "bgorder1" } },
+                    transcriptPath: transcript,
+                    toolResponse: { backgroundTaskId: "bgorder1" },
                 },
                 config,
             });
             writeFileSync(target, "BACKGROUND-ORDER\n");
             writeFileSync(output, "done\n\n[exited with code 0]\n");
 
-            const next = begin({ command: `bun /x/own.ts ${own}`, raw: { transcript_path: transcript } });
+            const next = begin({ command: `bun /x/own.ts ${own}`, transcriptPath: transcript });
 
             writeFileSync(own, "seed\nOWN-ORDER\n");
 
@@ -4932,7 +4931,8 @@ describe("the misfires of 2026-10-14", () => {
             const deferred = runDiffPost({
                 payload: {
                     ...started,
-                    raw: { transcript_path: transcript, tool_response: { backgroundTaskId: "bgtest1" } },
+                    transcriptPath: transcript,
+                    toolResponse: { backgroundTaskId: "bgtest1" },
                 },
                 config: plain,
             });
@@ -4941,7 +4941,7 @@ describe("the misfires of 2026-10-14", () => {
 
             writeFileSync(target, "BACKGROUND-EDIT\n");
 
-            const next = begin({ command: "true", raw: { transcript_path: transcript } });
+            const next = begin({ command: "true", transcriptPath: transcript });
             expect(flushDeferred({ payload: next, config: plain })).toEqual([]);
 
             writeFileSync(output, "done\n\n[exited with code 0]\n");
@@ -4972,14 +4972,15 @@ describe("the misfires of 2026-10-14", () => {
             runDiffPost({
                 payload: {
                     ...started,
-                    raw: { transcript_path: transcript, tool_response: { backgroundTaskId: "bgnote1" } },
+                    transcriptPath: transcript,
+                    toolResponse: { backgroundTaskId: "bgnote1" },
                 },
                 config: plain,
             });
             writeFileSync(target, Array.from({ length: 300 }, (_, i) => `BACKGROUND-ROW-${i}`).join("\n"));
             writeFileSync(output, "done\n\n[exited with code 0]\n");
 
-            const next = begin({ command: "true", raw: { transcript_path: transcript } });
+            const next = begin({ command: "true", transcriptPath: transcript });
             const note = flushDeferred({ payload: next, config: plain, maxChars: 2000 })[0]?.stats?.fullDiff ?? "";
 
             try {
@@ -5256,7 +5257,8 @@ describe("the misfires of 2026-10-14", () => {
                 runDiffPost({
                     payload: {
                         ...started,
-                        raw: { transcript_path: transcript, tool_response: { backgroundTaskId: id } },
+                        transcriptPath: transcript,
+                        toolResponse: { backgroundTaskId: id },
                     },
                     config,
                 });
@@ -5274,7 +5276,7 @@ describe("the misfires of 2026-10-14", () => {
                         sessionId: session,
                         toolUseId: `budget-next-${phase}`,
                         command: "true",
-                        raw: { transcript_path: transcript },
+                        transcriptPath: transcript,
                     },
                     diff
                 );

@@ -168,8 +168,7 @@ function modelFor(payload: HookPayload, config: HooksConfig): string {
         return "";
     }
 
-    const transcript = payload.raw.transcript_path ?? payload.raw.transcriptPath;
-    const resolved = resolveModel(typeof transcript === "string" ? transcript : undefined, {
+    const resolved = resolveModel(payload.transcriptPath, {
         settingsFallback: payload.harness === "claude",
     });
 

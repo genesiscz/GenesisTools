@@ -123,13 +123,13 @@ function str(value: unknown): string | undefined {
 
 /** The supplied final reply, else the latest assistant row through the required provider reader. */
 export async function finalReply(payload: HookPayload, read: ReadSession | undefined): Promise<string> {
-    const given = str(payload.raw.last_assistant_message) ?? str(payload.raw.lastAssistantMessage);
+    const given = str(payload.lastAssistantMessage);
 
     if (given) {
         return given;
     }
 
-    const transcriptPath = str(payload.raw.transcript_path) ?? str(payload.raw.transcriptPath);
+    const transcriptPath = str(payload.transcriptPath);
 
     if (!transcriptPath) {
         return "";
@@ -229,7 +229,7 @@ async function runChatAnswers(
     config: DecisionsHookConfig,
     deps: DecisionHookDeps
 ): Promise<StopHookOutput | null> {
-    const transcriptPath = str(payload.raw.transcript_path) ?? str(payload.raw.transcriptPath);
+    const transcriptPath = str(payload.transcriptPath);
 
     if (config.chatAnswers === "off" || !deps.readSession || !transcriptPath) {
         return null;
@@ -416,11 +416,11 @@ async function runQuestionNudge({
 }): Promise<StopHookOutput | null> {
     const question = decisionQuestion(reply);
 
-    if (!question || payload.raw.stop_hook_active === true || payload.raw.stopHookActive === true) {
+    if (!question || payload.stopHookActive === true) {
         return null;
     }
 
-    const transcriptPath = str(payload.raw.transcript_path) ?? str(payload.raw.transcriptPath);
+    const transcriptPath = str(payload.transcriptPath);
 
     if (!transcriptPath) {
         return null;
