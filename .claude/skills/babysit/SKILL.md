@@ -59,7 +59,7 @@ Write it to `/tmp/cc/<project>/<session>/babysit/run.json` at the start; the scr
 | `maxParallel` | 3 | Workers at once. The master is the bottleneck, not the workers. |
 | `post` | ask | Post the round summary and replies after the push (review-loop step 4), or hold them in the vault. |
 | `report` | vault note | Optionally also a bus message: `{ "session": "grok-dev", "to": "grokbot-developer" }`. |
-| `stopAfter` | the user's words | A phase or round to stop at. Stop there even if everything is green. |
+| `stopAfter` | the user's words | A phase or round to stop at. Stop there even if everything is green, except that a valid security finding is fixed before the stop, whatever the round (round policy below). |
 | `vault` | `<run>/vault` | The notes folder of this run: reply files, summaries, the rendered ledger. Set it. |
 | `judge` | `Claude` | The name the round summary credits as judge ("… from <worker> judged by <judge>"). |
 | `worktrees` | `<run>/worktrees` | Parent of the per-PR worker worktrees `bs-<N>`. |
@@ -127,6 +127,9 @@ confirmation.)
      threads (Martin, 2026-10-17 12:45). (2026-10-18: a lead fixed a Low in round 3 with neither reason.)
    - **A valid security finding is always fixed**, at any severity and in any round. Read the reviewer's category
      (`🔒 Security`), not only its severity.
+     🛑 No cap applies to it: `stopAfter`, a "3 rounds then stop" instruction or a campaign budget ends the loop only
+     after every open security finding is fixed, one that arrives after the last round is fixed before the report,
+     and "remains open under the campaign limit" is never a valid reply (Martin, 2026-10-31 00:33, #629 share.ts:238).
    - **A dedicated code review the user asks for** (an independent worker review such as `review-brief.ts` on Astra
      or Sol) is fixed in full, whatever round the PR is in. Fix it yourself or steer the PR's fixing worker, then
      judge it as any round (Martin, 2026-10-17 13:05).

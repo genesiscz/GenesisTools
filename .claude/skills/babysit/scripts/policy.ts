@@ -15,7 +15,7 @@ export function roundPolicy(options: { round: number; changedFiles: number; dedi
             (fixAll
                 ? "fix EVERY valid finding, critical, high, medium and low."
                 : "fix Critical, Major and High findings, and a valid Medium or Low only when the fix is cheap (about 20 changed lines) or the same class as an earlier round's fix."),
-        "A valid security finding is always fixed, at any severity and in any round; use the reviewer's Security category.",
+        "A valid security finding is always fixed, at any severity and in any round; use the reviewer's Security category. No round cap (stopAfter, a campaign limit) applies to it: fix it before the stop, and never answer it with a deferral.",
         fixAll
             ? "Fix every valid finding in this PR, including every file it needs; no deferral is accepted."
             : 'Other valid Medium/Low findings get an explained reply and stay OPEN. Use verdict "belongs-elsewhere" for the reply transport and explain the policy deferral; integrate posts them with --no-resolve.',
