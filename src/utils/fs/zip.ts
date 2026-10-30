@@ -7,6 +7,7 @@ const VERSION = 20;
 const UTF8_NAMES = 0x0800;
 const MAX_ENTRIES = 0xffff;
 const MAX_BYTES = 0xffffffff;
+const ZIP_WORKER_TIMEOUT_MS = 120_000;
 
 export interface ZipEntry {
     /** Forward-slash path inside the archive. */
@@ -116,8 +117,29 @@ export function zip(entries: ZipEntry[]): Uint8Array {
 export function zipAsync(entries: ZipEntry[]): Promise<Uint8Array> {
     return new Promise((resolve, reject) => {
         const worker = new Worker(new URL("./zip-worker.ts", import.meta.url).href);
-        worker.onmessage = (event: MessageEvent<{ body?: Uint8Array; error?: string }>) => {
+        let settled = false;
+        const timer = setTimeout(() => {
+            if (finish()) {
+                reject(new Error(`zip worker timed out after ${ZIP_WORKER_TIMEOUT_MS} ms`));
+            }
+        }, ZIP_WORKER_TIMEOUT_MS);
+
+        function finish(): boolean {
+            if (settled) {
+                return false;
+            }
+
+            settled = true;
+            clearTimeout(timer);
             worker.terminate();
+            return true;
+        }
+
+        worker.onmessage = (event: MessageEvent<{ body?: Uint8Array; error?: string }>) => {
+            if (!finish()) {
+                return;
+            }
+
             if (event.data.body) {
                 resolve(event.data.body);
             } else {
@@ -125,14 +147,16 @@ export function zipAsync(entries: ZipEntry[]): Promise<Uint8Array> {
             }
         };
         worker.onerror = (event) => {
-            worker.terminate();
-            reject(new Error(event.message));
+            if (finish()) {
+                reject(new Error(event.message));
+            }
         };
         try {
             worker.postMessage(entries);
         } catch (error) {
-            worker.terminate();
-            reject(error);
+            if (finish()) {
+                reject(error);
+            }
         }
     });
 }

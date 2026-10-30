@@ -1,4 +1,4 @@
-import { afterAll, beforeAll, describe, expect, spyOn, test } from "bun:test";
+import { afterAll, beforeAll, describe, expect, jest, spyOn, test } from "bun:test";
 import { createHash } from "node:crypto";
 import { mkdirSync, mkdtempSync, rmSync, symlinkSync, writeFileSync } from "node:fs";
 import { tmpdir } from "node:os";
@@ -399,6 +399,7 @@ describe("GET /share/:slug assets", () => {
         expect(Buffer.from(unzip(syncArchive).get("data.bin") ?? []).equals(data)).toBe(true);
 
         const terminated = spyOn(Worker.prototype, "terminate");
+        const cleared = spyOn(globalThis, "clearTimeout");
         try {
             let ticked = false;
             setTimeout(() => {
@@ -409,48 +410,84 @@ describe("GET /share/:slug assets", () => {
             expect(ticked).toBe(true);
             expect(Buffer.from(unzip(archive).get("data.bin") ?? []).equals(data)).toBe(true);
             expect(terminated).toHaveBeenCalledTimes(1);
+            expect(cleared).toHaveBeenCalled();
         } finally {
             terminated.mockRestore();
+            cleared.mockRestore();
         }
     });
 
     test("ZIP worker reports archive errors and terminates", async () => {
         const terminated = spyOn(Worker.prototype, "terminate");
+        const cleared = spyOn(globalThis, "clearTimeout");
         const entries = Array.from({ length: 0x10000 }, () => ({ name: "a", data: new Uint8Array() }));
         try {
             expect(() => zip(entries)).toThrow("ZIP64");
             await expect(zipAsync(entries)).rejects.toThrow("ZIP64");
             expect(terminated).toHaveBeenCalledTimes(1);
+            expect(cleared).toHaveBeenCalled();
         } finally {
             terminated.mockRestore();
+            cleared.mockRestore();
         }
     });
 
     test("ZIP worker terminates when sending entries throws", async () => {
         const terminated = spyOn(Worker.prototype, "terminate");
+        const cleared = spyOn(globalThis, "clearTimeout");
         const send = spyOn(Worker.prototype, "postMessage").mockImplementation(() => {
             throw new Error("send failed");
         });
         try {
             await expect(zipAsync([])).rejects.toThrow("send failed");
             expect(terminated).toHaveBeenCalledTimes(1);
+            expect(cleared).toHaveBeenCalled();
         } finally {
             send.mockRestore();
             terminated.mockRestore();
+            cleared.mockRestore();
         }
     });
 
     test("ZIP worker terminates on an uncaught worker error", async () => {
         const terminated = spyOn(Worker.prototype, "terminate");
+        const cleared = spyOn(globalThis, "clearTimeout");
         const send = spyOn(Worker.prototype, "postMessage").mockImplementation(function (this: Worker) {
             this.dispatchEvent(new ErrorEvent("error", { message: "worker failed" }));
         });
         try {
             await expect(zipAsync([])).rejects.toThrow("worker failed");
             expect(terminated).toHaveBeenCalledTimes(1);
+            expect(cleared).toHaveBeenCalled();
         } finally {
             send.mockRestore();
             terminated.mockRestore();
+            cleared.mockRestore();
+        }
+    });
+
+    test("ZIP worker times out and terminates when it never answers", async () => {
+        jest.useFakeTimers();
+        const terminated = spyOn(Worker.prototype, "terminate");
+        const cleared = spyOn(globalThis, "clearTimeout");
+        const send = spyOn(Worker.prototype, "postMessage").mockImplementation(() => {});
+        try {
+            const result = zipAsync([]).catch((error: unknown) => error);
+            jest.advanceTimersByTime(119_999);
+            expect(terminated).not.toHaveBeenCalled();
+            jest.advanceTimersByTime(1);
+            const error = await result;
+            expect(error).toBeInstanceOf(Error);
+            if (error instanceof Error) {
+                expect(error.message).toBe("zip worker timed out after 120000 ms");
+            }
+            expect(terminated).toHaveBeenCalledTimes(1);
+            expect(cleared).toHaveBeenCalled();
+        } finally {
+            send.mockRestore();
+            terminated.mockRestore();
+            cleared.mockRestore();
+            jest.useRealTimers();
         }
     });
 
