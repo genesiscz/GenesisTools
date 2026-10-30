@@ -3,10 +3,10 @@ import { liveTree } from "@app/cmux/lib/live-layout";
 import { profileSurfaces } from "@app/cmux/lib/profile-walk";
 import { resumeTargetFromCommand } from "@app/cmux/lib/render-resume";
 import { type RestoreOptions, replayTerminal } from "@app/cmux/lib/restore";
+import { cmuxAdapter, SESSION_AGENT_IDS, type SessionAgentId, type TrustPrompt } from "@app/cmux/lib/session-agents";
 import { agentsOnTtys, idleShellTtys, runningAgentSessions, type TtyAgent } from "@app/cmux/lib/tab-process";
 import { classifyPrompt, isShellPromptReady, waitForTerminalText } from "@app/cmux/lib/terminal-ready";
 import type { Profile, TerminalSurface } from "@app/cmux/lib/types";
-import type { AccountProviderAlias } from "@genesiscz/utils/ai/providers/alias-list";
 import { concurrentMap } from "@genesiscz/utils/async";
 import { runCmux, runCmuxJSON, runCmuxOk, sendSurfaceText } from "@genesiscz/utils/cmux/lib/cli";
 import { cmuxIdKey } from "@genesiscz/utils/cmux/lib/target";
@@ -87,20 +87,20 @@ export interface InPlaceLiveState {
     callerId?: string;
 }
 
-/** Grok's first-run dialog. Until it is answered, grok has not opened the session it was asked to resume. */
 const TYPABLE_EVIDENCE: ReadonlySet<string> = new Set(["journal", "typed", "title"]);
 
-const GROK_TRUST_PROMPT = /Do you trust the contents of this directory\?[\s\S]*No, quit\s+n\b/;
+/** The agent whose trust prompt the screen shows (each harness's `trustPrompt` in its cmux part), if any. */
+function trustPromptOn(screen: string): { agent: SessionAgentId; prompt: TrustPrompt } | undefined {
+    for (const agent of SESSION_AGENT_IDS) {
+        const prompt = cmuxAdapter(agent).trustPrompt;
 
-/**
- * The prompt a harness waits at before it opens anything, which a restore may quit through: Grok asks whether to
- * trust the folder. Claude and Codex start without one that this restore recognises.
- */
-const TRUST_PROMPTS: Record<AccountProviderAlias, RegExp | null> = {
-    claude: null,
-    codex: null,
-    grok: GROK_TRUST_PROMPT,
-};
+        if (prompt?.screen.test(screen)) {
+            return { agent, prompt };
+        }
+    }
+
+    return undefined;
+}
 
 function lastLine(screen: string): string {
     return (
@@ -192,9 +192,9 @@ function decide(surface: TerminalSurface, live: LiveTab | undefined, state: InPl
 
         // cmux's own relaunch restore can start a stale session in the tab. While that agent still waits at
         // its trust prompt it has opened nothing, so quitting it loses nothing.
-        const trustPrompt = running ? TRUST_PROMPTS[running.kind] : null;
+        const trustPrompt = running ? cmuxAdapter(running.kind).trustPrompt : null;
 
-        if (agent && running && trustPrompt && screen !== undefined && trustPrompt.test(screen)) {
+        if (agent && running && trustPrompt && screen !== undefined && trustPrompt.screen.test(screen)) {
             return {
                 prepare: "quit-stale-agent",
                 prepareNote: `quits ${running.kind} ${running.sessionId ?? "(no session)"}, which waits at its trust prompt; the surface journal names this tab's session`,
@@ -410,9 +410,9 @@ async function clearPrompt(live: LiveTab): Promise<void> {
 }
 
 /**
- * Answer grok's trust prompt with "n", wait for the shell, and clear the line zsh redraws there. The plan
- * read the screen earlier; the dialog is checked again right before the key, because an "n" typed into an
- * agent that has moved past the dialog would land in its chat.
+ * Answer the agent's trust prompt with its quit key (Grok's "n"), wait for the shell, and clear the line zsh redraws
+ * there. The plan read the screen earlier; the dialog is checked again right before the key, because a key typed into
+ * an agent that has moved past the dialog would land in its chat.
  */
 async function quitStaleAgent(live: LiveTab): Promise<void> {
     if (!live.tty) {
@@ -421,11 +421,13 @@ async function quitStaleAgent(live: LiveTab): Promise<void> {
 
     const now = await runCmux(["read-screen", "--surface", live.id]);
 
-    if (now.code !== 0 || !GROK_TRUST_PROMPT.test(now.stdout)) {
-        throw new Error(`${live.ref} no longer shows grok's trust prompt; nothing was sent`);
+    const shown = now.code === 0 ? trustPromptOn(now.stdout) : undefined;
+
+    if (!shown) {
+        throw new Error(`${live.ref} no longer shows an agent's trust prompt; nothing was sent`);
     }
 
-    await sendSurfaceText({ surfaceRef: live.id, text: "n" });
+    await sendSurfaceText({ surfaceRef: live.id, text: shown.prompt.quitKey });
     const processesGone = async () => {
         const left = listProcesses().filter((entry) => entry.tty === live.tty && !entry.zombie);
         return idleShellTtys(left, process.getuid?.() ?? -1).has(live.tty ?? "");
@@ -434,7 +436,9 @@ async function quitStaleAgent(live: LiveTab): Promise<void> {
 
     while (!(await processesGone())) {
         if (Date.now() > deadline) {
-            throw new Error(`the agent in ${live.ref} did not quit within 15 s after "n"`);
+            throw new Error(
+                `the ${shown.agent} agent in ${live.ref} did not quit within 15 s after "${shown.prompt.quitKey}"`
+            );
         }
 
         await Bun.sleep(250);

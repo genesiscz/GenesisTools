@@ -102,9 +102,10 @@ export const HARNESS_GUARD_ALLOWLIST: Readonly<Record<string, HarnessGuardCounts
     "src/ai/lib/sessions/resolve-transcript.ts": { table: 4 },
     "src/claude/commands/codex.ts": { table: 1 },
     "src/claude/lib/active-sessions.ts": { branch: 1 },
-    "src/cmux/lib/restore-in-place.ts": { table: 2 },
-    "src/cmux/lib/session-agents.ts": { table: 2 },
-    "src/cmux/lib/title-match.ts": { table: 2 },
+    "src/cmux/lib/session-agents.ts": {
+        table: 2,
+        why: "the one tool-owned cmux table (CmuxAdapter) that every driver's cmux part names: its launch extras need the cmux and grok tools, which @genesiscz/utils cannot import",
+    },
     "src/codex/lib/process-scan.ts": { branch: 1 },
     "src/control/lib/cursor-context.ts": { table: 1 },
     "src/dev-dashboard/ui/src/components/QaDecisionsTab.tsx": { branch: 1 },

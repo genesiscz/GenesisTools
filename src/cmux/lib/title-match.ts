@@ -1,4 +1,5 @@
 import type { ReplayCatalogSession } from "@app/cmux/lib/replay-catalog";
+import { cmuxAdapter, SPINNER_PREFIX } from "@app/cmux/lib/session-agents";
 import type { ResumeEvidence } from "@app/cmux/lib/types";
 import type { AgentKind } from "@genesiscz/utils/agent-sessions/types";
 
@@ -6,8 +7,6 @@ import type { AgentKind } from "@genesiscz/utils/agent-sessions/types";
  * Which session a tab title names: the agent its title implies, then an exact title in the tab's folder, a title
  * that starts with the tab title, and last the first prompt's words (weak evidence, never typed).
  */
-const SPINNER_PREFIX = /^[⠋⠙⠹⠸⠼⠴⠦⠧⠇⠏✳⠐●○◐◑◒◓]\s*/u;
-
 export function inferLauncherFromTitle(title: string): AgentKind | undefined {
     if (/\s-\s+grok\b/i.test(title) || /\bgrok\s*$/i.test(title.trim())) {
         return "grok";
@@ -24,35 +23,13 @@ export function inferLauncherFromTitle(title: string): AgentKind | undefined {
     return undefined;
 }
 
-function stripGrokSuffix(title: string): string {
-    return title.replace(/\s+-\s+grok(?:\s+·\s+[0-9a-f]{7,8})?\s*$/i, "").trim();
-}
-
-function stripCodexSuffix(title: string): string {
-    return title.replace(/\s+-\s+codex(?:\s+·\s+[0-9a-f]{7,8})?\s*$/i, "").trim();
-}
-
-function stripClaudeGlyph(title: string): string {
-    return title
-        .replace(SPINNER_PREFIX, "")
-        .replace(/\s+·\s+[0-9a-f]{7,8}\s*$/i, "")
-        .trim();
-}
-
 function stripEllipsis(value: string): string {
     return value.replace(/(\u2026|\.{2,}|…)+$/u, "").trim();
 }
 
-/** What each harness adds around a session title in a tab: a suffix (Grok, Codex) or a spinner glyph (Claude). */
-const TITLE_DECORATION: Record<AgentKind, (title: string) => string> = {
-    claude: stripClaudeGlyph,
-    codex: stripCodexSuffix,
-    grok: stripGrokSuffix,
-};
-
 /** Keys to try against a generated session title, most specific first. */
 export function titleMatchKeys(title: string, kind: AgentKind): string[] {
-    const base = TITLE_DECORATION[kind](title);
+    const base = cmuxAdapter(kind).stripTitle(title);
     const stripped = stripEllipsis(base.replace(SPINNER_PREFIX, "").trim());
     const parts = stripped
         .split(/\s+-\s+/)

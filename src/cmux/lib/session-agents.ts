@@ -13,21 +13,41 @@ export const SESSION_AGENT_IDS = ACCOUNT_PROVIDER_ALIASES;
 
 export type SessionAgentId = (typeof SESSION_AGENT_IDS)[number];
 
-export interface SessionAgent {
-    id: SessionAgentId;
-    /** Plugin id of the agent's accounts (`anthropic-sub`, `grok-sub`, `openai-sub`). */
-    provider: string;
-    /** What the agent's TUI quits on. `close` types it before it closes the workspace. */
-    exitCommand: string;
+/**
+ * The cmux part of a harness (its driver's `cmux` slot names this module): what only the cmux tool knows about the
+ * agent, for launch, capture, replay and restore. Everything else comes from the harness driver (`sessionAgent`).
+ */
+export interface CmuxAdapter {
     /** Whether its `tools <id> run` door takes `--cross-messages` / `--no-cross-messages` (Claude's peer channel). */
     crossMessages: boolean;
-    /** The native subcommand that resumes a session (`codex resume <id>`); null when a flag does it. */
-    resumeSubcommand: string | null;
     /**
      * What `agents new` adds to the launch so a second client can reach the session without keystrokes: the
      * `tools <id> run` flags and the record block that names the endpoint. Null when the agent has no such launch.
      */
     launchExtras: ((input: { account: string; sessionId: string }) => SessionLaunchExtras) | null;
+    /**
+     * A tab title without what the agent draws around the session title: a ` - grok · <id>` suffix (Grok, Codex) or
+     * a spinner glyph and ` · <id>` (Claude). Replay and adopt match the rest against session titles.
+     */
+    stripTitle(title: string): string;
+    /** The prompt the agent waits at before it opens anything, which a restore may quit through; null for none. */
+    trustPrompt: TrustPrompt | null;
+}
+
+/** A first-run dialog on the agent's screen: the text that shows it, and the key that quits the agent there. */
+export interface TrustPrompt {
+    screen: RegExp;
+    quitKey: string;
+}
+
+export interface SessionAgent extends CmuxAdapter {
+    id: SessionAgentId;
+    /** Plugin id of the agent's accounts (`anthropic-sub`, `grok-sub`, `openai-sub`). */
+    provider: string;
+    /** What the agent's TUI quits on. `close` types it before it closes the workspace. */
+    exitCommand: string;
+    /** The native subcommand that resumes a session (`codex resume <id>`); null when a flag does it. */
+    resumeSubcommand: string | null;
 }
 
 export interface SessionLaunchExtras {
@@ -46,15 +66,50 @@ function grokLaunchExtras({ account, sessionId }: { account: string; sessionId: 
     };
 }
 
-/**
- * What only the cmux tool knows about an agent: its `tools <id> run` door's flags and the launch extras. The plugin
- * id, the exit command and the resume subcommand come from the harness driver (`sessionAgent`).
- */
-const CMUX_AGENTS: Record<SessionAgentId, Pick<SessionAgent, "crossMessages" | "launchExtras">> = {
-    claude: { crossMessages: true, launchExtras: null },
-    codex: { crossMessages: false, launchExtras: null },
-    grok: { crossMessages: false, launchExtras: grokLaunchExtras },
+/** The spinner glyph a busy or idle agent draws in front of its tab title. */
+export const SPINNER_PREFIX = /^[⠋⠙⠹⠸⠼⠴⠦⠧⠇⠏✳⠐●○◐◑◒◓]\s*/u;
+
+function stripGrokSuffix(title: string): string {
+    return title.replace(/\s+-\s+grok(?:\s+·\s+[0-9a-f]{7,8})?\s*$/i, "").trim();
+}
+
+function stripCodexSuffix(title: string): string {
+    return title.replace(/\s+-\s+codex(?:\s+·\s+[0-9a-f]{7,8})?\s*$/i, "").trim();
+}
+
+function stripClaudeGlyph(title: string): string {
+    return title
+        .replace(SPINNER_PREFIX, "")
+        .replace(/\s+·\s+[0-9a-f]{7,8}\s*$/i, "")
+        .trim();
+}
+
+/** Grok's first-run dialog. Until it is answered, grok has not opened the session it was asked to resume. */
+const GROK_TRUST_PROMPT: TrustPrompt = {
+    screen: /Do you trust the contents of this directory\?[\s\S]*No, quit\s+n\b/,
+    quitKey: "n",
 };
+
+/**
+ * The one cmux table (plan P3): the `cmux` part of every harness is tool-owned, because its launch extras need the
+ * cmux and grok tools, which `@genesiscz/utils` cannot import. Claude and Codex start without a trust prompt that
+ * this restore recognises.
+ */
+const CMUX_AGENTS: Record<SessionAgentId, CmuxAdapter> = {
+    claude: { crossMessages: true, launchExtras: null, stripTitle: stripClaudeGlyph, trustPrompt: null },
+    codex: { crossMessages: false, launchExtras: null, stripTitle: stripCodexSuffix, trustPrompt: null },
+    grok: {
+        crossMessages: false,
+        launchExtras: grokLaunchExtras,
+        stripTitle: stripGrokSuffix,
+        trustPrompt: GROK_TRUST_PROMPT,
+    },
+};
+
+/** The cmux part of one harness. */
+export function cmuxAdapter(id: SessionAgentId): CmuxAdapter {
+    return CMUX_AGENTS[id];
+}
 
 export function isSessionAgentId(value: string): value is SessionAgentId {
     return (SESSION_AGENT_IDS as readonly string[]).includes(value);
