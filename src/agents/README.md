@@ -213,6 +213,49 @@ tools agents hooks config set decisions.chatAnswers record --write
 tools agents hooks chat-answers --misses
 ```
 
+## Structural questions (`questions`)
+
+An agent that asks through its own harness never writes `❓ DECISION N`: Claude's `AskUserQuestion` and
+`ExitPlanMode`, Codex's `request_user_input` (sync and async), Grok's `ask_user_question` and `exit_plan_mode`, and the
+permission prompts of Claude and Grok. The `questions` feature records each one as a dialog record, one JSON file per
+session under `~/.genesis-tools/agents/dialogs/<provider>/<sessionId>.json`
+(`src/utils/agents/dialogs/store.ts`). The hub inbox lists every open record as a waiting decision with the badge
+count, a banner goes out for a newly open one (`questions.notify`), and the answer-delivery guard refuses to type
+free text into a session while one is open.
+
+**One identity everywhere: `provider:sessionId:toolCallId`** (`openQuestionKey`). The hook, the hub watcher, the
+inbox item id and the guard all use it, so a question that both a hook and the watcher see is one record and one
+item. The call id is Claude's `tool_use_id`, Codex's `call_id` or Grok's `toolCallId`; a Claude permission
+notification names no call, so it is `permission:<ISO time>`. A Grok permission prompt takes the id of the open
+`tool_call` it asks for (`events.jsonl` names only the tool; `TurnSnapshot.questionCall` pairs it).
+
+Everything ships off, per harness:
+
+```bash
+tools agents hooks config set questions on --write          # every harness
+tools agents hooks config set questions.claude on --write   # one harness: claude, codex or grok
+tools agents hooks config set questions.notify false --write
+tools agents hooks install --write   # wires the Claude/Grok entries; `questions off` + install removes exactly them
+```
+
+How each harness is served:
+
+| Harness | Opens a record | Closes it |
+|---|---|---|
+| Claude | `hook-question.ts` on PreToolUse (`AskUserQuestion\|ExitPlanMode`), Notification (`permission_prompt`) | its PostToolUse or PostToolUseFailure; any tool's PostToolUse closes the permission prompts; UserPromptSubmit and SessionEnd close all |
+| Grok | the same entries (Grok runs Claude's `settings.json`; the matcher also names `ask_user_question\|exit_plan_mode`), plus the hub watcher for permission prompts, which no Grok hook sees (`pre_tool_use` fires before the prompt) | the same, and the watcher for its own records |
+| Codex | the hub watcher (`readTurnState`, `request_user_input`); its hooks reach shell calls only | the watcher, when the turn state no longer waits |
+
+The watcher (`src/utils/agents/dialogs/watcher.ts`) runs inside `loadInbox` for the listed sessions of a harness
+with `questions` on that wrote within 24 hours. It re-reads a session only when its transcript or event log changed
+(`turnStateSources`), reads bounded tails (256 KB transcript, 64 KB Grok `events.jsonl`), writes records with
+`source: "watcher"`, and never rewrites or closes a hook's record. Codex approval prompts are not covered: its
+rollouts persist no approval request.
+
+`hook-question.ts` is one bun start; a PostToolUse of a session with no dialog record file exits after one `stat`
+(`questions-gate.ts`), before `questions.ts` loads the store and its logger. Each change is logged to the hooks log
+as `phase: "question"`.
+
 ## How a diff looks
 
 `diff.theme` picks the look. `claude` (the default) copies Claude Code's own Bash diff in the theme
@@ -552,6 +595,8 @@ so a long-lived writer rotates too and the hot path still pays no `stat` per rec
 | `src/agents/bin/hook-pre.ts` | PreToolUse: guard then capture, in one process |
 | `src/agents/bin/hook-diff-post.ts` | PostToolUse: the diff |
 | `src/agents/bin/hook-session-end.ts` | SessionEnd: sweep this session's captures |
+| `src/agents/bin/hook-question.ts` | The questions feature: open and close dialog records (loads `questions.ts` only with work) |
+| `src/agents/lib/hooks/questions.ts` | What a hook payload does to the dialog records (`questionHookAction`), and applying it |
 
 🛑 Nothing under `src/agents/lib/hooks/**` may import `@genesiscz/utils/logger` or `Storage`.
 Measured 2026-09-20: the pino facade costs 14.9 ms to import and `Storage` another 16.2 ms.
