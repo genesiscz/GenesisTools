@@ -148,7 +148,11 @@ export function denyRequest(
     const note = options.note ?? undefined;
     saveRmRequest({
         ...request,
-        status: "denied",
+        status: back.kept.length > 0 ? "pending" : request.decided?.approved.length ? "approved" : "denied",
+        targets:
+            back.kept.length > 0
+                ? request.targets.filter((target) => back.kept.some((kept) => kept.path === target.path))
+                : request.targets,
         decidedAt: new Date().toISOString(),
         decidedVia: options.via,
         deniedNote: note,
@@ -311,6 +315,7 @@ function saveRemembered(ctx: RunContext, roots: readonly RmRoot[], requestId: st
 
 export interface DeleteApproval {
     batch: TrashBatch | null;
+    back: ReturnResult;
 }
 
 /**
@@ -367,7 +372,7 @@ export function approveDelete(input: {
     printDisposal(request.id, batch, graceMinutes);
     settleShared(shared, request, batch?.id);
     saveRemembered(ctx, rememberedRoots(ctx, request, approved, choices.remember), request.id);
-    return { batch };
+    return { batch, back };
 }
 
 function printDisposal(requestId: string, batch: TrashBatch | null, graceMinutes: number): void {

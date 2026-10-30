@@ -297,6 +297,16 @@ describe("folder stats", () => {
         expect(folderStats(folder)).toEqual({ files: 3, newestAt: "2030-01-02T03:04:05.000Z" });
         expect(folderStats(folder, 2).capped).toBe(true);
     });
+
+    test("caps a flat directory and distinguishes an exact cap", () => {
+        const folder = dir("flat-stats");
+        for (let i = 0; i < 25; i++) {
+            file(join(folder, `${i}.txt`));
+        }
+        expect(folderStats(folder, 4)).toMatchObject({ files: 4, capped: true });
+        expect(folderStats(folder, 25)).toMatchObject({ files: 25 });
+        expect(folderStats(folder, 25).capped).toBeUndefined();
+    });
 });
 
 describe("session scratch and roots", () => {

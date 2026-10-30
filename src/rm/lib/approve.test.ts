@@ -1,5 +1,5 @@
 import { afterAll, beforeAll, describe, expect, test } from "bun:test";
-import { existsSync, mkdirSync, mkdtempSync, realpathSync, writeFileSync } from "node:fs";
+import { existsSync, mkdirSync, mkdtempSync, realpathSync, renameSync, writeFileSync } from "node:fs";
 import { tmpdir } from "node:os";
 import { join } from "node:path";
 import {
@@ -13,6 +13,7 @@ import {
     loadRmRequest,
     moveAside,
     newBatchId,
+    pendingAsideDirs,
     priorDenials,
     type RmCaller,
     type RmConfig,
@@ -20,6 +21,7 @@ import {
     resolveTarget,
     saveRmConfig,
 } from "@genesiscz/utils/rm";
+import { saveApproved } from "../commands/requests";
 import { type ApproveEntry, approveDelete, denyRequest, splitBySelection } from "./approve";
 import type { RunContext } from "./run";
 
@@ -175,6 +177,51 @@ describe("approve in the window", () => {
         expect(loadRmRequest(twin.id)).toMatchObject({ status: "approved", batchId: batch?.id });
         expect(existsSync(stored)).toBe(true);
         expect(loadRmRequest(asideTwin.id)?.status).toBe("pending");
+    });
+
+    test("failed put-backs stay protected and can be retried without losing the trash batch", () => {
+        const request = asideRequest("partial-retry");
+        const [a, b] = request.targets.map((target) => target.path);
+        if (!a || !b) {
+            throw new Error("expected two targets");
+        }
+        file(b);
+        const { approved, denied } = splitBySelection(entriesOf(request), [a]);
+        const choices = { selected: [a], disposal: "trash" as const, remember: "once" as const, note: null };
+        const ctx = context();
+        const { batch, back } = approveDelete({ ctx, request, approved, denied, choices });
+        const pending = denied.filter((entry) => back.kept.some((kept) => kept.path === entry.wanted.path));
+        expect(back.kept.map((item) => item.path)).toEqual([b]);
+        saveApproved({
+            request,
+            answer: { approved: true, via: "touch-id", choices, deniedByPerson: false },
+            approved,
+            denied: [],
+            pending: pending.map((entry) => entry.wanted),
+            batchId: batch?.id,
+            ctx,
+        });
+        const saved = loadRmRequest(request.id);
+        expect(saved).toMatchObject({ status: "pending", batchId: batch?.id, decided: { approved: [a], denied: [] } });
+        expect(saved?.targets.map((item) => item.path)).toEqual([b]);
+        expect(pendingAsideDirs().some((entry) => entry.requestId === request.id)).toBe(true);
+        renameSync(b, `${b}.replacement`);
+        if (!saved) {
+            throw new Error("expected pending request");
+        }
+        expect(denyRequest(saved, { caller: PERSON, via: "cli" }).kept).toEqual([]);
+        expect(loadRmRequest(request.id)).toMatchObject({ status: "approved", batchId: batch?.id });
+        expect(existsSync(b)).toBe(true);
+        expect(pendingAsideDirs().some((entry) => entry.requestId === request.id)).toBe(false);
+    });
+
+    test("a failed deny keeps its aside copy pending", () => {
+        const request = asideRequest("deny-retry");
+        const path = request.targets[0]?.path ?? "";
+        file(path);
+        expect(denyRequest(request, { caller: PERSON, via: "cli" }).kept.map((item) => item.path)).toEqual([path]);
+        expect(loadRmRequest(request.id)?.status).toBe("pending");
+        expect(pendingAsideDirs().some((entry) => entry.requestId === request.id)).toBe(true);
     });
 
     test("a permanent delete is due at once", () => {

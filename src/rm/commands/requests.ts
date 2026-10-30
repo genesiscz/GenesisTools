@@ -73,7 +73,7 @@ function approvalLines(
  * Records the decision on the request: approved (with the ticked and the put-back paths) and its batch. A path that
  * was refused, changed while the person decided, or could not be moved keeps the request pending, with only those.
  */
-function saveApproved(input: {
+export function saveApproved(input: {
     request: RmRequest;
     answer: PersonAnswer;
     approved: readonly ApproveEntry[];
@@ -90,12 +90,12 @@ function saveApproved(input: {
         decidedAt: new Date().toISOString(),
         decidedVia: answer.via,
         decided: {
-            approved: approved.map((entry) => entry.wanted.path),
-            denied: denied.map((entry) => entry.wanted.path),
+            approved: [...new Set([...(request.decided?.approved ?? []), ...approved.map((entry) => entry.wanted.path)])],
+            denied: [...new Set([...(request.decided?.denied ?? []), ...denied.map((entry) => entry.wanted.path)])],
             disposal: request.kind === "delete" ? answer.choices.disposal : undefined,
             remember: request.kind === "delete" ? answer.choices.remember : undefined,
         },
-        batchId,
+        batchId: batchId ?? request.batchId,
     });
     appendRmLedger({ action: "approve", requestId: request.id, via: answer.via, caller: ctx.caller, batchId });
 }
@@ -197,6 +197,18 @@ export function registerRequestCommands(program: Command): void {
                 return;
             }
 
+            // A path the person already denied whose aside copy could not go home waits for a deny, not a second
+            // approval; a path that was blocked or changed while they decided can be approved again.
+            const deniedBefore = new Set(request.decided?.denied ?? []);
+
+            if (request.targets.some((target) => deniedBefore.has(target.path))) {
+                out.println(
+                    pc.red(`Request ${id} has unfinished recovery. Use tools rm deny ${id} to retry the put-back.`)
+                );
+                process.exitCode = 1;
+                return;
+            }
+
             // An aside item is approved where it waits (its stored copy); the original path is what gets recorded.
             const entries: ApproveEntry[] = request.targets.map((t) => ({
                 wanted: t,
@@ -240,8 +252,15 @@ export function registerRequestCommands(program: Command): void {
 
             if (!answer.approved) {
                 if (answer.deniedByPerson) {
-                    denyRequest(request, { caller: ctx.caller, via: answer.via, note: answer.choices.note });
-                    out.println(`Request ${id} denied.`);
+                    const back = denyRequest(request, {
+                        caller: ctx.caller,
+                        via: answer.via,
+                        note: answer.choices.note,
+                    });
+                    out.println(back.kept.length ? `Request ${id} still needs recovery.` : `Request ${id} denied.`);
+                    if (back.kept.length) {
+                        process.exitCode = 1;
+                    }
                 }
 
                 return;
@@ -250,8 +269,15 @@ export function registerRequestCommands(program: Command): void {
             const { approved, denied } = splitBySelection(openEntries, answer.choices.selected);
 
             if (approved.length === 0) {
-                denyRequest(request, { caller: ctx.caller, via: answer.via, note: answer.choices.note });
-                out.println(`Nothing was ticked: request ${id} denied.`);
+                const back = denyRequest(request, { caller: ctx.caller, via: answer.via, note: answer.choices.note });
+                out.println(
+                    back.kept.length
+                        ? `Request ${id} still needs recovery.`
+                        : `Nothing was ticked: request ${id} denied.`
+                );
+                if (back.kept.length) {
+                    process.exitCode = 1;
+                }
                 return;
             }
 
@@ -282,7 +308,7 @@ export function registerRequestCommands(program: Command): void {
                 return;
             }
 
-            const { batch } = approveDelete({
+            const { batch, back } = approveDelete({
                 ctx,
                 request,
                 approved: ready,
@@ -291,6 +317,9 @@ export function registerRequestCommands(program: Command): void {
                 onRefused: (entry) => pending.push(entry.wanted),
             });
             const moved = ready.filter((entry) => !pending.includes(entry.wanted));
+            // An unticked aside copy that could not go home stays pending, so its aside folder stays guarded.
+            const notBack = (entry: ApproveEntry) => back.kept.some((kept) => kept.path === entry.wanted.path);
+            pending.push(...denied.filter(notBack).map((entry) => entry.wanted));
             saveApproved({ request, answer, approved: moved, denied, pending, batchId: batch?.id, ctx });
             kickDrainer(ctx.config);
             exitPendingFor(id, pending);
@@ -318,7 +347,7 @@ export function registerRequestCommands(program: Command): void {
             }
 
             const back = denyRequest(request, { caller: ctx.caller, via: "cli" });
-            out.println(`Request ${id} denied.`);
+            out.println(back.kept.length ? `Request ${id} still needs recovery.` : `Request ${id} closed.`);
             process.exitCode = back.kept.length > 0 ? 1 : 0;
         });
 }
