@@ -68,6 +68,7 @@ are in [genesistools.md](genesistools.md)). Add a new entry at the end of its se
   so nothing moves on hover; the hover fill appears on the next pointer move after the row turns live.
 - A plain `VStack` is right for tens of rows when exact heights matter (anchoring that survives a width
   change); a lazy stack estimates rows above the viewport and moves the visible ones as it measures.
+- What Apple documents behind these rules, and what stays our observation: [sources.md](sources.md) "How SwiftUI decides to re-run a body".
 
 ### Defer large recipient menus until the user opens them
 
