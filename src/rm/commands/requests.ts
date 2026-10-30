@@ -1,3 +1,4 @@
+import { toolCommand } from "@genesiscz/utils/cli";
 import { formatBytes } from "@genesiscz/utils/format";
 import { out } from "@genesiscz/utils/logger";
 import {
@@ -203,7 +204,9 @@ export function registerRequestCommands(program: Command): void {
 
             if (request.targets.some((target) => deniedBefore.has(target.path))) {
                 out.println(
-                    pc.red(`Request ${id} has unfinished recovery. Use tools rm deny ${id} to retry the put-back.`)
+                    pc.red(
+                        `Request ${id} has unfinished recovery. Use ${toolCommand("rm")} deny ${id} to retry the put-back.`
+                    )
                 );
                 process.exitCode = 1;
                 return;
