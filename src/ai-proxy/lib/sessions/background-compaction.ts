@@ -1,5 +1,5 @@
 import { createHash } from "node:crypto";
-import { existsSync, mkdirSync, readFileSync, unlinkSync, writeFileSync } from "node:fs";
+import { existsSync, mkdirSync, readdirSync, readFileSync, statSync, unlinkSync } from "node:fs";
 import { join } from "node:path";
 import type { BackgroundCompactionSettings } from "@app/ai-proxy/lib/sessions/settings";
 import { getAiProxyStorage } from "@app/ai-proxy/lib/storage";
@@ -7,6 +7,7 @@ import { claudeCodeThreadKey } from "@app/ai-proxy/lib/translators/formats/anthr
 import { SafeJSON } from "@genesiscz/utils/json";
 import { logger } from "@genesiscz/utils/logger";
 import { isObject } from "@genesiscz/utils/object";
+import { atomicWriteFileSync, isMissingFileError } from "@genesiscz/utils/storage/atomic-file";
 
 /**
  * Background compaction, the proxy's copy of Codex's `async_compaction` (codex-rs, off by default there in 2026-10):
@@ -116,10 +117,56 @@ function persist(key: string, result: BackgroundResult): void {
 
     try {
         mkdirSync(join(path, ".."), { recursive: true, mode: 0o700 });
-        writeFileSync(path, SafeJSON.stringify({ key, result }), { mode: 0o600 });
+        atomicWriteFileSync(path, SafeJSON.stringify({ key, result }), { mode: 0o600 });
     } catch (error) {
         logger.warn({ err: error, key }, "ai-proxy: could not save a background compaction; a restart loses it");
     }
+}
+
+function isBackgroundResult(value: unknown): value is BackgroundResult {
+    if (!isObject(value)) {
+        return false;
+    }
+
+    return (
+        isObject(value.item) &&
+        typeof value.accountHash === "string" &&
+        typeof value.prefixHash === "string" &&
+        Array.isArray(value.prefix) &&
+        [value.prefixLength, value.contextTokens, value.startedAt, value.readyAt].every(
+            (number) => typeof number === "number" && Number.isFinite(number) && number >= 0
+        ) &&
+        [value.inputTokens, value.cachedTokens, value.outputTokens].every(
+            (number) => number === undefined || (typeof number === "number" && Number.isFinite(number) && number >= 0)
+        )
+    );
+}
+
+/** Remove expired background data even when its thread is never opened again. */
+export function sweepBackgroundCompactions(retentionDays: number, now = Date.now()): string[] {
+    const dir = join(getAiProxyStorage().getBaseDir(), "background");
+    if (!existsSync(dir)) {
+        return [];
+    }
+
+    const removed: string[] = [];
+    for (const name of readdirSync(dir)) {
+        if (!/^[0-9a-f]{32}\.json(?:\.\d+\.\d+\.\d+\.tmp)?$/.test(name)) {
+            continue;
+        }
+        const path = join(dir, name);
+        try {
+            if (statSync(path).mtimeMs < now - retentionDays * 86_400_000) {
+                unlinkSync(path);
+                removed.push(name);
+            }
+        } catch (error) {
+            if (!isMissingFileError(error)) {
+                logger.warn({ error, name }, "ai-proxy: could not sweep background compaction");
+            }
+        }
+    }
+    return removed;
 }
 
 function readPersisted(key: string): BackgroundResult | undefined {
@@ -129,18 +176,34 @@ function readPersisted(key: string): BackgroundResult | undefined {
         return undefined;
     }
 
+    let text: string;
     try {
-        const saved = SafeJSON.parse(readFileSync(path, "utf8")) as { key?: string; result?: BackgroundResult };
-
-        if (saved.key !== key || !saved.result || Date.now() - saved.result.readyAt > PERSISTED_MAX_AGE_MS) {
-            return undefined;
-        }
-
-        return saved.result;
+        text = readFileSync(path, "utf8");
     } catch (error) {
         logger.warn({ err: error, key }, "ai-proxy: a saved background compaction could not be read");
         return undefined;
     }
+
+    let saved: unknown;
+    try {
+        saved = SafeJSON.parse(text, { strict: true });
+    } catch (error) {
+        logger.warn({ err: error, key }, "ai-proxy: a saved background compaction is malformed");
+        forgetPersisted(key);
+        return undefined;
+    }
+
+    if (
+        !isObject(saved) ||
+        saved.key !== key ||
+        !isBackgroundResult(saved.result) ||
+        Date.now() - saved.result.readyAt > PERSISTED_MAX_AGE_MS
+    ) {
+        forgetPersisted(key);
+        return undefined;
+    }
+
+    return saved.result;
 }
 
 /** The thread's state, loaded from its saved run when this process has none (after a restart). */
@@ -167,8 +230,10 @@ function forgetPersisted(key: string): void {
 
     try {
         unlinkSync(persistedPath(key));
-    } catch {
-        // Nothing saved for this thread.
+    } catch (error) {
+        if (!isMissingFileError(error)) {
+            logger.warn({ error, key }, "ai-proxy: could not remove background compaction");
+        }
     }
 }
 

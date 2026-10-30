@@ -203,6 +203,25 @@ function loadedToolsItem(result: JsonRecord, deferred: DeferredTools | undefined
     return tools.length > 0 ? { type: "additional_tools", role: "developer", tools } : undefined;
 }
 
+/** Introduce an offered deferred tool immediately before its first surviving call. */
+function introduceUsedTools(input: JsonRecord[], content: unknown, deferred: DeferredTools | undefined): void {
+    if (!deferred || !Array.isArray(content)) {
+        return;
+    }
+
+    for (const part of content) {
+        if (!isObject(part) || part.type !== "tool_use" || typeof part.name !== "string") {
+            continue;
+        }
+        const tool = deferred.byName.get(part.name);
+        if (!tool || deferred.sent.has(part.name)) {
+            continue;
+        }
+        deferred.sent.add(part.name);
+        input.push({ type: "additional_tools", role: "developer", tools: [responsesTool(tool)] });
+    }
+}
+
 function appendUserMessage(
     input: JsonRecord[],
     content: unknown,
@@ -494,6 +513,26 @@ function isDeferredTool(tool: unknown): tool is JsonRecord {
     return isObject(tool) && tool.defer_loading === true && typeof tool.name === "string";
 }
 
+function hasCompactedHistory(messages: unknown): boolean {
+    if (!Array.isArray(messages)) {
+        return false;
+    }
+    const first = messages.find((message) => isObject(message) && message.role === "user");
+    if (!isObject(first)) {
+        return false;
+    }
+    const text =
+        typeof first.content === "string"
+            ? first.content
+            : Array.isArray(first.content)
+              ? first.content
+                    .filter(isObject)
+                    .map((block) => (typeof block.text === "string" ? block.text : ""))
+                    .join("\n")
+              : "";
+    return text.startsWith("This session is being continued") || text.includes("[codex-compaction ");
+}
+
 function deferredTools(tools: unknown): DeferredTools {
     const byName = new Map<string, JsonRecord>();
 
@@ -598,6 +637,21 @@ export function anthropicToResponses(body: JsonRecord, model: string, hooks: Res
     // The calls the last assistant message made, whose results the next user message carries.
     let calls: string[] = [];
 
+    if (deferred && hasCompactedHistory(body.messages)) {
+        const referenced = new Set(referencedToolNames(body.messages));
+        const orphaned = [...deferred.byName.entries()].filter(([name]) => !referenced.has(name));
+        if (orphaned.length > 0) {
+            input.push({
+                type: "additional_tools",
+                role: "developer",
+                tools: orphaned.map(([, tool]) => responsesTool(tool)),
+            });
+            for (const [name] of orphaned) {
+                deferred.sent.add(name);
+            }
+        }
+    }
+
     if (Array.isArray(body.messages)) {
         for (const message of body.messages) {
             if (!isObject(message)) {
@@ -605,6 +659,7 @@ export function anthropicToResponses(body: JsonRecord, model: string, hooks: Res
             }
 
             if (message.role === "assistant") {
+                introduceUsedTools(input, message.content, deferred);
                 const start = input.length;
                 appendAssistantMessage(input, message.content, dropped, hooks, customCalls);
                 calls = callIdsOf(input.slice(start));

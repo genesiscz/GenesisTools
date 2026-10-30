@@ -1,10 +1,16 @@
 import { afterEach, beforeEach, describe, expect, it, mock } from "bun:test";
-import { mkdtempSync, readFileSync, utimesSync, writeFileSync } from "node:fs";
+import { createHash } from "node:crypto";
+import { existsSync, mkdtempSync, readFileSync, utimesSync, writeFileSync } from "node:fs";
 import { tmpdir } from "node:os";
 import { join } from "node:path";
 import { execBashInput, parseExecBashCommand } from "@app/ai-proxy/lib/providers/codex/exec/bash-command";
 import { EXEC_RUNNER_PATH } from "@app/ai-proxy/lib/providers/codex/exec/tool";
 import { resetCooldowns } from "@app/ai-proxy/lib/providers/cooldown";
+import {
+    rememberedMessageItems,
+    rememberMessageItems,
+    resetReasoningMemoryForTests,
+} from "@app/ai-proxy/lib/providers/reasoning-memory";
 import {
     type CompactionRecord,
     compactionFromSse,
@@ -29,6 +35,66 @@ import {
 import type { AiProxyAccountConfig, SessionsInConfig } from "@app/ai-proxy/lib/types";
 import { env } from "@genesiscz/utils/env";
 import { SafeJSON } from "@genesiscz/utils/json";
+
+describe("reasoning message identity", () => {
+    it("replays a cache notice on the same historical message", async () => {
+        const { preserveCacheReminders, resetCacheShapeForTests } = await import(
+            "@app/ai-proxy/lib/sessions/cache-shape"
+        );
+        resetCacheShapeForTests();
+        const input = [{ role: "user", content: "question" }];
+        const first = preserveCacheReminders("thread", input, "changed");
+        const continuation = preserveCacheReminders("thread", [...input, { role: "assistant", content: "answer" }]);
+        expect(continuation[0]).toEqual(first[0]);
+        expect(preserveCacheReminders("thread", [{ role: "user", content: "new history" }])[0]).toEqual({
+            role: "user",
+            content: "new history",
+        });
+    });
+
+    it("bounds the number of remembered notices per thread", async () => {
+        const { preserveCacheReminders, resetCacheShapeForTests } = await import(
+            "@app/ai-proxy/lib/sessions/cache-shape"
+        );
+        resetCacheShapeForTests();
+        const input: Array<{ role: string; content: string }> = [];
+        for (let index = 0; index < 130; index++) {
+            input.push({ role: "user", content: `message ${index}` });
+            preserveCacheReminders("thread", input, `notice ${index}`);
+        }
+        const restored = preserveCacheReminders("thread", input);
+        expect(restored[0]).toEqual(input[0]);
+        expect(restored[1]).toEqual(input[1]);
+        expect(SafeJSON.stringify(restored[2])).toContain("notice 2");
+        expect(SafeJSON.stringify(restored[129])).toContain("notice 129");
+    });
+
+    it("times out an idle WHAM stream", async () => {
+        const { whamSsePayloads } = await import("@app/ai-proxy/lib/providers/codex/wham-stream");
+        let cancelled = false;
+        const stream = new ReadableStream<Uint8Array>({
+            cancel() {
+                cancelled = true;
+            },
+        });
+        await expect(whamSsePayloads(stream, 10).next()).rejects.toThrow("timed out");
+        expect(cancelled).toBe(true);
+    });
+
+    it("does not restore a tool call whose name or arguments changed", () => {
+        resetReasoningMemoryForTests();
+        const tool = { type: "tool_use", id: "call-1", name: "read", input: { path: "first" } };
+        const items = [
+            { type: "reasoning", id: "reason-1" },
+            { type: "function_call", call_id: "call-1" },
+        ];
+        rememberMessageItems("conversation", [tool], items);
+        expect(rememberedMessageItems("conversation", [tool])).toEqual(items);
+        expect(rememberedMessageItems("conversation", [{ ...tool, input: { path: "second" } }])).toBeUndefined();
+        expect(rememberedMessageItems("conversation", [{ ...tool, name: "write" }])).toBeUndefined();
+        resetReasoningMemoryForTests();
+    });
+});
 
 const TEST_TOKEN = "codex-access-token";
 const TEST_ACCOUNT_ID = "acct-123";
@@ -293,6 +359,41 @@ describe("buildWhamResponsesBody", () => {
             { defaultReasoningEffort: "high", itemScope: ITEM_SCOPE }
         );
         expect(bogus.body.reasoning).toEqual({ effort: "high" });
+    });
+
+    it("resolves explicit, default and catalog-mapped effort without reading input", async () => {
+        const { buildWhamResponsesBody, resolveWhamReasoning } = await import("./codex/wham-body");
+        const { mergeCodexModelRecords } = await import("@genesiscz/utils/ai/openai/codex-models");
+        const catalog = mergeCodexModelRecords({
+            live: [
+                {
+                    slug: "gpt-x-sol",
+                    displayName: "X",
+                    contextWindow: 500_000,
+                    visibility: "list",
+                    supportedEfforts: ["low", "high", "xhigh", "ultra"],
+                    defaultEffort: "low",
+                    multiAgentReasoningEffort: "xhigh",
+                },
+            ],
+            fallback: [],
+        }).get("gpt-x-sol");
+        const cases = [{ reasoning: { effort: "high" } }, { reasoning: {} }, { reasoning: { effort: "ultra" } }];
+        for (const [index, options] of cases.entries()) {
+            const input = {
+                ...options,
+                get input(): never {
+                    throw new Error("resolver read input");
+                },
+            };
+            const resolved = resolveWhamReasoning(input, "gpt-x-sol", { catalog });
+            const built = buildWhamResponsesBody({ ...options, input: [] }, "gpt-x-sol", {
+                catalog,
+                itemScope: ITEM_SCOPE,
+            });
+            expect(built.body.reasoning).toEqual(resolved.reasoning);
+            expect(resolved.reasoning?.effort).toBe(["high", "low", "xhigh"][index]);
+        }
     });
 
     it("checks the effort against the model's catalog record instead of the fixed allowlist", async () => {
@@ -2289,6 +2390,78 @@ describe("background compaction (Codex async_compaction for Claude Code)", () =>
         setCompactionEventsPathForTests(undefined);
     });
 
+    it("sweeps expired persisted background data and rejects malformed records", async () => {
+        const { backgroundResult, forgetBackgroundInMemoryForTests, sweepBackgroundCompactions, trackBackground } =
+            await import("@app/ai-proxy/lib/sessions/background-compaction");
+        const key = "retention-test";
+        const result = {
+            item: { type: "compaction" },
+            accountHash: "work",
+            prefixLength: 0,
+            prefixHash: "hash",
+            prefix: [],
+            contextTokens: 100,
+            startedAt: Date.now(),
+            readyAt: Date.now(),
+        };
+        trackBackground(key, 100, Promise.resolve(result));
+        await Promise.resolve();
+        const name = `${createHash("sha256").update(key).digest("hex").slice(0, 32)}.json`;
+        const path = join(getAiProxyStorage().getBaseDir(), "background", name);
+        expect(existsSync(path)).toBe(true);
+        forgetBackgroundInMemoryForTests();
+        expect(backgroundResult(key)).toEqual(result);
+        forgetBackgroundInMemoryForTests();
+        writeFileSync(path, SafeJSON.stringify({ key, result: { ...result, readyAt: undefined } }));
+        expect(backgroundResult(key)).toBeUndefined();
+        expect(existsSync(path)).toBe(false);
+        writeFileSync(path, "{invalid json");
+        expect(backgroundResult(key)).toBeUndefined();
+        expect(existsSync(path)).toBe(false);
+        trackBackground(key, 100, Promise.resolve(result));
+        await Promise.resolve();
+        const old = new Date(Date.now() - 3 * 86_400_000);
+        utimesSync(path, old, old);
+        const temporary = `${path}.1.2.3.tmp`;
+        writeFileSync(temporary, "unfinished");
+        utimesSync(temporary, old, old);
+        expect(sweepBackgroundCompactions(1)).toEqual(expect.arrayContaining([name, `${name}.1.2.3.tmp`]));
+        expect(existsSync(path)).toBe(false);
+        expect(existsSync(temporary)).toBe(false);
+    });
+
+    it("keeps the previous background file when a replacement write fails", async () => {
+        const { backgroundResult, forgetBackgroundInMemoryForTests, trackBackground } = await import(
+            "@app/ai-proxy/lib/sessions/background-compaction"
+        );
+        const { atomicWriteIo } = await import("@genesiscz/utils/storage/atomic-file");
+        const key = "atomic-replacement";
+        const result = {
+            item: { type: "compaction" },
+            accountHash: "work",
+            prefixLength: 0,
+            prefixHash: "hash",
+            prefix: [],
+            contextTokens: 100,
+            startedAt: Date.now(),
+            readyAt: Date.now(),
+        };
+        trackBackground(key, 100, Promise.resolve(result));
+        await Promise.resolve();
+        const write = atomicWriteIo.writeSync;
+        try {
+            atomicWriteIo.writeSync = () => {
+                throw new Error("injected write failure");
+            };
+            trackBackground(key, 200, Promise.resolve({ ...result, contextTokens: 200 }));
+            await Promise.resolve();
+        } finally {
+            atomicWriteIo.writeSync = write;
+        }
+        forgetBackgroundInMemoryForTests();
+        expect(backgroundResult(key)).toEqual(result);
+    });
+
     /** A normal WHAM turn whose usage reports this much context. */
     function turnResponse(text: string, inputTokens: number): Response {
         const sse =
@@ -2649,6 +2822,61 @@ describe("tools that Claude Code's tool search loads, on the Codex agent", () =>
         return sent[0] ?? {};
     }
 
+    it("does not introduce deferred tools on a never-loaded first turn", async () => {
+        const body = await sentBody([{ role: "user", content: "check the bus" }], [tool("Monitor", true)]);
+        const input = body.input as Array<Record<string, unknown>>;
+        expect(input.some((item) => item.type === "additional_tools")).toBe(false);
+    });
+
+    it("introduces a surviving tool use once without changing earlier input prefixes", async () => {
+        const tools = [tool("Monitor", true), tool("TaskStop", true)];
+        const first = [{ role: "user", content: "check status" }];
+        const call = (name: string, id: string) => ({
+            role: "assistant",
+            content: [{ type: "tool_use", id, name, input: {} }],
+        });
+        const result = (id: string) => ({
+            role: "user",
+            content: [{ type: "tool_result", tool_use_id: id, content: "done" }],
+        });
+        const used = [...first, call("Monitor", "call-one"), result("call-one")];
+        const more = [...used, call("Monitor", "call-two"), result("call-two"), call("TaskStop", "call-three")];
+        const initial = (await sentBody(first, tools)).input as Array<Record<string, unknown>>;
+        const second = (await sentBody(used, tools)).input as Array<Record<string, unknown>>;
+        const third = (await sentBody(more, tools)).input as Array<Record<string, unknown>>;
+        expect(second.slice(0, initial.length)).toEqual(initial);
+        expect(third.slice(0, second.length)).toEqual(second);
+        const additions = third.filter((item) => item.type === "additional_tools");
+        expect(additions.map((item) => (item.tools as Array<{ name: string }>).map((entry) => entry.name))).toEqual([
+            ["Monitor"],
+            ["TaskStop"],
+        ]);
+        const monitor = third.findIndex((item) => item.type === "function_call" && item.name === "Monitor");
+        expect(third[monitor - 1]?.type).toBe("additional_tools");
+    });
+
+    it("does not reintroduce a tool whose search reference survived", async () => {
+        const history = [
+            ...loaded,
+            { role: "assistant", content: [{ type: "tool_use", id: "m1", name: "Monitor", input: {} }] },
+        ];
+        const body = await sentBody(history, [tool("Monitor", true), tool("ToolSearch")]);
+        const additions = (body.input as Array<Record<string, unknown>>).filter(
+            (item) => item.type === "additional_tools"
+        );
+        expect(additions).toHaveLength(1);
+    });
+
+    it("introduces a deferred tool whose search result is absent after compaction", async () => {
+        const body = await sentBody(
+            [{ role: "user", content: "This session is being continued.\n\nSummary:\nMonitor was loaded." }],
+            [tool("Monitor", true)]
+        );
+        const input = body.input as Array<Record<string, unknown>>;
+        expect(input[0]?.type).toBe("additional_tools");
+        expect((input[0]?.tools as Array<{ name: string }> | undefined)?.map((item) => item.name)).toEqual(["Monitor"]);
+    });
+
     it("keeps `tools` the same after a load and makes the loaded tool callable from the input, after its search result", async () => {
         const first = await sentBody(before, [tool("Bash"), tool("ToolSearch")]);
         // Claude Code 2.1.310 inserts the loaded tool by name order, with defer_loading.
@@ -2734,20 +2962,25 @@ describe("Claude Code's turn-start thinking flip, on the Codex agent", () => {
         content: [{ type: "tool_result", tool_use_id: "call_clock", content: "12:00" }],
     };
 
-    async function sentInput(messages: unknown[]): Promise<Array<Record<string, unknown>>> {
+    async function sentInput(
+        messages: unknown[],
+        options: { source?: "content" | "claude-session"; accountName?: string } = {}
+    ): Promise<Array<Record<string, unknown>>> {
         const sent: Array<Record<string, unknown>> = [];
         globalThis.fetch = (async (_url: RequestInfo | URL, init?: RequestInit) => {
             sent.push(SafeJSON.parse(String(init?.body)) as Record<string, unknown>);
             return whamStreamResponse();
         }) as typeof fetch;
         const { OpenAiSubscriptionProvider } = await import("./openai-subscription");
-        const provider = await OpenAiSubscriptionProvider.create(account);
+        const provider = await OpenAiSubscriptionProvider.create(
+            options.accountName ? { ...account, name: options.accountName } : account
+        );
         const bodyText = SafeJSON.stringify({ model: "gpt-6.1-sol", stream: true, max_tokens: 1024, messages });
         const res = await provider.messages?.(
             new Request("http://localhost/v1/messages", { method: "POST", body: bodyText }),
             "gpt-6.1-sol",
             bodyText,
-            { promptCacheKey: { key: session, source: "claude-session" } }
+            { promptCacheKey: { key: session, source: options.source ?? "claude-session" } }
         );
         await res?.text();
         return (sent[0]?.input ?? []) as Array<Record<string, unknown>>;
@@ -2769,6 +3002,23 @@ describe("Claude Code's turn-start thinking flip, on the Codex agent", () => {
 
         expect(toolLoop.some((item) => item.type === "reasoning")).toBe(true);
         expect(nextTurn.slice(0, toolLoop.length)).toEqual(toolLoop);
+    });
+
+    it("does not restore across accounts or from a content-only identity", async () => {
+        resetReasoningMemoryForTests();
+        const original = [
+            { role: "user", content: "question" },
+            { role: "assistant", content: [thinking, toolUse] },
+            toolResult,
+        ];
+        const omitted = [{ role: "user", content: "question" }, { role: "assistant", content: [toolUse] }, toolResult];
+        expect((await sentInput(original)).some((item) => item.type === "reasoning")).toBe(true);
+        expect((await sentInput(omitted, { accountName: "other" })).some((item) => item.type === "reasoning")).toBe(
+            false
+        );
+        resetReasoningMemoryForTests();
+        await sentInput(original, { source: "content" });
+        expect((await sentInput(omitted, { source: "content" })).some((item) => item.type === "reasoning")).toBe(false);
     });
 
     it("never gives one conversation's remembered reasoning to another conversation", async () => {
@@ -2833,9 +3083,18 @@ describe("a changed effort on one Claude Code thread, on the Codex agent", () =>
         setCompactionEventsPathForTests(undefined);
     });
 
-    async function send(effort: string, system = "Lead system prompt"): Promise<void> {
+    async function send(
+        effort: string | undefined,
+        system = "Lead system prompt",
+        identity: { accountName?: string; clientKey?: string; conversation?: string } = {}
+    ): Promise<unknown> {
         const { OpenAiSubscriptionProvider } = await import("./openai-subscription");
-        const provider = await OpenAiSubscriptionProvider.create(account);
+        const { prefixDiffFor } = await import("@app/ai-proxy/lib/usage/prefix-diff");
+        const provider = await OpenAiSubscriptionProvider.create({
+            ...account,
+            name: identity.accountName ?? account.name,
+            openaiSub: { defaultReasoningEffort: "low" },
+        });
         const bodyText = SafeJSON.stringify({
             model: "gpt-6.1-sol",
             stream: true,
@@ -2844,12 +3103,19 @@ describe("a changed effort on one Claude Code thread, on the Codex agent", () =>
             output_config: { effort },
             messages: [{ role: "user", content: "go on" }],
         });
+        const req = new Request("http://localhost/v1/messages", {
+            method: "POST",
+            body: bodyText,
+            headers: identity.clientKey ? { authorization: `Bearer ${identity.clientKey}` } : {},
+        });
         const res = await provider.messages?.(
-            new Request("http://localhost/v1/messages", { method: "POST", body: bodyText }),
+            req,
             "gpt-6.1-sol",
-            bodyText
+            bodyText,
+            identity.conversation ? { promptCacheKey: { key: identity.conversation, source: "client" } } : undefined
         );
         await res?.text();
+        return prefixDiffFor(req);
     }
 
     function events(): Array<Record<string, unknown>> {
@@ -2863,6 +3129,25 @@ describe("a changed effort on one Claude Code thread, on the Codex agent", () =>
             return [];
         }
     }
+
+    it("isolates shape, reminders and prefix diagnostics across accounts, clients and conversations", async () => {
+        const owner = { accountName: "work", clientKey: "client-a", conversation: "conversation-a" };
+        await send("high", undefined, owner);
+        await send("xhigh", undefined, owner);
+        expect(SafeJSON.stringify(sent[1]?.input)).toContain("<system-reminder>");
+        for (const other of [
+            { ...owner, accountName: "personal" },
+            { ...owner, clientKey: "client-b" },
+            { ...owner, conversation: "conversation-b" },
+        ]) {
+            const index = sent.length;
+            expect(await send("high", undefined, other)).toEqual({ part: "first" });
+            expect(SafeJSON.stringify(sent[index]?.input)).not.toContain("<system-reminder>");
+        }
+        expect(events().filter((event) => event.kind === "cache-reset")).toHaveLength(1);
+        await send("xhigh", undefined, owner);
+        expect(SafeJSON.stringify(sent.at(-1)?.input)).toContain("<system-reminder>");
+    });
 
     it("records a cache-reset event that names both efforts", async () => {
         await send("high");
@@ -2883,6 +3168,19 @@ describe("a changed effort on one Claude Code thread, on the Codex agent", () =>
         expect(last).toContain("<system-reminder>");
         expect(last).toContain("high to xhigh");
         expect(SafeJSON.stringify(sent[0]?.input)).not.toContain("<system-reminder>");
+    });
+
+    it("keeps the reminder in a continuation at the same effort", async () => {
+        await send("high");
+        await send("xhigh");
+        await send("xhigh");
+        expect(sent[2]?.input).toEqual(sent[1]?.input);
+    });
+
+    it("does not report a change for an explicit default effort", async () => {
+        await send(undefined);
+        await send("low");
+        expect(events().filter((event) => event.kind === "cache-reset")).toEqual([]);
     });
 
     it("stays quiet when the effort repeats, and for a subagent that has its own system prompt", async () => {
@@ -2927,6 +3225,12 @@ describe("where a Codex request's prefix first differs from the thread's previou
         expect(first).toEqual({ part: "first" });
         expect(grown).toEqual({ part: "none" });
         expect(edited).toEqual({ part: "input", index: 1, of: 3, itemType: "message" });
+    });
+
+    it("names an instruction change within the same conversation", async () => {
+        const messages = [{ role: "user", content: crypto.randomUUID() }];
+        await diffOf({ system: "original instructions", messages });
+        expect(await diffOf({ system: "changed instructions", messages })).toEqual({ part: "instructions" });
     });
 
     it("names the tools when the tool list changed", async () => {
@@ -3110,6 +3414,27 @@ describe("Codex's exec tool on the Claude Code route", () => {
             },
         ]);
         expect(SafeJSON.stringify(fromMain.input)).toBe(SafeJSON.stringify(fromWorktree.input));
+    });
+
+    it("preserves exec replay when a surviving deferred tool call is introduced", async () => {
+        const monitor = { name: "Monitor", defer_loading: true, input_schema: { type: "object", properties: {} } };
+        const messages = [
+            ...history("/wt/src/ai-proxy/lib/providers/codex/exec/runner.ts"),
+            { role: "assistant", content: [{ type: "tool_use", id: "call_monitor", name: "Monitor", input: {} }] },
+            { role: "user", content: [{ type: "tool_result", tool_use_id: "call_monitor", content: "done" }] },
+        ];
+        const body = await sentBody(messages, [bash, monitor]);
+        const input = body.input as Array<Record<string, unknown>>;
+        expect(input.map((item) => item.type)).toEqual([
+            undefined,
+            "custom_tool_call",
+            "custom_tool_call_output",
+            "additional_tools",
+            "function_call",
+            "function_call_output",
+        ]);
+        expect(input[1]?.name).toBe("exec");
+        expect(input[4]?.name).toBe("Monitor");
     });
 
     it("with the setting off, the same history goes up as the Bash function call it is", async () => {

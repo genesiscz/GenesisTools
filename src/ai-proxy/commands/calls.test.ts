@@ -130,6 +130,9 @@ describe("ai-proxy monitor", () => {
 
         expect(formatRequest(missed)).toContain("changed input#2/340 reasoning");
         expect(formatRequest(upstream)).toContain("changed nothing (upstream miss)");
+        const codexHit = { ...missed, usage: { prompt_tokens: 100, cached_prompt_tokens: 90, completion_tokens: 1 } };
+        expect(formatRequest(codexHit)).toContain("hit 90%");
+        expect(formatRequest(codexHit)).not.toContain("changed");
         expect(formatRequest({ ...record, prefix: { part: "tools" as const } })).not.toContain("changed");
     });
 });
