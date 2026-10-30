@@ -116,7 +116,7 @@ Tests assert against `NEUTRAL_DEFAULTS` and `NEUTRAL_CONFIG`, never the seam.
 
 ## Commands
 
-`<iid>` is `42`, `!42` or the MR URL. A comma list (`12,34`) is accepted where it says so.
+`<iid>` is `42`, `!42` or the MR URL. A comma list (`12,34`) is accepted where it says so. The verb may also come first when it is a group: `pr review 42 --give` is `pr 42 review --give`, and `pr comments 42` is `pr 42 comments`.
 
 | Command | Description |
 |---------|-------------|
@@ -190,7 +190,7 @@ The reviewer's twin of `--receive`. Read-only: GETs on GitLab, and `git diff` / 
 - **Gates**: the `review.gates` from the config, below. None configured, no gates section. `review.runner: "parallel"` prints one block that starts every gate as a background `tools task` session and then prints each exit code (needs a POSIX shell). When `tools` is not on PATH, that block lists each command instead. A gate whose `{tests}` finds no test file is replaced by a note.
 - **Your comments**: every pending draft of yours (`D`) in full: its body, whether it replies to a thread or opens one, where it sits in the diff (added, context or removed line) and the code around the anchor; then every thread you started (`Y`) in full. `--mine-only` prints only that, skips the impact scan and writes `...-drafts.json` and `.md`.
 - **Threads**: `--threads` adds every unresolved diff thread in full after the checklist, as `--receive` renders it: all notes, the MR tip and the reviewer's view. With `--mine-only` it is the re-review view: your comments and the conversations they join.
-- **Output**: stdout is the facts JSON by default; `--md` (or `--print`) the numbered report (json2md); `--llm` a compact view with ids (`F01` files, `T01` threads, `Y01` your threads, `D01` your drafts, `M01` affected MRs); `--format summary` nothing, only the summary lines on stderr; `--expand F03,T01` prints ids in full from the saved facts (`--refresh` collects again). Ids are kept per MR, so a second run gives the same thread the same id. Every collecting run writes `$TMPDIR/gitlab-pr-<project>-<key>-<iid>.json` and `.md` (`<key>` is a hash of the host and project, so two hosts never share a file), or the report at `--out <file>` with the JSON beside it, and prints both paths on stderr.
+- **Output**: stdout is the facts JSON by default; `--md` (or `--print`) the numbered report (json2md); `--llm` a compact view with ids (`F01` files, `T01` threads, `Y01` your threads, `D01` your drafts, `M01` affected MRs); `--format summary` nothing, only the summary lines on stderr; `--expand F03,T01` prints ids in full from the saved facts (`--refresh` collects again); the `--llm` view ends with that expand command, `--out` included, so it reads the facts this run saved. Ids are kept per MR, so a second run gives the same thread the same id. Every collecting run writes `$TMPDIR/gitlab-pr-<project>-<key>-<iid>.json` and `.md` (`<key>` is a hash of the host and project, so two hosts never share a file), or the report at `--out <file>` with the JSON beside it, and prints both paths on stderr.
 - **Proposal skeleton**: `--proposal-skeleton` prints a review proposal pre-filled from the facts (provider, host, project, number, branches, `baseSha`, `headSha`, `repoPath`, every thread with its `resolved` state). An agent adds the verdict and drafts. The `gt:review-proposal` skill says how to fill the proposal and push it with `tools hub proposal push`.
 
 ### Judgements: `review skeleton | check | render`, `comments post`

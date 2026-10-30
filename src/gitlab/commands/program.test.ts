@@ -70,6 +70,24 @@ describe("the gitlab command tree", () => {
         expect(rewriteArgv(["activity", "user", "--help"], tree)).toEqual(["activity", "user", "--help"]);
     });
 
+    test("`gitlab pr review <iid>` (verb first) reaches the facts leaf like `gitlab pr <iid> review`", () => {
+        const tree = commandTree(program);
+        const flags = ["--give", "--json", "--host", "https://gitlab.example.com", "--project", "acme/widgets"];
+
+        expect(rewriteArgv(["pr", "review", "42", ...flags], tree)).toEqual(["pr", "review", "facts", "42", ...flags]);
+        expect(rewriteArgv(["pr", "review", "!42", ...flags], tree)).toEqual(
+            rewriteArgv(["pr", "42", "review", ...flags], tree)
+        );
+        expect(rewriteArgv(["pr", "review", "facts", "42", "--md"], tree)).toEqual([
+            "pr",
+            "review",
+            "facts",
+            "42",
+            "--md",
+        ]);
+        expect(rewriteArgv(["pr", "review", "skeleton", "42"], tree)).toEqual(["pr", "review", "skeleton", "42"]);
+    });
+
     test("the old command names are gone", () => {
         const names = all.map(({ path }) => path.join(" "));
 

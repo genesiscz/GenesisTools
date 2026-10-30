@@ -78,7 +78,9 @@ describe("du size command", () => {
                 symlinkSync("a/one.bin", join(root, "c", "sym"));
                 writeFileSync(join(root, "c", "tiny.txt"), "x");
 
-                const du = Number(execFileSync("du", ["-sk", root], { encoding: "utf8" }).trim().split(/\s+/)[0]);
+                const du = Number(
+                    execFileSync("du", ["-sk", root], { encoding: "utf8", env: process.env }).trim().split(/\s+/)[0]
+                );
                 const walked = duSize(root);
 
                 expect(walked.kib).toBe(du);

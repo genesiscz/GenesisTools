@@ -2,6 +2,9 @@ import { afterAll, afterEach, beforeAll, beforeEach, describe, expect, spyOn, te
 import { existsSync, mkdtempSync, readFileSync, realpathSync, writeFileSync } from "node:fs";
 import { tmpdir } from "node:os";
 import { join } from "node:path";
+import { commandTree } from "@app/gitlab/commands/pr";
+import { factsBaseName } from "@app/gitlab/commands/pr-review";
+import { buildProgram } from "@app/gitlab/commands/program";
 import { registerComments } from "@app/gitlab/commands/review-drafts";
 import { registerCommentsPost, registerReviewJudgements, runStep } from "@app/gitlab/commands/review-judgements";
 import { mergeConfig, NEUTRAL_CONFIG } from "@app/gitlab/lib/config";
@@ -15,13 +18,17 @@ import {
     installFakeConfig,
     mrRoutes,
     PROJECT_API,
+    rawMr,
     scoped,
     startFakeRuntime,
     status,
     stopFakeRuntime,
 } from "@app/gitlab/lib/fake-gitlab";
+import { rewriteArgv } from "@app/gitlab/lib/pr-argv";
+import { toolCommand } from "@genesiscz/utils/cli/tool-command";
 import { env } from "@genesiscz/utils/env";
 import { SafeJSON } from "@genesiscz/utils/json";
+import { out } from "@genesiscz/utils/logger";
 import { Command } from "commander";
 
 interface Ran {
@@ -1450,5 +1457,155 @@ describe("plain MR comments in the receive flow", () => {
 
         expect(checked.stdout).toContain("T02 (line");
         expect(checked.stdout).toContain("a plain comment has nothing to resolve; use Action reply");
+    });
+});
+
+/** Every command of the tree throws instead of exiting, so a parse error fails the test and not the runner. */
+function exitOverrideDeep(cmd: Command): void {
+    cmd.exitOverride();
+
+    for (const child of cmd.commands) {
+        exitOverrideDeep(child);
+    }
+}
+
+/** Runs `gitlab <args>` as the entrypoint does: the public argv rewritten, then the whole command tree. */
+async function runGitlab(fake: FakeGitLab, ...args: string[]): Promise<Ran> {
+    const { stdout, stderr } = await scoped(fake, async () => {
+        const { program } = buildProgram();
+        exitOverrideDeep(program);
+        await program.parseAsync(rewriteArgv(args, commandTree(program)), { from: "user" });
+    });
+
+    return { stdout, stderr };
+}
+
+/** Someone else's MR with one thread by carol, one draft of mine, and one other open MR that changes the same file. */
+function giveFake(iid: number): FakeGitLab {
+    const fake = baseRoutes(new FakeGitLab());
+    const other = iid + 100;
+    mrRoutes(fake, iid, {
+        mr: { diff_refs: { base_sha: "b".repeat(40), start_sha: "s".repeat(40), head_sha: "h".repeat(40) } },
+    });
+    fake.get(`${PROJECT_API}/merge_requests/${iid}/discussions`, [
+        rawDiscussion(THREAD, { path: "src/a.ts", line: 2 }),
+    ]);
+    const diff = { old_path: "src/a.ts", new_path: "src/a.ts", new_file: false, renamed_file: false, diff: DIFF };
+    fake.get(`${PROJECT_API}/merge_requests/${iid}/diffs`, [diff]);
+    fake.get(`${PROJECT_API}/merge_requests`, [rawMr(iid), rawMr(other, { title: "Other work" })]);
+    fake.get(`${PROJECT_API}/merge_requests/${other}/diffs`, [diff]);
+    draftServer(fake, iid, [{ id: 900, note: "Draft text", position: storedPosition(2) }]);
+
+    return fake;
+}
+
+/** The two paths a collecting run prints on stderr. */
+function printedPaths(stderr: string): { report: string | undefined; facts: string | undefined } {
+    return {
+        report: /^ℹ {2}report → (.+)$/m.exec(stderr)?.[1],
+        facts: /^ℹ {2}facts {2}→ (.+)$/m.exec(stderr)?.[1],
+    };
+}
+
+describe("pr <iid> review --give: the command line", () => {
+    test("it writes the facts JSON and the report to the temp folder, prints both paths, and stdout is the facts; `pr review <iid>` is the same command", async () => {
+        const fake = giveFake(95);
+        const base = join(tmpdir(), factsBaseName({ host: FAKE_HOST, project: FAKE_PROJECT, iid: 95 }));
+
+        const ran = await runGitlab(fake, "pr", "95", "review", "--give", ...TARGET);
+
+        expect(printedPaths(ran.stderr)).toEqual({ report: `${base}.md`, facts: `${base}.json` });
+        const facts = SafeJSON.parse(ran.stdout, { strict: true }) as {
+            provider: string;
+            iid: number;
+            project: string;
+            files: Array<{ ref: string; path: string }>;
+            discussions: Array<{ ref: string; id: string }>;
+            drafts: Array<{ ref: string }>;
+            impact: Array<{ ref: string; iid: number; sharedFiles: string[] }>;
+        };
+        expect(facts).toMatchObject({ provider: "gitlab", iid: 95, project: FAKE_PROJECT });
+        expect(facts.files.map((file) => [file.ref, file.path])).toEqual([["F01", "src/a.ts"]]);
+        expect(facts.discussions.map((d) => [d.ref, d.id])).toEqual([["T01", THREAD]]);
+        expect(facts.drafts.map((draft) => draft.ref)).toEqual(["D01"]);
+        expect(facts.impact.map((entry) => [entry.ref, entry.iid, entry.sharedFiles])).toEqual([
+            ["M01", 195, ["src/a.ts"]],
+        ]);
+        expect(SafeJSON.parse(readFileSync(`${base}.json`, "utf8"), { strict: true })).toEqual(facts);
+        expect(readFileSync(`${base}.md`, "utf8")).toContain("added line two");
+        expect(fake.writes()).toEqual([]);
+
+        const verbFirst = await runGitlab(fake, "pr", "review", "95", "--give", "--json", ...TARGET);
+
+        expect(verbFirst.stdout).toBe(ran.stdout);
+        expect(printedPaths(verbFirst.stderr)).toEqual({ report: `${base}.md`, facts: `${base}.json` });
+    });
+
+    test("--md prints the report it wrote to --out, --llm the id view whose expand step reads the saved facts, and --format summary only the summary", async () => {
+        const fake = giveFake(97);
+        const report = join(dir, "review-97.md");
+        const flags = ["--give", ...TARGET, "--no-impact", "--out", report];
+
+        const md = await runGitlab(fake, "pr", "97", "review", ...flags, "--md");
+
+        expect(printedPaths(md.stderr)).toEqual({ report, facts: join(dir, "review-97.json") });
+        expect(md.stdout).toBe(readFileSync(report, "utf8"));
+        expect(existsSync(join(dir, "review-97.json"))).toBe(true);
+
+        const llm = await runGitlab(fake, "pr", "97", "review", ...flags, "--llm");
+        const command = toolCommand("gitlab pr", "97", "review", "--give", ...TARGET, "--out", report);
+
+        expect(llm.stdout).toStartWith("=== GitLab MR review: acme/widgets!97 ===\n");
+        expect(llm.stdout).toContain("  F01  modified  +1 −0  src/a.ts\n");
+        expect(llm.stdout).toContain("  T01  UNRESOLVED  src/a.ts:2  @carol  1n  Why this?\n");
+        expect(llm.stdout).toContain("  D01  src/a.ts:2  Draft text\n");
+        expect(llm.stdout).toContain(`Expand: ${command} --expand F01,T01\nMarkdown: ${command} --md\n`);
+
+        const collected = fake.calls("GET", `${PROJECT_API}/merge_requests/97/diffs`).length;
+        const expanded = await runGitlab(fake, "pr", "97", "review", ...flags, "--expand", "T01,D01");
+
+        expect(expanded.stdout).toContain(`Discussion id: ${THREAD}`);
+        expect(expanded.stdout).toContain("=== D01 draft 900 · src/a.ts:2 ===\nDraft text\n");
+        expect(fake.calls("GET", `${PROJECT_API}/merge_requests/97/diffs`).length).toBe(collected);
+        expect(printedPaths(expanded.stderr)).toEqual({ report: undefined, facts: undefined });
+
+        const summary = await runGitlab(fake, "pr", "97", "review", ...flags, "--format", "summary");
+
+        expect(summary.stdout).toBe("");
+        expect(summary.stderr).toContain("ℹ  files 1 (+1 −0) · threads 1 · your drafts 1\n");
+        expect(summary.stderr).toContain("ℹ  open-MR scan: not run\n");
+    });
+
+    test("a wrong flag stops before any GitLab request: two outputs, an unknown --format, a --receive flag, a bad number, --repo with --cwd", async () => {
+        const fake = giveFake(98);
+        const errors = spyOn(out.log, "error").mockImplementation(() => undefined);
+
+        try {
+            const both = await runGitlab(fake, "pr", "98", "review", "--give", "--md", "--llm", ...TARGET);
+
+            expect(both.stdout).toBe("");
+            expect(process.exitCode).toBe(1);
+            expect(errors.mock.calls.flat().join("\n")).toContain("Pick one output: md, llm were all requested.");
+            process.exitCode = 0;
+
+            const unknown = await runGitlab(fake, "pr", "98", "review", "--give", "--format", "xml", ...TARGET);
+
+            expect(unknown.stdout).toBe("");
+            expect(process.exitCode).toBe(1);
+            expect(String(errors.mock.calls.at(-1)?.[0])).toContain("json, md, llm, summary");
+        } finally {
+            errors.mockRestore();
+        }
+
+        await expect(runGitlab(fake, "pr", "98", "review", "--give", "--no-anchors", ...TARGET)).rejects.toThrow(
+            "--no-anchors belongs to the --receive mode."
+        );
+        await expect(
+            runGitlab(fake, "pr", "98", "review", "--give", "--context-lines", "x", ...TARGET)
+        ).rejects.toThrow('--context-lines must be a non-negative integer; got "x".');
+        await expect(
+            runGitlab(fake, "pr", "98", "review", "--give", "--repo", dir, "--cwd", dir, ...TARGET)
+        ).rejects.toThrow("--cwd is another name for --repo; give one of them.");
+        expect(fake.requests).toEqual([]);
     });
 });
