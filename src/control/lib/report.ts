@@ -1,5 +1,6 @@
 import { copyFile, mkdir, readdir } from "node:fs/promises";
 import { basename, dirname, extname, isAbsolute, join, relative, resolve } from "node:path";
+import { toolCommand } from "@genesiscz/utils/cli/tool-command";
 import {
     type Annotation,
     type AnnotationRect,
@@ -282,7 +283,7 @@ export function renderReportMarkdown({
     const lines = [
         `# ${title}`,
         "",
-        `Written ${writtenAt} by \`tools control report\`. ${results.length} pair(s).`,
+        `Written ${writtenAt} by \`${toolCommand("control report")}\`. ${results.length} pair(s).`,
         "",
         "How to read the boxes:",
         "- **Red**: a real change. The view-tree diff found a control that moved, resized, appeared, disappeared or changed state, or a pixel region overlaps one. Without a view tree on both sides every pixel region is red, because pixels alone cannot tell data from design.",
