@@ -1,5 +1,6 @@
 import { openDialogFor } from "@genesiscz/utils/agents/dialogs/guard";
-import type { DialogProvider, OpenDialog } from "@genesiscz/utils/agents/dialogs/types";
+import { openQuestions } from "@genesiscz/utils/agents/dialogs/store";
+import type { DialogProvider, OpenDialog, OpenQuestion } from "@genesiscz/utils/agents/dialogs/types";
 import { ACCOUNT_PROVIDER_ALIASES } from "@genesiscz/utils/ai/providers/alias-list";
 import { type ResolvedTranscript, resolveTranscript } from "@genesiscz/utils/ai/transcripts/resolve";
 import { type ClaudeLiveSession, listClaudeSessionInventory } from "@genesiscz/utils/claude/peer-message";
@@ -79,4 +80,19 @@ export async function sessionOpenDialog({
     }
 
     return null;
+}
+
+/**
+ * The open dialog records of a session across every harness, newest first: what `tools claude cmux send --option`
+ * answers. Only a record carries the options and the tool call id; the registry and turn-state signals do not.
+ */
+export function sessionOpenRecords(sessionId: string): OpenQuestion[] {
+    return ACCOUNT_PROVIDER_ALIASES.flatMap((provider) => {
+        try {
+            return openQuestions(provider, sessionId);
+        } catch (error) {
+            log.warn({ error, sessionId, provider }, "could not read this session's dialog records");
+            return [];
+        }
+    }).sort((a, b) => b.askedAt.localeCompare(a.askedAt));
 }

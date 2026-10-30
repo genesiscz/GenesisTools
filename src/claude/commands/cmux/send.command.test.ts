@@ -1,4 +1,5 @@
 import { afterEach, beforeEach, expect, mock, test } from "bun:test";
+import type { OpenQuestion } from "@genesiscz/utils/agents/dialogs/types";
 import type { CmuxLivePane, CmuxLiveSnapshot, CmuxLiveSurface } from "@genesiscz/utils/cmux/lib/live-snapshot";
 import type { SessionCmuxRefs } from "@genesiscz/utils/cmux/session-refs";
 import { SafeJSON } from "@genesiscz/utils/json";
@@ -191,6 +192,78 @@ test("an open dialog in the session refuses the send before any keystroke; --for
     const idle = { ...deps, openDialog: async () => null };
     expect(await sendCommand(SESSION_A, "hello", { paste: true }, idle)).toBe(true);
     expect(events).toContain("paste --surface surface:41 --submit -- hello");
+});
+
+function askRecord(overrides: Partial<OpenQuestion> = {}): OpenQuestion {
+    return {
+        provider: "claude",
+        sessionId: SESSION_A,
+        toolCallId: "toolu_fixture_1",
+        kind: "decision",
+        question: "Which colour?",
+        options: ["Red", "Green", "Blue"],
+        questionCount: 1,
+        askedAt: "2026-10-30T20:00:00.000Z",
+        source: "hook",
+        ...overrides,
+    };
+}
+
+test("--option presses the option's digit into the open dialog, never text plus Enter, and closes its record", async () => {
+    setSnapshot([pane({ id: "pane:7", surfaces: [surface({ id: "surface:41", title: SESSION_A, selected: true })] })]);
+    const closed: string[] = [];
+    const answering = {
+        ...deps,
+        openDialog: async (): Promise<never> => {
+            throw new Error("the option path reads the records, not the free-text guard");
+        },
+        openRecords: () => [askRecord()],
+        closeRecord: (record: OpenQuestion) => {
+            closed.push(record.toolCallId);
+        },
+    };
+
+    expect(await sendCommand(SESSION_A, "", { option: "c", json: true }, answering)).toBe(true);
+    expect(events.filter((event) => event.startsWith("send") || event.startsWith("paste"))).toEqual([
+        "send --surface surface:41 --force -- 3",
+    ]);
+    expect(closed).toEqual(["toolu_fixture_1"]);
+    expect(SafeJSON.parse(await capturedResult())).toMatchObject({
+        sent: true,
+        option: "c",
+        index: 2,
+        label: "Blue",
+        dialog: `claude:${SESSION_A}:toolu_fixture_1`,
+        presses: [{ text: "3" }],
+    });
+});
+
+test("--option refuses before any key press with no open dialog, an option past the list, or text beside it", async () => {
+    setSnapshot([pane({ id: "pane:7", surfaces: [surface({ id: "surface:41", title: SESSION_A, selected: true })] })]);
+    const closeRecord = () => {
+        throw new Error("a refused press must not close the record");
+    };
+
+    expect(
+        await sendCommand(SESSION_A, "", { option: "a", json: true }, { ...deps, openRecords: () => [], closeRecord })
+    ).toBe(false);
+    expect(process.exitCode).toBe(1);
+    expect(SafeJSON.parse(await capturedResult())).toMatchObject({
+        sent: false,
+        reason: "no question dialog is open in the session; send the answer as text instead",
+    });
+
+    stdout = [];
+    process.exitCode = 0;
+    const open = { ...deps, openRecords: () => [askRecord()], closeRecord };
+    expect(await sendCommand(SESSION_A, "", { option: "d", json: true }, open)).toBe(false);
+    expect(SafeJSON.parse(await capturedResult())).toMatchObject({
+        sent: false,
+        reason: 'option "d" is not in the dialog; its options are a) Red, b) Green, c) Blue',
+    });
+    expect(events.some((event) => event.startsWith("send") || event.startsWith("paste"))).toBe(false);
+
+    await expect(sendCommand(SESSION_A, "b) Green", { option: "b" }, open)).rejects.toThrow("leave out the text");
 });
 
 test("the dialog guard asks about the session the matched pane runs when the query is not an id", async () => {

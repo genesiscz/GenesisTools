@@ -23,7 +23,10 @@ export interface OpenQuestion {
     toolCallId: string;
     kind: OpenQuestionKind;
     question: string;
+    /** The first question's options (`options` of `questions[0]`). */
     options?: string[];
+    /** How many questions the call asks; absent on records written before 2026-10-30, which count as one. */
+    questionCount?: number;
     /** ISO time the question was asked. */
     askedAt: string;
     /** ISO time it was answered or withdrawn; absent while it is open. */

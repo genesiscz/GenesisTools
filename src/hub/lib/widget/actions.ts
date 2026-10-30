@@ -3,6 +3,7 @@ import { mkdir, unlink } from "node:fs/promises";
 import { join } from "node:path";
 import { decisionFiles } from "@app/question/lib/decisions/read";
 import { readDecisions, updateDecision } from "@app/question/lib/decisions/store";
+import { answerDialogItem } from "@app/question/lib/inbox/dialog-answer";
 import { getEntryById, markEntriesRead, markEntriesReadThrough, openReadModel } from "@app/question/lib/read-model";
 import { logger } from "@genesiscz/utils/logger";
 import { toolDataDir } from "@genesiscz/utils/storage/root";
@@ -59,6 +60,8 @@ export const widgetActionSchema = z.discriminatedUnion("action", [
     z.object({ action: z.literal("send-staged"), ids: z.array(z.string()).min(1), targets: decisionTargetsSchema }),
     z.object({ action: z.literal("resend-answers"), ids: z.array(z.string()).min(1), targets: decisionTargetsSchema }),
     z.object({ action: z.literal("unstage"), ids: z.array(z.string()).min(1) }),
+    /** An inbox item from a dialog record (`source: "dialog"`): press the option's key in the live dialog. */
+    z.object({ action: z.literal("dialog-answer"), key: z.string().min(1), option: z.string().min(1).max(2) }),
     z.object({ action: z.literal("preferences"), patch: widgetPreferencesPatchSchema }),
     z.object({ action: z.literal("visibility"), key: z.string(), pinned: z.boolean() }),
     z.object({ action: z.literal("draft"), key: z.string(), draft: widgetDraftSchema }),
@@ -149,6 +152,11 @@ export async function performWidgetAction({
             return mutateWidgetState(root, (state) => {
                 state.selectedKey = request.key;
             });
+        // The `dialogAnswer` preference decides whether a widget answer presses the option or refuses.
+        case "dialog-answer": {
+            const { preferences } = await readWidgetState(root);
+            return answerDialogItem({ key: request.key, option: request.option, mode: preferences.dialogAnswer });
+        }
         case "preferences":
             return mutateWidgetState(root, (state) => {
                 state.preferences = widgetPreferencesSchema.parse({ ...state.preferences, ...request.patch });

@@ -5,6 +5,7 @@ import { join } from "node:path";
 import type { TurnSnapshot } from "@genesiscz/utils/ai/transcripts/turn-state";
 import { SafeJSON } from "@genesiscz/utils/json";
 import { dialogFromRecords, dialogFromSnapshot, dialogRefusal, openDialogFor } from "./guard";
+import { DIALOG_KEY_MAPS, optionIndexOf, planDialogKeys } from "./keys";
 import { closeQuestion, dialogsPath, openQuestions, readSessionQuestions, upsertQuestion } from "./store";
 import { type OpenQuestion, openQuestionKey } from "./types";
 import { DialogWatcher, questionFromSnapshot, syncSessionDialogs } from "./watcher";
@@ -305,3 +306,34 @@ function questionFromSnapshotFixture(): OpenQuestion {
         source: "watcher",
     });
 }
+
+describe("dialog option keys", () => {
+    test("a Claude option is its digit, typed as text, for a letter or a 1-based position", () => {
+        const asked = question({ options: ["Red", "Green", "Blue"], questionCount: 1 });
+
+        expect(planDialogKeys(asked, "b")).toEqual({ ok: true, presses: [{ text: "2" }], index: 1, label: "Green" });
+        expect(planDialogKeys(asked, "C)")).toMatchObject({ ok: true, presses: [{ text: "3" }], label: "Blue" });
+        expect(planDialogKeys(asked, "1")).toMatchObject({ ok: true, presses: [{ text: "1" }], label: "Red" });
+        expect(optionIndexOf("bb")).toBeNull();
+    });
+
+    test("an option past the list refuses and names the valid letters", () => {
+        const plan = planDialogKeys(question({ options: ["Red", "Green", "Blue"] }), "d");
+
+        expect(plan).toEqual({
+            ok: false,
+            reason: 'option "d" is not in the dialog; its options are a) Red, b) Green, c) Blue',
+        });
+    });
+
+    test("a dialog without options, with several questions, or of a harness without measured keys refuses", () => {
+        expect(planDialogKeys(question({ kind: "plan", options: undefined }), "a")).toMatchObject({ ok: false });
+        expect(planDialogKeys(question({ questionCount: 2 }), "a")).toMatchObject({
+            ok: false,
+            reason: expect.stringContaining("asks 2 questions"),
+        });
+        expect(planDialogKeys(question({ provider: "codex" }), "a")).toMatchObject({ ok: false });
+        expect(planDialogKeys(question({ provider: "grok" }), "a")).toMatchObject({ ok: false });
+        expect(Object.keys(DIALOG_KEY_MAPS).sort()).toEqual(["claude", "codex", "grok"]);
+    });
+});
