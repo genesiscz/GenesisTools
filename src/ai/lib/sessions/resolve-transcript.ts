@@ -1,57 +1,33 @@
-import { readFileSync } from "node:fs";
 import { matchLiveAgentSurfaces } from "@app/cmux/lib/session-adopt";
 import { recordedSessionIdOf } from "@app/cmux/lib/session-close";
 import { liveAgentSurfacesNow } from "@app/cmux/lib/session-close-live";
 import { fileSessionStore, type SessionCreatedRecord, type SessionRecordLine } from "@app/cmux/lib/session-store";
-import {
-    type ResolvedTranscript,
-    resolveCodexNative,
-    resolveTranscript,
-} from "@genesiscz/utils/ai/transcripts/resolve";
+import { harnessLocate, harnessWorker } from "@genesiscz/utils/ai/providers/harness-index";
+import { directReads, type ResolvedTranscript, resolveTranscript } from "@genesiscz/utils/ai/transcripts/resolve";
 import { findSessionsByTitle } from "@genesiscz/utils/ai/transcripts/session-title";
 import type { TurnProvider } from "@genesiscz/utils/ai/transcripts/turn-state";
 import { toolCommand } from "@genesiscz/utils/cli/tool-command";
 import { loadAllSessionCmuxRefs, type SessionCmuxRefs } from "@genesiscz/utils/cmux/session-refs";
-import { SafeJSON } from "@genesiscz/utils/json";
+
 import { logger } from "@genesiscz/utils/logger";
 
 const { log } = logger.scoped("agent-wait");
 
-/**
- * A headless worker's native transcript, when its harness writes one: a `tools codex spawn` worker runs a real native
- * thread, and its rollout (in the worker's own Codex home) is the transcript to wait on. Claude and Grok workers write
- * only their own turn files.
- */
-const WORKER_NATIVE_TRANSCRIPTS: Record<
-    TurnProvider,
-    (worker: ResolvedTranscript, query: string) => ResolvedTranscript | null
-> = {
-    claude: () => null,
-    codex: (worker, query) => resolveCodexNative(worker.sessionId, { codexHome: workerCodexHome(worker, query) }),
-    grok: () => null,
-};
+/** The command that reads a headless worker of the harness: the status and read verbs of its driver's worker part. */
+function workerReadCommand(alias: TurnProvider): string {
+    const verbs = harnessWorker(alias).verbs;
+    const picked = ["status", "read"]
+        .map((verb) => verbs.find((each) => each === verb || each.endsWith(` ${verb}`)))
+        .filter((each): each is string => each !== undefined);
+    const prefix = picked[0]?.split(" ").slice(0, -1) ?? [];
 
-/** The worker's home from its `.meta.json` beside the turn files; undefined when it records none. */
-function workerCodexHome(worker: ResolvedTranscript, query: string): string | undefined {
-    try {
-        const meta: unknown = SafeJSON.parse(readFileSync(worker.filePath.replace(/\.jsonl$/, ".meta.json"), "utf8"));
-
-        if (meta && typeof meta === "object" && "home" in meta && typeof meta.home === "string") {
-            return meta.home;
-        }
-    } catch (err) {
-        log.debug({ err, query }, "worker metadata unavailable while resolving its Codex home");
-    }
-
-    return undefined;
+    return toolCommand(
+        [alias, ...prefix].join(" "),
+        picked.map((each) => each.split(" ").at(-1)).join("|"),
+        "--name",
+        "<name>"
+    );
 }
-
-/** The commands that read a headless worker of each harness. */
-const WORKER_READ_VERBS: Record<TurnProvider, string> = {
-    claude: toolCommand("claude worker", "status|tail", "--name", "<name>"),
-    codex: toolCommand("codex", "status|read", "--name", "<name>"),
-    grok: toolCommand("grok", "status|read", "--name", "<name>"),
-};
 
 /**
  * The native session id of the newest session `tools cmux agents new --name <query>` started for this agent, open
@@ -164,14 +140,14 @@ export async function resolveSessionTranscript(
     }
 
     if (resolved.source === "worker") {
-        const native = WORKER_NATIVE_TRANSCRIPTS[resolved.provider](resolved, query);
+        const native = harnessLocate(resolved.provider).workerNative(resolved, directReads);
 
         if (native) {
             return native;
         }
 
         throw new Error(
-            `"${query}" is a headless worker session with no native transcript yet. Use \`${WORKER_READ_VERBS[alias]}\`.`
+            `"${query}" is a headless worker session with no native transcript yet. Use \`${workerReadCommand(alias)}\`.`
         );
     }
 

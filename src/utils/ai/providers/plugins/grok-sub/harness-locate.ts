@@ -19,6 +19,8 @@ export const grokLocate: TranscriptLocator = {
         ...findGrokNative(query, resolved.grokHome, fs),
         ...findGrokWorker(query, resolved.grokWorker, fs),
     ],
+    // A `tools grok` worker writes only its own turn files.
+    workerNative: () => null,
 };
 
 export function findGrokNative(query: string, grokHome: string, fs: FolderReads): RankedHit[] {

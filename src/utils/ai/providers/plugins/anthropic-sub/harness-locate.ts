@@ -23,6 +23,8 @@ export const claudeLocate: TranscriptLocator = {
         ...claudeRoots(roots).flatMap((root) => findClaude(query, root, fs)),
         ...findClaudeWorker(query, roots.resolved.claudeWorker, fs),
     ],
+    // A `tools claude worker` writes only its own turn files.
+    workerNative: () => null,
 };
 
 export function findClaude(query: string, projectsDir: string, fs: FolderReads): RankedHit[] {

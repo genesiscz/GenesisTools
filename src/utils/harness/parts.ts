@@ -37,6 +37,8 @@ export interface TranscriptLocator {
     sessionOfPath(file: { source: TranscriptSource; stem: string; filePath: string }): ResolvedTranscript;
     /** Every transcript of the harness whose id equals or starts with `query`, with its modification time. */
     find(query: string, roots: LocateRoots, fs: FolderReads): RankedHit[];
+    /** The native transcript a headless worker of the harness writes beside its own log, or null when it writes none. */
+    workerNative(worker: ResolvedTranscript, fs: FolderReads): ResolvedTranscript | null;
 }
 
 /** D: transcript lines to the provider-neutral turns every renderer reads. */

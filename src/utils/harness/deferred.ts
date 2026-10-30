@@ -10,7 +10,9 @@ function isTranscriptLocator(value: unknown): value is TranscriptLocator {
         "pathRoots" in value &&
         typeof value.pathRoots === "function" &&
         "sessionOfPath" in value &&
-        typeof value.sessionOfPath === "function"
+        typeof value.sessionOfPath === "function" &&
+        "workerNative" in value &&
+        typeof value.workerNative === "function"
     );
 }
 
@@ -44,5 +46,6 @@ export function deferredLocator(meta: ImportMeta, module: string, exportName: st
         pathRoots: (roots) => impl().pathRoots(roots),
         sessionOfPath: (file) => impl().sessionOfPath(file),
         find: (query, roots, fs) => impl().find(query, roots, fs),
+        workerNative: (worker, fs) => impl().workerNative(worker, fs),
     };
 }

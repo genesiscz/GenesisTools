@@ -1,12 +1,12 @@
 import { basename, join } from "node:path";
-import type { FolderReads, RankedHit } from "@genesiscz/utils/ai/transcripts/resolve";
+import type { FolderReads, RankedHit, ResolvedTranscript } from "@genesiscz/utils/ai/transcripts/resolve";
 import { idMatches, isRecord } from "@genesiscz/utils/ai/transcripts/resolve-core";
 import { env } from "@genesiscz/utils/env";
 import type { TranscriptLocator } from "@genesiscz/utils/harness/parts";
 import { SafeJSON } from "@genesiscz/utils/json";
+import { logger } from "@genesiscz/utils/logger";
 import { codexHomeOverrides, isNativeTranscript, transcriptStem } from "@genesiscz/utils/providers/session-paths";
 
-/** The default root is the raw `CODEX_HOME` comma list, so it names every home; any other root is one home. */
 /** The Codex driver's `locate` part: rollouts under each Codex home, and `tools codex spawn` worker logs. */
 export const codexLocate: TranscriptLocator = {
     pathRoots: ({ resolved }) => [
@@ -24,8 +24,37 @@ export const codexLocate: TranscriptLocator = {
         ...findCodexNative(query, resolved.codexHome, fs),
         ...findCodexWorker(query, resolved.codexWorker, fs),
     ],
+    // A `tools codex spawn` worker runs a real native thread; its rollout sits in the worker's own Codex home.
+    workerNative: (worker, fs) => {
+        const home = workerHomeOf(worker, fs);
+
+        if (!home) {
+            return null;
+        }
+
+        const best = findCodexNative(worker.sessionId, home, fs).sort((a, b) => b.mtime - a.mtime)[0];
+        return best
+            ? { provider: best.provider, source: best.source, sessionId: best.sessionId, filePath: best.filePath }
+            : null;
+    },
 };
 
+/** A worker's Codex home from its `.meta.json` beside the event log; undefined when it records none. */
+function workerHomeOf(worker: ResolvedTranscript, fs: FolderReads): string | undefined {
+    try {
+        const meta: unknown = SafeJSON.parse(fs.readText(worker.filePath.replace(/\.jsonl$/, ".meta.json")));
+
+        if (meta && typeof meta === "object" && "home" in meta && typeof meta.home === "string") {
+            return meta.home;
+        }
+    } catch (err) {
+        logger.debug({ err, path: worker.filePath }, "[transcripts] codex worker metadata unavailable");
+    }
+
+    return undefined;
+}
+
+/** The default root is the raw `CODEX_HOME` comma list, so it names every home; any other root is one home. */
 export function splitCodexHomes(codexHome: string): string[] {
     if (codexHome === env.codex.getHomeOverride()) {
         return codexHomeOverrides();
