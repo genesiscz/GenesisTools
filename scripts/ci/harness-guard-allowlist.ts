@@ -83,10 +83,6 @@ export const HARNESS_GUARD_ALLOWLIST: Readonly<Record<string, HarnessGuardCounts
         table: 1,
         why: "the env accessor namespaces (x, grok, codex, copilot, aiProxy, …): variables grouped by the tool or service that reads them, a wider set than the harnesses",
     },
-    "src/utils/rm/approval.ts": {
-        table: 1,
-        why: "keyed by the runtime agent of the caller (claude-code, codex, grok, cursor, gemini), a wider set than the harnesses",
-    },
     "src/utils/rm/aside.ts": {
         table: 1,
         why: "keyed by the runtime agent of the caller (claude-code, codex, grok, copilot), a wider set than the harnesses",
