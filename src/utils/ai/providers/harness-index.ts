@@ -1,3 +1,4 @@
+import type { NativeSessionReader } from "@genesiscz/utils/agent-sessions/types";
 import { ACCOUNT_PROVIDER_ALIASES } from "@genesiscz/utils/ai/providers/alias-list";
 import type { LaunchRecipe } from "@genesiscz/utils/harness/parts";
 import { type HarnessDriver, type HarnessId, isPartNote } from "@genesiscz/utils/harness/types";
@@ -43,4 +44,15 @@ export function harnessLaunch(id: HarnessId): LaunchRecipe {
     }
 
     return slot;
+}
+
+/** The history reader of a harness (its driver's lazy `history` part); every harness has one. */
+export async function harnessHistory(id: HarnessId): Promise<NativeSessionReader> {
+    const slot = harnessDriver(id).parts.history;
+
+    if (isPartNote(slot)) {
+        throw new Error(`The ${id} harness driver has no history reader: ${slot.reason}`);
+    }
+
+    return slot();
 }
