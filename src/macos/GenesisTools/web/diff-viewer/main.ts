@@ -479,6 +479,16 @@ const themes = { light: "pierre-light", dark: "pierre-dark" } as const;
  * a file boundary the headers stopped and snapped ("the file headers jump", Martin, 2026-10-26).
  */
 const OVERSCROLL_PX = 2000;
+/*
+ * Measured 2026-10-30 (the hub, a 469-file MR, 100,000 px flicks at 28 px/ms, `diff.scroll` lines): a flick's frame
+ * gaps come from WebKit's style and compositing work on the rows it renders, not from CodeView's render passes (5 to
+ * 17 ms at most, 110 to 145 of them per flick). Each line's gutter is `position: sticky` in scroll mode, so every row
+ * is a layer the compositor re-walks per frame. A buffer that followed the speed (up to 6000 px) rendered three times
+ * the rows and made it worse: 24 to 26 frames over 34 ms per flick against 4 to 5, pinned frames unchanged (3 to 8).
+ * Static gutters during the flick (no sticky layer per line) changed nothing measurable either (pinned 2 to 6).
+ * At a file boundary the new file's first render is the long frame (77 to 150 ms), and that is where the reader
+ * sees it most: a few rows pinned under the header and a blank pane below until the rows land.
+ */
 
 /** Space below an open file. The unsafeCSS rule on `[data-code]` and `itemMetrics.paddingBottom` must agree. */
 const FILE_GAP = 12;
@@ -2907,6 +2917,12 @@ const probe = {
     maxPin: 0,
     corrections: 0,
     renderedMax: 0,
+    /** CodeView's render passes during the gesture: how many, their total and their longest, in ms of main thread. */
+    renderCalls: 0,
+    renderMs: 0,
+    renderMax: 0,
+    /** The probe's own per-frame work (forced layouts for the jump check), so it can be told from the page's cost. */
+    probeMs: 0,
     /** Frames where the code under the viewport moved by a different amount than the scroll did. */
     jumps: 0,
     maxJump: 0,
@@ -2930,6 +2946,29 @@ Object.defineProperty(host, "scrollTo", {
         Reflect.apply(HTMLElement.prototype.scrollTo, host, args);
     },
 });
+
+// CodeView's render pass (a class field it reads at each schedule), timed while a gesture runs. A frame gap during a
+// flick is either this pass or the probe's own layout reads; the diff.scroll line tells them apart.
+{
+    const pass: unknown = Reflect.get(viewer, "computeRenderRangeAndEmit");
+    if (typeof pass === "function") {
+        Reflect.set(viewer, "computeRenderRangeAndEmit", (...args: unknown[]) => {
+            if (!probe.active) {
+                return Reflect.apply(pass, viewer, args);
+            }
+
+            const started = performance.now();
+            try {
+                return Reflect.apply(pass, viewer, args);
+            } finally {
+                const took = performance.now() - started;
+                probe.renderCalls += 1;
+                probe.renderMs += took;
+                probe.renderMax = Math.max(probe.renderMax, took);
+            }
+        });
+    }
+}
 
 function probeBegin(now: number): void {
     probe.active = true;
@@ -2957,6 +2996,10 @@ function probeBegin(now: number): void {
     probe.tracked = null;
     probe.corrections = 0;
     probe.renderedMax = 0;
+    probe.renderCalls = 0;
+    probe.renderMs = 0;
+    probe.renderMax = 0;
+    probe.probeMs = 0;
     probe.samples = [];
     requestAnimationFrame(probeFrame);
 }
@@ -2990,8 +3033,10 @@ function probeFrame(now: number): void {
 
     probe.wheelSinceFrame = 0;
     probe.frameTop = top;
+    const probeStarted = performance.now();
     probe.renderedMax = Math.max(probe.renderedMax, viewer.getRenderedItems().length);
     trackJump(top);
+    probe.probeMs += performance.now() - probeStarted;
 
     if (now - probe.lastEvent > 250) {
         probeEnd(now);
@@ -3183,6 +3228,14 @@ function trackJump(scroll: number): void {
         : null;
 }
 
+/** The scroll's speed over the last 80 ms of samples, in px per ms; 0 with one sample. */
+function recentSpeed(now: number): number {
+    const samples = probe.samples;
+    const last = samples[samples.length - 1];
+    const tail = samples.find((sample) => last && now - sample.time <= 80) ?? last;
+    return last && tail && last.time > tail.time ? Math.abs(last.top - tail.top) / (last.time - tail.time) : 0;
+}
+
 function probeEnd(now: number): void {
     probe.active = false;
     runDeferredLoad();
@@ -3197,11 +3250,8 @@ function probeEnd(now: number): void {
         return;
     }
 
-    const samples = probe.samples;
-    const last = samples[samples.length - 1];
-    const tail = samples.find((sample) => last && last.time - sample.time <= 80) ?? last;
-    const endSpeed =
-        last && tail && last.time > tail.time ? Math.abs(last.top - tail.top) / (last.time - tail.time) : 0;
+    const last = probe.samples[probe.samples.length - 1];
+    const endSpeed = last ? recentSpeed(last.time) : 0;
     const seconds = Math.max(1, probe.lastEvent - probe.start) / 1000;
     post({
         type: "log",
@@ -3211,7 +3261,8 @@ function probeEnd(now: number): void {
             `frames ${probe.frames} (max gap ${Math.round(probe.maxGap)}ms, ${probe.slowFrames} over 34ms), stuck ${probe.stuckFrames}, ` +
             `pinned ${probe.pinnedFrames}${probe.pinnedFrames > 0 ? ` (max ${Math.round(probe.maxPin)}px)` : ""}, ` +
             `jumps ${probe.jumps}${probe.jumps > 0 ? ` (max ${Math.round(probe.maxJump)}px, ${probe.anchored} put back: ${probe.jumpNotes.join("; ")})` : ""}, ` +
-            `corrections ${probe.corrections}, end speed ${endSpeed.toFixed(2)} px/ms, items on page ${probe.renderedMax}, ${files.length} files` +
+            `corrections ${probe.corrections}, end speed ${endSpeed.toFixed(2)} px/ms, items on page ${probe.renderedMax}, ${files.length} files, ` +
+            `render ${probe.renderCalls}× ${Math.round(probe.renderMs)}ms (max ${Math.round(probe.renderMax)}ms), probe ${Math.round(probe.probeMs)}ms` +
             `${now - probe.lastEvent > 1000 ? " (ended late)" : ""}`,
     });
 }
