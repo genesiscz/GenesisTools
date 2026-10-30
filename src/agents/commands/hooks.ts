@@ -238,6 +238,13 @@ function perHarnessDiff(config: HooksConfig): string {
     }).join(" · ");
 }
 
+/** The `questions` feature per harness (`tools agents hooks config set questions.<harness> on`), all off by default. */
+function perHarnessQuestions(config: HooksConfig): string {
+    return HARNESSES.map((harness) => `${harness} ${config.questions.harnesses[harness] ? "on" : pc.dim("off")}`).join(
+        " · "
+    );
+}
+
 export function registerHooksCommands(program: Command): void {
     const hooks = program.command("hooks").description("Shell guard and diff watcher for any coding agent");
     registerRuleCommands(hooks);
@@ -285,6 +292,7 @@ export function registerHooksCommands(program: Command): void {
             table.push(["diff.standDownWhenNative", String(config.diff.standDownWhenNative)]);
             table.push(["native Bash diff", nativeDiffLabel(config)]);
             table.push(["diff per harness", perHarnessDiff(config)]);
+            table.push(["questions per harness", perHarnessQuestions(config)]);
             table.push(["agentsTalk.hint", String(config.agentsTalk.hint)]);
             table.push(["decisions.stopHook", config.decisions.stopHook]);
             table.push(["decisions.questionNudge", config.decisions.questionNudge]);
