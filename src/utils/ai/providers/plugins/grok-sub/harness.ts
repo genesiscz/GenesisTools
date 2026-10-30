@@ -1,7 +1,7 @@
 import { isGrok, resolveGrokContext } from "@genesiscz/utils/agent/hosts/grok";
 import { grokTurnState } from "@genesiscz/utils/agent-sessions/readers/grok-turn-state";
+import { deferredLocator, deferredWindowTurns } from "@genesiscz/utils/harness/deferred";
 import { interpreterScriptIndex } from "@genesiscz/utils/harness/interpreter-entry";
-import { deferredLocator } from "@genesiscz/utils/harness/deferred";
 import type { HarnessDriver } from "@genesiscz/utils/harness/types";
 import { pending, toolOwned, unsupported } from "@genesiscz/utils/harness/types";
 import { grokHooks } from "./harness-hooks";
@@ -55,6 +55,7 @@ export const grokHarness: HarnessDriver<"grok"> = {
                 /(^|[/\\])updates\.jsonl$/.test(transcriptPath)
                     ? transcriptPath.replace(/updates\.jsonl$/, "events.jsonl")
                     : null,
+            windowTurns: deferredWindowTurns(import.meta, "harness-parse", "grokWindowTurns"),
         },
         exit: { command: "/exit" },
         hooks: grokHooks,

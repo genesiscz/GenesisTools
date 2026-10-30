@@ -1,7 +1,7 @@
 import { isCodex, resolveCodexContext } from "@genesiscz/utils/agent/hosts/codex";
 import { codexTurnState } from "@genesiscz/utils/agent-sessions/readers/codex-turn-state";
+import { deferredLocator, deferredWindowTurns } from "@genesiscz/utils/harness/deferred";
 import { interpreterScriptIndex } from "@genesiscz/utils/harness/interpreter-entry";
-import { deferredLocator } from "@genesiscz/utils/harness/deferred";
 import type { HarnessDriver } from "@genesiscz/utils/harness/types";
 import { pending, toolOwned, unsupported } from "@genesiscz/utils/harness/types";
 import { codexHooks } from "./harness-hooks";
@@ -51,6 +51,7 @@ export const codexHarness: HarnessDriver<"codex"> = {
             keepsLiveRegistry: false,
             // Codex rollouts persist no approval request; only a live app-server client sees one.
             eventLog: () => null,
+            windowTurns: deferredWindowTurns(import.meta, "harness-parse", "codexWindowTurns"),
         },
         exit: { command: "/quit" },
         hooks: codexHooks,

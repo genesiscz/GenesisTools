@@ -12,6 +12,11 @@ import type { TranscriptParser } from "@genesiscz/utils/harness/parts";
 import type { WorkerEvent } from "@genesiscz/utils/worker/events";
 
 /** Codex transcripts to turns: a native rollout (folded append-only when large) or stored worker events. Moved from `TURN_READERS` in load.ts. */
+/** A window of rollout records to turns (`TranscriptFacts.windowTurns`). */
+export function codexWindowTurns(values: Record<string, unknown>[]): TranscriptTurn[] {
+    return codexNativeLinesToTurns(values);
+}
+
 export const codexParse: TranscriptParser = {
     fromFile: async (resolved, path, index) => {
         if (resolved.source !== "worker") {
