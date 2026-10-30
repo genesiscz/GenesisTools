@@ -1,4 +1,4 @@
-import { resolveCmuxPath, runCmuxOk } from "@genesiscz/utils/cmux/lib/cli";
+import { runCmuxOk } from "@genesiscz/utils/cmux/lib/cli";
 import { surfaceTargetArgs } from "@genesiscz/utils/cmux/lib/target";
 import { env } from "@genesiscz/utils/env";
 import { SafeJSON } from "@genesiscz/utils/json";
@@ -52,83 +52,31 @@ async function sendTmux(pane: string, text: string, enter: boolean, enterDelayMs
 }
 
 /**
- * If this process is told to die between the text and the Enter, the Enter still goes out.
- * Observed 2026-09-10 17:39: a detached `send-self '/compact'` logged its `send` and never
- * its `send-key enter`; the text sat unsubmitted in the prompt and the compaction never
- * ran. Who sent the signal is unknown (the day log has no trace), so the handler records
- * the signal and finishes the job synchronously on the way out.
+ * One `cmux paste --submit`: the text and its submit go out in a single call, so no gap is left between them.
+ * Observed 2026-09-10 17:39: a detached `send-self '/compact'` typed with `send` and then `send-key enter` logged
+ * its `send` and never its Enter; the text sat unsubmitted in the prompt and the compaction never ran. The paste
+ * also keeps a multi-line text as one message, and runs a slash command (a pasted `/compact` compacted a scratch
+ * session on 2026-10-30, Claude Code 2.1.312).
  */
-function enterOnSignal(where: readonly string[]): () => void {
-    const signals = ["SIGTERM", "SIGHUP", "SIGINT"] as const;
-    const handler = (signal: string) => {
-        logger.warn(
-            { pid: process.pid, signal },
-            "[cmux send-self] signalled between text and Enter; sending Enter now"
-        );
-        // The resolved binary, not a bare `cmux`: the detached `nohup zsh -c` this rescue
-        // exists for runs with a minimal PATH, where a bare name is exactly what fails.
-        const rescue = Bun.spawnSync([resolveCmuxPath(), "send-key", ...where, "enter"], {
-            stdio: ["ignore", "ignore", "pipe"],
-        });
-
-        if (rescue.exitCode !== 0) {
-            logger.error(
-                { pid: process.pid, exitCode: rescue.exitCode, stderr: rescue.stderr.toString().trim() },
-                "[cmux send-self] rescue Enter failed"
-            );
-        }
-
-        process.exit(1);
-    };
-
-    for (const signal of signals) {
-        process.on(signal, handler);
-    }
-
-    return () => {
-        for (const signal of signals) {
-            process.off(signal, handler);
-        }
-    };
-}
-
 async function sendCmux(
     workspaceId: string | undefined,
     surfaceId: string,
     text: string,
-    enter: boolean,
-    enterDelayMs: number
+    enter: boolean
 ): Promise<void> {
     const where = surfaceTargetArgs(surfaceId, workspaceId);
     // Never log `text` itself. This types arbitrary content into a terminal — a prompt,
     // a pasted command, a token being echoed into a login flow — and logger always
     // writes the day-stamped plaintext file, at every level. The length plus the enter
-    // flag is what the triage actually needs: the 2026-09-10 failure was a `send` with
-    // no matching `send-key enter`, which this still shows. A bare slash command is
-    // named in full because it cannot be a credential and it is the case being debugged.
+    // flag is what the triage actually needs. A bare slash command is named in full
+    // because it cannot be a credential and it is the case being debugged.
     const command = /^\/[a-z][a-z-]{0,31}$/.test(text) ? text : undefined;
     logger.info(
-        { pid: process.pid, surfaceId, textLength: text.length, command, enter, enterDelayMs },
-        "[cmux send-self] sending text"
+        { pid: process.pid, surfaceId, textLength: text.length, command, enter },
+        "[cmux send-self] pasting text"
     );
-    await runCmuxOk(["send", ...where, text]);
-
-    if (!enter) {
-        return;
-    }
-
-    const release = enterOnSignal(where);
-
-    try {
-        if (enterDelayMs > 0) {
-            await Bun.sleep(enterDelayMs);
-        }
-
-        await runCmuxOk(["send-key", ...where, "enter"]);
-        logger.info({ pid: process.pid, surfaceId }, "[cmux send-self] Enter sent");
-    } finally {
-        release();
-    }
+    await runCmuxOk(["paste", ...where, ...(enter ? ["--submit"] : []), "--", text]);
+    logger.info({ pid: process.pid, surfaceId, enter }, "[cmux send-self] pasted");
 }
 
 export function registerSendSelfCommand(program: Command): void {
@@ -140,7 +88,7 @@ export function registerSendSelfCommand(program: Command): void {
         )
         .option(
             "--enter-delay <ms>",
-            "Wait this long between the text and Enter (0: back-to-back, which cmux and tmux both accept)",
+            "tmux only: wait this long between the text and Enter (cmux pastes and submits in one call)",
             "0"
         )
         .option("--no-enter", "Send the text only, leave it unsubmitted at the prompt")
@@ -174,7 +122,7 @@ export function registerSendSelfCommand(program: Command): void {
                 if (target.kind === "tmux") {
                     await sendTmux(target.pane, text, opts.enter, enterDelayMs);
                 } else {
-                    await sendCmux(target.workspaceId, target.surfaceId, text, opts.enter, enterDelayMs);
+                    await sendCmux(target.workspaceId, target.surfaceId, text, opts.enter);
                 }
 
                 out.println(`sent to ${target.kind}`);
