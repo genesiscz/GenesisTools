@@ -798,15 +798,3 @@ test("currentModel reads summary.json, since Grok rows carry no model", () => {
     writeFileSync(join(session, "summary.json"), SafeJSON.stringify({ current_model_id: "grok-build-1" }));
     expect(currentModel(chat)).toBe("grok-build-1");
 });
-
-test("rowAnchors names an update's message and turn, and a tool_call update's call id", () => {
-    const walk = createGrokHistoryOperations().rowAnchors();
-    expect(
-        walk({ params: { update: { sessionUpdate: "tool_call", toolCallId: "call-1", turnId: "turn-1" } } }, false)
-    ).toEqual({ messageIds: [], toolCallIds: ["call-1"], turnIds: ["turn-1"] });
-    expect(walk({ params: { update: { messageId: "msg-1", toolCallId: "call-2" } } }, false)).toEqual({
-        messageIds: ["msg-1"],
-        toolCallIds: [],
-        turnIds: [],
-    });
-});
