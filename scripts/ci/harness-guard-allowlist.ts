@@ -17,14 +17,40 @@ export interface HarnessGuardCounts {
 }
 
 export const HARNESS_GUARD_ALLOWLIST: Readonly<Record<string, HarnessGuardCounts>> = {
-    "plugins/genesis-tools/hooks/agents-talk-hint.ts": { branch: 2 },
-    "plugins/genesis-tools/hooks/area-rules.ts": { branch: 1 },
-    "plugins/genesis-tools/hooks/harness.ts": { list: 1 },
-    "plugins/genesis-tools/hooks/record-session-account.ts": { branch: 6 },
-    "plugins/genesis-tools/hooks/record-session-cmux.ts": { branch: 2 },
-    "plugins/genesis-tools/hooks/track-session-files.ts": { branch: 1 },
-    "plugins/genesis-tools/lib/agent-process.ts": { list: 1, table: 2, branch: 1 },
-    "plugins/genesis-tools/lib/resume-argv.ts": { branch: 2 },
+    "plugins/genesis-tools/hooks/agents-talk-hint.ts": {
+        branch: 2,
+        why: "a standalone plugin hook: the harness copies plugins/** out of the checkout, so it cannot import the drivers (check-plugin-standalone.ts)",
+    },
+    "plugins/genesis-tools/hooks/area-rules.ts": {
+        branch: 1,
+        why: "a standalone plugin hook: the harness copies plugins/** out of the checkout, so it cannot import the drivers (check-plugin-standalone.ts)",
+    },
+    "plugins/genesis-tools/hooks/harness.ts": {
+        list: 1,
+        why: "a standalone plugin hook: the harness copies plugins/** out of the checkout, so it cannot import the drivers (check-plugin-standalone.ts)",
+    },
+    "plugins/genesis-tools/hooks/record-session-account.ts": {
+        branch: 6,
+        why: "a standalone plugin hook: the harness copies plugins/** out of the checkout, so it cannot import the drivers (check-plugin-standalone.ts)",
+    },
+    "plugins/genesis-tools/hooks/record-session-cmux.ts": {
+        branch: 2,
+        why: "a standalone plugin hook: the harness copies plugins/** out of the checkout, so it cannot import the drivers (check-plugin-standalone.ts)",
+    },
+    "plugins/genesis-tools/hooks/track-session-files.ts": {
+        branch: 1,
+        why: "a standalone plugin hook: the harness copies plugins/** out of the checkout, so it cannot import the drivers (check-plugin-standalone.ts)",
+    },
+    "plugins/genesis-tools/lib/agent-process.ts": {
+        list: 1,
+        table: 2,
+        branch: 1,
+        why: "a standalone plugin hook: the harness copies plugins/** out of the checkout, so it cannot import the drivers (check-plugin-standalone.ts)",
+    },
+    "plugins/genesis-tools/lib/resume-argv.ts": {
+        branch: 2,
+        why: "a standalone plugin hook: the harness copies plugins/** out of the checkout, so it cannot import the drivers (check-plugin-standalone.ts)",
+    },
     "scripts/benchmarks/agent-sessions/discover-child.ts": { list: 1 },
     "scripts/benchmarks/fs/walk-trees.ts": { table: 1 },
     "scripts/benchmarks/widget/roster.ts": { list: 1 },
@@ -35,12 +61,31 @@ export const HARNESS_GUARD_ALLOWLIST: Readonly<Record<string, HarnessGuardCounts
     "src/agents/lib/hooks/diff/theme.ts": { branch: 1 },
     "src/agents/lib/hooks/harnesses.ts": { table: 2 },
     "src/agents/lib/hooks/payload.ts": { table: 2 },
-    "src/ai-proxy/commands/session-use.ts": { list: 1 },
-    "src/ai-proxy/lib/providers/upstream-failure.ts": { table: 1 },
-    "src/ai-proxy/lib/sessions/records.ts": { list: 1, table: 2 },
-    "src/ai-proxy/lib/sessions/routing.ts": { list: 1 },
-    "src/ai-proxy/lib/sessions/settings.ts": { table: 1 },
-    "src/ai-proxy/lib/sessions/view.ts": { list: 1 },
+    "src/ai-proxy/commands/session-use.ts": {
+        list: 1,
+        why: "the ai-proxy upstream-route axis (which upstream answers a request), not the coding-agent harness of a session (plan decision G5)",
+    },
+    "src/ai-proxy/lib/providers/upstream-failure.ts": {
+        table: 1,
+        why: "the ai-proxy upstream-route axis (which upstream answers a request), not the coding-agent harness of a session (plan decision G5)",
+    },
+    "src/ai-proxy/lib/sessions/records.ts": {
+        list: 1,
+        table: 2,
+        why: "the ai-proxy upstream-route axis (which upstream answers a request), not the coding-agent harness of a session (plan decision G5)",
+    },
+    "src/ai-proxy/lib/sessions/routing.ts": {
+        list: 1,
+        why: "the ai-proxy upstream-route axis (which upstream answers a request), not the coding-agent harness of a session (plan decision G5)",
+    },
+    "src/ai-proxy/lib/sessions/settings.ts": {
+        table: 1,
+        why: "an exhaustive mapped type over the upstream providers of a Claude Code session (ClaudeCodeProvider), the ai-proxy route axis (plan decision G5)",
+    },
+    "src/ai-proxy/lib/sessions/view.ts": {
+        list: 1,
+        why: "the ai-proxy upstream-route axis (which upstream answers a request), not the coding-agent harness of a session (plan decision G5)",
+    },
     "src/ai-spend/lib/accounts-context.ts": { table: 3 },
     "src/ai-spend/lib/drivers/types.ts": { table: 2 },
     "src/ai-spend/lib/events-cache.ts": { table: 1 },
@@ -100,9 +145,24 @@ export const HARNESS_GUARD_ALLOWLIST: Readonly<Record<string, HarnessGuardCounts
     "src/utils/ai/transcripts/resolve.ts": { table: 4 },
     "src/utils/ai/transcripts/session-title.ts": { table: 1 },
     "src/utils/cli/failures/caller.ts": { table: 1 },
-    "src/utils/env/envVariables.ts": { table: 1 },
-    "src/utils/providers/session-paths.ts": { table: 2 },
-    "src/utils/rm/approval.ts": { table: 1 },
-    "src/utils/rm/aside.ts": { table: 1 },
-    "src/utils/worker/capabilities.ts": { table: 1 },
+    "src/utils/env/envVariables.ts": {
+        table: 1,
+        why: "a false positive: the env accessor object has get/has/isFlag members, not harness names",
+    },
+    "src/utils/providers/session-paths.ts": {
+        table: 2,
+        why: "the native-home lint owner: the home folder names may appear only here, so the per-harness NativeHomeLayout objects and their exhaustive table stay in this file",
+    },
+    "src/utils/rm/approval.ts": {
+        table: 1,
+        why: "keyed by the runtime agent of the caller (claude-code, codex, grok, cursor, gemini), a wider set than the harnesses",
+    },
+    "src/utils/rm/aside.ts": {
+        table: 1,
+        why: "keyed by the runtime agent of the caller (claude-code, codex, grok, copilot), a wider set than the harnesses",
+    },
+    "src/utils/worker/capabilities.ts": {
+        table: 1,
+        why: "the declared type of WORKER_CAPABILITIES, which byHarness builds from the drivers' worker parts",
+    },
 };
