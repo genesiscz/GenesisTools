@@ -1,5 +1,5 @@
 import { existsSync } from "node:fs";
-import { readWorkerCostRows, type WorkerCostRow } from "@app/ai-spend/lib/workers/ledger";
+import { readWorkerCostRowsOf, type WorkerCostRow } from "@app/ai-spend/lib/workers/ledger";
 import { logger } from "@genesiscz/utils/logger";
 import { isObject } from "@genesiscz/utils/object";
 import { isReviewEffort, manifestChangedLines, type ReviewManifest } from "@genesiscz/utils/worker/contract";
@@ -66,12 +66,10 @@ export function defaultReviewImportReaders(ledgerPath = reviewLedgerPath()): Rev
     return {
         readMeta: async (name) => store.readMeta(name),
         costRows: (meta) =>
-            readWorkerCostRows()
+            readWorkerCostRowsOf("codex")
                 .filter(
                     (row) =>
-                        row.backend === "codex" &&
-                        row.name === meta.name &&
-                        (!meta.threadId || !row.sessionId || row.sessionId === meta.threadId)
+                        row.name === meta.name && (!meta.threadId || !row.sessionId || row.sessionId === meta.threadId)
                 )
                 .sort((a, b) => Date.parse(a.ts) - Date.parse(b.ts)),
         lastAgentMessage: (meta) => lastAgentMessage(store, meta),

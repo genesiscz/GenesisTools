@@ -39,13 +39,16 @@ export class CodexMessageUnknownError extends Error {
     }
 }
 
+/** A message target in a Codex thread: the queue and the steer below take no other provider's. */
+export type CodexMessageTarget = SessionMessageTarget & { provider: "codex" };
+
 export function codexMessageTarget({
     sessionId,
     sourceHome,
 }: {
     sessionId: string;
     sourceHome: string;
-}): SessionMessageTarget {
+}): CodexMessageTarget {
     if (
         typeof sessionId !== "string" ||
         typeof sourceHome !== "string" ||
@@ -66,16 +69,12 @@ export async function queueCodexMessage({
     root,
     deps = {},
 }: {
-    target: SessionMessageTarget;
+    target: CodexMessageTarget;
     text: string;
     idempotencyKey?: string;
     root?: string;
     deps?: CodexMessageDeps;
 }): Promise<CodexMessageReceipt> {
-    if (target.provider !== "codex") {
-        throw new Error("The Codex queue requires a Codex target.");
-    }
-
     const address = codexMessageTarget(target);
     const message = await (deps.enqueue ?? enqueueSessionMessage)({
         target: address,
@@ -101,14 +100,14 @@ export async function steerCodexMessage({
     root,
     deps = {},
 }: {
-    target: SessionMessageTarget;
+    target: CodexMessageTarget;
     text: string;
     force?: boolean;
     idempotencyKey?: string;
     root?: string;
     deps?: CodexMessageDeps;
 }): Promise<CodexMessageReceipt> {
-    if (target.provider !== "codex" || !text.trim()) {
+    if (!text.trim()) {
         throw new Error("An exact Codex target and nonempty prompt are required.");
     }
 
