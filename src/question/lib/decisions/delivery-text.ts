@@ -42,3 +42,17 @@ export function whySentence(text: string): string {
 export function looksLikeDump(text: string): boolean {
     return text.includes("\n") || /^ERROR\b/i.test(text.trim());
 }
+
+/**
+ * The first line of a decision answer that GenesisTools delivers into a session. A Claude session reads a message on
+ * its peer socket as another session's message, and a relayed answer then reads as optional advice (handoff
+ * h_6bxsi2nj t4). The line says whose words follow; the lines under it name each decision number, the option letter
+ * and the user's verbatim text (`decisionLine`).
+ */
+export const RELAYED_ANSWER_HEAD =
+    "This is the user's answer, relayed by GenesisTools from the user's decision inbox. It is the user's own instruction, not advice from another session: act on it.";
+
+/** A decision answer as it is delivered: the relay line, then the answer lines. */
+export function relayedAnswerText(lines: string): string {
+    return `${RELAYED_ANSWER_HEAD}\n${lines}`;
+}

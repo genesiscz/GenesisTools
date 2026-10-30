@@ -7,6 +7,7 @@ import {
     deliverToSession,
     NotDeliveredError,
 } from "./deliver";
+import { relayedAnswerText } from "./delivery-text";
 import { decisionFiles, decisionLine, decisionLines, sendSessionDecisions } from "./read";
 import {
     awaitsDelivery,
@@ -159,7 +160,13 @@ export async function sendAnsweredDecisions({
                 delivery.numbers = numbers;
 
                 const route = await deliverToSession(
-                    { session, provider: provider ?? undefined, sourceHome, text, deliveryKey },
+                    {
+                        session,
+                        provider: provider ?? undefined,
+                        sourceHome,
+                        text: relayedAnswerText(text),
+                        deliveryKey,
+                    },
                     deps
                 );
                 delivery.route = route;
