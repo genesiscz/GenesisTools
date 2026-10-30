@@ -127,3 +127,8 @@ export function harnessExit(id: HarnessId): ExitCommand {
 
     return slot;
 }
+
+/** The harness whose host part reports this runtime agent name (`claude-code` is Claude), or null for a non-harness. */
+export function harnessOfRuntimeAgent(agent: string): HarnessId | null {
+    return harnessDrivers().find((driver) => harnessHost(driver.id).agent === agent)?.id ?? null;
+}

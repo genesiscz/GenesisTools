@@ -1,6 +1,8 @@
 import { stat } from "node:fs/promises";
 import { basename } from "node:path";
+import { isAccountProviderAlias } from "@genesiscz/utils/ai/providers/alias-list";
 import { PROVIDER_ALIASES } from "@genesiscz/utils/ai/providers/aliases";
+import { harnessTranscriptFacts } from "@genesiscz/utils/ai/providers/harness-index";
 import { transcriptStem } from "@genesiscz/utils/providers/session-paths";
 import { sourceFingerprint } from "./fingerprint";
 import { historySourceKey } from "./identity";
@@ -60,7 +62,8 @@ function metadataSession<Kind extends AgentKind>(options: {
     const fallbackId = transcriptStem(basename(source.filePath));
     const isSubagent = metadata?.isSubagent ?? sourceMetadata.isSubagent ?? false;
     const sessionId =
-        kind === "claude" && isSubagent
+        // A sub-agent on disk (Claude's) is named by its file; its rows carry the parent's session id.
+        isAccountProviderAlias(kind) && harnessTranscriptFacts(kind).subagentsOnDisk && isSubagent
             ? fallbackId
             : (metadata?.sessionId ?? metadata?.nativeId ?? sourceMetadata.sessionId ?? fallbackId);
 

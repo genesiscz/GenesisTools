@@ -1,5 +1,5 @@
 import { ACCOUNT_PROVIDER_ALIASES, isAccountProviderAlias } from "@genesiscz/utils/ai/providers/alias-list";
-import { harnessDrivers, harnessHost } from "@genesiscz/utils/ai/providers/harness-index";
+import { harnessOfRuntimeAgent } from "@genesiscz/utils/ai/providers/harness-index";
 import { logger } from "@genesiscz/utils/logger";
 import { z } from "zod";
 import type { AgentRuntimeContext } from "./context";
@@ -63,8 +63,7 @@ export function createTranscriptAnchor({
     const source = sourceMessage === undefined ? undefined : sourceMessageSchema.parse(sourceMessage);
     // The runtime agent name to the transcript provider: a harness by its host part (`claude-code` is Claude), and
     // Copilot, which is a host but no harness, by its own name.
-    const provider =
-        harnessDrivers().find((driver) => harnessHost(driver.id).agent === context.agent)?.id ?? context.agent;
+    const provider = harnessOfRuntimeAgent(context.agent) ?? context.agent;
     const sessionId = context.sessionId?.trim();
     if ((!isAccountProviderAlias(provider) && provider !== "copilot") || !sessionId || sessionId === "unknown") {
         // The receipt itself still matters; native IDs without a provider and session cannot be resolved.
