@@ -3231,7 +3231,7 @@ test("an append during a bounded log read cannot hide the session's earlier unre
                 appendDuringRead = false;
                 const before = fixture.files.get(file)?.text ?? "";
                 fixture.files.set(file, {
-                    text: before + `${JSON.stringify({ id: "d_1_other", note: "x".repeat(200) })}\n`,
+                    text: `${before}${JSON.stringify({ id: "d_1_other", note: "x".repeat(200) })}\n`,
                     mtimeMs: 2,
                 });
             }
