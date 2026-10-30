@@ -1294,32 +1294,57 @@ final class HubInboxModel: ObservableObject {
 
     /// A pick on an agent's own question dialog (`InboxAnswerRoute.dialog`): the widget action `dialog-answer` presses
     /// the option's key in the session's live dialog, or refuses (no dialog open, `dialogAnswer` set to refuse). The
-    /// hub reads the setting, so the widget and this Inbox obey the same one.
+    /// hub reads the setting, so the widget and this Inbox obey the same one. A refusal is the card's error line.
     func answerDialog(_ item: InboxItem, letter: String) {
+        guard !writing.contains(item.id) else { return }
         let file = FileManager.default.temporaryDirectory
             .appendingPathComponent("hub-inbox-dialog-\(UUID().uuidString).json")
         let request: WidgetJSON = ["action": "dialog-answer", "key": .string(item.id), "option": .string(letter)]
         do {
             try JSONEncoder().encode(request).write(to: file)
         } catch {
-            deliveries[item.id] = .failure("Nothing was pressed: the hub could not write the request.", raw: "\(error)")
+            writeErrors[item.id] = "Not pressed: the hub could not write the request."
+            writeErrorDetails[item.id] = "\(error)"
             return
         }
-        run(["hub", "widget", "call", "--input", file.path], item: item, removing: file)
+        writing.insert(item.id)
+        writeErrors[item.id] = nil
+        writeErrorDetails[item.id] = nil
+        HubPerf.log("inbox.dialog-answer \(item.id)")
+        DispatchQueue.global(qos: .userInitiated).async {
+            defer { try? FileManager.default.removeItem(at: file) }
+            let delivery: InboxDelivery
+            do {
+                let capture = try ToolsCLIRunner.capture(["hub", "widget", "call", "--input", file.path])
+                delivery = (try? JSONDecoder().decode(InboxDelivery.self, from: capture.stdout))
+                    ?? .failure("the hub did not answer.", raw: "tools hub widget call exited \(capture.status): \(String(decoding: capture.stderr, as: UTF8.self).trimmed)")
+            } catch {
+                delivery = .failure("the hub could not run tools.", raw: "\(error)")
+            }
+            DispatchQueue.main.async { [weak self] in
+                MainActor.assumeIsolated {
+                    guard let self else { return }
+                    self.writing.remove(item.id)
+                    if delivery.delivered == true {
+                        GenAnnounce.post(delivery.summary)
+                        self.load()
+                    } else {
+                        self.writeErrors[item.id] = "Not pressed: \(delivery.error ?? "the dialog did not take the option.")"
+                        self.writeErrorDetails[item.id] = delivery.raw
+                    }
+                }
+            }
+        }
     }
 
-    private func run(_ args: [String], item: InboxItem, staged: [String] = [], removing file: URL? = nil) {
-        guard !sending.contains(item.id) else {
-            file.map { try? FileManager.default.removeItem(at: $0) }
-            return
-        }
+    private func run(_ args: [String], item: InboxItem, staged: [String] = []) {
+        guard !sending.contains(item.id) else { return }
         sending.insert(item.id)
         deliveries[item.id] = nil
         HubPerf.log("inbox.answer \(item.id)")
         DispatchQueue.global(qos: .userInitiated).async {
             let span = HubPerf.begin("inbox.answer")
             let delivery: InboxDelivery
-            defer { file.map { try? FileManager.default.removeItem(at: $0) } }
             do {
                 let capture = try ToolsCLIRunner.capture(args)
                 delivery = (try? JSONDecoder().decode(InboxDelivery.self, from: capture.stdout))
