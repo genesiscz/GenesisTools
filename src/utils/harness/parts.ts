@@ -9,6 +9,7 @@ import type {
     ResolvedTranscript,
     TranscriptSource,
 } from "@genesiscz/utils/ai/transcripts/resolve";
+import type { TitledSession, TitleSearch } from "@genesiscz/utils/ai/transcripts/session-title";
 import type { TurnQuestionCall, TurnSnapshot, TurnStateInput } from "@genesiscz/utils/ai/transcripts/turn-state";
 import type { TranscriptTurn } from "@genesiscz/utils/ai/transcripts/types";
 import type { WorkerCapabilities } from "@genesiscz/utils/worker/capabilities";
@@ -39,6 +40,8 @@ export interface TranscriptLocator {
     find(query: string, roots: LocateRoots, fs: FolderReads): RankedHit[];
     /** The native transcript a headless worker of the harness writes beside its own log, or null when it writes none. */
     workerNative(worker: ResolvedTranscript, fs: FolderReads): ResolvedTranscript | null;
+    /** Every session the harness gave a title, read where it keeps titles (`findSessionsByTitle` ranks them). */
+    titledSessions(search: TitleSearch): TitledSession[];
 }
 
 /** D: transcript lines to the provider-neutral turns every renderer reads. */

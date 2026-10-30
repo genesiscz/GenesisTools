@@ -1,7 +1,16 @@
 import { join } from "node:path";
 import type { FolderReads, LocateRoots, RankedHit } from "@genesiscz/utils/ai/transcripts/resolve";
 import { findTurnFileWorker, idMatches, workerTurnChain } from "@genesiscz/utils/ai/transcripts/resolve-core";
+import {
+    type FindByTitleOptions,
+    listDir,
+    mtimeOf,
+    type TitledSession,
+} from "@genesiscz/utils/ai/transcripts/session-title";
 import type { TranscriptLocator } from "@genesiscz/utils/harness/parts";
+import { SafeJSON } from "@genesiscz/utils/json";
+import { logger } from "@genesiscz/utils/logger";
+import { scanFileMatches } from "../../../transcripts/file-scan";
 
 /** The roots a Claude lookup reads: an injected projects folder is the whole answer, else every root `nativeSessionRoots` knows. */
 function claudeRoots({ injected, resolved }: LocateRoots): string[] {
@@ -25,6 +34,9 @@ export const claudeLocate: TranscriptLocator = {
     ],
     // A `tools claude worker` writes only its own turn files.
     workerNative: () => null,
+    // The `custom-title` rows of the transcripts written in the last `maxAgeDays`, within a time budget.
+    titledSessions: ({ options, roots, now }) =>
+        claudeSessions({ roots, maxAgeDays: options.maxAgeDays ?? 14, budgetMs: options.budgetMs ?? 8000, now }),
 };
 
 export function findClaude(query: string, projectsDir: string, fs: FolderReads): RankedHit[] {
@@ -99,4 +111,103 @@ function findClaudeSubagent(query: string, projectsDir: string, fs: FolderReads)
 
 export function findClaudeWorker(query: string, workerDir: string, fs: FolderReads): RankedHit[] {
     return findTurnFileWorker(query, workerDir, "claude", fs);
+}
+
+const CUSTOM_TITLE = /"type":"custom-title","customTitle":"((?:[^"\\]|\\.)*)"/g;
+
+/** The last `/rename` title in a Claude transcript's text, or null. */
+export function lastClaudeTitle(text: string): string | null {
+    let last: string | null = null;
+
+    for (const match of text.matchAll(CUSTOM_TITLE)) {
+        last = match[1];
+    }
+
+    if (last === null) {
+        return null;
+    }
+
+    try {
+        const decoded = SafeJSON.parse(`"${last}"`, { strict: true });
+
+        return typeof decoded === "string" ? decoded : last;
+    } catch (err) {
+        logger.debug({ err }, "[session-title] title escape unreadable; using it raw");
+        return last;
+    }
+}
+
+/** Bytes kept after each `custom-title` match: a title longer than this is not read. */
+const TITLE_WINDOW = 4096;
+
+/** The last `/rename` title of a transcript, streamed: a 200 MB transcript is never one string. */
+function lastClaudeTitleIn(path: string): string | null {
+    const found: { last: Buffer | null } = { last: null };
+    scanFileMatches(path, '"type":"custom-title","customTitle":"', TITLE_WINDOW, (slice) => {
+        found.last = Buffer.from(slice);
+    });
+
+    return found.last === null ? null : lastClaudeTitle(found.last.toString("utf8"));
+}
+
+export function claudeSessions({
+    roots,
+    maxAgeDays,
+    budgetMs,
+    now,
+}: Required<Pick<FindByTitleOptions, "roots" | "maxAgeDays" | "budgetMs" | "now">>): TitledSession[] {
+    const cutoff = now - maxAgeDays * 86_400_000;
+    const files: { path: string; mtime: number }[] = [];
+
+    for (const root of roots) {
+        for (const project of listDir(root)) {
+            for (const entry of listDir(join(root, project))) {
+                if (!entry.endsWith(".jsonl")) {
+                    continue;
+                }
+
+                const path = join(root, project, entry);
+                const mtime = mtimeOf(path);
+
+                if (mtime >= cutoff) {
+                    files.push({ path, mtime });
+                }
+            }
+        }
+    }
+
+    files.sort((a, b) => b.mtime - a.mtime);
+    const found: TitledSession[] = [];
+    const deadline = Date.now() + budgetMs;
+
+    for (const file of files) {
+        if (Date.now() > deadline) {
+            logger.warn(
+                { read: found.length, total: files.length },
+                "[session-title] time budget spent; the title scan is partial"
+            );
+            break;
+        }
+
+        try {
+            const title = lastClaudeTitleIn(file.path);
+
+            if (title) {
+                found.push({
+                    sessionId:
+                        file.path
+                            .split("/")
+                            .at(-1)
+                            ?.replace(/\.jsonl$/, "") ?? file.path,
+                    title,
+                    mtime: file.mtime,
+                    locator: file.path,
+                });
+            }
+        } catch (err) {
+            logger.debug({ err, path: file.path }, "[session-title] could not read a transcript");
+        }
+    }
+
+    return found;
 }

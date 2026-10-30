@@ -11,12 +11,11 @@
  *           `title_is_manual: true`), else the generated `session_summary`.
  * - Codex:  `session_index.jsonl` -> `thread_name`, in every home `CODEX_HOME` names (else `~/.codex`).
  */
-import { existsSync, readdirSync, readFileSync, statSync } from "node:fs";
-import { join } from "node:path";
-import { SafeJSON } from "@genesiscz/utils/json";
+
+import { readdirSync, statSync } from "node:fs";
+import { harnessLocate } from "@genesiscz/utils/ai/providers/harness-index";
 import { logger } from "@genesiscz/utils/logger";
-import { codexHomeOverrides, nativeHome, nativeSessionRoots } from "@genesiscz/utils/providers/session-paths";
-import { scanFileMatches } from "./file-scan";
+import { nativeSessionRoots } from "@genesiscz/utils/providers/session-paths";
 import type { TurnProvider } from "./turn-state";
 
 export interface TitledSession {
@@ -41,13 +40,7 @@ export interface FindByTitleOptions {
     now?: number;
 }
 
-const CUSTOM_TITLE = /"type":"custom-title","customTitle":"((?:[^"\\]|\\.)*)"/g;
-
-function isRecord(value: unknown): value is Record<string, unknown> {
-    return typeof value === "object" && value !== null && !Array.isArray(value);
-}
-
-function listDir(path: string): string[] {
+export function listDir(path: string): string[] {
     try {
         return readdirSync(path);
     } catch (err) {
@@ -56,193 +49,12 @@ function listDir(path: string): string[] {
     }
 }
 
-function mtimeOf(path: string): number {
+export function mtimeOf(path: string): number {
     try {
         return statSync(path).mtimeMs;
     } catch (err) {
         logger.debug({ err, path }, "[session-title] could not stat a transcript");
         return 0;
-    }
-}
-
-/** The last `/rename` title in a Claude transcript's text, or null. */
-export function lastClaudeTitle(text: string): string | null {
-    let last: string | null = null;
-
-    for (const match of text.matchAll(CUSTOM_TITLE)) {
-        last = match[1];
-    }
-
-    if (last === null) {
-        return null;
-    }
-
-    try {
-        const decoded = SafeJSON.parse(`"${last}"`, { strict: true });
-
-        return typeof decoded === "string" ? decoded : last;
-    } catch (err) {
-        logger.debug({ err }, "[session-title] title escape unreadable; using it raw");
-        return last;
-    }
-}
-
-/** Bytes kept after each `custom-title` match: a title longer than this is not read. */
-const TITLE_WINDOW = 4096;
-
-/** The last `/rename` title of a transcript, streamed: a 200 MB transcript is never one string. */
-function lastClaudeTitleIn(path: string): string | null {
-    const found: { last: Buffer | null } = { last: null };
-    scanFileMatches(path, '"type":"custom-title","customTitle":"', TITLE_WINDOW, (slice) => {
-        found.last = Buffer.from(slice);
-    });
-
-    return found.last === null ? null : lastClaudeTitle(found.last.toString("utf8"));
-}
-
-function claudeSessions({
-    roots,
-    maxAgeDays,
-    budgetMs,
-    now,
-}: Required<Pick<FindByTitleOptions, "roots" | "maxAgeDays" | "budgetMs" | "now">>): TitledSession[] {
-    const cutoff = now - maxAgeDays * 86_400_000;
-    const files: { path: string; mtime: number }[] = [];
-
-    for (const root of roots) {
-        for (const project of listDir(root)) {
-            for (const entry of listDir(join(root, project))) {
-                if (!entry.endsWith(".jsonl")) {
-                    continue;
-                }
-
-                const path = join(root, project, entry);
-                const mtime = mtimeOf(path);
-
-                if (mtime >= cutoff) {
-                    files.push({ path, mtime });
-                }
-            }
-        }
-    }
-
-    files.sort((a, b) => b.mtime - a.mtime);
-    const found: TitledSession[] = [];
-    const deadline = Date.now() + budgetMs;
-
-    for (const file of files) {
-        if (Date.now() > deadline) {
-            logger.warn(
-                { read: found.length, total: files.length },
-                "[session-title] time budget spent; the title scan is partial"
-            );
-            break;
-        }
-
-        try {
-            const title = lastClaudeTitleIn(file.path);
-
-            if (title) {
-                found.push({
-                    sessionId:
-                        file.path
-                            .split("/")
-                            .at(-1)
-                            ?.replace(/\.jsonl$/, "") ?? file.path,
-                    title,
-                    mtime: file.mtime,
-                    locator: file.path,
-                });
-            }
-        } catch (err) {
-            logger.debug({ err, path: file.path }, "[session-title] could not read a transcript");
-        }
-    }
-
-    return found;
-}
-
-/** A Grok `/rename` lands in `generated_title` with `title_is_manual: true`; it beats the generated summary. */
-export function grokTitleOf(summary: Record<string, unknown>): string | null {
-    const manual = summary.title_is_manual === true ? summary.generated_title : undefined;
-
-    if (typeof manual === "string" && manual.trim() !== "") {
-        return manual;
-    }
-
-    return typeof summary.session_summary === "string" && summary.session_summary.trim() !== ""
-        ? summary.session_summary
-        : null;
-}
-
-function grokSessions(roots: string[]): TitledSession[] {
-    const found: TitledSession[] = [];
-
-    for (const root of roots) {
-        for (const cwdDir of listDir(root)) {
-            for (const id of listDir(join(root, cwdDir))) {
-                const dir = join(root, cwdDir, id);
-                const summaryPath = join(dir, "summary.json");
-                const updates = join(dir, "updates.jsonl");
-
-                if (!existsSync(summaryPath) || !existsSync(updates)) {
-                    continue;
-                }
-
-                try {
-                    const summary: unknown = SafeJSON.parse(readFileSync(summaryPath, "utf8"), { strict: true });
-                    const title = isRecord(summary) ? grokTitleOf(summary) : null;
-
-                    if (title) {
-                        found.push({ sessionId: id, title, mtime: mtimeOf(updates), locator: updates });
-                    }
-                } catch (err) {
-                    logger.debug({ err, summaryPath }, "[session-title] could not read a Grok summary");
-                }
-            }
-        }
-    }
-
-    return found;
-}
-
-/** The index of each home `CODEX_HOME` names (the same homes transcript resolution reads), else `~/.codex`. */
-export function codexIndexPaths(): string[] {
-    const homes = codexHomeOverrides();
-
-    return (homes.length > 0 ? homes : [nativeHome("codex")]).map((home) => join(home, "session_index.jsonl"));
-}
-
-function codexSessions(indexPaths: readonly string[]): TitledSession[] {
-    // Codex appends a line per rename, in write order: the last line of an id is its current title.
-    const found = new Map<string, TitledSession>();
-
-    for (const indexPath of indexPaths) {
-        if (existsSync(indexPath)) {
-            readCodexIndex(indexPath, found);
-        }
-    }
-
-    return [...found.values()];
-}
-
-function readCodexIndex(indexPath: string, found: Map<string, TitledSession>): void {
-    for (const line of readFileSync(indexPath, "utf8").split("\n")) {
-        try {
-            const record: unknown = line.trim() ? SafeJSON.parse(line, { strict: true }) : null;
-
-            if (isRecord(record) && typeof record.id === "string" && typeof record.thread_name === "string") {
-                found.delete(record.id);
-                found.set(record.id, {
-                    sessionId: record.id,
-                    title: record.thread_name,
-                    mtime: Date.parse(String(record.updated_at)) || 0,
-                    locator: record.id,
-                });
-            }
-        } catch (err) {
-            logger.debug({ err, indexPath }, "[session-title] skipped an unreadable Codex index line");
-        }
     }
 }
 
@@ -263,19 +75,15 @@ export function rankByTitle(query: string, sessions: readonly TitledSession[]): 
     return [...tier].sort((a, b) => b.mtime - a.mtime);
 }
 
-/** Where each provider keeps its session titles: Claude's transcripts, Grok's session folders, Codex's title index. */
-const TITLED_SESSIONS: Record<
-    FindByTitleOptions["provider"],
-    (input: { options: FindByTitleOptions; roots: string[]; now: number }) => TitledSession[]
-> = {
-    claude: ({ options, roots, now }) =>
-        claudeSessions({ roots, maxAgeDays: options.maxAgeDays ?? 14, budgetMs: options.budgetMs ?? 8000, now }),
-    grok: ({ roots }) => grokSessions(roots),
-    codex: ({ options }) => codexSessions(options.codexIndexPath ? [options.codexIndexPath] : codexIndexPaths()),
-};
+/** What a title search hands each harness's locator (`TranscriptLocator.titledSessions`). */
+export interface TitleSearch {
+    options: FindByTitleOptions;
+    roots: string[];
+    now: number;
+}
 
 export function findSessionsByTitle(query: string, options: FindByTitleOptions): TitledSession[] {
     const now = options.now ?? Date.now();
     const roots = options.roots ?? nativeSessionRoots(options.provider);
-    return rankByTitle(query, TITLED_SESSIONS[options.provider]({ options, roots, now }));
+    return rankByTitle(query, harnessLocate(options.provider).titledSessions({ options, roots, now }));
 }

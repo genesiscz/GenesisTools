@@ -1,11 +1,18 @@
+import { existsSync, readFileSync } from "node:fs";
 import { basename, join } from "node:path";
 import type { FolderReads, RankedHit, ResolvedTranscript } from "@genesiscz/utils/ai/transcripts/resolve";
 import { idMatches, isRecord } from "@genesiscz/utils/ai/transcripts/resolve-core";
+import type { TitledSession } from "@genesiscz/utils/ai/transcripts/session-title";
 import { env } from "@genesiscz/utils/env";
 import type { TranscriptLocator } from "@genesiscz/utils/harness/parts";
 import { SafeJSON } from "@genesiscz/utils/json";
 import { logger } from "@genesiscz/utils/logger";
-import { codexHomeOverrides, isNativeTranscript, transcriptStem } from "@genesiscz/utils/providers/session-paths";
+import {
+    codexHomeOverrides,
+    isNativeTranscript,
+    nativeHome,
+    transcriptStem,
+} from "@genesiscz/utils/providers/session-paths";
 
 /** The Codex driver's `locate` part: rollouts under each Codex home, and `tools codex spawn` worker logs. */
 export const codexLocate: TranscriptLocator = {
@@ -24,6 +31,9 @@ export const codexLocate: TranscriptLocator = {
         ...findCodexNative(query, resolved.codexHome, fs),
         ...findCodexWorker(query, resolved.codexWorker, fs),
     ],
+    // Codex keeps its titles in `session_index.jsonl` of each home.
+    titledSessions: ({ options }) =>
+        codexSessions(options.codexIndexPath ? [options.codexIndexPath] : codexIndexPaths()),
     // A `tools codex spawn` worker runs a real native thread; its rollout sits in the worker's own Codex home.
     workerNative: (worker, fs) => {
         const home = workerHomeOf(worker, fs);
@@ -155,4 +165,44 @@ export function findCodexWorker(query: string, workerDir: string, fs: FolderRead
         });
     }
     return hits;
+}
+
+/** The index of each home `CODEX_HOME` names (the same homes transcript resolution reads), else `~/.codex`. */
+export function codexIndexPaths(): string[] {
+    const homes = codexHomeOverrides();
+
+    return (homes.length > 0 ? homes : [nativeHome("codex")]).map((home) => join(home, "session_index.jsonl"));
+}
+
+export function codexSessions(indexPaths: readonly string[]): TitledSession[] {
+    // Codex appends a line per rename, in write order: the last line of an id is its current title.
+    const found = new Map<string, TitledSession>();
+
+    for (const indexPath of indexPaths) {
+        if (existsSync(indexPath)) {
+            readCodexIndex(indexPath, found);
+        }
+    }
+
+    return [...found.values()];
+}
+
+function readCodexIndex(indexPath: string, found: Map<string, TitledSession>): void {
+    for (const line of readFileSync(indexPath, "utf8").split("\n")) {
+        try {
+            const record: unknown = line.trim() ? SafeJSON.parse(line, { strict: true }) : null;
+
+            if (isRecord(record) && typeof record.id === "string" && typeof record.thread_name === "string") {
+                found.delete(record.id);
+                found.set(record.id, {
+                    sessionId: record.id,
+                    title: record.thread_name,
+                    mtime: Date.parse(String(record.updated_at)) || 0,
+                    locator: record.id,
+                });
+            }
+        } catch (err) {
+            logger.debug({ err, indexPath }, "[session-title] skipped an unreadable Codex index line");
+        }
+    }
 }
