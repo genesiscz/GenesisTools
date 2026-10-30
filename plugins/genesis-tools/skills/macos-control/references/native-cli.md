@@ -176,6 +176,27 @@ do not prove that an overlay appeared at every action; review a recording when t
 use its help for the annotation schema. `compare-screenshot` exits 0 within the threshold,
 1 over it, 2 for unusable inputs. These commands are not native plan-step verbs.
 
+## GenesisTools app snapshots
+
+`GenesisTools --hub … --snapshot <png>` (and `--features --page <id> --snapshot <png>` for a Settings or
+Clicky page) draws the window off screen, writes the PNG and exits. It never takes focus.
+
+- **The hub's session view shows its panes side by side.** A snapshot starts from the live hub's open panes,
+  and `--tab` only picks the focused pane and adds it to them. With transcript, changes and files open,
+  `--tab changes` and `--tab files` draw the same three panes: a before/after pair taken that way showed
+  identical afters for both. One pane alone needs `--panes <name>`; two need a list:
+
+  ```bash
+  GenesisTools --hub --session <id> --panes files --width 1440 --height 900 --snapshot files.png
+  GenesisTools --hub --session <id> --panes transcript,changes --width 1440 --height 900 --snapshot both.png
+  ```
+
+- **Overlays are waited for.** `--digest`, `--prompts`, `--handoff` and `--rules` load after they open; the
+  snapshot waits for that load (at most 20 s) and otherwise captures anyway and prints
+  `hub snapshot: still loading: digest` on stderr. Treat a shot with that line as showing a loading state.
+- Pin `--width` and `--height` (points) on both sides of a before/after pair: without them the window takes
+  the live hub's size, so two runs on different days differ in size.
+
 ## Plans and recording
 
 `control run plan.json` uses sequential selector actions, optional `saveAs` references,
