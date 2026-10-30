@@ -8,7 +8,12 @@ import { pending, toolOwned } from "@genesiscz/utils/harness/types";
  */
 export const claudeHarness: HarnessDriver<"claude"> = {
     id: "claude",
-    identity: { label: "Claude Code", binary: "claude", aliases: ["claude-code", "claude_code", "cc"] },
+    identity: {
+        label: "Claude Code",
+        binary: "claude",
+        plugin: "anthropic-sub",
+        aliases: ["claude-code", "claude_code", "cc"],
+    },
     parts: {
         locate: pending("P2", "the claude finders in src/utils/ai/transcripts/resolve.ts and session-paths.ts roots"),
         parse: pending("P2", "the claude entry of the parser table in src/utils/ai/transcripts/load.ts"),

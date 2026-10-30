@@ -3,6 +3,7 @@ import { existsSync } from "node:fs";
 import { join } from "node:path";
 import { ACCOUNT_PROVIDER_ALIASES } from "@genesiscz/utils/ai/providers/alias-list";
 import { providerAliasOf } from "@genesiscz/utils/ai/providers/aliases";
+import { harnessDriver, harnessDrivers } from "@genesiscz/utils/ai/providers/harness-index";
 import { registerBuiltInPlugins } from "@genesiscz/utils/ai/providers/plugins";
 import { allProviderPlugins } from "@genesiscz/utils/ai/providers/registry";
 import { moduleDir } from "@genesiscz/utils/fs/module-dir";
@@ -58,7 +59,19 @@ describe("harness drivers hang off the provider plugins", () => {
             expect(identity.label.length).toBeGreaterThan(0);
             expect(identity.binary.length).toBeGreaterThan(0);
             expect(identity.aliases).not.toContain(driverOf(plugin.id).id);
+            expect(identity.plugin).toBe(plugin.id);
         }
+    });
+
+    test("the light index holds the very driver each plugin carries, and nothing else", () => {
+        for (const plugin of codingAgents) {
+            const driver = driverOf(plugin.id);
+            const indexed: unknown = harnessDriver(driver.id);
+
+            expect(indexed).toBe(driver);
+        }
+
+        expect(harnessDrivers().map((driver) => driver.id)).toEqual([...ACCOUNT_PROVIDER_ALIASES]);
     });
 });
 
