@@ -8,6 +8,8 @@
  * without a renaming layer.
  */
 
+import { type EffortRange, effortRange } from "@genesiscz/utils/ai/catalog/efforts";
+
 export type Role = "user" | "assistant" | "system";
 
 export type ItemType = "message" | "tool_call" | "tool_result" | "reasoning";
@@ -57,12 +59,12 @@ export interface Tool {
     Parameters: Record<string, unknown>;
 }
 
-export type ReasoningEffort = "low" | "medium" | "high" | "xhigh" | "max";
+export type ReasoningEffort = EffortRange<"low", "max">;
 
-const REASONING_EFFORTS: ReadonlySet<string> = new Set(["low", "medium", "high", "xhigh", "max"]);
+const HARNESS_EFFORTS: ReadonlySet<string> = new Set(effortRange("low", "max"));
 
 export function isReasoningEffort(value: unknown): value is ReasoningEffort {
-    return typeof value === "string" && REASONING_EFFORTS.has(value);
+    return typeof value === "string" && HARNESS_EFFORTS.has(value);
 }
 
 export interface Model {

@@ -1,5 +1,12 @@
-import { describe, expect, test } from "bun:test";
-import { buildWorkerContract, type ReviewManifest, reviewLines, WORKER_REPORT_KEYS } from "./contract";
+import { describe, expect, expectTypeOf, test } from "bun:test";
+import {
+    buildWorkerContract,
+    REVIEW_EFFORTS,
+    type ReviewEffort,
+    type ReviewManifest,
+    reviewLines,
+    WORKER_REPORT_KEYS,
+} from "./contract";
 
 const bus = { agentName: "codex_task", leadName: "lead", rendezvousSession: "s-1" };
 
@@ -151,5 +158,12 @@ describe("buildWorkerContract", () => {
             expect(reviewer).toContain("`git diff --no-textconv --no-ext-diff origin/master...HEAD -- <path>`");
             expect(reviewer.indexOf("OPEN: ")).toBeLessThan(reviewer.indexOf("code REVIEWER"));
         }
+    });
+});
+
+describe("REVIEW_EFFORTS", () => {
+    test("the review tiers are the catalog's efforts from low to max, shallowest first", () => {
+        expectTypeOf<ReviewEffort>().toEqualTypeOf<"low" | "medium" | "high" | "xhigh" | "max">();
+        expect([...REVIEW_EFFORTS]).toEqual(["low", "medium", "high", "xhigh", "max"]);
     });
 });

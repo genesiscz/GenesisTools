@@ -1,16 +1,10 @@
 import { isProviderImplemented, providerDefinition } from "@app/ai-proxy/lib/providers/registry";
 import type { AiProxyAccountConfig, ReasoningEffort, ResolvedRoute } from "@app/ai-proxy/lib/types";
+import { effortRange } from "@genesiscz/utils/ai/catalog/efforts";
 import { openRouterModelSync } from "@genesiscz/utils/ai/catalog/openrouter";
 
-export const REASONING_EFFORT_SUFFIXES = [
-    "low",
-    "medium",
-    "high",
-    "xhigh",
-    "minimal",
-    "max",
-    "ultra",
-] as const satisfies readonly ReasoningEffort[];
+/** Every `:<effort>` suffix the proxy strips off a model id, weakest first. */
+export const REASONING_EFFORT_SUFFIXES: readonly ReasoningEffort[] = effortRange("minimal", "ultra");
 
 const REASONING_EFFORT_SET = new Set<string>(REASONING_EFFORT_SUFFIXES);
 
