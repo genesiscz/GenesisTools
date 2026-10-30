@@ -13,6 +13,8 @@ export interface Check {
     hint: string;
     /** Drop a hit when this matches within `near` lines of it (the case is already handled there). */
     unless?: RegExp;
+    /** Keep a hit only when this also matches within `near` lines of it (the defect needs both). */
+    with?: RegExp;
     near?: number;
     /** Check only files whose text matches (for example view files, or files on the main actor). */
     onlyIn?: RegExp;
@@ -92,10 +94,10 @@ export function scan(set: ScanSet, files: string[], max: number): string {
                     continue;
                 }
 
-                if (check.unless) {
+                if (check.unless || check.with) {
                     const near = check.near ?? 0;
                     const window = lines.slice(Math.max(0, i - near), i + near + 1).join("\n");
-                    if (check.unless.test(window)) {
+                    if (check.unless?.test(window) || (check.with && !check.with.test(window))) {
                         continue;
                     }
                 }
