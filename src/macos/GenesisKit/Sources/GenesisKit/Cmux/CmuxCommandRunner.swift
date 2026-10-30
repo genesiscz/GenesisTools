@@ -62,23 +62,20 @@ public enum CmuxCommandRunner {
         return enter.ok ? nil : enter.out.trimmed
     }
 
-    /// The command that resumes an agent session in a terminal, or nil for an agent with none.
+    /// The command that resumes an agent session in a terminal, or nil for an agent with none. Claude resumes through
+    /// `tools claude resume` (it picks the session's account); every other harness through its generated resume argv
+    /// (`Harness.resumeArgs`, written from the TypeScript drivers), so Grok's flag is the `-r` the drivers use.
     public static func resumeCommand(provider: String, sessionId: String) -> [String]? {
-        switch provider {
-        case "claude": return ["tools", "claude", "resume", sessionId]
-        case "codex": return ["codex", "resume", sessionId]
-        case "grok": return ["grok", "--resume", sessionId]
-        default: return nil
-        }
+        guard let harness = Harness(rawValue: provider) else { return nil }
+        if harness == .claude { return ["tools", "claude", "resume", sessionId] }
+        return harness.resumeArgs(sessionId: sessionId)
     }
 
     /// The `tools <agent>` that owns a session's cmux resolver: `tools codex cmux` and `tools grok cmux` know their own
     /// history (Grok has no journal and its own fallback); anything else goes through Claude's.
     public static func tool(provider: String?) -> String {
-        switch provider {
-        case "codex", "grok": return provider ?? "claude"
-        default: return "claude"
-        }
+        guard let harness = provider.flatMap(Harness.init(rawValue:)) else { return Harness.claude.rawValue }
+        return harness.rawValue
     }
 
     public static let paneGone = "That cmux pane is gone. Choose a pane to resume the session in."
