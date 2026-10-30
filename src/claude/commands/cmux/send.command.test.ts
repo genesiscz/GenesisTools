@@ -554,3 +554,27 @@ test("a session in tmux is typed into the tab running its tmux client, and refus
     expect(await capturedResult()).toContain(`"hidden": true`);
     expect(events.filter((event) => event.startsWith("send"))).toEqual([]);
 });
+
+test("Claude's registry status `waiting` is an open dialog for that session only, never for a parked copy", async () => {
+    const { claudeRegistryDialog } = await import("@app/claude/lib/cmux/dialog-guard");
+    const entry = {
+        pid: 42,
+        sessionId: SESSION_A,
+        name: "fixture",
+        cwd: "/fixture",
+        status: "waiting",
+        kind: "interactive",
+        socketPath: "/fixture/42.sock",
+        file: "/fixture/sessions/42.json",
+    };
+
+    expect(claudeRegistryDialog(SESSION_A, () => [entry])).toEqual({
+        kind: "decision",
+        question: null,
+        signal: "turn-state",
+    });
+    expect(claudeRegistryDialog(SESSION_A, () => [{ ...entry, status: "idle" }])).toBeNull();
+    expect(claudeRegistryDialog(SESSION_A, () => [{ ...entry, status: "busy" }])).toBeNull();
+    expect(claudeRegistryDialog(SESSION_A, () => [{ ...entry, parkedJobId: "job-1" }])).toBeNull();
+    expect(claudeRegistryDialog("another-session", () => [entry])).toBeNull();
+});
