@@ -1,3 +1,4 @@
+import type { EffortRange } from "@genesiscz/utils/ai/catalog/efforts";
 import type { AccountRef } from "@genesiscz/utils/ai/config/refs";
 import type { CopilotAccountType, CopilotUsageSummary } from "@genesiscz/utils/ai/github-copilot/types";
 import type { GrokBillingConfig, GrokModelRecord, GrokSettings } from "@genesiscz/utils/ai/grok";
@@ -423,7 +424,7 @@ export interface LegacyClaudeSessionsConfig {
 }
 
 /** `ultra` is a Codex UI level: the Codex agent resolves it per model (codex-rs `resolve_reasoning_effort`). */
-export type ReasoningEffort = "low" | "medium" | "high" | "xhigh" | "minimal" | "max" | "ultra";
+export type ReasoningEffort = EffortRange<"minimal", "ultra">;
 
 /**
  * Where a request's effort came from: the model id's `:effort` suffix (it wins), the client's own setting (Claude

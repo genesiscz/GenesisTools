@@ -45,7 +45,7 @@ export function effortRange<From extends ReasoningEffort, To extends ReasoningEf
     const last = REASONING_EFFORTS.indexOf(to);
 
     return REASONING_EFFORTS.filter(
-        (effort, index): effort is EffortRange<From, To> => index >= first && index <= last
+        (_effort, index): _effort is EffortRange<From, To> => index >= first && index <= last
     );
 }
 

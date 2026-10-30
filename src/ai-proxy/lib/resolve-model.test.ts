@@ -1,12 +1,17 @@
-import { describe, expect, it } from "bun:test";
+import { describe, expect, expectTypeOf, it } from "bun:test";
 import { resolveProxyRoute } from "@app/ai-proxy/lib/account-model-ref";
 import { sessionRouteDenial } from "@app/ai-proxy/lib/clients";
 import type { ModelFacts } from "@app/ai-proxy/lib/providers/definition";
-import { parseProxyModelId, resolveModel } from "@app/ai-proxy/lib/resolve-model";
+import {
+    parseProxyModelId,
+    REASONING_EFFORT_SUFFIXES,
+    resolveModel,
+    splitReasoningEffortSuffix,
+} from "@app/ai-proxy/lib/resolve-model";
 import { type PickerModelGroup, sessionPickerModels } from "@app/ai-proxy/lib/sessions/picker-models";
 import { type AiProxySessionRecord, sessionProxyAccounts } from "@app/ai-proxy/lib/sessions/records";
 import { resolveSessionRoute, sessionPinnedRoute } from "@app/ai-proxy/lib/sessions/routing";
-import type { AiProxyAccountConfig } from "@app/ai-proxy/lib/types";
+import type { AiProxyAccountConfig, ReasoningEffort } from "@app/ai-proxy/lib/types";
 import { mergeCodexModelRecords } from "@genesiscz/utils/ai/openai/codex-models";
 import { SafeJSON } from "@genesiscz/utils/json";
 
@@ -402,5 +407,23 @@ describe("resolveSessionRoute", () => {
 
         expect(route.reasoningEffort).toBe("high");
         expect(route.effortSource).toBe("suffix");
+    });
+});
+
+describe("the proxy's reasoning effort vocabulary", () => {
+    it("is the catalog's efforts from minimal to ultra, and each one is stripped as a model id suffix", () => {
+        expectTypeOf<ReasoningEffort>().toEqualTypeOf<
+            "minimal" | "low" | "medium" | "high" | "xhigh" | "max" | "ultra"
+        >();
+        expect([...REASONING_EFFORT_SUFFIXES]).toEqual(["minimal", "low", "medium", "high", "xhigh", "max", "ultra"]);
+
+        for (const effort of REASONING_EFFORT_SUFFIXES) {
+            expect(splitReasoningEffortSuffix(`some-model:${effort}`)).toEqual({
+                modelId: "some-model",
+                reasoningEffort: effort,
+            });
+        }
+
+        expect(splitReasoningEffortSuffix("some-model:none")).toEqual({ modelId: "some-model:none" });
     });
 });

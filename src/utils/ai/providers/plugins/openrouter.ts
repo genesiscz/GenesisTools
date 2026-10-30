@@ -1,4 +1,5 @@
 import { createOpenAI } from "@ai-sdk/openai";
+import { effortRange } from "@genesiscz/utils/ai/catalog/efforts";
 import { logger } from "@genesiscz/utils/logger";
 import { createOpenRouter, type OpenRouterChatSettings } from "@openrouter/ai-sdk-provider";
 import { z } from "zod";
@@ -63,7 +64,7 @@ const reasoningSchema = z.object({
     enabled: z.boolean().optional(),
     exclude: z.boolean().optional(),
     max_tokens: z.number().optional(),
-    effort: z.enum(["xhigh", "high", "medium", "low", "minimal", "none"]).optional(),
+    effort: z.enum(effortRange("none", "xhigh")).optional(),
 });
 
 const overridesSchema = z.object({

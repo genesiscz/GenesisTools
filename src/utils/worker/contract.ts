@@ -1,3 +1,4 @@
+import { type EffortRange, effortRange } from "@genesiscz/utils/ai/catalog/efforts";
 import { toolCommand } from "@genesiscz/utils/cli/tool-command";
 import type { WorkerBackend } from "./capabilities";
 
@@ -22,8 +23,8 @@ export interface WorkerContractInput {
 }
 
 /** Review depth tiers, shallowest first. They reuse the reasoning-effort names the workers already take. */
-export const REVIEW_EFFORTS = ["low", "medium", "high", "xhigh", "max"] as const;
-export type ReviewEffort = (typeof REVIEW_EFFORTS)[number];
+export type ReviewEffort = EffortRange<"low", "max">;
+export const REVIEW_EFFORTS: readonly ReviewEffort[] = effortRange("low", "max");
 
 export function isReviewEffort(value: unknown): value is ReviewEffort {
     return typeof value === "string" && (REVIEW_EFFORTS as readonly string[]).includes(value);
