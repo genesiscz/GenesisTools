@@ -1,15 +1,30 @@
-import { decodeImageRgba, decodeImageRgbaScaled, encodeRgbaToPng } from "@genesiscz/utils/image";
+import { decodeImageRgba, decodeImageRgbaScaled, encodeRgbaToPng, renderAnnotationPlan } from "@genesiscz/utils/image";
 import { compareImagePixels } from "@genesiscz/utils/image/difference";
 import { logger, out } from "@genesiscz/utils/logger";
 import type { Command } from "commander";
 import pc from "picocolors";
+import { DEFAULT_REGION_OPTIONS, type DiffRegion, findDiffRegions, regionAnnotations } from "../lib/diff-regions";
 
 interface CompareOptions {
     threshold: string;
     maxMismatch?: string;
     diffOut?: string;
     resizeToMatch?: boolean;
+    regions?: boolean;
+    mergeDistance: string;
+    minArea: string;
+    annotateOut?: string;
     json?: boolean;
+}
+
+function nonNegativeNumber(value: string, flag: string): number {
+    const parsed = Number(value);
+    if (!Number.isFinite(parsed) || parsed < 0) {
+        logger.error(`${flag} must be a number of pixels, 0 or more (got "${value}")`);
+        process.exit(2);
+    }
+
+    return parsed;
 }
 
 export function registerCompareScreenshotCommand(program: Command): void {
@@ -26,6 +41,24 @@ export function registerCompareScreenshotCommand(program: Command): void {
         .option("--max-mismatch <pct>", "fail (exit 1) when mismatched pixels exceed this percentage, e.g. 0.5")
         .option("--diff-out <path>", "write the highlighted diff PNG here")
         .option("--resize-to-match", "scale image B to A's dimensions instead of erroring on mismatch")
+        .option(
+            "--regions",
+            "also find the changed regions: mismatched pixels (anti-aliasing excluded) clustered into boxes, printed as {x,y,w,h,pixels} in image A's pixels"
+        )
+        .option(
+            "--merge-distance <px>",
+            "with --regions: changes at most this far apart join one box",
+            String(DEFAULT_REGION_OPTIONS.mergeDistance)
+        )
+        .option(
+            "--min-area <px>",
+            "with --regions: drop a box with fewer mismatched pixels (noise)",
+            String(DEFAULT_REGION_OPTIONS.minArea)
+        )
+        .option(
+            "--annotate-out <path>",
+            "write image B with the region boxes drawn and numbered (implies --regions; the `draw` engine)"
+        )
         .option("--json", "machine-readable result JSON on stdout")
         .action(async (aPath: string, bPath: string, opts: CompareOptions) => {
             for (const p of [aPath, bPath]) {
@@ -77,6 +110,24 @@ export function registerCompareScreenshotCommand(program: Command): void {
                 await Bun.write(opts.diffOut, encodeRgbaToPng(diff, a.width, a.height));
             }
 
+            let regions: DiffRegion[] | undefined;
+            if (opts.regions || opts.annotateOut) {
+                regions = findDiffRegions(a, b, {
+                    threshold,
+                    mergeDistance: nonNegativeNumber(opts.mergeDistance, "--merge-distance"),
+                    minArea: nonNegativeNumber(opts.minArea, "--min-area"),
+                }).regions;
+                logger.debug({ a: aPath, b: bPath, regions: regions.length }, "compare-screenshot regions");
+            }
+
+            if (opts.annotateOut && regions) {
+                const drawn = await renderAnnotationPlan({
+                    input: resized ? encodeRgbaToPng(b.data, b.width, b.height) : bPath,
+                    annotations: regionAnnotations(regions),
+                });
+                await Bun.write(opts.annotateOut, drawn.png);
+            }
+
             const maxMismatch = opts.maxMismatch !== undefined ? Number(opts.maxMismatch) : undefined;
             if (maxMismatch !== undefined && (!Number.isFinite(maxMismatch) || maxMismatch < 0 || maxMismatch > 100)) {
                 logger.error(`--max-mismatch must be a percentage between 0 and 100 (got "${opts.maxMismatch}")`);
@@ -100,6 +151,8 @@ export function registerCompareScreenshotCommand(program: Command): void {
                     similarity: Number(similarity.toFixed(6)),
                     maxMismatchPct: maxMismatch,
                     diffOut: opts.diffOut,
+                    regions,
+                    annotateOut: opts.annotateOut,
                 });
             } else {
                 const verdict =
@@ -114,6 +167,19 @@ export function registerCompareScreenshotCommand(program: Command): void {
 
                 if (opts.diffOut) {
                     out.println(pc.dim(`diff -> ${opts.diffOut}`));
+                }
+
+                if (regions) {
+                    out.println(`${regions.length} changed region(s)`);
+                    for (const [index, region] of regions.entries()) {
+                        out.println(
+                            `  ${index + 1}. x=${region.x} y=${region.y} w=${region.w} h=${region.h} (${region.pixels} px)`
+                        );
+                    }
+                }
+
+                if (opts.annotateOut) {
+                    out.println(pc.dim(`annotated -> ${opts.annotateOut}`));
                 }
             }
 
