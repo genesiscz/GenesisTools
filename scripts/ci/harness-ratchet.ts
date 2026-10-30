@@ -47,14 +47,7 @@ export const HARNESS_BRANCH_RATCHET: ReadonlySet<string> = new Set<string>([
     "src/utils/cli/failures/caller.ts",
 ]);
 
-export const HOOK_PAYLOAD_READ_RATCHET: ReadonlySet<string> = new Set<string>([
-    "src/agents/lib/hooks/decisions.ts",
-    "src/agents/lib/hooks/diff/capture.ts",
-    "src/agents/lib/hooks/diff/run.ts",
-    "src/agents/lib/hooks/guard.ts",
-    "src/ai-spend/lib/reports/statusline.ts",
-    "src/utils/ai/providers/plugins/anthropic-sub/statusline.ts",
-]);
+export const HOOK_PAYLOAD_READ_RATCHET: ReadonlySet<string> = new Set<string>([]);
 
 export const AGENT_PROCESS_MATCH_RATCHET: ReadonlySet<string> = new Set<string>([
     "scripts/benchmarks/process/call-sites.ts",

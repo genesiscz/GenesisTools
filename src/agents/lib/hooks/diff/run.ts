@@ -606,11 +606,7 @@ interface DeferredCall {
  * not found, so the call is diffed now, as before, rather than deferred with no way to see it end.
  */
 function backgroundTaskOf(payload: HookPayload): DeferredCall | null {
-    const response = payload.raw.tool_response ?? payload.raw.toolResponse;
-    const id =
-        typeof response === "object" && response !== null && "backgroundTaskId" in response
-            ? response.backgroundTaskId
-            : undefined;
+    const id = payload.toolResponse?.backgroundTaskId;
     const transcript = transcriptOf(payload);
 
     if (typeof id !== "string" || !/^[A-Za-z0-9_-]+$/.test(id) || !transcript || !payload.sessionId) {
@@ -901,10 +897,11 @@ export function flushDeferred({
                     cwd: made.cwd,
                     event: made.event,
                     nativeDiffFiles: [],
-                    raw: {
-                        transcript_path: transcriptOf(payload),
-                        ...(deferred.agent ? { agent_id: deferred.agent } : {}),
-                    },
+                    // The deferred call's own input and response are gone: only the session's transcript (kept by
+                    // the spread) and the agent that made the call carry over, never this later call's tool fields.
+                    toolInput: undefined,
+                    toolResponse: undefined,
+                    raw: deferred.agent ? { agent_id: deferred.agent } : {},
                 },
                 config,
                 record,
@@ -2022,12 +2019,6 @@ function recordBashEdits(payload: HookPayload, captures: CapturedEdit[], since: 
     }
 }
 
-function field(value: unknown, key: string): unknown {
-    return typeof value === "object" && value !== null && key in value
-        ? (value as Record<string, unknown>)[key]
-        : undefined;
-}
-
 /**
  * Session log row for an Edit, MultiEdit or Write call. The harness renders these diffs itself,
  * so this only records. Tests never touch the home directory. Never throws.
@@ -2038,8 +2029,8 @@ export function recordFileToolChange(payload: HookPayload): void {
             return;
         }
 
-        const path = field(payload.raw.tool_input ?? payload.raw.toolInput, "file_path");
-        const original = field(payload.raw.tool_response ?? payload.raw.toolResponse, "originalFile");
+        const path = payload.toolInput?.file_path;
+        const original = payload.toolResponse?.originalFile;
 
         if (typeof path !== "string" || path.length === 0) {
             return;
@@ -2072,8 +2063,7 @@ export function recordFileToolChange(payload: HookPayload): void {
  */
 export function noteFileToolInput(payload: HookPayload): void {
     try {
-        const input = payload.raw.tool_input ?? payload.raw.toolInput;
-        const named = mentionsOf({ tool: payload.tool, input, cwd: payload.cwd });
+        const named = mentionsOf({ tool: payload.tool, input: payload.toolInput, cwd: payload.cwd });
 
         if (named.length === 0 || !payload.sessionId) {
             return;

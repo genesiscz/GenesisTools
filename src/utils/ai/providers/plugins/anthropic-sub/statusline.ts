@@ -1,6 +1,6 @@
 import { existsSync, readFileSync, realpathSync, statSync } from "node:fs";
-import { homedir } from "node:os";
 import { join } from "node:path";
+import { statuslineInputFrom } from "@genesiscz/utils/agents/hooks/statusline-input";
 import { accountEnvVar, accountFromEnv } from "@genesiscz/utils/ai/account-env";
 import { normalizeLimits } from "@genesiscz/utils/ai/providers/plugins/anthropic-sub/limits";
 import { snapshotToAccountUsage } from "@genesiscz/utils/ai/providers/plugins/anthropic-sub/usage";
@@ -14,6 +14,7 @@ import { env } from "@genesiscz/utils/env";
 import { SafeJSON } from "@genesiscz/utils/json";
 import { logger } from "@genesiscz/utils/logger";
 import { readProcess, readProcessEnvironment } from "@genesiscz/utils/process/processes";
+import { claudeJsonPath, nativeHomePath } from "@genesiscz/utils/providers/session-paths";
 import { atomicWriteFileSync, Storage } from "@genesiscz/utils/storage/storage";
 
 /**
@@ -43,16 +44,8 @@ interface TranscriptFacts {
 
 const transcriptFacts = new WeakMap<StatuslinePayload, Promise<TranscriptFacts>>();
 
-function claudeDir(): string {
-    return env.paths.getClaudeConfigDir() ?? join(homedir(), ".claude");
-}
-
 function asString(value: unknown): string | null {
     return typeof value === "string" && value.length > 0 ? value : null;
-}
-
-function asNumber(value: unknown): number | null {
-    return typeof value === "number" && Number.isFinite(value) ? value : null;
 }
 
 function asRecord(value: unknown): Record<string, unknown> | null {
@@ -62,35 +55,31 @@ function asRecord(value: unknown): Record<string, unknown> | null {
 }
 
 export function parseClaudeCodePayload(raw: Record<string, unknown>): StatuslinePayload | null {
-    const workspace = asRecord(raw.workspace);
-    const cwd = asString(workspace?.current_dir) ?? asString(raw.cwd);
+    const input = statuslineInputFrom(raw);
 
-    if (!cwd) {
+    if (!input.cwd) {
         return null;
     }
 
-    const model = asRecord(raw.model);
-    const contextWindow = asRecord(raw.context_window);
-    const usage = asRecord(contextWindow?.current_usage);
-    const agent = asRecord(raw.agent);
+    const usage = input.contextWindow?.currentUsage;
 
     return {
         host: "claude-code",
-        cwd,
-        projectDir: asString(workspace?.project_dir),
-        sessionId: asString(raw.session_id),
-        transcriptPath: asString(raw.transcript_path),
-        modelDisplayName: asString(model?.display_name),
-        modelId: asString(model?.id),
-        contextWindowSize: asNumber(contextWindow?.context_window_size),
+        cwd: input.cwd,
+        projectDir: input.projectDir ?? null,
+        sessionId: input.sessionId ?? null,
+        transcriptPath: input.transcriptPath ?? null,
+        modelDisplayName: input.model?.displayName ?? null,
+        modelId: input.model?.id ?? null,
+        contextWindowSize: input.contextWindow?.size ?? null,
         usage: usage
             ? {
-                  inputTokens: asNumber(usage.input_tokens) ?? 0,
-                  cacheCreationTokens: asNumber(usage.cache_creation_input_tokens) ?? 0,
-                  cacheReadTokens: asNumber(usage.cache_read_input_tokens) ?? 0,
+                  inputTokens: usage.inputTokens ?? 0,
+                  cacheCreationTokens: usage.cacheCreationInputTokens ?? 0,
+                  cacheReadTokens: usage.cacheReadInputTokens ?? 0,
               }
             : null,
-        isAgentFrame: asString(agent?.name) !== null,
+        isAgentFrame: input.agentName !== undefined,
         raw,
     };
 }
@@ -207,7 +196,12 @@ async function resolveSessionName(payload: StatuslinePayload, cache: StatuslineC
         return null;
     }
 
-    const indexPath = join(claudeDir(), "projects", escapedProjectDir(payload.projectDir), "sessions-index.json");
+    const indexPath = nativeHomePath(
+        "claude",
+        "projects",
+        escapedProjectDir(payload.projectDir),
+        "sessions-index.json"
+    );
 
     if (!existsSync(indexPath)) {
         return null;
@@ -378,7 +372,7 @@ async function usageFor(accountName: string): Promise<AccountSegmentData> {
 }
 
 async function resolveAutocompact(cache: StatuslineCache): Promise<boolean | null> {
-    const path = join(claudeDir(), ".claude.json");
+    const path = claudeJsonPath();
 
     if (!existsSync(path)) {
         return null;
@@ -406,7 +400,7 @@ async function resolveAutocompact(cache: StatuslineCache): Promise<boolean | nul
 }
 
 function settingsPath(): string {
-    return join(claudeDir(), "settings.json");
+    return nativeHomePath("claude", "settings.json");
 }
 
 /** `~/.claude/settings.json` is a symlink into the GenesisClaude repo; write the real file. */

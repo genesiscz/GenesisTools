@@ -1,19 +1,12 @@
-import { SafeJSON } from "@genesiscz/utils/json";
+import { parseStatuslineInput, type StatuslineInput } from "@genesiscz/utils/agents/hooks/statusline-input";
 import type { PricingTable } from "../types";
 import { identifySessionBlocks } from "./blocks";
 import { zonedDay } from "./dates";
-import { asRecord, asString } from "./jsonl";
 import { pricedEventCost } from "./load";
 import type { CostMode, SpendEvent } from "./types";
 
-export interface StatuslineHook {
-    session_id: string;
-    transcript_path?: string;
-    model?: { id?: string; display_name?: string };
-    cost?: { total_cost_usd?: number };
-    effort?: { level?: string };
-    context_window?: { total_input_tokens?: number; context_window_size?: number };
-}
+/** Claude Code's statusline input with the session id this report needs. */
+export type StatuslineHook = StatuslineInput & { sessionId: string };
 
 export interface StatuslineOptions {
     timezone: string;
@@ -25,52 +18,10 @@ export interface StatuslineOptions {
 }
 
 export function parseStatuslineHook(raw: string): StatuslineHook | null {
-    const trimmed = raw.trim();
+    const input = parseStatuslineInput(raw);
+    const sessionId = input?.sessionId;
 
-    if (!trimmed) {
-        return null;
-    }
-
-    try {
-        const parsed = SafeJSON.parse(trimmed, { strict: true });
-        const record = asRecord(parsed);
-
-        if (!record) {
-            return null;
-        }
-
-        const sessionId = asString(record.session_id) ?? asString(record.sessionId);
-
-        if (!sessionId) {
-            return null;
-        }
-
-        const model = asRecord(record.model);
-        const cost = asRecord(record.cost);
-        const effort = asRecord(record.effort);
-        const context = asRecord(record.context_window) ?? asRecord(record.contextWindow);
-        return {
-            session_id: sessionId,
-            transcript_path: asString(record.transcript_path) ?? asString(record.transcriptPath),
-            model: model
-                ? { id: asString(model.id), display_name: asString(model.display_name) ?? asString(model.displayName) }
-                : undefined,
-            cost: cost
-                ? { total_cost_usd: typeof cost.total_cost_usd === "number" ? cost.total_cost_usd : undefined }
-                : undefined,
-            effort: effort ? { level: asString(effort.level) } : undefined,
-            context_window: context
-                ? {
-                      total_input_tokens:
-                          typeof context.total_input_tokens === "number" ? context.total_input_tokens : undefined,
-                      context_window_size:
-                          typeof context.context_window_size === "number" ? context.context_window_size : undefined,
-                  }
-                : undefined,
-        };
-    } catch {
-        return null;
-    }
+    return input && sessionId ? { ...input, sessionId } : null;
 }
 
 function usd(value: number | undefined): string {
@@ -92,12 +43,12 @@ export function renderStatusline(hook: StatuslineHook, events: SpendEvent[], opt
     const today = zonedDay(options.now.toISOString(), options.timezone);
     const costOf = (event: SpendEvent): number => pricedEventCost(event, options.pricing, options.mode);
     const sessionCost = events
-        .filter((event) => event.sessionId === hook.session_id)
+        .filter((event) => event.sessionId === hook.sessionId)
         .reduce((sum, event) => sum + costOf(event), 0);
     const todayCost = events
         .filter((event) => zonedDay(event.timestamp, options.timezone) === today)
         .reduce((sum, event) => sum + costOf(event), 0);
-    const hookCost = hook.cost?.total_cost_usd;
+    const hookCost = hook.totalCostUsd;
     let sessionDisplay: string;
 
     if (options.costSource === "cc") {
@@ -144,15 +95,15 @@ export function renderStatusline(hook: StatuslineHook, events: SpendEvent[], opt
     }
 
     let context = "N/A";
-    const totalInput = hook.context_window?.total_input_tokens;
-    const windowSize = hook.context_window?.context_window_size;
+    const totalInput = hook.contextWindow?.totalInputTokens;
+    const windowSize = hook.contextWindow?.size;
 
     if (typeof totalInput === "number" && typeof windowSize === "number" && windowSize > 0) {
         const pct = Math.round((totalInput / windowSize) * 100);
         context = `${totalInput.toLocaleString()} (${pct}%)`;
     }
 
-    const modelLabel = hook.model?.display_name ?? hook.model?.id ?? "unknown";
-    const effort = hook.effort?.level ? ` (${hook.effort.level})` : "";
+    const modelLabel = hook.model?.displayName ?? hook.model?.id ?? "unknown";
+    const effort = hook.effortLevel ? ` (${hook.effortLevel})` : "";
     return `🤖 ${modelLabel}${effort} | 💰 ${sessionDisplay} session / ${usd(todayCost)} today / ${blockInfo}${burn} | 🧠 ${context}`;
 }

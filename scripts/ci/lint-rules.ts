@@ -619,11 +619,14 @@ const RULES: Rule[] = [
             },
         },
         message:
-            "Read hook payload fields through HookPayload in src/agents/lib/hooks/payload.ts. " +
+            "Read hook payload fields through HookPayload in src/agents/lib/hooks/payload.ts, and Claude Code's " +
+            "statusline input through StatuslineInput in src/utils/agents/hooks/statusline-input.ts. " +
             "Add a typed field there instead of reading or destructuring the raw payload in a caller. " +
             "scripts/ci/harness-ratchet.ts lists the callers not migrated yet.",
         onlyIn: /^(?:src|scripts)\//,
-        allowedIn: /(?:^|\/)src\/agents\/lib\/hooks\/payload\.ts$/,
+        // Two owners, one per input shape: hook payloads, and Claude Code's statusline input (under src/utils/ because
+        // the @genesiscz/utils statusline renderer reads it and src/utils/ never imports @app/*).
+        allowedIn: /(?:^|\/)src\/(?:agents\/lib\/hooks\/payload|utils\/agents\/hooks\/statusline-input)\.ts$/,
         allowedFiles: HOOK_PAYLOAD_READ_RATCHET,
         test: (_text, node) => readsHookPayload(node),
     },
