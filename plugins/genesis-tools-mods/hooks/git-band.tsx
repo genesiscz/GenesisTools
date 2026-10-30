@@ -34,7 +34,7 @@ import {
 } from "./checkouts";
 import { type GenesisProbe, genesisProbe, hubLink } from "./genesis";
 import { liveAgo } from "./live";
-import { type Feature, type Host, isRecord, logMod, settingsOf } from "./shared";
+import { type Feature, type Host, isRecord, logMod, logReading, settingsOf } from "./shared";
 import { type SharedRunResult, sharedRun } from "./shared-run";
 import {
     actionButton,
@@ -133,10 +133,27 @@ async function run(host: Host, argv: string[], cwd: string): Promise<string | un
     return done?.exitCode === 0 ? done.stdout : undefined;
 }
 
+/**
+ * The checkout of a cwd, remembered for 10 minutes (a cwd outside a repository for 1 minute). `bandRoots` runs on
+ * every refresh, and its `git rev-parse` was 1,334 of the 14,746 processes of 20 sessions in a quiet 3 hours on
+ * 2026-10-30.
+ */
+const cwdRoots = new Map<string, { root: string | undefined; at: number }>();
+const CWD_ROOT_MS = 10 * 60_000;
+const CWD_NO_ROOT_MS = 60_000;
+
 async function cwdRoot(host: Host): Promise<string | undefined> {
     const cwd = await host.cwd();
+    const known = cwdRoots.get(cwd);
 
-    return (await run(host, ["git", "rev-parse", "--show-toplevel"], cwd))?.trim() || undefined;
+    if (known && Date.now() - known.at < (known.root ? CWD_ROOT_MS : CWD_NO_ROOT_MS)) {
+        return known.root;
+    }
+
+    const root = (await run(host, ["git", "rev-parse", "--show-toplevel"], cwd))?.trim() || undefined;
+    cwdRoots.set(cwd, { root, at: Date.now() });
+
+    return root;
 }
 
 /** The checkouts the band shows now, with why: the added ones, then the ones the session worked in, the last first. */
@@ -388,7 +405,7 @@ async function rowPrs(
  * The row of a worktree the session removed: the branch it had last, that branch's PRs and the earlier ones, read in
  * the main checkout; null when the branch has no local ref and no PR left to show.
  */
-async function goneRow(host: Host, root: string, touch: Touch): Promise<GitBand | null> {
+async function goneRow(host: Host, root: string, touch: Touch, ttlMs: number): Promise<GitBand | null> {
     const branch = touch.branches?.[0];
     const repo = touch.repo;
 
@@ -396,10 +413,11 @@ async function goneRow(host: Host, root: string, touch: Touch): Promise<GitBand 
         return null;
     }
 
-    const ref = await run(
+    const ref = await gitText(
         host,
         ["git", "for-each-ref", "--format=%(refname:short)%09%(upstream:track)", `refs/heads/${branch}`],
-        repo
+        repo,
+        ttlMs
     );
     const sync = ref?.split("\t")[1] ?? "";
     const prs = await rowPrs(host, { cwd: repo, root, which: branch, branch, touch });
@@ -435,9 +453,16 @@ async function goneRow(host: Host, root: string, touch: Touch): Promise<GitBand 
  * `tools git status` would cost a Bun start (0.2-0.4 s on that Mac) for the 0.15-0.4 s git itself takes.
  */
 const SHARED_GIT_MS = 30_000;
+/**
+ * A timer's refresh accepts an answer as old as the timer's period: the sessions of one checkout then run git about
+ * once per period between them, instead of once each (1,803 `git status`, 1,399 `git diff` and 1,253 `gh pr` in a
+ * quiet 3 hours of 20 sessions on 2026-10-30, with a 30 s share). A row is then at most two periods behind a change
+ * made outside every session; a change a session's own tool made is read fresh and shared at once.
+ */
+const TIMER_SHARED_MS = EVERY_MS;
 
-async function gitText(host: Host, argv: string[], root: string, shared: boolean): Promise<string | undefined> {
-    const done = await sharedRun(host, { argv, cwd: root, ttlMs: shared ? SHARED_GIT_MS : 0, timeoutMs: 15_000 });
+async function gitText(host: Host, argv: string[], root: string, ttlMs: number): Promise<string | undefined> {
+    const done = await sharedRun(host, { argv, cwd: root, ttlMs, timeoutMs: 15_000 });
 
     return done?.exitCode === 0 ? done.stdout : undefined;
 }
@@ -446,9 +471,9 @@ async function readRow(
     host: Host,
     root: string,
     why: GitBand["why"],
-    shared: boolean
+    ttlMs: number
 ): Promise<GitBand | null | undefined> {
-    const status = await gitText(host, ["git", "status", "--porcelain", "--branch"], root, shared);
+    const status = await gitText(host, ["git", "status", "--porcelain", "--branch"], root, ttlMs);
     const earlier = (await settingsOf(host)).git.earlier === "show";
     const touch = earlier ? (await sessionCheckouts(host)).find((held) => held.root === root) : undefined;
 
@@ -457,10 +482,10 @@ async function readRow(
             return undefined;
         }
 
-        return touch ? goneRow(host, root, touch) : null;
+        return touch ? goneRow(host, root, touch, ttlMs) : null;
     }
 
-    const numstat = parseNumstat((await gitText(host, ["git", "diff", "--numstat", "HEAD"], root, shared)) ?? "");
+    const numstat = parseNumstat((await gitText(host, ["git", "diff", "--numstat", "HEAD"], root, ttlMs)) ?? "");
     const state = parseStatus(status);
     const prs = await rowPrs(host, { cwd: root, root, which: "", branch: state.branch, touch });
     const { repo } = await headOf(host, root);
@@ -471,12 +496,13 @@ async function readRow(
 async function refreshNow(host: Host, why: string): Promise<void> {
     const started = Date.now();
     const roots = await bandRoots(host);
-    // A timer reads the answers other sessions share; a tool's refresh asks git fresh only for the checkouts it
-    // changed; a press or a command asks fresh for all.
+    // A timer reads the answers other sessions share, as old as its period; a tool's refresh asks git fresh only for
+    // the checkouts it changed and shares the rest for 30 s; a press or a command asks fresh for all.
     const fresh = new Set(changedRoots);
     changedRoots.clear();
-    const shared = (root: string) => why === "timer" || why === "start" || (why === "tool" && !fresh.has(root));
-    const read = await Promise.all(roots.map((at) => readRow(host, at.root, at.why, shared(at.root))));
+    const ttlOf = (root: string) =>
+        why === "timer" || why === "start" ? TIMER_SHARED_MS : why === "tool" && !fresh.has(root) ? SHARED_GIT_MS : 0;
+    const read = await Promise.all(roots.map((at) => readRow(host, at.root, at.why, ttlOf(at.root))));
     // A checkout git could not read this time keeps its last row; one whose folder is gone with nothing to show goes.
     const next = roots
         .map(({ root }, index) => {
@@ -488,7 +514,7 @@ async function refreshNow(host: Host, why: string): Promise<void> {
 
     rows = next;
     host.redraw();
-    await logMod(host, "git", {
+    await logReading(host, "git", {
         event: "refresh",
         why,
         rows: next.map((band) => ({
