@@ -1,4 +1,3 @@
-import { importNativeCodexSession } from "@genesiscz/utils/ai/openai/native-session-import";
 import { nativeSessionRoots, nativeSessionRootsWithLegacyHomes } from "@genesiscz/utils/providers/session-paths";
 import { readCompatibilityTranscript } from "./reader-compat";
 import { createClaudeHistoryOperations } from "./readers/claude";
@@ -6,6 +5,7 @@ import { claudeIndexesFile, discoverClaudeHistorySources } from "./readers/claud
 import { readClaudeStatistics } from "./readers/claude-statistics";
 import { createCodexHistoryOperations } from "./readers/codex";
 import { codexIndexesFile, discoverCodexHistorySources } from "./readers/codex-discovery";
+import { importNativeCodexSession } from "./readers/codex-import";
 import { readCodexStatistics } from "./readers/codex-statistics";
 import { createGrokHistoryOperations } from "./readers/grok";
 import { discoverGrokHistorySources, grokIndexesFile } from "./readers/grok-discovery";

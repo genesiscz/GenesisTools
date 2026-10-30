@@ -4,7 +4,7 @@ import { tmpdir } from "node:os";
 import { join } from "node:path";
 import type { AgentSession, NativeSessionImportContext } from "@genesiscz/utils/agent-sessions/types";
 import { SafeJSON } from "@genesiscz/utils/json";
-import { importNativeCodexSession } from "./native-session-import";
+import { importNativeCodexSession } from "./codex-import";
 
 async function fixture(mode = "legacy") {
     const root = await mkdtemp(join(tmpdir(), "gt-copy-session-"));
