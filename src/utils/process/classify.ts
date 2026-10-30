@@ -1,3 +1,6 @@
+import { ACCOUNT_PROVIDER_ALIASES } from "@genesiscz/utils/ai/providers/alias-list";
+import { harnessDrivers, harnessProcess } from "@genesiscz/utils/ai/providers/harness-index";
+
 /**
  * What a process is, from its argv alone: an agent CLI (claude, codex, grok, cursor-agent), a
  * GenesisTools wrapper that started one (`tools claude run`), an MCP server, an agent's tool shell,
@@ -6,7 +9,8 @@
  * splitting a path that may contain spaces, except argv[0] of a bare binary.
  */
 
-export const AGENT_PROVIDERS = ["claude", "codex", "grok", "cursor-agent"] as const;
+/** The agents a process can run: every harness, plus cursor-agent, which GenesisTools recognises but does not drive. */
+export const AGENT_PROVIDERS = [...ACCOUNT_PROVIDER_ALIASES, "cursor-agent"] as const;
 export type AgentProvider = (typeof AGENT_PROVIDERS)[number];
 
 export type ProcKind = "agent" | "wrapper" | "mcp" | "shell" | "tools" | "other";
@@ -31,14 +35,12 @@ const LAUNCHER_PREFIX = /^\S*\/GenesisTools\.app\/Contents\/MacOS\/GenesisTools\
 /** `…/GenesisTools/src/<tool>/index.ts <verb>` (gt-* launchers, `bun run`) or `…/GenesisTools/tools <tool> <verb>`. */
 const TOOL_ENTRY =
     /\/src\/([\w-]+)\/index\.tsx?(?:\s+(\S+))?|\/GenesisTools(?:\/\.worktrees\/[^/\s]+)?\/tools\s+([\w-]+)(?:\s+(\S+))?/;
-const WRAPPER_TOOLS: Record<string, AgentProvider> = {
-    claude: "claude",
-    cc: "claude",
-    codex: "codex",
-    grok: "grok",
-    cursor: "cursor-agent",
-    "cursor-agent": "cursor-agent",
-};
+/** `tools <name> run …`: a harness by its id or one of its aliases (`cc`), and cursor-agent by its two names. */
+const WRAPPER_TOOLS: Readonly<Record<string, AgentProvider>> = Object.fromEntries([
+    ...harnessDrivers().flatMap((driver) => [driver.id, ...driver.identity.aliases].map((name) => [name, driver.id])),
+    ["cursor", "cursor-agent"],
+    ["cursor-agent", "cursor-agent"],
+]);
 const WRAPPER_VERBS = new Set(["run", "resume", "start"]);
 /** `tools <agent> run|start|resume …` from any checkout path or off PATH: the launcher that starts the agent. */
 const TOOLS_LAUNCHER = /(?:^|[\s/])tools\s+([\w-]+)\s+(?:run|start|resume)\b/;
@@ -66,42 +68,30 @@ function agentOf(command: string): AgentProvider | null {
     }
 
     const name = basename(first);
+    const harness = harnessDrivers().find((driver) =>
+        harnessProcess(driver.id).runsCli({ argv0: first, name, command })
+    );
 
-    if (
-        name === "claude" ||
-        /\/claude\/versions\/[\d.]+$/.test(first) ||
-        /@anthropic-ai\/claude-code\/cli\.m?js\b/.test(command)
-    ) {
-        return "claude";
-    }
-
-    if (/^codex(?:-[\w-]+)?$/.test(name) || /@openai\/codex\/bin\/codex\.m?js\b/.test(command)) {
-        return "codex";
+    if (harness) {
+        return harness.id;
     }
 
     if (name === "cursor-agent" || /\/cursor-agent\/versions\/[^/\s]+\/index\.m?js\b/.test(command)) {
         return "cursor-agent";
     }
 
-    if (
-        name === "grok" ||
-        /^grok-\d+(?:\.\d+)*(?:-[\w-]+)?$/.test(name) ||
-        /\bgrok-cli\/dist\/index\.m?js\b/.test(command)
-    ) {
-        return "grok";
-    }
-
     // A script agent started through an interpreter: `node /x/bin/cursor-agent`, `bash ~/.local/bin/grok`.
     const second = basename(command.trim().split(/\s+/)[1] ?? "");
 
-    if (
-        INTERPRETERS.test(name) &&
-        (second === "cursor-agent" || second === "claude" || second === "grok" || second === "codex")
-    ) {
-        return second;
+    if (!INTERPRETERS.test(name)) {
+        return null;
     }
 
-    return null;
+    if (second === "cursor-agent") {
+        return "cursor-agent";
+    }
+
+    return harnessDrivers().find((driver) => driver.identity.binary === second)?.id ?? null;
 }
 
 /** The session id an agent's argv names: `--resume <uuid>`, `-r <uuid>`, `--session-id <uuid>`, `resume <uuid>`. */

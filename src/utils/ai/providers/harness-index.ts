@@ -1,6 +1,6 @@
 import type { NativeSessionReader } from "@genesiscz/utils/agent-sessions/types";
 import { ACCOUNT_PROVIDER_ALIASES } from "@genesiscz/utils/ai/providers/alias-list";
-import type { HostResolver, LaunchRecipe } from "@genesiscz/utils/harness/parts";
+import type { HostResolver, LaunchRecipe, ProcessSignature } from "@genesiscz/utils/harness/parts";
 import { type HarnessDriver, type HarnessId, isPartNote } from "@genesiscz/utils/harness/types";
 import { claudeHarness } from "./plugins/anthropic-sub/harness";
 import { grokHarness } from "./plugins/grok-sub/harness";
@@ -63,6 +63,17 @@ export function harnessHost(id: HarnessId): HostResolver {
 
     if (isPartNote(slot)) {
         throw new Error(`The ${id} harness driver has no host resolver: ${slot.reason}`);
+    }
+
+    return slot;
+}
+
+/** How a harness's CLI is recognised in a process command line; every harness has one. */
+export function harnessProcess(id: HarnessId): ProcessSignature {
+    const slot = harnessDriver(id).parts.process;
+
+    if (isPartNote(slot)) {
+        throw new Error(`The ${id} harness driver has no process signature: ${slot.reason}`);
     }
 
     return slot;

@@ -119,7 +119,6 @@ export const HARNESS_GUARD_ALLOWLIST: Readonly<Record<string, HarnessGuardCounts
     "src/utils/ai/transcripts/types.ts": { table: 2 },
     "src/utils/cli/failures/caller.ts": { table: 1 },
     "src/utils/env/envVariables.ts": { table: 1 },
-    "src/utils/process/classify.ts": { list: 1, table: 1, branch: 5 },
     "src/utils/providers/session-paths.ts": { table: 2, branch: 11 },
     "src/utils/rm/approval.ts": { table: 1 },
     "src/utils/rm/aside.ts": { table: 1 },
