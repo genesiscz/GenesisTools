@@ -1,3 +1,4 @@
+import { randomUUID } from "node:crypto";
 import { existsSync, statSync } from "node:fs";
 import { homedir } from "node:os";
 import { basename, resolve } from "node:path";
@@ -33,7 +34,7 @@ import {
     type SessionNewResult,
     startDevSession,
 } from "../lib/session-new";
-import { fileSessionStore, openSessions, type SessionStore } from "../lib/session-store";
+import { fileSessionStore, openSessions, type SessionProviderBlocks, type SessionStore } from "../lib/session-store";
 
 const { log } = logger.scoped("cmux-session");
 
@@ -60,6 +61,8 @@ export interface SessionNewDeps {
     store: SessionStore;
     accounts: () => Promise<AccountSource>;
     budgets: (agent: SessionAgentId, accounts: readonly AccountChoice[]) => Promise<AccountBudget[]>;
+    /** The id a new session is started under when its agent takes one (Grok's `--session-id`). */
+    sessionId: () => string;
 }
 
 async function liveAccounts(): Promise<AccountSource> {
@@ -87,9 +90,13 @@ function sessionSlug(value: string): string {
     );
 }
 
-function printHuman(name: string, result: SessionNewResult): void {
+function printHuman(name: string, result: SessionNewResult, providers?: SessionProviderBlocks): void {
     out.println(`${name}  ${result.agent}  ${result.workspace}  ${result.surface}  ${result.window}`);
     out.println(result.cwd);
+
+    if (providers?.grok) {
+        out.println(`grok leader ${providers.grok.leader.socket}  session ${providers.grok.leader.sessionId}`);
+    }
 
     if (result.tmuxSession) {
         out.println(`tmux ${result.tmuxSession}`);
@@ -174,6 +181,10 @@ export async function runSessionNew(
     const name = title ? sessionSlug(title) : `${agent}-${sessionSlug(basename(cwd))}-${io.nonce()}`;
     const model = blank(options.model);
     const pidFile = store.pidFile(name);
+    const extras = sessionAgent(agent).launchExtras?.({
+        account: account.name,
+        sessionId: (deps.sessionId ?? randomUUID)(),
+    });
     // The name check, the workspace and the record happen under one name lock: a second start with the same
     // --name in another process waits a moment, then fails instead of sharing this pid file.
     const result = await store.reserve(name, async () => {
@@ -191,6 +202,7 @@ export async function runSessionNew(
                 prompt,
                 promptFile: absolutePrompt,
                 crossMessages: options.crossMessages,
+                ...(extras ? { agentArgs: extras.args } : {}),
                 name: title,
                 viaTmux: options.viaTmux === true,
                 focus: focus.focus,
@@ -220,17 +232,24 @@ export async function runSessionNew(
             command: started.command,
             createdAt: new Date().toISOString(),
             createdBy: "agents-new",
+            ...(extras ? { providers: extras.providers } : {}),
         });
 
         return started;
     });
 
-    log.debug({ name, agent, workspace: result.workspace }, "session recorded");
+    log.debug({ name, agent, workspace: result.workspace, providers: extras?.providers }, "session recorded");
 
     if (options.json) {
-        out.result({ name, account: account.name, model: model ?? null, ...result });
+        out.result({
+            name,
+            account: account.name,
+            model: model ?? null,
+            ...result,
+            ...(extras ? { providers: extras.providers } : {}),
+        });
     } else {
-        printHuman(name, result);
+        printHuman(name, result, extras?.providers);
     }
 
     await out.flush();

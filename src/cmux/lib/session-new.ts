@@ -53,6 +53,8 @@ export interface SessionNewRequest {
     promptFile?: string;
     /** Claude: the per-run cross-messages flag; unset leaves it to `tools claude run`'s saved launch preference. */
     crossMessages?: boolean;
+    /** The agent's `launchExtras` flags for `tools <agent> run`. */
+    agentArgs?: readonly string[];
     name?: string;
     viaTmux?: boolean;
     focus?: boolean;
@@ -342,6 +344,7 @@ export async function startDevSession(input: SessionNewRequest, io: SessionNewIO
         prompt: input.prompt,
         promptFile: input.promptFile,
         crossMessages: input.crossMessages,
+        agentArgs: input.agentArgs,
     });
     const agentLine = input.pidFile ? withPidNote(run, input.pidFile) : run;
     const windowId = await resolveSessionWindow(io);

@@ -1,9 +1,11 @@
 import { isAgentLauncher } from "@app/cmux/lib/launchers";
+import { grokLeaderSocket } from "@app/grok/lib/leader";
 import type { AccountEntry } from "@genesiscz/utils/ai/config/schema";
 import { PROVIDER_ALIASES } from "@genesiscz/utils/ai/providers/aliases";
 import { toolsEntrypoint } from "@genesiscz/utils/cli/tools";
 import { shellWords } from "@genesiscz/utils/session-changes/words";
 import { shellCommandLine, shellQuote } from "@genesiscz/utils/shell/quote";
+import type { SessionProviderBlocks } from "./session-store";
 
 /** The agents `tools cmux agents new` can start. Each one has a `tools <id> run` door with the same shape. */
 export const SESSION_AGENT_IDS = ["claude", "grok", "codex"] as const;
@@ -20,6 +22,27 @@ export interface SessionAgent {
     crossMessages: boolean;
     /** The native subcommand that resumes a session (`codex resume <id>`); null when a flag does it. */
     resumeSubcommand: string | null;
+    /**
+     * What `agents new` adds to the launch so a second client can reach the session without keystrokes: the
+     * `tools <id> run` flags and the record block that names the endpoint. Null when the agent has no such launch.
+     */
+    launchExtras: ((input: { account: string; sessionId: string }) => SessionLaunchExtras) | null;
+}
+
+export interface SessionLaunchExtras {
+    /** `tools <id> run` flags, placed before the prompt. */
+    args: string[];
+    /** The session record's provider block. */
+    providers: SessionProviderBlocks;
+}
+
+/** Grok joins one leader per account; the leader socket and the session id go into the record. */
+function grokLaunchExtras({ account, sessionId }: { account: string; sessionId: string }): SessionLaunchExtras {
+    const socket = grokLeaderSocket(account);
+    return {
+        args: ["--leader-socket", socket, "--session-id", sessionId],
+        providers: { grok: { leader: { socket, sessionId } } },
+    };
 }
 
 const AGENTS: Record<SessionAgentId, SessionAgent> = {
@@ -29,6 +52,7 @@ const AGENTS: Record<SessionAgentId, SessionAgent> = {
         exitCommand: "/exit",
         crossMessages: true,
         resumeSubcommand: null,
+        launchExtras: null,
     },
     grok: {
         id: "grok",
@@ -36,6 +60,7 @@ const AGENTS: Record<SessionAgentId, SessionAgent> = {
         exitCommand: "/exit",
         crossMessages: false,
         resumeSubcommand: null,
+        launchExtras: grokLaunchExtras,
     },
     codex: {
         id: "codex",
@@ -43,6 +68,7 @@ const AGENTS: Record<SessionAgentId, SessionAgent> = {
         exitCommand: "/quit",
         crossMessages: false,
         resumeSubcommand: "resume",
+        launchExtras: null,
     },
 };
 
@@ -72,6 +98,8 @@ export function agentRunCommand(input: {
      * so `tools claude run` applies the saved launch preference (`tools claude config cross-messages`).
      */
     crossMessages?: boolean;
+    /** The agent's `launchExtras` flags, placed before the prompt. */
+    agentArgs?: readonly string[];
 }): string {
     const account = input.account.trim();
 
@@ -97,6 +125,7 @@ export function agentRunCommand(input: {
         ...(input.crossMessages !== undefined && AGENTS[input.agent].crossMessages
             ? [input.crossMessages ? "--cross-messages" : "--no-cross-messages"]
             : []),
+        ...(input.agentArgs ?? []),
     ];
 
     if (input.promptFile) {
