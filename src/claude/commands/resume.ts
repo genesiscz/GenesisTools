@@ -1,6 +1,5 @@
 import { existsSync } from "node:fs";
 import { homedir } from "node:os";
-import { join } from "node:path";
 import { focusRunningSession } from "@app/claude/commands/cmux/focus";
 import { CLAUDE_WHO_SOURCE } from "@app/claude/lib/active-sessions";
 import * as p from "@clack/prompts";
@@ -24,6 +23,7 @@ import { out } from "@genesiscz/utils/logger";
 import { canonicalPath } from "@genesiscz/utils/paths";
 import { profiler } from "@genesiscz/utils/profile";
 import { tableSelect } from "@genesiscz/utils/prompts/clack/table-select";
+import { nativeHome } from "@genesiscz/utils/providers/session-paths";
 import { escapeShellArg } from "@genesiscz/utils/string";
 import type { Command } from "commander";
 import pc from "picocolors";
@@ -355,11 +355,6 @@ export interface SessionPickOptions {
     interactive?: boolean;
 }
 
-/** The Claude home a resume would actually open into. */
-function effectiveClaudeHome(): string {
-    return env.paths.getClaudeConfigDir() ?? join(homedir(), ".claude");
-}
-
 /**
  * Which session `tools claude resume <query>` and `tools claude start --resume <query>` open.
  *
@@ -394,7 +389,7 @@ export async function pickSessionForResume(
                 excludeAgents: true,
             },
             ...(opts.interactive === undefined ? {} : { interactive: opts.interactive }),
-            preferredHome: effectiveClaudeHome(),
+            preferredHome: nativeHome("claude"),
             running: () => listRunningCmuxSessions(CLAUDE_WHO_SOURCE),
         });
 
@@ -514,7 +509,7 @@ export function registerResumeCommand(program: Command): void {
 
 export function assertClaudeResumeHome({
     session,
-    effectiveHome = env.paths.getClaudeConfigDir() ?? join(homedir(), ".claude"),
+    effectiveHome = nativeHome("claude"),
 }: {
     session: Pick<DisplaySession, "sourceHome" | "filePath" | "sessionId">;
     effectiveHome?: string;

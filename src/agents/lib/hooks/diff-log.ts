@@ -1,8 +1,7 @@
 import { closeSync, existsSync, fstatSync, openSync, readdirSync, readFileSync, readSync, statSync } from "node:fs";
-import { homedir } from "node:os";
 import { basename, join } from "node:path";
-import { env } from "@genesiscz/utils/env";
 import { SafeJSON } from "@genesiscz/utils/json";
+import { nativeHomePath } from "@genesiscz/utils/providers/session-paths";
 import { stripAnsi } from "@genesiscz/utils/string";
 import { readSessionState } from "./diff/mentions";
 
@@ -243,10 +242,6 @@ export function readMessage(message: string): {
     return { blocks: own.blocks, notes: own.notes, chars: message.length, tasks };
 }
 
-function claudeDir(): string {
-    return env.paths.getClaudeConfigDir() ?? join(homedir(), ".claude");
-}
-
 /** The main transcript of a Claude session: the hook's own record of it first, then a search. */
 function transcriptOf(session: string): string | null {
     const recorded = readSessionState(session).transcript;
@@ -255,7 +250,7 @@ function transcriptOf(session: string): string | null {
         return recorded;
     }
 
-    const projects = join(claudeDir(), "projects");
+    const projects = nativeHomePath("claude", "projects");
 
     try {
         for (const project of readdirSync(projects)) {
