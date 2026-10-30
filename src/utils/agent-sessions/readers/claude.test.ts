@@ -748,3 +748,24 @@ test("modelOfRow names an assistant row's model, never a synthetic notice's, and
     expect(reader.indexesFile("/fixture/projects/-fixture/lead/subagents/workflows/wf_1/journal.jsonl")).toBe(false);
     expect(reader.indexesFile("/fixture/projects/-fixture/memory.md")).toBe(false);
 });
+
+test("rowAnchors names a row's uuid, its message id and its tool calls", () => {
+    const walk = claudeHistoryReader.rowAnchors();
+    expect(
+        walk(
+            {
+                type: "assistant",
+                uuid: "row-1",
+                message: {
+                    id: "msg-1",
+                    content: [
+                        { type: "tool_use", id: "toolu-1" },
+                        { type: "text", text: "x" },
+                    ],
+                },
+            },
+            false
+        )
+    ).toEqual({ messageIds: ["row-1", "msg-1"], toolCallIds: ["toolu-1"], turnIds: [] });
+    expect(walk({ type: "system", uuid: "row-2" }, false)).toEqual({ messageIds: [], toolCallIds: [], turnIds: [] });
+});

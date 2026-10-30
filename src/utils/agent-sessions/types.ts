@@ -322,6 +322,20 @@ export interface BackwardRead {
     lastAssistantOffset?: number;
 }
 
+/** The native ids one transcript row carries, for matching a source anchor (a message, a tool call, a turn). */
+export interface RowAnchorIds {
+    messageIds: string[];
+    toolCallIds: string[];
+    /** The turn the row belongs to; more than one when the row and the open turn disagree. */
+    turnIds: string[];
+}
+
+/**
+ * Names the ids of each row of one walk, oldest row first. `gapBefore` says rows were skipped before this one, so a
+ * turn left open by an earlier row no longer encloses it.
+ */
+export type RowAnchorWalk = (row: Record<string, unknown>, gapBefore: boolean) => RowAnchorIds;
+
 export interface ContinuedInOptions {
     /** How many bytes of the end of the source to read; the pointer is its last row. Default 64 KB. */
     maxBytes?: number;
@@ -367,6 +381,11 @@ export interface NativeSessionReader<Kind extends string = AgentKind> {
      * asks before it refreshes a listing.
      */
     indexesFile(path: string): boolean;
+    /**
+     * A new walk that names the native ids of each row of this provider's transcript (a source anchor's message id,
+     * tool call id and turn id), oldest row first. Stateful: a Codex row names its turn only where the turn starts.
+     */
+    rowAnchors(): RowAnchorWalk;
     importSession?(
         session: AgentSession<Kind>,
         context: NativeSessionImportContext

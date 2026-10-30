@@ -24,6 +24,7 @@ import type {
     NativeSourceIssue,
     ReadBackwardOptions,
     ReadForwardOptions,
+    RowAnchorWalk,
     TurnBoundary,
 } from "../types";
 
@@ -728,6 +729,7 @@ export type GrokHistoryOperations = Pick<NativeSessionReader<"grok">, "parserVer
             | "readForward"
             | "continuedIn"
             | "modelOfRow"
+            | "rowAnchors"
         >
     >;
 
@@ -800,6 +802,28 @@ async function readGrokTurnBoundary(
     });
 }
 
+function anchorRecord(value: unknown): Record<string, unknown> {
+    return typeof value === "object" && value !== null && !Array.isArray(value)
+        ? Object.fromEntries(Object.entries(value))
+        : {};
+}
+
+function anchorStrings(values: unknown[]): string[] {
+    return values.filter((value): value is string => typeof value === "string" && value.length > 0);
+}
+
+/** A Grok update row names its message and turn, and a `tool_call` update its tool call id. */
+function grokRowAnchors(): RowAnchorWalk {
+    return (row) => {
+        const update = anchorRecord(anchorRecord(row.params).update);
+        return {
+            messageIds: anchorStrings([update.messageId]),
+            toolCallIds: update.sessionUpdate === "tool_call" ? anchorStrings([update.toolCallId]) : [],
+            turnIds: anchorStrings([update.turnId]),
+        };
+    };
+}
+
 export function createGrokHistoryOperations(): GrokHistoryOperations {
     return {
         // 5: `lastTimestamp` is capped at the last turn-file write. The bump makes every indexed session read once
@@ -817,5 +841,6 @@ export function createGrokHistoryOperations(): GrokHistoryOperations {
         // Grok's chat history rows name no model: the session's model is `summary.json` `current_model_id`, which
         // `readMetadata` reads, not a row.
         modelOfRow: () => undefined,
+        rowAnchors: grokRowAnchors,
     };
 }

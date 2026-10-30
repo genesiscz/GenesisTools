@@ -801,3 +801,15 @@ test("modelOfRow names nothing, since Grok rows carry no model, and indexesFile 
     expect(grokIndexesFile(`${folder}/events.jsonl`)).toBe(false);
     expect(grokIndexesFile(`${folder}/updates.jsonl`)).toBe(false);
 });
+
+test("rowAnchors names an update's message and turn, and a tool_call update's call id", () => {
+    const walk = createGrokHistoryOperations().rowAnchors();
+    expect(
+        walk({ params: { update: { sessionUpdate: "tool_call", toolCallId: "call-1", turnId: "turn-1" } } }, false)
+    ).toEqual({ messageIds: [], toolCallIds: ["call-1"], turnIds: ["turn-1"] });
+    expect(walk({ params: { update: { messageId: "msg-1", toolCallId: "call-2" } } }, false)).toEqual({
+        messageIds: ["msg-1"],
+        toolCallIds: [],
+        turnIds: [],
+    });
+});

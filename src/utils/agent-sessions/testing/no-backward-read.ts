@@ -1,4 +1,4 @@
-import type { BackwardRead } from "../types";
+import type { BackwardRead, RowAnchorWalk } from "../types";
 
 /** `readBackward` for a test reader whose test never walks a session backwards. */
 export async function noBackwardRead(): Promise<BackwardRead> {
@@ -18,4 +18,9 @@ export function noModelOfRow(): string | undefined {
 /** `indexesFile` for a test reader that no file watcher asks. */
 export function indexesNoFile(): boolean {
     return false;
+}
+
+/** `rowAnchors` for a test reader whose rows carry no native ids. */
+export function noRowAnchors(): RowAnchorWalk {
+    return () => ({ messageIds: [], toolCallIds: [], turnIds: [] });
 }

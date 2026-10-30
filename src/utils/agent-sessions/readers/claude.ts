@@ -28,6 +28,7 @@ import type {
     NativeSourceIssue,
     ReadBackwardOptions,
     ReadForwardOptions,
+    RowAnchorWalk,
     TurnBoundary,
 } from "../types";
 import { claudeNativeId, claudeProjectDirectory, claudeProjectName, isClaudeSubagentPath } from "./claude-paths";
@@ -640,6 +641,7 @@ export type ClaudeHistoryOperations = Pick<NativeSessionReader<"claude">, "parse
             | "readForward"
             | "continuedIn"
             | "modelOfRow"
+            | "rowAnchors"
         >
     >;
 
@@ -740,6 +742,33 @@ async function readClaudeContinuedIn(
 
 const CONTINUED_IN_TAIL_BYTES = 64 * 1024;
 
+function anchorRecord(value: unknown): Record<string, unknown> {
+    return typeof value === "object" && value !== null && !Array.isArray(value)
+        ? Object.fromEntries(Object.entries(value))
+        : {};
+}
+
+function anchorStrings(values: unknown[]): string[] {
+    return values.filter((value): value is string => typeof value === "string" && value.length > 0);
+}
+
+/** A user or assistant row names its `uuid` and its message id, and an assistant row the ids of its tool calls. */
+function claudeRowAnchors(): RowAnchorWalk {
+    return (row) => {
+        if (row.type !== "user" && row.type !== "assistant") {
+            return { messageIds: [], toolCallIds: [], turnIds: [] };
+        }
+
+        const message = anchorRecord(row.message);
+        const content = Array.isArray(message.content) ? message.content.map(anchorRecord) : [];
+        return {
+            messageIds: anchorStrings([row.uuid, message.id]),
+            toolCallIds: anchorStrings(content.filter((part) => part.type === "tool_use").map((part) => part.id)),
+            turnIds: [],
+        };
+    };
+}
+
 /**
  * The model an assistant row names. Claude Code writes its local notices (API errors, "No response.") as assistant rows
  * whose model is a placeholder such as `<synthetic>`; they ran no model, so they name none.
@@ -777,5 +806,6 @@ export function createClaudeHistoryOperations(): ClaudeHistoryOperations {
         readForward: readClaudeForward,
         continuedIn: readClaudeContinuedIn,
         modelOfRow: claudeModelOfRow,
+        rowAnchors: claudeRowAnchors,
     };
 }
