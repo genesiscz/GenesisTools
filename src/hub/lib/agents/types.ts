@@ -11,7 +11,8 @@ export const DEFAULT_AGENTS_LIMIT = 50;
 export const AGENT_HARNESSES = ACCOUNT_PROVIDER_ALIASES;
 export type AgentHarness = (typeof AGENT_HARNESSES)[number];
 
-export type AgentKind = "teammate" | "background" | "foreground" | "worker";
+/** How an agent node runs (not which harness: that is `AgentHarness`). Renamed from `AgentKind`, the harness alias. */
+export type AgentRole = "teammate" | "background" | "foreground" | "worker";
 
 export type AgentStatus = "running" | "idle" | "completed" | "failed" | "killed";
 
@@ -19,7 +20,7 @@ export interface AgentNode {
     /** A Claude agent id (`a0564…`, `aE-sharedkit-4743…`), or a codex/grok worker name. */
     id: string;
     harness: AgentHarness;
-    kind: AgentKind;
+    kind: AgentRole;
     /** A teammate's or a named agent's name. */
     name: string | null;
     /** The Agent call's `description`. */
