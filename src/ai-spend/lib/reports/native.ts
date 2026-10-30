@@ -9,7 +9,7 @@ import { claudeDriver } from "../drivers/claude";
 import { codexDriver } from "../drivers/codex";
 import { grokDriver } from "../drivers/grok";
 import { num } from "../drivers/parse-helpers";
-import type { DriverRoot, DriverUsageEvent, MonitorDriver } from "../drivers/types";
+import type { AgentId, DriverRoot, DriverUsageEvent, MonitorDriver } from "../drivers/types";
 import { findRecentTranscripts } from "../monitor";
 import { prof } from "../prof";
 import { asRecord, asString, parseJsonValue } from "./jsonl";
@@ -151,34 +151,30 @@ function parseClaudeLine(line: string, file: string): SpendEvent[] {
     return events;
 }
 
-function sessionFromFile(file: string, source: SourceId): string {
-    if (source === "grok") {
-        return basename(dirname(file));
-    }
-
-    return transcriptStem(basename(file));
+/**
+ * Where Codex and Grok keep a transcript's session id and project: in its path. Claude's rows carry both, so its
+ * parser never asks (`parseClaudeLine`).
+ */
+interface PathLayout {
+    session(file: string): string;
+    /** Empty when the layout names no project. */
+    project(file: string): string;
 }
 
-function projectFromFile(file: string, source: SourceId): string {
-    if (source === "claude") {
-        const parts = file.split("/");
-        const projects = parts.lastIndexOf("projects");
+const CODEX_LAYOUT: PathLayout = {
+    session: (file) => transcriptStem(basename(file)),
+    project: () => "",
+};
 
-        if (projects >= 0 && parts[projects + 1]) {
-            return parts[projects + 1];
-        }
-    }
-
-    if (source === "grok") {
-        return basename(dirname(dirname(file)));
-    }
-
-    return "";
-}
+/** Native grok is `<project>/<sessionId>/updates.jsonl`. */
+const GROK_LAYOUT: PathLayout = {
+    session: (file) => basename(dirname(file)),
+    project: (file) => basename(dirname(dirname(file))),
+};
 
 export interface NativeChunkOptions {
     driver: MonitorDriver;
-    source: SourceId;
+    source: NativeSourceId;
     /** Absolute path, for the session id and the project name. */
     file: string;
     /** Complete lines only — a chunk cut mid-line loses that line in both halves. */
@@ -202,20 +198,25 @@ export interface NativeChunkResult {
  * series and a report disagreeing about the same file.
  */
 export function parseNativeChunk(options: NativeChunkOptions): NativeChunkResult {
-    const { driver, source, file, chunk } = options;
+    return NATIVE_READS[options.source].parseChunk(options);
+}
+
+function parseClaudeChunk({ file, chunk }: NativeChunkOptions): NativeChunkResult {
     const events: SpendEvent[] = [];
 
-    if (source === "claude") {
-        for (const line of chunk.split("\n")) {
-            events.push(...parseClaudeLine(line, file));
-        }
-
-        return { events, state: undefined };
+    for (const line of chunk.split("\n")) {
+        events.push(...parseClaudeLine(line, file));
     }
 
+    return { events, state: undefined };
+}
+
+function parseDriverChunk(options: NativeChunkOptions, layout: PathLayout): NativeChunkResult {
+    const { driver, source, file, chunk } = options;
+    const events: SpendEvent[] = [];
     const parser = driver.createParser({ file, state: options.state });
-    const sessionId = sessionFromFile(file, source);
-    const project = projectFromFile(file, source);
+    const sessionId = layout.session(file);
+    const project = layout.project(file);
 
     for (const line of chunk.split("\n")) {
         parser.parseLine(line, (event: DriverUsageEvent) => {
@@ -269,7 +270,7 @@ const LEGACY_AGENT_PREFIX = "agent-";
 
 interface DriverFilesOptions {
     driver: MonitorDriver;
-    source: SourceId;
+    source: NativeSourceId;
     roots: DriverRoot[];
     files: string[];
     sessionId?: string;
@@ -331,19 +332,21 @@ function parseClaudeBytes(bytes: Buffer, file: string): SpendEvent[] {
     return events;
 }
 
-function parseFile(options: {
+interface ParseFileOptions {
     driver: MonitorDriver;
-    source: SourceId;
+    source: NativeSourceId;
     file: string;
     sessionId?: string;
-}): SpendEvent[] | null {
-    const { driver, source, file, sessionId } = options;
+}
 
-    if (source !== "claude") {
-        const content = readText(file);
-        return content === null ? null : parseNativeChunk({ driver, source, file, chunk: content }).events;
-    }
+function parseDriverFile(options: ParseFileOptions, layout: PathLayout): SpendEvent[] | null {
+    const { driver, source, file } = options;
+    const content = readText(file);
 
+    return content === null ? null : parseDriverChunk({ driver, source, file, chunk: content }, layout).events;
+}
+
+function parseClaudeFile({ file, sessionId }: ParseFileOptions): SpendEvent[] | null {
     const bytes = readBytes(file);
 
     if (bytes === null) {
@@ -362,7 +365,7 @@ function parseDriverFiles(options: DriverFilesOptions): SpendEvent[] {
     const events: SpendEvent[] = [];
 
     for (const file of files) {
-        const parsed = parseFile({ driver, source, file, sessionId });
+        const parsed = NATIVE_READS[source].parseFile({ driver, source, file, sessionId });
 
         if (parsed === null) {
             continue;
@@ -390,7 +393,7 @@ function parseDriverFiles(options: DriverFilesOptions): SpendEvent[] {
     return events;
 }
 
-function loadDriverFiles(driver: MonitorDriver, source: SourceId, options: LoadNativeOptions): SpendEvent[] {
+function loadDriverFiles(driver: MonitorDriver, source: NativeSourceId, options: LoadNativeOptions): SpendEvent[] {
     const roots = driverRoots(driver, options);
     const files = prof.measure(`${source}:discover`, () =>
         findRecentTranscripts(
@@ -419,13 +422,7 @@ export function loadGrokEvents(options: LoadNativeOptions): SpendEvent[] {
     return loadDriverFiles(grokDriver, "grok", options);
 }
 
-export type NativeSourceId = Extract<SourceId, "claude" | "codex" | "grok">;
-
-const NATIVE_DRIVERS: Record<NativeSourceId, MonitorDriver> = {
-    claude: claudeDriver,
-    codex: codexDriver,
-    grok: grokDriver,
-};
+export type NativeSourceId = Extract<SourceId, AgentId>;
 
 function readDirEntries(dir: string): Dirent[] {
     try {
@@ -520,26 +517,59 @@ function claudeSessionFiles(options: SessionFilesOptions): string[] | undefined 
 }
 
 /**
- * Codex and Grok take the session id from the PATH (`sessionFromFile`), so
+ * Codex and Grok take the session id from the PATH (`PathLayout.session`), so
  * matching names is exact: a file named otherwise cannot yield an event of
  * this session. Located is decided before the mtime cut, so a session older
  * than `--since` still counts as found (with no events) instead of sending
  * the caller to a full scan.
  */
-function pathSessionFiles(options: SessionFilesOptions): string[] | undefined {
-    const { driver, source, roots, sessionId, minMtimeMs } = options;
-    const named = findRecentTranscripts(
-        roots,
-        MIN_MTIME,
-        driver,
-        (file) => sessionFromFile(file, source) === sessionId
-    );
+function pathSessionFiles(options: SessionFilesOptions, layout: PathLayout): string[] | undefined {
+    const { driver, roots, sessionId, minMtimeMs } = options;
+    const named = findRecentTranscripts(roots, MIN_MTIME, driver, (file) => layout.session(file) === sessionId);
 
     if (named.length === 0) {
         return undefined;
     }
 
     return named.filter((file) => modifiedSince(file, minMtimeMs));
+}
+
+/**
+ * How the reports read one agent's native transcripts, one entry per agent. Claude has its own parser (it dedups on
+ * the message id and pre-filters a file's bytes for one session); Codex and Grok go through their driver's line
+ * parser and take the session id from the path.
+ */
+interface NativeRead {
+    driver: MonitorDriver;
+    parseChunk(options: NativeChunkOptions): NativeChunkResult;
+    parseFile(options: ParseFileOptions): SpendEvent[] | null;
+    /** The files of one session; undefined when no file of this agent is named after it. */
+    sessionFiles(options: SessionFilesOptions): string[] | undefined;
+}
+
+function pathNamedRead(driver: MonitorDriver, layout: PathLayout): NativeRead {
+    return {
+        driver,
+        parseChunk: (options) => parseDriverChunk(options, layout),
+        parseFile: (options) => parseDriverFile(options, layout),
+        sessionFiles: (options) => pathSessionFiles(options, layout),
+    };
+}
+
+const NATIVE_READS: Record<NativeSourceId, NativeRead> = {
+    claude: {
+        driver: claudeDriver,
+        parseChunk: parseClaudeChunk,
+        parseFile: parseClaudeFile,
+        sessionFiles: claudeSessionFiles,
+    },
+    codex: pathNamedRead(codexDriver, CODEX_LAYOUT),
+    grok: pathNamedRead(grokDriver, GROK_LAYOUT),
+};
+
+/** Whether ai-spend reads this source from a coding agent's own transcripts (through a `MonitorDriver`). */
+export function isNativeSource(source: SourceId): source is NativeSourceId {
+    return Object.hasOwn(NATIVE_READS, source);
 }
 
 /**
@@ -561,10 +591,9 @@ export function loadNativeSessionEvents(
         return undefined;
     }
 
-    const driver = NATIVE_DRIVERS[source];
+    const { driver, sessionFiles } = NATIVE_READS[source];
     const roots = driverRoots(driver, options);
-    const finder = source === "claude" ? claudeSessionFiles : pathSessionFiles;
-    const files = finder({
+    const files = sessionFiles({
         driver,
         source,
         roots: roots.map((root) => root.path),
@@ -579,18 +608,6 @@ export function loadNativeSessionEvents(
     return parseDriverFiles({ driver, source, roots, files, sessionId });
 }
 
-export function nativePriceCandidates(source: SourceId, model: string): string[] {
-    if (source === "claude") {
-        return claudeDriver.priceCandidates(model);
-    }
-
-    if (source === "codex") {
-        return codexDriver.priceCandidates(model);
-    }
-
-    if (source === "grok") {
-        return grokDriver.priceCandidates(model);
-    }
-
-    return [model];
+export function nativePriceCandidates(source: NativeSourceId, model: string): string[] {
+    return NATIVE_READS[source].driver.priceCandidates(model);
 }

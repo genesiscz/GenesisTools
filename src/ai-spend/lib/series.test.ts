@@ -10,7 +10,7 @@ import { setupStorageSandbox } from "@genesiscz/utils/storage/test-sandbox";
 import { claudeDriver } from "./drivers/claude";
 import { codexDriver } from "./drivers/codex";
 import { isolateAgentHomeEnv } from "./drivers/test-env";
-import type { DriverRoot, MonitorDriver } from "./drivers/types";
+import { type DriverRoot, type MonitorDriver, spendAccountRowId } from "./drivers/types";
 import { loadEvents } from "./reports/load";
 import { buildSpendSeries, type SpendSeriesOptions, UnsupportedGrainError } from "./series";
 
@@ -357,5 +357,16 @@ describe("buildSpendSeries", () => {
 
         expect(opened.some((path) => path.includes("rollout-stale"))).toBe(false);
         expect(result.points[0].tokens).toBe(600_000);
+    });
+});
+
+describe("spendAccountRowId", () => {
+    test("Claude's spend is one shared row; Codex and Grok report their account, else the unbound row", () => {
+        expect(spendAccountRowId("claude", WORK)).toBe(CLAUDE_ALL_ACCOUNT_ID);
+        expect(spendAccountRowId("claude", undefined)).toBe(CLAUDE_ALL_ACCOUNT_ID);
+        expect(spendAccountRowId("codex", WORK)).toBe(WORK);
+        expect(spendAccountRowId("codex", undefined)).toBe(UNBOUND_ACCOUNT_ID);
+        expect(spendAccountRowId("grok", SHOP)).toBe(SHOP);
+        expect(spendAccountRowId("grok", undefined)).toBe(UNBOUND_ACCOUNT_ID);
     });
 });

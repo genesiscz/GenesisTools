@@ -2,7 +2,15 @@ import type { PricingTable } from "../types";
 import { totalTokensOf } from "./cost";
 import { lastSinceDay, periodFieldName, periodKey, zonedDay } from "./dates";
 import { filterEvents, pricedEventCost } from "./load";
-import type { CostMode, ModelBreakdownJson, PeriodGrain, SourceId, SpendEvent, TokenTotalsJson } from "./types";
+import {
+    type CostMode,
+    type ModelBreakdownJson,
+    type PeriodGrain,
+    SOURCE_JSON_SHAPE,
+    type SourceId,
+    type SpendEvent,
+    type TokenTotalsJson,
+} from "./types";
 
 export interface PeriodBuildOptions {
     grain: PeriodGrain;
@@ -199,7 +207,7 @@ export function buildPeriodReport(events: SpendEvent[], options: PeriodBuildOpti
         };
     }
 
-    if (options.source === "codex") {
+    if (options.source && SOURCE_JSON_SHAPE[options.source] === "models-map") {
         const codexTotals = totalsOf(rows);
 
         return {

@@ -31,7 +31,7 @@ import { renderCodexAnalysis } from "./reviews-render";
 import { buildSessionReport } from "./session";
 import { parseStatuslineHook, renderStatusline } from "./statusline";
 import type { PeriodGrain, ReportFlags, ReportKind, SourceId } from "./types";
-import { SOURCE_REPORTS } from "./types";
+import { SOURCE_COST_MODE_FLAG, SOURCE_REPORTS } from "./types";
 
 const VISUAL_BURN_RATES = ["off", "emoji", "text", "emoji-text"] as const;
 
@@ -298,7 +298,7 @@ async function runReportPhases(cmd: Command, kind: ReportKind, source?: SourceId
 
         const line = renderStatusline(
             hook,
-            events.filter((event) => event.source === "claude"),
+            events.filter((event) => SOURCE_REPORTS[event.source].includes("statusline")),
             {
                 timezone,
                 now,
@@ -315,7 +315,7 @@ async function runReportPhases(cmd: Command, kind: ReportKind, source?: SourceId
     if (kind === "blocks") {
         const hours = flags.sessionLength ? Number.parseFloat(flags.sessionLength) : 5;
         const report = buildBlocksReport(
-            events.filter((event) => event.source === "claude"),
+            events.filter((event) => SOURCE_REPORTS[event.source].includes("blocks")),
             {
                 timezone,
                 sinceDay,
@@ -364,7 +364,11 @@ async function runReportPhases(cmd: Command, kind: ReportKind, source?: SourceId
         untilDay,
         sessionId: flags.id,
     });
-    const analysis = source === "codex" ? buildCodexAnalysis(analysisEvents, pricing, mode) : undefined;
+    // The reviews analysis (task kinds, review passes) exists for the sources whose events carry it.
+    const analysis =
+        source !== undefined && SOURCE_REPORTS[source].includes("reviews")
+            ? buildCodexAnalysis(analysisEvents, pricing, mode)
+            : undefined;
 
     if (kind === "reviews" && analysis) {
         if (flags.json) {
@@ -461,7 +465,7 @@ export function registerCcusageCommands(program: Command): void {
             const extra = {
                 last: kind === "daily" || kind === "weekly" || kind === "monthly",
                 breakdown: true,
-                mode: source === "claude",
+                mode: SOURCE_COST_MODE_FLAG[source],
                 blocks: kind === "blocks",
                 sessionId: kind === "session" || kind === "reviews",
             };

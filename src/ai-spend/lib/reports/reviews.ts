@@ -2,7 +2,7 @@ import type { CodexActivity, CodexTask } from "../drivers/codex-context";
 import type { PricingTable } from "../types";
 import { type CostEstimate, eventCostEstimate, totalTokensOf } from "./cost";
 import { candidatesFor } from "./load";
-import type { CostMode, SpendEvent } from "./types";
+import { type CostMode, SOURCE_REPORTS, type SpendEvent } from "./types";
 
 interface UsageSummary {
     costUSD: number | null;
@@ -82,7 +82,7 @@ export function buildCodexAnalysis(events: SpendEvent[], pricing: PricingTable, 
     const passes = new Map<string, ReviewPass>();
 
     for (const event of events) {
-        if (event.source !== "codex") {
+        if (!SOURCE_REPORTS[event.source].includes("reviews")) {
             continue;
         }
 

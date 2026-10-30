@@ -13,13 +13,12 @@ import {
     type SpendSeriesPoint,
     spendBucketKey,
     systemTimeZone,
-    UNBOUND_ACCOUNT_ID,
 } from "@genesiscz/utils/ai/usage";
 import { toolCommand } from "@genesiscz/utils/cli/tool-command";
 import { logger } from "@genesiscz/utils/logger";
 import { Storage } from "@genesiscz/utils/storage/storage";
 import { loadPricing } from "./config";
-import { AGENT_IDS, type AgentId, type MonitorDriver } from "./drivers";
+import { AGENT_IDS, type AgentId, type MonitorDriver, spendAccountRowId } from "./drivers";
 import {
     AI_SPEND_SERIES_RETENTION_DAYS,
     type CompactEvent,
@@ -93,15 +92,11 @@ export class UnsupportedGrainError extends Error {
 
 /**
  * D6: `~/.claude/projects` carries no account marker, so every Anthropic
- * transcript reports as ONE row. Per-account Claude numbers come from the call
- * log, which is keyed by `AccountEntry.id` at write time.
+ * transcript reports as ONE row (`spendAccountRowId`). Per-account Claude numbers
+ * come from the call log, which is keyed by `AccountEntry.id` at write time.
  */
 function seriesAccountId(event: CompactEvent): string {
-    if (event.source === "claude") {
-        return CLAUDE_ALL_ACCOUNT_ID;
-    }
-
-    return event.accountId ?? UNBOUND_ACCOUNT_ID;
+    return spendAccountRowId(event.source, event.accountId);
 }
 
 function addTo(bucket: Record<string, SpendSeriesBucket>, key: string, event: CompactEvent): void {

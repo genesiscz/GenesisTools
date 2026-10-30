@@ -46,6 +46,54 @@ export const SOURCE_REPORTS: Record<SourceId, readonly ReportKind[]> = {
     jev: ["daily", "monthly", "session"],
 };
 
+/**
+ * The JSON a one-source report prints, matching ccusage's own report for that agent (the parity tests compare them):
+ * `models-map` is ccusage's Codex shape (`costUSD`, a `models` map with reasoning tokens), `model-breakdowns` the
+ * shape of every other agent (`totalCost`, `modelBreakdowns`).
+ */
+export type SourceJsonShape = "model-breakdowns" | "models-map";
+
+export const SOURCE_JSON_SHAPE: Record<SourceId, SourceJsonShape> = {
+    claude: "model-breakdowns",
+    codex: "models-map",
+    opencode: "model-breakdowns",
+    amp: "model-breakdowns",
+    droid: "model-breakdowns",
+    codebuff: "model-breakdowns",
+    hermes: "model-breakdowns",
+    pi: "model-breakdowns",
+    goose: "model-breakdowns",
+    kilo: "model-breakdowns",
+    copilot: "model-breakdowns",
+    gemini: "model-breakdowns",
+    kimi: "model-breakdowns",
+    qwen: "model-breakdowns",
+    openclaw: "model-breakdowns",
+    grok: "model-breakdowns",
+    jev: "model-breakdowns",
+};
+
+/** Whether a source's reports take `--mode auto|calculate|display`: only Claude Code's records carry their own cost. */
+export const SOURCE_COST_MODE_FLAG: Record<SourceId, boolean> = {
+    claude: true,
+    codex: false,
+    opencode: false,
+    amp: false,
+    droid: false,
+    codebuff: false,
+    hermes: false,
+    pi: false,
+    goose: false,
+    kilo: false,
+    copilot: false,
+    gemini: false,
+    kimi: false,
+    qwen: false,
+    openclaw: false,
+    grok: false,
+    jev: false,
+};
+
 export interface SpendEvent {
     source: SourceId;
     id: string;

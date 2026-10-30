@@ -15,7 +15,7 @@ export type {
     DriverUsageEvent,
     MonitorDriver,
 } from "./types";
-export { AGENT_IDS, AGENT_PLUGIN_IDS } from "./types";
+export { AGENT_IDS, AGENT_PLUGIN_IDS, spendAccountRowId } from "./types";
 
 /** Walk order is the report order. Claude first: it is the biggest tree. */
 export const MONITOR_DRIVERS: readonly MonitorDriver[] = [claudeDriver, codexDriver, grokDriver];

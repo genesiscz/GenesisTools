@@ -3,7 +3,7 @@ import { homedir } from "node:os";
 import { join } from "node:path";
 import type { AccountEntry } from "@genesiscz/utils/ai/config/schema";
 import type { DiscoveredHome } from "@genesiscz/utils/ai/providers/account-features";
-import { CLAUDE_ALL_ACCOUNT_ID, CLAUDE_ALL_ACCOUNT_NAME, UNBOUND_ACCOUNT_ID } from "@genesiscz/utils/ai/usage";
+import { CLAUDE_ALL_ACCOUNT_ID, CLAUDE_ALL_ACCOUNT_NAME } from "@genesiscz/utils/ai/usage";
 import { isZstdPath } from "@genesiscz/utils/compress/zstd";
 import { readWholeTextSync } from "@genesiscz/utils/fs/read-lines";
 import { SafeJSON } from "@genesiscz/utils/json";
@@ -17,6 +17,7 @@ import {
     type DriverUsageEvent,
     MONITOR_DRIVERS,
     type MonitorDriver,
+    spendAccountRowId,
 } from "./drivers";
 import { eventCostEstimate } from "./reports/cost";
 import type { PricingTable } from "./types";
@@ -693,22 +694,6 @@ function addSums(target: MonitorTotals, sums: DaySums): void {
     target.tokens += sums.tokens;
 }
 
-/**
- * Which account row a file's spend lands in.
- *
- * Claude collapses to one synthetic row: its transcripts record no login
- * (decision D6). Every other agent reports its own account, or the unbound row
- * when nothing claims that home — spend on an unbound home is still spend, so
- * it is never silently dropped.
- */
-function accountRowId(agent: AgentId, fileAccountId: string | undefined): string {
-    if (agent === "claude") {
-        return CLAUDE_ALL_ACCOUNT_ID;
-    }
-
-    return fileAccountId ?? UNBOUND_ACCOUNT_ID;
-}
-
 function newAccountRow(agent: AgentId, rowId: string, accounts: readonly AccountEntry[]): MonitorAccountSpend {
     const provider = AGENT_PLUGIN_IDS[agent];
     const empty = emptyAgentTotals();
@@ -808,7 +793,7 @@ export function buildMonitorReport(options: BuildMonitorOptions): MonitorReport 
         }
 
         for (const { event, accountId } of unique.values()) {
-            const rowId = accountRowId(id, accountId);
+            const rowId = spendAccountRowId(id, accountId);
 
             // `--account` restricts the totals too, not just the breakdown: a
             // number labelled "one account" that summed every account would be

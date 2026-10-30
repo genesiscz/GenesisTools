@@ -13,6 +13,7 @@
 
 import type { AccountEntry } from "@genesiscz/utils/ai/config/schema";
 import { ACCOUNT_PROVIDER_ALIASES, type AccountProviderAlias } from "@genesiscz/utils/ai/providers/alias-list";
+import { CLAUDE_ALL_ACCOUNT_ID, UNBOUND_ACCOUNT_ID } from "@genesiscz/utils/ai/usage";
 import type { CreateParserOptions, DriverLineParser } from "@genesiscz/utils/ai/usage/transcripts/types";
 
 export type {
@@ -38,6 +39,25 @@ export const AGENT_PLUGIN_IDS: Record<AgentId, string> = {
     codex: "openai-sub",
     grok: "grok-sub",
 };
+
+/**
+ * The one account row all of an agent's spend lands in, when its transcripts record no login; null when each
+ * transcript home belongs to its own account. Claude's `~/.claude/projects` names no account (decision D6), so its
+ * spend is the synthetic "claude (all accounts)" row and the per-account split lives in the call log.
+ */
+const AGENT_SHARED_ACCOUNT_ROW: Record<AgentId, string | null> = {
+    claude: CLAUDE_ALL_ACCOUNT_ID,
+    codex: null,
+    grok: null,
+};
+
+/**
+ * Which account row a transcript's spend lands in: the agent's shared row, else the account that claims the
+ * transcript's home, else the unbound row (spend on an unbound home is still spend, so it is never dropped).
+ */
+export function spendAccountRowId(agent: AgentId, fileAccountId: string | undefined): string {
+    return AGENT_SHARED_ACCOUNT_ROW[agent] ?? fileAccountId ?? UNBOUND_ACCOUNT_ID;
+}
 
 /**
  * One tree to walk, plus who it belongs to.
