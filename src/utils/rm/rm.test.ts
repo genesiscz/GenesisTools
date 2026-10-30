@@ -25,6 +25,7 @@ import {
     confirmByPerson,
     createRmRequest,
     defaultRmConfig,
+    denyRmRequest,
     drainDue,
     effectiveConfig,
     evaluateTarget,
@@ -35,6 +36,7 @@ import {
     listBatches,
     listRmRequests,
     loadRmRequest,
+    mayDenyRmRequest,
     moveAside,
     moveToTrash,
     parseRmConfig,
@@ -944,5 +946,45 @@ describe("security review fixes: a put-back never replaces", () => {
                 expect(readFileSync(original, "utf8")).toBe("recreated meanwhile");
             }
         }
+    });
+});
+
+describe("security review fixes: deny", () => {
+    test("an agent may deny only its own request; a person may deny any", () => {
+        const request = createRmRequest(
+            { kind: "delete", caller: AGENT, cwd: base, reason: null, targets: [] },
+            dir("deny-own-requests")
+        );
+
+        expect(mayDenyRmRequest(request, AGENT)).toBe(true);
+        expect(mayDenyRmRequest(request, { ...AGENT, sessionId: "sess-2222" })).toBe(false);
+        expect(mayDenyRmRequest(request, { ...AGENT, agent: "codex" })).toBe(false);
+        expect(mayDenyRmRequest(request, { ...AGENT, sessionId: null })).toBe(false);
+        expect(mayDenyRmRequest(request, { ...AGENT, isInAgent: false, sessionId: null })).toBe(true);
+    });
+
+    test("a copy that cannot go home keeps the request pending and its aside folder guarded", () => {
+        const requestsDir = dir("deny-kept-requests");
+        const src = file(join(dir("deny-kept-src"), "draft.md"), "work");
+        const verdict = { kind: "ask" as const, rule: "default", reason: "test" };
+        const asideRoot = dir("cc", "proj", "sess-1111", "deny-kept-aside");
+        const aside = moveAside([{ target: resolveTarget(src, base), verdict }], AGENT, "b1", asideRoot);
+        const request = createRmRequest(
+            { kind: "delete", caller: AGENT, cwd: base, reason: null, targets: aside.moved, asideDir: aside.dir },
+            requestsDir
+        );
+        file(src, "the agent wrote a new file there meanwhile");
+
+        const back = denyRmRequest(request, AGENT, { requestsDir });
+
+        expect(back.waiting).toHaveLength(1);
+        expect(loadRmRequest(request.id, requestsDir)?.status).toBe("pending");
+        expect(pendingAsideFor(realpathSync(aside.dir), pendingAsideDirs(requestsDir))).toBe(request.id);
+
+        unlinkSync(src);
+        const again = denyRmRequest(loadRmRequest(request.id, requestsDir) ?? request, AGENT, { requestsDir });
+
+        expect(again.returned).toEqual([src]);
+        expect(loadRmRequest(request.id, requestsDir)?.status).toBe("denied");
     });
 });

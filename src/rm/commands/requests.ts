@@ -7,16 +7,17 @@ import {
     appendRmLedger,
     approvalDenyReason,
     createRmRequest,
+    denyRmRequest,
     hardDenyReason,
     kickDrainer,
     listRmRequests,
     loadRmRequest,
+    mayDenyRmRequest,
     measureBytes,
     moveToTrash,
     type RmRequestTarget,
     recheckAfterWait,
     resolveTarget,
-    returnAside,
     saveRmConfig,
     saveRmRequest,
 } from "@genesiscz/utils/rm";
@@ -264,7 +265,13 @@ export function registerRequestCommands(program: Command): void {
                 return;
             }
 
-            const back = returnAside(request.targets, ctx.caller, id);
+            if (!mayDenyRmRequest(request, ctx.caller)) {
+                out.println(pc.red(`Request ${id} belongs to another session: only the user may deny it.`));
+                process.exitCode = 1;
+                return;
+            }
+
+            const back = denyRmRequest(request, ctx.caller);
 
             for (const path of back.returned) {
                 out.println(pc.green(`put back ${path}`));
@@ -278,9 +285,15 @@ export function registerRequestCommands(program: Command): void {
                 removeEmptyAsideDir(request.asideDir);
             }
 
-            saveRmRequest({ ...request, status: "denied", decidedAt: new Date().toISOString(), decidedVia: "cli" });
-            appendRmLedger({ action: "deny", requestId: id, caller: ctx.caller, path: resolve(request.cwd) });
-            out.println(`Request ${id} denied.`);
+            if (back.waiting.length > 0) {
+                out.println(
+                    pc.yellow(`Request ${id} stays pending for ${back.waiting.length} path(s) that still wait aside.`)
+                );
+            } else {
+                appendRmLedger({ action: "deny", requestId: id, caller: ctx.caller, path: resolve(request.cwd) });
+                out.println(`Request ${id} denied.`);
+            }
+
             process.exitCode = back.kept.length > 0 ? 1 : 0;
         });
 }

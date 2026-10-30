@@ -10,7 +10,7 @@ import {
     renameNoReplace,
     sharedTempRoot,
 } from "./paths";
-import { listRmRequests, type RmRequestTarget } from "./requests";
+import { listRmRequests, type RmRequest, type RmRequestTarget, saveRmRequest } from "./requests";
 import type { RmCaller, RmTarget, RmVerdict } from "./rules";
 import { measureBytes, RmTargetChangedError, renameVerified, trashItemName } from "./trash";
 
@@ -174,6 +174,52 @@ export function returnAside(
     }
 
     return result;
+}
+
+/**
+ * An agent may cancel only its own request (same agent, same session); a person, outside any agent, may deny any.
+ * Otherwise one session could put another's paths back and close the decision its user still has to make.
+ */
+export function mayDenyRmRequest(request: RmRequest, caller: RmCaller): boolean {
+    if (!caller.isInAgent) {
+        return true;
+    }
+
+    return (
+        caller.sessionId !== null &&
+        request.caller?.agent === caller.agent &&
+        request.caller?.sessionId === caller.sessionId
+    );
+}
+
+export interface DenyResult extends ReturnResult {
+    /** Aside copies that could not go home (the path is taken): the request stays pending for them. */
+    waiting: RmRequestTarget[];
+}
+
+/**
+ * Puts a request's aside copies back and closes it as denied. A copy that cannot go back keeps the request pending,
+ * with only those copies left in it, so its aside folder stays guarded until the user decides about them.
+ */
+export function denyRmRequest(
+    request: RmRequest,
+    caller: RmCaller | null,
+    options: { requestsDir?: string; now?: Date; hooks?: ReturnHooks } = {}
+): DenyResult {
+    const back = returnAside(request.targets, caller, request.id, options.hooks);
+    const returned = new Set(back.returned);
+    const waiting = request.targets.filter(
+        (t) => t.stored !== undefined && !returned.has(t.path) && (existsSync(t.stored) || isLink(t.stored))
+    );
+    const decidedAt = (options.now ?? new Date()).toISOString();
+
+    if (waiting.length > 0) {
+        saveRmRequest({ ...request, targets: waiting }, options.requestsDir);
+    } else {
+        saveRmRequest({ ...request, status: "denied", decidedAt, decidedVia: "cli" }, options.requestsDir);
+    }
+
+    return { ...back, waiting };
 }
 
 function isLink(path: string): boolean {
