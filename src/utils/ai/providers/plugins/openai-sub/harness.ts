@@ -27,7 +27,10 @@ export const codexHarness: HarnessDriver<"codex"> = {
             "P2",
             "the codex question signals inside src/utils/agent-sessions/readers/codex-turn-state.ts (TurnSnapshot.questionCall)"
         ),
-        live: pending("P2", "the codex live tail in src/utils/ai/transcripts/live.ts and activity.ts"),
+        live: pending(
+            "P2",
+            "live.ts is provider-neutral since 053da21ed7 (it reads the turnState part and the transcript facts); a live contract of its own only if a harness needs one"
+        ),
         launch: codexLaunch,
         transcript: {
             recordsTerminalEvent: true,
