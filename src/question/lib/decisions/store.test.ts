@@ -29,6 +29,7 @@ import { chatAnswers } from "./chat-answers";
 import { backfillChatAnswers } from "./chat-reading";
 import { DeliveryUnknownError, deliverToSession, resolveDeliveryTarget } from "./deliver";
 import { livePaneTargets, noPaneTargets } from "./deliver.fixtures";
+import { RELAYED_ANSWER_HEAD } from "./delivery-text";
 import { decisionPayload, validateQuestionItems } from "./items";
 import {
     decisionLine,
@@ -2173,16 +2174,22 @@ test("decision dry-run applies the same selected-kind filter as delivery", async
     await expect(
         sendAnsweredDecisions({ session: "test-session", files, ids: [todo.id], dryRun: true })
     ).rejects.toThrow("nothing to send");
+    const delivered: string[] = [];
     const sent = await sendAnsweredDecisions({
         session: "test-session",
         files,
         provider: "codex",
         deps: {
             codexWorkerFor: () => "fixture-worker",
-            runTool: async () => ({ success: true, stdout: '{"queued":false,"turnId":"fixture-turn"}', stderr: "" }),
+            runTool: async (args) => {
+                delivered.push(readFileSync(args[args.indexOf("--prompt-file") + 1], "utf8"));
+                return { success: true, stdout: '{"queued":false,"turnId":"fixture-turn"}', stderr: "" };
+            },
         },
     });
     expect(sent.text).toBe(preview.text);
+    // The session receives the answer framed as the user's own words, then the number, letter and verbatim text.
+    expect(delivered).toEqual([`${RELAYED_ANSWER_HEAD}\nDECISION 1: a) yes`]);
     expect(readDecisions(file).map((row) => row.state)).toEqual(["sent", "answered"]);
 });
 
