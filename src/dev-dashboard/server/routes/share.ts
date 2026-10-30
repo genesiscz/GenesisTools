@@ -8,6 +8,7 @@ import {
     buildShareBundle,
     buildShareEmbed,
     codeLanguageFor,
+    downloadBaseName,
     fencedCode,
     hashAsset,
     isMediaKind,
@@ -235,7 +236,8 @@ export function shareRoutes(): RouteDef[] {
                         source: markdown,
                     });
                     const title = (note.vaultPath.split("/").pop() ?? note.vaultPath).replace(/\.md$/, "");
-                    const fileBase = title.replace(/[\\/:*?"<>|]/g, "_") || "note";
+                    const fileBase = downloadBaseName(title);
+
                     if (download === "zip") {
                         const bundle = await buildShareBundle({
                             vaultRoot: obsidianVault,
@@ -451,11 +453,15 @@ export function shareRoutes(): RouteDef[] {
                         body: page,
                     };
                 } catch (err) {
+                    // The page is public: the error goes to the log, never into the body, since a file error
+                    // names the vault's path on disk.
+                    log.error({ err, slug }, "share page failed");
+
                     return {
                         kind: "text",
                         status: 500,
                         contentType: "text/plain; charset=utf-8",
-                        body: err instanceof Error ? err.message : String(err),
+                        body: "the shared note could not be rendered",
                     };
                 } finally {
                     if (isDownload) {

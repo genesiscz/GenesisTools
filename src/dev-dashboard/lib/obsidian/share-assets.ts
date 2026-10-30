@@ -540,6 +540,17 @@ export function renderCodeAssetHtml(options: {
     return `${windowNote}${code}`;
 }
 
+/**
+ * The folder and file name a download is saved under, from the note's title: no path separator, none of the
+ * characters Windows refuses, no control character, and never dots alone, so a note named `...md` cannot
+ * put the ZIP's folder at `..`.
+ */
+export function downloadBaseName(title: string): string {
+    const cleaned = title.replace(/[\\/:*?"<>|\p{Cc}]/gu, "_").replace(/^[\s.]+|[\s.]+$/g, "");
+
+    return cleaned || "note";
+}
+
 export const SHARE_BUNDLE_MAX_BYTES = 200 * 1024 * 1024;
 
 function commonDir(paths: string[]): string {

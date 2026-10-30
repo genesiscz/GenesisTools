@@ -7,6 +7,7 @@ import { publishNote } from "@app/dev-dashboard/lib/obsidian/publish";
 import {
     buildShareBundle,
     buildShareEmbed,
+    downloadBaseName,
     noteSection,
     SHARE_BUNDLE_MAX_BYTES,
     type ShareEmbed,
@@ -400,6 +401,48 @@ describe("GET /share/:slug assets", () => {
         expect([...files.keys()].some((name) => name.includes("secret") || name.includes("escape"))).toBe(false);
     });
 
+    test("a note named by dots alone downloads under a safe folder, never `..`", async () => {
+        writeFileSync(join(dir, "vault/Notes/...md"), "# dots\n\n![[shot.png]]");
+        const dotSlug = (await publishNote("Notes/...md")).slug;
+        const res = await get({ download: "zip" }, "*/*", dotSlug);
+
+        expect(res.kind).toBe("binary");
+
+        if (res.kind !== "binary") {
+            return;
+        }
+
+        expect(res.headers?.["Content-Disposition"]).toBe("attachment; filename*=UTF-8''note.zip");
+        const names = [...unzip(res.body).keys()];
+        expect(names).toEqual(["note/Notes/...md", "note/Other/shot.png"]);
+        expect(names.every((name) => !name.split("/").includes(".."))).toBe(true);
+
+        const html = await get({ download: "html" }, "text/html", dotSlug);
+        expect(html).toMatchObject({
+            kind: "raw",
+            headers: { "Content-Disposition": "attachment; filename*=UTF-8''note.html" },
+        });
+    });
+
+    test("zip refuses an entry name that would land outside the extraction folder", () => {
+        const data = new Uint8Array([1]);
+
+        for (const name of ["../x", "/x", "a/../x", "a/./x", "a//x", "a\\x", "C:x", "", "a\0"]) {
+            expect(() => zip([{ name, data }])).toThrow(/not a relative path/);
+        }
+
+        expect(unzip(zip([{ name: "a/b.txt", data }])).has("a/b.txt")).toBe(true);
+    });
+
+    test("the download name comes from the title with every unsafe character replaced", () => {
+        expect(downloadBaseName("Run")).toBe("Run");
+        expect(downloadBaseName("..")).toBe("note");
+        expect(downloadBaseName(" . ")).toBe("note");
+        expect(downloadBaseName(".hidden")).toBe("hidden");
+        expect(downloadBaseName("trailing. ")).toBe("trailing");
+        expect(downloadBaseName("a/b:c\u0007d")).toBe("a_b_c_d");
+    });
+
     test("ZIP keeps its synchronous API and the worker yields to the event loop", async () => {
         const data = Buffer.alloc(2 * 1024 * 1024, 42);
         const entries = [{ name: "data.bin", data }];
@@ -546,8 +589,11 @@ describe("GET /share/:slug assets", () => {
             expect(await first).toMatchObject({ status: 200 });
             expect(await second).toMatchObject({ status: 200 });
             expect(await get({ download: "html" })).toMatchObject({ status: 200 });
-            worker.mockRejectedValueOnce(new Error("worker failed"));
-            expect(await get({ download: "zip" })).toMatchObject({ status: 500 });
+            worker.mockRejectedValueOnce(new Error("worker failed at /vault/path"));
+            expect(await get({ download: "zip" })).toMatchObject({
+                status: 500,
+                body: "the shared note could not be rendered",
+            });
             expect(await get({ download: "html" })).toMatchObject({ status: 200 });
         } finally {
             clearTimeout(timeout);

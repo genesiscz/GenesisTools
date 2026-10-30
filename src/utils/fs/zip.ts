@@ -26,6 +26,23 @@ function dosDateTime(date: Date): { time: number; day: number } {
 }
 
 /**
+ * A zip tool extracts an entry below the folder it extracts into only when the name is relative, uses forward
+ * slashes and has no `.` or `..` segment; any other name can land a file outside that folder.
+ */
+function assertArchiveName(name: string): void {
+    const segments = name.split("/");
+    const escapes =
+        name.includes("\0") ||
+        name.includes("\\") ||
+        /^[a-zA-Z]:/.test(name) ||
+        segments.some((segment) => segment === "" || segment === "." || segment === "..");
+
+    if (escapes) {
+        throw new Error(`zip: entry name "${name}" is not a relative path inside the archive`);
+    }
+}
+
+/**
  * Writes a ZIP archive that `unzip` (and every zip tool) reads. An entry is deflated only when that makes it
  * smaller, so already-compressed images are stored as they are. ZIP64 is not written: more than 65535 entries
  * or 4 GiB throws.
@@ -41,6 +58,7 @@ export function zip(entries: ZipEntry[]): Uint8Array {
     let offset = 0;
 
     for (const entry of entries) {
+        assertArchiveName(entry.name);
         const name = encoder.encode(entry.name);
         const deflated = deflateRawSync(entry.data);
         const stored = deflated.length >= entry.data.length;
