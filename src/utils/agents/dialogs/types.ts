@@ -5,7 +5,7 @@ export type DialogProvider = "claude" | "codex" | "grok";
 export type OpenQuestionKind = "decision" | "permission" | "plan";
 
 /** Which signal wrote the record: a harness hook, the hub-side watcher, or a turn-state read of the transcript. */
-export type OpenQuestionSource = "hook" | "watcher" | "turn-state";
+export type OpenQuestionSource = "hook" | "watcher" | "turn-state" | "registry";
 
 /**
  * A structural question an agent asked its user and still waits on: Claude's `AskUserQuestion`, `ExitPlanMode`
