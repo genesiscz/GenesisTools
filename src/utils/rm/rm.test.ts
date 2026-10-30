@@ -732,3 +732,16 @@ describe("security review fixes: unsaved work stays in place", () => {
         expect(unsavedOf(join(repo, ".git"))).toEqual({ rule: "git-history", unsaved: true });
     });
 });
+
+describe("security review fixes: config", () => {
+    test("a custom opt-in preset stays off after a load until its id is enabled", () => {
+        const custom = { id: "shared-cache", description: "a shared cache", names: ["cache"], optIn: true };
+        const loaded = parseRmConfig({ customPresets: [custom] });
+
+        expect(loaded.customPresets[0]?.optIn).toBe(true);
+        expect(presetsFor(loaded).some((p) => p.id === "shared-cache")).toBe(false);
+        expect(presetsFor({ ...loaded, enabledPresets: ["shared-cache"] }).some((p) => p.id === "shared-cache")).toBe(
+            true
+        );
+    });
+});

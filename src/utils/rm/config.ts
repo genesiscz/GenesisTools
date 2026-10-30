@@ -185,6 +185,7 @@ function parsePreset(value: unknown): RmPreset | null {
         markers: Array.isArray(value.markers) ? strings(value.markers) : undefined,
         parentNames: Array.isArray(value.parentNames) ? strings(value.parentNames) : undefined,
         within: typeof value.within === "string" ? value.within : undefined,
+        optIn: value.optIn === true ? true : undefined,
     };
 }
 
