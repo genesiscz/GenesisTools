@@ -1,4 +1,5 @@
 import AppKit
+import Combine
 import SwiftUI
 
 // Files → "Add folder": more roots beside the session's own folder (a notes vault, a sibling repo).
@@ -94,37 +95,139 @@ struct HubFileList: View {
     }
 }
 
-/// One folder tree per root (GenesisKit `FileTreeView`), the session's folder first. A file with a change
-/// opens in the diff while Changes is open; any other file opens in Cursor.
+/// One line of the Folders list: a root's header, or a row of that root's tree.
+enum HubFolderListRow: GenTreeRow {
+    case header(root: String, folded: Bool, first: Bool)
+    case entry(root: String, row: FileTreeRow)
+
+    enum Key: Hashable {
+        case header(String)
+        case entry(String, FileTreeRowKey)
+    }
+
+    var key: Key {
+        switch self {
+        case .header(let root, _, _): .header(root)
+        case .entry(let root, let row): .entry(root, row.key)
+        }
+    }
+
+    var depth: Int {
+        if case .entry(_, let row) = self { return row.depth }
+        return 0
+    }
+
+    var isFolder: Bool {
+        if case .entry(_, let row) = self { return row.isFolder }
+        return true
+    }
+
+    var expanded: Bool {
+        switch self {
+        case .header(_, let folded, _): !folded
+        case .entry(_, let row): row.expanded
+        }
+    }
+
+    var name: String {
+        switch self {
+        case .header(let root, _, _): (root as NSString).lastPathComponent
+        case .entry(_, let row): row.name
+        }
+    }
+}
+
+/// One folder tree per root (GenesisKit `FileTreeModel` rows), the session's folder first, all in one table
+/// (`GenTreeTable`): the lazy stack it replaced spent its main thread on each folder's open and close animation.
+/// A file with a change opens in the diff while Changes is open; any other file opens in Cursor.
 struct HubFolderTrees: View {
     let roots: [String]
     @ObservedObject var review: ReviewModel
     @ObservedObject var trees: HubFolderTreeStore
     let changesShown: Bool
     @State private var selected: String?
+    @State private var box = GenTreeScrollBox()
+    /// Counts the trees' changes: a tree is no observed object of this view, so its rows reach the body through this.
+    @State private var treeChanges = 0
     @GenReduceMotion private var reduceMotion
 
+    /// What the cells draw besides the rows.
+    private struct Revision: Equatable {
+        let selected: String?
+        let changesShown: Bool
+        let changedFiles: Int
+    }
+
     var body: some View {
-        ScrollView {
-            LazyVStack(alignment: .leading, spacing: 0) {
-                ForEach(roots, id: \.self) { root in
-                    let tree = trees.model(for: root)
-                    HubFolderTreeHeader(root: root, folded: trees.folded.contains(root)) {
-                        GenMotion.perform(expanding: trees.folded.contains(root), reduceMotion: reduceMotion) {
-                            trees.toggleFold(root)
-                        }
-                    }
-                    .padding(.top, root == roots.first ? 4 : 10)
-                    if !trees.folded.contains(root) {
-                        FileTreeView(model: tree, selected: selected, style: Self.style, actions: actions(tree)) { row in
-                            !row.isFolder && review.file(atPath: row.id) != nil ? "pencil.circle" : FileTreeView.defaultIcon(row)
-                        }
-                    }
+        let _ = treeChanges
+        let models = roots.map { trees.model(for: $0) }
+        let rows = roots.enumerated().flatMap { index, root -> [HubFolderListRow] in
+            let folded = trees.folded.contains(root)
+            let header = HubFolderListRow.header(root: root, folded: folded, first: index == 0)
+            return folded ? [header] : [header] + models[index].rows.map { .entry(root: root, row: $0) }
+        }
+        let selectedKey = selected.map { FileTreeRowKey(selection: $0) }
+        GenTreeTable(
+            rows: rows,
+            revision: Revision(selected: selected, changesShown: changesShown, changedFiles: review.files.count),
+            box: box,
+            height: { Self.height(of: $0) },
+            insets: NSEdgeInsets(top: 0, left: 0, bottom: 12, right: 0)
+        ) { row in
+            AnyView(cell(row, models: models, selectedKey: selectedKey).frame(maxWidth: .infinity, maxHeight: .infinity, alignment: .topLeading))
+        }
+        .onReceive(Publishers.MergeMany(models.map { $0.objectWillChange.map { _ in () } })) { _ in
+            // After the change: `objectWillChange` fires before the tree's rows are set.
+            DispatchQueue.main.async { treeChanges &+= 1 }
+        }
+    }
+
+    @ViewBuilder
+    private func cell(_ row: HubFolderListRow, models: [FileTreeModel], selectedKey: FileTreeRowKey?) -> some View {
+        switch row {
+        case .header(let root, let folded, let first):
+            HubFolderTreeHeader(root: root, folded: folded) {
+                GenMotion.perform(expanding: trees.folded.contains(root), reduceMotion: reduceMotion) {
+                    trees.toggleFold(root)
                 }
             }
+            .padding(.top, first ? 4 : 10)
             .padding(.horizontal, 4)
-            .padding(.bottom, 12)
+        case .entry(let root, let entry):
+            if let index = roots.firstIndex(of: root) {
+                FileTreeView.row(
+                    entry, selected: entry.key == selectedKey,
+                    icon: !entry.isFolder && review.file(atPath: entry.id) != nil ? "pencil.circle" : FileTreeView.defaultIcon(entry),
+                    style: Self.style, model: models[index], actions: actions(models[index])
+                )
+                .padding(.horizontal, 4)
+            }
         }
+    }
+
+    /// A header's and a tree row's height, measured once from their views (the lazy stack had no gap between rows).
+    @MainActor private static var heights: [String: CGFloat] = [:]
+
+    @MainActor
+    private static func height(of row: HubFolderListRow) -> CGFloat {
+        let kind: String
+        switch row {
+        case .header(_, _, let first): kind = first ? "header.first" : "header"
+        case .entry: kind = "entry"
+        }
+        if let known = heights[kind] { return known }
+        let probe: AnyView
+        switch row {
+        case .header(_, _, let first):
+            probe = AnyView(HubFolderTreeHeader(root: "/x", folded: false) {}.padding(.top, first ? 4 : 10))
+        case .entry:
+            let tree = FileTreeModel(root: URL(fileURLWithPath: "/"))
+            probe = AnyView(FileTreeView.row(FileTreeRow(id: "/x", name: "x", isFolder: false, depth: 0), selected: false, icon: "doc",
+                                             style: style, model: tree, actions: FileTreeActions(open: { _ in }, setRoot: { _ in }, changed: { _ in })))
+        }
+        let measured = max(ceil(NSHostingView(rootView: probe).fittingSize.height), 1)
+        heights[kind] = measured
+        return measured
     }
 
     private func actions(_ tree: FileTreeModel) -> FileTreeActions {

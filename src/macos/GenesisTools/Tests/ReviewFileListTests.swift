@@ -211,4 +211,46 @@ final class ReviewFileListTests: XCTestCase {
         XCTAssertFalse(visible.contains(0), "a positive control: the list moved away from its top")
         window.close()
     }
+
+    /// The Folders mode lays every root's header and tree rows in one table: a tree that lists a folder adds its rows,
+    /// and a folded root keeps only its header.
+    func testTheFoldersTableFollowsTheTreesAndTheRootFolds() throws {
+        let tools = base.appendingPathComponent("tools")
+        try FileManager.default.createDirectory(at: tools.appendingPathComponent("src"), withIntermediateDirectories: true)
+        try Data("x\n".utf8).write(to: tools.appendingPathComponent("src/a.ts"))
+        let review = ReviewModel(repo: tools, options: DiffViewOptions(), renderer: NullRenderer())
+        let trees = HubFolderTreeStore()
+        let roots = [tools.path, base.appendingPathComponent("notes").path]
+        let window = NSWindow(contentRect: NSRect(x: 0, y: 0, width: 320, height: 620), styleMask: [.borderless], backing: .buffered, defer: false)
+        window.isReleasedWhenClosed = false
+        window.alphaValue = 0
+        window.level = .init(rawValue: Int(CGWindowLevelForKey(.desktopWindow)) - 1)
+        let host = NSHostingView(rootView: HubFolderTrees(roots: roots, review: review, trees: trees, changesShown: false).frame(width: 320, height: 620))
+        window.contentView = host
+        window.order(.below, relativeTo: 0)
+        func settle() {
+            let end = Date().addingTimeInterval(1)
+            while Date() < end {
+                host.layoutSubtreeIfNeeded()
+                RunLoop.current.run(until: Date().addingTimeInterval(0.1))
+            }
+        }
+        func table(in view: NSView) -> NSTableView? {
+            if let table = view as? NSTableView { return table }
+            return view.subviews.lazy.compactMap { table(in: $0) }.first
+        }
+        settle()
+        let list = try XCTUnwrap(table(in: host), "the Folders list is a table")
+        // tools: header, README.md, src; notes: header, README.md.
+        XCTAssertEqual(list.numberOfRows, 5)
+
+        trees.model(for: tools.path).toggle(tools.appendingPathComponent("src").path)
+        settle()
+        XCTAssertEqual(list.numberOfRows, 6, "an opened folder's listing reaches the table")
+
+        trees.toggleFold(tools.path)
+        settle()
+        XCTAssertEqual(list.numberOfRows, 3, "a folded root keeps its header only")
+        window.close()
+    }
 }

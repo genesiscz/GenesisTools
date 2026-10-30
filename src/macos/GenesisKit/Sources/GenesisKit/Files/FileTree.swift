@@ -559,6 +559,12 @@ public struct FileTreeView: View {
         rows.filter { git.change(for: $0.id) != nil || git.holdsChanges($0.id) }
     }
 
+    /// One row as this view draws it, for a host that lays several trees in one table (the hub's Folders mode).
+    public static func row(_ row: FileTreeRow, selected: Bool, icon: String, style: FileTreeStyle, model: FileTreeModel,
+                           actions: FileTreeActions) -> some View {
+        FileTreeRowView(row: row, selected: selected, icon: icon, style: style, model: model, actions: actions).equatable()
+    }
+
     public static func defaultIcon(_ row: FileTreeRow) -> String {
         if row.isFolder {
             return row.expanded ? "folder.fill" : "folder"
