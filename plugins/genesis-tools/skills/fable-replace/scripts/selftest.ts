@@ -11,7 +11,7 @@ import * as os from "node:os";
 import * as path from "node:path";
 import { fileURLToPath } from "node:url";
 import { collectApi } from "./api";
-import { writeBackup } from "./backup-and-rollback";
+import { scratchSessionKey, sessionScratchRoot, writeBackup } from "./backup-and-rollback";
 import type { JournalEntry } from "./journal";
 import { parseJson, stringifyJson } from "./json";
 import * as barrel from "./replace-utils";
@@ -2251,10 +2251,13 @@ console.log("round 3: error payload and recon guards");
 console.log("scratchDir() root + pruneScratch()");
 {
     const root = scratchRoot();
+    const ownRoot = sessionScratchRoot();
     const fresh = scratchDir("probe");
     check(
-        "scratchDir lands under <tmp>/fable-replace/",
-        fresh.startsWith(`${root}${path.sep}`) && path.basename(fresh).startsWith(`probe-${process.pid}-`),
+        "scratchDir lands in this session's folder, <tmp>/fable-replace/<session>/",
+        ownRoot === path.join(root, scratchSessionKey()) &&
+            path.dirname(fresh) === ownRoot &&
+            path.basename(fresh).startsWith(`probe-${process.pid}-`),
         fresh
     );
     const age = (dir: string): string => {
@@ -2275,6 +2278,26 @@ console.log("scratchDir() root + pruneScratch()");
     const oldEmpty = age(scratchDir("empty"));
     const legacy = age(finished(fs.mkdtempSync(path.join(os.tmpdir(), "fable-replace-legacy-1-"))));
     const current = age(finished(scratchDir("current")));
+    // A second session on the same TMPDIR, as a worker that inherited its lead's temp folder is.
+    const otherKey = "selftest-other-session";
+    const ownSession = process.env.FABLE_REPLACE_SESSION;
+    process.env.FABLE_REPLACE_SESSION = otherKey;
+    let otherSession: string;
+    try {
+        otherSession = age(finished(scratchDir("old")));
+    } finally {
+        if (ownSession === undefined) {
+            delete process.env.FABLE_REPLACE_SESSION;
+        } else {
+            process.env.FABLE_REPLACE_SESSION = ownSession;
+        }
+    }
+
+    check(
+        "another session's scratchDir lands in that session's own folder",
+        path.dirname(otherSession) === path.join(root, otherKey) && sessionScratchRoot() === ownRoot,
+        otherSession
+    );
     const foreignRoot = path.join(f("other-tmp"), "fable-replace");
     fs.mkdirSync(foreignRoot, { recursive: true });
     const foreign = age(finished(fs.mkdtempSync(path.join(foreignRoot, "old-"))));
@@ -2283,13 +2306,30 @@ console.log("scratchDir() root + pruneScratch()");
     check("a young dir survives", fs.existsSync(youngWithManifest));
     check("an old dir without a manifest survives: not proven ours", fs.existsSync(oldNoManifest));
     check("an old empty dir is removed", !fs.existsSync(oldEmpty));
-    check("a legacy fable-replace-* dir directly under the temp dir falls under the same gate", !fs.existsSync(legacy));
     check("the current run's dir survives even when old", fs.existsSync(current));
-    check("the report counts what it removed", report.removed === 3 && report.bytes >= 200, stringifyJson(report));
+    check("an ordinary prune never removes another session's old backup", fs.existsSync(otherSession));
+    check("an ordinary prune leaves a legacy fable-replace-* dir to --all-sessions", fs.existsSync(legacy));
+    check("the report counts what it removed", report.removed === 2 && report.bytes >= 100, stringifyJson(report));
     check(
-        "the prune sweeps only the root this process writes to (TMPDIR), never another temp root",
-        report.roots.length === 1 && report.roots[0] === scratchRoot() && fs.existsSync(foreign),
+        "an ordinary prune sweeps only this session's folder, under the root this process writes to (TMPDIR)",
+        report.roots.length === 1 && report.roots[0] === ownRoot && fs.existsSync(foreign),
         stringifyJson(report.roots)
+    );
+    const everyone = pruneScratch({ keep: [current], scope: "all-sessions" });
+    check(
+        "all-sessions removes another session's old backup and a legacy fable-replace-* dir under the same gate",
+        !fs.existsSync(otherSession) && !fs.existsSync(legacy) && everyone.removed === 2,
+        stringifyJson(everyone)
+    );
+    check(
+        "all-sessions still keeps young, unproven and current dirs, and sweeps only this TMPDIR's root",
+        fs.existsSync(youngWithManifest) &&
+            fs.existsSync(oldNoManifest) &&
+            fs.existsSync(current) &&
+            fs.existsSync(foreign) &&
+            everyone.roots.length === 1 &&
+            everyone.roots[0] === root,
+        stringifyJson(everyone.roots)
     );
     const many = Array.from({ length: 60 }, (_, i) => age(finished(scratchDir(`many${i}`))));
     const capped = pruneScratch({ keep: [current] });
