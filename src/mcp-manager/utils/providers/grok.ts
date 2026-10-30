@@ -7,6 +7,7 @@ import { env } from "@genesiscz/utils/env";
 import { SafeJSON } from "@genesiscz/utils/json";
 import { logger } from "@genesiscz/utils/logger";
 import { isObject } from "@genesiscz/utils/object";
+import { claudeJsonPath, defaultNativeHome, nativeHome } from "@genesiscz/utils/providers/session-paths";
 import * as TOML from "@iarna/toml";
 import chalk from "chalk";
 import type { GrokGenericConfig, GrokMCPServerConfig } from "./grok.types.js";
@@ -77,7 +78,7 @@ function grokConfigPathForHome(home: string): string {
 
 export class GrokProvider extends MCPProvider {
     constructor() {
-        const home = path.join(env.paths.getHome() || env.paths.getUserProfile() || "~", ".grok");
+        const home = defaultNativeHome("grok", env.paths.getHome() || env.paths.getUserProfile() || "~");
         super(grokConfigPathForHome(home), "grok");
     }
 
@@ -182,8 +183,11 @@ export class GrokProvider extends MCPProvider {
             via: `plugin ${server.pluginId}`,
             plugin: server.pluginId,
         }));
+        // The `.claude.json` Claude Code uses ($CLAUDE_CONFIG_DIR/.claude.json when set), named with `~` for the home.
+        const claudeJson = claudeJsonPath(home);
+        const claudeJsonVia = claudeJson.startsWith(home) ? `~${claudeJson.slice(home.length)}` : claudeJson;
         const sources: Array<{ file: string; via: string; on: boolean }> = [
-            { file: path.join(home, ".claude.json"), via: "~/.claude.json", on: compatMcpsOn(config, "claude") },
+            { file: claudeJson, via: claudeJsonVia, on: compatMcpsOn(config, "claude") },
             {
                 file: path.join(home, ".cursor", "mcp.json"),
                 via: "~/.cursor/mcp.json",
@@ -276,7 +280,7 @@ export class GrokProvider extends MCPProvider {
      */
     private async discoverPluginServers(config: GrokGenericConfig): Promise<DeclaredPluginServer[]> {
         const found: DeclaredPluginServer[] = [];
-        const claudeDir = path.join(env.paths.getHome() || env.paths.getUserProfile() || "~", ".claude");
+        const claudeDir = nativeHome("claude", env.paths.getHome() || env.paths.getUserProfile() || "~");
 
         try {
             found.push(...(await claudeEnabledPluginServers(claudeDir, await readClaudeSettings(claudeDir))));

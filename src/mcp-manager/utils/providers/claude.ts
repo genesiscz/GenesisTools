@@ -8,6 +8,7 @@ import { env } from "@genesiscz/utils/env";
 import { SafeJSON } from "@genesiscz/utils/json";
 import { logger } from "@genesiscz/utils/logger";
 import { isObject } from "@genesiscz/utils/object";
+import { claudeJsonPath } from "@genesiscz/utils/providers/session-paths";
 import { atomicWriteFileSync } from "@genesiscz/utils/storage/atomic-file";
 import { matchGlob } from "@genesiscz/utils/string";
 import chalk from "chalk";
@@ -74,7 +75,7 @@ function isDeniedByClaude(denied: unknown[], registeredName: string, url: string
 export class ClaudeProvider extends MCPProvider {
     constructor() {
         const homeDir = env.paths.getHome() || env.paths.getUserProfile() || "~";
-        super(path.join(homeDir, ".claude.json"), "claude");
+        super(claudeJsonPath(homeDir), "claude");
     }
 
     async configExists(): Promise<boolean> {

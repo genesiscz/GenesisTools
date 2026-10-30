@@ -1,6 +1,10 @@
 export type Transport = "stdio" | "http" | "sse";
 
-export type ConfigSource = "~/.claude.json" | ".mcp.json" | ".cursor/mcp.json";
+/**
+ * The file a server came from, as the doctor prints it: Claude Code's `.claude.json` by its real path with `~` for
+ * the home (`claudeConfigLabel()`, so `CLAUDE_CONFIG_DIR` shows), `.mcp.json` or `.cursor/mcp.json`.
+ */
+export type ConfigSource = string;
 
 export type Status = "ok" | "slow" | "timeout" | "error" | "invalid";
 
