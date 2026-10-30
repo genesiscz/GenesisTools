@@ -517,12 +517,16 @@ final class ReviewModel: ObservableObject {
     /// into `repo`): this repository's files open on the host at that head (Review/ReviewRemoteHead.swift).
     var remoteHead: ReviewRemoteHead?
     @Published var files: [DiffFile] = [] {
-        didSet { lookupCache = nil }
+        didSet {
+            lookupCache = nil
+            fileListRowsCache = nil
+        }
     }
-    /// The file list's filter text; the list's rows are rebuilt from it in the view.
+    /// The file list's filter text; the list's rows are rebuilt from it (`fileListRows`).
     @Published var filter = "" {
         didSet {
             if filter != oldValue {
+                fileListRowsCache = nil
                 MainActor.assumeIsolated { HubMainBusy.measure("review.files.filter") }
             }
         }
@@ -541,8 +545,12 @@ final class ReviewModel: ObservableObject {
     /// The Files list as a tree or flat. Its click measures itself (`review.files.tree`, at the toggle): measured
     /// here, every launch's session-state restore logged the whole launch as the tree's cost ("897 ms of 600 ms",
     /// six at a time from parallel snapshot runs, 2026-10-10).
-    @Published var treeMode = true
-    @Published var collapsed: Set<String> = []
+    @Published var treeMode = true {
+        didSet { fileListRowsCache = nil }
+    }
+    @Published var collapsed: Set<String> = [] {
+        didSet { fileListRowsCache = nil }
+    }
     /// Set only when the diff moves to a file on its own (a find match), so a click in the list never scrolls the list.
     @Published var sidebarScrollTarget: String?
     /// PR thread ids picked for "Fix threads": the cards' Fix checkboxes, the threads list, and x.
@@ -577,6 +585,7 @@ final class ReviewModel: ObservableObject {
     @Published private(set) var roots: [ReviewRoot] {
         didSet {
             lookupCache = nil
+            fileListRowsCache = nil
             if roots.count != oldValue.count || zip(roots, oldValue).contains(where: { !$0.sameSetup(as: $1) }) {
                 resolvedPaths = [:]
             }
@@ -593,6 +602,9 @@ final class ReviewModel: ObservableObject {
         lookupCache = made
         return made
     }
+    /// The file list's rows for what it shows now (`fileListRows`); nil after the files, roots, filter, tree mode or
+    /// folds changed.
+    private var fileListRowsCache: [SidebarRow]?
     /// Absolute paths as `file(atPath:)` compares them (symlinks resolved, standardized), each read from disk once:
     /// the Folders tree asks for every row it draws, and a body must not touch the disk per row. Dropped when the
     /// roots move to other folders.
@@ -694,6 +706,23 @@ final class ReviewModel: ObservableObject {
         let needle = filter.trimmed.lowercased()
         guard !needle.isEmpty else { return files }
         return files.filter { $0.path.lowercased().contains(needle) }
+    }
+
+    /// The file list draws folders only without a filter; a filter lists the matches flat.
+    var fileListIsTree: Bool {
+        treeMode && filter.isEmpty
+    }
+
+    /// The file list's rows (`FileSidebar`, `FileListFit`), built on the first read after the files, roots, filter,
+    /// tree mode or folds changed. Built in the list's body, every publish of this model (a comment count, a notice,
+    /// the loading flag) split, sorted and walked every path again: 442 ms per publish at 4995 rows (2026-10-23).
+    var fileListRows: [SidebarRow] {
+        if let fileListRowsCache {
+            return fileListRowsCache
+        }
+        let made = sidebarRows(filteredFiles, tree: fileListIsTree, collapsed: collapsed, roots: roots)
+        fileListRowsCache = made
+        return made
     }
 
     var selectedIndex: Int? {
@@ -1354,6 +1383,18 @@ final class ReviewModel: ObservableObject {
         Dictionary(grouping: (proposal?.drafts ?? []).filter { $0.status == "proposed" }, by: \.path).mapValues(\.count)
     }
 
+    /// The same per merged file id: every file whose own repository names a draft's path (`repoPath(of:)`) shows
+    /// its count. One lookup per draft, so the list's rows get their badges as values.
+    var openDraftsByFileID: [String: Int] {
+        var result: [String: Int] = [:]
+        for (path, count) in openDraftsByPath {
+            for id in lookup.ids(repoPath: path) {
+                result[id] = count
+            }
+        }
+        return result
+    }
+
     /// A proposal opens at its first undecided draft once: nothing else on screen says where it is.
     private func revealFirstOpenDraftOnce() {
         guard let proposal, !resumesSavedPlace, revealedProposal != proposal.url.path, pendingThreadCard == nil, focusedCard == nil,
@@ -1923,6 +1964,11 @@ final class ReviewModel: ObservableObject {
             actions.append(ReviewPathAction("Copy repo-relative path") { PathOpener.copy(relative, what: "path") })
         }
         return actions
+    }
+
+    /// What `pathActions(of:)` reads besides the file and the roots, for the file list's rows to compare.
+    var pathActionsKey: ReviewPathActionsKey {
+        ReviewPathActionsKey(repo: repo.path, remoteHead: remoteHead?.sha, hostRevision: hostRevision)
     }
 
     /// The page sends the file and any text selected there; the menu opens at the pointer.
@@ -3313,8 +3359,8 @@ private struct ProposalBanner: View {
     }
 }
 
-struct SidebarRow: Identifiable {
-    enum Kind {
+struct SidebarRow: Identifiable, Equatable {
+    enum Kind: Equatable {
         /// A root's folder in a review of several repositories: its checkbox, remove and error live here.
         case root(index: Int, additions: Int, deletions: Int)
         case directory(name: String, additions: Int, deletions: Int)
@@ -3418,6 +3464,8 @@ private func sidebarRows(_ files: [DiffFile], tree: Bool, collapsed: Set<String>
 }
 
 /// Not private: reused standalone as the hub's "Files" pane (`HubTab.files` in HubWindow.swift).
+/// An observing shell: it reads the model and hands the rows their values (`FileSidebarRows`), so a publish that
+/// changes nothing a row draws (a comment count, a notice, the loading flag) runs this body and no row's.
 struct FileSidebar: View {
     @ObservedObject var model: ReviewModel
     @FocusState private var filterFocused: Bool
@@ -3437,8 +3485,7 @@ struct FileSidebar: View {
 
     var body: some View {
         let _ = RenderProbe.hit("review.files.body")
-        let rows = sidebarRows(model.filteredFiles, tree: model.treeMode && model.filter.isEmpty, collapsed: model.collapsed, roots: model.roots)
-        let drafts = model.openDraftsByPath
+        let list = Self.rows(of: model, toggle: toggleFolder)
         VStack(spacing: 0) {
             HStack(spacing: 6) {
                 HStack(spacing: 6) {
@@ -3467,7 +3514,7 @@ struct FileSidebar: View {
             .padding(.top, model.embedded ? 8 : 52)
             .padding(.bottom, 8)
 
-            if rows.isEmpty, !model.loading {
+            if list.rows.isEmpty, !model.loading {
                 Text(model.filter.isEmpty ? "No changed files" : "No file matches “\(model.filter)”")
                     .font(.system(size: 12))
                     .foregroundColor(ReviewPalette.dim)
@@ -3477,45 +3524,7 @@ struct FileSidebar: View {
 
             ScrollViewReader { proxy in
                 ScrollView {
-                    LazyVStack(alignment: .leading, spacing: 1) {
-                        ForEach(rows) { row in
-                            switch row.kind {
-                            case .root(let index, let additions, let deletions):
-                                let root = model.roots[index]
-                                RootFolderRow(root: root, additions: additions, deletions: deletions,
-                                              collapsed: model.collapsed.contains(row.id), actions: model.rootActions) {
-                                    toggleFolder(row.id)
-                                }
-                                .padding(.horizontal, 6)
-                                .padding(.top, index == 0 ? 0 : 6)
-                            case .directory(let name, let additions, let deletions):
-                                let tree = model.treeMode && model.filter.isEmpty
-                                DirectoryRow(
-                                    name: name,
-                                    depth: row.depth,
-                                    additions: additions,
-                                    deletions: deletions,
-                                    tree: tree,
-                                    collapsed: model.collapsed.contains(row.id),
-                                    toggle: { toggleFolder(row.id) }
-                                )
-                                .equatable()
-                                // The gap above a flat-list group sits outside the button, so the
-                                // hover box covers the folder name and nothing above it.
-                                .padding(.horizontal, 6)
-                                .padding(.top, tree ? 0 : 8)
-                            case .file(let file):
-                                FileRow(file: file, selected: file.id == model.selectedID, depth: row.depth,
-                                        drafts: model.repoPath(of: file.id).flatMap { drafts[$0] } ?? 0,
-                                        select: { model.select(file.id) })
-                                    .equatable()
-                                    .id(file.id)
-                                    .contextMenu { fileMenu(file) }
-                                    .padding(.horizontal, 6)
-                            }
-                        }
-                    }
-                    .padding(.bottom, 12)
+                    list.equatable()
                 }
                 .onChange(of: model.sidebarScrollTarget) { id in
                     guard let id else { return }
@@ -3534,11 +3543,95 @@ struct FileSidebar: View {
         .panelFindNative("files") { filterFocused = true }
     }
 
+    /// The rows' values as the model has them now: every input a row draws, each read once per body of the shell.
+    /// The rows (`fileListRows`) and the lookups behind the drafts are built once per change, not here.
+    static func rows(of model: ReviewModel, toggle: @escaping (String) -> Void) -> FileSidebarRows {
+        FileSidebarRows(
+            rows: model.fileListRows,
+            tree: model.fileListIsTree,
+            selectedID: model.selectedID,
+            collapsed: model.collapsed,
+            drafts: model.openDraftsByFileID,
+            roots: model.roots,
+            rootActions: model.rootActions,
+            pathActionsKey: model.pathActionsKey,
+            toggle: toggle,
+            select: { model.select($0) },
+            pathActions: { model.pathActions(of: $0) }
+        )
+    }
+}
+
+/// The file list's rows from values. `==` compares everything a row draws, so with `.equatable()` a body of the shell
+/// that changed none of it draws no row: an unrelated publish cost the list 442 ms at 4995 rows when the rows were
+/// built in the shell's body (2026-10-23 file tree comparison). 🛑 A new input a row draws is a field here AND a term
+/// of `==`; one left out of `==` leaves the rows stale until another input changes.
+struct FileSidebarRows: View, Equatable {
+    let rows: [SidebarRow]
+    let tree: Bool
+    let selectedID: String?
+    let collapsed: Set<String>
+    /// Undecided agent drafts per merged file id (`ReviewModel.openDraftsByFileID`).
+    let drafts: [String: Int]
+    let roots: [ReviewRoot]
+    let rootActions: ReviewRootActions?
+    /// The file menus' inputs besides the file and the roots (`ReviewModel.pathActions`).
+    let pathActionsKey: ReviewPathActionsKey
+    let toggle: (String) -> Void
+    let select: (String) -> Void
+    let pathActions: (DiffFile) -> [ReviewPathAction]
+
+    static func == (a: FileSidebarRows, b: FileSidebarRows) -> Bool {
+        a.rows == b.rows && a.tree == b.tree && a.selectedID == b.selectedID && a.collapsed == b.collapsed
+            && a.drafts == b.drafts && a.roots == b.roots && (a.rootActions == nil) == (b.rootActions == nil)
+            && a.pathActionsKey == b.pathActionsKey
+    }
+
+    var body: some View {
+        let _ = RenderProbe.hit("review.files.rows")
+        LazyVStack(alignment: .leading, spacing: 1) {
+            ForEach(rows) { row in
+                switch row.kind {
+                case .root(let index, let additions, let deletions):
+                    RootFolderRow(root: roots[index], additions: additions, deletions: deletions,
+                                  collapsed: collapsed.contains(row.id), actions: rootActions) {
+                        toggle(row.id)
+                    }
+                    .padding(.horizontal, 6)
+                    .padding(.top, index == 0 ? 0 : 6)
+                case .directory(let name, let additions, let deletions):
+                    DirectoryRow(
+                        name: name,
+                        depth: row.depth,
+                        additions: additions,
+                        deletions: deletions,
+                        tree: tree,
+                        collapsed: collapsed.contains(row.id),
+                        toggle: { toggle(row.id) }
+                    )
+                    .equatable()
+                    // The gap above a flat-list group sits outside the button, so the
+                    // hover box covers the folder name and nothing above it.
+                    .padding(.horizontal, 6)
+                    .padding(.top, tree ? 0 : 8)
+                case .file(let file):
+                    FileRow(file: file, selected: file.id == selectedID, depth: row.depth, drafts: drafts[file.id] ?? 0,
+                            select: { select(file.id) })
+                        .equatable()
+                        .id(file.id)
+                        .contextMenu { fileMenu(file) }
+                        .padding(.horizontal, 6)
+                }
+            }
+        }
+        .padding(.bottom, 12)
+    }
+
     /// Open, copy or reveal the file in its own repository (with several roots, not `model.repo`).
     /// The same list as the diff header's right-click menu (`ReviewModel.pathActions`).
     @ViewBuilder
     private func fileMenu(_ file: DiffFile) -> some View {
-        ForEach(model.pathActions(of: file)) { action in
+        ForEach(pathActions(file)) { action in
             Button(action.title, action: action.run)
         }
     }
@@ -3559,8 +3652,8 @@ enum FileListFit {
 
     @MainActor
     static func width(model: ReviewModel) -> CGFloat {
-        let tree = model.treeMode && model.filter.isEmpty
-        let rows = sidebarRows(model.filteredFiles, tree: tree, collapsed: model.collapsed, roots: model.roots)
+        let tree = model.fileListIsTree
+        let rows = model.fileListRows
         let widest = rows.map { rowWidth($0, tree: tree, roots: model.roots, hasRootActions: model.rootActions != nil) }.max() ?? 0
         let scroller = NSScroller.preferredScrollerStyle == .legacy ? NSScroller.scrollerWidth(for: .regular, scrollerStyle: .legacy) : 0
         return (widest + rowInset + slack + scroller).rounded(.up)

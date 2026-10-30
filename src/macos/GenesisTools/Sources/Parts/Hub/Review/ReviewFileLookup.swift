@@ -64,3 +64,11 @@ struct ReviewFileLookup {
         return (roots[index], file)
     }
 }
+
+/// What `ReviewModel.pathActions(of:)` reads besides the file and the roots. The file list's rows draw their context
+/// menus from it, so a change of it draws them again (`FileSidebarRows`).
+struct ReviewPathActionsKey: Equatable {
+    let repo: String
+    let remoteHead: String?
+    let hostRevision: String?
+}
