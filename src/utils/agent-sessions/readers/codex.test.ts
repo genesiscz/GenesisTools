@@ -1377,20 +1377,3 @@ test("modelOfRow names a turn_context row's model, and indexesFile takes rollout
     expect(codexIndexesFile("C:\\fixture\\rollout-example.jsonl")).toBe(true);
     expect(codexIndexesFile("/fixture/sessions/2026/10/10/history.jsonl")).toBe(false);
 });
-
-test("rowAnchors carries an open turn to its items until the turn ends or rows were skipped", () => {
-    const walk = createCodexHistoryOperations().rowAnchors();
-    expect(walk({ type: "event_msg", payload: { type: "task_started", turn_id: "turn-1" } }, false).turnIds).toEqual([
-        "turn-1",
-    ]);
-    expect(walk({ type: "response_item", payload: { type: "function_call", call_id: "call-1" } }, false)).toEqual({
-        messageIds: [],
-        toolCallIds: ["call-1"],
-        turnIds: ["turn-1"],
-    });
-    expect(walk({ type: "response_item", payload: { type: "message", id: "msg-1" } }, true)).toEqual({
-        messageIds: ["msg-1"],
-        toolCallIds: [],
-        turnIds: [],
-    });
-});

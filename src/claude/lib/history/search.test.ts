@@ -8,7 +8,6 @@ import {
     noBackwardRead,
     noContinuedIn,
     noModelOfRow,
-    noRowAnchors,
 } from "@genesiscz/utils/agent-sessions/testing/no-backward-read";
 import type {
     HistoryStatisticsRead,
@@ -255,7 +254,6 @@ function reader(overrides: Partial<Reader> = {}): Reader {
         modelOfRow: noModelOfRow,
         scanInsights: null,
         indexesFile: indexesNoFile,
-        rowAnchors: noRowAnchors,
         readTurnBoundary: async () => null,
         readForward: async () => ({ rows: [], file: null, endOffset: 0, issues: [] }),
         roots: () => [root],

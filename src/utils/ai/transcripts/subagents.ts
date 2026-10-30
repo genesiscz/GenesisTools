@@ -9,12 +9,12 @@
 import { closeSync, existsSync, fstatSync, openSync, readdirSync, readFileSync, readSync, statSync } from "node:fs";
 import { basename, dirname, join } from "node:path";
 import { resolveHistoryProvider } from "@genesiscz/utils/agent-sessions/provider";
-import { harnessTranscriptFacts } from "@genesiscz/utils/ai/providers/harness-index";
 import { isMissingPathError } from "@genesiscz/utils/fs/canonical";
 import { SafeJSON } from "@genesiscz/utils/json";
 import { logger } from "@genesiscz/utils/logger";
 import { scanClaudeToolCalls } from "./file-scan";
 import type { ResolvedTranscript } from "./resolve";
+import type { TranscriptProvider } from "./types";
 
 /**
  * - `running`: the last record is a prompt, a tool result or a tool call, and the file was written
@@ -380,11 +380,18 @@ function readAgentFresh(
     }
 }
 
+/** Whether a provider writes a session's sub-agents beside it (Claude's `<session>/subagents/`). */
+const SUBAGENTS_ON_DISK: Record<TranscriptProvider, boolean> = {
+    claude: true,
+    codex: false,
+    grok: false,
+};
+
 /** Every sub-agent of a Claude session, oldest first. Other providers have none on disk: an empty list. */
 export function listSubagents(resolved: ResolvedTranscript, options: ListSubagentsOptions = {}): SessionSubagents {
     const now = options.now ?? Date.now();
     const staleAfterMs = options.staleAfterMs ?? DEFAULT_STALE_MS;
-    if (!harnessTranscriptFacts(resolved.provider).subagentsOnDisk) {
+    if (!SUBAGENTS_ON_DISK[resolved.provider]) {
         return { sessionId: resolved.sessionId, subagents: [] };
     }
 
