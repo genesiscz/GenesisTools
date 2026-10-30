@@ -1,8 +1,13 @@
 import { afterEach, describe, expect, type Mock, spyOn, test } from "bun:test";
+import { mkdtempSync, rmSync, writeFileSync } from "node:fs";
+import { tmpdir } from "node:os";
+import { join } from "node:path";
+import { env } from "@genesiscz/utils/env";
 import { SafeJSON } from "@genesiscz/utils/json";
 import {
     claudeKeychainCli,
     KeychainUnreadableError,
+    keychainOwnerUuidOffline,
     readKeychainEntry,
     readKeychainPayload,
     type SecurityCliResult,
@@ -19,6 +24,22 @@ async function withPlatform<T>(platform: string, run: () => Promise<T>): Promise
         Object.defineProperty(process, "platform", { value: original, configurable: true });
     }
 }
+
+describe("keychainOwnerUuidOffline", () => {
+    test("reads the .claude.json Claude Code uses, which CLAUDE_CONFIG_DIR moves", async () => {
+        const dir = mkdtempSync(join(tmpdir(), "gt-keychain-claude-json-"));
+
+        try {
+            const account = { oauthAccount: { accountUuid: "00000000-0000-4000-8000-00000000a11c" } };
+            writeFileSync(join(dir, ".claude.json"), SafeJSON.stringify(account));
+            await env.testing.withOverrides({ CLAUDE_CONFIG_DIR: dir }, async () => {
+                expect(await keychainOwnerUuidOffline()).toBe("00000000-0000-4000-8000-00000000a11c");
+            });
+        } finally {
+            rmSync(dir, { recursive: true, force: true });
+        }
+    });
+});
 
 describe("keychain off macOS", () => {
     test("readKeychainPayload returns null instead of throwing", async () => {

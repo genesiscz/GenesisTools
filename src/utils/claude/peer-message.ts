@@ -1,10 +1,10 @@
 import { readdirSync, readFileSync } from "node:fs";
 import { join } from "node:path";
-import { env } from "@genesiscz/utils/env";
 import { SafeJSON } from "@genesiscz/utils/json";
 import { logger } from "@genesiscz/utils/logger";
 import { batchPsInfo } from "@genesiscz/utils/process/ps";
 import { isProcessAlive } from "@genesiscz/utils/process-alive";
+import { nativeHomePath } from "@genesiscz/utils/providers/session-paths";
 
 /**
  * Claude Code's cross-session messaging (2.1.224+): every interactive session listens on a Unix socket
@@ -41,12 +41,9 @@ export interface ClaudeLiveSession {
     parkedJobId?: string;
 }
 
-function claudeDir(): string {
-    return env.paths.getClaudeConfigDir() ?? join(env.paths.getHome(), ".claude");
-}
-
+/** Claude Code's live-session registry, `<claude home>/sessions` (CLAUDE_CONFIG_DIR moves it). */
 export function claudeSessionsDir(): string {
-    return join(claudeDir(), "sessions");
+    return nativeHomePath("claude", "sessions");
 }
 
 function isRecord(value: unknown): value is Record<string, unknown> {

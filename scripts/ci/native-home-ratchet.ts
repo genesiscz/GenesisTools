@@ -21,10 +21,7 @@ export const NATIVE_HOME_CLAUDE_RATCHET: ReadonlySet<string> = new Set<string>([
     "src/learn-from-fable/lib/config.ts",
     "src/scripts/lib/claude-tokens.ts",
     "src/utils/ai/providers/plugins/anthropic-sub/statusline.ts",
-    "src/utils/ai/statusline/config.ts",
-    "src/utils/claude/keychain.ts",
     "src/utils/cli/failures/caller.ts",
-    "src/utils/ts/sourcemaps/sentry-config.ts",
 ]);
 
 export const NATIVE_HOME_CODEX_GROK_RATCHET: ReadonlySet<string> = new Set<string>([
@@ -32,7 +29,6 @@ export const NATIVE_HOME_CODEX_GROK_RATCHET: ReadonlySet<string> = new Set<strin
     "scripts/benchmarks/fs/walk-trees.ts",
     "src/ai/commands/config/account.ts",
     "src/codex/lib/spawn.ts",
-    "src/utils/ai/openai/codex-auth.ts",
     "src/utils/cli/failures/caller.ts",
     "src/utils/session-changes/codex.ts",
 ]);

@@ -1,10 +1,9 @@
 import { readFileSync } from "node:fs";
-import { homedir } from "node:os";
-import { join } from "node:path";
 import { aiDataDir } from "@genesiscz/utils/ai/config/paths";
 import { toolCommand } from "@genesiscz/utils/cli/tool-command";
 import { SafeJSON } from "@genesiscz/utils/json";
 import { logger } from "@genesiscz/utils/logger";
+import { nativeHomePath } from "@genesiscz/utils/providers/session-paths";
 import { shellCommandLine } from "@genesiscz/utils/shell/quote";
 import { isJsonObject } from "@genesiscz/utils/storage/atomic-file";
 import { atomicWriteFileSync } from "@genesiscz/utils/storage/storage";
@@ -25,7 +24,7 @@ export function defaultStatuslineConfig(): StatuslineConfig {
         showGit: true,
         showDirty: false,
         modelStyle: "id",
-        graft: { enabled: true, shim: join(homedir(), ".claude", "helpers", "graft-statusline.cjs"), ttlMs: 10_000 },
+        graft: { enabled: true, shim: nativeHomePath("claude", "helpers", "graft-statusline.cjs"), ttlMs: 10_000 },
         metricsPost: { enabled: false, url: "http://localhost:8765/statusline", timeoutMs: 300 },
         gitTtlMs: 5_000,
         extends: null,
