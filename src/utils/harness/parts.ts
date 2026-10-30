@@ -178,6 +178,28 @@ export interface ProcessSignature {
     cliEntryIndex(input: { argv0: string; name: string; command: string }): number | null;
 }
 
+/**
+ * I: what a hook, the hook config and the change log may assume about the harness that ran them. Plain data in its
+ * own module per plugin (`plugins/<plugin>/harness-hooks.ts`), because the guard hook reads it through
+ * `harness-hooks.ts`, a door that loads no driver.
+ */
+export interface HookFacts {
+    /** Its diff-log entries are filled from its transcript (`extendFromTranscripts` reads the tool calls there). */
+    readonly diffLogFromTranscript: boolean;
+    /** Its transcript's earlier tool inputs name the paths a Bash diff attributes (`refreshMentions`). */
+    readonly transcriptMentions: boolean;
+    /** The GenesisTools mods plugin runs inside it and draws the full diffs itself. */
+    readonly modsDrawDiffs: boolean;
+    /** Its model may come from `~/.claude/settings.json` when the transcript names none. */
+    readonly settingsModel: boolean;
+    /** Its shell honours a bare zsh glob qualifier such as `(N)`, so the guard allows `zsh-glob-qualifier` there. */
+    readonly honoursBareGlobQualifier: boolean;
+    /** It renders a hook message with ANSI colour and in full, so the diff hook shows its diffs there. */
+    readonly rendersAnsiDiffs: boolean;
+    /** Its change-log turn is the id of the prompt row that started it, so a blame line can show the prompt. */
+    readonly turnIsPromptId: boolean;
+}
+
 /** Parts that wrap parsers and readers: a driver holds a loader, so reading the driver never loads them. */
 export interface LazyPartContracts {
     parse: TranscriptParser;
@@ -209,6 +231,8 @@ export interface EagerPartContracts {
      * its finders on the first call, so the finders cost the hook path nothing.
      */
     locate: TranscriptLocator;
+    /** I: the hook facts (`HookFacts`); the hook payload shape stays `HookPayload` in the agents tool. */
+    hooks: HookFacts;
 }
 
 /**

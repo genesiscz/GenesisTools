@@ -3,6 +3,7 @@ import { existsSync, readFileSync } from "node:fs";
 import { join } from "node:path";
 import { ACCOUNT_PROVIDER_ALIASES } from "@genesiscz/utils/ai/providers/alias-list";
 import { providerAliasOf } from "@genesiscz/utils/ai/providers/aliases";
+import { harnessHooks } from "@genesiscz/utils/ai/providers/harness-hooks";
 import {
     harnessDriver,
     harnessDrivers,
@@ -155,6 +156,15 @@ describe("turnState: an empty tail of every harness", () => {
             expect(stale.openTools).toEqual([]);
             expect(stale.lastText).toBe("");
             expect(stale.asksQuestion).toBe(false);
+        });
+    }
+});
+
+describe("hooks: the light door holds the drivers' own hook facts", () => {
+    for (const driver of harnessDrivers()) {
+        test(`${driver.id}'s harness-hooks entry is the object its driver carries`, () => {
+            const own: unknown = driver.parts.hooks;
+            expect(own).toBe(harnessHooks(driver.id));
         });
     }
 });
