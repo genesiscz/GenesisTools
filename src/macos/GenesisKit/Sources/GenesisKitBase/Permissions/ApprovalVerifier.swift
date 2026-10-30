@@ -258,26 +258,38 @@ struct ApprovalTouchIDGlyph: NSViewRepresentable {
 
 /// Holds the `LAAuthenticationView` for the current context. A new context (a retry) gets a new glyph view, because
 /// the glyph is bound to its context for life.
+///
+/// The glyph draws at its control size whatever frame it gets (measured 2026-10-30: `.mini` 16 pt, `.small` 32,
+/// `.regular` 64, `.large` 128), so the host pins it to that size and reports it: the `.regular` glyph in a 32 pt
+/// frame spilled over the window's edge and under the buttons.
 final class ApprovalTouchIDHostView: NSView {
+    /// The glyph of a footer line: 32 pt, as the lock and checkmark it alternates with.
+    static let controlSize = NSControl.ControlSize.small
+    static let fallbackSize = NSSize(width: 32, height: 32)
+
     weak var verifier: ApprovalVerifier?
     private var glyph: LAAuthenticationView?
     private var keyObserver: NSObjectProtocol?
 
-    override var intrinsicContentSize: NSSize { NSSize(width: 32, height: 32) }
+    override var intrinsicContentSize: NSSize { glyph?.fittingSize ?? Self.fallbackSize }
 
     func pair(with context: LAContext?) {
         guard glyph?.context !== context else { return }
         glyph?.removeFromSuperview()
         glyph = nil
         guard let context else { return }
-        let view = LAAuthenticationView(context: context, controlSize: .regular)
+        let view = LAAuthenticationView(context: context, controlSize: Self.controlSize)
         view.translatesAutoresizingMaskIntoConstraints = false
         addSubview(view)
+        let size = view.fittingSize
         NSLayoutConstraint.activate([
             view.centerXAnchor.constraint(equalTo: centerXAnchor),
             view.centerYAnchor.constraint(equalTo: centerYAnchor),
+            view.widthAnchor.constraint(equalToConstant: size.width),
+            view.heightAnchor.constraint(equalToConstant: size.height),
         ])
         glyph = view
+        invalidateIntrinsicContentSize()
         evaluateWhenShown()
     }
 
