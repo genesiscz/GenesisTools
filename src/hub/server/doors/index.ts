@@ -1,5 +1,5 @@
 import { agentsCountsDoor, agentsMailDoor, agentsTreeDoor, subagentsDoor } from "./agents";
-import { agentsToolChangesDoor } from "./changes";
+import { agentsToolChangesDoor, agentsTurnChangesDoor } from "./changes";
 import {
     forecastDoor,
     inboxDoor,
@@ -30,6 +30,7 @@ export const HUB_SERVER_DOORS: readonly Door[] = [
     agentsTreeDoor,
     subagentsDoor,
     agentsToolChangesDoor,
+    agentsTurnChangesDoor,
     forecastDoor,
     procsDoor,
     stuckDoor,

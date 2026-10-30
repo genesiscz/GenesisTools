@@ -7,7 +7,7 @@ import { SafeJSON } from "@genesiscz/utils/json";
 import { currentTraceId } from "@genesiscz/utils/trace";
 import { parseArgv } from "./argv";
 import { askHubServer, callHubServer } from "./client";
-import { agentsToolChangesDoor } from "./doors/changes";
+import { agentsToolChangesDoor, agentsTurnChangesDoor } from "./doors/changes";
 import { proposalListDoor, repoDoor, usageSessionsDoor } from "./doors/frequent";
 import { HUB_SERVER_DOORS } from "./doors/index";
 import { navConfigureDoor, navListDoor, navRecordDoor } from "./doors/nav";
@@ -344,6 +344,28 @@ describe("hub server argv", () => {
         expect(agentsToolChangesDoor.match(["agents", "changes", id, "--tool", "t1", "--json"])).toBeNull();
         expect(agentsToolChangesDoor.match(["agents", "changes", id, "--tools", "t1"])).toBeNull();
         expect(agentsToolChangesDoor.match(["agents", "changes", id, "--tools", " , ", "--json"])).toBeNull();
+    });
+
+    it("agents changes: the Changes pane's --last-turns ask, blobs stored or not; a prefix, no --json or another count runs as a process", () => {
+        const id = "1b4001ba-d479-40f2-9e25-b13cb2ef5a13";
+        expect(
+            agentsTurnChangesDoor.match(["agents", "changes", id, "--last-turns", "5", "--json", "--store-blobs"])
+        ).toEqual({ session: id, lastTurns: 5, storeBlobs: true });
+        expect(agentsTurnChangesDoor.match(["agents", "changes", id, "--last-turns", "1", "--json"])).toEqual({
+            session: id,
+            lastTurns: 1,
+            storeBlobs: false,
+        });
+        expect(
+            agentsTurnChangesDoor.match(["agents", "changes", "1b4001ba", "--last-turns", "5", "--json"])
+        ).toBeNull();
+        expect(agentsTurnChangesDoor.match(["agents", "changes", id, "--last-turns", "5"])).toBeNull();
+        expect(agentsTurnChangesDoor.match(["agents", "changes", id, "--last-turns", "0", "--json"])).toBeNull();
+        expect(agentsTurnChangesDoor.match(["agents", "changes", id, "--last-turns", "x", "--json"])).toBeNull();
+        expect(
+            agentsTurnChangesDoor.match(["agents", "changes", id, "--last-turns", "5", "--json", "--diff"])
+        ).toBeNull();
+        expect(agentsTurnChangesDoor.match(["agents", "changes", id, "--tools", "t1", "--json"])).toBeNull();
     });
 
     it("hub repo: absolute paths and the cache flags; a relative path or an unknown flag runs as a process", () => {

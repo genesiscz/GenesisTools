@@ -599,6 +599,45 @@ describe("computeSessionChanges", () => {
         expect(p2(scoped)?.files.map((file) => file.path)).toEqual([`${REPO}/src/out.ts`]);
     });
 
+    it("keeps a call's analysis across asks of one session, and still replays the script it wrote", () => {
+        // A resident process asks again as the session grows: the second ask sees the script's run appended.
+        const first = parseClaudeTranscript("kept-session", {
+            main: jsonl([
+                prompt("p1", "write a script", 0),
+                use("heredoc", "Bash", { command: "cat > gen.sh <<'EOF'\necho hi > src/out.ts\nEOF" }, 1),
+                result("p1", "heredoc", 2),
+            ]),
+        });
+        const grown = parseClaudeTranscript("kept-session", {
+            main: jsonl([
+                prompt("p1", "write a script", 0),
+                use("heredoc", "Bash", { command: "cat > gen.sh <<'EOF'\necho hi > src/out.ts\nEOF" }, 1),
+                result("p1", "heredoc", 2),
+                prompt("p2", "run it", 10),
+                use("run", "Bash", { command: "zsh gen.sh" }, 11),
+                result("p2", "run", 12),
+            ]),
+        });
+        const runLog = [row("p1", `${REPO}/gen.sh`, 2), row("p2", `${REPO}/src/out.ts`, 12)];
+        const ask = (sessionId: string, transcript: typeof first) =>
+            computeSessionChanges({
+                sessionId,
+                transcript,
+                log: runLog,
+                home: HOME,
+                tempDirs: [TEMP],
+                repoRoot,
+                isDirectory: () => false,
+            });
+        ask("kept-session", first);
+        const second = ask("kept-session", grown);
+        const fresh = ask("kept-session-fresh", grown);
+        const p2 = (changes: typeof second) => changes.turns.find((item) => item.turnId === "p2");
+
+        expect(p2(second)).toEqual(p2(fresh));
+        expect(p2(second)?.files.map((file) => file.path)).toEqual([`${REPO}/src/out.ts`]);
+    });
+
     it("judges the log alone by path rules when there is no transcript", () => {
         const logOnly = compute({
             transcript: null,

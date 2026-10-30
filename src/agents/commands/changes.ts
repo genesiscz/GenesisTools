@@ -1,19 +1,14 @@
-import { existsSync } from "node:fs";
 import {
     type ChangesOptions,
     diffFields,
     diffsFor,
-    excludedOf,
-    fileJson,
-    isKnownSession,
-    persistBlobs,
-    selectTurns,
+    sessionTurnChanges,
     toolChangesJson,
+    turnChangesJson,
 } from "@app/agents/lib/changes/tool-changes";
 import { resolveCachedSessionId, type SessionIdResolution } from "@genesiscz/utils/agent-sessions/cached-title";
 import { readJsonlRows } from "@genesiscz/utils/jsonl";
 import { logger, out } from "@genesiscz/utils/logger";
-import { lastChangedTurns, loadSessionChanges, mergeTurnFiles } from "@genesiscz/utils/session-changes";
 import type { Command } from "commander";
 import { type ChangeEvent, lastTurnIds, sessionChangesPath } from "../lib/changes/log";
 import { objectsDir } from "../lib/changes/objects";
@@ -247,49 +242,18 @@ export function registerChangesCommand(program: Command): void {
                 return;
             }
 
-            const changes = loadSessionChanges({ sessionId: session, log: read.rows });
+            const result = await sessionTurnChanges({ session, file, rows: read.rows, options, count });
 
-            if (!changes.transcriptPath && !existsSync(file) && !(await isKnownSession(session))) {
-                // An empty list would read as "this session changed nothing", for a mistyped id too.
-                out.log.error(`No change log and no transcript for session ${session}`);
+            if ("error" in result) {
+                out.log.error(result.error);
                 process.exitCode = 1;
                 return;
             }
 
-            const recent = count === undefined ? [] : lastChangedTurns(changes, count);
-            const selected = selectTurns(recent, changes.turns, options, count);
-            const merged = selected ? mergeTurnFiles(selected) : changes.files;
-            // One call's files. When several calls of a turn changed a file, its before and after span
-            // all of them (the log keeps one pair per turn), and `span` says how many calls that is.
-            const files = options.tool ? merged.filter((item) => item.toolUseIds.includes(options.tool ?? "")) : merged;
-            const excluded = excludedOf(selected ?? changes.turns, files, options.tool);
-
-            if (options.storeBlobs) {
-                persistBlobs(files, changes.blobs);
-            }
-
-            const diffs = options.tool || options.diff ? diffsFor(files, changes.blobs) : null;
-            log.debug(
-                {
-                    session,
-                    turns: selected?.length ?? changes.turns.length,
-                    files: files.length,
-                    excluded: excluded.length,
-                },
-                "session changes"
-            );
+            const { changes, files, excluded, diffs } = result;
 
             if (options.json) {
-                out.result({
-                    session,
-                    turn: options.turn ?? (selected?.length === 1 ? selected[0]?.turnId : null) ?? null,
-                    turns: selected ? selected.map((turn) => turn.turnId) : null,
-                    files: files.map((item) => fileJson(item, diffs, Boolean(options.tool))),
-                    excluded: excluded.map((item) => ({ path: item.path, reason: item.reason, via: item.via })),
-                    log: file,
-                    objects: objectsDir(),
-                    transcript: changes.transcriptPath,
-                });
+                out.result(turnChangesJson(session, file, options, result));
                 return;
             }
 

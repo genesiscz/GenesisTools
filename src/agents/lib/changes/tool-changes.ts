@@ -4,6 +4,7 @@ import { logger } from "@genesiscz/utils/logger";
 import {
     type ComputedSessionChanges,
     type ExcludedFile,
+    lastChangedTurns,
     loadSessionChanges,
     mergeTurnFiles,
     storeBlobs,
@@ -173,6 +174,78 @@ export interface ChangesOptions {
     tools?: string;
     diff?: boolean;
     storeBlobs?: boolean;
+}
+
+/** The turns, files and exclusions `tools agents changes <session>` shows, before the CLI or a door prints them. */
+export interface SessionTurnChanges {
+    changes: ComputedSessionChanges & { transcriptPath: string | null };
+    selected: TurnChanges[] | null;
+    files: TurnFile[];
+    excluded: ExcludedFile[];
+    diffs: Map<string, FileDiff> | null;
+}
+
+/**
+ * The session's changes as `tools agents changes <session> [--last-turns n | --turn id | --last-turn] [--tool id]
+ * [--diff] [--store-blobs]` selects them: the CLI's plain run and the hub server's door share it. `count` is the
+ * number of changed turns asked for (`--last-turns`, or 1 for `--last-turn`); undefined selects by `options.turn`
+ * or takes the whole session. With `storeBlobs` the files' before and after blobs go into the object store, so
+ * `git --git-dir <objects>` can read every oid the answer lists.
+ */
+export async function sessionTurnChanges(input: {
+    session: string;
+    /** The change log path and its rows, read by the caller (`sessionChangesPath`, `readJsonlRows`). */
+    file: string;
+    rows: ChangeEvent[];
+    options: ChangesOptions;
+    count?: number;
+}): Promise<SessionTurnChanges | { error: string }> {
+    const { session, file, options, count } = input;
+    const changes = loadSessionChanges({ sessionId: session, log: input.rows });
+
+    if (!changes.transcriptPath && !existsSync(file) && !(await isKnownSession(session))) {
+        // An empty list would read as "this session changed nothing", for a mistyped id too.
+        return { error: `No change log and no transcript for session ${session}` };
+    }
+
+    const recent = count === undefined ? [] : lastChangedTurns(changes, count);
+    const selected = selectTurns(recent, changes.turns, options, count);
+    const merged = selected ? mergeTurnFiles(selected) : changes.files;
+    // One call's files. When several calls of a turn changed a file, its before and after span
+    // all of them (the log keeps one pair per turn), and `span` says how many calls that is.
+    const files = options.tool ? merged.filter((item) => item.toolUseIds.includes(options.tool ?? "")) : merged;
+    const excluded = excludedOf(selected ?? changes.turns, files, options.tool);
+
+    if (options.storeBlobs) {
+        persistBlobs(files, changes.blobs);
+    }
+
+    const diffs = options.tool || options.diff ? diffsFor(files, changes.blobs) : null;
+    log.debug(
+        { session, turns: selected?.length ?? changes.turns.length, files: files.length, excluded: excluded.length },
+        "session changes"
+    );
+    return { changes, selected, files, excluded, diffs };
+}
+
+/** The `--json` shape of `tools agents changes <session>` (not `--tools`): the same bytes from the CLI and the door. */
+export function turnChangesJson(
+    session: string,
+    file: string,
+    options: ChangesOptions,
+    result: SessionTurnChanges
+): Record<string, unknown> {
+    const { changes, selected, files, excluded, diffs } = result;
+    return {
+        session,
+        turn: options.turn ?? (selected?.length === 1 ? selected[0]?.turnId : null) ?? null,
+        turns: selected ? selected.map((turn) => turn.turnId) : null,
+        files: files.map((item) => fileJson(item, diffs, Boolean(options.tool))),
+        excluded: excluded.map((item) => ({ path: item.path, reason: item.reason, via: item.via })),
+        log: file,
+        objects: objectsDir(),
+        transcript: changes.transcriptPath,
+    };
 }
 
 /**
