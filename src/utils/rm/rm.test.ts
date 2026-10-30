@@ -637,3 +637,19 @@ describe("security review fixes", () => {
         expect(verdictOf(join(base, "dots", "dist"), c)).toEqual({ kind: "deny", rule: "hard-deny" });
     });
 });
+
+describe("security review fixes: git pathspecs", () => {
+    test("a tracked file whose name holds pathspec magic still counts as tracked", () => {
+        const repo = dir("magic");
+        git(repo, "init", "-q");
+        // `:draft.txt` reads as a pathspec with empty magic for `draft.txt`, so a plain query finds nothing.
+        const tricky = file(join(repo, ":draft.txt"), "tracked");
+        const bracket = file(join(repo, "draft[1].txt"), "tracked");
+        git(repo, "add", "--", ":(literal):draft.txt", ":(literal)draft[1].txt");
+        git(repo, "-c", "user.email=t@example.com", "-c", "user.name=t", "commit", "-qm", "init");
+        const c = ctx({ ownFiles: new Set([tricky, bracket]) });
+
+        expect(verdictOf(tricky, c)).toEqual({ kind: "ask", rule: "git-tracked" });
+        expect(verdictOf(bracket, c)).toEqual({ kind: "ask", rule: "git-tracked" });
+    });
+});

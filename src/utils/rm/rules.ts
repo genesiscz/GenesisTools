@@ -447,8 +447,11 @@ export function probeGit(target: RmTarget): RmGitFacts {
 
     const rel = relative(realOrSelf(top), target.canonical);
     facts.workTree = top;
-    facts.tracked = countZ(git(top, ["ls-files", "-z", "--", rel]));
-    facts.untracked = countZ(git(top, ["ls-files", "-z", "--others", "--exclude-standard", "--", rel]));
+    // Literal: `--` ends the options but not the globbing, so `draft[1].txt` would name `draft1.txt`.
+    facts.tracked = countZ(git(top, ["--literal-pathspecs", "ls-files", "-z", "--", rel]));
+    facts.untracked = countZ(
+        git(top, ["--literal-pathspecs", "ls-files", "-z", "--others", "--exclude-standard", "--", rel])
+    );
     logger.debug({ path: target.path, top, tracked: facts.tracked, untracked: facts.untracked }, "rm: git facts");
     return facts;
 }
