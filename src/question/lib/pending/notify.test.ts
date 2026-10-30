@@ -23,6 +23,11 @@ mock.module("@genesiscz/utils/notifications", () => ({
             throw new Error("notify channel is down");
         }
 
+        if (e.message.includes("STUCK")) {
+            // A channel whose child process never exits (or whose grandchild holds its pipe open) never settles.
+            return new Promise<never>(() => {});
+        }
+
         dispatched.push(e);
     },
 }));
@@ -50,7 +55,7 @@ mock.module("@app/dev-dashboard/lib/qa-deep-link", () => ({
 
 import { type Migration, runMigrations } from "@genesiscz/utils/database/migrations";
 import { type AskDeps, answerAskForm, cancelAskForm, postAskForm } from "./ask";
-import { qaNotificationId } from "./notify";
+import { notifyPendingForm, qaNotificationId } from "./notify";
 import { PENDING_MIGRATIONS } from "./store";
 
 let deps: AskDeps;
@@ -72,6 +77,20 @@ beforeEach(() => {
 afterEach(() => {
     db.close();
 });
+
+/** True when `work` settles within `ms`; false when it is still pending then. Leaves no timer behind. */
+async function settlesWithin(work: Promise<unknown>, ms: number): Promise<boolean> {
+    let timer: ReturnType<typeof setTimeout> | undefined;
+    const late = new Promise<false>((resolve) => {
+        timer = setTimeout(() => resolve(false), ms);
+    });
+
+    try {
+        return await Promise.race([work.then(() => true), late]);
+    } finally {
+        clearTimeout(timer);
+    }
+}
 
 describe("pending-form notification", () => {
     test("posting and answering a form starts no child process", async () => {
@@ -146,6 +165,21 @@ describe("pending-form notification", () => {
         );
 
         expect(form.status).toBe("pending");
+        expect(dispatched).toHaveLength(0);
+    });
+
+    test("a banner channel that never finishes does not hold the post: the wait ends at its deadline", async () => {
+        const form = await postAskForm(
+            { projectPath: "/tmp/gt-notify-fixture", items: [{ promptMarkdown: "STUCK: a channel that never exits" }] },
+            { ...deps, notify: false }
+        );
+
+        expect(
+            await settlesWithin(
+                notifyPendingForm(form, () => true, { deadlineMs: 20 }),
+                400
+            )
+        ).toBe(true);
         expect(dispatched).toHaveLength(0);
     });
 

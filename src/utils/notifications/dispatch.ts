@@ -1,4 +1,5 @@
 import { logger } from "@genesiscz/utils/logger";
+import { boundedCommand } from "@genesiscz/utils/process/bounded-command";
 import { dispatchSystem } from "./channels/system";
 import { dispatchTelegram } from "./channels/telegram";
 import { dispatchWebhook } from "./channels/webhook";
@@ -6,8 +7,19 @@ import { notificationsConfig } from "./config";
 import { recordNotification } from "./ledger";
 import type { ChannelName, NotificationEvent, SayChannelConfig } from "./types";
 
+/**
+ * How long `tools say` may run before its process group is stopped. Speaking a notification takes seconds. A run past
+ * this is stuck: a child that never exits, or one that left a grandchild holding its stderr pipe open, and without a
+ * deadline every caller of {@link dispatchNotification} waited on it forever.
+ */
+export const SAY_DISPATCH_TIMEOUT_MS = 120_000;
+
 /** True when `tools say` spoke the message (or there was nothing to say). Never throws. */
-export async function dispatchSay(message: string, config: SayChannelConfig): Promise<boolean> {
+export async function dispatchSay(
+    message: string,
+    config: SayChannelConfig,
+    { timeoutMs = SAY_DISPATCH_TIMEOUT_MS }: { timeoutMs?: number } = {}
+): Promise<boolean> {
     if (!config.enabled) {
         return true;
     }
@@ -20,17 +32,17 @@ export async function dispatchSay(message: string, config: SayChannelConfig): Pr
     }
 
     try {
-        const proc = Bun.spawn(args, {
-            stdout: "ignore",
-            stderr: "pipe",
-        });
-        const [exitCode, stderrText] = await Promise.all([proc.exited, new Response(proc.stderr).text()]);
+        const result = await boundedCommand({ command: args, timeoutMs });
 
-        if (exitCode !== 0) {
-            logger.warn({ exitCode, stderr: stderrText.trim() }, "Say notification dispatch failed");
+        if (result.error || result.status !== 0) {
+            logger.warn(
+                { err: result.error, exitCode: result.status, signal: result.signal, stderr: result.stderr.trim() },
+                "Say notification dispatch failed"
+            );
+            return false;
         }
 
-        return exitCode === 0;
+        return true;
     } catch (err) {
         logger.warn({ err }, "Say notification dispatch failed");
 

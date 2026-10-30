@@ -111,12 +111,16 @@ async function accountKey(entry: AccountEntry): Promise<string> {
  * any other app asks: a child `tools ai gate request` naming this process, which GenesisTools.app
  * approves with Touch ID (or a remembered grant). It is a child process on purpose: the gate
  * refuses a pid that is not its ancestor, and it must run under the app's identity.
+ *
+ * The child gets a deadline 30 s past the approval window: nobody at the Mac, or a request that
+ * never exits, ends as a refused key instead of a `tools say` that waits forever.
  */
 async function gateKey(entry: AccountEntry): Promise<string> {
     const [{ APPROVAL_TIMEOUT_MS }, { execTool }] = await Promise.all([
         import("@genesiscz/utils/ai/gate/approve"),
         import("@genesiscz/utils/cli"),
     ]);
+    const timeoutMs = APPROVAL_TIMEOUT_MS + 30_000;
     const result = await execTool(
         [
             "ai",
@@ -132,12 +136,17 @@ async function gateKey(entry: AccountEntry): Promise<string> {
             entry.id,
             "--print-token",
         ],
-        { timeout: APPROVAL_TIMEOUT_MS + 30_000 }
+        { timeout: timeoutMs }
     );
 
     if (!result.success || !result.stdout) {
-        const reason = result.stderr.split("\n").filter(Boolean).at(-1) ?? `exit ${result.exitCode}`;
-        logger.debug({ account: entry.name, exitCode: result.exitCode }, "[say] gate refused the account key");
+        const reason = result.timedOut
+            ? `no answer within ${Math.round(timeoutMs / 1000)} s`
+            : (result.stderr.split("\n").filter(Boolean).at(-1) ?? `exit ${result.exitCode}`);
+        logger.debug(
+            { account: entry.name, exitCode: result.exitCode, timedOut: result.timedOut === true },
+            "[say] gate refused the account key"
+        );
         throw new SayAccountError(`${toolCommand("ai gate")} did not hand out the key of "${entry.name}": ${reason}`);
     }
 
