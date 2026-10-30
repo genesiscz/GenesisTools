@@ -3,6 +3,7 @@ import { getActiveSessionIds } from "@app/claude/lib/tail-list";
 import { accountFromEnv, type LiveAccount } from "@genesiscz/utils/ai/account-env";
 import { type PsProcessRow, parseLsofCwd, parsePsLine } from "@genesiscz/utils/ai/active-processes";
 import type { AgentSessionFacts, AgentWhoSource } from "@genesiscz/utils/ai/active-sessions";
+import { harnessProcess } from "@genesiscz/utils/ai/providers/harness-index";
 import { cleanTranscriptText } from "@genesiscz/utils/ai/transcripts/clean-text";
 import { humanTextOf, readTailBytes } from "@genesiscz/utils/claude/session.utils";
 import type { ContentBlock } from "@genesiscz/utils/claude/types";
@@ -143,20 +144,22 @@ async function readSessionTail(filePath: string): Promise<SessionTail> {
 }
 
 /**
- * The real claude binary is a session; bun launchers are not. The gt-claude wrapper is an
- * SDK process, except when its last arg is `mcp`: that is the `tools claude mcp` stdio
- * server (the command takes no arguments), which any MCP host may spawn with no tty.
+ * The real claude binary is a session (the Claude driver's process part says what runs its CLI); bun launchers are
+ * not. The gt-claude wrapper is an SDK process, except when its last arg is `mcp`: that is the `tools claude mcp`
+ * stdio server (the command takes no arguments), which any MCP host may spawn with no tty. The wrapper is read first,
+ * so a wrapper line that names the CLI package stays the wrapper.
  */
 export function classifyClaudeArgs(args: string): ClaudeProcessKind | null {
     const tokens = args.split(/\s+/);
-    const base = (tokens[0] ?? "").split("/").pop() ?? "";
-
-    if (base === "claude") {
-        return "tui";
-    }
+    const argv0 = tokens[0] ?? "";
+    const base = argv0.split("/").pop() ?? "";
 
     if (base === "gt-claude") {
         return tokens[tokens.length - 1] === "mcp" ? "mcp" : "sdk";
+    }
+
+    if (harnessProcess("claude").runsCli({ argv0, name: base, command: args })) {
+        return "tui";
     }
 
     return null;

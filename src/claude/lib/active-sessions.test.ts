@@ -64,6 +64,17 @@ describe("classifyClaudeArgs", () => {
         expect(classifyClaudeArgs("/Users/x/.bun/bin/claude --resume abc")).toBe("tui");
     });
 
+    test("the native installer's versioned binary and the npm CLI are tui sessions too", () => {
+        expect(classifyClaudeArgs("/Users/x/.local/share/claude/versions/2.1.3 --resume abc")).toBe("tui");
+        expect(classifyClaudeArgs("node /x/node_modules/@anthropic-ai/claude-code/cli.js --resume abc")).toBe("tui");
+    });
+
+    test("a gt-claude line that names the CLI package stays the wrapper", () => {
+        expect(
+            classifyClaudeArgs("/Users/x/.genesis-tools/bin/gt-claude /x/node_modules/@anthropic-ai/claude-code/cli.js")
+        ).toBe("sdk");
+    });
+
     test("gt-claude wrapper is an sdk session", () => {
         expect(classifyClaudeArgs("/Users/x/.genesis-tools/bin/gt-claude --preload /x/y.ts")).toBe("sdk");
         expect(
