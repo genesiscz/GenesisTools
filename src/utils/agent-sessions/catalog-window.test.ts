@@ -745,3 +745,38 @@ test("catalogHistory with refresh: false still lists an index whose only pending
         rmSync(home, { recursive: true, force: true });
     }
 });
+
+test("a tolerant listing joins a refresh of its scope in flight, and a strict one still refreshes for itself", async () => {
+    const root = mkdtempSync(join(tmpdir(), "history-catalog-join-"));
+    session(root, "11111111-2222-4333-8444-000000000041", HOUR);
+    const database = new Database(":memory:");
+    initializeCompactHistorySchema(database);
+    const discover = spyOn(claudeHistoryReader, "discover");
+    const service = new HistoryService({
+        providerId: "anthropic-sub",
+        roots: [root],
+        repository: new HistorySyncRepository(database),
+        reader: claudeHistoryReader,
+        now: () => new Date(NOW),
+        // Never fresh: without the join, every caller would walk.
+        freshness: { age: () => null, touch: () => {} },
+    });
+
+    try {
+        const window = { excludeAgents: true, mtimeFrom: NOW - 24 * HOUR };
+        const [first, joined] = await Promise.all([
+            service.catalog(window, { maxDiscoveryAgeMs: 30_000 }),
+            service.catalog(window, { maxDiscoveryAgeMs: 30_000 }),
+        ]);
+        expect(discover).toHaveBeenCalledTimes(1);
+        expect(joined.metadata).toEqual(first.metadata);
+
+        discover.mockClear();
+        await Promise.all([service.catalog(window, { maxDiscoveryAgeMs: 30_000 }), service.catalog(window)]);
+        expect(discover).toHaveBeenCalledTimes(2);
+    } finally {
+        discover.mockRestore();
+        database.close();
+        rmSync(root, { recursive: true, force: true });
+    }
+});

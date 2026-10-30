@@ -202,6 +202,13 @@ function resultFromMetadata(metadata: CachedHistoryMetadata, kind: string): Hist
 }
 
 /** One provider-independent query path. The owner supplies an initialized canonical repository. */
+/**
+ * The listing refreshes of the default index (the services with a `freshness` marker) running in this process, by
+ * the marker's scope key. Only a caller that tolerates a recent refresh (`maxDiscoveryAgeMs`) joins one; a caller
+ * without it refreshes for itself, as before.
+ */
+const refreshesInFlight = new Map<string, Promise<{ report: NativeIndexSyncResult; reindexed: boolean }>>();
+
 export class HistoryService {
     constructor(
         private readonly options: {
@@ -428,6 +435,8 @@ export class HistoryService {
         const age = options.maxDiscoveryAgeMs === undefined ? null : (freshness?.age(freshnessKey) ?? null);
         const recent = age !== null && options.maxDiscoveryAgeMs !== undefined && age < options.maxDiscoveryAgeMs;
         let synchronized: { report: NativeIndexSyncResult; reindexed: boolean };
+        const running =
+            freshness && options.maxDiscoveryAgeMs !== undefined ? refreshesInFlight.get(freshnessKey) : undefined;
 
         if (recent || options.refresh === false || filters.filePaths?.length === 0) {
             logger.trace(
@@ -443,9 +452,27 @@ export class HistoryService {
                 },
                 reindexed: false,
             };
+        } else if (running) {
+            // A caller that accepts a refresh this recent accepts one that is running: it finishes now, and the
+            // freshness marker it writes would have served this caller a moment later anyway. The widget's full
+            // refresh asked the same Claude listing twice at once (its own listing and the agents tree's parents),
+            // and both refreshed it: two walks and two reads of every changed transcript (2026-10-30).
+            logger.trace({ provider: this.options.providerId }, "[history] listing joins a refresh in flight");
+            synchronized = await running;
         } else {
-            synchronized = await this.refreshListing({ ...filters, filePaths: logicalPaths });
-            freshness?.touch(freshnessKey);
+            const refresh = this.refreshListing({ ...filters, filePaths: logicalPaths });
+            if (freshness) {
+                refreshesInFlight.set(freshnessKey, refresh);
+            }
+
+            try {
+                synchronized = await refresh;
+                freshness?.touch(freshnessKey);
+            } finally {
+                if (refreshesInFlight.get(freshnessKey) === refresh) {
+                    refreshesInFlight.delete(freshnessKey);
+                }
+            }
         }
 
         const scoped = {
