@@ -283,6 +283,11 @@ export const RM_RULES: readonly RmRule[] = [
         },
     },
     {
+        // Before session-scratch: a scratch folder may hold a linked worktree or a clone whose work is nowhere else.
+        id: "nested-work",
+        evaluate: (target, ctx) => nestedWorkVerdict(target, ctx),
+    },
+    {
         id: "git-history",
         // The .git folder or anything in it (objects, HEAD, refs): git cannot see a work tree from in there.
         evaluate: (target) =>
@@ -387,15 +392,61 @@ export const RM_RULES: readonly RmRule[] = [
     },
 ];
 
+/**
+ * The repositories inside a folder (not the folder itself): a linked worktree git still lists is refused, as it is
+ * at the top, and a clone with work that exists nowhere else needs the user. Clean, pushed clones pass.
+ */
+function nestedWorkVerdict(target: RmTarget, ctx: RmRuleContext): RmVerdict | null {
+    if (target.kind !== "dir") {
+        return null;
+    }
+
+    let unsaved: RmVerdict | null = null;
+
+    for (const repo of ctx.nestedRepos(target)) {
+        if (canonicalPath(repo) === target.canonical) {
+            continue;
+        }
+
+        const facts = ctx.git(resolveTarget(repo, ctx.cwd));
+
+        if (facts.linkedWorktreeOf) {
+            return {
+                kind: "deny",
+                rule: "registered-worktree",
+                reason: `holds ${repo}, a linked worktree of ${facts.linkedWorktreeOf}: use git worktree remove first`,
+            };
+        }
+
+        if (facts.unsavedClone && !unsaved) {
+            unsaved = { kind: "ask", rule: "nested-repos", reason: `holds ${repo}: ${facts.unsavedClone}` };
+        }
+    }
+
+    return unsaved;
+}
+
 export function evaluateTarget(target: RmTarget, ctx: RmRuleContext): RmVerdict {
     let facts: RmGitFacts | undefined;
     const git = (): RmGitFacts => {
         facts ??= target.kind === "missing" ? NO_GIT : ctx.git(target);
         return facts;
     };
+    let nested: string[] | undefined;
+    const once: RmRuleContext = {
+        ...ctx,
+        nestedRepos: (t) => {
+            if (t !== target) {
+                return ctx.nestedRepos(t);
+            }
+
+            nested ??= ctx.nestedRepos(t);
+            return nested;
+        },
+    };
 
     for (const rule of RM_RULES) {
-        const verdict = rule.evaluate(target, ctx, git);
+        const verdict = rule.evaluate(target, once, git);
 
         if (verdict) {
             logger.debug({ path: target.path, rule: verdict.rule, kind: verdict.kind }, "rm: verdict");

@@ -685,3 +685,25 @@ describe("security review fixes: git metadata", () => {
         expect(verdictOf(join(repo, ".git"))).toEqual({ kind: "ask", rule: "git-history" });
     });
 });
+
+describe("security review fixes: repositories inside the session's scratch", () => {
+    test("a scratch folder holding a linked worktree is refused, a dirty clone asks, a clean clone goes", () => {
+        const origin = dir("nested-origin");
+        git(origin, "init", "-q");
+        file(join(origin, "a.txt"), "a");
+        git(origin, "add", ".");
+        git(origin, "-c", "user.email=t@example.com", "-c", "user.name=t", "commit", "-qm", "init");
+
+        const withWorktree = dir("cc", "proj", "sess-1111", "wt-holder");
+        git(origin, "worktree", "add", "-q", "--detach", join(withWorktree, "wt"));
+        const withDirty = dir("cc", "proj", "sess-1111", "dirty-holder");
+        git(origin, "clone", "-q", origin, join(withDirty, "clone"));
+        file(join(withDirty, "clone", "new.txt"), "new work");
+        const withClean = dir("cc", "proj", "sess-1111", "clean-holder");
+        git(origin, "clone", "-q", origin, join(withClean, "clone"));
+
+        expect(verdictOf(withWorktree)).toEqual({ kind: "deny", rule: "registered-worktree" });
+        expect(verdictOf(withDirty)).toEqual({ kind: "ask", rule: "nested-repos" });
+        expect(verdictOf(withClean)).toEqual({ kind: "allow", rule: "session-scratch" });
+    });
+});

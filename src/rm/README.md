@@ -45,20 +45,23 @@ The first rule that answers decides.
    aside folder lives in the session's scratch, so without this rule the scratch rule would let the agent delete it.
 3. **registered-worktree** (refuse): a linked worktree git still lists. Use `git worktree remove`, which refuses
    uncommitted work.
-4. **git-history** (ask): a `.git` folder, even in the session's scratch: its history and unpushed commits go with it.
-5. **git-tracked** (ask): files git tracks. Prefer `git rm`.
-6. **unsaved-clone** (ask): a clone with uncommitted changes or commits on no remote.
-7. **session-scratch** (allow): inside the calling session's `/tmp/cc/<project>/<session id>/` (or the agent's own
+4. **nested-work** (refuse or ask): a folder that holds a linked worktree git still lists is refused, and one that
+   holds a clone with uncommitted changes or commits on no remote asks, even in the session's scratch.
+5. **git-history** (ask): a `.git` folder or anything inside it, even in the session's scratch: its history and
+   unpushed commits go with it.
+6. **git-tracked** (ask): files git tracks. Prefer `git rm`.
+7. **unsaved-clone** (ask): a clone with uncommitted changes or commits on no remote.
+8. **session-scratch** (allow): inside the calling session's `/tmp/cc/<project>/<session id>/` (or the agent's own
    folder, such as `/tmp/codex/...`). A profile can turn it off (`allowSessionScratch`).
-8. **own-files** (allow): a file the calling Claude session wrote (its modified-file journal) that git does not track.
+9. **own-files** (allow): a file the calling Claude session wrote (its modified-file journal) that git does not track.
    A profile can turn it off (`allowOwnFiles`).
-9. **git-untracked** (ask): untracked files git does not ignore, which may be new work.
-10. **nested-repos** (ask): a folder that holds git repositories.
-11. **preset** (allow): a folder a build or install recreates, next to the file that proves it: `node_modules` next to
+10. **git-untracked** (ask): untracked files git does not ignore, which may be new work.
+11. **nested-repos** (ask): a folder that holds git repositories.
+12. **preset** (allow): a folder a build or install recreates, next to the file that proves it: `node_modules` next to
    `package.json`, `dist`/`build`/`.next`/`.turbo`/... next to `package.json`, `.build` next to `Package.swift`,
    `target` next to `Cargo.toml`, Gradle and CMake output, Python caches, Pods, Xcode DerivedData and more.
-12. **root** (allow): inside a folder the user trusts (`tools rm roots add`).
-13. **default** (ask).
+13. **root** (allow): inside a folder the user trusts (`tools rm roots add`).
+14. **default** (ask).
 
 A person at a terminal (not inside an agent) gets a typed confirmation for an ask instead of a request.
 
