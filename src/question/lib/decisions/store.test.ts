@@ -1211,6 +1211,26 @@ describe("delivery routes", () => {
         expect(forced).toMatchObject({ channel: "cmux", delivered: true });
         expect(calls).toHaveLength(1);
         expect(calls[0]?.slice(0, 3)).toEqual(["claude", "cmux", "send"]);
+        expect(calls[0]).toContain("--force");
+
+        // A dialog that opened after this check is still caught by the send's own guard; its sentence comes back.
+        const reason = "a plan approval is open in the session (Approve the plan?); free text would land there.";
+        const late = spy({
+            success: false,
+            stdout: SafeJSON.stringify({ sent: false, reason, dialog: { kind: "plan" } }),
+        });
+        const refused = await deliverToSession(
+            { session: "dialog-session", provider: "claude", text: "DECISION 3: b) no" },
+            {
+                runTool: late.runTool,
+                nativeWorkers: () => [],
+                claudePeers: () => [],
+                findTargets: livePaneTargets,
+                openDialog: () => null,
+            }
+        );
+        expect(refused).toMatchObject({ channel: "queued", delivered: false, error: reason });
+        expect(late.calls[0]).not.toContain("--force");
     });
 
     test("the structural Claude peer rung is never guarded: a dialog cannot swallow a socket message", async () => {

@@ -152,6 +152,70 @@ test("paste can leave the complete message unsubmitted and never retries an unce
     expect(events.filter((event) => event.includes(DEAD_SURFACE_UUID))).toHaveLength(1);
 });
 
+test("an open dialog in the session refuses the send before any keystroke; --force types anyway", async () => {
+    setSnapshot([pane({ id: "pane:7", surfaces: [surface({ id: "surface:41", title: SESSION_A, selected: true })] })]);
+    const asked: string[] = [];
+    const dialog = { kind: "permission" as const, question: "Allow Bash?", signal: "hook" as const };
+    const guarded = {
+        ...deps,
+        openDialog: async (sessionId: string) => {
+            asked.push(sessionId);
+            return dialog;
+        },
+    };
+
+    expect(await sendCommand(SESSION_A, "DECISION 1: a) yes", { paste: true, json: true }, guarded)).toBe(false);
+    expect(process.exitCode).toBe(1);
+    expect(asked).toEqual([SESSION_A]);
+    expect(events.filter((event) => event.startsWith("paste") || event.startsWith("send"))).toEqual([]);
+    expect(SafeJSON.parse(await capturedResult())).toMatchObject({
+        query: SESSION_A,
+        sent: false,
+        reason: expect.stringContaining("a permission prompt is open in the session (Allow Bash?)"),
+        dialog,
+        sessionId: SESSION_A,
+    });
+
+    process.exitCode = 0;
+    const forced = {
+        ...deps,
+        openDialog: async (): Promise<never> => {
+            throw new Error("--force must not ask the dialog guard");
+        },
+    };
+    expect(await sendCommand(SESSION_A, "typed anyway", { paste: true, force: true }, forced)).toBe(true);
+    expect(events).toContain("paste --surface surface:41 --submit --force -- typed anyway");
+
+    // Control: no dialog, the same send types as before.
+    events = [];
+    const idle = { ...deps, openDialog: async () => null };
+    expect(await sendCommand(SESSION_A, "hello", { paste: true }, idle)).toBe(true);
+    expect(events).toContain("paste --surface surface:41 --submit -- hello");
+});
+
+test("the dialog guard asks about the session the matched pane runs when the query is not an id", async () => {
+    setSnapshot([
+        pane({
+            id: "pane:7",
+            surfaces: [surface({ id: "surface:41", title: "release-train", selected: true })],
+            preview: `claude --resume ${SESSION_A}`,
+        }),
+    ]);
+    const asked: string[] = [];
+    const named = {
+        ...deps,
+        lookupSession: async () => ({ aliases: ["release-train"], sessionId: SESSION_A }),
+        openDialog: async (sessionId: string) => {
+            asked.push(sessionId);
+            return { kind: "decision" as const, question: "Ship it?", signal: "turn-state" as const };
+        },
+    };
+
+    expect(await sendCommand("release-train", "hi", { first: true, enter: false }, named)).toBe(false);
+    expect(asked).toEqual([SESSION_A]);
+    expect(events.some((event) => event.startsWith("send") || event.startsWith("paste"))).toBe(false);
+});
+
 test("--timeout ends a send whose lookup never answers, and rejects a bad value", async () => {
     const stuck = { ...deps, fetchSnapshot: () => new Promise<CmuxLiveSnapshot>(() => {}) };
     const started = Date.now();

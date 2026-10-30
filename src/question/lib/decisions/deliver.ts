@@ -1,6 +1,7 @@
 import { mkdtempSync, rmSync, writeFileSync } from "node:fs";
 import { tmpdir } from "node:os";
 import { dirname, join } from "node:path";
+import { sessionOpenDialog } from "@app/claude/lib/cmux/dialog-guard";
 import { type FocusTarget, isUnambiguous } from "@app/claude/lib/cmux/focus";
 import {
     findSessionTargets,
@@ -19,9 +20,9 @@ import {
     SessionMessageTooLargeError,
     sessionMessageTextHash,
 } from "@genesiscz/utils/agent-sessions/message-queue";
-import { dialogRefusal, openDialogFor } from "@genesiscz/utils/agents/dialogs/guard";
+import { dialogRefusal } from "@genesiscz/utils/agents/dialogs/guard";
 import type { DialogProvider, OpenDialog } from "@genesiscz/utils/agents/dialogs/types";
-import { resolveTranscript } from "@genesiscz/utils/ai/transcripts/resolve";
+
 import {
     type ClaudeLiveSession,
     claudeSessionsDir,
@@ -222,20 +223,9 @@ export interface OpenDialogInput {
     sourceHome?: string;
 }
 
-/**
- * State signals only: the hook records, then the transcript's turn state. A session whose transcript cannot be
- * found still gets the hook records, so a permission prompt recorded by a hook blocks the typing either way.
- */
-async function defaultOpenDialog(input: OpenDialogInput): Promise<OpenDialog | null> {
-    let transcriptPath: string | undefined;
-
-    try {
-        transcriptPath = (await resolveTranscript(input.sessionId, {}, input.provider)).filePath;
-    } catch (error) {
-        log.debug({ error, session: input.sessionId }, "no transcript for the dialog guard; hook records only");
-    }
-
-    return openDialogFor({ provider: input.provider, sessionId: input.sessionId, transcriptPath });
+/** State signals only (the hook records, then the transcript's turn state), the same guard `cmux send` asks. */
+function defaultOpenDialog(input: OpenDialogInput): Promise<OpenDialog | null> {
+    return sessionOpenDialog({ sessionId: input.sessionId, provider: input.provider });
 }
 
 function codexWorkerFor(sessionId: string, sourceHome?: string): string | null {
@@ -716,7 +706,8 @@ export async function deliverToSession(
         }
     }
 
-    // After `--`: a message that starts with a hyphen is text, not an option.
+    // After `--`: a message that starts with a hyphen is text, not an option. Without force the send asks the same
+    // dialog guard again right before it types, so a dialog that opened since the check above still stops it.
     const sent = await run([
         "claude",
         "cmux",
@@ -724,6 +715,7 @@ export async function deliverToSession(
         "--json",
         "--paste",
         "--exact-session",
+        ...(force ? ["--force"] : []),
         "--",
         session,
         paneText(text),
@@ -756,7 +748,16 @@ export function paneMiss(stdout: string, stderr = ""): string {
     }
 
     try {
-        const parsed = SafeJSON.parse(stdout, { strict: true }) as { matches?: unknown };
+        const parsed = SafeJSON.parse(stdout, { strict: true }) as {
+            matches?: unknown;
+            reason?: unknown;
+            dialog?: unknown;
+        };
+
+        // The send's dialog guard refused before any keystroke and said why.
+        if (parsed.dialog && typeof parsed.reason === "string" && parsed.reason.length > 0) {
+            return parsed.reason;
+        }
 
         if (Array.isArray(parsed.matches)) {
             return parsed.matches.length === 0

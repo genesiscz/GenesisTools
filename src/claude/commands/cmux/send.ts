@@ -1,4 +1,5 @@
-import { describeMatch, type FocusTarget, isUnambiguous } from "@app/claude/lib/cmux/focus";
+import { sessionOpenDialog } from "@app/claude/lib/cmux/dialog-guard";
+import { describeMatch, type FocusTarget, isUnambiguous, sessionIdsIn } from "@app/claude/lib/cmux/focus";
 import {
     findSessionTargets,
     identifiesExactSession,
@@ -7,6 +8,8 @@ import {
     SOFT_SOURCES,
     tmuxMissHint,
 } from "@app/claude/lib/cmux/resolve";
+import { dialogRefusal } from "@genesiscz/utils/agents/dialogs/guard";
+import type { OpenDialog } from "@genesiscz/utils/agents/dialogs/types";
 import { suggestCommand } from "@genesiscz/utils/cli";
 import { runCmuxOk } from "@genesiscz/utils/cmux/lib/cli";
 import { surfaceTargetArgs } from "@genesiscz/utils/cmux/lib/target";
@@ -94,7 +97,10 @@ export async function sendDoor(
     process.exit(SEND_TIMEOUT_EXIT);
 }
 
-export type SendCommandDeps = ResolveDeps;
+export interface SendCommandDeps extends ResolveDeps {
+    /** Is a dialog open in this session? Asked before any text is typed; defaults to `sessionOpenDialog`. */
+    openDialog?: (sessionId: string) => Promise<OpenDialog | null>;
+}
 
 /**
  * The surface the text must go to. A title/alias/recorded match names its tab
@@ -121,12 +127,14 @@ interface Delivery {
     enter: boolean;
     enterDelayMs: number;
     paste: boolean;
+    /** `--force`: cmux paste also types over a draft or into a dialog it sees on screen. */
+    force: boolean;
 }
 
-async function deliver({ target, surfaceId, text, enter, enterDelayMs, paste }: Delivery) {
+async function deliver({ target, surfaceId, text, enter, enterDelayMs, paste, force }: Delivery) {
     const where = surfaceTargetArgs(surfaceId, target.workspaceId);
     if (paste) {
-        await runCmuxOk(["paste", ...where, ...(enter ? ["--submit"] : []), "--", text]);
+        await runCmuxOk(["paste", ...where, ...(enter ? ["--submit"] : []), ...(force ? ["--force"] : []), "--", text]);
         return;
     }
 
@@ -223,6 +231,53 @@ export function refuseAmbiguous(
 }
 
 /**
+ * The send stops before any keystroke while the session shows a question, plan or permission dialog: typed text
+ * plus Enter would pick or deny an option the user never chose, or land in the dialog's free-text field (handoff
+ * h_ppczhri1). The session is the full id the query names, else the one the matched pane runs. `--force` types
+ * anyway. Returns true when the caller must stop.
+ */
+async function refuseOpenDialog({
+    target,
+    query,
+    opts,
+    deps,
+}: {
+    target: FocusTarget;
+    query: string;
+    opts: SendOptions;
+    deps: SendCommandDeps;
+}): Promise<boolean> {
+    if (opts.force) {
+        return false;
+    }
+
+    const sessionId = sessionIdsIn(query)[0] ?? target.sessionIds[0];
+
+    if (!sessionId) {
+        log.debug({ query, paneId: target.paneId }, "the pane names no session; the dialog guard has nothing to ask");
+        return false;
+    }
+
+    const dialog = await (deps.openDialog ?? ((id: string) => sessionOpenDialog({ sessionId: id })))(sessionId);
+
+    if (!dialog) {
+        return false;
+    }
+
+    const reason = dialogRefusal(dialog);
+    log.warn({ sessionId, dialog, paneId: target.paneId }, "a dialog is open in the session; nothing was typed");
+    process.exitCode = 1;
+
+    if (opts.json) {
+        out.result(SafeJSON.stringify({ query, sent: false, reason, dialog, sessionId, target }, null, 2));
+        return true;
+    }
+
+    out.error(pc.red(reason.replace("pass force", "pass --force")));
+    return true;
+}
+
+/**
  * Type text into the pane a session is running in, then press Enter.
  *
  * The wakeup path for a session that is about to lose its prompt cache: the
@@ -299,9 +354,16 @@ export async function sendCommand(
         return false;
     }
 
+    const paste = opts.paste === true;
+    const force = opts.force === true;
+
     if (surfaceId) {
+        if (await refuseOpenDialog({ target, query: queryTrim, opts, deps })) {
+            return false;
+        }
+
         try {
-            await deliver({ target, surfaceId, text, enter, enterDelayMs, paste: opts.paste === true });
+            await deliver({ target, surfaceId, text, enter, enterDelayMs, paste, force });
             report({ opts, query: queryTrim, target, surfaceId, enter, source: result.source });
             return true;
         } catch (err) {
@@ -343,7 +405,12 @@ export async function sendCommand(
 
     target = fallback;
     surfaceId = fallbackSurface;
-    await deliver({ target, surfaceId, text, enter, enterDelayMs, paste: opts.paste === true });
+
+    if (await refuseOpenDialog({ target, query: queryTrim, opts, deps })) {
+        return false;
+    }
+
+    await deliver({ target, surfaceId, text, enter, enterDelayMs, paste, force });
     report({ opts, query: queryTrim, target, surfaceId, enter, source: result.source });
     return true;
 }
