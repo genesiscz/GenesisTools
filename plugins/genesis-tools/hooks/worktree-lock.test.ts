@@ -239,7 +239,7 @@ describe("worktree-lock", () => {
         }
     });
 
-    it("a dead session's lock is stale: found without a change, cleared, and taken over by the next call", () => {
+    it("a dead session's lock is stale: found without a change, cleared, left alone by a mention, taken over by work", () => {
         plantLock(DEAD_LOCK);
 
         expect(findStaleWorktreeLocks(wt).map((lock) => lock.reason)).toEqual([DEAD_LOCK]);
@@ -248,7 +248,13 @@ describe("worktree-lock", () => {
         expect(lockReason()).toBeNull();
 
         plantLock(DEAD_LOCK);
-        lockWorktreesForToolUse(bash("s-heir", `git -C ${wt} status`), { agent: me });
+        // A command that only names the worktree changes nothing: on 2026-10-27 such a mention made one session
+        // the successor of another session's campaign checkout (handoff h_grb12ao1).
+        lockWorktreesForToolUse(bash("s-reader", `git -C ${wt} status`), { agent: me });
+
+        expect(lockReason()).toBe(DEAD_LOCK);
+
+        lockWorktreesForToolUse(edit("s-heir", join(wt, "a.ts")), { agent: me });
 
         expect(parseLockReason(lockReason() ?? "")).toMatchObject({ kind: "session", sessionId: "s-heir" });
     });
