@@ -43,7 +43,7 @@
  * one per directory for a reason that cost this machine a fork bomb to learn.
  */
 import { mkdirSync, readdirSync, statSync, writeFileSync } from "node:fs";
-import { homedir, loadavg } from "node:os";
+import { loadavg } from "node:os";
 import { join } from "node:path";
 import { type BaselineMetrics, compareToBaseline, formatComparison, recordBaseline } from "@app/benchmark/lib";
 import { resolveAnthropicSubModel } from "@genesiscz/utils/ai/anthropic/models";
@@ -51,6 +51,7 @@ import { byId } from "@genesiscz/utils/ai/catalog";
 import { env } from "@genesiscz/utils/env";
 import { SafeJSON } from "@genesiscz/utils/json";
 import { logger, out } from "@genesiscz/utils/logger";
+import { nativeHome, nativeHomePath } from "@genesiscz/utils/providers/session-paths";
 import { stripAnsi } from "@genesiscz/utils/string";
 import { createBoxTable, renderCliHeader, renderCliSection } from "@genesiscz/utils/table";
 
@@ -59,10 +60,10 @@ const { log } = logger.scoped("bench-statusline");
 const BASELINE_NAME = "statusline-current";
 const WORK_DIR = join("/tmp", "statusline-bench");
 const SAMPLES_DIR = join(import.meta.dir, "samples");
-const DEFAULT_COMMAND = `bash ${join(homedir(), ".claude", "helpers", "statusline-graft.sh")}`;
+const DEFAULT_COMMAND = `bash ${nativeHomePath("claude", "helpers", "statusline-graft.sh")}`;
 
 function defaultTranscriptDir(): string {
-    const claudeDir = env.paths.getClaudeConfigDir() ?? join(homedir(), ".claude");
+    const claudeDir = nativeHome("claude");
 
     return join(claudeDir, "projects", process.cwd().replace(/\//g, "-"));
 }

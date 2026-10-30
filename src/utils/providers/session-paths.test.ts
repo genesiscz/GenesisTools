@@ -5,6 +5,7 @@ import { join } from "node:path";
 import { env } from "@genesiscz/utils/env";
 import {
     claudeJsonPath,
+    claudeJsonPathInConfigDir,
     codexHomeOverrides,
     codexHomesIn,
     defaultNativeHome,
@@ -14,6 +15,7 @@ import {
     nativeSessionRoots,
     nativeSessionRootsForHome,
     nativeTranscriptMaxDepth,
+    parseCodexHomeList,
     primaryCodexHome,
     transcriptStem,
 } from "./session-paths";
@@ -44,6 +46,14 @@ describe("nativeHome", () => {
             expect(nativeHome("codex", "/home/u")).toBe(join("/home/u", ".codex"));
             expect(nativeHome("grok", "/home/u")).toBe(join("/home/u", ".grok"));
         });
+    });
+});
+
+describe("parseCodexHomeList", () => {
+    test("splits another process's CODEX_HOME on commas and drops the empty entries", () => {
+        expect(parseCodexHomeList(" /a/codex , ,/b/codex")).toEqual(["/a/codex", "/b/codex"]);
+        expect(parseCodexHomeList(undefined)).toEqual([]);
+        expect(parseCodexHomeList(" , ")).toEqual([]);
     });
 });
 
@@ -78,6 +88,9 @@ describe("nativeHomePath and claudeJsonPath", () => {
         });
         await env.testing.withOverrides({ CLAUDE_CONFIG_DIR: "" }, () => {
             expect(claudeJsonPath("/home/u")).toBe(join("/home/u", ".claude.json"));
+        });
+        await env.testing.withOverrides({ CLAUDE_CONFIG_DIR: "/ambient/claude" }, () => {
+            expect(claudeJsonPathInConfigDir("/child/claude")).toBe(join("/child/claude", ".claude.json"));
         });
     });
 });

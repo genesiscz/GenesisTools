@@ -1,9 +1,9 @@
 import { mkdirSync, readFileSync } from "node:fs";
-import { homedir } from "node:os";
-import { join, resolve } from "node:path";
+import { join } from "node:path";
 import { resolveAnthropicSubModel } from "@genesiscz/utils/ai/anthropic/models";
 import { SafeJSON } from "@genesiscz/utils/json";
 import { logger } from "@genesiscz/utils/logger";
+import { nativeHomePath } from "@genesiscz/utils/providers/session-paths";
 import { isJsonObject } from "@genesiscz/utils/storage/atomic-file";
 import { genesisToolsDir } from "@genesiscz/utils/storage/root";
 import { atomicWriteFileSync } from "@genesiscz/utils/storage/storage";
@@ -93,7 +93,7 @@ export function packPaths(config: FableConfig): PackPaths {
 }
 
 function defaultSessionSources(): string[] {
-    return [resolve(homedir(), ".claude", "projects"), join(FABLE_LOCAL_DIR, "sessions")];
+    return [nativeHomePath("claude", "projects"), join(FABLE_LOCAL_DIR, "sessions")];
 }
 
 function isFableConfigDocument(value: unknown): value is Partial<FableConfig> {

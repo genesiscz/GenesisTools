@@ -15,13 +15,19 @@ import { defaultWorkerHome } from "@genesiscz/utils/grok/worker-paths";
  * directory named `…/.codex-work,~/.codex`, which nothing on disk answers to.
  */
 export function codexHomeOverrides(): string[] {
-    const override = env.codex.getHomeOverride();
+    return parseCodexHomeList(env.codex.getHomeOverride());
+}
 
-    if (!override) {
+/**
+ * The homes one `CODEX_HOME` value names, in order, for a caller that holds another process's environment (a failed
+ * tool's caller, a spawned child). Codex writes to the first entry.
+ */
+export function parseCodexHomeList(value: string | undefined): string[] {
+    if (!value) {
         return [];
     }
 
-    return override
+    return value
         .split(",")
         .map((path) => path.trim())
         .filter((path) => path.length > 0);
@@ -86,7 +92,15 @@ export function nativeHomePath(kind: NativeSessionProvider, ...segments: string[
  */
 export function claudeJsonPath(home = homedir()): string {
     const configDir = env.paths.getClaudeConfigDir();
-    return configDir ? join(configDir, ".claude.json") : join(home, ".claude.json");
+    return configDir ? claudeJsonPathInConfigDir(configDir) : join(home, ".claude.json");
+}
+
+/**
+ * The `.claude.json` of one given Claude config dir, for a caller that already knows it (a launched child's own
+ * `CLAUDE_CONFIG_DIR`). No env lookup, the same reason `nativeSessionRootsForHome` has none.
+ */
+export function claudeJsonPathInConfigDir(configDir: string): string {
+    return join(configDir, ".claude.json");
 }
 
 /**
