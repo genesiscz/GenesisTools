@@ -338,25 +338,37 @@ async function mentionProject(ctx: LinkContext, mention: RepoMention): Promise<F
  * GitLab project there, nothing names a GitHub one, or the session works in several and no evidence picks one
  * (`pr-repos.ts`). `after`: the text right after the number, where a reply writes the PR's title.
  */
-function writtenTitle(after: string): string | undefined {
+function* writtenTitles(after: string): Generator<string> {
     if (!after.startsWith(" (")) {
-        return undefined;
+        return;
     }
 
-    let depth = 1;
-    for (let i = 2; i < after.length && after[i] !== "\n"; i++) {
-        if (after[i] === "(") {
-            depth++;
-        } else if (after[i] === ")") {
-            if (depth === 1 && after[i + 1] === ")") {
-                continue;
-            }
-            if (--depth === 0) {
-                return after.slice(2, i) || undefined;
-            }
+    // Check the entire line before yielding: a truncated scan cannot rule out a later matching title.
+    const maxChars = 1024;
+    const maxBoundaries = 32;
+    let end = 2;
+    let boundaries = 0;
+    while (end < after.length && after[end] !== "\n") {
+        if (end - 2 >= maxChars || (after[end] === ")" && ++boundaries > maxBoundaries)) {
+            return;
+        }
+        end++;
+    }
+
+    for (let i = 3; i < end; i++) {
+        if (after[i] === ")") {
+            yield after.slice(2, i);
         }
     }
-    return after.slice(2).split("\n")[0] || undefined;
+}
+
+function writtenTitleMatches(after: string, title: string): boolean {
+    for (const written of writtenTitles(after)) {
+        if (titleMatches(written, title)) {
+            return true;
+        }
+    }
+    return false;
 }
 
 async function prRepo(
@@ -401,13 +413,12 @@ async function prRepo(
     }
 
     // Several checkouts and no word of the reply picks one: the PR lookup is the evidence.
-    const written = writtenTitle(after);
     const looked = await Promise.all(
         candidates.map(async (project) => ({ project, pr: await pullRequest(ctx, project, String(n)) }))
     );
     const found = looked.flatMap(({ project, pr }) => (pr ? [{ project, pr }] : []));
 
-    const titled = written ? found.filter((hit) => titleMatches(written, hit.pr.title)) : [];
+    const titled = found.filter((hit) => writtenTitleMatches(after, hit.pr.title));
 
     if (titled.length === 1 && titled[0]) {
         return { project: titled[0].project, why: "its title there matches the title the reply wrote" };
@@ -418,7 +429,7 @@ async function prRepo(
         token: `#${n}`,
         candidates: candidates.map((project) => project.path),
         withPr: found.map((hit) => hit.project.path),
-        titleWritten: Boolean(written),
+        titleWritten: !writtenTitles(after).next().done,
     });
 
     return undefined;

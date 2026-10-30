@@ -4258,3 +4258,27 @@ test("links: candidate PR lookups start concurrently", async () => {
     expect(simultaneous).toBe(true);
     expect(text).toContain("[#912](https://github.com/acme/Toolbox/pull/912)");
 });
+
+test("links: an unmatched closing parenthesis cannot select the wrong repository", async () => {
+    forgetPullRequests();
+    const { ctx } = twoCheckouts(
+        {
+            "acme/Toolbox#913": "fix: handle ) tokens",
+            "acme/Playground#913": "fix: handle",
+            "acme/Toolbox#914": "fix: handle ) tokens",
+            "acme/Playground#914": "different title",
+        },
+        GH_ONLY
+    );
+    expect(await linkLine(ctx, "#913 (fix: handle ) tokens).\n")).toBe("#913 (fix: handle ) tokens).\n");
+    expect(await linkLine(ctx, "#914 (fix: handle ) tokens).\n")).toContain(
+        "[#914](https://github.com/acme/Toolbox/pull/914)"
+    );
+    const longLine = `#913 (fix: handle ) tokens)${")".repeat(10_000)}.\n`;
+    expect(await linkLine(ctx, longLine)).toBe(longLine);
+    // The title alone identifies Toolbox, but an incomplete boundary scan must never select it.
+    const manyBoundaries = `#914 (fix: handle ) tokens)${")".repeat(32)}.\n`;
+    expect(await linkLine(ctx, manyBoundaries)).toBe(manyBoundaries);
+    const longSuffix = `#914 (fix: handle ) tokens)${"x".repeat(1024)}.\n`;
+    expect(await linkLine(ctx, longSuffix)).toBe(longSuffix);
+});
