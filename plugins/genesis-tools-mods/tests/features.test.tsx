@@ -53,7 +53,15 @@ import {
     stagedText,
     typedAnswer,
 } from "../hooks/decisions";
-import { finderLink, forgetGenesisProbe, type GenesisProbe, genesisProbe, mdLink, probeOf } from "../hooks/genesis";
+import {
+    finderLink,
+    forgetGenesisProbe,
+    type GenesisProbe,
+    genesisProbe,
+    genesisProbeClock,
+    mdLink,
+    probeOf,
+} from "../hooks/genesis";
 import {
     checkCounts,
     checksOf,
@@ -853,7 +861,7 @@ test("genesis probe: a run cut off by a newer render is not remembered", async (
     forgetGenesisProbe();
 });
 
-test("genesis probe: a run past its 5 s deadline is asked again, a missing tools is remembered", async () => {
+test("genesis probe: a run past its deadline backs off and keeps the last answer, a missing tools is remembered", async () => {
     forgetGenesisProbe();
     let calls = 0;
     let deadline = 0;
@@ -865,7 +873,7 @@ test("genesis probe: a run past its 5 s deadline is asked again, a missing tools
             deadline = init?.timeoutMs ?? 0;
 
             if (calls === 1) {
-                throw new Error("$.process.run(tools) is still running after 5000 ms");
+                throw new Error("$.process.run(tools) is still running after 15000 ms");
             }
 
             return { exitCode: 0, stdout: json, stderr: "", isStdoutTruncated: false, isStderrTruncated: false };
@@ -873,9 +881,17 @@ test("genesis probe: a run past its 5 s deadline is asked again, a missing tools
     };
 
     expect((await genesisProbe(host)).tools).toBe(false);
+    // The timeout said nothing about this Mac, but a Mac that slow is not asked again for a minute.
+    expect((await genesisProbe(host)).tools).toBe(false);
+    expect(calls).toBe(1);
+    expect(deadline).toBe(15_000);
+    genesisProbeClock.now = () => Date.now() + 61_000;
     expect((await genesisProbe(host)).opens.hub).toBe(true);
     expect(calls).toBe(2);
-    expect(deadline).toBe(5_000);
+    // A good answer ends the backoff and stays for 30 minutes on the moved clock.
+    expect((await genesisProbe(host)).opens.hub).toBe(true);
+    expect(calls).toBe(2);
+    genesisProbeClock.now = () => Date.now();
     forgetGenesisProbe();
 
     const missing: Host = {
