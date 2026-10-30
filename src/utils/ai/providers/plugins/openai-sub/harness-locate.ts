@@ -31,7 +31,6 @@ export const codexLocate: TranscriptLocator = {
         ...findCodexNative(query, resolved.codexHome, fs),
         ...findCodexWorker(query, resolved.codexWorker, fs),
     ],
-    rootsOfHome: (home) => ({ codexHome: home }),
     // Codex keeps its titles in `session_index.jsonl` of each home.
     titledSessions: ({ options }) =>
         codexSessions(options.codexIndexPath ? [options.codexIndexPath] : codexIndexPaths()),

@@ -7,7 +7,6 @@ import type {
     LocateRoots,
     RankedHit,
     ResolvedTranscript,
-    TranscriptRoots,
     TranscriptSource,
 } from "@genesiscz/utils/ai/transcripts/resolve";
 import type { TitledSession, TitleSearch } from "@genesiscz/utils/ai/transcripts/session-title";
@@ -41,8 +40,6 @@ export interface TranscriptLocator {
     find(query: string, roots: LocateRoots, fs: FolderReads): RankedHit[];
     /** The native transcript a headless worker of the harness writes beside its own log, or null when it writes none. */
     workerNative(worker: ResolvedTranscript, fs: FolderReads): ResolvedTranscript | null;
-    /** The transcript roots inside one provider home of the harness (a session's own source home). */
-    rootsOfHome(home: string): TranscriptRoots;
     /** Every session the harness gave a title, read where it keeps titles (`findSessionsByTitle` ranks them). */
     titledSessions(search: TitleSearch): TitledSession[];
 }
@@ -53,7 +50,7 @@ export interface TranscriptParser {
     fromFile(resolved: ResolvedTranscript, path: string, index: number): Promise<TranscriptTurn[]>;
     /**
      * The turns of some of a transcript's lines (the end of a file too large to parse whole). Claude has its own tail
-     * reader too (`lastClaudeAssistantText` in hub/lib/widget/snapshot.ts), and the widget reads every harness here.
+     * reader (`lastClaudeAssistantText` in hub/lib/widget/snapshot.ts) and gets no turns here.
      */
     fromLines(resolved: ResolvedTranscript, lines: readonly string[]): TranscriptTurn[];
     /**
@@ -152,11 +149,6 @@ export interface TranscriptFacts {
      * to `events.jsonl` in the session folder; Claude's go to its `Notification` hook and Codex persists none.
      */
     eventLog(transcriptPath: string): string | null;
-    /**
-     * The turns of a window of native records (a receipt's context in `around.ts`). A driver holds a
-     * `deferredWindowTurns` (`deferred.ts`) that loads its turn parser on the first call.
-     */
-    windowTurns(values: Record<string, unknown>[]): TranscriptTurn[];
 }
 
 /** H: the slash command that ends an interactive session. */
@@ -184,28 +176,6 @@ export interface ProcessSignature {
     runsCli(input: { argv0: string; name: string; command: string }): boolean;
     /** For an identified CLI, its index in the whitespace-split command, or null when the boundary is unknown. */
     cliEntryIndex(input: { argv0: string; name: string; command: string }): number | null;
-}
-
-/**
- * I: what a hook, the hook config and the change log may assume about the harness that ran them. Plain data in its
- * own module per plugin (`plugins/<plugin>/harness-hooks.ts`), because the guard hook reads it through
- * `harness-hooks.ts`, a door that loads no driver.
- */
-export interface HookFacts {
-    /** Its diff-log entries are filled from its transcript (`extendFromTranscripts` reads the tool calls there). */
-    readonly diffLogFromTranscript: boolean;
-    /** Its transcript's earlier tool inputs name the paths a Bash diff attributes (`refreshMentions`). */
-    readonly transcriptMentions: boolean;
-    /** The GenesisTools mods plugin runs inside it and draws the full diffs itself. */
-    readonly modsDrawDiffs: boolean;
-    /** Its model may come from `~/.claude/settings.json` when the transcript names none. */
-    readonly settingsModel: boolean;
-    /** Its shell honours a bare zsh glob qualifier such as `(N)`, so the guard allows `zsh-glob-qualifier` there. */
-    readonly honoursBareGlobQualifier: boolean;
-    /** It renders a hook message with ANSI colour and in full, so the diff hook shows its diffs there. */
-    readonly rendersAnsiDiffs: boolean;
-    /** Its change-log turn is the id of the prompt row that started it, so a blame line can show the prompt. */
-    readonly turnIsPromptId: boolean;
 }
 
 /** Parts that wrap parsers and readers: a driver holds a loader, so reading the driver never loads them. */
@@ -239,8 +209,6 @@ export interface EagerPartContracts {
      * its finders on the first call, so the finders cost the hook path nothing.
      */
     locate: TranscriptLocator;
-    /** I: the hook facts (`HookFacts`); the hook payload shape stays `HookPayload` in the agents tool. */
-    hooks: HookFacts;
 }
 
 /**

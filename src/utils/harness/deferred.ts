@@ -1,4 +1,3 @@
-import type { TranscriptTurn } from "@genesiscz/utils/ai/transcripts/types";
 import { requireSibling } from "@genesiscz/utils/fs/module-dir";
 import type { TranscriptLocator } from "./parts";
 
@@ -15,42 +14,8 @@ function isTranscriptLocator(value: unknown): value is TranscriptLocator {
         "workerNative" in value &&
         typeof value.workerNative === "function" &&
         "titledSessions" in value &&
-        typeof value.titledSessions === "function" &&
-        "rootsOfHome" in value &&
-        typeof value.rootsOfHome === "function"
+        typeof value.titledSessions === "function"
     );
-}
-
-/** A window of native records to turns, the shape of `TranscriptFacts.windowTurns`. */
-type WindowTurns = (values: Record<string, unknown>[]) => TranscriptTurn[];
-
-function isWindowTurns(value: unknown): value is WindowTurns {
-    return typeof value === "function" && value.length <= 1;
-}
-
-/**
- * The window-turns function of a driver's `transcript` part, loaded beside the driver on the first call, for the same
- * reason as `deferredLocator`: the turn parsers it reaches cost 31 to 42 ms to import (measured 2026-10-31), and
- * `transcriptAround` is synchronous.
- */
-export function deferredWindowTurns(meta: ImportMeta, module: string, exportName: string): WindowTurns {
-    let loaded: WindowTurns | undefined;
-
-    return (values) => {
-        if (!loaded) {
-            const exports: unknown = requireSibling(meta, module);
-            const value: unknown =
-                typeof exports === "object" && exports !== null ? Reflect.get(exports, exportName) : undefined;
-
-            if (!isWindowTurns(value)) {
-                throw new Error(`${module} exports no window-turns function named ${exportName}`);
-            }
-
-            loaded = value;
-        }
-
-        return loaded(values);
-    };
 }
 
 /**
@@ -85,6 +50,5 @@ export function deferredLocator(meta: ImportMeta, module: string, exportName: st
         find: (query, roots, fs) => impl().find(query, roots, fs),
         workerNative: (worker, fs) => impl().workerNative(worker, fs),
         titledSessions: (search) => impl().titledSessions(search),
-        rootsOfHome: (home) => impl().rootsOfHome(home),
     };
 }
