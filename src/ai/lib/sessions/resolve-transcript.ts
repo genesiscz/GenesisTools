@@ -49,8 +49,8 @@ function workerCodexHome(worker: ResolvedTranscript, query: string): string | un
 /** The commands that read a headless worker of each harness. */
 const WORKER_READ_VERBS: Record<TurnProvider, string> = {
     claude: toolCommand("claude worker", "status|tail", "--name", "<name>"),
-    codex: "tools codex status|read --name <name>",
-    grok: "tools grok status|read --name <name>",
+    codex: toolCommand("codex", "status|read", "--name", "<name>"),
+    grok: toolCommand("grok", "status|read", "--name", "<name>"),
 };
 
 /**
