@@ -423,8 +423,9 @@ export async function runCodexSession(
     logger.info(
         {
             sessionId,
-            codex: codex.label,
-            claude: claude?.label,
+            // The two accounts of one session (the Codex upstream and the Claude Code shell), not a table by harness.
+            codexAccount: codex.label,
+            claudeAccount: claude?.label,
             model: model.slug,
             effort: effort.effort,
         },
