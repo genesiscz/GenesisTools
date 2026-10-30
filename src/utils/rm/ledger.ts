@@ -38,6 +38,8 @@ export interface RmLedgerEntry {
     caller?: RmCaller | null;
     /** How a person confirmed: `tty` or `dialog`. */
     via?: string;
+    /** The person's note on a deny in the approval window, for the agent to read. */
+    note?: string;
 }
 
 export function rmLedgerPath(): string {

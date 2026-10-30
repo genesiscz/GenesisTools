@@ -24,6 +24,8 @@ public final class ApprovalVerifier: ObservableObject {
         case password
         /// Touch ID cannot be used now; the password is the way.
         case unavailable(String)
+        /// Nothing to approve (every row unticked): the sensor does not listen until a row is on again.
+        case paused
         case verified
     }
 
@@ -121,6 +123,20 @@ public final class ApprovalVerifier: ObservableObject {
     public func cancel() {
         answered = true
         stopContext()
+    }
+
+    /// Every row was unticked: a touch must not approve an empty request. Listening stops; `resume` starts it again.
+    public func pause() {
+        guard !answered, state != .paused else { return }
+        stopContext()
+        state = .paused
+        onEvent("biometric.pause reason=nothing-selected")
+    }
+
+    public func resume() {
+        guard !answered, state == .paused else { return }
+        onEvent("biometric.resume")
+        start(windowIsKey: NSApp?.keyWindow != nil)
     }
 
     private func start(windowIsKey: Bool) {

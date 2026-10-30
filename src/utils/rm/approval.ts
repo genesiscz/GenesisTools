@@ -4,6 +4,8 @@ import { logger } from "@genesiscz/utils/logger";
 import { type GenesisAppRpcOutcome, genesisAppRpc } from "@genesiscz/utils/macos/genesis-app-rpc";
 import * as p from "@genesiscz/utils/prompts/p";
 import { type RmApproval, rmConfigPath } from "./config";
+import type { FolderStats, ItemGit } from "./item-facts";
+import type { RmDisposal, RmRememberChoice } from "./requests";
 import type { RmCaller, RmTargetKind } from "./rules";
 
 export type ApprovalVia = "tty" | "dialog" | "touch-id" | "password";
@@ -12,6 +14,39 @@ export interface ApprovalOutcome {
     approved: boolean;
     via: ApprovalVia | "none";
     detail: string;
+    /** The window's picks; absent for the typed code and the dialog, which answer for all items, trash, once. */
+    choices?: ApprovalChoices;
+    /** The person pressed Deny in the window (not a timeout, a failed touch or a closed window). */
+    deniedByPerson?: boolean;
+}
+
+/** What the approval window lets a person pick besides allow or deny. */
+export interface ApprovalChoices {
+    /** The item paths ticked; null when nothing was unticked (all of them). */
+    selected: string[] | null;
+    disposal: RmDisposal;
+    remember: RmRememberChoice;
+    /** The note on a deny; null when none. */
+    note: string | null;
+}
+
+/** All items, to the trash, just this once: the answer of the typed code and the dialog. */
+export const DEFAULT_APPROVAL_CHOICES: ApprovalChoices = {
+    selected: null,
+    disposal: "trash",
+    remember: "once",
+    note: null,
+};
+
+/** The outcome's picks, or the defaults for a way of asking that has none. */
+export function outcomeChoices(outcome: ApprovalOutcome): ApprovalChoices {
+    return outcome.choices ?? DEFAULT_APPROVAL_CHOICES;
+}
+
+/** One "remember" choice the window offers; the CLI offers only the ones it can carry out for this request. */
+export interface ApprovalRememberOption {
+    id: RmRememberChoice;
+    title: string;
 }
 
 /** One path of a request as the approval window shows it: a row with its icon, size and reason. */
@@ -28,6 +63,12 @@ export interface ApprovalItem {
     storedAt?: string;
     /** One short sentence for a person: why no rule allowed it. */
     reason: string;
+    /** What git knows about the path: its repository, its state and, when tracked, its last commit. */
+    git?: ItemGit;
+    /** A folder's file count and newest change, from a capped walk. */
+    folderStats?: FolderStats;
+    /** Other pending requests naming the same path; an approval decides them too. */
+    alsoIn?: string[];
 }
 
 /** The agent that asked, as the window names it. */
@@ -37,6 +78,10 @@ export interface ApprovalAsker {
     session?: string;
     project?: string;
     branch?: string;
+    /** The session's id, for links into the hub and the terminal. */
+    sessionId?: string;
+    /** The history provider of the session (`claude`, `codex`, `grok`). */
+    provider?: string;
 }
 
 /** The request behind a prompt, so the window can show rows instead of the terminal's lines. */
@@ -50,6 +95,8 @@ export interface ApprovalRequestInfo {
     cwd: string;
     /** Minutes the trash keeps the items before the drain deletes them. */
     graceMinutes?: number;
+    /** When the agent asked (the request's `createdAt`). */
+    askedAt?: string;
     asker?: ApprovalAsker;
     items: ApprovalItem[];
 }
@@ -65,6 +112,8 @@ export interface ApprovalPrompt {
     approval?: RmApproval;
     /** Set for a delete or root request; settings changes (config, roots, profiles) have only lines. */
     request?: ApprovalRequestInfo;
+    /** The "remember" choices this request can carry out; absent: the window offers none. */
+    remember?: ApprovalRememberOption[];
 }
 
 /** The app's window answered (`outcome`), or there is no app that offers it (`missing`). */
@@ -129,6 +178,29 @@ interface RmApproveReply {
     decision: string;
     method?: string;
     reason?: string;
+    selected?: unknown;
+    disposal?: unknown;
+    remember?: unknown;
+    note?: unknown;
+}
+
+const REMEMBER_CHOICES: readonly RmRememberChoice[] = ["once", "session", "folder"];
+
+function isRememberChoice(value: unknown): value is RmRememberChoice {
+    return REMEMBER_CHOICES.some((choice) => choice === value);
+}
+
+/** The window's picks from its reply; a missing or unknown value is the default (all, trash, once, no note). */
+export function replyChoices(reply: RmApproveReply): ApprovalChoices {
+    const note = typeof reply.note === "string" ? reply.note.trim() : "";
+    return {
+        selected: Array.isArray(reply.selected)
+            ? reply.selected.filter((path: unknown): path is string => typeof path === "string")
+            : null,
+        disposal: reply.disposal === "permanent" ? "permanent" : "trash",
+        remember: isRememberChoice(reply.remember) ? reply.remember : "once",
+        note: note || null,
+    };
 }
 
 function isRmApproveReply(value: unknown): value is RmApproveReply {
@@ -170,7 +242,39 @@ export function approvalAsker(caller: RmCaller | null | undefined): ApprovalAske
         session: caller.sessionTitle ?? undefined,
         project: caller.project ?? undefined,
         branch: caller.branch ?? undefined,
+        sessionId: caller.sessionId ?? undefined,
+        provider: historyProvider(caller),
     };
+}
+
+/** The provider the session's transcript belongs to: the anchor's when it has one, else the agent's own name. */
+function historyProvider(caller: RmCaller): string {
+    const anchor = caller.transcriptAnchor;
+
+    if (anchor && "provider" in anchor && anchor.provider) {
+        return anchor.provider;
+    }
+
+    return caller.agent === "claude-code" ? "claude" : caller.agent;
+}
+
+/**
+ * The remember choices a delete request can carry out: "this session, this folder" needs the asker's session id;
+ * a root request (it is the trust itself) and a person's own run offer none.
+ */
+export function rememberOptions(kind: "delete" | "root", caller: RmCaller | null): ApprovalRememberOption[] {
+    if (kind !== "delete" || !caller?.isInAgent) {
+        return [];
+    }
+
+    const options: ApprovalRememberOption[] = [{ id: "once", title: "Just this once" }];
+
+    if (caller.sessionId) {
+        options.push({ id: "session", title: "This session, this folder" });
+    }
+
+    options.push({ id: "folder", title: "Always for this folder" });
+    return options;
 }
 
 function tildePath(path: string, home = homedir()): string {
@@ -241,7 +345,18 @@ export function appApproveParams(prompt: ApprovalPrompt, cwd = process.cwd()): R
         params.request = prompt.request;
     }
 
+    if (prompt.remember && prompt.remember.length > 0) {
+        params.remember = prompt.remember;
+    }
+
     return params;
+}
+
+/** The window's give-up reply ("no answer within 170s") is a deny no person pressed. */
+const NO_ANSWER = /^no answer\b/;
+
+function isPersonsDeny(decision: string, reason: string | undefined): boolean {
+    return decision === "deny" && !NO_ANSWER.test(reason ?? "");
 }
 
 /** Only an exact `allow` approves; any other reply, and any failure that is not "no app", is a no. */
@@ -256,17 +371,25 @@ export function appApprovalFromReply(outcome: GenesisAppRpcOutcome<RmApproveRepl
     }
 
     const { decision, method, reason } = outcome.result;
+    const choices = replyChoices(outcome.result);
 
     if (decision !== "allow") {
+        const detail = reason || "denied in the approval window";
         return {
             kind: "answered",
-            outcome: { approved: false, via: "touch-id", detail: reason || "denied in the approval window" },
+            outcome: {
+                approved: false,
+                via: "touch-id",
+                detail,
+                choices,
+                deniedByPerson: isPersonsDeny(decision, reason),
+            },
         };
     }
 
     const via = method === "password" ? "password" : "touch-id";
     const detail = via === "password" ? "approved with the account password" : "approved with Touch ID";
-    return { kind: "answered", outcome: { approved: true, via, detail } };
+    return { kind: "answered", outcome: { approved: true, via, detail, choices } };
 }
 
 async function askApp(prompt: ApprovalPrompt): Promise<AppApproval> {

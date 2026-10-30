@@ -11,7 +11,7 @@ tools rm -n <paths...>              # dry run: each rule's verdict and the sizes
 tools rm preset node_modules js-build [--in <dir>]   # find and delete preset folders
 tools rm presets                    # the folder kinds deleted without asking
 tools rm trash                      # what waits for the drain (--sizes measures it)
-tools rm restore <batch> [paths...] # undo, while the batch is in its grace period
+tools rm restore <batch|request> [paths...] # undo, while the batch is in its grace period (a request id: its batch)
 tools rm drain [--now]              # drain due batches now (--now: all of them)
 tools rm requests                   # what agents asked the user to confirm
 tools rm request-root <dir> --reason "<why>"   # ask the user to trust a folder
@@ -60,7 +60,8 @@ The first rule that answers decides.
 12. **preset** (allow): a folder a build or install recreates, next to the file that proves it: `node_modules` next to
    `package.json`, `dist`/`build`/`.next`/`.turbo`/... next to `package.json`, `.build` next to `Package.swift`,
    `target` next to `Cargo.toml`, Gradle and CMake output, Python caches, Pods, Xcode DerivedData and more.
-13. **root** (allow): inside a folder the user trusts (`tools rm roots add`).
+13. **root** (allow): inside a folder the user trusts (`tools rm roots add`). A root the approval window remembered
+   for "this session, this folder" counts only for that session and for 8 hours (`session`, `expiresAt`).
 14. **default** (ask).
 
 A person at a terminal (not inside an agent) is asked to confirm an ask at once (see below) instead of a request.
@@ -124,6 +125,19 @@ asks the person the current way first. On Linux and Windows, where `auto` cannot
 code by writing `"approval": "code"` into `~/.genesis-tools/rm/config.json` by hand.
 
 In Claude Code, run `! tools rm approve <id>` from the prompt.
+
+The window answers more than allow or deny, and `approve` does what it picked:
+
+- **rows**: only the ticked paths are approved; the unticked ones are put back from aside, and the request's `decided`
+  record lists both. Another pending request that names an approved path is decided with it.
+- **disposal**: "Move to the trash" keeps the items 10 minutes for `tools rm restore <request id>`; "Delete
+  permanently" queues them with no grace and starts the drain.
+- **remember**: "This session, this folder" trusts each item's folder for the asking session for 8 hours; "Always for
+  this folder" trusts it for everyone (`tools rm roots` shows the scope).
+- **deny**: a person's Deny closes the request and puts everything back. Its note is kept (`tools rm requests --all`)
+  and printed to the same session the next time it asks to delete that path.
+
+The typed code and the dialog answer for all paths, to the trash, just this once.
 
 ## The trash and the drain
 

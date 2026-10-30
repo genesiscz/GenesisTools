@@ -26,8 +26,23 @@ public enum ApprovalAttention {
         ApprovalNotifyChoice(seconds: -1, title: "Never"),
     ]
 
+    /// Seconds an answered request's window stays to say what happens (the rm window's "Approved: moving to the
+    /// trash" with the restore command); 0 closes it at once.
+    public static let lingerKey = "approvals.lingerSeconds"
+    public static let defaultLinger = 4
+    public static let lingerChoices = [
+        ApprovalNotifyChoice(seconds: 0, title: "Close at once"),
+        ApprovalNotifyChoice(seconds: 2, title: "2 seconds"),
+        ApprovalNotifyChoice(seconds: 4, title: "4 seconds"),
+        ApprovalNotifyChoice(seconds: 8, title: "8 seconds"),
+    ]
+
     public static var sound: String {
         UserDefaults.standard.string(forKey: soundKey) ?? defaultSound
+    }
+
+    public static var linger: Int {
+        UserDefaults.standard.object(forKey: lingerKey) as? Int ?? defaultLinger
     }
 
     public static var notifyAfter: Int {

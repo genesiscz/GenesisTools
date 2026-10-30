@@ -7,6 +7,7 @@ import {
     listBatches,
     measureBytes,
     recoverAsideJournals,
+    requestBatchId,
     restoreBatch,
     runDrainer,
     sweepOrphans,
@@ -18,6 +19,15 @@ import { runContext } from "../lib/run";
 function dueIn(drainAfter: string): string {
     const minutes = Math.ceil((Date.parse(drainAfter) - Date.now()) / 60_000);
     return minutes <= 0 ? "due now" : `in ${minutes} min`;
+}
+
+/** A batch id as given, or the batch an approved request made (the window prints the request id before the batch exists). */
+function restoreTarget(id: string): string {
+    if (listBatches().some((batch) => batch.id === id)) {
+        return id;
+    }
+
+    return requestBatchId(id) ?? id;
 }
 
 export function registerTrashCommands(program: Command): void {
@@ -59,11 +69,12 @@ export function registerTrashCommands(program: Command): void {
     program
         .command("restore")
         .description("move a batch (or some of its paths) back where it was")
-        .argument("<batch>", `the batch id (${toolCommand("rm")} trash lists them)`)
+        .argument("<batch>", `the batch id (${toolCommand("rm")} trash lists them), or the id of the approved request`)
         .argument("[paths...]", "only these original paths")
         .action((id: string, paths: string[]) => {
             const ctx = runContext();
-            const result = restoreBatch(id, { config: ctx.config, only: paths, caller: ctx.caller });
+            const batchId = restoreTarget(id);
+            const result = restoreBatch(batchId, { config: ctx.config, only: paths, caller: ctx.caller });
 
             for (const path of result.restored) {
                 out.println(pc.green(`restored ${path}`));

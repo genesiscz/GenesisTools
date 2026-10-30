@@ -3,23 +3,29 @@ import { isInteractive, toolCommand } from "@genesiscz/utils/cli";
 import { createStopwatch, formatBytes } from "@genesiscz/utils/format";
 import { logger, out } from "@genesiscz/utils/logger";
 import {
+    type ApprovalChoices,
     type ApprovalPrompt,
     appendRmLedger,
     approvalItemReason,
     confirmByPerson,
     createAsideRequest,
     defaultRuleContext,
+    disposalGraceMinutes,
     effectiveConfig,
     graceMinutesFor,
     isInside,
     kickDrainer,
     listBatches,
+    listRmRequests,
     loadRmConfig,
     measureBytes,
     moveToTrash,
+    outcomeChoices,
+    priorDenials,
     type RmCaller,
     type RmConfig,
     type RmPlanItem,
+    type RmPriorDenial,
     type RmRuleContext,
     type RmVerdictKind,
     recheckAfterWait,
@@ -72,6 +78,8 @@ export interface ExecuteResult {
     batches: TrashBatch[];
     requestId: string | null;
     refused: number;
+    /** The person's earlier denials of these paths for this session, shown before the new request. */
+    denials: RmPriorDenial[];
 }
 
 /**
@@ -83,7 +91,8 @@ export async function executePlan(
     ctx: RunContext,
     options: ExecuteOptions
 ): Promise<ExecuteResult> {
-    const result: ExecuteResult = { batches: [], requestId: null, refused: 0 };
+    const result: ExecuteResult = { batches: [], requestId: null, refused: 0, denials: [] };
+    const confirmedMinutes = new Map<RmPlanItem, number>();
     const sizes = new Map<string, number>();
 
     if (options.dryRun) {
@@ -143,59 +152,39 @@ export async function executePlan(
 
     if (asked.length > 0) {
         if (!ctx.caller.isInAgent && isInteractive() && options.aside !== true) {
-            const outcome = await confirmByPerson({
-                title: `Delete ${asked.length === 1 ? "1 item" : `${asked.length} items`} that no rule allows?`,
-                lines: asked.map((item) => `${item.target.path}  (${item.verdict.reason})`),
-                code: "delete",
-                caller: ctx.caller,
-                approval: ctx.base.approval,
-                request: {
-                    id: null,
-                    kind: "delete",
-                    why: options.reason ?? null,
-                    cwd: ctx.cwd,
-                    graceMinutes: ctx.config.grace.otherMinutes,
-                    items: asked.map((item) => ({
+            const confirmed = await confirmAtTerminal(asked, ctx, options);
+
+            // The prompt can wait: a path that changed meanwhile, or now hits a rule no approval overrides, stays.
+            for (const [item, minutes] of confirmed) {
+                const reason = recheckAfterWait(item.target, ctx.rules);
+
+                if (reason) {
+                    out.println(pc.red(`refuse ${shown(item.target.path, ctx.cwd)}: ${reason}`));
+                    appendRmLedger({
+                        action: "refuse",
                         path: item.target.path,
-                        kind: item.target.kind,
-                        bytes: item.target.kind === "missing" ? undefined : measureBytes(item.target.path),
-                        reason: approvalItemReason(item.verdict.rule, item.verdict.reason),
-                    })),
-                },
-            });
-
-            if (outcome.approved) {
-                // The prompt can wait: a path that changed meanwhile, or now hits a rule no approval overrides, stays.
-                for (const item of asked) {
-                    const reason = recheckAfterWait(item.target, ctx.rules);
-
-                    if (reason) {
-                        out.println(pc.red(`refuse ${shown(item.target.path, ctx.cwd)}: ${reason}`));
-                        appendRmLedger({
-                            action: "refuse",
-                            path: item.target.path,
-                            rule: "target-changed",
-                            reason,
-                            caller: ctx.caller,
-                        });
-                        result.refused++;
-                        continue;
-                    }
-
-                    allowed.push({ ...item, verdict: { ...item.verdict, rule: `confirmed ${item.verdict.rule}` } });
+                        rule: "target-changed",
+                        reason,
+                        caller: ctx.caller,
+                    });
+                    result.refused++;
+                    continue;
                 }
-            } else {
-                out.println(pc.yellow(`Kept ${asked.length} path(s): ${outcome.detail}.`));
+
+                allowed.push(item);
+                confirmedMinutes.set(item, minutes);
             }
         } else {
-            result.requestId = requestForAsked(asked, ctx, options);
+            const asking = requestForAsked(asked, ctx, options);
+            result.requestId = asking.id;
+            result.denials = asking.denials;
         }
     }
 
     const groups = new Map<number, RmPlanItem[]>();
 
     for (const item of allowed) {
-        const minutes = graceMinutesFor(item, ctx.rules, options.keepMinutes);
+        const minutes = confirmedMinutes.get(item) ?? graceMinutesFor(item, ctx.rules, options.keepMinutes);
         groups.set(minutes, [...(groups.get(minutes) ?? []), item]);
     }
 
@@ -236,6 +225,7 @@ export async function executePlan(
             items: plan.map(summary),
             batches: result.batches.map((b) => ({ id: b.id, drainAfter: b.drainAfter, items: b.items.length })),
             request: result.requestId,
+            deniedBefore: result.denials,
         });
     }
 
@@ -247,10 +237,98 @@ export async function executePlan(
 }
 
 /**
+ * A person at a terminal confirms the paths no rule allows (Touch ID window, typed code or dialog). Returns the
+ * confirmed items with their trash minutes: the window's ticked rows and disposal; the code and the dialog confirm
+ * all of them to the trash (`--keep` / `--now` still set its time).
+ */
+async function confirmAtTerminal(
+    asked: readonly RmPlanItem[],
+    ctx: RunContext,
+    options: ExecuteOptions
+): Promise<Map<RmPlanItem, number>> {
+    const outcome = await confirmByPerson({
+        title: `Delete ${asked.length === 1 ? "1 item" : `${asked.length} items`} that no rule allows?`,
+        lines: asked.map((item) => `${item.target.path}  (${item.verdict.reason})`),
+        code: "delete",
+        caller: ctx.caller,
+        approval: ctx.base.approval,
+        request: {
+            id: null,
+            kind: "delete",
+            why: options.reason ?? null,
+            cwd: ctx.cwd,
+            graceMinutes: disposalGraceMinutes("trash", options.keepMinutes),
+            askedAt: new Date().toISOString(),
+            items: asked.map((item) => ({
+                path: item.target.path,
+                kind: item.target.kind,
+                bytes: item.target.kind === "missing" ? undefined : measureBytes(item.target.path),
+                reason: approvalItemReason(item.verdict.rule, item.verdict.reason),
+            })),
+        },
+    });
+    const confirmed = new Map<RmPlanItem, number>();
+
+    if (!outcome.approved) {
+        out.println(pc.yellow(`Kept ${asked.length} path(s): ${outcome.detail}.`));
+        return confirmed;
+    }
+
+    const choices = outcomeChoices(outcome);
+    const minutes = disposalGraceMinutes(choices.disposal, options.keepMinutes);
+    const picked = pickedItems(asked, choices);
+
+    for (const item of picked) {
+        confirmed.set({ ...item, verdict: { ...item.verdict, rule: `confirmed ${item.verdict.rule}` } }, minutes);
+    }
+
+    if (picked.length < asked.length) {
+        out.println(pc.yellow(`Kept ${asked.length - picked.length} path(s) the person did not tick.`));
+    }
+
+    return confirmed;
+}
+
+function pickedItems(asked: readonly RmPlanItem[], choices: ApprovalChoices): RmPlanItem[] {
+    const selected = choices.selected;
+
+    if (!selected) {
+        return [...asked];
+    }
+
+    return asked.filter((item) => selected.includes(item.target.path));
+}
+
+/** "The user denied this on <when>: <note>", for each path a person denied this session before. */
+function printPriorDenials(denials: readonly RmPriorDenial[], cwd: string): void {
+    for (const denial of denials) {
+        const when = new Date(denial.decidedAt).toLocaleString("en-GB", { dateStyle: "medium", timeStyle: "short" });
+        const note = denial.note ? `: ${denial.note}` : " (no note)";
+        out.println(
+            pc.yellow(`The user denied ${shown(denial.path, cwd)} on ${when} (request ${denial.requestId})${note}`)
+        );
+    }
+}
+
+/**
  * Turns the paths that need the user into one request. With aside on, each path moves into the session's aside
  * folder first, out of the agent's way; unsaved work (unless `asideUnsaved`) and paths on another volume stay put.
  */
-function requestForAsked(asked: RmPlanItem[], ctx: RunContext, options: ExecuteOptions): string {
+function requestForAsked(
+    asked: RmPlanItem[],
+    ctx: RunContext,
+    options: ExecuteOptions
+): { id: string; denials: RmPriorDenial[] } {
+    const denials = priorDenials(
+        asked.map((item) => item.target.path),
+        ctx.caller.sessionId,
+        listRmRequests({ all: true })
+    );
+
+    if (!options.json) {
+        printPriorDenials(denials, ctx.cwd);
+    }
+
     const asideOn = options.aside ?? ctx.config.askAction === "aside";
     const asideable = asideOn ? asked.filter((item) => ctx.config.asideUnsaved || !item.verdict.unsaved) : [];
     const inPlace = asked.filter((item) => !asideable.includes(item));
@@ -284,7 +362,7 @@ function requestForAsked(asked: RmPlanItem[], ctx: RunContext, options: ExecuteO
         printRequestHint(request.id, asked.length);
     }
 
-    return request.id;
+    return { id: request.id, denials };
 }
 
 function summary(item: RmPlanItem): Record<string, string | undefined> {
@@ -311,8 +389,8 @@ export function printRequestHint(id: string, count: number): void {
 /** For a verb only a person may run (approve, roots add, config set): ask, and log how it was answered. */
 export async function requirePerson(
     ctx: RunContext,
-    prompt: Pick<ApprovalPrompt, "title" | "lines" | "code" | "request">
-): Promise<{ approved: boolean; via: string }> {
+    prompt: Pick<ApprovalPrompt, "title" | "lines" | "code" | "request" | "remember">
+): Promise<PersonAnswer> {
     const outcome = await confirmByPerson({ ...prompt, caller: ctx.caller, approval: ctx.base.approval });
 
     if (!outcome.approved) {
@@ -320,7 +398,21 @@ export async function requirePerson(
         process.exitCode = 1;
     }
 
-    return { approved: outcome.approved, via: outcome.via };
+    return {
+        approved: outcome.approved,
+        via: outcome.via,
+        choices: outcomeChoices(outcome),
+        deniedByPerson: outcome.deniedByPerson === true,
+    };
+}
+
+export interface PersonAnswer {
+    approved: boolean;
+    via: string;
+    /** The window's picks; the typed code and the dialog answer all items, trash, once. */
+    choices: ApprovalChoices;
+    /** The person pressed Deny in the window (a timeout or a failed touch is not). */
+    deniedByPerson: boolean;
 }
 
 export function minutesOption(value: string): number {

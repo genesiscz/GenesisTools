@@ -1,15 +1,8 @@
-import { existsSync, readdirSync, rmdirSync } from "node:fs";
-import { resolve } from "node:path";
-import { toolCommand } from "@genesiscz/utils/cli";
 import { formatBytes } from "@genesiscz/utils/format";
-import { logger, out } from "@genesiscz/utils/logger";
+import { out } from "@genesiscz/utils/logger";
 import {
-    type ApprovalItem,
     appendRmLedger,
-    approvalAsker,
     approvalDenyReason,
-    approvalGraceMinutes,
-    approvalItemReason,
     createRmRequest,
     denyRmRequest,
     finishRmApproval,
@@ -18,35 +11,102 @@ import {
     listRmRequests,
     loadRmRequest,
     mayDenyRmRequest,
-    measureBytes,
-    moveToTrash,
+    type RmRequest,
     type RmRequestTarget,
     recheckAfterWait,
     recoverAsideJournals,
+    rememberOptions,
     resolveTarget,
-    saveRmConfig,
+    saveRmRequest,
 } from "@genesiscz/utils/rm";
 import type { Command } from "commander";
 import pc from "picocolors";
-import { printRequestHint, requirePerson, runContext, shown } from "../lib/run";
+import {
+    type ApproveEntry,
+    approvalItems,
+    approvalRequestInfo,
+    approveDelete,
+    approveRoots,
+    denyRequest,
+    splitBySelection,
+} from "../lib/approve";
+import { type PersonAnswer, printRequestHint, type RunContext, requirePerson, runContext, shown } from "../lib/run";
 
-/** An aside batch folder that the decision emptied; a non-empty one (something kept) stays. */
-function removeEmptyAsideDir(dir: string | undefined): void {
-    if (!dir || !existsSync(dir) || readdirSync(dir).length > 0) {
+/** The decision lines under a request in `tools rm requests`. */
+function printDecision(request: RmRequest): void {
+    if (request.decided && request.decided.denied.length > 0) {
+        out.println(
+            pc.dim(`  decided: ${request.decided.approved.length} approved, ${request.decided.denied.length} put back`)
+        );
+    }
+
+    if (request.batchId) {
+        out.println(pc.dim(`  batch: ${request.batchId}`));
+    }
+
+    if (request.deniedNote) {
+        out.println(`  denied: ${request.deniedNote}`);
+    }
+}
+
+function approvalLines(
+    request: RmRequest,
+    entries: readonly ApproveEntry[],
+    ctx: RunContext,
+    sizes: (number | undefined)[]
+) {
+    const lines = entries.map(({ wanted }, index) => {
+        const bytes = sizes[index];
+        const size = bytes === undefined ? "" : `  ${formatBytes(bytes)}`;
+        const where = wanted.stored ? ", moved aside" : "";
+        return `${shown(wanted.path, ctx.cwd)}${size}  (${wanted.reason}${where})`;
+    });
+
+    if (request.reason) {
+        lines.unshift(`Why: ${request.reason}`, "");
+    }
+
+    return lines;
+}
+
+/**
+ * Records the decision on the request: approved (with the ticked and the put-back paths) and its batch. A path that
+ * was refused, changed while the person decided, or could not be moved keeps the request pending, with only those.
+ */
+function saveApproved(input: {
+    request: RmRequest;
+    answer: PersonAnswer;
+    approved: readonly ApproveEntry[];
+    denied: readonly ApproveEntry[];
+    pending: readonly RmRequestTarget[];
+    batchId?: string;
+    ctx: RunContext;
+}): void {
+    const { request, answer, approved, denied, pending, batchId, ctx } = input;
+    saveRmRequest({
+        ...request,
+        status: pending.length > 0 ? "pending" : "approved",
+        targets: pending.length > 0 ? request.targets.filter((target) => pending.includes(target)) : request.targets,
+        decidedAt: new Date().toISOString(),
+        decidedVia: answer.via,
+        decided: {
+            approved: approved.map((entry) => entry.wanted.path),
+            denied: denied.map((entry) => entry.wanted.path),
+            disposal: request.kind === "delete" ? answer.choices.disposal : undefined,
+            remember: request.kind === "delete" ? answer.choices.remember : undefined,
+        },
+        batchId,
+    });
+    appendRmLedger({ action: "approve", requestId: request.id, via: answer.via, caller: ctx.caller, batchId });
+}
+
+function exitPendingFor(id: string, pending: readonly RmRequestTarget[]): void {
+    if (pending.length === 0) {
         return;
     }
 
-    rmdirSync(dir);
-}
-
-/** True for a folder with nothing in it; an unreadable folder is not called empty. */
-function isEmptyDir(dir: string): boolean {
-    try {
-        return readdirSync(dir).length === 0;
-    } catch (error) {
-        logger.debug({ error, dir }, "rm: could not list a folder for the approval window");
-        return false;
-    }
+    out.println(pc.yellow(`Request ${id} stays pending for ${pending.length} blocked or changed path(s).`));
+    process.exitCode = 1;
 }
 
 export function registerRequestCommands(program: Command): void {
@@ -88,6 +148,8 @@ export function registerRequestCommands(program: Command): void {
                         out.println(pc.dim(`    waits aside at ${target.stored}${size}`));
                     }
                 }
+
+                printDecision(request);
             }
         });
 
@@ -136,7 +198,7 @@ export function registerRequestCommands(program: Command): void {
             }
 
             // An aside item is approved where it waits (its stored copy); the original path is what gets recorded.
-            const entries = request.targets.map((t) => ({
+            const entries: ApproveEntry[] = request.targets.map((t) => ({
                 wanted: t,
                 target: resolveTarget(t.stored ?? t.path, request.cwd),
             }));
@@ -146,73 +208,63 @@ export function registerRequestCommands(program: Command): void {
                 .map((e) => ({ ...e, denied: denyOf(e.target, ctx.rules) }))
                 .filter((e) => e.denied !== null);
             const openEntries = entries.filter((e) => !blocked.some((b) => b.wanted === e.wanted));
-            const open = openEntries.map((e) => e.target);
 
             for (const entry of blocked) {
                 out.println(pc.red(`refuse ${entry.wanted.path}: ${entry.denied}`));
             }
 
-            if (open.length === 0) {
+            if (openEntries.length === 0) {
                 process.exitCode = 1;
                 return;
             }
 
-            const asker = approvalAsker(request.caller);
-            const who = asker ? (asker.session ?? asker.project ?? asker.agent) : "an agent";
-            const items: ApprovalItem[] = openEntries.map(({ wanted, target }) => {
-                const isDelete = request.kind === "delete" && target.kind !== "missing";
-                return {
-                    path: wanted.path,
-                    kind: target.kind,
-                    bytes: isDelete ? (wanted.bytes ?? measureBytes(target.path)) : undefined,
-                    empty: target.kind === "dir" ? isEmptyDir(target.path) : undefined,
-                    storedAt: wanted.stored,
-                    reason: approvalItemReason(wanted.rule, wanted.reason),
-                };
-            });
-            const lines = openEntries.map(({ wanted }, index) => {
-                const bytes = items[index]?.bytes;
-                const size = bytes === undefined ? "" : `  ${formatBytes(bytes)}`;
-                const where = wanted.stored ? ", moved aside" : "";
-                return `${shown(wanted.path, ctx.cwd)}${size}  (${wanted.reason}${where})`;
-            });
-
-            if (request.reason) {
-                lines.unshift(`Why: ${request.reason}`, "");
-            }
-
+            const items = await approvalItems(request, openEntries);
+            const info = approvalRequestInfo(request, items);
+            const who = info.asker ? (info.asker.session ?? info.asker.project ?? info.asker.agent) : "an agent";
             const verb =
                 request.kind === "delete"
-                    ? `Delete ${open.length === 1 ? "1 item" : `${open.length} items`}`
-                    : `Trust ${shown(open[0]?.path ?? "", ctx.cwd)}`;
+                    ? `Delete ${openEntries.length === 1 ? "1 item" : `${openEntries.length} items`}`
+                    : `Trust ${shown(openEntries[0]?.target.path ?? "", ctx.cwd)}`;
             const answer = await requirePerson(ctx, {
                 title: `${verb} for ${who}?`,
-                lines,
+                lines: approvalLines(
+                    request,
+                    openEntries,
+                    ctx,
+                    items.map((item) => item.bytes)
+                ),
                 code: id,
-                request: {
-                    id,
-                    kind: request.kind,
-                    why: request.reason,
-                    cwd: request.cwd,
-                    graceMinutes: request.kind === "delete" ? ctx.config.grace.otherMinutes : undefined,
-                    asker,
-                    items,
-                },
+                request: info,
+                remember: rememberOptions(request.kind, request.caller),
             });
 
             if (!answer.approved) {
+                if (answer.deniedByPerson) {
+                    denyRequest(request, { caller: ctx.caller, via: answer.via, note: answer.choices.note });
+                    out.println(`Request ${id} denied.`);
+                }
+
                 return;
             }
 
-            // The prompt can wait for minutes: each path must still name what the person was shown, and still pass
-            // the rules no approval overrides. A changed one stays in the request, which stays pending for it.
-            const unresolved = new Set<RmRequestTarget>();
-            const ready = openEntries.filter(({ wanted, target }) => {
+            const { approved, denied } = splitBySelection(openEntries, answer.choices.selected);
+
+            if (approved.length === 0) {
+                denyRequest(request, { caller: ctx.caller, via: answer.via, note: answer.choices.note });
+                out.println(`Nothing was ticked: request ${id} denied.`);
+                return;
+            }
+
+            // The prompt can wait for minutes: each ticked path must still name what the person was shown, and still
+            // pass the rules no approval overrides. A changed one stays in the request, which stays pending for it, as
+            // do the paths refused before the prompt.
+            const pending: RmRequestTarget[] = blocked.map((entry) => entry.wanted);
+            const ready = approved.filter(({ wanted, target }) => {
                 const reason = recheckAfterWait(target, ctx.rules, denyOf);
 
                 if (reason) {
                     out.println(pc.red(`refuse ${wanted.path}: ${reason}`));
-                    unresolved.add(wanted);
+                    pending.push(wanted);
                 }
 
                 return reason === null;
@@ -224,72 +276,24 @@ export function registerRequestCommands(program: Command): void {
             }
 
             if (request.kind === "root") {
-                const roots = ready.map(({ target: t }) => ({
-                    path: t.canonical,
-                    note: request.reason ?? undefined,
-                    addedAt: new Date().toISOString(),
-                    via: `request:${id}`,
-                }));
-                saveRmConfig({ ...ctx.base, roots: [...ctx.base.roots, ...roots] });
-
-                for (const root of roots) {
-                    appendRmLedger({
-                        action: "root-add",
-                        path: root.path,
-                        requestId: id,
-                        via: answer.via,
-                        caller: ctx.caller,
-                    });
-                }
-
-                out.println(pc.green(`Trusted ${roots.map((r) => r.path).join(", ")}.`));
-            } else {
-                const byTarget = new Map(ready.map((e) => [e.target, e.wanted]));
-                const batch = moveToTrash(
-                    ready.map(({ wanted, target }) => ({
-                        target,
-                        rule: `approved ${id}`,
-                        original: wanted.path,
-                        bytes: wanted.bytes,
-                    })),
-                    {
-                        config: ctx.config,
-                        caller: request.caller,
-                        graceMinutes: approvalGraceMinutes(request, ctx.base),
-                        onRefused: (move, reason) => {
-                            out.println(pc.red(`refuse ${move.original ?? move.target.path}: ${reason}`));
-                            const wanted = byTarget.get(move.target);
-
-                            if (wanted) {
-                                unresolved.add(wanted);
-                            }
-                        },
-                    }
-                );
-                removeEmptyAsideDir(request.asideDir);
-                out.println(pc.green(`Moved ${batch?.items.length ?? 0} item(s) to the trash.`));
-
-                if (batch) {
-                    out.println(pc.dim(`  undo: ${toolCommand("rm")} restore ${batch.id}`));
-                }
-
-                kickDrainer(ctx.config);
+                approveRoots(ctx, request, ready, answer.via);
+                saveApproved({ request, answer, approved: ready, denied, pending, ctx });
+                exitPendingFor(id, pending);
+                return;
             }
 
-            const result = finishRmApproval({
+            const { batch } = approveDelete({
+                ctx,
                 request,
-                blocked: blocked.map((entry) => entry.wanted),
-                unresolved,
-                via: answer.via,
+                approved: ready,
+                denied,
+                choices: answer.choices,
+                onRefused: (entry) => pending.push(entry.wanted),
             });
-            if (result.status === "pending") {
-                out.println(
-                    pc.yellow(`Request ${id} stays pending for ${result.targets.length} blocked or changed path(s).`)
-                );
-                process.exitCode = 1;
-            }
-
-            appendRmLedger({ action: "approve", requestId: id, via: answer.via, caller: ctx.caller });
+            const moved = ready.filter((entry) => !pending.includes(entry.wanted));
+            saveApproved({ request, answer, approved: moved, denied, pending, batchId: batch?.id, ctx });
+            kickDrainer(ctx.config);
+            exitPendingFor(id, pending);
         });
 
     program
@@ -313,29 +317,8 @@ export function registerRequestCommands(program: Command): void {
                 return;
             }
 
-            const back = denyRmRequest(request, ctx.caller);
-
-            for (const path of back.returned) {
-                out.println(pc.green(`put back ${path}`));
-            }
-
-            for (const kept of back.kept) {
-                out.println(pc.yellow(`not put back ${kept.path}: ${kept.reason}`));
-            }
-
-            if (back.kept.length === 0) {
-                removeEmptyAsideDir(request.asideDir);
-            }
-
-            if (back.waiting.length > 0) {
-                out.println(
-                    pc.yellow(`Request ${id} stays pending for ${back.waiting.length} path(s) that still wait aside.`)
-                );
-            } else {
-                appendRmLedger({ action: "deny", requestId: id, caller: ctx.caller, path: resolve(request.cwd) });
-                out.println(`Request ${id} denied.`);
-            }
-
+            const back = denyRequest(request, { caller: ctx.caller, via: "cli" });
+            out.println(`Request ${id} denied.`);
             process.exitCode = back.kept.length > 0 ? 1 : 0;
         });
 }

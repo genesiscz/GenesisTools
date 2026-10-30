@@ -132,6 +132,7 @@ struct SettingsView: View {
     @AppStorage(PermissionSettingsGuide.enabledKey) private var settingsGuide = true
     @AppStorage(ApprovalAttention.soundKey) private var approvalSound = ApprovalAttention.defaultSound
     @AppStorage(ApprovalAttention.notifyAfterKey) private var approvalNotifyAfter = ApprovalAttention.defaultNotifyAfter
+    @AppStorage(ApprovalAttention.lingerKey) private var approvalLinger = ApprovalAttention.defaultLinger
 
     var body: some View {
         Form {
@@ -169,7 +170,12 @@ struct SettingsView: View {
                         Text(choice.title).tag(choice.seconds)
                     }
                 }
-                Text("A program that asks for the vault key or an AI account opens a request window. The window never takes the keyboard by itself, so this sound and notification tell you it is waiting.")
+                Picker("After an approval, the window stays", selection: $approvalLinger) {
+                    ForEach(ApprovalAttention.lingerChoices) { choice in
+                        Text(choice.title).tag(choice.seconds)
+                    }
+                }
+                Text("A program that asks for the vault key or an AI account opens a request window. The window never takes the keyboard by itself, so this sound and notification tell you it is waiting. A delete request's window stays after your touch to say where the items went and to offer the restore command.")
                     .font(.system(size: 11))
                     .foregroundStyle(.secondary)
             }

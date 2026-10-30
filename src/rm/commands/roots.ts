@@ -1,9 +1,29 @@
 import { toolCommand } from "@genesiscz/utils/cli";
 import { out } from "@genesiscz/utils/logger";
-import { appendRmLedger, hardDenyReason, realOrSelf, resolveTarget, saveRmConfig } from "@genesiscz/utils/rm";
+import {
+    appendRmLedger,
+    hardDenyReason,
+    isRootActive,
+    type RmRoot,
+    realOrSelf,
+    resolveTarget,
+    saveRmConfig,
+} from "@genesiscz/utils/rm";
 import type { Command } from "commander";
 import pc from "picocolors";
 import { requirePerson, runContext } from "../lib/run";
+
+/** "always", "session 2f320c19 until <time>", or "expired <time>". */
+function rootScope(root: RmRoot): string {
+    const until = root.expiresAt ? new Date(root.expiresAt).toLocaleString("en-GB") : null;
+
+    if (until && !isRootActive(root, root.session ?? null)) {
+        return `expired ${until}`;
+    }
+
+    const who = root.session ? `session ${root.session.slice(0, 8)}` : "always";
+    return until ? `${who} until ${until}` : who;
+}
 
 export function registerRootCommands(program: Command): void {
     const roots = program.command("roots").description("folders an agent may delete anything inside");
@@ -26,7 +46,8 @@ export function registerRootCommands(program: Command): void {
             }
 
             for (const root of config.roots) {
-                out.println(`${root.path} ${pc.dim(`${root.via} ${root.addedAt}${root.note ? ` ${root.note}` : ""}`)}`);
+                const details = `${rootScope(root)} · ${root.via} ${root.addedAt}${root.note ? ` ${root.note}` : ""}`;
+                out.println(`${root.path} ${pc.dim(details)}`);
             }
         });
 

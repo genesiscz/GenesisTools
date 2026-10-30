@@ -32,14 +32,18 @@ import {
     createRmRequest,
     defaultRmConfig,
     denyRmRequest,
+    disposalGraceMinutes,
     drainDue,
     effectiveConfig,
     evaluateTarget,
     filterRmLedger,
     findNestedRepos,
     finishRmApproval,
+    folderStats,
     isInside,
+    isRootActive,
     isTrashRootName,
+    itemGitState,
     listBatches,
     listRmRequests,
     loadRmConfig,
@@ -52,15 +56,22 @@ import {
     pendingAsideFor,
     planRemoval,
     presetsFor,
+    priorDenials,
     probeGit,
+    probeItemGit,
     RM_REQUEST_TTL_MS,
     type RmCaller,
     type RmConfig,
     type RmLedgerEntry,
+    type RmRequest,
     type RmRuleContext,
     recheckAfterWait,
     recoverAsideJournals,
+    rememberOptions,
     renameNoReplace,
+    replyChoices,
+    requestBatchId,
+    requestsAlsoNaming,
     resolveTarget,
     restoreBatch,
     returnAside,
@@ -238,6 +249,53 @@ describe("git", () => {
         expect(verdictOf(linked)).toEqual({ kind: "deny", rule: "registered-worktree" });
         expect(verdictOf(join(base, "clone-parent", "clone"))).toEqual({ kind: "ask", rule: "unsaved-clone" });
         expect(verdictOf(join(base, "clone-parent"))).toEqual({ kind: "ask", rule: "nested-repos" });
+    });
+
+    test("the approval window's git facts: one status per repository, the last commit of a tracked path", async () => {
+        const outside = dir("cwd");
+        const facts = await probeItemGit([
+            { path: join(repo, "src") },
+            { path: join(repo, "dist") },
+            { path: join(repo, "notes.md") },
+            { path: outside },
+        ]);
+
+        expect(facts.get(join(repo, "src"))).toMatchObject({ state: "clean", repo });
+        expect(facts.get(join(repo, "src"))?.lastCommit).toMatch(/^[0-9a-f]{7,} .+: init$/);
+        expect(facts.get(join(repo, "dist"))).toEqual({ state: "ignored", repo });
+        expect(facts.get(join(repo, "notes.md"))).toEqual({ state: "untracked", repo });
+        expect(facts.get(outside)).toEqual({ state: "none" });
+    });
+});
+
+describe("git state of an approval item", () => {
+    const deleted = { kind: "changed" as const, path: "src/a.ts", index: ".", worktree: "D" };
+
+    test("a tracked folder moved aside is clean; the same deletion in place is a change", () => {
+        expect(itemGitState({ entries: [deleted], rel: "src", aside: true, tracked: true })).toBe("clean");
+        expect(itemGitState({ entries: [deleted], rel: "src", aside: false, tracked: true })).toBe("modified");
+    });
+
+    test("an untracked or ignored folder around the path decides it; a path no commit holds is untracked", () => {
+        const untracked = { kind: "untracked" as const, path: "new/", index: "?", worktree: "?" };
+        const ignored = { kind: "ignored" as const, path: "build/", index: "!", worktree: "!" };
+
+        expect(itemGitState({ entries: [untracked], rel: "new/x.ts", aside: false, tracked: false })).toBe("untracked");
+        expect(itemGitState({ entries: [ignored], rel: "build/out", aside: false, tracked: false })).toBe("ignored");
+        expect(itemGitState({ entries: [], rel: "empty", aside: false, tracked: false })).toBe("untracked");
+    });
+});
+
+describe("folder stats", () => {
+    test("counts the files and the newest change, and says when the walk stopped at its cap", () => {
+        const folder = dir("stats");
+        file(join(folder, "a.txt"));
+        file(join(folder, "deep", "b.txt"));
+        const newest = file(join(folder, "deep", "c.txt"));
+        utimesSync(newest, new Date("2030-01-02T03:04:05Z"), new Date("2030-01-02T03:04:05Z"));
+
+        expect(folderStats(folder)).toEqual({ files: 3, newestAt: "2030-01-02T03:04:05.000Z" });
+        expect(folderStats(folder, 2).capped).toBe(true);
     });
 });
 
@@ -580,6 +638,8 @@ describe("requests and approval", () => {
                 session: "shop-admin",
                 project: "shop",
                 branch: "main",
+                sessionId: "sess-1111",
+                provider: "claude",
             });
             expect(settings).toEqual({
                 title: "t",
@@ -646,6 +706,117 @@ describe("requests and approval", () => {
     });
 });
 
+describe("approval window choices", () => {
+    test("the reply's picks are read, and a missing or unknown value is the default", () => {
+        expect(replyChoices({ decision: "allow" })).toEqual({
+            selected: null,
+            disposal: "trash",
+            remember: "once",
+            note: null,
+        });
+        expect(
+            replyChoices({
+                decision: "allow",
+                selected: ["/a", 3],
+                disposal: "permanent",
+                remember: "session",
+                note: "  ",
+            })
+        ).toEqual({ selected: ["/a"], disposal: "permanent", remember: "session", note: null });
+        expect(replyChoices({ decision: "allow", disposal: "shred", remember: "forever" })).toMatchObject({
+            disposal: "trash",
+            remember: "once",
+        });
+    });
+
+    test("a person's deny carries its note; the window's give-up is not a person's deny", () => {
+        const reply = (decision: string, reason: string, note?: string) =>
+            appApprovalFromReply({ ok: true, result: { decision, method: "none", reason, note } });
+        const personal = reply("deny", "denied in the approval window", "keep the fixtures");
+        const timeout = reply("deny", "no answer within 170s");
+
+        expect(personal.kind === "answered" && personal.outcome).toMatchObject({
+            approved: false,
+            deniedByPerson: true,
+            choices: { note: "keep the fixtures" },
+        });
+        expect(timeout.kind === "answered" && timeout.outcome.deniedByPerson).toBe(false);
+    });
+
+    test("the params keep their old keys and add remember only when the request offers it", () => {
+        const prompt = { title: "t", lines: ["/x"], code: "abc", caller: AGENT };
+
+        expect(Object.keys(appApproveParams(prompt, "/cwd"))).toEqual(["title", "lines", "caller", "folder"]);
+        expect(appApproveParams({ ...prompt, remember: rememberOptions("delete", AGENT) }, "/cwd").remember).toEqual([
+            { id: "once", title: "Just this once" },
+            { id: "session", title: "This session, this folder" },
+            { id: "folder", title: "Always for this folder" },
+        ]);
+        expect(rememberOptions("delete", { ...AGENT, sessionId: null }).map((o) => o.id)).toEqual(["once", "folder"]);
+        expect(rememberOptions("root", AGENT)).toEqual([]);
+        expect(rememberOptions("delete", { agent: "person", sessionId: null, isInAgent: false })).toEqual([]);
+    });
+
+    test("the asker carries its session id and provider for the window's links", () => {
+        expect(approvalAsker(AGENT)).toMatchObject({ sessionId: "sess-1111", provider: "claude" });
+        expect(approvalAsker({ ...AGENT, agent: "codex" })?.provider).toBe("codex");
+    });
+
+    test("a permanent delete has no grace; the trash keeps an approved item 10 minutes", () => {
+        expect(disposalGraceMinutes("permanent")).toBe(0);
+        expect(disposalGraceMinutes("trash")).toBe(10);
+        expect(disposalGraceMinutes("permanent", 30)).toBe(0);
+    });
+});
+
+describe("request lookups", () => {
+    function request(id: string, overrides: Partial<RmRequest> = {}): RmRequest {
+        return {
+            id,
+            kind: "delete",
+            createdAt: "2026-10-30T10:00:00.000Z",
+            caller: AGENT,
+            cwd: "/w",
+            reason: null,
+            targets: [{ path: "/w/a", kind: "file", rule: "default", reason: "r" }],
+            status: "pending",
+            ...overrides,
+        };
+    }
+
+    test("another pending request naming the same path is listed as alsoIn", () => {
+        const all = [request("aaaaaa"), request("bbbbbb"), request("cccccc", { status: "denied" })];
+
+        expect(requestsAlsoNaming(["/w/a", "/w/b"], "aaaaaa", all)).toEqual(new Map([["/w/a", ["bbbbbb"]]]));
+    });
+
+    test("a person's earlier deny is found for the same session only, and an agent's own cancel never", () => {
+        const all = [
+            request("dddddd", {
+                status: "denied",
+                decidedVia: "touch-id",
+                decidedAt: "2026-10-30T11:00:00.000Z",
+                deniedNote: "not the fixtures",
+            }),
+            request("eeeeee", { status: "denied", decidedVia: "cli", decidedAt: "2026-10-30T12:00:00.000Z" }),
+        ];
+
+        expect(priorDenials(["/w/a"], "sess-1111", all)).toEqual([
+            { path: "/w/a", requestId: "dddddd", decidedAt: "2026-10-30T11:00:00.000Z", note: "not the fixtures" },
+        ]);
+        expect(priorDenials(["/w/a"], "sess-other", all)).toEqual([]);
+        expect(priorDenials(["/w/a"], null, all)).toEqual([]);
+    });
+
+    test("restore by request id resolves to the batch its approval made", () => {
+        const requestsDir = dir("batch-requests");
+        saveRmRequest(request("ffffff", { status: "approved", batchId: "20261030-batch" }), requestsDir);
+
+        expect(requestBatchId("ffffff", requestsDir)).toBe("20261030-batch");
+        expect(requestBatchId("gggggg", requestsDir)).toBeNull();
+    });
+});
+
 describe("config", () => {
     test("approval defaults to auto and keeps only a known value", () => {
         expect(defaultRmConfig().approval).toBe("auto");
@@ -657,6 +828,31 @@ describe("config", () => {
         expect(parseRmConfig({ trashRoot: "/Users/someone" }).trashRoot).toBe(defaultRmConfig().trashRoot);
         expect(parseRmConfig({ trashRoot: "/Volumes/x/GenesisTools/rm" }).trashRoot).toBe("/Volumes/x/GenesisTools/rm");
         expect(parseRmConfig({ grace: { otherMinutes: -5 } }).grace.otherMinutes).toBe(60);
+    });
+
+    test("a remembered root counts only for its session and only until it expires", () => {
+        const now = Date.parse("2026-10-30T12:00:00Z");
+        const scoped = parseRmConfig({
+            roots: [
+                { path: "/w", addedAt: "", via: "request:x", session: "sess-1111", expiresAt: "2026-10-30T20:00:00Z" },
+            ],
+        }).roots[0];
+
+        expect(scoped).toMatchObject({ session: "sess-1111", expiresAt: "2026-10-30T20:00:00Z" });
+        expect(scoped && isRootActive(scoped, "sess-1111", now)).toBe(true);
+        expect(scoped && isRootActive(scoped, "sess-other", now)).toBe(false);
+        expect(scoped && isRootActive(scoped, "sess-1111", Date.parse("2026-10-30T21:00:00Z"))).toBe(false);
+        expect(isRootActive({ path: "/w", addedAt: "", via: "cli" }, null, now)).toBe(true);
+    });
+
+    test("the root rule skips a root of another session", () => {
+        const inside = file(join(dir("session-root"), "x.txt"));
+        const roots = [{ path: dir("session-root"), addedAt: "", via: "request:x", session: "sess-other" }];
+
+        expect(verdictOf(inside, ctx({ config: { ...config, roots } })).rule).toBe("default");
+        expect(
+            verdictOf(inside, ctx({ config: { ...config, roots: [{ ...roots[0], session: "sess-1111" }] } })).rule
+        ).toBe("root");
     });
 });
 

@@ -7,7 +7,7 @@ import { logger } from "@genesiscz/utils/logger";
 import { nativeHome } from "@genesiscz/utils/providers/session-paths";
 import { genesisToolsDir } from "@genesiscz/utils/storage/root";
 import { pendingAsideDirs, pendingAsideFor, sessionScratchRoots } from "./aside";
-import type { RmConfig, RmPreset } from "./config";
+import { isRootActive, type RmConfig, type RmPreset } from "./config";
 import {
     canonicalPath,
     identityOf,
@@ -411,7 +411,9 @@ export const RM_RULES: readonly RmRule[] = [
     {
         id: "root",
         evaluate: (target, ctx) => {
-            const root = ctx.config.roots.find((r) => isInside(target.canonical, realOrSelf(r.path)));
+            const root = ctx.config.roots.find(
+                (r) => isRootActive(r, ctx.caller.sessionId) && isInside(target.canonical, realOrSelf(r.path))
+            );
             return root ? { kind: "allow", rule: "root", reason: `inside the trusted root ${root.path}` } : null;
         },
     },

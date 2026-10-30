@@ -38,6 +38,36 @@ export interface RmRequest {
     decidedVia?: string;
     /** The aside folder holding the paths that were moved out of the way (no TTL: they wait for a decision). */
     asideDir?: string;
+    /** What the person picked: the paths approved and the paths denied (put back), and how the approved ones go. */
+    decided?: RmRequestDecision;
+    /** The trash batch an approved delete made; `tools rm restore <request id>` resolves to it. */
+    batchId?: string;
+    /** The person's note on a deny, shown to the agent when it asks for the same path again. */
+    deniedNote?: string;
+}
+
+/** How approved items leave: the trash (restorable for a short grace) or deleted at once. */
+export type RmDisposal = "trash" | "permanent";
+
+/** Whether an approval also trusts the item's folder: not at all, for the asking session, or for everyone. */
+export type RmRememberChoice = "once" | "session" | "folder";
+
+/** Minutes approved items wait in the trash before the drain: "Move to the trash (deleted after 10 minutes)". */
+export const RM_APPROVED_TRASH_MINUTES = 10;
+
+/** How long "this session, this folder" trusts the folder. */
+export const RM_SESSION_ROOT_HOURS = 8;
+
+/** The trash grace a disposal means: none for a permanent delete, else `trashMinutes` (default 10). */
+export function disposalGraceMinutes(disposal: RmDisposal, trashMinutes = RM_APPROVED_TRASH_MINUTES): number {
+    return disposal === "permanent" ? 0 : trashMinutes;
+}
+
+export interface RmRequestDecision {
+    approved: string[];
+    denied: string[];
+    disposal?: RmDisposal;
+    remember?: RmRememberChoice;
 }
 
 /** A request older than this is expired: the user answers fresh asks, not yesterday's. */
@@ -188,4 +218,79 @@ export function listRmRequests(options: { all?: boolean; dir?: string; now?: Dat
         .filter((request): request is RmRequest => request !== null)
         .filter((request) => options.all || request.status === "pending")
         .sort((a, b) => a.createdAt.localeCompare(b.createdAt));
+}
+
+/** The trash batch the approved request `id` made; null when there is no such request or it made none. */
+export function requestBatchId(id: string, dir = rmRequestsDir()): string | null {
+    const request = loadRmRequest(id, dir);
+
+    if (!request) {
+        return null;
+    }
+
+    return request.batchId ?? null;
+}
+
+/** For each path, the other pending requests that name it too (an agent asked twice). */
+export function requestsAlsoNaming(
+    paths: readonly string[],
+    exceptId: string,
+    pending: readonly RmRequest[]
+): Map<string, string[]> {
+    const found = new Map<string, string[]>();
+
+    for (const path of paths) {
+        const ids = pending
+            .filter((request) => request.id !== exceptId && request.status === "pending")
+            .filter((request) => request.targets.some((target) => target.path === path))
+            .map((request) => request.id);
+
+        if (ids.length > 0) {
+            found.set(path, ids);
+        }
+    }
+
+    return found;
+}
+
+export interface RmPriorDenial {
+    path: string;
+    requestId: string;
+    decidedAt: string;
+    note: string | null;
+}
+
+/**
+ * The person's latest deny, in the approval window, of a request from this session that named one of `paths`. An
+ * agent's own cancel (`tools rm deny`, decided via `cli`) is not a person's answer and is skipped.
+ */
+export function priorDenials(
+    paths: readonly string[],
+    sessionId: string | null,
+    requests: readonly RmRequest[]
+): RmPriorDenial[] {
+    if (!sessionId) {
+        return [];
+    }
+
+    const denied = requests
+        .filter((request) => request.status === "denied" && request.decidedVia !== "cli")
+        .filter((request) => request.caller?.sessionId === sessionId)
+        .sort((a, b) => (b.decidedAt ?? "").localeCompare(a.decidedAt ?? ""));
+    const result: RmPriorDenial[] = [];
+
+    for (const path of paths) {
+        const hit = denied.find((request) => request.targets.some((target) => target.path === path));
+
+        if (hit) {
+            result.push({
+                path,
+                requestId: hit.id,
+                decidedAt: hit.decidedAt ?? hit.createdAt,
+                note: hit.deniedNote ?? null,
+            });
+        }
+    }
+
+    return result;
 }
