@@ -801,12 +801,91 @@ function trimDiffHunk(
     return [newHeader, ...relevantLines.map((r) => r.line)].join("\n");
 }
 
-function detectSeverity(body: string): "high" | "medium" | "low" {
+type ReviewSeverity = ParsedReviewThread["severity"];
+
+/** How a review comment is classified: what its reviewer declared, or the word heuristic when it declares nothing. */
+export interface ReviewCommentClass {
+    severity: ReviewSeverity;
+    /** The declared category, lower-cased ("security", "quality", "functional correctness"); null when none is declared. */
+    category: string | null;
+}
+
+/**
+ * Severity labels that reviewers declare, mapped to the three-level scale. CodeRabbit has no High: its Major sits above
+ * Minor and is fixed together with Critical and High (babysit `scripts/policy.ts`), and its colours match eve's
+ * (🟠 Major = 🟠 High, 🟡 Minor = 🟡 Medium, 🔵 Trivial = 🔵 Low).
+ */
+const DECLARED_SEVERITY = new Map<string, ReviewSeverity>([
+    ["critical", "high"],
+    ["high", "high"],
+    ["major", "high"],
+    ["medium", "medium"],
+    ["minor", "medium"],
+    ["low", "low"],
+    ["trivial", "low"],
+    ["info", "low"],
+]);
+
+const SEVERITY_BADGE = /!\[(critical|high|medium|low)\]/i;
+const HTML_COMMENT_LINE = /^<!--.*-->$/;
+const HEADER_SEPARATOR = /[|·•]/;
+const HEADER_DECORATION = /<[^>]*>|[*_`]|\p{Extended_Pictographic}|\u{FE0F}|\u{200D}/gu;
+const CONFIDENCE_PART = /^\(?confidence\s*:?\s*\d+\s*\/\s*100\)?$/i;
+
+/**
+ * Reads the header line a review bot puts first. eve writes "🧹 Quality | 🟡 Medium · confidence 98/100"; CodeRabbit
+ * writes "**<picture>…</picture> Major** · **Functional Correctness** · **Quick win**" under an HTML comment line, or
+ * the older "_⚠️ Potential issue_ | _🟠 Major_". A header is a line of two or more parts of which exactly one is a
+ * severity label; the category is the first other part that is not the confidence.
+ */
+function parseDeclaredHeader(body: string): ReviewCommentClass | null {
+    const firstLine = body
+        .split("\n")
+        .map((line) => line.trim())
+        .find((line) => line !== "" && !HTML_COMMENT_LINE.test(line));
+    if (!firstLine) {
+        return null;
+    }
+
+    const parts = firstLine
+        .replace(HEADER_DECORATION, "")
+        .split(HEADER_SEPARATOR)
+        .map((part) => part.trim().replace(/\s+/g, " "))
+        .filter((part) => part !== "");
+    const declared = parts.flatMap((part) => {
+        const severity = DECLARED_SEVERITY.get(part.toLowerCase());
+        return severity ? [{ part, severity }] : [];
+    });
+    if (parts.length < 2 || declared.length !== 1) {
+        return null;
+    }
+
+    const [{ part: label, severity }] = declared;
+    const category = parts.find((part) => part !== label && !CONFIDENCE_PART.test(part));
+    return { severity, category: category ? category.toLowerCase() : null };
+}
+
+/**
+ * Classifies a review comment by its first comment's body. A declared severity (a bot's header line, or a
+ * `![medium](…)` badge) always wins over the words in the text, so a Security finding keeps the severity its reviewer
+ * gave it and its category stays separate.
+ */
+export function classifyReviewComment(body: string): ReviewCommentClass {
+    const header = parseDeclaredHeader(body);
+    if (header) {
+        return header;
+    }
+
+    const badge = body.match(SEVERITY_BADGE);
+    const badgeSeverity = badge ? DECLARED_SEVERITY.get(badge[1].toLowerCase()) : undefined;
+    return { severity: badgeSeverity ?? severityFromWords(body), category: null };
+}
+
+function severityFromWords(body: string): ReviewSeverity {
     const lowerBody = body.toLowerCase();
 
     if (
         lowerBody.includes("high-priority") ||
-        lowerBody.includes("![high]") ||
         lowerBody.includes("critical") ||
         lowerBody.includes("security vulnerability") ||
         /\bbug\b/.test(lowerBody)
@@ -816,7 +895,6 @@ function detectSeverity(body: string): "high" | "medium" | "low" {
 
     if (
         lowerBody.includes("medium-priority") ||
-        lowerBody.includes("![medium]") ||
         lowerBody.includes("suggestion") ||
         lowerBody.includes("refactor") ||
         lowerBody.includes("performance") ||
@@ -885,7 +963,7 @@ export function parseThreads(threads: ReviewThread[]): ParsedReviewThread[] {
                 threadId: thread.id,
                 threadNumber: index + 1,
                 status: thread.isResolved ? "resolved" : "unresolved",
-                severity: detectSeverity(firstComment.body),
+                severity: classifyReviewComment(firstComment.body).severity,
                 file: thread.path,
                 line: thread.line,
                 startLine: thread.startLine,
