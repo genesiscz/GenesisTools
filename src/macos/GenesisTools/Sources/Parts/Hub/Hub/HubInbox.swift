@@ -50,8 +50,6 @@ struct InboxDeliveryRecord: Decodable, Hashable {
     /// under a header that said "Sent" (UX audit 2026-10-27, F7).
     var line: String {
         let time = HubFormat.date(at).map { Self.clock.string(from: $0) } ?? ""
-        // The decision log's delivery channels (`DeliveryChannel`, src/question/lib/decisions/deliver.ts), not the
-        // harness set: `codex` is the Codex worker route.
         switch route {
         case "cmux":
             let where_ = place.map { $0.hasPrefix("cmux") ? $0 : "cmux pane \($0)" } ?? "the cmux pane"
@@ -374,7 +372,6 @@ struct InboxDelivery: Decodable, Equatable {
     var summary: String {
         if let error { return error }
         if let outcomeText { return outcomeText }
-        // The delivery channels of the decision log, not the harness set (see `InboxDeliveryRecord.line`).
         switch channel {
         case "cmux": return "Sent to \(target ?? "the session's cmux pane")"
         case "codex": return "Sent to \(target ?? "the Codex worker")"
@@ -1981,7 +1978,7 @@ private struct InboxSessionHeader: View {
                     }
                 }
             }
-            if let provider = session.provider, Harness(rawValue: provider) != nil {
+            if let provider = session.provider, ["claude", "codex", "grok"].contains(provider) {
                 IconButton(systemName: "terminal", tooltip: "Show this session's cmux pane") {
                     inbox.focusPane(session) { model.post($0, $1) }
                 }
