@@ -627,3 +627,146 @@ describe("open tool calls and the live activity", () => {
         expect(toolSummaryOf({ todos: [] })).toBe("");
     });
 });
+
+/** An `events.jsonl` line of Grok: ISO milliseconds, one flat record per event. */
+function grokEvent(ms: number, type: string, extra: Record<string, unknown> = {}): Record<string, unknown> {
+    return { ts: new Date(T0 + ms).toISOString(), type, ...extra };
+}
+
+describe("permission prompts and the question call", () => {
+    // The shape of a real session (2026-09-10, folder names only): the call is written before the prompt, its
+    // update only after the answer, and events.jsonl names the tool but carries no call id.
+    const terminalCall = grokLine(4, "tool_call", {
+        toolCallId: "call-0001-48",
+        title: "run_terminal_command",
+        rawInput: { command: "date", description: "Print the date" },
+        _meta: { "x.ai/tool": { name: "run_terminal_command", kind: "execute" } },
+    });
+    const updates = [grokLine(0, "user_message_chunk", { content: { type: "text", text: "go" } }), terminalCall];
+    const requested = [
+        grokEvent(0, "turn_started"),
+        grokEvent(3_841, "permission_requested", { tool_name: "read_file" }),
+        grokEvent(3_841, "permission_resolved", { tool_name: "read_file", decision: "allow", wait_ms: 0 }),
+        grokEvent(4_084, "phase_changed", { phase: "permission_prompt" }),
+        grokEvent(4_084, "permission_requested", { tool_name: "run_terminal_command" }),
+    ];
+
+    it("Grok: an open permission request waits on the user, with the command and the call's id", () => {
+        const snap = grokTurnState({ ...input(updates, 60), eventLog: requested });
+
+        expect(snap.state).toBe("AWAITING-INPUT");
+        expect(snap.asksQuestion).toBe(true);
+        expect(snap.question).toBe("run_terminal_command: Print the date");
+        expect(snap.questionCall).toEqual({ kind: "permission", callId: "call-0001-48" });
+    });
+
+    it("Grok: an answered request, a new turn or no event log leaves the turn as it was", () => {
+        const answered = [
+            ...requested,
+            grokEvent(50_863, "permission_resolved", {
+                tool_name: "run_terminal_command",
+                decision: "allow",
+                wait_ms: 46_778,
+            }),
+        ];
+
+        for (const eventLog of [answered, [...requested, grokEvent(51_000, "turn_ended", { outcome: "cancelled" })]]) {
+            const snap = grokTurnState({ ...input(updates, 60), eventLog });
+            expect(snap.state).toBe("RUNNING");
+            expect(snap.asksQuestion).toBe(false);
+            expect(snap.questionCall).toBeUndefined();
+        }
+
+        expect(grokTurnState(input(updates, 60)).state).toBe("RUNNING");
+        const ended = [...updates, grokLine(6, "turn_completed", { stop_reason: "end_turn" })];
+        expect(grokTurnState({ ...input(ended, 60), eventLog: requested }).asksQuestion).toBe(false);
+    });
+
+    it("Grok: a request whose call left the tail gets a time id only while it is newer than the transcript", () => {
+        const noCall = [updates[0] ?? {}, grokLine(2, "agent_message_chunk", { content: { type: "text", text: "x" } })];
+        const fresh = grokTurnState({ ...input(noCall, 60), eventLog: requested });
+        expect(fresh.questionCall).toEqual({ kind: "permission", callId: `permission:${iso(4.084)}` });
+        expect(fresh.question).toBe("run_terminal_command");
+
+        const later = [...noCall, grokLine(9, "agent_message_chunk", { content: { type: "text", text: "y" } })];
+        expect(grokTurnState({ ...input(later, 60), eventLog: requested }).asksQuestion).toBe(false);
+    });
+
+    it("Grok: a question tool wins over its own instant permission pair, with kind, id and options", () => {
+        const ask = grokLine(3, "tool_call", {
+            toolCallId: "call-ask",
+            rawInput: { questions: [{ question: "Which one?", options: [{ label: "A" }, "B"] }] },
+            _meta: { "x.ai/tool": { name: "ask_user_question", kind: "ask_user" } },
+        });
+        const eventLog = [grokEvent(3_000, "permission_requested", { tool_name: "ask_user_question" })];
+        const snap = grokTurnState({ ...input([updates[0] ?? {}, ask], 60), eventLog });
+
+        expect(snap.question).toBe("Which one?");
+        expect(snap.questionCall).toEqual({ kind: "decision", callId: "call-ask", options: ["A", "B"] });
+
+        const plan = grokLine(3, "tool_call", {
+            toolCallId: "call-plan",
+            rawInput: {},
+            _meta: { "x.ai/tool": { name: "exit_plan_mode", kind: "exit_plan" } },
+        });
+        expect(grokTurnState(input([updates[0] ?? {}, plan], 60)).questionCall).toEqual({
+            kind: "plan",
+            callId: "call-plan",
+        });
+    });
+
+    it("Claude and Codex: the question call carries the tool call id and the options", () => {
+        const ask = claudeAssistant(
+            5,
+            [
+                {
+                    type: "tool_use",
+                    id: "toolu_1",
+                    name: "AskUserQuestion",
+                    input: { questions: [{ question: "Ship it?", options: [{ label: "Yes" }, { label: "No" }] }] },
+                },
+            ],
+            "tool_use"
+        );
+        expect(claudeTurnState(input([claudeUser(0), ask], 30)).questionCall).toEqual({
+            kind: "decision",
+            callId: "toolu_1",
+            options: ["Yes", "No"],
+        });
+
+        const codex = codexTurnState(
+            input(
+                [
+                    codexLine(0, "event_msg", { type: "task_started" }),
+                    codexLine(1, "response_item", {
+                        type: "function_call",
+                        name: "request_user_input",
+                        call_id: "call_q",
+                        arguments: SafeJSON.stringify({ questions: [{ question: "Branch?", options: ["main"] }] }),
+                    }),
+                ],
+                30
+            )
+        );
+        expect(codex.questionCall).toEqual({ kind: "decision", callId: "call_q", options: ["main"] });
+    });
+
+    it("readTurnState reads Grok's events.jsonl beside updates.jsonl", () => {
+        const dir = mkdtempSync(join(tmpdir(), "turn-state-grok-"));
+        const file = join(dir, "updates.jsonl");
+        writeFileSync(file, `${updates.map((line) => SafeJSON.stringify(line)).join("\n")}\n`);
+        const options = { stallTimeoutMs: 900_000, now: T0 + 60_000 };
+
+        expect(readTurnState("grok", file, options)?.asksQuestion).toBe(false);
+
+        writeFileSync(join(dir, "events.jsonl"), `${requested.map((line) => SafeJSON.stringify(line)).join("\n")}\n`);
+        const snap = readTurnState("grok", file, options);
+
+        expect(snap?.state).toBe("AWAITING-INPUT");
+        expect(snap?.questionCall).toEqual({ kind: "permission", callId: "call-0001-48" });
+        // A transcript of another name has no event log, whatever lies beside it.
+        const other = join(dir, "grok.jsonl");
+        writeFileSync(other, readFileSync(file));
+        expect(readTurnState("grok", other, options)?.asksQuestion).toBe(false);
+    });
+});
