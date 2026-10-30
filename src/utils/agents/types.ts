@@ -5,9 +5,16 @@
  * Any agent (Claude Code, Codex, pi, custom) maps its native format into these.
  */
 
+import type { HarnessId } from "@genesiscz/utils/harness/types";
+
 // ─── Provider ───────────────────────────────────────────────────────────────
 
-export type AgentProvider = "claude-code" | "codex" | "pi" | "custom";
+/**
+ * Who wrote the conversation. Claude is spelled `claude-code` here, as in `AgentRuntimeContext.agent`; the other
+ * harnesses keep their id, so a new harness joins without an edit. Renamed from `AgentProvider`, which is also the
+ * process classifier's name (`src/utils/process/classify.ts`).
+ */
+export type AgentMessageProvider = "claude-code" | Exclude<HarnessId, "claude"> | "pi" | "custom";
 
 // ─── Content Blocks ─────────────────────────────────────────────────────────
 
@@ -84,7 +91,7 @@ export interface AgentUsage {
 
 export interface AgentSessionInfo {
     id: string;
-    provider: AgentProvider;
+    provider: AgentMessageProvider;
     title?: string;
     summary?: string;
     branch?: string;

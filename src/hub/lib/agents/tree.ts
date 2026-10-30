@@ -1,7 +1,7 @@
 import type { TaskNotification } from "@genesiscz/utils/ai/transcripts/file-scan";
 import type { SessionSubagent } from "@genesiscz/utils/ai/transcripts/subagents";
 import type { SessionTeam } from "./team";
-import type { AgentHarness, AgentKind, AgentNode, AgentParent, AgentStatus } from "./types";
+import type { AgentHarness, AgentNode, AgentParent, AgentRole, AgentStatus } from "./types";
 import type { WorkerAgent } from "./workers";
 
 /** A parent written this recently is live even with no running child. */
@@ -52,7 +52,7 @@ function isTeammate(agent: SessionSubagent): boolean {
     return agent.taskKind === "in_process_teammate" || agent.teamName !== null;
 }
 
-function kindOf(agent: SessionSubagent): AgentKind {
+function kindOf(agent: SessionSubagent): AgentRole {
     if (isTeammate(agent)) {
         return "teammate";
     }
