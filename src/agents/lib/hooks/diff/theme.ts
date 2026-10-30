@@ -160,6 +160,7 @@ export function resolvePalette(
         return null;
     }
 
+    // `claude` is a theme name (follow Claude Code's own `/theme`), a DiffThemeName and not a harness.
     if (name !== "claude") {
         return PALETTES[name];
     }

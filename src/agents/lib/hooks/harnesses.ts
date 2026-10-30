@@ -30,7 +30,8 @@ function tailOf(path: string, bytes: number): string {
 /**
  * When each harness last reached these hooks, read from the decision log (and its rotated
  * generation when the current one does not name a harness). The surest wiring check there is:
- * a harness whose config looks right but that never shows up here is not running the hooks.
+ * a harness whose config looks right but that never shows up here is not running the hooks. The result is keyed by
+ * the canonical harness type and filled from HARNESS_NAMES; it holds no harness fact of its own.
  */
 export function lastSeenPerHarness(logPath: string): Partial<Record<HarnessName, string>> {
     const seen: Partial<Record<HarnessName, string>> = {};

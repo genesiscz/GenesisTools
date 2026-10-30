@@ -55,11 +55,20 @@ export const HARNESS_GUARD_ALLOWLIST: Readonly<Record<string, HarnessGuardCounts
         table: 1,
         why: "benchmark tree names a baseline records (claude-listing, claude-all, grok, codex), not the harness set",
     },
-    "src/agents/commands/hooks.ts": { list: 1, table: 2 },
+    "src/agents/commands/hooks.ts": {
+        table: 2,
+        why: "HOOK_INSTALLERS, the agents tool's one table of hook-file installers (they write settings.json and hooks.json, which the tool owns); Grok runs Claude's hooks and has no entry",
+    },
     "src/agents/lib/changes/blame.ts": { table: 2 },
     "src/agents/lib/hooks/config.ts": { table: 9 },
-    "src/agents/lib/hooks/diff/theme.ts": { branch: 1 },
-    "src/agents/lib/hooks/harnesses.ts": { table: 2 },
+    "src/agents/lib/hooks/diff/theme.ts": {
+        branch: 1,
+        why: "a DiffThemeName: the theme named claude follows Claude Code's own /theme, it is no harness",
+    },
+    "src/agents/lib/hooks/harnesses.ts": {
+        table: 2,
+        why: "the result type of lastSeenPerHarness, keyed by the canonical harness type and filled from HARNESS_NAMES; no fact of its own",
+    },
     "src/agents/lib/hooks/payload.ts": { table: 2 },
     "src/ai-proxy/commands/session-use.ts": {
         list: 1,

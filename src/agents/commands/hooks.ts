@@ -46,6 +46,7 @@ import {
     type SubagentLinePlan,
     stopHookWired,
     uninstallHooks,
+    type WiringStatus,
     wiringStatus,
 } from "../lib/hooks/install";
 import {
@@ -69,10 +70,7 @@ import { writeJsonFile } from "../lib/hooks/write-json";
 import { registerRuleCommands, registerRulePicker, ruleState, shortPath } from "./hooks-rules";
 
 const HARNESSES: readonly HarnessName[] = ACCOUNT_PROVIDER_ALIASES;
-/** Grok has no hook file of its own: it runs the hooks in Claude's settings.json. */
-const INSTALLABLE = ["claude", "codex"] as const;
-
-type InstallableHarness = (typeof INSTALLABLE)[number];
+type InstallableHarness = keyof typeof HOOK_INSTALLERS;
 
 /** `--harness` for install and uninstall: the value, or `null` after printing the choices. */
 function installableHarness(given: string | boolean | undefined, verb: string): InstallableHarness | null {
@@ -139,16 +137,22 @@ interface InstallOptions {
     replaceSubagentLine?: boolean;
 }
 
-/** How `install` and `uninstall` wire each harness: Claude's settings.json, Codex's hooks.json. */
-const HOOK_INSTALLERS: Record<
-    InstallableHarness,
-    {
-        install(options: InstallOptions): void;
-        uninstall(write: boolean): { removed: number };
-        /** What a written uninstall records afterwards. */
-        afterUninstall(): void;
-    }
-> = {
+/** How `install`, `uninstall` and `doctor` handle one harness's hook file. */
+interface HookInstaller {
+    install(options: InstallOptions): void;
+    uninstall(write: boolean): { removed: number };
+    /** What a written uninstall records afterwards. */
+    afterUninstall(): void;
+    /** Whether its hook file is wired, as `doctor --json` reports it (Claude's full status, Codex's state). */
+    wiring(): WiringStatus | CodexWiring["state"];
+}
+
+/**
+ * How `install` and `uninstall` wire each harness: Claude's settings.json, Codex's hooks.json. Grok has no entry: it
+ * has no hook file of its own and runs the hooks in Claude's settings.json. The agents tool's one table keyed by
+ * harness for the hook files, since the installers write files this tool owns.
+ */
+const HOOK_INSTALLERS = {
     claude: {
         install(options) {
             const { dist } = options;
@@ -182,6 +186,7 @@ const HOOK_INSTALLERS: Record<
             recordInstallState({ dist: hooksDistPath(), target: null });
             ui.raw(`${pc.bold("recorded")}  ${hooksConfigPath()}`);
         },
+        wiring: () => wiringStatus(),
     },
     codex: {
         install(options) {
@@ -202,8 +207,14 @@ const HOOK_INSTALLERS: Record<
         uninstall: (write) => uninstallCodexHooks({ write }),
         // Codex keeps no install record.
         afterUninstall() {},
+        wiring: () => codexWiring().state,
     },
-};
+} satisfies Partial<Record<HarnessName, HookInstaller>>;
+
+/** The harnesses with a hook file of their own, in the canonical order. */
+const INSTALLABLE: readonly InstallableHarness[] = HARNESSES.filter((name): name is InstallableHarness =>
+    Object.hasOwn(HOOK_INSTALLERS, name)
+);
 
 /** Rules switched off for every harness, and rules only some harnesses allow. */
 function ruleOverrides(config: HooksConfig, rules: readonly ShellRule[]): { off: string; perHarness: string } {
@@ -335,7 +346,9 @@ export function registerHooksCommands(program: Command): void {
                 out.result({
                     configPath: hooksConfigPath(),
                     config,
-                    wiring: { claude: wiringStatus(), codex: codexWiring().state },
+                    wiring: Object.fromEntries(
+                        INSTALLABLE.map((harness) => [harness, HOOK_INSTALLERS[harness].wiring()])
+                    ),
                     stopHookWired: stopWired,
                 });
                 return;
