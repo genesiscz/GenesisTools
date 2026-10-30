@@ -9,7 +9,7 @@ import {
     symlinkSync,
     writeFileSync,
 } from "node:fs";
-import { tmpdir } from "node:os";
+import { homedir, tmpdir } from "node:os";
 import { basename, dirname, join, resolve } from "node:path";
 import { runInNewContext } from "node:vm";
 import { env } from "@genesiscz/utils/env";
@@ -69,7 +69,7 @@ import {
 } from "./open";
 import { mdPageExtras } from "./page-extras";
 import { GALLERY_DIR } from "./paths";
-import { addEntry, type DashboardEntry, loadRegistry, removeEntry, resolveTarget } from "./registry";
+import { addEntry, type DashboardEntry, loadRegistry, removeEntry, resolveTarget, tooBroadReason } from "./registry";
 import {
     findRunning,
     holdServer,
@@ -80,7 +80,7 @@ import {
     removeRunning,
     runningOutsideRegistry,
 } from "./running";
-import { runningPath } from "./storage";
+import { registryPath, runningPath } from "./storage";
 import { listShippedTemplates, renderTemplate, resolveTemplateDir } from "./templates";
 import { cacheDirFor, fsAllowRoots } from "./vite";
 
@@ -133,6 +133,85 @@ describe("registry", () => {
 
         const tsx = resolveTarget(join(dir, "widget.tsx"));
         expect(tsx.entry).toBe("widget.tsx");
+    });
+});
+
+describe("too-broad folders are never served or registered", () => {
+    test("the disk root, a top-level folder, the home folder and what contains it are too broad", () => {
+        const home = realpathSync(mkdtempSync(join(tmpdir(), "artifact-home-")));
+        mkdirSync(join(home, "artifacts"));
+
+        expect(tooBroadReason("/", home)).toBe("the root of the disk");
+        expect(tooBroadReason("/usr", home)).toBe("a top-level folder of the disk");
+        expect(tooBroadReason(home, home)).toBe("the home folder");
+        expect(tooBroadReason(dirname(home), home)).toBe("a folder that contains the home folder");
+        expect(tooBroadReason(join(home, "artifacts"), home)).toBeNull();
+        rmSync(home, { recursive: true, force: true });
+    });
+
+    test("a symlink to the disk root is judged by where it points", () => {
+        const link = join(dir, "to-root");
+        symlinkSync("/", link);
+
+        try {
+            expect(tooBroadReason(link, dir)).toBe("the root of the disk");
+            expect(() => resolveTarget(link)).toThrow(/Refusing \/: it is the root of the disk/);
+        } finally {
+            rmSync(link);
+        }
+    });
+
+    test("serve, open and build refuse every spelling of a too-broad target, the default cwd included", () => {
+        expect(() => resolveTarget("/")).toThrow(/Refusing \/: it is the root of the disk/);
+        expect(() => resolveTarget("/usr")).toThrow(/top-level folder/);
+        expect(() => resolveTarget(homedir())).toThrow(/Refusing/);
+
+        const cwd = process.cwd();
+        process.chdir("/");
+
+        try {
+            expect(() => resolveTarget(undefined)).toThrow(/Refusing \/: it is the root of the disk/);
+        } finally {
+            process.chdir(cwd);
+        }
+    });
+
+    test("add refuses a too-broad folder and an empty name", () => {
+        expect(() => addEntry({ dir: "/" })).toThrow(/Refusing \//);
+        expect(() => addEntry({ dir, name: "" })).toThrow(/registry name is empty/);
+        expect(() => addEntry({ dir, name: "   " })).toThrow(/registry name is empty/);
+        expect(loadRegistry()).toHaveLength(0);
+    });
+
+    test("a stored entry with no name or a too-broad folder is skipped with one warning", () => {
+        mkdirSync(dirname(registryPath()), { recursive: true });
+        writeFileSync(
+            registryPath(),
+            SafeJSON.stringify({
+                entries: [
+                    { name: "", dir: "/", createdAt: "2026-10-30T19:27:32.848Z" },
+                    { name: "home", dir: homedir(), createdAt: "2026-10-30T19:27:32.848Z" },
+                    { name: "fine", dir, createdAt: "2026-10-30T19:27:32.848Z" },
+                ],
+            })
+        );
+        const warn = spyOn(logger, "warn");
+
+        try {
+            expect(loadRegistry().map((e) => e.name)).toEqual(["fine"]);
+            expect(loadRegistry().map((e) => e.name)).toEqual(["fine"]);
+            expect(warn.mock.calls.filter(([, msg]) => msg === "[artifact] skipping a registry entry")).toHaveLength(2);
+            expect(() => resolveTarget("home")).toThrow(/neither a registered dashboard name/);
+        } finally {
+            warn.mockRestore();
+            removeEntry("fine");
+        }
+    });
+
+    test("the built-in kit gallery resolves by name, so a service start has a folder to serve", () => {
+        const resolved = resolveTarget("kit-gallery");
+        expect(resolved.dir).toBe(GALLERY_DIR);
+        expect(resolved.entry).toBe("index.tsx");
     });
 });
 

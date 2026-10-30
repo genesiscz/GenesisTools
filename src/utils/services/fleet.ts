@@ -8,8 +8,8 @@ import { listDashboards, listWebServices, type RegistryEntry } from "@genesiscz/
 /**
  * Registered servers that another system keeps running, or that need their own setup. `up` and `down`
  * leave them alone unless they are named: a bare `down` must never stop the MCP gateway or the proxy.
- * `artifact` serves the folder it is started in and registers it, and its registered launch command names no
- * folder, so a bare `up` would serve and register whatever directory the caller stands in.
+ * `artifact` is the scratch server for one folder; its registered launch serves only the shipped kit gallery,
+ * which the library already shows, so a bare `up` has no reason to start it.
  */
 export const OUTSIDE_THE_FLEET: ReadonlySet<string> = new Set([
     "ai-proxy",

@@ -151,7 +151,8 @@ export const DASHBOARDS = {
         description: "On-the-fly dashboards from any folder of loose HTML/TSX/MD artifacts.",
         port: 3076,
         strictPort: false,
-        launch: `${toolCommand("artifact serve")}`,
+        // A service start has no useful working folder (GenesisTools.app runs it in `/`), so it serves the shipped gallery.
+        launch: `${toolCommand("artifact serve kit-gallery --no-open --no-register")}`,
         portOverride: { flag: "--port" },
         tech: "vite",
         auth: "none",
