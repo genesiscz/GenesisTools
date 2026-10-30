@@ -92,6 +92,31 @@ private func workflowFailure(_ error: Error, extras: [String: Any] = [:]) -> Nev
 /// A refusal that omits the rectangle it was compared against sends the caller hunting: a window
 /// that repositioned itself between `see` and `act` is indistinguishable from a coordinate that was
 /// always wrong. Name the received point, the window and its bounds, so one read settles which.
+/// The window server's on-screen windows, front to back, for naming the owner of a refused point.
+private func listedOnScreenWindows() -> [ListedWindow] {
+    let list = CGWindowListCopyWindowInfo([.optionOnScreenOnly, .excludeDesktopElements], kCGNullWindowID)
+        as? [[CFString: Any]] ?? []
+    return list.compactMap { info in
+        guard let id = info[kCGWindowNumber] as? Int, let owner = info[kCGWindowOwnerPID] as? Int32,
+              let raw = info[kCGWindowBounds] as? NSDictionary,
+              let bounds = CGRect(dictionaryRepresentation: raw) else { return nil }
+        return ListedWindow(id: id, ownerPid: owner, ownerName: (info[kCGWindowOwnerName] as? String) ?? "pid \(owner)",
+                            title: info[kCGWindowName] as? String, layer: (info[kCGWindowLayer] as? Int) ?? 0,
+                            bounds: bounds)
+    }
+}
+
+/// The element an AX hit test returned, with the app that owns it.
+private func describeHit(_ hit: AXUIElement?) -> HitElement? {
+    guard let hit else { return nil }
+    var owner: pid_t = 0
+    let pid: Int32? = AXUIElementGetPid(hit, &owner) == .success ? owner : nil
+    let app = pid.flatMap { NSRunningApplication(processIdentifier: $0)?.localizedName }
+    let title = axStringAttribute(hit, "AXTitle")
+    let label = (title?.isEmpty == false ? title : nil) ?? axStringAttribute(hit, "AXDescription")
+    return HitElement(app: app, pid: pid, role: axStringAttribute(hit, "AXRole"), label: label)
+}
+
 private func describeOutsideWindow(point: CGPoint, window: ObservedWindow) -> String {
     func whole(_ value: Double) -> Int {
         return Int(value.rounded())
@@ -1551,6 +1576,7 @@ func cmdAct(appName _: String) {
             // sleeps span 200 ms, and a window that moves or loses focus inside that window
             // would otherwise have a later hit accepted against geometry nobody re-read, which
             // is a synthetic click dispatched at a stale coordinate.
+            var lastHit: AXUIElement?
             for attempt in 0..<5 {
                 if attempt > 0 {
                     Thread.sleep(forTimeInterval: 0.05)
@@ -1560,6 +1586,7 @@ func cmdAct(appName _: String) {
                 guard AXUIElementCopyElementAtPosition(root, Float(point.x), Float(point.y), &hit) == .success, let hit else {
                     throw WindowEventError.unavailable("cannot verify event hit target")
                 }
+                lastHit = hit
                 var ancestor: AXUIElement? = hit
                 var enabledStates: [Bool?] = []
                 for _ in 0..<50 {
@@ -1603,7 +1630,11 @@ func cmdAct(appName _: String) {
                     }
                 }
             }
-            throw WindowEventError.unavailable("observed target is occluded or hit testing disagrees; no event dispatched")
+            // Name what is really at the point, so the caller can choose between raising the target
+            // window and clicking elsewhere (handoff h_00ddcbx1 t26).
+            throw WindowEventError.unavailable(occlusionRefusal(
+                point: point, targetPid: pid, targetWindowId: Int(window.id),
+                owner: windowOwningPoint(point, in: listedOnScreenWindows()), hit: describeHit(lastHit)))
         }
         func pageViewport(_ point: CGPoint, pin: SnapshotVerifyTarget) throws -> (element: AXUIElement, observed: ScrollViewportAncestor) {
             let hit = try verifyPoint(point, pin: pin)
