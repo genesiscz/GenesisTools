@@ -67,9 +67,9 @@ export const HARNESS_TYPE_NAMES: ReadonlySet<string> = new Set([
 /**
  * P8 of `.claude/plans/2026-10-30-PlugenizeHarnesses.md` flips this one line: the guard then runs `--strict` by itself
  * (the CI step needs no edit), and `scripts/ci/lint-rules.ts` reports every violation as an error, so a local lint
- * fails before a push. False until every allowlisted file is gone or says why.
+ * fails before a push. On since 2026-10-31: every allowlisted file says why.
  */
-export const HARNESS_GUARD_STRICT = false;
+export const HARNESS_GUARD_STRICT = true;
 
 /** The drivers and the canonical list own the names; tests and fixtures spell them on purpose. */
 const OWNERS =
