@@ -1360,7 +1360,13 @@ export type CodexHistoryOperations = Pick<NativeSessionReader<"codex">, "parserV
     Required<
         Pick<
             NativeSessionReader<"codex">,
-            "readMetadata" | "scan" | "readRecords" | "readBackward" | "readTurnBoundary" | "readForward"
+            | "readMetadata"
+            | "scan"
+            | "readRecords"
+            | "readBackward"
+            | "readTurnBoundary"
+            | "readForward"
+            | "continuedIn"
         >
     >;
 
@@ -1439,5 +1445,8 @@ export function createCodexHistoryOperations(): CodexHistoryOperations {
         readBackward: readCodexBackward,
         readTurnBoundary: readCodexTurnBoundary,
         readForward: readCodexForward,
+        // Codex resumes a thread under its own id and never hands a conversation to a successor file, so a rollout
+        // carries no pointer to another session.
+        continuedIn: async () => undefined,
     };
 }

@@ -13,7 +13,7 @@ import { createNativeHistoryAdapter } from "./native-adapter";
 import { openHistoryService } from "./open-service";
 import { createClaudeHistoryOperations } from "./readers/claude";
 import { discoverClaudeHistorySources } from "./readers/claude-discovery";
-import { noBackwardRead } from "./testing/no-backward-read";
+import { noBackwardRead, noContinuedIn } from "./testing/no-backward-read";
 import type { NativeSessionSource } from "./types";
 
 afterEach(() => {
@@ -54,6 +54,7 @@ test("a registered fourth provider supports listing, content, detail and unavail
                 registryDirectory: () => null,
             },
             readBackward: noBackwardRead,
+            continuedIn: noContinuedIn,
             readTurnBoundary: async () => null,
             readForward: async () => ({ rows: [], file: null, endOffset: 0, issues: [] }),
             roots: () => [root],

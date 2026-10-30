@@ -1,7 +1,7 @@
 import { expect, test } from "bun:test";
 import type { CachedHistoryMetadata } from "./repository";
 import { searchHistorySource } from "./search-source";
-import { noBackwardRead } from "./testing/no-backward-read";
+import { noBackwardRead, noContinuedIn } from "./testing/no-backward-read";
 import type { HistorySourceRecord, NativeSessionReader, NativeSessionSource } from "./types";
 
 const START = "2026-09-01T10:00:00.000Z";
@@ -96,6 +96,7 @@ function reader(records: HistorySourceRecord[]): NativeSessionReader<string> {
             registryDirectory: () => null,
         },
         readBackward: noBackwardRead,
+        continuedIn: noContinuedIn,
         readTurnBoundary: async () => null,
         readForward: async () => ({ rows: [], file: null, endOffset: 0, issues: [] }),
         roots: () => [SOURCE.root],

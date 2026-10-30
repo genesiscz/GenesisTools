@@ -689,3 +689,46 @@ test("backward conversation reads exclude meta and sidechain answers", async () 
     const read = await createClaudeHistoryOperations().readBackward(source, { until: () => false });
     expect(read.entries.filter((entry) => entry.role === "user").map((entry) => entry.text)).toEqual(["D1 a)"]);
 });
+
+test("continuedIn is the trailing continued-in row's successor id, and nothing for a session that goes on", async () => {
+    const continued = fixture();
+    writeFileSync(
+        continued.path,
+        jsonl(
+            {
+                type: "user",
+                uuid: "u1",
+                timestamp: "2026-10-30T10:00:00.000Z",
+                message: { role: "user", content: "hi" },
+            },
+            { type: "continued-in", continuedInSessionId: "66666666-7777-4888-9999-000000000000" }
+        )
+    );
+    expect(await createClaudeHistoryOperations().continuedIn(continued.source)).toBe(
+        "66666666-7777-4888-9999-000000000000"
+    );
+
+    const live = fixture();
+    writeFileSync(
+        live.path,
+        jsonl({
+            type: "user",
+            uuid: "u1",
+            timestamp: "2026-10-30T10:00:00.000Z",
+            message: { role: "user", content: "hi" },
+        })
+    );
+    expect(await createClaudeHistoryOperations().continuedIn(live.source)).toBeUndefined();
+
+    // A row still being written is skipped; the pointer before it is read as the last whole row.
+    const cut = fixture();
+    writeFileSync(
+        cut.path,
+        `${jsonl({ type: "continued-in", continuedInSessionId: "66666666-7777-4888-9999-000000000000" })}{"type":"assist`
+    );
+    expect(await createClaudeHistoryOperations().continuedIn(cut.source)).toBe("66666666-7777-4888-9999-000000000000");
+
+    const empty = fixture();
+    writeFileSync(empty.path, "");
+    expect(await createClaudeHistoryOperations().continuedIn(empty.source)).toBeUndefined();
+});
