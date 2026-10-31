@@ -114,6 +114,17 @@ describe("the helpers the rules match with", () => {
         expect(commandAfter("sudo -u deploy git status")).toBe("git");
         expect(commandAfter("nice -n 10 git status")).toBe("git");
         expect(commandAfter("xargs -n 1 git rm")).toBe("git");
+        // GNU long options with a separate value, an unambiguous prefix of one, and `--name=value`.
+        expect(commandAfter("xargs --max-args 1 rm -f")).toBe("rm");
+        expect(commandAfter("xargs --max-procs 4 --delimiter , rm")).toBe("rm");
+        expect(commandAfter("xargs --arg-file list.txt rm")).toBe("rm");
+        expect(commandAfter("xargs --max-a 1 rm")).toBe("rm");
+        expect(commandAfter("xargs --max-args=1 --null rm")).toBe("rm");
+        // An option with an optional value, or none, never eats the command; neither does GNU's -l.
+        expect(commandAfter("xargs --no-run-if-empty rm")).toBe("rm");
+        expect(commandAfter("xargs -l rm")).toBe("rm");
+        expect(commandAfter("xargs -J % rm % /tmp/x")).toBe("rm");
+        expect(commandAfter("xargs -- rm -rf")).toBe("rm");
     });
 });
 
