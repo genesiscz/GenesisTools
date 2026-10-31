@@ -13,7 +13,7 @@ import {
     writeFileSync,
 } from "node:fs";
 import { tmpdir } from "node:os";
-import { join } from "node:path";
+import { basename, join } from "node:path";
 import { persistentFixture } from "@genesiscz/utils/test/persistent-fixture";
 import { skip } from "@genesiscz/utils/test/skip";
 import * as kernel from "./libproc-table";
@@ -94,6 +94,26 @@ async function waitForExec(pid: number): Promise<void> {
     }
 
     expect(linux.readProcExe(pid)).not.toBe(runner);
+}
+
+/**
+ * A program that keeps running under any file name. Ubuntu 26.04's coreutils (uutils) is one multi-call binary that
+ * picks its utility from argv[0], so a copy of `/bin/sleep`, or a link to it, under another name exits at once and
+ * leaves a zombie with no executable to read. Linux runs `/bin/sh` waiting for a line on a pipe that never gets one;
+ * macOS runs bun, since a copied system binary is refused there.
+ */
+const idleProgram =
+    process.platform === "darwin"
+        ? { source: process.execPath, args: ["-e", "setTimeout(() => {}, 30000)"] }
+        : { source: "/bin/sh", args: ["-c", "read line"] };
+
+function spawnIdle(exe: string): Bun.Subprocess<"pipe", "ignore", "ignore"> {
+    return Bun.spawn([exe, ...idleProgram.args], {
+        stdin: "pipe",
+        stdout: "ignore",
+        stderr: "ignore",
+        env: process.env,
+    });
 }
 
 /** Like {@link spawnedPrograms}, with each program's arguments. */
@@ -758,13 +778,8 @@ describe.skipIf(process.platform === "win32")("the readers against this machine"
         async () => {
             const dir = mkdtempSync(join(tmpdir(), "moved-exe-"));
             const exe = join(dir, "first-name");
-            const darwin = process.platform === "darwin";
-            copyFileSync(darwin ? process.execPath : "/bin/sleep", exe, constants.COPYFILE_FICLONE);
-            const child = Bun.spawn([exe, ...(darwin ? ["-e", "setTimeout(() => {}, 30000)"] : ["30"])], {
-                stdout: "ignore",
-                stderr: "ignore",
-                env: process.env,
-            });
+            copyFileSync(idleProgram.source, exe, constants.COPYFILE_FICLONE);
+            const child = spawnIdle(exe);
 
             try {
                 await waitForExec(child.pid);
@@ -1010,16 +1025,17 @@ describe.skipIf(process.platform === "win32")("the readers against this machine"
         async () => {
             const dir = mkdtempSync(join(tmpdir(), "gt-symlinked-exe-"));
             // A prefix of the target's name, as `python3` is of `python3.13`.
-            const link = join(dir, "sle");
-            symlinkSync("/bin/sleep", link);
-            const child = Bun.spawn([link, "30"], { stdout: "ignore", stderr: "ignore", env: process.env });
+            const name = basename(realpathSync(idleProgram.source)).slice(0, 2);
+            const link = join(dir, name);
+            symlinkSync(idleProgram.source, link);
+            const child = spawnIdle(link);
 
             try {
                 await waitForExec(child.pid);
                 const listed = listProcesses({ commands: false }).find((entry) => entry.pid === child.pid);
                 // The kernel names it after the link, `ps` prints that, and the command line holds it.
-                expect(listed?.name).toBe("sle");
-                expect(listed && readListedName(listed)).toBe("sle");
+                expect(listed?.name).toBe(name);
+                expect(listed && readListedName(listed)).toBe(name);
             } finally {
                 child.kill();
                 await child.exited;
@@ -1033,8 +1049,8 @@ describe.skipIf(process.platform === "win32")("the readers against this machine"
         async () => {
             const dir = mkdtempSync(join(tmpdir(), "gt-replaced-exe-"));
             const exe = join(dir, "runs-then-replaced");
-            copyFileSync("/bin/sleep", exe);
-            const child = Bun.spawn([exe, "30"], { stdout: "ignore", stderr: "ignore", env: process.env });
+            copyFileSync(idleProgram.source, exe);
+            const child = spawnIdle(exe);
 
             try {
                 await waitForExec(child.pid);
@@ -1188,19 +1204,15 @@ describe.skipIf(process.platform === "win32")("the readers against this machine"
 
     test("a name the kernel cut matches only in full", async () => {
         // A real executable with a 25-byte name: the kernel name comes from the file, not from a symlink or a script.
-        // macOS runs a copy of bun (an APFS clone, instant); a copied system binary is refused there. The copy is a
-        // persistent fixture: a new executable per run, deleted with the temp root, crashed syspolicyd on 2026-10-14.
+        // A copy of {@link idleProgram} (on macOS an APFS clone, instant). The copy is a persistent fixture: a new
+        // executable per run, deleted with the temp root, crashed syspolicyd on 2026-10-14.
         const darwin = process.platform === "darwin";
-        const source = darwin ? process.execPath : "/bin/sleep";
+        const source = idleProgram.source;
         const { size, mtimeMs } = statSync(source);
         const exe = persistentFixture("genesis-long-process-name", `${source}:${size}:${mtimeMs}`, (path) =>
             copyFileSync(source, path, constants.COPYFILE_FICLONE)
         );
-        const child = Bun.spawn([exe, ...(darwin ? ["-e", "setTimeout(() => {}, 30000)"] : ["30"])], {
-            stdout: "ignore",
-            stderr: "ignore",
-            env: process.env,
-        });
+        const child = spawnIdle(exe);
 
         try {
             await waitForExec(child.pid);
