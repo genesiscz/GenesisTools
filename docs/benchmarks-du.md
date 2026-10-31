@@ -1526,12 +1526,14 @@ on the same tree at 02:08 printed identical scan totals.
 
 ## 2026-10-31 14:33 — `tools du size`: a mounted volume inside the root sends the ask to du
 
+<!-- updated 2026-10-31 16:42: an absent skipped_mounts reads as unknown since 5025922ac7, not as 0 -->
 The listing walk does not cross a foreign mount inside its root (`add_foreign_mounts`, then `is_excluded` in
 `big_process_dir`), while `du -sk` crosses it. That hole was the one kind of skipped subtree no counter named, so a
 root holding another volume passed every completeness check of `nativeDuSize` and `folderKb` cached the short total.
 Sum-only mode now counts each mount it does not enter (`g_big_mounts_skipped`), the `--dusize` reply carries it as
 `skipped_mounts`, and `nativeDuSize` answers null when it is above 0, so du measures such a root. A reply from an
-older binary has no field and reads as 0.
+older binary has no field: `parseDuSize` reads it as unknown (null), and `nativeDuSize` answers null for every value
+but 0, so du measures every root such a binary is asked about.
 
 Which totals move: only `tools du size`, only for a root with a mounted volume below it, which now answers du's figure
 instead of the walk's. `--dusize /System/Volumes` reports `skipped_mounts` 7; a plain folder reports 0. Every other
