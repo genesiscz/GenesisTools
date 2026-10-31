@@ -264,6 +264,17 @@ export interface Feature {
     autocomplete?: (host: Host, e: PromptAutocompleteInput) => Promise<PromptAutocompleteSuggestion[]>;
 }
 
+/** Each tool call's input as text, built once for every feature that asks which paths it names. */
+const callTexts = new WeakMap<ToolCallInput, string>();
+
+/** The paths among `paths` a tool call names anywhere in its input. */
+export function namedPaths(e: ToolCallInput, paths: readonly string[]): string[] {
+    const text = callTexts.get(e) ?? JSON.stringify(e);
+    callTexts.set(e, text);
+
+    return paths.filter((path) => text.includes(path));
+}
+
 /** Post-call bookkeeping keeps its order while the tool result and its progress cleanup return immediately. */
 export function afterTools({
     host,
