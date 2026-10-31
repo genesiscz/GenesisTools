@@ -22,6 +22,13 @@ describe("harness guard", () => {
         expect(scanTypeScript("src/example.ts", "const table = { claude, codex, grok };")).toMatchObject([
             { kind: "table", line: 1 },
         ]);
+        // A comment between a shorthand name and its comma or brace does not hide the table.
+        expect(
+            scanTypeScript("src/example.ts", "const table = { claude /* handler */, codex /* handler */ };")
+        ).toMatchObject([{ kind: "table", line: 1 }]);
+        expect(
+            scanTypeScript("src/example.ts", "const table = {\n    claude // handler\n    ,\n    codex,\n};")
+        ).toMatchObject([{ kind: "table" }]);
     });
 
     test("finds Swift sites and skips comments", () => {

@@ -39,7 +39,10 @@ export interface HarnessGuardHit {
 
 const NAMES = new Set(["claude", "codex", "grok"]);
 const NAME_LITERAL = /^(["'`])(claude|codex|grok)\1$/;
-const PREFILTER = /["'`](?:claude|codex|grok)["'`]|\b(?:claude|codex|grok)\s*[:,}]|Record\s*<\s*[A-Z]/;
+// A cheap text check before the parse. A comment may sit between a shorthand name and its delimiter
+// (`{ claude /* handler */, codex }`), so block and line comments are skipped there too.
+const PREFILTER =
+    /["'`](?:claude|codex|grok)["'`]|\b(?:claude|codex|grok)\s*(?:(?:\/\*[\s\S]*?\*\/|\/\/[^\n]*\n)\s*)*[:,}]|Record\s*<\s*[A-Z]/;
 const COMPARE_OPS = new Set(["===", "!==", "==", "!="]);
 
 /** Type names that stand for the harness set (the canonical alias, its derived aliases, and the independent copies). */
