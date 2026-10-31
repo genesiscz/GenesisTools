@@ -121,6 +121,25 @@ describe("fable-replace scratch stays inside the session that wrote it", () => {
         expect(report.roots).toEqual([path.join(temp, "fable-replace")]);
     });
 
+    test("a symlinked session folder is never followed: its target's old backups survive either scope", () => {
+        // An old, finished backup outside the scratch root, reachable only through a link inside it.
+        const outside = path.join(base, "outside");
+        fs.mkdirSync(outside);
+        const target = aged(finished(fs.mkdtempSync(path.join(outside, "cli-"))));
+        fs.mkdirSync(scratchRoot(), { recursive: true });
+        fs.symlinkSync(outside, path.join(scratchRoot(), "linked-session"));
+
+        asSession("session-a");
+        pruneScratch({ scope: "all-sessions" });
+        expect(fs.existsSync(target)).toBe(true);
+
+        // The session's own folder is the link: an ordinary prune must not list through it either.
+        asSession("linked-session");
+        pruneScratch();
+        expect(fs.existsSync(target)).toBe(true);
+        expect(fs.lstatSync(path.join(scratchRoot(), "linked-session")).isSymbolicLink()).toBe(true);
+    });
+
     test("an inherited TMPDIR with no session variable keys the folder by the parent process", () => {
         asSession(undefined);
 

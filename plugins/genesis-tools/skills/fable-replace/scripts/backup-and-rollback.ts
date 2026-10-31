@@ -306,6 +306,34 @@ const dirBytes = (dir: string): number => {
     return bytes;
 };
 
+/** A real directory, not a link to one: a sweep never lists or deletes through a symlink. */
+const isRealDir = (dir: string): boolean => {
+    try {
+        return fs.lstatSync(dir).isDirectory();
+    } catch {
+        return false;
+    }
+};
+
+const realpathOrNull = (dir: string): string | null => {
+    try {
+        return fs.realpathSync(dir);
+    } catch {
+        return null;
+    }
+};
+
+/** The resolved `dir` lies strictly inside the resolved `boundary`, so no link on its path leads out of it. */
+const staysInside = (dir: string, boundary: string | null): boolean => {
+    const real = realpathOrNull(dir);
+    if (boundary === null || real === null) {
+        return false;
+    }
+
+    const rel = path.relative(boundary, real);
+    return rel !== "" && rel !== ".." && !rel.startsWith(`..${path.sep}`) && !path.isAbsolute(rel);
+};
+
 const listDirs = (dir: string, filter: (name: string) => boolean): string[] => {
     try {
         return fs
@@ -346,12 +374,23 @@ export const pruneScratch = ({
     const temp = os.tmpdir();
     const root = path.join(temp, "fable-replace");
     const sessionRoot = sessionScratchRoot();
+    // Each candidate carries the folder it must resolve inside. A symlinked session folder is never descended
+    // into, and a candidate whose real path leaves its root (a link anywhere above it) is refused, so a sweep
+    // cannot reach a link's target and delete what lives there.
+    const realRoot = realpathOrNull(root);
+    const inRoot = (dir: string) => ({ dir, boundary: realRoot });
     const candidates =
         scope === "session"
-            ? listDirs(sessionRoot, () => true)
+            ? listDirs(sessionRoot, () => true).map(inRoot)
             : [
-                  ...listDirs(root, () => true).flatMap((dir) => [dir, ...listDirs(dir, () => true)]),
-                  ...listDirs(temp, (name) => name.startsWith(LEGACY_PREFIX)),
+                  ...listDirs(root, () => true)
+                      .filter(isRealDir)
+                      .flatMap((dir) => [dir, ...listDirs(dir, () => true)])
+                      .map(inRoot),
+                  ...listDirs(temp, (name) => name.startsWith(LEGACY_PREFIX)).map((dir) => ({
+                      dir,
+                      boundary: realpathOrNull(temp),
+                  })),
               ];
 
     const keepSet = new Set(keep.map((dir) => path.resolve(dir)));
@@ -361,7 +400,7 @@ export const pruneScratch = ({
         bytes: 0,
         roots: [scope === "session" ? sessionRoot : root],
     };
-    for (const dir of candidates) {
+    for (const { dir, boundary } of candidates) {
         if (report.removed >= maxRemovals) {
             break;
         }
@@ -372,13 +411,13 @@ export const pruneScratch = ({
 
         let stat: fs.Stats;
         try {
-            stat = fs.statSync(dir);
+            // lstat, not stat: a symlink is not a directory here, so it is neither aged by its target nor removed.
+            stat = fs.lstatSync(dir);
         } catch {
             // Gone already: a concurrent prune or the OS sweep.
             continue;
         }
-
-        if (!stat.isDirectory() || now - stat.mtimeMs < ttlMs || !isPrunable(dir)) {
+        if (!stat.isDirectory() || !staysInside(dir, boundary) || now - stat.mtimeMs < ttlMs || !isPrunable(dir)) {
             continue;
         }
 
