@@ -1,6 +1,9 @@
-import { existsSync, lstatSync, mkdirSync } from "node:fs";
+import { existsSync, lstatSync, mkdirSync, readdirSync, unlinkSync } from "node:fs";
 import { dirname, join } from "node:path";
+import { SafeJSON } from "@genesiscz/utils/json";
 import { logger } from "@genesiscz/utils/logger";
+import { isProcessAlive } from "@genesiscz/utils/process-alive";
+import { atomicWriteFileSync } from "@genesiscz/utils/storage/atomic-file";
 import { appendRmLedger } from "./ledger";
 import {
     DESTINATION_TAKEN,
@@ -10,9 +13,25 @@ import {
     renameNoReplace,
     sharedTempRoot,
 } from "./paths";
-import { listRmRequests, type RmRequest, type RmRequestTarget, saveRmRequest } from "./requests";
+import {
+    createRmRequest,
+    listRmRequests,
+    type RmRequest,
+    type RmRequestTarget,
+    readRmRequestFile,
+    reserveRmRequestId,
+    rmRequestsDir,
+    saveRmRequest,
+} from "./requests";
 import type { RmCaller, RmTarget, RmVerdict } from "./rules";
-import { measureBytes, RmTargetChangedError, renameVerified, trashItemName } from "./trash";
+import {
+    measureBytes,
+    newBatchId,
+    type RenameHooks,
+    RmTargetChangedError,
+    renameVerified,
+    trashItemName,
+} from "./trash";
 
 /** The folder under the shared temp root each agent keeps its session scratch in. */
 export const AGENT_SCRATCH_DIRS: Readonly<Record<string, string>> = {
@@ -59,17 +78,25 @@ export interface AsideResult {
     kept: Array<{ input: AsideInput; reason: string }>;
 }
 
+export interface MoveAsideOptions {
+    inputs: readonly AsideInput[];
+    caller: RmCaller;
+    batchId: string;
+    /** The aside root; the caller's session scratch by default. */
+    root?: string;
+    /** Called once with every planned move (original and destination) before the first one moves. */
+    beforeMoves?: (dir: string, planned: RmRequestTarget[]) => void;
+    hooks?: RenameHooks;
+}
+
 /**
  * Renames each path into `<aside root>/<batch>/`, measuring it after the move. A path on another volume stays in
  * place (a copy is not a move aside), and so does one whose rename fails.
  */
-export function moveAside(
-    inputs: readonly AsideInput[],
-    caller: RmCaller,
-    batchId: string,
-    root: string = asideRootFor(caller)
-): AsideResult {
-    const dir = join(root, batchId);
+export function moveAside(options: MoveAsideOptions): AsideResult {
+    const { inputs, caller } = options;
+    const root = options.root ?? asideRootFor(caller);
+    const dir = join(root, options.batchId);
     const result: AsideResult = { dir, moved: [], kept: [] };
 
     try {
@@ -82,12 +109,19 @@ export function moveAside(
         return result;
     }
 
-    for (const [index, input] of inputs.entries()) {
-        const stored = join(dir, trashItemName(index, input.target.path));
+    const planned = inputs.map((input, index) => ({
+        input,
+        stored: join(dir, trashItemName(index, input.target.path)),
+    }));
+    options.beforeMoves?.(
+        dir,
+        planned.map(({ input, stored }) => ({ ...requestTarget(input), stored }))
+    );
 
+    for (const { input, stored } of planned) {
         try {
             mkdirSync(dirname(stored), { recursive: true });
-            renameVerified(input.target, stored);
+            renameVerified(input.target, stored, options.hooks);
         } catch (error) {
             const code = (error as NodeJS.ErrnoException).code;
             const reason =
@@ -102,18 +136,163 @@ export function moveAside(
         }
 
         const bytes = measureBytes(stored);
-        result.moved.push({
-            path: input.target.path,
-            kind: input.target.kind,
-            rule: input.verdict.rule,
-            reason: input.verdict.reason,
-            stored,
-            bytes,
-        });
+        result.moved.push({ ...requestTarget(input), stored, bytes });
         appendRmLedger({ action: "aside", path: input.target.path, stored, rule: input.verdict.rule, bytes, caller });
     }
 
     return result;
+}
+
+/** How a request names `input` where it is. */
+function requestTarget(input: AsideInput): RmRequestTarget {
+    return { path: input.target.path, kind: input.target.kind, rule: input.verdict.rule, reason: input.verdict.reason };
+}
+
+export interface AsideRequestInput {
+    /** The paths that move into the session's aside folder while the user decides. */
+    aside: readonly AsideInput[];
+    /** The paths the request names where they are. */
+    inPlace: readonly AsideInput[];
+    caller: RmCaller;
+    cwd: string;
+    reason: string | null;
+    requestsDir?: string;
+    /** The aside root; the caller's session scratch by default. */
+    root?: string;
+    hooks?: RenameHooks;
+}
+
+export interface AsideRequestResult {
+    request: RmRequest;
+    /** Null when nothing was to move aside. */
+    aside: AsideResult | null;
+}
+
+/** `<id>.json.moving-<pid>`: a request drafted by a run that moves its paths aside, before it is saved. */
+const JOURNAL_NAME = /^([a-z0-9]{4,12})\.json\.moving-(\d+)$/;
+
+/**
+ * Moves `aside` into the session's aside folder and opens one request for those and the `inPlace` paths. The
+ * request is drafted first, as a journal this process holds (`<id>.json.moving-<pid>` beside the requests), with
+ * every planned move and its restore path; the moves follow, then the request is saved and the journal removed. A
+ * crash between moves leaves the journal: its folder stays guarded, and `recoverAsideJournals` opens the request.
+ * No reader lists a journal as a request, older ones included, so nobody decides it while its paths still move.
+ */
+export function createAsideRequest(input: AsideRequestInput): AsideRequestResult {
+    const dir = input.requestsDir ?? rmRequestsDir();
+    const fields = { kind: "delete" as const, caller: input.caller, cwd: input.cwd, reason: input.reason };
+    const inPlace = input.inPlace.map(requestTarget);
+
+    if (input.aside.length === 0) {
+        return { request: createRmRequest({ ...fields, targets: inPlace }, dir), aside: null };
+    }
+
+    const id = reserveRmRequestId(dir);
+    const journal = join(dir, `${id}.json.moving-${process.pid}`);
+    const aside = moveAside({
+        inputs: input.aside,
+        caller: input.caller,
+        batchId: newBatchId(),
+        root: input.root,
+        hooks: input.hooks,
+        beforeMoves: (asideDir, planned) => {
+            const draft: RmRequest = {
+                ...fields,
+                id,
+                createdAt: new Date().toISOString(),
+                status: "pending",
+                asideDir,
+                targets: [...planned, ...inPlace],
+            };
+            mkdirSync(dir, { recursive: true });
+            atomicWriteFileSync(journal, `${SafeJSON.stringify(draft, null, 2)}\n`);
+        },
+    });
+    const request = createRmRequest(
+        {
+            ...fields,
+            id,
+            asideDir: aside.moved.length > 0 ? aside.dir : undefined,
+            targets: [...aside.moved, ...inPlace, ...aside.kept.map((k) => requestTarget(k.input))],
+        },
+        dir
+    );
+
+    if (existsSync(journal)) {
+        unlinkSync(journal);
+    }
+
+    return { request, aside };
+}
+
+interface AsideJournal {
+    id: string;
+    pid: number;
+    file: string;
+    draft: RmRequest | null;
+}
+
+function asideJournals(dir: string): AsideJournal[] {
+    if (!existsSync(dir)) {
+        return [];
+    }
+
+    return readdirSync(dir).flatMap((name) => {
+        const match = JOURNAL_NAME.exec(name);
+
+        if (!match) {
+            return [];
+        }
+
+        const file = join(dir, name);
+        return [{ id: match[1], pid: Number(match[2]), file, draft: readRmRequestFile(file) }];
+    });
+}
+
+/**
+ * Opens the request of each aside run that died before it did, from its journal: a planned move whose copy is in
+ * the aside folder keeps its stored path (deny puts it back, approve deletes it), one that never moved is named in
+ * place. A journal whose request was saved is removed. A live run's journal, or one that cannot be read, stays and
+ * keeps its folder guarded. Returns the ids of the requests it opened.
+ */
+export function recoverAsideJournals(requestsDir = rmRequestsDir()): string[] {
+    const recovered: string[] = [];
+
+    for (const journal of asideJournals(requestsDir)) {
+        if (isProcessAlive(journal.pid)) {
+            continue;
+        }
+
+        const draft = journal.draft;
+
+        if (!draft) {
+            logger.warn({ file: journal.file }, "rm: unreadable aside journal kept");
+            continue;
+        }
+
+        if (!existsSync(join(requestsDir, `${journal.id}.json`))) {
+            const targets = draft.targets.map((target) =>
+                target.stored === undefined || existsSync(target.stored) || isLink(target.stored)
+                    ? target
+                    : { path: target.path, kind: target.kind, rule: target.rule, reason: target.reason }
+            );
+            const asideDir = targets.some((target) => target.stored !== undefined) ? draft.asideDir : undefined;
+            saveRmRequest({ ...draft, targets, asideDir }, requestsDir);
+            appendRmLedger({
+                action: "request",
+                requestId: journal.id,
+                reason: "recovered: the run that moved its paths aside stopped before it opened the request",
+                caller: draft.caller,
+                path: targets.map((target) => target.path).join(", "),
+            });
+            logger.warn({ id: journal.id, pid: journal.pid }, "rm: request recovered from a dead aside run");
+            recovered.push(journal.id);
+        }
+
+        unlinkSync(journal.file);
+    }
+
+    return recovered;
 }
 
 export interface ReturnResult {
@@ -235,11 +414,15 @@ export interface PendingAside {
     requestId: string;
 }
 
-/** Aside folders whose request still waits for the user. */
-export function pendingAsideDirs(requestsDir?: string): PendingAside[] {
-    return listRmRequests({ dir: requestsDir })
+/** Aside folders whose request still waits for the user, or whose run moves (or died moving) paths into them. */
+export function pendingAsideDirs(requestsDir = rmRequestsDir()): PendingAside[] {
+    const requests = listRmRequests({ dir: requestsDir })
         .filter((request) => request.asideDir)
         .map((request) => ({ dir: realOrSelf(request.asideDir ?? ""), requestId: request.id }));
+    const journals = asideJournals(requestsDir).flatMap((journal) =>
+        journal.draft?.asideDir ? [{ dir: realOrSelf(journal.draft.asideDir), requestId: journal.id }] : []
+    );
+    return [...requests, ...journals];
 }
 
 /** The pending request whose aside folder `path` is, holds, or sits in; null when none. */

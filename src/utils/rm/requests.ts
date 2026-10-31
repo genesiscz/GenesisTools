@@ -53,6 +53,17 @@ function newRequestId(): string {
     return Array.from({ length: 6 }, () => ID_ALPHABET[randomInt(ID_ALPHABET.length)]).join("");
 }
 
+/** A request id no saved request in `dir` uses yet, for a request drafted before it is saved. */
+export function reserveRmRequestId(dir = rmRequestsDir()): string {
+    let id = newRequestId();
+
+    while (existsSync(requestFile(dir, id))) {
+        id = newRequestId();
+    }
+
+    return id;
+}
+
 function requestFile(dir: string, id: string): string {
     return join(dir, `${id}.json`);
 }
@@ -62,17 +73,13 @@ export function saveRmRequest(request: RmRequest, dir = rmRequestsDir()): void {
     atomicWriteFileSync(requestFile(dir, request.id), `${SafeJSON.stringify(request, null, 2)}\n`);
 }
 
+/** Saves a new pending request; `id` is one `reserveRmRequestId` gave out earlier, else a fresh one. */
 export function createRmRequest(
-    input: Pick<RmRequest, "kind" | "caller" | "cwd" | "reason" | "targets" | "asideDir">,
+    input: Pick<RmRequest, "kind" | "caller" | "cwd" | "reason" | "targets" | "asideDir"> & { id?: string },
     dir = rmRequestsDir(),
     now = new Date()
 ): RmRequest {
-    let id = newRequestId();
-
-    while (existsSync(requestFile(dir, id))) {
-        id = newRequestId();
-    }
-
+    const id = input.id ?? reserveRmRequestId(dir);
     const request: RmRequest = { ...input, id, createdAt: now.toISOString(), status: "pending" };
     saveRmRequest(request, dir);
     appendRmLedger({
@@ -121,6 +128,17 @@ function isRmRequest(value: unknown): value is RmRequest {
     );
 }
 
+/** A request read from `file` as it is saved; null when it cannot be read or is not a request. */
+export function readRmRequestFile(file: string): RmRequest | null {
+    try {
+        const parsed: unknown = SafeJSON.parse(readFileSync(file, "utf8"));
+        return isRmRequest(parsed) ? parsed : null;
+    } catch (error) {
+        logger.debug({ file, error }, "rm: unreadable request");
+        return null;
+    }
+}
+
 /** The request with its expiry applied (a pending request past its TTL reads as `expired`). */
 export function loadRmRequest(id: string, dir = rmRequestsDir(), now = new Date()): RmRequest | null {
     const file = requestFile(dir, id);
@@ -129,26 +147,21 @@ export function loadRmRequest(id: string, dir = rmRequestsDir(), now = new Date(
         return null;
     }
 
-    try {
-        const parsed: unknown = SafeJSON.parse(readFileSync(file, "utf8"));
+    const parsed = readRmRequestFile(file);
 
-        if (!isRmRequest(parsed)) {
-            return null;
-        }
-
-        if (
-            parsed.status === "pending" &&
-            !parsed.asideDir &&
-            now.getTime() - Date.parse(parsed.createdAt) > RM_REQUEST_TTL_MS
-        ) {
-            return { ...parsed, status: "expired" };
-        }
-
-        return parsed;
-    } catch (error) {
-        logger.debug({ file, error }, "rm: unreadable request");
+    if (!parsed) {
         return null;
     }
+
+    if (
+        parsed.status === "pending" &&
+        !parsed.asideDir &&
+        now.getTime() - Date.parse(parsed.createdAt) > RM_REQUEST_TTL_MS
+    ) {
+        return { ...parsed, status: "expired" };
+    }
+
+    return parsed;
 }
 
 export function listRmRequests(options: { all?: boolean; dir?: string; now?: Date } = {}): RmRequest[] {

@@ -25,6 +25,7 @@ import {
     assertInsideTrash,
     BUILTIN_PRESETS,
     confirmByPerson,
+    createAsideRequest,
     createRmRequest,
     defaultRmConfig,
     denyRmRequest,
@@ -55,6 +56,7 @@ import {
     type RmLedgerEntry,
     type RmRuleContext,
     recheckAfterWait,
+    recoverAsideJournals,
     renameNoReplace,
     resolveTarget,
     restoreBatch,
@@ -582,7 +584,12 @@ describe("aside", () => {
         const src = file(join(dir("aside-src"), "draft.md"), "work");
         const target = resolveTarget(src, base);
         const verdict = { kind: "ask" as const, rule: "git-tracked", reason: "tracked" };
-        const aside = moveAside([{ target, verdict }], AGENT, "b1", dir("cc", "proj", "sess-1111", "rm-aside"));
+        const aside = moveAside({
+            inputs: [{ target, verdict }],
+            caller: AGENT,
+            batchId: "b1",
+            root: dir("cc", "proj", "sess-1111", "rm-aside"),
+        });
 
         expect(aside.moved).toHaveLength(1);
         expect(existsSync(src)).toBe(false);
@@ -975,7 +982,12 @@ describe("security review fixes: private trash", () => {
         chmodSync(asideRoot, 0o755);
         const draft = file(join(dir("private-src3"), "draft.md"), "work");
         const verdict = { kind: "ask" as const, rule: "default", reason: "test" };
-        const aside = moveAside([{ target: resolveTarget(draft, base), verdict }], AGENT, "b1", asideRoot);
+        const aside = moveAside({
+            inputs: [{ target: resolveTarget(draft, base), verdict }],
+            caller: AGENT,
+            batchId: "b1",
+            root: asideRoot,
+        });
 
         expect(aside.moved).toHaveLength(1);
         expect(statSync(asideRoot).mode & 0o777).toBe(0o700);
@@ -1129,7 +1141,12 @@ describe("security review fixes: deny", () => {
         const src = file(join(dir("deny-kept-src"), "draft.md"), "work");
         const verdict = { kind: "ask" as const, rule: "default", reason: "test" };
         const asideRoot = dir("cc", "proj", "sess-1111", "deny-kept-aside");
-        const aside = moveAside([{ target: resolveTarget(src, base), verdict }], AGENT, "b1", asideRoot);
+        const aside = moveAside({
+            inputs: [{ target: resolveTarget(src, base), verdict }],
+            caller: AGENT,
+            batchId: "b1",
+            root: asideRoot,
+        });
         const request = createRmRequest(
             { kind: "delete", caller: AGENT, cwd: base, reason: null, targets: aside.moved, asideDir: aside.dir },
             requestsDir
@@ -1311,5 +1328,82 @@ describe("crash safety: the record comes before the move", () => {
             first,
             second,
         ]);
+    });
+
+    test("an aside run that crashes between moves keeps its folder guarded; recovery opens the request, deny puts all back", () => {
+        const requestsDir = dir("crash-aside-requests");
+        const asideRoot = dir("cc", "proj", "sess-1111", "rm-aside");
+        const first = file(join(dir("crash-aside"), "first.md"), "one");
+        const second = file(join(dir("crash-aside"), "second.md"), "two");
+        const pid = crashOnSecondMove(
+            [
+                "const [requestsDir, root, ...targets] = args;",
+                "const verdict = { kind: 'ask', rule: 'git-tracked', reason: 'tracked' };",
+                "rm.createAsideRequest({",
+                "    aside: targets.map((path) => ({ target: rm.resolveTarget(path, '/'), verdict })),",
+                "    inPlace: [],",
+                "    caller: { agent: 'claude-code', sessionId: 'sess-1111', isInAgent: true },",
+                "    cwd: '/', reason: null, requestsDir, root, hooks,",
+                "});",
+            ].join("\n"),
+            [requestsDir, asideRoot, first, second]
+        );
+
+        expect(existsSync(first)).toBe(false);
+        expect(existsSync(second)).toBe(true);
+        // No reader, an older one included, lists the journal as a request: nobody can decide it mid-move.
+        expect(listRmRequests({ dir: requestsDir })).toEqual([]);
+        const journal = readdirSync(requestsDir).find((name) => name.endsWith(`.json.moving-${pid}`)) ?? "";
+        const id = journal.split(".json.")[0];
+        const pending = pendingAsideDirs(requestsDir);
+        const c = ctx({ asidePending: (t) => pendingAsideFor(t.canonical, pending) });
+
+        expect(pending.map((entry) => entry.requestId)).toEqual([id]);
+        expect(verdictOf(asideRoot, c)).toEqual({ kind: "deny", rule: "aside-pending" });
+
+        expect(recoverAsideJournals(requestsDir)).toEqual([id]);
+        const request = loadRmRequest(id, requestsDir);
+
+        expect(readdirSync(requestsDir)).toEqual([`${id}.json`]);
+        expect(request?.status).toBe("pending");
+        expect(request?.targets.map((t) => [t.path, t.stored !== undefined])).toEqual([
+            [first, true],
+            [second, false],
+        ]);
+
+        if (!request) {
+            throw new Error(`no recovered request ${id}`);
+        }
+
+        const back = denyRmRequest(request, AGENT, { requestsDir });
+
+        expect(back.returned).toEqual([first]);
+        expect(readFileSync(first, "utf8")).toBe("one");
+        expect(readFileSync(second, "utf8")).toBe("two");
+        expect(loadRmRequest(id, requestsDir)?.status).toBe("denied");
+    });
+
+    test("a finished aside run leaves only its request, and its journal named every move before the first", () => {
+        const requestsDir = dir("live-aside-requests");
+        const src = file(join(dir("live-aside"), "draft.md"), "work");
+        const seen: string[][] = [];
+        const { request, aside } = createAsideRequest({
+            aside: [
+                { target: resolveTarget(src, base), verdict: { kind: "ask", rule: "git-tracked", reason: "tracked" } },
+            ],
+            inPlace: [],
+            caller: AGENT,
+            cwd: base,
+            reason: null,
+            requestsDir,
+            root: dir("cc", "proj", "sess-1111", "rm-aside"),
+            hooks: { beforeRename: () => seen.push(readdirSync(requestsDir)) },
+        });
+
+        expect(seen).toEqual([[`${request.id}.json.moving-${process.pid}`]]);
+        expect(readdirSync(requestsDir)).toEqual([`${request.id}.json`]);
+        expect(request.targets.map((t) => t.stored)).toEqual(aside?.moved.map((t) => t.stored) ?? []);
+        expect(request.asideDir).toBe(aside?.dir);
+        expect(recoverAsideJournals(requestsDir)).toEqual([]);
     });
 });

@@ -6,6 +6,7 @@ import {
     drainDue,
     listBatches,
     measureBytes,
+    recoverAsideJournals,
     restoreBatch,
     runDrainer,
     sweepOrphans,
@@ -89,6 +90,8 @@ export function registerTrashCommands(program: Command): void {
         )
         .action(async (flags: { now?: boolean; background?: boolean }) => {
             const { config } = runContext();
+            // Every rm run starts this drainer: an aside run that died before it opened its request gets it here.
+            recoverAsideJournals();
 
             if (flags.background) {
                 await runDrainer({ config });

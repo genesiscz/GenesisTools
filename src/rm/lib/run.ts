@@ -5,7 +5,7 @@ import { logger, out } from "@genesiscz/utils/logger";
 import {
     appendRmLedger,
     confirmByPerson,
-    createRmRequest,
+    createAsideRequest,
     defaultRuleContext,
     effectiveConfig,
     graceMinutesFor,
@@ -14,15 +14,14 @@ import {
     listBatches,
     loadRmConfig,
     measureBytes,
-    moveAside,
     moveToTrash,
-    newBatchId,
     type RmCaller,
     type RmConfig,
     type RmPlanItem,
     type RmRuleContext,
     type RmVerdictKind,
     recheckAfterWait,
+    recoverAsideJournals,
     rmCallerFromRuntime,
     type TrashBatch,
 } from "@genesiscz/utils/rm";
@@ -122,6 +121,8 @@ export async function executePlan(
         return result;
     }
 
+    // An aside run that died before it opened its request: its request opens now, so the user can decide it.
+    recoverAsideJournals();
     const refused = plan.filter((item) => item.verdict.kind === "deny");
     const asked = plan.filter((item) => item.verdict.kind === "ask");
     const allowed = plan.filter((item) => item.verdict.kind === "allow");
@@ -238,23 +239,12 @@ function requestForAsked(asked: RmPlanItem[], ctx: RunContext, options: ExecuteO
     const asideOn = options.aside ?? ctx.config.askAction === "aside";
     const asideable = asideOn ? asked.filter((item) => ctx.config.asideUnsaved || !item.verdict.unsaved) : [];
     const inPlace = asked.filter((item) => !asideable.includes(item));
-    const aside = asideable.length > 0 ? moveAside(asideable, ctx.caller, newBatchId()) : null;
-    const kept = [...inPlace, ...(aside?.kept.map((k) => k.input) ?? [])];
-    const request = createRmRequest({
-        kind: "delete",
+    const { request, aside } = createAsideRequest({
+        aside: asideable,
+        inPlace,
         caller: ctx.caller,
         cwd: ctx.cwd,
         reason: options.reason ?? null,
-        asideDir: aside && aside.moved.length > 0 ? aside.dir : undefined,
-        targets: [
-            ...(aside?.moved ?? []),
-            ...kept.map((item) => ({
-                path: item.target.path,
-                kind: item.target.kind,
-                rule: item.verdict.rule,
-                reason: item.verdict.reason,
-            })),
-        ],
     });
 
     if (!options.json) {

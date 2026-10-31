@@ -19,6 +19,7 @@ import {
     moveToTrash,
     type RmRequestTarget,
     recheckAfterWait,
+    recoverAsideJournals,
     resolveTarget,
     saveRmConfig,
 } from "@genesiscz/utils/rm";
@@ -112,6 +113,7 @@ export function registerRequestCommands(program: Command): void {
         .argument("<id>", "the request id")
         .action(async (id: string) => {
             const ctx = runContext();
+            recoverAsideJournals();
             const request = loadRmRequest(id);
 
             if (!request || request.status !== "pending") {
@@ -258,6 +260,7 @@ export function registerRequestCommands(program: Command): void {
         .argument("<id>", "the request id")
         .action((id: string) => {
             const ctx = runContext();
+            recoverAsideJournals();
             const request = loadRmRequest(id);
 
             if (!request || request.status !== "pending") {
