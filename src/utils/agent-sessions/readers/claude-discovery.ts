@@ -128,13 +128,18 @@ async function readProjectIndex(options: {
  * A Claude session transcript (a main session or a sub-agent's `.jsonl`), not the project's `sessions-index.jsonl` and
  * not a workflow's `journal.jsonl`: the files discovery reads and a watcher refreshes a listing for.
  */
-export function claudeIndexesFile(path: string): boolean {
+function claudeTranscriptFile(path: string): boolean {
     if (!path.endsWith(".jsonl")) {
         return false;
     }
 
     const name = path.split(/[/\\]/).at(-1) ?? "";
     return name !== "sessions-index.jsonl" && !(name === "journal.jsonl" && path.split(/[/\\]/).includes("workflows"));
+}
+
+/** Transcript and metadata changes can both change indexed session information. */
+export function claudeIndexesFile(path: string): boolean {
+    return path.split(/[/\\]/).at(-1) === "sessions-index.json" || claudeTranscriptFile(path);
 }
 
 export async function discoverClaudeHistorySources(
@@ -154,7 +159,7 @@ export async function discoverClaudeHistorySources(
         filePaths: options.filePaths,
         signal: options.signal,
         ...(shallowMainOnly ? { maxDepth: 1 } : {}),
-        includeFile: ({ path }) => claudeIndexesFile(path),
+        includeFile: ({ path }) => claudeTranscriptFile(path),
     });
     // One `isSubagentPath` per file: the passes below asked it up to five times for each of about 12,500 files.
     const subagents = new Set(walked.files.filter((file) => isSubagentPath(file.path)));

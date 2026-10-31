@@ -5256,6 +5256,7 @@ describe("background Widget roster", () => {
         const change = (path: string, listed = false) =>
             widgetRosterChange({ path, roots, listedParent: (id) => listed && id === "lead-session" });
         expect(change("/fixture/claude/projects/-fixture-project/lead-session.jsonl")).toBe("claude");
+        expect(change("/fixture/claude/projects/-fixture-project/sessions-index.json")).toBe("claude");
         expect(change("/fixture/claude/projects/-fixture-project/lead-session/subagents/agent-a1.jsonl", true)).toBe(
             "read"
         );

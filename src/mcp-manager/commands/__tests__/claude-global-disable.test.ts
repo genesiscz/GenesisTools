@@ -64,6 +64,7 @@ function unifiedFixture(): UnifiedMCPConfig {
 describe("claude provider TRUE global disable", () => {
     let homeDir: string;
     let prevHome: string | undefined;
+    let previousClaudeConfigDir: string | undefined;
 
     const claudeJsonPath = () => join(homeDir, ".claude.json");
 
@@ -92,6 +93,8 @@ describe("claude provider TRUE global disable", () => {
         // process, so restore everything BEFORE installing our own spies.
         mock.restore();
         prevHome = env.get("HOME");
+        previousClaudeConfigDir = env.get("CLAUDE_CONFIG_DIR");
+        env.testing.unset("CLAUDE_CONFIG_DIR");
         homeDir = mkdtempSync(join(tmpdir(), "mcp-claude-global-"));
         env.testing.set("HOME", homeDir);
         setGlobalOptions({ yes: true });
@@ -109,6 +112,11 @@ describe("claude provider TRUE global disable", () => {
             env.testing.unset("HOME");
         }
         setGlobalOptions({});
+        if (previousClaudeConfigDir !== undefined) {
+            env.testing.set("CLAUDE_CONFIG_DIR", previousClaudeConfigDir);
+        } else {
+            env.testing.unset("CLAUDE_CONFIG_DIR");
+        }
         rmSync(homeDir, { recursive: true, force: true });
     });
 

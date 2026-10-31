@@ -39,6 +39,7 @@ const GITHUB: UnifiedMCPServerConfig = { type: "stdio", command: "bunx", args: [
 describe("claude per-project enable override for globally-disabled servers", () => {
     let homeDir: string;
     let prevHome: string | undefined;
+    let previousClaudeConfigDir: string | undefined;
 
     const claudeJsonPath = () => join(homeDir, ".claude.json");
 
@@ -86,6 +87,8 @@ describe("claude per-project enable override for globally-disabled servers", () 
     beforeEach(() => {
         mock.restore(); // clear spies leaked from other test files (single bun process)
         prevHome = env.get("HOME");
+        previousClaudeConfigDir = env.get("CLAUDE_CONFIG_DIR");
+        env.testing.unset("CLAUDE_CONFIG_DIR");
         homeDir = mkdtempSync(join(tmpdir(), "mcp-claude-override-"));
         env.testing.set("HOME", homeDir);
         setGlobalOptions({ yes: true });
@@ -103,6 +106,11 @@ describe("claude per-project enable override for globally-disabled servers", () 
             env.testing.unset("HOME");
         }
         setGlobalOptions({});
+        if (previousClaudeConfigDir !== undefined) {
+            env.testing.set("CLAUDE_CONFIG_DIR", previousClaudeConfigDir);
+        } else {
+            env.testing.unset("CLAUDE_CONFIG_DIR");
+        }
         rmSync(homeDir, { recursive: true, force: true });
     });
 

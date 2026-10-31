@@ -76,6 +76,7 @@ const UNIFIED_JSONC = `{
 describe("remove command (permanent purge)", () => {
     let homeDir: string;
     let prevHome: string | undefined;
+    let previousClaudeConfigDir: string | undefined;
 
     const readJson = (path: string): Record<string, unknown> =>
         SafeJSON.parse(readFileSync(path, "utf-8")) as Record<string, unknown>;
@@ -151,6 +152,8 @@ describe("remove command (permanent purge)", () => {
     beforeEach(() => {
         mock.restore(); // clear spies leaked from other test files (single bun process)
         prevHome = env.get("HOME");
+        previousClaudeConfigDir = env.get("CLAUDE_CONFIG_DIR");
+        env.testing.unset("CLAUDE_CONFIG_DIR");
         homeDir = mkdtempSync(join(tmpdir(), "mcp-remove-"));
         env.testing.set("HOME", homeDir);
         setGlobalOptions({ yes: true });
@@ -168,6 +171,11 @@ describe("remove command (permanent purge)", () => {
             env.testing.unset("HOME");
         }
         setGlobalOptions({});
+        if (previousClaudeConfigDir !== undefined) {
+            env.testing.set("CLAUDE_CONFIG_DIR", previousClaudeConfigDir);
+        } else {
+            env.testing.unset("CLAUDE_CONFIG_DIR");
+        }
         rmSync(homeDir, { recursive: true, force: true });
     });
 

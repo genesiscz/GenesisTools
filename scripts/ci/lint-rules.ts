@@ -343,7 +343,10 @@ const AGENT_PAYLOAD_CAMEL_FIELDS =
     "hookEventName|toolInput|toolResponse|transcriptPath|lastAssistantMessage|stopHookActive";
 const AGENT_PAYLOAD_SNAKE_FIELD = new RegExp(`^(?:${AGENT_PAYLOAD_SNAKE_FIELDS})$`);
 const AGENT_PAYLOAD_CAMEL_FIELD = new RegExp(`^(?:${AGENT_PAYLOAD_CAMEL_FIELDS})$`);
+const STATUSLINE_FIELDS = "session_id|sessionId|context_window|contextWindow";
+const STATUSLINE_FIELD = new RegExp(`^(?:${STATUSLINE_FIELDS})$`);
 const AGENT_PAYLOAD_MEMBER = `\\.(?:${AGENT_PAYLOAD_SNAKE_FIELDS}|${AGENT_PAYLOAD_CAMEL_FIELDS})$`;
+const STATUSLINE_MEMBER = `\\.(?:${STATUSLINE_FIELDS})$`;
 
 function isRawPayload(node: SgNode | null | undefined): boolean {
     if (node?.kind() === "identifier") {
@@ -358,9 +361,11 @@ function isRawPayload(node: SgNode | null | undefined): boolean {
     return index?.kind() === "string" && unquote(index) === "raw";
 }
 
-function readsHookPayload(node: SgNode): boolean {
+function readsHookPayload(node: SgNode, statusline = false): boolean {
     const fieldMatches = (key: string, raw: boolean) =>
-        AGENT_PAYLOAD_SNAKE_FIELD.test(key) || (raw && AGENT_PAYLOAD_CAMEL_FIELD.test(key));
+        statusline
+            ? raw && STATUSLINE_FIELD.test(key)
+            : AGENT_PAYLOAD_SNAKE_FIELD.test(key) || (raw && AGENT_PAYLOAD_CAMEL_FIELD.test(key));
 
     if (node.kind() === "member_expression") {
         return fieldMatches(node.field("property")?.text() ?? "", isRawPayload(node.field("object")));
@@ -629,6 +634,24 @@ const RULES: Rule[] = [
         allowedIn: /(?:^|\/)src\/(?:agents\/lib\/hooks\/payload|utils\/agents\/hooks\/statusline-input)\.ts$/,
         allowedFiles: HOOK_PAYLOAD_READ_RATCHET,
         test: (_text, node) => readsHookPayload(node),
+    },
+    {
+        name: "no-statusline-payload-read",
+        severity: "error",
+        kinds: ["member_expression", "subscript_expression", "object_pattern"],
+        matcher: {
+            rule: {
+                any: [
+                    { kind: "member_expression", regex: STATUSLINE_MEMBER },
+                    { kind: "subscript_expression", has: { field: "index", kind: "string" } },
+                    { kind: "object_pattern" },
+                ],
+            },
+        },
+        message: "Read statusline fields through StatuslineInput in src/utils/agents/hooks/statusline-input.ts.",
+        onlyIn: /^(?:src|scripts)\/.*statusline/i,
+        allowedIn: /(?:^|\/)src\/utils\/agents\/hooks\/statusline-input\.ts$/,
+        test: (_text, node) => readsHookPayload(node, true),
     },
     {
         name: "no-agent-name-in-command-match",

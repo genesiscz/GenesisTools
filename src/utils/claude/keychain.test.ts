@@ -1,6 +1,6 @@
 import { afterEach, describe, expect, type Mock, spyOn, test } from "bun:test";
 import { mkdtempSync, rmSync, writeFileSync } from "node:fs";
-import { tmpdir } from "node:os";
+import { homedir, tmpdir } from "node:os";
 import { join } from "node:path";
 import { env } from "@genesiscz/utils/env";
 import { SafeJSON } from "@genesiscz/utils/json";
@@ -10,6 +10,7 @@ import {
     keychainOwnerUuidOffline,
     readKeychainEntry,
     readKeychainPayload,
+    resolveKeychainAccountUuid,
     type SecurityCliResult,
     writeKeychainPayload,
 } from "./keychain";
@@ -26,17 +27,44 @@ async function withPlatform<T>(platform: string, run: () => Promise<T>): Promise
 }
 
 describe("keychainOwnerUuidOffline", () => {
-    test("reads the .claude.json Claude Code uses, which CLAUDE_CONFIG_DIR moves", async () => {
-        const dir = mkdtempSync(join(tmpdir(), "gt-keychain-claude-json-"));
-
+    test("the default keychain owner ignores a different Claude config directory", async () => {
+        const home = mkdtempSync(join(tmpdir(), "gt-keychain-home-"));
+        const override = mkdtempSync(join(tmpdir(), "gt-keychain-override-"));
         try {
-            const account = { oauthAccount: { accountUuid: "00000000-0000-4000-8000-00000000a11c" } };
-            writeFileSync(join(dir, ".claude.json"), SafeJSON.stringify(account));
-            await env.testing.withOverrides({ CLAUDE_CONFIG_DIR: dir }, async () => {
-                expect(await keychainOwnerUuidOffline()).toBe("00000000-0000-4000-8000-00000000a11c");
-            });
+            writeFileSync(
+                join(home, ".claude.json"),
+                SafeJSON.stringify({ oauthAccount: { accountUuid: "default-owner" } })
+            );
+            writeFileSync(
+                join(override, ".claude.json"),
+                SafeJSON.stringify({ oauthAccount: { accountUuid: "other-owner" } })
+            );
+            const fixtureFile = Bun.file(join(home, ".claude.json"));
+            const fileSpy = spyOn(Bun, "file").mockReturnValue(fixtureFile);
+            try {
+                await env.testing.withOverrides({ HOME: home, CLAUDE_CONFIG_DIR: override }, async () => {
+                    expect(await keychainOwnerUuidOffline()).toBe("default-owner");
+                    expect(fileSpy).toHaveBeenCalledWith(join(homedir(), ".claude.json"));
+                    const fetchMock = spyOn(globalThis, "fetch").mockResolvedValue(new Response(null, { status: 503 }));
+                    try {
+                        expect(
+                            await resolveKeychainAccountUuid({
+                                accessToken: "fixture",
+                                refreshToken: "fixture",
+                                expiresAt: 0,
+                                scopes: [],
+                            })
+                        ).toBe("default-owner");
+                    } finally {
+                        fetchMock.mockRestore();
+                    }
+                });
+            } finally {
+                fileSpy.mockRestore();
+            }
         } finally {
-            rmSync(dir, { recursive: true, force: true });
+            rmSync(home, { recursive: true, force: true });
+            rmSync(override, { recursive: true, force: true });
         }
     });
 });

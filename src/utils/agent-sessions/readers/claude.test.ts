@@ -747,5 +747,6 @@ test("modelOfRow names an assistant row's model, never a synthetic notice's, and
     expect(reader.indexesFile("/fixture/projects/-fixture/sessions-index.jsonl")).toBe(false);
     expect(reader.indexesFile("/fixture/projects/-fixture/lead/subagents/workflows/wf_1/journal.jsonl")).toBe(false);
     expect(reader.indexesFile("C:\\fixture\\sessions-index.jsonl")).toBe(false);
+    expect(reader.indexesFile("/fixture/projects/-fixture/sessions-index.json")).toBe(true);
     expect(reader.indexesFile("/fixture/projects/-fixture/memory.md")).toBe(false);
 });

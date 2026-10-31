@@ -32,6 +32,7 @@ const CONTEXT7 = { type: "stdio" as const, command: "context7-mcp" };
 describe("grok enable/disable survives sync", () => {
     let homeDir: string;
     let prevHome: string | undefined;
+    let previousClaudeConfigDir: string | undefined;
 
     const grokToml = () => join(homeDir, ".grok", "config.toml");
 
@@ -49,6 +50,8 @@ describe("grok enable/disable survives sync", () => {
     beforeEach(() => {
         mock.restore();
         prevHome = env.get("HOME");
+        previousClaudeConfigDir = env.get("CLAUDE_CONFIG_DIR");
+        env.testing.unset("CLAUDE_CONFIG_DIR");
         homeDir = mkdtempSync(join(tmpdir(), "mcp-grok-toggle-"));
         env.testing.set("HOME", homeDir);
         mkdirSync(join(homeDir, ".grok"), { recursive: true });
@@ -67,6 +70,11 @@ describe("grok enable/disable survives sync", () => {
             env.testing.unset("HOME");
         }
         setGlobalOptions({});
+        if (previousClaudeConfigDir !== undefined) {
+            env.testing.set("CLAUDE_CONFIG_DIR", previousClaudeConfigDir);
+        } else {
+            env.testing.unset("CLAUDE_CONFIG_DIR");
+        }
         rmSync(homeDir, { recursive: true, force: true });
     });
 

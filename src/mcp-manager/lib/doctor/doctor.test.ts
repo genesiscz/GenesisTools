@@ -1,6 +1,7 @@
 import { afterEach, describe, expect, it } from "bun:test";
 import { readdirSync, readFileSync } from "node:fs";
 import { delimiter, join } from "node:path";
+import { env } from "@genesiscz/utils/env";
 import { SafeJSON } from "@genesiscz/utils/json";
 import { genesisToolsDir } from "@genesiscz/utils/storage/root";
 import { probeAll } from "../../commands/doctor.ts";
@@ -21,6 +22,7 @@ import { isInvalidServer, type NormalizedServer, type ProbeResult } from "./type
 describe("mergeServers", () => {
     it("normalizes a stdio server from ~/.claude.json with source attribution", () => {
         const servers = mergeServers({
+            claudeSource: "~/.claude.json",
             claude: { mcpServers: { github: { command: "npx", args: ["-y", "server-github"] } } },
             mcp: null,
             cursor: null,
@@ -57,6 +59,7 @@ describe("mergeServers", () => {
 
     it("lets a project .mcp.json server override the same name from ~/.claude.json", () => {
         const servers = mergeServers({
+            claudeSource: "~/.claude.json",
             claude: { mcpServers: { fs: { command: "old-fs" } } },
             mcp: { mcpServers: { fs: { command: "new-fs" } } },
             cursor: null,
@@ -191,14 +194,26 @@ describe("redactServerForOutput", () => {
 describe("formatEmptyServersMessage", () => {
     // Regression test: #446 item 10 — the empty state said "No MCP servers
     // configured" with no hint about which files were read or what is excluded.
-    it("names every config source it reads and excludes claude.ai connectors and plugins", () => {
-        const message = formatEmptyServersMessage();
+    it("names every config source it reads and excludes claude.ai connectors and plugins", async () => {
+        await env.testing.withOverrides({ CLAUDE_CONFIG_DIR: undefined }, () => {
+            const message = formatEmptyServersMessage();
 
-        expect(message).toContain("~/.claude.json");
-        expect(message).toContain(".mcp.json");
-        expect(message).toContain(".cursor/mcp.json");
-        expect(message).toContain("claude.ai connectors");
-        expect(message).toContain("plugin-provided servers");
+            expect(message).toContain("~/.claude.json");
+            expect(message).toContain(".mcp.json");
+            expect(message).toContain(".cursor/mcp.json");
+            expect(message).toContain("claude.ai connectors");
+            expect(message).toContain("plugin-provided servers");
+        });
+    });
+
+    it("names an overridden Claude config source", async () => {
+        await env.testing.withOverrides({ CLAUDE_CONFIG_DIR: "/fixture/claude" }, () => {
+            expect(formatEmptyServersMessage()).toContain("/fixture/claude/.claude.json");
+            expect(
+                mergeServers({ claude: { mcpServers: { sample: { command: "sample" } } }, mcp: null, cursor: null })[0]
+                    .source
+            ).toBe("/fixture/claude/.claude.json");
+        });
     });
 });
 

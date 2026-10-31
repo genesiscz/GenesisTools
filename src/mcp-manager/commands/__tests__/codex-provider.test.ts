@@ -11,9 +11,12 @@ import * as TOML from "@iarna/toml";
 describe("CodexProvider remote HTTP authentication", () => {
     let homeDir: string;
     let previousHome: string | undefined;
+    let previousClaudeConfigDir: string | undefined;
 
     beforeEach(() => {
         previousHome = env.get("HOME");
+        previousClaudeConfigDir = env.get("CLAUDE_CONFIG_DIR");
+        env.testing.unset("CLAUDE_CONFIG_DIR");
         homeDir = mkdtempSync(join(tmpdir(), "mcp-codex-provider-"));
         env.testing.set("HOME", homeDir);
         setGlobalOptions({ yes: true });
@@ -26,6 +29,11 @@ describe("CodexProvider remote HTTP authentication", () => {
             env.testing.unset("HOME");
         }
         setGlobalOptions({});
+        if (previousClaudeConfigDir !== undefined) {
+            env.testing.set("CLAUDE_CONFIG_DIR", previousClaudeConfigDir);
+        } else {
+            env.testing.unset("CLAUDE_CONFIG_DIR");
+        }
         rmSync(homeDir, { recursive: true, force: true });
     });
 
@@ -196,9 +204,12 @@ command = "peekaboo"
 describe("CodexProvider plugin-provided MCP servers", () => {
     let homeDir: string;
     let previousHome: string | undefined;
+    let previousClaudeConfigDir: string | undefined;
 
     beforeEach(() => {
         previousHome = env.get("HOME");
+        previousClaudeConfigDir = env.get("CLAUDE_CONFIG_DIR");
+        env.testing.unset("CLAUDE_CONFIG_DIR");
         homeDir = mkdtempSync(join(tmpdir(), "mcp-codex-plugins-"));
         env.testing.set("HOME", homeDir);
         setGlobalOptions({ yes: true });
@@ -211,6 +222,11 @@ describe("CodexProvider plugin-provided MCP servers", () => {
             env.testing.unset("HOME");
         }
         setGlobalOptions({});
+        if (previousClaudeConfigDir !== undefined) {
+            env.testing.set("CLAUDE_CONFIG_DIR", previousClaudeConfigDir);
+        } else {
+            env.testing.unset("CLAUDE_CONFIG_DIR");
+        }
         rmSync(homeDir, { recursive: true, force: true });
     });
 

@@ -78,6 +78,11 @@ export function nativeHomePath(kind: NativeSessionProvider, ...segments: string[
     return join(nativeHome(kind), ...segments);
 }
 
+/** The default keychain service belongs to the default home, regardless of overrides. */
+export function defaultClaudeJsonPath(home = homedir()): string {
+    return join(home, ".claude.json");
+}
+
 /**
  * Claude Code's `.claude.json` (accounts, MCP servers, project trust). Claude Code reads it from
  * `$CLAUDE_CONFIG_DIR/.claude.json` when that variable is set (`src/claude/lib/launch-env.ts`), else from the home
@@ -86,7 +91,7 @@ export function nativeHomePath(kind: NativeSessionProvider, ...segments: string[
  */
 export function claudeJsonPath(home = homedir()): string {
     const configDir = env.paths.getClaudeConfigDir();
-    return configDir ? join(configDir, ".claude.json") : join(home, ".claude.json");
+    return configDir ? join(configDir, ".claude.json") : defaultClaudeJsonPath(home);
 }
 
 /**

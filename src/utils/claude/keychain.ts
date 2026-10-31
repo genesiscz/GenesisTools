@@ -6,7 +6,7 @@ import type { AISecondaryLogin } from "@genesiscz/utils/config/ai.types";
 import { env } from "@genesiscz/utils/env";
 import { SafeJSON } from "@genesiscz/utils/json";
 import { logger } from "@genesiscz/utils/logger";
-import { claudeJsonPath } from "@genesiscz/utils/providers/session-paths";
+import { defaultClaudeJsonPath } from "@genesiscz/utils/providers/session-paths";
 import { isJsonObject } from "@genesiscz/utils/storage/atomic-file";
 import { genesisToolsDir } from "@genesiscz/utils/storage/root";
 import { isTestProcess } from "@genesiscz/utils/test-process";
@@ -118,7 +118,7 @@ function assertMacOS(): void {
  */
 export async function keychainOwnerUuidOffline(): Promise<string | undefined> {
     try {
-        const file = Bun.file(claudeJsonPath());
+        const file = Bun.file(defaultClaudeJsonPath());
 
         if (!(await file.exists())) {
             return undefined;
@@ -283,7 +283,7 @@ export async function resolveKeychainAccountUuid(oauth: ClaudeAiOauthCredentials
     }
 
     try {
-        const claudeJson = SafeJSON.parse(await Bun.file(claudeJsonPath()).text(), { strict: true });
+        const claudeJson = SafeJSON.parse(await Bun.file(defaultClaudeJsonPath()).text(), { strict: true });
         const uuid = claudeJson?.oauthAccount?.accountUuid;
 
         if (typeof uuid === "string" && uuid) {

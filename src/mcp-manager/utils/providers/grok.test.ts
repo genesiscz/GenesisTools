@@ -9,6 +9,7 @@ import { env } from "@genesiscz/utils/env";
 import { SafeJSON } from "@genesiscz/utils/json";
 import { atomicWriteIo } from "@genesiscz/utils/storage/atomic-file";
 import * as TOML from "@iarna/toml";
+import { ClaudeProvider } from "./claude.ts";
 import { GrokProvider } from "./grok.ts";
 import { WriteResult } from "./types.ts";
 
@@ -52,10 +53,13 @@ describe("GrokProvider.fromUnifiedConfig", () => {
 describe("GrokProvider.syncServers", () => {
     let home: string;
     let previousHome: string | undefined;
+    let previousClaudeConfigDir: string | undefined;
 
     // A sync reads ~/.claude.json, ~/.cursor/mcp.json and Claude's plugins; keep them invented.
     beforeEach(() => {
         previousHome = env.get("HOME");
+        previousClaudeConfigDir = env.get("CLAUDE_CONFIG_DIR");
+        env.testing.unset("CLAUDE_CONFIG_DIR");
         home = mkdtempSync(join(tmpdir(), "grok-sync-home-"));
         env.testing.set("HOME", home);
     });
@@ -65,6 +69,12 @@ describe("GrokProvider.syncServers", () => {
             env.testing.set("HOME", previousHome);
         } else {
             env.testing.unset("HOME");
+        }
+
+        if (previousClaudeConfigDir !== undefined) {
+            env.testing.set("CLAUDE_CONFIG_DIR", previousClaudeConfigDir);
+        } else {
+            env.testing.unset("CLAUDE_CONFIG_DIR");
         }
 
         rmSync(home, { recursive: true, force: true });
@@ -289,9 +299,12 @@ describe("GrokProvider.syncServers", () => {
 describe("GrokProvider plugin-provided MCP servers", () => {
     let home: string;
     let previousHome: string | undefined;
+    let previousClaudeConfigDir: string | undefined;
 
     beforeEach(() => {
         previousHome = env.get("HOME");
+        previousClaudeConfigDir = env.get("CLAUDE_CONFIG_DIR");
+        env.testing.unset("CLAUDE_CONFIG_DIR");
         home = mkdtempSync(join(tmpdir(), "grok-plugins-"));
         env.testing.set("HOME", home);
     });
@@ -301,6 +314,12 @@ describe("GrokProvider plugin-provided MCP servers", () => {
             env.testing.set("HOME", previousHome);
         } else {
             env.testing.unset("HOME");
+        }
+
+        if (previousClaudeConfigDir !== undefined) {
+            env.testing.set("CLAUDE_CONFIG_DIR", previousClaudeConfigDir);
+        } else {
+            env.testing.unset("CLAUDE_CONFIG_DIR");
         }
 
         rmSync(home, { recursive: true, force: true });
@@ -445,5 +464,22 @@ describe("GrokProvider plugin-provided MCP servers", () => {
 
         expect(readConfig().disabled_mcp_servers).toEqual(["pencil", "chrome-devtools", "expo"]);
         expect(readConfig().mcp_servers?.expo).toBeUndefined();
+    });
+});
+
+test("Claude provider resolves settings in the default home", async () => {
+    const home = mkdtempSync(join(tmpdir(), "claude-provider-home-"));
+    try {
+        await env.testing.withOverrides({ HOME: home, CLAUDE_CONFIG_DIR: undefined }, () => {
+            expect(new ClaudeProvider().getSettingsPath()).toBe(join(home, ".claude", "settings.json"));
+        });
+    } finally {
+        rmSync(home, { recursive: true, force: true });
+    }
+});
+
+test("Claude provider resolves settings in the configured Claude home", async () => {
+    await env.testing.withOverrides({ CLAUDE_CONFIG_DIR: "/fixture/claude-home" }, () => {
+        expect(new ClaudeProvider().getSettingsPath()).toBe("/fixture/claude-home/settings.json");
     });
 });

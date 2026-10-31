@@ -176,7 +176,7 @@ export function widgetRosterChange({
         }
 
         const parts = relative.split(sep);
-        if (parts.length === 2 && parts[1].endsWith(".jsonl")) {
+        if (parts.length === 2 && resolveHistoryProvider("claude").reader.indexesFile(path)) {
             return "claude";
         }
 

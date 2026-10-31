@@ -418,7 +418,7 @@ function addNewOptions(command: Command): Command {
         )
         .option(
             "--no-cross-messages",
-            `Claude: do not accept them for this session (they then wait for approval in bypass mode)`
+            "Claude: omit the launcher accept setting; Claude Code’s own settings decide whether messages are accepted"
         )
         .option("--json", "Print name, agent, account, workspace, surface, window, tmuxSession, cwd, command as JSON");
 }

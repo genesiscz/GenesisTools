@@ -8,7 +8,7 @@ import { env } from "@genesiscz/utils/env";
 import { SafeJSON } from "@genesiscz/utils/json";
 import { logger } from "@genesiscz/utils/logger";
 import { isObject } from "@genesiscz/utils/object";
-import { claudeJsonPath } from "@genesiscz/utils/providers/session-paths";
+import { claudeJsonPath, nativeHome } from "@genesiscz/utils/providers/session-paths";
 import { atomicWriteFileSync } from "@genesiscz/utils/storage/atomic-file";
 import { matchGlob } from "@genesiscz/utils/string";
 import chalk from "chalk";
@@ -193,7 +193,7 @@ export class ClaudeProvider extends MCPProvider {
 
     /** `~/.claude/settings.json`: user settings, home of `enabledPlugins` and the `deniedMcpServers` denylist. */
     getSettingsPath(): string {
-        return path.join(path.dirname(this.configPath), ".claude", "settings.json");
+        return path.join(nativeHome("claude", path.dirname(this.configPath)), "settings.json");
     }
 
     private async readSettings(): Promise<Record<string, unknown>> {

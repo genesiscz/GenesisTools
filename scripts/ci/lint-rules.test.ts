@@ -1216,6 +1216,18 @@ describe("the agent and model ratchet rules (❓ DECISION 22 b)", () => {
         }
     });
 
+    test("statusline raw fields are flagged in all read forms", () => {
+        const file = "src/ai-spend/lib/reports/statusline.ts";
+        for (const source of [
+            "const id = raw.session_id;",
+            'const c = raw["context_window"];',
+            "const { session_id } = raw;",
+        ]) {
+            expect(rules(source, file)).toContain("no-statusline-payload-read");
+        }
+        expect(rules("const id = other.session_id;", file)).not.toContain("no-statusline-payload-read");
+    });
+
     test("harness, payload and process diagnostics name their migration owner", () => {
         for (const [source, owner] of [
             ['if (node.harness === "claude") {}', "ProviderPlugin or NativeSessionReader"],
