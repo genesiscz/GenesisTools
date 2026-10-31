@@ -3181,6 +3181,18 @@ describe("the guard runs custom rules beside the built-in ones", () => {
         expect(custom).toBeNull();
     });
 
+    it("the rule set the hooks pass runs the GenesisTools rm rules, which the shared default lacks", async () => {
+        const { rules } = await guardRules(DEFAULT_HOOKS_CONFIG);
+
+        expect(evaluateGuard(payload("rm -rf build"), DEFAULT_HOOKS_CONFIG, rules)?.message).toContain(
+            "rule rm-use-tools-rm"
+        );
+        expect(evaluateGuard(payload("tools rm approve k7m2qd"), DEFAULT_HOOKS_CONFIG, rules)?.message).toContain(
+            "rule rm-user-verbs"
+        );
+        expect(evaluateGuard(payload("rm -rf build"), DEFAULT_HOOKS_CONFIG)).toBeNull();
+    });
+
     it("a custom rule blocks, and `guard.default` switches it off like a built-in one", async () => {
         const dir = rulesDir({ "a.ts": ruleModule(fixtureRule("fixture-stop", "zzstop")) });
         const config = withCustomRules([dir]);
