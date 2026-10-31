@@ -1,6 +1,6 @@
 // Review command - fetch, display, reply to, and resolve PR review threads
 
-import { postReviewComment } from "@app/github/lib/review-comments";
+import { postRepliesAsOneReview, postReviewComment } from "@app/github/lib/review-comments";
 import {
     formatPrCommentsLLM,
     formatReviewJSON,
@@ -24,7 +24,9 @@ import { formatRelativeTime } from "@genesiscz/utils/format";
 import type { ReviewCommandOptions, ReviewData, ReviewSessionData } from "@genesiscz/utils/github/types";
 import { detectRepoFromGit, parseGitHubUrl } from "@genesiscz/utils/github/url-parser";
 import { setGlobalVerbose } from "@genesiscz/utils/github/utils";
+import { SafeJSON } from "@genesiscz/utils/json";
 import { logger, out } from "@genesiscz/utils/logger";
+import { isObject } from "@genesiscz/utils/object";
 import chalk from "chalk";
 import { Command } from "commander";
 
@@ -265,6 +267,63 @@ async function expandCommand(refs: string, options: { session?: string; repo?: s
     }
 }
 
+/**
+ * One reply per thread, each with its own text, from a JSONL file of `{ "ref": "t3", "body": "…" }` lines, posted
+ * as ONE review so the conversation tab shows one entry, not one per reply.
+ */
+async function respondBatchCommand(file: string, options: { session?: string }): Promise<void> {
+    const sessionMgr = new ReviewSessionManager();
+    if (!options.session) {
+        throw new Error("Session ID required. Use -s <session-id>");
+    }
+
+    const sessionData = await sessionMgr.loadSession(options.session);
+    if (!sessionData) {
+        throw new Error(`Session not found or expired: ${options.session}`);
+    }
+
+    const lines = (await Bun.file(file).text()).split("\n").filter((line) => line.trim());
+    const rows = lines.map((line, index) => {
+        const row: unknown = SafeJSON.parse(line, { strict: true });
+        if (!isObject(row) || typeof row.ref !== "string" || typeof row.body !== "string") {
+            throw new Error(`${file}:${index + 1} must be {"ref": "t1", "body": "…"}`);
+        }
+
+        return { ref: row.ref, body: row.body };
+    });
+    const resolved = sessionMgr.resolveRefIds(
+        sessionData,
+        rows.map((row) => row.ref)
+    );
+    const missing = resolved.filter((entry) => !entry.thread).map((entry) => entry.refId);
+    if (missing.length > 0) {
+        throw new Error(`could not resolve ref(s): ${missing.join(", ")}; nothing was posted`);
+    }
+
+    const byRef = new Map(resolved.map((entry) => [entry.refId, entry.threadId]));
+    const { owner, repo, prNumber } = sessionData.meta;
+    const result = await postRepliesAsOneReview({
+        owner,
+        repo,
+        number: prNumber,
+        replies: rows.map((row) => ({ threadId: byRef.get(row.ref) ?? row.ref, body: row.body })),
+    });
+
+    for (const failure of result.failed) {
+        out.error(chalk.red(`Failed ${failure.threadId}: ${failure.error}`));
+    }
+
+    out.println(
+        chalk.green(
+            `Replied to ${result.posted.length} thread(s) in one review${result.reviewUrl ? `: ${result.reviewUrl}` : ""}`
+        )
+    );
+
+    if (result.failed.length > 0) {
+        process.exitCode = 1;
+    }
+}
+
 async function respondCommand(
     refs: string,
     message: string,
@@ -489,6 +548,23 @@ Examples:
             .action(async (refs: string, message: string, opts: { session?: string; resolve?: boolean }) => {
                 try {
                     await respondCommand(refs, message, opts);
+                } catch (error) {
+                    out.error(chalk.red(`Error: ${error instanceof Error ? error.message : String(error)}`));
+                    process.exit(1);
+                }
+            })
+    );
+
+    cmd.addCommand(
+        new Command("respond-batch")
+            .description(
+                'Reply to several threads, each with its own text, as one review (JSONL: {"ref","body"} per line)'
+            )
+            .argument("<file>", 'JSONL file, one {"ref": "t1", "body": "…"} per line')
+            .option("-s, --session <id>", "Review session ID")
+            .action(async (file: string, opts: { session?: string }) => {
+                try {
+                    await respondBatchCommand(file, opts);
                 } catch (error) {
                     out.error(chalk.red(`Error: ${error instanceof Error ? error.message : String(error)}`));
                     process.exit(1);
