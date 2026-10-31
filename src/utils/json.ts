@@ -157,3 +157,11 @@ export function parseConcatenatedJson(text: string): unknown[] {
 
     return documents;
 }
+
+/**
+ * True for a plain JSON object (`{...}`), the shape every config file here has at its root. It lives here, not in the
+ * storage module, so a hook's hot path can check a shape without loading the logger.
+ */
+export function isJsonObject(value: unknown): value is Record<string, unknown> {
+    return value !== null && typeof value === "object" && !Array.isArray(value);
+}

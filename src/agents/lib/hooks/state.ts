@@ -1,7 +1,8 @@
+import { existsSync, readFileSync } from "node:fs";
 import { join } from "node:path";
 import { safeSessionId as sharedSafeSessionId } from "@genesiscz/utils/agents/session-id";
-import { isJsonObject } from "@genesiscz/utils/storage/atomic-file";
-import { type JsonDocument, jsonDocument } from "@genesiscz/utils/storage/locked-document";
+import { isJsonObject, SafeJSON } from "@genesiscz/utils/json";
+import type { JsonDocument } from "@genesiscz/utils/storage/locked-document";
 import { agentsDataDir } from "./config";
 import { hookDiag } from "./log";
 
@@ -145,9 +146,15 @@ export function migrateHookState(raw: unknown): HookSessionState {
  * cannot lose each other's count. A file that does not parse is copied aside and starts over. A version 1 file is
  * read through {@link migrateHookState} and written back as version 2 by the next update.
  */
-function stateDocument(sessionId: string): JsonDocument<HookSessionState> {
+function statePath(sessionId: string): string {
+    return join(hooksStateDir(), `${sessionId}.json`);
+}
+
+/** Loaded on the first update only: the locked writer pulls in the logger, which the guard's read path must not pay. */
+async function stateDocument(sessionId: string): Promise<JsonDocument<HookSessionState>> {
+    const { jsonDocument } = await import("@genesiscz/utils/storage/locked-document");
     return jsonDocument<HookSessionState>({
-        path: join(hooksStateDir(), `${sessionId}.json`),
+        path: statePath(sessionId),
         lockTimeoutMs: STATE_LOCK_TIMEOUT_MS,
         empty: emptyHookState,
         decode: (raw) => {
@@ -164,10 +171,22 @@ function stateDocument(sessionId: string): JsonDocument<HookSessionState> {
 
 /** The session's state; a missing or unreadable file reads as empty (an unreadable one is worth a diagnostic). */
 export function readHookState(sessionId: string): HookSessionState {
+    const path = statePath(sessionId);
+
+    // A missing file is the NORMAL first call of a session and reads as empty with no diagnostic: logging
+    // it put 206 "caught" lines into a 20-minute soak. Only a file that exists and cannot be read is worth a line.
+    if (!existsSync(path)) {
+        return emptyHookState();
+    }
+
     try {
-        // A missing file is the NORMAL first call of a session and reads as empty with no diagnostic: logging
-        // it put 206 "caught" lines into a 20-minute soak. Only a file that exists and cannot be read is worth a line.
-        return stateDocument(sessionId).read();
+        const raw: unknown = SafeJSON.parse(readFileSync(path, "utf8"));
+
+        if (!isJsonObject(raw)) {
+            throw new Error("hook state is not a JSON object");
+        }
+
+        return migrateHookState(raw);
     } catch (err) {
         hookDiag("Hook state exists but could not be read", { err, sessionId });
         return emptyHookState();
@@ -177,7 +196,7 @@ export function readHookState(sessionId: string): HookSessionState {
 /** Change the session's state in place, in one locked read-change-write. */
 export async function updateHookState(sessionId: string, change: (state: HookSessionState) => void): Promise<void> {
     try {
-        await stateDocument(sessionId).mutate(change);
+        await (await stateDocument(sessionId)).mutate(change);
     } catch (err) {
         // A counter that cannot be written only costs a repeated note.
         hookDiag("Could not persist the hook state", { err, sessionId });

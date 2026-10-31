@@ -340,7 +340,4 @@ export function isMissingFileError(err: unknown): boolean {
     return err instanceof Error && "code" in err && err.code === "ENOENT";
 }
 
-/** True for a plain JSON object (`{...}`), the shape every config file here has at its root. */
-export function isJsonObject(value: unknown): value is Record<string, unknown> {
-    return value !== null && typeof value === "object" && !Array.isArray(value);
-}
+export { isJsonObject } from "@genesiscz/utils/json";
