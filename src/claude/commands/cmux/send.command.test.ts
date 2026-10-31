@@ -279,7 +279,7 @@ test("--option presses the option's digit into the open dialog, never text plus 
     });
 });
 
-test("--option on a continued session reads the live session's dialog record", async () => {
+test("--option refuses after a continuation and presses nothing into the successor's pane", async () => {
     const successor = "77777777-7777-4777-8777-777777777777";
     setSnapshot([pane({ id: "pane:7", surfaces: [surface({ id: "surface:41", title: successor, selected: true })] })]);
     const read: string[] = [];
@@ -288,13 +288,14 @@ test("--option on a continued session reads the live session's dialog record", a
         continuedIn: async (id: string) => (id === SESSION_A ? successor : undefined),
         openRecords: (id: string) => {
             read.push(id);
-            return id === successor ? [askRecord({ sessionId: successor })] : [askRecord()];
+            return [askRecord({ sessionId: id })];
         },
     };
 
-    await sendCommand(SESSION_A, "", { option: "b", json: true }, answering);
-    expect(read).toEqual([successor]);
-    expect(events.filter((event) => event.startsWith("send"))).toEqual(["send --surface surface:41 --force -- 2"]);
+    expect(await sendCommand(SESSION_A, "", { option: "b", json: true }, answering)).toBe(false);
+    expect(read).toEqual([]);
+    expect(events.filter((event) => event.startsWith("send"))).toEqual([]);
+    expect(SafeJSON.parse(await capturedResult())).toMatchObject({ sent: false, sessionId: successor });
 });
 
 test("--option does not close a dialog when writing a digit cannot confirm submission", async () => {

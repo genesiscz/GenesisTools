@@ -346,10 +346,23 @@ async function pressDialogOption({
     opts: SendOptions & { option: string };
     deps: SendCommandDeps;
     source: string;
-    /** The live id when the queried session continued in another one: its pane gets the keys, so its record names them. */
+    /** The live id when the queried session continued in another one; an option press then refuses. */
     continuedTo?: string;
 }): Promise<boolean> {
-    const sessionId = continuedTo ?? sessionIdsIn(query)[0] ?? target.sessionIds[0];
+    const asked = sessionIdsIn(query)[0];
+
+    // The pane runs the successor, so the old session's options would land in another dialog, and the successor's
+    // options answer a question the caller never saw. A dialog answer never follows a continuation.
+    if (continuedTo && continuedTo !== asked) {
+        return refuseOption({
+            query,
+            sessionId: continuedTo,
+            reason: `the session continued in ${continuedTo}; answer that session's own dialog by its id`,
+            opts,
+        });
+    }
+
+    const sessionId = asked ?? target.sessionIds[0];
 
     if (!sessionId) {
         return refuseOption({
