@@ -526,11 +526,6 @@ async function resolvePaneTarget(session: string, deps: DeliverDeps): Promise<Pa
     return named(target, snapshot);
 }
 
-/** Agent replies use one bracketed paste, preserving JSON, paths and paragraph boundaries. */
-export function paneText(text: string): string {
-    return text;
-}
-
 /** The backend a `tools codex steer` receipt names: the Codex route's own worker. */
 const CODEX_WORKER_BACKEND: AccountProviderAlias = "codex";
 
@@ -855,7 +850,8 @@ export async function deliverToSession(
         ...(force ? ["--force"] : []),
         "--",
         session,
-        paneText(text),
+        // One bracketed paste, so JSON, paths and paragraph breaks arrive as written.
+        text,
     ]);
     const outcome = parseSent(sent.stdout);
     log.info(

@@ -69,13 +69,14 @@ function grokLaunchExtras({ account, sessionId }: { account: string; sessionId: 
 /** The spinner glyph a busy or idle agent draws in front of its tab title. */
 export const SPINNER_PREFIX = /^[⠋⠙⠹⠸⠼⠴⠦⠧⠇⠏✳⠐●○◐◑◒◓]\s*/u;
 
-function stripGrokSuffix(title: string): string {
-    return title.replace(/\s+-\s+grok(?:\s+·\s+[0-9a-f]{7,8})?\s*$/i, "").trim();
+/** A title stripper for a CLI that appends ` - <name>` (and an optional ` · <short id>`) to its tab title. */
+function harnessSuffixStripper(name: string): (title: string) => string {
+    const suffix = new RegExp(`\\s+-\\s+${name}(?:\\s+·\\s+[0-9a-f]{7,8})?\\s*$`, "i");
+    return (title) => title.replace(suffix, "").trim();
 }
 
-function stripCodexSuffix(title: string): string {
-    return title.replace(/\s+-\s+codex(?:\s+·\s+[0-9a-f]{7,8})?\s*$/i, "").trim();
-}
+const stripGrokSuffix = harnessSuffixStripper("grok");
+const stripCodexSuffix = harnessSuffixStripper("codex");
 
 function stripClaudeGlyph(title: string): string {
     return title
