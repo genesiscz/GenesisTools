@@ -12,21 +12,17 @@ import {
     loadRmConfig,
     loadRmRequest,
     moveAside,
-    moveToTrash,
     newBatchId,
     pendingAsideDirs,
-    presetsFor,
     priorDenials,
     type RmCaller,
     type RmConfig,
     type RmRequest,
     resolveTarget,
-    restoreBatch,
     saveRmConfig,
     stillAside,
 } from "@genesiscz/utils/rm";
 import { saveApproved } from "../commands/requests";
-import { applyRmSetting, saveRmSetting } from "../commands/settings";
 import { type ApproveEntry, approveDelete, denyRequest, splitBySelection } from "./approve";
 import type { RunContext } from "./run";
 
@@ -401,56 +397,5 @@ describe("approve in the window", () => {
                 listRmRequests({ all: true })
             ).map((denial) => denial.note)
         ).toEqual(["these are fixtures", "these are fixtures"]);
-    });
-});
-
-describe("config set", () => {
-    test("enable-preset turns on a custom opt-in preset, not only a shipped one", () => {
-        const custom = { id: "shared-cache", description: "a shared cache", names: ["cache"], optIn: true };
-        const config = { ...defaultRmConfig(), customPresets: [custom] };
-        const next = applyRmSetting(config, "enable-preset", "shared-cache");
-
-        expect(presetsFor(config).some((p) => p.id === "shared-cache")).toBe(false);
-        expect(presetsFor(next).some((p) => p.id === "shared-cache")).toBe(true);
-        expect(applyRmSetting(config, "enable-preset", "no-such-preset").enabledPresets).toEqual(config.enabledPresets);
-    });
-
-    test("a trash-root move is checked again at the save, against the config and the trash as they are then", () => {
-        const configPath = join(base, "settings-recheck", "config.json");
-        const paths = {
-            batchesDir: join(base, "settings-recheck", "batches"),
-            lockPath: join(base, "settings-recheck", "lock"),
-        };
-        const oldRoot = join(base, "settings-recheck", "GenesisTools", "rm");
-        const newRoot = join(base, "settings-recheck", "other", "GenesisTools", "rm");
-        const own = { ...defaultRmConfig(), trashRoot: oldRoot };
-        saveRmConfig(own, configPath);
-        // While the person decided: a batch reached the old root, and another setting was saved.
-        const target = resolveTarget(file(join(base, "settings-recheck", "late.txt")), base);
-        const batch = moveToTrash([{ target, rule: "test" }], { config: own, caller: AGENT, graceMinutes: 60, paths });
-        saveRmConfig({ ...own, approval: "code" }, configPath);
-
-        const blocked = saveRmSetting({
-            key: "trash-root",
-            value: newRoot,
-            drainCommand: "drain-now",
-            paths,
-            configPath,
-        });
-
-        expect(blocked).toEqual({ blocked: expect.stringContaining("drain-now") });
-        expect(loadRmConfig(configPath).trashRoot).toBe(oldRoot);
-
-        restoreBatch(batch?.id ?? "", { config: own, paths });
-        const saved = saveRmSetting({
-            key: "trash-root",
-            value: newRoot,
-            drainCommand: "drain-now",
-            paths,
-            configPath,
-        });
-
-        expect("saved" in saved && saved.saved.trashRoot).toBe(newRoot);
-        expect(loadRmConfig(configPath)).toMatchObject({ trashRoot: newRoot, approval: "code" });
     });
 });

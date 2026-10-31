@@ -192,7 +192,15 @@ export async function executePlan(
         const elapsed = createStopwatch();
         const batch = moveToTrash(
             items.map((item) => ({ target: item.target, rule: item.verdict.rule })),
-            { config: ctx.config, caller: ctx.caller, graceMinutes: minutes }
+            {
+                config: ctx.config,
+                caller: ctx.caller,
+                graceMinutes: minutes,
+                onRefused: (move, reason) => {
+                    out.println(pc.red(`refuse ${shown(move.target.path, ctx.cwd)}: ${reason}`));
+                    result.refused++;
+                },
+            }
         );
 
         if (batch) {
@@ -210,7 +218,7 @@ export async function executePlan(
     }
 
     kickDrainer(ctx.config);
-    process.exitCode = refused.length > 0 ? 1 : result.requestId ? 3 : 0;
+    process.exitCode = result.refused > 0 ? 1 : result.requestId ? 3 : 0;
 
     if (options.json) {
         out.result({
