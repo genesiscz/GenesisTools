@@ -94,7 +94,9 @@ export const rmUseToolsRm: ShellRule = {
                         `${toolCommand("rm")} `
                     );
                     const suggestion =
-                        word === "rm" && corrected !== matched ? scan.command.replace(matched, corrected) : undefined;
+                        word === "rm" && corrected !== matched
+                            ? scan.command.slice(0, start) + corrected + scan.command.slice(start + matched.length)
+                            : undefined;
                     return { matched, index: start, suggestion };
                 }
             }

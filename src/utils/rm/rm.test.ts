@@ -35,6 +35,7 @@ import {
     isTrashRootName,
     listBatches,
     listRmRequests,
+    loadRmConfig,
     loadRmRequest,
     mayDenyRmRequest,
     moveAside,
@@ -155,6 +156,17 @@ describe("presets", () => {
         expect(verdictOf(join(app, "node_modules"))).toEqual({ kind: "allow", rule: "preset" });
         expect(verdictOf(join(app, ".build"))).toEqual({ kind: "allow", rule: "preset" });
         expect(verdictOf(join(base, "work", "loose", "node_modules"))).toEqual({ kind: "ask", rule: "default" });
+    });
+
+    test("within presets never select siblings outside the requested root", () => {
+        const within = dir("scoped-preset");
+        const projectA = dir("scoped-preset", "project-a");
+        dir("scoped-preset", "project-b");
+        const preset = { id: "scoped", description: "test", names: [], within };
+
+        expect(scanPresets(projectA, [preset]).map((match) => match.path)).toEqual([projectA]);
+        expect(scanPresets(within, [preset])).toHaveLength(2);
+        expect(scanPresets(dir("scoped-preset", "project-a", "nested"), [preset])).toEqual([]);
     });
 
     test("scanning finds matches without entering them, and node_modules/.cache", () => {
@@ -633,6 +645,28 @@ describe("defaults", () => {
 });
 
 describe("security review fixes", () => {
+    test("missing config uses defaults; unreadable or malformed policy fails closed", () => {
+        const folder = dir("policy-load");
+        expect(loadRmConfig(join(folder, "missing.json"))).toEqual(defaultRmConfig());
+        expect(() => loadRmConfig(folder)).toThrow(/cannot read safety config/);
+        const dangling = join(folder, "dangling.json");
+        symlinkSync(join(folder, "missing-target"), dangling);
+        expect(() => loadRmConfig(dangling)).toThrow(/cannot read safety config/);
+        for (const [index, content] of [
+            "{",
+            "null",
+            '{"protect":42}',
+            '{"profiles":[{"name":"x","match":{},"allowOwnFiles":"no"}]}',
+        ].entries()) {
+            expect(() => loadRmConfig(file(join(folder, `invalid-${index}.json`), content))).toThrow(
+                /invalid safety config/
+            );
+        }
+        const old = loadRmConfig(file(join(folder, "old.json"), '{"protect":["/safe"],"allowOwnFiles":false}'));
+        expect(old.protect).toEqual(["/safe"]);
+        expect(old.allowOwnFiles).toBe(false);
+    });
+
     test("a child named ..name is inside its parent; a real .. step is not", () => {
         expect(isInside("/work/app/dist/..important", "/work/app/dist")).toBe(true);
         expect(isInside("/work/app/..dist", "/work/app")).toBe(true);

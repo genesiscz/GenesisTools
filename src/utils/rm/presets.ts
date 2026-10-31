@@ -247,15 +247,17 @@ export function scanPresets(root: string, presets: readonly RmPreset[], maxDepth
     const withinPresets = presets.filter((preset) => preset.within);
 
     for (const preset of withinPresets) {
-        const within = preset.within ?? "";
+        const within = realOrSelf(preset.within ?? "");
+        const searchRoot = realOrSelf(root);
 
-        if (!isInside(within, root) && within !== root && !isInside(root, within)) {
+        if (!isInside(within, searchRoot) && within !== searchRoot && !isInside(searchRoot, within)) {
             continue;
         }
 
         for (const entry of readDir(within)) {
-            if (entry.isDirectory()) {
-                found.push({ path: join(within, entry.name), preset });
+            const candidate = join(within, entry.name);
+            if (entry.isDirectory() && (candidate === searchRoot || isInside(candidate, searchRoot))) {
+                found.push({ path: candidate, preset });
             }
         }
     }

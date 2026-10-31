@@ -1,4 +1,4 @@
-import { existsSync, mkdirSync, readFileSync } from "node:fs";
+import { lstatSync, mkdirSync, readFileSync } from "node:fs";
 import { dirname, isAbsolute } from "node:path";
 import { SafeJSON } from "@genesiscz/utils/json";
 import { logger } from "@genesiscz/utils/logger";
@@ -124,15 +124,28 @@ export function defaultRmConfig(): RmConfig {
 }
 
 export function loadRmConfig(path = rmConfigPath()): RmConfig {
-    if (!existsSync(path)) {
-        return defaultRmConfig();
+    let contents: string;
+    try {
+        contents = readFileSync(path, "utf8");
+    } catch (error) {
+        if ((error as NodeJS.ErrnoException).code === "ENOENT") {
+            try {
+                lstatSync(path);
+            } catch (statError) {
+                if ((statError as NodeJS.ErrnoException).code === "ENOENT") {
+                    return defaultRmConfig();
+                }
+            }
+        }
+        throw new Error(`rm: cannot read safety config ${path}; fix it before deleting`, { cause: error });
     }
 
     try {
-        return parseRmConfig(SafeJSON.parse(readFileSync(path, "utf8")));
+        const raw: unknown = SafeJSON.parse(contents, { strict: true });
+        validateRmConfig(raw);
+        return parseRmConfig(raw);
     } catch (error) {
-        logger.warn({ path, error }, "rm: config is unreadable, using the defaults");
-        return defaultRmConfig();
+        throw new Error(`rm: invalid safety config ${path}; fix it before deleting`, { cause: error });
     }
 }
 
@@ -144,6 +157,82 @@ export function saveRmConfig(config: RmConfig, path = rmConfigPath()): void {
 
 function isRecord(value: unknown): value is Record<string, unknown> {
     return typeof value === "object" && value !== null && !Array.isArray(value);
+}
+
+function validateRmConfig(value: unknown): void {
+    if (!isRecord(value)) {
+        throw new Error("config must be an object");
+    }
+    const check = (object: Record<string, unknown>, key: string, valid: (v: unknown) => boolean): void => {
+        if (key in object && !valid(object[key])) {
+            throw new Error(`invalid ${key}`);
+        }
+    };
+    const text = (v: unknown): boolean => typeof v === "string";
+    const boolean = (v: unknown): boolean => typeof v === "boolean";
+    const texts = (v: unknown): boolean => Array.isArray(v) && v.every(text);
+    const nonnegative = (v: unknown): boolean => typeof v === "number" && Number.isFinite(v) && v >= 0;
+    const grace = (v: unknown): boolean => {
+        if (!isRecord(v)) {
+            return false;
+        }
+        check(v, "presetMinutes", nonnegative);
+        check(v, "otherMinutes", nonnegative);
+        return true;
+    };
+    const policy = (v: Record<string, unknown>): void => {
+        for (const key of ["asideUnsaved", "allowSessionScratch", "allowOwnFiles"]) {
+            check(v, key, boolean);
+        }
+        check(v, "askAction", isAskAction);
+        check(v, "grace", grace);
+    };
+    for (const key of ["protect", "disabledPresets", "enabledPresets", "disabledProfiles"]) {
+        check(value, key, texts);
+    }
+    policy(value);
+    check(value, "approval", isRmApproval);
+    check(value, "trashRoot", isTrashRootName);
+    check(value, "roots", (v) => Array.isArray(v) && v.every((item) => parseRoot(item) !== null));
+    check(
+        value,
+        "customPresets",
+        (v) =>
+            Array.isArray(v) &&
+            v.every((item) => {
+                if (!isRecord(item) || parsePreset(item) === null) {
+                    return false;
+                }
+                for (const key of ["description", "within"]) {
+                    check(item, key, text);
+                }
+                for (const key of ["names", "markers", "parentNames"]) {
+                    check(item, key, texts);
+                }
+                check(item, "optIn", boolean);
+                return true;
+            })
+    );
+    check(
+        value,
+        "profiles",
+        (v) =>
+            Array.isArray(v) &&
+            v.every((item) => {
+                if (!isRecord(item) || parseProfile(item) === null || !isRecord(item.match)) {
+                    return false;
+                }
+                for (const key of ["agent", "session", "project", "cwd"]) {
+                    check(item.match, key, text);
+                }
+                for (const key of ["disabledPresets", "roots", "protect"]) {
+                    check(item, key, texts);
+                }
+                check(item, "note", text);
+                policy(item);
+                return true;
+            })
+    );
 }
 
 function strings(value: unknown): string[] {

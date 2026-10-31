@@ -56,6 +56,11 @@ describe("rm-use-tools-rm", () => {
         expect(only("cd /tmp/x && rm -f out.log", "rm-use-tools-rm")?.suggestion).toBe("cd /tmp/x && tools rm out.log");
     });
 
+    it("replaces only the matched command and preserves dollar sequences", () => {
+        expect(only("echo rm -f x; rm -f x", "rm-use-tools-rm")?.suggestion).toBe("echo rm -f x; tools rm x");
+        expect(only("rm -f /tmp/x.$$", "rm-use-tools-rm")?.suggestion).toBe("tools rm /tmp/x.$$");
+    });
+
     it.each(["/bin/rm -r build", "command rm -rf build", "find . -name '*.orig' | xargs rm", "sudo rm -rf /var/x"])(
         "blocks %j",
         (command) => {
