@@ -12,9 +12,7 @@
  * - Codex:  `session_index.jsonl` -> `thread_name`, in every home `CODEX_HOME` names (else `~/.codex`).
  */
 
-import { readdirSync, statSync } from "node:fs";
 import { harnessLocate } from "@genesiscz/utils/ai/providers/harness-index";
-import { logger } from "@genesiscz/utils/logger";
 import { nativeSessionRoots } from "@genesiscz/utils/providers/session-paths";
 import type { TurnProvider } from "./turn-state";
 
@@ -38,24 +36,6 @@ export interface FindByTitleOptions {
     /** Stop reading Claude transcripts after this long. Default 8 s. */
     budgetMs?: number;
     now?: number;
-}
-
-export function listDir(path: string): string[] {
-    try {
-        return readdirSync(path);
-    } catch (err) {
-        logger.debug({ err, path }, "[session-title] could not list a directory");
-        return [];
-    }
-}
-
-export function mtimeOf(path: string): number {
-    try {
-        return statSync(path).mtimeMs;
-    } catch (err) {
-        logger.debug({ err, path }, "[session-title] could not stat a transcript");
-        return 0;
-    }
 }
 
 /**

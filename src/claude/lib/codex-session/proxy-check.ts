@@ -1,6 +1,7 @@
 import { toolCommand } from "@genesiscz/utils/cli/tool-command";
 import { SafeJSON } from "@genesiscz/utils/json";
 import { logger } from "@genesiscz/utils/logger";
+import { isObject } from "@genesiscz/utils/object";
 
 /**
  * Why the proxy would refuse this session's key, or undefined when it takes it. `/health` answers without a key, so a
@@ -66,18 +67,10 @@ export async function sessionKeyProblem(input: {
 function errorMessage(body: string): string | undefined {
     try {
         const parsed: unknown = SafeJSON.parse(body, { strict: true });
+        const error = isObject(parsed) ? parsed.error : undefined;
 
-        if (typeof parsed === "object" && parsed !== null && "error" in parsed) {
-            const error = parsed.error;
-
-            if (
-                typeof error === "object" &&
-                error !== null &&
-                "message" in error &&
-                typeof error.message === "string"
-            ) {
-                return error.message;
-            }
+        if (isObject(error) && typeof error.message === "string") {
+            return error.message;
         }
     } catch (error) {
         logger.debug({ error }, "[codex] the proxy's refusal is not JSON");

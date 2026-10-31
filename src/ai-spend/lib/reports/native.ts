@@ -2,22 +2,15 @@ import { type Dirent, existsSync, readdirSync, statSync } from "node:fs";
 import { basename, join, sep } from "node:path";
 import type { AccountEntry } from "@genesiscz/utils/ai/config/schema";
 import type { DiscoveredHome } from "@genesiscz/utils/ai/providers/account-features";
+import { isAccountProviderAlias } from "@genesiscz/utils/ai/providers/alias-list";
 import { logger } from "@genesiscz/utils/logger";
-
 import { resolveDriverRoots, rootForFile } from "../account-roots";
 import { spendDriver } from "../drivers";
 import { claudeDriver } from "../drivers/claude";
 import { codexDriver } from "../drivers/codex";
 import { grokDriver } from "../drivers/grok";
 import { num } from "../drivers/parse-helpers";
-import {
-    AGENT_IDS,
-    type AgentId,
-    type DriverRoot,
-    type DriverUsageEvent,
-    type MonitorDriver,
-    type SpendLayout,
-} from "../drivers/types";
+import type { AgentId, DriverRoot, DriverUsageEvent, MonitorDriver, SpendLayout } from "../drivers/types";
 import { findRecentTranscripts } from "../monitor";
 import { prof } from "../prof";
 import { asRecord, asString, parseJsonValue } from "./jsonl";
@@ -561,7 +554,7 @@ function nativeRead(source: NativeSourceId): NativeRead {
 
 /** Whether ai-spend reads this source from a coding agent's own transcripts (through a `MonitorDriver`). */
 export function isNativeSource(source: SourceId): source is NativeSourceId {
-    return AGENT_IDS.some((id) => id === source);
+    return isAccountProviderAlias(source);
 }
 
 /**

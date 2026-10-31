@@ -2,6 +2,7 @@ import { readdirSync, statSync } from "node:fs";
 import { basename, dirname, join } from "node:path";
 import type { FolderReads, RankedHit, ResolvedTranscript } from "@genesiscz/utils/ai/transcripts/resolve";
 import { SafeJSON } from "@genesiscz/utils/json";
+import { logger } from "@genesiscz/utils/logger";
 import { isObject } from "@genesiscz/utils/object";
 import type { TranscriptProvider } from "./types";
 
@@ -20,7 +21,8 @@ export function idMatches(query: string, candidate: string): boolean {
 export function mtimeOf(path: string): number {
     try {
         return statSync(path).mtimeMs;
-    } catch {
+    } catch (err) {
+        logger.debug({ err, path }, "[transcripts] could not stat a transcript");
         return 0;
     }
 }
@@ -28,7 +30,8 @@ export function mtimeOf(path: string): number {
 export function listDir(path: string): string[] {
     try {
         return readdirSync(path);
-    } catch {
+    } catch (err) {
+        logger.debug({ err, path }, "[transcripts] could not list a directory");
         return [];
     }
 }
