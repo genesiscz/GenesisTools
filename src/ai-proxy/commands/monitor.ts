@@ -9,6 +9,7 @@ import { type CompactionEvent, compactionEventsPath } from "@app/ai-proxy/lib/se
 import { getAiProxyStorage } from "@app/ai-proxy/lib/storage";
 import type { PrefixDiff } from "@app/ai-proxy/lib/usage/prefix-diff";
 import type { UsageRequestRecord } from "@app/ai-proxy/lib/usage/types";
+import { hitPercent, splitPromptTokens } from "@genesiscz/utils/ai/usage/cache-stats";
 import { FileTailer } from "@genesiscz/utils/fs/file-tailer";
 import { SafeJSON } from "@genesiscz/utils/json";
 import { out } from "@genesiscz/utils/logger";
@@ -93,15 +94,17 @@ function seconds(ms: number | undefined): string {
 
 export function formatRequest(record: UsageRequestRecord): string {
     const usage = record.usage ?? {};
-    const cached = usage.cache_read_input_tokens ?? usage.cached_prompt_tokens ?? 0;
-    const input = (usage.prompt_tokens ?? 0) + (usage.cache_read_input_tokens ?? 0);
-    const hit = input > 0 ? `${Math.round((cached / input) * 100)}%` : "-";
+    // Both conventions: Anthropic's cache read and write sit beside prompt_tokens, OpenAI's cached part is inside it.
+    const split = splitPromptTokens(usage);
+    const input = split.uncached + split.cacheRead + split.cacheWrite;
+    const percent = hitPercent(split);
+    const hit = percent === undefined ? "-" : `${Math.round(percent)}%`;
     const status = record.status >= 400 || record.error ? pc.red(String(record.status)) : String(record.status);
     const flags = [
         record.compaction ? pc.magenta(record.path.includes("background") ? "BG-COMPACT" : "COMPACT") : "",
         record.failure ? pc.red(`failure=${record.failure}`) : "",
         record.rateLimited ? pc.yellow("rate-limited") : "",
-        input > 0 && cached / input < 0.5 ? missCause(record.prefix) : "",
+        percent !== undefined && percent < 50 ? missCause(record.prefix) : "",
     ]
         .filter(Boolean)
         .join(" ");
@@ -167,14 +170,20 @@ export function formatEvent(event: CompactionEvent): string {
         .join("  ");
 }
 
-function parseLines<T>(path: string, since: number): T[] {
+/**
+ * The rows since `since`, and the byte offset after the last complete line: the live tail starts there, so a row
+ * appended while the backlog prints, or a line the proxy was still writing, is read by the tail instead of lost.
+ */
+export function readBacklog<T>(path: string, since: number): { rows: T[]; end: number } {
     if (!existsSync(path)) {
-        return [];
+        return { rows: [], end: 0 };
     }
 
+    const bytes = readFileSync(path);
+    const end = bytes.lastIndexOf(0x0a) + 1;
     const rows: T[] = [];
 
-    for (const line of readFileSync(path, "utf8").split("\n")) {
+    for (const line of bytes.subarray(0, end).toString("utf8").split("\n")) {
         if (!line.trim()) {
             continue;
         }
@@ -186,11 +195,11 @@ function parseLines<T>(path: string, since: number): T[] {
                 rows.push(row);
             }
         } catch {
-            // A torn last line while the proxy writes: the tailer picks it up whole.
+            // A malformed row in the ledger: skip it, the rest still prints.
         }
     }
 
-    return rows;
+    return { rows, end };
 }
 
 export function runMonitorCommand(options: MonitorOptions): void {
@@ -215,14 +224,18 @@ export function runMonitorCommand(options: MonitorOptions): void {
         }
     };
 
+    let requestsFrom: number | undefined;
+    let eventsFrom: number | undefined;
+
     if (options.since !== undefined) {
         const since = Date.now() - options.since * 60_000;
+        const requests = readBacklog<UsageRequestRecord>(requestsFile(), since);
+        const events = readBacklog<CompactionEvent>(compactionEventsPath(), since);
+        requestsFrom = requests.end;
+        eventsFrom = events.end;
         const backlog = [
-            ...parseLines<UsageRequestRecord>(requestsFile(), since).map((row) => ({ type: "request" as const, row })),
-            ...parseLines<CompactionEvent>(compactionEventsPath(), since).map((row) => ({
-                type: "compaction" as const,
-                row,
-            })),
+            ...requests.rows.map((row) => ({ type: "request" as const, row })),
+            ...events.rows.map((row) => ({ type: "compaction" as const, row })),
         ].sort((a, b) => Date.parse(a.row.ts) - Date.parse(b.row.ts));
 
         for (const entry of backlog) {
@@ -242,6 +255,15 @@ export function runMonitorCommand(options: MonitorOptions): void {
         out.println(pc.dim("Following ai-proxy requests and compaction events (Ctrl-C to stop)"));
     }
 
-    new FileTailer<UsageRequestRecord>(requestsFile(), { onLine: onRequest }).start();
-    new FileTailer<CompactionEvent>(compactionEventsPath(), { onLine: onEvent }).start();
+    // A monitor only watches: a missing ledger is waited for, never created.
+    new FileTailer<UsageRequestRecord>(
+        requestsFile(),
+        { onLine: onRequest },
+        { from: requestsFrom, create: false }
+    ).start();
+    new FileTailer<CompactionEvent>(
+        compactionEventsPath(),
+        { onLine: onEvent },
+        { from: eventsFrom, create: false }
+    ).start();
 }

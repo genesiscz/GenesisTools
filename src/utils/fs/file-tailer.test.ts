@@ -1,5 +1,5 @@
 import { describe, expect, it } from "bun:test";
-import { appendFileSync, mkdtempSync, writeFileSync } from "node:fs";
+import { appendFileSync, existsSync, mkdtempSync, writeFileSync } from "node:fs";
 import { tmpdir } from "node:os";
 import { join } from "node:path";
 import { SafeJSON } from "@genesiscz/utils/json";
@@ -28,5 +28,24 @@ describe("FileTailer<T>", () => {
         await Bun.sleep(500);
         t.stop();
         expect(seen).toEqual(["fresh"]); // reset must emit ONLY post-truncation data, no stale "a" replay
+    });
+
+    it("starts at a given offset and never creates a missing file when create is false", () => {
+        const dir = mkdtempSync(join(tmpdir(), "ft-"));
+        const f = join(dir, "log.jsonl");
+        const first = `${SafeJSON.stringify({ id: "backlog" })}\n`;
+        writeFileSync(f, `${first}${SafeJSON.stringify({ id: "after" })}\n`);
+        const seen: string[] = [];
+        const t = new FileTailer<{ id: string }>(f, { onLine: (e) => seen.push(e.id) }, { from: first.length });
+        t.start();
+        t.flush();
+        t.stop();
+        expect(seen).toEqual(["after"]);
+
+        const missing = join(dir, "later", "log.jsonl");
+        const watcher = new FileTailer(missing, { onLine: () => {} }, { create: false });
+        watcher.start();
+        watcher.stop();
+        expect(existsSync(missing)).toBe(false);
     });
 });
