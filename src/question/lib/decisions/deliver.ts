@@ -45,6 +45,7 @@ import { batchPsInfo } from "@genesiscz/utils/process/ps";
 import { isProcessAlive } from "@genesiscz/utils/process-alive";
 import { isTestProcess } from "@genesiscz/utils/test-process";
 import { workerSourceHome } from "@genesiscz/utils/worker/delivery";
+import type { WorkerMetaStore } from "@genesiscz/utils/worker/meta-store";
 import { DeliveryUnknownError, NotDeliveredError } from "./delivery-errors";
 import { deliverySentence } from "./delivery-text";
 
@@ -162,52 +163,46 @@ function busy(active?: { ownerPid: number; childPid?: number }): boolean {
     return Boolean(active && (isProcessAlive(active.ownerPid) || (active.childPid && isProcessAlive(active.childPid))));
 }
 
-function claudeNativeWorkers(): NativeDeliveryWorker[] {
-    const provider = "claude" as const;
-    const store = new ClaudeWorkerStore();
-    return store.listNames().flatMap((name) => {
-        const meta = store.readMeta(name);
-        if (!meta) {
-            return [];
-        }
-        const running = busy(meta.activeTurn);
-        return [
-            {
-                provider,
-                name,
-                sessionId: meta.sessionId,
-                sourceHome: claudeWorkerSourceHome(meta),
-                turns: meta.turns,
-                ready: !running && meta.turns > 0,
-                reason: running
-                    ? "The Claude worker is busy; the answer remains queued for a later turn."
-                    : "The original Claude worker session has not started.",
-            },
-        ];
-    });
+interface OwnedWorkerMeta {
+    name: string;
+    sessionId: string;
+    turns: number;
+    activeTurn?: { ownerPid: number; childPid?: number };
 }
 
-function grokNativeWorkers(): NativeDeliveryWorker[] {
-    const provider = "grok" as const;
-    const store = new GrokSessionStore();
+/** A harness's owned headless workers; `started` says the worker's session exists to resume. */
+function ownedWorkers<Meta extends OwnedWorkerMeta>({
+    provider,
+    store,
+    title,
+    sourceHome,
+    started,
+}: {
+    provider: AccountProviderAlias;
+    store: WorkerMetaStore<Meta>;
+    /** The harness as a sentence names it: `Claude`, `Grok`. */
+    title: string;
+    sourceHome: (meta: Meta) => string;
+    started: (meta: Meta) => boolean;
+}): NativeDeliveryWorker[] {
     return store.listNames().flatMap((name) => {
         const meta = store.readMeta(name);
         if (!meta) {
             return [];
         }
+
         const running = busy(meta.activeTurn);
-        const started = meta.sessionStarted ?? (meta.turns > 0 && meta.lastTurn?.ended === true);
         return [
             {
                 provider,
                 name,
                 sessionId: meta.sessionId,
-                sourceHome: meta.workerHome,
+                sourceHome: sourceHome(meta),
                 turns: meta.turns,
-                ready: !running && started,
+                ready: !running && started(meta),
                 reason: running
-                    ? "The Grok worker is busy; the answer remains queued for a later turn."
-                    : "The original Grok worker session has not started.",
+                    ? `The ${title} worker is busy; the answer remains queued for a later turn.`
+                    : `The original ${title} worker session has not started.`,
             },
         ];
     });
@@ -447,11 +442,31 @@ const ANSWER_ROUTES: { readonly [Id in AccountProviderAlias]: AnswerRoute } = {
     },
     claude: {
         structured: async (query, deps) => ownedWorkerRoute("claude", query, deps) ?? claudePeerRoute(query, deps),
-        workers: { list: claudeNativeWorkers, steer: ["claude", "worker", "steer"] },
+        workers: {
+            list: () =>
+                ownedWorkers({
+                    provider: "claude",
+                    store: new ClaudeWorkerStore(),
+                    title: "Claude",
+                    sourceHome: claudeWorkerSourceHome,
+                    started: (meta) => meta.turns > 0,
+                }),
+            steer: ["claude", "worker", "steer"],
+        },
     },
     grok: {
         structured: async (query, deps) => ownedWorkerRoute("grok", query, deps) ?? grokLeaderRoute(query, deps),
-        workers: { list: grokNativeWorkers, steer: ["grok", "steer"] },
+        workers: {
+            list: () =>
+                ownedWorkers({
+                    provider: "grok",
+                    store: new GrokSessionStore(),
+                    title: "Grok",
+                    sourceHome: (meta) => meta.workerHome,
+                    started: (meta) => meta.sessionStarted ?? (meta.turns > 0 && meta.lastTurn?.ended === true),
+                }),
+            steer: ["grok", "steer"],
+        },
     },
 };
 
