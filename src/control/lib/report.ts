@@ -262,7 +262,17 @@ export async function reportPair(pair: ReportPair, index: number, options: Repor
 }
 
 function link(target: string, noteDir: string): string {
-    return relative(noteDir, target).split("\\").join("/");
+    return relative(noteDir, target)
+        .split("\\")
+        .join("/")
+        .split("/")
+        .map((segment) =>
+            encodeURIComponent(segment).replace(
+                /[!'()*]/g,
+                (char) => `%${char.charCodeAt(0).toString(16).toUpperCase()}`
+            )
+        )
+        .join("/");
 }
 
 /** The markdown note: a legend, then per pair its fix, sentence, findings and the annotated before and after. */

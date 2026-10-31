@@ -122,7 +122,7 @@ export function controlToolEntries(): Record<string, ToolEntry> {
     return {
         control_workflow_run: {
             description:
-                "PREFERRED for acting on a macOS app. Run a versioned see/act workflow in one pinned app window: every step is bound against a fresh AX observation the runner takes itself, dispatched with snapshot validation (the same refusals as `control act`), and verified by an exact postcondition before the next step. Stops at the first unverified step unless continue_on_fail; never repeats an uncertain mutation. Returns {status, failedSteps, skippedSteps, steps:[{id, status, reason, ms}], metrics}. Never takes focus for press/set/scroll; keyboard actions refuse while another window is frontmost. Same core as `" +
+                "PREFERRED for acting on a macOS app. Run a versioned see/act workflow in one pinned app window: every step is bound against a fresh AX observation the runner takes itself, dispatched with snapshot validation (the same refusals as `control act`), and verified by an exact postcondition before the next step. Stops at the first unverified step unless continue_on_fail; never repeats an uncertain mutation. Returns {status, failedSteps, skippedSteps, steps:[{id, status, reason, ms}], metrics}. Automatic preparation can raise the target window for keyboard, click, and web actions. When enabled, the foreground guard refuses preparation while the user is active. Same core as `" +
                 toolCommand("control workflow run") +
                 "`.",
             inputSchema: z.toJSONSchema(workflowSchema, { io: "input" }),

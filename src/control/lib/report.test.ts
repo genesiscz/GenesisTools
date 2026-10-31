@@ -130,6 +130,28 @@ describe("control report", () => {
         expect(refused.message).toContain("400");
     });
 
+    it("encodes image paths with spaces and parentheses in Markdown", () => {
+        const markdown = renderReportMarkdown({
+            title: "Comparison",
+            notePath: "/tmp/report/note.md",
+            openCommand: "open",
+            writtenAt: "2026-10-30 21:00",
+            results: [
+                {
+                    screen: "fixture",
+                    index: 1,
+                    status: "ok",
+                    regions: [],
+                    before: "a",
+                    after: "b",
+                    beforeOut: "/tmp/Before After/(pair)/one.png",
+                    afterOut: "/tmp/Before After/(pair)/two.png",
+                },
+            ],
+        });
+        expect(markdown).toContain("![before](../Before%20After/%28pair%29/one.png)");
+    });
+
     it("classifies a region by overlap with a tree change", () => {
         const regions = [
             { x: 140, y: 50, w: 40, h: 50, pixels: 800 },

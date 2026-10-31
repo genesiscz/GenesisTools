@@ -421,13 +421,14 @@ export function diffViewTrees(
             continue;
         }
 
-        const reason = was.inTemplate
-            ? "row position"
-            : textWidthOnly(was, now, tolerance)
-              ? "text width"
-              : !resized && was.parentKey && textResizedParents.has(was.parentKey)
-                ? "follows text"
-                : undefined;
+        const reason =
+            was.inTemplate && !resized
+                ? "row position"
+                : textWidthOnly(was, now, tolerance)
+                  ? "text width"
+                  : !resized && was.parentKey && textResizedParents.has(was.parentKey)
+                    ? "follows text"
+                    : undefined;
         if (reason) {
             dataOnly.push({ key, reason, before: was.node.frame, after: now.node.frame });
             continue;

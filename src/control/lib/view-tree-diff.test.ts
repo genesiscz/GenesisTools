@@ -91,6 +91,14 @@ describe("diffViewTrees", () => {
         expect(diffViewTrees(before, after).changes).toMatchObject([{ kind: "resized", identifier: "hub.refresh" }]);
     });
 
+    it("reports a resized control in a repeated row", () => {
+        const row = "AXWindow/AXGroup[0]/AXTable[0]/AXRow[0]";
+        const button = { path: `${row}/AXButton[0]`, role: "AXButton", frame: { x: 200, y: 130, w: 28, h: 28 } };
+        const before = tree([...hub({ title: 180, rows: 3 }).nodes, button]);
+        const after = tree([...hub({ title: 180, rows: 3 }).nodes, { ...button, frame: { ...button.frame, h: 40 } }]);
+        expect(diffViewTrees(before, after).changes).toMatchObject([{ kind: "resized", role: "AXButton" }]);
+    });
+
     it("reports added, removed and restyled controls, and a moved parent once", () => {
         const before = hub({ title: 180, rows: 3 });
         const after = tree([
