@@ -78,10 +78,13 @@ export function readRmLedger(path = rmLedgerPath()): RmLedgerEntry[] {
     return entries;
 }
 
+/** How far out of time order the ledger's lines may be: writers set `at` just before they append. */
+const LEDGER_ORDER_SLACK_MS = 10 * 60_000;
+
 /**
  * The newest `limit` entries that pass `filter`, oldest first. It reads the ledger from its end and stops at the
- * `limit`-th match or at the first entry older than `filter.since` (the ledger is appended in time order), so the
- * cost follows the answer, not the ledger's age.
+ * `limit`-th match or at the first entry ten minutes older than `filter.since` (the ledger is appended in time order,
+ * within that slack), so the cost follows the answer, not the ledger's age.
  */
 export function readRmLedgerNewest(filter: RmLedgerFilter, limit: number, path = rmLedgerPath()): RmLedgerEntry[] {
     if (!existsSync(path) || limit <= 0) {
@@ -98,8 +101,16 @@ export function readRmLedgerNewest(filter: RmLedgerFilter, limit: number, path =
             continue;
         }
 
-        if (since !== undefined && Date.parse(entry.at) < since) {
-            break;
+        const at = Date.parse(entry.at);
+
+        // Older than the cutoff: skipped. The read stops only well past it, since two writers (or a clock step) can
+        // append an older time after a newer one.
+        if (since !== undefined && at < since) {
+            if (at < since - LEDGER_ORDER_SLACK_MS) {
+                break;
+            }
+
+            continue;
         }
 
         if (filterRmLedger([entry], filter).length === 0) {

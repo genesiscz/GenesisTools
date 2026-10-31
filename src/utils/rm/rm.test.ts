@@ -993,6 +993,14 @@ describe("audit log", () => {
             "/x/5",
         ]);
         expect(readRmLedgerNewest({}, 50, path)).toEqual(readRmLedger(path));
+
+        // Out of order within the slack (two writers): an older line after a newer one does not hide the newer one.
+        const skewed = join(dir("ledger-skewed"), "ledger.jsonl");
+        appendRmLedger({ at: new Date(now - 60_000).toISOString(), action: "move", path: "/y/new" }, skewed);
+        appendRmLedger({ at: new Date(now - 180_000).toISOString(), action: "move", path: "/y/old" }, skewed);
+        expect(readRmLedgerNewest({ since: new Date(now - 120_000) }, 50, skewed).map((e) => e.path)).toEqual([
+            "/y/new",
+        ]);
     });
 });
 
