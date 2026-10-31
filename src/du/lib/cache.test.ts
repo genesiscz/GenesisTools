@@ -206,7 +206,9 @@ describe("du size command", () => {
             // Every child of /System/Volumes is a mount point (Data, VM, Preboot, ...): the walk enters none of them,
             // also with a trailing slash, which once built `/System/Volumes//Data` and crossed into Data.
             for (const root of ["/System/Volumes", "/System/Volumes/"]) {
-                const reply = parseDuSize(execFileSync(ensureBinary(), ["--dusize", root], { encoding: "utf8" }));
+                const reply = parseDuSize(
+                    execFileSync(ensureBinary(), ["--dusize", root], { encoding: "utf8", env: process.env })
+                );
 
                 expect(reply.skippedMounts ?? 0).toBeGreaterThan(0);
                 expect(reply.files).toBe(0);
