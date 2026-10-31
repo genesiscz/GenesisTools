@@ -263,12 +263,7 @@ final class ClickyAudio {
                 for variant in 0..<3 {
                     let samples = ClickySynthesis.samples(profile: profile, release: release, variant: variant,
                                                           sampleRate: format.sampleRate)
-                    let buffer = AVAudioPCMBuffer(pcmFormat: format, frameCapacity: AVAudioFrameCount(samples.count))!
-                    buffer.frameLength = buffer.frameCapacity
-                    samples.withUnsafeBufferPointer { pointer in
-                        buffer.floatChannelData![0].update(from: pointer.baseAddress!, count: samples.count)
-                    }
-                    made[key(profile, release, variant)] = buffer
+                    made[key(profile, release, variant)] = pcmBuffer(samples, format: format)!
                 }
             }
         }
@@ -293,14 +288,20 @@ final class ClickyAudio {
         return decoded
     }
 
-    nonisolated private static func convert(_ frames: [Float], to format: AVAudioFormat) -> AVAudioPCMBuffer? {
-        let source = Self.format(rate: ClickySynthesis.sampleRate)
-        guard let input = AVAudioPCMBuffer(pcmFormat: source, frameCapacity: AVAudioFrameCount(max(1, frames.count))),
-              let channel = input.floatChannelData?[0] else { return nil }
-        input.frameLength = AVAudioFrameCount(frames.count)
+    /// `frames` as a mono buffer in `format`, which must already run at their rate.
+    nonisolated private static func pcmBuffer(_ frames: [Float], format: AVAudioFormat) -> AVAudioPCMBuffer? {
+        guard let buffer = AVAudioPCMBuffer(pcmFormat: format, frameCapacity: AVAudioFrameCount(max(1, frames.count))),
+              let channel = buffer.floatChannelData?[0] else { return nil }
+        buffer.frameLength = AVAudioFrameCount(frames.count)
         frames.withUnsafeBufferPointer { pointer in
             if let base = pointer.baseAddress { channel.update(from: base, count: pointer.count) }
         }
+        return buffer
+    }
+
+    nonisolated private static func convert(_ frames: [Float], to format: AVAudioFormat) -> AVAudioPCMBuffer? {
+        let source = Self.format(rate: ClickySynthesis.sampleRate)
+        guard let input = pcmBuffer(frames, format: source) else { return nil }
         guard format.sampleRate != source.sampleRate else { return input }
         guard let converter = AVAudioConverter(from: source, to: format) else { return nil }
         converter.sampleRateConverterQuality = AVAudioQuality.max.rawValue
@@ -344,12 +345,7 @@ final class ClickyAudio {
                     case .failure(let error):
                         completion(error)
                     case .success(let prepared):
-                        self.format = next
-                        self.buffers = builtIn
-                        for index in self.banks.indices {
-                            self.banks[index].buffers = prepared[index]
-                        }
-                        PerfLog.mark(String(format: "clicky.audio.rate %.0f Hz", next.sampleRate))
+                        self.applyRate(next, builtIn: builtIn, banks: prepared)
                         completion(nil)
                     }
                 }
@@ -358,14 +354,20 @@ final class ClickyAudio {
     }
 
     /// Offline rendering starts synchronously and has no hardware to wake.
+    /// A bank that cannot be converted keeps its buffers.
     private func adopt(_ next: AVAudioFormat, synthesized: [String: AVAudioPCMBuffer]?) {
         guard next.sampleRate != format.sampleRate else { return }
+        applyRate(next, builtIn: synthesized ?? Self.synthesize(next),
+                  banks: banks.map { try? Self.buffers($0.samples, format: next) })
+    }
+
+    /// Switches to `next`: the built-in sounds and each bank's converted buffers (nil keeps that bank's own).
+    private func applyRate(_ next: AVAudioFormat, builtIn: [String: AVAudioPCMBuffer],
+                           banks prepared: [[String: AVAudioPCMBuffer]?]) {
         format = next
-        buffers = synthesized ?? Self.synthesize(next)
+        buffers = builtIn
         for index in banks.indices {
-            if let converted = try? Self.buffers(banks[index].samples, format: next) {
-                banks[index].buffers = converted
-            }
+            if let converted = prepared[index] { banks[index].buffers = converted }
         }
         PerfLog.mark(String(format: "clicky.audio.rate %.0f Hz", next.sampleRate))
     }
