@@ -138,6 +138,50 @@ describe("field manifest", () => {
         }
     });
 
+    test("a check narrows to the saved types only for a file generated with --types", async () => {
+        const dir = mkdtempSync(join(tmpdir(), "ado-manifest-check-"));
+        const config = join(dir, "config.json");
+        const previousConfig = getExplicitConfigPath();
+        const previousExitCode = process.exitCode;
+        const kind = manifestKind("fields");
+        if (!kind) {
+            throw new Error("fields manifest kind missing");
+        }
+        writeFileSync(
+            config,
+            SafeJSON.stringify({ org: "https://example.test", project: "Sample", projectId: "p", apiResource: "r" })
+        );
+        setConfigFlag(config);
+        const asked: Array<string[] | undefined> = [];
+        const fetch = spyOn(kind, "fetch").mockImplementation(async ({ types }) => {
+            asked.push(types);
+            return { types: {} };
+        });
+        const processLookup = spyOn(Api.prototype, "getProjectProcess").mockImplementation(async () => null);
+        try {
+            const full = join(dir, "full.json");
+            const narrowed = join(dir, "narrowed.json");
+            const manifest = fixture();
+            writeFileSync(full, renderManifestJson(manifest));
+            writeFileSync(
+                narrowed,
+                renderManifestJson({
+                    ...manifest,
+                    meta: { ...manifest.meta, regenerate: "tools azure-devops maintenance fields --types Bug,Task" },
+                })
+            );
+            const program = new Command().exitOverride();
+            registerMaintenanceCommand(program);
+            await program.parseAsync(["maintenance", "check", full, narrowed], { from: "user" });
+            expect(asked).toEqual([undefined, ["Bug", "Task"]]);
+        } finally {
+            fetch.mockRestore();
+            processLookup.mockRestore();
+            setConfigFlag(previousConfig ?? undefined);
+            process.exitCode = previousExitCode;
+        }
+    });
+
     test("the check reports renamed labels, changed values and states, added fields, and ignores the meta", () => {
         const saved = fixture();
         const live = fixture();

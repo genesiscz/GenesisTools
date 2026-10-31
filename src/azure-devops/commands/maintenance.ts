@@ -123,10 +123,14 @@ async function fetchManifest(options: {
     return { meta: { kind: kind.kind, ...(await context.meta()), regenerate: options.regenerate }, ...payload };
 }
 
+/**
+ * The types a check narrows the live fetch to: the saved ones only when the file was generated with `--types`, which
+ * its recorded regenerate command shows. A full export means every enabled type, so a type ADO added is drift.
+ */
 function typesOf(manifest: Manifest): string[] | undefined {
     const types = manifest.types;
 
-    if (typeof types !== "object" || types === null) {
+    if (!/(?:^|\s)--types(?:\s|=)/.test(manifest.meta.regenerate) || typeof types !== "object" || types === null) {
         return undefined;
     }
 
