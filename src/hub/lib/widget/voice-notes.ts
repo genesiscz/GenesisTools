@@ -9,8 +9,7 @@ import { type RecordingEvent, recordPcmClip } from "@genesiscz/utils/ai/voice/re
 import { createVoiceSession, type VoiceEvent } from "@genesiscz/utils/ai/voice/session";
 import { SafeJSON } from "@genesiscz/utils/json";
 import { logger } from "@genesiscz/utils/logger";
-import { atomicWriteFileSync } from "@genesiscz/utils/storage/atomic-file";
-import { withFileLock } from "@genesiscz/utils/storage/file-lock";
+import { type JsonDocument, jsonDocument } from "@genesiscz/utils/storage/locked-document";
 import { z } from "zod";
 import { widgetRoot } from "./storage";
 
@@ -63,24 +62,57 @@ export function voiceNotesDirectory(root?: string): string {
     return join(widgetRoot(root), "voice-notes");
 }
 
-async function readIndex(root?: string): Promise<VoiceNoteIndex> {
-    const file = Bun.file(join(voiceNotesDirectory(root), "notes.json"));
-    if (!(await file.exists())) {
-        return { revision: 0, notes: [] };
-    }
-    if (file.size > MAX_METADATA_BYTES) {
-        throw new Error("Voice note metadata exceeds the supported local size");
-    }
-    return indexSchema.parse(SafeJSON.parse(await file.text()));
+/** `voice-notes/notes.json` (mode 600, folder 700) under `notes.lock` (10 s), capped at 16 MiB both ways. */
+function indexDocument(root?: string): JsonDocument<VoiceNoteIndex> {
+    const directory = voiceNotesDirectory(root);
+    const tooLarge = "Voice note metadata exceeds the supported local size";
+    return jsonDocument<VoiceNoteIndex>({
+        path: join(directory, "notes.json"),
+        lockPath: join(directory, "notes.lock"),
+        lockTimeoutMs: 10_000,
+        empty: () => ({ revision: 0, notes: [] }),
+        decode: (raw) => indexSchema.parse(raw),
+        maxBytes: MAX_METADATA_BYTES,
+        encode: (index) => {
+            const serialized = SafeJSON.stringify(index);
+
+            if (Buffer.byteLength(serialized, "utf8") > MAX_METADATA_BYTES) {
+                throw new Error(tooLarge);
+            }
+
+            return serialized;
+        },
+        onUnreadable: "refuse",
+        beforeWrite: (index) => {
+            index.revision++;
+            indexSchema.parse(index);
+        },
+        fileMode: 0o600,
+        dirMode: 0o700,
+        unreadableError: (problem) =>
+            problem.kind === "too-large"
+                ? new Error(tooLarge)
+                : problem.cause instanceof Error
+                  ? problem.cause
+                  : problem,
+    });
 }
+
+async function readIndex(root?: string): Promise<VoiceNoteIndex> {
+    return indexDocument(root).read();
+}
+
 export async function listVoiceNotes(root?: string) {
-    const index = await readIndex(root);
+    const document = indexDocument(root);
+    const index = document.read();
     return {
         ...index,
         notes: index.notes.toSorted((a, b) => b.createdAt - a.createdAt),
-        statePath: join(voiceNotesDirectory(root), "notes.json"),
+        statePath: document.path,
     };
 }
+
+/** `signal` is checked before the lock, inside it, and right before the rename, the last moment a cancel can stop it. */
 async function mutate<T>({
     root,
     signal,
@@ -90,34 +122,7 @@ async function mutate<T>({
     signal?: AbortSignal;
     change: (index: VoiceNoteIndex) => T;
 }): Promise<T> {
-    signal?.throwIfAborted();
-    const directory = voiceNotesDirectory(root);
-    await mkdir(directory, { recursive: true, mode: 0o700 });
-    return withFileLock(
-        join(directory, "notes.lock"),
-        async () => {
-            signal?.throwIfAborted();
-            const index = await readIndex(root);
-            const before = SafeJSON.stringify(index);
-            const result = change(index);
-            if (SafeJSON.stringify(index) === before) {
-                return result;
-            }
-            index.revision++;
-            indexSchema.parse(index);
-            const serialized = SafeJSON.stringify(index);
-            if (Buffer.byteLength(serialized, "utf8") > MAX_METADATA_BYTES) {
-                throw new Error("Voice note metadata exceeds the supported local size");
-            }
-
-            // The write and the rename run with no await between them, so a cancel seen here is the last one
-            // that can still stop the save.
-            signal?.throwIfAborted();
-            atomicWriteFileSync(join(directory, "notes.json"), serialized, { mode: 0o600 });
-            return result;
-        },
-        10_000
-    );
+    return indexDocument(root).mutate(change, signal ? { signal } : undefined);
 }
 function noteAt(index: VoiceNoteIndex, id: string): VoiceNote {
     const note = index.notes.find((note) => note.id === id);

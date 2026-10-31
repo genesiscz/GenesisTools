@@ -251,7 +251,12 @@ async function sessionInboxAnswer(options: InboxListOptions & { session: string 
         trace,
         ...(options.transcript ? { transcript: { path: options.transcript, provider } } : {}),
     });
-    const { cursor, delta } = cursors.recordAnswer({ session, answer: inbox, trace, ...(since ? { since } : {}) });
+    const { cursor, delta } = await cursors.recordAnswer({
+        session,
+        answer: inbox,
+        trace,
+        ...(since ? { since } : {}),
+    });
 
     return delta ? { sessionId: session, cursor, full: false, ...delta } : { ...inbox, cursor, full: true };
 }

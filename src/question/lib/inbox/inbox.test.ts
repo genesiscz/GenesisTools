@@ -452,7 +452,7 @@ describe("loadSessionInbox", () => {
         const trace = new InboxTrace();
         const deps = { rows: () => [row], forms: () => [], entries: () => [], decisions: async () => [] };
         const held = await loadSessionInbox("s-lease", { ...deps, trace });
-        const { cursor } = recordAnswer({ session: "s-lease", answer: held, trace });
+        const { cursor } = await recordAnswer({ session: "s-lease", answer: held, trace });
         expect(held.staged).toBeUndefined();
         expect(cursorStillHolds("s-lease", cursor)).toBe(false);
 
@@ -473,7 +473,7 @@ describe("loadSessionInbox", () => {
             entries: () => [],
             decisions: async () => [],
         });
-        const recorded = (session: string) => {
+        const recorded = async (session: string) => {
             const trace = new InboxTrace();
             traceTranscript(trace, {
                 provider: "claude",
@@ -482,15 +482,15 @@ describe("loadSessionInbox", () => {
                 filePath: turn(2),
                 extraFiles: [turn(1)],
             });
-            return recordAnswer({ session, answer, trace }).cursor;
+            return (await recordAnswer({ session, answer, trace })).cursor;
         };
 
-        const beforeNewTurn = recorded("s-worker");
+        const beforeNewTurn = await recorded("s-worker");
         expect(cursorStillHolds("s-worker", beforeNewTurn)).toBe(true);
         writeFileSync(turn(3), "{}\n");
         expect(cursorStillHolds("s-worker", beforeNewTurn)).toBe(false);
 
-        const beforeEdit = recorded("s-worker-2");
+        const beforeEdit = await recorded("s-worker-2");
         writeFileSync(turn(1), "{}\n{}\n");
         expect(cursorStillHolds("s-worker-2", beforeEdit)).toBe(false);
     });

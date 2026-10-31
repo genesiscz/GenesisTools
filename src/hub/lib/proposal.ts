@@ -9,8 +9,8 @@ import { json2md, jsonToBlocks } from "@genesiscz/utils/json2md";
 import { logger } from "@genesiscz/utils/logger";
 import { genesisAppBundlePath } from "@genesiscz/utils/macos/genesis-app";
 import { genesisAppBuildHint } from "@genesiscz/utils/macos/xcode";
-import { Storage, withFileLock } from "@genesiscz/utils/storage";
-import { atomicWriteFileSync } from "@genesiscz/utils/storage/atomic-file";
+import { Storage } from "@genesiscz/utils/storage";
+import { type JsonDocument, jsonDocument, prettyJson } from "@genesiscz/utils/storage/locked-document";
 
 /**
  * A review proposal: what an agent concluded about a PR/MR, pushed into the GenesisTools.app review
@@ -349,18 +349,22 @@ function isStoredProposal(value: unknown): value is ReviewProposal {
 }
 
 /** The proposal a new push merges into; a file of another shape is refused, since overwriting it drops decisions. */
-function readStoredProposal(path: string): ReviewProposal | null {
-    if (!existsSync(path)) {
-        return null;
-    }
+function storedProposalDocument(path: string): JsonDocument<ReviewProposal | null> {
+    return jsonDocument<ReviewProposal | null>({
+        path,
+        empty: () => null,
+        decode: (stored) => {
+            if (!isStoredProposal(stored)) {
+                throw new ProposalError(`${path} is not a stored proposal; move it aside before pushing again`);
+            }
 
-    const stored: unknown = SafeJSON.parse(readFileSync(path, "utf8"));
-
-    if (!isStoredProposal(stored)) {
-        throw new ProposalError(`${path} is not a stored proposal; move it aside before pushing again`);
-    }
-
-    return stored;
+            return stored;
+        },
+        encode: prettyJson,
+        onUnreadable: "refuse",
+        writes: "always",
+        unreadableError: (problem) => (problem.cause instanceof Error ? problem.cause : problem),
+    });
 }
 
 /** What the hub's PR list shows about a stored proposal: where it is and what is still undecided. */
@@ -471,15 +475,19 @@ export async function saveProposal(
     const key = proposalKey(incoming);
     const path = join(dir, `${key}.json`);
 
-    return withFileLock(`${path}.lock`, async () => mergeAndWrite({ incoming, key, path }));
+    const { kept, drafts } = await storedProposalDocument(path).update((previous) => {
+        const merged = mergeProposal(previous, incoming);
+        return { write: merged.proposal, result: { kept: merged.kept, drafts: merged.proposal.drafts.length } };
+    });
+    logger.debug({ key, path, drafts, kept }, "review proposal saved");
+    return { key, path, kept };
 }
 
-function mergeAndWrite({ incoming, key, path }: { incoming: ReviewProposal; key: string; path: string }): {
-    key: string;
-    path: string;
-    kept: number;
-} {
-    const previous = readStoredProposal(path);
+/** The proposal a push stores: the agent's new drafts, plus every decision the window already made on the old ones. */
+function mergeProposal(
+    previous: ReviewProposal | null,
+    incoming: ReviewProposal
+): { proposal: ReviewProposal; kept: number } {
     let kept = 0;
 
     const drafts = incoming.drafts.map((draft) => {
@@ -516,9 +524,7 @@ function mergeAndWrite({ incoming, key, path }: { incoming: ReviewProposal; key:
         drafts,
         ...(threads ? { threads } : {}),
     };
-    atomicWriteFileSync(path, `${SafeJSON.stringify(merged, null, 2)}\n`);
-    logger.debug({ key, path, drafts: drafts.length, kept }, "review proposal saved");
-    return { key, path, kept };
+    return { proposal: merged, kept };
 }
 
 export function listProposals(base?: string): ReviewProposal[] {

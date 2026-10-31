@@ -83,6 +83,11 @@ export interface JsonDocumentSpec<T> {
     unreadableError?: (problem: DocumentUnreadableError) => Error;
 }
 
+/** The encoding most hand-editable stores use: two-space indented JSON with a final newline. */
+export function prettyJson(doc: unknown): string {
+    return `${SafeJSON.stringify(doc, null, 2)}\n`;
+}
+
 /** What an `update` callback asks for: write `write` and return `result`, or write nothing and return `keep`. */
 export type DocumentUpdate<T, R> = { write: T; result: R } | { keep: R };
 

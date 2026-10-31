@@ -1,8 +1,6 @@
-import { existsSync, readFileSync } from "node:fs";
 import { join } from "node:path";
-import { SafeJSON } from "@genesiscz/utils/json";
-import { withFileLock } from "@genesiscz/utils/storage";
-import { atomicWriteFileSync } from "@genesiscz/utils/storage/storage";
+import { isJsonObject } from "@genesiscz/utils/storage/atomic-file";
+import { type JsonDocument, jsonDocument } from "@genesiscz/utils/storage/locked-document";
 import type { SessionPaths } from "./types";
 
 const META_LOCK_TIMEOUT_MS = 10_000;
@@ -11,36 +9,26 @@ export interface SessionMeta {
     debug: boolean;
 }
 
-function metaPath(paths: SessionPaths): string {
-    return join(paths.sessionDir, "session-meta.json");
+/** `session-meta.json`: a file that does not parse throws; any other shape reads as the defaults. */
+function metaDocument(paths: SessionPaths): JsonDocument<SessionMeta> {
+    return jsonDocument<SessionMeta>({
+        path: join(paths.sessionDir, "session-meta.json"),
+        lockTimeoutMs: META_LOCK_TIMEOUT_MS,
+        empty: () => ({ debug: false }),
+        decode: (parsed) => ({ debug: isJsonObject(parsed) ? Boolean(parsed.debug) : false }),
+        onUnreadable: "refuse",
+        writes: "always",
+        unreadableError: (problem) => (problem.cause instanceof Error ? problem.cause : problem),
+    });
 }
 
 export function readSessionMeta(paths: SessionPaths): SessionMeta {
-    const path = metaPath(paths);
-
-    if (!existsSync(path)) {
-        return { debug: false };
-    }
-
-    const parsed = SafeJSON.parse(readFileSync(path, "utf8"));
-
-    if (typeof parsed !== "object" || parsed === null || Array.isArray(parsed)) {
-        return { debug: false };
-    }
-
-    return { debug: Boolean((parsed as Record<string, unknown>).debug) };
+    return metaDocument(paths).read();
 }
 
 export async function updateSessionMeta(paths: SessionPaths, patch: Partial<SessionMeta>): Promise<SessionMeta> {
-    const path = metaPath(paths);
-    return withFileLock(
-        `${path}.lock`,
-        async () => {
-            const current = readSessionMeta(paths);
-            const next: SessionMeta = { ...current, ...patch };
-            atomicWriteFileSync(path, SafeJSON.stringify(next, { strict: true }));
-            return next;
-        },
-        META_LOCK_TIMEOUT_MS
-    );
+    return metaDocument(paths).update((current) => {
+        const next: SessionMeta = { ...current, ...patch };
+        return { write: next, result: next };
+    });
 }

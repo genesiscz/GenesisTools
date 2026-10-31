@@ -1,9 +1,9 @@
 import { createHash } from "node:crypto";
-import { readdirSync, readFileSync, statSync } from "node:fs";
+import { readdirSync, statSync } from "node:fs";
 import { join } from "node:path";
 import { SafeJSON } from "@genesiscz/utils/json";
 import { logger } from "@genesiscz/utils/logger";
-import { atomicWriteFileSync } from "@genesiscz/utils/storage/atomic-file";
+import { type JsonDocument, jsonDocument } from "@genesiscz/utils/storage/locked-document";
 import { genesisToolsDir } from "@genesiscz/utils/storage/root";
 import { decisionFiles } from "../decisions/paths";
 import { logDir } from "../log-store";
@@ -165,38 +165,43 @@ function isSnapshot(value: unknown): value is Snapshot {
     );
 }
 
+/**
+ * The session's last {@link KEEP} answer snapshots, one cache file per session. A cache: a file of another version or
+ * session, or one that does not parse, reads as no snapshots and is replaced (the next `--since` then gets the whole
+ * answer). Two inbox calls of one session at once both keep their snapshot, because the write runs under a lock.
+ */
+function cursorDocument(session: string): JsonDocument<Snapshot[]> {
+    return jsonDocument<Snapshot[]>({
+        path: storePath(session),
+        empty: () => [],
+        decode: (parsed) => {
+            if (
+                typeof parsed !== "object" ||
+                parsed === null ||
+                !("version" in parsed) ||
+                parsed.version !== CURSOR_VERSION ||
+                !("session" in parsed) ||
+                parsed.session !== session ||
+                !("snapshots" in parsed) ||
+                !Array.isArray(parsed.snapshots)
+            ) {
+                return [];
+            }
+
+            return parsed.snapshots.filter(isSnapshot);
+        },
+        encode: (snapshots) => SafeJSON.stringify({ version: CURSOR_VERSION, session, snapshots }, { strict: true }),
+        strictJson: true,
+        onUnreadable: "discard",
+        writes: "always",
+    });
+}
+
 function loadStore(session: string): Snapshot[] {
-    let raw: string;
-
     try {
-        raw = readFileSync(storePath(session), "utf8");
+        return cursorDocument(session).read();
     } catch (error) {
-        if (!(error instanceof Error && "code" in error && error.code === "ENOENT")) {
-            log.debug({ error, session }, "inbox cursor: store not readable");
-        }
-
-        return [];
-    }
-
-    try {
-        const parsed: unknown = SafeJSON.parse(raw, { strict: true });
-
-        if (
-            typeof parsed !== "object" ||
-            parsed === null ||
-            !("version" in parsed) ||
-            parsed.version !== CURSOR_VERSION ||
-            !("session" in parsed) ||
-            parsed.session !== session ||
-            !("snapshots" in parsed) ||
-            !Array.isArray(parsed.snapshots)
-        ) {
-            return [];
-        }
-
-        return parsed.snapshots.filter(isSnapshot);
-    } catch (error) {
-        log.debug({ error, session }, "inbox cursor: store not parseable");
+        log.debug({ error, session }, "inbox cursor: store not readable");
         return [];
     }
 }
@@ -237,7 +242,7 @@ function itemHashes(answer: SessionInbox): Record<string, string> {
  * Stores this answer's snapshot and returns its cursor, plus the change since `since` when that cursor is known (null
  * when it is not: the caller then sends the whole answer).
  */
-export function recordAnswer({
+export async function recordAnswer({
     session,
     answer,
     trace,
@@ -247,11 +252,9 @@ export function recordAnswer({
     answer: SessionInbox;
     trace: InboxTrace;
     since?: string;
-}): { cursor: string; delta: SessionInboxDelta | null } {
+}): Promise<{ cursor: string; delta: SessionInboxDelta | null }> {
     const cursor = `c${CURSOR_VERSION}-${hashOf(SafeJSON.stringify(answer, { strict: true }))}`;
     const items = itemHashes(answer);
-    const snapshots = loadStore(session);
-    const previous = since ? snapshots.find((snapshot) => snapshot.cursor === since) : undefined;
     const snapshot: Snapshot = {
         cursor,
         probes: trace.unprovable ? null : trace.probes,
@@ -263,16 +266,19 @@ export function recordAnswer({
         log.debug({ session, reason: trace.unprovable }, "inbox cursor: this answer cannot take the fast path");
     }
 
-    const kept = [snapshot, ...snapshots.filter((candidate) => candidate.cursor !== cursor)].slice(0, KEEP);
+    let snapshots: Snapshot[];
 
     try {
-        atomicWriteFileSync(
-            storePath(session),
-            SafeJSON.stringify({ version: CURSOR_VERSION, session, snapshots: kept }, { strict: true })
-        );
+        snapshots = await cursorDocument(session).update((current) => ({
+            write: [snapshot, ...current.filter((candidate) => candidate.cursor !== cursor)].slice(0, KEEP),
+            result: current,
+        }));
     } catch (error) {
         log.warn({ error, session }, "inbox cursor: snapshot not saved; the next --since gets the whole answer");
+        snapshots = loadStore(session);
     }
+
+    const previous = since ? snapshots.find((candidate) => candidate.cursor === since) : undefined;
 
     if (!previous) {
         return { cursor, delta: null };

@@ -1,8 +1,6 @@
-import { mkdir } from "node:fs/promises";
 import { join, resolve } from "node:path";
 import { SafeJSON } from "@genesiscz/utils/json";
-import { atomicWriteFileSync } from "@genesiscz/utils/storage/atomic-file";
-import { withFileLock } from "@genesiscz/utils/storage/file-lock";
+import { type JsonDocument, jsonDocument } from "@genesiscz/utils/storage/locked-document";
 import { toolDataDir } from "@genesiscz/utils/storage/root";
 import { type WidgetState, widgetStateSchema } from "./types";
 
@@ -12,43 +10,47 @@ export const MAX_WIDGET_STATE_BYTES = 32 * 1024 * 1024;
 export function widgetRoot(root?: string): string {
     return root ? resolve(root) : toolDataDir("hub", "widget");
 }
-export async function readWidgetState(root?: string): Promise<WidgetState> {
-    const file = Bun.file(join(widgetRoot(root), "state.json"));
-    if (!(await file.exists())) {
-        return widgetStateSchema.parse({});
-    }
-
-    if (file.size > MAX_WIDGET_STATE_BYTES) {
-        throw new Error("Widget history exceeds 32 MiB; export and clean up old outgoing items");
-    }
-
-    return widgetStateSchema.parse(SafeJSON.parse(await file.text()));
-}
-export async function mutateWidgetState<T>(root: string | undefined, update: (state: WidgetState) => T): Promise<T> {
-    const directory = widgetRoot(root);
-    await mkdir(directory, { recursive: true });
-    return withFileLock(
-        join(directory, "state.lock"),
-        async () => {
-            const state = await readWidgetState(directory);
-            const previous = SafeJSON.stringify(state);
-            const value = update(state);
-            if (SafeJSON.stringify(state) === previous) {
-                return value;
-            }
-            state.revision += 1;
-            widgetStateSchema.parse(state);
+/**
+ * `state.json` under `state.lock` (10 s). A file over 32 MiB, or one the schema refuses, throws on read and refuses
+ * every change; a change writes only when it changed something, and bumps `revision` when it does.
+ */
+function widgetStateDocument(directory: string): JsonDocument<WidgetState> {
+    return jsonDocument<WidgetState>({
+        path: join(directory, "state.json"),
+        lockPath: join(directory, "state.lock"),
+        lockTimeoutMs: 10_000,
+        empty: () => widgetStateSchema.parse({}),
+        decode: (raw) => widgetStateSchema.parse(raw),
+        maxBytes: MAX_WIDGET_STATE_BYTES,
+        encode: (state) => {
             const serialized = SafeJSON.stringify(state);
             // A larger file could never be read again, and every later snapshot, cancel and edit would fail.
             if (Buffer.byteLength(serialized) > MAX_WIDGET_STATE_BYTES) {
                 throw new Error("This change was not saved: widget history would exceed 32 MiB");
             }
 
-            atomicWriteFileSync(join(directory, "state.json"), serialized);
-            return value;
+            return serialized;
         },
-        10_000
-    );
+        onUnreadable: "refuse",
+        beforeWrite: (state) => {
+            state.revision += 1;
+            widgetStateSchema.parse(state);
+        },
+        unreadableError: (problem) =>
+            problem.kind === "too-large"
+                ? new Error("Widget history exceeds 32 MiB; export and clean up old outgoing items")
+                : problem.cause instanceof Error
+                  ? problem.cause
+                  : problem,
+    });
+}
+
+export async function readWidgetState(root?: string): Promise<WidgetState> {
+    return widgetStateDocument(widgetRoot(root)).read();
+}
+
+export async function mutateWidgetState<T>(root: string | undefined, update: (state: WidgetState) => T): Promise<T> {
+    return widgetStateDocument(widgetRoot(root)).mutate(update);
 }
 
 const INBOX_READ_LIMIT = 4096;

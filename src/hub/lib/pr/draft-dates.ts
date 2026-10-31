@@ -1,9 +1,6 @@
-import { mkdir, readFile } from "node:fs/promises";
-import { dirname } from "node:path";
 import { SafeJSON } from "@genesiscz/utils/json";
 import { logger } from "@genesiscz/utils/logger";
-import { atomicWriteFileSync, isMissingFileError } from "@genesiscz/utils/storage/atomic-file";
-import { withFileLock } from "@genesiscz/utils/storage/file-lock";
+import { type JsonDocument, jsonDocument } from "@genesiscz/utils/storage/locked-document";
 import { toolDataDir } from "@genesiscz/utils/storage/root";
 
 /**
@@ -95,41 +92,35 @@ function asDraftDates(value: unknown): DraftDates {
     return dates;
 }
 
-/** The locked writer must not save the display reader's fallback over bytes it could not use. */
-async function readDatesForUpdate(file: string): Promise<DraftDates> {
-    let text: string;
+/**
+ * The dates file. The locked writer refuses a file of another shape instead of saving the display reader's fallback
+ * over bytes it could not use; the display read keeps only the entries it understands.
+ */
+function datesDocument(file: string): JsonDocument<DraftDates> {
+    return jsonDocument<DraftDates>({
+        path: file,
+        empty: () => ({}),
+        decode: (parsed) => {
+            if (
+                !isRecord(parsed) ||
+                !Object.values(parsed).every(
+                    (ids) => isRecord(ids) && Object.values(ids).every((at) => typeof at === "string")
+                )
+            ) {
+                throw new Error(`draft dates in ${file} have an invalid shape; refusing to replace them`);
+            }
 
-    try {
-        text = await readFile(file, "utf8");
-    } catch (error) {
-        if (isMissingFileError(error)) {
-            return {};
-        }
-
-        throw error;
-    }
-
-    const parsed: unknown = SafeJSON.parse(text);
-
-    if (
-        !isRecord(parsed) ||
-        !Object.values(parsed).every((ids) => isRecord(ids) && Object.values(ids).every((at) => typeof at === "string"))
-    ) {
-        throw new Error(`draft dates in ${file} have an invalid shape; refusing to replace them`);
-    }
-
-    return asDraftDates(parsed);
+            return asDraftDates(parsed);
+        },
+        encode: (dates) => SafeJSON.stringify(dates, null, 2),
+        onUnreadable: "refuse",
+        unreadableError: (problem) => (problem.cause instanceof Error ? problem.cause : problem),
+    });
 }
 
-async function readDates(file: string): Promise<DraftDates> {
-    const handle = Bun.file(file);
-
-    if (!(await handle.exists())) {
-        return {};
-    }
-
+function readDates(file: string): DraftDates {
     try {
-        return asDraftDates(SafeJSON.parse(await handle.text()));
+        return datesDocument(file).read({ decode: asDraftDates });
     } catch (err) {
         log.warn({ err, file }, "draft dates unreadable; every draft is dated now");
         return {};
@@ -149,18 +140,12 @@ export async function draftDatesFor({
     file?: string;
 }): Promise<Map<string, string>> {
     try {
-        await mkdir(dirname(file), { recursive: true });
-        return await withFileLock(`${file}.lock`, async () => {
-            const stamped = stampDraftDates({ dates: await readDatesForUpdate(file), mr, draftIds, now });
-
-            if (stamped.changed) {
-                atomicWriteFileSync(file, SafeJSON.stringify(stamped.dates, null, 2));
-            }
-
-            return stamped.byId;
+        return await datesDocument(file).update<Map<string, string>>((dates) => {
+            const stamped = stampDraftDates({ dates, mr, draftIds, now });
+            return stamped.changed ? { write: stamped.dates, result: stamped.byId } : { keep: stamped.byId };
         });
     } catch (err) {
         log.warn({ err, file }, "draft dates not saved; the next read dates new drafts again");
-        return stampDraftDates({ dates: await readDates(file), mr, draftIds, now }).byId;
+        return stampDraftDates({ dates: readDates(file), mr, draftIds, now }).byId;
     }
 }

@@ -3,10 +3,9 @@ import { constants } from "node:fs";
 import { copyFile, mkdir, stat, unlink } from "node:fs/promises";
 import { basename, join, resolve } from "node:path";
 import { sha256FileAsync } from "@genesiscz/utils/fs/hash";
-import { SafeJSON } from "@genesiscz/utils/json";
 import { logger } from "@genesiscz/utils/logger";
-import { atomicWriteFileSync } from "@genesiscz/utils/storage/atomic-file";
 import { withFileLock } from "@genesiscz/utils/storage/file-lock";
+import { type JsonDocument, jsonDocument } from "@genesiscz/utils/storage/locked-document";
 import { z } from "zod";
 import { importWidgetAsset } from "../composer/assets";
 import {
@@ -42,19 +41,34 @@ function shelfDirectory(root?: string): string {
     return join(widgetRoot(root), "shelf");
 }
 
+/** `shelf/state.json` under `shelf/state.lock` (10 s): the same rules as the widget state, capped at 32 MiB. */
+function shelfDocument(root?: string): JsonDocument<ShelfState> {
+    const directory = shelfDirectory(root);
+    return jsonDocument<ShelfState>({
+        path: join(directory, "state.json"),
+        lockPath: join(directory, "state.lock"),
+        lockTimeoutMs: 10_000,
+        empty: () => shelfStateSchema.parse({}),
+        decode: (raw) => shelfStateSchema.parse(raw),
+        maxBytes: 32 * 1024 * 1024,
+        onUnreadable: "refuse",
+        beforeWrite: (state) => {
+            state.revision += 1;
+            shelfStateSchema.parse(state);
+        },
+        unreadableError: (problem) =>
+            problem.kind === "too-large"
+                ? new Error("Shelf inventory exceeds 32 MiB")
+                : problem.cause instanceof Error
+                  ? problem.cause
+                  : problem,
+    });
+}
+
 /** Reads inventory metadata only. It never opens, hashes or probes the staged files. */
 export async function listWidgetShelf(root?: string): Promise<ShelfState & { statePath: string }> {
-    const statePath = join(shelfDirectory(root), "state.json");
-    const file = Bun.file(statePath);
-    if (!(await file.exists())) {
-        return { ...shelfStateSchema.parse({}), statePath };
-    }
-
-    if (file.size > 32 * 1024 * 1024) {
-        throw new Error("Shelf inventory exceeds 32 MiB");
-    }
-
-    return { ...shelfStateSchema.parse(SafeJSON.parse(await file.text())), statePath };
+    const document = shelfDocument(root);
+    return { ...document.read(), statePath: document.path };
 }
 
 /**
@@ -70,26 +84,7 @@ async function mutateShelf<T>({
     update: (state: ShelfState) => T;
     signal?: AbortSignal;
 }): Promise<T> {
-    const directory = shelfDirectory(root);
-    await mkdir(directory, { recursive: true });
-    return withFileLock(
-        join(directory, "state.lock"),
-        async () => {
-            signal?.throwIfAborted();
-            const state = shelfStateSchema.parse(await listWidgetShelf(root));
-            const previous = SafeJSON.stringify(state);
-            const result = update(state);
-            if (SafeJSON.stringify(state) === previous) {
-                return result;
-            }
-
-            state.revision += 1;
-            shelfStateSchema.parse(state);
-            atomicWriteFileSync(join(directory, "state.json"), SafeJSON.stringify(state));
-            return result;
-        },
-        10_000
-    );
+    return shelfDocument(root).mutate(update, signal ? { signal } : undefined);
 }
 
 async function cleanupOwnedFile(path: string): Promise<void> {

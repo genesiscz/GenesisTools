@@ -1,13 +1,17 @@
-import { mkdirSync, readFileSync } from "node:fs";
-import { dirname, join } from "node:path";
+import { join } from "node:path";
 import type { TranscriptTool, TranscriptTurn } from "@genesiscz/utils/ai/transcripts";
 import { isTaskReport } from "@genesiscz/utils/ai/transcripts/prompt-parts";
 import { isFailedTool, keyArgument, toolDisplayName } from "@genesiscz/utils/ai/transcripts/tool-kind";
 import { formatDuration } from "@genesiscz/utils/format";
-import { SafeJSON } from "@genesiscz/utils/json";
 import { logger } from "@genesiscz/utils/logger";
-import { Storage, withFileLock } from "@genesiscz/utils/storage";
-import { atomicWriteFileSync } from "@genesiscz/utils/storage/storage";
+import { Storage } from "@genesiscz/utils/storage";
+import {
+    type DocumentProblemKind,
+    type JsonDocument,
+    jsonDocument,
+    prettyJson,
+    type UnreadablePolicy,
+} from "@genesiscz/utils/storage/locked-document";
 import type { StuckThresholds, StuckVerdict } from "./types";
 
 // The stuck-agent detector: a running session whose last tool call has waited too long, or that
@@ -97,37 +101,37 @@ export function stuckConfigPath(dir = new Storage("hub").getBaseDir()): string {
  * The saved thresholds, or the defaults when there is no file. A file that exists but cannot be read, does not parse
  * or is not a JSON object THROWS, so an update never replaces the user's thresholds with the defaults.
  */
+function stuckDocument(
+    path: string,
+    { onUnreadable = "refuse" }: { onUnreadable?: UnreadablePolicy } = {}
+): JsonDocument<StuckThresholds> {
+    const fix = "they were left untouched. Fix or move the file, or pass --reset";
+    const messages = {
+        io: `hub: cannot read the stuck thresholds ${path}; they were left untouched`,
+        "too-large": `hub: the stuck thresholds ${path} are too large; ${fix}`,
+        json: `hub: the stuck thresholds ${path} do not parse; ${fix}`,
+        shape: `hub: the stuck thresholds ${path} are not a JSON object; ${fix}`,
+    } satisfies Record<DocumentProblemKind, string>;
+    return jsonDocument<StuckThresholds>({
+        path,
+        empty: defaultStuckThresholds,
+        decode: (raw) => {
+            if (!isRecord(raw)) {
+                throw new Error("not a JSON object");
+            }
+
+            return normalizeStuckThresholds(raw);
+        },
+        encode: prettyJson,
+        onUnreadable,
+        writes: "always",
+        unreadableError: (problem) =>
+            new Error(messages[problem.kind], problem.kind === "shape" ? undefined : { cause: problem.cause }),
+    });
+}
+
 function readStuckThresholdsStrict(path: string): StuckThresholds {
-    let text: string;
-
-    try {
-        text = readFileSync(path, "utf8");
-    } catch (err) {
-        if (err instanceof Error && "code" in err && err.code === "ENOENT") {
-            return defaultStuckThresholds();
-        }
-
-        throw new Error(`hub: cannot read the stuck thresholds ${path}; they were left untouched`, { cause: err });
-    }
-
-    let raw: unknown;
-
-    try {
-        raw = SafeJSON.parse(text);
-    } catch (err) {
-        throw new Error(
-            `hub: the stuck thresholds ${path} do not parse; they were left untouched. Fix or move the file, or pass --reset`,
-            { cause: err }
-        );
-    }
-
-    if (!isRecord(raw)) {
-        throw new Error(
-            `hub: the stuck thresholds ${path} are not a JSON object; they were left untouched. Fix or move the file, or pass --reset`
-        );
-    }
-
-    return normalizeStuckThresholds(raw);
+    return stuckDocument(path).read();
 }
 
 /** The thresholds to judge with or show: an unreadable file warns and reads as the defaults, and is never written. */
@@ -145,15 +149,16 @@ export async function updateStuckThresholds(
     change: Partial<StuckThresholds> & { reset?: boolean },
     path = stuckConfigPath()
 ): Promise<StuckThresholds> {
-    mkdirSync(dirname(path), { recursive: true });
-    return withFileLock(`${path}.lock`, async () => {
-        const { reset, ...fields } = change;
-        const base = reset ? defaultStuckThresholds() : readStuckThresholdsStrict(path);
-        const next = normalizeStuckThresholds({ ...base, ...fields });
-        atomicWriteFileSync(path, `${SafeJSON.stringify(next, null, 2)}\n`);
-        log.debug({ path, change }, "stuck thresholds updated");
-        return next;
+    const { reset, ...fields } = change;
+    // `reset` replaces whatever is there, a file that does not parse included: the document refuses that one, so a
+    // reset writes the defaults under the same lock without reading.
+    const document = reset ? stuckDocument(path, { onUnreadable: "discard" }) : stuckDocument(path);
+    const next = await document.update((current) => {
+        const changed = normalizeStuckThresholds({ ...(reset ? defaultStuckThresholds() : current), ...fields });
+        return { write: changed, result: changed };
     });
+    log.debug({ path, change }, "stuck thresholds updated");
+    return next;
 }
 
 function millis(iso: string | null | undefined): number | null {

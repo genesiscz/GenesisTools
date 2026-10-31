@@ -1,14 +1,12 @@
-import { existsSync, mkdirSync, readFileSync } from "node:fs";
 import { mkdir, writeFile } from "node:fs/promises";
 import { basename, dirname, join } from "node:path";
 import { readCachedSessionCwd } from "@genesiscz/utils/agent-sessions/cached-title";
 import { execTool } from "@genesiscz/utils/cli";
 import { toolCommand } from "@genesiscz/utils/cli/tool-command";
 import { repoFacts } from "@genesiscz/utils/git/repo-facts";
-import { SafeJSON } from "@genesiscz/utils/json";
 import { logger } from "@genesiscz/utils/logger";
-import { Storage, withFileLock } from "@genesiscz/utils/storage";
-import { atomicWriteFileSync } from "@genesiscz/utils/storage/storage";
+import { Storage } from "@genesiscz/utils/storage";
+import { type JsonDocument, jsonDocument, prettyJson } from "@genesiscz/utils/storage/locked-document";
 import { promptVariables, renderPrompt } from "@genesiscz/utils/template";
 import { noPaneMatched } from "./fix-threads";
 
@@ -112,39 +110,62 @@ function normalizePrompt(raw: unknown): SavedPrompt | null {
 }
 
 /**
+ * The prompts file as a write sees it: an entry it cannot read refuses the write, because a rewrite would drop it from
+ * the file for good, and a file that cannot be read refuses it too, since saving would replace every prompt in it.
+ */
+function promptsDocument(path: string): JsonDocument<PromptsFile> {
+    return jsonDocument<PromptsFile>({
+        path,
+        empty: () => ({ version: 1, prompts: defaultPrompts() }),
+        decode: (raw) => {
+            const list = isRecord(raw) && Array.isArray(raw.prompts) ? raw.prompts : null;
+
+            if (!list) {
+                throw new Error("it holds no prompts list");
+            }
+
+            const prompts = list.map(normalizePrompt);
+            const unreadable = prompts.indexOf(null);
+
+            if (unreadable !== -1) {
+                throw new Error(`entry ${unreadable + 1} is not a prompt: it needs a string name and a string text`);
+            }
+
+            return { version: 1, prompts: prompts.filter((prompt) => prompt !== null) };
+        },
+        encode: prettyJson,
+        onUnreadable: "refuse",
+        writes: "always",
+        unreadableError: (problem) => {
+            const reason = problem.cause instanceof Error ? problem.cause.message : String(problem.cause);
+            return new HubPromptError(
+                "bad-input",
+                `${path} cannot be read as a prompts file (${reason}); fix it or move it aside, since saving now would replace every prompt in it`
+            );
+        },
+    });
+}
+
+/** Listing skips an entry it cannot read, and a file of another shape lists no prompts. */
+function listedPrompts(raw: unknown): PromptsFile {
+    const list = isRecord(raw) && Array.isArray(raw.prompts) ? raw.prompts : [];
+    return { version: 1, prompts: list.map(normalizePrompt).filter((prompt) => prompt !== null) };
+}
+
+/**
  * The saved prompts. A file that cannot be read lists the defaults, except with `strict` (every write):
  * writing that fallback back would replace every prompt the file held, so a write refuses instead.
  */
 export function readPrompts(path = promptsPath(), { strict = false }: { strict?: boolean } = {}): PromptsFile {
-    if (!existsSync(path)) {
-        return { version: 1, prompts: defaultPrompts() };
+    const document = promptsDocument(path);
+
+    if (strict) {
+        return document.read();
     }
 
     try {
-        const raw: unknown = SafeJSON.parse(readFileSync(path, "utf8"));
-        const list = isRecord(raw) && Array.isArray(raw.prompts) ? raw.prompts : null;
-
-        if (strict && !list) {
-            throw new Error("it holds no prompts list");
-        }
-
-        const prompts = (list ?? []).map(normalizePrompt);
-        const unreadable = prompts.findIndex((prompt) => prompt === null);
-
-        // Listing skips an entry it cannot read; a write would drop it from the file for good.
-        if (strict && unreadable !== -1) {
-            throw new Error(`entry ${unreadable + 1} is not a prompt: it needs a string name and a string text`);
-        }
-
-        return { version: 1, prompts: prompts.filter((prompt) => prompt !== null) };
+        return document.read({ decode: listedPrompts });
     } catch (err) {
-        if (strict) {
-            throw new HubPromptError(
-                "bad-input",
-                `${path} cannot be read as a prompts file (${err instanceof Error ? err.message : String(err)}); fix it or move it aside, since saving now would replace every prompt in it`
-            );
-        }
-
         log.warn({ err, path }, "prompts file unreadable; showing the defaults");
         return { version: 1, prompts: defaultPrompts() };
     }
@@ -152,12 +173,9 @@ export function readPrompts(path = promptsPath(), { strict = false }: { strict?:
 
 /** Read, change and write back under a lock, so the hub and a CLI call never lose each other's write. */
 async function updatePrompts<T>(path: string, change: (file: PromptsFile) => T): Promise<T> {
-    mkdirSync(dirname(path), { recursive: true });
-    return withFileLock(`${path}.lock`, async () => {
-        const file = readPrompts(path, { strict: true });
+    return promptsDocument(path).update((file) => {
         const result = change(file);
-        atomicWriteFileSync(path, `${SafeJSON.stringify(file, null, 2)}\n`);
-        return result;
+        return { write: file, result };
     });
 }
 
