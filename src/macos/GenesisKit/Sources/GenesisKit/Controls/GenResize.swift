@@ -169,26 +169,9 @@ public struct GenResizeReveal<Content: View, Handle: View, Uncovered: View>: Vie
     private func along(_ length: CGFloat) -> CGFloat? { axis == .horizontal ? length : nil }
     private func across(_ length: CGFloat) -> CGFloat? { axis == .vertical ? length : nil }
 
-    private var movingEdge: Edge {
-        switch fixedEdge {
-        case .leading: return .trailing
-        case .trailing: return .leading
-        case .top: return .bottom
-        case .bottom: return .top
-        }
-    }
-
-    private var fixedAlignment: Alignment { Self.alignment(of: fixedEdge) }
-    private var movingAlignment: Alignment { Self.alignment(of: movingEdge) }
-
-    private static func alignment(of edge: Edge) -> Alignment {
-        switch edge {
-        case .leading: return .leading
-        case .trailing: return .trailing
-        case .top: return .top
-        case .bottom: return .bottom
-        }
-    }
+    private var movingEdge: Edge { fixedEdge.opposite }
+    private var fixedAlignment: Alignment { fixedEdge.alignment }
+    private var movingAlignment: Alignment { movingEdge.alignment }
 }
 
 /// The slot of a reveal: the frame the layout gives the panel, which the neighbours are placed against. Animatable,
@@ -499,24 +482,33 @@ private struct GenResizeOverlap: ViewModifier {
     }
 
     private var vertical: Bool { edge == .top || edge == .bottom }
-    private var alignment: Alignment {
-        switch edge {
-        case .leading: return .leading
-        case .trailing: return .trailing
-        case .top: return .top
-        case .bottom: return .bottom
-        }
-    }
-    private var start: UnitPoint {
-        switch edge {
+    private var alignment: Alignment { edge.alignment }
+    private var start: UnitPoint { edge.opposite.unitPoint }
+    private var end: UnitPoint { edge.unitPoint }
+}
+
+/// The two mappings of an edge the resize views need: its opposite, and the same side as an alignment or a point.
+private extension Edge {
+    var opposite: Edge {
+        switch self {
         case .leading: return .trailing
         case .trailing: return .leading
         case .top: return .bottom
         case .bottom: return .top
         }
     }
-    private var end: UnitPoint {
-        switch edge {
+
+    var alignment: Alignment {
+        switch self {
+        case .leading: return .leading
+        case .trailing: return .trailing
+        case .top: return .top
+        case .bottom: return .bottom
+        }
+    }
+
+    var unitPoint: UnitPoint {
+        switch self {
         case .leading: return .leading
         case .trailing: return .trailing
         case .top: return .top
