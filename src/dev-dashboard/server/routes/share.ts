@@ -25,6 +25,7 @@ import {
 import { renderSharePage } from "@app/dev-dashboard/lib/obsidian/share-template";
 import { publicBaseUrl } from "@app/dev-dashboard/lib/public-base";
 import type { RouteContext, RouteDef, RouteResult } from "@app/dev-dashboard/server/types";
+import { concurrentMap } from "@genesiscz/utils/async";
 import { zipAsync } from "@genesiscz/utils/fs/zip";
 import { parseByteRange } from "@genesiscz/utils/http/range";
 import { logger } from "@genesiscz/utils/logger";
@@ -35,6 +36,8 @@ const { log } = logger.scoped("share");
 const NOT_FOUND_HTML = "<!doctype html><meta charset=utf-8><title>Not found</title><h1>Not found</h1>";
 const ASSET_CACHE_LIMIT = 64;
 const MAX_ACTIVE_DOWNLOADS = 2;
+/** Linked notes a page render reads at once; each may be up to `SHARE_ASSET_MAX_BYTES`. */
+export const LINKED_NOTE_READ_CONCURRENCY = 4;
 let activeDownloads = 0;
 
 const NOT_FOUND: RouteResult = {
@@ -323,18 +326,27 @@ export function shareRoutes(): RouteDef[] {
                     const linkedNotes = [...assets.byHash.values()].filter(
                         (asset) => asset.kind === "markdown" && asset.vaultPath !== note.vaultPath
                     );
-                    const noteReads = await Promise.all(
-                        linkedNotes.map((asset) =>
-                            readShareAsset({ vaultRoot: obsidianVault, index: assets, hash: asset.hash })
-                        )
-                    );
                     const noteTexts = new Map<string, string>();
 
-                    for (const found of noteReads) {
-                        if (found) {
-                            noteTexts.set(found.asset.hash, found.body.toString("utf8"));
-                        }
-                    }
+                    // A few at a time, each body decoded as it arrives, so no request holds every buffer at once.
+                    await concurrentMap({
+                        items: linkedNotes,
+                        concurrency: LINKED_NOTE_READ_CONCURRENCY,
+                        fn: async (asset) => {
+                            const found = await readShareAsset({
+                                vaultRoot: obsidianVault,
+                                index: assets,
+                                hash: asset.hash,
+                            });
+
+                            if (found) {
+                                noteTexts.set(found.asset.hash, found.body.toString("utf8"));
+                            }
+                        },
+                        onError: (asset, error) => {
+                            log.warn({ error, asset: asset.vaultPath }, "share page could not read a linked note");
+                        },
+                    });
 
                     const published = await listPublished();
                     const publishedByPath = new Map(published.map((entry) => [entry.vaultPath, entry.slug]));

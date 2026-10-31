@@ -4,6 +4,7 @@ import { mkdirSync, mkdtempSync, rmSync, symlinkSync, writeFileSync } from "node
 import { tmpdir } from "node:os";
 import { join } from "node:path";
 import { publishNote } from "@app/dev-dashboard/lib/obsidian/publish";
+import * as shareAssets from "@app/dev-dashboard/lib/obsidian/share-assets";
 import {
     buildShareBundle,
     buildShareEmbed,
@@ -13,7 +14,7 @@ import {
     type ShareEmbedPanels,
 } from "@app/dev-dashboard/lib/obsidian/share-assets";
 import { getDevDashboardStorage, resetDevDashboardStorage } from "@app/dev-dashboard/lib/storage";
-import { shareRoutes } from "@app/dev-dashboard/server/routes/share";
+import { LINKED_NOTE_READ_CONCURRENCY, shareRoutes } from "@app/dev-dashboard/server/routes/share";
 import type { RouteContext, RouteResult } from "@app/dev-dashboard/server/types";
 import { env } from "@genesiscz/utils/env";
 import { unzip } from "@genesiscz/utils/fs/unzip";
@@ -599,6 +600,43 @@ describe("GET /share/:slug assets", () => {
             clearTimeout(timeout);
             release(new Uint8Array());
             worker.mockRestore();
+        }
+    });
+
+    test("a page reads its linked notes a few at a time, never all at once", async () => {
+        const vault = join(dir, "vault");
+        const names = Array.from({ length: 12 }, (_, index) => `linked-${index}`);
+        mkdirSync(join(vault, "Many"), { recursive: true });
+
+        for (const name of names) {
+            writeFileSync(join(vault, `Many/${name}.md`), `# ${name} body`);
+        }
+
+        writeFileSync(join(vault, "Many/Hub.md"), names.map((name) => `![[${name}]]`).join("\n\n"));
+        const hubSlug = (await publishNote("Many/Hub.md")).slug;
+        const realRead = shareAssets.readShareAsset;
+        let inFlight = 0;
+        let peak = 0;
+        const read = spyOn(shareAssets, "readShareAsset").mockImplementation(async (options) => {
+            inFlight++;
+            peak = Math.max(peak, inFlight);
+
+            try {
+                return await realRead(options);
+            } finally {
+                inFlight--;
+            }
+        });
+
+        try {
+            const res = await get({}, "text/html", hubSlug);
+
+            expect(res.kind).toBe("raw");
+            expect(read).toHaveBeenCalledTimes(names.length);
+            expect(peak).toBeLessThanOrEqual(LINKED_NOTE_READ_CONCURRENCY);
+            expect(String(res.kind === "raw" ? res.body : "")).toContain("linked-11 body");
+        } finally {
+            read.mockRestore();
         }
     });
 
