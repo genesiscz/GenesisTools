@@ -1,7 +1,7 @@
 import { refuseUnlessWaiting } from "../decisions/answers";
 import { type DeliverDeps, isLiveDelivery, type LocatedDelivery, locateDelivery } from "../decisions/deliver";
 import { optionLetters } from "../decisions/read";
-import { type SendResult, sendAnsweredDecisions } from "../decisions/send";
+import { providerOf, type SendResult, sendAnsweredDecisions } from "../decisions/send";
 import {
     type HarvestedDecision,
     harvestDecisions,
@@ -201,12 +201,15 @@ export async function sendDrafts(
         return { ...result, promoted: [] };
     }
 
-    const drafted = readDecisions(deps.file).filter((row) => row.sessionId === input.session && isDrafted(row));
+    const sessionRows = readDecisions(deps.file).filter((row) => row.sessionId === input.session);
+    const drafted = sessionRows.filter(isDrafted);
+    // The rows name the provider when the caller did not: the wait and the send below must look up one harness.
+    const provider = providerOf(input.provider, sessionRows) ?? undefined;
 
     if (input.dryRun) {
         const result = await sendAnsweredDecisions({
             session: input.session,
-            ...(input.provider ? { provider: input.provider } : {}),
+            ...(provider ? { provider } : {}),
             dryRun: true,
             files: deps,
             ...(deps.deliver ? { deps: deps.deliver } : {}),
@@ -234,7 +237,7 @@ export async function sendDrafts(
 
         for (let attempt = 0; attempt < attempts; attempt++) {
             const located = await locateDelivery(
-                { session: input.session, ...(input.provider ? { provider: input.provider } : {}) },
+                { session: input.session, ...(provider ? { provider } : {}) },
                 deps.deliver ?? {}
             );
 
@@ -264,7 +267,7 @@ export async function sendDrafts(
         );
         return {
             session: input.session,
-            provider: input.provider ?? null,
+            provider: provider ?? null,
             text: answered.map((row) => row.number).join(", "),
             numbers: [],
             channel: "resume",
@@ -278,7 +281,7 @@ export async function sendDrafts(
 
     const result = await sendAnsweredDecisions({
         session: input.session,
-        ...(input.provider ? { provider: input.provider } : {}),
+        ...(provider ? { provider } : {}),
         ...(input.inSession ? { inSession: true } : {}),
         ...(live ? { located: live } : {}),
         files: deps,

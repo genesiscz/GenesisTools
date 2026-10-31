@@ -402,6 +402,49 @@ describe("sendDrafts", () => {
         expect(readDecisions(file)[0]).toMatchObject({ state: "sent", delivery: { route: "cmux" } });
     });
 
+    test("the resume path with no provider given takes the provider its decisions name, so a codex answer skips the pane", async () => {
+        const { file, events } = scratch();
+        await postDecisions(file, events, {
+            sessionId: "s",
+            provider: "codex",
+            decisions: [{ prompt: "One?", options: ["a1", "b1"] }],
+        });
+        const deps = { file, events, block: async () => null };
+        await draftDecision({ session: "s", number: 1, option: "a" }, deps);
+        const typed: string[][] = [];
+        const target = {
+            workspaceId: "ws",
+            workspaceName: "gt-inbox-scratch",
+            paneId: "pane:9",
+            paneTitle: "probe",
+            surfaceId: "surface:9",
+            sessionIds: ["s"],
+            matchedOn: "title-id",
+            score: 90,
+            active: true,
+        };
+
+        const result = await sendDrafts(
+            { session: "s", recordResumeTarget: "cmux · new workspace", waitLiveMs: 1_000 },
+            {
+                ...deps,
+                sleep: async () => {},
+                deliver: {
+                    ...noNativeReceivers,
+                    findTargets: async () => ({ targets: [target], source: "titles", unavailable: false }) as never,
+                    runTool: async (args) => {
+                        typed.push(args);
+                        return { success: true, stdout: '{"sent":true}', stderr: "" };
+                    },
+                },
+            }
+        );
+
+        // Codex answers go to its owned worker only: a cmux pane of the session is not a place to type them.
+        expect(typed).toEqual([]);
+        expect(result).toMatchObject({ channel: "resume", delivered: false, provider: "codex" });
+    });
+
     test("the resume path queues the answers and records where it resumed, not an error", async () => {
         const { file, events } = scratch();
         await postDecisions(file, events, { sessionId: "s", decisions: [{ prompt: "One?", options: ["a1", "b1"] }] });
