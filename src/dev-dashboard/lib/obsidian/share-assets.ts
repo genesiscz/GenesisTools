@@ -767,6 +767,10 @@ export async function buildShareEmbed(options: {
 }
 
 const HEADING_LINE_RE = /^(#{1,6})[ \t]+(.*?)[ \t]*#*[ \t]*$/;
+/** A Setext underline: `===` makes the paragraph above it a level 1 heading, `---` a level 2 one. */
+const SETEXT_UNDERLINE_RE = /^ {0,3}(=+|-+)[ \t]*$/;
+/** A line that cannot be the text of a Setext heading: a list item or a quote (a `---` under it is a rule). */
+const NOT_SETEXT_TEXT_RE = /^ {0,3}(?:[-*+][ \t]|\d{1,9}[.)][ \t]|>)/;
 
 /**
  * The part of a note an embed shows: the whole body without frontmatter, the section under `#Heading`
@@ -802,6 +806,8 @@ export function noteSection(text: string, fragment: string): string {
     let start = -1;
     let level = 0;
     let end = lines.length;
+    // The first line of the paragraph the walk is in, which a Setext underline turns into a heading; -1 outside one.
+    let paragraph = -1;
 
     for (let index = 0; index < lines.length; index++) {
         const line = lines[index].replace(/\r$/, "");
@@ -816,19 +822,37 @@ export function noteSection(text: string, fragment: string): string {
 
         if (marker && (marker[1][0] !== "`" || !marker[2].includes("`"))) {
             fence = marker[1];
+            paragraph = -1;
             continue;
         }
 
-        const heading = HEADING_LINE_RE.exec(line);
+        const atx = HEADING_LINE_RE.exec(line);
+        const underline = paragraph === -1 ? null : SETEXT_UNDERLINE_RE.exec(line);
+        const heading = atx
+            ? { at: index, level: atx[1].length, text: atx[2] }
+            : underline
+              ? {
+                    at: paragraph,
+                    level: underline[1][0] === "=" ? 1 : 2,
+                    text: lines
+                        .slice(paragraph, index)
+                        .map((text) => text.trim())
+                        .join(" "),
+                }
+              : null;
+
         if (!heading) {
+            paragraph = !line.trim() || NOT_SETEXT_TEXT_RE.test(line) ? -1 : paragraph === -1 ? index : paragraph;
             continue;
         }
 
-        if (start === -1 && headingSlug(heading[2]) === wanted) {
-            start = index;
-            level = heading[1].length;
-        } else if (start !== -1 && heading[1].length <= level) {
-            end = index;
+        paragraph = -1;
+
+        if (start === -1 && headingSlug(heading.text) === wanted) {
+            start = heading.at;
+            level = heading.level;
+        } else if (start !== -1 && heading.level <= level) {
+            end = heading.at;
             break;
         }
     }
