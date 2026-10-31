@@ -72,7 +72,8 @@ function memoized<T>(read: (path: string) => T): (path: string) => T {
     };
 }
 
-function memoReads(base: FolderReads): FolderReads {
+/** The reads of one pass, each path read once: a walk that revisits a folder costs nothing more. */
+export function memoReads(base: FolderReads): FolderReads {
     return {
         listDir: memoized(base.listDir),
         isDir: memoized(base.isDir),

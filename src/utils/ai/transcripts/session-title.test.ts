@@ -4,8 +4,9 @@ import { tmpdir } from "node:os";
 import { join } from "node:path";
 import { env } from "@genesiscz/utils/env";
 import { lastClaudeTitle } from "../../agent-sessions/readers/claude-title";
-import { createCodexLocate } from "../../agent-sessions/readers/codex-locate";
+import { codexSessions, createCodexLocate } from "../../agent-sessions/readers/codex-locate";
 import { grokTitleOf } from "../../agent-sessions/readers/grok-title";
+import { directReads, type FolderReads } from "./resolve";
 import { findSessionsByTitle, rankByTitle } from "./session-title";
 
 /** Codex title search over the homes under `home` (and `CODEX_HOME`), ranked as `findSessionsByTitle` ranks them. */
@@ -152,6 +153,40 @@ describe("findSessionsByTitle", () => {
             expect(titles("New").map((hit) => hit.locator)).toEqual([current]);
             expect(titles("Old")).toEqual([]);
         });
+    });
+
+    it("lists each rollout folder once however many threads two homes share", () => {
+        const home = mkdtempSync(join(tmpdir(), "titles-codex-shared-"));
+        const ids = ["019c0000-0000-7000-8000-000000000031", "019c0000-0000-7000-8000-000000000032"];
+
+        for (const codexHome of [".codex", ".codex-work"]) {
+            const day = join(home, codexHome, "sessions", "2026", "10", "31");
+            mkdirSync(day, { recursive: true });
+            for (const id of ids) {
+                writeFileSync(join(day, `rollout-2026-10-31T10-00-00-${id}.jsonl`), "{}\n");
+            }
+            writeFileSync(
+                join(home, codexHome, "session_index.jsonl"),
+                ids.map((id) => `{"id":"${id}","thread_name":"t ${id}","updated_at":"2026-10-31T10:00:00Z"}\n`).join("")
+            );
+        }
+
+        const listed = new Map<string, number>();
+        const counting: FolderReads = {
+            ...directReads,
+            listDir: (path) => {
+                listed.set(path, (listed.get(path) ?? 0) + 1);
+                return directReads.listDir(path);
+            },
+        };
+
+        const sessions = codexSessions(
+            [".codex", ".codex-work"].map((codexHome) => join(home, codexHome, "session_index.jsonl")),
+            counting
+        );
+        expect(sessions).toHaveLength(2);
+        expect(listed.size).toBeGreaterThan(0);
+        expect([...listed.values()].every((count) => count === 1)).toBe(true);
     });
 
     it("orders Codex titles by an updated_at in epoch seconds as discovery does", async () => {

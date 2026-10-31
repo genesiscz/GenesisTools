@@ -5,6 +5,7 @@ import { readCodexTitleIndex } from "@genesiscz/utils/agent-sessions/readers/cod
 import {
     directReads,
     type FolderReads,
+    memoReads,
     type RankedHit,
     type ResolvedTranscript,
 } from "@genesiscz/utils/ai/transcripts/resolve";
@@ -195,9 +196,12 @@ export function codexSessions(indexPaths: readonly string[], fs: FolderReads = d
         }
     }
 
+    // Every thread in two homes walks the same rollout folders, so the pass lists each folder once.
+    const reads = memoReads(fs);
+
     return [...byThread.values()].flatMap((homes) => {
         const [first] = homes.values();
-        return first ? [homes.size === 1 ? first : titleOfNewestRollout(homes, first, fs)] : [];
+        return first ? [homes.size === 1 ? first : titleOfNewestRollout(homes, first, reads)] : [];
     });
 }
 
