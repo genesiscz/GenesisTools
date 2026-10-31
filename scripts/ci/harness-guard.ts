@@ -39,7 +39,7 @@ export interface HarnessGuardHit {
 
 const NAMES = new Set(["claude", "codex", "grok"]);
 const NAME_LITERAL = /^(["'`])(claude|codex|grok)\1$/;
-const PREFILTER = /["'`](?:claude|codex|grok)["'`]|\b(?:claude|codex|grok)\s*:|Record<\s*[A-Z]/;
+const PREFILTER = /["'`](?:claude|codex|grok)["'`]|\b(?:claude|codex|grok)\s*:|Record\s*<\s*[A-Z]/;
 const COMPARE_OPS = new Set(["===", "!==", "==", "!="]);
 
 /** Type names that stand for the harness set (the canonical alias, its derived aliases, and the independent copies). */
@@ -275,6 +275,34 @@ export function compare(
     return verdict;
 }
 
+export function updateAllowlist(
+    counts: ReadonlyMap<string, HarnessGuardCounts>,
+    allowlist: Readonly<Record<string, HarnessGuardCounts>>,
+    named: readonly string[]
+): Map<string, HarnessGuardCounts> {
+    const selected = new Set(named);
+    const increases = compare(counts, allowlist).added.filter((entry) => selected.has(entry.file));
+
+    if (increases.length > 0) {
+        const entry = increases[0];
+        throw new Error(`cannot increase ${entry.file} ${entry.kind} from ${entry.allowed} to ${entry.found}`);
+    }
+
+    const merged = new Map<string, HarnessGuardCounts>(Object.entries(allowlist));
+
+    for (const file of named) {
+        const now = counts.get(file);
+
+        if (now) {
+            merged.set(file, now);
+        } else {
+            merged.delete(file);
+        }
+    }
+
+    return merged;
+}
+
 function trackedFiles(repoRoot: string): string[] {
     const proc = Bun.spawnSync(["git", "ls-files", "-z", "--", "src", "scripts", "plugins"], {
         cwd: repoRoot,
@@ -302,9 +330,12 @@ export function scanRepo(repoRoot: string): HarnessGuardHit[] {
 
         try {
             source = readFileSync(join(repoRoot, file), "utf8");
-        } catch {
-            // A tracked file deleted in the working tree has nothing to scan.
-            continue;
+        } catch (error) {
+            if (error instanceof Error && "code" in error && error.code === "ENOENT") {
+                continue;
+            }
+
+            throw error;
         }
 
         hits.push(...(file.endsWith(".swift") ? scanSwift(file, source) : scanTypeScript(file, source)));
@@ -345,21 +376,28 @@ function renderAllowlist(counts: ReadonlyMap<string, HarnessGuardCounts>): strin
 function main(): void {
     const args = new Set(process.argv.slice(2));
     const repoRoot = join(import.meta.dirname, "..", "..");
-    const hits = scanRepo(repoRoot);
+    let hits: HarnessGuardHit[];
+
+    try {
+        hits = scanRepo(repoRoot);
+    } catch (error) {
+        process.stderr.write(`harness-guard: scan failed: ${error instanceof Error ? error.message : String(error)}\n`);
+        process.exitCode = 2;
+        return;
+    }
+
     const counts = countsOf(hits);
 
     if (args.has("--update-allowlist")) {
         const named = process.argv.slice(2).filter((arg) => !arg.startsWith("--"));
-        const merged = new Map<string, HarnessGuardCounts>(Object.entries(HARNESS_GUARD_ALLOWLIST));
+        let merged: Map<string, HarnessGuardCounts>;
 
-        for (const file of named) {
-            const now = counts.get(file);
-
-            if (now) {
-                merged.set(file, now);
-            } else {
-                merged.delete(file);
-            }
+        try {
+            merged = updateAllowlist(counts, HARNESS_GUARD_ALLOWLIST, named);
+        } catch (error) {
+            process.stderr.write(`harness-guard: ${error instanceof Error ? error.message : String(error)}\n`);
+            process.exitCode = 1;
+            return;
         }
 
         writeFileSync(join(import.meta.dirname, "harness-guard-allowlist.ts"), renderAllowlist(merged));
