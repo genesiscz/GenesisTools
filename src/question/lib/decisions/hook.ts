@@ -3,6 +3,7 @@ import type { TurnBoundary } from "@genesiscz/utils/agent-sessions/types";
 import { safeSessionId } from "@genesiscz/utils/agents/session-id";
 import type { HarnessId } from "@genesiscz/utils/harness/types";
 import { SafeJSON } from "@genesiscz/utils/json";
+import { type SentDecisions, sendSessionDecisions } from "./answers";
 import { type ChatAnswerRun, loggedUserMessage } from "./chat-answer-run";
 import { type AmbiguousAnswer, type ChatAnswer, chatAnswers, userText } from "./chat-answers";
 import {
@@ -20,8 +21,6 @@ import {
     mentionedDecisions,
     parseDecisionBlocks,
     questionNudgeVerdict,
-    type SentDecisions,
-    sendSessionDecisions,
     stopHookVerdict,
 } from "./read";
 import { type DecisionRecord, harvestDecisions, kindOf, readDecisions, recordDelivery } from "./store";

@@ -1,10 +1,10 @@
 import { resolve } from "node:path";
 import { readPaneReceipt } from "@app/claude/lib/cmux/pane-send";
-import { canonicalAgent } from "@app/handoff/targeting";
+import { doorAnswerRefusal, type HeldAnswer, planDoorAnswer } from "@app/question/lib/decisions/answers";
 import { type DeliverDeps, DeliveryUnknownError, deliverToSession } from "@app/question/lib/decisions/deliver";
 import { decisionFiles } from "@app/question/lib/decisions/read";
 import { sendAnsweredDecisions } from "@app/question/lib/decisions/send";
-import { type DecisionRecord, kindOf, readDecisions } from "@app/question/lib/decisions/store";
+import { readDecisions } from "@app/question/lib/decisions/store";
 import { answerInboxDecision } from "@app/question/lib/inbox/answer";
 import { waitingBlock } from "@app/question/lib/inbox/load";
 import { type AskDeps, answerAskForm, checkAskAnswer, getAskForm } from "@app/question/lib/pending/ask";
@@ -107,21 +107,9 @@ export function widgetDeliveryReceipt({
 
 type DecisionPayload = Extract<WidgetOutgoing["payload"], { kind: "decision" }>;
 
-/** States a decision reaches after its answer was typed into the agent. */
-const DELIVERED_DECISION_STATES: ReadonlySet<string> = new Set(["sent", "acknowledged", "implemented"]);
-
-/**
- * The row holds this message's own answer, stored by an earlier attempt: answering keeps the revision, so the
- * same revision, the same letter and the same note mean nobody answered it differently since.
- */
-function holdsThisAnswer(row: DecisionRecord, payload: DecisionPayload): boolean {
-    const option = payload.option?.trim().toLowerCase() || undefined;
-    const note = payload.text.trim();
-    return (
-        (row.revision ?? 1) === payload.expectedRevision &&
-        (row.option || undefined) === option &&
-        (!note || (row.answer ?? "").includes(note))
-    );
+/** The answer a widget message holds for its decision. */
+function heldAnswer(payload: DecisionPayload): HeldAnswer {
+    return { expectedRevision: payload.expectedRevision, option: payload.option, text: payload.text };
 }
 
 /** Widget images too large for a form answer. They still reach the form, as media context. */
@@ -179,23 +167,14 @@ export function widgetDispatcher({
             const payload = message.payload;
             if (payload.kind === "decision") {
                 const row = readDecisions(files.file).find((entry) => entry.id === payload.id);
-                if (
-                    !row ||
-                    kindOf(row) !== "decision" ||
-                    row.sessionId !== message.target.sessionId ||
-                    row.number !== payload.number ||
-                    // A row may spell the harness `claude-code` (the runtime context's name); compare canonical names.
-                    (row.provider && (canonicalAgent(row.provider) ?? row.provider) !== message.target.provider) ||
-                    (row.revision ?? 1) !== payload.expectedRevision ||
-                    // A refused transport leaves this message's answer stored `answered`; a Retry sends that
-                    // answer again, and a canonical delivery from Hub settles it (see dispatch).
-                    !(
-                        ["open", "drafted"].includes(row.state) ||
-                        ((row.state === "answered" || DELIVERED_DECISION_STATES.has(row.state)) &&
-                            holdsThisAnswer(row, payload))
-                    )
-                ) {
-                    throw new Error("The decision changed or belongs to another session; refresh it before answering.");
+                const refusal = doorAnswerRefusal(row, {
+                    session: message.target.sessionId,
+                    number: payload.number,
+                    provider: message.target.provider,
+                    ...heldAnswer(payload),
+                });
+                if (refusal) {
+                    throw refusal;
                 }
             } else if (payload.kind === "form") {
                 const form = getAskForm(payload.id, ask);
@@ -248,50 +227,53 @@ export function widgetDispatcher({
             }
             if (payload.kind === "decision") {
                 const row = readDecisions(files.file).find((entry) => entry.id === payload.id);
-                if (row?.delivery?.uncertain) {
+                const plan = planDoorAnswer(row, heldAnswer(payload));
+                if (plan.kind === "unresolved") {
                     throw new DeliveryUnknownError(
                         "An earlier delivery of this decision is unresolved. Inspect the conversation in Hub."
                     );
                 }
-                const ours = row !== undefined && holdsThisAnswer(row, payload);
-                if (row && ours && DELIVERED_DECISION_STATES.has(row.state)) {
+
+                if (plan.kind === "delivered") {
                     return { delivered: true, channel: "decisions", detail: "Delivered from Decisions" };
                 }
-                const resend = row?.state === "answered" && ours;
-                if (!row || !(resend || ["open", "drafted"].includes(row.state))) {
+
+                if (plan.kind === "refused") {
                     return {
                         delivered: false,
                         certainty: "not-sent",
                         channel: "decisions",
-                        detail: "Decision changed elsewhere. Refresh it before answering.",
+                        detail: plan.refusal.message,
                     };
                 }
+
                 // An earlier attempt stored the answer and the transport refused it: send that same answer again.
                 // Without a live route both paths save it for this exact session (sourceHome, deliveryKey).
-                const sent = resend
-                    ? await sendAnsweredDecisions({
-                          ids: [row.id],
-                          session: message.target.sessionId,
-                          provider: message.target.provider,
-                          sourceHome: message.target.sourceHome,
-                          deliveryKey: message.id,
-                          files,
-                          deps: deliver,
-                      })
-                    : await answerInboxDecision(
-                          {
+                const sent =
+                    plan.kind === "resend"
+                        ? await sendAnsweredDecisions({
+                              ids: [plan.row.id],
                               session: message.target.sessionId,
                               provider: message.target.provider,
-                              cwd: message.target.cwd,
                               sourceHome: message.target.sourceHome,
                               deliveryKey: message.id,
-                              number: payload.number,
-                              expectedRevision: payload.expectedRevision,
-                              option: payload.option,
-                              text,
-                          },
-                          { ...files, block: waitingBlock, deliver }
-                      );
+                              files,
+                              deps: deliver,
+                          })
+                        : await answerInboxDecision(
+                              {
+                                  session: message.target.sessionId,
+                                  provider: message.target.provider,
+                                  cwd: message.target.cwd,
+                                  sourceHome: message.target.sourceHome,
+                                  deliveryKey: message.id,
+                                  number: payload.number,
+                                  expectedRevision: payload.expectedRevision,
+                                  option: payload.option,
+                                  text,
+                              },
+                              { ...files, block: waitingBlock, deliver }
+                          );
                 return {
                     delivered: sent.delivered === true,
                     channel: sent.queueId ? "session-queue" : (sent.channel ?? "queued"),

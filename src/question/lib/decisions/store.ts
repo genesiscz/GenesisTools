@@ -187,6 +187,30 @@ export type DecisionVersion = Pick<DecisionRecord, "prompt" | "options" | Versio
 /** Only an item nobody has answered yet may be replaced: an answer must keep pointing at the text it answered. */
 const SUPERSEDABLE: ReadonlySet<DecisionState> = new Set(["open", "drafted"]);
 
+/**
+ * Whether the item still waits for its answer: `open`, or `drafted` with an unsent pick or note (the same states a
+ * post may supersede). Every door that applies an answer, and every list of what still needs one, asks this.
+ */
+export function awaitsAnswer(row: Pick<DecisionRecord, "state">): boolean {
+    return SUPERSEDABLE.has(row.state);
+}
+
+/**
+ * Nothing staged any more (an unstage, a cleared pick): a `drafted` row with no pick and no note is plain `open`
+ * again, without the empty draft fields. The widget's unstage used to leave `drafted` with empty fields, which every
+ * list then showed as staged. Returns the row itself when it is not such a draft.
+ */
+export function reopenEmptyDraft<Row extends DecisionRecord>(row: Row): Row {
+    if (row.state !== "drafted" || row.draftOption || row.draft?.trim()) {
+        return row;
+    }
+
+    const reopened: Row = { ...row, state: "open" };
+    delete reopened.draft;
+    delete reopened.draftOption;
+    return reopened;
+}
+
 const NEXT: Record<DecisionKind, Record<DecisionState, DecisionState[]>> = {
     decision: {
         // `acknowledged` straight from open or drafted: an agent records an answer the user gave in chat (patched()
@@ -810,15 +834,8 @@ function patched(
         delete next.draftOption;
     }
 
-    // Nothing staged any more (an unstage, a cleared pick): plain `open` again, whichever surface cleared it. The
-    // widget's unstage used to leave `drafted` with empty fields, which every list then showed as staged.
-    if (next.state === "drafted" && !next.draftOption && !next.draft?.trim()) {
-        next.state = "open";
-        delete next.draft;
-        delete next.draftOption;
-    }
-
-    return next;
+    // Whichever surface cleared the last staged pick or note, the row is plain `open` again.
+    return reopenEmptyDraft(next);
 }
 
 export interface DecisionLogRepair {
@@ -877,12 +894,10 @@ export async function repairDecisionLog({
                 };
             }
 
-            if (row.state === "drafted" && !row.draftOption && !row.draft?.trim()) {
+            const reopened = reopenEmptyDraft(row);
+            if (reopened !== row) {
                 repair.reopened.push(row.id);
-                const reopened: DecisionRecord = { ...row, state: "open", updatedTs: ts };
-                delete reopened.draft;
-                delete reopened.draftOption;
-                return reopened;
+                return { ...reopened, updatedTs: ts };
             }
 
             return row;

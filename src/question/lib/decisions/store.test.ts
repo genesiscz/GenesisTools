@@ -18,6 +18,7 @@ import { withFileLock } from "@genesiscz/utils/storage/file-lock";
 import { answerGitWithoutSpawning } from "@genesiscz/utils/test/no-git";
 import { z } from "zod";
 import { stagedSendText } from "../inbox/drafts";
+import { AnswerRefusedError, checkAnswer, doorAnswerRefusal, planDoorAnswer, sendSessionDecisions } from "./answers";
 import { setDecisionBannerRemover } from "./banners";
 import { chatAnswers } from "./chat-answers";
 import { backfillChatAnswers } from "./chat-reading";
@@ -34,7 +35,6 @@ import {
     mentionedDecisions,
     parseDecisionBlocks,
     questionNudgeVerdict,
-    sendSessionDecisions,
     sessionAnswers,
     staleCrossings,
     stopHookVerdict,
@@ -42,6 +42,7 @@ import {
 import { DECISION_STATES, decisionUpdateInputSchema, postDecisionsInputSchema } from "./schema";
 import { sendAnsweredDecisions } from "./send";
 import {
+    awaitsAnswer,
     awaitsDelivery,
     createTodo,
     type DecisionRecord,
@@ -52,6 +53,7 @@ import {
     readDecisions,
     readDecisionsWithIntegrity,
     recordChatAnswers,
+    reopenEmptyDraft,
     repairDecisionLog,
     updateDecision,
     updateDecisions,
@@ -2353,5 +2355,68 @@ describe("decision banners (F13)", () => {
         } finally {
             setDecisionBannerRemover(undefined);
         }
+    });
+});
+
+describe("decision answers: one closed reason per refusal", () => {
+    const row: DecisionRecord = {
+        id: "d_1_s",
+        sessionId: "s",
+        number: 1,
+        prompt: "Ship it?",
+        options: ["yes", "no"],
+        state: "open",
+        updatedTs: "2026-01-01T00:00:00.000Z",
+    };
+    const noBlock = async () => null;
+
+    test("checkAnswer names each refusal by its code, with the sentence every door shows", async () => {
+        const refusal = async (answer: Parameters<typeof checkAnswer>[0]["answer"], rows: DecisionRecord[] = [row]) =>
+            checkAnswer({ session: "s", answer, rows, block: noBlock }).then(
+                () => undefined,
+                (error: unknown) => (error instanceof AnswerRefusedError ? error.code : error)
+            );
+
+        expect(await refusal({ number: 1 })).toBe("empty");
+        expect(await refusal({ number: 1, option: "a1" })).toBe("option-shape");
+        expect(await refusal({ number: 1, option: "a", expectedRevision: 2 })).toBe("stale-revision");
+        expect(await refusal({ number: 2, option: "a" })).toBe("not-waiting");
+        expect(await refusal({ number: 1, option: "c" })).toBe("option-range");
+        expect(await refusal({ number: 1, option: "a" }, [{ ...row, state: "answered" }])).toBe("already-answered");
+        expect(await refusal({ number: 1, option: "a" })).toBeUndefined();
+        expect(
+            await refusal({ number: 1, option: "a" }, [{ ...row, state: "drafted", draftOption: "b" }])
+        ).toBeUndefined();
+    });
+
+    test("a door's answer is applied while the decision waits, sent again while it is ours and answered, and settled once delivered", () => {
+        const held = { expectedRevision: 1, option: "a", text: "" };
+        const ours = { ...row, option: "a", answer: "yes" };
+
+        expect(planDoorAnswer(row, held)).toEqual({ kind: "answer" });
+        expect(planDoorAnswer({ ...ours, state: "answered" }, held)).toMatchObject({ kind: "resend" });
+        expect(planDoorAnswer({ ...ours, state: "sent" }, held)).toEqual({ kind: "delivered" });
+        expect(
+            planDoorAnswer(
+                { ...ours, state: "answered", delivery: { route: "queued", uncertain: true, at: "x" } },
+                held
+            )
+        ).toEqual({ kind: "unresolved" });
+        const other = planDoorAnswer({ ...ours, state: "sent", option: "b" }, held);
+        expect(other.kind === "refused" ? other.refusal.code : other.kind).toBe("changed-elsewhere");
+        expect(doorAnswerRefusal(row, { ...held, session: "s", number: 1, provider: "claude" })).toBeUndefined();
+        expect(doorAnswerRefusal(row, { ...held, session: "other", number: 1, provider: "claude" })?.code).toBe(
+            "changed-elsewhere"
+        );
+    });
+
+    test("an emptied draft is plain open again, and any other row is returned as it is", () => {
+        expect(reopenEmptyDraft<DecisionRecord>({ ...row, state: "drafted", draft: "  ", draftOption: "" })).toEqual(
+            row
+        );
+        const staged = { ...row, state: "drafted" as const, draftOption: "a" };
+        expect(reopenEmptyDraft(staged)).toBe(staged);
+        expect(awaitsAnswer(staged)).toBe(true);
+        expect(awaitsAnswer({ ...row, state: "answered" })).toBe(false);
     });
 });

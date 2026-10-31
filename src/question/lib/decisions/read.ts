@@ -4,7 +4,6 @@ import { routerLink } from "@genesiscz/utils/browser-router/router-link";
 import { toolCommand } from "@genesiscz/utils/cli/tool-command";
 import { json2md } from "@genesiscz/utils/json2md";
 import { isTestProcess } from "@genesiscz/utils/test-process";
-import { DeliveryUnknownError, NotDeliveredError } from "./delivery-errors";
 import {
     boundContext,
     cleanBlock,
@@ -16,16 +15,14 @@ import {
 } from "./reply-text";
 import { DECISION_STATES } from "./schema";
 import {
-    awaitsDelivery,
+    awaitsAnswer,
     type DecisionKind,
     type DecisionRecord,
     type DecisionState,
     type HarvestedDecision,
     kindOf,
-    moveDecisions,
     promptReserved,
     readDecisions,
-    restoreUndelivered,
 } from "./store";
 /** Session id of the harness posting this process, or null for a human CLI and for tests. */
 export function currentHarnessSession(): string | null {
@@ -99,7 +96,7 @@ export function listSessions(rows: DecisionRecord[], options: ListSessionsOption
 
     return [...groups.entries()].map(([sessionId, decisions]) => {
         const first = decisions[0];
-        const waiting = decisions.filter((row) => row.state === "open" || row.state === "drafted");
+        const waiting = decisions.filter(awaitsAnswer);
         const oldest = waiting.map((row) => Date.parse(row.createdTs ?? row.updatedTs)).filter(Number.isFinite);
 
         return {
@@ -303,68 +300,6 @@ export function decisionLine(row: DecisionRecord): string {
 
 export function decisionLines(rows: DecisionRecord[]): string {
     return rows.map(decisionLine).join("\n");
-}
-
-export interface SentDecisions {
-    text: string;
-    numbers: number[];
-}
-
-/**
- * Delivers a session's answered decisions: the batch is marked `sent` in ONE store transition
- * FIRST, and only then handed to `emit`. Marking row by row after emitting let a crash leave
- * delivered answers still `answered`, and the next send delivered them again. Both the CLI and
- * the MCP door send through this. Throws "nothing to send" before any change when none is due.
- * An `emit` that throws puts the batch back to `answered`; one that returns normally delivered it.
- */
-export async function sendSessionDecisions({
-    file,
-    events,
-    session,
-    ids: selectedIds,
-    emit,
-}: {
-    file: string;
-    events: string;
-    session: string;
-    ids?: readonly string[];
-    /**
-     * Returns (or resolves) when delivered; throws (or rejects) when not. Its value is ignored.
-     * `numbers` are the decisions in `text`, for a caller that frames the message.
-     */
-    emit: (text: string, numbers: number[]) => unknown;
-}): Promise<SentDecisions> {
-    const selected = selectedIds ? new Set(selectedIds) : undefined;
-    // Without ids: only the answers waiting to go out, never a chat answer an agent recorded as `answered`.
-    const rows = readDecisions(file).filter(
-        (row) =>
-            row.sessionId === session &&
-            kindOf(row) === "decision" &&
-            (selected ? selected.has(row.id) : awaitsDelivery(row))
-    );
-    const due = deliverDecisions(rows, () => undefined);
-    const ids = rows.filter((row) => due.numbers.includes(row.number)).map((row) => row.id);
-    // The text comes from the rows as they stood UNDER the lock, not from the read above: an
-    // answer edited in between would otherwise be marked sent while the old one was delivered.
-    const moved = await moveDecisions(file, events, ids, "sent");
-    const sent = { text: decisionLines(moved), numbers: moved.map((row) => row.number) };
-
-    try {
-        await emit(sent.text, sent.numbers);
-    } catch (error) {
-        if (!(error instanceof DeliveryUnknownError)) {
-            const queued = error instanceof NotDeliveredError && error.result.queueId ? error.result : undefined;
-            await restoreUndelivered({
-                file,
-                events,
-                ids,
-                ...(queued ? { delivery: { route: "queued", queueId: queued.queueId, error: queued.error } } : {}),
-            });
-        }
-        throw error;
-    }
-
-    return sent;
 }
 
 export interface StopHookConfig {
@@ -750,7 +685,7 @@ export function staleCrossings(rows: DecisionRecord[], config: StalenessConfig, 
     const crossings: StaleCrossing[] = [];
 
     for (const row of rows) {
-        if (kindOf(row) !== "decision" || !row.blocking || (row.state !== "open" && row.state !== "drafted")) {
+        if (kindOf(row) !== "decision" || !row.blocking || !awaitsAnswer(row)) {
             continue;
         }
 

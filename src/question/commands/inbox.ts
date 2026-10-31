@@ -2,8 +2,9 @@ import { ACCOUNT_PROVIDER_ALIASES, isAccountProviderAlias } from "@genesiscz/uti
 import { SafeJSON } from "@genesiscz/utils/json";
 import { logger, out } from "@genesiscz/utils/logger";
 import type { Command } from "commander";
+import type { DecisionAnswer } from "../lib/decisions/answers";
 import type { PromptReceipt } from "../lib/decisions/store";
-import type { AnswerDecisionDeps, DecisionAnswer, InboxAnswerResult } from "../lib/inbox/answer";
+import type { AnswerDecisionDeps, InboxAnswerResult } from "../lib/inbox/answer";
 import type { DialogAnswerDeps } from "../lib/inbox/dialog-answer";
 import type { AskDeps } from "../lib/pending/ask";
 import type { AskAnswer } from "../lib/pending/types";

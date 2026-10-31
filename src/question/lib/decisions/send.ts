@@ -1,14 +1,10 @@
 import { canonicalAgent } from "@app/handoff/targeting";
 import { logger } from "@genesiscz/utils/logger";
-import {
-    type DeliverDeps,
-    type DeliveryResult,
-    DeliveryUnknownError,
-    deliverToSession,
-    NotDeliveredError,
-} from "./deliver";
+import { sendSessionDecisions } from "./answers";
+import { type DeliverDeps, type DeliveryResult, deliverToSession } from "./deliver";
+import { DeliveryUnknownError, NotDeliveredError } from "./delivery-errors";
 import { relayedAnswerText } from "./delivery-text";
-import { decisionFiles, decisionLine, decisionLines, sendSessionDecisions } from "./read";
+import { decisionFiles, decisionLine, decisionLines } from "./read";
 import {
     awaitsDelivery,
     finishPromptDecisions,

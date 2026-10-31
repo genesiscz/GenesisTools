@@ -1,5 +1,5 @@
 import { decisionLines, dueDecisions, optionLetters } from "../decisions/read";
-import { awaitsDelivery, type DecisionRecord, kindOf } from "../decisions/store";
+import { awaitsAnswer, awaitsDelivery, type DecisionRecord, kindOf } from "../decisions/store";
 
 /**
  * What a send would deliver, without the delivery code: `inbox --session <id> --json --all-items` shows the staged
@@ -8,11 +8,7 @@ import { awaitsDelivery, type DecisionRecord, kindOf } from "../decisions/store"
 
 /** A drafted decision the send would promote: an unsent pick or note on an open row. */
 export function isDrafted(row: DecisionRecord): boolean {
-    return (
-        kindOf(row) === "decision" &&
-        (row.state === "open" || row.state === "drafted") &&
-        (Boolean(row.draftOption) || Boolean(row.draft?.trim()))
-    );
+    return kindOf(row) === "decision" && awaitsAnswer(row) && (Boolean(row.draftOption) || Boolean(row.draft?.trim()));
 }
 
 /** What a send turns a draft into: the pick becomes the option, the note the answer. */

@@ -3,7 +3,7 @@ import type { BackwardRead, ReadBackwardOptions } from "@genesiscz/utils/agent-s
 import { resolveTranscript } from "@genesiscz/utils/ai/transcripts/resolve";
 import { logger } from "@genesiscz/utils/logger";
 import { type AmbiguousAnswer, type ChatAnswer, chatAnswers, type OpenDecisionRef } from "./chat-answers";
-import { type DecisionRecord, kindOf, readDecisions, recordChatAnswers } from "./store";
+import { awaitsAnswer, type DecisionRecord, kindOf, readDecisions, recordChatAnswers } from "./store";
 
 const log = logger.child({ component: "question:chat-answers" });
 
@@ -17,10 +17,7 @@ export type ReadSession = (
  * for the decision Stop hook, the backfill and the inbox's `chatAnswered` list.
  */
 export function openChatDecisions(rows: readonly DecisionRecord[], session: string): DecisionRecord[] {
-    return rows.filter(
-        (row) =>
-            row.sessionId === session && kindOf(row) === "decision" && (row.state === "open" || row.state === "drafted")
-    );
+    return rows.filter((row) => row.sessionId === session && kindOf(row) === "decision" && awaitsAnswer(row));
 }
 
 /** When a decision was asked as it stands: its latest revision, else its post. */

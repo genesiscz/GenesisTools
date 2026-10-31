@@ -1,10 +1,11 @@
 import { errorResult } from "@app/dev-dashboard/server/routes/error";
 import type { RouteDef } from "@app/dev-dashboard/server/types";
+import type { DecisionAnswer } from "@app/question/lib/decisions/answers";
 import type { DeliverDeps } from "@app/question/lib/decisions/deliver";
 import { decisionFiles } from "@app/question/lib/decisions/read";
 import { sendAnsweredDecisions } from "@app/question/lib/decisions/send";
 import type { HarvestedDecision } from "@app/question/lib/decisions/store";
-import { answerInboxDecisions, type DecisionAnswer } from "@app/question/lib/inbox/answer";
+import { answerInboxDecisions } from "@app/question/lib/inbox/answer";
 import { dismissDecision, draftDecision, sendDrafts } from "@app/question/lib/inbox/drafts";
 import { type InboxDeps, loadInbox, loadSessionDecisions, waitingBlock } from "@app/question/lib/inbox/load";
 

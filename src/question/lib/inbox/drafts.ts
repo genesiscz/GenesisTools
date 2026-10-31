@@ -2,6 +2,7 @@ import { type DeliverDeps, resolveDeliveryTarget } from "../decisions/deliver";
 import { optionLetters } from "../decisions/read";
 import { type SendResult, sendAnsweredDecisions } from "../decisions/send";
 import {
+    awaitsAnswer,
     type DecisionRecord,
     type HarvestedDecision,
     harvestDecisions,
@@ -99,7 +100,7 @@ export async function draftDecision(input: DraftInput, deps: DraftDeps) {
         throw new Error(`DECISION ${input.number} could not be stored for session ${input.session}`);
     }
 
-    if (row.state !== "open" && row.state !== "drafted") {
+    if (!awaitsAnswer(row)) {
         throw new Error(`DECISION ${input.number} is already ${row.state}`);
     }
 
@@ -153,7 +154,7 @@ export async function dismissDecision(
         throw new Error(`DECISION ${number} is not waiting in session ${session}`);
     }
 
-    if (row.state !== "open" && row.state !== "drafted") {
+    if (!awaitsAnswer(row)) {
         throw new Error(`DECISION ${number} is already ${row.state}`);
     }
 

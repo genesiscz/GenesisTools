@@ -1,30 +1,13 @@
 import { logger } from "@genesiscz/utils/logger";
+import { type CheckedAnswer, checkAnswer, type DecisionAnswer, decisionRow } from "../decisions/answers";
 import type { DeliverDeps, DeliveryResult } from "../decisions/deliver";
-import { decisionLine, optionLetters } from "../decisions/read";
+import { decisionLine } from "../decisions/read";
 import { sendAnsweredDecisions } from "../decisions/send";
-import {
-    type DecisionRecord,
-    type HarvestedDecision,
-    harvestDecisions,
-    kindOf,
-    readDecisions,
-    staleRevisionError,
-    updateDecisions,
-} from "../decisions/store";
+import { type HarvestedDecision, harvestDecisions, readDecisions, updateDecisions } from "../decisions/store";
 import { type AskDeps, answerAskForm, checkAskAnswer } from "../pending/ask";
 import type { AskAnswer } from "../pending/types";
 
 const { log } = logger.scoped("question-inbox");
-
-/** One decision's answer: a letter, a text, or a letter with a note. */
-export interface DecisionAnswer {
-    expectedRevision?: number;
-    number: number;
-    /** One letter, a-z. Required unless `text` is given. */
-    option?: string;
-    /** A free-text answer, or a note after the letter. */
-    text?: string;
-}
 
 export interface AnswerDecisionsInput {
     session: string;
@@ -66,74 +49,6 @@ export interface InboxAnswerResult {
     queueTextHash?: string;
 }
 
-function findRow(rows: DecisionRecord[], session: string, number: number): DecisionRecord | undefined {
-    return rows.find((row) => row.sessionId === session && row.number === number && kindOf(row) === "decision");
-}
-
-interface CheckedAnswer {
-    expectedRevision?: number;
-    number: number;
-    option?: string;
-    text?: string;
-    row?: DecisionRecord;
-    block?: HarvestedDecision;
-}
-
-/** Validates one answer against its stored row or its transcript block; throws a readable refusal. */
-async function checkAnswer(
-    session: string,
-    answer: DecisionAnswer,
-    rows: DecisionRecord[],
-    deps: AnswerDecisionDeps
-): Promise<CheckedAnswer> {
-    // The decision log allows several letters ("ac" when two apply); each must name an option.
-    const option = optionLetters(answer.option).join("") || undefined;
-    const text = answer.text?.trim() || undefined;
-
-    if (!option && !text) {
-        throw new Error(`DECISION ${answer.number}: pass an option letter or an answer text`);
-    }
-
-    if (answer.option?.trim() && !/^[a-z]+$/i.test(answer.option.trim())) {
-        throw new Error(`the option is one or more letters a-z, not "${answer.option}"`);
-    }
-
-    const row = findRow(rows, session, answer.number);
-    if (
-        answer.expectedRevision !== undefined &&
-        (!Number.isInteger(answer.expectedRevision) ||
-            answer.expectedRevision < 1 ||
-            answer.expectedRevision !== (row?.revision ?? 1))
-    ) {
-        throw staleRevisionError(answer.number);
-    }
-
-    const block = row ? null : await deps.block(session, answer.number);
-
-    if (!row && !block) {
-        throw new Error(`DECISION ${answer.number} is not waiting in session ${session}`);
-    }
-
-    const options = row?.options ?? block?.options ?? [];
-
-    if (option && options.length > 0 && [...option].some((letter) => letter.charCodeAt(0) - 97 >= options.length)) {
-        throw new Error(`DECISION ${answer.number} has options a-${String.fromCharCode(96 + options.length)}`);
-    }
-
-    if (row && row.state !== "open" && row.state !== "drafted") {
-        throw new Error(`DECISION ${answer.number} is already ${row.state}`);
-    }
-
-    return {
-        number: answer.number,
-        option,
-        text,
-        expectedRevision: answer.expectedRevision ?? row?.revision ?? 1,
-        ...(row ? { row } : {}),
-        ...(block ? { block } : {}),
-    };
-}
-
 /**
  * Answers decisions of one session and delivers them as ONE message (the hub's Decisions pane
  * sends every drafted answer at once; the inbox sends one). Every answer is checked before
@@ -155,7 +70,7 @@ export async function answerInboxDecisions(
     const checked: CheckedAnswer[] = [];
 
     for (const answer of input.answers) {
-        checked.push(await checkAnswer(input.session, answer, rows, deps));
+        checked.push(await checkAnswer({ session: input.session, answer, rows, block: deps.block }));
     }
 
     if (input.dryRun) {
@@ -191,7 +106,7 @@ export async function answerInboxDecisions(
 
     const stored = readDecisions(deps.file);
     const updates = checked.map((item) => {
-        const row = findRow(stored, input.session, item.number);
+        const row = decisionRow(stored, input.session, item.number);
 
         if (!row) {
             throw new Error(`DECISION ${item.number} could not be stored for session ${input.session}`);
