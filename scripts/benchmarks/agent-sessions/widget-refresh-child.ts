@@ -4,8 +4,11 @@
  * scratch `GENESIS_TOOLS_HOME` the driver (`widget-refresh.ts`) set up with a copy of the history index, so the live
  * index is never written. The session roots are the live ones, read only. Prints one JSON object on stdout.
  *
- * - `tick.claude`: a change of the newest main Claude transcript (the scope a transcript write asks for).
- * - `tick.claudeAgents`: a change of the newest Claude sub-agent transcript of a lead the tree does not list.
+ * - `tick.claude`: the refresh a write to the newest main Claude transcript asks for (its scope and its path). The
+ *   live file is never written, so after the discarded pass this is the scoped refresh of a file whose metadata
+ *   revision still matches: the stat, the index lookup and the listing, without the metadata read. The read of a
+ *   grown file is `metadata.grown*` below; a tick that also pays it would need scratch session roots.
+ * - `tick.claudeAgents`: the same for the newest Claude sub-agent transcript of a lead the tree does not list.
  * - `tick.all`: the full refresh the safety tick asks for every fourth tick (the listing and the agents tree).
  * - `metadata.grownSmall` / `metadata.grownLarge`: one transcript's metadata read again after 64 KB more of real
  *   lines were appended, for a copy under the 10 MB full-read bound and one above it (scratch files, not the roots).
