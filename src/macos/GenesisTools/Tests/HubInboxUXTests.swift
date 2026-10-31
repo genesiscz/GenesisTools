@@ -176,8 +176,10 @@ final class HubInboxUXTests: XCTestCase {
         XCTAssertEqual(InboxMain.numberRow[25], 9)
     }
 
+    /// A dialog takes the number keys like a decision, but its pick goes to the dialog-answer route (`choose` sends it
+    /// to `answerDialog`), never to the decision log's staging; a legacy dialog row (kind decision) counts as a dialog.
     @MainActor
-    func testDialogsNeverReceiveDecisionKeyboardActions() throws {
+    func testDialogsTakeNumberKeysThroughTheDialogRoute() throws {
         let inbox = HubInboxModel()
         let dialog = try Self.decision(#"{"id":"dialog-1","kind":"dialog","source":"dialog"}"#)
         let legacy = try Self.decision(#"{"id":"dialog-2","kind":"decision","source":"dialog"}"#)
@@ -186,8 +188,12 @@ final class HubInboxUXTests: XCTestCase {
         inbox.selectedID = session.id
         XCTAssertTrue(dialog.isDialog)
         XCTAssertTrue(legacy.isDialog)
-        XCTAssertEqual(inbox.keyCard(in: [session])?.item.id, decision.id)
+        XCTAssertFalse(legacy.isDecision)
+        XCTAssertEqual(inbox.keyCard(in: [session])?.item.id, dialog.id)
+        XCTAssertEqual(inbox.keyCard(in: [session])?.item.answerRoute, .dialog)
+        XCTAssertEqual(inbox.moveKeyCard(1, in: [session]), legacy.id)
         XCTAssertEqual(inbox.moveKeyCard(1, in: [session]), decision.id)
+        XCTAssertNotEqual(decision.answerRoute, .dialog)
     }
 
     /// F8: Up and Down walk the open decisions across sessions and stop at the ends; the selected session's first open
