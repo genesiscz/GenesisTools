@@ -39,7 +39,7 @@ export interface HarnessGuardHit {
 
 const NAMES = new Set(["claude", "codex", "grok"]);
 const NAME_LITERAL = /^(["'`])(claude|codex|grok)\1$/;
-const PREFILTER = /["'`](?:claude|codex|grok)["'`]|\b(?:claude|codex|grok)\s*:|Record\s*<\s*[A-Z]/;
+const PREFILTER = /["'`](?:claude|codex|grok)["'`]|\b(?:claude|codex|grok)\s*[:,}]|Record\s*<\s*[A-Z]/;
 const COMPARE_OPS = new Set(["===", "!==", "==", "!="]);
 
 /** Type names that stand for the harness set (the canonical alias, its derived aliases, and the independent copies). */
@@ -125,7 +125,12 @@ function isComparison(literal: SgNode): boolean {
     return parent?.kind() === "binary_expression" && COMPARE_OPS.has(parent.field("operator")?.text() ?? "");
 }
 
+/** The harness key of an object member: a `pair`'s key, or a shorthand `{ claude, codex }` member's own name. */
 function pairKey(pair: SgNode): string | null {
+    if (pair.kind() === "shorthand_property_identifier") {
+        return pair.text();
+    }
+
     const key = pair.field("key");
 
     if (!key) {
@@ -184,7 +189,7 @@ export function scanTypeScript(file: string, source: string): HarnessGuardHit[] 
     for (const object of root.findAll({ rule: { kind: "object" } })) {
         const keys = object
             .children()
-            .filter((child) => child.kind() === "pair")
+            .filter((child) => child.kind() === "pair" || child.kind() === "shorthand_property_identifier")
             .map(pairKey)
             .filter((key): key is string => key !== null && NAMES.has(key));
 
@@ -456,13 +461,19 @@ function main(): void {
         return;
     }
 
+    const verdict = compare(counts, HARNESS_GUARD_ALLOWLIST);
+    const strict = HARNESS_GUARD_STRICT || args.has("--strict");
+    const unjustified = [...counts.keys()].filter((file) => !HARNESS_GUARD_ALLOWLIST[file]?.why);
+
+    if (strict && (verdict.added.length > 0 || verdict.stale.length > 0 || unjustified.length > 0)) {
+        process.exitCode = 1;
+    }
+
     if (args.has("--json")) {
         process.stdout.write(`${SafeJSON.stringify(hits, null, 2)}\n`);
         return;
     }
 
-    const verdict = compare(counts, HARNESS_GUARD_ALLOWLIST);
-    const strict = HARNESS_GUARD_STRICT || args.has("--strict");
     const byKind = KINDS.map((kind) => `${hits.filter((hit) => hit.kind === kind).length} ${kind}`).join(", ");
 
     for (const entry of verdict.added) {
@@ -481,7 +492,6 @@ function main(): void {
         );
     }
 
-    const unjustified = [...counts.keys()].filter((file) => !HARNESS_GUARD_ALLOWLIST[file]?.why);
     const unjustifiedSites = hits.filter((hit) => unjustified.includes(hit.file)).length;
 
     if (strict) {
@@ -496,10 +506,6 @@ function main(): void {
             `${unjustifiedSites} sites in ${unjustified.length} files without a why; ` +
             `${verdict.added.length} new, ${verdict.stale.length} stale\n`
     );
-
-    if (strict && (verdict.added.length > 0 || verdict.stale.length > 0 || unjustified.length > 0)) {
-        process.exitCode = 1;
-    }
 }
 
 if (import.meta.main) {

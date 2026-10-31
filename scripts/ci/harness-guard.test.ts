@@ -19,6 +19,9 @@ describe("harness guard", () => {
         ]);
         expect(scanTypeScript("src/example.ts", "type Lookup = Record \n <HarnessId, number>;")).toHaveLength(1);
         expect(scanTypeScript("src/example.ts", "const value = 'other';")).toEqual([]);
+        expect(scanTypeScript("src/example.ts", "const table = { claude, codex, grok };")).toMatchObject([
+            { kind: "table", line: 1 },
+        ]);
     });
 
     test("finds Swift sites and skips comments", () => {
