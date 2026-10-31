@@ -55,8 +55,8 @@ provider, so a new provider is a list of members to fill in and no feature parse
   migration): `continuedIn` (the successor session id a transcript ends on; Codex and Grok keep none),
   `currentModel` (the model a session runs now, from a bounded tail, or Grok's `summary.json`; it replaced the per-row
   `modelOfRow` on 2026-10-31, and the same function is each harness's `HookFacts.currentModel`, so a hook loads no
-  reader), `indexesFile` (whether a path under a
-  session root is this provider's transcript), and `rowAnchors` (the ids a row carries: uuid, message id, tool call
+  reader), `classifyPath` (what a file under a session root is: a session's transcript, a sub-agent's, or the
+  metadata beside one, else null), and `rowAnchors` (the ids a row carries: uuid, message id, tool call
   ids, the open Codex turn). `followSessionContinuations` (`session-backward.ts`) walks `continuedIn` to the live
   id, so `tools claude cmux focus`, `send` and decision delivery reach a continued session.
 - **What a feature gets is normalized**: `NativeHistoryEntry` (role, text, timestamp, tool, paths). Logic over it
