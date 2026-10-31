@@ -1054,16 +1054,10 @@ export class OpenAiSubscriptionProvider implements ProxyProvider {
                     .map((record) => record.slug);
                 const hint = visionModels.length > 0 ? ` Vision-capable: ${visionModels.join(", ")}.` : "";
 
-                return new Response(
-                    SafeJSON.stringify({
-                        error: {
-                            message: `Model ${concreteModel} does not accept image input.${hint}`,
-                            type: "invalid_request_error",
-                            code: "unsupported_modality",
-                        },
-                    }),
-                    { status: 400, headers: { "Content-Type": "application/json" } }
-                );
+                return jsonError(400, `Model ${concreteModel} does not accept image input.${hint}`, {
+                    type: "invalid_request_error",
+                    code: "unsupported_modality",
+                });
             }
         }
 
@@ -1088,17 +1082,11 @@ export class OpenAiSubscriptionProvider implements ProxyProvider {
 
         if (effortError) {
             logger.info({ account: this.account.name, model: concreteModel, effortError }, "ai-proxy: effort refused");
-            return new Response(
-                SafeJSON.stringify({
-                    error: {
-                        message: effortError,
-                        type: "invalid_request_error",
-                        param: "reasoning.effort",
-                        code: "unsupported_effort",
-                    },
-                }),
-                { status: 400, headers: { "Content-Type": "application/json" } }
-            );
+            return jsonError(400, effortError, {
+                type: "invalid_request_error",
+                param: "reasoning.effort",
+                code: "unsupported_effort",
+            });
         }
 
         warnDroppedParamsOnce(dropped);

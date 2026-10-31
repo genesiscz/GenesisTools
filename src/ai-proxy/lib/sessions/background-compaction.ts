@@ -8,6 +8,7 @@ import { SafeJSON } from "@genesiscz/utils/json";
 import { logger } from "@genesiscz/utils/logger";
 import { isObject } from "@genesiscz/utils/object";
 import { atomicWriteFileSync, isMissingFileError } from "@genesiscz/utils/storage/atomic-file";
+import { estimateTokens } from "@genesiscz/utils/tokens";
 
 /**
  * Background compaction, the proxy's copy of Codex's `async_compaction` (codex-rs, off by default there in 2026-10):
@@ -323,8 +324,8 @@ export function matchBackground(input: {
 }
 
 /** A rough token count for a tail of Responses input items: 4 characters per token, as Claude Code estimates. */
-export function estimateTokens(items: unknown[]): number {
-    return Math.ceil((SafeJSON.stringify(items) ?? "").length / 4);
+export function estimateItemTokens(items: unknown[]): number {
+    return estimateTokens(SafeJSON.stringify(items) ?? "");
 }
 
 /**
