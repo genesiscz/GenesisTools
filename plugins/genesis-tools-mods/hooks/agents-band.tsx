@@ -513,6 +513,27 @@ function openOn(host: Host, agentId: string | undefined): void {
     void host.openPane(AGENTS_PANE, "Agents");
 }
 
+function workerNameOf(worker: SessionWorker, format: Parameters<typeof modelLabel>[1]): string {
+    return `${worker.model ? `(${modelLabel(worker.model, format)}) ` : ""}${worker.name}`;
+}
+
+/** How long a worker has run, how long since its last tool call, and its tool calls. */
+function workerTail(worker: SessionWorker, now: number): string {
+    return [
+        worker.startedAt === undefined ? "" : liveSince(worker.startedAt, now),
+        worker.lastAt === undefined ? "" : `idle ${liveSince(worker.lastAt, now)}`,
+        plural(worker.toolCalls, "tool"),
+    ]
+        .filter(Boolean)
+        .join(" · ");
+}
+
+/** A press on a worker puts a question about it in the prompt: it is no subagent, so it has no detail of its own. */
+function askAboutWorker(host: Host, worker: SessionWorker): void {
+    const ask = `What is the ${worker.harness} worker ${worker.name} doing now? Read it with \`tools hub agents --agent ${worker.name}\`.`;
+    void host.fill({ text: ask, mode: "replace" });
+}
+
 /** The band's agents rows, or null when no subagent works. */
 export async function agentsRow(host: Host, ui: ElementTable, columns: number): Promise<RenderElement | null> {
     const settings = (await settingsOf(host)).agentsBand;
@@ -552,26 +573,14 @@ export async function agentsRow(host: Host, ui: ElementTable, columns: number): 
             </Box>
         );
     };
-    const workerName = (worker: SessionWorker) =>
-        `${worker.model ? `(${modelLabel(worker.model, format)}) ` : ""}${worker.name}`;
+    const workerName = (worker: SessionWorker) => workerNameOf(worker, format);
     const workerRow = (worker: SessionWorker) => {
-        const tail = [
-            worker.startedAt === undefined ? "" : liveSince(worker.startedAt, now),
-            worker.lastAt === undefined ? "" : `idle ${liveSince(worker.lastAt, now)}`,
-            plural(worker.toolCalls, "tool"),
-        ]
-            .filter(Boolean)
-            .join(" · ");
+        const tail = workerTail(worker, now);
         const label = cut(`◆ ${workerName(worker)} · ${worker.harness}`, Math.max(20, columns - tail.length - 3));
-        const ask = `What is the ${worker.harness} worker ${worker.name} doing now? Read it with \`tools hub agents --agent ${worker.name}\`.`;
 
         return (
             <Box key={`worker-${worker.name}`} flexDirection="row">
-                <Button
-                    key={`worker-${worker.name}`}
-                    plain
-                    onPress={() => void host.fill({ text: ask, mode: "replace" })}
-                >
+                <Button key={`worker-${worker.name}`} plain onPress={() => askAboutWorker(host, worker)}>
                     <Text dimColor>{label}</Text>
                 </Button>
                 <Box flexGrow={1} />
@@ -599,15 +608,17 @@ export async function agentsRow(host: Host, ui: ElementTable, columns: number): 
         ) : null;
     const shown = isOpen ? all.slice(0, MAX_ROWS) : [];
     const shownWorkers = isOpen ? workers.slice(0, Math.max(0, MAX_ROWS - shown.length)) : [];
+    // The agents and the workers past the rows; the sidebar lists both.
+    const more = all.length - shown.length + workers.length - shownWorkers.length;
 
     return (
         <Box key="agents-band" flexDirection="column">
             {header}
             {shown.map(row)}
             {shownWorkers.map(workerRow)}
-            {isOpen && all.length > MAX_ROWS ? (
+            {isOpen && more > 0 ? (
                 <Button key="agents-more" plain dimColor onPress={() => openOn(host, all[MAX_ROWS]?.agent.id)}>
-                    {`+${all.length - MAX_ROWS} more in the sidebar`}
+                    {`+${more} more in the sidebar`}
                 </Button>
             ) : null}
         </Box>
@@ -630,9 +641,25 @@ async function agentsPane(host: Host, kit: Kit): Promise<RenderElement> {
         onPress: () => void refreshAgentDetails(host),
     };
 
-    if (all.length === 0) {
+    if (all.length === 0 && workers.length === 0) {
         return sidebarFrame(kit, dimNote(kit, "No agents in this session yet."));
     }
+
+    const format = (await settingsOf(host)).agentModel.format;
+    const workerRows = workers.map((worker) => {
+        const status = workerTail(worker, now);
+
+        return listRow(
+            kit,
+            {
+                key: `worker-${worker.name}`,
+                label: cut(`◆ ${workerNameOf(worker, format)} · ${worker.harness}`, kit.columns - status.length - 2),
+                isDim: true,
+                onPress: () => askAboutWorker(host, worker),
+            },
+            <Text dimColor>{status}</Text>
+        );
+    });
 
     const rows = all.map((facts) => {
         const isChosen = facts === chosen;
@@ -672,6 +699,12 @@ async function agentsPane(host: Host, kit: Kit): Promise<RenderElement> {
             <Box flexDirection="column" marginTop={1} marginBottom={1}>
                 {rows}
             </Box>
+            {workerRows.length > 0 ? (
+                <Box flexDirection="column" marginBottom={1}>
+                    {sectionTitle(kit, plural(workers.length, "worker"))}
+                    {workerRows}
+                </Box>
+            ) : null}
             {chosen ? await detailOf(host, kit, chosen, now) : null}
         </Box>
     );
