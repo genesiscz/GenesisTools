@@ -61,13 +61,7 @@ export const SWIFT_ROW_CONTROL_RATCHET: ReadonlySet<string> = new Set<string>([
 /** `swift-formatter-in-view`: views that still make a formatter or a regex in a body or a computed property. */
 export const SWIFT_FORMATTER_IN_VIEW_RATCHET: ReadonlySet<string> = new Set<string>([
     "src/macos/GenesisKit/Sources/GenesisKit/Diff/Views/GitCommitPicker.swift#GitCommitPickerRow",
-    "src/macos/GenesisKit/Sources/GenesisKit/Flow/FlowView.swift#FlowEntryRow",
-    "src/macos/GenesisKit/Sources/GenesisKit/Flow/FlowView.swift#FlowHistoryPane",
-    "src/macos/GenesisKit/Sources/GenesisKit/Markdown/Views/MarkdownStatusBar.swift#MarkdownStatusBar",
     "src/macos/GenesisTools/Sources/Host/LocalNetworkWatch.swift#LocalNetworkPromptRow",
-    "src/macos/GenesisTools/Sources/Parts/Hub/Hub/HubPRSessions.swift#PRSessionRow",
-    "src/macos/GenesisTools/Sources/Parts/Hub/Hub/HubTimeline.swift#TimelineMain",
-    "src/macos/GenesisTools/Sources/Parts/Hub/Hub/HubTimeline.swift#TimelineRowView",
 ]);
 
 /** `swift-equatable-eq-skips-value`: `==` bodies that skip a stored value, not yet reviewed (a proxy such as `revision`, or a stale view). */
