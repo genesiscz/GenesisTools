@@ -1390,9 +1390,9 @@ describe("answering a dialog item by its option key", () => {
     const DIALOG_SESSION = "fixture-dialog-session";
     const KEY = `claude:${DIALOG_SESSION}:toolu_pick_1`;
 
-    function recordsRoot(overrides: Partial<OpenQuestion> = {}): string {
+    async function recordsRoot(overrides: Partial<OpenQuestion> = {}): Promise<string> {
         const root = mkdtempSync(join(tmpdir(), "inbox-dialog-answer-"));
-        upsertQuestion(
+        await upsertQuestion(
             {
                 provider: "claude",
                 sessionId: DIALOG_SESSION,
@@ -1432,7 +1432,7 @@ describe("answering a dialog item by its option key", () => {
 
     test("a pick goes through cmux send --option for that exact session and reports the option", async () => {
         const tool = fakeTool(SafeJSON.stringify({ sent: true, label: "Green" }));
-        const result = await answerDialogItem({ key: KEY, option: "b" }, { recordsRoot: recordsRoot(), ...tool });
+        const result = await answerDialogItem({ key: KEY, option: "b" }, { recordsRoot: await recordsRoot(), ...tool });
 
         expect(tool.calls).toEqual([
             [
@@ -1453,7 +1453,7 @@ describe("answering a dialog item by its option key", () => {
 
     test("refusals start no process: the refuse setting, a closed dialog, a bad option, a harness without keys", async () => {
         const tool = fakeTool("");
-        const root = recordsRoot();
+        const root = await recordsRoot();
 
         expect(
             await answerDialogItem({ key: KEY, option: "b", mode: "refuse" }, { recordsRoot: root, ...tool })
@@ -1467,7 +1467,7 @@ describe("answering a dialog item by its option key", () => {
         });
 
         const codexKey = `codex:${DIALOG_SESSION}:call_1`;
-        const codexRoot = recordsRoot({ provider: "codex", toolCallId: "call_1" });
+        const codexRoot = await recordsRoot({ provider: "codex", toolCallId: "call_1" });
         expect(
             await answerDialogItem({ key: codexKey, option: "a" }, { recordsRoot: codexRoot, ...tool })
         ).toMatchObject({
@@ -1475,7 +1475,11 @@ describe("answering a dialog item by its option key", () => {
             error: expect.stringContaining("not measured live"),
         });
 
-        closeQuestion({ provider: "claude", sessionId: DIALOG_SESSION, toolCallId: "toolu_pick_1" }, undefined, root);
+        await closeQuestion(
+            { provider: "claude", sessionId: DIALOG_SESSION, toolCallId: "toolu_pick_1" },
+            undefined,
+            root
+        );
         expect(await answerDialogItem({ key: KEY, option: "b" }, { recordsRoot: root, ...tool })).toMatchObject({
             delivered: false,
             error: "the dialog is no longer open; nothing was pressed",
@@ -1486,7 +1490,7 @@ describe("answering a dialog item by its option key", () => {
     test("a pane that refuses the press is reported with its reason", async () => {
         const tool = fakeTool(SafeJSON.stringify({ sent: false, reason: "no question dialog is open in the session" }));
         expect(
-            await answerDialogItem({ key: KEY, option: "a" }, { recordsRoot: recordsRoot(), ...tool })
+            await answerDialogItem({ key: KEY, option: "a" }, { recordsRoot: await recordsRoot(), ...tool })
         ).toMatchObject({
             delivered: false,
             error: "no question dialog is open in the session",
@@ -1494,7 +1498,7 @@ describe("answering a dialog item by its option key", () => {
 
         const weak = fakeTool(SafeJSON.stringify({ sent: false, ambiguous: true, source: "titles", matches: [{}] }));
         expect(
-            await answerDialogItem({ key: KEY, option: "a" }, { recordsRoot: recordsRoot(), ...weak })
+            await answerDialogItem({ key: KEY, option: "a" }, { recordsRoot: await recordsRoot(), ...weak })
         ).toMatchObject({
             delivered: false,
             error: expect.stringContaining("not identified exactly"),
@@ -1504,7 +1508,7 @@ describe("answering a dialog item by its option key", () => {
     test("an unconfirmed key write is distinguishable from a refusal", async () => {
         const tool = fakeTool(SafeJSON.stringify({ sent: false, unconfirmed: true, reason: "check the dialog" }));
         expect(
-            await answerDialogItem({ key: KEY, option: "a" }, { recordsRoot: recordsRoot(), ...tool })
+            await answerDialogItem({ key: KEY, option: "a" }, { recordsRoot: await recordsRoot(), ...tool })
         ).toMatchObject({
             delivered: false,
             uncertain: true,
@@ -1515,7 +1519,7 @@ describe("answering a dialog item by its option key", () => {
     test("a missing command outcome is unknown, not a refusal", async () => {
         const tool = fakeTool("not-json");
         expect(
-            await answerDialogItem({ key: KEY, option: "a" }, { recordsRoot: recordsRoot(), ...tool })
+            await answerDialogItem({ key: KEY, option: "a" }, { recordsRoot: await recordsRoot(), ...tool })
         ).toMatchObject({
             delivered: false,
             uncertain: true,
@@ -1525,7 +1529,7 @@ describe("answering a dialog item by its option key", () => {
 
     test("the CLI door answers --dialog with --option and refuses it without one", async () => {
         const tool = fakeTool(SafeJSON.stringify({ sent: true }));
-        const deps: InboxCommandDeps = { dialogs: { recordsRoot: recordsRoot(), ...tool } };
+        const deps: InboxCommandDeps = { dialogs: { recordsRoot: await recordsRoot(), ...tool } };
 
         expect(await runInboxAnswer(["--dialog", KEY, "--option", "c"], deps)).toMatchObject({
             delivered: true,
