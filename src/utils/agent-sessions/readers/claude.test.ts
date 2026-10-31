@@ -1,5 +1,5 @@
 import { expect, spyOn, test } from "bun:test";
-import { appendFileSync, mkdirSync, mkdtempSync, renameSync, truncateSync, writeFileSync } from "node:fs";
+import { appendFileSync, mkdirSync, mkdtempSync, renameSync, truncateSync, utimesSync, writeFileSync } from "node:fs";
 import { tmpdir } from "node:os";
 import { join } from "node:path";
 import { SafeJSON } from "@genesiscz/utils/json";
@@ -8,6 +8,7 @@ import { claudeHistoryReader } from "../compact-readers";
 import { searchHistorySource } from "../search-source";
 import type { NativeSessionSource } from "../types";
 import { createClaudeHistoryOperations, readClaudeMetadata, readClaudeRecords, scanClaudeRecords } from "./claude";
+import { canonicalClaudeTranscript } from "./claude-locate";
 import { SESSION_MODEL_TAIL_BYTES } from "./session-model";
 
 const MAIN_ID = "11111111-2222-4333-8444-555555555555";
@@ -689,6 +690,33 @@ test("backward conversation reads exclude meta and sidechain answers", async () 
     );
     const read = await createClaudeHistoryOperations().readBackward(source, { until: () => false });
     expect(read.entries.filter((entry) => entry.role === "user").map((entry) => entry.text)).toEqual(["D1 a)"]);
+});
+
+test("a session's transcript is the conversation, not a newer title-only stub in another project folder", async () => {
+    const root = join(mkdtempSync(join(tmpdir(), "gt-claude-canonical-")), "projects");
+    const id = "11111111-2222-4333-8444-555555555555";
+    const real = join(root, "-work-repo", `${id}.jsonl`);
+    const stub = join(root, "-work-repo-moved", `${id}.jsonl`);
+    mkdirSync(join(root, "-work-repo"), { recursive: true });
+    mkdirSync(join(root, "-work-repo-moved"), { recursive: true });
+    writeFileSync(
+        real,
+        jsonl(
+            {
+                type: "user",
+                uuid: "u1",
+                timestamp: "2026-10-30T10:00:00.000Z",
+                message: { role: "user", content: "hi" },
+            },
+            { type: "continued-in", continuedInSessionId: "66666666-7777-4888-9999-000000000000" }
+        )
+    );
+    // Written later, so it is the newest file with this id.
+    writeFileSync(stub, jsonl({ type: "custom-title", customTitle: "a long title", sessionId: id }));
+    utimesSync(real, new Date("2026-10-30T10:00:00Z"), new Date("2026-10-30T10:00:00Z"));
+    utimesSync(stub, new Date("2026-10-31T10:00:00Z"), new Date("2026-10-31T10:00:00Z"));
+
+    expect(await canonicalClaudeTranscript(id.toUpperCase(), { native: [root] })).toBe(real);
 });
 
 test("continuedIn is the trailing continued-in row's successor id, and nothing for a session that goes on", async () => {

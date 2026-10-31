@@ -1,9 +1,11 @@
+import { existsSync, readFileSync } from "node:fs";
 import { join } from "node:path";
 import { lastClaudeTitleIn } from "@genesiscz/utils/agent-sessions/readers/claude-title";
-import type { FolderReads, RankedHit } from "@genesiscz/utils/ai/transcripts/resolve";
+import type { FolderReads, HarnessRoots, RankedHit } from "@genesiscz/utils/ai/transcripts/resolve";
 import {
     findTurnFileWorker,
     idMatches,
+    isDir,
     listDir,
     mtimeOf,
     workerTurnChain,
@@ -13,7 +15,8 @@ import { workersDir } from "@genesiscz/utils/claude/worker-paths";
 import type { TranscriptLocator } from "@genesiscz/utils/harness/parts";
 import { logger } from "@genesiscz/utils/logger";
 import { nativeSessionRoots, nativeSessionRootsForHome } from "@genesiscz/utils/providers/session-paths";
-import { claudeSubagentFiles, claudeSubagentsDir } from "./claude-paths";
+import { canonicalClaudeCopy } from "./claude-discovery";
+import { claudeSubagentFiles, claudeSubagentsDir, isClaudeSubagentPath } from "./claude-paths";
 
 /** The Claude driver's `locate` part: `<project>/<id>.jsonl` with its sub-agent files, and `tools claude worker` turn files. */
 export const claudeLocate: TranscriptLocator = {
@@ -40,6 +43,31 @@ export const claudeLocate: TranscriptLocator = {
     titledSessions: ({ options, roots, now }) =>
         claudeSessions({ roots, maxAgeDays: options.maxAgeDays ?? 14, budgetMs: options.budgetMs ?? 8000, now }),
 };
+
+const folderReads: FolderReads = {
+    listDir,
+    isDir,
+    mtimeOf,
+    exists: existsSync,
+    readText: (path) => readFileSync(path, "utf8"),
+};
+
+/**
+ * The main transcript of a full Claude session id that history discovery indexes: one folder listing per root and
+ * discovery's own duplicate order, not the newest file, which after a cwd move is often a title-only stub.
+ */
+export async function canonicalClaudeTranscript(
+    sessionId: string,
+    roots: Pick<HarnessRoots, "native"> = claudeLocate.defaultRoots()
+): Promise<string | undefined> {
+    const wanted = sessionId.toLowerCase();
+    const paths = roots.native
+        .flatMap((root) => findClaude(wanted, root, folderReads))
+        .filter((hit) => hit.sessionId.toLowerCase() === wanted && !isClaudeSubagentPath(hit.filePath))
+        .map((hit) => hit.filePath);
+
+    return canonicalClaudeCopy(paths);
+}
 
 export function findClaude(query: string, projectsDir: string, fs: FolderReads): RankedHit[] {
     const hits: RankedHit[] = [];

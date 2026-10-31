@@ -68,13 +68,18 @@ export interface FindSessionTargetsOpts {
 }
 
 /**
- * The session a Claude session continued in, by its id: the transcript the locator finds for the id, then the
- * reader's `continuedIn`. A missing transcript throws, and the caller treats that as "not continued".
+ * The session a Claude session continued in, by its id: the copy of its transcript history discovery indexes (a
+ * conversation, never a newer title-only stub in another project folder), then the reader's `continuedIn`.
  */
 function claudeContinuedIn(): (sessionId: string) => Promise<string | undefined> {
     return async (sessionId) => {
-        const { resolveTranscript } = await import("@genesiscz/utils/ai/transcripts/resolve");
-        const { filePath } = await resolveTranscript(sessionId, {}, "claude");
+        const { canonicalClaudeTranscript } = await import("@genesiscz/utils/agent-sessions/readers/claude-locate");
+        const filePath = await canonicalClaudeTranscript(sessionId);
+
+        if (!filePath) {
+            return undefined;
+        }
+
         const { readSessionsContinuedIn } = await import("@genesiscz/utils/agent-sessions/session-backward");
         return (await readSessionsContinuedIn({ kind: "claude", transcriptPaths: [filePath] })).get(filePath);
     };

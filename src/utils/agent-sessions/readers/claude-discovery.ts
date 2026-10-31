@@ -58,6 +58,46 @@ async function isMetadataStub(path: string, size: number): Promise<boolean> {
     return true;
 }
 
+/** One copy of a Claude session's main transcript, with the facts duplicates are ranked by. */
+interface ClaudeCopy {
+    path: string;
+    size: number;
+    mtimeMs: number;
+    stub: boolean;
+}
+
+/**
+ * The order of the copies of one session: a copy that holds conversation before a sidecar stub whatever their
+ * sizes (a stub with a long title used to beat a short real transcript on bytes alone), then larger, newer, by path.
+ */
+function byCanonicalCopy(left: ClaudeCopy, right: ClaudeCopy): number {
+    return (
+        Number(left.stub) - Number(right.stub) ||
+        right.size - left.size ||
+        right.mtimeMs - left.mtimeMs ||
+        left.path.localeCompare(right.path)
+    );
+}
+
+/**
+ * The copy discovery indexes among `paths`, the same session id under several project folders (Claude Code writes
+ * one more whenever the cwd moves, usually a newer title-only stub). A file that is gone is skipped.
+ */
+export async function canonicalClaudeCopy(paths: readonly string[]): Promise<string | undefined> {
+    const copies = await Promise.all(
+        paths.map(async (path): Promise<ClaudeCopy | undefined> => {
+            try {
+                const stats = await stat(path);
+                return { path, size: stats.size, mtimeMs: stats.mtimeMs, stub: await isMetadataStub(path, stats.size) };
+            } catch {
+                return undefined;
+            }
+        })
+    );
+
+    return copies.filter((copy): copy is ClaudeCopy => copy !== undefined).sort(byCanonicalCopy)[0]?.path;
+}
+
 /** The first `maxBytes` of a file, or null when it holds more than that. */
 export async function readBounded(path: string, maxBytes: number): Promise<string | null> {
     const handle = await open(path, "r");
@@ -209,22 +249,15 @@ export async function discoverClaudeHistorySources(
             Promise.all(
                 group.map(async (file) => {
                     const stats = await stat(file.path);
-                    return { file, stats, stub: await isMetadataStub(file.path, stats.size) };
+                    const stub = await isMetadataStub(file.path, stats.size);
+                    return { file, stats, stub, path: file.path, size: stats.size, mtimeMs: stats.mtimeMs };
                 })
             );
         const ranked =
             profiler.detail === "all"
                 ? await profiler.scope("agent-sessions").measureAsync("discover.claude-dedup-group", rank)
                 : await rank();
-        // A copy that holds conversation outranks a sidecar stub whatever their sizes: a stub
-        // with a long title used to beat a short real transcript on bytes alone.
-        ranked.sort(
-            (left, right) =>
-                Number(left.stub) - Number(right.stub) ||
-                right.stats.size - left.stats.size ||
-                right.stats.mtimeMs - left.stats.mtimeMs ||
-                left.file.path.localeCompare(right.file.path)
-        );
+        ranked.sort(byCanonicalCopy);
         const selected = ranked[0];
 
         if (selected) {
