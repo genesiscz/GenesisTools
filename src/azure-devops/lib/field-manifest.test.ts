@@ -248,6 +248,31 @@ describe("other manifest kinds", () => {
         await expect(kind.fetch({ api })).rejects.toThrow("nested folder unavailable");
     });
 
+    test("area and sprint manifests refuse a tree cut at the depth cap", async () => {
+        const api = new Api({
+            org: "https://dev.azure.com/example",
+            project: "Sample",
+            projectId: "p",
+            apiResource: "r",
+        });
+        Reflect.set(api, "get", async () => ({
+            id: 1,
+            identifier: "a",
+            name: "Sample",
+            path: "\\Sample\\Area",
+            children: [{ id: 2, identifier: "b", name: "Deep", path: "\\Sample\\Area\\Deep", hasChildren: true }],
+        }));
+
+        expect(await api.getAreaNodes()).toBeDefined();
+        for (const name of ["areas", "sprints"]) {
+            const kind = manifestKind(name);
+            if (!kind) {
+                throw new Error(`${name} manifest kind missing`);
+            }
+            await expect(kind.fetch({ api })).rejects.toThrow("truncated at depth");
+        }
+    });
+
     test("area nodes flatten to sorted WIQL area paths", () => {
         const root = {
             id: 1,

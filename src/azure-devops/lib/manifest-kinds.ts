@@ -207,7 +207,7 @@ export const MANIFEST_KINDS: ManifestKind[] = [
         description: "Every dated iteration (sprint) by its iteration path, with its id and dates",
         usesTypes: false,
         fetch: async ({ api }) => {
-            const iterations = await api.getProjectIterations();
+            const iterations = await api.getProjectIterations({ strict: true });
             return {
                 sprints: sortedRecord(
                     iterations.map((iteration) => [
@@ -227,7 +227,7 @@ export const MANIFEST_KINDS: ManifestKind[] = [
         exportName: "AdoAreas",
         description: "Every area path of the project",
         usesTypes: false,
-        fetch: async ({ api }) => ({ areas: flattenAreaPaths(await api.getAreaNodes()) }),
+        fetch: async ({ api }) => ({ areas: flattenAreaPaths(await api.getAreaNodes({ strict: true })) }),
     },
     {
         kind: "queries",
