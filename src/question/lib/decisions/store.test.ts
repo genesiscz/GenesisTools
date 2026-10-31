@@ -18,7 +18,15 @@ import { withFileLock } from "@genesiscz/utils/storage/file-lock";
 import { answerGitWithoutSpawning } from "@genesiscz/utils/test/no-git";
 import { z } from "zod";
 import { stagedSendText } from "../inbox/drafts";
-import { AnswerRefusedError, checkAnswer, doorAnswerRefusal, planDoorAnswer, sendSessionDecisions } from "./answers";
+import {
+    AnswerRefusedError,
+    checkAnswer,
+    doorAnswerRefusal,
+    planDoorAnswer,
+    queueReserved,
+    refuseUnlessWaiting,
+    sendSessionDecisions,
+} from "./answers";
 import { setDecisionBannerRemover } from "./banners";
 import { chatAnswers } from "./chat-answers";
 import { backfillChatAnswers } from "./chat-reading";
@@ -2408,6 +2416,23 @@ describe("decision answers: one closed reason per refusal", () => {
         expect(doorAnswerRefusal(row, { ...held, session: "other", number: 1, provider: "claude" })?.code).toBe(
             "changed-elsewhere"
         );
+    });
+
+    test("a staged pick or a dismissal is refused once the decision is answered, or on a re-posted text", () => {
+        const codeOf = (fn: () => void) => {
+            try {
+                fn();
+                return undefined;
+            } catch (error) {
+                return error instanceof AnswerRefusedError ? error.code : error;
+            }
+        };
+
+        expect(codeOf(() => refuseUnlessWaiting(row, 1))).toBeUndefined();
+        expect(codeOf(() => refuseUnlessWaiting({ ...row, state: "sent" }, 1))).toBe("already-answered");
+        expect(codeOf(() => refuseUnlessWaiting({ ...row, revision: 2 }, 1, 1))).toBe("stale-revision");
+        expect(queueReserved({ delivery: { route: "queued", queueId: "q1", at: "x" } })).toBe(true);
+        expect(queueReserved({})).toBe(false);
     });
 
     test("an emptied draft is plain open again, and any other row is returned as it is", () => {

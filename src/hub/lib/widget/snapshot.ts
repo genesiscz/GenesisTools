@@ -4,6 +4,7 @@ import { type AgentSessionRow, listAgentSessionRows } from "@app/ai/lib/sessions
 import { decisionFiles } from "@app/question/lib/decisions/read";
 import {
     type AnsweredVia,
+    awaitsAnswer,
     type DecisionRecord,
     kindOf,
     readDecisionsWithIntegrity,
@@ -1079,7 +1080,7 @@ export async function widgetSnapshot({
                 // hub. Its last update would let a stage on an old decision count the session as active again.
                 askedTimeOf(decision)
             );
-        if (kindOf(decision) === "decision" && ["open", "drafted"].includes(decision.state)) {
+        if (kindOf(decision) === "decision" && awaitsAnswer(decision)) {
             newestAsk.set(session.key, Math.max(newestAsk.get(session.key) ?? 0, askedTimeOf(decision)));
             waitingIn.add(session);
         }
@@ -1238,7 +1239,7 @@ export async function widgetSnapshot({
     let pendingDecisions = 0;
     const staged: WidgetInboxItem[] = [];
     for (const row of decisions) {
-        if (kindOf(row) !== "decision" || !["open", "drafted"].includes(row.state) || row.delivery?.uncertain) {
+        if (kindOf(row) !== "decision" || !awaitsAnswer(row) || row.delivery?.uncertain) {
             continue;
         }
         const session = findSession(row.sessionId, row.provider);
@@ -1363,7 +1364,7 @@ export async function widgetSnapshot({
         ...(decisionsComplete
             ? {
                   pendingDecisionIDs: decisions
-                      .filter((row) => kindOf(row) === "decision" && ["open", "drafted"].includes(row.state))
+                      .filter((row) => kindOf(row) === "decision" && awaitsAnswer(row))
                       .map((row) => row.id),
               }
             : {}),

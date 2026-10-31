@@ -1,3 +1,4 @@
+import { queueReserved } from "@app/question/lib/decisions/answers";
 import type { DeliverDeps } from "@app/question/lib/decisions/deliver";
 import { loadDecisionsHookConfig } from "@app/question/lib/decisions/hook-config";
 import { decisionFiles } from "@app/question/lib/decisions/read";
@@ -186,7 +187,7 @@ export async function resendAnsweredDecisions({
     for (const [session, rows] of bySession) {
         const target = targets[session] ?? {};
         const numbers = rows.map((row) => row.number);
-        const free = rows.filter((row) => !row.delivery?.queueId);
+        const free = rows.filter((row) => !queueReserved(row));
 
         if (free.length === 0) {
             const detail = "They are in the session's queue already.";

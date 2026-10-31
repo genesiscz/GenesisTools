@@ -7,7 +7,7 @@ import {
     POLLED_LISTING_REUSE_MS,
 } from "@app/ai/lib/sessions/agent-session-rows";
 import { decisionFiles } from "@app/question/lib/decisions/read";
-import { type DecisionRecord, readDecisions } from "@app/question/lib/decisions/store";
+import { awaitsAnswer, type DecisionRecord, readDecisions } from "@app/question/lib/decisions/store";
 import { byId } from "@genesiscz/utils/ai/catalog/static";
 import { toolCommand } from "@genesiscz/utils/cli/tool-command";
 import { SafeJSON } from "@genesiscz/utils/json";
@@ -473,7 +473,7 @@ function matchesFor(rule: HubRule, inputs: RuleInputs, now: number): { matches: 
         }
         case "decision": {
             const matches = inputs.decisions
-                .filter((row) => row.type !== "todo" && (row.state === "open" || row.state === "drafted"))
+                .filter((row) => row.type !== "todo" && awaitsAnswer(row))
                 .filter((row) => contains([row.project, row.cwd, row.repoRoot], rule.project))
                 .map((row) => ({
                     key: row.id,

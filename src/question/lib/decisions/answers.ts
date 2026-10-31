@@ -1,19 +1,21 @@
 import { canonicalAgent } from "@app/handoff/targeting";
 import type { DeliveryResult } from "./deliver";
 import { DeliveryUnknownError, NotDeliveredError } from "./delivery-errors";
-import { decisionLines, deliverDecisions, optionLetters } from "./read";
+import { decisionLine, decisionLines, deliverDecisions, optionLetters } from "./read";
 import {
     awaitsAnswer,
     awaitsDelivery,
     type DecisionRecord,
     type DecisionState,
     type HarvestedDecision,
+    harvestDecisions,
     kindOf,
     moveDecisions,
     readDecisions,
     recordDelivery,
     restoreUndelivered,
     staleRevisionError,
+    updateDecisions,
 } from "./store";
 
 /**
@@ -138,6 +140,117 @@ export async function checkAnswer({
         ...(row ? { row } : {}),
         ...(found ? { block: found } : {}),
     };
+}
+
+/**
+ * A door that edits a decision before its answer exists (a staged pick, a dismissal) may do so only while it still
+ * waits, at the revision the door read; else the closed refusal.
+ */
+export function refuseUnlessWaiting(row: DecisionRecord, number: number, expectedRevision?: number): void {
+    if (!awaitsAnswer(row)) {
+        throw new AnswerRefusedError("already-answered", `DECISION ${number} is already ${row.state}`);
+    }
+
+    if (expectedRevision !== undefined && expectedRevision !== (row.revision ?? 1)) {
+        throw new AnswerRefusedError("stale-revision", staleRevisionError(number).message);
+    }
+}
+
+/** Checks every answer before anything is written; the first refusal throws (`checkAnswer`). */
+export async function checkAnswers({
+    session,
+    answers,
+    rows,
+    block,
+}: {
+    session: string;
+    answers: readonly DecisionAnswer[];
+    rows: DecisionRecord[];
+    block: (session: string, number: number) => Promise<HarvestedDecision | null>;
+}): Promise<CheckedAnswer[]> {
+    const checked: CheckedAnswer[] = [];
+
+    for (const answer of answers) {
+        checked.push(await checkAnswer({ session, answer, rows, block }));
+    }
+
+    return checked;
+}
+
+/** The lines a send of these checked answers would deliver, for a dry run: the real send's own format. */
+export function answerPreview(session: string, checked: readonly CheckedAnswer[]): string {
+    return checked
+        .map((item) => {
+            // The title switches decisionLine to the "Reply to:" payload the real send delivers.
+            const title = item.row?.title ?? item.block?.title;
+            return decisionLine({
+                id: item.row?.id ?? `d_${item.number}_${session}`,
+                sessionId: session,
+                number: item.number,
+                prompt: item.row?.prompt ?? item.block?.prompt ?? "",
+                options: item.row?.options ?? item.block?.options ?? [],
+                state: "answered",
+                updatedTs: new Date().toISOString(),
+                ...(title ? { title } : {}),
+                ...(item.option ? { option: item.option } : {}),
+                ...(item.text ? { answer: item.text } : {}),
+            });
+        })
+        .join("\n");
+}
+
+/**
+ * Stores checked answers: a decision read from the transcript only is stored first through the harvest path (same
+ * number, never renumbered), so every answer has a row to live on; then every row moves to `answered` in one
+ * transition, as the user's own answer (an agent's update may not). Returns the rows' ids, for the send.
+ */
+export async function applyAnswers({
+    file,
+    events,
+    session,
+    provider,
+    cwd,
+    checked,
+}: {
+    file: string;
+    events: string;
+    session: string;
+    provider?: string;
+    cwd?: string;
+    checked: readonly CheckedAnswer[];
+}): Promise<string[]> {
+    const found = checked.flatMap((item) => (item.block ? [item.block] : []));
+
+    if (found.length > 0) {
+        await harvestDecisions(file, events, { sessionId: session, provider, cwd, found });
+    }
+
+    const stored = readDecisions(file);
+    const updates = checked.map((item) => {
+        const row = decisionRow(stored, session, item.number);
+
+        if (!row) {
+            throw new Error(`DECISION ${item.number} could not be stored for session ${session}`);
+        }
+
+        return {
+            id: row.id,
+            expectedRevision: item.expectedRevision,
+            state: "answered" as const,
+            ...(item.option ? { option: item.option } : {}),
+            ...(item.text ? { answer: item.text } : {}),
+        };
+    });
+    await updateDecisions(file, events, { updates }, undefined, { actor: "user" });
+    return updates.map((update) => update.id);
+}
+
+/**
+ * An answer a session queue already holds: that session's next prompt takes it, so a re-send leaves it alone (a
+ * second copy would reach the session twice).
+ */
+export function queueReserved(row: Pick<DecisionRecord, "delivery">): boolean {
+    return Boolean(row.delivery?.queueId);
 }
 
 /** The states a decision reaches once its answer was typed into the agent. */

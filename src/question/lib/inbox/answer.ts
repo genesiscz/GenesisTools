@@ -1,9 +1,8 @@
 import { logger } from "@genesiscz/utils/logger";
-import { type CheckedAnswer, checkAnswer, type DecisionAnswer, decisionRow } from "../decisions/answers";
+import { answerPreview, applyAnswers, checkAnswers, type DecisionAnswer } from "../decisions/answers";
 import type { DeliverDeps, DeliveryResult } from "../decisions/deliver";
-import { decisionLine } from "../decisions/read";
 import { sendAnsweredDecisions } from "../decisions/send";
-import { type HarvestedDecision, harvestDecisions, readDecisions, updateDecisions } from "../decisions/store";
+import { type HarvestedDecision, readDecisions } from "../decisions/store";
 import { type AskDeps, answerAskForm, checkAskAnswer } from "../pending/ask";
 import type { AskAnswer } from "../pending/types";
 
@@ -66,65 +65,32 @@ export async function answerInboxDecisions(
         throw new Error("no answers to send");
     }
 
-    const rows = readDecisions(deps.file);
-    const checked: CheckedAnswer[] = [];
-
-    for (const answer of input.answers) {
-        checked.push(await checkAnswer({ session: input.session, answer, rows, block: deps.block }));
-    }
+    const checked = await checkAnswers({
+        session: input.session,
+        answers: input.answers,
+        rows: readDecisions(deps.file),
+        block: deps.block,
+    });
 
     if (input.dryRun) {
-        const lines = checked.map((item) => {
-            // The title switches decisionLine to the "Reply to:" payload the real send delivers.
-            const title = item.row?.title ?? item.block?.title;
-            return decisionLine({
-                id: item.row?.id ?? `d_${item.number}_${input.session}`,
-                sessionId: input.session,
-                number: item.number,
-                prompt: item.row?.prompt ?? item.block?.prompt ?? "",
-                options: item.row?.options ?? item.block?.options ?? [],
-                state: "answered",
-                updatedTs: new Date().toISOString(),
-                ...(title ? { title } : {}),
-                ...(item.option ? { option: item.option } : {}),
-                ...(item.text ? { answer: item.text } : {}),
-            });
-        });
-        return { session: input.session, text: lines.join("\n"), channel: "dry-run", delivered: false };
-    }
-
-    const found = checked.flatMap((item) => (item.block ? [item.block] : []));
-
-    if (found.length > 0) {
-        await harvestDecisions(deps.file, deps.events, {
-            sessionId: input.session,
-            provider: input.provider,
-            cwd: input.cwd,
-            found,
-        });
-    }
-
-    const stored = readDecisions(deps.file);
-    const updates = checked.map((item) => {
-        const row = decisionRow(stored, input.session, item.number);
-
-        if (!row) {
-            throw new Error(`DECISION ${item.number} could not be stored for session ${input.session}`);
-        }
-
         return {
-            id: row.id,
-            expectedRevision: item.expectedRevision,
-            state: "answered" as const,
-            ...(item.option ? { option: item.option } : {}),
-            ...(item.text ? { answer: item.text } : {}),
+            session: input.session,
+            text: answerPreview(input.session, checked),
+            channel: "dry-run",
+            delivered: false,
         };
-    });
-    // The inbox's own answer: it is delivered right below, so it may move to `answered` (an agent's update may not).
-    await updateDecisions(deps.file, deps.events, { updates }, undefined, { actor: "user" });
+    }
 
+    const ids = await applyAnswers({
+        file: deps.file,
+        events: deps.events,
+        session: input.session,
+        provider: input.provider,
+        cwd: input.cwd,
+        checked,
+    });
     const sent = await sendAnsweredDecisions({
-        ids: updates.map((update) => update.id),
+        ids,
         session: input.session,
         ...(input.provider ? { provider: input.provider } : {}),
         ...(input.sourceHome ? { sourceHome: input.sourceHome } : {}),

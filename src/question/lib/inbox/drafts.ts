@@ -1,16 +1,14 @@
+import { refuseUnlessWaiting } from "../decisions/answers";
 import { type DeliverDeps, isLiveDelivery, type LocatedDelivery, locateDelivery } from "../decisions/deliver";
 import { optionLetters } from "../decisions/read";
 import { type SendResult, sendAnsweredDecisions } from "../decisions/send";
 import {
-    awaitsAnswer,
-    type DecisionRecord,
     type HarvestedDecision,
     harvestDecisions,
     kindOf,
     type PromptReceipt,
     readDecisions,
     recordDelivery,
-    staleRevisionError,
     updateDecisions,
 } from "../decisions/store";
 import { isDrafted, promotedDraft } from "./staged";
@@ -37,12 +35,6 @@ export interface DraftInput {
      * (`staleRevisionError`), as the widget's own stage is.
      */
     expectedRevision?: number;
-}
-
-function checkRevision(row: DecisionRecord, number: number, expected: number | undefined): void {
-    if (expected !== undefined && expected !== (row.revision ?? 1)) {
-        throw staleRevisionError(number);
-    }
 }
 
 export interface DraftDeps {
@@ -100,11 +92,7 @@ export async function draftDecision(input: DraftInput, deps: DraftDeps) {
         throw new Error(`DECISION ${input.number} could not be stored for session ${input.session}`);
     }
 
-    if (!awaitsAnswer(row)) {
-        throw new Error(`DECISION ${input.number} is already ${row.state}`);
-    }
-
-    checkRevision(row, input.number, input.expectedRevision);
+    refuseUnlessWaiting(row, input.number, input.expectedRevision);
     const option = normalize(input.option);
     const draftOption = option ?? row.draftOption ?? "";
     const draft = input.text !== undefined ? input.text : (row.draft ?? "");
@@ -154,11 +142,7 @@ export async function dismissDecision(
         throw new Error(`DECISION ${number} is not waiting in session ${session}`);
     }
 
-    if (!awaitsAnswer(row)) {
-        throw new Error(`DECISION ${number} is already ${row.state}`);
-    }
-
-    checkRevision(row, number, expectedRevision);
+    refuseUnlessWaiting(row, number, expectedRevision);
     const [updated] = await updateDecisions(deps.file, deps.events, {
         updates: [{ id: row.id, state: "dismissed", ...(expectedRevision !== undefined ? { expectedRevision } : {}) }],
     });

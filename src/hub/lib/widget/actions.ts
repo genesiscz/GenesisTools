@@ -2,7 +2,7 @@ import { randomUUID } from "node:crypto";
 import { mkdir, unlink } from "node:fs/promises";
 import { join } from "node:path";
 import { decisionFiles } from "@app/question/lib/decisions/read";
-import { readDecisions, updateDecision } from "@app/question/lib/decisions/store";
+import { awaitsAnswer, readDecisions, updateDecision } from "@app/question/lib/decisions/store";
 import { answerDialogItem } from "@app/question/lib/inbox/dialog-answer";
 import { getEntryById, markEntriesRead, markEntriesReadThrough, openReadModel } from "@app/question/lib/read-model";
 import { logger } from "@genesiscz/utils/logger";
@@ -256,7 +256,7 @@ export async function performWidgetAction({
                         decision.delivery?.queueId !== undefined &&
                         message.receipt?.channel === "session-queue" &&
                         message.receipt.entryId === decision.delivery.queueId;
-                    if (decision && !queuedHere && !["open", "drafted"].includes(decision.state)) {
+                    if (decision && !queuedHere && !awaitsAnswer(decision)) {
                         throw new Error(
                             "This answer is now owned by Decisions. Manage its delivery in Hub; cancelling here would not withdraw it."
                         );

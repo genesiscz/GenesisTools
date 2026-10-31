@@ -6,8 +6,9 @@ import {
     listAgentSessionRows,
     POLLED_LISTING_REUSE_MS,
 } from "@app/ai/lib/sessions/agent-session-rows";
+import { answerDelivered } from "@app/question/lib/decisions/answers";
 import { decisionFiles } from "@app/question/lib/decisions/read";
-import { type DecisionRecord, readDecisions } from "@app/question/lib/decisions/store";
+import { awaitsAnswer, type DecisionRecord, readDecisions } from "@app/question/lib/decisions/store";
 import { cleanSessionTitle } from "@genesiscz/utils/agent-sessions/user-text";
 import { readTailWindow } from "@genesiscz/utils/ai/transcripts/native-scan";
 import { concurrentMap } from "@genesiscz/utils/async";
@@ -499,9 +500,6 @@ function threadEvents(results: readonly ThreadsResult[], window: TimelineWindow)
     return events;
 }
 
-const OPEN_DECISION_STATES = new Set(["open", "drafted"]);
-const ANSWERED_DECISION_STATES = new Set(["answered", "sent", "acknowledged", "implemented"]);
-
 function decisionEvents(rows: readonly DecisionRecord[], window: TimelineWindow): TimelineEvent[] {
     const events: TimelineEvent[] = [];
 
@@ -510,8 +508,8 @@ function decisionEvents(rows: readonly DecisionRecord[], window: TimelineWindow)
             continue;
         }
 
-        const open = OPEN_DECISION_STATES.has(row.state);
-        const answered = ANSWERED_DECISION_STATES.has(row.state);
+        const open = awaitsAnswer(row);
+        const answered = row.state === "answered" || answerDelivered(row);
 
         if (!open && !answered) {
             continue;
