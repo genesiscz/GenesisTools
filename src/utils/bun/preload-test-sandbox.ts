@@ -3,6 +3,7 @@ import { mkdtempSync } from "node:fs";
 import { tmpdir } from "node:os";
 import { join } from "node:path";
 import { env } from "@genesiscz/utils/env";
+import { type NativeSessionProvider, nativeHomeOverrideVariable } from "@genesiscz/utils/providers/session-paths";
 
 /**
  * Force every test process to use a throwaway `~/.genesis-tools` root.
@@ -147,10 +148,12 @@ function isolateNativeHomes(): void {
         return;
     }
 
-    const homes = {
-        CLAUDE_CONFIG_DIR: env.getTrimmed("CLAUDE_CONFIG_DIR") ?? mkdtempSync(join(tmpdir(), "gt-test-claude-home-")),
-        GROK_HOME: env.getTrimmed("GROK_HOME") ?? mkdtempSync(join(tmpdir(), "gt-test-grok-home-")),
+    const sandboxed = (kind: NativeSessionProvider): [string, string] => {
+        const name = nativeHomeOverrideVariable(kind);
+        return [name, env.getTrimmed(name) ?? mkdtempSync(join(tmpdir(), `gt-test-${kind}-home-`))];
     };
+    // Codex keeps its home: its sessions are not a delivery receiver, and CODEX_HOME is a comma list its tests set.
+    const homes = Object.fromEntries([sandboxed("claude"), sandboxed("grok")]);
 
     for (const [name, home] of Object.entries(homes)) {
         env.testing.set(name, home);

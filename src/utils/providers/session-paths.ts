@@ -51,6 +51,8 @@ interface NativeHomeLayout {
     readonly defaultFolder: string;
     /** The home an environment variable names (`CLAUDE_CONFIG_DIR`, the primary `CODEX_HOME`, `GROK_HOME`). */
     homeOverride(): string | undefined;
+    /** The name of that environment variable. */
+    readonly overrideVariable: string;
     /** Every session root under a user's home, the overrides and the headless worker home included. */
     sessionRoots(home: string): string[];
     /** The session roots of ONE provider home, with no environment lookup. */
@@ -68,6 +70,7 @@ const CODEX_COMPRESSED_SUFFIX = ".jsonl.zst";
 const claudeLayout: NativeHomeLayout = {
     defaultFolder: ".claude",
     homeOverride: () => env.paths.getClaudeConfigDir(),
+    overrideVariable: "CLAUDE_CONFIG_DIR",
     sessionRoots: (home) => {
         const roots = [join(home, ".claude", "projects"), join(home, ".config", "claude", "projects")];
         const configDir = env.paths.getClaudeConfigDir();
@@ -88,6 +91,7 @@ const claudeLayout: NativeHomeLayout = {
 const codexLayout: NativeHomeLayout = {
     defaultFolder: ".codex",
     homeOverride: () => primaryCodexHome(),
+    overrideVariable: "CODEX_HOME",
     sessionRoots: (home) => {
         const homes = codexHomeOverrides();
         const bases = homes.length > 0 ? homes : [join(home, ".codex")];
@@ -110,6 +114,7 @@ const codexLayout: NativeHomeLayout = {
 const grokLayout: NativeHomeLayout = {
     defaultFolder: ".grok",
     homeOverride: () => env.grok.getHomeOverride(),
+    overrideVariable: "GROK_HOME",
     sessionRoots: (home) => {
         const grokHome = env.grok.getHomeOverride() ?? join(home, ".grok");
         const roots = [join(grokHome, "sessions")];
@@ -148,6 +153,11 @@ export function defaultNativeHome(kind: NativeSessionProvider, home = homedir())
  * `GROK_HOME` or `~/.grok`. The one place that builds these roots; lint-rules `no-hand-built-claude-home` and
  * `no-hand-built-codex-grok-home` point here.
  */
+/** The environment variable that moves an agent's home (`CLAUDE_CONFIG_DIR`, `CODEX_HOME`, `GROK_HOME`). */
+export function nativeHomeOverrideVariable(kind: NativeSessionProvider): string {
+    return NATIVE_LAYOUTS[kind].overrideVariable;
+}
+
 export function nativeHome(kind: NativeSessionProvider, home = homedir()): string {
     return NATIVE_LAYOUTS[kind].homeOverride() ?? defaultNativeHome(kind, home);
 }

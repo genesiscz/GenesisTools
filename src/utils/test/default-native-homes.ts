@@ -1,5 +1,6 @@
 import { beforeEach } from "bun:test";
 import { env } from "@genesiscz/utils/env";
+import { nativeHomeOverrideVariable } from "@genesiscz/utils/providers/session-paths";
 
 /**
  * The test preload points `CLAUDE_CONFIG_DIR` and `GROK_HOME` at empty folders (`isolateNativeHomes` in
@@ -9,7 +10,7 @@ import { env } from "@genesiscz/utils/env";
  */
 export function startWithDefaultNativeHomes(): void {
     beforeEach(() => {
-        env.testing.unset("CLAUDE_CONFIG_DIR");
-        env.testing.unset("GROK_HOME");
+        env.testing.unset(nativeHomeOverrideVariable("claude"));
+        env.testing.unset(nativeHomeOverrideVariable("grok"));
     });
 }
