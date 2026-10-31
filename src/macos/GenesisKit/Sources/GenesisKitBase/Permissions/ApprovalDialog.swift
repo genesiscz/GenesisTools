@@ -184,12 +184,25 @@ public final class ApprovalDialogModel: ObservableObject {
         onDeny()
     }
 
-    /// Opens the deny note; a second press with the note open denies with it.
+    /// Opens the deny note; a second press with the note open denies with it. While the note is open the sensor
+    /// pauses, so a touch meant for nothing in particular cannot approve what the person is about to deny.
     public func denyWithNote() {
         if denying {
             deny()
         } else {
             denying = true
+            verifier?.pause(reason: "deny-note")
+        }
+    }
+
+    /// Closes the deny note without denying; the sensor listens again when a row is still ticked.
+    public func cancelDenyNote() {
+        guard denying else { return }
+        denying = false
+
+        // With every row unticked the sensor stays paused for that reason (`setSelected`).
+        if !(selectable && selected.isEmpty) {
+            verifier?.resume()
         }
     }
 
@@ -215,7 +228,8 @@ public final class ApprovalDialogModel: ObservableObject {
     }
 
     private func verified(method: String) {
-        guard !answered else { return }
+        // A reply that lands while the deny note is open is late: the sensor was paused for the note.
+        guard !answered, !denying else { return }
         answered = true
         onVerified(method, rememberChoices.indices.contains(rememberIndex) ? rememberChoices[rememberIndex] : nil)
     }
@@ -532,6 +546,14 @@ struct ApprovalVerifyFooter: View {
                 }
             }
         }
+        // Esc denies at once, with the note open or not: the Deny… button only opens the note.
+        .background {
+            Button("Deny", action: model.deny)
+                .keyboardShortcut(.cancelAction)
+                .opacity(0)
+                .frame(width: 0, height: 0)
+                .accessibilityHidden(true)
+        }
         .disabled(model.answered)
     }
 
@@ -596,7 +618,7 @@ struct ApprovalVerifyFooter: View {
             Button("Deny", action: model.deny)
                 .pointerCursor()
                 .accessibilityIdentifier("\(model.identifier)-deny")
-            Button("Cancel") { model.denying = false }
+            Button("Cancel", action: model.cancelDenyNote)
                 .pointerCursor()
                 .accessibilityIdentifier("\(model.identifier)-deny-cancel")
         }
@@ -625,7 +647,6 @@ struct ApprovalVerifyFooter: View {
                     .accessibilityIdentifier("\(model.identifier)-password")
             }
             Button("Deny…", action: model.denyWithNote)
-                .keyboardShortcut(.cancelAction)
                 .pointerCursor()
                 .help("Deny, with a word for the agent. Esc denies at once.")
                 .accessibilityIdentifier("\(model.identifier)-deny")

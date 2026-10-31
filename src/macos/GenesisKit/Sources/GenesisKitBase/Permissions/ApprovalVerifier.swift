@@ -125,12 +125,13 @@ public final class ApprovalVerifier: ObservableObject {
         stopContext()
     }
 
-    /// Every row was unticked: a touch must not approve an empty request. Listening stops; `resume` starts it again.
-    public func pause() {
+    /// Every row was unticked, or the deny note is open: a touch must not approve. Listening stops; `resume` starts
+    /// it again.
+    public func pause(reason: String = "nothing-selected") {
         guard !answered, state != .paused else { return }
         stopContext()
         state = .paused
-        onEvent("biometric.pause reason=nothing-selected")
+        onEvent("biometric.pause reason=\(reason)")
     }
 
     public func resume() {

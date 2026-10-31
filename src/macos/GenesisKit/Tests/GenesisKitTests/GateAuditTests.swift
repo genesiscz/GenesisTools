@@ -404,4 +404,31 @@ final class ApprovalVerifierTests: XCTestCase {
         XCTAssertTrue(answers.isEmpty)
         XCTAssertNil(verifier.context)
     }
+
+    func testTheDenyNotePausesTheSensorAndALateTouchApprovesNothing() throws {
+        let fake = FakeEvaluator()
+        let verifier = ApprovalVerifier(reason: "approve: test", evaluator: fake)
+        var answers: [String] = []
+        let model = ApprovalDialogModel(title: "t", purpose: "p", symbol: "trash.fill", facts: [], details: [], warning: nil,
+                                        footnote: "f", rememberChoices: [], rememberNote: nil, allowTitle: "Use password…",
+                                        deadline: nil, identifier: "test", verifier: verifier)
+        model.onVerified = { method, _ in answers.append(method) }
+
+        verifier.begin(windowIsKey: false)
+        verifier.evaluate(try XCTUnwrap(verifier.context))
+        model.denyWithNote()
+        XCTAssertTrue(model.denying)
+        XCTAssertEqual(verifier.state, .paused)
+        try XCTUnwrap(fake.biometricReplies.last)(true, nil)
+        settle()
+        XCTAssertTrue(answers.isEmpty, "a touch while the deny note is open must not approve")
+        XCTAssertFalse(model.answered)
+
+        model.cancelDenyNote()
+        XCTAssertEqual(verifier.state, .listening)
+        verifier.evaluate(try XCTUnwrap(verifier.context))
+        try XCTUnwrap(fake.biometricReplies.last)(true, nil)
+        settle()
+        XCTAssertEqual(answers, ["touch-id"])
+    }
 }
