@@ -3266,6 +3266,10 @@ private struct ProposalBanner: View {
         let color: Color = proposal.decision == "approve" ? ReviewPalette.added : proposal.decision == "request_changes" ? ReviewPalette.removed : ReviewPalette.modified
         let (drafts, extra) = counts
         let short = drafts.filter { !$0.optional || $0.value > 0 }
+        let title = Text(verbatim: "\(proposal.agent) reviewed \(proposal.label)")
+            .font(.system(size: 12, weight: .semibold))
+            .lineLimit(1)
+            .truncationMode(.tail)
         HStack(alignment: .top, spacing: 12) {
             Text(proposal.decision.replacingOccurrences(of: "_", with: " ").uppercased())
                 .font(.system(size: 10.5, weight: .bold))
@@ -3279,10 +3283,7 @@ private struct ProposalBanner: View {
                     if let open = model.openInWindow {
                         Button(action: open) {
                             HStack(spacing: 4) {
-                                Text(verbatim: "\(proposal.agent) reviewed \(proposal.label)")
-                                    .font(.system(size: 12, weight: .semibold))
-                                    .lineLimit(1)
-                                    .truncationMode(.tail)
+                                title
                                 Image(systemName: "arrow.up.right.square")
                                     .font(.system(size: 10.5))
                                     .foregroundColor(ReviewPalette.dim)
@@ -3292,10 +3293,7 @@ private struct ProposalBanner: View {
                         .instantTooltip("Open this review in its own window: the same diff, threads and proposal")
                         .accessibilityLabel(Text("Open \(proposal.agent)'s review in its own window"))
                     } else {
-                        Text(verbatim: "\(proposal.agent) reviewed \(proposal.label)")
-                            .font(.system(size: 12, weight: .semibold))
-                            .lineLimit(1)
-                            .truncationMode(.tail)
+                        title
                     }
                     if let confidence = proposal.confidence {
                         Text(verbatim: "[\(confidence)%]")
