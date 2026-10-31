@@ -1288,7 +1288,8 @@ describe("changing the trash root", () => {
         const target = resolveTarget(file(join(dir("root-move-src"), "a.txt")), base);
         const batch = moveToTrash([{ target, rule: "test" }], { config: own, caller: AGENT, graceMinutes: 60, paths });
 
-        expect(trashRootChangeBlocker(own, next, paths)).toContain("drain --now");
+        expect(trashRootChangeBlocker(own, next, paths, "tools rm drain --now")).toContain("run tools rm drain --now");
+        expect(trashRootChangeBlocker(own, next, paths)).toContain("drain the trash");
         expect(trashRootChangeBlocker(own, own.trashRoot, paths)).toBeNull();
 
         restoreBatch(batch?.id ?? "", { config: own, paths });

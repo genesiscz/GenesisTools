@@ -160,7 +160,10 @@ export function registerSettingsCommands(program: Command): void {
             }
 
             const next = applyRmSetting(ctx.base, key, value);
-            const blocked = key === "trash-root" ? trashRootChangeBlocker(ctx.base, value) : null;
+            const blocked =
+                key === "trash-root"
+                    ? trashRootChangeBlocker(ctx.base, value, undefined, `${toolCommand("rm")} drain --now`)
+                    : null;
 
             if (blocked) {
                 out.println(pc.red(`Not changing trash-root: ${blocked}`));
