@@ -22,6 +22,7 @@ import {
     type ApprovalDeps,
     appApprovalFromReply,
     appApproveParams,
+    appendRmLedger,
     approvalAsker,
     approvalGraceMinutes,
     approvalItemReason,
@@ -65,6 +66,8 @@ import {
     type RmLedgerEntry,
     type RmRequest,
     type RmRuleContext,
+    readRmLedger,
+    readRmLedgerNewest,
     recheckAfterWait,
     recoverAsideJournals,
     rememberOptions,
@@ -956,6 +959,25 @@ describe("audit log", () => {
             { key: "codex", moved: 0, aside: 40, reclaimed: 0, items: 1, refused: 1, requests: 0 },
         ]);
         expect(filterRmLedger(entries, { session: "cdx" })).toHaveLength(3);
+    });
+
+    test("the newest-entries read stops at the limit and at --since, and keeps the filter", () => {
+        const path = join(dir("ledger-newest"), "ledger.jsonl");
+        const codex: RmCaller = { agent: "codex", sessionId: "cdx-9", isInAgent: true };
+        const now = Date.now();
+
+        for (let i = 0; i < 6; i++) {
+            const at = new Date(now - (6 - i) * 60_000).toISOString();
+            appendRmLedger({ at, action: "move", path: `/x/${i}`, caller: i % 2 === 0 ? AGENT : codex }, path);
+        }
+
+        expect(readRmLedgerNewest({}, 2, path).map((e) => e.path)).toEqual(["/x/4", "/x/5"]);
+        expect(readRmLedgerNewest({ agent: "codex" }, 2, path).map((e) => e.path)).toEqual(["/x/3", "/x/5"]);
+        expect(readRmLedgerNewest({ since: new Date(now - 150_000) }, 50, path).map((e) => e.path)).toEqual([
+            "/x/4",
+            "/x/5",
+        ]);
+        expect(readRmLedgerNewest({}, 50, path)).toEqual(readRmLedger(path));
     });
 });
 

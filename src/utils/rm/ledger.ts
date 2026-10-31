@@ -1,5 +1,6 @@
 import { appendFileSync, existsSync, mkdirSync, readFileSync } from "node:fs";
 import { dirname } from "node:path";
+import { readLinesBackwardSync } from "@genesiscz/utils/fs/read-lines";
 import { SafeJSON } from "@genesiscz/utils/json";
 import { logger } from "@genesiscz/utils/logger";
 import { rmDataDir } from "./config";
@@ -57,6 +58,7 @@ export function appendRmLedger(entry: Omit<RmLedgerEntry, "at"> & { at?: string 
     }
 }
 
+/** The whole ledger, oldest first: for totals over all of it. A view of recent entries reads `readRmLedgerNewest`. */
 export function readRmLedger(path = rmLedgerPath()): RmLedgerEntry[] {
     if (!existsSync(path)) {
         return [];
@@ -65,22 +67,66 @@ export function readRmLedger(path = rmLedgerPath()): RmLedgerEntry[] {
     const entries: RmLedgerEntry[] = [];
 
     for (const line of readFileSync(path, "utf8").split("\n")) {
-        if (!line.trim()) {
-            continue;
-        }
+        const entry = parseLedgerLine(line, path);
 
-        try {
-            const parsed: unknown = SafeJSON.parse(line, { strict: true });
-
-            if (isLedgerEntry(parsed)) {
-                entries.push(parsed);
-            }
-        } catch (error) {
-            logger.debug({ path, error }, "rm: skipping an unreadable ledger line");
+        if (entry) {
+            entries.push(entry);
         }
     }
 
     return entries;
+}
+
+/**
+ * The newest `limit` entries that pass `filter`, oldest first. It reads the ledger from its end and stops at the
+ * `limit`-th match or at the first entry older than `filter.since` (the ledger is appended in time order), so the
+ * cost follows the answer, not the ledger's age.
+ */
+export function readRmLedgerNewest(filter: RmLedgerFilter, limit: number, path = rmLedgerPath()): RmLedgerEntry[] {
+    if (!existsSync(path) || limit <= 0) {
+        return [];
+    }
+
+    const since = filter.since?.getTime();
+    const newest: RmLedgerEntry[] = [];
+
+    for (const line of readLinesBackwardSync(path)) {
+        const entry = parseLedgerLine(line, path);
+
+        if (!entry) {
+            continue;
+        }
+
+        if (since !== undefined && Date.parse(entry.at) < since) {
+            break;
+        }
+
+        if (filterRmLedger([entry], filter).length === 0) {
+            continue;
+        }
+
+        newest.push(entry);
+
+        if (newest.length >= limit) {
+            break;
+        }
+    }
+
+    return newest.reverse();
+}
+
+function parseLedgerLine(line: string, path: string): RmLedgerEntry | null {
+    if (!line.trim()) {
+        return null;
+    }
+
+    try {
+        const parsed: unknown = SafeJSON.parse(line, { strict: true });
+        return isLedgerEntry(parsed) ? parsed : null;
+    } catch (error) {
+        logger.debug({ path, error }, "rm: skipping an unreadable ledger line");
+        return null;
+    }
 }
 
 function isLedgerEntry(value: unknown): value is RmLedgerEntry {
