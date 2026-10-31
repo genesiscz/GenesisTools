@@ -9,6 +9,17 @@ export interface ImageDifference {
     diff?: Uint8ClampedArray;
 }
 
+/** The percentage and similarity of a mismatch count, as `compareImagePixels` reports them. */
+export function summarizeMismatch(
+    mismatchedPixels: number,
+    totalPixels: number
+): Pick<ImageDifference, "differencePct" | "similarity"> {
+    return {
+        differencePct: (100 * mismatchedPixels) / totalPixels,
+        similarity: 1 - mismatchedPixels / totalPixels,
+    };
+}
+
 export function compareImagePixels({
     a,
     b,
@@ -46,8 +57,7 @@ export function compareImagePixels({
     return {
         mismatchedPixels,
         totalPixels,
-        differencePct: (100 * mismatchedPixels) / totalPixels,
-        similarity: 1 - mismatchedPixels / totalPixels,
+        ...summarizeMismatch(mismatchedPixels, totalPixels),
         ...(diff ? { diff } : {}),
     };
 }
