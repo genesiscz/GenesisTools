@@ -125,8 +125,8 @@ export const HARNESS_GUARD_ALLOWLIST: Readonly<Record<string, HarnessGuardCounts
         why: "SESSION_ID_OF, keyed by the gateway's runtime-agent caller axis (with copilot and unknown); its readers spawn lsof and read the session registry, which the hook-path drivers must not load",
     },
     "src/hub/lib/agents/index.ts": { table: 2 },
-    "src/hub/lib/insights/index.ts": { table: 2 },
     "src/hub/lib/widget/context.ts": { table: 2 },
+    "src/hub/lib/widget/roster-index.ts": { table: 1 },
     "src/hub/lib/widget/snapshot.ts": { table: 2 },
     "src/macos/GenesisKit/Sources/GenesisKit/Sessions/ToolCalls/SessionNativeLog.swift": {
         branch: 3,
@@ -136,6 +136,7 @@ export const HARNESS_GUARD_ALLOWLIST: Readonly<Record<string, HarnessGuardCounts
         branch: 1,
         why: "the decision log's delivery channels (DeliveryChannel in src/question/lib/decisions/deliver.ts), a route axis: codex is the Codex worker route",
     },
+    "src/macos/GenesisTools/Sources/Host/RmApprove.swift": { branch: 1 },
     "src/macos/GenesisTools/Sources/Parts/Hub/Hub/HubInbox.swift": {
         branch: 2,
         why: "the decision log's delivery channels (DeliveryChannel in src/question/lib/decisions/deliver.ts), a route axis: codex is the Codex worker route",
