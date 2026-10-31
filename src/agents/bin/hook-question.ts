@@ -3,14 +3,14 @@
  * The questions feature (`tools agents hooks config set questions on`): records an agent's structural question
  * (AskUserQuestion, ExitPlanMode, a permission prompt) as a dialog record, and closes it when the harness moves on.
  * Wired for PreToolUse on the question tools, PostToolUse and PostToolUseFailure, Notification, UserPromptSubmit and
- * SessionEnd. One bun start per call: a PostToolUse of a session with no dialog records exits after one `stat`,
+ * SessionEnd. One bun start per call: a PostToolUse of a session with no open dialog record exits after one `stat`,
  * before the store and its logger load.
  */
 import { env } from "@genesiscz/utils/env";
 import { loadHooksConfig, megabytes } from "../lib/hooks/config";
 import { hookDiag, logDecision, setDiagLogPath, setMaxLogBytes } from "../lib/hooks/log";
 import { normalizeEvent, parseHookPayload } from "../lib/hooks/payload";
-import { hasDialogRecords } from "../lib/hooks/questions-gate";
+import { hasOpenDialogRecords, openMarkersIndexed } from "../lib/hooks/questions-gate";
 
 if (env.agents.areHooksDisabled()) {
     process.exit(0);
@@ -26,8 +26,18 @@ if (!payload || !config.questions.harnesses[payload.harness]) {
 const event = normalizeEvent(payload.event);
 const asks = event === "pretooluse" || event === "notification";
 
-if (!asks && !hasDialogRecords(payload.harness, payload.sessionId)) {
-    process.exit(0);
+if (!asks && !hasOpenDialogRecords(payload.harness, payload.sessionId)) {
+    if (openMarkersIndexed()) {
+        process.exit(0);
+    }
+
+    // Once per machine: record files from before the open markers get theirs, so their open records still close.
+    const { indexOpenDialogMarkers } = await import("@genesiscz/utils/agents/dialogs/store");
+    indexOpenDialogMarkers();
+
+    if (!hasOpenDialogRecords(payload.harness, payload.sessionId)) {
+        process.exit(0);
+    }
 }
 
 setDiagLogPath(config.logPath);

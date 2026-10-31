@@ -79,6 +79,11 @@ export interface JsonDocumentSpec<T> {
     /** The mode of the written file (`0o600` for private data) and of a directory `update` creates. */
     fileMode?: number;
     dirMode?: number;
+    /**
+     * Runs after the write, still under the lock: keep a derived file in step with the document (an index, a marker).
+     * A throw here fails the update, but the document is already written.
+     */
+    afterWrite?: (doc: T) => void;
     /** The error `read` and a refusing `update` throw. Defaults to the {@link DocumentUnreadableError} itself. */
     unreadableError?: (problem: DocumentUnreadableError) => Error;
 }
@@ -207,6 +212,7 @@ export function jsonDocument<T>(spec: JsonDocumentSpec<T>): JsonDocument<T> {
             // that can still stop the save.
             options?.signal?.throwIfAborted();
             atomicWriteFileSync(spec.path, text, spec.fileMode !== undefined ? { mode: spec.fileMode } : undefined);
+            spec.afterWrite?.(outcome.write);
             return outcome.result;
         };
 

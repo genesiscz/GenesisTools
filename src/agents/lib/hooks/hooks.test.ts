@@ -83,7 +83,7 @@ import { callDir, hookDataRoot, safeSegment, sessionDir } from "./paths";
 import type { HookPayload } from "./payload";
 import { HARNESS_HOOK_FACTS, harnessHookFacts, parseHookPayload } from "./payload";
 import { applyQuestionHookAction, questionHookAction } from "./questions";
-import { hasDialogRecords, QUESTION_TOOL_MATCHER } from "./questions-gate";
+import { hasOpenDialogRecords, QUESTION_TOOL_MATCHER } from "./questions-gate";
 import { checkRuleExamples, replayCorpus } from "./rules-check";
 import { applyRuleSelection, applySetting, ruleEnabled, setHooksConfig, setRuleSelection } from "./set-config";
 import {
@@ -3705,13 +3705,13 @@ describe("the questions feature", () => {
         expect(openQuestions("claude", "s-questions-1", root)).toEqual([]);
     });
 
-    it("leaves a question tool without a call id to the watcher, and the gate finds the store's file", async () => {
+    it("leaves a question tool without a call id to the watcher, and the gate finds the store's open marker", async () => {
         const noId = claudePayload({ hook_event_name: "PreToolUse", tool_name: "AskUserQuestion", tool_input: {} });
         expect(questionHookAction(noId, "t")).toBeNull();
         expect(questionHookAction(claudePayload({ hook_event_name: "PreToolUse", tool_name: "Bash" }), "t")).toBeNull();
 
         const sessionId = "s-gate-1";
-        expect(hasDialogRecords("claude", sessionId)).toBe(false);
+        expect(hasOpenDialogRecords("claude", sessionId)).toBe(false);
         const payload = claudePayload({
             session_id: sessionId,
             hook_event_name: "PreToolUse",
@@ -3721,8 +3721,14 @@ describe("the questions feature", () => {
         // The default records root, the one the gate checks without importing the store.
         await applyQuestionHookAction(payload, questionHookAction(payload, "t") ?? { closes: "none" }, { now: "t" });
         expect(existsSync(dialogsPath("claude", sessionId))).toBe(true);
-        expect(hasDialogRecords("claude", sessionId)).toBe(true);
-        expect(hasDialogRecords("claude", "../escape")).toBe(false);
+        expect(hasOpenDialogRecords("claude", sessionId)).toBe(true);
+        expect(hasOpenDialogRecords("claude", "../escape")).toBe(false);
+
+        // Answered: the record file stays (it keeps closed records), and the gate stops the hook again.
+        const typed = claudePayload({ session_id: sessionId, hook_event_name: "UserPromptSubmit", prompt: "go" });
+        await applyQuestionHookAction(typed, questionHookAction(typed, "t2") ?? { closes: "none" }, { now: "t2" });
+        expect(existsSync(dialogsPath("claude", sessionId))).toBe(true);
+        expect(hasOpenDialogRecords("claude", sessionId)).toBe(false);
     });
 });
 

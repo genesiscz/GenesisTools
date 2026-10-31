@@ -11,6 +11,9 @@ import {
     closeQuestion,
     closeQuestions,
     dialogsPath,
+    indexOpenDialogMarkers,
+    OPEN_MARKERS_INDEXED,
+    openMarkerPath,
     openQuestions,
     readSessionQuestions,
     readSessionQuestionsStrict,
@@ -266,6 +269,34 @@ describe("closeQuestions", () => {
             []
         );
         expect(readFileSync(path, "utf8")).toBe(before);
+    });
+});
+
+describe("open markers", () => {
+    test("a record file from before the markers gets its marker from the one-time pass, and a close removes it", async () => {
+        const dir = root();
+        const path = dialogsPath("claude", SESSION, dir);
+        const done = dialogsPath("claude", "fixture-session-2", dir);
+        mkdirSync(dirname(path), { recursive: true });
+        // Written by the store as it was before the markers: an open and an answered session, no marker, no flag.
+        writeFileSync(path, SafeJSON.stringify([question({ toolCallId: "old-open" })]));
+        writeFileSync(
+            done,
+            SafeJSON.stringify([question({ sessionId: "fixture-session-2", closedAt: "2026-10-30T10:01:00.000Z" })])
+        );
+        writeFileSync(join(dirname(path), "torn.json"), "[{");
+
+        expect(indexOpenDialogMarkers(dir)).toEqual({ indexed: 2 });
+        expect(existsSync(openMarkerPath(path))).toBe(true);
+        expect(existsSync(openMarkerPath(done))).toBe(false);
+        expect(existsSync(join(dir, OPEN_MARKERS_INDEXED))).toBe(true);
+        expect(indexOpenDialogMarkers(dir)).toEqual({ indexed: 0 });
+
+        await closeQuestion(question({ toolCallId: "old-open" }), "2026-10-30T10:05:00.000Z", dir);
+        expect(existsSync(openMarkerPath(path))).toBe(false);
+
+        await upsertQuestion(question({ toolCallId: "new-open" }), dir);
+        expect(existsSync(openMarkerPath(path))).toBe(true);
     });
 });
 

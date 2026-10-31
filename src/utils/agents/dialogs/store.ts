@@ -1,6 +1,8 @@
+import { existsSync, mkdirSync, readdirSync, readFileSync, unlinkSync, writeFileSync } from "node:fs";
 import { join } from "node:path";
 import { SafeJSON } from "@genesiscz/utils/json";
 import { logger } from "@genesiscz/utils/logger";
+import { isMissingFileError } from "@genesiscz/utils/storage/atomic-file";
 import { type JsonDocument, jsonDocument } from "@genesiscz/utils/storage/locked-document";
 import { genesisToolsDir } from "@genesiscz/utils/storage/root";
 import { sessionIdProblem } from "../session-id";
@@ -51,7 +53,101 @@ function recordsDocument(provider: DialogProvider, sessionId: string, root?: str
         onUnreadable: "refuse",
         writes: "always",
         unreadableError: (problem) => (problem.cause instanceof Error ? problem.cause : problem),
+        afterWrite: (records) => syncOpenMarker(path, records),
     });
+}
+
+/**
+ * `<session>.open` beside the record file while the session has an open record. The question hook runs on every
+ * PostToolUse; it stats this marker before it loads the store, so a session whose questions are all answered pays one
+ * `stat`, not the store, the logger and a parse. The record file alone could not say that: it keeps closed records.
+ */
+export function openMarkerPath(recordsPath: string): string {
+    return `${recordsPath.replace(/\.json$/, "")}.open`;
+}
+
+function syncOpenMarker(recordsPath: string, records: readonly OpenQuestion[]): void {
+    const marker = openMarkerPath(recordsPath);
+
+    if (records.some((record) => record.closedAt === undefined)) {
+        if (!existsSync(marker)) {
+            writeFileSync(marker, "");
+        }
+
+        return;
+    }
+
+    try {
+        unlinkSync(marker);
+    } catch (error) {
+        if (!isMissingFileError(error)) {
+            throw error;
+        }
+    }
+}
+
+/** Written once the pass below has indexed every record file; the question hook skips the pass after that. */
+export const OPEN_MARKERS_INDEXED = ".open-markers-indexed";
+
+export function dialogsRoot(root?: string): string {
+    return root ?? genesisToolsDir("agents", "dialogs");
+}
+
+/**
+ * The one-time pass for record files written before the open markers existed: each file that holds an open record gets
+ * its marker, so the question hook reaches it again and its close lands. Without it such a record would stay open for
+ * good and keep refusing typed answers for its session. Safe to run twice (two hooks at once): it only adds markers.
+ */
+export function indexOpenDialogMarkers(root?: string): { indexed: number } {
+    const base = dialogsRoot(root);
+    let indexed = 0;
+
+    for (const provider of listNames(base)) {
+        for (const name of listNames(join(base, provider))) {
+            if (!name.endsWith(".json")) {
+                continue;
+            }
+
+            const path = join(base, provider, name);
+            if (!existsSync(openMarkerPath(path)) && holdsOpenRecord(path)) {
+                writeFileSync(openMarkerPath(path), "");
+                indexed += 1;
+            }
+        }
+    }
+
+    mkdirSync(base, { recursive: true });
+    writeFileSync(join(base, OPEN_MARKERS_INDEXED), `${new Date().toISOString()}\n`);
+    log.info({ root: base, indexed }, "dialog records: indexed the open markers of files written before them");
+    return { indexed };
+}
+
+function listNames(dir: string): string[] {
+    try {
+        return readdirSync(dir);
+    } catch (error) {
+        if (isMissingFileError(error) || (error instanceof Error && "code" in error && error.code === "ENOTDIR")) {
+            return [];
+        }
+
+        throw error;
+    }
+}
+
+/** Whether the file holds an open record. An unreadable file counts as open: the hook must keep reaching it. */
+function holdsOpenRecord(path: string): boolean {
+    try {
+        const parsed: unknown = SafeJSON.parse(readFileSync(path, "utf8"), { strict: true });
+        return (
+            Array.isArray(parsed) && parsed.some((record) => isOpenQuestion(record) && record.closedAt === undefined)
+        );
+    } catch (error) {
+        log.warn(
+            { path, error },
+            "dialog records: a file is unreadable; marking it open so its session stays reachable"
+        );
+        return true;
+    }
 }
 
 /** Every well-formed record of the session; an unreadable file reads as none, and a malformed row is dropped. */
