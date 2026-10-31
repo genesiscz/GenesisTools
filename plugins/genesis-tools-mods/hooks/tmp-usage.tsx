@@ -117,16 +117,22 @@ async function freeKb(host: Host): Promise<number | null> {
     return kbFrom(await sharedRun(host, { argv: ["df", "-k", "/"], cwd: "/", ttlMs: 60_000, timeoutMs: 60_000 }), 3);
 }
 
-let uid: Promise<string | undefined> | undefined;
+let uidLookup: Promise<string | undefined> | undefined;
 
-/** The user's id, read once per process: it never changes, and `id -u` ran on every reading before. */
+/** The user's id, read once per process after a successful lookup. */
 function uidOf(host: Host): Promise<string | undefined> {
-    uid ??= host
+    uidLookup ??= host
         .run(["id", "-u"], { timeoutMs: 5_000 })
-        .then((done) => done.stdout.trim() || undefined)
-        .catch(() => undefined);
+        .then((done) => (done.exitCode === 0 ? done.stdout.trim() || undefined : undefined))
+        .catch(() => undefined)
+        .then((value) => {
+            if (!value) {
+                uidLookup = undefined;
+            }
+            return value;
+        });
 
-    return uid;
+    return uidLookup;
 }
 
 /** `du -sk <path>`, leaving out every folder named in `skip` (a basename mask, `du -I`). */
@@ -370,7 +376,7 @@ const PROJECT_MS = 10 * 60_000;
  * folder. Remembered for 10 minutes: a `git rev-parse` ran on every reading before (664 in a quiet 3 hours of 20
  * sessions on 2026-10-30).
  */
-async function projectOf(host: Host): Promise<{ project: string; main: string }> {
+export async function projectOf(host: Host): Promise<{ project: string; main: string }> {
     const cwd = await host.cwd();
     const known = projects.get(cwd);
 
@@ -384,7 +390,9 @@ async function projectOf(host: Host): Promise<{ project: string; main: string }>
     const common = done?.exitCode === 0 ? done.stdout.trim() : "";
     const main = common.endsWith("/.git") ? common.slice(0, -5) : cwd;
     const found = { project: main.split("/").filter(Boolean).pop() ?? "unknown", main, at: Date.now() };
-    projects.set(cwd, found);
+    if (done?.exitCode === 0) {
+        projects.set(cwd, found);
+    }
 
     return found;
 }

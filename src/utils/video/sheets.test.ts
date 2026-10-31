@@ -43,15 +43,18 @@ describe("contact sheets of a screen recording", () => {
     });
 
     test("the frames-per-image default keeps a tile at half the source or better", () => {
-        expect(defaultVideoSettings({ width: 4112 }).framesPerImage).toBe(4);
+        expect(defaultVideoSettings({ width: 4112 }).framesPerImage).toBe(1);
+        expect(defaultVideoSettings({ width: 3200 }).framesPerImage).toBe(4);
+        expect(defaultVideoSettings({ width: 2714 }).framesPerImage).toBe(8);
+        expect(defaultVideoSettings({ width: 2715 }).framesPerImage).toBe(4);
         expect(defaultVideoSettings({ width: 2560 }).framesPerImage).toBe(8);
         expect(defaultVideoSettings({ width: 1920 }).framesPerImage).toBe(16);
         expect(defaultVideoSettings({ width: 1280 }).framesPerImage).toBe(32);
         expect(defaultVideoSettings({ width: 20_000 }).framesPerImage).toBe(1);
-        for (const width of [4112, 2560, 1920, 1280]) {
+        for (const width of [4112, 3200, 2714, 2715, 2560, 1920, 1280]) {
             const { framesPerImage } = defaultVideoSettings({ width });
             const columns = Math.ceil(Math.sqrt(framesPerImage));
-            expect(width / Math.floor(MAX_SHEET_WIDTH / columns)).toBeLessThanOrEqual(2.2);
+            expect(width / (Math.floor(MAX_SHEET_WIDTH / columns) - 8)).toBeLessThanOrEqual(2);
         }
     });
 });

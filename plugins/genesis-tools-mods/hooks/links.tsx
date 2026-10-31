@@ -778,7 +778,7 @@ async function checkoutProject(
 ): Promise<{ root: string | undefined; project: ForgeProject | undefined }> {
     const known = checkoutProjects.get(cwd);
 
-    if (known && Date.now() - known.at < CHECKOUT_PROJECT_MS) {
+    if (known && Date.now() - known.at < (known.root && known.project ? CHECKOUT_PROJECT_MS : 30_000)) {
         return known;
     }
 
@@ -793,7 +793,9 @@ async function checkoutProject(
         : undefined;
     const project = origin?.exitCode === 0 ? forgeProject(origin.stdout) : undefined;
     const found = { root, project, at: Date.now() };
-    checkoutProjects.set(cwd, found);
+    if (top && (!root || origin)) {
+        checkoutProjects.set(cwd, found);
+    }
 
     return found;
 }

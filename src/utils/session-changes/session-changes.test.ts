@@ -638,6 +638,42 @@ describe("computeSessionChanges", () => {
         expect(p2(second)?.files.map((file) => file.path)).toEqual([`${REPO}/src/out.ts`]);
     });
 
+    it("replays a cached script overwrite on a warm refresh", () => {
+        const writes = [
+            prompt("p1", "write twice", 0),
+            use("first-write", "Bash", { command: "cat > gen.sh <<'EOF'\necho hi > src/old.ts\nEOF" }, 1),
+            result("p1", "first-write", 2),
+            use("second-write", "Bash", { command: "cat > gen.sh <<'EOF'\necho hi > src/new.ts\nEOF" }, 3),
+            result("p1", "second-write", 4),
+        ];
+        const first = parseClaudeTranscript("rewrite-session", { main: jsonl(writes) });
+        const grown = parseClaudeTranscript("rewrite-session", {
+            main: jsonl([
+                ...writes,
+                prompt("p2", "run it", 10),
+                use("run", "Bash", { command: "zsh gen.sh" }, 11),
+                result("p2", "run", 12),
+            ]),
+        });
+        const log = [row("p1", `${REPO}/gen.sh`, 4), row("p2", `${REPO}/src/new.ts`, 12)];
+        const ask = (sessionId: string, transcript: typeof first) =>
+            computeSessionChanges({
+                sessionId,
+                transcript,
+                log,
+                home: HOME,
+                tempDirs: [TEMP],
+                repoRoot,
+                isDirectory: () => false,
+            });
+        ask("rewrite-session", first);
+        const warm = ask("rewrite-session", grown);
+        const cold = ask("rewrite-session-cold", grown);
+        const turn = (changes: typeof warm) => changes.turns.find((item) => item.turnId === "p2");
+        expect(turn(warm)).toEqual(turn(cold));
+        expect(turn(warm)?.files.map((file) => file.path)).toEqual([`${REPO}/src/new.ts`]);
+    });
+
     it("judges the log alone by path rules when there is no transcript", () => {
         const logOnly = compute({
             transcript: null,

@@ -116,6 +116,7 @@ export function forgetSettings(): void {
  * of the mods drops the lines still waiting, at most 10 s of a log.
  */
 const queuedLog = new Map<string, string[]>();
+const inFlightLog = new Map<string, Promise<void>>();
 const LOG_FLUSH_MS = 10_000;
 const LOG_FLUSH_LINES = 100;
 
@@ -124,13 +125,22 @@ async function flushLog(host: Host, path: string): Promise<void> {
     queuedLog.delete(path);
 
     if (lines && lines.length > 0) {
-        await host.append(path, lines.join("")).catch(() => undefined);
+        const previous = inFlightLog.get(path) ?? Promise.resolve();
+        const pending = previous.then(() => host.append(path, lines.join(""))).catch(() => undefined);
+        inFlightLog.set(path, pending);
+        await pending;
+        if (inFlightLog.get(path) === pending) {
+            inFlightLog.delete(path);
+        }
+    } else {
+        await inFlightLog.get(path);
     }
 }
 
 /** Every waiting log line written now: the session ends. */
 export async function flushModLogs(host: Host): Promise<void> {
-    await Promise.all([...queuedLog.keys()].map((path) => flushLog(host, path)));
+    const paths = new Set([...queuedLog.keys(), ...inFlightLog.keys()]);
+    await Promise.all([...paths].map((path) => flushLog(host, path)));
 }
 
 export async function appendJsonl(host: Host, path: string, record: Record<string, unknown>): Promise<void> {

@@ -388,7 +388,7 @@ export interface ModsConfig {
      * replaces a context block already given to the same loop since its last compaction with a one-line receipt.
      */
     hooks: { tokens: boolean; dedupe: boolean };
-    /** `readings`: the mods' routine refreshes and readings go to `mods-log/<feature>.jsonl` too (a process each). */
+    /** `readings`: routine refreshes go to `mods-log/<feature>.jsonl`, batched by file. */
     log: { readings: boolean };
     /**
      * The sidebars a band row opens: `hints` says in the status bar at a sidebar's foot what the focused button does,

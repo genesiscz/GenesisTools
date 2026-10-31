@@ -680,11 +680,11 @@ export function computeSessionChanges(input: SessionChangesInput): ComputedSessi
                 written.set(path, text);
             }
         } else {
-            const before = new Set(written.keys());
+            const before = new Map(written);
             analysis = analyzeCommand({ command: call.command, cwd, files: written });
             const wrote: Array<[string, string]> = [];
             for (const [path, text] of written) {
-                if (!before.has(path)) {
+                if (!before.has(path) || before.get(path) !== text) {
                     wrote.push([path, text]);
                 }
             }

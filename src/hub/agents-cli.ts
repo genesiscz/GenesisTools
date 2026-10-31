@@ -13,8 +13,7 @@ if (env.tools.hubServerEnabled() && process.argv.includes("--json")) {
     const answered = await callHubServer({ argv: ["hub", ...process.argv.slice(2)], timeoutMs: 2_500 });
 
     if (answered) {
-        process.stdout.write(answered.stdout);
-        process.stderr.write(answered.stderr);
+        await Promise.all([Bun.write(Bun.stdout, answered.stdout), Bun.write(Bun.stderr, answered.stderr)]);
         process.exit(answered.exit);
     }
 

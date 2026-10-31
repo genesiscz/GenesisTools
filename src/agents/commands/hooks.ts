@@ -926,7 +926,7 @@ function registerMods(hooks: Command): void {
                 ["mods.agentsBand", mods.agentsBand.enabled, `red past ${mods.agentsBand.warnMinutes} min`],
                 ["mods.hooks.tokens", mods.hooks.tokens, ""],
                 ["mods.hooks.dedupe", mods.hooks.dedupe, ""],
-                ["mods.log.readings", mods.log.readings, "the routine refreshes and readings, a process per line"],
+                ["mods.log.readings", mods.log.readings, "the routine refreshes and readings, batched by log file"],
                 [
                     "mods.sidebar.hints",
                     mods.sidebar.hints,

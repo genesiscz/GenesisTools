@@ -501,7 +501,7 @@ async function refreshNow(host: Host, why: string): Promise<void> {
     const fresh = new Set(changedRoots);
     changedRoots.clear();
     const ttlOf = (root: string) =>
-        why === "timer" || why === "start" ? TIMER_SHARED_MS : why === "tool" && !fresh.has(root) ? SHARED_GIT_MS : 0;
+        fresh.has(root) ? 0 : why === "timer" || why === "start" ? TIMER_SHARED_MS : why === "tool" ? SHARED_GIT_MS : 0;
     const read = await Promise.all(roots.map((at) => readRow(host, at.root, at.why, ttlOf(at.root))));
     // A checkout git could not read this time keeps its last row; one whose folder is gone with nothing to show goes.
     const next = roots

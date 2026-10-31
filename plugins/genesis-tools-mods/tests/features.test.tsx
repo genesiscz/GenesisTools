@@ -93,7 +93,7 @@ import { forgetLive, liveAgo, liveDue, liveLeft, liveSince } from "../hooks/live
 import { bareDescription } from "../hooks/model-label";
 import { forgetRepoMentions, namesIn, sessionRepos, titleMatches, urlProject } from "../hooks/pr-repos";
 import { modsSettings } from "../hooks/settings";
-import { afterTools, forgetSettings, type Host, isRecord } from "../hooks/shared";
+import { afterTools, appendJsonl, flushModLogs, forgetSettings, type Host, isRecord } from "../hooks/shared";
 import { cliLacks, sharedRun, sharedRunClock, sharedRunFiles } from "../hooks/shared-run";
 import { toolLabel } from "../hooks/spinner";
 import {
@@ -111,6 +111,7 @@ import {
     changesSize,
     lockedToSession,
     markSizeStale,
+    projectOf,
     samePath,
     sessionTotalKb,
     sizeAgeText,
@@ -137,6 +138,32 @@ const NO_LINKS: GenesisProbe = {
 
 // Run with `claude plugin test plugins/genesis-tools-mods`. The pure parts of each feature first, then the link
 // fixer end to end over a streamed reply.
+
+test("project lookup retries nonzero results and caches a successful lookup", async () => {
+    const base = checkoutHost();
+    let calls = 0;
+    const host: Host = {
+        ...base,
+        cwd: async () => "/work/lookup-retry-checkout",
+        async run() {
+            calls++;
+            return {
+                stdout: calls === 1 ? "" : "/work/main/.git\n",
+                stderr: calls === 1 ? "temporary error" : "",
+                exitCode: calls === 1 ? 128 : 0,
+                isStdoutTruncated: false,
+                isStderrTruncated: false,
+            };
+        },
+    };
+    expect(await projectOf(host)).toMatchObject({
+        project: "lookup-retry-checkout",
+        main: "/work/lookup-retry-checkout",
+    });
+    expect(await projectOf(host)).toMatchObject({ project: "main", main: "/work/main" });
+    expect(await projectOf(host)).toMatchObject({ project: "main", main: "/work/main" });
+    expect(calls).toBe(2);
+});
 
 test("session files restore measured sizes, persist new sizes and pace known worktrees", async () => {
     forgetGenesisProbe();
@@ -2605,6 +2632,49 @@ test("session files: a CLI without tools du size walks with du, and keeps doing 
     } finally {
         forgetGenesisProbe();
     }
+});
+
+test("log flush waits for in-flight appends and preserves their order", async () => {
+    let wakeTimer = () => {};
+    let finishFirst = () => {};
+    let startedFirst = () => {};
+    const timer = new Promise<void>((resolve) => {
+        wakeTimer = resolve;
+    });
+    const firstStarted = new Promise<void>((resolve) => {
+        startedFirst = resolve;
+    });
+    const firstFinished = new Promise<void>((resolve) => {
+        finishFirst = resolve;
+    });
+    const writes: string[] = [];
+    const host: Host = {
+        ...checkoutHost(),
+        sleep: () => timer,
+        async append(_path, text) {
+            writes.push(text);
+            if (writes.length === 1) {
+                startedFirst();
+                await firstFinished;
+            }
+        },
+    };
+    await appendJsonl(host, "/test-log", { value: 1 });
+    wakeTimer();
+    await firstStarted;
+    await appendJsonl(host, "/test-log", { value: 2 });
+    let flushed = false;
+    const finish = flushModLogs(host).then(() => {
+        flushed = true;
+    });
+    await Promise.resolve();
+    expect(flushed).toBe(false);
+    expect(writes.length).toBe(1);
+    finishFirst();
+    await finish;
+    expect(writes.length).toBe(2);
+    expect(writes[0]).toContain('"value":1');
+    expect(writes[1]).toContain('"value":2');
 });
 
 test("shared run: a cut-off stdout is neither returned nor shared", async () => {

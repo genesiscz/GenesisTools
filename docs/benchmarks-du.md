@@ -1457,7 +1457,8 @@ hard-linked inode counted once (its names are kept per thread as `LinkRec`s and 
 rounded up as du does. `folderKb` (`src/du/lib/size-command.ts`) walks natively first and runs `du -sk` only when the
 walk cannot answer: the path is a file, the dylib cannot compile (no Xcode tools), or the root could not be read
 (`dirs` 0). Differences from du, by design: a foreign mount inside the root is pruned where du crosses it, and a
-symlink's own blocks are not counted (du counts a few hundred bytes per link).
+symlink's own blocks are not counted (du counts a few hundred bytes per link). The walk also prunes cloud-provider
+roots and dataless directories, so it can return an incomplete total for a tree that contains them.
 
 Why: the mods' Session files row asks `tools du size <worktree> --max-cache-age 1800` and the cache answers in 0.13 to
 0.49 s, but every cold walk was the system `du`, single-threaded: 29 of 42 calls in a quiet 3 hours took 1.7 to 10 s on

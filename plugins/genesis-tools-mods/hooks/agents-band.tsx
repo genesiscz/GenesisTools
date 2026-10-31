@@ -438,7 +438,10 @@ async function loadTail(host: Host, agentId: string): Promise<void> {
 
     tails.set(agentId, { at: Date.now(), said: held?.said ?? "", mark: held?.mark });
     const done = path ? await host.run(["tail", "-c", "131072", path], { timeoutMs: 5_000 }) : undefined;
-    const said = done?.exitCode === 0 ? lastSaidOf(done.stdout) : "";
+    if (done?.exitCode !== 0) {
+        return;
+    }
+    const said = lastSaidOf(done.stdout);
     tails.set(agentId, { at: Date.now(), said, mark });
 
     if (said !== held?.said) {
