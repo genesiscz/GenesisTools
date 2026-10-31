@@ -21,6 +21,7 @@ const INTERPRETER_OPTIONS_WITH_VALUE = new Set([
 const INTERPRETER_FLAGS = new Set([
     "--no-warnings",
     "--trace-warnings",
+    "--trace-uncaught",
     "--enable-source-maps",
     "--inspect",
     "--inspect-brk",
