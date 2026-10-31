@@ -35,7 +35,7 @@ import {
 import { type GenesisProbe, genesisProbe, hubLink } from "./genesis";
 import { liveAgo } from "./live";
 import { checkoutRoot } from "./pr-repos";
-import { type Feature, type Host, isRecord, logMod, logReading, settingsOf } from "./shared";
+import { type Feature, type Host, isRecord, jsonOf, logMod, logReading, settingsOf } from "./shared";
 import { type SharedRunResult, sharedRun } from "./shared-run";
 import {
     actionButton,
@@ -90,25 +90,21 @@ function prTtl(pr: BandPr | null): number {
 }
 
 function parsedPr(text: string | undefined, tracked: boolean): BandPr | null {
-    try {
-        const parsed: unknown = text ? JSON.parse(text) : undefined;
+    const parsed = jsonOf(text);
 
-        if (isRecord(parsed) && typeof parsed.number === "number") {
-            return {
-                number: parsed.number,
-                title: String(parsed.title ?? ""),
-                url: String(parsed.url ?? ""),
-                state: String(parsed.state ?? ""),
-                draft: parsed.isDraft === true,
-                tracked,
-                own: false,
-                hidden: false,
-                ...checkCounts(parsed.statusCheckRollup),
-                checks: checksOf(parsed.statusCheckRollup),
-            };
-        }
-    } catch {
-        return null;
+    if (isRecord(parsed) && typeof parsed.number === "number") {
+        return {
+            number: parsed.number,
+            title: String(parsed.title ?? ""),
+            url: String(parsed.url ?? ""),
+            state: String(parsed.state ?? ""),
+            draft: parsed.isDraft === true,
+            tracked,
+            own: false,
+            hidden: false,
+            ...checkCounts(parsed.statusCheckRollup),
+            checks: checksOf(parsed.statusCheckRollup),
+        };
     }
 
     return null;
@@ -223,13 +219,7 @@ export function checksOf(rollup: unknown): BandCheck[] {
  * the description a commit status carries, which `statusCheckRollup` leaves out. Undefined when it is not that list.
  */
 export function prChecksOf(stdout: string): BandCheck[] | undefined {
-    let parsed: unknown;
-
-    try {
-        parsed = JSON.parse(stdout);
-    } catch {
-        return undefined;
-    }
+    const parsed = jsonOf(stdout);
 
     if (!Array.isArray(parsed) || parsed.length === 0) {
         return undefined;

@@ -18,7 +18,7 @@ import type { SpawnedAgents } from "../types";
 import { genesisProbe } from "./genesis";
 import { liveAgo, liveSince } from "./live";
 import { bareDescription, modelLabel } from "./model-label";
-import { type Feature, type Host, isRecord, logMod, paceAfter, settingsOf } from "./shared";
+import { type Feature, type Host, isRecord, jsonOf, logMod, paceAfter, settingsOf } from "./shared";
 import {
     actionRow,
     dimNote,
@@ -168,14 +168,7 @@ function timeOf(value: unknown): number | undefined {
 
 /** The running workers of one session in `tools hub agents --json` output; [] for output it cannot read. */
 export function workersOf(stdout: string, sessionId: string): SessionWorker[] {
-    let parsed: unknown;
-
-    try {
-        parsed = JSON.parse(stdout);
-    } catch {
-        return [];
-    }
-
+    const parsed = jsonOf(stdout);
     const parents = isRecord(parsed) && Array.isArray(parsed.parents) ? parsed.parents : [];
     const parent = parents.find((entry) => isRecord(entry) && entry.sessionId === sessionId);
     const children = isRecord(parent) && Array.isArray(parent.children) ? parent.children : [];
@@ -394,22 +387,19 @@ export function lastSaidOf(tail: string): string {
             continue;
         }
 
-        try {
-            const row: unknown = JSON.parse(line);
-            const message = isRecord(row) && isRecord(row.message) ? row.message : undefined;
-            const content = message && Array.isArray(message.content) ? message.content : [];
-            const text = content
-                .flatMap((part) =>
-                    isRecord(part) && part.type === "text" && typeof part.text === "string" ? [part.text] : []
-                )
-                .join("\n")
-                .trim();
+        // The first line of a byte-cut tail is half a row, which reads as none.
+        const row = jsonOf(line);
+        const message = isRecord(row) && isRecord(row.message) ? row.message : undefined;
+        const content = message && Array.isArray(message.content) ? message.content : [];
+        const text = content
+            .flatMap((part) =>
+                isRecord(part) && part.type === "text" && typeof part.text === "string" ? [part.text] : []
+            )
+            .join("\n")
+            .trim();
 
-            if (text) {
-                return text;
-            }
-        } catch {
-            // The first line of a byte-cut tail is half a row.
+        if (text) {
+            return text;
         }
     }
 

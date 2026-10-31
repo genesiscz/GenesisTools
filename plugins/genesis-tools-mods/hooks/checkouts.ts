@@ -16,7 +16,7 @@
 // in this session's band until removed. `folderSuggestions` proposes folders for that, from zoxide when it is
 // installed (`GenesisPlayg` finds the GenesisPlayground path) and from the folder a typed `/` or `~/` path names.
 import type { FsEntry } from "claude-code";
-import { type Host, logMod } from "./shared";
+import { type Host, jsonOf, logMod } from "./shared";
 
 export interface Touch {
     root: string;
@@ -405,26 +405,21 @@ async function fromJournal(host: Host, session: string): Promise<Touch[]> {
     const text = home
         ? await host.read(`${home}/.genesis-tools/claude-code/sessions/${session}.json`).catch(() => undefined)
         : undefined;
+    const parsed = jsonOf(text);
     let files: string[] = [];
 
-    try {
-        const parsed: unknown = text ? JSON.parse(text) : undefined;
-
-        if (isRecord(parsed) && Array.isArray(parsed.files)) {
-            files = parsed.files
-                .filter((file): file is string => typeof file === "string")
-                .slice(-SEED_FILES)
-                .map((file) => {
-                    try {
-                        return decodeURIComponent(file);
-                    } catch {
-                        return file;
-                    }
-                })
-                .filter((file) => file.startsWith("/"));
-        }
-    } catch {
-        files = [];
+    if (isRecord(parsed) && Array.isArray(parsed.files)) {
+        files = parsed.files
+            .filter((file): file is string => typeof file === "string")
+            .slice(-SEED_FILES)
+            .map((file) => {
+                try {
+                    return decodeURIComponent(file);
+                } catch {
+                    return file;
+                }
+            })
+            .filter((file) => file.startsWith("/"));
     }
 
     return (await datedRoots(host, files)).slice(0, KEEP_ROOTS);

@@ -13,7 +13,17 @@ import { genesisProbe } from "./genesis";
 import { checkoutStatus } from "./git-band";
 import { liveAgo } from "./live";
 import { bareDescription } from "./model-label";
-import { type Feature, type Host, isRecord, logMod, logReading, paceAfter, settingsOf } from "./shared";
+import {
+    type Feature,
+    type Host,
+    isRecord,
+    jsonOfRun,
+    logMod,
+    logReading,
+    paceAfter,
+    readJsonFile,
+    settingsOf,
+} from "./shared";
 import { cliLacks, sharedRun } from "./shared-run";
 import { actionButton, type Kit, line, type Pressable, plural, pressed, sidebarFrame } from "./sidebar";
 
@@ -273,14 +283,10 @@ async function sharedKbOnly(host: Host, path: string, maxAgeS: number): Promise<
         return folderKb(host, path);
     }
 
-    try {
-        const sizes: unknown = done?.exitCode === 0 ? JSON.parse(done.stdout) : undefined;
-        const kb = isRecord(sizes) ? sizes[path] : undefined;
+    const sizes = jsonOfRun(done);
+    const kb = isRecord(sizes) ? sizes[path] : undefined;
 
-        return typeof kb === "number" ? kb : null;
-    } catch {
-        return null;
-    }
+    return typeof kb === "number" ? kb : null;
 }
 
 /** A worktree's last size, the git status it was measured at, and when `du` may walk it again. */
@@ -478,10 +484,7 @@ async function subagentWorktrees(host: Host): Promise<Map<string, string>> {
             continue;
         }
 
-        const meta: unknown = await host
-            .read(`${dir}/subagents/${entry.name}`)
-            .then((text) => JSON.parse(text))
-            .catch(() => undefined);
+        const meta = await readJsonFile(host, `${dir}/subagents/${entry.name}`);
 
         if (isRecord(meta) && typeof meta.worktreePath === "string") {
             const what = typeof meta.description === "string" ? bareDescription(meta.description) : "a subagent";
