@@ -3,6 +3,26 @@ import { resolveHistoryProvider } from "./provider";
 import type { BackwardRead, ForwardRead, ReadBackwardOptions, ReadForwardOptions, TurnBoundary } from "./types";
 
 /**
+ * The provider's reader, its discovery of `transcriptPaths`, and the source that owns each path (its main file or
+ * one of its data files). One discovery serves every path.
+ */
+async function discoverTranscripts(kind: string, transcriptPaths: readonly string[], signal?: AbortSignal) {
+    const { reader } = resolveHistoryProvider(kind);
+    const found = await reader.discover(reader.roots(), { filePaths: [...transcriptPaths], signal });
+    const byPath = new Map<string, (typeof found.sources)[number]>();
+
+    for (const source of found.sources) {
+        for (const path of [source.filePath, ...source.dataPaths]) {
+            if (!byPath.has(path)) {
+                byPath.set(path, source);
+            }
+        }
+    }
+
+    return { reader, found, sourceOf: (path: string) => byPath.get(path) };
+}
+
+/**
  * A session's newest entries, from the transcript a hook names (`transcript_path`), through its provider's reader
  * (`NativeSessionReader.readBackward`): the door a hook or a tool uses to read a conversation from its end. `kind` is
  * the harness (`claude`, `codex`, `grok`) or a provider id; the provider finds the session source for the file.
@@ -12,12 +32,8 @@ export async function readSessionBackward({
     transcriptPath,
     ...options
 }: ReadBackwardOptions & { kind: string; transcriptPath: string }): Promise<BackwardRead> {
-    const { reader } = resolveHistoryProvider(kind);
-    const found = await reader.discover(reader.roots(), { filePaths: [transcriptPath], signal: options.signal });
-    const source =
-        found.sources.find(
-            (candidate) => candidate.filePath === transcriptPath || candidate.dataPaths.includes(transcriptPath)
-        ) ?? found.sources[0];
+    const { reader, found, sourceOf } = await discoverTranscripts(kind, [transcriptPath], options.signal);
+    const source = sourceOf(transcriptPath) ?? found.sources[0];
 
     if (!source) {
         return {
@@ -39,11 +55,8 @@ export async function readSessionTurnBoundary({
     transcriptPath,
     ...options
 }: Omit<ReadBackwardOptions, "until"> & { kind: string; transcriptPath: string }): Promise<TurnBoundary | null> {
-    const { reader } = resolveHistoryProvider(kind);
-    const found = await reader.discover(reader.roots(), { filePaths: [transcriptPath], signal: options.signal });
-    const source = found.sources.find(
-        (candidate) => candidate.filePath === transcriptPath || candidate.dataPaths.includes(transcriptPath)
-    );
+    const { reader, found, sourceOf } = await discoverTranscripts(kind, [transcriptPath], options.signal);
+    const source = sourceOf(transcriptPath);
 
     for (const issue of found.issues) {
         logger.warn(issue, "Turn boundary discovery issue");
@@ -77,8 +90,7 @@ export async function readSessionsContinuedIn({
         return successors;
     }
 
-    const { reader } = resolveHistoryProvider(kind);
-    const found = await reader.discover(reader.roots(), { filePaths: [...transcriptPaths], signal });
+    const { reader, found, sourceOf } = await discoverTranscripts(kind, transcriptPaths, signal);
 
     for (const issue of found.issues) {
         logger.debug(issue, "Continued-in discovery issue");
@@ -88,9 +100,7 @@ export async function readSessionsContinuedIn({
     }
 
     for (const path of transcriptPaths) {
-        const source = found.sources.find(
-            (candidate) => candidate.filePath === path || candidate.dataPaths.includes(path)
-        );
+        const source = sourceOf(path);
 
         if (!source) {
             logger.debug({ path, kind }, "No session source to read a continued-in pointer from");
@@ -156,12 +166,8 @@ export async function readSessionForward({
     transcriptPath,
     ...options
 }: ReadForwardOptions & { kind: string; transcriptPath: string }): Promise<ForwardRead> {
-    const { reader } = resolveHistoryProvider(kind);
-    const found = await reader.discover(reader.roots(), { filePaths: [transcriptPath], signal: options.signal });
-    const source =
-        found.sources.find(
-            (candidate) => candidate.filePath === transcriptPath || candidate.dataPaths.includes(transcriptPath)
-        ) ?? found.sources[0];
+    const { reader, found, sourceOf } = await discoverTranscripts(kind, [transcriptPath], options.signal);
+    const source = sourceOf(transcriptPath) ?? found.sources[0];
 
     if (!source) {
         const message = `No ${kind} session source for this transcript`;
