@@ -79,6 +79,8 @@ export interface ToolRun {
     success: boolean;
     stdout: string;
     stderr: string;
+    /** The runner killed the child at the deadline it was given (`execTool`'s own flag), whatever it had done. */
+    timedOut?: boolean;
 }
 
 /** Runs `tools <args>` and waits at most `timeoutMs`; the route that runs it knows how long its send may take. */
@@ -967,8 +969,10 @@ async function typeIntoPane(
         };
     }
 
-    // A send that ran past its deadline may have typed the text with Enter still owed: never queue it again.
-    if (receipt.kind === "unconfirmed" && receipt.timedOut) {
+    // A send that ran past its deadline may have typed the text with Enter still owed: never queue it again. That is
+    // the child's own `--timeout` receipt, or our runner killing the child at its deadline (the paste may have begun,
+    // and a killed child prints nothing). Only a readable refusal printed before the kill still proves no input.
+    if ((receipt.kind === "unconfirmed" && receipt.timedOut) || (sent.timedOut && receipt.kind !== "refused")) {
         return {
             kind: "unknown",
             reason: "The cmux send ran past its deadline; the text may be typed without Enter. Check the session before retrying.",

@@ -1261,6 +1261,56 @@ describe("a pane send that ran past its deadline", () => {
         ).toEqual([]);
     });
 
+    const pane = (queueRoot: string, run: { success: boolean; stdout: string; timedOut?: boolean }) =>
+        deliverToSession(
+            {
+                session: "abc",
+                provider: "claude",
+                text: "DECISION 1: a) yes",
+                sourceHome: "/fixture/claude",
+                deliveryKey: "killed-key",
+            },
+            {
+                runTool: async () => ({ stderr: "", ...run }),
+                findTargets: livePaneTargets,
+                openDialog: () => null,
+                queueRoot,
+            }
+        );
+    const queued = (queueRoot: string) =>
+        listSessionMessages({
+            root: queueRoot,
+            target: { provider: "claude", sessionId: "abc", sourceHome: "/fixture/claude" },
+        });
+
+    test("a child our runner killed at its deadline, with no receipt, is unknown and never queued", async () => {
+        const queueRoot = mkdtempSync(join(tmpdir(), "pane-killed-queue-"));
+
+        await expect(pane(queueRoot, { success: false, stdout: "", timedOut: true })).rejects.toBeInstanceOf(
+            DeliveryUnknownError
+        );
+        expect(queued(queueRoot)).toEqual([]);
+    });
+
+    test("a child that exited with no output before any input is reported not delivered, and not queued", async () => {
+        const queueRoot = mkdtempSync(join(tmpdir(), "pane-empty-queue-"));
+
+        expect(await pane(queueRoot, { success: false, stdout: "" })).toMatchObject({
+            channel: "queued",
+            delivered: false,
+            error: "the cmux send failed",
+        });
+        expect(queued(queueRoot)).toEqual([]);
+    });
+
+    test("a refusal the child printed before our deadline killed it still proves no input, so it is queued", async () => {
+        const queueRoot = mkdtempSync(join(tmpdir(), "pane-killed-refusal-queue-"));
+        const result = await pane(queueRoot, { success: false, stdout: '{"sent":false,"matches":[]}', timedOut: true });
+
+        expect(result).toMatchObject({ channel: "queued", delivered: false });
+        expect(result.queueId).toBeDefined();
+    });
+
     test("a readable refusal before input is still queued (control)", async () => {
         const queueRoot = mkdtempSync(join(tmpdir(), "pane-refusal-queue-"));
         const result = await deliverToSession(
