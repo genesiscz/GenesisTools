@@ -140,23 +140,15 @@ export function harFromMessages(messages: CdpMessage[], options?: HarBuildOption
     };
 
     /** A hop that has its response but still waits for its extra info (a redirect hop has a renamed `__key`). */
-    const hopAwaitingExtraInfo = (key: string, params: CdpResponseReceivedExtraInfoParams): HarEntry | undefined =>
-        entries.find(
-            (entry) =>
-                entry.__baseKey === key &&
-                entry.response &&
-                !entry.__extraApplied &&
-                entry.__expectsExtraInfo !== false &&
-                statusMatches(entry, params)
-        ) ??
-        entriesWithoutPage.find(
-            (entry) =>
-                entry.__baseKey === key &&
-                entry.response &&
-                !entry.__extraApplied &&
-                entry.__expectsExtraInfo !== false &&
-                statusMatches(entry, params)
-        );
+    const hopAwaitingExtraInfo = (key: string, params: CdpResponseReceivedExtraInfoParams): HarEntry | undefined => {
+        const awaits = (entry: HarEntry): boolean =>
+            entry.__baseKey === key &&
+            Boolean(entry.response) &&
+            !entry.__extraApplied &&
+            entry.__expectsExtraInfo !== false &&
+            statusMatches(entry, params);
+        return entries.find(awaits) ?? entriesWithoutPage.find(awaits);
+    };
 
     /** Deviation 4: session-scoped page attribution. Sessionless falls back to upstream's `pages.at(-1)`. */
     const pageForRequest = (sessionId: string | undefined, frameId: string | undefined): HarPage | undefined => {

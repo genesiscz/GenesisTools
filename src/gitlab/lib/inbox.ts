@@ -393,11 +393,6 @@ export interface InboxResult {
     errors: string[];
 }
 
-/** Pending to-dos remain actionable until GitLab marks them done, regardless of when they arrived. */
-export function isTodoNews(_todo: InboxTodo, _opts: Pick<CollectOptions, "me" | "since">): boolean {
-    return true;
-}
-
 function mrListPath(projectId: number | null, filter: string, since?: string): string {
     const query = since
         ? `${filter}&state=all&updated_after=${encodeURIComponent(since)}&order_by=updated_at`
@@ -474,7 +469,8 @@ export async function collectInbox(api: GitLabApi, opts: CollectOptions): Promis
               ),
     ]);
 
-    const todos = (rawTodos ?? []).map(toInboxTodo).filter((todo) => isTodoNews(todo, opts));
+    // Pending to-dos remain actionable until GitLab marks them done, regardless of when they arrived.
+    const todos = (rawTodos ?? []).map(toInboxTodo);
     const mrs = new Map<string, InboxMr>();
     for (const raw of [...(own ?? []), ...(reviewed ?? []), ...(openOwn ?? []), ...(openReviewed ?? [])]) {
         mrs.set(mrKey(raw.project_id, raw.iid), toInboxMr(raw));

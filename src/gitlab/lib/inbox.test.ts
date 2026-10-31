@@ -19,8 +19,6 @@ import {
     type InboxDiscussion,
     type InboxMr,
     type InboxNote,
-    type InboxTodo,
-    isTodoNews,
     readInboxState,
     renderInboxText,
     writeInboxState,
@@ -166,25 +164,6 @@ describe("analyzeMr", () => {
         });
         expect(analyzeMr({ ...base, mr: mr(4, "me"), pipeline: old }).pipelineFailed).toBeNull();
         expect(analyzeMr({ ...base, mr: mr(4, "alice"), pipeline: failed }).pipelineFailed).toBeNull();
-    });
-});
-
-describe("isTodoNews", () => {
-    const todo = (action: string, author: string, createdAt: string): InboxTodo => ({
-        id: 1,
-        projectId: FAKE_PROJECT_ID,
-        iid: 5,
-        action,
-        author,
-        title: "MR 5",
-        url: `${MR_URL}/5`,
-        createdAt,
-    });
-    const opts = { me: { id: 99, username: "me" }, since: SINCE };
-
-    test("pending to-dos remain visible across checks even if old or self-created", () => {
-        expect(isTodoNews(todo("review_requested", "bob", "2026-10-19T00:00:00Z"), opts)).toBe(true);
-        expect(isTodoNews(todo("marked", "me", "2026-10-19T00:00:00Z"), opts)).toBe(true);
     });
 });
 

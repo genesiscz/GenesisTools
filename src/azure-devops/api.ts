@@ -1591,21 +1591,34 @@ export class Api {
     async getTeamRosters(): Promise<{ team: string; members: IdentityRef[] }[]> {
         const teamsUrl = Api.orgUrl(this.config, ["projects", this.config.projectId, "teams"]);
         const teams = await this.get<TeamsListResponse>(teamsUrl, "teams");
-        const rosters: { team: string; members: IdentityRef[] }[] = [];
+        let firstError: unknown;
+        const rosters = await concurrentMap({
+            items: teams.value,
+            concurrency: 4,
+            onError: (_team, error) => {
+                firstError ??= error;
+            },
+            fn: async (team) => {
+                const membersUrl = Api.orgUrl(this.config, [
+                    "projects",
+                    this.config.projectId,
+                    "teams",
+                    team.id,
+                    "members",
+                ]);
+                const data = await this.get<TeamMembersResponse>(membersUrl, `members of ${team.name}`);
+                return { team: team.name, members: data.value.map((member) => member.identity) };
+            },
+        });
 
-        for (const team of teams.value) {
-            const membersUrl = Api.orgUrl(this.config, [
-                "projects",
-                this.config.projectId,
-                "teams",
-                team.id,
-                "members",
-            ]);
-            const data = await this.get<TeamMembersResponse>(membersUrl, `members of ${team.name}`);
-            rosters.push({ team: team.name, members: data.value.map((member) => member.identity) });
+        if (firstError !== undefined) {
+            throw firstError;
         }
 
-        return rosters;
+        return teams.value.flatMap((team) => {
+            const roster = rosters.get(team);
+            return roster ? [roster] : [];
+        });
     }
 
     /** The project's area tree (classification nodes), as deep as ADO allows. */
