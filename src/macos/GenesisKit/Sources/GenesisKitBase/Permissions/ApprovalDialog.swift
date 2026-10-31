@@ -96,15 +96,15 @@ public final class ApprovalDialogModel: ObservableObject {
     public let deadline: Date?
     public let identifier: String
     /// The paths a destructive request names, as rows with their icons and open buttons (the rm window). Empty for a
-    /// request that has only facts.
-    public let items: [ApprovalItem]
+    /// request that has only facts. `refresh` replaces them when a size arrives after the window opened.
+    @Published public private(set) var items: [ApprovalItem]
     /// Touch ID inside the window: the sensor listens from the first frame and a touch approves (`onVerified`).
     /// nil keeps the Allow button, whose `onAllow` runs the host's own authentication.
     public let verifier: ApprovalVerifier?
     /// Links under the purpose (the asking session's inbox and terminal).
     public let links: [ApprovalLink]
     /// One line under the rows ("5 items, 34 kB, 1 already gone").
-    public let summary: String?
+    @Published public private(set) var summary: String?
     /// The ways out the person picks from before confirming; empty shows none, the first is picked.
     public let disposals: [ApprovalChoice]
     /// The keys that work ("Esc denies · Space previews"), under the buttons.
@@ -158,6 +158,12 @@ public final class ApprovalDialogModel: ObservableObject {
         self.disposal = disposals.first?.id ?? ""
         self.selected = Set(items.map(\.id))
         verifier?.onVerified = { [weak self] method in self?.verified(method: method) }
+    }
+
+    /// The same rows with newer facts (a size measured after the window opened); the ticks stay as the person left them.
+    public func refresh(items: [ApprovalItem], summary: String?) {
+        self.items = items
+        self.summary = summary
     }
 
     /// The title with the live count when rows can be unticked.

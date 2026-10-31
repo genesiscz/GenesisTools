@@ -168,6 +168,50 @@ final class RmApproveTests: XCTestCase {
         XCTAssertEqual(model.selectedItems.map(\.name), ["b"])
     }
 
+    /// The CLI opens the window before it walks a tree: such a row says "Measuring…" and the total waits, until an
+    /// `rm.item` line on stdin brings the size. EOF clears a row whose size never came.
+    func testASizeMeasuredAfterTheWindowOpenedReplacesMeasuring() throws {
+        let items = [
+            RmApproveItem(path: "/w/cache", kind: "dir", bytes: nil, empty: nil, storedAt: nil, reason: "Holds a repository", measuring: true),
+            RmApproveItem(path: "/w/out.bin", kind: "file", bytes: 2_000, empty: nil, storedAt: nil, reason: "Outside"),
+        ]
+        func build(_ params: RmApproveParams) -> RmWindowContent {
+            RmWindowContent.build(params, home: "/Users/someone", icons: false, markdownApp: false)
+        }
+        var params = request(items)
+        XCTAssertEqual(build(params).items.map(\.size), ["Measuring…", "2 kB"])
+        XCTAssertEqual(build(params).summary, "2 items, measuring 1 size")
+
+        let line = #"{"method":"rm.item","params":{"path":"/w/cache","bytes":3210000000,"empty":false,"folderStats":{"files":12},"measuring":false}}"#
+        params = params.applying(try XCTUnwrap(RmApproveParams.update(fromLine: Data(line.utf8))))
+        XCTAssertEqual(build(params).items.map(\.size), ["3.21 GB", "2 kB"])
+        XCTAssertEqual(build(params).items.first?.detail, "12 files.")
+        XCTAssertEqual(build(params).summary, "2 items, 3.21 GB")
+
+        // Another method, and a path the request does not name, change nothing.
+        XCTAssertNil(RmApproveParams.update(fromLine: Data(#"{"method":"rm.other","params":{"path":"/w/cache"}}"#.utf8)))
+        XCTAssertEqual(params.applying(RmApproveItemUpdate(path: "/elsewhere", bytes: 1)).request?.items.map(\.bytes), [3_210_000_000, 2_000])
+
+        let ended = request([items[0]]).endingUpdates()
+        XCTAssertNil(build(ended).items.first?.size)
+        XCTAssertEqual(build(ended).summary, "1 item")
+    }
+
+    /// A refresh replaces the rows and the total, and the ticks stay as the person left them.
+    @MainActor func testARefreshKeepsTheTicks() {
+        func rows(_ size: String?) -> [ApprovalItem] {
+            ["a", "b"].map { ApprovalItem(path: "/w/\($0)", name: $0, folder: "/w", size: size, reason: "r", gone: false, isFolder: true) }
+        }
+        let model = ApprovalDialogModel(title: "t", purpose: "p", symbol: "trash.fill", facts: [], details: [], warning: nil, footnote: "f",
+                                        rememberChoices: [], rememberNote: nil, allowTitle: "a", deadline: nil, identifier: "rm-approve",
+                                        items: rows("Measuring…"), summary: "2 items, measuring 2 sizes", selectable: true)
+        model.setSelected(model.items[0], false)
+        model.refresh(items: rows("1 GB"), summary: "2 items, 2 GB")
+        XCTAssertEqual(model.items.map(\.size), ["1 GB", "1 GB"])
+        XCTAssertEqual(model.summary, "2 items, 2 GB")
+        XCTAssertEqual(model.selectedItems.map(\.name), ["b"])
+    }
+
     func testTheNewKeysDecodeAndOldPayloadsStillDo() throws {
         let json = #"""
         {"title":"t","lines":[],"request":{"id":"abc234","kind":"delete","cwd":"/w","graceMinutes":10,"askedAt":"2026-10-30T14:57:00Z",

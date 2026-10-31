@@ -26,6 +26,9 @@ struct RmApproveParams: Decodable {
     var request: RmApproveRequest?
     /// The remember choices the CLI offers (`id` goes back as it is); none hides the picker.
     var remember: [RmApproveRemember]?
+    /// The CLI sends `rm.item` lines on stdin after the window opened (sizes still measured, git facts), until EOF.
+    /// Without it stdin is never read.
+    var live: Bool?
 }
 
 struct RmApproveRequest: Decodable {
@@ -65,6 +68,56 @@ struct RmApproveItem: Decodable {
     var folderStats: RmApproveFolderStats?
     /// Other pending requests naming the same path.
     var alsoIn: [String]?
+    /// Its size is still measured; an `rm.item` update brings it.
+    var measuring: Bool?
+}
+
+/// One row change the CLI sends after the window opened: `{"method":"rm.item","params":{"path":…,"bytes":…}}`.
+struct RmApproveItemUpdate: Decodable {
+    var path: String
+    var bytes: Int64?
+    var empty: Bool?
+    var folderStats: RmApproveFolderStats?
+    var git: RmApproveGit?
+    var measuring: Bool?
+}
+
+/// A line of the CLI's stdin; a method this build does not know is skipped.
+private struct RmApproveLine: Decodable {
+    var method: String
+    var params: RmApproveItemUpdate?
+}
+
+extension RmApproveParams {
+    /// The params with one row changed; a path the request does not name changes nothing.
+    func applying(_ update: RmApproveItemUpdate) -> RmApproveParams {
+        guard var request, let index = request.items.firstIndex(where: { $0.path == update.path }) else { return self }
+        var item = request.items[index]
+        if let bytes = update.bytes { item.bytes = bytes }
+        if let empty = update.empty { item.empty = empty }
+        if let stats = update.folderStats { item.folderStats = stats }
+        if let git = update.git { item.git = git }
+        if let measuring = update.measuring { item.measuring = measuring }
+        request.items[index] = item
+        var next = self
+        next.request = request
+        return next
+    }
+
+    /// No more updates come: a row still measuring shows no size rather than "Measuring…" for good.
+    func endingUpdates() -> RmApproveParams {
+        guard var request else { return self }
+        for index in request.items.indices { request.items[index].measuring = nil }
+        var next = self
+        next.request = request
+        return next
+    }
+
+    /// The `rm.item` update in one stdin line; nil for anything else.
+    static func update(fromLine line: Data) -> RmApproveItemUpdate? {
+        guard let decoded = try? JSONDecoder().decode(RmApproveLine.self, from: line), decoded.method == "rm.item" else { return nil }
+        return decoded.params
+    }
 }
 
 struct RmApproveGit: Decodable {
@@ -210,19 +263,26 @@ struct RmWindowContent {
         ]
     }
 
-    /// "5 items, 34 kB, 1 already gone".
+    /// "5 items, 34 kB, 1 already gone"; "5 items, measuring 2 sizes" until every size is in.
     static func summary(_ items: [RmApproveItem]) -> String {
         let gone = items.filter { $0.kind == "missing" }.count
-        let bytes = items.filter { $0.kind != "missing" }.compactMap(\.bytes).reduce(0, +)
+        let present = items.filter { $0.kind != "missing" }
+        let measuring = present.filter { $0.measuring == true }.count
+        let bytes = present.compactMap(\.bytes).reduce(0, +)
         var parts = [Plural.count(items.count, "item")]
-        if bytes > 0 { parts.append(ByteFormat.file(bytes)) }
+        if measuring > 0 {
+            parts.append("measuring \(Plural.count(measuring, "size"))")
+        } else if bytes > 0 {
+            parts.append(ByteFormat.file(bytes))
+        }
         if gone > 0 { parts.append("\(gone) already gone") }
         return parts.joined(separator: ", ")
     }
 
-    /// "Empty folder", "12.4 KB", "Already gone".
+    /// "Empty folder", "12.4 KB", "Already gone", "Measuring…".
     static func size(_ item: RmApproveItem) -> String? {
         if item.kind == "missing" { return "Already gone" }
+        if item.measuring == true { return "Measuring…" }
         if item.kind == "dir", item.empty == true { return "Empty folder" }
         guard let bytes = item.bytes else { return nil }
         if bytes == 0, item.kind == "file" { return "Empty file" }
@@ -382,6 +442,27 @@ private func rmLinks(_ request: RmApproveRequest?) -> [ApprovalLink] {
     return links
 }
 
+/// Reads the CLI's `rm.item` lines from stdin on a thread of its own until EOF; both callbacks run on the main queue.
+private func rmFollowUpdates(onUpdate: @escaping @MainActor (RmApproveItemUpdate) -> Void, onEnd: @escaping @MainActor () -> Void) {
+    Thread.detachNewThread {
+        let input = FileHandle.standardInput
+        var pending = Data()
+        while true {
+            let chunk = input.availableData
+            if chunk.isEmpty { break }
+            pending.append(chunk)
+            while let newline = pending.firstIndex(of: 0x0A) {
+                let line = pending.subdata(in: pending.startIndex..<newline)
+                pending = pending.subdata(in: pending.index(after: newline)..<pending.endIndex)
+                if let update = RmApproveParams.update(fromLine: line) {
+                    DispatchQueue.main.async { MainActor.assumeIsolated { onUpdate(update) } }
+                }
+            }
+        }
+        DispatchQueue.main.async { MainActor.assumeIsolated { onEnd() } }
+    }
+}
+
 func approveRm(_ params: RmApproveParams) {
     let content = RmWindowContent.build(params)
     let audit: [String: Any] = ["title": params.title, "lines": params.lines, "caller": params.caller ?? "", "folder": params.folder ?? "",
@@ -439,5 +520,20 @@ func approveRm(_ params: RmApproveParams) {
         let shown = content.facts + content.details + content.items.map { ApprovalFact($0.path, $0.reason) }
         record("prompted", ["shown": GateAudit.shown(title: content.title, purpose: model.purpose, facts: shown, warning: nil, onceOnly: "only once")])
         rmPresenter.present(model)
+
+        // The sizes the CLI still measures arrive here; each one rebuilds the rows and the total under them.
+        guard params.live == true else { return }
+        var current = params
+        @MainActor func show(_ next: RmApproveParams) {
+            current = next
+            let rebuilt = RmWindowContent.build(next)
+            model.refresh(items: rebuilt.items, summary: rebuilt.summary)
+        }
+        rmFollowUpdates(
+            onUpdate: { update in
+                logClick("rm.approve update path=\(update.path) bytes=\(update.bytes.map(String.init) ?? "-")")
+                show(current.applying(update))
+            },
+            onEnd: { show(current.endingUpdates()) })
     }
 }
