@@ -610,8 +610,12 @@ export const tmpUsage: Feature = {
             return;
         }
 
-        // The folders the command names, else the one it ran in.
-        const known = [usage.scratch.path, ...usage.worktrees.map((tree) => tree.path)];
+        // The folders the command names, else the one it ran in; the task output folder counts in the total too.
+        const known = [
+            usage.scratch.path,
+            ...(usage.tasks.path ? [usage.tasks.path] : []),
+            ...usage.worktrees.map((tree) => tree.path),
+        ];
         const text = JSON.stringify(e);
         const named = known.filter((path) => text.includes(path));
         const cwd = await host.cwd();
