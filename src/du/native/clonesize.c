@@ -2295,8 +2295,9 @@ static void big_process_dir(BigOut *o, const char *dirpath, int dircloud) {
             }
 
             o->files++;
+            // The progress line is the listing's alone: `tools du size` answers like `du -sk`, which prints none.
             uint64_t seen = __atomic_add_fetch(&g_big_progress, 1, __ATOMIC_RELAXED);
-            if (seen % BIG_PROGRESS_EVERY == 0) {
+            if (!g_big_sum_only && seen % BIG_PROGRESS_EVERY == 0) {
                 char *desc = json_escape(dirpath);
                 fprintf(stderr, "{\"progress\":true,\"files\":%llu,\"dir\":\"%s\"}\n",
                         (unsigned long long)seen, desc);
