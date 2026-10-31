@@ -1,9 +1,9 @@
 import { isAgentLauncher } from "@app/cmux/lib/launchers";
-import { grokLeaderSocket } from "@app/grok/lib/leader";
 import type { AccountEntry } from "@genesiscz/utils/ai/config/schema";
-import { ACCOUNT_PROVIDER_ALIASES, type PerHarness } from "@genesiscz/utils/ai/providers/alias-list";
+import { ACCOUNT_PROVIDER_ALIASES } from "@genesiscz/utils/ai/providers/alias-list";
 import { harnessDriver, harnessPluginId } from "@genesiscz/utils/ai/providers/harness-index";
 import { toolsEntrypoint } from "@genesiscz/utils/cli/tools";
+import { hasMembers, toolParts } from "@genesiscz/utils/harness/tool-parts";
 import { shellWords } from "@genesiscz/utils/session-changes/words";
 import { shellCommandLine, shellQuote } from "@genesiscz/utils/shell/quote";
 import type { SessionProviderBlocks } from "./session-store";
@@ -14,7 +14,7 @@ export const SESSION_AGENT_IDS = ACCOUNT_PROVIDER_ALIASES;
 export type SessionAgentId = (typeof SESSION_AGENT_IDS)[number];
 
 /**
- * The cmux part of a harness (its driver's `cmux` slot names this module): what only the cmux tool knows about the
+ * The cmux part of a harness (`agents/<harness id>.ts`): what only the cmux tool knows about the
  * agent, for launch, capture, replay and restore. Everything else comes from the harness driver (`sessionAgent`).
  */
 export interface CmuxAdapter {
@@ -57,58 +57,23 @@ export interface SessionLaunchExtras {
     providers: SessionProviderBlocks;
 }
 
-/** Grok joins one leader per account; the leader socket and the session id go into the record. */
-function grokLaunchExtras({ account, sessionId }: { account: string; sessionId: string }): SessionLaunchExtras {
-    const socket = grokLeaderSocket(account);
-    return {
-        args: ["--leader-socket", socket, "--session-id", sessionId],
-        providers: { grok: { leader: { socket, sessionId } } },
-    };
-}
-
 /** The spinner glyph a busy or idle agent draws in front of its tab title. */
 export const SPINNER_PREFIX = /^[⠋⠙⠹⠸⠼⠴⠦⠧⠇⠏✳⠐●○◐◑◒◓]\s*/u;
 
-function stripGrokSuffix(title: string): string {
-    return title.replace(/\s+-\s+grok(?:\s+·\s+[0-9a-f]{7,8})?\s*$/i, "").trim();
-}
-
-function stripCodexSuffix(title: string): string {
-    return title.replace(/\s+-\s+codex(?:\s+·\s+[0-9a-f]{7,8})?\s*$/i, "").trim();
-}
-
-function stripClaudeGlyph(title: string): string {
-    return title
-        .replace(SPINNER_PREFIX, "")
-        .replace(/\s+·\s+[0-9a-f]{7,8}\s*$/i, "")
-        .trim();
-}
-
-/** Grok's first-run dialog. Until it is answered, grok has not opened the session it was asked to resume. */
-const GROK_TRUST_PROMPT: TrustPrompt = {
-    screen: /Do you trust the contents of this directory\?[\s\S]*No, quit\s+n\b/,
-    quitKey: "n",
-};
-
 /**
- * The one cmux table (plan P3): the `cmux` part of every harness is tool-owned, because its launch extras need the
- * cmux and grok tools, which `@genesiscz/utils` cannot import. Claude and Codex start without a trust prompt that
- * this restore recognises.
+ * The cmux part of every harness: `agents/<harness id>.ts` exports it as `cmuxPart` (`toolParts`), because its launch
+ * extras need the cmux and grok tools, which `@genesiscz/utils` cannot import. A new harness adds its module there.
  */
-const CMUX_AGENTS: PerHarness<CmuxAdapter> = {
-    claude: { crossMessages: true, launchExtras: null, stripTitle: stripClaudeGlyph, trustPrompt: null },
-    codex: { crossMessages: false, launchExtras: null, stripTitle: stripCodexSuffix, trustPrompt: null },
-    grok: {
-        crossMessages: false,
-        launchExtras: grokLaunchExtras,
-        stripTitle: stripGrokSuffix,
-        trustPrompt: GROK_TRUST_PROMPT,
-    },
-};
+export const CMUX_AGENTS = toolParts<CmuxAdapter>({
+    meta: import.meta,
+    folder: "agents",
+    exportName: "cmuxPart",
+    isPart: hasMembers<CmuxAdapter>("crossMessages", "launchExtras", "stripTitle", "trustPrompt"),
+});
 
 /** The cmux part of one harness. */
 export function cmuxAdapter(id: SessionAgentId): CmuxAdapter {
-    return CMUX_AGENTS[id];
+    return CMUX_AGENTS.of(id);
 }
 
 export function isSessionAgentId(value: string): value is SessionAgentId {
@@ -121,7 +86,7 @@ export function sessionAgent(id: SessionAgentId): SessionAgent {
         provider: harnessPluginId(id),
         exitCommand: harnessDriver(id).parts.exit.command,
         resumeSubcommand: harnessDriver(id).parts.launch.resumeSyntax.subcommand ? "resume" : null,
-        ...CMUX_AGENTS[id],
+        ...CMUX_AGENTS.of(id),
     };
 }
 
@@ -167,7 +132,7 @@ export function agentRunCommand(input: {
         "run",
         account,
         ...(input.model ? ["-m", input.model] : []),
-        ...(input.crossMessages !== undefined && CMUX_AGENTS[input.agent].crossMessages
+        ...(input.crossMessages !== undefined && CMUX_AGENTS.of(input.agent).crossMessages
             ? [input.crossMessages ? "--cross-messages" : "--no-cross-messages"]
             : []),
         ...(input.agentArgs ?? []),
