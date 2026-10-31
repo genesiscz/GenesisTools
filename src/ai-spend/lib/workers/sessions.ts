@@ -3,7 +3,9 @@ import { ClaudeWorkerStore, claudeWorkerSourceHome } from "@app/claude/lib/worke
 import { sessionEventsPath } from "@app/codex/lib/paths";
 import { CodexSessionStore } from "@app/codex/lib/store";
 import { GrokSessionStore } from "@app/grok/lib/store";
+import { ACCOUNT_PROVIDER_ALIASES } from "@genesiscz/utils/ai/providers/alias-list";
 import { codexAuthMode } from "@genesiscz/utils/codex/turn-cost";
+import { isFunctionPart, toolParts } from "@genesiscz/utils/harness/tool-parts";
 import { SafeJSON } from "@genesiscz/utils/json";
 import { logger } from "@genesiscz/utils/logger";
 import type { WorkerBackend } from "@genesiscz/utils/worker/capabilities";
@@ -64,7 +66,7 @@ export function codexLoginFromEvents(name: string): WorkerAuthMode {
     }
 }
 
-function codexSessions(): WorkerSessionInfo[] {
+export function codexSessions(): WorkerSessionInfo[] {
     const store = new CodexSessionStore();
 
     return store.listNames().flatMap((name): WorkerSessionInfo[] => {
@@ -93,7 +95,7 @@ function codexSessions(): WorkerSessionInfo[] {
     });
 }
 
-function grokSessions(): WorkerSessionInfo[] {
+export function grokSessions(): WorkerSessionInfo[] {
     const store = new GrokSessionStore();
 
     return store.listNames().flatMap((name): WorkerSessionInfo[] => {
@@ -123,7 +125,7 @@ function grokSessions(): WorkerSessionInfo[] {
     });
 }
 
-function claudeSessions(): WorkerSessionInfo[] {
+export function claudeSessions(): WorkerSessionInfo[] {
     const store = new ClaudeWorkerStore();
 
     return store.listNames().flatMap((name): WorkerSessionInfo[] => {
@@ -153,20 +155,17 @@ function claudeSessions(): WorkerSessionInfo[] {
 }
 
 /**
- * Each backend's worker store reader, in listing order (Codex, Grok, Claude). The readers open the worker tools' own
- * stores (`@app/codex`, `@app/grok`, `@app/claude`), so they stay here and not on the spend drivers, which the
- * monitor loads on every refresh.
+ * Each backend's worker store reader: `stores/<harness id>.ts` exports it as `workerSessionsPart` (`toolParts`). The
+ * readers open the worker tools' own stores (`@app/codex`, `@app/grok`, `@app/claude`), so they stay here and not on
+ * the spend drivers, which the monitor loads on every refresh; only the wanted backends' stores load.
  */
-const WORKER_SESSION_READERS: { readonly [Backend in WorkerBackend]: () => WorkerSessionInfo[] } = {
-    codex: codexSessions,
-    grok: grokSessions,
-    claude: claudeSessions,
-};
+const WORKER_SESSION_READERS = toolParts<() => WorkerSessionInfo[]>({
+    meta: import.meta,
+    folder: "stores",
+    exportName: "workerSessionsPart",
+    isPart: isFunctionPart,
+});
 
 export function listWorkerSessions(backends?: readonly WorkerBackend[]): WorkerSessionInfo[] {
-    const wanted = backends ? new Set<string>(backends) : null;
-
-    return Object.entries(WORKER_SESSION_READERS).flatMap(([backend, read]) =>
-        !wanted || wanted.has(backend) ? read() : []
-    );
+    return (backends ?? ACCOUNT_PROVIDER_ALIASES).flatMap((backend) => WORKER_SESSION_READERS.of(backend)());
 }
