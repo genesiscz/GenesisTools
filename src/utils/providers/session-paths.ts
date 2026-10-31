@@ -1,6 +1,6 @@
 import { existsSync, readdirSync } from "node:fs";
 import { homedir } from "node:os";
-import { join } from "node:path";
+import { join, resolve } from "node:path";
 import { ACCOUNT_PROVIDER_ALIASES, type AccountProviderAlias } from "@genesiscz/utils/ai/providers/alias-list";
 import { env } from "@genesiscz/utils/env";
 import { defaultWorkerHome } from "@genesiscz/utils/grok/worker-paths";
@@ -224,8 +224,9 @@ export function nativeSessionRootsForHome(kind: NativeSessionProvider, home: str
  * server) answers it only when both strings are equal: a caller with another root reads other transcripts.
  */
 export function nativeRootsKey(home = homedir()): string {
+    // Resolved against this process's folder: CODEX_HOME=./profile names another folder in another cwd.
     return ACCOUNT_PROVIDER_ALIASES.map((kind) =>
-        [kind, nativeHome(kind, home), ...nativeSessionRoots(kind, home)].join("\t")
+        [kind, ...[nativeHome(kind, home), ...nativeSessionRoots(kind, home)].map((path) => resolve(path))].join("\t")
     ).join("\n");
 }
 

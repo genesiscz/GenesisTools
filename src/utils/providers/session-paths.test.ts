@@ -12,6 +12,7 @@ import {
     isNativeTranscript,
     nativeHome,
     nativeHomePath,
+    nativeRootsKey,
     nativeSessionRoots,
     nativeSessionRootsForHome,
     nativeSessionRootsWithLegacyHomes,
@@ -301,5 +302,31 @@ describe("codexHomeOverrides", () => {
         await env.testing.withOverrides({ CODEX_HOME: "/only/codex" }, () => {
             expect(primaryCodexHome()).toBe("/only/codex");
         });
+    });
+});
+
+describe("nativeRootsKey", () => {
+    test("one relative CODEX_HOME in two folders gives two keys, since it names two homes", async () => {
+        const base = mkdtempSync(join(tmpdir(), "roots-key-"));
+        const first = join(base, "a");
+        const second = join(base, "b");
+        mkdirSync(first);
+        mkdirSync(second);
+        const cwd = process.cwd();
+        const keys: string[] = [];
+
+        try {
+            await env.testing.withOverrides({ CODEX_HOME: "./profile" }, () => {
+                process.chdir(first);
+                keys.push(nativeRootsKey("/home/test"));
+                process.chdir(second);
+                keys.push(nativeRootsKey("/home/test"));
+            });
+        } finally {
+            process.chdir(cwd);
+        }
+
+        expect(keys[0]).not.toBe(keys[1]);
+        expect(keys[1]).toContain(join(second, "profile", "sessions"));
     });
 });
