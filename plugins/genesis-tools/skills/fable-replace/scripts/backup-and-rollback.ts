@@ -345,12 +345,13 @@ const staysInside = (dir: string, boundary: string | null): boolean => {
     return rel !== "" && rel !== ".." && !rel.startsWith(`..${path.sep}`) && !path.isAbsolute(rel);
 };
 
+/** Real directories only: a symlink is never listed, so a prune never descends through one or deletes behind it. */
 const listDirs = (dir: string, filter: (name: string) => boolean): string[] => {
     try {
         return fs
-            .readdirSync(dir)
-            .filter(filter)
-            .map((name) => path.join(dir, name));
+            .readdirSync(dir, { withFileTypes: true })
+            .filter((entry) => entry.isDirectory() && filter(entry.name))
+            .map((entry) => path.join(dir, entry.name));
     } catch (err) {
         if ((err as { code?: string }).code === "ENOENT") {
             return [];
