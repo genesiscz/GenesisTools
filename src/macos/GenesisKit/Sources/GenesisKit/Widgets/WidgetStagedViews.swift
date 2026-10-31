@@ -263,6 +263,7 @@ struct WidgetStagedLeavePrompt: View {
 /// click on an option changes the pick (the shared option row, as the inbox of every session draws it). The Review
 /// list adds a checkbox that chooses whether it goes now; the leave question has none.
 struct WidgetStagedDecisionRow: View {
+    // lint-rules-ignore: a few rows (the staged decisions), observes on purpose
     @ObservedObject var model: WidgetModel
     let item: WidgetInboxItem
     @Binding var openIDs: Set<String>
@@ -275,6 +276,7 @@ struct WidgetStagedDecisionRow: View {
         VStack(alignment: .leading, spacing: 0) {
             HStack(alignment: .top, spacing: 9) {
                 if let checked {
+                    // lint-rules-ignore: short list (the staged decisions, a few rows)
                     Button {
                         checked.wrappedValue.toggle()
                     } label: {
