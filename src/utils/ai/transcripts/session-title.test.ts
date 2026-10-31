@@ -4,8 +4,13 @@ import { tmpdir } from "node:os";
 import { join } from "node:path";
 import { env } from "@genesiscz/utils/env";
 import { lastClaudeTitle } from "../../agent-sessions/readers/claude-title";
+import { createCodexLocate } from "../../agent-sessions/readers/codex-locate";
 import { grokTitleOf } from "../../agent-sessions/readers/grok-title";
 import { findSessionsByTitle, rankByTitle } from "./session-title";
+
+/** Codex title search over the homes under `home` (and `CODEX_HOME`), ranked as `findSessionsByTitle` ranks them. */
+const codexTitles = (home: string) => (query: string) =>
+    rankByTitle(query, createCodexLocate(home).titledSessions({ options: { provider: "codex" }, roots: [], now: 0 }));
 
 const titled = (title: string, mtime: number) => ({ sessionId: title, title, mtime, locator: title });
 
@@ -117,12 +122,10 @@ describe("findSessionsByTitle", () => {
         );
 
         await env.testing.withOverrides({ CODEX_HOME: `${work}, ${side}` }, () => {
-            expect(findSessionsByTitle("work thread", { provider: "codex" })[0]?.sessionId).toBe(
-                "019c0000-0000-7000-8000-000000000011"
-            );
-            expect(findSessionsByTitle("side thread", { provider: "codex" })[0]?.sessionId).toBe(
-                "019c0000-0000-7000-8000-000000000012"
-            );
+            // An empty fixture home holds no legacy profile homes, so the real `~/.codex-*` indexes are never read.
+            const titles = codexTitles(mkdtempSync(join(tmpdir(), "titles-codex-home-")));
+            expect(titles("work thread")[0]?.sessionId).toBe("019c0000-0000-7000-8000-000000000011");
+            expect(titles("side thread")[0]?.sessionId).toBe("019c0000-0000-7000-8000-000000000012");
         });
     });
 });
