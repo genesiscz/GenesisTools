@@ -1,4 +1,5 @@
 import { existsSync } from "node:fs";
+import { homedir } from "node:os";
 import { basename, join } from "node:path";
 import { readCodexTitleIndex } from "@genesiscz/utils/agent-sessions/readers/codex-title";
 import type { FolderReads, RankedHit, ResolvedTranscript } from "@genesiscz/utils/ai/transcripts/resolve";
@@ -10,39 +11,47 @@ import { SafeJSON } from "@genesiscz/utils/json";
 import { logger } from "@genesiscz/utils/logger";
 import { codexHomesWithLegacy, isNativeTranscript, transcriptStem } from "@genesiscz/utils/providers/session-paths";
 
+/**
+ * A Codex `locate` part whose default homes are the ones under `home`. The driver's part reads the user's home; a test
+ * passes a fixture home, so it never lists the real one.
+ */
+export function createCodexLocate(home = homedir()): TranscriptLocator {
+    return {
+        // Every home history lists (`codexHomesWithLegacy`), so a session the history shows is one a lookup finds.
+        defaultRoots: () => ({ native: codexHomesWithLegacy(home), worker: sessionsDir() }),
+        pathRoots: (roots) => [
+            { root: roots.worker, source: "worker" },
+            ...roots.native.map((root) => ({ root, source: "native" as const })),
+        ],
+        // A worker's file is its own session; a native rollout names its thread in the file name.
+        sessionOfPath: ({ source, stem, filePath }) => ({
+            provider: "codex",
+            source,
+            sessionId: source === "native" ? codexNativeSessionId(filePath) : stem,
+            filePath,
+        }),
+        find: (query, roots, fs) => [
+            ...findCodexNative(query, roots.native, fs),
+            ...findCodexWorker(query, roots.worker, fs),
+        ],
+        rootsOfHome: (codexHome) => ({ native: [codexHome] }),
+        // Codex keeps its titles in `session_index.jsonl` of each home.
+        titledSessions: ({ options }) =>
+            codexSessions(options.codexIndexPath ? [options.codexIndexPath] : codexIndexPaths(home)),
+        // A `tools codex spawn` worker runs a real native thread; its rollout sits in the worker's own Codex home.
+        workerNative: (worker, fs) => {
+            const workerHome = workerHomeOf(worker, fs);
+            const homes = workerHome ? [workerHome] : codexHomesWithLegacy(home);
+            const best = findCodexNative(worker.sessionId, homes, fs).sort((a, b) => b.mtime - a.mtime)[0];
+            return best
+                ? { provider: best.provider, source: best.source, sessionId: best.sessionId, filePath: best.filePath }
+                : null;
+        },
+    };
+}
+
 /** The Codex driver's `locate` part: rollouts under each Codex home, and `tools codex spawn` worker logs. */
-export const codexLocate: TranscriptLocator = {
-    // Every home history lists (`codexHomesWithLegacy`), so a session the history shows is one a lookup finds.
-    defaultRoots: () => ({ native: codexHomesWithLegacy(), worker: sessionsDir() }),
-    pathRoots: (roots) => [
-        { root: roots.worker, source: "worker" },
-        ...roots.native.map((root) => ({ root, source: "native" as const })),
-    ],
-    // A worker's file is its own session; a native rollout names its thread in the file name.
-    sessionOfPath: ({ source, stem, filePath }) => ({
-        provider: "codex",
-        source,
-        sessionId: source === "native" ? codexNativeSessionId(filePath) : stem,
-        filePath,
-    }),
-    find: (query, roots, fs) => [
-        ...findCodexNative(query, roots.native, fs),
-        ...findCodexWorker(query, roots.worker, fs),
-    ],
-    rootsOfHome: (home) => ({ native: [home] }),
-    // Codex keeps its titles in `session_index.jsonl` of each home.
-    titledSessions: ({ options }) =>
-        codexSessions(options.codexIndexPath ? [options.codexIndexPath] : codexIndexPaths()),
-    // A `tools codex spawn` worker runs a real native thread; its rollout sits in the worker's own Codex home.
-    workerNative: (worker, fs) => {
-        const home = workerHomeOf(worker, fs);
-        const homes = home ? [home] : codexHomesWithLegacy();
-        const best = findCodexNative(worker.sessionId, homes, fs).sort((a, b) => b.mtime - a.mtime)[0];
-        return best
-            ? { provider: best.provider, source: best.source, sessionId: best.sessionId, filePath: best.filePath }
-            : null;
-    },
-};
+export const codexLocate: TranscriptLocator = createCodexLocate();
 
 /** A worker's Codex home from its `.meta.json` beside the event log; undefined when it records none. */
 function workerHomeOf(worker: ResolvedTranscript, fs: FolderReads): string | undefined {
@@ -153,8 +162,8 @@ export function findCodexWorker(query: string, workerDir: string, fs: FolderRead
 }
 
 /** The index of each Codex home transcript resolution reads (`codexHomesWithLegacy`). */
-export function codexIndexPaths(): string[] {
-    return codexHomesWithLegacy().map((home) => join(home, "session_index.jsonl"));
+export function codexIndexPaths(home = homedir()): string[] {
+    return codexHomesWithLegacy(home).map((home) => join(home, "session_index.jsonl"));
 }
 
 export function codexSessions(indexPaths: readonly string[]): TitledSession[] {

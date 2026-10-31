@@ -2,7 +2,7 @@ import { describe, expect, test } from "bun:test";
 import { mkdirSync, mkdtempSync, utimesSync, writeFileSync } from "node:fs";
 import { tmpdir } from "node:os";
 import { dirname, join } from "node:path";
-import { codexLocate } from "@genesiscz/utils/agent-sessions/readers/codex-locate";
+import { createCodexLocate } from "@genesiscz/utils/agent-sessions/readers/codex-locate";
 import { env } from "@genesiscz/utils/env";
 import { SafeJSON } from "@genesiscz/utils/json";
 import { codexHomesWithLegacy, nativeSessionRootsWithLegacyHomes } from "@genesiscz/utils/providers/session-paths";
@@ -640,7 +640,8 @@ test("a rollout in a legacy Codex profile home is found by id, as history discov
         expect(new Set(nativeSessionRootsWithLegacyHomes("codex", home))).toEqual(
             new Set(homes.flatMap((codexHome) => [join(codexHome, "sessions"), join(codexHome, "archived_sessions")]))
         );
-        expect(codexLocate.defaultRoots().native).toEqual(codexHomesWithLegacy());
+        // The fixture home stands in for the user's, so the test never lists the real one.
+        expect(createCodexLocate(home).defaultRoots().native).toEqual(homes);
         expect(await resolveTranscript(id, { codex: { native: homes } }, "codex")).toMatchObject({
             source: "native",
             filePath: rollout,
@@ -662,14 +663,14 @@ test("codex worker without home resolves a rollout in the default home list", as
     writeFileSync(join(root, "worker.meta.json"), SafeJSON.stringify({ threadId: id }));
     await env.testing.withOverrides({ CODEX_HOME: `${first},${second}` }, () => {
         expect(
-            codexLocate.workerNative(
+            createCodexLocate(root).workerNative(
                 { provider: "codex", source: "worker", sessionId: id, filePath: workerPath },
                 directReads
             )
         ).toMatchObject({ source: "native", filePath: rollout });
         writeFileSync(join(root, "worker.meta.json"), SafeJSON.stringify({ threadId: id, home: "" }));
         expect(
-            codexLocate.workerNative(
+            createCodexLocate(root).workerNative(
                 { provider: "codex", source: "worker", sessionId: id, filePath: workerPath },
                 directReads
             )
@@ -680,7 +681,7 @@ test("codex worker without home resolves a rollout in the default home list", as
         writeFileSync(explicit, "{}\n");
         writeFileSync(join(root, "worker.meta.json"), SafeJSON.stringify({ threadId: id, home: first }));
         expect(
-            codexLocate.workerNative(
+            createCodexLocate(root).workerNative(
                 { provider: "codex", source: "worker", sessionId: id, filePath: workerPath },
                 directReads
             )
