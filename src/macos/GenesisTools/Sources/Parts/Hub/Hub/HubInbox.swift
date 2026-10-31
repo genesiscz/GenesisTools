@@ -1093,7 +1093,7 @@ final class HubInboxModel: ObservableObject {
         // A live target: the widget's own send (`send-staged`), worded as the widget words it. A resumed session
         // waits for its new pane below, which only `inbox send` does.
         guard resumeTarget != nil else {
-            sendStaged(session.draftedItems.map(\.id).filter { !heldDismiss.contains($0) }, in: session)
+            sendStaged(sendableIDs(session), in: session)
             return
         }
         sendingSessions.insert(sessionId)
@@ -1162,14 +1162,19 @@ final class HubInboxModel: ObservableObject {
     /// (the header's "Send all staged", ⌘-Return; F2). A decision whose Dismiss waits for its Undo stays out.
     func sendAllStaged() {
         for session in sessions {
-            let ids = session.draftedItems.map(\.id).filter { !heldDismiss.contains($0) }
+            let ids = sendableIDs(session)
             if !ids.isEmpty { sendStaged(ids, in: session) }
         }
     }
 
     /// How many decisions wait staged in every session (the header's count and its Send all staged).
     var stagedCount: Int {
-        sessions.reduce(0) { $0 + $1.draftedItems.filter { !heldDismiss.contains($0.id) }.count }
+        sessions.reduce(0) { $0 + sendableIDs($1).count }
+    }
+
+    /// A session's staged decisions that can go now: one whose Dismiss waits for its Undo stays out.
+    func sendableIDs(_ session: InboxSession) -> [String] {
+        session.draftedItems.map(\.id).filter { !heldDismiss.contains($0) }
     }
 
     /// A session's send result: shown under its Send bar, read out by VoiceOver (F17), and a delivered one fades after
