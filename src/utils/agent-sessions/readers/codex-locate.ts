@@ -9,12 +9,13 @@ import {
     type RankedHit,
     type ResolvedTranscript,
 } from "@genesiscz/utils/ai/transcripts/resolve";
-import { idMatches, isDir, isRecord, mtimeOf } from "@genesiscz/utils/ai/transcripts/resolve-core";
+import { idMatches, isDir, mtimeOf } from "@genesiscz/utils/ai/transcripts/resolve-core";
 import type { TitledSession } from "@genesiscz/utils/ai/transcripts/session-title";
 import { sessionsDir } from "@genesiscz/utils/codex/worker-paths";
 import type { TranscriptLocator } from "@genesiscz/utils/harness/parts";
 import { SafeJSON } from "@genesiscz/utils/json";
 import { logger } from "@genesiscz/utils/logger";
+import { isObject } from "@genesiscz/utils/object";
 import {
     codexHomesWithLegacy,
     isNativeTranscript,
@@ -143,7 +144,7 @@ export function findCodexWorker(query: string, workerDir: string, fs: FolderRead
         let sessionId = name;
         try {
             const meta = SafeJSON.parse(fs.readText(join(workerDir, entry)));
-            if (isRecord(meta)) {
+            if (isObject(meta)) {
                 if (typeof meta.threadId === "string" && meta.threadId) {
                     sessionId = meta.threadId;
                 } else if (typeof meta.name === "string" && meta.name) {

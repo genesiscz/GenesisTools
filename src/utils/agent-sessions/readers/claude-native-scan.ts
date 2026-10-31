@@ -1,10 +1,7 @@
 import type { NativeCall, NativeScan, ToolTiming } from "@genesiscz/utils/ai/transcripts/insights-types";
 import { eachLine } from "@genesiscz/utils/ai/transcripts/native-scan";
 import { parseTranscriptLine } from "@genesiscz/utils/ai/transcripts/parse-line";
-
-function isRecord(value: unknown): value is Record<string, unknown> {
-    return typeof value === "object" && value !== null && !Array.isArray(value);
-}
+import { isObject } from "@genesiscz/utils/object";
 
 function count(value: unknown): number {
     return typeof value === "number" && Number.isFinite(value) ? value : 0;
@@ -52,20 +49,20 @@ export function scanClaudeNative(text: string): NativeScan {
             scan.branch = record.gitBranch;
         }
 
-        const message = isRecord(record.message) ? record.message : null;
+        const message = isObject(record.message) ? record.message : null;
 
         if (!message) {
             return;
         }
 
-        const content = Array.isArray(message.content) ? message.content.filter(isRecord) : [];
+        const content = Array.isArray(message.content) ? message.content.filter(isObject) : [];
 
         if (record.type === "assistant") {
             const id = typeof message.id === "string" ? message.id : null;
 
             if (id && !seenMessages.has(id)) {
                 seenMessages.add(id);
-                const usage = isRecord(message.usage) ? message.usage : {};
+                const usage = isObject(message.usage) ? message.usage : {};
                 const call: NativeCall = {
                     ordinal,
                     messageId: id,

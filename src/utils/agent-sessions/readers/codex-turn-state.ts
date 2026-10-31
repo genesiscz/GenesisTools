@@ -2,7 +2,6 @@
 import type { ActivityEvent } from "@genesiscz/utils/ai/transcripts/activity";
 import {
     firstLine,
-    isRecord,
     questionCallOf,
     questionTextOf,
     snapshotOf,
@@ -19,6 +18,7 @@ import type {
 } from "@genesiscz/utils/ai/transcripts/turn-state-types";
 import { SafeJSON } from "@genesiscz/utils/json";
 import { logger } from "@genesiscz/utils/logger";
+import { isObject } from "@genesiscz/utils/object";
 
 /** A Codex `exec` script calls `tools.exec_command({cmd: "…"})`: the command, else the tool it calls, else its first line. */
 function codexScriptSummary(script: string): string {
@@ -40,7 +40,7 @@ function codexScriptSummary(script: string): string {
 }
 
 function codexPayloadOf(record: JsonRecord): { type: string; payload: JsonRecord } | null {
-    const payload = isRecord(record.payload) ? record.payload : null;
+    const payload = isObject(record.payload) ? record.payload : null;
     const type = payload?.type;
 
     return payload && typeof type === "string" ? { type, payload } : null;
@@ -115,7 +115,7 @@ export function codexTurnState(input: TurnStateInput): TurnSnapshot {
             // 2026-10-14: a worker whose remote compaction failed ended every turn at once with this error, and
             // `tools codex wait` reported each one as done.
             const failure = parsed.payload.error;
-            turnError = isRecord(failure) && typeof failure.message === "string" ? failure.message : null;
+            turnError = isObject(failure) && typeof failure.message === "string" ? failure.message : null;
             calls.end();
             events.push({ ts, kind: "question" });
 

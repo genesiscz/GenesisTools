@@ -2,11 +2,8 @@ import { readdirSync, statSync } from "node:fs";
 import { basename, dirname, join } from "node:path";
 import type { FolderReads, RankedHit, ResolvedTranscript } from "@genesiscz/utils/ai/transcripts/resolve";
 import { SafeJSON } from "@genesiscz/utils/json";
+import { isObject } from "@genesiscz/utils/object";
 import type { TranscriptProvider } from "./types";
-
-export function isRecord(value: unknown): value is Record<string, unknown> {
-    return typeof value === "object" && value !== null && !Array.isArray(value);
-}
 
 export function idMatches(query: string, candidate: string): boolean {
     const q = query.toLowerCase();
@@ -102,7 +99,7 @@ export function findTurnFileWorker(
         let sessionId = name;
         try {
             const meta = SafeJSON.parse(fs.readText(join(workerDir, entry)));
-            if (isRecord(meta) && typeof meta.sessionId === "string" && meta.sessionId) {
+            if (isObject(meta) && typeof meta.sessionId === "string" && meta.sessionId) {
                 sessionId = meta.sessionId;
             }
         } catch {

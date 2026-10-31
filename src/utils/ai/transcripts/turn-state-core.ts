@@ -3,7 +3,6 @@
  * calls of a turn, the question and tool summaries, and the snapshot a reader returns. No transcript dialect here.
  */
 import type {
-    JsonRecord,
     OpenToolCall,
     TurnQuestionCall,
     TurnQuestionKind,
@@ -12,6 +11,7 @@ import type {
 } from "@genesiscz/utils/ai/transcripts/turn-state-types";
 import { SafeJSON } from "@genesiscz/utils/json";
 import { logger } from "@genesiscz/utils/logger";
+import { isObject } from "@genesiscz/utils/object";
 import { type ActivityEvent, type ActivityState, classifyActivity } from "./activity";
 import { parseTranscriptLine } from "./parse-line";
 
@@ -41,10 +41,6 @@ export class TurnCalls {
     end(): void {
         this.open.clear();
     }
-}
-
-export function isRecord(value: unknown): value is JsonRecord {
-    return typeof value === "object" && value !== null && !Array.isArray(value);
 }
 
 export function toEpochMs(value: unknown): number | undefined {
@@ -82,9 +78,9 @@ export function questionTextOf(input: unknown): string | null {
         }
     }
 
-    const first = isRecord(value) && Array.isArray(value.questions) ? value.questions[0] : undefined;
+    const first = isObject(value) && Array.isArray(value.questions) ? value.questions[0] : undefined;
 
-    if (!isRecord(first)) {
+    if (!isObject(first)) {
         return null;
     }
 
@@ -102,7 +98,7 @@ export function questionTextOf(input: unknown): string | null {
 /** How many questions a question tool's input asks (`questions[]`), or undefined when it lists none. */
 export function questionCountOf(input: unknown): number | undefined {
     const value = typeof input === "string" ? parseTranscriptLine(input) : input;
-    return isRecord(value) && Array.isArray(value.questions) && value.questions.length > 0
+    return isObject(value) && Array.isArray(value.questions) && value.questions.length > 0
         ? value.questions.length
         : undefined;
 }
@@ -110,10 +106,10 @@ export function questionCountOf(input: unknown): number | undefined {
 /** The option labels of a question tool's first question: `questions[0].options[]`, each a string or `{label}`. */
 export function questionOptionsOf(input: unknown): string[] | undefined {
     const value = typeof input === "string" ? parseTranscriptLine(input) : input;
-    const first = isRecord(value) && Array.isArray(value.questions) ? value.questions[0] : undefined;
-    const options: unknown[] = isRecord(first) && Array.isArray(first.options) ? first.options : [];
+    const first = isObject(value) && Array.isArray(value.questions) ? value.questions[0] : undefined;
+    const options: unknown[] = isObject(first) && Array.isArray(first.options) ? first.options : [];
     const labels = options.flatMap((option) => {
-        const label = isRecord(option) ? option.label : option;
+        const label = isObject(option) ? option.label : option;
         return typeof label === "string" && label.trim() ? [label.trim()] : [];
     });
 
@@ -162,7 +158,7 @@ export function toolSummaryOf(input: unknown): string {
         return typeof input === "string" ? firstLine(input) : "";
     }
 
-    if (!isRecord(value)) {
+    if (!isObject(value)) {
         return "";
     }
 
