@@ -1393,6 +1393,51 @@ const emptySources: WidgetSources = {
     agents: async () => ({ generatedAt: "", parents: [], orphans: [] }),
 };
 
+test("widget snapshot exposes the selected session's open dialog with its full key", async () => {
+    const directory = await root();
+    const key = widgetSessionKey(target);
+    const sources = {
+        ...emptySources,
+        sessions: async () => [
+            {
+                ...target,
+                provider: "codex" as const,
+                title: "Fixture session",
+                project: "Fixture",
+                cwdShort: "Fixture",
+                mtime: Date.now(),
+                model: null,
+                account: null,
+                filePath: "/fixture/transcript.jsonl",
+            },
+        ],
+        dialogs: () => [
+            {
+                provider: "codex" as const,
+                sessionId: target.sessionId,
+                toolCallId: "call:one",
+                kind: "decision" as const,
+                question: "Choose?",
+                options: ["Yes", "No"],
+                questionCount: 1,
+                askedAt: "2026-10-30T10:00:00.000Z",
+                source: "hook" as const,
+            },
+        ],
+    };
+    const snapshot = await widgetSnapshot({ root: directory, sources, selectedKey: key });
+    expect(snapshot.cards).toContainEqual(
+        expect.objectContaining({
+            kind: "dialog",
+            sourceId: `codex:${target.sessionId}:call:one`,
+            choices: [
+                expect.objectContaining({ id: "a", title: "Yes" }),
+                expect.objectContaining({ id: "b", title: "No" }),
+            ],
+        })
+    );
+});
+
 function readyVideo(id: string, manifestPath: string): WidgetAsset {
     return {
         id,

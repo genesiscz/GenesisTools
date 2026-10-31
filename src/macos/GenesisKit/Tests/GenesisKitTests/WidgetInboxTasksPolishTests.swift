@@ -1182,6 +1182,59 @@ final class WidgetStagingTests: XCTestCase {
         return try XCTUnwrap(object["payload"] as? [String: Any])
     }
 
+    func testDialogPickUsesFullKeyAndDoesNotStage() async throws {
+        let model = StagingFixture.model()
+        defer { model.stop() }
+        let sent = expectation(description: "dialog action")
+        var request: WidgetJSON?
+        model.actionRunner = { value in
+            request = value
+            sent.fulfill()
+            return ["delivered": false, "uncertain": true, "detail": "The option key was sent; check the dialog before retrying."]
+        }
+        let fullKey = "claude:fixture-session:tool:call"
+        let card = WidgetCard(id: "dialog:" + fullKey, kind: "dialog", sessionKey: key, sourceId: fullKey,
+                              at: 1, title: "Question", body: "", status: "waiting", choices: [],
+                              attachments: [], refs: [], read: false)
+        XCTAssertTrue(card.needsAnswer)
+        model.choose(card, option: "b")
+        await fulfillment(of: [sent], timeout: 2)
+        let finished = await model.waitForShutdownMutations()
+        XCTAssertTrue(finished)
+        XCTAssertEqual(request, ["action": "dialog-answer", "key": .string(fullKey), "option": "b"])
+        XCTAssertNil(model.stagedOption(fullKey, stored: nil))
+        XCTAssertTrue(model.notice?.contains("not confirmed") == true)
+    }
+
+    func testDialogNumberKeyUsesTheDialogRoute() async throws {
+        let model = StagingFixture.model()
+        defer { model.stop() }
+        var wire = try XCTUnwrap(JSONSerialization.jsonObject(with: Data(snapshot(draftOption: nil).utf8)) as? [String: Any])
+        var cards = try XCTUnwrap(wire["cards"] as? [[String: Any]])
+        let fullKey = "claude:fixture-session:tool:call"
+        cards[0]["id"] = "dialog:" + fullKey
+        cards[0]["kind"] = "dialog"
+        cards[0]["sourceId"] = fullKey
+        cards[0]["status"] = "waiting"
+        wire["cards"] = cards
+        let sent = expectation(description: "keyboard dialog action")
+        var request: WidgetJSON?
+        model.actionRunner = { value in
+            if case .object(let fields) = value, fields["action"] == "dialog-answer" {
+                request = value
+                sent.fulfill()
+            }
+            return ["delivered": false, "uncertain": true, "detail": "Check the dialog."]
+        }
+        model.receive([String(decoding: try JSONSerialization.data(withJSONObject: wire), as: UTF8.self)])
+        model.select(key)
+        model.selectedCardID = "dialog:" + fullKey
+        XCTAssertEqual(model.answerCard?.sourceId, fullKey)
+        model.choose(option: "a")
+        await fulfillment(of: [sent], timeout: 2)
+        XCTAssertEqual(request, ["action": "dialog-answer", "key": .string(fullKey), "option": "a"])
+    }
+
     func testAPickStagesAndClosingAsksThenSendsOneBatch() async throws {
         let defaults = UserDefaults(suiteName: "widget.staging." + UUID().uuidString)!
         let model = WidgetModel(binaryPath: "/fixture/tools", stateRoot: FileManager.default.temporaryDirectory.path,

@@ -54,6 +54,8 @@ export interface InboxAnswerResult {
     text: string;
     channel: DeliveryResult["channel"] | "form" | "dry-run";
     delivered: boolean;
+    /** A key or message may have arrived, but its outcome cannot be confirmed. */
+    uncertain?: boolean;
     /** Where it went, else why it did not: the one line the hub and /qa show. */
     detail?: string;
     /** A short human place (`cmux · work · agent`, `codex worker w1`). */

@@ -131,11 +131,8 @@ enum InboxAnswerRoute: Equatable {
     case ledger
     case dialog
 
-    init(source: String?) {
-        switch source {
-        case "dialog": self = .dialog
-        default: self = .ledger
-        }
+    init(source: String?, kind: String? = nil) {
+        self = kind == "dialog" || source == "dialog" ? .dialog : .ledger
     }
 }
 
@@ -183,7 +180,7 @@ struct InboxItem: Decodable, Identifiable, Hashable {
     var isDialog: Bool { kind == "dialog" || source == "dialog" }
     var isDecision: Bool { kind == "decision" && !isDialog }
     var isOpen: Bool { status == "waiting" || status == "drafted" }
-    var answerRoute: InboxAnswerRoute { InboxAnswerRoute(source: source) }
+    var answerRoute: InboxAnswerRoute { InboxAnswerRoute(source: source, kind: kind) }
     /// The recorded answer's own words, when they say more than the picked options do. Nil when the answer only repeats
     /// a picked option ("b", "b) Keep it", "Keep it"), so a closed card never prints the same option twice (F7).
     var answerBeyondPick: String? {
@@ -340,6 +337,7 @@ struct InboxDelivery: Decodable, Equatable {
     let raw: String?
     /// The form path uses `detail` for its note.
     let detail: String?
+    var uncertain: Bool? = nil
     /// A send through the widget's engine: its outcome's own words (`WidgetDecisionSendOutcome.notice`), the same note
     /// the widget shows.
     var outcomeText: String? = nil
@@ -347,7 +345,7 @@ struct InboxDelivery: Decodable, Equatable {
     var resendIDs: [String] = []
 
     private enum CodingKeys: String, CodingKey {
-        case text, channel, delivered, target, error, raw, detail
+        case text, channel, delivered, target, error, raw, detail, uncertain
     }
 
     /// `message`: one sentence the user reads. `raw`: the tool's own output, shown behind Details only (F10).
@@ -684,7 +682,9 @@ final class HubInboxModel: ObservableObject {
 
     /// The card the number keys act on: the one named, else the first open decision of the selected session.
     func keyCard(in rows: [InboxSession]) -> (session: InboxSession, item: InboxItem)? {
-        let open = rows.flatMap { session in session.items.filter { $0.isDecision && $0.isOpen }.map { (session, $0) } }
+        let open = rows.flatMap { session in
+            session.items.filter { $0.isOpen && ($0.isDecision || $0.answerRoute == .dialog) }.map { (session, $0) }
+        }
         if let id = keyCardID, let hit = open.first(where: { $0.1.id == id }) { return hit }
         if let selected = selectedID, let hit = open.first(where: { $0.0.id == selected }) { return hit }
         return nil
@@ -693,7 +693,7 @@ final class HubInboxModel: ObservableObject {
     /// Up and Down in the main list: the key card moves to the open decision above or below, across sessions.
     @discardableResult
     func moveKeyCard(_ step: Int, in rows: [InboxSession]) -> String? {
-        let ids = rows.flatMap { $0.items.filter { $0.isDecision && $0.isOpen }.map(\.id) }
+        let ids = rows.flatMap { $0.items.filter { $0.isOpen && ($0.isDecision || $0.answerRoute == .dialog) }.map(\.id) }
         guard !ids.isEmpty else { return nil }
         let current = keyCard(in: rows)?.item.id
         let index = current.flatMap { ids.firstIndex(of: $0) }
@@ -1329,7 +1329,8 @@ final class HubInboxModel: ObservableObject {
                         GenAnnounce.post(delivery.summary)
                         self.load()
                     } else {
-                        self.writeErrors[item.id] = "Answer not confirmed: \(delivery.error ?? "check the dialog before retrying.")"
+                        let reason = delivery.uncertain == true ? delivery.detail : delivery.error
+                        self.writeErrors[item.id] = "Answer not confirmed: \(reason ?? "check the dialog before retrying.")"
                         self.writeErrorDetails[item.id] = delivery.raw
                     }
                 }
@@ -1780,8 +1781,6 @@ struct InboxMain: View {
             Group {
                 if item.isForm {
                     InboxFormCard(inbox: inbox, item: item)
-                } else if item.isDialog {
-                    InboxDialogCard(model: model, inbox: inbox, session: session, item: item)
                 } else {
                     InboxDecisionCard(model: model, inbox: inbox, session: session, item: item,
                                       keyed: keysFocused && inbox.keyCardID == item.id,
@@ -1991,34 +1990,6 @@ private struct InboxSessionHeader: View {
         }
     }
 
-}
-
-private struct InboxDialogCard: View {
-    var model: HubModel
-    @ObservedObject var inbox: HubInboxModel
-    let session: InboxSession
-    let item: InboxItem
-
-    var body: some View {
-        VStack(alignment: .leading, spacing: 8) {
-            FindText(item.title ?? item.prompt ?? "Question", field: "title").font(.headline)
-            if let title = item.title, let prompt = item.prompt, !prompt.isEmpty, prompt != title {
-                FindText(prompt, field: "prompt")
-            }
-            ForEach(item.choices ?? [], id: \.id) { choice in
-                HStack(alignment: .firstTextBaseline, spacing: 4) {
-                    Text("\(choice.id))")
-                    FindText(inlineMarkdown(choice.shownLabel), field: "choice:\(choice.id)")
-                }.foregroundColor(ReviewPalette.dim)
-            }
-            Button("Open session to answer") {
-                inbox.focusPane(session) { model.post($0, $1) }
-            }
-            .buttonStyle(.genHoverPlain())
-            .disabled(session.sessionId == nil)
-        }
-        .findRow(item.id, cornerRadius: 11)
-    }
 }
 
 /// One session's Send: "Send N answers to <session>", the exact message under it, then where it went
@@ -2334,7 +2305,7 @@ struct InboxDecisionCard: View, Equatable {
             if !item.isOpen, let answer = item.answerBeyondPick {
                 answerBlock(answer)
             }
-            if item.isOpen {
+            if item.isOpen && item.answerRoute != .dialog {
                 noteField
             }
             footerRow
@@ -2707,7 +2678,7 @@ struct InboxDecisionCard: View, Equatable {
                         .font(.system(size: 11))
                         .foregroundColor(ReviewPalette.renamed)
                 }
-                if let hubSession = state.hubSession {
+                if let hubSession = state.hubSession, item.answerRoute != .dialog {
                     LiveButton(tooltip: "Open the session and search the transcript for this decision",
                                pressable: true) {
                         model.transcriptQuery = "DECISION \(item.number ?? 0)"
@@ -2719,7 +2690,7 @@ struct InboxDecisionCard: View, Equatable {
                     .foregroundColor(ReviewPalette.renamed)
                 }
                 // The routine destructive action: quiet, last, apart from the send (P13).
-                if item.isOpen, state.heldDismiss {
+                if item.isOpen, state.heldDismiss, item.answerRoute != .dialog {
                     LiveButton(tooltip: "Keep this decision; nothing was written yet", pressable: true) {
                         inbox.undoDismiss(item)
                     } label: {
@@ -2728,7 +2699,7 @@ struct InboxDecisionCard: View, Equatable {
                         .font(.system(size: 11))
                         .foregroundColor(ReviewPalette.renamed)
                         .padding(.leading, 8)
-                } else if item.isOpen {
+                } else if item.isOpen && item.answerRoute != .dialog {
                     LiveButton(tooltip: "Drop this decision without sending an answer; Undo stays for a few seconds",
                                pressable: true) {
                         inbox.dismiss(item, in: session)

@@ -622,9 +622,10 @@ public final class WidgetModel: ObservableObject {
     @Published public var heldCardIDs: Set<String> = []
     /// The decision ids of `heldCardIDs`: such a decision is out of every staged send until its Undo brings it back.
     @Published public var heldDecisionIDs: Set<String> = []
-    /// The decision the composer and the number keys answer: the selected one, unanswered, not folded and not held.
+    @Published public var dialogSendingIDs: Set<String> = []
+    /// The decision or dialog the number keys answer: the selected one, unanswered, not folded and not held.
     public var answerCard: WidgetCard? {
-        guard let card, card.kind == "decision", card.needsAnswer, !foldedCardIDs.contains(card.id),
+        guard let card, ["decision", "dialog"].contains(card.kind), card.needsAnswer, !foldedCardIDs.contains(card.id),
               !heldCardIDs.contains(card.id) else { return nil }
         return card
     }
@@ -656,7 +657,7 @@ public final class WidgetModel: ObservableObject {
     @Published public var ownAnswerFocusRequest: String?
     /// `ownAnswerCardID` while that decision is still the one the composer answers.
     public var ownAnswerCard: WidgetCard? {
-        guard let card = answerCard, card.id == ownAnswerCardID else { return nil }
+        guard let card = answerCard, card.kind == "decision", card.id == ownAnswerCardID else { return nil }
         return card
     }
     public var draft: WidgetDraft { drafts[selectedKey] ?? WidgetDraft() }

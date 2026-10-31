@@ -596,7 +596,7 @@ public struct LiveWidgetView: View {
     @ViewBuilder
     private func optionRow(_ card: WidgetCard, choice: WidgetChoice, index: Int, key: String?, picked: Bool,
                            focused: Bool) -> some View {
-        let stages = model.decisionClickStages
+        let stages = card.kind == "decision" && model.decisionClickStages
         let text = Self.choiceText(choice)
         Button {
             model.choose(card, option: choice.id)
@@ -608,10 +608,12 @@ public struct LiveWidgetView: View {
         }
         .buttonStyle(RowButtonStyle(cornerRadius: WidgetOptionLabel.cornerRadius))
         // An answer on its way takes no second, conflicting pick (forms say "Answer queued" the same way).
-        .disabled(model.importing > 0 || model.cardPending || model.sendingDecisionIDs.contains(card.sourceId))
+        .disabled(model.importing > 0 || model.cardPending || model.sendingDecisionIDs.contains(card.sourceId)
+                  || model.dialogSendingIDs.contains(card.sourceId))
         .id("choice-" + card.id + "-" + choice.id)
-        .instantTooltip(Self.choiceTooltip(choice, index: index, stages: stages, picked: picked,
-                                           swaps: model.snapshot?.state.preferences.decisionCommandSwaps ?? true))
+        .instantTooltip(card.kind == "dialog" ? "Send this option to the open dialog." :
+            Self.choiceTooltip(choice, index: index, stages: stages, picked: picked,
+                               swaps: model.snapshot?.state.preferences.decisionCommandSwaps ?? true))
         .accessibilityLabel(WidgetOptionText.accessibilityLabel(letter: choice.id, text: text, stages: stages,
                                                                 recommended: choice.recommended))
         .accessibilityValue(picked ? "Staged" : "")
@@ -668,7 +670,7 @@ public struct LiveWidgetView: View {
                         let focused = model.choiceFocus == WidgetChoiceFocus(cardID: card.id, choiceID: choice.id)
                         optionRow(card, choice: choice, index: index, key: key, picked: picked, focused: focused)
                     }
-                    ownAnswer(card)
+                    if card.kind == "decision" { ownAnswer(card) }
                 }
             }
             // Under the options, beside the buttons that act on it: at the top of the card it pushed the options and

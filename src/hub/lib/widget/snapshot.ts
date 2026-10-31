@@ -19,6 +19,8 @@ import {
     readQuestionSnapshot,
 } from "@app/question/lib/read-model";
 import type { TranscriptAnchor } from "@genesiscz/utils/agent/source-anchor";
+import { openQuestions } from "@genesiscz/utils/agents/dialogs/store";
+import { type DialogProvider, type OpenQuestion, openQuestionKey } from "@genesiscz/utils/agents/dialogs/types";
 import {
     type ResolvedTranscript,
     resolveTranscript,
@@ -117,7 +119,7 @@ export interface WidgetCard {
         aiAgent?: string | null;
     };
     id: string;
-    kind: "decision" | "todo" | "form" | "answer" | "result";
+    kind: "decision" | "dialog" | "todo" | "form" | "answer" | "result";
     sessionKey: string;
     sourceId: string;
     at: number;
@@ -171,6 +173,7 @@ export interface WidgetSources {
     sessions(refresh: boolean): Promise<AgentSessionRow[]>;
     decisions(): DecisionRecord[] | { rows: DecisionRecord[]; complete: boolean; missing?: boolean };
     forms(session?: string): AskForm[];
+    dialogs?(provider: DialogProvider, session: string): OpenQuestion[];
     answers(session?: string): QaRow[];
     /** The newest `limit` answers of each session in one read (the warm sessions); else `answers` per session. */
     answersOf?(sessions: string[], limit: number): QaRow[];
@@ -589,6 +592,7 @@ export const realWidgetSources: WidgetSources = {
             failClosed: true,
         }),
     decisions: () => readDecisionsWithIntegrity(decisionFiles().file),
+    dialogs: (provider, session) => openQuestions(provider, session),
     forms: (sessionHint) => widgetForms({ dbPath: toolDataDir("question", "qa.db"), sessionHint }),
     answers: (sessionId) =>
         queryEntriesSnapshot({
@@ -1380,6 +1384,35 @@ export async function widgetSnapshot({
         }
     }
     const cards: WidgetCard[] = [];
+    for (const key of cardKeys ?? []) {
+        const session = sessions.get(key);
+        const provider = session?.target.provider;
+        if (!session || !provider || provider === "unknown" || !sources.dialogs) {
+            continue;
+        }
+        const dialogs = await read("dialogs", () => sources.dialogs?.(provider, session.target.sessionId) ?? [], []);
+        for (const dialog of dialogs) {
+            const id = openQuestionKey(dialog);
+            cards.push({
+                id: `dialog:${id}`,
+                kind: "dialog",
+                sessionKey: key,
+                sourceId: id,
+                at: timeOf(dialog.askedAt),
+                title: dialog.question || "Question",
+                body: "",
+                status: "waiting",
+                choices: (dialog.options ?? []).map((title, index) => ({
+                    id: String.fromCharCode(97 + index),
+                    title,
+                    recommended: false,
+                })),
+                attachments: [],
+                refs: [],
+                read: false,
+            });
+        }
+    }
     const selectedAnswers = new Set(answers.map((row) => row.id));
     const selectedForms = new Set(forms.map((form) => form.id));
     const cardForms = [...forms, ...warmForms.filter((form) => !selectedForms.has(form.id))];
@@ -1697,6 +1730,7 @@ export const WARM_CARD_WINDOW = 12;
 function cardWaits(card: WidgetCard): boolean {
     return (
         (card.kind === "decision" && (card.status === "open" || card.status === "drafted")) ||
+        (card.kind === "dialog" && card.status === "waiting") ||
         (card.kind === "form" && card.status === "pending")
     );
 }

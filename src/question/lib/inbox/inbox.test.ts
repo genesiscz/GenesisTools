@@ -1501,6 +1501,28 @@ describe("answering a dialog item by its option key", () => {
         });
     });
 
+    test("an unconfirmed key write is distinguishable from a refusal", async () => {
+        const tool = fakeTool(SafeJSON.stringify({ sent: false, unconfirmed: true, reason: "check the dialog" }));
+        expect(
+            await answerDialogItem({ key: KEY, option: "a" }, { recordsRoot: recordsRoot(), ...tool })
+        ).toMatchObject({
+            delivered: false,
+            uncertain: true,
+            detail: "check the dialog",
+        });
+    });
+
+    test("a missing command outcome is unknown, not a refusal", async () => {
+        const tool = fakeTool("not-json");
+        expect(
+            await answerDialogItem({ key: KEY, option: "a" }, { recordsRoot: recordsRoot(), ...tool })
+        ).toMatchObject({
+            delivered: false,
+            uncertain: true,
+            detail: expect.stringContaining("check the dialog"),
+        });
+    });
+
     test("the CLI door answers --dialog with --option and refuses it without one", async () => {
         const tool = fakeTool(SafeJSON.stringify({ sent: true }));
         const deps: InboxCommandDeps = { dialogs: { recordsRoot: recordsRoot(), ...tool } };

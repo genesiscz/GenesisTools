@@ -21,6 +21,8 @@ final class HubInboxUXTests: XCTestCase {
     /// h_bgj1m68y t7: a dialog item's pick presses its key in the live dialog; every other decision goes the log's way.
     func testAnInboxItemsSourcePicksItsAnswerRoute() {
         XCTAssertEqual(InboxAnswerRoute(source: "dialog"), .dialog)
+        XCTAssertEqual(InboxAnswerRoute(source: nil, kind: "dialog"), .dialog)
+        XCTAssertEqual(InboxAnswerRoute(source: "store", kind: "decision"), .ledger)
         XCTAssertEqual(InboxAnswerRoute(source: "transcript"), .ledger)
         XCTAssertEqual(InboxAnswerRoute(source: "store"), .ledger)
         XCTAssertEqual(InboxAnswerRoute(source: nil), .ledger)

@@ -173,6 +173,7 @@ public struct WidgetCard: Codable, Identifiable, Equatable, Sendable {
     public var isStaged: Bool { kind == "decision" && needsAnswer && (draftOption != nil || draft != nil) }
     public var needsAnswer: Bool {
         (kind == "decision" && ["open", "drafted"].contains(status))
+            || (kind == "dialog" && status == "waiting")
             || (kind == "form" && status == "pending")
     }
 }

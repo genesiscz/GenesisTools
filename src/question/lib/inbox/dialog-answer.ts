@@ -107,13 +107,24 @@ export async function answerDialogItem(
         "--json",
     ];
     const run = await (deps.runTool ?? defaultRunTool)(args);
-    let outcome: { sent?: unknown; reason?: unknown; ambiguous?: unknown } = {};
+    let outcome: { sent?: unknown; reason?: unknown; ambiguous?: unknown; unconfirmed?: unknown } = {};
 
     try {
         const parsed: unknown = SafeJSON.parse(run.stdout, { strict: true });
         outcome = typeof parsed === "object" && parsed !== null ? parsed : {};
     } catch (error) {
         log.debug({ error, stdout: run.stdout.slice(0, 200) }, "cmux send --option printed no JSON outcome");
+    }
+
+    if (outcome.unconfirmed === true || (outcome.sent !== true && outcome.sent !== false)) {
+        return {
+            session: target.sessionId,
+            text: `${option}) ${plan.label}`,
+            channel: "cmux",
+            delivered: false,
+            uncertain: true,
+            detail: typeof outcome.reason === "string" ? outcome.reason : "check the dialog before retrying",
+        };
     }
 
     if (outcome.sent !== true) {

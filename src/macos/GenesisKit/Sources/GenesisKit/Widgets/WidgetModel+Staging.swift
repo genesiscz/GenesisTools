@@ -95,6 +95,10 @@ extension WidgetModel {
     /// A click on a decision option in a session's inbox. A second click on the staged option clears the pick.
     /// ⇧ adds the letter to the staged ones or takes it out (`DecisionAnswering.nextPick`), and always stages.
     public func choose(_ card: WidgetCard, option: String) {
+        if card.kind == "dialog" {
+            answerDialog(key: card.sourceId, option: option)
+            return
+        }
         let adding = NSEvent.modifierFlags.contains(.shift)
         guard clickStagesNow || adding else {
             // Media in this card's own answer cannot be staged: the outbox carries it with the pick.
@@ -113,6 +117,29 @@ extension WidgetModel {
         let current = stagedOption(card.sourceId, stored: card.draftOption)
         stage(id: card.sourceId, sessionId: selected.target.sessionId, revision: revision,
               option: DecisionAnswering.nextPick(current, option, adding: adding), item: Self.inboxItem(card))
+    }
+
+    func answerDialog(key: String, option: String) {
+        guard dialogSendingIDs.insert(key).inserted else { return }
+        afterMutations { [weak self] in
+            guard let self else { return }
+            defer { self.dialogSendingIDs.remove(key) }
+            do {
+                let result = try await self.call(["action": "dialog-answer", "key": .string(key), "option": .string(option)])
+                if case .object(let fields) = result, fields["delivered"] == .bool(true) {
+                    self.postNote("Dialog answer delivered.")
+                } else if case .object(let fields) = result, fields["uncertain"] == .bool(true),
+                          case .string(let detail) = fields["detail"] {
+                    self.postNote("Answer not confirmed: " + detail, tone: .warning)
+                } else if case .object(let fields) = result, case .string(let error) = fields["error"] {
+                    self.postNote("Answer not confirmed: " + error, tone: .warning)
+                } else {
+                    self.postNote("Answer not confirmed. Check the dialog before retrying.", tone: .warning)
+                }
+            } catch {
+                self.postNote("Answer not confirmed. Check the dialog before retrying.", tone: .warning)
+            }
+        }
     }
 
     /// The number keys: the open decision's option, as a click on it.
