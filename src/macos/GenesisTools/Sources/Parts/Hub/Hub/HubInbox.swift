@@ -1925,7 +1925,7 @@ private struct InboxSessionHeader: View {
 }
 
 private struct InboxDialogCard: View {
-    @ObservedObject var model: HubModel
+    var model: HubModel
     @ObservedObject var inbox: HubInboxModel
     let session: InboxSession
     let item: InboxItem
