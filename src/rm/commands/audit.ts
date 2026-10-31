@@ -34,7 +34,10 @@ export function registerAuditCommands(program: Command): void {
         .option("--since <duration>", "only the last 30m, 2h, 1d, ...", minutesOption)
         .option("--agent <name>", "claude-code, codex, grok, copilot, or person")
         .option("--session <id>", "a session id or its prefix")
-        .option("--action <list>", "comma list: move, aside, return, drain, restore, refuse, request, approve, deny")
+        .option(
+            "--action <list>",
+            "comma list: move, aside, measure, return, drain, restore, refuse, request, approve, deny"
+        )
         .option("--path <text>", "entries whose path contains this text")
         .option("--by <group>", `totals instead of entries: ${RM_LEDGER_GROUPS.join(", ")}`)
         .option("--limit <n>", "how many entries to print (newest)", (v) => Number.parseInt(v, 10), 50)

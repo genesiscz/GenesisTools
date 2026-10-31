@@ -902,7 +902,8 @@ describe("aside", () => {
 
         expect(aside.moved).toHaveLength(1);
         expect(existsSync(src)).toBe(false);
-        expect(aside.moved[0]?.bytes).toBeGreaterThan(0);
+        // The move does not walk the copy: the request's measurement pass sizes it, so the asking run returns at once.
+        expect(aside.moved[0]?.bytes).toBeUndefined();
 
         const request = createRmRequest(
             { kind: "delete", caller: AGENT, cwd: base, reason: null, targets: aside.moved, asideDir: aside.dir },

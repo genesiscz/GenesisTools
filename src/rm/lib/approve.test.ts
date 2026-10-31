@@ -12,6 +12,7 @@ import {
 import { tmpdir } from "node:os";
 import { dirname, join } from "node:path";
 import {
+    type ApprovalItemUpdate,
     createRmRequest,
     defaultRmConfig,
     defaultRuleContext,
@@ -19,7 +20,9 @@ import {
     isRootActive,
     listRmRequests,
     loadRmConfig,
+    loadRmMeasurements,
     loadRmRequest,
+    measureRmRequest,
     moveAside,
     moveToTrash,
     newBatchId,
@@ -36,7 +39,14 @@ import {
 } from "@genesiscz/utils/rm";
 import { saveApproved } from "../commands/requests";
 import { applyRmSetting, saveRmSetting } from "../commands/settings";
-import { type ApproveEntry, approveDelete, denyRequest, splitBySelection } from "./approve";
+import {
+    type ApprovalRowDeps,
+    type ApproveEntry,
+    approvalRows,
+    approveDelete,
+    denyRequest,
+    splitBySelection,
+} from "./approve";
 import type { RunContext } from "./run";
 
 const AGENT: RmCaller = { agent: "claude-code", sessionId: "sess-2222", isInAgent: true };
@@ -559,5 +569,116 @@ describe("config set", () => {
 
             restoreBatch(batch?.id ?? "", { config: loadRmConfig(r.configPath), paths: r.paths });
         });
+    });
+});
+
+describe("sizes measured with the request", () => {
+    /** A folder with two files named in place by a pending request, as `tools rm` leaves an in-place ask. */
+    function inPlaceRequest(folder: string): RmRequest {
+        const dir = join(base, folder, "cache");
+        file(join(dir, "a.bin"));
+        file(join(dir, "sub", "b.bin"));
+        return createRmRequest({
+            kind: "delete",
+            caller: AGENT,
+            cwd: join(base, folder),
+            reason: "cleanup",
+            targets: [{ path: dir, kind: "dir", rule: "nested-repos", reason: "holds a repository" }],
+        });
+    }
+
+    /** Row seams that fail the test when the window walks a tree itself. */
+    function noWalk(): Partial<ApprovalRowDeps> {
+        return {
+            measure: () => {
+                throw new Error("the window walked a tree that the pass had measured");
+            },
+            probeGit: async () => new Map(),
+            passRunning: () => false,
+        };
+    }
+
+    async function collect(rows: ReturnType<typeof approvalRows>): Promise<ApprovalItemUpdate[]> {
+        const seen: ApprovalItemUpdate[] = [];
+
+        for await (const update of rows.updates.read()) {
+            seen.push(update);
+        }
+
+        await rows.done;
+        return seen;
+    }
+
+    test("a request carries its bytes after the background pass", async () => {
+        const request = inPlaceRequest("measured");
+        const at = new Date("2026-10-31T12:00:00.000Z");
+        const result = await measureRmRequest(request.id, { now: () => at });
+
+        expect(result).toEqual({ measured: 1, fresh: 0, busy: false });
+        expect(loadRmMeasurements(request.id)?.items).toEqual([
+            expect.objectContaining({
+                path: request.targets[0]?.path,
+                at: at.toISOString(),
+                bytes: expect.any(Number),
+                empty: false,
+                folderStats: expect.objectContaining({ files: 2 }),
+            }),
+        ]);
+        expect(loadRmMeasurements(request.id)?.items[0]?.bytes).toBeGreaterThan(0);
+        // A second pass finds the saved numbers fresh and walks nothing.
+        expect(await measureRmRequest(request.id)).toEqual({ measured: 0, fresh: 1, busy: false });
+    });
+
+    test("approve uses the stored bytes and does not measure again", async () => {
+        const request = inPlaceRequest("stored");
+        await measureRmRequest(request.id);
+        const saved = loadRmMeasurements(request.id)?.items[0];
+        const rows = approvalRows(request, entriesOf(request), {
+            signal: new AbortController().signal,
+            deps: noWalk(),
+        });
+
+        expect(rows.items[0]).toMatchObject({ bytes: saved?.bytes, folderStats: { files: 2 } });
+        expect(rows.items[0]?.measuring).toBeUndefined();
+        expect(await collect(rows)).toEqual([]);
+    });
+
+    test("a row without a fresh size opens as measuring and gets its size after the window opened", async () => {
+        const request = inPlaceRequest("changed");
+        await measureRmRequest(request.id);
+        // A new entry at the top changes the folder's mtime: the saved size no longer describes it.
+        file(join(request.targets[0]?.path ?? "", "late.bin"));
+        let walks = 0;
+        const rows = approvalRows(request, entriesOf(request), {
+            signal: new AbortController().signal,
+            deps: {
+                ...noWalk(),
+                measure: async (target) => {
+                    walks++;
+                    return { path: target.path, location: target.path, at: "", mtimeMs: 0, bytes: 4096 };
+                },
+            },
+        });
+
+        expect(rows.items[0]).toMatchObject({ measuring: true });
+        expect(rows.items[0]?.bytes).toBeUndefined();
+        expect(await collect(rows)).toEqual([{ path: request.targets[0]?.path, bytes: 4096, measuring: false }]);
+        expect(walks).toBe(1);
+    });
+
+    test("the window follows a running pass instead of walking the same tree", async () => {
+        const request = inPlaceRequest("following");
+        let running = true;
+        const rows = approvalRows(request, entriesOf(request), {
+            signal: new AbortController().signal,
+            deps: { ...noWalk(), passRunning: () => running, followMs: 5 },
+        });
+        await measureRmRequest(request.id);
+        running = false;
+
+        expect(rows.items[0]).toMatchObject({ measuring: true });
+        expect(await collect(rows)).toEqual([
+            expect.objectContaining({ path: request.targets[0]?.path, measuring: false, bytes: expect.any(Number) }),
+        ]);
     });
 });

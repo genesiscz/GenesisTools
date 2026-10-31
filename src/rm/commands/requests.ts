@@ -10,6 +10,7 @@ import {
     listRmRequests,
     loadRmRequest,
     mayDenyRmRequest,
+    measureRmRequest,
     type RmRequest,
     type RmRequestTarget,
     recheckAfterWait,
@@ -23,11 +24,12 @@ import type { Command } from "commander";
 import pc from "picocolors";
 import {
     type ApproveEntry,
-    approvalItems,
     approvalRequestInfo,
+    approvalRows,
     approveDelete,
     approveRoots,
     denyRequest,
+    savedSizes,
     splitBySelection,
 } from "../lib/approve";
 import { type PersonAnswer, printRequestHint, type RunContext, requirePerson, runContext, shown } from "../lib/run";
@@ -236,8 +238,10 @@ export function registerRequestCommands(program: Command): void {
                 return;
             }
 
-            const items = await approvalItems(request, openEntries);
-            const info = approvalRequestInfo(request, items);
+            // The window opens now; the sizes not saved yet follow into it as they are measured.
+            const measuring = new AbortController();
+            const rows = approvalRows(request, openEntries, { signal: measuring.signal });
+            const info = approvalRequestInfo(request, rows.items);
             const who = info.asker ? (info.asker.session ?? info.asker.project ?? info.asker.agent) : "an agent";
             const verb =
                 request.kind === "delete"
@@ -249,12 +253,13 @@ export function registerRequestCommands(program: Command): void {
                     request,
                     openEntries,
                     ctx,
-                    items.map((item) => item.bytes)
+                    rows.items.map((item) => item.bytes)
                 ),
                 code: id,
                 request: info,
                 remember: rememberOptions(request.kind, request.caller),
-            });
+                updates: rows.updates,
+            }).finally(() => measuring.abort());
 
             if (!answer.approved) {
                 if (answer.deniedByPerson) {
@@ -321,6 +326,7 @@ export function registerRequestCommands(program: Command): void {
                 denied,
                 choices: answer.choices,
                 onRefused: (entry) => pending.push(entry.wanted),
+                sizes: savedSizes(request, ready),
             });
             const moved = ready.filter((entry) => !pending.includes(entry.wanted));
             // An unticked aside copy that could not go home stays pending, so its aside folder stays guarded.
@@ -333,6 +339,21 @@ export function registerRequestCommands(program: Command): void {
             saveApproved({ request, answer, approved: moved, denied, pending, batchId: batch?.id, ctx });
             kickDrainer(ctx.config);
             exitPendingFor(id, pending);
+        });
+
+    program
+        .command("measure")
+        .description(
+            `measure a delete request's paths and save the sizes with it (${toolCommand("rm")} starts this in the background)`
+        )
+        .argument("<id>", "the request id")
+        .action(async (id: string) => {
+            const result = await measureRmRequest(id);
+            out.println(
+                result.busy
+                    ? `Request ${id} is measured by another run.`
+                    : `Measured ${result.measured} path(s) of request ${id}; ${result.fresh} were still fresh.`
+            );
         });
 
     program

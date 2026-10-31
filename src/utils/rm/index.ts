@@ -23,6 +23,7 @@ export * from "./aside";
 export * from "./config";
 export * from "./item-facts";
 export * from "./ledger";
+export * from "./measure";
 export * from "./paths";
 export * from "./presets";
 export * from "./profiles";
@@ -119,4 +120,13 @@ export function kickDrainer(config: RmConfig, paths?: TrashPaths): void {
 
     const pid = spawnToolDetached(["rm", "drain", "--background"], { reparent: true });
     logger.debug({ pid }, "rm: drainer started");
+}
+
+/**
+ * Starts the measurement pass of a new delete request in the background (`tools rm measure <id>`): the asking run
+ * returns at once, and `tools rm approve` later reads the saved sizes instead of walking the trees again.
+ */
+export function startRmMeasurement(requestId: string): void {
+    const pid = spawnToolDetached(["rm", "measure", requestId], { reparent: true });
+    logger.debug({ pid, requestId }, "rm: measurement pass started");
 }

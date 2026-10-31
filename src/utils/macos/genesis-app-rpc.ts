@@ -1,7 +1,7 @@
 import { SafeJSON } from "@genesiscz/utils/json";
 import { logger } from "@genesiscz/utils/logger";
 import { installedGenesisAppLauncher } from "@genesiscz/utils/macos/genesis-app";
-import type { Subprocess } from "bun";
+import type { FileSink, Subprocess } from "bun";
 
 /**
  * Ask GenesisTools.app to do something as its own bundle identity.
@@ -70,6 +70,38 @@ export function isGenesisAppRpcAvailable(): boolean {
 export interface GenesisAppRpcOptions<T = unknown> {
     timeoutMs?: number;
     isResult?: (value: unknown) => value is T;
+    /**
+     * Messages for a method that keeps listening after its request (the rm window's `rm.item` row updates): each goes
+     * to the app's stdin as one JSON line, and stdin closes when the input ends or the reply came.
+     */
+    input?: AsyncIterable<Record<string, unknown>>;
+}
+
+/** Writes each message as a JSON line until the input ends or `stopped()` says the reply came, then closes stdin. */
+async function pumpInput(
+    sink: FileSink,
+    input: AsyncIterable<Record<string, unknown>>,
+    stopped: () => boolean,
+    method: string
+): Promise<void> {
+    try {
+        for await (const message of input) {
+            if (stopped()) {
+                break;
+            }
+
+            sink.write(`${SafeJSON.stringify(message)}\n`);
+            await sink.flush();
+        }
+    } catch (error) {
+        logger.debug({ method, error }, "GenesisTools.app RPC input stopped");
+    }
+
+    try {
+        await sink.end();
+    } catch (error) {
+        logger.debug({ method, error }, "GenesisTools.app RPC stdin already closed");
+    }
 }
 
 export async function genesisAppRpc<T>(
@@ -94,8 +126,13 @@ export async function genesisAppRpc<T>(
     const proc = Bun.spawn([launcher, "--rpc", request], {
         stdout: "pipe",
         stderr: "pipe",
-        stdin: "ignore",
+        stdin: opts.input ? "pipe" : "ignore",
     });
+    let replied = false;
+
+    if (opts.input && proc.stdin && typeof proc.stdin !== "number") {
+        void pumpInput(proc.stdin, opts.input, () => replied, method);
+    }
 
     let timedOut = false;
     const timer = setTimeout(() => {
@@ -108,6 +145,7 @@ export async function genesisAppRpc<T>(
             new Response(proc.stdout).text(),
             new Response(proc.stderr).text(),
         ]);
+        replied = true;
         const exitCode = await exitedOrLingering(proc);
 
         if (timedOut) {

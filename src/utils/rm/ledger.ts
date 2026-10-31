@@ -10,6 +10,7 @@ import type { RmCaller } from "./rules";
 export type RmLedgerAction =
     | "move"
     | "aside"
+    | "measure"
     | "return"
     | "drain"
     | "restore"
@@ -32,7 +33,7 @@ export interface RmLedgerEntry {
     requestId?: string;
     rule?: string;
     reason?: string;
-    /** Bytes moved (move, aside: measured after the rename) or reclaimed (drain). */
+    /** Bytes moved (move; aside before the measurement pass), measured (measure) or reclaimed (drain). */
     bytes?: number;
     /** Where an aside or trash move put it. */
     stored?: string;
@@ -254,6 +255,9 @@ export function totalRmLedger(entries: readonly RmLedgerEntry[], by: RmLedgerGro
         } else if (entry.action === "aside") {
             total.aside += bytes;
             total.items++;
+        } else if (entry.action === "measure" && entry.stored) {
+            // An aside copy's size, which the measurement pass finds after the move.
+            total.aside += bytes;
         } else if (entry.action === "drain") {
             total.reclaimed += bytes;
         } else if (entry.action === "refuse") {

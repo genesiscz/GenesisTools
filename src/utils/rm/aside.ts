@@ -24,14 +24,7 @@ import {
     saveRmRequest,
 } from "./requests";
 import type { RmCaller, RmTarget, RmVerdict } from "./rules";
-import {
-    measureBytes,
-    newBatchId,
-    type RenameHooks,
-    RmTargetChangedError,
-    renameVerified,
-    trashItemName,
-} from "./trash";
+import { newBatchId, type RenameHooks, RmTargetChangedError, renameVerified, trashItemName } from "./trash";
 
 /** The folder under the shared temp root each agent keeps its session scratch in. */
 export const AGENT_SCRATCH_DIRS: Readonly<Record<string, string>> = {
@@ -135,9 +128,9 @@ export function moveAside(options: MoveAsideOptions): AsideResult {
             continue;
         }
 
-        const bytes = measureBytes(stored);
-        result.moved.push({ ...requestTarget(input), stored, bytes });
-        appendRmLedger({ action: "aside", path: input.target.path, stored, rule: input.verdict.rule, bytes, caller });
+        // The size comes from the request's measurement pass (`tools rm measure`), so the asking run does not wait.
+        result.moved.push({ ...requestTarget(input), stored });
+        appendRmLedger({ action: "aside", path: input.target.path, stored, rule: input.verdict.rule, caller });
     }
 
     return result;

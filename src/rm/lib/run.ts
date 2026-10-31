@@ -31,9 +31,11 @@ import {
     recheckAfterWait,
     recoverAsideJournals,
     rmCallerFromRuntime,
+    startRmMeasurement,
     type TrashBatch,
 } from "@genesiscz/utils/rm";
 import pc from "picocolors";
+import { liveSizes } from "./approve";
 
 export interface RunContext {
     /** The settings this caller runs under: the saved config with the matching profiles applied. */
@@ -276,6 +278,13 @@ async function confirmAtTerminal(
     ctx: RunContext,
     options: ExecuteOptions
 ): Promise<Map<RmPlanItem, number>> {
+    // The window opens at once; each size follows into it when its walk is done.
+    const measuring = new AbortController();
+    const present = asked.filter((item) => item.target.kind !== "missing");
+    const updates = liveSizes(
+        present.map((item) => item.target.path),
+        { signal: measuring.signal }
+    );
     const outcome = await confirmByPerson({
         title: `Delete ${asked.length === 1 ? "1 item" : `${asked.length} items`} that no rule allows?`,
         lines: asked.map((item) => `${item.target.path}  (${item.verdict.reason})`),
@@ -292,11 +301,12 @@ async function confirmAtTerminal(
             items: asked.map((item) => ({
                 path: item.target.path,
                 kind: item.target.kind,
-                bytes: item.target.kind === "missing" ? undefined : measureBytes(item.target.path),
+                measuring: item.target.kind === "missing" ? undefined : true,
                 reason: approvalItemReason(item.verdict.rule, item.verdict.reason),
             })),
         },
-    });
+        updates,
+    }).finally(() => measuring.abort());
     const confirmed = new Map<RmPlanItem, number>();
 
     if (!outcome.approved) {
@@ -370,12 +380,12 @@ function requestForAsked(
         reason: options.reason ?? null,
     });
 
+    // The sizes are measured in the background, so `approve` opens its window without walking the trees.
+    startRmMeasurement(request.id);
+
     if (!options.json) {
         if (aside && aside.moved.length > 0) {
-            const bytes = aside.moved.reduce((sum, t) => sum + (t.bytes ?? 0), 0);
-            out.println(
-                pc.yellow(`Moved ${aside.moved.length} path(s) aside (${formatBytes(bytes)}) to ${aside.dir}.`)
-            );
+            out.println(pc.yellow(`Moved ${aside.moved.length} path(s) aside to ${aside.dir}.`));
             out.println(pc.dim("  They wait there for the user: approve deletes them, deny puts them back."));
         }
 
@@ -419,7 +429,7 @@ export function printRequestHint(id: string, count: number): void {
 /** For a verb only a person may run (approve, roots add, config set): ask, and log how it was answered. */
 export async function requirePerson(
     ctx: RunContext,
-    prompt: Pick<ApprovalPrompt, "title" | "lines" | "code" | "request" | "remember">
+    prompt: Pick<ApprovalPrompt, "title" | "lines" | "code" | "request" | "remember" | "updates">
 ): Promise<PersonAnswer> {
     const outcome = await confirmByPerson({ ...prompt, caller: ctx.caller, approval: ctx.base.approval });
 

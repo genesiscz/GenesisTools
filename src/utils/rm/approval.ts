@@ -1,7 +1,8 @@
 import { homedir } from "node:os";
 import { harnessLabel, harnessOfRuntimeAgent } from "@genesiscz/utils/ai/providers/harness-index";
 import { isInteractive } from "@genesiscz/utils/cli";
-import { logger } from "@genesiscz/utils/logger";
+import { formatBytes } from "@genesiscz/utils/format";
+import { logger, out } from "@genesiscz/utils/logger";
 import { type GenesisAppRpcOutcome, genesisAppRpc } from "@genesiscz/utils/macos/genesis-app-rpc";
 import * as p from "@genesiscz/utils/prompts/p";
 import { type RmApproval, rmConfigPath } from "./config";
@@ -70,6 +71,74 @@ export interface ApprovalItem {
     folderStats?: FolderStats;
     /** Other pending requests naming the same path; an approval decides them too. */
     alsoIn?: string[];
+    /** Its size is still being measured: the window shows "Measuring…" until an update brings it. */
+    measuring?: boolean;
+}
+
+/** A change to one row after the window opened: its size once measured, its git facts once probed. */
+export interface ApprovalItemUpdate {
+    /** The row's `path`. */
+    path: string;
+    bytes?: number;
+    empty?: boolean;
+    folderStats?: FolderStats;
+    git?: ItemGit;
+    /** False once the row's size is in, or cannot be measured. */
+    measuring?: boolean;
+}
+
+/**
+ * The row changes that arrive after the window opened, in the order they finish. Every reader gets all of them from
+ * the start, so a window that is asked again (its process ended) still shows every size.
+ */
+export class ApprovalUpdates {
+    private readonly seen: ApprovalItemUpdate[] = [];
+    private waiting: Array<() => void> = [];
+    private closed = false;
+
+    push(update: ApprovalItemUpdate): void {
+        if (this.closed) {
+            return;
+        }
+
+        this.seen.push(update);
+        this.wakeReaders();
+    }
+
+    /** No more updates come; readers end after the last one. */
+    close(): void {
+        this.closed = true;
+        this.wakeReaders();
+    }
+
+    async *read(): AsyncGenerator<ApprovalItemUpdate> {
+        let next = 0;
+
+        while (true) {
+            while (next < this.seen.length) {
+                const update = this.seen[next++];
+
+                if (update) {
+                    yield update;
+                }
+            }
+
+            if (this.closed) {
+                return;
+            }
+
+            await new Promise<void>((resolve) => this.waiting.push(resolve));
+        }
+    }
+
+    private wakeReaders(): void {
+        const waiting = this.waiting;
+        this.waiting = [];
+
+        for (const wake of waiting) {
+            wake();
+        }
+    }
 }
 
 /** The agent that asked, as the window names it. */
@@ -115,6 +184,8 @@ export interface ApprovalPrompt {
     request?: ApprovalRequestInfo;
     /** The "remember" choices this request can carry out; absent: the window offers none. */
     remember?: ApprovalRememberOption[];
+    /** Row changes measured after the window opened (`request` rows marked `measuring`); absent: rows are final. */
+    updates?: ApprovalUpdates;
 }
 
 /** The app's window answered (`outcome`), or there is no app that offers it (`missing`). */
@@ -130,8 +201,21 @@ export interface ApprovalDeps {
 
 const MAX_DIALOG_LINES = 15;
 
+/** On a terminal the sizes print under the note as they are measured, before the code is asked for. */
+async function printUpdates(updates: ApprovalUpdates): Promise<void> {
+    for await (const update of updates.read()) {
+        if (update.bytes !== undefined) {
+            out.println(`  ${update.path}  ${formatBytes(update.bytes)}`);
+        }
+    }
+}
+
 async function askTyped(prompt: ApprovalPrompt): Promise<boolean> {
     p.note(prompt.lines.join("\n"), prompt.title);
+
+    if (prompt.updates) {
+        await printUpdates(prompt.updates);
+    }
 
     try {
         const answer = await p.text({ message: `Type ${prompt.code} to confirm, anything else cancels` });
@@ -349,7 +433,19 @@ export function appApproveParams(prompt: ApprovalPrompt, cwd = process.cwd()): R
         params.remember = prompt.remember;
     }
 
+    // The window reads `rm.item` lines from its stdin until EOF; without this flag it never reads stdin.
+    if (prompt.updates) {
+        params.live = true;
+    }
+
     return params;
+}
+
+/** The `rm.item` lines the window reads from its stdin, one per row change. */
+async function* updateLines(updates: ApprovalUpdates): AsyncGenerator<Record<string, unknown>> {
+    for await (const update of updates.read()) {
+        yield { method: "rm.item", params: update };
+    }
 }
 
 /** The window's give-up reply ("no answer within 170s") is a deny no person pressed. */
@@ -396,6 +492,7 @@ async function askApp(prompt: ApprovalPrompt): Promise<AppApproval> {
     const outcome = await genesisAppRpc<RmApproveReply>("rm.approve", appApproveParams(prompt), {
         timeoutMs: APP_TIMEOUT_MS,
         isResult: isRmApproveReply,
+        input: prompt.updates ? updateLines(prompt.updates) : undefined,
     });
     const answer = appApprovalFromReply(outcome);
     logger.debug({ answer }, "rm: approval window answered");

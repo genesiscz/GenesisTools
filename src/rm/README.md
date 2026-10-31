@@ -16,6 +16,7 @@ tools rm drain [--now]              # drain due batches now (--now: all of them)
 tools rm requests                   # what agents asked the user to confirm
 tools rm request-root <dir> --reason "<why>"   # ask the user to trust a folder
 tools rm deny <id>                  # close a request and put its aside paths back (an agent may cancel its own)
+tools rm measure <id>               # measure a request's paths and save the sizes (tools rm starts it in the background)
 tools rm log [--since 1d] [--agent codex] [--session <id>] [--by agent|session|day|rule|action]   # audit log
 tools rm profiles                   # settings per agent, session or project, and what applies to you
 
@@ -140,6 +141,14 @@ The window answers more than allow or deny, and `approve` does what it picked:
   and printed to the same session the next time it asks to delete that path.
 
 The typed code and the dialog answer for all paths, to the trash, just this once.
+
+The window opens before any tree is walked. When `tools rm` opens a delete request it starts `tools rm measure <id>`
+in the background, which saves each path's size, emptiness and file count to
+`~/.genesis-tools/rm/requests/measured/<id>.json` with the top path's mtime. `approve` shows a saved size at once
+while that mtime is unchanged; a row without one says "Measuring…" until its size arrives (from the pass that still
+runs, or walked by `approve` itself), and the total under the rows appears when every size is in. The git facts
+follow the same way. The typed code prints the sizes as they come; the macOS dialog cannot change once it shows, so
+it lists only the sizes known when it opened.
 
 ## The trash and the drain
 

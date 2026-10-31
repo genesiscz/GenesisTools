@@ -19,7 +19,7 @@ export interface RmRequestTarget {
     reason: string;
     /** Where an aside move put it, while it waits for the user. */
     stored?: string;
-    /** Its allocated size, measured after the aside move. */
+    /** Its allocated size, measured after the aside move by requests made before the measurement pass. */
     bytes?: number;
 }
 
