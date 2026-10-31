@@ -10,7 +10,6 @@ import { SafeJSON } from "@genesiscz/utils/json";
 import { getLogger } from "@genesiscz/utils/logger";
 import type { ThreadTurnsListParams, Turn } from "./_generated/protocol";
 import { CodexAccountBinding } from "./account";
-import { isOwnBusCommand, isReadOnlyCommand } from "./bus-approval";
 import { type ApprovalRefusal, parseControlBody, refusalNotice } from "./control";
 import {
     fullRequestCommand,
@@ -1428,59 +1427,9 @@ test("a native subagent's turns and usage never become the worker's own", async 
     });
 });
 
-describe("an ask worker's own bus commands", () => {
+describe("an ask worker's requests all go to the lead", () => {
     const own = (args: string) => `/bin/zsh -lc "tools agents ${args} --session parent-123"`;
-
-    test("the seeded verbs, run as the worker in its swarm, are its own", () => {
-        const bus = { agentName: "codex_reviewer", session: "parent-123" };
-
-        expect(isOwnBusCommand(own("message --from codex_reviewer --to lead --body 'received; starting'"), bus)).toBe(
-            true
-        );
-        expect(isOwnBusCommand(own("login --agent-name codex_reviewer --once"), bus)).toBe(true);
-        expect(isOwnBusCommand(own("message --from codex_reviewer --reply 0007 --body='done, see x=1'"), bus)).toBe(
-            true
-        );
-        expect(
-            isOwnBusCommand(
-                "tools agents request --from codex_reviewer --to lead --body plan --session parent-123",
-                bus
-            )
-        ).toBe(true);
-    });
-
-    test("only absolute system shells may wrap an automatically approved script", () => {
-        const bus = { agentName: "codex_reviewer", session: "parent-123" };
-        const script = "tools agents login --agent-name codex_reviewer --once --session parent-123";
-        for (const shell of ["/tmp/bash", "./zsh", "/repo/sh", "bash", "zsh", "sh"]) {
-            expect(isOwnBusCommand(shell + " -lc '" + script + "'", bus)).toBe(false);
-            expect(isReadOnlyCommand(shell + " -lc 'cat README.md'")).toBe(false);
-        }
-        for (const shell of ["/bin/sh", "/bin/bash", "/bin/zsh"]) {
-            expect(isOwnBusCommand(shell + " -lc '" + script + "'", bus)).toBe(true);
-            expect(isReadOnlyCommand(shell + " -lc 'cat README.md'")).toBe(true);
-        }
-    });
-
-    test("anything chained, expanded, redirected, another identity or another swarm is not", () => {
-        const bus = { agentName: "codex_reviewer", session: "parent-123" };
-
-        for (const command of [
-            own("message --from codex_reviewer --to lead --body x; touch /tmp/pwned"),
-            own("message --from codex_reviewer --to lead --body x && echo hi"),
-            own("message --from codex_reviewer --to lead --body x > /tmp/out"),
-            `/bin/zsh -lc "tools agents message --from codex_reviewer --to lead --body \\"$(id)\\" --session parent-123"`,
-            own("message --from codex_reviewer --to lead --body `id`"),
-            own("message --from lead --to codex_reviewer --body x"),
-            own("login --agent-name codex_reviewer --once --observer"),
-            own("message --from codex_reviewer --to lead --body x --session other"),
-            "tools agents message --from codex_reviewer --to lead --body x",
-            "tools hub message --from codex_reviewer --session parent-123",
-            own("message --from codex_reviewer --to lead --body x\nrm -rf ~"),
-        ]) {
-            expect({ command, own: isOwnBusCommand(command, bus) }).toEqual({ command, own: false });
-        }
-    });
+    const zsh = (script: string) => `/bin/zsh -lc '${script}'`;
 
     test("the runtime holds its own bus command for an explicit lead decision", async () => {
         const home = mkdtempSync(join(tmpdir(), "gt-codex-runtime-bus-approval-"));
@@ -1528,127 +1477,6 @@ describe("an ask worker's own bus commands", () => {
             await expect(fromSubagent).resolves.toEqual({ decision: "decline" });
             await expect(other).resolves.toEqual({ decision: "decline" });
         });
-    });
-});
-describe("an ask worker's read-only commands", () => {
-    const zsh = (script: string) => `/bin/zsh -lc '${script}'`;
-
-    test.each(["constructor", "toString", "toLocaleString", "__proto__", "valueOf", "hasOwnProperty"])(
-        "an inherited allowlist name must require approval: %s",
-        (name) => {
-            for (const command of [
-                name,
-                `${name} payload`,
-                zsh(`${name} payload`),
-                `cat README.md && ${name} payload`,
-            ]) {
-                expect(isReadOnlyCommand(command)).toBe(false);
-            }
-        }
-    );
-
-    test("reads, searches and read-only git need no approval, as Codex's own safe set intends", () => {
-        for (const command of [
-            zsh("cat CLAUDE.md"),
-            zsh("sed -n '\"'\"'140,410p'\"'\"' src/a.ts"),
-            zsh("nl -ba src/a.ts | head -430\nnl -ba README.md | head -75"),
-            `/bin/zsh -lc "rg -n 'background|openBackground' src/a.test.ts | head -40"`,
-            zsh(
-                "git diff --no-ext-diff --no-textconv --stat\ngit diff --no-ext-diff --no-textconv --cached --name-only\ngit branch --show-current"
-            ),
-            zsh("git show --no-ext-diff --no-textconv origin/feature:src/a.ts | sed -n 315,380p"),
-            zsh("cd src && ls -la && wc -l a.ts"),
-            zsh("find src -name '\"'\"'*.ts'\"'\"' -newer a.ts"),
-            // Backslashes in a double-quoted wrapper and discarded streams remain read-only.
-            `/bin/zsh -lc "rg -n 'parse\\\\(' src/utils/json.ts | head -15"`,
-
-            zsh("ls missing 2>/dev/null\ngit log --no-ext-diff --no-textconv --oneline -5 2>&1 | head"),
-            zsh("cat ~/notes.md src/\\(a\\).ts"),
-        ]) {
-            expect({ command, readOnly: isReadOnlyCommand(command) }).toEqual({ command, readOnly: true });
-        }
-    });
-
-    test("a write, a program run, a redirection, an expansion or a background job still asks the lead", () => {
-        for (const command of [
-            zsh("cat a.ts > b.ts"),
-            zsh("sed -i '\"'\"''\"'\"' s/a/b/ a.ts"),
-            zsh("sed -n '\"'\"'w out'\"'\"' a.ts"),
-            zsh("sed -n 1,5p -i a.ts"),
-            zsh("rg --pre ./run.sh x src"),
-            `/bin/zsh -lc "rg -n 'WebSocket|Bun.serve' src/utils/chrome-devtools/*.test.ts | head -40"`,
-            zsh("git -c core.pager=./run.sh log"),
-            zsh("git diff --output=patch.diff"),
-            zsh("git grep --open-files-in-pager=./run.sh pattern"),
-            zsh("git grep --no-textconv -O./run.sh pattern"),
-            zsh("git diff --ext-diff"),
-            zsh("git show --textconv"),
-            zsh("git show HEAD"),
-            zsh("git cat-file --filters HEAD:src/a.ts"),
-            zsh("git log --no-ext-diff --no-textconv --exec=./run.sh"),
-            zsh("git branch new-branch"),
-            zsh("git commit -m x"),
-            zsh("find . -name x -delete"),
-            zsh("find . -exec rm {} ;"),
-            zsh("cat a.ts\nrm -rf src"),
-            zsh("cat a.ts & touch x"),
-            `/bin/zsh -lc "cat $(echo a.ts)"`,
-            zsh("cat `echo a.ts`"),
-            zsh("bun scripts/test.ts"),
-            zsh("FOO=1 cat a.ts"),
-            zsh("cat 'unclosed"),
-            zsh("cat a.ts 2>err.log"),
-            zsh("cat a.ts >> out.ts"),
-            zsh("cat a.ts >/dev/nullx"),
-            zsh("cat <(echo a.ts)"),
-            zsh("cat a.ts 2>/dev/null; rm b.ts"),
-            `/bin/zsh -lc "cat \\"$HOME/a.ts\\""`,
-            zsh("cat a.ts &"),
-            "",
-        ]) {
-            expect({ command, readOnly: isReadOnlyCommand(command) }).toEqual({ command, readOnly: false });
-        }
-    });
-
-    test.each([
-        "find . -ex\\\nec /bin/sh -c 'touch /tmp/approval-bypass' ';'",
-        'find . "-ex\\\nec" /bin/sh -c "touch /tmp/approval-bypass" ";"',
-        "rg --p\\\nre=./runner needle .",
-        'rg "--p\\\nre=./runner" needle .',
-        "find . -ex\\\r\nec /bin/sh -c 'touch /tmp/approval-bypass' ';'",
-        "rg --p\\\r\nre=./runner needle .",
-    ])("shell line continuations cannot conceal dangerous options: %s", (script) => {
-        expect(isReadOnlyCommand(script)).toBe(false);
-        const quoted = "'" + script.replaceAll("'", "'\"'\"'") + "'";
-        expect(isReadOnlyCommand(`/bin/sh -c ${quoted}`)).toBe(false);
-        expect(isReadOnlyCommand(`/bin/zsh -lc ${quoted}`)).toBe(false);
-    });
-
-    test("ordinary escapes and quoted newlines still qualify as read-only", () => {
-        expect(isReadOnlyCommand("cat with\\ space.ts")).toBe(true);
-        expect(isReadOnlyCommand("cat 'first\nsecond'")).toBe(true);
-        expect(isReadOnlyCommand('rg "needle" README.md')).toBe(true);
-    });
-
-    test("unquoted globs cannot introduce executable options from filenames", () => {
-        const cwd = mkdtempSync(join(tmpdir(), "gt-approval-glob-"));
-        writeFileSync(join(cwd, "--pre=sh"), "");
-        writeFileSync(join(cwd, "payload"), "fixture data only");
-        const expansion = Bun.spawnSync(["/bin/sh", "-c", "printf '%s\\n' *"], { cwd, env: env.getProcessEnv() });
-        expect(expansion.exitCode).toBe(0);
-        expect(expansion.stdout.toString()).toContain("--pre=sh");
-        for (const command of ["rg needle *", "rg needle ?", "rg needle [a-z]*", zsh("rg needle *")]) {
-            expect(isReadOnlyCommand(command)).toBe(false);
-        }
-        expect(isReadOnlyCommand("rg -g '*.ts' needle src")).toBe(true);
-        expect(isReadOnlyCommand("cat literal\\*name")).toBe(true);
-    });
-
-    test("shell comments cannot hide a write behind unmatched quotes", () => {
-        expect(isReadOnlyCommand("cat README.md # '\ntouch /tmp/approval-bypass\n# '")).toBe(false);
-        expect(isReadOnlyCommand('cat README.md # "\ntouch /tmp/approval-bypass\n# "')).toBe(false);
-        expect(isReadOnlyCommand("cat 'a#b.ts'")).toBe(true);
-        expect(isReadOnlyCommand("cat a\\#b.ts")).toBe(true);
     });
 
     test("the runtime holds a read-only command and names file changes for the lead", async () => {

@@ -24,7 +24,7 @@ import {
 } from "node:fs";
 import { homedir } from "node:os";
 import { basename, dirname, isAbsolute, join, relative, resolve, sep } from "node:path";
-import { strictShellWords } from "@app/codex/lib/bus-approval";
+import { strictShellWords } from "@app/codex/lib/shell-words";
 import { execTool } from "@genesiscz/utils/cli";
 import { SafeJSON } from "@genesiscz/utils/json";
 import { reviewScratch } from "./run";

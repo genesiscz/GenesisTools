@@ -328,18 +328,10 @@ With `--write ask`, Codex uses its `untrusted` approval policy: commands outside
 set, sandbox escalations, and file-change approval requests pause and are forwarded to `lead` as `approval_request`
 messages. Resolve one with `tools codex approve --name <n> --request <id>` or `deny`. Codex 0.162.1 has no protocol
 mode that pauses its built-in trusted read-only commands; `untrusted` is its strictest supported command policy.
-The one exception the daemon accepts itself is the worker's own seeded bus command (`tools agents message`, `login`,
-`request` or `leave` as `codex_<name>` with its own `--session`, from its own thread, holding no shell operator,
-redirection or expansion), recorded in the event log as `approval/auto-accepted`. Without it every `ask` worker's
-first action, its "received; starting" report, waited for the lead.
-
-The daemon also accepts a command that only reads (`isReadOnlyCommand` in `lib/bus-approval.ts`): every segment of
-the script is `cat`, `head`, `tail`, `wc`, `nl`, `ls`, `pwd`, `stat`, `cd`, `grep`, `rg` (not `--pre`), `find`
-(not `-exec` or `-delete`), `sed -n '<a>,<b>p'`, or a read-only `git` subcommand (no `-c`, no `--output`), with no
-redirection, expansion or background job. Codex's own read-only set does not parse a `zsh -lc` script, so before
-this an `ask` worker sent every `cat` and `sed -n` to the lead (44 approvals in one 9-minute turn, 2026-10-14). A
-file-change approval names the files it writes (`edit src/a.ts, README.md`); the request itself carries only an
-item id.
+The daemon accepts no request itself: the worker's own bus commands (`tools agents message`, `login`, `request`,
+`leave`) and read-only commands go to the lead like any other, because an automatic approval of a parsed shell
+script is only as safe as its parser. A file-change approval names the files it writes (`edit src/a.ts, README.md`);
+the request itself carries only an item id.
 
 The lead reads what a file change would write before it answers. The daemon keeps each in-flight `fileChange` item's
 `changes` (the whole new file for `add`, the removed file for `delete`, a unified diff for `update`, replaced by
