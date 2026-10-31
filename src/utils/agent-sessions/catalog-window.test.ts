@@ -534,6 +534,8 @@ test("a catalog with maxDiscoveryAgeMs reuses a recent refresh of the same scope
     const root = mkdtempSync(join(tmpdir(), "history-catalog-fresh-"));
     const id = "11111111-2222-4333-8444-000000000021";
     session(root, id, HOUR);
+    const older = "11111111-2222-4333-8444-000000000022";
+    session(root, older, 24.5 * HOUR);
     const database = new Database(":memory:");
     initializeCompactHistorySchema(database);
     const stamps = new Map<string, number>();
@@ -550,7 +552,7 @@ test("a catalog with maxDiscoveryAgeMs reuses a recent refresh of the same scope
                 return claudeHistoryReader.discover(roots, options);
             },
         },
-        now: () => new Date(NOW),
+        now: () => new Date(NOW + clock - 1_000_000),
         freshness: {
             age: (key) => (stamps.has(key) ? clock - (stamps.get(key) ?? 0) : null),
             touch: (key) => {
@@ -566,12 +568,18 @@ test("a catalog with maxDiscoveryAgeMs reuses a recent refresh of the same scope
 
         clock += 10_000;
         const reused = await service.catalog(
-            { excludeAgents: true, mtimeFrom: NOW - 24 * HOUR },
+            { excludeAgents: true, mtimeFrom: NOW + 10_000 - 24 * HOUR },
             { maxDiscoveryAgeMs: 30_000 }
         );
         expect(walks).toBe(1);
         expect(reused.metadata.map((entry) => entry.nativeId)).toEqual([id]);
         expect(reused.report.parsed).toBe(0);
+        const wider = await service.catalog(
+            { excludeAgents: true, mtimeFrom: NOW - 24.9 * HOUR },
+            { maxDiscoveryAgeMs: 30_000 }
+        );
+        expect(walks).toBe(1);
+        expect(wider.metadata.map((entry) => entry.nativeId)).toContain(older);
 
         // Another scope is another stamp.
         await service.catalog({ agentsOnly: true }, { maxDiscoveryAgeMs: 30_000 });

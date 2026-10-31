@@ -424,19 +424,26 @@ export class HistoryService {
         }
 
         const { freshness } = this.options;
+        // A rolling cutoff moves on every poll. Group windows by their age in hours, and refresh
+        // an extra two hours so every cutoff in the same group is covered by that refresh.
+        const hour = 60 * 60 * 1_000;
+        const now = this.options.now?.().getTime() ?? Date.now();
+        const windowHours = filters.mtimeFrom === undefined ? null : Math.floor((now - filters.mtimeFrom) / hour);
+        const refreshFrom = windowHours === null ? undefined : now - (windowHours + 2) * hour;
         const freshnessKey = SafeJSON.stringify([
             this.options.providerId,
             Boolean(filters.excludeAgents),
             Boolean(filters.agentsOnly),
             filters.project ?? null,
-            filters.mtimeFrom ?? null,
+            windowHours,
             filters.newest ?? null,
             filters.limit ?? null,
             this.options.roots,
             ...(filters.filePaths === undefined ? [] : [[...filters.filePaths].sort()]),
         ]);
         const age = options.maxDiscoveryAgeMs === undefined ? null : (freshness?.age(freshnessKey) ?? null);
-        const recent = age !== null && options.maxDiscoveryAgeMs !== undefined && age < options.maxDiscoveryAgeMs;
+        const recent =
+            age !== null && age >= 0 && options.maxDiscoveryAgeMs !== undefined && age < options.maxDiscoveryAgeMs;
         let synchronized: { report: NativeIndexSyncResult; reindexed: boolean };
         const running =
             freshness && options.maxDiscoveryAgeMs !== undefined && options.maxDiscoveryAgeMs > 0
@@ -465,7 +472,7 @@ export class HistoryService {
             logger.trace({ provider: this.options.providerId }, "[history] listing joins a refresh in flight");
             synchronized = await running;
         } else {
-            const refresh = this.refreshListing({ ...filters, filePaths: logicalPaths });
+            const refresh = this.refreshListing({ ...filters, mtimeFrom: refreshFrom, filePaths: logicalPaths });
             if (freshness) {
                 refreshesInFlight.set(freshnessKey, refresh);
             }
