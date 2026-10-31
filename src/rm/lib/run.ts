@@ -107,7 +107,7 @@ export async function executePlan(
             return result;
         }
 
-        const waiting = listBatches();
+        const waiting = listBatches().filter((batch) => !batch.incomplete);
         const total = [...sizes.values()].reduce((sum, size) => sum + size, 0);
         out.println(pc.dim(`Dry run: nothing moved. ${formatBytes(total)} would leave the disk.`));
 

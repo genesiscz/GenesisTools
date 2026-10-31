@@ -44,9 +44,10 @@ export function registerTrashCommands(program: Command): void {
 
             for (const batch of rows) {
                 const size = batch.bytes === null ? "" : ` ${formatBytes(batch.bytes)}`;
-                out.println(
-                    `${pc.bold(batch.id)} ${batch.items.length} item(s)${size} ${pc.dim(`drain ${dueIn(batch.drainAfter)}`)}`
-                );
+                const drain = batch.incomplete
+                    ? pc.yellow("incomplete: its run stopped; never drained, restore it")
+                    : pc.dim(`drain ${dueIn(batch.drainAfter)}`);
+                out.println(`${pc.bold(batch.id)} ${batch.items.length} item(s)${size} ${drain}`);
 
                 for (const item of batch.items) {
                     out.println(pc.dim(`  ${item.original}`));
@@ -69,6 +70,10 @@ export function registerTrashCommands(program: Command): void {
 
             for (const skip of result.skipped) {
                 out.println(pc.yellow(`kept in the trash ${skip.path}: ${skip.reason}`));
+            }
+
+            for (const path of result.notMoved) {
+                out.println(pc.dim(`never moved, still in place ${path}`));
             }
 
             process.exitCode = result.skipped.length > 0 ? 1 : 0;
@@ -95,7 +100,12 @@ export function registerTrashCommands(program: Command): void {
                 out.println(`  ${progress.path}  ${formatBytes(progress.bytes)}  ${pc.dim(progress.elapsed)}`);
             const swept = await sweepOrphans({ config, onItem });
             const drained = await drainDue({ config, force: flags.now, onItem });
-            const left = listBatches().length;
+            const left = listBatches().filter((batch) => !batch.incomplete).length;
+
+            for (const entry of swept.held) {
+                out.println(pc.yellow(`kept ${entry.id}: ${entry.reason}`));
+            }
+
             out.println(
                 `Drained ${drained.batches + swept.batches} batch(es), ${formatBytes(drained.bytes + swept.bytes)} freed in ${elapsed()}.` +
                     (left > 0 ? pc.dim(` ${left} batch(es) still in their grace period (--now drains them).`) : "")

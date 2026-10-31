@@ -16,6 +16,7 @@ import {
 } from "node:fs";
 import { tmpdir } from "node:os";
 import { join } from "node:path";
+import { SafeJSON } from "@genesiscz/utils/json";
 import {
     type AppApproval,
     type ApprovalDeps,
@@ -1190,5 +1191,125 @@ describe("security review fixes: a typed code is not proof of a person", () => {
         expect(typed).toMatchObject({ approved: true, via: "tty" });
         expect(agent.approved).toBe(false);
         expect(calls).toEqual(["typed"]);
+    });
+});
+
+describe("crash safety: the record comes before the move", () => {
+    let crashConfig: RmConfig;
+    let crashPaths: TrashPaths;
+
+    beforeAll(() => {
+        crashConfig = { ...config, trashRoot: join(base, "crash", "GenesisTools", "rm") };
+        crashPaths = { batchesDir: join(base, "crash-state", "batches"), lockPath: join(base, "crash-state", "lock") };
+    });
+
+    /** Runs `body` in a child bun that SIGKILLs itself in the second `beforeRename`: a crash, no finally runs. */
+    function crashOnSecondMove(body: string, args: string[]): number {
+        const script = file(
+            join(dir("crash-scripts"), `${Bun.hash(body).toString(16)}.ts`),
+            [
+                `import * as rm from ${SafeJSON.stringify(join(import.meta.dir, "index.ts"))};`,
+                "let renames = 0;",
+                "const hooks = { beforeRename: () => { renames++; if (renames === 2) process.kill(process.pid, 'SIGKILL'); } };",
+                "const args = process.argv.slice(2);",
+                body,
+            ].join("\n")
+        );
+        const proc = Bun.spawnSync([process.execPath, script, ...args], { env: process.env, stderr: "pipe" });
+
+        expect(proc.signalCode).toBe("SIGKILL");
+        return proc.pid;
+    }
+
+    test("a crash between moves keeps every file: no drain, the sweep keeps the folder, restore brings it back", async () => {
+        const first = file(join(dir("crash-trash"), "first.txt"), "one");
+        const second = file(join(dir("crash-trash"), "second.txt"), "two");
+        const pid = crashOnSecondMove(
+            [
+                "const [config, paths, ...targets] = args;",
+                "rm.moveToTrash(targets.map((path) => ({ target: rm.resolveTarget(path, '/'), rule: 'test' })), {",
+                "    config: JSON.parse(config), caller: null, graceMinutes: 0, paths: JSON.parse(paths), hooks,",
+                "});",
+            ].join("\n"),
+            [SafeJSON.stringify(crashConfig), SafeJSON.stringify(crashPaths), first, second]
+        );
+
+        expect(existsSync(first)).toBe(false);
+        expect(existsSync(second)).toBe(true);
+        const claim = readdirSync(crashPaths.batchesDir).find((name) => name.endsWith(`.json.restoring-${pid}`));
+        const id = claim?.split(".json.")[0] ?? "";
+
+        expect(id).not.toBe("");
+        expect(listBatches(crashPaths)).toEqual([]);
+        expect((await drainDue({ config: crashConfig, paths: crashPaths, force: true })).items).toBe(0);
+
+        const swept = await sweepOrphans({ config: crashConfig, paths: crashPaths, minAgeMs: 0 });
+        const record = SafeJSON.parse(readFileSync(join(crashPaths.batchesDir, `${id}.json`), "utf8"));
+
+        expect(swept.batches).toBe(0);
+        expect(swept.held.map((entry) => entry.id)).toEqual([id]);
+        // An older reader drains and restores `items`; the incomplete record has none, so it reads no batch.
+        expect(record.items).toBeUndefined();
+        expect(record.planned.map((item: { original: string }) => item.original)).toEqual([first, second]);
+        expect(listBatches(crashPaths).map((batch) => [batch.id, batch.incomplete])).toEqual([[id, true]]);
+        expect((await drainDue({ config: crashConfig, paths: crashPaths, force: true })).items).toBe(0);
+        expect(existsSync(join(crashConfig.trashRoot, id))).toBe(true);
+
+        const restored = restoreBatch(id, { config: crashConfig, paths: crashPaths });
+
+        expect(restored).toEqual({ restored: [first], skipped: [], notMoved: [second] });
+        expect(readFileSync(first, "utf8")).toBe("one");
+        expect(readFileSync(second, "utf8")).toBe("two");
+        expect(listBatches(crashPaths)).toEqual([]);
+    });
+
+    test("while the producer moves, the drain sees nothing, the sweep keeps the folder and a restore refuses", async () => {
+        const first = file(join(dir("live-trash"), "first.txt"), "one");
+        const second = file(join(dir("live-trash"), "second.txt"), "two");
+        const running: Array<Promise<unknown>> = [];
+        let renames = 0;
+        let refusal = "";
+        const batch = moveToTrash(
+            [first, second].map((path) => ({ target: resolveTarget(path, base), rule: "test" })),
+            {
+                config: crashConfig,
+                caller: null,
+                graceMinutes: 0,
+                paths: crashPaths,
+                hooks: {
+                    beforeRename: () => {
+                        renames++;
+
+                        if (renames !== 2) {
+                            return;
+                        }
+
+                        const id = readdirSync(crashPaths.batchesDir)
+                            .find((name) => name.endsWith(`.json.restoring-${process.pid}`))
+                            ?.split(".json.")[0];
+
+                        running.push(drainDue({ config: crashConfig, paths: crashPaths, force: true }));
+                        running.push(sweepOrphans({ config: crashConfig, paths: crashPaths, minAgeMs: 0 }));
+                        try {
+                            restoreBatch(id ?? "", { config: crashConfig, paths: crashPaths });
+                        } catch (error) {
+                            refusal = error instanceof Error ? error.message : String(error);
+                        }
+                    },
+                },
+            }
+        );
+        const [drained, swept] = await Promise.all(running);
+
+        expect(drained).toMatchObject({ items: 0 });
+        expect(swept).toMatchObject({ batches: 0, held: [{ id: batch?.id }] });
+        expect(refusal).toMatch(/still moving/);
+        expect(batch?.items.map((item) => item.original)).toEqual([first, second]);
+        expect(batch?.items.every((item) => existsSync(item.stored))).toBe(true);
+        expect(readdirSync(crashPaths.batchesDir)).toEqual([`${batch?.id}.json`]);
+        expect(restoreBatch(batch?.id ?? "", { config: crashConfig, paths: crashPaths }).restored).toEqual([
+            first,
+            second,
+        ]);
     });
 });

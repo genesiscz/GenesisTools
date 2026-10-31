@@ -54,6 +54,26 @@ export interface TrashBatch {
     drainAfter: string;
     caller: RmCaller | null;
     items: TrashItem[];
+    /**
+     * Set while the producer has not finished its moves, or when it stopped before it did: the items are the planned
+     * ones, and the filesystem says which moved. A restore brings back what moved; the drain never deletes it. A
+     * record without the field (every record written before it existed) is complete.
+     */
+    incomplete?: true;
+}
+
+/**
+ * An incomplete batch on disk. Its items sit under `planned`, not `items`, so an older reader (which drains and
+ * restores `items` and knows no `incomplete`) reads no batch: it never drains one, and its orphan sweep keeps the
+ * folder, since a `<id>.json` names it.
+ */
+interface IncompleteBatchRecord {
+    id: string;
+    createdAt: string;
+    drainAfter: string;
+    caller: RmCaller | null;
+    incomplete: true;
+    planned: TrashItem[];
 }
 
 export interface TrashPaths {
@@ -220,8 +240,11 @@ export interface MoveOptions {
 }
 
 /**
- * Renames each target into a new batch (instant on one volume) and records the batch after every move, so a crash
- * halfway leaves a record of what moved. Returns the batch, or null when nothing moved.
+ * Renames each target into a new batch (instant on one volume). The record is written first, as a claim this
+ * process holds, with every planned item and its restore path; each move follows, and the record is published as
+ * `<id>.json` only once the moves are over. Until then the drain cannot see the batch, a restore refuses it, and
+ * the orphan sweep keeps its folder; a crash leaves the claim, which the sweep gives back as an incomplete record
+ * that a restore reads and the drain never deletes. Returns the batch, or null when nothing moved.
  */
 export function moveToTrash(requests: readonly MoveRequest[], options: MoveOptions): TrashBatch | null {
     if (requests.length === 0) {
@@ -236,83 +259,150 @@ export function moveToTrash(requests: readonly MoveRequest[], options: MoveOptio
         drainAfter: new Date(now.getTime() + options.graceMinutes * 60_000).toISOString(),
         caller: options.caller,
         items: [],
+        incomplete: true,
     };
+    const planned: Array<{ request: MoveRequest; item: TrashItem }> = [];
 
     for (const [index, request] of requests.entries()) {
-        const name = trashItemName(index, request.target.path);
-        let stored: string;
+        let root: string;
 
         try {
-            stored = prepareTrashDestination(
-                () => {
-                    options.hooks?.beforeTrashRoot?.(request);
-                    return trashRootFor(request.target, options.config);
-                },
-                batch.id,
-                name
-            );
-            try {
-                renameVerified(request.target, stored, options.hooks);
-            } catch (error) {
-                if ((error as NodeJS.ErrnoException).code !== "EXDEV") {
-                    throw error;
-                }
-
-                // The device check said one volume but the rename crossed two (a firmlink, a bind mount): fall
-                // back to the trash at the target's own mount point, where the rename stays a rename.
-                stored = prepareTrashDestination(
-                    () => {
-                        options.hooks?.beforeVolumeTrash?.(request);
-                        return volumeTrashDir(request.target.path);
-                    },
-                    batch.id,
-                    name
-                );
-                logger.debug(
-                    { path: request.target.path, stored },
-                    "rm: cross-volume rename, using the volume's trash"
-                );
-                renameVerified(request.target, stored, options.hooks);
-            }
+            root = inTrash(() => {
+                options.hooks?.beforeTrashRoot?.(request);
+                return trashRootFor(request.target, options.config);
+            });
         } catch (error) {
-            if (error instanceof RmTrashUnavailableError) {
-                refuseUnavailable(request, error.message, options);
-                continue;
-            }
-            if (!(error instanceof RmTargetChangedError)) {
+            if (!(error instanceof RmTrashUnavailableError)) {
                 throw error;
             }
 
-            refuseChanged(request, error.message, options);
+            refuseUnavailable(request, error.message, options);
             continue;
         }
 
-        const original = request.original ?? request.target.path;
-        const bytes = request.bytes ?? measureBytes(stored);
-        batch.items.push({ original, stored, kind: request.target.kind, rule: request.rule, bytes });
-        writeBatch(batch, paths);
-        appendRmLedger({
-            action: "move",
-            path: original,
-            stored,
-            batchId: batch.id,
+        const item: TrashItem = {
+            original: request.original ?? request.target.path,
+            stored: join(root, batch.id, trashItemName(index, request.target.path)),
+            kind: request.target.kind,
             rule: request.rule,
-            bytes,
-            caller: options.caller,
-        });
-        logger.debug({ path: request.target.path, stored, batch: batch.id }, "rm: moved aside");
+        };
+        planned.push({ request, item });
+        batch.items.push(item);
     }
 
-    return batch.items.length > 0 ? batch : null;
+    if (planned.length === 0) {
+        return null;
+    }
+
+    const claim = producerClaim(paths, batch.id);
+    writeBatch(batch, paths, claim);
+    let published: TrashBatch | null = null;
+
+    try {
+        for (const { request, item } of planned) {
+            try {
+                moveOne(request, item, { batch, paths, claim, options });
+            } catch (error) {
+                if (error instanceof RmTrashUnavailableError) {
+                    refuseUnavailable(request, error.message, options);
+                    continue;
+                }
+                if (!(error instanceof RmTargetChangedError)) {
+                    throw error;
+                }
+
+                refuseChanged(request, error.message, options);
+                continue;
+            }
+
+            item.bytes = request.bytes ?? measureBytes(item.stored);
+            appendRmLedger({
+                action: "move",
+                path: item.original,
+                stored: item.stored,
+                batchId: batch.id,
+                rule: request.rule,
+                bytes: item.bytes,
+                caller: options.caller,
+            });
+            logger.debug({ path: request.target.path, stored: item.stored, batch: batch.id }, "rm: moved aside");
+        }
+    } finally {
+        // Also on a throw: what reached the trash is on the published record, whatever stopped the loop.
+        published = publishBatch(batch, { paths, claim, config: options.config });
+    }
+
+    return published;
 }
 
-class RmTrashUnavailableError extends Error {}
+/** Moves one planned item; a cross-volume fallback puts its new destination on record before it moves there. */
+function moveOne(
+    request: MoveRequest,
+    item: TrashItem,
+    context: { batch: TrashBatch; paths: TrashPaths; claim: string; options: MoveOptions }
+): void {
+    inTrash(() => mkdirSync(dirname(item.stored), { recursive: true }));
 
-function prepareTrashDestination(root: () => string, batchId: string, name: string): string {
     try {
-        const stored = join(root(), batchId, name);
-        mkdirSync(dirname(stored), { recursive: true });
-        return stored;
+        renameVerified(request.target, item.stored, context.options.hooks);
+    } catch (error) {
+        if ((error as NodeJS.ErrnoException).code !== "EXDEV") {
+            throw error;
+        }
+
+        // The device check said one volume but the rename crossed two (a firmlink, a bind mount): fall back to the
+        // trash at the target's own mount point, where the rename stays a rename.
+        const volume = inTrash(() => {
+            context.options.hooks?.beforeVolumeTrash?.(request);
+            return volumeTrashDir(request.target.path);
+        });
+        item.stored = join(volume, context.batch.id, basename(item.stored));
+        inTrash(() => mkdirSync(dirname(item.stored), { recursive: true }));
+        writeBatch(context.batch, context.paths, context.claim);
+        logger.debug(
+            { path: request.target.path, stored: item.stored },
+            "rm: cross-volume rename, using the volume's trash"
+        );
+        renameVerified(request.target, item.stored, context.options.hooks);
+    }
+}
+
+/**
+ * Publishes the finished batch: the items that are in the trash now (the filesystem decides, so an item moved by a
+ * step that then threw is still on record), written to the claim and renamed to `<id>.json` in one step.
+ */
+function publishBatch(
+    batch: TrashBatch,
+    context: { paths: TrashPaths; claim: string; config: RmConfig }
+): TrashBatch | null {
+    const items = batch.items.filter((item) => existsSync(item.stored) || isBrokenLink(item.stored));
+
+    if (items.length === 0) {
+        unlinkSync(context.claim);
+        removeEmptyBatchDirs(batch, context.config);
+        return null;
+    }
+
+    for (const item of items) {
+        item.bytes ??= measureBytes(item.stored);
+    }
+
+    const published: TrashBatch = {
+        id: batch.id,
+        createdAt: batch.createdAt,
+        drainAfter: batch.drainAfter,
+        caller: batch.caller,
+        items,
+    };
+    writeBatch(published, context.paths, context.claim);
+    renameSync(context.claim, batchFile(context.paths, batch.id));
+    return published;
+}
+
+/** A volume with no writable private trash: the step's error becomes RmTrashUnavailableError, so the path stays. */
+function inTrash<T>(step: () => T): T {
+    try {
+        return step();
     } catch (error) {
         const code = (error as NodeJS.ErrnoException).code;
         if (code === "EACCES" || code === "EPERM" || code === "EROFS") {
@@ -323,6 +413,8 @@ function prepareTrashDestination(root: () => string, batchId: string, name: stri
         throw error;
     }
 }
+
+class RmTrashUnavailableError extends Error {}
 
 function refuseUnavailable(request: MoveRequest, reason: string, options: MoveOptions): void {
     if (!options.onRefused) {
@@ -354,9 +446,37 @@ function batchFile(paths: TrashPaths, id: string): string {
     return join(paths.batchesDir, `${id}.json`);
 }
 
+/**
+ * The claim a producer holds on its own record while it moves. It reuses the `restoring` suffix on purpose: every
+ * reader, older ones too, treats a `draining` or `restoring` claim as owned by its pid, so the orphan sweep keeps the
+ * batch folder while this process lives and gives the record back as `<id>.json` when it dies.
+ */
+function producerClaim(paths: TrashPaths, id: string): string {
+    return join(paths.batchesDir, `${id}.json.restoring-${process.pid}`);
+}
+
 function writeBatch(batch: TrashBatch, paths: TrashPaths, file = batchFile(paths, batch.id)): void {
+    const { items, incomplete, ...rest } = batch;
+    const record: TrashBatch | IncompleteBatchRecord = incomplete
+        ? { ...rest, incomplete, planned: items }
+        : { ...rest, items };
     mkdirSync(paths.batchesDir, { recursive: true });
-    atomicWriteFileSync(file, `${SafeJSON.stringify(batch, null, 2)}\n`);
+    atomicWriteFileSync(file, `${SafeJSON.stringify(record, null, 2)}\n`);
+}
+
+function isIncompleteRecord(value: unknown): value is IncompleteBatchRecord {
+    return (
+        typeof value === "object" &&
+        value !== null &&
+        "incomplete" in value &&
+        value.incomplete === true &&
+        "id" in value &&
+        typeof value.id === "string" &&
+        "drainAfter" in value &&
+        typeof value.drainAfter === "string" &&
+        "planned" in value &&
+        Array.isArray(value.planned)
+    );
 }
 
 function isTrashBatch(value: unknown): value is TrashBatch {
@@ -375,6 +495,12 @@ function isTrashBatch(value: unknown): value is TrashBatch {
 function readBatch(file: string): TrashBatch | null {
     try {
         const parsed: unknown = SafeJSON.parse(readFileSync(file, "utf8"));
+
+        if (isIncompleteRecord(parsed)) {
+            const { planned, ...rest } = parsed;
+            return { ...rest, items: planned };
+        }
+
         return isTrashBatch(parsed) ? parsed : null;
     } catch (error) {
         logger.debug({ file, error }, "rm: unreadable batch record");
@@ -516,12 +642,12 @@ export interface DrainOptions {
     onItem?: (progress: DrainProgress) => void;
 }
 
-/** Drains every batch whose grace has passed (or all of them with `force`), batches in parallel. */
+/** Drains every complete batch whose grace has passed (or all of them with `force`), batches in parallel. */
 export async function drainDue(options: DrainOptions): Promise<DrainResult> {
     const paths = options.paths ?? defaultTrashPaths();
     const now = (options.now ?? new Date()).getTime();
     const claimed = listBatches(paths)
-        .filter((batch) => options.force || Date.parse(batch.drainAfter) <= now)
+        .filter((batch) => !batch.incomplete && (options.force || Date.parse(batch.drainAfter) <= now))
         .map((batch) => ({ batch, file: claimBatch(paths, batch.id, "draining") }))
         .filter((entry): entry is { batch: TrashBatch; file: string } => entry.file !== null);
     const results = await Promise.all(
@@ -540,29 +666,65 @@ export async function drainDue(options: DrainOptions): Promise<DrainResult> {
 
 const CLAIM_NAME = /^(.+)\.json\.(?:draining|restoring)-(\d+)$/;
 
+/** Gives each claim among `names` whose process died back as a plain `<id>.json` record; returns the live claims. */
+function releaseDeadClaims(paths: TrashPaths, names: readonly string[]): Array<{ id: string; pid: number }> {
+    const live: Array<{ id: string; pid: number }> = [];
+
+    for (const name of names) {
+        const claim = CLAIM_NAME.exec(name);
+
+        if (!claim) {
+            continue;
+        }
+
+        const pid = Number(claim[2]);
+
+        if (isProcessAlive(pid)) {
+            live.push({ id: claim[1], pid });
+            continue;
+        }
+
+        renameSync(join(paths.batchesDir, name), batchFile(paths, claim[1]));
+    }
+
+    return live;
+}
+
+/** A batch folder the sweep kept although no plain complete record names it, and why. */
+export interface HeldBatch {
+    id: string;
+    reason: string;
+}
+
+export interface SweepResult extends DrainResult {
+    held: HeldBatch[];
+}
+
 /**
- * Folders in the configured trash root that no batch record names (a run that died between its move and its
- * record), older than `minAgeMs`, are deleted: nothing could restore them. A claim whose process died is given
- * back as a plain record, so the next drain (or a restore) finishes it.
+ * Folders in the configured trash root that no batch record names, older than `minAgeMs`, are deleted: nothing
+ * could restore them. A claim whose process died is given back as a plain record, so the next drain (or a restore)
+ * finishes it. A folder whose record is incomplete, or that a live process still claims, is kept and reported.
  */
-export async function sweepOrphans(options: DrainOptions & { minAgeMs?: number }): Promise<DrainResult> {
+export async function sweepOrphans(options: DrainOptions & { minAgeMs?: number }): Promise<SweepResult> {
     const paths = options.paths ?? defaultTrashPaths();
     const root = resolvedTrashRoot(options.config);
     const records = existsSync(paths.batchesDir) ? readdirSync(paths.batchesDir) : [];
     const known = new Set(
         records.map((name) => CLAIM_NAME.exec(name)?.[1] ?? (name.endsWith(".json") ? name.slice(0, -5) : name))
     );
+    const held: HeldBatch[] = releaseDeadClaims(paths, records).map(({ id, pid }) => ({
+        id,
+        reason: `process ${pid} holds its record`,
+    }));
 
-    for (const name of records) {
-        const claim = CLAIM_NAME.exec(name);
-
-        if (claim && !isProcessAlive(Number(claim[2]))) {
-            renameSync(join(paths.batchesDir, name), join(paths.batchesDir, `${claim[1]}.json`));
-        }
+    for (const batch of listBatches(paths).filter((b) => b.incomplete)) {
+        const entry = { id: batch.id, reason: "its run stopped before it finished; restore brings back what moved" };
+        logger.warn(entry, "rm: trash folder kept, its batch is incomplete");
+        held.push(entry);
     }
 
     if (!existsSync(root)) {
-        return { batches: 0, items: 0, bytes: 0 };
+        return { batches: 0, items: 0, bytes: 0, held };
     }
 
     const now = (options.now ?? new Date()).getTime();
@@ -592,7 +754,12 @@ export async function sweepOrphans(options: DrainOptions & { minAgeMs?: number }
         })
     );
 
-    return { batches: orphans.length, items: orphans.length, bytes: sizes.reduce((sum, size) => sum + size, 0) };
+    return {
+        batches: orphans.length,
+        items: orphans.length,
+        bytes: sizes.reduce((sum, size) => sum + size, 0),
+        held,
+    };
 }
 
 /** True when the configured trash root holds anything (a batch, or an orphan the drainer should sweep). */
@@ -604,6 +771,8 @@ export function trashHasEntries(config: RmConfig): boolean {
 export interface RestoreResult {
     restored: string[];
     skipped: Array<{ path: string; reason: string }>;
+    /** Items of an incomplete batch that its run never moved: they are still at their path. */
+    notMoved: string[];
 }
 
 /** Moves a batch's items (all, or the named originals) back where they were. */
@@ -612,10 +781,15 @@ export function restoreBatch(
     options: { config: RmConfig; only?: readonly string[]; paths?: TrashPaths; caller?: RmCaller | null }
 ): RestoreResult {
     const paths = options.paths ?? defaultTrashPaths();
+    // A run that died while it moved left its claim: give it back, so its incomplete record can be restored.
+    const claims = existsSync(paths.batchesDir)
+        ? readdirSync(paths.batchesDir).filter((name) => name.startsWith(`${id}.json.`))
+        : [];
+    releaseDeadClaims(paths, claims);
     const claimed = claimBatch(paths, id, "restoring");
 
     if (!claimed) {
-        throw new Error(`rm: no batch ${id} waiting in the trash (already drained, or being drained)`);
+        throw new Error(`rm: no batch ${id} waiting in the trash (already drained, being drained, or still moving)`);
     }
 
     const batch = readBatch(claimed);
@@ -626,12 +800,17 @@ export function restoreBatch(
     }
 
     const wanted = options.only && options.only.length > 0 ? new Set(options.only) : null;
-    const result: RestoreResult = { restored: [], skipped: [] };
+    const result: RestoreResult = { restored: [], skipped: [], notMoved: [] };
     const remaining: TrashItem[] = [];
 
     for (const item of batch.items) {
         if (wanted && !wanted.has(item.original)) {
             remaining.push(item);
+            continue;
+        }
+
+        if (batch.incomplete && !existsSync(item.stored) && !isBrokenLink(item.stored)) {
+            result.notMoved.push(item.original);
             continue;
         }
 
@@ -754,7 +933,7 @@ export async function runDrainer(options: DrainerOptions): Promise<DrainResult> 
 
         while (true) {
             add(await drainDue({ config: options.config, paths, now: now() }));
-            const waiting = listBatches(paths);
+            const waiting = listBatches(paths).filter((batch) => !batch.incomplete);
 
             if (waiting.length === 0) {
                 break;
