@@ -241,6 +241,35 @@ describe("dialog record store", () => {
     });
 });
 
+describe("dialog records across processes", () => {
+    test("the hook, the watcher and cmux send writing one session at once lose no record and no close", async () => {
+        const dir = root();
+        const worker = join(import.meta.dir, "store.test-worker.ts");
+        const startAt = String(Date.now() + 1000);
+        const children = ["hook", "watcher", "send"].map((prefix) =>
+            Bun.spawn([process.execPath, worker, dir, SESSION, prefix, "8", startAt], {
+                stdout: "pipe",
+                stderr: "pipe",
+                env: { ...process.env },
+            })
+        );
+
+        for (const child of children) {
+            const [stderr, code] = await Promise.all([new Response(child.stderr).text(), child.exited]);
+            expect({ code, stderr: code === 0 ? "" : stderr }).toEqual({ code: 0, stderr: "" });
+        }
+
+        const records = readSessionQuestionsStrict("claude", SESSION, dir);
+        expect(records).toHaveLength(24);
+        expect(records.filter((record) => record.closedAt !== undefined)).toHaveLength(12);
+        expect(
+            openQuestions("claude", SESSION, dir)
+                .map((record) => record.toolCallId.split("-")[1])
+                .sort()
+        ).toEqual(["1", "1", "1", "3", "3", "3", "5", "5", "5", "7", "7", "7"]);
+    }, 30_000);
+});
+
 describe("dialog guard", () => {
     test("an unreadable dialog record blocks typed delivery", () => {
         const dir = root();

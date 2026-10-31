@@ -1,5 +1,6 @@
 import { tmpdir } from "node:os";
 import { join } from "node:path";
+import { safeSessionId } from "@genesiscz/utils/agents/session-id";
 import { SafeJSON } from "@genesiscz/utils/json";
 
 /**
@@ -31,16 +32,11 @@ export function hookDataRoot(): string {
  * `../../..` would therefore resolve the capture directory back up to `hookDataRoot()` or
  * beyond, and the sweep would delete it. The harness is the only writer of those fields
  * today, which makes this unlikely rather than impossible — and the blast radius is a
- * recursive delete, so it is validated rather than trusted.
+ * recursive delete, so it is validated rather than trusted. The test is the shared session-id
+ * one (`@genesiscz/utils/agents/session-id`): one segment, no `.`/`..`, no control character.
  */
-const SAFE_SEGMENT = /^[A-Za-z0-9][A-Za-z0-9._-]{0,119}$/;
-
 export function safeSegment(value: string | undefined): string | null {
-    if (!value || value === "." || value === ".." || !SAFE_SEGMENT.test(value)) {
-        return null;
-    }
-
-    return value;
+    return safeSessionId(value);
 }
 
 function requireSegment(kind: string, value: string): string {

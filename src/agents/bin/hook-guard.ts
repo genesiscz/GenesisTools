@@ -63,7 +63,7 @@ if (config.shadow) {
 const sessionId = safeSessionId(payload.sessionId);
 
 if (sessionId && verdict.shownContextRules.length > 0) {
-    bumpContextCounts(sessionId, verdict.shownContextRules);
+    await bumpContextCounts(sessionId, verdict.shownContextRules);
 }
 
 if (verdict.outcome === "block") {

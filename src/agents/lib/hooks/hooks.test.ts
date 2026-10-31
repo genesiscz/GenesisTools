@@ -5,6 +5,7 @@ import {
     lstatSync,
     mkdirSync,
     mkdtempSync,
+    readdirSync,
     readFileSync,
     readlinkSync,
     realpathSync,
@@ -85,6 +86,7 @@ import { applyQuestionHookAction, questionHookAction } from "./questions";
 import { hasDialogRecords, QUESTION_TOOL_MATCHER } from "./questions-gate";
 import { checkRuleExamples, replayCorpus } from "./rules-check";
 import { applyRuleSelection, applySetting, ruleEnabled, setHooksConfig, setRuleSelection } from "./set-config";
+import { bumpContextCounts, hooksStateDir, readContextCounts } from "./state";
 import { BUILT_IN_RULES } from "./tool-rules";
 import { unpushedReminders, unpushedState } from "./unpushed";
 import { writeJsonFile } from "./write-json";
@@ -1526,10 +1528,51 @@ describe("installHooks on a machine with no settings file", () => {
     });
 });
 
+describe("hook state across processes", () => {
+    it("concurrent hooks of one session lose no counter bump", async () => {
+        const home = mkdtempSync(join(tmpdir(), "gt-hook-state-"));
+        const worker = join(import.meta.dir, "state.test-worker.ts");
+        const startAt = String(Date.now() + 1000);
+        const children = Array.from({ length: 3 }, () =>
+            Bun.spawn([process.execPath, worker, "sess-parallel", "rule-x", "15", startAt], {
+                stdout: "pipe",
+                stderr: "pipe",
+                env: { ...process.env, GENESIS_TOOLS_HOME: home },
+            })
+        );
+
+        for (const child of children) {
+            const [stderr, code] = await Promise.all([new Response(child.stderr).text(), child.exited]);
+            expect({ code, stderr: code === 0 ? "" : stderr }).toEqual({ code: 0, stderr: "" });
+        }
+
+        await env.testing.withOverrides({ GENESIS_TOOLS_HOME: home }, () => {
+            expect(readContextCounts("sess-parallel")).toEqual({ "rule-x": 45 });
+        });
+    }, 30_000);
+
+    it("a state file that does not parse is kept aside and the counter starts over", async () => {
+        const home = mkdtempSync(join(tmpdir(), "gt-hook-state-"));
+
+        await env.testing.withOverrides({ GENESIS_TOOLS_HOME: home }, async () => {
+            mkdirSync(hooksStateDir(), { recursive: true });
+            writeFileSync(join(hooksStateDir(), "sess-torn.json"), '{"rule-x": 4');
+            expect(readContextCounts("sess-torn")).toEqual({});
+
+            await bumpContextCounts("sess-torn", ["rule-x"]);
+
+            expect(readContextCounts("sess-torn")).toEqual({ "rule-x": 1 });
+            const kept = readdirSync(hooksStateDir()).filter((name) => name.startsWith("sess-torn.json.corrupt-"));
+            expect(kept).toHaveLength(1);
+            expect(readFileSync(join(hooksStateDir(), kept[0] ?? ""), "utf8")).toBe('{"rule-x": 4');
+        });
+    });
+});
+
 describe("capture paths refuse an unsafe identifier", () => {
     // The post phase ends in `rmSync(dir, { recursive: true, force: true })`, so a
     // `toolUseId` of `../../..` would resolve back up the tree and the sweep would delete it.
-    const unsafe = ["../../..", "..", ".", "a/b", "", "with space", "x\u0000y", "-leading"];
+    const unsafe = ["../../..", "..", ".", "a/b", "a\\b", "", "x\u0000y", "x\ny", " padded", "x".repeat(129)];
 
     it.each(unsafe)("rejects %j", (value) => {
         expect(safeSegment(value)).toBeNull();
@@ -1545,6 +1588,13 @@ describe("capture paths refuse an unsafe identifier", () => {
     it.each(ok)("accepts the real shape %j", (value) => {
         expect(safeSegment(value)).toBe(value);
         expect(callDir("claude", "sess", value).endsWith(`/diff/${value}`)).toBe(true);
+    });
+
+    // One session-id test guards every hook file now, and the agents bus accepted these, so a folder named by one
+    // stays reachable. Neither leaves the session's own folder.
+    it.each(["with space", "-leading", "_x.y"])("accepts the one-segment id %j inside the session folder", (value) => {
+        expect(safeSegment(value)).toBe(value);
+        expect(sessionDir("claude", value)).toBe(join(hookDataRoot(), "claude", value));
     });
 });
 
@@ -1888,7 +1938,9 @@ describe("decision hub hooks", () => {
         const blocks = new Map<string, number>();
         const counts = {
             read: (session: string) => blocks.get(session) ?? 0,
-            bump: (session: string) => blocks.set(session, (blocks.get(session) ?? 0) + 1),
+            bump: (session: string) => {
+                blocks.set(session, (blocks.get(session) ?? 0) + 1);
+            },
         };
 
         return { log, counts, deps: { log, counts } };
@@ -2062,7 +2114,9 @@ describe("decision hub hooks", () => {
                 checkedAt: (session: string) => chat.get(`${session}:checked`),
                 offset: () => undefined,
                 setOffset: () => undefined,
-                setCheckedAt: (session: string, at: number) => chat.set(`${session}:checked`, at),
+                setCheckedAt: (session: string, at: number) => {
+                    chat.set(`${session}:checked`, at);
+                },
                 sentBack: (session: string, id: string) => chat.has(`${session}:${id}`),
                 markSentBack: (session: string, ids: string[]) => {
                     for (const id of ids) {

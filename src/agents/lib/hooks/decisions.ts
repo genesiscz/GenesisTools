@@ -32,7 +32,7 @@ import { appendChatAnswerRun, type ChatAnswerRun, loggedUserMessage } from "./ch
 import type { DecisionsHookConfig } from "./config";
 import { hookDiag } from "./log";
 import type { HookPayload } from "./payload";
-import { bumpContextCounts, readContextCounts, safeSessionId, setContextValues } from "./state";
+import { bumpContextCounts, readContextCounts, safeSessionId, setContextValues, updateContextCounts } from "./state";
 
 /** The per-session counter the loop guard reads; it lives beside the guard's context counts. */
 export const STOP_BLOCK_COUNTER = "decisions-stop-block";
@@ -75,7 +75,7 @@ export interface DecisionLogPaths {
 export interface NudgeState {
     blocks: (session: string) => number;
     lastTurn: (session: string) => number | undefined;
-    record: (session: string, turn: number, blocked: boolean) => void;
+    record: (session: string, turn: number, blocked: boolean) => void | Promise<void>;
 }
 
 /**
@@ -84,11 +84,11 @@ export interface NudgeState {
  */
 export interface ChatAnswerState {
     checkedAt: (session: string) => number | undefined;
-    setCheckedAt: (session: string, at: number) => void;
+    setCheckedAt: (session: string, at: number) => void | Promise<void>;
     offset: (session: string, transcript: string) => number | undefined;
-    setOffset: (session: string, transcript: string, offset: number) => void;
+    setOffset: (session: string, transcript: string, offset: number) => void | Promise<void>;
     sentBack: (session: string, id: string) => boolean;
-    markSentBack: (session: string, ids: string[]) => void;
+    markSentBack: (session: string, ids: string[]) => void | Promise<void>;
 }
 
 export type { ReadSession } from "@app/question/lib/decisions/chat-reading";
@@ -110,7 +110,7 @@ export interface DecisionHookDeps {
     appendRun?: (run: ChatAnswerRun) => void;
     now?: () => number;
     /** The loop guard's counter store; tests pass an in-memory one. */
-    counts?: { read: (session: string) => number; bump: (session: string) => void };
+    counts?: { read: (session: string) => number; bump: (session: string) => void | Promise<void> };
     /** The question nudge's state store; tests pass an in-memory one. */
     nudge?: NudgeState;
 }
@@ -173,11 +173,11 @@ const fileCounts = {
 const fileNudgeState: NudgeState = {
     blocks: (session) => readContextCounts(session)[NUDGE_BLOCK_COUNTER] ?? 0,
     lastTurn: (session) => readContextCounts(session)[NUDGE_TURN_KEY],
-    record: (session, turn, blocked) => {
-        const blocks = readContextCounts(session)[NUDGE_BLOCK_COUNTER] ?? 0;
-
-        setContextValues(session, { [NUDGE_TURN_KEY]: turn, [NUDGE_BLOCK_COUNTER]: blocked ? blocks + 1 : blocks });
-    },
+    record: (session, turn, blocked) =>
+        updateContextCounts(session, (counts) => {
+            const blocks = counts[NUDGE_BLOCK_COUNTER] ?? 0;
+            return { ...counts, [NUDGE_TURN_KEY]: turn, [NUDGE_BLOCK_COUNTER]: blocked ? blocks + 1 : blocks };
+        }),
 };
 
 function offsetKey(transcript: string): string {
@@ -328,7 +328,7 @@ async function runChatAnswers(
     });
 
     if (toRecord.length > 0 || toCheck.length > 0) {
-        state.markSentBack(
+        await state.markSentBack(
             session,
             [...toRecord, ...toCheck].map(({ row }) => row.id)
         );
@@ -342,14 +342,14 @@ async function runChatAnswers(
     // old rule re-read the same capped window on every Stop and never got further. The cut is in the run log and
     // `hookDiag` above; `tools question chat-answers` reads a backlog without a cap.
     if (handled) {
-        state.setCheckedAt(session, now);
+        await state.setCheckedAt(session, now);
 
         // From the agent's last reply, not the end: a bare `b)` the user types next answers the decision that reply
         // asked, and the finder needs that reply in the read to see it.
         const next = read.lastAssistantOffset ?? read.endOffset;
 
         if (next !== undefined) {
-            state.setOffset(session, transcriptPath, next);
+            await state.setOffset(session, transcriptPath, next);
         }
     }
 
@@ -466,12 +466,12 @@ async function runQuestionNudge({
     );
 
     if (verdict.action === "block" && verdict.reason) {
-        state.record(session, turn.key, true);
+        await state.record(session, turn.key, true);
         return { decision: "block", reason: verdict.reason };
     }
 
     if (verdict.action === "warn" && verdict.reason) {
-        state.record(session, turn.key, false);
+        await state.record(session, turn.key, false);
         return { systemMessage: verdict.reason };
     }
 
@@ -568,7 +568,7 @@ async function runReplyChecks(
             : "";
 
     if (verdict.action === "block" && verdict.reason) {
-        counts.bump(session);
+        await counts.bump(session);
         return { decision: "block", reason: verdict.reason };
     }
 
