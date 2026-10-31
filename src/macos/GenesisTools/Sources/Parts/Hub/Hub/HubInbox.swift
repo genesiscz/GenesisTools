@@ -2420,8 +2420,7 @@ struct InboxDecisionCard: View, Equatable {
                 .textSelection(.enabled)
                 .fixedSize(horizontal: false, vertical: true)
         }
-        .padding(.leading, 10)
-        .overlay(alignment: .leading) { Rectangle().fill(ReviewPalette.added.opacity(0.5)).frame(width: 2) }
+        .leadingRule(ReviewPalette.added.opacity(0.5))
         .frame(maxWidth: .infinity, alignment: .leading)
     }
 
@@ -2484,8 +2483,7 @@ struct InboxDecisionCard: View, Equatable {
                 }
         }
         // A plain block with a rule on its left, not a filled box inside the card (P8: a card in a card).
-        .padding(.leading, 10)
-        .overlay(alignment: .leading) { Rectangle().fill(Color.white.opacity(0.12)).frame(width: 2) }
+        .leadingRule(Color.white.opacity(0.12))
         .frame(maxWidth: .infinity, alignment: .leading)
     }
 
@@ -2860,8 +2858,7 @@ private struct InboxExcerptCard: View {
                 )
                 .frame(maxWidth: .infinity, alignment: .leading)
                 // The code reads as a block by its rule and its monospaced lines, not by a filled box (P8).
-                .padding(.leading, 10)
-                .overlay(alignment: .leading) { Rectangle().fill(Color.white.opacity(0.12)).frame(width: 2) }
+                .leadingRule(Color.white.opacity(0.12))
             }
         }
     }
@@ -3493,4 +3490,12 @@ private struct InboxFormCard: View {
 func inlineMarkdown(_ text: String) -> AttributedString {
     (try? AttributedString(markdown: text, options: AttributedString.MarkdownParsingOptions(interpretedSyntax: .inlineOnlyPreservingWhitespace)))
         ?? AttributedString(text)
+}
+
+private extension View {
+    /// A block marked by a 2 pt rule on its left, not a filled box inside the card (P8: a card in a card).
+    func leadingRule(_ color: Color) -> some View {
+        padding(.leading, 10)
+            .overlay(alignment: .leading) { Rectangle().fill(color).frame(width: 2) }
+    }
 }
