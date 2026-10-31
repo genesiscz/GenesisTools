@@ -48,6 +48,7 @@ function snapshot(overrides: Partial<TurnSnapshot>): TurnSnapshot {
         lastText: "",
         asksQuestion: false,
         question: null,
+        turnEnded: false,
         interrupted: false,
         turnError: null,
         lastEventAt: null,

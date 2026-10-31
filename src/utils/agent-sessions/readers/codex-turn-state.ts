@@ -1,11 +1,5 @@
 /** The Codex driver's `turnState` part: the newest turn of a `rollout-*.jsonl`. */
 import type { ActivityEvent } from "@genesiscz/utils/ai/transcripts/activity";
-import type {
-    JsonRecord,
-    TurnQuestionCall,
-    TurnSnapshot,
-    TurnStateInput,
-} from "@genesiscz/utils/ai/transcripts/turn-state";
 import {
     firstLine,
     isRecord,
@@ -17,6 +11,12 @@ import {
     toolSummaryOf,
     waitingOn,
 } from "@genesiscz/utils/ai/transcripts/turn-state-core";
+import type {
+    JsonRecord,
+    TurnQuestionCall,
+    TurnSnapshot,
+    TurnStateInput,
+} from "@genesiscz/utils/ai/transcripts/turn-state-types";
 import { SafeJSON } from "@genesiscz/utils/json";
 import { logger } from "@genesiscz/utils/logger";
 
@@ -54,6 +54,30 @@ const CODEX_TURN_EVENTS = new Set([
     "agent_reasoning",
     "item_completed",
 ]);
+
+/** The `response_item` payload types that are a tool call; each has a `*_output` with the same `call_id`. */
+const CODEX_CALL_TYPES: ReadonlySet<string> = new Set(["function_call", "custom_tool_call"]);
+const CODEX_CALL_MARKERS = [...CODEX_CALL_TYPES].map((type) => `"type":"${type}"`);
+
+/**
+ * How many tool calls a run of whole rollout lines holds, counted on the raw text (no parse), so a caller can count an
+ * append-only rollout chunk by chunk. The markers are ASCII, so a match's length is the same in a string and in its
+ * bytes.
+ */
+export function countCodexToolCalls(chunk: Buffer | string): number {
+    let count = 0;
+
+    for (const marker of CODEX_CALL_MARKERS) {
+        let at = chunk.indexOf(marker);
+
+        while (at !== -1) {
+            count += 1;
+            at = chunk.indexOf(marker, at + marker.length);
+        }
+    }
+
+    return count;
+}
 
 /** A record that starts or advances a turn: a model item (`response_item`) or a turn event. */
 function codexAdvancesTurn(record: JsonRecord, payloadType: string): boolean {
@@ -129,7 +153,7 @@ export function codexTurnState(input: TurnStateInput): TurnSnapshot {
         const callId = typeof parsed.payload.call_id === "string" ? parsed.payload.call_id : null;
 
         if (record.type === "response_item" && callId) {
-            if (parsed.type === "function_call" || parsed.type === "custom_tool_call") {
+            if (CODEX_CALL_TYPES.has(parsed.type)) {
                 const name = typeof parsed.payload.name === "string" ? parsed.payload.name : "tool";
                 const script = typeof parsed.payload.input === "string" ? parsed.payload.input : "";
                 const summary =

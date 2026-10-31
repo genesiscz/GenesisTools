@@ -3,7 +3,9 @@ import { basename, dirname } from "node:path";
 import { POLLED_LISTING_REUSE_MS } from "@app/ai/lib/sessions/agent-session-rows";
 import { catalogHistory } from "@genesiscz/utils/agent-sessions/open-service";
 import { resolveHistoryProvider } from "@genesiscz/utils/agent-sessions/provider";
-import { readHead, readTailWindow } from "@genesiscz/utils/ai/transcripts/native-scan";
+import { countCodexToolCalls } from "@genesiscz/utils/agent-sessions/readers/codex-turn-state";
+import { readHead } from "@genesiscz/utils/ai/transcripts/native-scan";
+import { readTurnState } from "@genesiscz/utils/ai/transcripts/turn-state";
 import { isZstdPath } from "@genesiscz/utils/compress/zstd";
 import { readLinesSync } from "@genesiscz/utils/fs/read-lines";
 import { SafeJSON } from "@genesiscz/utils/json";
@@ -25,8 +27,6 @@ import type { AgentNode, AgentParent, AgentStatus } from "./types";
 
 /** The link fields all sit in the first kilobyte of a rollout whose first line is 20 KB of instructions. */
 const HEAD_BYTES = 4096;
-/** A turn marker is in the last records; a long tool output between them can push it back. */
-const TAIL_BYTES = 256 * 1024;
 /** The `turn_context` that names the model follows ~300 KB of instructions and world state. */
 const MODEL_SCAN_BYTES = 640 * 1024;
 const SCAN_CHUNK_BYTES = 16 * 1024 * 1024;
@@ -149,45 +149,34 @@ export function codexAgentHeadOf(path: string): CodexAgentHead | null {
 }
 
 /**
- * Where the agent's last turn stands, from the last turn marker in the tail:
- * - `task_complete`: finished.
- * - `turn_aborted`: interrupted.
- * - `task_started` with nothing after it: mid-turn, running while the file is fresh and killed once
- *   it went quiet.
- *
- * A `.jsonl.zst` rollout is one Codex closed and compressed, so it is never running: as if it went quiet.
+ * Where the agent's last turn stands, from the shared turn-state read of its rollout (`readTurnState`):
+ * - a turn that ended: completed;
+ * - a turn the user stopped (`turn_aborted`): killed;
+ * - a turn that began and has not ended: running while the file is fresh, killed once it went quiet for
+ *   `TURN_STALE_MS` or once Codex closed it (a `.jsonl.zst` rollout);
+ * - no turn record in the tail: running while the file is fresh, else completed.
  */
-export function codexTurnState(options: { filePath: string; mtime: number; now: number }): AgentStatus {
-    const { filePath, mtime, now } = options;
-    const closed = isZstdPath(filePath);
-    let tail: string;
+export function codexAgentStatus(options: { filePath: string; now: number }): AgentStatus {
+    const { filePath, now } = options;
+    const snapshot = readTurnState("codex", filePath, { now, stallTimeoutMs: TURN_STALE_MS });
 
-    try {
-        tail = readTailWindow(filePath, TAIL_BYTES).buffer.toString("utf8");
-    } catch (error) {
-        logger.debug({ error, filePath }, "[hub agents] unreadable codex agent tail");
+    if (!snapshot) {
         return "completed";
     }
 
-    let last: string | null = null;
-
-    for (const match of tail.matchAll(/"type":"(task_started|task_complete|turn_aborted)"/g)) {
-        last = match[1] ?? null;
-    }
-
-    if (last === "task_complete") {
-        return "completed";
-    }
-
-    if (last === "turn_aborted") {
+    if (snapshot.interrupted) {
         return "killed";
     }
 
-    if (last === "task_started") {
-        return !closed && now - mtime < TURN_STALE_MS ? "running" : "killed";
+    if (snapshot.turnEnded) {
+        return "completed";
     }
 
-    return !closed && now - mtime < NO_MARKER_FRESH_MS ? "running" : "completed";
+    if (snapshot.turnStartedAt !== null) {
+        return snapshot.state === "RUNNING" ? "running" : "killed";
+    }
+
+    return snapshot.state !== "FINISHED" && snapshot.silenceMs < NO_MARKER_FRESH_MS ? "running" : "completed";
 }
 
 /**
@@ -237,24 +226,6 @@ interface ScanEntry {
 
 type ScanCache = Record<string, ScanEntry>;
 
-const CALL_MARKERS = ['"type":"custom_tool_call"', '"type":"function_call"'];
-
-/** Markers are ASCII, so a match's length is the same in a string and in its bytes. */
-function countCalls(buffer: Buffer | string): number {
-    let count = 0;
-
-    for (const marker of CALL_MARKERS) {
-        let at = buffer.indexOf(marker);
-
-        while (at !== -1) {
-            count += 1;
-            at = buffer.indexOf(marker, at + marker.length);
-        }
-    }
-
-    return count;
-}
-
 /**
  * Tool calls of an append-only rollout, counting only what was appended since the last read. A `.jsonl.zst` rollout
  * never grows: its decompressed lines are counted once, and the entry (offset = its size on disk) answers after that.
@@ -268,7 +239,7 @@ function scanCalls(path: string, size: number, entry: ScanEntry | undefined): { 
         let counted = 0;
 
         for (const line of readLinesSync(path)) {
-            counted += countCalls(line);
+            counted += countCodexToolCalls(line);
         }
 
         return { calls: counted, offset: size };
@@ -288,7 +259,7 @@ function scanCalls(path: string, size: number, entry: ScanEntry | undefined): { 
 
         const whole = lastNewline === -1 ? chunk : chunk.subarray(0, lastNewline + 1);
 
-        calls += countCalls(whole);
+        calls += countCodexToolCalls(whole);
         offset += whole.length;
     }
 
@@ -391,7 +362,7 @@ function nodeOf(
             agentType: head.role,
             model: model ?? context.model,
             account: null,
-            status: codexTurnState({ filePath: record.filePath, mtime: record.mtime, now: context.now }),
+            status: codexAgentStatus({ filePath: record.filePath, now: context.now }),
             startedAt: head.startedAt,
             lastAt: iso(record.mtime),
             toolCalls: scanned.calls,

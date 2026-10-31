@@ -9,7 +9,7 @@ import type {
     TurnQuestionKind,
     TurnSnapshot,
     TurnStateInput,
-} from "@genesiscz/utils/ai/transcripts/turn-state";
+} from "@genesiscz/utils/ai/transcripts/turn-state-types";
 import { SafeJSON } from "@genesiscz/utils/json";
 import { logger } from "@genesiscz/utils/logger";
 import { type ActivityEvent, type ActivityState, classifyActivity } from "./activity";
@@ -236,6 +236,7 @@ export function snapshotOf({
         asksQuestion,
         question,
         ...(asksQuestion && questionCall ? { questionCall } : {}),
+        turnEnded: endedTurn,
         interrupted,
         turnError,
         lastEventAt,

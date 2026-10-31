@@ -536,8 +536,12 @@ describe("open tool calls and the live activity", () => {
     it("Claude: end_turn is idle, Esc is interrupted, and AskUserQuestion or ExitPlanMode wait for the user", () => {
         const done = claudeAssistant(6, [{ type: "text", text: "done" }], "end_turn");
         expect(liveActivityOf(claudeTurnState(input([claudeUser(0), done], 30, INFINITE))).phase).toBe("idle");
+        expect(claudeTurnState(input([claudeUser(0), done], 30, INFINITE)).turnEnded).toBe(true);
 
         const call = claudeAssistant(5, [bash("t1", { command: "sleep 100" })], "tool_use");
+        const working = claudeTurnState(input([claudeUser(0), call], 30, INFINITE));
+        expect(working.turnEnded).toBe(false);
+        expect(working.openTools[0]?.waits).toBeUndefined();
         const esc = claudeUser(8, [{ type: "text", text: "[Request interrupted by user for tool use]" }]);
         const stopped = claudeTurnState(input([claudeUser(0), call, esc], 30, INFINITE));
         expect(liveActivityOf(stopped)).toMatchObject({ phase: "interrupted", openTools: 0, tool: null });
@@ -560,6 +564,10 @@ describe("open tool calls and the live activity", () => {
             question: "Approve the plan?",
         });
         expect(liveActivityOf({ ...planSnapshot, question: "Ship it?" }).question).toBe("Approve the plan?");
+        // The dialect marks the plan tool; the neutral phase reads only the mark, never the tool's name.
+        expect(planSnapshot.openTools[0]?.waits).toBe("plan");
+        const renamed = { ...planSnapshot.openTools[0], name: "SomeOtherPlanTool" };
+        expect(liveActivityOf({ ...planSnapshot, openTools: [renamed] }).phase).toBe("waiting");
     });
 
     it("marks a running turn stalled only past the live limit", () => {

@@ -20,7 +20,7 @@ import {
     type CodexAgentRecord,
     codexAgentHeadOf,
     codexAgentModel,
-    codexTurnState,
+    codexAgentStatus,
 } from "./codex-agents";
 import type { ParentRow } from "./tree";
 
@@ -80,9 +80,9 @@ function meta(options: { id: string; parent: string; depth: number; nickname: st
 }
 
 const turn = (type: "task_started" | "task_complete" | "turn_aborted") =>
-    line({ type: "event_msg", payload: { type } });
+    line({ timestamp: "2026-10-05T10:00:01.000Z", type: "event_msg", payload: { type } });
 const call = (kind: "custom_tool_call" | "function_call" | "custom_tool_call_output") =>
-    line({ type: "response_item", payload: { type: kind, name: "exec" } });
+    line({ timestamp: "2026-10-05T10:00:02.000Z", type: "response_item", payload: { type: kind, name: "exec" } });
 /** After the instructions and the world state, as in a real rollout: 300 KB in. */
 const turnContext = (model: string) =>
     line({ type: "response_item", payload: { type: "message", text: "y".repeat(300_000) } }) +
@@ -159,11 +159,11 @@ describe("codexAgentHeadOf", () => {
     });
 });
 
-describe("codexTurnState", () => {
+describe("codexAgentStatus", () => {
     const stateOf = (text: string, ageMs: number) => {
         const file = rollout(temp(), CHILD_A, text, ageMs);
 
-        return codexTurnState({ filePath: file.filePath, mtime: file.mtime, now: NOW });
+        return codexAgentStatus({ filePath: file.filePath, now: NOW });
     };
 
     test("a finished turn is completed, however fresh the file", () => {
@@ -399,8 +399,8 @@ describe("a compressed rollout (.jsonl.zst, one zstd frame as Codex 0.164 writes
         expect(codexAgentHeadOf(zst.filePath)?.nickname).toBe("Cicero");
         expect(codexAgentModel(zst.filePath)).toBe("gpt-6.1-sol");
         // Fresh and mid-turn: the plain rollout runs; the compressed one was closed by Codex.
-        expect(codexTurnState({ filePath: plain.filePath, mtime: plain.mtime, now: NOW })).toBe("running");
-        expect(codexTurnState({ filePath: zst.filePath, mtime: zst.mtime, now: NOW })).toBe("killed");
+        expect(codexAgentStatus({ filePath: plain.filePath, now: NOW })).toBe("running");
+        expect(codexAgentStatus({ filePath: zst.filePath, now: NOW })).toBe("killed");
 
         const cache = join(dir, "cache.json");
         const nodeOf = () =>

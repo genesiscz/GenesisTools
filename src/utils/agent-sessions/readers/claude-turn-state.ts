@@ -1,11 +1,5 @@
 /** The Claude driver's `turnState` part: the newest turn of a `<project>/<id>.jsonl` transcript. */
-import { claudeRecordsToEvents } from "@genesiscz/utils/ai/transcripts/activity";
-import type {
-    JsonRecord,
-    TurnQuestionCall,
-    TurnSnapshot,
-    TurnStateInput,
-} from "@genesiscz/utils/ai/transcripts/turn-state";
+import type { ActivityEvent } from "@genesiscz/utils/ai/transcripts/activity";
 import {
     isRecord,
     questionCallOf,
@@ -15,8 +9,81 @@ import {
     toEpochMs,
     toolSummaryOf,
 } from "@genesiscz/utils/ai/transcripts/turn-state-core";
+import type {
+    JsonRecord,
+    OpenToolCall,
+    TurnQuestionCall,
+    TurnSnapshot,
+    TurnStateInput,
+} from "@genesiscz/utils/ai/transcripts/turn-state-types";
 
+/** The record types that say where a Claude session is. Everything else is bookkeeping. */
 const CLAUDE_CONVERSATION: ReadonlySet<string> = new Set(["assistant", "user", "result"]);
+
+/** The question tool: its call ends the turn on a question for the user. */
+const CLAUDE_QUESTION_TOOL = "AskUserQuestion";
+
+/** Claude tools that stop the turn until the user answers, and what they wait on. */
+const CLAUDE_WAITING_TOOLS: Readonly<Record<string, NonNullable<OpenToolCall["waits"]>>> = {
+    [CLAUDE_QUESTION_TOOL]: "decision",
+    ExitPlanMode: "plan",
+};
+
+function asksUser(record: JsonRecord): boolean {
+    if (record.type !== "assistant") {
+        return false;
+    }
+
+    const message = isRecord(record.message) ? record.message : null;
+    const content = message?.content;
+
+    if (
+        Array.isArray(content) &&
+        content.some((block) => isRecord(block) && block.type === "tool_use" && block.name === CLAUDE_QUESTION_TOOL)
+    ) {
+        return true;
+    }
+
+    // A completed turn means the session sits at its prompt, waiting for the user.
+    return message?.stop_reason === "end_turn";
+}
+
+/**
+ * Claude transcript records, oldest first, as events.
+ *
+ * Only the LAST conversation record (`assistant`, `user` or `result`) can mark a finish or a question.
+ * `summary` records sit at the top of compacted sessions and a `result` in the middle belongs to a
+ * sub-agent, so treating either as terminal would freeze a live session at `FINISHED`.
+ *
+ * Records after the last conversation record are bookkeeping (`cost-state`, `system`, `queue-operation`).
+ * Measured 2026-10-05: 39 of the 40 most recent transcripts on one machine ended on one of those, so a
+ * rule that read the final line saw an end of turn almost never. They produce no event: pass the file's
+ * modification time as `lastModified`, which already covers their time. A record without a timestamp
+ * produces none.
+ */
+export function claudeRecordsToEvents(records: ReadonlyArray<JsonRecord>): ActivityEvent[] {
+    const stamped = records.flatMap((record) => {
+        const ts = toEpochMs(record.timestamp ?? record.ts);
+
+        return ts === undefined ? [] : [{ record, ts }];
+    });
+    const lastConversation = stamped.findLastIndex(
+        ({ record }) => typeof record.type === "string" && CLAUDE_CONVERSATION.has(record.type)
+    );
+    const upTo = lastConversation === -1 ? stamped.length : lastConversation + 1;
+
+    return stamped.slice(0, upTo).map(({ record, ts }, index): ActivityEvent => {
+        if (index === lastConversation && record.type === "result") {
+            return { kind: "exit", ts };
+        }
+
+        if (index === lastConversation && asksUser(record)) {
+            return { kind: "question", ts };
+        }
+
+        return { kind: "output", ts };
+    });
+}
 
 function claudeTextBlocks(record: JsonRecord): string[] {
     const message = isRecord(record.message) ? record.message : null;
@@ -48,7 +115,7 @@ function claudeQuestionOf(record: JsonRecord): { text: string; call: TurnQuestio
     }
 
     const call = content.find(
-        (block) => isRecord(block) && block.type === "tool_use" && block.name === "AskUserQuestion"
+        (block) => isRecord(block) && block.type === "tool_use" && block.name === CLAUDE_QUESTION_TOOL
     );
     if (!isRecord(call)) {
         return null;
@@ -211,11 +278,14 @@ function claudeCalls(records: ReadonlyArray<JsonRecord>): TurnCalls {
             }
 
             if (record.type === "assistant" && block.type === "tool_use" && typeof block.id === "string") {
+                const name = typeof block.name === "string" ? block.name : "tool";
+                const waits = Object.hasOwn(CLAUDE_WAITING_TOOLS, name) ? CLAUDE_WAITING_TOOLS[name] : undefined;
                 calls.call({
                     id: block.id,
-                    name: typeof block.name === "string" ? block.name : "tool",
+                    name,
                     summary: toolSummaryOf(block.input),
                     startedAt: ts,
+                    ...(waits ? { waits } : {}),
                 });
             } else if (
                 record.type === "user" &&

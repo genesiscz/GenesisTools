@@ -11,7 +11,7 @@ import type {
     TranscriptSource,
 } from "@genesiscz/utils/ai/transcripts/resolve";
 import type { TitledSession, TitleSearch } from "@genesiscz/utils/ai/transcripts/session-title";
-import type { TurnQuestionCall, TurnSnapshot, TurnStateInput } from "@genesiscz/utils/ai/transcripts/turn-state";
+import type { TurnQuestionCall, TurnSnapshot, TurnStateInput } from "@genesiscz/utils/ai/transcripts/turn-state-types";
 import type { TranscriptTurn } from "@genesiscz/utils/ai/transcripts/types";
 import type { WorkerCapabilities } from "@genesiscz/utils/worker/capabilities";
 

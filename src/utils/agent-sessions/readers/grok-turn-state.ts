@@ -1,13 +1,6 @@
 /** The Grok driver's `turnState` part: the newest turn of an `updates.jsonl`, plus the prompts of `events.jsonl`. */
 import type { NativeDialogPermission } from "@genesiscz/utils/agent-sessions/types";
 import type { ActivityEvent } from "@genesiscz/utils/ai/transcripts/activity";
-import type {
-    JsonRecord,
-    TurnQuestionCall,
-    TurnQuestionKind,
-    TurnSnapshot,
-    TurnStateInput,
-} from "@genesiscz/utils/ai/transcripts/turn-state";
 import {
     firstLine,
     isRecord,
@@ -19,6 +12,13 @@ import {
     toolSummaryOf,
     waitingOn,
 } from "@genesiscz/utils/ai/transcripts/turn-state-core";
+import type {
+    JsonRecord,
+    TurnQuestionCall,
+    TurnQuestionKind,
+    TurnSnapshot,
+    TurnStateInput,
+} from "@genesiscz/utils/ai/transcripts/turn-state-types";
 
 /** What a Grok `updates.jsonl` line says, or null when it is not an update line. */
 function grokUpdateOf(record: JsonRecord): { kind: string; update: JsonRecord; ts: number | undefined } | null {

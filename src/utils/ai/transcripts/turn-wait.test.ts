@@ -16,6 +16,7 @@ function snap(state: ActivityState, lastEventAt: number | null, turnStartedAt: n
         lastText: `text@${lastEventAt}`,
         asksQuestion: false,
         question: null,
+        turnEnded: false,
         interrupted: false,
         turnError: null,
         lastEventAt,

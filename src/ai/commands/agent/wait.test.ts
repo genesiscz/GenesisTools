@@ -99,6 +99,7 @@ describe("answeredBeforeWatch", () => {
             lastText: "",
             asksQuestion: false,
             question: null,
+            turnEnded: false,
             interrupted: false,
             turnError: null,
             lastEventAt: turnStartedAt,
