@@ -331,6 +331,20 @@ describe("session scratch and roots", () => {
         expect(verdictOf(root, c)).toEqual({ kind: "ask", rule: "default" });
     });
 
+    test("an allowed path inside an asked folder stays in the plan; an asked one inside it goes with the folder", () => {
+        const root = dir("trusted-overlap");
+        const c = ctx({ config: { ...config, roots: [{ path: root, addedAt: "", via: "cli" }] } });
+        const allowedChild = dir("trusted-overlap", "build");
+        const theirs = dir("cc", "proj", "sess-2222", "overlap");
+        const plan = planRemoval([root, allowedChild, theirs, dir("cc", "proj", "sess-2222", "overlap", "inner")], c);
+
+        expect(plan.map((item) => [item.target.path, item.verdict.kind])).toEqual([
+            [root, "ask"],
+            [allowedChild, "allow"],
+            [theirs, "ask"],
+        ]);
+    });
+
     test("a path inside another input is dropped from the plan", () => {
         const outer = dir("cc", "proj", "sess-1111", "outer");
         const plan = planRemoval([outer, join(outer, "inner"), outer], ctx());
