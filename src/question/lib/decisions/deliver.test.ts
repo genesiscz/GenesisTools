@@ -1225,6 +1225,60 @@ describe("delivery routes", () => {
     });
 });
 
+describe("a pane send that ran past its deadline", () => {
+    // Before 2026-10-31 a timeout receipt (`sent: false, reason: "timeout"`) read as a refusal before input, so the
+    // answer was saved to the session queue and could be delivered a second time after the first one was typed.
+    test.each([
+        ["the flagged receipt", { sent: false, unconfirmed: true, reason: "timeout", query: "abc", timeoutSeconds: 5 }],
+        ["an older child's receipt", { sent: false, reason: "timeout", query: "abc", timeoutSeconds: 5 }],
+    ])("%s is an unknown outcome and is never queued", async (_label, receipt) => {
+        const queueRoot = mkdtempSync(join(tmpdir(), "pane-timeout-queue-"));
+        const request = {
+            session: "abc",
+            provider: "claude",
+            text: "DECISION 1: a) yes",
+            sourceHome: "/fixture/claude",
+            deliveryKey: "timeout-key",
+        };
+
+        await expect(
+            deliverToSession(request, {
+                runTool: async () => ({ success: false, stdout: SafeJSON.stringify(receipt), stderr: "" }),
+                findTargets: livePaneTargets,
+                openDialog: () => null,
+                queueRoot,
+            })
+        ).rejects.toBeInstanceOf(DeliveryUnknownError);
+        expect(
+            listSessionMessages({
+                root: queueRoot,
+                target: { provider: "claude", sessionId: "abc", sourceHome: "/fixture/claude" },
+            })
+        ).toEqual([]);
+    });
+
+    test("a readable refusal before input is still queued (control)", async () => {
+        const queueRoot = mkdtempSync(join(tmpdir(), "pane-refusal-queue-"));
+        const result = await deliverToSession(
+            {
+                session: "abc",
+                provider: "claude",
+                text: "DECISION 1: a) yes",
+                sourceHome: "/fixture/claude",
+                deliveryKey: "refusal-key",
+            },
+            {
+                runTool: async () => ({ success: false, stdout: '{"sent":false,"matches":[]}', stderr: "" }),
+                findTargets: livePaneTargets,
+                openDialog: () => null,
+                queueRoot,
+            }
+        );
+        expect(result).toMatchObject({ channel: "queued", delivered: false });
+        expect(result.queueId).toBeDefined();
+    });
+});
+
 describe("the live receiver edges in a test run", () => {
     test("without noNativeReceivers a delivery reads the sandboxed agent homes, never this Mac's real ones", async () => {
         const realHome = homedir();

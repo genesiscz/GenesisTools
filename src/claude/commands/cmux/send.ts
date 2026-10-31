@@ -67,7 +67,9 @@ export async function sendDoor(
     }
 
     if (opts.json) {
-        out.result({ sent: false, reason: "timeout", query, timeoutSeconds: Number(opts.timeout) });
+        // `unconfirmed`: the text may be typed already with Enter still owed, so no caller may read this as a
+        // refusal before input (readPaneReceipt).
+        out.result({ sent: false, unconfirmed: true, reason: "timeout", query, timeoutSeconds: Number(opts.timeout) });
     }
 
     out.error(

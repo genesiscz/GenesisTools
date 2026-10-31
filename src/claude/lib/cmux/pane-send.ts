@@ -562,7 +562,8 @@ export function paneSendReceipt(outcome: PaneSendOutcome): Record<string, unknow
  * `tools claude cmux send` uses (decision delivery, the widget's transport, a dialog answer).
  * - `typed`: the text went in; `pane` names the workspace and pane it went to, when the receipt says.
  * - `refused`: nothing was typed or pressed (no pane, several panes, an open dialog, a timeout before typing).
- * - `unconfirmed`: an option key was pressed, but nothing confirms the dialog took it.
+ * - `unconfirmed`: an option key was pressed, but nothing confirms the dialog took it; or the send ran past its
+ *   `--timeout` (`timedOut`), so the text may be typed without Enter.
  * - `unreadable`: no JSON receipt with a `sent` answer; nobody can tell what happened.
  */
 export type PaneReceipt =
@@ -576,7 +577,7 @@ export type PaneReceipt =
           /** How many panes matched, when the receipt lists them. */
           matches?: number;
       }
-    | { kind: "unconfirmed"; reason?: string }
+    | { kind: "unconfirmed"; reason?: string; timedOut: boolean }
     | { kind: "unreadable" };
 
 export function readPaneReceipt(stdout: string): PaneReceipt {
@@ -602,8 +603,10 @@ export function readPaneReceipt(stdout: string): PaneReceipt {
         return workspaceName || paneTitle ? { kind: "typed", pane: { workspaceName, paneTitle } } : { kind: "typed" };
     }
 
-    if ("unconfirmed" in raw && raw.unconfirmed === true) {
-        return { kind: "unconfirmed", ...(reason ? { reason } : {}) };
+    // A timeout receipt without the `unconfirmed` flag (a child from before it) is the same outcome.
+    const timedOut = reason === "timeout";
+    if (("unconfirmed" in raw && raw.unconfirmed === true) || timedOut) {
+        return { kind: "unconfirmed", ...(reason ? { reason } : {}), timedOut };
     }
 
     return {

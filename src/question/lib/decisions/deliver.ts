@@ -965,7 +965,15 @@ async function typeIntoPane(
         };
     }
 
-    // A text send never presses a dialog key, so an `unconfirmed` receipt is no answer this send can trust.
+    // A send that ran past its deadline may have typed the text with Enter still owed: never queue it again.
+    if (receipt.kind === "unconfirmed" && receipt.timedOut) {
+        return {
+            kind: "unknown",
+            reason: "The cmux send ran past its deadline; the text may be typed without Enter. Check the session before retrying.",
+        };
+    }
+
+    // A text send never presses a dialog key, so any other `unconfirmed` receipt is no answer this send can trust.
     if (receipt.kind === "unconfirmed") {
         return {
             kind: "unknown",
