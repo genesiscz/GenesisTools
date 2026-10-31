@@ -566,7 +566,9 @@ struct WidgetPeekView: View {
                     // The context the agent wrote under the title, so a pick here is not made blind (Martin,
                     // 2026-10-28: "in this window you should probably have the description").
                     if model.snapshot?.state.preferences.alertSummary ?? true,
-                       let summary = item.summary, !summary.isEmpty, item.needsAnswer { summaryText(summary) }
+                       let summary = item.summary, !summary.isEmpty, item.needsAnswer {
+                        WidgetPeekSummary(summary: summary).equatable()
+                    }
                     if !options.isEmpty { optionList }
                     if item.isAnsweredElsewhere { answeredBody }
                     if isReminder { stagedBody }
@@ -672,29 +674,6 @@ struct WidgetPeekView: View {
 
     /// The summary's tallest block; a longer one scrolls, so the options and the footer under it stay on screen.
     static let summaryMaxHeight: CGFloat = 132
-
-    /// The whole summary, with no line limit: the sender already cuts it near 600 characters (`decisionSummary`), and
-    /// a selectable `Text` draws its full string while it is being selected, past the frame a line limit laid out
-    /// (2026-10-30: six lines laid out, nine drawn, the last three under the option rows). Many short lines still fit
-    /// in 600 characters, so the block hugs its text up to `summaryMaxHeight` and scrolls past it, clipped there.
-    private func summaryText(_ summary: String) -> some View {
-        let markdown = (try? AttributedString(
-            markdown: summary, options: .init(interpretedSyntax: .inlineOnlyPreservingWhitespace))) ?? AttributedString(summary)
-        return ScrollView(.vertical) {
-            Text(markdown)
-                .font(.system(size: 12)).foregroundStyle(.secondary)
-                .fixedSize(horizontal: false, vertical: true)
-                .textSelection(.enabled)
-                .padding(.horizontal, 8)
-                .frame(maxWidth: .infinity, alignment: .leading)
-        }
-        .scrollBounceBehavior(.basedOnSize)
-        // Ideal height first (the text's own), then at most the cap: a short summary takes only its lines.
-        .frame(maxHeight: Self.summaryMaxHeight)
-        .fixedSize(horizontal: false, vertical: true)
-        .accessibilityIdentifier("widget.peek.summary")
-        .frameProbe("widget.peek.summary")
-    }
 
     /// The decision's options as the inbox draws them: a click stages one (or sends it, by the Decision click
     /// setting) without opening anything, and the row says Staged at once. A send shows its outcome here.
@@ -919,6 +898,35 @@ struct WidgetPeekView: View {
         var style = model.attentionStyle
         style.cornerRadius = Self.cornerRadius
         return style
+    }
+}
+
+/// The popup's decision summary in full, with no line limit: the sender already cuts it near 600 characters
+/// (`decisionSummary`), and a selectable `Text` draws its full string while it is being selected, past the frame a line
+/// limit laid out (2026-10-30: six lines laid out, nine drawn, the last three under the option rows). Many short lines
+/// still fit in 600 characters, so the block hugs its text up to `WidgetPeekView.summaryMaxHeight` and scrolls past it,
+/// clipped there. Its own equatable view, so the markdown is parsed when the summary changes, not on every publish of
+/// the model the popup observes.
+struct WidgetPeekSummary: View, Equatable {
+    let summary: String
+
+    var body: some View {
+        let markdown = (try? AttributedString(
+            markdown: summary, options: .init(interpretedSyntax: .inlineOnlyPreservingWhitespace))) ?? AttributedString(summary)
+        ScrollView(.vertical) {
+            Text(markdown)
+                .font(.system(size: 12)).foregroundStyle(.secondary)
+                .fixedSize(horizontal: false, vertical: true)
+                .textSelection(.enabled)
+                .padding(.horizontal, 8)
+                .frame(maxWidth: .infinity, alignment: .leading)
+        }
+        .scrollBounceBehavior(.basedOnSize)
+        // Ideal height first (the text's own), then at most the cap: a short summary takes only its lines.
+        .frame(maxHeight: WidgetPeekView.summaryMaxHeight)
+        .fixedSize(horizontal: false, vertical: true)
+        .accessibilityIdentifier("widget.peek.summary")
+        .frameProbe("widget.peek.summary")
     }
 }
 
