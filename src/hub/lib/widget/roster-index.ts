@@ -81,6 +81,15 @@ export const WIDGET_EXACT_PATHS_LIMIT = 64;
 
 type ProviderScope = Exclude<WidgetRosterScope, "all">;
 
+type NativeHarness = Exclude<HarnessId, "claude">;
+const NATIVE_HARNESSES = ["codex", "grok"] as const satisfies readonly NativeHarness[];
+
+/** The catalog listings one whole-harness refresh reruns; Codex keeps its sub-agents in a listing of their own. */
+const NATIVE_LISTINGS: Record<NativeHarness, Array<{ excludeAgents?: boolean; agentsOnly?: boolean }>> = {
+    codex: [{ excludeAgents: true }, { agentsOnly: true }],
+    grok: [{ excludeAgents: true }],
+};
+
 /** The provider whose index a provider scope refreshes: a harness scope its own, the sub-agent listing Claude's. */
 function scopeProvider(scope: ProviderScope): HarnessId {
     return scope === "claude-agents" ? "claude" : scope;
@@ -217,10 +226,7 @@ export async function refreshWidgetIndex(
         getSessionListing({ ...filters, mtimeFrom: since, refresh: true }).then(
             (listing) => listing.indexed + listing.staleRemoved
         );
-    const native = (
-        provider: Exclude<HarnessId, "claude">,
-        filters: { excludeAgents?: boolean; agentsOnly?: boolean }
-    ) =>
+    const native = (provider: NativeHarness, filters: { excludeAgents?: boolean; agentsOnly?: boolean }) =>
         catalogHistory({ provider, refresh: true, filters: { ...filters, mtimeFrom: since } }).then(
             ({ report }) => report.parsed + report.removed
         );
@@ -232,12 +238,10 @@ export async function refreshWidgetIndex(
         tasks.push(claude({ subagentsOnly: true }));
     }
 
-    if (whole.has("codex")) {
-        tasks.push(native("codex", { excludeAgents: true }), native("codex", { agentsOnly: true }));
-    }
-
-    if (whole.has("grok")) {
-        tasks.push(native("grok", { excludeAgents: true }));
+    for (const harness of NATIVE_HARNESSES) {
+        if (whole.has(harness)) {
+            tasks.push(...NATIVE_LISTINGS[harness].map((filters) => native(harness, filters)));
+        }
     }
 
     const counts = await Promise.all(tasks);
@@ -315,17 +319,11 @@ export function widgetRosterChange({
         return undefined;
     }
 
-    for (const root of roots.codex) {
-        if (under(root, path) !== undefined) {
-            // A rollout, plain or compressed (Codex 0.164 renames a closed one to `.jsonl.zst`): the index changes too.
-            return resolveHistoryProvider("codex").reader.indexesFile(path) ? "codex" : undefined;
-        }
-    }
-
-    for (const root of roots.grok) {
-        if (under(root, path) !== undefined) {
-            // The files the grok reader indexes; its event, signal and rewind files change constantly and index nothing.
-            return resolveHistoryProvider("grok").reader.indexesFile(path) ? "grok" : undefined;
+    // Only the files each reader indexes count: a closed Codex rollout renamed to `.jsonl.zst` does, Grok's event,
+    // signal and rewind files (which change constantly) do not.
+    for (const harness of NATIVE_HARNESSES) {
+        if (roots[harness].some((root) => under(root, path) !== undefined)) {
+            return resolveHistoryProvider(harness).reader.indexesFile(path) ? harness : undefined;
         }
     }
 
