@@ -53,6 +53,9 @@ export function validateFieldValue(value: CellValue, field: RecastCollection["fi
             if (Temporal.PlainDateTime.from(local, { overflow: "reject" }).year < 1) {
                 throw new Error("datetime");
             }
+            if (local !== value) {
+                Temporal.Instant.from(value);
+            }
         } else if (field.type === "timezone") {
             if (value !== "UTC" && !/^[A-Za-z_+-]+(?:\/[A-Za-z0-9_+-]+)+$/.test(value)) {
                 throw new Error("timezone");

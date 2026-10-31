@@ -25,7 +25,7 @@ import { foldCalendarLine, RecastExportError, renderRecastCollection } from "./r
 import { previewRoundTrip } from "./roundtrip";
 import { captureRecastTranscript, recastAudioSelection, reviewRecastTranscript } from "./transcription";
 import { transcribeRecastSelection } from "./transcription-generation";
-import { calendarInstant, recordIssues } from "./validation";
+import { calendarInstant, recordIssues, validateFieldValue } from "./validation";
 
 const AT = "2026-01-01T12:00:00.000Z";
 const HASH = createHash("sha256").update("fixture").digest("hex");
@@ -279,6 +279,21 @@ describe("Recast correction and acceptance", () => {
             }
         }
         expect(() => set(example(), "value", " ")).not.toThrow();
+    });
+
+    test("a datetime field rejects an impossible UTC offset and keeps valid ones", () => {
+        const field = { id: "when", label: "When", type: "datetime", required: false } as const;
+        for (const value of ["2026-10-05T09:00+99:99", "2026-10-05T09:00+24:00", "2026-10-05T09:00-00:60"]) {
+            expect(validateFieldValue(value, field)).toContain("is not a valid");
+        }
+        for (const value of [
+            "2026-10-05T09:00",
+            "2026-10-05T09:00Z",
+            "2026-10-05T09:00:30+02:00",
+            "2026-10-05T09:00-14:00",
+        ]) {
+            expect(validateFieldValue(value, field)).toBeUndefined();
+        }
     });
 
     test("archived records cannot be edited or accepted through ordinary operations", () => {
