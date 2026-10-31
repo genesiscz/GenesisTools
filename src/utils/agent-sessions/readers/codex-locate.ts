@@ -1,8 +1,13 @@
 import { existsSync } from "node:fs";
 import { homedir } from "node:os";
-import { basename, join } from "node:path";
+import { basename, dirname, join, sep } from "node:path";
 import { readCodexTitleIndex } from "@genesiscz/utils/agent-sessions/readers/codex-title";
-import type { FolderReads, RankedHit, ResolvedTranscript } from "@genesiscz/utils/ai/transcripts/resolve";
+import {
+    directReads,
+    type FolderReads,
+    type RankedHit,
+    type ResolvedTranscript,
+} from "@genesiscz/utils/ai/transcripts/resolve";
 import { idMatches, isRecord } from "@genesiscz/utils/ai/transcripts/resolve-core";
 import type { TitledSession } from "@genesiscz/utils/ai/transcripts/session-title";
 import { sessionsDir } from "@genesiscz/utils/codex/worker-paths";
@@ -166,15 +171,46 @@ export function codexIndexPaths(home = homedir()): string[] {
     return codexHomesWithLegacy(home).map((home) => join(home, "session_index.jsonl"));
 }
 
-export function codexSessions(indexPaths: readonly string[]): TitledSession[] {
-    // Codex appends a line per rename, in write order: the last line of an id is its current title.
-    const found = new Map<string, TitledSession>();
+/**
+ * The titled threads of the given session indexes. Codex appends a line per rename, in write order, so the last line
+ * of an id in one index is its current title there. A thread in two homes (a legacy profile home copied from the
+ * default one) takes its title from the home of its newest rollout, the one a lookup of its id resolves to, and points
+ * at that rollout, so the title and the transcript come from one pick.
+ */
+export function codexSessions(indexPaths: readonly string[], fs: FolderReads = directReads): TitledSession[] {
+    const byThread = new Map<string, Map<string, TitledSession>>();
 
     for (const indexPath of indexPaths) {
-        if (existsSync(indexPath)) {
-            readCodexTitleIndex(indexPath, found);
+        if (!existsSync(indexPath)) {
+            continue;
+        }
+
+        const found = new Map<string, TitledSession>();
+        readCodexTitleIndex(indexPath, found);
+
+        for (const [id, session] of found) {
+            const homes = byThread.get(id) ?? new Map<string, TitledSession>();
+            homes.set(dirname(indexPath), session);
+            byThread.set(id, homes);
         }
     }
 
-    return [...found.values()];
+    return [...byThread.values()].flatMap((homes) => {
+        const [first] = homes.values();
+        return first ? [homes.size === 1 ? first : titleOfNewestRollout(homes, first, fs)] : [];
+    });
+}
+
+/** The title of a thread several homes index, from the home that holds its newest rollout, pointing at that rollout. */
+function titleOfNewestRollout(
+    homes: ReadonlyMap<string, TitledSession>,
+    first: TitledSession,
+    fs: FolderReads
+): TitledSession {
+    const newest = findCodexNative(first.sessionId, [...homes.keys()], fs).sort((a, b) => b.mtime - a.mtime)[0];
+    const home = newest ? [...homes.keys()].find((path) => newest.filePath.startsWith(`${path}${sep}`)) : undefined;
+    const session = home ? homes.get(home) : undefined;
+
+    // No rollout in any of them: the default home's title, which a lookup cannot resolve either.
+    return newest && session ? { ...session, locator: newest.filePath } : first;
 }

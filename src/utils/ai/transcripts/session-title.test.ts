@@ -129,6 +129,31 @@ describe("findSessionsByTitle", () => {
         });
     });
 
+    it("takes a thread's title from the home of the rollout its id resolves to", async () => {
+        const home = mkdtempSync(join(tmpdir(), "titles-codex-legacy-"));
+        const id = "019c0000-0000-7000-8000-000000000021";
+        const rolloutIn = (codexHome: string, title: string, mtimeSec: number) => {
+            const day = join(home, codexHome, "sessions", "2026", "10", "31");
+            mkdirSync(day, { recursive: true });
+            const rollout = join(day, `rollout-2026-10-31T10-00-00-${id}.jsonl`);
+            writeFileSync(rollout, "{}\n");
+            utimesSync(rollout, mtimeSec, mtimeSec);
+            writeFileSync(
+                join(home, codexHome, "session_index.jsonl"),
+                `{"id":"${id}","thread_name":"${title}","updated_at":"2026-10-31T10:00:00Z"}\n`
+            );
+            return rollout;
+        };
+        const current = rolloutIn(".codex", "New", 2_000_000_000);
+        rolloutIn(".codex-work", "Old", 1_000_000_000);
+
+        await env.testing.withOverrides({ CODEX_HOME: undefined }, () => {
+            const titles = codexTitles(home);
+            expect(titles("New").map((hit) => hit.locator)).toEqual([current]);
+            expect(titles("Old")).toEqual([]);
+        });
+    });
+
     it("orders Codex titles by an updated_at in epoch seconds as discovery does", async () => {
         const home = mkdtempSync(join(tmpdir(), "titles-codex-epoch-"));
         writeFileSync(
