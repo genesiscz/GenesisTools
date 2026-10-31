@@ -739,11 +739,17 @@ final class HubInboxModel: ObservableObject {
             let item = found?.decisions.first { $0.id == id }
             DispatchQueue.main.async { [weak self] in
                 MainActor.assumeIsolated {
-                    guard let self, self.revealMissing != nil else { return }
-                    self.revealMissing?.text = Self.notWaitingSentence(number: number, item: item)
+                    self?.explain(target, Self.notWaitingSentence(number: number, item: item))
                 }
             }
         }
+    }
+
+    /// The lookup's sentence lands only on the notice it was started for: a later reveal may have replaced the notice
+    /// while the lookup ran, and its text must keep describing its own target.
+    func explain(_ target: RevealTarget, _ text: String) {
+        guard revealMissing?.target == target else { return }
+        revealMissing?.text = text
     }
 
     /// "Decision 26 is not waiting: it was answered (b) as a separate draft pr)."

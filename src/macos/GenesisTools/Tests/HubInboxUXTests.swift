@@ -178,6 +178,21 @@ final class HubInboxUXTests: XCTestCase {
 
     /// A dialog takes the number keys like a decision, but its pick goes to the dialog-answer route (`choose` sends it
     /// to `answerDialog`), never to the decision log's staging; a legacy dialog row (kind decision) counts as a dialog.
+    /// Two reveal lookups that finish in reverse order: the older one's sentence must not land on the newer notice.
+    @MainActor
+    func testALateRevealExplanationNeverRewritesANewerNotice() {
+        let inbox = HubInboxModel()
+        let first = HubInboxModel.RevealTarget(sessionId: "s1", number: 26)
+        let second = HubInboxModel.RevealTarget(sessionId: "s2", number: 4)
+        inbox.revealMissing = .init(text: "Decision 4 is not waiting any more.", target: second)
+
+        inbox.explain(first, "Decision 26 is not waiting: it was answered (b).")
+        XCTAssertEqual(inbox.revealMissing, .init(text: "Decision 4 is not waiting any more.", target: second))
+
+        inbox.explain(second, "Decision 4 is not waiting: its answer was sent.")
+        XCTAssertEqual(inbox.revealMissing, .init(text: "Decision 4 is not waiting: its answer was sent.", target: second))
+    }
+
     @MainActor
     func testDialogsTakeNumberKeysThroughTheDialogRoute() throws {
         let inbox = HubInboxModel()
