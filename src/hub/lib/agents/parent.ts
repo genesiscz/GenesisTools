@@ -4,7 +4,7 @@ import { listSubagents } from "@genesiscz/utils/ai/transcripts/subagents";
 import { logger } from "@genesiscz/utils/logger";
 import { readSessionTeam, unreadInbox } from "./team";
 import { buildParent, type ParentRow } from "./tree";
-import type { AgentParent } from "./types";
+import type { AgentNode, AgentParent } from "./types";
 import type { WorkerAgent } from "./workers";
 
 const HEAD_BYTES = 16 * 1024;
@@ -18,6 +18,28 @@ export function startedAtOf(path: string): string | null {
         return null;
     }
 }
+
+/** What a harness's parent builder (`parents/<harness id>.ts`) gets besides the row: one tree build's shared reads. */
+export interface ParentContext {
+    now: number;
+    /** The teams root the teammates are read under. */
+    root: string;
+    promptChars?: number;
+    /** The `tools <agent>` workers that report to a session. */
+    workersOf(sessionId: string): WorkerAgent[];
+    /** The Codex sub-agents a session spawned (its rollouts' agent records). */
+    codexAgentsOf(sessionId: string): AgentNode[];
+}
+
+/** How a harness's session becomes a parent of the agents tree: the export `parents/<harness id>.ts` holds. */
+export type ParentBuilder = (row: ParentRow, context: ParentContext) => AgentParent;
+
+/** The parent of a session read from its transcript and its workers (Claude, and Grok with no sub-agents on disk). */
+export const transcriptParent: ParentBuilder = (row, context) =>
+    readParent(row, context.workersOf(row.sessionId), context.root, {
+        now: context.now,
+        promptChars: context.promptChars,
+    });
 
 export function readParent(
     row: ParentRow,

@@ -9,17 +9,17 @@ import { teamsRoot } from "@app/claude/lib/teams/discover";
 import type { SessionMetadataRecord } from "@genesiscz/utils/agent-sessions/cache-types";
 import { claudeSubagentLead } from "@genesiscz/utils/agent-sessions/readers/claude-paths";
 import { resolveTranscripts } from "@genesiscz/utils/ai/transcripts/resolve";
+import { isFunctionPart, toolParts } from "@genesiscz/utils/harness/tool-parts";
 import { logger } from "@genesiscz/utils/logger";
 import { profiler } from "@genesiscz/utils/profile";
 import { openAgentSessionIds } from "../procs/sources";
-import { attachCodexAgents, buildCodexParent, type CodexAgentRecord, recentCodexAgentRecords } from "./codex-agents";
-import { readParent, startedAtOf } from "./parent";
+import { attachCodexAgents, type CodexAgentRecord, recentCodexAgentRecords } from "./codex-agents";
+import type { ParentBuilder, ParentContext } from "./parent";
 import { type ParentRow, sortNodes, sortParents, withoutFullPrompts } from "./tree";
 import {
     AGENT_HARNESSES,
     type AgentHarness,
     type AgentNode,
-    type AgentParent,
     type AgentsTree,
     DEFAULT_AGENTS_LIMIT,
     DEFAULT_AGENTS_SINCE_HOURS,
@@ -32,6 +32,20 @@ import { listWorkers, type WorkerAgent } from "./workers";
 export type { AgentMail, AgentNode, AgentParent, AgentsTree } from "./types";
 
 const prof = profiler.scope("hub-agents");
+
+/**
+ * How each harness's session becomes a parent of the tree: `parents/<harness id>.ts` exports it as `parentPart`
+ * (`toolParts`). A new harness adds its module there and edits no table.
+ */
+const PARENT_BUILDERS = toolParts<ParentBuilder>({
+    meta: import.meta,
+    folder: "parents",
+    exportName: "parentPart",
+    isPart: isFunctionPart,
+});
+
+/** The harness of a parent row that predates the `provider` field: only Claude sessions were listed then. */
+const DEFAULT_PARENT_HARNESS: AgentHarness = "claude";
 
 export interface HubAgentsOptions {
     /** False for diagnostics; intentional background refreshes may update the shared index and memo. */
@@ -416,18 +430,18 @@ async function buildTree(options: HubAgentsOptions): Promise<AgentsTree> {
         }
     }
 
-    const readClaudeParent = (row: ParentRow): AgentParent =>
-        readParent(row, bySession.get(row.sessionId) ?? [], root, { now, promptChars: options.promptChars });
-    // How each harness's session becomes a parent: Codex from its agent records; Claude (and a row with no provider,
-    // which predates the field) and Grok from their transcript and workers, Grok with no sub-agents on disk.
-    // Harness-guard: the one table of the tool-owned `subagents` part, which every driver names this file for.
-    const parentBuilders: { readonly [Harness in AgentHarness]: (row: ParentRow) => AgentParent } = {
-        claude: readClaudeParent,
-        codex: (row) => buildCodexParent(row, codexTops.get(row.sessionId) ?? [], now, startedAtOf(row.filePath)),
-        grok: readClaudeParent,
+    const context: ParentContext = {
+        now,
+        root,
+        promptChars: options.promptChars,
+        workersOf: (sessionId) => bySession.get(sessionId) ?? [],
+        codexAgentsOf: (sessionId) => codexTops.get(sessionId) ?? [],
     };
+    // A row with no provider predates the field and is a Claude session.
     const parents = sortParents(
-        prof.measure("tree", () => parentRows.map((row) => parentBuilders[row.provider ?? "claude"](row)))
+        prof.measure("tree", () =>
+            parentRows.map((row) => PARENT_BUILDERS.of(row.provider ?? DEFAULT_PARENT_HARNESS)(row, context))
+        )
     )
         .map((parent) => ({ ...parent, open: open.has(parent.sessionId) }))
         .sort((left, right) => Number(right.open) - Number(left.open))
