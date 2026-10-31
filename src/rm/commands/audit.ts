@@ -1,3 +1,4 @@
+import { formatLocalDateTimeStamp } from "@genesiscz/utils/date";
 import { formatBytes } from "@genesiscz/utils/format";
 import { out } from "@genesiscz/utils/logger";
 import {
@@ -22,11 +23,6 @@ interface LogFlags {
     by?: string;
     limit: number;
     json?: boolean;
-}
-
-function localTime(at: string): string {
-    const date = new Date(at);
-    return `${date.toLocaleDateString("sv-SE")} ${date.toLocaleTimeString("sv-SE", { hour: "2-digit", minute: "2-digit" })}`;
 }
 
 export function registerAuditCommands(program: Command): void {
@@ -120,7 +116,7 @@ export function registerAuditCommands(program: Command): void {
                 const subject = entry.path ? shown(entry.path, cwd) : (entry.requestId ?? "");
                 const extra = entry.rule ? pc.dim(` ${entry.rule}`) : "";
                 out.println(
-                    `${pc.dim(localTime(entry.at))} ${pc.bold(entry.action.padEnd(8))}${size} ${subject}${extra}`
+                    `${pc.dim(formatLocalDateTimeStamp(entry.at, { seconds: false }))} ${pc.bold(entry.action.padEnd(8))}${size} ${subject}${extra}`
                 );
                 out.println(pc.dim(`                 ${who}${entry.via ? ` via ${entry.via}` : ""}`));
             }

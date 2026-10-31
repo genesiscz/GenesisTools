@@ -669,13 +669,9 @@ export function findNestedRepos(target: RmTarget, maxDepth = 4, maxDirs = 5000):
     let visited = 0;
     const queue: Array<{ dir: string; depth: number }> = [{ dir: target.path, depth: 0 }];
 
-    while (queue.length > 0 && visited < maxDirs && found.length < 20) {
-        const next = queue.shift();
-
-        if (!next) {
-            break;
-        }
-
+    // A read index, not `shift()`: shifting a 5000-entry array moves every element each time.
+    for (let head = 0; head < queue.length && visited < maxDirs && found.length < 20; head++) {
+        const next = queue[head];
         visited++;
         let entries: Dirent[];
 

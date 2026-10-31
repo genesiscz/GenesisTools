@@ -596,11 +596,17 @@ export interface DrainProgress {
 
 /**
  * Measures and deletes one stored item. Bun runs each `rm` on its thread pool, so a batch's items (and several
- * batches) delete in parallel, the way the reference tool started one `rm -rf` per orphan.
+ * batches) delete in parallel, the way the reference tool started one `rm -rf` per orphan. `knownBytes` is the size
+ * recorded when the item was moved; the tree is walked again only when none was recorded.
  */
-async function deleteStored(path: string, config: RmConfig, level: "item" | "batch"): Promise<number> {
+async function deleteStored(
+    path: string,
+    config: RmConfig,
+    level: "item" | "batch",
+    knownBytes?: number
+): Promise<number> {
     assertInsideTrash(path, config, level);
-    const size = measureBytes(path);
+    const size = knownBytes ?? measureBytes(path);
     await rm(path, { recursive: true, force: true });
     return size;
 }
@@ -616,7 +622,7 @@ async function drainClaimed(
     const sizes = await Promise.all(
         present.map(async (item) => {
             const elapsed = createStopwatch();
-            const size = await deleteStored(item.stored, config, "item");
+            const size = await deleteStored(item.stored, config, "item", item.bytes);
             appendRmLedger({
                 action: "drain",
                 path: item.original,
