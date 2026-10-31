@@ -320,21 +320,19 @@ export function shareRoutes(): RouteDef[] {
                     }
 
                     // Every note the page may embed, read once and masked like any text asset.
+                    const linkedNotes = [...assets.byHash.values()].filter(
+                        (asset) => asset.kind === "markdown" && asset.vaultPath !== note.vaultPath
+                    );
+                    const noteReads = await Promise.all(
+                        linkedNotes.map((asset) =>
+                            readShareAsset({ vaultRoot: obsidianVault, index: assets, hash: asset.hash })
+                        )
+                    );
                     const noteTexts = new Map<string, string>();
 
-                    for (const asset of assets.byHash.values()) {
-                        if (asset.kind !== "markdown" || asset.vaultPath === note.vaultPath) {
-                            continue;
-                        }
-
-                        const found = await readShareAsset({
-                            vaultRoot: obsidianVault,
-                            index: assets,
-                            hash: asset.hash,
-                        });
-
+                    for (const found of noteReads) {
                         if (found) {
-                            noteTexts.set(asset.hash, found.body.toString("utf8"));
+                            noteTexts.set(found.asset.hash, found.body.toString("utf8"));
                         }
                     }
 

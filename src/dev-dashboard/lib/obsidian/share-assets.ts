@@ -576,6 +576,49 @@ function commonDir(paths: string[]): string {
 }
 
 /**
+ * The masked bytes of `assets`, read one after another through `readShareAsset`. A file that changed since
+ * indexing is skipped and counted. Returns null as soon as `startBytes` plus the bodies exceed
+ * `SHARE_BUNDLE_MAX_BYTES`.
+ */
+async function readAssetBodies(options: {
+    vaultRoot: string;
+    index: ShareAssetIndex;
+    assets: Iterable<ShareAsset>;
+    startBytes: number;
+    what: string;
+}): Promise<{ bodies: Map<ShareAsset, Buffer>; skipped: number; total: number } | null> {
+    const { vaultRoot, index, assets, what } = options;
+    const bodies = new Map<ShareAsset, Buffer>();
+    let total = options.startBytes;
+    let skipped = 0;
+
+    if (total > SHARE_BUNDLE_MAX_BYTES) {
+        return null;
+    }
+
+    for (const asset of assets) {
+        const found = await readShareAsset({ vaultRoot, index, hash: asset.hash });
+
+        if (!found) {
+            log.warn({ asset: asset.vaultPath }, `${what} skipped an attachment that changed`);
+            skipped++;
+            continue;
+        }
+
+        total += found.body.length;
+
+        if (total > SHARE_BUNDLE_MAX_BYTES) {
+            log.warn({ total }, `${what} is over the size limit`);
+            return null;
+        }
+
+        bodies.set(asset, found.body);
+    }
+
+    return { bodies, skipped, total };
+}
+
+/**
  * The shared note and every file it references, as zip entries under one folder named after the note.
  * Paths keep their layout below the deepest folder they all share, so relative links and wikilinks in the
  * note still resolve after unzipping. Every attachment goes through `readShareAsset`, so the zip holds the
@@ -591,49 +634,32 @@ export async function buildShareBundle(options: {
 }): Promise<{ entries: Array<{ name: string; data: Uint8Array }>; skipped: number } | null> {
     const { vaultRoot, index, notePath, noteText, folderName } = options;
 
-    if (Buffer.byteLength(noteText, "utf8") > SHARE_BUNDLE_MAX_BYTES) {
+    const noteData = new TextEncoder().encode(noteText);
+    const byPath = new Map<string, ShareAsset>();
+
+    for (const asset of index.byTarget.values()) {
+        if (asset.vaultPath !== notePath && !byPath.has(asset.vaultPath)) {
+            byPath.set(asset.vaultPath, asset);
+        }
+    }
+
+    const read = await readAssetBodies({
+        vaultRoot,
+        index: { byTarget: index.byTarget, byHash: new Map([...byPath.values()].map((asset) => [asset.hash, asset])) },
+        assets: byPath.values(),
+        startBytes: noteData.length,
+        what: "share bundle",
+    });
+
+    if (!read) {
         return null;
     }
 
+    const { skipped, total } = read;
     const files: Array<{ vaultPath: string; data: Uint8Array }> = [
-        { vaultPath: notePath, data: new TextEncoder().encode(noteText) },
+        { vaultPath: notePath, data: noteData },
+        ...[...read.bodies].map(([asset, data]) => ({ vaultPath: asset.vaultPath, data })),
     ];
-    let total = files[0].data.length;
-    let skipped = 0;
-
-    const seenPaths = new Set<string>();
-
-    for (const asset of index.byTarget.values()) {
-        if (seenPaths.has(asset.vaultPath)) {
-            continue;
-        }
-
-        seenPaths.add(asset.vaultPath);
-        if (asset.vaultPath === notePath) {
-            continue;
-        }
-
-        const found = await readShareAsset({
-            vaultRoot,
-            index: { byTarget: index.byTarget, byHash: new Map([[asset.hash, asset]]) },
-            hash: asset.hash,
-        });
-
-        if (!found) {
-            log.warn({ notePath, asset: asset.vaultPath }, "share bundle skipped an attachment that changed");
-            skipped++;
-            continue;
-        }
-
-        total += found.body.length;
-
-        if (total > SHARE_BUNDLE_MAX_BYTES) {
-            log.warn({ notePath, total }, "share bundle is over the size limit");
-            return null;
-        }
-
-        files.push({ vaultPath: asset.vaultPath, data: found.body });
-    }
 
     const base = commonDir(files.map((file) => file.vaultPath));
     const strip = base === "" ? 0 : base.length + 1;
@@ -696,32 +722,26 @@ export async function buildShareEmbed(options: {
 }): Promise<ShareEmbed | null> {
     const { vaultRoot, index, panelBase, sourceBytes } = options;
     const embed: ShareEmbed = { media: new Map(), panels: {}, raws: {} };
-    const bodies = new Map<string, Buffer>();
-    let total = sourceBytes;
+    const read = await readAssetBodies({
+        vaultRoot,
+        index,
+        assets: index.byHash.values(),
+        startBytes: sourceBytes,
+        what: "share embed",
+    });
 
-    if (total > SHARE_BUNDLE_MAX_BYTES) {
+    if (!read) {
         return null;
     }
 
-    for (const asset of index.byHash.values()) {
-        const found = await readShareAsset({ vaultRoot, index, hash: asset.hash });
+    const { total } = read;
+    const bodies = new Map<string, Buffer>();
 
-        if (!found) {
-            log.warn({ asset: asset.vaultPath }, "share embed skipped an attachment that changed");
-            continue;
-        }
-
-        total += found.body.length;
-
-        if (total > SHARE_BUNDLE_MAX_BYTES) {
-            log.warn({ total }, "share embed is over the size limit");
-            return null;
-        }
-
-        bodies.set(asset.hash, found.body);
+    for (const [asset, body] of read.bodies) {
+        bodies.set(asset.hash, body);
 
         if (isMediaKind(asset.kind)) {
-            embed.media.set(asset.hash, dataUrl(asset.contentType, found.body));
+            embed.media.set(asset.hash, dataUrl(asset.contentType, body));
         }
     }
 
