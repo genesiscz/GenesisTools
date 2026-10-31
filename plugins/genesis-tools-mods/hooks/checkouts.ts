@@ -582,16 +582,15 @@ export async function noteToolCall(host: Host, input: unknown): Promise<boolean>
     return facts ? recordToolCall(host, facts) : false;
 }
 
-/** Writes captured facts into the ledger: `git check-ignore` and the store write may run after the result returned. */
-export async function recordToolCall(host: Host, facts: ToolCallFacts): Promise<boolean> {
-    const { files, writes, at: now } = facts;
+/** Each checkout a call's files and git writes name, with the branches its command made or pushed there. */
+async function namedRoots(host: Host, facts: ToolCallFacts): Promise<Map<string, string[]>> {
     const named = new Map<string, string[]>();
 
-    for (const touch of await datedRoots(host, files)) {
+    for (const touch of await datedRoots(host, facts.files)) {
         named.set(touch.root, []);
     }
 
-    for (const write of writes) {
+    for (const write of facts.writes) {
         const root = await rootAbove(host, write.dir);
 
         if (root !== null) {
@@ -599,15 +598,29 @@ export async function recordToolCall(host: Host, facts: ToolCallFacts): Promise<
         }
     }
 
-    const roots = [...named.keys()];
+    return named;
+}
 
-    if (roots.length === 0) {
-        return false;
-    }
-
-    const heads = await Promise.all(roots.map((root) => facts.heads.get(root) ?? headOf(host, root)));
+/**
+ * Writes captured facts into the ledger: `git check-ignore` and the store write may run after the result returned.
+ * The ledger slot is taken now, while the slow reads start beside it, so calls are written in the order they
+ * finished even when an earlier call's `check-ignore` is the slower one.
+ */
+export function recordToolCall(host: Host, facts: ToolCallFacts): Promise<boolean> {
+    const pending = namedRoots(host, facts);
+    // Awaited in the slot below; this only keeps an early rejection from counting as unhandled.
+    pending.catch(() => undefined);
 
     return mutateCheckouts(async () => {
+        const named = await pending;
+        const roots = [...named.keys()];
+
+        if (roots.length === 0) {
+            return false;
+        }
+
+        const now = facts.at;
+        const heads = await Promise.all(roots.map((root) => facts.heads.get(root) ?? headOf(host, root)));
         const before = await sessionCheckouts(host);
         const fresh = roots.map((root, index): Touch => {
             const head = heads[index];

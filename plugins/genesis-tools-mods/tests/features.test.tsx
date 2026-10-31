@@ -893,6 +893,33 @@ test("git band: a call's branch is read before its result returns, so a switch r
     expect((await sessionCheckouts(host))[0]).toMatchObject({ root: "/work/wt-b", branches: ["fix/a"] });
 });
 
+test("git band: calls are written in the order they finished, even when the first one's check-ignore is slower", async () => {
+    forgetCheckouts();
+    const base = checkoutHost();
+    let release = () => {};
+    const gate = new Promise<void>((resolve) => {
+        release = resolve;
+    });
+    const host: Host = {
+        ...base,
+        async run(argv, init) {
+            if (argv[2] === "/work/wt-a" && argv[3] === "check-ignore") {
+                await gate;
+            }
+
+            return base.run(argv, init);
+        },
+    };
+
+    await recordCheckout(host, { tool: "Edit", file_path: "/work/wt-a/src/x.ts" });
+    await recordCheckout(host, { tool: "Edit", file_path: "/work/wt-b/y.ts" });
+    await new Promise((resolve) => setTimeout(resolve, 10));
+    release();
+    await new Promise((resolve) => setTimeout(resolve, 20));
+
+    expect((await sessionCheckouts(host)).map((touch) => touch.root)).toEqual(["/work/wt-b", "/work/wt-a"]);
+});
+
 test("git band: folders added by hand, and the folders proposed for them", async () => {
     forgetCheckouts();
     forgetSettings();
