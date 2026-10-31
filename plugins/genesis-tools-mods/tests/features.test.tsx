@@ -91,7 +91,16 @@ import {
 } from "../hooks/links";
 import { forgetLive, liveAgo, liveDue, liveLeft, liveSince } from "../hooks/live";
 import { bareDescription } from "../hooks/model-label";
-import { forgetRepoMentions, namesIn, projectOfPath, sessionRepos, titleMatches, urlProject } from "../hooks/pr-repos";
+import {
+    checkoutOf,
+    forgetRepoMentions,
+    namesIn,
+    projectOfPath,
+    repoLookupClock,
+    sessionRepos,
+    titleMatches,
+    urlProject,
+} from "../hooks/pr-repos";
 import { modsSettings } from "../hooks/settings";
 import { afterTools, appendJsonl, flushModLogs, forgetSettings, type Host, isRecord } from "../hooks/shared";
 import { cliLacks, sharedRun, sharedRunClock, sharedRunFiles } from "../hooks/shared-run";
@@ -1297,6 +1306,62 @@ test("links: failed attribution retries without titles and preserves links recor
         laterNotes.push(note);
     });
     expect(laterNotes).toHaveLength(1);
+});
+
+test("links: the session checkout's origin is asked again after it expires, so a remote added later is seen", async () => {
+    forgetRepoMentions();
+    const base = checkoutHost();
+    let origin: string | undefined;
+    const originAsks: string[] = [];
+    const done = (stdout: string, exitCode = 0, stderr = "") => ({
+        exitCode,
+        stdout,
+        stderr,
+        isStdoutTruncated: false,
+        isStderrTruncated: false,
+    });
+    const host: Host = {
+        ...base,
+        async run(argv, init) {
+            const line = argv.join(" ");
+
+            if (line === "git -C /tmp/fx/new rev-parse --show-toplevel") {
+                return done("/tmp/fx/new\n");
+            }
+
+            if (line === "git -C /tmp/fx/new remote get-url origin") {
+                originAsks.push(origin ?? "none");
+
+                return origin ? done(`${origin}\n`) : done("", 2, "error: No such remote 'origin'\n");
+            }
+
+            return base.run(argv, init);
+        },
+    };
+    let now = 1_000_000;
+    repoLookupClock.now = () => now;
+
+    try {
+        expect((await checkoutOf(host, "/tmp/fx/new")).project).toBeUndefined();
+
+        origin = "git@github.com:acme/web.git";
+        now += 10_000;
+        expect((await checkoutOf(host, "/tmp/fx/new")).project).toBeUndefined();
+
+        now += 25_000;
+        expect((await checkoutOf(host, "/tmp/fx/new")).project?.path).toBe("acme/web");
+
+        origin = "git@github.com:acme/moved.git";
+        now += 9 * 60_000;
+        expect((await checkoutOf(host, "/tmp/fx/new")).project?.path).toBe("acme/web");
+
+        now += 2 * 60_000;
+        expect((await checkoutOf(host, "/tmp/fx/new")).project?.path).toBe("acme/moved");
+        expect(originAsks).toEqual(["none", "git@github.com:acme/web.git", "git@github.com:acme/moved.git"]);
+    } finally {
+        repoLookupClock.now = () => Date.now();
+        forgetRepoMentions();
+    }
 });
 
 test("links: a bare PR number takes the repository the reply means, not only the session's folder", async () => {

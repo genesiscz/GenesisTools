@@ -281,7 +281,14 @@ interface Lookup {
 }
 
 const pathProjects = new Map<string, Promise<Lookup>>();
-const rootProjects = new Map<string, Promise<Lookup>>();
+/**
+ * A checkout root's `origin` once git answered, for 10 minutes (no forge project for 30 seconds), so a remote added or
+ * moved with `git remote set-url` during a session reaches the links of the session's own checkout. `at` is unset
+ * while the run is in flight, which every caller then shares.
+ */
+const rootProjects = new Map<string, { lookup: Promise<Lookup>; at?: number; project?: ForgeProject }>();
+const ORIGIN_MS = 10 * 60_000;
+const NO_ORIGIN_MS = 30_000;
 /**
  * A folder's checkout root once git answered, for 10 minutes (a folder outside a checkout for 1 minute). The git
  * band asks for the cwd on every refresh: its `git rev-parse` was 1,334 of the 14,746 processes of 20 sessions in a
@@ -290,6 +297,9 @@ const rootProjects = new Map<string, Promise<Lookup>>();
 const folderRoots = new Map<string, { root: string | undefined; settled: boolean; at: number }>();
 const ROOT_MS = 10 * 60_000;
 const NO_ROOT_MS = 60_000;
+
+/** The time the checkout and origin answers age by (tests move it). */
+export const repoLookupClock = { now: (): number => Date.now() };
 
 /** Forgets the checkouts read so far (tests). */
 export function forgetRepoMentions(): void {
@@ -302,7 +312,7 @@ export function forgetRepoMentions(): void {
 async function rootOf(host: Host, dir: string): Promise<{ root: string | undefined; settled: boolean }> {
     const known = folderRoots.get(dir);
 
-    if (known && Date.now() - known.at < (known.root ? ROOT_MS : NO_ROOT_MS)) {
+    if (known && repoLookupClock.now() - known.at < (known.root ? ROOT_MS : NO_ROOT_MS)) {
         return known;
     }
 
@@ -313,7 +323,7 @@ async function rootOf(host: Host, dir: string): Promise<{ root: string | undefin
     const found = {
         root,
         settled: root !== undefined || (top !== undefined && /not a git repository/i.test(top.stderr)),
-        at: Date.now(),
+        at: repoLookupClock.now(),
     };
 
     // A run that could not start, timed out or failed otherwise says nothing, and is asked again.
@@ -339,18 +349,47 @@ export async function checkoutOf(
     return { root, project: root ? (await originOf(host, root)).project : undefined };
 }
 
-/** The forge project of a checkout root's `origin`, read once per root while git answers. */
+/** The forge project of a checkout root's `origin`, kept for `ORIGIN_MS` once git answers (`NO_ORIGIN_MS` for none). */
 function originOf(host: Host, root: string): Promise<Lookup> {
-    return remembered(rootProjects, root, async () => {
-        const origin = await host
-            .run(["git", "-C", root, "remote", "get-url", "origin"], { timeoutMs: 3_000 })
-            .catch(() => undefined);
+    const known = rootProjects.get(root);
 
-        return {
-            project: origin?.exitCode === 0 ? forgeProject(origin.stdout) : undefined,
-            settled: origin !== undefined && (origin.exitCode === 0 || /no such remote/i.test(origin.stderr)),
-        };
+    if (
+        known &&
+        (known.at === undefined || repoLookupClock.now() - known.at < (known.project ? ORIGIN_MS : NO_ORIGIN_MS))
+    ) {
+        return known.lookup;
+    }
+
+    const held: { lookup: Promise<Lookup>; at?: number; project?: ForgeProject } = {
+        lookup: readOrigin(host, root),
+    };
+    rootProjects.set(root, held);
+    void held.lookup.then((found) => {
+        if (rootProjects.get(root) !== held) {
+            return;
+        }
+
+        if (!found.settled) {
+            rootProjects.delete(root);
+            return;
+        }
+
+        held.at = repoLookupClock.now();
+        held.project = found.project;
     });
+
+    return held.lookup;
+}
+
+async function readOrigin(host: Host, root: string): Promise<Lookup> {
+    const origin = await host
+        .run(["git", "-C", root, "remote", "get-url", "origin"], { timeoutMs: 3_000 })
+        .catch(() => undefined);
+
+    return {
+        project: origin?.exitCode === 0 ? forgeProject(origin.stdout) : undefined,
+        settled: origin !== undefined && (origin.exitCode === 0 || /no such remote/i.test(origin.stderr)),
+    };
 }
 
 /** One lookup per key while it runs and after it settled; an unsettled one is dropped once it answers. */
