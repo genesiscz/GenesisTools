@@ -42,12 +42,23 @@ public final class WidgetModel: ObservableObject {
 
     /// The parts of `updateInbox` that read preferences: the rail order, the opening inbox filter, the hover list.
     private func refreshPreferenceDerived() {
+        refreshRailActivity()
+        refreshOpeningFilterAndPreview()
+    }
+
+    /// The rail reads in the hover list's order, so a bubble and its row sit at the same place (Martin, 2026-10-23:
+    /// "the order should be the same in the right and the expanded list"); "stable" keeps places.
+    private func refreshRailActivity() {
         let railActive = railSessions.filter { session in
             let inbox = inboxSessions[session.key]
             return session.visualStatus == .working || (inbox?.unread ?? 0) + (inbox?.needsAnswer ?? 0) > 0
         }
         railActivitySessions = snapshot?.state.preferences.railOrder == "stable"
             ? railActive : railActive.sorted(by: Self.previewOrder(inbox: inboxSessions, sort: previewSort))
+    }
+
+    /// The inbox filter the preferences open with (until the reader picks one), and the hover list.
+    private func refreshOpeningFilterAndPreview() {
         if !inboxFilterPicked, let opening = snapshot?.state.preferences.inboxFilter, opening != inboxFilter {
             inboxFilter = opening
         }
@@ -1424,14 +1435,7 @@ public final class WidgetModel: ObservableObject {
         inboxSessionPulses = inboxSessionPulses.filter { activeKeys.contains($0.key) }
         inbox = value
         inboxSessions = Dictionary(value.sessions.map { ($0.key, $0) }, uniquingKeysWith: { _, last in last })
-        let railActive = railSessions.filter { session in
-            let inbox = inboxSessions[session.key]
-            return session.visualStatus == .working || (inbox?.unread ?? 0) + (inbox?.needsAnswer ?? 0) > 0
-        }
-        // The rail reads in the hover list's order, so a bubble and its row sit at the same place (Martin,
-        // 2026-10-23: "the order should be the same in the right and the expanded list"); "stable" keeps places.
-        railActivitySessions = snapshot?.state.preferences.railOrder == "stable"
-            ? railActive : railActive.sorted(by: Self.previewOrder(inbox: inboxSessions, sort: previewSort))
+        refreshRailActivity()
         inboxOverviewItems = Self.overviewItems(value.sessions)
         // Remove settled alerts in both list and queue mode. A visible alert must not keep answer buttons either.
         let settledWaiting = peekQueue.filter { peekSettled($0) }
@@ -1471,12 +1475,7 @@ public final class WidgetModel: ObservableObject {
             stagedStartChecked = true
             if !stagedItems.isEmpty { stagedAtStart?(stagedItems) }
         }
-        if !inboxFilterPicked, let opening = snapshot?.state.preferences.inboxFilter, opening != inboxFilter {
-            inboxFilter = opening
-        }
-        previewList = Self.previewRows(
-            sessions: snapshot?.sessions ?? [], inbox: inboxSessions,
-            filter: previewFilter, sort: previewSort)
+        refreshOpeningFilterAndPreview()
     }
 
     public var previewFilter: String { snapshot?.state.preferences.previewFilter ?? "needs-you" }
