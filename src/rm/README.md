@@ -144,7 +144,7 @@ The typed code and the dialog answer for all paths, to the trash, just this once
 
 The window opens before any tree is walked. When `tools rm` opens a delete request it starts `tools rm measure <id>`
 in the background, which saves each path's size, emptiness and file count to
-`~/.genesis-tools/rm/requests/measured/<id>.json` with the top path's mtime. `approve` shows a saved size at once
+`~/.genesis-tools/rm/requests/measured/<id>/` (one file per path) with the top path's mtime. `approve` shows a saved size at once
 while that mtime is unchanged; a row without one says "Measuring…" until its size arrives (from the pass that still
 runs, or walked by `approve` itself), and the total under the rows appears when every size is in. The git facts
 follow the same way. The typed code prints the sizes as they come; the macOS dialog cannot change once it shows, so

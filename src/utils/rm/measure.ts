@@ -1,4 +1,5 @@
-import { existsSync, lstatSync, mkdirSync, readdirSync, readFileSync } from "node:fs";
+import { createHash } from "node:crypto";
+import { closeSync, existsSync, lstatSync, mkdirSync, openSync, readdirSync, readFileSync } from "node:fs";
 import { join } from "node:path";
 import { walkFiles } from "@genesiscz/utils/fs/disk-usage";
 import { SafeJSON } from "@genesiscz/utils/json";
@@ -30,7 +31,11 @@ export interface RmMeasuredItem {
     folderStats?: FolderStats;
 }
 
-/** `<requests>/measured/<id>.json`: what the measurement pass found for a request, one entry per path. */
+/**
+ * What the measurement pass and `approve` found for a request, one entry per path. On disk each path is its own file,
+ * `<requests>/measured/<id>/<hash of the location>.json`, written whole: two processes that measure different paths
+ * of one request never merge into a shared file, so neither can drop the other's entry.
+ */
 export interface RmRequestMeasurements {
     requestId: string;
     items: RmMeasuredItem[];
@@ -46,51 +51,80 @@ export function rmMeasurementsDir(requestsDir = rmRequestsDir()): string {
     return join(requestsDir, "measured");
 }
 
-function measurementsFile(id: string, requestsDir: string): string {
-    return join(rmMeasurementsDir(requestsDir), `${id}.json`);
+function measurementsDir(id: string, requestsDir: string): string {
+    return join(rmMeasurementsDir(requestsDir), id);
+}
+
+function locationKey(location: string): string {
+    return createHash("sha256").update(location).digest("hex").slice(0, 24);
 }
 
 function lockFile(id: string, requestsDir: string): string {
     return join(rmMeasurementsDir(requestsDir), `${id}.lock`);
 }
 
-function isMeasurements(value: unknown): value is RmRequestMeasurements {
+function isMeasuredItem(value: unknown): value is RmMeasuredItem {
     return (
         typeof value === "object" &&
         value !== null &&
-        "requestId" in value &&
-        typeof value.requestId === "string" &&
-        "items" in value &&
-        Array.isArray(value.items)
+        "path" in value &&
+        typeof value.path === "string" &&
+        "location" in value &&
+        typeof value.location === "string" &&
+        "mtimeMs" in value &&
+        typeof value.mtimeMs === "number" &&
+        "bytes" in value &&
+        typeof value.bytes === "number"
     );
 }
 
-/** The saved measurements of request `id`; null when none were saved or the file cannot be read. */
-export function loadRmMeasurements(id: string, requestsDir = rmRequestsDir()): RmRequestMeasurements | null {
-    const file = measurementsFile(id, requestsDir);
-
-    if (!existsSync(file)) {
-        return null;
-    }
-
+function readMeasuredItem(file: string): RmMeasuredItem | null {
     try {
         const parsed: unknown = SafeJSON.parse(readFileSync(file, "utf8"));
-        return isMeasurements(parsed) ? parsed : null;
+        return isMeasuredItem(parsed) ? parsed : null;
     } catch (error) {
-        logger.debug({ file, error }, "rm: unreadable request measurements");
+        logger.debug({ file, error }, "rm: unreadable request measurement");
         return null;
     }
 }
 
-/** Saves `item` into request `id`'s measurements, replacing the entry for the same location. */
+/** The saved measurements of request `id`; null when none were saved. */
+export function loadRmMeasurements(id: string, requestsDir = rmRequestsDir()): RmRequestMeasurements | null {
+    const dir = measurementsDir(id, requestsDir);
+
+    if (!existsSync(dir)) {
+        return null;
+    }
+
+    const items = readdirSync(dir)
+        .filter((name) => name.endsWith(".json"))
+        .map((name) => readMeasuredItem(join(dir, name)))
+        .filter((item): item is RmMeasuredItem => item !== null);
+    return { requestId: id, items };
+}
+
+/** Saves `item` as request `id`'s entry for its location, replacing an older one; no other entry is read or written. */
 export function saveRmMeasurement(id: string, item: RmMeasuredItem, requestsDir = rmRequestsDir()): void {
-    const saved = loadRmMeasurements(id, requestsDir)?.items ?? [];
-    const items = [...saved.filter((other) => other.location !== item.location), item];
-    mkdirSync(rmMeasurementsDir(requestsDir), { recursive: true });
-    atomicWriteFileSync(
-        measurementsFile(id, requestsDir),
-        `${SafeJSON.stringify({ requestId: id, items }, null, 2)}\n`
-    );
+    const dir = measurementsDir(id, requestsDir);
+    mkdirSync(dir, { recursive: true });
+    atomicWriteFileSync(join(dir, `${locationKey(item.location)}.json`), `${SafeJSON.stringify(item, null, 2)}\n`);
+}
+
+/**
+ * True for the one caller, across processes, that first claims the ledger line of `location`: the marker file is
+ * created with O_EXCL, so two writers that measure the same aside copy log its size once.
+ */
+function claimLedgerLine(id: string, location: string, requestsDir: string): boolean {
+    const dir = measurementsDir(id, requestsDir);
+    mkdirSync(dir, { recursive: true });
+
+    try {
+        closeSync(openSync(join(dir, `${locationKey(location)}.ledger`), "wx"));
+        return true;
+    } catch (error) {
+        logger.debug({ id, location, error }, "rm: the size of this aside copy is already in the ledger");
+        return false;
+    }
 }
 
 /** Where a request path is now: its aside copy while it waits, else the path itself. */
@@ -234,10 +268,9 @@ export function recordRmMeasurement(input: {
 }): void {
     const { request, target, item } = input;
     const requestsDir = input.requestsDir ?? rmRequestsDir();
-    const known = loadRmMeasurements(request.id, requestsDir)?.items.some((entry) => entry.location === item.location);
     saveRmMeasurement(request.id, item, requestsDir);
 
-    if (target.stored && !known) {
+    if (target.stored && claimLedgerLine(request.id, item.location, requestsDir)) {
         appendRmLedger({
             action: "measure",
             path: target.path,

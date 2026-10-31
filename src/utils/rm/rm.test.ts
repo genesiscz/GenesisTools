@@ -49,6 +49,7 @@ import {
     listBatches,
     listRmRequests,
     loadRmConfig,
+    loadRmMeasurements,
     loadRmRequest,
     mayDenyRmRequest,
     measureBytes,
@@ -1835,5 +1836,41 @@ describe("printApprovalUpdates", () => {
         updates.close();
 
         expect(await printApprovalUpdates(updates, { timeoutMs: 60_000 })).toBe("complete");
+    });
+});
+
+describe("measurements written by two processes at once", () => {
+    test("keep every path's entry, and log an aside copy's size once", async () => {
+        const requestsDir = dir("concurrent-requests");
+        const script = file(
+            join(dir("concurrent-scripts"), "writer.ts"),
+            [
+                `import * as rm from ${SafeJSON.stringify(join(import.meta.dir, "index.ts"))};`,
+                "const [requestsDir, writer] = process.argv.slice(2);",
+                "const request = { id: 'conc01', caller: null };",
+                "for (let index = 0; index < 150; index++) {",
+                "    const own = `/w/${writer}-${index}`;",
+                "    const item = { path: own, location: own, at: '', mtimeMs: 1, bytes: index };",
+                "    rm.recordRmMeasurement({ request, target: { path: own }, item, requestsDir });",
+                "    const stored = `/aside/${index % 30}`;",
+                "    const copy = { path: `/w/shared-${index % 30}`, location: stored, at: '', mtimeMs: 1, bytes: 7 };",
+                "    rm.recordRmMeasurement({ request, target: { path: copy.path, stored }, item: copy, requestsDir });",
+                "}",
+            ].join("\n")
+        );
+        const writers = ["a", "b"].map((writer) =>
+            Bun.spawn([process.execPath, script, requestsDir, writer], { env: process.env, stderr: "pipe" })
+        );
+
+        expect(await Promise.all(writers.map((writer) => writer.exited))).toEqual([0, 0]);
+
+        const saved = loadRmMeasurements("conc01", requestsDir)?.items ?? [];
+        expect(saved.filter((item) => item.path.startsWith("/w/a-") || item.path.startsWith("/w/b-"))).toHaveLength(
+            300
+        );
+        expect(saved.filter((item) => item.location.startsWith("/aside/"))).toHaveLength(30);
+        expect(
+            readRmLedger().filter((entry) => entry.action === "measure" && entry.requestId === "conc01")
+        ).toHaveLength(30);
     });
 });
