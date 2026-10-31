@@ -454,7 +454,12 @@ final class HubInboxModel: ObservableObject {
 
     @Published private(set) var sessions: [InboxSession] = []
     /// A notification's target that is not waiting any more: said once, instead of the click doing nothing.
-    @Published var revealMissing: String?
+    @Published var revealMissing: RevealMissing?
+    struct RevealMissing: Equatable {
+        var text: String
+        /// The session and number of a revealed decision that no longer waits, for the notice's "Open in transcript".
+        var target: RevealTarget? = nil
+    }
     @Published private(set) var loading = false
     @Published private(set) var loadedAt: Date?
     @Published private(set) var error: String?
@@ -550,8 +555,6 @@ final class HubInboxModel: ObservableObject {
     /// Reveals per item id: a card's flash plays when its own count moves, never when another card is revealed.
     @Published private(set) var revealCounts: [String: Int] = [:]
     private var focusClear: Task<Void, Never>?
-    /// The session and number of a revealed decision that no longer waits, for the notice's "Open in transcript".
-    @Published var revealMissingTarget: RevealTarget?
     struct RevealTarget: Equatable {
         let sessionId: String
         let number: Int
@@ -642,22 +645,23 @@ final class HubInboxModel: ObservableObject {
             if let session = match(id) {
                 resumeFor = session
             } else {
-                revealMissing = "Session \(id.prefix(8)) has nothing waiting in the Inbox any more"
+                revealMissing = RevealMissing(text: "Session \(id.prefix(8)) has nothing waiting in the Inbox any more")
             }
         case .info(let id):
             if let session = match(id) {
                 infoFor = session.sessionId
             } else {
-                revealMissing = "Session \(id.prefix(8)) has nothing waiting in the Inbox any more"
+                revealMissing = RevealMissing(text: "Session \(id.prefix(8)) has nothing waiting in the Inbox any more")
             }
         case .item(let id):
             guard let session = sessions.first(where: { $0.items.contains { $0.id == id } }) else {
                 HubPerf.log("inbox.reveal: \(id) is not waiting in the Inbox")
                 let target = Self.revealTarget(id)
-                revealMissingTarget = target
-                revealMissing = target.map { "\(WidgetWords.decision($0.number)) is not waiting any more." }
-                    ?? "That decision is not waiting any more."
-                explainNotWaiting(id)
+                revealMissing = RevealMissing(
+                    text: target.map { "\(WidgetWords.decision($0.number)) is not waiting any more." }
+                        ?? "That decision is not waiting any more.",
+                    target: target)
+                if let target { explainNotWaiting(id, target) }
                 return
             }
             selectedID = session.id
@@ -722,10 +726,9 @@ final class HubInboxModel: ObservableObject {
 
     /// Says what became of a decision a banner or a link asked for that the Inbox no longer lists: its state and the
     /// answer it took, read from the session's decisions (`tools question inbox --session <id> --json`).
-    private func explainNotWaiting(_ id: String) {
-        let parts = id.split(separator: "_", maxSplits: 2)
-        guard parts.count == 3, parts[0] == "d", let number = Int(parts[1]) else { return }
-        let sessionId = String(parts[2])
+    private func explainNotWaiting(_ id: String, _ target: RevealTarget) {
+        let sessionId = target.sessionId
+        let number = target.number
         DispatchQueue.global(qos: .userInitiated).async {
             let found = try? JSONDecoder().decode(SessionDecisionsEnvelope.self, from: ToolsCLIRunner.run(
                 ["question", "inbox", "--session", sessionId, "--json"]))
@@ -733,7 +736,7 @@ final class HubInboxModel: ObservableObject {
             DispatchQueue.main.async { [weak self] in
                 MainActor.assumeIsolated {
                     guard let self, self.revealMissing != nil else { return }
-                    self.revealMissing = Self.notWaitingSentence(number: number, item: item)
+                    self.revealMissing?.text = Self.notWaitingSentence(number: number, item: item)
                 }
             }
         }
@@ -1839,9 +1842,8 @@ struct InboxMain: View {
                 }
                 if let missing = inbox.revealMissing {
                     // Not an error: the decision moved on. It names the decision and offers the way to it (F18).
-                    NoticePill(text: missing, tone: .warning, fixes: revealFixes) {
+                    NoticePill(text: missing.text, tone: .warning, fixes: revealFixes) {
                         inbox.revealMissing = nil
-                        inbox.revealMissingTarget = nil
                     }
                 }
                 if staged > 0 {
@@ -1876,12 +1878,11 @@ struct InboxMain: View {
     /// The way to a revealed decision that no longer waits: its place in the session's transcript, when the hub lists
     /// that session.
     private var revealFixes: [NoticeFix] {
-        guard let target = inbox.revealMissingTarget,
+        guard let target = inbox.revealMissing?.target,
               let hubSession = model.sessions.first(where: { $0.sessionId == target.sessionId })
         else { return [] }
         return [.button("Open in transcript", symbol: "text.bubble") {
             inbox.revealMissing = nil
-            inbox.revealMissingTarget = nil
             model.transcriptQuery = "DECISION \(target.number)"
             model.openSession(hubSession)
         }]
