@@ -275,11 +275,75 @@ interface Lookup {
 
 const pathProjects = new Map<string, Promise<Lookup>>();
 const rootProjects = new Map<string, Promise<Lookup>>();
+/**
+ * A folder's checkout root once git answered, for 10 minutes (a folder outside a checkout for 1 minute). The git
+ * band asks for the cwd on every refresh: its `git rev-parse` was 1,334 of the 14,746 processes of 20 sessions in a
+ * quiet 3 hours on 2026-10-30.
+ */
+const folderRoots = new Map<string, { root: string | undefined; settled: boolean; at: number }>();
+const ROOT_MS = 10 * 60_000;
+const NO_ROOT_MS = 60_000;
 
 /** Forgets the checkouts read so far (tests). */
 export function forgetRepoMentions(): void {
     pathProjects.clear();
     rootProjects.clear();
+    folderRoots.clear();
+}
+
+/** The checkout a folder lies in; `settled` when git said so, or said it is not in one. */
+async function rootOf(host: Host, dir: string): Promise<{ root: string | undefined; settled: boolean }> {
+    const known = folderRoots.get(dir);
+
+    if (known && Date.now() - known.at < (known.root ? ROOT_MS : NO_ROOT_MS)) {
+        return known;
+    }
+
+    const top = await host
+        .run(["git", "-C", dir, "rev-parse", "--show-toplevel"], { timeoutMs: 3_000 })
+        .catch(() => undefined);
+    const root = (top?.exitCode === 0 && top.stdout.trim()) || undefined;
+    const found = {
+        root,
+        settled: root !== undefined || (top !== undefined && /not a git repository/i.test(top.stderr)),
+        at: Date.now(),
+    };
+
+    // A run that could not start, timed out or failed otherwise says nothing, and is asked again.
+    if (found.settled) {
+        folderRoots.set(dir, found);
+    }
+
+    return found;
+}
+
+/** The checkout root of a folder; undefined outside a checkout or when git did not answer. */
+export async function checkoutRoot(host: Host, dir: string): Promise<string | undefined> {
+    return (await rootOf(host, dir)).root;
+}
+
+/** A folder's checkout root and the forge project of its `origin`. */
+export async function checkoutOf(
+    host: Host,
+    dir: string
+): Promise<{ root: string | undefined; project: ForgeProject | undefined }> {
+    const { root } = await rootOf(host, dir);
+
+    return { root, project: root ? (await originOf(host, root)).project : undefined };
+}
+
+/** The forge project of a checkout root's `origin`, read once per root while git answers. */
+function originOf(host: Host, root: string): Promise<Lookup> {
+    return remembered(rootProjects, root, async () => {
+        const origin = await host
+            .run(["git", "-C", root, "remote", "get-url", "origin"], { timeoutMs: 3_000 })
+            .catch(() => undefined);
+
+        return {
+            project: origin?.exitCode === 0 ? forgeProject(origin.stdout) : undefined,
+            settled: origin !== undefined && (origin.exitCode === 0 || /no such remote/i.test(origin.stderr)),
+        };
+    });
 }
 
 /** One lookup per key while it runs and after it settled; an unsettled one is dropped once it answers. */
@@ -331,23 +395,7 @@ async function checkoutProject(host: Host, path: string): Promise<Lookup> {
         return { project: undefined, settled: true };
     }
 
-    const top = await host
-        .run(["git", "-C", dir, "rev-parse", "--show-toplevel"], { timeoutMs: 3_000 })
-        .catch(() => undefined);
-    const root = top?.exitCode === 0 ? top.stdout.trim() : "";
+    const { root, settled } = await rootOf(host, dir);
 
-    if (!root) {
-        return { project: undefined, settled: top !== undefined && /not a git repository/i.test(top.stderr) };
-    }
-
-    return remembered(rootProjects, root, async () => {
-        const origin = await host
-            .run(["git", "-C", root, "remote", "get-url", "origin"], { timeoutMs: 3_000 })
-            .catch(() => undefined);
-
-        return {
-            project: origin?.exitCode === 0 ? forgeProject(origin.stdout) : undefined,
-            settled: origin !== undefined && (origin.exitCode === 0 || /no such remote/i.test(origin.stderr)),
-        };
-    });
+    return root ? originOf(host, root) : { project: undefined, settled };
 }

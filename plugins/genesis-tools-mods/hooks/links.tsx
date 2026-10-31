@@ -13,9 +13,10 @@
 // number picks the repository whose PR has it, and with no such evidence the number stays text.
 import type { HookStream, TurnStepChunk, TurnStepInput, TurnStepResult } from "claude-code";
 import { sessionCheckouts } from "./checkouts";
-import { COMMIT, checkHubLink, commitLink, type ForgeProject, forgeProject } from "./commit-links";
+import { COMMIT, checkHubLink, commitLink, type ForgeProject } from "./commit-links";
 import { decisionLink, encodePath, finderLink, type GenesisProbe, genesisProbe, mdLink } from "./genesis";
 import {
+    checkoutOf,
     mentionsIn,
     namesIn,
     projectNamed,
@@ -819,43 +820,11 @@ export async function linkLine(ctx: LinkContext, line: string): Promise<string> 
 }
 
 /** `messageCount`: the messages the request carried; later ones are this reply itself, which asks nothing earlier. */
-/** A cwd's checkout and forge project, remembered for 10 minutes: two git processes per reply before. */
-const checkoutProjects = new Map<string, { root: string | undefined; project: ForgeProject | undefined; at: number }>();
-const CHECKOUT_PROJECT_MS = 10 * 60_000;
-
-async function checkoutProject(
-    host: Host,
-    cwd: string
-): Promise<{ root: string | undefined; project: ForgeProject | undefined }> {
-    const known = checkoutProjects.get(cwd);
-
-    if (known && Date.now() - known.at < (known.root && known.project ? CHECKOUT_PROJECT_MS : 30_000)) {
-        return known;
-    }
-
-    const top = await host
-        .run(["git", "-C", cwd, "rev-parse", "--show-toplevel"], { timeoutMs: 3_000 })
-        .catch(() => undefined);
-    const root = top?.exitCode === 0 ? top.stdout.trim() : undefined;
-    const origin = root
-        ? await host
-              .run(["git", "-C", root, "remote", "get-url", "origin"], { timeoutMs: 3_000 })
-              .catch(() => undefined)
-        : undefined;
-    const project = origin?.exitCode === 0 ? forgeProject(origin.stdout) : undefined;
-    const found = { root, project, at: Date.now() };
-    if (top && (!root || origin)) {
-        checkoutProjects.set(cwd, found);
-    }
-
-    return found;
-}
-
 async function contextOf(host: Host, messageCount: number): Promise<LinkContext> {
     const home = (await host.env("HOME")) ?? "";
     const cwd = await host.cwd();
     const sessionId = await host.sessionId();
-    const { root, project } = await checkoutProject(host, cwd);
+    const { root, project } = await checkoutOf(host, cwd);
     const repo = project?.path;
     const askedBefore = new Set<number>();
     const messages = (await host.messages()).slice(0, messageCount);
