@@ -76,11 +76,7 @@ public enum MarkdownDocumentLinks {
                 if exists(literal.path) { return literal }
             }
             guard index.isReady else { return nil }
-            let near = index.relativeFolder(folder)
-            for path in index.notes(named: target, near: near) {
-                let url = index.root.appendingPathComponent(path).standardizedFileURL
-                if exists(url.path) { return url }
-            }
+            if let url = indexedNote(target, near: folder, in: index, exists: exists) { return url }
         }
         for root in roots {
             let direct = root.appendingPathComponent(target).standardizedFileURL
@@ -93,8 +89,13 @@ public enum MarkdownDocumentLinks {
         // `[[Overview]]` in `Project/Design/Figma.md` names `Project/Overview.md`: Obsidian finds a note by its
         // name (or a path tail) anywhere in the vault, the nearest one first.
         guard let index, !target.hasPrefix("../"), !target.hasPrefix("./") else { return nil }
-        let near = index.relativeFolder(folder)
-        for path in index.notes(named: target, near: near) {
+        return indexedNote(target, near: folder, in: index, exists: exists)
+    }
+
+    /// The first note the vault index names `target`, nearest to `folder` first, that still exists.
+    private static func indexedNote(_ target: String, near folder: URL, in index: VaultFileIndex,
+                                    exists: (String) -> Bool) -> URL? {
+        for path in index.notes(named: target, near: index.relativeFolder(folder)) {
             let url = index.root.appendingPathComponent(path).standardizedFileURL
             if exists(url.path) { return url }
         }
