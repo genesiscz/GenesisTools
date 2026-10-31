@@ -140,6 +140,32 @@ export function readDecision(stdout: string): RouterDecision {
 }
 
 /**
+ * A typed loopback address whose port the live config opens, while no router route matches it: only the
+ * dashboard-names preset may name that server, and its routes match the name, not the address. The port's own
+ * registered service answers then, so every port the extension catches can start its server. Any other decision
+ * stays the router's.
+ */
+function loopbackServiceDecision(
+    decision: RouterDecision,
+    url: string,
+    port: number | null,
+    wanted: RouterHosts
+): RouterDecision {
+    const registered = port === null ? undefined : wanted.services.find((entry) => entry.port === port);
+
+    if (decision.via !== "default" || !registered || !allowsPlainNavigation(wanted.services, registered.port)) {
+        return decision;
+    }
+
+    return {
+        kind: "run",
+        via: "loopback-port",
+        summary: `start and open ${registered.name} (${url})`,
+        service: { port: registered.port, name: registered.name, target: url },
+    };
+}
+
+/**
  * What GenesisTools.app would do with a router link, read through the router's own CLI door
  * (`explain`) so this code never re-implements its matching. No side effects. A link the router
  * would only forward to the default browser is `handled: false`: forwarding it would land in this
@@ -160,9 +186,9 @@ export async function explainLink(
         );
     }
 
-    const decision = readDecision(explained.stdout);
-    const handled = decision.via !== "default" && decision.via !== "loop-guard";
     const port = loopbackPort(url);
+    const decision = loopbackServiceDecision(readDecision(explained.stdout), url, port, wanted);
+    const handled = decision.via !== "default" && decision.via !== "loop-guard";
     // The flag is the only authorization: a service decision alone is not, and a loopback link must name the port
     // whose server it starts.
     const plainNavigation =
