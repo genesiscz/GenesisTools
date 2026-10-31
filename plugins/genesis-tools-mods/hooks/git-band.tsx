@@ -34,6 +34,7 @@ import {
 } from "./checkouts";
 import { type GenesisProbe, genesisProbe, hubLink } from "./genesis";
 import { liveAgo } from "./live";
+import { checkoutRoot } from "./pr-repos";
 import { type Feature, type Host, isRecord, logMod, logReading, settingsOf } from "./shared";
 import { type SharedRunResult, sharedRun } from "./shared-run";
 import {
@@ -135,38 +136,9 @@ let lastToolRefreshAt = 0;
 const TOOL_REFRESH_GAP_MS = 10_000;
 const TOOLS_THAT_WRITE = new Set(["Edit", "MultiEdit", "Write", "NotebookEdit", "Bash"]);
 
-async function run(host: Host, argv: string[], cwd: string): Promise<string | undefined> {
-    const done = await host.run(argv, { cwd, timeoutMs: 15_000 }).catch(() => undefined);
-
-    return done?.exitCode === 0 ? done.stdout : undefined;
-}
-
-/**
- * The checkout of a cwd, remembered for 10 minutes (a cwd outside a repository for 1 minute). `bandRoots` runs on
- * every refresh, and its `git rev-parse` was 1,334 of the 14,746 processes of 20 sessions in a quiet 3 hours on
- * 2026-10-30.
- */
-const cwdRoots = new Map<string, { root: string | undefined; at: number }>();
-const CWD_ROOT_MS = 10 * 60_000;
-const CWD_NO_ROOT_MS = 60_000;
-
-async function cwdRoot(host: Host): Promise<string | undefined> {
-    const cwd = await host.cwd();
-    const known = cwdRoots.get(cwd);
-
-    if (known && Date.now() - known.at < (known.root ? CWD_ROOT_MS : CWD_NO_ROOT_MS)) {
-        return known.root;
-    }
-
-    const root = (await run(host, ["git", "rev-parse", "--show-toplevel"], cwd))?.trim() || undefined;
-    cwdRoots.set(cwd, { root, at: Date.now() });
-
-    return root;
-}
-
 /** The checkouts the band shows now, with why: the added ones, then the ones the session worked in, the last first. */
 async function bandRoots(host: Host): Promise<{ root: string; why: GitBand["why"] }[]> {
-    ownRoot = await cwdRoot(host);
+    ownRoot = await checkoutRoot(host, await host.cwd());
     const settings = (await settingsOf(host)).git;
     const all = await sessionCheckouts(host);
     // With `earlier: hide` a removed worktree takes no row, so it leaves its place to one that is there.
