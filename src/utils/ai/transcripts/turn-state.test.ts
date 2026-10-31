@@ -724,7 +724,12 @@ describe("permission prompts and the question call", () => {
         const snap = grokTurnState({ ...input([updates[0] ?? {}, ask], 60), permission: permission(eventLog) });
 
         expect(snap.question).toBe("Which one?");
-        expect(snap.questionCall).toEqual({ kind: "decision", callId: "call-ask", options: ["A", "B"] });
+        expect(snap.questionCall).toEqual({
+            kind: "decision",
+            callId: "call-ask",
+            options: ["A", "B"],
+            questionCount: 1,
+        });
 
         const plan = grokLine(3, "tool_call", {
             toolCallId: "call-plan",
@@ -754,6 +759,7 @@ describe("permission prompts and the question call", () => {
             kind: "decision",
             callId: "toolu_1",
             options: ["Yes", "No"],
+            questionCount: 1,
         });
 
         const codex = codexTurnState(
@@ -770,7 +776,7 @@ describe("permission prompts and the question call", () => {
                 30
             )
         );
-        expect(codex.questionCall).toEqual({ kind: "decision", callId: "call_q", options: ["main"] });
+        expect(codex.questionCall).toEqual({ kind: "decision", callId: "call_q", options: ["main"], questionCount: 1 });
     });
 
     it("readTurnState reads Grok's events.jsonl beside updates.jsonl", () => {
