@@ -393,11 +393,27 @@ async function refreshAction(opts: InstallOptions): Promise<void> {
         }
 
         const names = Object.keys(state.clis);
+
+        if (names.length === 0) {
+            out.log.info(`Nothing installed yet: ${toolCommand("zsh completions")}`);
+            return;
+        }
+
+        // The same checks as a real refresh: a known provider whose CLI is on PATH.
+        const known = names.map((name) => getCompletionProvider(name)).filter((provider) => provider !== undefined);
+        const present = new Set(detectProviders(known).map((entry) => entry.provider.cli));
+        const regenerated = names.filter((name) => present.has(name));
+        const skipped = names.filter((name) => !present.has(name));
         out.log.info(
-            names.length > 0
-                ? `Dry run: refresh would regenerate ${names.join(", ")} in ${completionsDir()}. Nothing written.`
-                : `Nothing installed yet: ${toolCommand("zsh completions")}`
+            regenerated.length > 0
+                ? `Dry run: refresh would regenerate ${regenerated.join(", ")} in ${completionsDir()}. Nothing written.`
+                : "Dry run: refresh would regenerate nothing. Nothing written."
         );
+
+        if (skipped.length > 0) {
+            out.log.info(`Skipped (not on PATH, or no longer a known CLI; the file stays): ${skipped.join(", ")}`);
+        }
+
         return;
     }
 

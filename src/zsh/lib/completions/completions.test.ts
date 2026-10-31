@@ -455,6 +455,12 @@ describe("completion install and refresh", () => {
         const before = {
             version: 1 as const,
             clis: {
+                nosuchcli: {
+                    file: join(dir, "_nosuchcli"),
+                    wiring: "fpath" as const,
+                    generatedAt: "2026-10-01T00:00:00.000Z",
+                    sha256: "0".repeat(64),
+                },
                 gh: {
                     file: join(dir, "_gh"),
                     wiring: "fpath" as const,
@@ -469,7 +475,8 @@ describe("completion install and refresh", () => {
         const output = await Promise.all([new Response(proc.stdout).text(), new Response(proc.stderr).text()]);
 
         expect(await proc.exited).toBe(0);
-        expect(output.join("")).toContain("Dry run");
+        expect(output.join("")).toContain("Dry run: refresh would regenerate gh");
+        expect(output.join("")).toContain("Skipped (not on PATH, or no longer a known CLI; the file stays): nosuchcli");
         expect(readdirSync(dir)).toEqual([]);
         expect(readStateReadOnly(statePath).state).toEqual(before);
     });
