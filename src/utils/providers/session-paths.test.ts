@@ -1,5 +1,5 @@
 import { describe, expect, test } from "bun:test";
-import { mkdirSync, mkdtempSync } from "node:fs";
+import { mkdirSync, mkdtempSync, realpathSync } from "node:fs";
 import { tmpdir } from "node:os";
 import { join } from "node:path";
 import { env } from "@genesiscz/utils/env";
@@ -307,7 +307,8 @@ describe("codexHomeOverrides", () => {
 
 describe("nativeRootsKey", () => {
     test("one relative CODEX_HOME in two folders gives two keys, since it names two homes", async () => {
-        const base = mkdtempSync(join(tmpdir(), "roots-key-"));
+        // The physical path: process.cwd() reports it after a chdir (macOS /var is /private/var).
+        const base = realpathSync(mkdtempSync(join(tmpdir(), "roots-key-")));
         const first = join(base, "a");
         const second = join(base, "b");
         mkdirSync(first);
