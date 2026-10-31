@@ -175,6 +175,22 @@ describe("codexAgentStatus", () => {
         expect(stateOf(turn("task_started"), 20 * 60_000)).toBe("killed");
     });
 
+    test("a sub-agent parked on an open request_user_input is idle, however long it waits, never completed", () => {
+        const ask = line({
+            timestamp: "2026-10-05T10:00:02.000Z",
+            type: "response_item",
+            payload: {
+                type: "function_call",
+                name: "request_user_input",
+                call_id: "q1",
+                arguments: '{"questions":[{"question":"Which branch?"}]}',
+            },
+        });
+
+        expect(stateOf(turn("task_started") + ask, 5_000)).toBe("idle");
+        expect(stateOf(turn("task_started") + ask, 60 * 60_000)).toBe("idle");
+    });
+
     test("an aborted turn is killed, and a turn that follows it runs again", () => {
         expect(stateOf(turn("task_started") + turn("turn_aborted"), 5_000)).toBe("killed");
         expect(stateOf(turn("task_started") + turn("turn_aborted") + turn("task_started"), 5_000)).toBe("running");
