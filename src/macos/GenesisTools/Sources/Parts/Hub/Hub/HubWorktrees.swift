@@ -194,16 +194,22 @@ enum ToolsCLIRunner {
         if let server = HubSource.server {
             let start = CFAbsoluteTimeGetCurrent()
             if let result = server.callSync(argv: args, timeout: timeout, traceId: traceId) {
-                PerfLog.since("hub.srv.\(args.prefix(3).joined(separator: "."))", start)
-                ToolsCallTrace.record(
-                    traceId: traceId, via: "server", argv: args, started: started,
-                    exit: result.exitCode, outBytes: result.stdout.utf8.count, stderr: result.stderr
-                )
-                return ProcessCapture(status: result.exitCode, stdout: Data(result.stdout.utf8), stderr: Data(result.stderr.utf8))
+                return serverCapture(result, args, traceId: traceId, started: started, since: start)
             }
         }
 
         return try processCapture(args, timeout: timeout, traceId: traceId, started: started)
+    }
+
+    /// A server door's answer as a capture, with its perf span and its trace line.
+    private static func serverCapture(_ result: ToolsRunResult, _ args: [String], traceId: String, started: Date,
+                                      since start: CFAbsoluteTime) -> ProcessCapture {
+        PerfLog.since("hub.srv.\(args.prefix(3).joined(separator: "."))", start)
+        ToolsCallTrace.record(
+            traceId: traceId, via: "server", argv: args, started: started,
+            exit: result.exitCode, outBytes: result.stdout.utf8.count, stderr: result.stderr
+        )
+        return ProcessCapture(status: result.exitCode, stdout: Data(result.stdout.utf8), stderr: Data(result.stderr.utf8))
     }
 
     /// `capture` that its task can stop: a server call is cancelled there, and a running process is terminated (the
@@ -227,13 +233,7 @@ enum ToolsCLIRunner {
             let result = await server.call(argv: args, timeoutSeconds: Int(timeout), traceId: traceId)
             try Task.checkCancellation()
             if let result {
-                PerfLog.since("hub.srv.\(args.prefix(3).joined(separator: "."))", start)
-                ToolsCallTrace.record(
-                    traceId: traceId, via: "server", argv: args, started: started,
-                    exit: result.exitCode, outBytes: result.stdout.utf8.count, stderr: result.stderr
-                )
-                let capture = ProcessCapture(status: result.exitCode, stdout: Data(result.stdout.utf8), stderr: Data(result.stderr.utf8))
-                return (capture, false)
+                return (serverCapture(result, args, traceId: traceId, started: started, since: start), false)
             }
         }
 
