@@ -654,7 +654,7 @@ test("Claude waiting status reads the registry that owns the transcript", async 
         claudeHistoryReader.dialog.registryDirectory(transcript)
     );
     expect(directory).toBe("/fixture/other-account/sessions");
-    expect(dialog?.signal).toBe("turn-state");
+    expect(dialog?.signal).toBe("registry");
 });
 
 test("multi-line text goes as one paste even without --paste; a single line keeps the typed path", async () => {
