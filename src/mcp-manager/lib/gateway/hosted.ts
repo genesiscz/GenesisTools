@@ -426,7 +426,7 @@ export class HostedSupervisor {
                 this.server.sourceRoot,
                 ...(this.options.checkMs ? ["--check-ms", String(this.options.checkMs)] : []),
             ],
-            { stdin: "ignore", stdout: "pipe", stderr: "pipe", env: { ...process.env } }
+            { stdin: "ignore", stdout: "pipe", stderr: "pipe" }
         );
         const stderr = new ByteTail(STDERR_TAIL_BYTES);
         const stderrRead = readStderr(proc, stderr, this.options.forwardStderr ?? true).catch((error) => {
