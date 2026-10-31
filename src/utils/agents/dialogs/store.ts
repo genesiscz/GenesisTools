@@ -4,7 +4,13 @@ import { SafeJSON } from "@genesiscz/utils/json";
 import { logger } from "@genesiscz/utils/logger";
 import { withFileLock } from "@genesiscz/utils/storage/file-lock";
 import { genesisToolsDir } from "@genesiscz/utils/storage/root";
-import { type DialogProvider, type OpenQuestion, openQuestionKey } from "./types";
+import {
+    type DialogProvider,
+    type OpenQuestion,
+    type OpenQuestionKind,
+    type OpenQuestionSource,
+    openQuestionKey,
+} from "./types";
 
 const log = logger.child({ component: "agents:dialogs" });
 
@@ -123,8 +129,20 @@ function writeSessionQuestions(
     renameSync(temp, path);
 }
 
+const QUESTION_KINDS: ReadonlySet<string> = new Set<OpenQuestionKind>(["decision", "permission", "plan"]);
+const QUESTION_SOURCES: ReadonlySet<string> = new Set<OpenQuestionSource>([
+    "hook",
+    "watcher",
+    "turn-state",
+    "registry",
+]);
+
+/**
+ * A stored record of the right shape, optional fields included: a `closedAt: null` would read as open-or-closed by
+ * accident and an `options: "yes"` would throw in the inbox, so the strict reader refuses both as damaged.
+ */
 function isOpenQuestion(value: unknown): value is OpenQuestion {
-    if (typeof value !== "object" || value === null) {
+    if (typeof value !== "object" || value === null || Array.isArray(value)) {
         return false;
     }
 
@@ -134,8 +152,14 @@ function isOpenQuestion(value: unknown): value is OpenQuestion {
         typeof record.sessionId === "string" &&
         typeof record.toolCallId === "string" &&
         typeof record.kind === "string" &&
+        QUESTION_KINDS.has(record.kind) &&
         typeof record.question === "string" &&
         typeof record.askedAt === "string" &&
-        typeof record.source === "string"
+        typeof record.source === "string" &&
+        QUESTION_SOURCES.has(record.source) &&
+        (record.closedAt === undefined || typeof record.closedAt === "string") &&
+        (record.options === undefined ||
+            (Array.isArray(record.options) && record.options.every((option) => typeof option === "string"))) &&
+        (record.questionCount === undefined || typeof record.questionCount === "number")
     );
 }
