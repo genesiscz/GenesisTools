@@ -16,7 +16,9 @@ import {
     readCodexRecords,
     scanCodexRecords,
 } from "./codex";
+import { CODEX_MODEL_HEAD_BYTES } from "./codex-model";
 import { codexIndexRows } from "./codex-title";
+import { SESSION_MODEL_TAIL_BYTES } from "./session-model";
 
 const CHILD_ID = "11111111-2222-4333-8444-555555555555";
 const PARENT_ID = "aaaaaaaa-bbbb-4ccc-8ddd-eeeeeeeeeeee";
@@ -1380,16 +1382,18 @@ test("currentModel is the newest turn_context's model, else the newest one in th
         `${turnContext("gpt-6.1-luna")}${row({ type: "session_meta", payload: { model: "gpt-6.1-astra" } })}${turnContext("gpt-6.1-sol")}{"type":"turn_context","payload":{"model":"gpt-6`
     );
     expect(currentModel(switched)).toBe("gpt-6.1-sol");
-    // One long turn: its output pushed the turn_context out of the 256 KB tail, so the head answers.
+    // One long turn: its output pushed the turn_context out of the tail, so the head answers.
+    const pastTail = SESSION_MODEL_TAIL_BYTES + 50_000;
+    expect(pastTail).toBeLessThan(CODEX_MODEL_HEAD_BYTES);
     const long = rollout(
         "rollout-long.jsonl",
-        `${turnContext("gpt-6.1-sol")}${row({ type: "response_item", payload: { type: "message", text: "y".repeat(300_000) } })}`
+        `${turnContext("gpt-6.1-sol")}${row({ type: "response_item", payload: { type: "message", text: "y".repeat(pastTail) } })}`
     );
     expect(currentModel(long)).toBe("gpt-6.1-sol");
     // The model switched before that long turn: the head's newest turn_context answers, not its first (obsolete) one.
     const switchedThenLong = rollout(
         "rollout-switched-long.jsonl",
-        `${turnContext("gpt-6.1-luna")}${turnContext("gpt-6.1-sol")}${row({ type: "response_item", payload: { type: "message", text: "y".repeat(300_000) } })}`
+        `${turnContext("gpt-6.1-luna")}${turnContext("gpt-6.1-sol")}${row({ type: "response_item", payload: { type: "message", text: "y".repeat(pastTail) } })}`
     );
     expect(currentModel(switchedThenLong)).toBe("gpt-6.1-sol");
     expect(currentModel(rollout("rollout-none.jsonl", row({ type: "session_meta", payload: {} })))).toBeNull();

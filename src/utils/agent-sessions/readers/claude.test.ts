@@ -8,6 +8,7 @@ import { claudeHistoryReader } from "../compact-readers";
 import { searchHistorySource } from "../search-source";
 import type { NativeSessionSource } from "../types";
 import { createClaudeHistoryOperations, readClaudeMetadata, readClaudeRecords, scanClaudeRecords } from "./claude";
+import { SESSION_MODEL_TAIL_BYTES } from "./session-model";
 
 const MAIN_ID = "11111111-2222-4333-8444-555555555555";
 
@@ -769,14 +770,20 @@ test("currentModel is the newest assistant model of the session's own chain, nev
         assistant("claude-haiku-5-5", { isSidechain: true }),
     ]);
     expect(reader.currentModel(busy)).toBeNull();
-    // The parent's own model is in the file, but a sub-agent's rows pushed it out of the 256 KiB tail.
+    // The parent's own model is in the file, but a sub-agent's rows pushed it out of the tail.
     const pushed = transcript("pushed-lead.jsonl", [
         assistant("claude-sonnet-5-5"),
-        ...Array.from({ length: 30 }, () =>
+        ...Array.from({ length: Math.ceil(SESSION_MODEL_TAIL_BYTES / 10_000) + 1 }, () =>
             assistant("claude-haiku-5-5", { isSidechain: true, padding: "x".repeat(10_000) })
         ),
     ]);
     expect(reader.currentModel(pushed)).toBeNull();
+    // A 300 KiB tool result after the model's row, as the failure log's old 512 KiB tail read it: the model is found.
+    const longResult = transcript("long-result.jsonl", [
+        assistant("claude-sonnet-5-5"),
+        { type: "user", message: { content: [{ type: "tool_result", content: "r".repeat(300 * 1024) }] } },
+    ]);
+    expect(reader.currentModel(longResult)).toBe("claude-sonnet-5-5");
     expect(reader.currentModel(transcript("none.jsonl", [{ type: "user", message: { content: "hi" } }]))).toBeNull();
     expect(reader.currentModel(join(dir, "missing.jsonl"))).toBeNull();
 });

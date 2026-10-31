@@ -7,8 +7,12 @@
 import { closeSync, fstatSync, openSync, readSync } from "node:fs";
 import { requireSibling } from "@genesiscz/utils/fs/module-dir";
 
-/** The newest model sits in the last turn's records; a long tool result between them can push it back. */
-export const SESSION_MODEL_TAIL_BYTES = 256 * 1024;
+/**
+ * The newest model sits in the last turn's records; a long tool result between them can push it back. 512 KiB is the
+ * larger of the two bounds this read replaced (the hook's 256 KiB, the failure log's 512 KiB), so neither caller lost
+ * a model; the larger window cost a hook about 0.06 ms more (0.07 to 0.13 ms per read, 2026-10-31).
+ */
+export const SESSION_MODEL_TAIL_BYTES = 512 * 1024;
 
 /** The model one row names, and whether the row belongs to a sub-agent's side chain. */
 export interface RowModel {
