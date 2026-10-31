@@ -2669,6 +2669,39 @@ final class WidgetComposerClickTests: XCTestCase {
         XCTAssertNotNil(FrameProbe.frames["widget.peek.answerButton"])
     }
 
+    /// A summary of many short lines stops at its cap and scrolls, so the options and the answer field under it stay
+    /// inside a screen-sized popup; a short summary takes only its own lines.
+    func testALongAlertSummaryScrollsAndKeepsTheOptionsOnScreen() throws {
+        _ = NSApplication.shared
+        let model = StagingFixture.model()
+        defer { model.stop() }
+        model.actionRunner = { _ in ["ok": true] }
+        model.receive([try StagingFixture.snapshot(draftOption: nil)])
+        model.select(StagingFixture.key)
+        var item = try XCTUnwrap(model.inboxFor(StagingFixture.key)?.pendingItem)
+        FrameProbe.enabled = true
+        defer { FrameProbe.enabled = false }
+        // A small screen's popup: 40 lines of 12 pt text alone are taller than it.
+        let popup = NSSize(width: 310, height: 480)
+
+        for (summary, long) in [((1...40).map { "line \($0)" }.joined(separator: "\n"), true), ("One short line", false)] {
+            item.summary = summary
+            FrameProbe.reset()
+            let window = hosted(AnyView(WidgetPeekView(model: model, item: item).padding(WidgetPeekView.inset)
+                .frame(width: popup.width, height: popup.height, alignment: .top)), size: popup)
+            defer { window.orderOut(nil); window.close() }
+            pump(0.5)
+            let block = try XCTUnwrap(FrameProbe.frames["widget.peek.summary"])
+            let field = try XCTUnwrap(FrameProbe.frames["widget.peek.ownAnswer"])
+            if long {
+                XCTAssertEqual(block.height, WidgetPeekView.summaryMaxHeight, accuracy: 1, "a long summary stops at the cap")
+            } else {
+                XCTAssertLessThan(block.height, 30, "a short summary takes only its line")
+            }
+            XCTAssertLessThanOrEqual(field.maxY, popup.height, "the answer field under the options stays in the popup")
+        }
+    }
+
     /// Martin, 2026-10-28, of the alert popup: "'Write my own answer' can probably be just under the buttons as a smaller
     /// compact version of the input - pls make sure its the same component with just different props". The popup of an
     /// open decision shows the compact answer field under its options; a real click on it opens THAT decision's own
