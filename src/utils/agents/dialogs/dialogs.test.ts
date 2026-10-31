@@ -7,7 +7,14 @@ import type { TurnSnapshot } from "@genesiscz/utils/ai/transcripts/turn-state";
 import { SafeJSON } from "@genesiscz/utils/json";
 import { dialogFromRecords, dialogFromSnapshot, dialogRefusal, openDialogFor } from "./guard";
 import { dialogKeysOf, optionIndexOf, planDialogKeys } from "./keys";
-import { closeQuestion, dialogsPath, openQuestions, readSessionQuestions, upsertQuestion } from "./store";
+import {
+    closeQuestion,
+    dialogsPath,
+    openQuestions,
+    readSessionQuestions,
+    readSessionQuestionsStrict,
+    upsertQuestion,
+} from "./store";
 import { type OpenQuestion, openQuestionKey } from "./types";
 import { DialogWatcher, questionFromSnapshot, syncSessionDialogs } from "./watcher";
 
@@ -214,6 +221,24 @@ describe("dialog record store", () => {
         expect(readFileSync(path, "utf8")).toBe("{ not json");
         expect(() => dialogsPath("claude", "../escape", dir)).toThrow("a session id is");
     });
+
+    test("a record with a damaged optional field is malformed, never closed or crashing", async () => {
+        const dir = root();
+        await upsertQuestion(question(), dir);
+        const path = dialogsPath("claude", SESSION, dir);
+
+        for (const damaged of [
+            { closedAt: null },
+            { options: "yes" },
+            { options: ["yes", 2] },
+            { kind: "other" },
+            { source: "elsewhere" },
+        ]) {
+            writeFileSync(path, SafeJSON.stringify([{ ...question({ toolCallId: "kept" }), ...damaged }]));
+            expect(readSessionQuestions("claude", SESSION, dir)).toEqual([]);
+            expect(() => readSessionQuestionsStrict("claude", SESSION, dir)).toThrow("malformed dialog records");
+        }
+    });
 });
 
 describe("dialog guard", () => {
@@ -265,6 +290,9 @@ describe("dialog guard", () => {
         // A question asked earlier in a turn that kept running is visible, but nothing waits on it.
         expect(dialogFromSnapshot(snapshot({ asksQuestion: false, question: "Which branch?" }))).toBeNull();
         expect(dialogFromSnapshot(null)).toBeNull();
+        expect(
+            dialogFromSnapshot(snapshot({ asksQuestion: true, question: "Which branch?", state: "FINISHED" }))
+        ).toBeNull();
     });
 
     test("openDialogFor prefers an open hook record over the transcript, and reads the transcript without one", async () => {
