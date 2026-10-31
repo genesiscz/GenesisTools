@@ -1,4 +1,5 @@
 import { accountConfigFingerprint } from "@app/ai-proxy/lib/account-config";
+import { jsonError } from "@app/ai-proxy/lib/http-error";
 import { clientAbortResponse } from "@app/ai-proxy/lib/providers/client-abort";
 import { relayHeaders } from "@app/ai-proxy/lib/providers/http-relay";
 import type { OpenAiModel, ProviderInspectionOptions, ProxyProvider } from "@app/ai-proxy/lib/providers/types";
@@ -481,12 +482,5 @@ export function withoutEarlierThinking(messages: unknown[]): unknown[] {
             (block) => !(isObject(block) && (block.type === "thinking" || block.type === "redacted_thinking"))
         );
         return { ...message, content: kept.length > 0 ? kept : [{ type: "text", text: "(reasoning dropped)" }] };
-    });
-}
-
-function jsonError(status: number, message: string): Response {
-    return new Response(SafeJSON.stringify({ error: { message } }), {
-        status,
-        headers: { "Content-Type": "application/json" },
     });
 }

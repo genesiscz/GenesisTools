@@ -1,6 +1,10 @@
 import { SafeJSON } from "@genesiscz/utils/json";
 
-export function jsonError(status: number, message: string, extra?: { type?: string; code?: string }): Response {
+export function jsonError(
+    status: number,
+    message: string,
+    extra?: { type?: string; code?: string; param?: string }
+): Response {
     return new Response(SafeJSON.stringify({ error: { message, ...extra } }), {
         status,
         headers: { "Content-Type": "application/json" },

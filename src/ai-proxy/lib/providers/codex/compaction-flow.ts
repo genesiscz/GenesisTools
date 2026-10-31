@@ -8,7 +8,7 @@ import {
     backgroundInFlight,
     backgroundResult,
     clearBackground,
-    estimateTokens,
+    estimateItemTokens,
     matchBackground,
     prefixHash,
     setPendingNotice,
@@ -442,7 +442,7 @@ export class CodexCompactionFlow {
             rawInput: input.rawInput,
             accountHash: input.accountHash,
             point: input.point,
-            tailTokens: estimateTokens,
+            tailTokens: estimateItemTokens,
             settings: input.settings,
         });
 
