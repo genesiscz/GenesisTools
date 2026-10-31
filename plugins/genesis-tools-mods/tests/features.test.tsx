@@ -1545,6 +1545,29 @@ test("links: a written title with a code span still decides, and a repository na
     );
 });
 
+test("links: the written title ends at its own parenthesis, and a URL inside it is title text", async () => {
+    forgetPullRequests();
+    takeLinkedPullRequestNote();
+    const { ctx } = twoCheckouts(
+        {
+            "acme/Toolbox#114": "fix widgets",
+            "acme/Playground#114": "other",
+            "acme/Toolbox#115": "fix: document https://github.com/acme/Playground",
+            "acme/Playground#115": "chore: unrelated",
+        },
+        GH_ONLY
+    );
+
+    // A name after the title group, before a later `(docs)`, is an explicit pointer to that repository.
+    expect(await linkLine(ctx, "Landed #114 (fix widgets) for Playground (docs).\n")).toBe(
+        "Landed [#114](https://github.com/acme/Playground/pull/114) (fix widgets) for Playground (docs).\n"
+    );
+    // A repository URL the title quotes is compared as title text, so the title picks Toolbox.
+    expect(await linkLine(ctx, "Landed #115 (fix: document https://github.com/acme/Playground).\n")).toContain(
+        "[#115](https://github.com/acme/Toolbox/pull/115)"
+    );
+});
+
 test("links: a one-checkout session links a bare number in its checkout as before, and names count as words", async () => {
     forgetPullRequests();
     takeLinkedPullRequestNote();

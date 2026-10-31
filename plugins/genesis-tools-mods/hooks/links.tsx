@@ -364,12 +364,30 @@ function* writtenTitles(after: string): Generator<string> {
     }
 }
 
-/** How far the written title after a number reaches (to its last possible closing parenthesis), 0 for none. */
+/**
+ * How far the written title after a number reaches, 0 for none: to the parenthesis that closes its own group, nested
+ * ones included, so a later `(docs)` on the line does not pull the words between into the title. A group that never
+ * closes reaches to its last closing parenthesis.
+ */
 function writtenTitleSpan(after: string): number {
     let span = 0;
 
     for (const written of writtenTitles(after)) {
         span = written.length + 3;
+    }
+
+    if (span === 0) {
+        return 0;
+    }
+
+    let depth = 0;
+
+    for (let i = 1; i < span; i++) {
+        if (after[i] === "(") {
+            depth++;
+        } else if (after[i] === ")" && --depth === 0) {
+            return i + 1;
+        }
     }
 
     return span;
@@ -413,7 +431,8 @@ async function prRepo(
     // repository: in a two-checkout session it counts only after the titles were compared.
     const titleFrom = at + `#${n}`.length;
     const titleTo = titleFrom + writtenTitleSpan(after);
-    const inTitle = (m: RepoMention) => m.byName === true && m.start >= titleFrom && m.start < titleTo;
+    // Any mention there is title text: a plain name, and a repository URL the title quotes as well.
+    const inTitle = (m: RepoMention) => m.start >= titleFrom && m.start < titleTo;
     const nearest = [...ctx.line].sort((a, b) => distance(a) - distance(b));
     const named = async (mentions: readonly RepoMention[]) => {
         for (const mention of mentions) {
