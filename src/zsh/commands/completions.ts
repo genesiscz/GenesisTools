@@ -1,4 +1,4 @@
-import { join } from "node:path";
+import { join, resolve } from "node:path";
 import { isInteractive } from "@genesiscz/utils/cli";
 import { toolCommand } from "@genesiscz/utils/cli/tool-command";
 import { env } from "@genesiscz/utils/env";
@@ -257,6 +257,15 @@ async function installAction(opts: InstallOptions): Promise<void> {
     const interactive = isInteractive() && !opts.yes && !opts.dryRun;
     const selected = await pickProviders(found, interactive);
     const prior = readStateReadOnly().state;
+
+    if (prior.rc && resolve(prior.rc) !== resolve(rcPath)) {
+        throw new Error(`Completions are installed in ${prior.rc}. Uninstall them there before using ${rcPath}.`);
+    }
+
+    if (!prior.rc && Object.keys(prior.replacedHand ?? {}).length > 0) {
+        throw new Error("Restoration records have no rc path. Restore the original wiring by hand before installing.");
+    }
+
     const isSelected = (cli: string): boolean => selected.some((provider) => provider.cli === cli);
     const deselected = Object.entries(prior.replacedHand ?? {}).filter(([cli]) => !isSelected(cli));
     const restore = restoreHandBlocks(
@@ -351,8 +360,10 @@ async function installAction(opts: InstallOptions): Promise<void> {
     const replacedHand: Record<string, ReplacedHandBlock[]> = {};
 
     for (const [cli, records] of Object.entries(prior.replacedHand ?? {})) {
-        if (plan.wired.some((provider) => provider.cli === cli)) {
-            replacedHand[cli] = records;
+        const retained = records.filter((record) => !restore.restored.includes(record));
+
+        if (retained.length > 0) {
+            replacedHand[cli] = retained;
         }
     }
 
@@ -439,6 +450,17 @@ async function refreshAction(): Promise<void> {
 async function uninstallAction(opts: InstallOptions): Promise<void> {
     const { state } = readStateReadOnly();
     const rcPath = opts.rc ?? state.rc ?? defaultRcPath();
+
+    if (state.rc && resolve(state.rc) !== resolve(rcPath)) {
+        throw new Error(`Completions are installed in ${state.rc}. Uninstall them there instead of ${rcPath}.`);
+    }
+
+    if (!state.rc && Object.keys(state.replacedHand ?? {}).length > 0) {
+        throw new Error(
+            "Restoration records have no rc path. Restore the original wiring by hand before uninstalling."
+        );
+    }
+
     const before = readRc(rcPath);
 
     if (before === undefined || !findOwnBlock(before.split("\n"))) {
@@ -473,8 +495,17 @@ async function uninstallAction(opts: InstallOptions): Promise<void> {
     const updated = readStateForUpdate();
 
     if (Object.keys(updated.clis).length > 0 || updated.rc || updated.replacedHand) {
-        const unrestored = (restore?.missing ?? []).length > 0 ? updated.replacedHand : undefined;
-        writeState({ version: 1, clis: {}, ...(unrestored ? { replacedHand: unrestored } : {}) });
+        const missing = restore ? restore.missing : records;
+        const unrestored = Object.fromEntries(
+            Object.entries(state.replacedHand ?? {})
+                .map(([cli, entries]) => [cli, entries.filter((entry) => missing.includes(entry))] as const)
+                .filter(([, entries]) => entries.length > 0)
+        );
+        writeState({
+            version: 1,
+            clis: {},
+            ...(Object.keys(unrestored).length > 0 ? { rc: rcPath, replacedHand: unrestored } : {}),
+        });
     }
 
     logger.debug({ rcPath, removed: Object.keys(updated.clis) }, "zsh completions: uninstalled");

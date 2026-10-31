@@ -1,5 +1,5 @@
 import { describe, expect, it } from "bun:test";
-import { existsSync, mkdirSync, mkdtempSync, readdirSync, readFileSync, writeFileSync } from "node:fs";
+import { existsSync, mkdirSync, mkdtempSync, readdirSync, readFileSync, symlinkSync, writeFileSync } from "node:fs";
 import { tmpdir } from "node:os";
 import { join } from "node:path";
 import { env } from "@genesiscz/utils/env";
@@ -150,6 +150,11 @@ describe("planCompletions", () => {
                 home: HOME,
             })
         ).toThrow(/no "# <<< genesis-tools zsh completions <<<" line/);
+    });
+
+    it("does not replace completion lines that contain other commands", () => {
+        const rc = 'eval "$(gh completion -s zsh)"; export EDITOR=vim\n';
+        expect(findHandBlocks(rc, [provider("gh")]).filter(isReplaceable)).toEqual([]);
     });
 
     it("finds every hand-made block with its exact lines", () => {
@@ -320,6 +325,71 @@ describe("state file", () => {
         expect(read.state).toEqual(emptyState());
         expect(read.problem).toContain("does not parse");
         expect(readdirSync(join(root, "state-bad"))).toEqual(["completions.json"]);
+    });
+});
+
+describe("completion install", () => {
+    it("retains an unrestored record when its CLI is deselected", async () => {
+        const home = join(root, "install-home");
+        const rc = join(home, ".zshrc");
+        const bin = join(home, "bin");
+        const statePath = join(home, ".genesis-tools", "zsh", "completions.json");
+        mkdirSync(bin, { recursive: true });
+        symlinkSync("/usr/bin/true", join(bin, "gh"));
+        writeFileSync(rc, "# edited replacement\n");
+        const records = { bun: [{ original: ["source old"], replacement: ["# removed"] }] };
+        writeState({ version: 1, rc, clis: {}, replacedHand: records }, statePath);
+        const proc = Bun.spawn(
+            [process.execPath, join(import.meta.dir, "../../index.ts"), "completions", "--yes", "--rc", rc],
+            {
+                env: { PATH: `${bin}:/usr/bin:/bin`, HOME: home, GENESIS_TOOLS_HOME: home },
+                stdout: "pipe",
+                stderr: "pipe",
+            }
+        );
+        await Promise.all([new Response(proc.stdout).text(), new Response(proc.stderr).text()]);
+        expect(await proc.exited).toBe(0);
+        expect(readStateReadOnly(statePath).state.replacedHand).toEqual(records);
+    });
+});
+
+describe("completion uninstall", () => {
+    it("retains missing restoration records with their rc and refuses a different rc", async () => {
+        const home = join(root, "uninstall-home");
+        const rc = join(home, ".zshrc");
+        const other = join(home, "other-rc");
+        const statePath = join(home, ".genesis-tools", "zsh", "completions.json");
+        mkdirSync(home, { recursive: true });
+        writeFileSync(rc, "# edited replacement\n");
+        writeFileSync(other, "# unrelated file\n");
+        const records = { gh: [{ original: ['eval "$(gh completion -s zsh)"'], replacement: ["# removed"] }] };
+        writeState({ version: 1, rc, clis: {}, replacedHand: records }, statePath);
+
+        const run = async (path: string) => {
+            const proc = Bun.spawn(
+                [process.execPath, join(import.meta.dir, "../../index.ts"), "completions", "--rc", path, "uninstall"],
+                {
+                    env: { PATH: env.get("PATH") ?? "/usr/bin:/bin", HOME: home, GENESIS_TOOLS_HOME: home },
+                    stdout: "pipe",
+                    stderr: "pipe",
+                }
+            );
+            const [stdout, stderr, exitCode] = await Promise.all([
+                new Response(proc.stdout).text(),
+                new Response(proc.stderr).text(),
+                proc.exited,
+            ]);
+            return { stdout, stderr, exitCode };
+        };
+
+        const wrong = await run(other);
+        expect(wrong.exitCode).not.toBe(0);
+        expect(readFileSync(other, "utf8")).toBe("# unrelated file\n");
+        expect(readStateReadOnly(statePath).state.replacedHand).toEqual(records);
+
+        const right = await run(rc);
+        expect(right.exitCode).toBe(0);
+        expect(readStateReadOnly(statePath).state).toEqual({ version: 1, rc, clis: {}, replacedHand: records });
     });
 });
 

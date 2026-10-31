@@ -79,7 +79,7 @@ function findLine(lines: readonly string[], pattern: RegExp, from = 0): number {
 function evalGeneratorLine(cli: string): HandWiring {
     const name = escapeRegExp(cli);
     const pattern = new RegExp(
-        `^\\s*[^#]*(eval\\s+"?\\$\\(\\s*${name}\\s+(completion|completions)\\b[^)]*\\)"?|source\\s+<\\(\\s*${name}\\s+(completion|completions)\\b[^)]*\\))`
+        `^\\s*(eval\\s+"?\\$\\(\\s*${name}\\s+(completion|completions)\\b[^);]*\\)"?|source\\s+<\\(\\s*${name}\\s+(completion|completions)\\b[^);]*\\))\\s*$`
     );
 
     return {
@@ -186,7 +186,7 @@ const BUN_SOURCE_LINE: HandWiring = {
     find(lines) {
         const index = findLine(
             lines,
-            /^\s*[^#]*\bsource\s+"?(\$BUN_INSTALL|\$\{BUN_INSTALL\}|\$HOME\/\.bun|~\/\.bun)\/_bun"?/
+            /^\s*(?:\[\s+-s\s+"(?:\$BUN_INSTALL|\$\{BUN_INSTALL\}|\$HOME\/\.bun|~\/\.bun)\/_bun"\s+\]\s*&&\s*)?source\s+"?(?:\$BUN_INSTALL|\$\{BUN_INSTALL\}|\$HOME\/\.bun|~\/\.bun)\/_bun"?\s*$/
         );
         return index === -1 ? undefined : { start: index, end: index };
     },
