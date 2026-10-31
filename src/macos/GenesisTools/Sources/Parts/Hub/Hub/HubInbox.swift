@@ -1879,7 +1879,7 @@ struct InboxMain: View {
     /// that session.
     private var revealFixes: [NoticeFix] {
         guard let target = inbox.revealMissing?.target,
-              let hubSession = model.sessions.first(where: { $0.sessionId == target.sessionId })
+              let hubSession = model.session(id: target.sessionId)
         else { return [] }
         return [.button("Open in transcript", symbol: "text.bubble") {
             inbox.revealMissing = nil
@@ -2205,7 +2205,7 @@ struct InboxDecisionCard: View, Equatable {
         self.item = item
         self.keyed = keyed
         self.state = state ?? inbox.cardState(for: item, in: session,
-                                              hubSession: session.sessionId.flatMap { id in model.sessions.first { $0.sessionId == id } })
+                                              hubSession: session.sessionId.flatMap(model.session(id:)))
     }
 
     nonisolated static func == (lhs: Self, rhs: Self) -> Bool {
@@ -2898,11 +2898,18 @@ private struct InboxReplySheet: View {
     }
 }
 
+extension HubModel {
+    /// The hub's session row with this session id, when its list has one.
+    func session(id: String) -> HubSession? {
+        sessions.first { $0.sessionId == id }
+    }
+}
+
 /// A HubSession for the terminal and resume actions: the row from the hub's list when it has one,
 /// else a stand-in built from what the inbox knows (an older session missing from the list).
 func inboxHubSession(_ session: InboxSession, in model: HubModel) -> HubSession? {
     guard let sessionId = session.sessionId else { return nil }
-    if let row = model.sessions.first(where: { $0.sessionId == sessionId }) {
+    if let row = model.session(id: sessionId) {
         return row
     }
     let cwd = session.cwd ?? ""
