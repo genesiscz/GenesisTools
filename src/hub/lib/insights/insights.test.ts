@@ -2,6 +2,7 @@ import { describe, expect, spyOn, test } from "bun:test";
 import { mkdtempSync, readFileSync, renameSync, statSync, utimesSync, writeFileSync } from "node:fs";
 import { tmpdir } from "node:os";
 import { dirname, join, resolve } from "node:path";
+import { resolveHistoryProvider } from "@genesiscz/utils/agent-sessions/provider";
 import type { ResolvedTranscript, TranscriptTool, TranscriptTurn } from "@genesiscz/utils/ai/transcripts";
 import { SafeJSON } from "@genesiscz/utils/json";
 import { getLogger } from "@genesiscz/utils/logger";
@@ -572,5 +573,30 @@ describe("postSessionHandoff", () => {
 
         expect(response.handoff.tasks).toHaveLength(1);
         expect(response.handoff.tasks[0]?.text).toContain("Continue");
+    });
+});
+
+describe("the second read of a native session file (each reader's scanInsights)", () => {
+    const line = (record: Record<string, unknown>) => SafeJSON.stringify(record, { strict: true }) ?? "";
+
+    test("Claude's file adds per-call usage, Codex's the session model, and Grok's is not read again", () => {
+        const claude = resolveHistoryProvider("claude").reader.scanInsights;
+        const claudeText = line({
+            type: "assistant",
+            uuid: "a1",
+            timestamp: iso(1),
+            cwd: "/work/app",
+            message: { id: "m1", model: "claude-x", usage: { input_tokens: 10, output_tokens: 5 }, content: [] },
+        });
+        expect(claude?.(claudeText).native?.calls.map((call) => call.messageId)).toEqual(["m1"]);
+        expect(claude?.(claudeText).defaultModel).toBeNull();
+
+        const codex = resolveHistoryProvider("codex").reader.scanInsights;
+        expect(codex?.(line({ type: "turn_context", payload: { model: "gpt-5.5" } }))).toEqual({
+            native: null,
+            defaultModel: "gpt-5.5",
+        });
+
+        expect(resolveHistoryProvider("grok").reader.scanInsights).toBeNull();
     });
 });
