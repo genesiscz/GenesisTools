@@ -734,10 +734,17 @@ async function command(host: Host, args: string): Promise<string> {
     return USAGE;
 }
 
-const checkoutMoves = new WeakMap<object, boolean>();
+/** Whether a call's checkouts moved, written while the tool result already returns; `afterTool` waits for it. */
+const checkoutMoves = new WeakMap<object, Promise<boolean>>();
 
-export async function recordCheckout(host: Host, input: object): Promise<void> {
-    checkoutMoves.set(input, await noteToolCall(host, input));
+export function recordCheckout(host: Host, input: object): void {
+    checkoutMoves.set(
+        input,
+        noteToolCall(host, input).catch(async (error: unknown) => {
+            await logMod(host, "git", { event: "checkout-failed", error: String(error) }).catch(() => undefined);
+            return false;
+        })
+    );
 }
 
 export const gitBand: Feature = {
@@ -808,7 +815,7 @@ export const gitBand: Feature = {
         }
 
         try {
-            const moved = checkoutMoves.get(e) ?? false;
+            const moved = (await checkoutMoves.get(e)) ?? false;
 
             // Read, Grep, Glob and the like, and a shell command that only reads, change nothing git shows.
             if (!moved && (!TOOLS_THAT_WRITE.has(e.tool) || (e.tool === "Bash" && onlyReads(e.command)))) {

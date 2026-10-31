@@ -4612,9 +4612,10 @@ for (const interactive of [true, false]) {
 
         await $.session.start({ cwd: "/repo", surface: interactive ? "terminal" : null, isInteractive: interactive });
         await $.tool.call({ tool: "Bash", command: "git -C /work/wt-a commit -m test" });
+        // The checkouts are written after the tool result returns.
+        await machine.clock.settle();
         const ledger = machine.store.get("git-band-checkouts");
         expect(ledger).toMatchObject({ "sess-log": [{ root: "/work/wt-a" }] });
-        await machine.clock.settle();
     });
 }
 
