@@ -210,3 +210,15 @@ export interface ScanOptions {
      */
     includeCloud?: boolean;
 }
+
+/** The JSON `clonesize_dusize_json` prints (`tools du size`), as the native core spells it. */
+export interface DuSizeWire {
+    kib: number;
+    bytes: number;
+    files: number;
+    dirs: number;
+    hardlinked_inodes: number;
+    walk_ms: number;
+    denied_dirs: number;
+    read_errors: number;
+}

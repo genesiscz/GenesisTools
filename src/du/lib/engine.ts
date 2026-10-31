@@ -21,6 +21,7 @@ import type {
     CloudBackedResult,
     CloudFileEntry,
     CloudFilesResult,
+    DuSizeWire,
     PartnersResult,
     ScanOptions,
     VolumeInfo,
@@ -331,16 +332,7 @@ export function duSize(root: string, threads = 0): DuSizeResult {
 
     const json = new CString(resPtr).toString();
     symbols.clonesize_free(resPtr);
-    const raw = SafeJSON.parse(json) as {
-        kib: number;
-        bytes: number;
-        files: number;
-        dirs: number;
-        hardlinked_inodes: number;
-        walk_ms: number;
-        denied_dirs: number;
-        read_errors: number;
-    };
+    const raw = SafeJSON.parse(json) as DuSizeWire;
     return {
         kib: raw.kib,
         bytes: raw.bytes,
