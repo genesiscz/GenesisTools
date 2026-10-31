@@ -66,7 +66,8 @@ export const claudeHarness: HarnessDriver<"claude"> = {
             runsCli: ({ argv0, name, command }) =>
                 name === "claude" ||
                 /\/claude\/versions\/[\d.]+$/.test(argv0) ||
-                /@anthropic-ai\/claude-code\/cli\.m?js\b/.test(command),
+                ((name === "node" || name === "bun") &&
+                    /(?:^|[/\\])@anthropic-ai[/\\]claude-code[/\\]cli\.m?js$/.test(command.split(/\s+/)[1] ?? "")),
         },
         history: () => import("@genesiscz/utils/agent-sessions/compact-readers").then((m) => m.claudeHistoryReader),
         cmux: toolOwned(

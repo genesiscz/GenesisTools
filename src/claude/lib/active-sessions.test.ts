@@ -67,6 +67,7 @@ describe("classifyClaudeArgs", () => {
     test("the native installer's versioned binary and the npm CLI are tui sessions too", () => {
         expect(classifyClaudeArgs("/Users/x/.local/share/claude/versions/2.1.3 --resume abc")).toBe("tui");
         expect(classifyClaudeArgs("node /x/node_modules/@anthropic-ai/claude-code/cli.js --resume abc")).toBe("tui");
+        expect(classifyClaudeArgs("/usr/bin/bun /x/node_modules/@anthropic-ai/claude-code/cli.mjs")).toBe("tui");
     });
 
     test("a gt-claude line that names the CLI package stays the wrapper", () => {
@@ -86,6 +87,11 @@ describe("classifyClaudeArgs", () => {
         expect(
             classifyClaudeArgs("/Users/x/.genesis-tools/bin/gt-claude --preload /x/y.ts /x/src/claude/index.ts mcp")
         ).toBe("mcp");
+    });
+
+    test("a package path in an unrelated command is not a session", () => {
+        expect(classifyClaudeArgs("rg @anthropic-ai/claude-code/cli.js")).toBeNull();
+        expect(classifyClaudeArgs("node /tmp/search.js /x/node_modules/@anthropic-ai/claude-code/cli.js")).toBeNull();
     });
 
     test("launchers and children are not sessions", () => {
