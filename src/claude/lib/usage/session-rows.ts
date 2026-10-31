@@ -209,6 +209,18 @@ export function __forgetTailCacheForTests(): void {
  * reader which session each continued in (one discovery for all of them); when that read fails, their usage is
  * returned without a successor and is not cached, so the next listing asks again.
  */
+/** The uncached tails, `TAIL_BATCH_SIZE` files at a time so a cold listing does not open every file at once. */
+async function readUncachedTails(filePaths: readonly string[]): Promise<{ usage: ClaudeTailUsage; read: boolean }[]> {
+    const reads: { usage: ClaudeTailUsage; read: boolean }[] = [];
+
+    for (let i = 0; i < filePaths.length; i += TAIL_BATCH_SIZE) {
+        const batch = filePaths.slice(i, i + TAIL_BATCH_SIZE);
+        reads.push(...(await Promise.all(batch.map((filePath) => extractTailUsageUncached(filePath)))));
+    }
+
+    return reads;
+}
+
 async function extractTailUsages(filePaths: readonly string[]): Promise<TailUsage[]> {
     // The identity comes first: a write after it leaves a newer one, and the next call reads the tail again.
     const identities = filePaths.map((filePath) => fileIdentity(filePath));
@@ -223,7 +235,7 @@ async function extractTailUsages(filePaths: readonly string[]): Promise<TailUsag
     }
 
     const [reads, successors] = await Promise.all([
-        Promise.all(misses.map((filePath) => extractTailUsageUncached(filePath))),
+        readUncachedTails(misses),
         readSessionsContinuedIn({ kind: "claude", transcriptPaths: misses }).catch((err) => {
             logger.warn({ err, files: misses.length }, "[sessions] continued-in pointers unreadable; not caching");
             return null;
@@ -404,10 +416,7 @@ export async function listSessionRowsWithTimings(
 
         await tailCache.load();
 
-        for (let i = 0; i < records.length; i += TAIL_BATCH_SIZE) {
-            const batch = records.slice(i, i + TAIL_BATCH_SIZE);
-            usages.push(...(await extractTailUsages(batch.map((r) => r.filePath))));
-        }
+        usages.push(...(await extractTailUsages(records.map((r) => r.filePath))));
 
         // `refresh: false` is a diagnostic (a dry run, `hub rules test`): it may read and compute, never write.
         if (opts.refresh !== false) {
