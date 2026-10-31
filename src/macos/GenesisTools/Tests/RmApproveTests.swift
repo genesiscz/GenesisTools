@@ -194,7 +194,19 @@ final class RmApproveTests: XCTestCase {
 
         let ended = request([items[0]]).endingUpdates()
         XCTAssertNil(build(ended).items.first?.size)
-        XCTAssertEqual(build(ended).summary, "1 item")
+        XCTAssertEqual(build(ended).summary, "1 item, 1 size unknown")
+    }
+
+    /// A row whose size never came (the walk failed, or the CLI closed stdin first) must not let the known sizes read
+    /// as the whole total.
+    func testAnUnknownSizeKeepsTheTotalFromReadingAsComplete() {
+        let items = [
+            RmApproveItem(path: "/w/cache", kind: "dir", bytes: nil, empty: nil, storedAt: nil, reason: "Holds a repository", measuring: false),
+            RmApproveItem(path: "/w/out.bin", kind: "file", bytes: 2_000, empty: nil, storedAt: nil, reason: "Outside"),
+            RmApproveItem(path: "/w/empty", kind: "dir", bytes: nil, empty: true, storedAt: nil, reason: "Outside"),
+        ]
+        XCTAssertEqual(RmWindowContent.summary(items), "3 items, at least 2 kB, 1 size unknown")
+        XCTAssertEqual(RmWindowContent.summary(Array(items.dropFirst())), "2 items, 2 kB")
     }
 
     /// A refresh replaces the rows and the total, and the ticks stay as the person left them.

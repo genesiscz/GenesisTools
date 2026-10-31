@@ -263,15 +263,20 @@ struct RmWindowContent {
         ]
     }
 
-    /// "5 items, 34 kB, 1 already gone"; "5 items, measuring 2 sizes" until every size is in.
+    /// "5 items, 34 kB, 1 already gone"; "5 items, measuring 2 sizes" until every size is in. A size that could not
+    /// be measured keeps the total from reading as complete: "2 items, at least 2 kB, 1 size unknown".
     static func summary(_ items: [RmApproveItem]) -> String {
         let gone = items.filter { $0.kind == "missing" }.count
         let present = items.filter { $0.kind != "missing" }
         let measuring = present.filter { $0.measuring == true }.count
+        let unknown = present.filter { $0.measuring != true && $0.bytes == nil && $0.empty != true }.count
         let bytes = present.compactMap(\.bytes).reduce(0, +)
         var parts = [Plural.count(items.count, "item")]
         if measuring > 0 {
             parts.append("measuring \(Plural.count(measuring, "size"))")
+        } else if unknown > 0 {
+            if bytes > 0 { parts.append("at least \(ByteFormat.file(bytes))") }
+            parts.append("\(Plural.count(unknown, "size")) unknown")
         } else if bytes > 0 {
             parts.append(ByteFormat.file(bytes))
         }
