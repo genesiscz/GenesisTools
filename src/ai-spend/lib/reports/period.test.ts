@@ -191,7 +191,7 @@ describe("statusline", () => {
                 context_window: { total_input_tokens: 25000, context_window_size: 200000 },
             })
         );
-        expect(hook?.session_id).toBe("sess-a");
+        expect(hook?.sessionId).toBe("sess-a");
         const line = renderStatusline(hook!, [ev({ id: "a", inputTokens: 100, recordedCostUsd: 0.5 })], {
             timezone: "UTC",
             now,
