@@ -6,8 +6,7 @@ enum WidgetStagedText {
         let options = item.options ?? []
         // Every staged letter with its own text: a ⇧-pick in the hub stores "ac", which read "ac) <text of a>" (F14).
         let picks = (option ?? "").compactMap { letter -> String? in
-            guard let index = letter.unicodeScalars.first.map({ Int($0.value) - 97 }), options.indices.contains(index)
-            else { return nil }
+            guard let index = WidgetOptionText.index(of: letter, count: options.count) else { return nil }
             // The option's own "b) " is dropped: the line read "b) b) drop it" (UX audit F1).
             return "\(letter)) " + WidgetOptionText.text(options[index], letter: String(letter))
         }
