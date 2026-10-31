@@ -166,7 +166,7 @@ async function foldersKb(host: Host, paths: readonly string[], skip: readonly st
  * of one 1.4 GB scratch folder in 30 minutes (31 s). The worktrees inside it are left out (`skip`): the worktree rule
  * measures them.
  */
-async function pacedKbs(
+export async function pacedKbs(
     host: Host,
     asks: readonly { path: string; skip: readonly string[] }[]
 ): Promise<Map<string, number | null>> {
@@ -195,13 +195,23 @@ async function pacedKbs(
         return sizes;
     }
 
-    // The folders that are due share one `du` (two processes per reading before, 102 in a quiet 19 minutes of 21
-    // sessions on 2026-10-30); a worktree's name masked for the scratch folder masks nothing in the task folder.
-    const found = await foldersKb(
-        host,
-        due.map((ask) => ask.path),
-        [...new Set(due.flatMap((ask) => ask.skip))]
-    );
+    // `du -I` applies to every operand, so only folders with the same masks can share one process.
+    const groups = new Map<string, { paths: string[]; skip: readonly string[] }>();
+    for (const ask of due) {
+        const key = JSON.stringify(ask.skip);
+        const group = groups.get(key);
+        if (group) {
+            group.paths.push(ask.path);
+        } else {
+            groups.set(key, { paths: [ask.path], skip: ask.skip });
+        }
+    }
+    const found = new Map<string, number>();
+    for (const group of groups.values()) {
+        for (const [path, kb] of await foldersKb(host, group.paths, group.skip)) {
+            found.set(path, kb);
+        }
+    }
 
     for (const ask of due) {
         const kb = found.get(ask.path) ?? null;

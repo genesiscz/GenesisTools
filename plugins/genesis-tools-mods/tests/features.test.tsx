@@ -111,6 +111,7 @@ import {
     changesSize,
     lockedToSession,
     markSizeStale,
+    pacedKbs,
     projectOf,
     samePath,
     sessionTotalKb,
@@ -138,6 +139,38 @@ const NO_LINKS: GenesisProbe = {
 
 // Run with `claude plugin test plugins/genesis-tools-mods`. The pure parts of each feature first, then the link
 // fixer end to end over a streamed reply.
+
+test("session folder measurements apply exclusions only to the matching operand group", async () => {
+    const base = checkoutHost();
+    const calls: string[][] = [];
+    const host: Host = {
+        ...base,
+        exists: async () => true,
+        async run(argv) {
+            calls.push([...argv]);
+            const masked = argv.includes("-I");
+            return {
+                stdout: masked ? "10\t/fixture/scratch-r3\n" : "20\t/fixture/tasks-r3\n30\t/fixture/other-r3\n",
+                stderr: "",
+                exitCode: 0,
+                isStdoutTruncated: false,
+                isStderrTruncated: false,
+            };
+        },
+    };
+    const sizes = await pacedKbs(host, [
+        { path: "/fixture/scratch-r3", skip: ["worktree"] },
+        { path: "/fixture/tasks-r3", skip: [] },
+        { path: "/fixture/other-r3", skip: [] },
+    ]);
+    expect(sizes.get("/fixture/scratch-r3")).toBe(10);
+    expect(sizes.get("/fixture/tasks-r3")).toBe(20);
+    expect(sizes.get("/fixture/other-r3")).toBe(30);
+    expect(calls).toEqual([
+        ["du", "-sk", "-I", "worktree", "/fixture/scratch-r3"],
+        ["du", "-sk", "/fixture/tasks-r3", "/fixture/other-r3"],
+    ]);
+});
 
 test("project lookup retries nonzero results and caches a successful lookup", async () => {
     const base = checkoutHost();
