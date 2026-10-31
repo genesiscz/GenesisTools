@@ -1,4 +1,5 @@
 import { CORS_HEADERS } from "@app/youtube/lib/server/cors";
+import { parseByteRange } from "@genesiscz/utils/http/range";
 import { SafeJSON } from "@genesiscz/utils/json";
 
 /**
@@ -33,9 +34,9 @@ export async function serveFileWithRange(req: Request, path: string, contentType
         });
     }
 
-    const parsed = parseRange(range, size);
+    const parsed = parseByteRange(range, size);
 
-    if (!parsed) {
+    if (parsed.kind !== "range") {
         return new Response(null, {
             status: 416,
             headers: { ...CORS_HEADERS, "Accept-Ranges": "bytes", "Content-Range": `bytes */${size}` },
@@ -54,31 +55,4 @@ export async function serveFileWithRange(req: Request, path: string, contentType
             "Content-Length": String(end - start + 1),
         },
     });
-}
-
-function parseRange(header: string, size: number): { start: number; end: number } | null {
-    const match = header.match(/^bytes=(\d*)-(\d*)$/);
-
-    if (!match || (match[1] === "" && match[2] === "")) {
-        return null;
-    }
-
-    let start: number;
-    let end: number;
-
-    if (match[1] === "") {
-        // Suffix range ("bytes=-500") — last N bytes.
-        const suffixLength = Number.parseInt(match[2], 10);
-        start = Math.max(0, size - suffixLength);
-        end = size - 1;
-    } else {
-        start = Number.parseInt(match[1], 10);
-        end = match[2] === "" ? size - 1 : Number.parseInt(match[2], 10);
-    }
-
-    if (Number.isNaN(start) || Number.isNaN(end) || start > end || start >= size) {
-        return null;
-    }
-
-    return { start, end: Math.min(end, size - 1) };
 }

@@ -1,5 +1,6 @@
 import { isUpstreamOutageStatus } from "@genesiscz/utils/ai/http-auth";
 import { logger } from "@genesiscz/utils/logger";
+import { TRANSPORT_ERROR_CODES } from "@genesiscz/utils/net/transport-codes";
 import { pollGateCacheKey, USAGE_CACHE_TTL, usageCacheFilePath, usagePollStorage } from "./storage";
 
 /**
@@ -107,27 +108,10 @@ export function backoffMs(failures: number): number {
  */
 const TRANSPORT_MAX_BACKOFF_MS = 5 * 60_000;
 
-/**
- * Codes set when the request never got a response. Verified against Bun 1.3.13:
- * a refused connection AND an unresolvable host both surface as
- * `ConnectionRefused`, and a bad certificate as an OpenSSL code — none of which
- * an account can influence.
- */
-const TRANSPORT_ERROR_CODES = new Set([
+/** The shared transport codes plus the proxy's own "upstream unreachable" code; none of them is an account's fault. */
+const TRANSPORT_OR_UPSTREAM_CODES: ReadonlySet<string> = new Set([
+    ...TRANSPORT_ERROR_CODES,
     "UPSTREAM_TRANSPORT_ERROR",
-    "ConnectionRefused",
-    "ConnectionClosed",
-    "FailedToOpenSocket",
-    "ECONNREFUSED",
-    "ECONNRESET",
-    "ECONNABORTED",
-    "EHOSTUNREACH",
-    "ENETDOWN",
-    "ENETUNREACH",
-    "ENOTFOUND",
-    "EAI_AGAIN",
-    "ETIMEDOUT",
-    "EPIPE",
 ]);
 
 /**
@@ -176,7 +160,7 @@ export function isTransportFailure(err: unknown): boolean {
             statusCode?: unknown;
         };
 
-        if (typeof code === "string" && TRANSPORT_ERROR_CODES.has(code)) {
+        if (typeof code === "string" && TRANSPORT_OR_UPSTREAM_CODES.has(code)) {
             return true;
         }
 

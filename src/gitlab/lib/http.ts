@@ -1,3 +1,5 @@
+import { TRANSPORT_ERROR_CODES } from "@genesiscz/utils/net/transport-codes";
+
 export class HttpError extends Error {
     readonly status: number;
     readonly statusText: string;
@@ -18,22 +20,6 @@ export class HttpError extends Error {
 export function isRetryableHttpStatus(status: number): boolean {
     return status === 408 || status === 429 || (status >= 500 && status < 600);
 }
-
-const TRANSPORT_ERROR_CODES = new Set([
-    "ECONNABORTED",
-    "ECONNREFUSED",
-    "ECONNRESET",
-    "EAI_AGAIN",
-    "EHOSTUNREACH",
-    "ENETUNREACH",
-    "ENOTFOUND",
-    "EPIPE",
-    "ETIMEDOUT",
-    "ConnectionClosed",
-    "ConnectionRefused",
-    "UND_ERR_CONNECT_TIMEOUT",
-    "UND_ERR_SOCKET",
-]);
 
 /** A failure of the connection, as opposed to a bug in our own code. */
 export function isTransportError(error: Error): boolean {
