@@ -455,6 +455,21 @@ describe("swift row gates (what a row a ForEach makes may not carry)", () => {
         expect(checkSwiftSource("Sources/Example.swift", once)).toMatchObject([
             { rule: "swift-formatter-in-view", line: 9, subject: "StampLabel" },
         ]);
+        // A stored closure runs on every call, so the formatter it makes is made every time.
+        const stored = [
+            "struct StampLabel: View {",
+            "    let date: Date",
+            "    private static let format = { (date: Date) -> String in",
+            "        let formatter = DateFormatter()",
+            "        return formatter.string(from: date)",
+            "    }",
+            "    var body: some View { Text(Self.format(date)) }",
+            "}",
+        ].join("\n");
+        expect(checkSwiftSource("Sources/Example.swift", stored)).toMatchObject([
+            { rule: "swift-formatter-in-view", line: 4, subject: "StampLabel" },
+        ]);
+        expect(swiftRules(view("private static let formatter: DateFormatter = { DateFormatter() }()"))).toEqual([]);
     });
 });
 

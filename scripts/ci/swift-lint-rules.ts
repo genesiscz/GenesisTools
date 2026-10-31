@@ -589,12 +589,15 @@ const STATIC_INITIALIZER = /\bstatic\s+(?:let|var)\b[^=]*=\s*\{/;
 
 /**
  * The lines inside a `static let x: T = { ... }()` closure (offsets into `lines`): what is made there is made once, so
- * `let formatter = DateFormatter()` inside it is the fix the formatter rule asks for, not a violation.
+ * `let formatter = DateFormatter()` inside it is the fix the formatter rule asks for, not a violation. Only a closure
+ * called right where it closes (`}()`) runs once; a stored one (`static let format = { (date: Date) in ... }`) runs on
+ * every call, so its lines stay checked.
  */
 function staticInitializerLines(lines: string[]): Set<number> {
     const inside = new Set<number>();
     let depth = 0;
     let closesAt: number | null = null;
+    let pending: number[] = [];
 
     for (const [offset, line] of lines.entries()) {
         const opens = STATIC_INITIALIZER.test(line) && closesAt === null;
@@ -613,9 +616,16 @@ function staticInitializerLines(lines: string[]): Set<number> {
         }
 
         if (closesAt !== null) {
-            inside.add(offset);
+            pending.push(offset);
 
             if (depth <= closesAt) {
+                if (/\}\s*\(\s*\)/.test(line)) {
+                    for (const kept of pending) {
+                        inside.add(kept);
+                    }
+                }
+
+                pending = [];
                 closesAt = null;
             }
         }
