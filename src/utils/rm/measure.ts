@@ -1,7 +1,7 @@
 import { createHash } from "node:crypto";
 import { closeSync, existsSync, lstatSync, mkdirSync, openSync, readdirSync, readFileSync } from "node:fs";
 import { join } from "node:path";
-import { walkFiles } from "@genesiscz/utils/fs/disk-usage";
+import { type WalkError, walkFiles } from "@genesiscz/utils/fs/disk-usage";
 import { SafeJSON } from "@genesiscz/utils/json";
 import { logger } from "@genesiscz/utils/logger";
 import { isProcessAlive } from "@genesiscz/utils/process-alive";
@@ -166,16 +166,17 @@ function nextTurn(): Promise<void> {
  * `measureBytes` that gives the event loop a turn every few thousand entries, folders included: the CLI reads the
  * approval window's answer while it walks. `walkFiles` hands out files only and goes down into an empty folder
  * without one, so it lists one folder per call here and the folders below go on this function's own stack. Throws
- * the signal's reason when aborted; 0 when the path cannot be read.
+ * the signal's reason when aborted. Null when any part of the tree could not be read (a folder it may not list, a
+ * file it may not stat): a partial sum is not the size, and is never saved as one.
  */
-export async function measureBytesAsync(path: string, signal?: AbortSignal): Promise<number> {
+export async function measureBytesAsync(path: string, signal?: AbortSignal): Promise<number | null> {
     let stat: ReturnType<typeof lstatSync>;
 
     try {
         stat = lstatSync(path);
     } catch (error) {
         logger.debug({ path, error }, "rm: cannot measure");
-        return 0;
+        return null;
     }
 
     if (!stat.isDirectory()) {
@@ -184,17 +185,21 @@ export async function measureBytesAsync(path: string, signal?: AbortSignal): Pro
 
     let total = 0;
     let seen = 0;
+    let unread: WalkError | null = null;
     const folders = [path];
     const below = (dir: string): false => {
         folders.push(dir);
         return false;
+    };
+    const onError = (error: WalkError): void => {
+        unread ??= error;
     };
 
     try {
         while (folders.length > 0) {
             const dir = folders.pop() ?? path;
 
-            for (const entry of walkFiles(dir, { signal, shouldEnter: below })) {
+            for (const entry of walkFiles(dir, { signal, shouldEnter: below, onError })) {
                 total += entry.allocated;
                 seen++;
 
@@ -215,7 +220,12 @@ export async function measureBytesAsync(path: string, signal?: AbortSignal): Pro
         }
 
         logger.debug({ path, error }, "rm: cannot measure");
-        return 0;
+        return null;
+    }
+
+    if (unread) {
+        logger.debug({ path, unread }, "rm: part of the tree could not be read; its size is unknown");
+        return null;
     }
 
     return total;
@@ -230,7 +240,7 @@ function isEmptyFolder(dir: string): boolean {
     }
 }
 
-/** Measures one request path where it is now; null when nothing is there. */
+/** Measures one request path where it is now; null when nothing is there or part of it could not be read. */
 export async function measureTarget(
     target: Pick<RmRequestTarget, "path" | "stored">,
     options: { now?: () => Date; signal?: AbortSignal } = {}
@@ -247,6 +257,11 @@ export async function measureTarget(
     }
 
     const bytes = await measureBytesAsync(location, options.signal);
+
+    if (bytes === null) {
+        return null;
+    }
+
     const item: RmMeasuredItem = { path: target.path, location, at, mtimeMs: stat.mtimeMs, bytes };
 
     if (!stat.isDirectory()) {

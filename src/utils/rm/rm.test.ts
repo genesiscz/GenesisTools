@@ -54,6 +54,7 @@ import {
     mayDenyRmRequest,
     measureBytes,
     measureBytesAsync,
+    measureTarget,
     moveAside,
     moveToTrash,
     parseRmConfig,
@@ -1836,6 +1837,25 @@ describe("printApprovalUpdates", () => {
         updates.close();
 
         expect(await printApprovalUpdates(updates, { timeoutMs: 60_000 })).toBe("complete");
+    });
+});
+
+describe("a tree with a folder that cannot be read", () => {
+    test("has no size, so a partial sum is never shown or saved as the whole", async () => {
+        const root = dir("measure-unreadable");
+        file(join(root, "readable.bin"), "abc");
+        const locked = dir("measure-unreadable", "locked");
+        file(join(locked, "hidden.bin"), "abcdef");
+        chmodSync(locked, 0o000);
+
+        try {
+            expect(await measureBytesAsync(root)).toBeNull();
+            expect(await measureTarget({ path: root })).toBeNull();
+        } finally {
+            chmodSync(locked, 0o755);
+        }
+
+        expect(await measureBytesAsync(root)).toBeGreaterThan(0);
     });
 });
 
