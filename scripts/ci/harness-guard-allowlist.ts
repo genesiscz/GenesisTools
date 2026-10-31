@@ -60,7 +60,7 @@ export const HARNESS_GUARD_ALLOWLIST: Readonly<Record<string, HarnessGuardCounts
         why: "HOOK_INSTALLERS, the agents tool's one table of hook-file installers (they write settings.json and hooks.json, which the tool owns); Grok runs Claude's hooks and has no entry",
     },
     "src/agents/lib/hooks/config.ts": {
-        table: 5,
+        table: 2,
         why: "the user's per-harness hook config shape (guard, diff and question overrides keyed by HarnessName), read from hooks.json; its defaults come from the drivers' hooks parts",
     },
     "src/agents/lib/hooks/diff/theme.ts": {
@@ -74,6 +74,10 @@ export const HARNESS_GUARD_ALLOWLIST: Readonly<Record<string, HarnessGuardCounts
     "src/agents/lib/hooks/payload.ts": {
         table: 1,
         why: "the declared type of HARNESS_HOOK_FACTS, which byHarness builds from the drivers' hooks parts through harness-hooks.ts",
+    },
+    "src/agents/lib/hooks/sections/diff.ts": {
+        table: 3,
+        why: "the user's per-harness diff overrides in hooks.json (diff.harnesses keyed by HarnessId), moved out of the agents hook config; their defaults come from the drivers' hooks parts",
     },
     "src/ai-proxy/commands/session-use.ts": {
         list: 1,

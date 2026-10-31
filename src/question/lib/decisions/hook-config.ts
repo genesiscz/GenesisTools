@@ -220,6 +220,16 @@ export const DECISIONS_HOOK_SECTION: HookConfigSection<DecisionsHookConfig> = {
     settable: SETTABLE,
     owns: (key) => DECISION_KEYS.has(key),
     set,
+    // The Stop entry runs every decision check; UserPromptSubmit only the hub's own (harvest, answers, the stop hook).
+    entries: (decisions, overrides) => [
+        ...((overrides.decisions ?? decisionHooksWanted({ decisions })) ? (["stop", "prompt"] as const) : []),
+        ...((overrides.questionNudge ?? stopOnlyDecisionsWanted({ decisions })) ? (["stop"] as const) : []),
+    ],
+    doctor: (decisions) => [
+        ["decisions.stopHook", decisions.stopHook],
+        ["decisions.questionNudge", decisions.questionNudge],
+        ["decisions.chatAnswers", decisions.chatAnswers],
+    ],
 };
 
 /** The decision hooks' settings as the hooks load them, for the question tool and the hub. */

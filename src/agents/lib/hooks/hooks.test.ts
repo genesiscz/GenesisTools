@@ -45,6 +45,7 @@ import {
     lastConfigLoadError,
     lastConfigProblems,
     loadHooksConfig,
+    wantedEntryKinds,
 } from "./config";
 import { recentBashCommands } from "./corpus";
 import { type DetectFailure, expandRulePath, guardRules, loadCustomRules, loadRuleSet } from "./custom-rules";
@@ -2976,7 +2977,8 @@ describe("decision hub hooks", () => {
 
         it("wires the Stop hook alone, and the Stop entrypoint loads the decision checks for it", () => {
             const nudging = { ...DEFAULT_HOOKS_CONFIG, decisions: nudgeOn() };
-            const events = entriesFor("/dist", { questionNudge: true }).map((item) => item.event);
+            const alone = { ...nudging, unpushed: { ...DEFAULT_HOOKS_CONFIG.unpushed, enabled: false } };
+            const events = entriesFor("/dist", wantedEntryKinds(alone, {})).map((item) => item.event);
 
             expect(events).toContain("Stop");
             expect(events).not.toContain("UserPromptSubmit");
@@ -3080,13 +3082,15 @@ describe("the unpushed reminder", () => {
     });
 
     it("the installer wires Stop for it alone, and not UserPromptSubmit", () => {
-        const events = entriesFor("/dist", { decisions: false, unpushed: true }).map((item) => item.event);
+        const kinds = (overrides: { decisions: boolean; unpushed: boolean }) =>
+            wantedEntryKinds(DEFAULT_HOOKS_CONFIG, overrides);
+        const events = entriesFor("/dist", kinds({ decisions: false, unpushed: true })).map((item) => item.event);
 
         expect(events).toContain("Stop");
         expect(events).not.toContain("UserPromptSubmit");
-        expect(entriesFor("/dist", { decisions: false, unpushed: false }).map((item) => item.event)).not.toContain(
-            "Stop"
-        );
+        expect(
+            entriesFor("/dist", kinds({ decisions: false, unpushed: false })).map((item) => item.event)
+        ).not.toContain("Stop");
     });
 
     it("its thresholds are settable and validated", () => {

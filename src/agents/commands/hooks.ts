@@ -26,6 +26,7 @@ import {
 import {
     DEFAULT_HOOKS_CONFIG,
     diffFor,
+    doctorRows,
     HARNESS_NAMES,
     type HarnessName,
     type HooksConfig,
@@ -350,22 +351,6 @@ function printCustomRules(config: HooksConfig, custom: CustomRules | null): void
     ui.raw(pc.dim(`guard.customRules: ${config.guard.customRules.join(", ")}`));
 }
 
-/** Which harnesses render the diff, so a harness that is switched off is visible at a glance. */
-function perHarnessDiff(config: HooksConfig): string {
-    return HARNESS_NAMES.map((harness) => {
-        const resolved = diffFor(config, harness);
-
-        return `${harness} ${resolved.enabled ? "on" : pc.yellow("off")}`;
-    }).join(" · ");
-}
-
-/** The `questions` feature per harness (`tools agents hooks config set questions.<harness> on`), all off by default. */
-function perHarnessQuestions(config: HooksConfig): string {
-    return HARNESS_NAMES.map(
-        (harness) => `${harness} ${config.questions.harnesses[harness] ? "on" : pc.dim("off")}`
-    ).join(" · ");
-}
-
 export function registerHooksCommands(program: Command): void {
     const hooks = program.command("hooks").description("Shell guard and diff watcher for any coding agent");
     registerRuleCommands(hooks);
@@ -395,35 +380,21 @@ export function registerHooksCommands(program: Command): void {
             renderCliHeader("Agent hooks", hooksConfigPath());
 
             const table = createBoxTable(["SETTING", "VALUE"]);
-
-            table.push(["guard.enabled", String(config.guard.enabled)]);
-            table.push([
-                "guard rules",
-                `${BUILT_IN_RULES.length} built-in, ${set.rules.length - BUILT_IN_RULES.length} custom`,
-            ]);
             const overrides = ruleOverrides(config, set.rules);
 
-            table.push(["rules switched off", overrides.off || "none"]);
-            table.push(["rules allowed per harness", overrides.perHarness || "none"]);
-            table.push([
-                "longCommand",
-                `${config.guard.longCommand.lines} lines / ${config.guard.longCommand.chars} chars`,
-            ]);
-            table.push(["contextCapPerSession", String(config.guard.contextCapPerSession)]);
-            table.push(["diff.enabled", String(config.diff.enabled)]);
-            table.push(["diff.maxFiles", String(config.diff.maxFiles)]);
-            table.push(["diff.standDownWhenNative", String(config.diff.standDownWhenNative)]);
-            table.push(["native Bash diff", nativeDiffLabel(config)]);
-            table.push(["diff per harness", perHarnessDiff(config)]);
-            table.push(["questions per harness", perHarnessQuestions(config)]);
-            table.push(["agentsTalk.hint", String(config.agentsTalk.hint)]);
-            table.push(["decisions.stopHook", config.decisions.stopHook]);
-            table.push(["decisions.questionNudge", config.decisions.questionNudge]);
-            table.push(["decisions.chatAnswers", config.decisions.chatAnswers]);
-            table.push(["Stop hook", stopWired ? "wired" : "not wired"]);
-            table.push(["shadow", config.shadow ? "ON (decides, says nothing)" : "off (it speaks)"]);
-            table.push(["log", config.logPath]);
-            table.push(["log rotates at", `${config.maxLogMB} MB, keeping one generation`]);
+            for (const row of doctorRows(config, {
+                rules: {
+                    builtIn: BUILT_IN_RULES.length,
+                    custom: set.rules.length - BUILT_IN_RULES.length,
+                    off: overrides.off,
+                    perHarness: overrides.perHarness,
+                },
+                nativeDiff: nativeDiffLabel(config),
+                stopHookWired: stopWired,
+            })) {
+                table.push([...row]);
+            }
+
             out.println(table.toString());
 
             printCustomRules(config, set.custom);

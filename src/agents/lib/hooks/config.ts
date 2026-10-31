@@ -1,27 +1,29 @@
 import { DECISIONS_HOOK_SECTION, type DecisionsHookConfig } from "@app/question/lib/decisions/hook-config";
 import { QUESTIONS_HOOK_SECTION, type QuestionsConfig } from "@genesiscz/utils/agents/dialogs/hook-config";
 import {
-    boolOr,
-    type CheckedNumber,
     type HookConfigSection,
+    type HookDoctorRow,
+    type HookEntryKind,
+    type HookInstallOverrides,
     hooksConfigPath,
-    isCount,
-    oneOf,
-    partOf,
     readStoredHooksConfig,
-    reportRejected,
-    countOr as sharedCountOr,
 } from "@genesiscz/utils/agents/hooks/config-section";
-import { ACCOUNT_PROVIDER_ALIASES, byHarnessWhere } from "@genesiscz/utils/ai/providers/alias-list";
-import { harnessHooks } from "@genesiscz/utils/ai/providers/harness-hooks";
+import { ACCOUNT_PROVIDER_ALIASES } from "@genesiscz/utils/ai/providers/alias-list";
 import type { HarnessId } from "@genesiscz/utils/harness/types";
-import { SafeJSON } from "@genesiscz/utils/json";
-import { genesisToolsDir, toolDataDir } from "@genesiscz/utils/storage/root";
+import { toolDataDir } from "@genesiscz/utils/storage/root";
 import type { DiffCategory } from "./diff/classify";
-import { FULL_DIFF_MODES, type FullDiffMode } from "./diff/full";
-import { DIFF_THEMES, type DiffThemeName } from "./diff/theme";
+import type { FullDiffMode } from "./diff/full";
+import type { DiffThemeName } from "./diff/theme";
 import { AGENTS_TALK_HOOK_SECTION, type AgentsTalkConfig } from "./sections/agents-talk";
+import { CORE_HOOK_SECTION, defaultLogPath } from "./sections/core";
+import type { FillMode, Highlighter, HighlightMode } from "./sections/diff";
+import { DIFF_HOOK_SECTION, diffForHarness } from "./sections/diff";
+import { GUARD_HOOK_SECTION } from "./sections/guard";
+import { MODS_HOOK_SECTION } from "./sections/mods";
 import { UNPUSHED_HOOK_SECTION, type UnpushedConfig } from "./sections/unpushed";
+
+export { defaultLogPath } from "./sections/core";
+export type { FillMode, Highlighter, HighlightMode } from "./sections/diff";
 
 export type HookOutcome = "allow" | "context" | "warn" | "block";
 export type HarnessName = HarnessId;
@@ -207,17 +209,7 @@ export type DiffOverrides = Partial<Omit<DiffConfig, "categories" | "harnesses">
  * that turns one kind on must not blank the other three.
  */
 export function diffFor(config: HooksConfig, harness: HarnessName | undefined): DiffConfig {
-    const override = harness ? config.diff.harnesses[harness] : undefined;
-
-    if (!override) {
-        return config.diff;
-    }
-
-    return {
-        ...config.diff,
-        ...override,
-        categories: { ...config.diff.categories, ...override.categories },
-    };
+    return diffForHarness(config.diff, harness);
 }
 
 export interface GuardConfig {
@@ -363,14 +355,8 @@ export interface ModsConfig {
     stall: { enabled: boolean; action: "button" | "auto"; minutes: number };
 }
 
-export interface HooksConfig {
-    guard: GuardConfig;
-    diff: DiffConfig;
-    decisions: DecisionsHookConfig;
-    questions: QuestionsConfig;
-    agentsTalk: AgentsTalkConfig;
-    mods: ModsConfig;
-    unpushed: UnpushedConfig;
+/** The keys at the top of `hooks.json`, beside the sections. */
+export interface CoreHooksConfig {
     logPath: string;
     /**
      * Log the decision, emit nothing. It lets the new hooks run beside the old ones on real
@@ -387,16 +373,140 @@ export interface HooksConfig {
     maxLogMB: number;
 }
 
-/** The hook features that own a section of `hooks.json`: its defaults, its merge and its `set` keys. */
-export const HOOK_SECTION_NAMES = ["decisions", "questions", "agentsTalk", "unpushed"] as const;
+export interface HooksConfig extends CoreHooksConfig {
+    guard: GuardConfig;
+    diff: DiffConfig;
+    decisions: DecisionsHookConfig;
+    questions: QuestionsConfig;
+    agentsTalk: AgentsTalkConfig;
+    mods: ModsConfig;
+    unpushed: UnpushedConfig;
+}
+
+/** What `doctor`'s settings rows may show besides each section's own value. */
+export interface HookDoctorFacts {
+    rules: { builtIn: number; custom: number; off: string; perHarness: string };
+    /** Claude Code's own Bash diff, as `doctor` labels it. */
+    nativeDiff: string;
+    /** Whether `settings.json` holds a Stop entry of ours. */
+    stopHookWired: boolean;
+}
+
+/** What a section's `set` may need besides the key and value. */
+export interface HookSetContext {
+    /** The rule ids a `rules.<id>` key may name: the built-in rules, plus the custom ones when the caller loaded them. */
+    ruleIds: ReadonlySet<string>;
+}
+
+/**
+ * Every hook feature, each owning a section of `hooks.json`: its defaults, its merge, its `set` keys, the hook entries
+ * it needs wired and its `doctor` rows. `core` is the top-level keys. The order is the order `doctor` prints them in.
+ */
+export const HOOK_SECTION_NAMES = [
+    "guard",
+    "diff",
+    "questions",
+    "agentsTalk",
+    "decisions",
+    "unpushed",
+    "mods",
+    "core",
+] as const;
 export type HookSectionName = (typeof HOOK_SECTION_NAMES)[number];
 
-export const HOOK_CONFIG_SECTIONS: { readonly [Name in HookSectionName]: HookConfigSection<HooksConfig[Name]> } = {
-    decisions: DECISIONS_HOOK_SECTION,
+/** The value each section owns. */
+export type HookSectionValues = { [Name in Exclude<HookSectionName, "core">]: HooksConfig[Name] } & {
+    core: CoreHooksConfig;
+};
+
+export const HOOK_CONFIG_SECTIONS: {
+    readonly [Name in HookSectionName]: HookConfigSection<HookSectionValues[Name], HookDoctorFacts, HookSetContext>;
+} = {
+    guard: GUARD_HOOK_SECTION,
+    diff: DIFF_HOOK_SECTION,
     questions: QUESTIONS_HOOK_SECTION,
     agentsTalk: AGENTS_TALK_HOOK_SECTION,
+    decisions: DECISIONS_HOOK_SECTION,
     unpushed: UNPUSHED_HOOK_SECTION,
+    mods: MODS_HOOK_SECTION,
+    core: CORE_HOOK_SECTION,
 };
+
+function coreOf(config: HooksConfig): CoreHooksConfig {
+    return {
+        logPath: config.logPath,
+        shadow: config.shadow,
+        logCommands: config.logCommands,
+        maxLogMB: config.maxLogMB,
+    };
+}
+
+/** How the config holds each section's value: under its key, or (core) at the top level. */
+const SECTION_SLOTS: {
+    readonly [Name in HookSectionName]: {
+        get(config: HooksConfig): HookSectionValues[Name];
+        put(config: HooksConfig, value: HookSectionValues[Name]): HooksConfig;
+    };
+} = {
+    guard: { get: (config) => config.guard, put: (config, guard) => ({ ...config, guard }) },
+    diff: { get: (config) => config.diff, put: (config, diff) => ({ ...config, diff }) },
+    questions: { get: (config) => config.questions, put: (config, questions) => ({ ...config, questions }) },
+    agentsTalk: { get: (config) => config.agentsTalk, put: (config, agentsTalk) => ({ ...config, agentsTalk }) },
+    decisions: { get: (config) => config.decisions, put: (config, decisions) => ({ ...config, decisions }) },
+    unpushed: { get: (config) => config.unpushed, put: (config, unpushed) => ({ ...config, unpushed }) },
+    mods: { get: (config) => config.mods, put: (config, mods) => ({ ...config, mods }) },
+    core: { get: coreOf, put: (config, core) => ({ ...config, ...core }) },
+};
+
+export function sectionValue<Name extends HookSectionName>(config: HooksConfig, name: Name): HookSectionValues[Name] {
+    return SECTION_SLOTS[name].get(config);
+}
+
+export function withSectionValue<Name extends HookSectionName>(
+    config: HooksConfig,
+    name: Name,
+    value: HookSectionValues[Name]
+): HooksConfig {
+    return SECTION_SLOTS[name].put(config, value);
+}
+
+/** The hook entries every feature needs, given the config and an install's overrides, in no particular order. */
+export function wantedEntryKinds(config: HooksConfig, overrides: HookInstallOverrides): Set<HookEntryKind> {
+    const kinds = new Set<HookEntryKind>();
+
+    for (const name of HOOK_SECTION_NAMES) {
+        for (const kind of sectionEntries(config, name, overrides)) {
+            kinds.add(kind);
+        }
+    }
+
+    return kinds;
+}
+
+function sectionEntries<Name extends HookSectionName>(
+    config: HooksConfig,
+    name: Name,
+    overrides: HookInstallOverrides
+): readonly HookEntryKind[] {
+    const section: HookConfigSection<HookSectionValues[Name], HookDoctorFacts, HookSetContext> =
+        HOOK_CONFIG_SECTIONS[name];
+    return section.entries(sectionValue(config, name), overrides);
+}
+
+/** Every section's `doctor` rows, in section order. */
+export function doctorRows(config: HooksConfig, facts: HookDoctorFacts): HookDoctorRow[] {
+    return HOOK_SECTION_NAMES.flatMap((name) => sectionDoctor(config, name, facts));
+}
+
+function sectionDoctor<Name extends HookSectionName>(
+    config: HooksConfig,
+    name: Name,
+    facts: HookDoctorFacts
+): readonly HookDoctorRow[] {
+    const section: HookConfigSection<HookSectionValues[Name], HookDoctorFacts, HookSetContext> =
+        HOOK_CONFIG_SECTIONS[name];
+    return section.doctor(sectionValue(config, name), facts);
+}
 
 /**
  * `~/.genesis-tools/agents`, the same directory `new Storage("agents")` resolves.
@@ -426,321 +536,17 @@ export function lastConfigProblems(): string[] {
     return lastProblems;
 }
 
-export function defaultLogPath(): string {
-    return genesisToolsDir("logs", "agents-hooks.jsonl");
-}
-
-/**
- * `longCommand` at 30 lines / 2500 chars: at or above either size a `misread` block
- * becomes a warn, because re-running a long script over one line costs more than
- * reading the note. `destructive` rules always block regardless of length.
- *
- * The zsh glob qualifier only misfires under Claude Code, which sets
- * NO_BARE_GLOB_QUAL; a harness whose own zsh honours `(N)` allows it (`honoursBareGlobQualifier`).
- */
+/** The shipped configuration, every section's defaults in the order the file lists them. */
 export const DEFAULT_HOOKS_CONFIG: HooksConfig = {
-    guard: {
-        enabled: true,
-        default: {},
-        harnesses: byHarnessWhere((id) =>
-            harnessHooks(id).honoursBareGlobQualifier ? { "zsh-glob-qualifier": "allow" } : undefined
-        ),
-        models: {},
-        longCommand: { lines: 30, chars: 2500 },
-        contextCapPerSession: 3,
-        customRules: [],
-    },
-    diff: {
-        enabled: true,
-        maxFiles: 15,
-        maxLinesPerFile: 30,
-        maxBlockLines: 400,
-        contextLines: 3,
-        maxRoots: 4,
-        untrackedExpansionCap: 200,
-        maxCaptureFiles: 400,
-        maxCaptureMB: 8,
-        maxCaptureFileMB: 0.256,
-        highlight: "256",
-        highlighter: "hljs",
-        fill: "block",
-        fillMax: 72,
-        theme: "claude",
-        columns: "auto",
-        fullDiff: "genesis",
-        standDownWhenNative: true,
-        replaceNative: true,
-        watchNamedPaths: true,
-        maxNamedPaths: 8,
-        maxNamedPathMB: 2,
-        namedPathsShowCreated: false,
-        showTempScratch: false,
-        dedupeAcrossSessions: true,
-        othersSummary: "line",
-        maxMessageChars: 9_900,
-        commandLines: 3,
-        categories: { source: true, formatting: true, log: false, generated: false },
-        // 🛑 OFF where the harness cannot show a diff (`rendersAnsiDiffs`; Grok, observed 2026-09-22, the reason is in
-        // its driver's hooks part). The capture is skipped too, so such a session pays nothing for a render.
-        harnesses: byHarnessWhere((id) => (harnessHooks(id).rendersAnsiDiffs ? undefined : { enabled: false })),
-    },
+    guard: GUARD_HOOK_SECTION.defaults(),
+    diff: DIFF_HOOK_SECTION.defaults(),
     decisions: DECISIONS_HOOK_SECTION.defaults(),
     questions: QUESTIONS_HOOK_SECTION.defaults(),
     agentsTalk: AGENTS_TALK_HOOK_SECTION.defaults(),
-    // Every mod past the full diff and the idle compaction starts off: `tools agents hooks mods enable <name> --write`.
-    mods: {
-        diff: { fullDiff: true, collapseGitSync: true },
-        idleCompact: { enabled: true, minutes: 56, minTokens: 200_000 },
-        agentModel: { enabled: false, format: "label" },
-        agentRow: { enabled: false, format: "version", effort: true },
-        decisions: { enabled: false, chip: "any", expand: "waiting", history: "collapsed", enter: "stage-then-send" },
-        inbox: { enabled: false, chip: "any", expand: "none" },
-        links: { enabled: false },
-        git: {
-            enabled: false,
-            labels: "full",
-            checkouts: 3,
-            cwd: "touched",
-            expand: "first",
-            name: "repo-folder",
-            earlier: "show",
-        },
-        askRow: { enabled: false },
-        spinner: { enabled: false },
-        cacheBand: { enabled: false, warnMinutes: 10, cautionMinutes: 20, others: true },
-        tmpUsage: { enabled: false, minutes: 5 },
-        agentsBand: { enabled: false, warnMinutes: 60 },
-        hooks: { tokens: false, dedupe: false },
-        log: { readings: false },
-        sidebar: { hints: true, feedback: "line", focus: "command" },
-        stall: { enabled: false, action: "button", minutes: 5 },
-    },
+    mods: MODS_HOOK_SECTION.defaults(),
     unpushed: UNPUSHED_HOOK_SECTION.defaults(),
-    logPath: defaultLogPath(),
-    // 🛑 `shadow: true` AND `logCommands: "shadow"` together mean `keepsCommand()` is true out
-    // of the box, so EVERY Bash command this machine runs through a hook is written verbatim
-    // to `logPath`. That is the point of shadow mode — the old and new guards cannot be
-    // compared on real traffic without the command text — but it is a local file holding
-    // whatever was typed, secrets included. It is capped at `maxLogMB` with one generation
-    // kept, and it stops accumulating commands as soon as either of these two is changed.
-    // Setting `logCommands: "never"` keeps shadow mode and drops the command text.
-    shadow: true,
-    logCommands: "shadow",
-    maxLogMB: 16,
+    ...CORE_HOOK_SECTION.defaults(),
 };
-
-/** A hand-edited value outside its count domain falls back to the default, and is named in `lastConfigProblems`. */
-function countOr(checked: CheckedNumber & { min?: number }): number {
-    return sharedCountOr(lastProblems, checked);
-}
-
-/**
- * An MB cap is a size, not a count: `0.256` is a valid per-file ceiling, so the whole-number
- * check of `isCount` would reject the shipped default. It must still be a positive finite number,
- * because `0` or a negative cap would leave nothing to capture or log.
- */
-export function isMegabytes(value: unknown): value is number {
-    return typeof value === "number" && Number.isFinite(value) && value > 0;
-}
-
-function megabytesOr(checked: CheckedNumber): number {
-    if (isMegabytes(checked.value)) {
-        return checked.value;
-    }
-
-    reportRejected(lastProblems, checked, "a positive number");
-
-    return checked.fallback;
-}
-
-/**
- * The byte-denominated caps an older `hooks.json` may still carry. They were renamed to MB,
- * and reading only the new names silently dropped a stored cap back to the default, which for
- * `maxLogBytes` meant keeping MORE verbatim commands on disk than the user had allowed.
- */
-interface LegacyByteCaps {
-    maxLogBytes?: unknown;
-    diff?: { maxCaptureBytes?: unknown };
-}
-
-/** What `hooks.json` may hold: any subset of the config, plus the pre-rename byte caps. */
-type StoredHooksConfig = Partial<HooksConfig> & LegacyByteCaps;
-
-function legacyMB(bytes: unknown): number | undefined {
-    return typeof bytes === "number" && Number.isFinite(bytes) && bytes > 0 ? bytes / 1_000_000 : undefined;
-}
-
-/** Each harness's rules merged over the shipped ones for that harness. */
-function mergeHarnesses(
-    base: GuardConfig["harnesses"],
-    stored: GuardConfig["harnesses"] | undefined
-): GuardConfig["harnesses"] {
-    const merged: GuardConfig["harnesses"] = { ...base };
-
-    for (const harness of HARNESS_NAMES) {
-        const rules = stored?.[harness];
-
-        if (rules) {
-            merged[harness] = { ...base[harness], ...rules };
-        }
-    }
-
-    return merged;
-}
-
-/** A list of paths: anything but an array of strings falls back, and is reported. */
-function pathListOr(field: string, value: unknown, fallback: string[]): string[] {
-    if (value === undefined) {
-        return fallback;
-    }
-
-    if (Array.isArray(value) && value.every((item) => typeof item === "string")) {
-        return value.filter((item) => item.trim().length > 0);
-    }
-
-    lastProblems.push(
-        `${field} is ${SafeJSON.stringify(value)}, not a list of paths; using ${SafeJSON.stringify(fallback)}`
-    );
-
-    return fallback;
-}
-
-/**
- * Every field checked on its own. A hand-edited `"maxFiles": "3"` or `"enabled": "false"` used
- * to flow straight through a spread: the string compared oddly against numbers, and the
- * non-empty string `"false"` read as on.
- */
-function mergeDiff(stored: StoredHooksConfig["diff"]): DiffConfig {
-    const base = DEFAULT_HOOKS_CONFIG.diff;
-
-    return {
-        enabled: boolOr(stored?.enabled, base.enabled),
-        maxFiles: countOr({ field: "diff.maxFiles", value: stored?.maxFiles, fallback: base.maxFiles }),
-        maxLinesPerFile: countOr({
-            field: "diff.maxLinesPerFile",
-            value: stored?.maxLinesPerFile,
-            fallback: base.maxLinesPerFile,
-        }),
-        maxBlockLines: countOr({
-            field: "diff.maxBlockLines",
-            value: stored?.maxBlockLines,
-            fallback: base.maxBlockLines,
-        }),
-        contextLines: countOr({
-            field: "diff.contextLines",
-            value: stored?.contextLines,
-            fallback: base.contextLines,
-            min: 0,
-        }),
-        maxRoots: countOr({ field: "diff.maxRoots", value: stored?.maxRoots, fallback: base.maxRoots }),
-        untrackedExpansionCap: countOr({
-            field: "diff.untrackedExpansionCap",
-            value: stored?.untrackedExpansionCap,
-            fallback: base.untrackedExpansionCap,
-        }),
-        maxCaptureFiles: countOr({
-            field: "diff.maxCaptureFiles",
-            value: stored?.maxCaptureFiles,
-            fallback: base.maxCaptureFiles,
-        }),
-        maxCaptureMB: megabytesOr({
-            field: "diff.maxCaptureMB",
-            value: stored?.maxCaptureMB,
-            fallback: legacyMB(stored?.maxCaptureBytes) ?? base.maxCaptureMB,
-        }),
-        maxCaptureFileMB: megabytesOr({
-            field: "diff.maxCaptureFileMB",
-            value: stored?.maxCaptureFileMB,
-            fallback: base.maxCaptureFileMB,
-        }),
-        highlight: highlightOr(stored?.highlight, base.highlight),
-        highlighter: HIGHLIGHTERS.find((name) => name === stored?.highlighter) ?? base.highlighter,
-        fill: FILL_MODES.find((mode) => mode === stored?.fill) ?? base.fill,
-        fillMax: countOr({ field: "diff.fillMax", value: stored?.fillMax, fallback: base.fillMax, min: 0 }),
-        commandLines: countOr({
-            field: "diff.commandLines",
-            value: stored?.commandLines,
-            fallback: base.commandLines,
-            min: 0,
-        }),
-        theme: themeOr(stored?.theme, base.theme),
-        columns: columnsOr(stored?.columns, base.columns),
-        fullDiff: FULL_DIFF_MODES.find((mode) => mode === stored?.fullDiff) ?? base.fullDiff,
-        standDownWhenNative: boolOr(stored?.standDownWhenNative, base.standDownWhenNative),
-        watchNamedPaths: boolOr(stored?.watchNamedPaths, base.watchNamedPaths),
-        maxNamedPaths: countOr({
-            field: "diff.maxNamedPaths",
-            value: stored?.maxNamedPaths,
-            fallback: base.maxNamedPaths,
-        }),
-        maxNamedPathMB: megabytesOr({
-            field: "diff.maxNamedPathMB",
-            value: stored?.maxNamedPathMB,
-            fallback: base.maxNamedPathMB,
-        }),
-        namedPathsShowCreated: boolOr(stored?.namedPathsShowCreated, base.namedPathsShowCreated),
-        showTempScratch: boolOr(stored?.showTempScratch, base.showTempScratch),
-        dedupeAcrossSessions: boolOr(stored?.dedupeAcrossSessions, base.dedupeAcrossSessions),
-        replaceNative: boolOr(stored?.replaceNative, base.replaceNative),
-        othersSummary: othersSummaryOr(stored?.othersSummary, base.othersSummary),
-        maxMessageChars: countOr({
-            field: "diff.maxMessageChars",
-            value: stored?.maxMessageChars,
-            fallback: base.maxMessageChars,
-        }),
-        // Merged FIELD BY FIELD for the same reason `longCommand` is: a hand-edited `hooks.json`
-        // that turns one category on would otherwise blank every other one, and `undefined`
-        // reads as "hidden".
-        categories: {
-            source: boolOr(stored?.categories?.source, base.categories.source),
-            formatting: boolOr(stored?.categories?.formatting, base.categories.formatting),
-            log: boolOr(stored?.categories?.log, base.categories.log),
-            generated: boolOr(stored?.categories?.generated, base.categories.generated),
-        },
-        // Same field-by-field reason, one level deeper: a stored override for Codex must not
-        // delete the shipped Grok one, which is what turns the diff off there.
-        harnesses: mergedHarnesses(stored?.harnesses),
-    };
-}
-
-export const HIGHLIGHTERS = ["hljs", "bat"] as const;
-export type Highlighter = (typeof HIGHLIGHTERS)[number];
-
-export const FILL_MODES = ["block", "terminal", "none"] as const;
-export type FillMode = (typeof FILL_MODES)[number];
-
-export const HIGHLIGHT_MODES = ["256", "truecolor", "none"] as const;
-export type HighlightMode = (typeof HIGHLIGHT_MODES)[number];
-
-/** A stored highlight mode; `bat`, the old name of the only colour mode, reads as `truecolor`. */
-export function highlightOr(value: unknown, fallback: HighlightMode): HighlightMode {
-    if (value === "bat") {
-        return "truecolor";
-    }
-
-    return HIGHLIGHT_MODES.find((mode) => mode === value) ?? fallback;
-}
-
-export function themeOr(value: unknown, fallback: DiffThemeName): DiffThemeName {
-    return DIFF_THEMES.find((theme) => theme === value) ?? fallback;
-}
-
-/** `auto`, or a whole number of columns (0 = no fill); anything else falls back. */
-export function columnsOr(value: unknown, fallback: DiffConfig["columns"]): DiffConfig["columns"] {
-    return value === "auto" || isCount(value, 0) ? value : fallback;
-}
-
-export const OTHERS_SUMMARIES: readonly DiffConfig["othersSummary"][] = ["line", "hidden"];
-
-function othersSummaryOr(value: unknown, fallback: DiffConfig["othersSummary"]): DiffConfig["othersSummary"] {
-    return OTHERS_SUMMARIES.find((mode) => mode === value) ?? fallback;
-}
-
-const LOG_COMMANDS_POLICIES: readonly LogCommandsPolicy[] = ["shadow", "always", "never"];
-
-function logCommandsOr(value: unknown, fallback: LogCommandsPolicy): LogCommandsPolicy {
-    return LOG_COMMANDS_POLICIES.find((policy) => policy === value) ?? fallback;
-}
 
 /**
  * The config at `path` for a WRITER to build on. A file that exists but cannot be read (bad
@@ -762,142 +568,6 @@ export function loadHooksConfigForWrite(path = hooksConfigPath()): HooksConfig {
     return config;
 }
 
-/** One entry per harness, each merged over the shipped one rather than replacing it. */
-function mergedHarnesses(
-    stored: Partial<Record<HarnessName, DiffOverrides>> | undefined
-): Partial<Record<HarnessName, DiffOverrides>> {
-    const merged: Partial<Record<HarnessName, DiffOverrides>> = { ...DEFAULT_HOOKS_CONFIG.diff.harnesses };
-
-    for (const harness of HARNESS_NAMES) {
-        const override = stored?.[harness];
-
-        if (typeof override === "object" && override !== null) {
-            merged[harness] = { ...merged[harness], ...checkedOverride(override, `diff.harnesses.${harness}`) };
-        }
-    }
-
-    return merged;
-}
-
-const OVERRIDE_COUNTS = [
-    "maxFiles",
-    "maxLinesPerFile",
-    "maxBlockLines",
-    "maxRoots",
-    "untrackedExpansionCap",
-    "maxCaptureFiles",
-    "maxNamedPaths",
-    "maxMessageChars",
-] as const;
-
-const OVERRIDE_MEGABYTES = ["maxCaptureMB", "maxCaptureFileMB", "maxNamedPathMB"] as const;
-
-const OVERRIDE_BOOLEANS = [
-    "enabled",
-    "standDownWhenNative",
-    "watchNamedPaths",
-    "namedPathsShowCreated",
-    "showTempScratch",
-    "dedupeAcrossSessions",
-    "replaceNative",
-] as const;
-
-/**
- * The fields of one stored harness override that have the right type. A spread let a hand-edited
- * `"enabled": "true"` through, and the non-empty string read as on, which is the defect
- * `mergeDiff` closes for the shared block. A field of the wrong type is dropped, so it falls
- * through to the shared value. A dropped number is reported, so `hooks doctor` names it.
- */
-function checkedOverride(stored: DiffOverrides, path: string): DiffOverrides {
-    const checked: DiffOverrides = {};
-
-    // The same range checks `mergeDiff` applies to the shared block: a count is a whole number
-    // of at least 1 (context lines may be 0), and an MB cap is a positive number.
-    for (const key of OVERRIDE_COUNTS) {
-        const value: unknown = stored[key];
-
-        if (isCount(value, 1)) {
-            checked[key] = value;
-        } else if (value !== undefined) {
-            lastProblems.push(
-                `${path}.${key} is ${SafeJSON.stringify(value)}, not a whole number of at least 1; ignoring it`
-            );
-        }
-    }
-
-    const contextLines: unknown = stored.contextLines;
-
-    if (isCount(contextLines, 0)) {
-        checked.contextLines = contextLines;
-    } else if (contextLines !== undefined) {
-        lastProblems.push(
-            `${path}.contextLines is ${SafeJSON.stringify(contextLines)}, not a whole number of at least 0; ignoring it`
-        );
-    }
-
-    for (const key of OVERRIDE_MEGABYTES) {
-        const value: unknown = stored[key];
-
-        if (isMegabytes(value)) {
-            checked[key] = value;
-        } else if (value !== undefined) {
-            lastProblems.push(`${path}.${key} is ${SafeJSON.stringify(value)}, not a positive number; ignoring it`);
-        }
-    }
-
-    for (const key of OVERRIDE_BOOLEANS) {
-        const value: unknown = stored[key];
-
-        if (typeof value === "boolean") {
-            checked[key] = value;
-        }
-    }
-
-    const fill = FILL_MODES.find((mode) => mode === stored.fill);
-
-    if (fill) {
-        checked.fill = fill;
-    }
-
-    const highlight: unknown = stored.highlight;
-
-    if (highlight === "bat" || HIGHLIGHT_MODES.some((mode) => mode === highlight)) {
-        checked.highlight = highlightOr(highlight, "256");
-    }
-
-    if (stored.othersSummary === "line" || stored.othersSummary === "hidden") {
-        checked.othersSummary = stored.othersSummary;
-    }
-
-    if (DIFF_THEMES.some((theme) => theme === stored.theme)) {
-        checked.theme = stored.theme;
-    }
-
-    if (stored.columns === "auto" || isCount(stored.columns, 0)) {
-        checked.columns = stored.columns;
-    }
-
-    if (FULL_DIFF_MODES.some((mode) => mode === stored.fullDiff)) {
-        checked.fullDiff = stored.fullDiff;
-    }
-
-    const categories: Partial<Record<DiffCategory, boolean>> = {};
-
-    for (const category of ["source", "formatting", "log", "generated"] as const) {
-        const value: unknown = stored.categories?.[category];
-
-        if (typeof value === "boolean") {
-            categories[category] = value;
-        }
-    }
-
-    if (Object.keys(categories).length > 0) {
-        checked.categories = categories;
-    }
-
-    return checked;
-}
-
 /** The copy of the shipped defaults a writer stores beside the full settings (see `storedOverrides`). */
 /**
  * Synchronous on purpose: three hook entrypoints call this before they read stdin, and
@@ -905,7 +575,7 @@ function checkedOverride(stored: DiffOverrides, path: string): DiffOverrides {
  * directory `Storage` would, so `GENESIS_TOOLS_HOME` still keeps the suite out of the real home.
  */
 export function loadHooksConfig(path = hooksConfigPath()): HooksConfig {
-    let stored: StoredHooksConfig | null = null;
+    let stored: Record<string, unknown> | null = null;
 
     lastLoadError = undefined;
     lastProblems = [];
@@ -927,190 +597,19 @@ export function loadHooksConfig(path = hooksConfigPath()): HooksConfig {
  * A stored config merged over the shipped one exactly as the hooks load it. Exported so the parity
  * scripts evaluate the SAME config the hooks would, with no temp file round trip.
  */
-export function mergeStoredConfig(stored: StoredHooksConfig): HooksConfig {
-    const base = DEFAULT_HOOKS_CONFIG.guard;
-    const guard = stored.guard;
+export function mergeStoredConfig(stored: Record<string, unknown>): HooksConfig {
+    const part = (section: { key: string | null }): unknown => (section.key === null ? stored : stored[section.key]);
 
     return {
-        guard: {
-            enabled: boolOr(guard?.enabled, base.enabled),
-            // The rule maps are merged per KEY, not replaced. A shallow spread let a hand-edited
-            // `hooks.json` that sets only `harnesses.claude` drop the shipped codex and grok
-            // `zsh-glob-qualifier: allow`, so both harnesses started refusing a valid `(N)`.
-            default: { ...base.default, ...guard?.default },
-            harnesses: mergeHarnesses(base.harnesses, guard?.harnesses),
-            models: { ...base.models, ...guard?.models },
-            // `longCommand` is merged FIELD BY FIELD. A shallow spread let a hand-edited
-            // `hooks.json` that sets only `guard.longCommand.lines` blank `chars`, and
-            // `chars >= undefined` is always false, so the character threshold silently
-            // stopped working. A value that is not a finite number is dropped the same way.
-            longCommand: {
-                lines: countOr({
-                    field: "guard.longCommand.lines",
-                    value: guard?.longCommand?.lines,
-                    fallback: base.longCommand.lines,
-                }),
-                chars: countOr({
-                    field: "guard.longCommand.chars",
-                    value: guard?.longCommand?.chars,
-                    fallback: base.longCommand.chars,
-                }),
-            },
-            contextCapPerSession: countOr({
-                field: "guard.contextCapPerSession",
-                value: guard?.contextCapPerSession,
-                fallback: base.contextCapPerSession,
-                min: 0,
-            }),
-            customRules: pathListOr("guard.customRules", guard?.customRules, base.customRules),
-        },
-        diff: mergeDiff(stored.diff),
-        decisions: DECISIONS_HOOK_SECTION.merge(stored.decisions, lastProblems),
-        questions: QUESTIONS_HOOK_SECTION.merge(stored.questions, lastProblems),
-        agentsTalk: AGENTS_TALK_HOOK_SECTION.merge(stored.agentsTalk, lastProblems),
-        mods: mergeMods(stored.mods),
-        unpushed: UNPUSHED_HOOK_SECTION.merge(stored.unpushed, lastProblems),
-        shadow: boolOr(stored.shadow, DEFAULT_HOOKS_CONFIG.shadow),
-        logCommands: logCommandsOr(stored.logCommands, DEFAULT_HOOKS_CONFIG.logCommands),
-        maxLogMB: megabytesOr({
-            field: "maxLogMB",
-            value: stored.maxLogMB,
-            fallback: legacyMB(stored.maxLogBytes) ?? DEFAULT_HOOKS_CONFIG.maxLogMB,
-        }),
-        logPath: typeof stored.logPath === "string" && stored.logPath.length > 0 ? stored.logPath : defaultLogPath(),
+        guard: GUARD_HOOK_SECTION.merge(part(GUARD_HOOK_SECTION), lastProblems),
+        diff: DIFF_HOOK_SECTION.merge(part(DIFF_HOOK_SECTION), lastProblems),
+        decisions: DECISIONS_HOOK_SECTION.merge(part(DECISIONS_HOOK_SECTION), lastProblems),
+        questions: QUESTIONS_HOOK_SECTION.merge(part(QUESTIONS_HOOK_SECTION), lastProblems),
+        agentsTalk: AGENTS_TALK_HOOK_SECTION.merge(part(AGENTS_TALK_HOOK_SECTION), lastProblems),
+        mods: MODS_HOOK_SECTION.merge(part(MODS_HOOK_SECTION), lastProblems),
+        unpushed: UNPUSHED_HOOK_SECTION.merge(part(UNPUSHED_HOOK_SECTION), lastProblems),
+        ...CORE_HOOK_SECTION.merge(part(CORE_HOOK_SECTION), lastProblems),
     };
-}
-
-/**
- * Field by field, like `diff`: a stored value of the wrong type falls back to the default. The flat keys of before
- * 2026-10-23 (`mods.fullDiff`, `mods.collapseGitSync`, `mods.idleCompact` as a boolean, `mods.idleCompactMinutes`,
- * `mods.idleCompactMinTokens`) still count where the object leaves a field out; the next write stores the objects.
- */
-export function mergeMods(stored: unknown): ModsConfig {
-    const base = DEFAULT_HOOKS_CONFIG.mods;
-    const held = partOf(stored);
-    const diff = partOf(held.diff);
-    const idle = partOf(held.idleCompact);
-    const legacyIdle = typeof held.idleCompact === "boolean" ? held.idleCompact : undefined;
-    const model = partOf(held.agentModel);
-    const row = partOf(held.agentRow);
-    const cache = partOf(held.cacheBand);
-    const tmp = partOf(held.tmpUsage);
-    const agents = partOf(held.agentsBand);
-    const hooks = partOf(held.hooks);
-    const log = partOf(held.log);
-    const sidebar = partOf(held.sidebar);
-    const stall = partOf(held.stall);
-    const enabled = (key: string, fallback: boolean) => boolOr(partOf(held[key]).enabled, fallback);
-    const git = partOf(held.git);
-    const decisions = partOf(held.decisions);
-    const inbox = partOf(held.inbox);
-    const minutes = countOr({
-        field: "mods.idleCompact.minutes",
-        value: idle.minutes ?? held.idleCompactMinutes,
-        fallback: base.idleCompact.minutes,
-    });
-
-    return {
-        diff: {
-            fullDiff: boolOr(diff.fullDiff, boolOr(held.fullDiff, base.diff.fullDiff)),
-            collapseGitSync: boolOr(diff.collapseGitSync, boolOr(held.collapseGitSync, base.diff.collapseGitSync)),
-        },
-        idleCompact: {
-            enabled: boolOr(idle.enabled, legacyIdle ?? base.idleCompact.enabled),
-            // The mod reads the file itself and drops 60 or more the same way.
-            minutes: minutes < 60 ? minutes : base.idleCompact.minutes,
-            minTokens: countOr({
-                field: "mods.idleCompact.minTokens",
-                value: idle.minTokens ?? held.idleCompactMinTokens,
-                fallback: base.idleCompact.minTokens,
-                min: 0,
-            }),
-        },
-        agentModel: {
-            enabled: boolOr(model.enabled, base.agentModel.enabled),
-            format: oneOf(model.format, ["label", "short", "version"], base.agentModel.format),
-        },
-        agentRow: {
-            enabled: boolOr(row.enabled, base.agentRow.enabled),
-            format: oneOf(row.format, ["label", "short", "version"], base.agentRow.format),
-            effort: boolOr(row.effort, base.agentRow.effort),
-        },
-        decisions: {
-            enabled: enabled("decisions", base.decisions.enabled),
-            chip: oneOf(decisions.chip, ["any", "waiting", "off"], base.decisions.chip),
-            expand: oneOf(decisions.expand, ["waiting", "all", "none"], base.decisions.expand),
-            history: oneOf(decisions.history, ["collapsed", "shown"], base.decisions.history),
-            enter: oneOf(decisions.enter, ["stage-then-send", "stage"], base.decisions.enter),
-        },
-        inbox: {
-            enabled: enabled("inbox", base.inbox.enabled),
-            chip: oneOf(inbox.chip, ["any", "unread", "off"], base.inbox.chip),
-            expand: oneOf(inbox.expand, ["unread", "all", "none"], base.inbox.expand),
-        },
-        links: { enabled: enabled("links", base.links.enabled) },
-        git: {
-            enabled: enabled("git", base.git.enabled),
-            labels: git.labels === "full" || git.labels === "minimal" ? git.labels : base.git.labels,
-            checkouts: minutesOr("mods.git.checkouts", git.checkouts, base.git.checkouts, 6),
-            cwd: git.cwd === "touched" || git.cwd === "always" ? git.cwd : base.git.cwd,
-            expand:
-                git.expand === "first" || git.expand === "all" || git.expand === "none" ? git.expand : base.git.expand,
-            name: git.name === "repo-folder" || git.name === "repo" || git.name === "folder" ? git.name : base.git.name,
-            earlier: git.earlier === "show" || git.earlier === "hide" ? git.earlier : base.git.earlier,
-        },
-        askRow: { enabled: enabled("askRow", base.askRow.enabled) },
-        spinner: { enabled: enabled("spinner", base.spinner.enabled) },
-        cacheBand: {
-            enabled: boolOr(cache.enabled, base.cacheBand.enabled),
-            warnMinutes: minutesOr("mods.cacheBand.warnMinutes", cache.warnMinutes, base.cacheBand.warnMinutes, 59),
-            cautionMinutes: minutesOr(
-                "mods.cacheBand.cautionMinutes",
-                cache.cautionMinutes,
-                base.cacheBand.cautionMinutes,
-                59
-            ),
-            others: boolOr(cache.others, base.cacheBand.others),
-        },
-        tmpUsage: {
-            enabled: boolOr(tmp.enabled, base.tmpUsage.enabled),
-            minutes: minutesOr("mods.tmpUsage.minutes", tmp.minutes, base.tmpUsage.minutes, 120),
-        },
-        agentsBand: {
-            enabled: boolOr(agents.enabled, base.agentsBand.enabled),
-            warnMinutes: minutesOr(
-                "mods.agentsBand.warnMinutes",
-                agents.warnMinutes,
-                base.agentsBand.warnMinutes,
-                24 * 60
-            ),
-        },
-        hooks: { tokens: boolOr(hooks.tokens, base.hooks.tokens), dedupe: boolOr(hooks.dedupe, base.hooks.dedupe) },
-        log: { readings: boolOr(log.readings, base.log.readings) },
-        sidebar: {
-            hints: boolOr(sidebar.hints, base.sidebar.hints),
-            feedback:
-                sidebar.feedback === "line" || sidebar.feedback === "toast" || sidebar.feedback === "both"
-                    ? sidebar.feedback
-                    : base.sidebar.feedback,
-            focus:
-                sidebar.focus === "command" || sidebar.focus === "always" || sidebar.focus === "never"
-                    ? sidebar.focus
-                    : base.sidebar.focus,
-        },
-        stall: {
-            enabled: boolOr(stall.enabled, base.stall.enabled),
-            action: stall.action === "button" || stall.action === "auto" ? stall.action : base.stall.action,
-            minutes: minutesOr("mods.stall.minutes", stall.minutes, base.stall.minutes, 120),
-        },
-    };
-}
-
-/** A whole number of minutes from 1 to `max`, as the plugin reads it; else the default. */
-function minutesOr(field: string, value: unknown, fallback: number, max: number): number {
-    const minutes = countOr({ field, value, fallback });
-
-    return minutes <= max ? minutes : fallback;
 }
 
 /** Whether this run should record the command verbatim in the decision log. */

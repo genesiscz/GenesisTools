@@ -9,6 +9,7 @@ import {
 import { ACCOUNT_PROVIDER_ALIASES, byHarness } from "@genesiscz/utils/ai/providers/alias-list";
 import { harnessHooks } from "@genesiscz/utils/ai/providers/harness-hooks";
 import type { HarnessId } from "@genesiscz/utils/harness/types";
+import pc from "picocolors";
 
 /**
  * The agents' own structural questions (`tools agents hooks set questions on`): a question tool (Claude
@@ -90,6 +91,15 @@ export const QUESTIONS_HOOK_SECTION: HookConfigSection<QuestionsConfig> = {
     settable: ["questions", `questions.<${ACCOUNT_PROVIDER_ALIASES.join("|")}>`, "questions.notify"],
     owns: (key) => key === "questions" || key === "questions.notify" || harnessOf(key) !== undefined,
     set,
+    entries: (questions, overrides) =>
+        (overrides.questions ?? questionHooksWanted({ questions })) ? ["questions"] : [],
+    // The feature per harness (`tools agents hooks config set questions.<harness> on`), all off by default.
+    doctor: (questions) => [
+        [
+            "questions per harness",
+            ACCOUNT_PROVIDER_ALIASES.map((id) => `${id} ${questions.harnesses[id] ? "on" : pc.dim("off")}`).join(" · "),
+        ],
+    ],
 };
 
 /** The questions settings as the hooks load them, for the inbox and the hub. */

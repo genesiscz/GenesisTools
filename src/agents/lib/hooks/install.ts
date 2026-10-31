@@ -10,12 +10,11 @@ import {
     symlinkSync,
 } from "node:fs";
 import { dirname, join, resolve } from "node:path";
-import { decisionHooksWanted, stopOnlyDecisionsWanted } from "@app/question/lib/decisions/hook-config";
-import { questionHooksWanted } from "@genesiscz/utils/agents/dialogs/hook-config";
+import { HOOK_ENTRY_KINDS, type HookEntryKind } from "@genesiscz/utils/agents/hooks/config-section";
 import { SafeJSON } from "@genesiscz/utils/json";
 import { nativeHomePath } from "@genesiscz/utils/providers/session-paths";
 import { shellQuote } from "@genesiscz/utils/shell/quote";
-import { agentsDataDir, diffFor, loadHooksConfig } from "./config";
+import { agentsDataDir, diffFor, loadHooksConfig, wantedEntryKinds } from "./config";
 import { hookDiag } from "./log";
 import { QUESTION_TOOL_MATCHER } from "./questions-gate";
 import { writeJsonFile } from "./write-json";
@@ -52,113 +51,99 @@ export interface SettingsShape {
 /** Every command string this installer writes carries this, so uninstall is exact. */
 export const INSTALL_MARKER = "src/agents/bin/hook-";
 
-/** What the Stop and UserPromptSubmit entries serve; each omitted feature is off. */
-export interface StopFeatures {
+/** An install that forces a feature's entries on or off; each omitted one follows the hooks config. */
+export interface HookFeatures {
+    /** The decision hub's Stop and UserPromptSubmit entries. */
     decisions?: boolean;
+    /** The Stop entry for the unpushed reminder. */
     unpushed?: boolean;
+    /** The Stop entry for the question nudge and the chat answers. */
     questionNudge?: boolean;
-}
-
-/** Every optional feature `entriesFor` can wire; each omitted one is off. */
-export interface HookFeatures extends StopFeatures {
     /** The questions feature's entries (`questions.harnesses.claude` or `.grok`). */
     questions?: boolean;
 }
 
-/**
- * The questions feature: one entrypoint, `hook-question.ts`, on every event that opens or closes a dialog record.
- * PostToolUse has no matcher because a permission prompt can stand before any tool; the hook exits after one `stat`
- * for a session that recorded nothing. Notification is matched to `permission_prompt`, so an idle notification starts
- * no process.
- */
-function questionEntries(script: (name: string) => string): { event: string; entry: HookEntry }[] {
-    const hooks = [{ type: "command", command: script("hook-question.ts"), timeout: 10 }];
-
-    return [
-        { event: "PreToolUse", entry: { matcher: QUESTION_TOOL_MATCHER, hooks } },
-        { event: "PostToolUse", entry: { hooks } },
-        { event: "PostToolUseFailure", entry: { hooks } },
-        { event: "Notification", entry: { matcher: "permission_prompt", hooks } },
-        { event: "UserPromptSubmit", entry: { hooks } },
-        { event: "SessionEnd", entry: { hooks } },
-    ];
-}
+type Script = (name: string) => string;
 
 /**
- * The Stop entry serves three features, the decision hub, the unpushed reminder and the question
- * nudge, so it is wired while any of them is on. UserPromptSubmit belongs to the decision hub alone.
+ * Every entry an installer can write, one per kind, in the order they land in `settings.json`. A feature names the
+ * kinds it needs (`HookConfigSection.entries`); a kind several features need (the Stop entry) is written once.
  */
-function stopEntries(script: (name: string) => string, options: StopFeatures): { event: string; entry: HookEntry }[] {
-    return [
-        ...(options.decisions || options.unpushed || options.questionNudge
-            ? [
-                  {
-                      event: "Stop",
-                      entry: { hooks: [{ type: "command", command: script("hook-stop.ts"), timeout: 15 }] },
-                  },
-              ]
-            : []),
-        ...(options.decisions
-            ? [
-                  {
-                      event: "UserPromptSubmit",
-                      entry: { hooks: [{ type: "command", command: script("hook-prompt.ts"), timeout: 15 }] },
-                  },
-              ]
-            : []),
-    ];
-}
-
-export function entriesFor(dist: string, options: HookFeatures = {}): { event: string; entry: HookEntry }[] {
-    // The harness runs each command through a shell, so a `dist` under a home directory or a
-    // `--dist` with a space in it split into two arguments and every hook call failed. The
-    // quoted form still contains INSTALL_MARKER, so a re-install converges an older entry.
-    const script = (name: string): string => `bun ${shellQuote(`${dist}/src/agents/bin/${name}`)}`;
-
-    return [
-        ...stopEntries(script, options),
+const HOOK_ENTRIES: { readonly [Kind in HookEntryKind]: (script: Script) => { event: string; entry: HookEntry }[] } = {
+    // The Stop entry serves three features, the decision hub, the unpushed reminder and the question nudge.
+    stop: (script) => [
+        { event: "Stop", entry: { hooks: [{ type: "command", command: script("hook-stop.ts"), timeout: 15 }] } },
+    ],
+    // UserPromptSubmit belongs to the decision hub alone.
+    prompt: (script) => [
         {
-            // ONE process for the whole PreToolUse phase. Two entries cost a second bun
-            // start and a second module graph, measured at about 10 ms, on every Bash call.
-            // `hook-guard.ts` and `hook-diff-pre.ts` still exist for a harness that wants only
-            // one half, and as the latency benchmark's guard-only stage.
-            event: "PreToolUse",
-            entry: {
-                matcher: "Bash",
-                hooks: [{ type: "command", command: script("hook-pre.ts"), timeout: 15 }],
-            },
+            event: "UserPromptSubmit",
+            entry: { hooks: [{ type: "command", command: script("hook-prompt.ts"), timeout: 15 }] },
         },
+    ],
+    // ONE process for the whole PreToolUse phase. Two entries cost a second bun start and a second module graph,
+    // measured at about 10 ms, on every Bash call. `hook-guard.ts` and `hook-diff-pre.ts` still exist for a harness
+    // that wants only one half, and as the latency benchmark's guard-only stage.
+    "bash-pre": (script) => [
         {
-            // Bash for the diff; the file tools only for the session change log.
+            event: "PreToolUse",
+            entry: { matcher: "Bash", hooks: [{ type: "command", command: script("hook-pre.ts"), timeout: 15 }] },
+        },
+    ],
+    // Bash for the diff; the file tools only for the session change log.
+    "diff-post": (script) => [
+        {
             event: "PostToolUse",
             entry: {
                 matcher: "Bash|Edit|MultiEdit|Write",
                 hooks: [{ type: "command", command: script("hook-diff-post.ts"), timeout: 15 }],
             },
         },
+    ],
+    // A Bash call that FAILS gets no PostToolUse, so its edits were never shown: 98 failed calls in a day, 48 of them
+    // editing files (2026-10-14). Same entry point, its own event.
+    "diff-post-failure": (script) => [
         {
-            // A Bash call that FAILS gets no PostToolUse, so its edits were never shown: 98 failed
-            // calls in a day, 48 of them editing files (2026-10-14). Same entry point, its own event.
             event: "PostToolUseFailure",
-            entry: {
-                matcher: "Bash",
-                hooks: [{ type: "command", command: script("hook-diff-post.ts"), timeout: 15 }],
-            },
+            entry: { matcher: "Bash", hooks: [{ type: "command", command: script("hook-diff-post.ts"), timeout: 15 }] },
         },
+    ],
+    // The pre phase writes a capture per Bash call; the post phase deletes it. A denied command, an interrupted turn
+    // or a crash leaves one behind, so the session's own sweep runs when the session ends.
+    "session-end": (script) => [
         {
-            // The pre phase writes a capture per Bash call; the post phase deletes it. A
-            // denied command, an interrupted turn or a crash leaves one behind, so the
-            // session's own sweep runs when the session ends.
             event: "SessionEnd",
-            entry: {
-                hooks: [{ type: "command", command: script("hook-session-end.ts"), timeout: 15 }],
-            },
+            entry: { hooks: [{ type: "command", command: script("hook-session-end.ts"), timeout: 15 }] },
         },
-        ...(options.questions ? questionEntries(script) : []),
-    ];
+    ],
+    // The questions feature: one entrypoint, `hook-question.ts`, on every event that opens or closes a dialog record.
+    // PostToolUse has no matcher because a permission prompt can stand before any tool; the hook exits after one
+    // `stat` for a session with no open record. Notification is matched to `permission_prompt`, so an idle
+    // notification starts no process.
+    questions: (script) => {
+        const hooks = [{ type: "command", command: script("hook-question.ts"), timeout: 10 }];
+
+        return [
+            { event: "PreToolUse", entry: { matcher: QUESTION_TOOL_MATCHER, hooks } },
+            { event: "PostToolUse", entry: { hooks } },
+            { event: "PostToolUseFailure", entry: { hooks } },
+            { event: "Notification", entry: { matcher: "permission_prompt", hooks } },
+            { event: "UserPromptSubmit", entry: { hooks } },
+            { event: "SessionEnd", entry: { hooks } },
+        ];
+    },
+};
+
+/** The entries of `kinds`, in the installer's order. */
+export function entriesFor(dist: string, kinds: ReadonlySet<HookEntryKind>): { event: string; entry: HookEntry }[] {
+    // The harness runs each command through a shell, so a `dist` under a home directory or a
+    // `--dist` with a space in it split into two arguments and every hook call failed. The
+    // quoted form still contains INSTALL_MARKER, so a re-install converges an older entry.
+    const script = (name: string): string => `bun ${shellQuote(`${dist}/src/agents/bin/${name}`)}`;
+
+    return HOOK_ENTRY_KINDS.filter((kind) => kinds.has(kind)).flatMap((kind) => HOOK_ENTRIES[kind](script));
 }
 
-/** Claude Code's command for the agents panel rows (`mods.agentRow`, `plugins/genesis-tools-mods/hooks/agent-row.ts`). */
 export function subagentLineFor(dist: string): { type: "command"; command: string } {
     return { type: "command", command: `bun ${shellQuote(`${dist}/src/agents/bin/hook-subagent-line.ts`)}` };
 }
@@ -508,12 +493,15 @@ export function installHooks(options: {
     const unchanged: string[] = [];
     const removed: string[] = [];
     const config = loadHooksConfig();
-    const wanted = entriesFor(dist, {
-        decisions: options.decisions ?? decisionHooksWanted(config),
-        unpushed: options.unpushed ?? config.unpushed.enabled,
-        questionNudge: options.questionNudge ?? stopOnlyDecisionsWanted(config),
-        questions: options.questions ?? questionHooksWanted(config),
-    });
+    const wanted = entriesFor(
+        dist,
+        wantedEntryKinds(config, {
+            decisions: options.decisions,
+            unpushed: options.unpushed,
+            questionNudge: options.questionNudge,
+            questions: options.questions,
+        })
+    );
     // An event can carry more than one entry of ours (the guard's `Bash` PreToolUse and the question tools'), so the
     // wanted entries are compared per event as a list, in order.
     const wantedByEvent = new Map<string, HookEntry[]>();

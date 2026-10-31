@@ -13,4 +13,7 @@ export const AGENTS_TALK_HOOK_SECTION: HookConfigSection<AgentsTalkConfig> = {
     settable: ["agentsTalk.hint"],
     owns: (key) => key === "agentsTalk.hint",
     set: (current, key, value) => ({ ...current, hint: asBoolean(key, value) }),
+    // The plugin's own SessionStart hook shows it; the agents hooks wire nothing for it.
+    entries: () => [],
+    doctor: (agentsTalk) => [["agentsTalk.hint", String(agentsTalk.hint)]],
 };

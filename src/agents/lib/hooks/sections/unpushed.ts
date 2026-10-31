@@ -74,4 +74,7 @@ export const UNPUSHED_HOOK_SECTION: HookConfigSection<UnpushedConfig> = {
     settable: ["unpushed.<enabled|maxCommits|maxAgeMinutes|remindEveryMinutes>"],
     owns: (key) => key.startsWith("unpushed."),
     set,
+    // The reminder runs in the Stop entry.
+    entries: (unpushed, overrides) => ((overrides.unpushed ?? unpushed.enabled) ? ["stop"] : []),
+    doctor: () => [],
 };

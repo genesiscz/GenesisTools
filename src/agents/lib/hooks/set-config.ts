@@ -1,272 +1,36 @@
+import { hooksConfigPath } from "@genesiscz/utils/agents/hooks/config-section";
 import {
-    asBoolean,
-    asCount,
-    type HookConfigSection,
-    hooksConfigPath,
-    isCount,
-    listed,
-} from "@genesiscz/utils/agents/hooks/config-section";
-import { SafeJSON } from "@genesiscz/utils/json";
-import {
-    DEFAULT_HOOKS_CONFIG,
-    FILL_MODES,
-    HARNESS_NAMES,
-    type HarnessName,
-    HIGHLIGHT_MODES,
-    HIGHLIGHTERS,
     HOOK_CONFIG_SECTIONS,
     HOOK_SECTION_NAMES,
-    type HookOutcome,
     type HookSectionName,
+    type HookSectionValues,
+    type HookSetContext,
     type HooksConfig,
-    isMegabytes,
     loadHooksConfigForWrite,
-    type ModsConfig,
-    mergeMods,
-    OTHERS_SUMMARIES,
+    sectionValue,
+    withSectionValue,
 } from "./config";
-import { FULL_DIFF_MODES } from "./diff/full";
-import { DIFF_THEMES, type DiffThemeName } from "./diff/theme";
 import { writeHooksFile } from "./hooks-file";
 import { type SubagentLinePlan, wireSubagentLine } from "./install";
 import { BUILT_IN_RULES } from "./tool-rules";
 
-const OUTCOMES: readonly HookOutcome[] = ["allow", "context", "warn", "block"];
-const NUMERIC_DIFF = [
-    "maxFiles",
-    "maxLinesPerFile",
-    "maxBlockLines",
-    "maxMessageChars",
-    "maxCaptureMB",
-    "maxCaptureFileMB",
-    "maxNamedPathMB",
-] as const;
-
-export const SETTABLE_KEYS = [
-    "shadow",
-    "logCommands",
-    "enabled",
-    "diff.enabled",
-    "diff.maxFiles",
-    "diff.maxLinesPerFile",
-    "diff.maxBlockLines",
-    "diff.maxMessageChars",
-    "diff.maxCaptureMB",
-    "diff.maxCaptureFileMB",
-    "diff.maxNamedPathMB",
-    "diff.othersSummary",
-    "diff.theme",
-    "diff.highlight",
-    "diff.highlighter",
-    "diff.fill",
-    "diff.fillMax",
-    "diff.commandLines",
-    "diff.columns",
-    "diff.fullDiff",
-    "diff.replaceNative",
-    "diff.showTempScratch",
+/**
+ * Every key `set` takes, in the order help lists them. Each section owns its keys (`HOOK_CONFIG_SECTIONS`); this list
+ * only orders them as they always printed, and `config.test.ts` holds it equal to the sections' union.
+ */
+export const SETTABLE_KEYS: readonly string[] = [
+    ...HOOK_CONFIG_SECTIONS.core.settable.slice(0, 2),
+    HOOK_CONFIG_SECTIONS.guard.settable[0] ?? "",
+    ...HOOK_CONFIG_SECTIONS.diff.settable.slice(0, -1),
     ...HOOK_CONFIG_SECTIONS.unpushed.settable,
-    `diff.harnesses.<${HARNESS_NAMES.join("|")}>.<enabled|maxFiles|…>`,
-    "maxLogMB",
-    "guard.longCommand.lines",
-    "guard.longCommand.chars",
-    "guard.contextCapPerSession",
-    "guard.customRules",
-    "rules.<rule-id>",
-    `harnesses.<${HARNESS_NAMES.join("|")}>.<rule-id>`,
+    ...HOOK_CONFIG_SECTIONS.diff.settable.slice(-1),
+    ...HOOK_CONFIG_SECTIONS.core.settable.slice(2),
+    ...HOOK_CONFIG_SECTIONS.guard.settable.slice(1),
     ...HOOK_CONFIG_SECTIONS.decisions.settable,
     ...HOOK_CONFIG_SECTIONS.questions.settable,
     ...HOOK_CONFIG_SECTIONS.agentsTalk.settable,
-    "mods.diff.<fullDiff|collapseGitSync>",
-    "mods.idleCompact.<enabled|minutes|minTokens>",
-    "mods.agentModel.<enabled|format>",
-    "mods.agentRow.<enabled|format|effort>",
-    "mods.<decisions|inbox|links|git|askRow|spinner>.enabled",
-    "mods.decisions.<chip|expand|history|enter>",
-    "mods.inbox.<chip|expand>",
-    "mods.git.<labels|checkouts|cwd|expand|name|earlier>",
-    "mods.cacheBand.<enabled|warnMinutes|cautionMinutes|others>",
-    "mods.tmpUsage.<enabled|minutes>",
-    "mods.agentsBand.<enabled|warnMinutes>",
-    "mods.hooks.<tokens|dedupe>",
-    "mods.sidebar.<hints|feedback|focus>",
-    "mods.stall.<enabled|action|minutes>",
-    "mods.log.<readings>",
-] as const;
-
-/** The flat keys of before 2026-10-23, still taken; `mods.<feature>` alone means its `enabled`. */
-const MOD_ALIASES: Record<string, string> = {
-    "mods.fullDiff": "mods.diff.fullDiff",
-    "mods.collapseGitSync": "mods.diff.collapseGitSync",
-    "mods.idleCompactMinutes": "mods.idleCompact.minutes",
-    "mods.idleCompactMinTokens": "mods.idleCompact.minTokens",
-};
-
-/** The highest whole number each numeric mods field takes, and the lowest when it is not 1. */
-const MOD_NUMBER_LIMITS: Record<string, { max: number; min?: number; why: string }> = {
-    "idleCompact.minutes": { max: 59, why: "at 60 the 1-hour prompt cache has expired" },
-    "idleCompact.minTokens": { max: Number.MAX_SAFE_INTEGER, min: 0, why: "" },
-    "cacheBand.warnMinutes": { max: 59, why: "the cache lives 60 minutes" },
-    "cacheBand.cautionMinutes": { max: 59, why: "the cache lives 60 minutes" },
-    "tmpUsage.minutes": { max: 120, why: "a reading older than 2 hours says little" },
-    "git.checkouts": { max: 6, why: "each checkout takes a row above the prompt" },
-    "agentsBand.warnMinutes": { max: 24 * 60, why: "a day" },
-    "stall.minutes": { max: 120, why: "a reply left two hours is no longer a stall to resume" },
-};
-
-/** The values each text mods field takes, as `--help` and an error list them. */
-const MOD_CHOICES: Record<string, readonly string[]> = {
-    "agentModel.format": ["label", "short", "version"],
-    "agentRow.format": ["label", "short", "version"],
-    "decisions.chip": ["any", "waiting", "off"],
-    "decisions.expand": ["waiting", "all", "none"],
-    "decisions.history": ["collapsed", "shown"],
-    "decisions.enter": ["stage-then-send", "stage"],
-    "inbox.chip": ["any", "unread", "off"],
-    "inbox.expand": ["unread", "all", "none"],
-    "git.labels": ["full", "minimal"],
-    "git.cwd": ["touched", "always"],
-    "git.expand": ["first", "all", "none"],
-    "git.name": ["repo-folder", "repo", "folder"],
-    "git.earlier": ["show", "hide"],
-    "sidebar.feedback": ["line", "toast", "both"],
-    "sidebar.focus": ["command", "always", "never"],
-    "stall.action": ["button", "auto"],
-};
-
-function isFields(value: unknown): value is Record<string, unknown> {
-    return typeof value === "object" && value !== null && !Array.isArray(value);
-}
-
-/** One `mods.<feature>.<field>` key, checked against the type of the field's default. */
-function withMods(mods: ModsConfig, key: string, value: string): ModsConfig {
-    const path = MOD_ALIASES[key] ?? key;
-    const [, feature = "", field = "enabled"] = path.split(".");
-    const base = new Map<string, unknown>(Object.entries(DEFAULT_HOOKS_CONFIG.mods)).get(feature);
-    const held = new Map<string, unknown>(Object.entries(mods)).get(feature);
-
-    if (!isFields(base) || !isFields(held) || !(field in base)) {
-        throw new Error(`Unknown mods key ${SafeJSON.stringify(key)}; see the mods.* keys in --help`);
-    }
-
-    const part = { ...held };
-    const sample = base[field];
-
-    if (typeof sample === "boolean") {
-        part[field] = asBoolean(key, value);
-    } else if (typeof sample === "number") {
-        const limit = MOD_NUMBER_LIMITS[`${feature}.${field}`];
-        const count = asCount(key, value, limit?.min ?? 1);
-
-        if (limit && count > limit.max) {
-            throw new Error(`${key} takes ${limit.min ?? 1} to ${limit.max}: ${limit.why}`);
-        }
-
-        part[field] = count;
-    } else {
-        const choices = MOD_CHOICES[`${feature}.${field}`];
-
-        if (choices && !choices.includes(value)) {
-            throw new Error(`${key} takes ${listed(choices)}, not ${SafeJSON.stringify(value)}`);
-        }
-
-        if (choices) {
-            part[field] = value;
-        }
-    }
-
-    return mergeMods({ ...mods, [feature]: part });
-}
-
-/** An MB cap: any positive number, because `0.256` is a valid per-file ceiling. */
-function asMegabytes(key: string, value: string): number {
-    const parsed = Number(value);
-
-    if (value.trim() === "" || !isMegabytes(parsed)) {
-        throw new Error(`${key} takes a number of MB greater than 0, not ${SafeJSON.stringify(value)}`);
-    }
-
-    return parsed;
-}
-
-const MEGABYTE_DIFF: ReadonlySet<string> = new Set(["maxCaptureMB", "maxCaptureFileMB", "maxNamedPathMB"]);
-
-/** One numeric diff field, range-checked by what it measures. */
-function asDiffNumber(field: string, key: string, value: string): number {
-    return MEGABYTE_DIFF.has(field) ? asMegabytes(key, value) : asCount(key, value);
-}
-
-function asOutcome(key: string, value: string): HookOutcome {
-    if ((OUTCOMES as readonly string[]).includes(value)) {
-        return value as HookOutcome;
-    }
-
-    throw new Error(`${key} takes one of ${OUTCOMES.join(", ")}, not ${SafeJSON.stringify(value)}`);
-}
-
-/**
- * One field of one harness's diff override, for example `diff.harnesses.grok.enabled`.
- *
- * It is a narrow door on purpose: `enabled` plus the numeric caps. Those are the settings a
- * harness's own display makes wrong, and every other field is shared for a reason.
- */
-function withHarnessDiff(next: HooksConfig, key: string, value: string, harness: string, field: string): HooksConfig {
-    if (!HARNESS_NAMES.some((name) => name === harness)) {
-        throw new Error(`no such harness: ${harness}`);
-    }
-
-    const held = next.diff.harnesses[harness as HarnessName] ?? {};
-
-    if (field === "enabled") {
-        next.diff.harnesses[harness as HarnessName] = { ...held, enabled: asBoolean(key, value) };
-        return next;
-    }
-
-    const numeric = NUMERIC_DIFF.find((candidate) => candidate === field);
-
-    if (numeric) {
-        next.diff.harnesses[harness as HarnessName] = { ...held, [numeric]: asDiffNumber(numeric, key, value) };
-        return next;
-    }
-
-    if (field === "theme") {
-        next.diff.harnesses[harness as HarnessName] = { ...held, theme: asTheme(key, value) };
-        return next;
-    }
-
-    if (field === "columns") {
-        next.diff.harnesses[harness as HarnessName] = { ...held, columns: asColumns(key, value) };
-        return next;
-    }
-
-    throw new Error(`cannot set ${field} per harness. Settable: enabled, theme, columns, ${NUMERIC_DIFF.join(", ")}`);
-}
-
-function asTheme(key: string, value: string): DiffThemeName {
-    const theme = DIFF_THEMES.find((candidate) => candidate === value);
-
-    if (!theme) {
-        throw new Error(`${key} takes ${DIFF_THEMES.join(", ")}, not ${SafeJSON.stringify(value)}`);
-    }
-
-    return theme;
-}
-
-function asColumns(key: string, value: string): number | "auto" {
-    if (value === "auto") {
-        return value;
-    }
-
-    const columns = Number(value);
-
-    if (!isCount(columns, 0)) {
-        throw new Error(
-            `${key} takes auto or a whole number of columns (0 = no fill), not ${SafeJSON.stringify(value)}`
-        );
-    }
-
-    return columns;
-}
+    ...HOOK_CONFIG_SECTIONS.mods.settable,
+];
 
 /** The ids a rule key may name: the built-in rules, plus the custom ones when the caller loaded them. */
 export interface RuleIdOptions {
@@ -277,243 +41,38 @@ function knownRuleIds(options: RuleIdOptions): ReadonlySet<string> {
     return options.ruleIds ?? new Set(BUILT_IN_RULES.map((rule) => rule.id));
 }
 
-/** Applies one dotted key to a config, validating the key and the value. Pure. */
-/** `set <key>` for a key one of the hook sections owns, or null when none does. */
-function withSection(config: HooksConfig, key: string, value: string): HooksConfig | null {
-    for (const name of HOOK_SECTION_NAMES) {
-        const next = withSectionNamed(config, name, key, value);
-
-        if (next) {
-            return next;
-        }
-    }
-
-    return null;
-}
-
-function withSectionNamed<Name extends HookSectionName>(
+function withSection<Name extends HookSectionName>(
     config: HooksConfig,
     name: Name,
     key: string,
-    value: string
+    value: string,
+    context: HookSetContext
 ): HooksConfig | null {
-    const section: HookConfigSection<HooksConfig[Name]> = HOOK_CONFIG_SECTIONS[name];
+    const section = HOOK_CONFIG_SECTIONS[name];
 
     if (!section.owns(key)) {
         return null;
     }
 
-    const next = { ...config };
-    next[name] = section.set(config[name], key, value);
-    return next;
+    const next: HookSectionValues[Name] = section.set(sectionValue(config, name), key, value, context);
+    return withSectionValue(config, name, next);
 }
 
+/** Applies one dotted key to a config, validating the key and the value. Pure. */
 export function applySetting(
     config: HooksConfig,
     key: string,
     value: string,
     options: RuleIdOptions = {}
 ): HooksConfig {
-    const ruleIds = knownRuleIds(options);
-    const next: HooksConfig = {
-        ...config,
-        guard: {
-            ...config.guard,
-            default: { ...config.guard.default },
-            harnesses: { ...config.guard.harnesses },
-            longCommand: { ...config.guard.longCommand },
-        },
-        // `harnesses` is cloned too: `withHarnessDiff` replaces whole entries, and a shallow
-        // `diff` spread would have it writing into the config it was handed.
-        diff: { ...config.diff, harnesses: { ...config.diff.harnesses } },
-    };
+    const context: HookSetContext = { ruleIds: knownRuleIds(options) };
 
-    const sectioned = withSection(next, key, value);
+    for (const name of HOOK_SECTION_NAMES) {
+        const next = withSection(config, name, key, value, context);
 
-    if (sectioned) {
-        return sectioned;
-    }
-
-    if (key === "shadow") {
-        next.shadow = asBoolean(key, value);
-        return next;
-    }
-
-    if (key === "logCommands") {
-        if (value !== "shadow" && value !== "always" && value !== "never") {
-            throw new Error(`${key} takes shadow, always or never, not ${SafeJSON.stringify(value)}`);
+        if (next) {
+            return next;
         }
-
-        next.logCommands = value;
-        return next;
-    }
-
-    if (key === "enabled" || key === "guard.enabled") {
-        next.guard.enabled = asBoolean(key, value);
-        return next;
-    }
-
-    if (key === "diff.enabled") {
-        next.diff.enabled = asBoolean(key, value);
-        return next;
-    }
-
-    if (key === "diff.replaceNative") {
-        next.diff.replaceNative = asBoolean(key, value);
-        return next;
-    }
-
-    if (key === "diff.showTempScratch") {
-        next.diff.showTempScratch = asBoolean(key, value);
-        return next;
-    }
-
-    if (key === "diff.highlighter") {
-        const name = HIGHLIGHTERS.find((candidate) => candidate === value);
-
-        if (!name) {
-            throw new Error(`${key} takes ${HIGHLIGHTERS.join(", ")}, not ${SafeJSON.stringify(value)}`);
-        }
-
-        next.diff.highlighter = name;
-        return next;
-    }
-
-    if (key === "diff.fill") {
-        const mode = FILL_MODES.find((candidate) => candidate === value);
-
-        if (!mode) {
-            throw new Error(`${key} takes ${FILL_MODES.join(", ")}, not ${SafeJSON.stringify(value)}`);
-        }
-
-        next.diff.fill = mode;
-        return next;
-    }
-
-    if (key === "diff.highlight") {
-        const mode = HIGHLIGHT_MODES.find((candidate) => candidate === value);
-
-        if (!mode) {
-            throw new Error(`${key} takes ${HIGHLIGHT_MODES.join(", ")}, not ${SafeJSON.stringify(value)}`);
-        }
-
-        next.diff.highlight = mode;
-        return next;
-    }
-
-    if (key === "diff.theme") {
-        next.diff.theme = asTheme(key, value);
-        return next;
-    }
-
-    if (key === "diff.columns") {
-        next.diff.columns = asColumns(key, value);
-        return next;
-    }
-
-    if (key === "diff.fillMax") {
-        next.diff.fillMax = asCount(key, value, 0);
-        return next;
-    }
-
-    if (key === "diff.commandLines") {
-        next.diff.commandLines = asCount(key, value, 0);
-        return next;
-    }
-
-    if (key === "diff.fullDiff") {
-        const mode = FULL_DIFF_MODES.find((candidate) => candidate === value);
-
-        if (!mode) {
-            throw new Error(`${key} takes ${FULL_DIFF_MODES.join(", ")}, not ${SafeJSON.stringify(value)}`);
-        }
-
-        next.diff.fullDiff = mode;
-        return next;
-    }
-
-    if (key === "diff.othersSummary") {
-        const mode = OTHERS_SUMMARIES.find((candidate) => candidate === value);
-
-        if (!mode) {
-            throw new Error(`${key} takes ${OTHERS_SUMMARIES.join(" or ")}, not ${SafeJSON.stringify(value)}`);
-        }
-
-        next.diff.othersSummary = mode;
-        return next;
-    }
-
-    const perHarnessDiff = /^diff\.harnesses\.([^.]+)\.(.+)$/.exec(key);
-
-    if (perHarnessDiff?.[1] && perHarnessDiff[2]) {
-        return withHarnessDiff(next, key, value, perHarnessDiff[1], perHarnessDiff[2]);
-    }
-
-    const diffKey = NUMERIC_DIFF.find((candidate) => `diff.${candidate}` === key);
-
-    if (diffKey) {
-        next.diff[diffKey] = asDiffNumber(diffKey, key, value);
-        return next;
-    }
-
-    if (key === "guard.longCommand.lines" || key === "guard.longCommand.chars") {
-        next.guard.longCommand[key.endsWith("lines") ? "lines" : "chars"] = asCount(key, value);
-        return next;
-    }
-
-    if (key.startsWith("mods.")) {
-        next.mods = withMods(config.mods, key, value);
-        return next;
-    }
-
-    if (key === "maxLogMB") {
-        next.maxLogMB = asMegabytes(key, value);
-        return next;
-    }
-
-    if (key === "guard.contextCapPerSession") {
-        next.guard.contextCapPerSession = asCount(key, value, 0);
-        return next;
-    }
-
-    if (key === "guard.customRules") {
-        // A comma list of files or folders; an empty value clears it.
-        next.guard.customRules = value
-            .split(",")
-            .map((path) => path.trim())
-            .filter(Boolean);
-        return next;
-    }
-
-    const rule = /^rules\.(.+)$/.exec(key);
-
-    if (rule?.[1]) {
-        if (!ruleIds.has(rule[1])) {
-            throw new Error(`no such rule: ${rule[1]}`);
-        }
-
-        next.guard.default[rule[1]] = asOutcome(key, value);
-        return next;
-    }
-
-    const perHarness = /^harnesses\.([^.]+)\.(.+)$/.exec(key);
-
-    if (perHarness?.[1] && perHarness[2]) {
-        const harness = perHarness[1];
-        const ruleId = perHarness[2];
-
-        if (!HARNESS_NAMES.some((name) => name === harness)) {
-            throw new Error(`no such harness: ${harness}`);
-        }
-
-        if (!ruleIds.has(ruleId)) {
-            throw new Error(`no such rule: ${ruleId}`);
-        }
-
-        const existing = next.guard.harnesses[harness as HarnessName] ?? {};
-
-        next.guard.harnesses[harness as HarnessName] = { ...existing, [ruleId]: asOutcome(key, value) };
-        return next;
     }
 
     throw new Error(`unknown key: ${key}. Settable: ${SETTABLE_KEYS.join(", ")}`);
