@@ -566,7 +566,9 @@ struct WidgetPeekView: View {
                     // The context the agent wrote under the title, so a pick here is not made blind (Martin,
                     // 2026-10-28: "in this window you should probably have the description").
                     if model.snapshot?.state.preferences.alertSummary ?? true,
-                       let summary = item.summary, !summary.isEmpty, item.needsAnswer { summaryText(summary) }
+                       let summary = item.summary, !summary.isEmpty, item.needsAnswer {
+                        WidgetPeekSummary(summary: summary).equatable()
+                    }
                     if !options.isEmpty { optionList }
                     if item.isAnsweredElsewhere { answeredBody }
                     if isReminder { stagedBody }
@@ -668,22 +670,6 @@ struct WidgetPeekView: View {
         .accessibilityLabel(kicker + ": " + title)
         .accessibilityHint(openTitle)
         .accessibilityIdentifier("widget.peek.open")
-    }
-
-    /// The whole summary, with no line limit: the sender already cuts it near 600 characters (`decisionSummary`), and
-    /// a selectable `Text` draws its full string while it is being selected, past the frame a line limit laid out
-    /// (2026-10-30: six lines laid out, nine drawn, the last three under the option rows).
-    private func summaryText(_ summary: String) -> some View {
-        let markdown = (try? AttributedString(
-            markdown: summary, options: .init(interpretedSyntax: .inlineOnlyPreservingWhitespace))) ?? AttributedString(summary)
-        return Text(markdown)
-            .font(.system(size: 12)).foregroundStyle(.secondary)
-            .fixedSize(horizontal: false, vertical: true)
-            .textSelection(.enabled)
-            .padding(.horizontal, 8)
-            .frame(maxWidth: .infinity, alignment: .leading)
-            .accessibilityIdentifier("widget.peek.summary")
-            .frameProbe("widget.peek.summary")
     }
 
     /// The decision's options as the inbox draws them: a click stages one (or sends it, by the Decision click
@@ -914,6 +900,32 @@ struct WidgetPeekView: View {
 
 /// An option a decision took outside the widget: the option row's shape, green, with a check where the inbox puts
 /// its recommended mark.
+/// The popup's decision summary in full, with no line limit: the sender already cuts it near 600 characters
+/// (`decisionSummary`), and a selectable `Text` draws its full string while it is being selected, past the frame a line
+/// limit laid out (2026-10-30: six lines laid out, nine drawn, the last three under the option rows). Its own
+/// equatable view, so the markdown is parsed when the summary changes, not on every publish of the model the popup
+/// observes.
+/// The whole summary, with no line limit: the sender already cuts it near 600 characters (`decisionSummary`), and
+/// a selectable `Text` draws its full string while it is being selected, past the frame a line limit laid out
+/// (2026-10-30: six lines laid out, nine drawn, the last three under the option rows). Equatable, so the markdown
+/// parses when the summary changes, not on every model publish.
+struct WidgetPeekSummary: View, Equatable {
+    let summary: String
+
+    var body: some View {
+        let markdown = (try? AttributedString(
+            markdown: summary, options: .init(interpretedSyntax: .inlineOnlyPreservingWhitespace))) ?? AttributedString(summary)
+        Text(markdown)
+            .font(.system(size: 12)).foregroundStyle(.secondary)
+            .fixedSize(horizontal: false, vertical: true)
+            .textSelection(.enabled)
+            .padding(.horizontal, 8)
+            .frame(maxWidth: .infinity, alignment: .leading)
+            .accessibilityIdentifier("widget.peek.summary")
+            .frameProbe("widget.peek.summary")
+    }
+}
+
 struct WidgetAnsweredOptionRow: View {
     let letter: String
     let text: String
