@@ -29,7 +29,9 @@ tools rm profile set <name> --agent codex --ask-action request [...]
 tools rm profile remove <name>
 ```
 
-Exit codes: 0 done, 1 something was refused or a person kept it at the prompt, 3 a request waits for the user.
+Exit codes of a delete run (`tools rm <path> ...`): 0 done, 1 something was refused or a person kept it at the prompt,
+3 a request waits for the user. A failed move (a disk or permission error) still opens the request for the asked paths
+before the run ends with that error.
 
 ## The rules
 

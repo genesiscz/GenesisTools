@@ -193,33 +193,41 @@ export async function executePlan(
         groups.set(minutes, [...(groups.get(minutes) ?? []), item]);
     }
 
-    for (const [minutes, items] of groups) {
-        const elapsed = createStopwatch();
-        const batch = moveToTrash(
-            items.map((item) => ({ target: item.target, rule: item.verdict.rule })),
-            {
-                config: ctx.config,
-                caller: ctx.caller,
-                graceMinutes: minutes,
-                onRefused: (move, reason) => {
-                    out.println(pc.red(`refuse ${shown(move.target.path, ctx.cwd)}: ${reason}`));
-                    result.refused++;
-                },
-            }
-        );
+    // A move that throws (not a refusal: a disk or permission error) must not cost the asked paths their request,
+    // and the batches that did move still need the drainer; the error is raised again after both.
+    let moveError: unknown;
 
-        if (batch) {
-            result.batches.push(batch);
+    try {
+        for (const [minutes, items] of groups) {
+            const elapsed = createStopwatch();
+            const batch = moveToTrash(
+                items.map((item) => ({ target: item.target, rule: item.verdict.rule })),
+                {
+                    config: ctx.config,
+                    caller: ctx.caller,
+                    graceMinutes: minutes,
+                    onRefused: (move, reason) => {
+                        out.println(pc.red(`refuse ${shown(move.target.path, ctx.cwd)}: ${reason}`));
+                        result.refused++;
+                    },
+                }
+            );
 
-            if (!options.json) {
-                const when =
-                    minutes === 0
-                        ? "the drain deletes it now, in the background"
-                        : `the drain deletes it in ${minutes} min`;
-                out.println(pc.green(`Moved ${batch.items.length} item(s) to the trash in ${elapsed()}; ${when}.`));
-                out.println(pc.dim(`  undo: ${toolCommand("rm")} restore ${batch.id}`));
+            if (batch) {
+                result.batches.push(batch);
+
+                if (!options.json) {
+                    const when =
+                        minutes === 0
+                            ? "the drain deletes it now, in the background"
+                            : `the drain deletes it in ${minutes} min`;
+                    out.println(pc.green(`Moved ${batch.items.length} item(s) to the trash in ${elapsed()}; ${when}.`));
+                    out.println(pc.dim(`  undo: ${toolCommand("rm")} restore ${batch.id}`));
+                }
             }
         }
+    } catch (error) {
+        moveError = error;
     }
 
     if (requestLater) {
@@ -229,6 +237,11 @@ export async function executePlan(
     }
 
     kickDrainer(ctx.config);
+
+    if (moveError !== undefined) {
+        throw moveError;
+    }
+
     process.exitCode = result.refused > 0 || declined > 0 ? 1 : result.requestId ? 3 : 0;
 
     if (options.json) {
