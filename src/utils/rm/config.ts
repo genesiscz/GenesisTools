@@ -229,12 +229,23 @@ function validateRmConfig(value: unknown): void {
         policy(item);
         return true;
     };
+    // A root's session scope and expiry fail closed: a malformed one must not widen the root to every caller.
+    const root = (item: unknown): boolean => {
+        if (!isRecord(item) || parseRoot(item) === null) {
+            return false;
+        }
+        check(item, {
+            session: (session) => typeof session === "string" && session.length > 0,
+            expiresAt: (date) => typeof date === "string" && Number.isFinite(Date.parse(date)),
+        });
+        return true;
+    };
     check(value, { protect: texts, disabledPresets: texts, enabledPresets: texts, disabledProfiles: texts });
     policy(value);
     check(value, {
         approval: isRmApproval,
         trashRoot: isTrashRootName,
-        roots: (v) => Array.isArray(v) && v.every((item) => parseRoot(item) !== null),
+        roots: (v) => Array.isArray(v) && v.every(root),
         customPresets: (v) => Array.isArray(v) && v.every(preset),
         profiles: (v) => Array.isArray(v) && v.every(profile),
     });
