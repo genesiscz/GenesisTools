@@ -321,15 +321,16 @@ export async function sessionDirOf(host: Host): Promise<string | undefined> {
     }
 
     sessionDirSearchedAt = Date.now();
+    // Every project folder in one round instead of one engine call after another.
+    const folders = (await host.list(projects).catch(() => [])).filter((entry) => entry.kind === "dir");
+    const holds = await Promise.all(
+        folders.map((entry) => host.exists(`${projects}/${entry.name}/${session}.jsonl`).catch(() => false))
+    );
+    const found = folders.find((_, index) => holds[index]);
 
-    for (const entry of await host.list(projects).catch(() => [])) {
-        if (
-            entry.kind === "dir" &&
-            (await host.exists(`${projects}/${entry.name}/${session}.jsonl`).catch(() => false))
-        ) {
-            sessionDir = `${projects}/${entry.name}/${session}`;
-            return sessionDir;
-        }
+    if (found) {
+        sessionDir = `${projects}/${found.name}/${session}`;
+        return sessionDir;
     }
 
     return guess;
