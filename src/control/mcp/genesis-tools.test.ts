@@ -48,6 +48,19 @@ describe("controlToolEntries", () => {
         expect((result.steps as unknown[]).length).toBe(2);
     });
 
+    test("a cancelled control_run request skips UI dispatch", async () => {
+        const controller = new AbortController();
+        controller.abort();
+        const response = await entries.control_run.handler(
+            { plan: { app: "Fixture", restore: true, steps: [{ do: "type", text: "test" }] } },
+            { signal: controller.signal }
+        );
+        const result = SafeJSON.parse(response, { strict: true });
+        expect(result.kind).toBe("ran");
+        expect(result.report.ok).toBe(false);
+        expect(result.report.skippedSteps).toBe(1);
+    });
+
     test("control_run reports every plan problem before the first step", async () => {
         const result = await call("control_run", { plan: { steps: [{ do: "frobnicate" }, { do: "press" }] } });
 

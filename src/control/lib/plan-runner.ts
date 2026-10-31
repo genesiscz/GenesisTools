@@ -1,4 +1,4 @@
-import { untilAborted } from "@genesiscz/utils/async";
+import { abortableSleep, untilAborted } from "@genesiscz/utils/async";
 import { SafeJSON } from "@genesiscz/utils/json";
 import type { Plan } from "./capture-plan";
 import { type CaptureFocusGuard, type RunResult, runCapturePlan, runCapturePlanWithSignal } from "./capture-runner";
@@ -271,7 +271,7 @@ export interface PlanRunDeps {
     assertEl: typeof assertEl;
     guard: typeof guardFocusSteal;
     capture: (plan: Plan, signal?: AbortSignal, guardFocus?: CaptureFocusGuard) => Promise<RunResult>;
-    sleep: (ms: number) => Promise<void>;
+    sleep: (ms: number, signal?: AbortSignal) => Promise<void>;
     now: () => number;
 }
 
@@ -282,7 +282,7 @@ export const DEFAULT_PLAN_RUN_DEPS: PlanRunDeps = {
     guard: guardFocusSteal,
     capture: (plan, signal, guardFocus) =>
         signal ? runCapturePlanWithSignal({ plan, signal, guardFocus }) : runCapturePlan(plan, guardFocus),
-    sleep: (ms) => Bun.sleep(ms),
+    sleep: abortableSleep,
     now: () => performance.now(),
 };
 
@@ -483,7 +483,7 @@ async function runSteps({
     const stopOnFail = stopOnFailFlag === true || plan.stopOnFail === true;
     const sleep = async (ms: number) => {
         try {
-            await untilAborted(deps.sleep(ms), signal);
+            await untilAborted(deps.sleep(ms, signal), signal);
         } catch (error) {
             if (!signal?.aborted) {
                 throw error;

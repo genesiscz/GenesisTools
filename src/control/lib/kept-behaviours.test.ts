@@ -417,6 +417,29 @@ describe("the plan runner", () => {
         expect(native.calls).toHaveLength(0);
     });
 
+    test("recording plans forward the focus policy and opt-out", async () => {
+        native = fakeAx();
+        const calls: Array<{ app?: string; stealFocus?: boolean }> = [];
+        const run = executePlan({
+            plan: { app: "Fixture", capture: { mode: "screen", duration: 1 }, steps: [{ do: "type", text: "test" }] },
+            stealFocus: true,
+            deps: {
+                ...deps(native.run),
+                guard: async ({ app, stealFocus }) => {
+                    calls.push({ app, stealFocus });
+                    return null;
+                },
+                capture: async (_plan, _signal, guardFocus) => {
+                    expect(guardFocus).toBeDefined();
+                    await guardFocus?.("Fixture");
+                    throw new Error("fixture capture completed");
+                },
+            },
+        });
+        await expect(run).rejects.toThrow("fixture capture completed");
+        expect(calls).toEqual([{ app: "Fixture", stealFocus: true }]);
+    });
+
     test("cancellation during a step skips every later action and restore", async () => {
         const controller = new AbortController();
         native = fakeAx((args) => {
