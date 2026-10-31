@@ -1,3 +1,4 @@
+import { parseNonNegativeInt } from "@genesiscz/utils/cli/parse";
 import { toolCommand } from "@genesiscz/utils/cli/tool-command";
 import { SafeJSON } from "@genesiscz/utils/json";
 import { out } from "@genesiscz/utils/logger";
@@ -35,16 +36,6 @@ async function answerApproval(options: DenyOptions, decision: "approve" | "deny"
     }
 
     out.result(SafeJSON.stringify(response.result ?? {}, null, 2));
-}
-
-function parseLineCount(value: string): number {
-    const count = Number(value);
-
-    if (!Number.isInteger(count) || count < 0) {
-        throw new Error(`--lines must be a whole number of 0 or more, got ${value}`);
-    }
-
-    return count;
 }
 
 /** `--json` answers with the stored record itself: the exact proposed content, never a cut preview. */
@@ -89,7 +80,7 @@ export function registerApprovalCommands(program: Command): void {
         )
         .option("--json", "Emit the stored records with their full content as JSON")
         .action((options: { name?: string; lines: string; json?: boolean }) => {
-            const maxLines = parseLineCount(options.lines);
+            const maxLines = parseNonNegativeInt(options.lines, "--lines");
             const requests = listPendingRequests(new CodexSessionStore(), options.name);
 
             if (options.json) {
