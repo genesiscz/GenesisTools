@@ -135,4 +135,26 @@ describe("ai-proxy monitor", () => {
         expect(formatRequest(codexHit)).not.toContain("changed");
         expect(formatRequest({ ...record, prefix: { part: "tools" as const } })).not.toContain("changed");
     });
+
+    it("counts an Anthropic cache write in ctx and the hit share", async () => {
+        const { formatRequest } = await import("./monitor");
+        const written = {
+            ...record,
+            usage: { prompt_tokens: 1000, cache_read_input_tokens: 4000, cache_creation_input_tokens: 5000 },
+        };
+
+        expect(formatRequest(written)).toContain("ctx 10.0K");
+        expect(formatRequest(written)).toContain("hit 40%");
+    });
+
+    it("stops the backlog at the last complete line, so the tail reads a torn row whole", async () => {
+        const { readBacklog } = await import("./monitor");
+        const path = join(mkdtempSync(join(tmpdir(), "ai-proxy-monitor-")), "requests.jsonl");
+        const whole = `${SafeJSON.stringify({ ts: record.ts, id: "a" })}\n`;
+        writeFileSync(path, `${whole}{"ts":"${record.ts}","id":`);
+
+        const backlog = readBacklog<{ id: string }>(path, 0);
+        expect(backlog.rows.map((row) => row.id)).toEqual(["a"]);
+        expect(backlog.end).toBe(Buffer.byteLength(whole));
+    });
 });
