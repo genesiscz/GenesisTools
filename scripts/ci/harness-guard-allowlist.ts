@@ -19,37 +19,28 @@ export interface HarnessGuardCounts {
 export const HARNESS_GUARD_ALLOWLIST: Readonly<Record<string, HarnessGuardCounts>> = {
     "plugins/genesis-tools/hooks/agents-talk-hint.ts": {
         branch: 2,
-        why: "a standalone plugin hook: the harness copies plugins/** out of the checkout, so it cannot import the drivers (check-plugin-standalone.ts)",
+        why: "a standalone plugin hook (check-plugin-standalone.ts): the harness ids and resume argv come from the generated lib/Generated/harness-facts.ts (scripts/gen-harness-plugin.ts); what is left is per-harness behaviour no driver fact describes yet",
     },
     "plugins/genesis-tools/hooks/area-rules.ts": {
         branch: 1,
-        why: "a standalone plugin hook: the harness copies plugins/** out of the checkout, so it cannot import the drivers (check-plugin-standalone.ts)",
-    },
-    "plugins/genesis-tools/hooks/harness.ts": {
-        list: 1,
-        why: "a standalone plugin hook: the harness copies plugins/** out of the checkout, so it cannot import the drivers (check-plugin-standalone.ts)",
+        why: "a standalone plugin hook (check-plugin-standalone.ts): the harness ids and resume argv come from the generated lib/Generated/harness-facts.ts (scripts/gen-harness-plugin.ts); what is left is per-harness behaviour no driver fact describes yet",
     },
     "plugins/genesis-tools/hooks/record-session-account.ts": {
         branch: 6,
-        why: "a standalone plugin hook: the harness copies plugins/** out of the checkout, so it cannot import the drivers (check-plugin-standalone.ts)",
+        why: "a standalone plugin hook (check-plugin-standalone.ts): the harness ids and resume argv come from the generated lib/Generated/harness-facts.ts (scripts/gen-harness-plugin.ts); what is left is per-harness behaviour no driver fact describes yet",
     },
     "plugins/genesis-tools/hooks/record-session-cmux.ts": {
         branch: 2,
-        why: "a standalone plugin hook: the harness copies plugins/** out of the checkout, so it cannot import the drivers (check-plugin-standalone.ts)",
+        why: "a standalone plugin hook (check-plugin-standalone.ts): the harness ids and resume argv come from the generated lib/Generated/harness-facts.ts (scripts/gen-harness-plugin.ts); what is left is per-harness behaviour no driver fact describes yet",
     },
     "plugins/genesis-tools/hooks/track-session-files.ts": {
         branch: 1,
-        why: "a standalone plugin hook: the harness copies plugins/** out of the checkout, so it cannot import the drivers (check-plugin-standalone.ts)",
+        why: "a standalone plugin hook (check-plugin-standalone.ts): the harness ids and resume argv come from the generated lib/Generated/harness-facts.ts (scripts/gen-harness-plugin.ts); what is left is per-harness behaviour no driver fact describes yet",
     },
     "plugins/genesis-tools/lib/agent-process.ts": {
-        list: 1,
         table: 2,
         branch: 1,
-        why: "a standalone plugin hook: the harness copies plugins/** out of the checkout, so it cannot import the drivers (check-plugin-standalone.ts)",
-    },
-    "plugins/genesis-tools/lib/resume-argv.ts": {
-        branch: 2,
-        why: "a standalone plugin hook: the harness copies plugins/** out of the checkout, so it cannot import the drivers (check-plugin-standalone.ts)",
+        why: "a standalone plugin hook (check-plugin-standalone.ts): the harness ids and resume argv come from the generated lib/Generated/harness-facts.ts (scripts/gen-harness-plugin.ts); what is left is per-harness behaviour no driver fact describes yet",
     },
     "scripts/benchmarks/fs/walk-trees.ts": {
         table: 1,
@@ -59,25 +50,9 @@ export const HARNESS_GUARD_ALLOWLIST: Readonly<Record<string, HarnessGuardCounts
         table: 2,
         why: "HOOK_INSTALLERS, the agents tool's one table of hook-file installers (they write settings.json and hooks.json, which the tool owns); Grok runs Claude's hooks and has no entry",
     },
-    "src/agents/lib/hooks/config.ts": {
-        table: 2,
-        why: "the user's per-harness hook config shape (guard, diff and question overrides keyed by HarnessName), read from hooks.json; its defaults come from the drivers' hooks parts",
-    },
     "src/agents/lib/hooks/diff/theme.ts": {
         branch: 1,
         why: "a DiffThemeName: the theme named claude follows Claude Code's own /theme, it is no harness",
-    },
-    "src/agents/lib/hooks/harnesses.ts": {
-        table: 2,
-        why: "the result type of lastSeenPerHarness, keyed by the canonical harness type and filled from HARNESS_NAMES; no fact of its own",
-    },
-    "src/agents/lib/hooks/payload.ts": {
-        table: 1,
-        why: "the declared type of HARNESS_HOOK_FACTS, which byHarness builds from the drivers' hooks parts through harness-hooks.ts",
-    },
-    "src/agents/lib/hooks/sections/diff.ts": {
-        table: 3,
-        why: "the user's per-harness diff overrides in hooks.json (diff.harnesses keyed by HarnessId), moved out of the agents hook config; their defaults come from the drivers' hooks parts",
     },
     "src/ai-proxy/commands/session-use.ts": {
         list: 1,
@@ -106,7 +81,7 @@ export const HARNESS_GUARD_ALLOWLIST: Readonly<Record<string, HarnessGuardCounts
     },
     "src/ai-spend/lib/drivers/index.ts": {
         table: 1,
-        why: "the one tool-owned spend table (SPEND_DRIVERS) that every driver's spend part names: MonitorDriver reads ai-spend's own parsers and pricing",
+        why: "SPEND_DRIVERS, ai-spend's one exhaustive table: each MonitorDriver reads ai-spend's own parsers and pricing (@app code a driver cannot import), so a new harness adds one entry here",
     },
     "src/ai-spend/lib/reports/types.ts": {
         list: 1,
@@ -119,10 +94,10 @@ export const HARNESS_GUARD_ALLOWLIST: Readonly<Record<string, HarnessGuardCounts
     },
     "src/ai/commands/statusline/run.ts": {
         table: 1,
-        why: "the statusline host table (HOST_FEATURES) that the drivers' pending statusline part names: the hot entry imports the Claude feature itself, so a render pays no driver hop",
+        why: "HOST_FEATURES, the statusline host table: only Claude has a statusline, the hot entry imports it itself so a render pays no driver hop; a part comes back with a second host",
     },
     "src/ai/lib/agent-message/delivery.ts": {
-        table: 2,
+        table: 1,
         why: "the one table of the message part: each MessageDriver is this tool's code (peer channel, thread queue, Grok leader), which src/utils cannot import",
     },
     "src/ai/lib/sessions/agent-session-rows.ts": {
@@ -130,8 +105,8 @@ export const HARNESS_GUARD_ALLOWLIST: Readonly<Record<string, HarnessGuardCounts
         why: "ROW_LISTERS, the one tool-owned session-row table: Claude's listing and the cache clocks are the claude tool's (@app/claude/lib/usage/session-rows), which a driver cannot import",
     },
     "src/cmux/lib/session-agents.ts": {
-        table: 2,
-        why: "the one tool-owned cmux table (CmuxAdapter) that every driver's cmux part names: its launch extras need the cmux and grok tools, which @genesiscz/utils cannot import",
+        table: 1,
+        why: "CMUX_AGENTS, cmux's one exhaustive table (CmuxAdapter): its launch extras need the cmux and grok tools, which @genesiscz/utils cannot import",
     },
     "src/genesis-tools-mcp/lib/http-caller.ts": {
         table: 1,
@@ -139,7 +114,7 @@ export const HARNESS_GUARD_ALLOWLIST: Readonly<Record<string, HarnessGuardCounts
     },
     "src/hub/lib/agents/index.ts": {
         table: 1,
-        why: "the one table of the tool-owned subagents part that every driver names this file for: a parent is built from the hub's own agent records and workers",
+        why: "the hub's one exhaustive table of parent builders: a parent is built from the hub's own agent records and workers (@app code)",
     },
     "src/macos/GenesisKit/Sources/GenesisKit/Sessions/ToolCalls/SessionNativeLog.swift": {
         branch: 3,
@@ -155,23 +130,11 @@ export const HARNESS_GUARD_ALLOWLIST: Readonly<Record<string, HarnessGuardCounts
     },
     "src/mcp-manager/utils/harnesses.ts": {
         table: 1,
-        why: "the MCP-client axis (Gemini and Cursor too) of the tool-owned mcp part: each client's stored default config home",
+        why: "the MCP-client axis (Gemini and Cursor too), not the harness set: each client's stored default config home",
     },
     "src/question/lib/decisions/deliver.ts": {
         table: 1,
-        why: "ANSWER_ROUTES, the one table of the tool-owned answer part that every driver names (src/question owns the delivery ladder; @genesiscz/utils cannot import it)",
-    },
-    "src/utils/agent-sessions/readers/codex-import.ts": {
-        branch: 1,
-        why: "the Codex importer's own precondition, in the Codex reader files beside the other readers: another harness's session is refused",
-    },
-    "src/utils/agent-sessions/search.ts": {
-        table: 1,
-        why: "the SearchAdapters map type, filled from the canonical list (SEARCH_PROVIDERS); it holds no fact per harness",
-    },
-    "src/utils/agents/dialogs/hook-config.ts": {
-        table: 1,
-        why: "the user's per-harness questions switch in hooks.json (QuestionsConfig.harnesses keyed by HarnessId), moved out of the agents hook config; which harness the hooks reach is the drivers' runsClaudeSettingsHooks",
+        why: "ANSWER_ROUTES, the question tool's one exhaustive table (src/question owns the delivery ladder; @genesiscz/utils cannot import it)",
     },
     "src/utils/cli/failures/caller.ts": {
         table: 1,
@@ -182,7 +145,7 @@ export const HARNESS_GUARD_ALLOWLIST: Readonly<Record<string, HarnessGuardCounts
         why: "a false positive: the env accessor object has get/has/isFlag members, not harness names",
     },
     "src/utils/providers/session-paths.ts": {
-        table: 2,
+        table: 1,
         why: "the native-home lint owner: the home folder names may appear only here, so the per-harness NativeHomeLayout objects and their exhaustive table stay in this file",
     },
     "src/utils/rm/approval.ts": {
@@ -192,9 +155,5 @@ export const HARNESS_GUARD_ALLOWLIST: Readonly<Record<string, HarnessGuardCounts
     "src/utils/rm/aside.ts": {
         table: 1,
         why: "keyed by the runtime agent of the caller (claude-code, codex, grok, copilot), a wider set than the harnesses",
-    },
-    "src/utils/worker/capabilities.ts": {
-        table: 1,
-        why: "the declared type of WORKER_CAPABILITIES, which byHarness builds from the drivers' worker parts",
     },
 };

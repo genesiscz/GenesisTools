@@ -1,7 +1,11 @@
 import { existsSync, readdirSync } from "node:fs";
 import { homedir } from "node:os";
 import { join, resolve } from "node:path";
-import { ACCOUNT_PROVIDER_ALIASES, type AccountProviderAlias } from "@genesiscz/utils/ai/providers/alias-list";
+import {
+    ACCOUNT_PROVIDER_ALIASES,
+    type AccountProviderAlias,
+    type PerHarness,
+} from "@genesiscz/utils/ai/providers/alias-list";
 import { env } from "@genesiscz/utils/env";
 import { defaultWorkerHome } from "@genesiscz/utils/grok/worker-paths";
 
@@ -136,7 +140,7 @@ const NATIVE_LAYOUTS = {
     claude: claudeLayout,
     codex: codexLayout,
     grok: grokLayout,
-} satisfies Record<NativeSessionProvider, NativeHomeLayout>;
+} satisfies PerHarness<NativeHomeLayout>;
 
 /**
  * The agent's folder under a user's home, `~/.claude`, `~/.codex` or `~/.grok`, whatever `CLAUDE_CONFIG_DIR`,

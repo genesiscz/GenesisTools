@@ -1,6 +1,7 @@
 import { closeSync, openSync, readSync, statSync } from "node:fs";
+import type { SomeHarnesses } from "@genesiscz/utils/ai/providers/alias-list";
 import { SafeJSON } from "@genesiscz/utils/json";
-import { HARNESS_NAMES, type HarnessName } from "./config";
+import { HARNESS_NAMES } from "./config";
 
 /** How much of each log generation `doctor` reads from the end. */
 const TAIL_BYTES = 4_000_000;
@@ -33,8 +34,8 @@ function tailOf(path: string, bytes: number): string {
  * a harness whose config looks right but that never shows up here is not running the hooks. The result is keyed by
  * the canonical harness type and filled from HARNESS_NAMES; it holds no harness fact of its own.
  */
-export function lastSeenPerHarness(logPath: string): Partial<Record<HarnessName, string>> {
-    const seen: Partial<Record<HarnessName, string>> = {};
+export function lastSeenPerHarness(logPath: string): SomeHarnesses<string> {
+    const seen: SomeHarnesses<string> = {};
 
     for (const path of [logPath, `${logPath}.1`]) {
         if (HARNESS_NAMES.every((harness) => seen[harness])) {

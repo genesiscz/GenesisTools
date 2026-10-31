@@ -11,7 +11,9 @@
  * file: a hook script cannot import `@genesiscz/utils`, but it can import a sibling.
  */
 
-export type Harness = "claude" | "codex" | "grok";
+import type { Harness } from "../lib/Generated/harness-facts";
+
+export type { Harness };
 
 export interface SessionStartPayload {
     transcript_path?: string;

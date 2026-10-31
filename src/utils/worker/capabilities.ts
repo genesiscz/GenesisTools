@@ -7,7 +7,7 @@
  * a missing capability is declared, never emulated or silently degraded.
  */
 
-import { type AccountProviderAlias, byHarness } from "@genesiscz/utils/ai/providers/alias-list";
+import { type AccountProviderAlias, byHarness, type PerHarness } from "@genesiscz/utils/ai/providers/alias-list";
 import { harnessDriver } from "@genesiscz/utils/ai/providers/harness-index";
 
 export type WorkerBackend = AccountProviderAlias;
@@ -64,6 +64,6 @@ export function accountPinRefusal(backend: WorkerBackend, account: string): stri
 }
 
 /** Each harness's worker capabilities, read from its driver's `worker` part (plugins/<plugin>/harness-worker.ts). */
-export const WORKER_CAPABILITIES: Readonly<Record<WorkerBackend, WorkerCapabilities>> = byHarness(
+export const WORKER_CAPABILITIES: Readonly<PerHarness<WorkerCapabilities>> = byHarness(
     (id) => harnessDriver(id).parts.worker
 );

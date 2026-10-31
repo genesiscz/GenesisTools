@@ -37,9 +37,9 @@ const REPO = join(import.meta.dirname, "..", "..");
 const BASE = process.env.HARNESS_EXTENSIBILITY_DIR ?? join(tmpdir(), "harness-extensibility");
 const WORKTREE = join(BASE, "wt");
 
-/** Files a new harness is meant to touch: the drivers, the canonical list, the light doors, tests, generated code. */
+/** Files a new harness is meant to touch: the drivers, its reader files, the canonical list, the light doors, tests, generated code. */
 const EXPECTED_OWNERS =
-    /^(?:src\/utils\/harness\/|src\/utils\/ai\/providers\/(?:plugins\/|alias-list\.ts$|harness-index\.ts$|harness-hooks\.ts$))|\.test\.tsx?$|(?:^|\/)(?:testing|fixtures?)\//;
+    /^(?:src\/utils\/harness\/|src\/utils\/agent-sessions\/readers\/|src\/utils\/ai\/providers\/(?:plugins\/|alias-list\.ts$|harness-index\.ts$|harness-hooks\.ts$))|\.test\.tsx?$|(?:^|\/)(?:testing|fixtures?)\//;
 
 function run(command: string[], cwd: string): { status: number; out: string } {
     const proc = Bun.spawnSync(command, { cwd, stdout: "pipe", stderr: "pipe" });

@@ -1,4 +1,4 @@
-import { byHarness, isAccountProviderAlias } from "@genesiscz/utils/ai/providers/alias-list";
+import { byHarness, isAccountProviderAlias, type PerHarness } from "@genesiscz/utils/ai/providers/alias-list";
 import { harnessHooks } from "@genesiscz/utils/ai/providers/harness-hooks";
 import type { HookFacts } from "@genesiscz/utils/harness/parts";
 import { SafeJSON } from "@genesiscz/utils/json";
@@ -41,7 +41,7 @@ export interface HookPayload {
 export type HarnessHookFacts = HookFacts;
 
 /** Each harness's hook facts, read through the light `harness-hooks.ts` door, which loads no driver. */
-export const HARNESS_HOOK_FACTS: Readonly<Record<HarnessName, HarnessHookFacts>> = byHarness(harnessHooks);
+export const HARNESS_HOOK_FACTS: Readonly<PerHarness<HarnessHookFacts>> = byHarness(harnessHooks);
 
 /** The facts of a harness named by a stored string (a diff-log row); undefined for a name no harness has. */
 export function harnessHookFacts(name: string): HarnessHookFacts | undefined {

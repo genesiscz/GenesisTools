@@ -1,4 +1,4 @@
-import { ACCOUNT_PROVIDER_ALIASES } from "@genesiscz/utils/ai/providers/alias-list";
+import { ACCOUNT_PROVIDER_ALIASES, type SomeHarnesses } from "@genesiscz/utils/ai/providers/alias-list";
 import { logger } from "@genesiscz/utils/logger";
 import { snippetAround } from "@genesiscz/utils/string";
 import { createNativeHistoryAdapter } from "./native-adapter";
@@ -67,7 +67,7 @@ export interface SessionSearchResult {
 }
 
 /** Harness-guard: an injectable map type, filled from the canonical list below; it holds no fact per harness. */
-export type SearchAdapters = Partial<Record<SearchProvider, () => AgentSessionAdapter<string>>>;
+export type SearchAdapters = SomeHarnesses<() => AgentSessionAdapter<string>>;
 
 /** Every harness's own history adapter, the one behind `tools <provider> history`, resolved through its plugin. */
 export const realSearchAdapters: SearchAdapters = Object.fromEntries(

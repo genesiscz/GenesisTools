@@ -1,19 +1,12 @@
-import type { Harness } from "../hooks/harness";
+import { type Harness, RESUME_ARGV } from "./Generated/harness-facts";
 
 /**
  * The command that resumes a session in a terminal, as `resumeArgv` in src/utils/agent-sessions/resume-argv.ts
- * builds it for an account (a plugin file cannot import that module). resume-argv.test.ts holds the two equal.
+ * builds it for an account (a plugin file cannot import that module, so the drivers' recipes are generated into
+ * `Generated/harness-facts.ts` by `scripts/gen-harness-plugin.ts`). resume-argv.test.ts holds the two equal.
  */
 export function resumeArgv(harness: Harness, sessionId: string, account?: string | null): string[] {
-    if (harness === "grok") {
-        return account ? ["tools", "grok", "run", account, "--", "-r", sessionId] : ["grok", "-r", sessionId];
-    }
-
-    if (harness === "codex") {
-        return account ? ["tools", "codex", "run", account, "--", "resume", sessionId] : ["codex", "resume", sessionId];
-    }
-
-    return account
-        ? ["tools", "claude", "start", account, "--", "--resume", sessionId]
-        : ["claude", "--resume", sessionId];
+    const recipe = RESUME_ARGV[harness];
+    const words = account ? recipe.account : recipe.plain;
+    return words.map((word) => (word === "{session}" ? sessionId : word === "{account}" ? (account ?? "") : word));
 }

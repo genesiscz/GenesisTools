@@ -1,8 +1,7 @@
 import { basename } from "node:path";
-import type { Harness } from "../hooks/harness";
+import { HARNESS_IDS, type Harness } from "./Generated/harness-facts";
 import { readProcessBasics } from "./process-basics";
 
-const HARNESSES: readonly Harness[] = ["claude", "codex", "grok"];
 const MAX_ANCESTORS = 12;
 
 /** The agent process a hook belongs to. */
@@ -20,7 +19,7 @@ export interface FoundAgent extends AgentProcess {
 
 /** Accept only supported coding-agent harness names at untrusted input boundaries. */
 export function harnessNamed(value: unknown): Harness | null {
-    return HARNESSES.find((harness) => harness === value) ?? null;
+    return HARNESS_IDS.find((harness) => harness === value) ?? null;
 }
 
 /** Identify a coding agent from its executable or Node CLI script, including versioned binary names. */

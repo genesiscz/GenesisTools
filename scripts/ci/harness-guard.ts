@@ -74,9 +74,12 @@ export const HARNESS_TYPE_NAMES: ReadonlySet<string> = new Set([
  */
 export const HARNESS_GUARD_STRICT = true;
 
-/** The drivers and the canonical list own the names; tests and fixtures spell them on purpose. */
+/**
+ * The drivers, the canonical list and each harness's reader files (`src/utils/agent-sessions/readers/<harness>-*.ts`,
+ * the one owner of its session files) own the names; tests and fixtures spell them on purpose.
+ */
 const OWNERS =
-    /^(?:src\/utils\/harness\/|src\/utils\/ai\/providers\/(?:plugins\/|alias-list\.ts$|harness-index\.ts$|harness-hooks\.ts$)|scripts\/ci\/harness-guard)/;
+    /^(?:src\/utils\/harness\/|src\/utils\/agent-sessions\/readers\/|src\/utils\/ai\/providers\/(?:plugins\/|alias-list\.ts$|harness-index\.ts$|harness-hooks\.ts$)|scripts\/ci\/harness-guard)/;
 const TESTS = /\.test\.tsx?$|(?:^|\/)__tests__\/|(?:^|\/)(?:testing|fixtures?|Tests)\/|\/Generated\//;
 const TS_SCOPE = /^(?:src|scripts|plugins)\/.*\.tsx?$/;
 const SWIFT_SCOPE = /^src\/macos\/.*\/Sources\/.*\.swift$/;

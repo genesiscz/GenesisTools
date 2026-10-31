@@ -1,6 +1,7 @@
 import { NoSessionMatchError, resolveSessionTranscript } from "@app/ai/lib/sessions/resolve-transcript";
 import { type LiveAgentSurface, matchLiveAgentSurfaces } from "@app/cmux/lib/session-adopt";
 import { agentsOnTtyNow, liveAgentSurfacesNow, tmuxPaneStillShownNow } from "@app/cmux/lib/session-close-live";
+import type { PerHarness } from "@genesiscz/utils/ai/providers/alias-list";
 import type { TurnProvider } from "@genesiscz/utils/ai/transcripts/turn-state";
 import {
     attestingSender,
@@ -488,7 +489,7 @@ export async function pasteIntoSurface(input: {
  * The one table of the message part: each driver is this tool's code (Claude's peer channel, the Codex thread queue,
  * Grok's leader), which the harness drivers in `src/utils` cannot import (harness guard).
  */
-const MESSAGE_DRIVERS: Record<TurnProvider, () => MessageDriver> = {
+const MESSAGE_DRIVERS: PerHarness<() => MessageDriver> = {
     claude: claudeMessageDriver,
     codex: codexMessageDriver,
     grok: grokMessageDriver,

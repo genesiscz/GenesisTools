@@ -1,7 +1,7 @@
 import { isAgentLauncher } from "@app/cmux/lib/launchers";
 import { grokLeaderSocket } from "@app/grok/lib/leader";
 import type { AccountEntry } from "@genesiscz/utils/ai/config/schema";
-import { ACCOUNT_PROVIDER_ALIASES } from "@genesiscz/utils/ai/providers/alias-list";
+import { ACCOUNT_PROVIDER_ALIASES, type PerHarness } from "@genesiscz/utils/ai/providers/alias-list";
 import { harnessDriver, harnessPluginId } from "@genesiscz/utils/ai/providers/harness-index";
 import { toolsEntrypoint } from "@genesiscz/utils/cli/tools";
 import { shellWords } from "@genesiscz/utils/session-changes/words";
@@ -95,7 +95,7 @@ const GROK_TRUST_PROMPT: TrustPrompt = {
  * cmux and grok tools, which `@genesiscz/utils` cannot import. Claude and Codex start without a trust prompt that
  * this restore recognises.
  */
-const CMUX_AGENTS: Record<SessionAgentId, CmuxAdapter> = {
+const CMUX_AGENTS: PerHarness<CmuxAdapter> = {
     claude: { crossMessages: true, launchExtras: null, stripTitle: stripClaudeGlyph, trustPrompt: null },
     codex: { crossMessages: false, launchExtras: null, stripTitle: stripCodexSuffix, trustPrompt: null },
     grok: {

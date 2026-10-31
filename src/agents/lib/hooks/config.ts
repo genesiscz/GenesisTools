@@ -8,7 +8,7 @@ import {
     hooksConfigPath,
     readStoredHooksConfig,
 } from "@genesiscz/utils/agents/hooks/config-section";
-import { ACCOUNT_PROVIDER_ALIASES } from "@genesiscz/utils/ai/providers/alias-list";
+import { ACCOUNT_PROVIDER_ALIASES, type SomeHarnesses } from "@genesiscz/utils/ai/providers/alias-list";
 import type { HarnessId } from "@genesiscz/utils/harness/types";
 import { toolDataDir } from "@genesiscz/utils/storage/root";
 import type { DiffCategory } from "./diff/classify";
@@ -194,7 +194,7 @@ export interface DiffConfig {
      * A diff is only worth rendering where the harness will actually SHOW it, and that is a
      * property of the harness, not of the repository or the command.
      */
-    harnesses: Partial<Record<HarnessName, DiffOverrides>>;
+    harnesses: SomeHarnesses<DiffOverrides>;
 }
 
 /** What one harness may override. Anything absent falls through to the shared `diff` block. */
@@ -215,7 +215,7 @@ export function diffFor(config: HooksConfig, harness: HarnessName | undefined): 
 export interface GuardConfig {
     enabled: boolean;
     default: Record<string, HookOutcome>;
-    harnesses: Partial<Record<HarnessName, Record<string, HookOutcome>>>;
+    harnesses: SomeHarnesses<Record<string, HookOutcome>>;
     models: Record<string, Record<string, HookOutcome>>;
     longCommand: { lines: number; chars: number };
     /** Context notes shown per rule per session before the rule goes quiet. */

@@ -11,7 +11,7 @@ import {
     megabytesOr,
     storedPart,
 } from "@genesiscz/utils/agents/hooks/config-section";
-import { ACCOUNT_PROVIDER_ALIASES, byHarnessWhere } from "@genesiscz/utils/ai/providers/alias-list";
+import { ACCOUNT_PROVIDER_ALIASES, byHarnessWhere, type SomeHarnesses } from "@genesiscz/utils/ai/providers/alias-list";
 import { harnessHooks } from "@genesiscz/utils/ai/providers/harness-hooks";
 import type { HarnessId } from "@genesiscz/utils/harness/types";
 import { SafeJSON } from "@genesiscz/utils/json";
@@ -190,10 +190,10 @@ function othersSummaryOr(value: unknown, fallback: DiffConfig["othersSummary"]):
 
 /** One entry per harness, each merged over the shipped one rather than replacing it. */
 function mergedHarnesses(
-    stored: Partial<Record<HarnessId, DiffOverrides>> | undefined,
+    stored: SomeHarnesses<DiffOverrides> | undefined,
     problems: string[]
-): Partial<Record<HarnessId, DiffOverrides>> {
-    const merged: Partial<Record<HarnessId, DiffOverrides>> = { ...DEFAULT_DIFF.harnesses };
+): SomeHarnesses<DiffOverrides> {
+    const merged: SomeHarnesses<DiffOverrides> = { ...DEFAULT_DIFF.harnesses };
 
     for (const harness of ACCOUNT_PROVIDER_ALIASES) {
         const override = stored?.[harness];

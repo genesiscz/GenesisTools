@@ -25,6 +25,15 @@ export function byHarness<T>(pick: (id: AccountProviderAlias) => T): Readonly<Re
     return { claude: pick("claude"), codex: pick("codex"), grok: pick("grok") };
 }
 
+/**
+ * A value for every harness: the type of a table `byHarness` builds, or a stored shape keyed by harness. A mapped type
+ * over the alias list, so a file that uses it names no harness and a new harness edits nothing there.
+ */
+export type PerHarness<T> = Record<AccountProviderAlias, T>;
+
+/** A value for some harnesses: a stored override map or a table `byHarnessWhere` builds. */
+export type SomeHarnesses<T> = Partial<Record<AccountProviderAlias, T>>;
+
 /** A table with an entry only for the harnesses `pick` answers for (undefined leaves the harness out). */
 export function byHarnessWhere<T>(
     pick: (id: AccountProviderAlias) => T | undefined

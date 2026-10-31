@@ -6,7 +6,7 @@ import {
     loadHookConfigSection,
     partOf,
 } from "@genesiscz/utils/agents/hooks/config-section";
-import { ACCOUNT_PROVIDER_ALIASES, byHarness } from "@genesiscz/utils/ai/providers/alias-list";
+import { ACCOUNT_PROVIDER_ALIASES, byHarness, type PerHarness } from "@genesiscz/utils/ai/providers/alias-list";
 import { harnessHooks } from "@genesiscz/utils/ai/providers/harness-hooks";
 import type { HarnessId } from "@genesiscz/utils/harness/types";
 import pc from "picocolors";
@@ -23,7 +23,7 @@ import pc from "picocolors";
  * through the hub watcher only, since its hooks reach shell calls alone.
  */
 export interface QuestionsConfig {
-    harnesses: Record<HarnessId, boolean>;
+    harnesses: PerHarness<boolean>;
     /** A banner when the hub watcher sees a newly recorded question that waits for the user. */
     notify: boolean;
 }
