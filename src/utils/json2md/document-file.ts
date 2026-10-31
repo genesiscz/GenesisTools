@@ -14,13 +14,13 @@ import { resolveIncludes } from "@genesiscz/utils/markdown/includes";
 import { hasTransclusionTokens, type TransclusionRegistry } from "@genesiscz/utils/transclude";
 import TOML from "@iarna/toml";
 import { Json2mdError } from "./errors";
-import { carryFrontmatterKeys, yamlFrontmatterKeys } from "./frontmatter";
+import { carryFrontmatterKeys } from "./frontmatter";
 import { type DocumentOptions, json2md } from "./index";
 import {
     type CheckResult,
     checkMarkdown,
     hashData,
-    hashText,
+    legacyOwnedKeys,
     ownedFrontmatterKeys,
     stampMarkdown,
     stripStamp,
@@ -260,15 +260,14 @@ function hintsOf(hints: DocumentHints): DocumentHints {
     };
 }
 
-export type WriteOutcome = "written" | "unchanged" | "refused";
+/** `would-write`: a dry run that skipped a write the real run would make. */
+export type WriteOutcome = "written" | "would-write" | "unchanged" | "refused";
 
 export interface WriteResult extends BuildResult {
     outcome: WriteOutcome;
     check: CheckResult | null;
     /** Front matter keys kept from the file this build replaced, because another tool wrote them. */
     carried: string[];
-    /** A clean dry run would still write because mergeFrontmatter is disabled. */
-    wouldWrite?: boolean;
 }
 
 export interface WriteOptions extends DocumentHints {
@@ -304,7 +303,7 @@ export async function writeDocument<T>(
             await Bun.write(built.outPath, built.markdown);
         }
 
-        return { ...built, outcome: options.dryRun ? "unchanged" : "written", check: null, carried: [] };
+        return { ...built, outcome: options.dryRun ? "would-write" : "written", check: null, carried: [] };
     }
 
     const current = await existing.text();
@@ -326,10 +325,9 @@ export async function writeDocument<T>(
 
         return {
             ...pinned,
-            outcome: removeExtras && !options.dryRun ? "written" : "unchanged",
+            outcome: !removeExtras ? "unchanged" : options.dryRun ? "would-write" : "written",
             check,
             carried: [],
-            ...(removeExtras && options.dryRun ? { wouldWrite: true } : {}),
         };
     }
 
@@ -341,13 +339,8 @@ export async function writeDocument<T>(
     }
 
     const fresh = await buildDocument(modulePath, definition, hintsOf(options));
-    // A matching legacy full-body hash proves every existing key belonged to the generator.
-    const oldBody = stripStamp(current).body;
-    const legacyKeys =
-        check.stamp && check.stamp.frontmatter === undefined && hashText(oldBody) === check.stamp.content
-            ? yamlFrontmatterKeys(oldBody)
-            : null;
-    const owned = legacyKeys ? new Set(legacyKeys) : (ownedFrontmatterKeys(check.stamp, pinned.markdown) ?? new Set());
+    const legacy = check.stamp ? legacyOwnedKeys(check.stamp, stripStamp(current).body) : null;
+    const owned = legacy ?? ownedFrontmatterKeys(check.stamp, pinned.markdown) ?? new Set<string>();
     // The previous ownership set prevents removed generator keys from being carried back.
     const { markdown, carried } =
         options.mergeFrontmatter === false
@@ -358,7 +351,7 @@ export async function writeDocument<T>(
         await Bun.write(fresh.outPath, markdown);
     }
 
-    return { ...fresh, markdown, outcome: options.dryRun ? "unchanged" : "written", check, carried };
+    return { ...fresh, markdown, outcome: options.dryRun ? "would-write" : "written", check, carried };
 }
 
 export interface DocumentCheck extends CheckResult {

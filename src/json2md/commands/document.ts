@@ -216,12 +216,7 @@ function registerBuild(program: Command, env: DocumentEnvironment): void {
                     continue;
                 }
 
-                // A dry run reports `unchanged` even when the file would be written.
-                if (
-                    flags.dryRun &&
-                    result.outcome === "unchanged" &&
-                    (result.wouldWrite || result.check?.verdict !== "clean")
-                ) {
+                if (result.outcome === "would-write") {
                     out.log.info(
                         `${shortPath(result.outPath)} would be written from ${shortPath(result.dataPath)} (dry run).`
                     );
