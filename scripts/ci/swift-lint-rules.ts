@@ -578,7 +578,52 @@ const FORMATTER_IN_VIEW_RULE: SwiftStructRule = {
         "views not converted yet.",
 };
 
-const ROW_OBSERVES = /@ObservedObject\b|@EnvironmentObject\b|@StateObject\b|\b[A-Z]\w*\.shared\b/;
+/**
+ * A store a row holds or reads. `X.shared` counts (an `@Observable` store tracks every read in a body), but not the
+ * system singletons (`NSWorkspace.shared`, `URLSession.shared`): they publish nothing a body could follow, and a
+ * click action such as "Reveal in Finder" calls them.
+ */
+const ROW_OBSERVES =
+    /@ObservedObject\b|@EnvironmentObject\b|@StateObject\b|\b(?!NS[A-Z]|URLSession\b)[A-Z]\w*\.shared\b/;
+const STATIC_INITIALIZER = /\bstatic\s+(?:let|var)\b[^=]*=\s*\{/;
+
+/**
+ * The lines inside a `static let x: T = { ... }()` closure (offsets into `lines`): what is made there is made once, so
+ * `let formatter = DateFormatter()` inside it is the fix the formatter rule asks for, not a violation.
+ */
+function staticInitializerLines(lines: string[]): Set<number> {
+    const inside = new Set<number>();
+    let depth = 0;
+    let closesAt: number | null = null;
+
+    for (const [offset, line] of lines.entries()) {
+        const opens = STATIC_INITIALIZER.test(line) && closesAt === null;
+        const before = depth;
+
+        for (const char of line) {
+            if (char === "{") {
+                depth += 1;
+            } else if (char === "}") {
+                depth -= 1;
+            }
+        }
+
+        if (opens) {
+            closesAt = before;
+        }
+
+        if (closesAt !== null) {
+            inside.add(offset);
+
+            if (depth <= closesAt) {
+                closesAt = null;
+            }
+        }
+    }
+
+    return inside;
+}
+
 const MAKES_FORMATTER =
     /\b(?:DateFormatter|NumberFormatter|ISO8601DateFormatter|RelativeDateTimeFormatter|ByteCountFormatter|DateComponentsFormatter|MeasurementFormatter|NSRegularExpression)\s*\(|\btry[!?]?\s+Regex\s*\(/;
 
@@ -682,10 +727,12 @@ export function checkSwiftRowRules(
         }
 
         if (!(ratchets && SWIFT_FORMATTER_IN_VIEW_RATCHET.has(key))) {
+            const once = staticInitializerLines(own);
+
             for (const [offset, line] of own.entries()) {
                 const column = line.search(MAKES_FORMATTER);
 
-                if (column !== -1 && !/\bstatic\b/.test(line)) {
+                if (column !== -1 && !/\bstatic\b/.test(line) && !once.has(offset)) {
                     push(FORMATTER_IN_VIEW_RULE, struct.start + offset, column, struct.name);
                 }
             }

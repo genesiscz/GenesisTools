@@ -344,6 +344,13 @@ describe("swift row gates (what a row a ForEach makes may not carry)", () => {
         expect(swiftRules(listOf(row.replace("@ObservedObject var store: ItemStore", "let selected: Bool")))).toEqual(
             []
         );
+        const reveal = row.replace(
+            "var body: some View { Text(item.title) }",
+            "var body: some View { Text(item.title).onTapGesture { NSWorkspace.shared.open(item.url) } }"
+        );
+        expect(
+            swiftRules(listOf(reveal.replace("@ObservedObject var store: ItemStore", "let selected: Bool")))
+        ).toEqual([]);
         expect(
             swiftRules(
                 listOf(
@@ -433,6 +440,21 @@ describe("swift row gates (what a row a ForEach makes may not carry)", () => {
             swiftRules(view('private var regex: NSRegularExpression? { try? NSRegularExpression(pattern: "x") }'))
         ).toEqual(["swift-formatter-in-view"]);
         expect(swiftRules("enum Stamps {\n    static func make() -> DateFormatter { DateFormatter() }\n}")).toEqual([]);
+        const once = [
+            "struct StampLabel: View {",
+            "    let date: Date",
+            "    private static let formatter: DateFormatter = {",
+            "        let formatter = DateFormatter()",
+            '        formatter.dateFormat = "HH:mm"',
+            "        return formatter",
+            "    }()",
+            "    var body: some View { Text(Self.formatter.string(from: date)) }",
+            "    var other: DateFormatter { DateFormatter() }",
+            "}",
+        ].join("\n");
+        expect(checkSwiftSource("Sources/Example.swift", once)).toMatchObject([
+            { rule: "swift-formatter-in-view", line: 9, subject: "StampLabel" },
+        ]);
     });
 });
 
