@@ -1850,7 +1850,7 @@ function renderNote(threadId: string, note: LiveNote, busy: boolean, reply = fal
                 {
                     label: "Save draft",
                     title: "Replace the draft's text; it stays a draft",
-                    primary: true,
+                    look: "primary",
                     send: (body) => threadAction(threadId, "note.update", { noteId: note.id, body }),
                 },
             ])
@@ -1891,20 +1891,19 @@ function renderReplyBox(threadId: string): HTMLElement {
             {
                 label: "Stage for agent",
                 title: "Send this to the review's agent with the thread: it can change its suggested reply or make the fix",
-                primary: false,
-                tone: "agent",
+                look: "agent",
                 send: (body) => threadAction(threadId, "stage", { body }),
             },
             {
                 label: "Post…",
                 title: "Publish the reply at once, visible to everyone (asks first)",
-                primary: false,
+                look: "plain",
                 send: (body) => threadAction(threadId, "reply", { draft: false, body }),
             },
             {
                 label: "Save as draft",
                 title: "A draft in your pending review; Submit review publishes it (⌘↩)",
-                primary: true,
+                look: "primary",
                 send: (body) => threadAction(threadId, "reply", { draft: true, body }),
             },
         ])
@@ -1915,9 +1914,8 @@ function renderReplyBox(threadId: string): HTMLElement {
 interface BoxButton {
     label: string;
     title: string;
-    primary: boolean;
-    /** "agent": the blue of the agent's own controls, beside the orange PR actions. */
-    tone?: "agent";
+    /** "primary" is the send ⌘↩ runs; "agent" is the blue of the agent's own controls, beside the orange PR actions. */
+    look: "plain" | "primary" | "agent";
     send: (body: string) => void;
 }
 
@@ -1955,7 +1953,7 @@ function renderBox(threadId: string, box: ThreadBox, sends: BoxButton[]): HTMLEl
 
         if (event.key === "Enter" && event.metaKey) {
             event.preventDefault();
-            const primary = sends.find((candidate) => candidate.primary);
+            const primary = sends.find((candidate) => candidate.look === "primary");
 
             if (primary) {
                 run(primary);
@@ -1977,8 +1975,9 @@ function renderBox(threadId: string, box: ThreadBox, sends: BoxButton[]): HTMLEl
     actions.appendChild(cancelButton);
 
     for (const send of sends) {
-        const node = button(send.label, () => run(send), send.primary, send.title);
-        if (send.tone === "agent") {
+        const node = button(send.label, () => run(send), send.look === "primary", send.title);
+
+        if (send.look === "agent") {
             node.style.cssText = css.agent;
         }
         node.disabled = box.sending;
