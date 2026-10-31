@@ -161,6 +161,7 @@ final class HubInboxUXTests: XCTestCase {
         let legacy = try Self.decision(#"{"id":"dialog-2","kind":"decision","source":"dialog"}"#)
         let decision = try Self.decision(#"{"id":"d_1_s1"}"#)
         let session = Self.session("s1", items: [dialog, legacy, decision])
+        inbox.selectedID = session.id
         XCTAssertTrue(dialog.isDialog)
         XCTAssertTrue(legacy.isDialog)
         XCTAssertEqual(inbox.keyCard(in: [session])?.item.id, decision.id)
