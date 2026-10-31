@@ -4,7 +4,13 @@ import { tmpdir } from "node:os";
 import { join } from "node:path";
 import { env } from "@genesiscz/utils/env";
 import { persistentFixture } from "@genesiscz/utils/test/persistent-fixture";
-import { type CommandRunner, generateCompletions, looksLikeZshCompletion, versionChanged } from "./generate";
+import {
+    type CommandRunner,
+    commandOutputOf,
+    generateCompletions,
+    looksLikeZshCompletion,
+    versionChanged,
+} from "./generate";
 import { COMPLETION_PROVIDERS, type CompletionProvider, getCompletionProvider } from "./providers";
 import { publishInstall } from "./publish";
 import {
@@ -231,6 +237,23 @@ describe("planCompletions", () => {
         const partial = restoreHandBlocks(edited, records);
         expect(partial.missing.map((record) => record.original[0])).toEqual(["eval #compdef glow"]);
         expect(partial.text).toContain("# edited by alice");
+    });
+});
+
+describe("commandOutputOf", () => {
+    it("fails a run with an error even when the leader exited 0, and keeps a clean exit 0", () => {
+        const overrun = commandOutputOf({
+            status: 0,
+            signal: null,
+            stdout: "#compdef cut-off",
+            stderr: "",
+            error: Object.assign(new Error("Command stdout exceeded its byte budget."), { code: "ENOBUFS" }),
+        });
+
+        expect(overrun.exitCode).toBe(1);
+        expect(overrun.stderr).toContain("byte budget");
+        expect(commandOutputOf({ status: 0, signal: null, stdout: "ok", stderr: "" }).exitCode).toBe(0);
+        expect(commandOutputOf({ status: 3, signal: null, stdout: "", stderr: "" }).exitCode).toBe(3);
     });
 });
 

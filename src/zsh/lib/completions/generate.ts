@@ -1,6 +1,6 @@
 import { env } from "@genesiscz/utils/env";
 import { logger } from "@genesiscz/utils/logger";
-import { boundedCommand } from "@genesiscz/utils/process/bounded-command";
+import { type BoundedCommandResult, boundedCommand } from "@genesiscz/utils/process/bounded-command";
 import { atomicWriteFileSync, readFileIfExistsSync } from "@genesiscz/utils/storage/atomic-file";
 import type { CompletionProvider } from "./providers";
 import { completionFilePath } from "./rc-block";
@@ -28,18 +28,32 @@ export type CommandRunner = (argv: readonly string[], options: RunOptions) => Pr
 /** Finds a command on PATH; injected in tests. */
 export type CommandLocator = (cli: string) => string | null;
 
+/**
+ * A bounded run as a command's output. An error is a failure even when the leader exited 0: a descendant that kept
+ * stdout open can overrun the byte budget (ENOBUFS) after it, and its stdout is then cut short.
+ */
+export function commandOutputOf(result: BoundedCommandResult): CommandOutput {
+    const timedOut = result.error?.code === "ETIMEDOUT";
+    const exitCode = result.error && !result.status ? 1 : (result.status ?? 1);
+    const stderr = result.error && !timedOut ? `${result.stderr}${result.error.message}` : result.stderr;
+
+    return { exitCode, stdout: result.stdout, stderr, timedOut };
+}
+
 export const runCommand: CommandRunner = async (argv, options) => {
     logger.debug({ argv, timeoutMs: options.timeoutMs }, "zsh completions: running");
-    const result = await boundedCommand({
-        command: [...argv],
-        timeoutMs: options.timeoutMs,
-        environment: options.env ? { ...env.getProcessEnv(), ...options.env } : undefined,
-    });
-    const timedOut = result.error?.code === "ETIMEDOUT";
-    const exitCode = result.status ?? 1;
-    const stderr = result.error && !timedOut ? `${result.stderr}${result.error.message}` : result.stderr;
-    logger.debug({ argv, exitCode, timedOut, bytes: result.stdout.length }, "zsh completions: finished");
-    return { exitCode, stdout: result.stdout, stderr, timedOut };
+    const output = commandOutputOf(
+        await boundedCommand({
+            command: [...argv],
+            timeoutMs: options.timeoutMs,
+            environment: options.env ? { ...env.getProcessEnv(), ...options.env } : undefined,
+        })
+    );
+    logger.debug(
+        { argv, exitCode: output.exitCode, timedOut: output.timedOut, bytes: output.stdout.length },
+        "zsh completions: finished"
+    );
+    return output;
 };
 
 export const locateCommand: CommandLocator = (cli) => Bun.which(cli);
