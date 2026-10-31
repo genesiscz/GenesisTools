@@ -141,7 +141,8 @@ function isolateCodexModelsCache(): void {
  * The native agent homes (`CLAUDE_CONFIG_DIR`, `GROK_HOME`) live outside `~/.genesis-tools` too. Decision delivery
  * reads the live Claude receivers from `<claude home>/sessions` and asks the Grok leader on `<grok home>/leader.sock`,
  * so a test that did not script them read this Mac's real peer registry, or connected to the real Grok leader. Each
- * variable points at an empty folder unless the run already set it; a test that needs a home passes its own.
+ * variable points at a fresh empty folder, also when the run inherited one: an agent session that runs the suite
+ * often carries its own real `CLAUDE_CONFIG_DIR`. A test that needs a home sets its own inside the test.
  */
 function isolateNativeHomes(): void {
     if (env.test.allowsRealHome()) {
@@ -150,7 +151,7 @@ function isolateNativeHomes(): void {
 
     const sandboxed = (kind: NativeSessionProvider): [string, string] => {
         const name = nativeHomeOverrideVariable(kind);
-        return [name, env.getTrimmed(name) ?? mkdtempSync(join(tmpdir(), `gt-test-${kind}-home-`))];
+        return [name, mkdtempSync(join(tmpdir(), `gt-test-${kind}-home-`))];
     };
     // Codex keeps its home: its sessions are not a delivery receiver, and CODEX_HOME is a comma list its tests set.
     const homes = Object.fromEntries([sandboxed("claude"), sandboxed("grok")]);

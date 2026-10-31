@@ -1,14 +1,15 @@
 // biome-ignore-all lint/plugin: test fixture intentionally uses /tmp/ or /Users/ string literals — production plugins do not apply to test code
 import { describe, expect, it } from "bun:test";
-import { existsSync, readdirSync } from "node:fs";
-import { homedir } from "node:os";
+import { existsSync, mkdirSync, readdirSync } from "node:fs";
 import { basename, resolve } from "node:path";
-import { startWithDefaultNativeHomes } from "@genesiscz/utils/test/default-native-homes";
+import { nativeHome } from "@genesiscz/utils/providers/session-paths";
 
-// These tests check how the default agent homes resolve, so they start with no override set.
-startWithDefaultNativeHomes();
-
-const PROJECTS_DIR = resolve(homedir(), ".claude", "projects");
+// The preload points the Claude home at an empty sandbox folder; a fixture projects tree there stands in for the
+// real one, so these tests never list this Mac's own sessions.
+const PROJECTS_DIR = resolve(nativeHome("claude"), "projects");
+const cwdEncoded = process.cwd().replaceAll("/", "-").replaceAll("\\", "-");
+mkdirSync(resolve(PROJECTS_DIR, cwdEncoded), { recursive: true });
+mkdirSync(resolve(PROJECTS_DIR, "-Users-test-Projects-Foo-bar-baz"), { recursive: true });
 
 describe("projects.ts — encodedProjectDir", () => {
     it("produces leading-dash format", async () => {
