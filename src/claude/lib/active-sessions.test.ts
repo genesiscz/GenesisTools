@@ -74,7 +74,11 @@ describe("classifyClaudeArgs", () => {
         const cli = "/x/node_modules/@anthropic-ai/claude-code/cli.js";
         expect(classifyClaudeArgs(`node --no-warnings ${cli} --resume abc`)).toBe("tui");
         expect(classifyClaudeArgs(`node --trace-uncaught ${cli}`)).toBe("tui");
-        expect(classifyClaudeArgs(`node --unknown-option ${cli}`)).toBeNull();
+        expect(classifyClaudeArgs(`node --trace-deprecation ${cli}`)).toBe("tui");
+        expect(classifyClaudeArgs(`node --unknown-option value ${cli}`)).toBe("tui");
+        expect(classifyClaudeArgs(`node --unknown-option /x/other.js /y/more.js ${cli}`)).toBeNull();
+        expect(classifyClaudeArgs(`bun --preload /x/preload.ts ${cli}`)).toBe("tui");
+        expect(classifyClaudeArgs(`node --trace-deprecation -e ${cli}`)).toBeNull();
         expect(classifyClaudeArgs(`node --require /x/preload.js ${cli}`)).toBe("tui");
         expect(classifyClaudeArgs(`node --require ${cli} /x/other.js`)).toBeNull();
         expect(classifyClaudeArgs(`node -e ${cli}`)).toBeNull();
@@ -128,6 +132,7 @@ describe("extractLaunchDetails", () => {
         const cli = "/x/node_modules/@anthropic-ai/claude-code/cli.js";
         expect(extractLaunchDetails(`node -r tsx ${cli}`).resumeId).toBeNull();
         expect(extractLaunchDetails(`node -r tsx ${cli} --resume actual`).resumeId).toBe("actual");
+        expect(extractLaunchDetails(`node --trace-deprecation -r tsx ${cli}`).resumeId).toBeNull();
     });
 
     test("returns nulls when absent or malformed", () => {

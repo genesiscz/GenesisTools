@@ -119,9 +119,10 @@ describe("classifyCommand", () => {
         ["codex", `${HOME}/node_modules/@openai/codex/bin/codex.js`],
         ["grok", `${HOME}/node_modules/grok-cli/dist/index.js`],
     ] as const)("%s script skips interpreter flags when finding MCP services", (provider, cli) => {
-        const command = `node --no-warnings ${cli} mcp serve`;
-        expect(classifyCommand(command)).toMatchObject({ provider, service: true });
-        expect(isAgentProcess(command, provider)).toBe(false);
+        for (const command of [`node --no-warnings ${cli} mcp serve`, `node --trace-deprecation ${cli} mcp serve`]) {
+            expect(classifyCommand(command)).toMatchObject({ provider, service: true });
+            expect(isAgentProcess(command, provider)).toBe(false);
+        }
     });
 
     test.each([
@@ -134,6 +135,10 @@ describe("classifyCommand", () => {
         });
         expect(classifyCommand(`node -r ${S1} ${cli} --resume ${S2}`).sessionId).toBe(S2);
         expect(classifyCommand(`bun --require=${S1} -- ${cli} --resume ${S2}`).sessionId).toBe(S2);
+        expect(classifyCommand(`node --trace-deprecation -r ${S1} ${cli}`)).toMatchObject({
+            provider,
+            sessionId: null,
+        });
         expect(classifyCommand(`node ${cli} --resume ${S2}`).sessionId).toBe(S2);
     });
 
