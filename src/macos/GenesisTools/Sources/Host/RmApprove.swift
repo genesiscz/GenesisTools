@@ -188,16 +188,19 @@ struct RmWindowContent {
     static func graceSentence(_ minutes: Int?) -> String {
         guard let minutes else { return "They go to the trash, and tools rm restore brings them back until it is emptied." }
         if minutes <= 0 { return "They go to the trash, which is emptied right away." }
-        let span = minutes % 60 == 0 ? Plural.count(minutes / 60, "hour") : Plural.count(minutes, "minute")
-        return "They go to the trash, and tools rm restore brings them back for \(span)."
+        return "They go to the trash, and tools rm restore brings them back for \(graceSpan(minutes))."
+    }
+
+    /// "2 hours" for a whole number of hours, else "90 minutes".
+    static func graceSpan(_ minutes: Int) -> String {
+        minutes % 60 == 0 ? Plural.count(minutes / 60, "hour") : Plural.count(minutes, "minute")
     }
 
     /// The two ways out of a delete: the trash with its grace, or for good.
     static func disposals(graceMinutes: Int?) -> [ApprovalChoice] {
         let grace: String
         if let graceMinutes, graceMinutes > 0 {
-            let span = graceMinutes % 60 == 0 ? Plural.count(graceMinutes / 60, "hour") : Plural.count(graceMinutes, "minute")
-            grace = "deleted after \(span); tools rm restore brings it back until then"
+            grace = "deleted after \(graceSpan(graceMinutes)); tools rm restore brings it back until then"
         } else {
             grace = "tools rm restore brings it back until the trash is emptied"
         }
