@@ -2,6 +2,7 @@ import { afterEach, describe, expect, spyOn, test } from "bun:test";
 import { mkdtempSync, utimesSync, writeFileSync } from "node:fs";
 import { tmpdir } from "node:os";
 import { join } from "node:path";
+import { env } from "@genesiscz/utils/env";
 import { moduleDir } from "@genesiscz/utils/fs/module-dir";
 import { SafeJSON } from "@genesiscz/utils/json";
 import { logger } from "@genesiscz/utils/logger";
@@ -175,6 +176,25 @@ describe("HostedSupervisor start failures", () => {
         const body = (await response.json()) as { pid: number };
         expect(body.pid).not.toBe(process.pid);
         expect(supervisor.pid).toBe(body.pid);
+    });
+
+    test("a child gets the environment as it is now, not as the process started with it", async () => {
+        const dir = mkdtempSync(join(tmpdir(), "gt-hosted-"));
+        const entry = fixtureChild(
+            dir,
+            "env",
+            `if (process.env.GT_HOSTED_ENV_PROBE !== "set-at-runtime") {\n    process.exit(7);\n}\nlisten();`
+        );
+        const supervisor = supervise(entry, dir, { startMs: 5_000 });
+        const warn = spyOn(logger, "warn").mockImplementation(() => {});
+        env.testing.set("GT_HOSTED_ENV_PROBE", "set-at-runtime");
+
+        try {
+            expect((await supervisor.forward(rpc(4), null)).status).toBe(200);
+        } finally {
+            env.testing.unset("GT_HOSTED_ENV_PROBE");
+            warn.mockRestore();
+        }
     });
 
     test("a child not ready by the call's deadline fails the call as still running, and the log line has its pid", async () => {

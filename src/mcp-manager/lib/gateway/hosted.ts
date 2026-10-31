@@ -5,6 +5,7 @@ import type { UnifiedMCPServerConfig } from "@app/mcp-manager/utils/providers/ty
 import type { MCPProviderName } from "@app/mcp-manager/utils/types.js";
 import { ACCOUNT_PROVIDER_ALIASES } from "@genesiscz/utils/ai/providers/alias-list";
 import { harnessDriver } from "@genesiscz/utils/ai/providers/harness-index";
+import { env } from "@genesiscz/utils/env";
 import { moduleDir } from "@genesiscz/utils/fs/module-dir";
 import { SafeJSON } from "@genesiscz/utils/json";
 import { logger } from "@genesiscz/utils/logger";
@@ -426,7 +427,8 @@ export class HostedSupervisor {
                 this.server.sourceRoot,
                 ...(this.options.checkMs ? ["--check-ms", String(this.options.checkMs)] : []),
             ],
-            { stdin: "ignore", stdout: "pipe", stderr: "pipe" }
+            // Bun.spawn without `env` passes the environment the process STARTED with, not today's `process.env`.
+            { stdin: "ignore", stdout: "pipe", stderr: "pipe", env: env.getProcessEnv() }
         );
         const stderr = new ByteTail(STDERR_TAIL_BYTES);
         const stderrRead = readStderr(proc, stderr, this.options.forwardStderr ?? true).catch((error) => {
