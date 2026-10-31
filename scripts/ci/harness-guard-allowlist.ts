@@ -145,10 +145,6 @@ export const HARNESS_GUARD_ALLOWLIST: Readonly<Record<string, HarnessGuardCounts
         branch: 1,
         why: "the decision log's delivery channels (DeliveryChannel in src/question/lib/decisions/deliver.ts), a route axis: codex is the Codex worker route",
     },
-    "src/macos/GenesisTools/Sources/Host/RmApprove.swift": {
-        branch: 1,
-        why: "the rm approval window's terminal link runs tools claude cmux focus, which finds only Claude sessions; the generated Harness enum names no focus command yet",
-    },
     "src/macos/GenesisTools/Sources/Parts/Hub/Hub/HubInbox.swift": {
         branch: 2,
         why: "the decision log's delivery channels (DeliveryChannel in src/question/lib/decisions/deliver.ts), a route axis: codex is the Codex worker route",
