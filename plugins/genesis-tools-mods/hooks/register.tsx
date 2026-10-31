@@ -738,9 +738,7 @@ export const register: Register = (on) => {
         try {
             const result = await next(e);
 
-            await recordCheckout(host, e).catch((error) =>
-                logMod(host, "git", { event: "checkout-failed", error: String(error) }).catch(() => undefined)
-            );
+            recordCheckout(host, e);
             afterTools({ host, event: e, features: liveFeatures() });
 
             // The PR numbers the links mod linked in the message that asked for this call: the model reads which
