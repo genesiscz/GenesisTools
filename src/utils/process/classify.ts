@@ -115,15 +115,15 @@ export function argvSessionId(command: string): string | null {
 }
 
 /** The first argument after the agent's entry (the binary, or the script an interpreter runs): `mcp` in `claude mcp serve`. */
-function agentSubcommand(command: string): string | undefined {
+function agentSubcommand(command: string, entryIndex: number | null): string | undefined {
     const tokens = command.trim().split(/\s+/);
-    const entry = INTERPRETERS.test(basename(tokens[0] ?? "")) ? 1 : 0;
+    const entry = entryIndex ?? (INTERPRETERS.test(basename(tokens[0] ?? "")) ? 1 : 0);
 
     return tokens[entry + 1];
 }
 
-function isAgentService(command: string, sessionId: string | null): boolean {
-    if (agentSubcommand(command) === "mcp") {
+function isAgentService(command: string, sessionId: string | null, entryIndex: number | null): boolean {
+    if (agentSubcommand(command, entryIndex) === "mcp") {
         return true;
     }
 
@@ -135,8 +135,27 @@ export function classifyCommand(raw: string): ProcClass {
     const provider = agentOf(command);
 
     if (provider) {
-        const sessionId = argvSessionId(command);
-        return { kind: "agent", provider, label: provider, sessionId, service: isAgentService(command, sessionId) };
+        const first = argv0(command);
+        const driver = harnessDrivers().find((candidate) => candidate.id === provider);
+        const entryIndex = driver
+            ? harnessProcess(driver.id).cliEntryIndex({ argv0: first, name: basename(first), command })
+            : null;
+        const sessionArgs =
+            entryIndex === null
+                ? command
+                : command
+                      .trim()
+                      .split(/\s+/)
+                      .slice(entryIndex + 1)
+                      .join(" ");
+        const sessionId = argvSessionId(sessionArgs);
+        return {
+            kind: "agent",
+            provider,
+            label: provider,
+            sessionId,
+            service: isAgentService(command, sessionId, entryIndex),
+        };
     }
 
     const tool = command.match(TOOL_ENTRY);

@@ -28,14 +28,14 @@ const INTERPRETER_FLAGS = new Set([
     "--smol",
 ]);
 
-function executesClaudeScript(command: string): boolean {
+function claudeScriptIndex(command: string): number | null {
     const args = command.split(/\s+/).slice(1);
 
     for (let i = 0; i < args.length; i++) {
         const arg = args[i];
 
         if (arg === "--") {
-            return /(?:^|[/\\])@anthropic-ai[/\\]claude-code[/\\]cli\.m?js$/.test(args[i + 1] ?? "");
+            return /(?:^|[/\\])@anthropic-ai[/\\]claude-code[/\\]cli\.m?js$/.test(args[i + 1] ?? "") ? i + 2 : null;
         }
 
         if (INTERPRETER_OPTIONS_WITH_VALUE.has(arg)) {
@@ -50,10 +50,10 @@ function executesClaudeScript(command: string): boolean {
             continue;
         }
 
-        return /(?:^|[/\\])@anthropic-ai[/\\]claude-code[/\\]cli\.m?js$/.test(arg);
+        return /(?:^|[/\\])@anthropic-ai[/\\]claude-code[/\\]cli\.m?js$/.test(arg) ? i + 1 : null;
     }
 
-    return false;
+    return null;
 }
 
 /**
@@ -116,7 +116,13 @@ export const claudeHarness: HarnessDriver<"claude"> = {
             runsCli: ({ argv0, name, command }) =>
                 name === "claude" ||
                 /\/claude\/versions\/[\d.]+$/.test(argv0) ||
-                ((name === "node" || name === "bun") && executesClaudeScript(command)),
+                ((name === "node" || name === "bun") && claudeScriptIndex(command) !== null),
+            cliEntryIndex: ({ argv0, name, command }) =>
+                name === "claude" || /\/claude\/versions\/[\d.]+$/.test(argv0)
+                    ? 0
+                    : name === "node" || name === "bun"
+                      ? claudeScriptIndex(command)
+                      : null,
         },
         history: () => import("@genesiscz/utils/agent-sessions/compact-readers").then((m) => m.claudeHistoryReader),
         cmux: toolOwned(

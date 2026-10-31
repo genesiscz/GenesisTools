@@ -124,6 +124,12 @@ describe("extractLaunchDetails", () => {
         });
     });
 
+    test("ignores interpreter preload flags before the Claude CLI", () => {
+        const cli = "/x/node_modules/@anthropic-ai/claude-code/cli.js";
+        expect(extractLaunchDetails(`node -r tsx ${cli}`).resumeId).toBeNull();
+        expect(extractLaunchDetails(`node -r tsx ${cli} --resume actual`).resumeId).toBe("actual");
+    });
+
     test("returns nulls when absent or malformed", () => {
         expect(extractLaunchDetails("/bin/claude --dangerously-skip-permissions")).toEqual({
             resumeId: null,

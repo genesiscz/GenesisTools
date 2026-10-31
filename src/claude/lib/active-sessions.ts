@@ -167,10 +167,13 @@ export function classifyClaudeArgs(args: string): ClaudeProcessKind | null {
 
 export function extractLaunchDetails(args: string): { resumeId: string | null; model: string | null } {
     const tokens = args.split(/\s+/);
+    const argv0 = tokens[0] ?? "";
+    const name = argv0.split("/").pop() ?? "";
+    const entry = harnessProcess("claude").cliEntryIndex({ argv0, name, command: args });
     let resumeId: string | null = null;
     let model: string | null = null;
 
-    for (let i = 0; i < tokens.length; i++) {
+    for (let i = entry === null ? 0 : entry + 1; i < tokens.length; i++) {
         const token = tokens[i];
 
         if (token === "--resume" || token === "-r") {

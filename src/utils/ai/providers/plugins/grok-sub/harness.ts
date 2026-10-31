@@ -65,6 +65,7 @@ export const grokHarness: HarnessDriver<"grok"> = {
                 name === "grok" ||
                 /^grok-\d+(?:\.\d+)*(?:-[\w-]+)?$/.test(name) ||
                 /\bgrok-cli\/dist\/index\.m?js\b/.test(command),
+            cliEntryIndex: ({ name }) => (/^(?:node|bun|bash|sh|zsh)$/.test(name) ? 1 : 0),
         },
         history: () => import("@genesiscz/utils/agent-sessions/compact-readers").then((m) => m.grokHistoryReader),
         cmux: toolOwned(

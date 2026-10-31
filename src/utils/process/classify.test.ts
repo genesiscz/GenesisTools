@@ -96,6 +96,8 @@ describe("classifyCommand", () => {
             `${HOME}/Applications/GenesisTools.app/Contents/MacOS/GenesisTools codex-gateway serve`,
             `${HOME}/.bun/bin/claude mcp serve`,
             `node ${HOME}/node_modules/@anthropic-ai/claude-code/cli.js mcp serve`,
+            `node --no-warnings ${HOME}/node_modules/@anthropic-ai/claude-code/cli.js mcp serve`,
+            `node -r tsx ${HOME}/node_modules/@anthropic-ai/claude-code/cli.js mcp serve`,
         ]) {
             expect(classifyCommand(command)).toMatchObject({ kind: "agent", service: true });
             expect(isAgentProcess(command, "codex") || isAgentProcess(command, "claude")).toBe(false);
@@ -104,6 +106,13 @@ describe("classifyCommand", () => {
         // A versioned Codex binary resuming a session is the agent; a prompt that says "mcp" is no subcommand.
         expect(classifyCommand(`/opt/bin/codex-aarch64-apple-darwin resume ${S2}`).service).toBe(false);
         expect(isAgentProcess(`${HOME}/.bun/bin/claude --resume ${S1} mcp`, "claude")).toBe(true);
+    });
+
+    test("interpreter preload arguments are not session arguments", () => {
+        const cli = `${HOME}/node_modules/@anthropic-ai/claude-code/cli.js`;
+        expect(classifyCommand(`node -r ${S1} ${cli}`).sessionId).toBeNull();
+        expect(classifyCommand(`node -r ${S1} ${cli} --resume ${S2}`).sessionId).toBe(S2);
+        expect(classifyCommand(`node --no-warnings ${cli} --resume ${S1} mcp`).service).toBe(false);
     });
 
     test("runsAgent takes a tools <agent> run|start|resume launcher from any checkout or off PATH", () => {

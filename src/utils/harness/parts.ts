@@ -168,6 +168,8 @@ export interface ProcessSignature {
      * (`bash ~/.local/bin/grok`) are matched by the caller through `identity.binary`.
      */
     runsCli(input: { argv0: string; name: string; command: string }): boolean;
+    /** For an identified CLI, its index in the whitespace-split command, or null when the boundary is unknown. */
+    cliEntryIndex(input: { argv0: string; name: string; command: string }): number | null;
 }
 
 /** Parts that wrap parsers and readers: a driver holds a loader, so reading the driver never loads them. */

@@ -59,6 +59,7 @@ export const codexHarness: HarnessDriver<"codex"> = {
         process: {
             runsCli: ({ name, command }) =>
                 /^codex(?:-[\w-]+)?$/.test(name) || /@openai\/codex\/bin\/codex\.m?js\b/.test(command),
+            cliEntryIndex: ({ name }) => (/^(?:node|bun|bash|sh|zsh)$/.test(name) ? 1 : 0),
         },
         history: () => import("@genesiscz/utils/agent-sessions/compact-readers").then((m) => m.codexHistoryReader),
         cmux: toolOwned(
