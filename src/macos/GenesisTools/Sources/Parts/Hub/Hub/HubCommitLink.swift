@@ -340,14 +340,11 @@ enum HubCommitLookup {
         }
         let own = WorktreeCleanup.normalizedPath(root)
         var nearest: (path: String, distance: Int)?
-        for block in (WorktreeDiscovery.git(root, ["worktree", "list", "--porcelain"]) ?? "").components(separatedBy: "\n\n") {
-            let lines = block.split(separator: "\n").map(String.init)
-            guard let path = lines.first(where: { $0.hasPrefix("worktree ") }).map({ String($0.dropFirst(9)) }),
-                  let head = lines.first(where: { $0.hasPrefix("HEAD ") }).map({ String($0.dropFirst(5)) }),
-                  WorktreeCleanup.normalizedPath(path) != own, FileManager.default.fileExists(atPath: path),
-                  let steps = distance(head) else { continue }
+        for tree in RepoWorktree.parse(WorktreeDiscovery.git(root, ["worktree", "list", "--porcelain"]) ?? "") {
+            guard !tree.head.isEmpty, WorktreeCleanup.normalizedPath(tree.path) != own,
+                  FileManager.default.fileExists(atPath: tree.path), let steps = distance(tree.head) else { continue }
             if nearest.map({ steps < $0.distance }) ?? true {
-                nearest = (path, steps)
+                nearest = (tree.path, steps)
             }
         }
         if let nearest {
