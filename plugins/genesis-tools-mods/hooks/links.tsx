@@ -960,6 +960,18 @@ export function rememberToolPaths(input: unknown): void {
     }
 }
 
+/** A Markdown fence line: its run of three or more backticks or tildes, and whether nothing but spaces follows it. */
+function fenceOf(line: string): { run: string; bare: boolean } | undefined {
+    const match = /^\s*(`{3,}|~{3,})(.*)$/.exec(line.replace(/\r?\n$/, ""));
+
+    return match?.[1] ? { run: match[1], bare: !match[2]?.trim() } : undefined;
+}
+
+/** Whether a fence line closes the block `open` began: the same character, at least as long, and no info string. */
+function closes(fence: { run: string; bare: boolean }, open: string): boolean {
+    return fence.bare && fence.run[0] === open[0] && fence.run.length >= open.length;
+}
+
 /** The turn.step stage of the main loop: reply text passes line by line, each line linked (see `linkLine`). */
 export async function* linksStep(
     host: Host,
@@ -969,16 +981,20 @@ export async function* linksStep(
     {
         let ctx: LinkContext | undefined;
         const lines = new Map<number, string>();
-        const fenced = new Set<number>();
+        /** The fence each open code block began with, per text block: its character and length. */
+        const fenced = new Map<number, string>();
         let answer = "";
         let changed = false;
 
         async function* emit(index: number, line: string): AsyncGenerator<TurnStepChunk> {
-            if (/^\s*```/.test(line)) {
-                if (fenced.has(index)) {
-                    fenced.delete(index);
+            const fence = fenceOf(line);
+            const open = fenced.get(index);
+
+            if (fence && (open === undefined || closes(fence, open))) {
+                if (open === undefined) {
+                    fenced.set(index, fence.run);
                 } else {
-                    fenced.add(index);
+                    fenced.delete(index);
                 }
 
                 answer += line;
