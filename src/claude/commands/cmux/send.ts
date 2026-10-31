@@ -277,7 +277,7 @@ async function refuseOpenDialog({
         return false;
     }
 
-    const reason = dialogRefusal(dialog);
+    const reason = dialogRefusal(dialog, "--force");
     log.warn({ sessionId, dialog, paneId: target.paneId }, "a dialog is open in the session; nothing was typed");
     process.exitCode = 1;
 
@@ -286,7 +286,7 @@ async function refuseOpenDialog({
         return true;
     }
 
-    out.error(pc.red(reason.replace("pass force", "pass --force")));
+    out.error(pc.red(reason));
     return true;
 }
 
