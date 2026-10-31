@@ -1,9 +1,10 @@
 import { decodeImageRgba, decodeImageRgbaScaled, encodeRgbaToPng, renderAnnotationPlan } from "@genesiscz/utils/image";
-import { compareImagePixels } from "@genesiscz/utils/image/difference";
+import { compareImagePixels, summarizeMismatch } from "@genesiscz/utils/image/difference";
 import { logger, out } from "@genesiscz/utils/logger";
 import type { Command } from "commander";
 import pc from "picocolors";
 import { DEFAULT_REGION_OPTIONS, type DiffRegion, findDiffRegions, regionAnnotations } from "../lib/diff-regions";
+import { numberFlag } from "../lib/flag-number";
 import { comparePairGeometry, readSnapshotGeometry } from "../lib/snapshot-geometry";
 
 interface CompareOptions {
@@ -16,16 +17,6 @@ interface CompareOptions {
     minArea: string;
     annotateOut?: string;
     json?: boolean;
-}
-
-function nonNegativeNumber(value: string, flag: string): number {
-    const parsed = Number(value);
-    if (!Number.isFinite(parsed) || parsed < 0) {
-        logger.error(`${flag} must be a number of pixels, 0 or more (got "${value}")`);
-        process.exit(2);
-    }
-
-    return parsed;
 }
 
 export function registerCompareScreenshotCommand(program: Command): void {
@@ -108,27 +99,38 @@ export function registerCompareScreenshotCommand(program: Command): void {
                 resized = true;
             }
 
-            const {
-                diff,
-                mismatchedPixels: mismatched,
-                totalPixels: total,
-                differencePct: mismatchPct,
-                similarity,
-            } = compareImagePixels({ a, b, sensitivity: threshold, includeDiff: !!opts.diffOut });
-
-            if (opts.diffOut && diff) {
-                await Bun.write(opts.diffOut, encodeRgbaToPng(diff, a.width, a.height));
-            }
-
             let regions: DiffRegion[] | undefined;
+            let regionMismatch: number | undefined;
             if (opts.regions || opts.annotateOut) {
-                regions = findDiffRegions(a, b, {
+                const found = findDiffRegions(a, b, {
                     threshold,
-                    mergeDistance: nonNegativeNumber(opts.mergeDistance, "--merge-distance"),
-                    minArea: nonNegativeNumber(opts.minArea, "--min-area"),
-                }).regions;
+                    mergeDistance: numberFlag(opts.mergeDistance, "--merge-distance"),
+                    minArea: numberFlag(opts.minArea, "--min-area"),
+                });
+                regions = found.regions;
+                regionMismatch = found.mismatchedPixels;
                 logger.debug({ a: aPath, b: bPath, regions: regions.length }, "compare-screenshot regions");
             }
+
+            // The region pass already ran pixelmatch over this pair at this threshold, so its count is the mismatch
+            // count; a second full pass is only needed to draw the --diff-out image.
+            const total = a.width * a.height;
+            let mismatched = regionMismatch ?? 0;
+            if (regionMismatch === undefined || opts.diffOut) {
+                const { diff, mismatchedPixels } = compareImagePixels({
+                    a,
+                    b,
+                    sensitivity: threshold,
+                    includeDiff: !!opts.diffOut,
+                });
+                mismatched = mismatchedPixels;
+
+                if (opts.diffOut && diff) {
+                    await Bun.write(opts.diffOut, encodeRgbaToPng(diff, a.width, a.height));
+                }
+            }
+
+            const { differencePct: mismatchPct, similarity } = summarizeMismatch(mismatched, total);
 
             if (opts.annotateOut && regions) {
                 const drawn = await renderAnnotationPlan({
