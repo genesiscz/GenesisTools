@@ -417,6 +417,14 @@ function callerFeature(): string {
     return names.join(" < ") || "unknown";
 }
 
+/**
+ * The shell every append runs: `$.fs.write` replaces a file and the engine has no append, so it is `cat >>` in `sh`,
+ * making the folder first. When `$.fs` gets an append, only the two callers of this change.
+ */
+function appendArgv(path: string): string[] {
+    return ["/bin/sh", "-c", 'mkdir -p "$(dirname "$1")" && cat >> "$1"', "sh", path];
+}
+
 async function flushProcessLog($: EngineInterface): Promise<void> {
     processLog.timer?.cancel();
     processLog.timer = undefined;
@@ -426,14 +434,14 @@ async function flushProcessLog($: EngineInterface): Promise<void> {
         return;
     }
 
-    const home = (await $.env.get("GENESIS_TOOLS_HOME")) ?? (await $.env.get("HOME"));
-    if (!home) {
+    const dir = await agentsDir(hostOf($));
+    if (!dir) {
         return;
     }
 
     const day = new Date().toISOString().slice(0, 10);
-    const path = `${home}/.genesis-tools/agents/mods-log/processes-${day}.jsonl`;
-    await $.process.run(["/bin/sh", "-c", 'mkdir -p "$(dirname "$1")" && cat >> "$1"', "sh", path], {
+    // Not through `Host.append`: that one is logged here itself.
+    await $.process.run(appendArgv(`${dir}/mods-log/processes-${day}.jsonl`), {
         stdin: `${lines.join("\n")}\n`,
         timeoutMs: 5_000,
     });
@@ -525,13 +533,8 @@ function hostOf($: EngineInterface): Host {
         run,
         read: (path) => $.fs.read(path),
         write: (path, text) => $.fs.write(path, text),
-        // `$.fs.write` replaces a file and the engine has no append, so this is the one place an append runs `cat >>`
-        // in `sh` (making the folder first). When `$.fs` gets an append, only these lines change.
         append: async (path, text) => {
-            const done = await run(["/bin/sh", "-c", 'mkdir -p "$(dirname "$1")" && cat >> "$1"', "sh", path], {
-                stdin: text,
-                timeoutMs: 5_000,
-            });
+            const done = await run(appendArgv(path), { stdin: text, timeoutMs: 5_000 });
 
             if (done.exitCode !== 0) {
                 throw new Error(`append to ${path} failed (exit ${done.exitCode}): ${done.stderr.trim()}`);
