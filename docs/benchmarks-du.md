@@ -1540,3 +1540,20 @@ tree is unchanged: the worktree printed 1,732,216 KiB from the old and the new b
 Cost: one atomic add on the excluded branch only, which the hot loop reaches once per mount. The old and the new
 binary ran interleaved on the worktree (104,185 files), 5 rounds each, 14:33, load 10.5: system CPU old 2.96, 4.62,
 2.26, 2.32, 1.85 s; new 2.77, 4.01, 2.12, 2.01, 1.79 s. The ranges overlap, as expected for an unchanged loop.
+
+## 2026-10-31 15:36 — the listing walk joins child paths without a doubled slash
+
+`big_process_dir` built each child as `dirpath + "/" + name`. A root given with a trailing slash (`/System/Volumes/`)
+or the root `/` then produced `/System/Volumes//Data`, which matches no entry of the foreign-mount list, so the walk
+crossed into the mounted volume: `--dusize /System/Volumes/` walked the whole Data volume (stopped after 8 s with a
+permission error inside it) where `--dusize /System/Volumes` reports `skipped_mounts` 7 in 2 ms. Both joins (the
+folder queue and the `--bigfiles` file paths) now use `idx_child_path`, which adds a slash only when the parent does
+not end in one, and both spellings report `skipped_mounts` 7 with no file.
+
+Which totals move: only a root written with a trailing slash, or `/`, that holds a mounted volume; it now stops at the
+mount. A root without a trailing slash builds the same paths as before: the worktree printed 1,799,828 KiB from the
+old and the new binary, and the `--bigfiles --min-bytes 1048576` listing was byte-identical apart from `walk_ms`.
+
+Cost, old and new binary interleaved on the worktree (104,567 files), 15:36, load 47 to 65 (system CPU): `--dusize`
+old 2.33, 1.83, 1.59, 1.66, 2.01 s; new 1.74, 1.90, 1.76, 1.70, 1.77 s. `--bigfiles` old 2.69, 1.68, 1.95 s; new
+3.09, 1.87, 1.71 s. The ranges overlap at that load; the join does the same work with one branch more.

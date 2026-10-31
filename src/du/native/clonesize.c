@@ -2225,6 +2225,9 @@ static void big_push(BigOut *o, char *path, uint64_t dlen, uint64_t alloc, uint6
 //   68 alloc off_t(8) | 76 datalength off_t(8)
 // A dataless file is never listed by default: the dedupe caller reads every
 // candidate, and reading a placeholder downloads it.
+// `dirpath/name`, with no second slash when dirpath already ends in one (a root of "/" or "/x/").
+static char *idx_child_path(const char *dirpath, const char *name);
+
 static void big_process_dir(BigOut *o, const char *dirpath, int dircloud) {
     int dfd = open(dirpath, O_RDONLY | O_DIRECTORY | O_NONBLOCK);
     if (dfd < 0) {
@@ -2266,10 +2269,8 @@ static void big_process_dir(BigOut *o, const char *dirpath, int dircloud) {
             if (objtype == VDIR) {
                 if (name[0] == '.' && (name[1] == '\0' || (name[1] == '.' && name[2] == '\0'))) continue;
                 if (g_nprune && is_pruned_name(name)) continue;
-                size_t pl = strlen(dirpath), nl = strlen(name);
-                char *sub = malloc(pl + 1 + nl + 1);
-                if (!sub) { perror("malloc bigdir"); exit(1); }
-                memcpy(sub, dirpath, pl); sub[pl] = '/'; memcpy(sub + pl + 1, name, nl + 1);
+                // A doubled slash would miss the foreign-mount list (`/x//Data` is not `/x/Data`) and cross it.
+                char *sub = idx_child_path(dirpath, name);
                 if (is_cloud_root(dirpath, name)) {
                     if (g_big_cloud_only) note_cloud_root(sub);
                     if (g_big_sum_only) __atomic_add_fetch(&g_big_cloud_pruned, 1, __ATOMIC_RELAXED);
@@ -2344,10 +2345,7 @@ static void big_process_dir(BigOut *o, const char *dirpath, int dircloud) {
                 if ((uint64_t)dlen < g_big_min) continue;
             }
 
-            size_t pl = strlen(dirpath), nl = strlen(name);
-            char *full = malloc(pl + 1 + nl + 1);
-            if (!full) { perror("malloc bigpath"); exit(1); }
-            memcpy(full, dirpath, pl); full[pl] = '/'; memcpy(full + pl + 1, name, nl + 1);
+            char *full = idx_child_path(dirpath, name);
             uint64_t mtime_ns = (uint64_t)mtime * 1000000000ULL + (uint64_t)mnsec;
             big_push(o, full, (uint64_t)dlen, (uint64_t)alloc, fileid, mtime_ns, nlink, dircloud);
         }
