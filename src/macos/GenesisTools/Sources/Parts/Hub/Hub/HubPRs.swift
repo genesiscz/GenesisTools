@@ -2036,7 +2036,7 @@ struct PRMetaLineLayout: Layout {
     }
 
     /// The parts' natural widths. They do not depend on the row's width, so a drag measures them once
-    /// instead of on every step; SwiftUI calls `updateCache` when a part changes.
+    /// instead of on every step; SwiftUI calls `updateCache` when a part changes. The age is the exception (`plan`).
     struct Cache { var ideal: [CGFloat] }
 
     func makeCache(subviews: Subviews) -> Cache {
@@ -2047,8 +2047,14 @@ struct PRMetaLineLayout: Layout {
         cache = makeCache(subviews: subviews)
     }
 
-    private func plan(_ proposal: ProposedViewSize, _ cache: Cache) -> [CGFloat] {
-        Self.widths(ideal: cache.ideal, width: proposal.width)
+    /// The age (`LiveAgo`, part 3) is measured on every pass: its text grows on its own clock ("9m ago" to "10m ago")
+    /// with no change of the parts, so a cached width would cut it or let it overlap the badges.
+    private func plan(_ proposal: ProposedViewSize, _ cache: Cache, _ subviews: Subviews) -> [CGFloat] {
+        var ideal = cache.ideal
+        if ideal.count == 5, subviews.count == 5 {
+            ideal[3] = subviews[3].sizeThatFits(.unspecified).width
+        }
+        return Self.widths(ideal: ideal, width: proposal.width)
     }
 
     private static func naturalWidth(_ widths: [CGFloat]) -> CGFloat {
@@ -2057,13 +2063,13 @@ struct PRMetaLineLayout: Layout {
     }
 
     func sizeThatFits(proposal: ProposedViewSize, subviews: Subviews, cache: inout Cache) -> CGSize {
-        let widths = plan(proposal, cache)
+        let widths = plan(proposal, cache, subviews)
         let height = zip(subviews, widths).map { $0.sizeThatFits(ProposedViewSize(width: $1, height: nil)).height }.max() ?? 0
         return CGSize(width: proposal.width ?? Self.naturalWidth(widths), height: height)
     }
 
     func placeSubviews(in bounds: CGRect, proposal: ProposedViewSize, subviews: Subviews, cache: inout Cache) {
-        let widths = plan(ProposedViewSize(width: bounds.width, height: proposal.height), cache)
+        let widths = plan(ProposedViewSize(width: bounds.width, height: proposal.height), cache, subviews)
         var x = bounds.minX
         for (index, subview) in subviews.enumerated() {
             let width = index < widths.count ? widths[index] : 0
