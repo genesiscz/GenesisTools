@@ -155,7 +155,7 @@ struct HubFolderTrees: View {
     private struct Revision: Equatable {
         let selected: String?
         let changesShown: Bool
-        let changedFiles: Int
+        let lookupRevision: Int
     }
 
     var body: some View {
@@ -169,7 +169,7 @@ struct HubFolderTrees: View {
         let selectedKey = selected.map { FileTreeRowKey(selection: $0) }
         GenTreeTable(
             rows: rows,
-            revision: Revision(selected: selected, changesShown: changesShown, changedFiles: review.files.count),
+            revision: Revision(selected: selected, changesShown: changesShown, lookupRevision: review.fileLookupRevision),
             box: box,
             height: { Self.height(of: $0) },
             insets: NSEdgeInsets(top: 0, left: 0, bottom: 12, right: 0)

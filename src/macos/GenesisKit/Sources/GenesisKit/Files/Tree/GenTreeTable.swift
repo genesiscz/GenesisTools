@@ -486,6 +486,16 @@ public struct GenTreeKeys<Row: GenTreeRow> {
     /// The row the keyboard starts on (the open file), or nil for the first row.
     var start: ([Row]) -> Int?
 
+    public init(open: @escaping (Row) -> Void, toggle: @escaping (Row) -> Void,
+                navigate: @escaping (Row) -> Void, up: @escaping () -> Void,
+                start: @escaping ([Row]) -> Int?) {
+        self.open = open
+        self.toggle = toggle
+        self.navigate = navigate
+        self.up = up
+        self.start = start
+    }
+
     /// Up and Down move, Right opens a folder or goes into it, Left closes it or goes to its parent, Return opens a
     /// file or toggles a folder, ⌘↓ goes into a folder, ⌘↑ goes up, Esc lets the keyboard go.
     static func action(for key: GenTreeKey, rows: [Row], cursor: Int?) -> GenTreeKeyAction {

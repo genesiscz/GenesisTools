@@ -176,6 +176,45 @@ final class ReviewRootsTests: XCTestCase {
         XCTAssertEqual(model.roots.map(\.prefix), [""], "back to one root: paths lose the prefix")
     }
 
+    func testLookupRevisionTracksChangedFilesAndRootSetup() {
+        let repo = URL(fileURLWithPath: "/work/tools")
+        let model = ReviewModel(repo: repo, options: DiffViewOptions(), renderer: NullRenderer())
+        model.files = [file("a.txt")]
+        let first = model.fileLookupRevision
+        model.files = [file("a.txt")]
+        XCTAssertEqual(model.fileLookupRevision, first)
+        model.files = [file("b.txt")]
+        XCTAssertNotEqual(model.fileLookupRevision, first, "a same-count replacement changes the folder decoration")
+        let second = model.fileLookupRevision
+        model.setRoots([ReviewRoot(folder: "/work/other", repo: URL(fileURLWithPath: "/work/other"))])
+        XCTAssertNotEqual(model.fileLookupRevision, second)
+    }
+
+    func testReloadDropsCachedSymlinkResolution() throws {
+        let repo = FileManager.default.temporaryDirectory.appendingPathComponent("review-symlink-\(UUID())").resolvingSymlinksInPath()
+        try FileManager.default.createDirectory(at: repo, withIntermediateDirectories: true)
+        addTeardownBlock { try? FileManager.default.removeItem(at: repo) }
+        for name in ["a.txt", "b.txt"] {
+            try name.write(to: repo.appendingPathComponent(name), atomically: true, encoding: .utf8)
+        }
+        let link = repo.appendingPathComponent("link.txt")
+        try FileManager.default.createSymbolicLink(atPath: link.path, withDestinationPath: "a.txt")
+        let model = ReviewModel(repo: repo, options: DiffViewOptions(), renderer: NullRenderer())
+        model.files = [file("a.txt"), file("b.txt")]
+        XCTAssertEqual(model.file(atPath: link.path)?.id, "a.txt")
+        try FileManager.default.removeItem(at: link)
+        try FileManager.default.createSymbolicLink(atPath: link.path, withDestinationPath: "b.txt")
+        let previousRevision = model.fileLookupRevision
+        model.reload()
+        XCTAssertNotEqual(model.fileLookupRevision, previousRevision)
+        XCTAssertEqual(model.file(atPath: link.path)?.id, "b.txt")
+        let deadline = Date().addingTimeInterval(10)
+        while model.loading && Date() < deadline {
+            RunLoop.current.run(until: Date().addingTimeInterval(0.05))
+        }
+        XCTAssertFalse(model.loading)
+    }
+
     /// Two real repositories with the same changed file: both load into one diff, and each merged file
     /// leads back to its own repository on disk.
     func testTwoRepositoriesLoadIntoOneDiffAndEachFileMapsBackToItsOwn() throws {

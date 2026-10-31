@@ -515,10 +515,14 @@ final class ReviewModel: ObservableObject {
     var remoteHead: ReviewRemoteHead?
     @Published var files: [DiffFile] = [] {
         didSet {
+            guard files != oldValue else { return }
             lookupCache = nil
             fileListRowsCache = nil
+            fileLookupRevision &+= 1
         }
     }
+    /// Changes when the folder tree's file lookups can return different results.
+    @Published private(set) var fileLookupRevision = 0
     /// The file list's filter text; the list's rows are rebuilt from it (`fileListRows`).
     @Published var filter = "" {
         didSet {
@@ -581,8 +585,10 @@ final class ReviewModel: ObservableObject {
     /// the session's ticked folders, and then every file sits under its root's folder name.
     @Published private(set) var roots: [ReviewRoot] {
         didSet {
+            guard roots != oldValue else { return }
             lookupCache = nil
             fileListRowsCache = nil
+            fileLookupRevision &+= 1
             if roots.count != oldValue.count || zip(roots, oldValue).contains(where: { !$0.sameSetup(as: $1) }) {
                 resolvedPaths = [:]
             }
@@ -604,7 +610,7 @@ final class ReviewModel: ObservableObject {
     private var fileListRowsCache: [ChangedFilesTreeRow]?
     /// Absolute paths as `file(atPath:)` compares them (symlinks resolved, standardized), each read from disk once:
     /// the Folders tree asks for every row it draws, and a body must not touch the disk per row. Dropped when the
-    /// roots move to other folders.
+    /// roots move to other folders or the filesystem is refreshed.
     private var resolvedPaths: [String: String] = [:]
     /// The Files tree's root rows: tick or untick a root, or remove an added folder. Set by the hub.
     var rootActions: ReviewRootActions?
@@ -970,6 +976,10 @@ final class ReviewModel: ObservableObject {
     /// roots they named. A file event reloads only its own root, so an agent writing in one repository
     /// does not re-read the others.
     private func reload(folders: Set<String>) {
+        if !folders.isEmpty {
+            resolvedPaths.removeAll(keepingCapacity: true)
+            fileLookupRevision &+= 1
+        }
         pendingLoads.formUnion(folders)
         if loadInFlight {
             reloadAgain = true
@@ -1194,7 +1204,7 @@ final class ReviewModel: ObservableObject {
 
         let merged = ReviewRoots.merge(roots)
         let changed = merged != files
-        files = merged
+        if changed { files = merged }
         if let pending = pendingRevealPath, let file = file(atPath: pending) {
             pendingRevealPath = nil
             selectedID = file.id
