@@ -1108,7 +1108,7 @@ final class HubInboxModel: ObservableObject {
                 let capture = try await ToolsCLIRunner.captureCancellable(args, timeout: TimeInterval(Self.resumeWaitSeconds + 60))
                 delivery = (try? JSONDecoder().decode(InboxDelivery.self, from: capture.stdout))
                     ?? .failure("Nothing was sent: the send did not finish.",
-                                raw: "tools question inbox send exited \(capture.status): \(String(decoding: capture.stderr, as: UTF8.self).trimmed)")
+                                raw: ToolsCLIRunner.exitDetail(capture, args))
             } catch is CancellationError {
                 delivery = .cancelled
             } catch {
@@ -1212,9 +1212,8 @@ final class HubInboxModel: ObservableObject {
                                            titles: [String: String], resend: Bool) -> InboxDelivery {
         guard capture.status == 0, let result = try? JSONDecoder().decode(WidgetJSON.self, from: capture.stdout) else {
             if stopped { return .cancelled }
-            let why = String(decoding: capture.stderr, as: UTF8.self).trimmed
             return .failure("Nothing was sent: the widget's sender did not answer. The answers stay staged.",
-                            raw: "tools hub widget call exited \(capture.status): \(why)")
+                            raw: ToolsCLIRunner.exitDetail(capture, ["hub", "widget", "call"]))
         }
         var delivery = InboxDelivery.outcome(WidgetDecisionSendOutcome(result, titles: titles), ids: ids, resend: resend)
         if stopped, delivery.error == nil, let text = delivery.outcomeText {
@@ -1318,9 +1317,10 @@ final class HubInboxModel: ObservableObject {
             defer { try? FileManager.default.removeItem(at: file) }
             let delivery: InboxDelivery
             do {
-                let capture = try ToolsCLIRunner.capture(["hub", "widget", "call", "--input", file.path])
+                let callArgs = ["hub", "widget", "call", "--input", file.path]
+                let capture = try ToolsCLIRunner.capture(callArgs)
                 delivery = (try? JSONDecoder().decode(InboxDelivery.self, from: capture.stdout))
-                    ?? .failure("the hub did not answer.", raw: "tools hub widget call exited \(capture.status): \(String(decoding: capture.stderr, as: UTF8.self).trimmed)")
+                    ?? .failure("the hub did not answer.", raw: ToolsCLIRunner.exitDetail(capture, callArgs))
             } catch {
                 delivery = .failure("the hub could not run tools.", raw: "\(error)")
             }
@@ -1353,7 +1353,7 @@ final class HubInboxModel: ObservableObject {
                 let capture = try ToolsCLIRunner.capture(args)
                 delivery = (try? JSONDecoder().decode(InboxDelivery.self, from: capture.stdout))
                     ?? .failure("The answer was not sent. Try again.",
-                                raw: "tools question inbox answer exited \(capture.status): \(String(decoding: capture.stderr, as: UTF8.self).trimmed)")
+                                raw: ToolsCLIRunner.exitDetail(capture, args))
             } catch {
                 delivery = .failure("The answer was not sent: the hub could not run tools.", raw: "\(error)")
             }

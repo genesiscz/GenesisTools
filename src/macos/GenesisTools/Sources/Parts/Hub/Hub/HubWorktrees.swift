@@ -184,6 +184,11 @@ enum ToolsCLIRunner {
         return result.stdout
     }
 
+    /// "tools question inbox send exited 1: <stderr>": the raw detail behind a failed call's Details.
+    static func exitDetail(_ capture: ProcessCapture, _ args: [String]) -> String {
+        "tools \(args.prefix(3).joined(separator: " ")) exited \(capture.status): \(String(decoding: capture.stderr, as: UTF8.self).trimmed)"
+    }
+
     /// The exit status and both streams, for verbs that print a JSON error on stdout when they
     /// fail (`tools hub pr … --json` prints `{error, code}` and exits 1).
     static func capture(_ args: [String], timeout: TimeInterval = 60) throws -> ProcessCapture {
