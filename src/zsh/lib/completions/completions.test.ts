@@ -1,20 +1,12 @@
 import { describe, expect, it } from "bun:test";
-import {
-    chmodSync,
-    existsSync,
-    mkdirSync,
-    mkdtempSync,
-    readdirSync,
-    readFileSync,
-    symlinkSync,
-    writeFileSync,
-} from "node:fs";
+import { existsSync, mkdirSync, mkdtempSync, readdirSync, readFileSync, symlinkSync, writeFileSync } from "node:fs";
 import { tmpdir } from "node:os";
 import { join } from "node:path";
 import { env } from "@genesiscz/utils/env";
 import { persistentFixture } from "@genesiscz/utils/test/persistent-fixture";
 import { type CommandRunner, generateCompletions, looksLikeZshCompletion, versionChanged } from "./generate";
 import { COMPLETION_PROVIDERS, type CompletionProvider, getCompletionProvider } from "./providers";
+import { publishInstall } from "./publish";
 import {
     BLOCK_END,
     BLOCK_START,
@@ -390,26 +382,61 @@ describe("completion install and refresh", () => {
         });
     }
 
-    it("puts the rc back when the state that records its replaced hand blocks cannot be saved", async () => {
-        const home = join(root, "state-fails-home");
+    it("puts the rc back when the state that records its replaced hand blocks cannot be saved", () => {
+        const dir = join(root, "publish-fails");
+        mkdirSync(dir, { recursive: true });
+        const state = { version: 1 as const, clis: {}, replacedHand: {} };
+        const failing = () => {
+            throw new Error("disk full");
+        };
+        const after = "export A=1\n# gh completion: replaced\n";
+
+        // An rc that existed: back to its old text.
+        const rc = join(dir, ".zshrc");
+        const original = 'export A=1\neval "$(gh completion -s zsh)"\n';
+        writeFileSync(rc, original);
+        expect(() => publishInstall({ rcPath: rc, rcBefore: original, after, state, saveState: failing })).toThrow(
+            "put back as it was"
+        );
+        expect(readFileSync(rc, "utf8")).toBe(original);
+
+        // An rc this run created: removed again.
+        const fresh = join(dir, "fresh-zshrc");
+        expect(() =>
+            publishInstall({ rcPath: fresh, rcBefore: undefined, after, state, saveState: failing })
+        ).toThrow();
+        expect(existsSync(fresh)).toBe(false);
+
+        // One another writer changed meanwhile: left alone.
+        const shared = join(dir, "shared-zshrc");
+        const otherWriter = () => {
+            writeFileSync(shared, "someone else\n");
+            throw new Error("disk full");
+        };
+        expect(() =>
+            publishInstall({ rcPath: shared, rcBefore: undefined, after, state, saveState: otherWriter })
+        ).toThrow();
+        expect(readFileSync(shared, "utf8")).toBe("someone else\n");
+
+        // The control: a state that saves keeps the new rc and the record.
+        const statePath = join(dir, "completions.json");
+        publishInstall({
+            rcPath: rc,
+            rcBefore: original,
+            after,
+            state,
+            saveState: (saved) => writeState(saved, statePath),
+        });
+        expect(readFileSync(rc, "utf8")).toBe(after);
+        expect(readStateReadOnly(statePath).state).toEqual(state);
+    });
+
+    it("an install with --replace-hand replaces the line and records it", async () => {
+        const home = join(root, "replace-hand-home");
         const rc = join(home, ".zshrc");
         const zshDir = join(home, ".genesis-tools", "zsh");
-        const original = 'export A=1\neval "$(gh completion -s zsh)"\n';
         mkdirSync(join(zshDir, "completions"), { recursive: true });
-        writeFileSync(rc, original);
-        chmodSync(zshDir, 0o500);
-
-        try {
-            const proc = run(home, ["completions", "--yes", "--replace-hand", "--rc", rc]);
-            await Promise.all([new Response(proc.stdout).text(), new Response(proc.stderr).text()]);
-
-            expect(await proc.exited).not.toBe(0);
-            expect(readFileSync(rc, "utf8")).toBe(original);
-        } finally {
-            chmodSync(zshDir, 0o755);
-        }
-
-        // The control: with a writable state folder the same run replaces the line and records it.
+        writeFileSync(rc, 'export A=1\neval "$(gh completion -s zsh)"\n');
         const proc = run(home, ["completions", "--yes", "--replace-hand", "--rc", rc]);
         await Promise.all([new Response(proc.stdout).text(), new Response(proc.stderr).text()]);
 

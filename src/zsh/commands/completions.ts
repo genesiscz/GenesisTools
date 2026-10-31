@@ -15,6 +15,7 @@ import {
     versionChanged,
 } from "../lib/completions/generate";
 import { COMPLETION_PROVIDERS, type CompletionProvider, getCompletionProvider } from "../lib/completions/providers";
+import { publishInstall } from "../lib/completions/publish";
 import {
     type CompletionPlan,
     completionFilePath,
@@ -348,7 +349,6 @@ async function installAction(opts: InstallOptions): Promise<void> {
         });
     }
 
-    replaceRc(rcPath, rcBefore, plan.after);
     const clis: CompletionsState["clis"] = {};
 
     for (const result of results) {
@@ -371,19 +371,7 @@ async function installAction(opts: InstallOptions): Promise<void> {
         replacedHand[block.provider.cli] = [...(replacedHand[block.provider.cli] ?? []), replacedRecord(block)];
     }
 
-    try {
-        writeState({ version: 1, rc: rcPath, clis, replacedHand });
-    } catch (error) {
-        // The rc already lost the hand blocks the state was to record: without that record no uninstall can put
-        // them back, so the rc goes back to what it was.
-        if (rcBefore !== undefined) {
-            replaceRc(rcPath, plan.after, rcBefore);
-        }
-
-        throw new Error(`Could not save the completions state, so ${rcPath} was put back as it was.`, {
-            cause: error,
-        });
-    }
+    publishInstall({ rcPath, rcBefore, after: plan.after, state: { version: 1, rc: rcPath, clis, replacedHand } });
 
     logger.debug({ rcPath, wired: Object.keys(clis) }, "zsh completions: installed");
 
