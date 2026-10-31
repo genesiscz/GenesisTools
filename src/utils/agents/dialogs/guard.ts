@@ -1,5 +1,6 @@
 import { readTurnState, type TurnSnapshot } from "@genesiscz/utils/ai/transcripts/turn-state";
-import { openQuestions } from "./store";
+import { logger } from "@genesiscz/utils/logger";
+import { readSessionQuestionsStrict } from "./store";
 import type { DialogProvider, OpenDialog, OpenQuestion } from "./types";
 
 /** A turn that ended on a question waits for the user; past this the reader calls a silent turn stalled instead. */
@@ -61,7 +62,19 @@ export interface OpenDialogQuery {
  * first and refuses, or answers the dialog structurally, when it says yes (handoff h_ppczhri1).
  */
 export function openDialogFor(query: OpenDialogQuery): OpenDialog | null {
-    const recorded = dialogFromRecords(openQuestions(query.provider, query.sessionId, query.recordsRoot));
+    let recorded: OpenDialog | null;
+    try {
+        const questions = readSessionQuestionsStrict(query.provider, query.sessionId, query.recordsRoot)
+            .filter((question) => question.closedAt === undefined)
+            .sort((a, b) => b.askedAt.localeCompare(a.askedAt));
+        recorded = dialogFromRecords(questions);
+    } catch (error) {
+        logger.warn(
+            { error, sessionId: query.sessionId, provider: query.provider },
+            "dialog records unreadable; blocking typed delivery"
+        );
+        return { kind: "decision", question: null, signal: "unreadable" };
+    }
 
     if (recorded) {
         return recorded;
@@ -78,6 +91,9 @@ export function openDialogFor(query: OpenDialogQuery): OpenDialog | null {
 
 /** The reason a typed delivery is refused while a dialog is open; the caller queues the text with it. */
 export function dialogRefusal(dialog: OpenDialog): string {
+    if (dialog.signal === "unreadable") {
+        return "could not read the session's dialog records; typed delivery is blocked until they are repaired, or pass force to type anyway.";
+    }
     const what =
         dialog.kind === "permission"
             ? "a permission prompt"

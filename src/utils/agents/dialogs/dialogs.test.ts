@@ -1,7 +1,7 @@
 import { describe, expect, test } from "bun:test";
-import { appendFileSync, existsSync, mkdtempSync, readFileSync, writeFileSync } from "node:fs";
+import { appendFileSync, existsSync, mkdirSync, mkdtempSync, readFileSync, writeFileSync } from "node:fs";
 import { tmpdir } from "node:os";
-import { join } from "node:path";
+import { dirname, join } from "node:path";
 import type { TurnSnapshot } from "@genesiscz/utils/ai/transcripts/turn-state";
 import { SafeJSON } from "@genesiscz/utils/json";
 import { dialogFromRecords, dialogFromSnapshot, dialogRefusal, openDialogFor } from "./guard";
@@ -215,6 +215,17 @@ describe("dialog record store", () => {
 });
 
 describe("dialog guard", () => {
+    test("an unreadable dialog record blocks typed delivery", () => {
+        const dir = root();
+        const path = dialogsPath("claude", SESSION, dir);
+        mkdirSync(dirname(path), { recursive: true });
+        writeFileSync(path, "{ not json");
+        const blocked = openDialogFor({ provider: "claude", sessionId: SESSION, recordsRoot: dir });
+        expect(blocked?.signal).toBe("unreadable");
+        expect(blocked && dialogRefusal(blocked)).toContain("could not read");
+        expect(openDialogFor({ provider: "codex", sessionId: SESSION, recordsRoot: dir })).toBeNull();
+    });
+
     test("dialogFromRecords takes the first open record and skips closed ones", () => {
         const closed = question({ toolCallId: "closed", closedAt: "2026-10-30T10:01:00.000Z" });
         const open = question({ toolCallId: "perm", kind: "permission", question: "Run rm?", options: undefined });

@@ -41,12 +41,18 @@ export function readSessionQuestions(provider: DialogProvider, sessionId: string
     }
 }
 
-function readQuestionsForUpdate(provider: DialogProvider, sessionId: string, root?: string): OpenQuestion[] {
+export function readSessionQuestionsStrict(provider: DialogProvider, sessionId: string, root?: string): OpenQuestion[] {
     const path = dialogsPath(provider, sessionId, root);
-    if (!existsSync(path)) {
-        return [];
+    let text: string;
+    try {
+        text = readFileSync(path, "utf8");
+    } catch (error) {
+        if (error instanceof Error && "code" in error && error.code === "ENOENT") {
+            return [];
+        }
+        throw error;
     }
-    const parsed: unknown = SafeJSON.parse(readFileSync(path, "utf8"), { strict: true });
+    const parsed: unknown = SafeJSON.parse(text, { strict: true });
     if (!Array.isArray(parsed) || !parsed.every(isOpenQuestion)) {
         throw new Error(`Cannot update malformed dialog records at ${path}`);
     }
@@ -64,7 +70,7 @@ export function openQuestions(provider: DialogProvider, sessionId: string, root?
 export async function upsertQuestion(question: OpenQuestion, root?: string): Promise<OpenQuestion[]> {
     return withFileLock(`${dialogsPath(question.provider, question.sessionId, root)}.lock`, async () => {
         const key = openQuestionKey(question);
-        const current = readQuestionsForUpdate(question.provider, question.sessionId, root);
+        const current = readSessionQuestionsStrict(question.provider, question.sessionId, root);
         const next = current.filter((item) => openQuestionKey(item) !== key);
         const previous = current.find((item) => openQuestionKey(item) === key);
         if (previous?.source === "hook" && question.source === "watcher") {
@@ -86,7 +92,7 @@ export async function closeQuestion(
 ): Promise<OpenQuestion | null> {
     return withFileLock(`${dialogsPath(target.provider, target.sessionId, root)}.lock`, async () => {
         const key = openQuestionKey(target);
-        const current = readQuestionsForUpdate(target.provider, target.sessionId, root);
+        const current = readSessionQuestionsStrict(target.provider, target.sessionId, root);
         const found = current.find((item) => openQuestionKey(item) === key);
 
         if (!found || (source !== undefined && found.source !== source)) {

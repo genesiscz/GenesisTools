@@ -41,5 +41,5 @@ export interface OpenDialog {
     question: string | null;
     toolCallId?: string;
     options?: string[];
-    signal: OpenQuestionSource;
+    signal: OpenQuestionSource | "unreadable";
 }
