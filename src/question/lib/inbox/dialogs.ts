@@ -5,6 +5,7 @@ import { type OpenQuestion, openQuestionKey } from "@genesiscz/utils/agents/dial
 import { DialogWatcher, type WatchedSession } from "@genesiscz/utils/agents/dialogs/watcher";
 import { logger } from "@genesiscz/utils/logger";
 import { dispatchNotification } from "@genesiscz/utils/notifications";
+import { clipOneLine } from "@genesiscz/utils/string";
 import { decisionNotificationId } from "../decisions/banners";
 import { hubItemClickCommand } from "../hub-link";
 
@@ -73,11 +74,6 @@ export async function notifiedAfterDelivery(
     return open.map(openQuestionKey).filter((key) => notified.has(key) || delivered);
 }
 
-function clip(text: string): string {
-    const flat = text.replace(/\s+/g, " ").trim();
-    return flat.length > MESSAGE_MAX ? `${flat.slice(0, MESSAGE_MAX - 1)}…` : flat;
-}
-
 const LABELS: Record<OpenQuestion["kind"], string> = {
     decision: "asks you",
     plan: "waits for plan approval",
@@ -117,7 +113,7 @@ export async function notifyOpenQuestions(
                     ? `${first.provider} ${LABELS[first.kind]}`
                     : `${questions.length} agents wait for you`,
             subtitle: row?.project ?? row?.title ?? first.sessionId,
-            message: clip(first.question || LABELS[first.kind]),
+            message: clipOneLine(first.question || LABELS[first.kind], MESSAGE_MAX),
             id: decisionNotificationId({ id }),
             execute: click,
             actions: [{ id: "open-hub", title: "Open in hub", execute: click }],
