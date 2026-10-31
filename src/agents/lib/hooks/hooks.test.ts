@@ -2057,6 +2057,12 @@ describe("HARNESS_HOOK_FACTS", () => {
             rendersAnsiDiffs: true,
             turnIsPromptId: true,
             runsClaudeSettingsHooks: true,
+            agentsTalkHint: expect.any(Function),
+            promisesFileTracking: true,
+            compactBoundaryRows: true,
+            homeBindsAccount: false,
+            launchAuthFromAncestor: true,
+            journalOmitsProvider: true,
         });
         expect(HARNESS_HOOK_FACTS.grok).toEqual({
             diffLogFromTranscript: true,
@@ -2068,6 +2074,12 @@ describe("HARNESS_HOOK_FACTS", () => {
             rendersAnsiDiffs: false,
             turnIsPromptId: false,
             runsClaudeSettingsHooks: true,
+            agentsTalkHint: expect.any(Function),
+            promisesFileTracking: false,
+            compactBoundaryRows: false,
+            homeBindsAccount: true,
+            launchAuthFromAncestor: false,
+            journalOmitsProvider: false,
         });
         expect(HARNESS_HOOK_FACTS.codex).toEqual({
             diffLogFromTranscript: false,
@@ -2079,6 +2091,12 @@ describe("HARNESS_HOOK_FACTS", () => {
             rendersAnsiDiffs: true,
             turnIsPromptId: false,
             runsClaudeSettingsHooks: false,
+            agentsTalkHint: expect.any(Function),
+            promisesFileTracking: false,
+            compactBoundaryRows: false,
+            homeBindsAccount: true,
+            launchAuthFromAncestor: false,
+            journalOmitsProvider: false,
         });
         expect(harnessHookFacts("cursor")).toBeUndefined();
         expect(harnessHookFacts("constructor")).toBeUndefined();

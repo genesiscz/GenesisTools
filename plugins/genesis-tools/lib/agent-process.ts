@@ -1,5 +1,5 @@
 import { basename } from "node:path";
-import { HARNESS_IDS, type Harness } from "./Generated/harness-facts";
+import { HARNESS_FACTS, HARNESS_IDS, type Harness } from "./Generated/harness-facts";
 import { readProcessBasics } from "./process-basics";
 
 const MAX_ANCESTORS = 12;
@@ -66,15 +66,6 @@ export function findAgentProcess(startPid = process.ppid): FoundAgent | null {
     return null;
 }
 
-/** Flags that make each agent run one scripted turn instead of its terminal UI. */
-const HEADLESS_FLAGS: Record<Harness, ReadonlySet<string>> = {
-    // `--input-format stream-json` is the Agent SDK driving claude over stdin.
-    claude: new Set(["-p", "--print", "--input-format"]),
-    grok: new Set(["-p", "--prompt", "--prompt-file"]),
-    codex: new Set(),
-};
-const CODEX_HEADLESS_COMMANDS = new Set(["exec", "e", "app-server", "mcp-server", "mcp", "proto"]);
-
 /**
  * True for an agent that runs without its terminal UI: `claude -p`, `grok -p`, `codex exec`, a Codex
  * app-server. Such a process is never the tab's occupant, even though it inherits the tab's
@@ -83,11 +74,21 @@ const CODEX_HEADLESS_COMMANDS = new Set(["exec", "e", "app-server", "mcp-server"
  */
 export function isHeadlessAgent(agent: { harness: Harness; command: string }): boolean {
     const tokens = agent.command.trim().split(/\s+/);
+    const { binary, headlessFlags, headlessSubcommands } = HARNESS_FACTS[agent.harness];
 
-    if (agent.harness === "codex") {
-        const at = tokens.findIndex((token) => /^codex(?:$|[-.])/.test(basename(token)));
-        return tokens.slice(at + 1).some((token) => CODEX_HEADLESS_COMMANDS.has(token));
+    if (tokens.some((token) => headlessFlags.includes(token))) {
+        return true;
     }
 
-    return tokens.some((token) => HEADLESS_FLAGS[agent.harness].has(token));
+    if (headlessSubcommands.length === 0) {
+        return false;
+    }
+
+    const at = tokens.findIndex((token) => isBinaryName(basename(token), binary));
+    return tokens.slice(at + 1).some((token) => headlessSubcommands.includes(token));
+}
+
+/** `codex`, or a versioned spelling of it (`codex-1.2`, `codex.js`). */
+function isBinaryName(name: string, binary: string): boolean {
+    return name === binary || name.startsWith(`${binary}-`) || name.startsWith(`${binary}.`);
 }

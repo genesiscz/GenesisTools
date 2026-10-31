@@ -26,6 +26,7 @@ import {
 } from "node:fs";
 import { homedir } from "node:os";
 import { basename, dirname, isAbsolute, join, relative, resolve } from "node:path";
+import { HARNESS_FACTS } from "../lib/Generated/harness-facts";
 import { parseLenientJson } from "./agents-talk-hint";
 import { harnessOf } from "./harness";
 import { lockWorktreesForToolUse } from "./worktree-lock";
@@ -285,15 +286,20 @@ export function markCompaction(state: Record<string, string[]>, now: number): Re
     return marked;
 }
 
-/** The agent's own Claude Code transcript; undefined for another harness, whose transcript has no boundary rows. */
+/** The agent's own transcript; undefined for a harness whose transcript has no compaction boundary rows. */
 export function agentTranscript(payload: HookPayload): string | undefined {
     const transcript = payload.transcript_path;
-    if (!transcript || harnessOf({ transcript_path: transcript }) !== "claude") {
+    const facts = transcript ? HARNESS_FACTS[harnessOf({ transcript_path: transcript })] : undefined;
+    if (!transcript || !facts?.compactBoundaryRows) {
         return undefined;
     }
 
     if (!payload.agent_id) {
         return transcript;
+    }
+
+    if (!facts.subagentsOnDisk) {
+        return undefined;
     }
 
     return join(dirname(transcript), basename(transcript, ".jsonl"), "subagents", `agent-${payload.agent_id}.jsonl`);

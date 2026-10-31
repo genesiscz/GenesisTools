@@ -155,6 +155,11 @@ export interface HostResolver {
     readonly agent: AgentRuntimeContext["agent"];
     /** The environment variable the harness sets to its own session id. */
     readonly sessionEnvKey: string;
+    /**
+     * The environment variable the harness sets to its own process id (Claude Code's `CLAUDE_PID`), or null. A worker of
+     * another harness inherits it from its parent, so a reader trusts it only for this harness's own payload.
+     */
+    readonly pidEnvKey: string | null;
     detects(env: NodeJS.ProcessEnv): boolean;
     resolve(env: NodeJS.ProcessEnv): Partial<AgentRuntimeContext>;
 }
@@ -169,6 +174,12 @@ export interface ProcessSignature {
     runsCli(input: { argv0: string; name: string; command: string }): boolean;
     /** For an identified CLI, its index in the whitespace-split command, or null when the boundary is unknown. */
     cliEntryIndex(input: { argv0: string; name: string; command: string }): number | null;
+    /**
+     * The argv words that make the CLI run one scripted turn without its terminal UI (`claude -p`, `codex exec`): a
+     * flag counts anywhere in the command, a subcommand only after the CLI's own word. The plugin's tab-owner check
+     * reads them from `lib/Generated/harness-facts.ts`.
+     */
+    readonly headless: { readonly flags: readonly string[]; readonly subcommands: readonly string[] };
 }
 
 /**
@@ -198,6 +209,35 @@ export interface HookFacts {
     readonly turnIsPromptId: boolean;
     /** It runs the hook entries of Claude's `settings.json`, so a feature wired there reaches its sessions too. */
     readonly runsClaudeSettingsHooks: boolean;
+    /**
+     * The SessionStart reminder of how its agents talk to each other while they work (the plugin's
+     * `agents-talk-hint.ts` prints it). `tool` names a `tools …` command (`toolCommand`, passed by the generator),
+     * because a util names no command of its own.
+     */
+    agentsTalkHint(tool: (command: string) => string): string;
+    /**
+     * The SessionStart line may promise that every file the session modifies is tracked (`track-session-files.ts`).
+     * Codex shell commands change files no edit hook sees, so only a harness whose edits all pass the hooks says it.
+     */
+    readonly promisesFileTracking: boolean;
+    /** Its transcript marks a compaction with a boundary row, which the plugin's `area-rules.ts` reads. */
+    readonly compactBoundaryRows: boolean;
+    /**
+     * A terminal the user opened without `tools <agent> run` is billed to the account logged in to the session's
+     * home (`~/.codex-<name>`), so the account hook reads that home's login. Claude has no home binding.
+     */
+    readonly homeBindsAccount: boolean;
+    /**
+     * Its session pin records the auth mode (keychain or token) and the launch `--model` read from the launch env and
+     * the process ancestors. The modes and the ancestor walk are Claude Code's; the others get neither, never a guess.
+     */
+    readonly launchAuthFromAncestor: boolean;
+    /**
+     * The session journals (pins, cmux records) predate the other harnesses, so a line without `provider` is this
+     * harness's, and its own lines omit the field. Exactly one driver sets it (`gen-harness-plugin.ts` refuses
+     * otherwise).
+     */
+    readonly journalOmitsProvider: boolean;
 }
 
 /** Parts that wrap parsers and readers: a driver holds a loader, so reading the driver never loads them. */

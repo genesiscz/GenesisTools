@@ -51,6 +51,7 @@ export const claudeHarness: HarnessDriver<"claude"> = {
         host: {
             agent: "claude-code",
             sessionEnvKey: "CLAUDE_CODE_SESSION_ID",
+            pidEnvKey: "CLAUDE_PID",
             detects: isClaude,
             resolve: resolveClaudeContext,
         },
@@ -65,6 +66,8 @@ export const claudeHarness: HarnessDriver<"claude"> = {
                     : name === "node" || name === "bun"
                       ? claudeScriptIndex(command)
                       : null,
+            // `--input-format stream-json` is the Agent SDK driving claude over stdin.
+            headless: { flags: ["-p", "--print", "--input-format"], subcommands: [] },
         },
         worker: claudeWorker,
         dialog: claudeDialog,

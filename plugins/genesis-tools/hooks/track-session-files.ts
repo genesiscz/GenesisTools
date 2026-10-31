@@ -16,6 +16,7 @@ import {
 } from "node:fs";
 import { homedir } from "node:os";
 import { join } from "node:path";
+import { HARNESS_FACTS } from "../lib/Generated/harness-facts";
 import { EDIT_TOOLS, filePathsOf, type HookInput, normalize, writeFailed } from "./edit-payload";
 import { harnessOf } from "./harness";
 
@@ -104,10 +105,9 @@ function recordUnknownTool(harness: string, toolName: string): void {
  * still takes `additionalContext` as developer context. Claude does too.
  */
 function sessionStartOutput(input: HookInput): { hookEventName: string; additionalContext: string } {
-    const tracked =
-        harnessOf(input) === "claude"
-            ? `\n\n**Modified files tracking:** All files you modify are tracked in ~/.genesis-tools/claude-code/sessions/${input.session_id}.json`
-            : "";
+    const tracked = HARNESS_FACTS[harnessOf(input)].promisesFileTracking
+        ? `\n\n**Modified files tracking:** All files you modify are tracked in ~/.genesis-tools/claude-code/sessions/${input.session_id}.json`
+        : "";
 
     return { hookEventName: "SessionStart", additionalContext: `📌 Session ID: ${input.session_id}${tracked}` };
 }

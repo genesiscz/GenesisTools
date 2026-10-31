@@ -42,7 +42,13 @@ export const grokHarness: HarnessDriver<"grok"> = {
         },
         exit: { command: "/exit" },
         hooks: grokHooks,
-        host: { agent: "grok", sessionEnvKey: "GROK_SESSION_ID", detects: isGrok, resolve: resolveGrokContext },
+        host: {
+            agent: "grok",
+            sessionEnvKey: "GROK_SESSION_ID",
+            pidEnvKey: null,
+            detects: isGrok,
+            resolve: resolveGrokContext,
+        },
         process: {
             runsCli: ({ name, command }) =>
                 name === "grok" ||
@@ -56,6 +62,7 @@ export const grokHarness: HarnessDriver<"grok"> = {
                     : /^(?:bash|sh|zsh)$/.test(name)
                       ? 1
                       : 0,
+            headless: { flags: ["-p", "--prompt", "--prompt-file"], subcommands: [] },
         },
         worker: grokWorker,
         dialog: {

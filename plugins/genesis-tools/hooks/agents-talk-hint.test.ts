@@ -5,15 +5,13 @@ import { join } from "node:path";
 import { inboxInstructions } from "@app/question/lib/inbox-guidance";
 import { isWidgetWatchCommand } from "@genesiscz/utils/macos/native-inbox";
 import { buildPidRecord, serializePidRecord } from "@genesiscz/utils/process/pidfile";
-import {
-    CLAUDE_REMINDER,
-    CODEX_REMINDER,
-    GROK_REMINDER,
-    harnessOf,
-    hintEnabled,
-    reminderFor,
-} from "./agents-talk-hint";
+import { HARNESS_FACTS } from "../lib/Generated/harness-facts";
+import { harnessOf, hintEnabled, reminderFor } from "./agents-talk-hint";
 import { hintFor, INSTALLED_HINT, inboxStateFromRecord, isLiveWidgetLock, RUNNING_HINT } from "./native-inbox-hint";
+
+const CLAUDE_REMINDER = HARNESS_FACTS.claude.agentsTalkHint;
+const CODEX_REMINDER = HARNESS_FACTS.codex.agentsTalkHint;
+const GROK_REMINDER = HARNESS_FACTS.grok.agentsTalkHint;
 
 const HOOK = join(import.meta.dir, "agents-talk-hint.ts");
 

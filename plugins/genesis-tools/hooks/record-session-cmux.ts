@@ -4,6 +4,7 @@ import { appendFileSync, existsSync, mkdirSync, readFileSync, renameSync, writeF
 import { homedir } from "node:os";
 import { join } from "node:path";
 import { findAgentProcess, isHeadlessAgent } from "../lib/agent-process";
+import { HARNESS_FACTS, JOURNAL_DEFAULT_HARNESS } from "../lib/Generated/harness-facts";
 import { readProcessBasics } from "../lib/process-basics";
 import { resumeArgv } from "../lib/resume-argv";
 import { accountEnvVarFor, type Harness, harnessFor } from "./harness";
@@ -116,16 +117,17 @@ function identifyRefs(): IdentifyCaller {
  * Claude tab that started them). Env comparison cannot catch it: a nested agent overwrites the session
  * variables for its own children.
  *
- * - Claude names its process in CLAUDE_PID. Use it only for a Claude payload: a Codex or Grok worker started
- *   from a Claude session inherits the PARENT's CLAUDE_PID, which is how those worker records got through.
+ * - Claude names its process in CLAUDE_PID (its driver's `host.pidEnvKey`). Use it only for that harness's
+ *   payload: a Codex or Grok worker started from a Claude session inherits the PARENT's CLAUDE_PID, which is how
+ *   those worker records got through.
  * - Otherwise the nearest claude/codex/grok ancestor of this hook is the agent (`findAgentProcess`).
  * - The occupant has a controlling terminal and runs its terminal UI: no `-p`, no `codex exec`, no app-server.
  * - Nothing to read (no such process, no agent ancestor, another harness's agent above a test run): fail open
  *   and record, because losing the journal is worse than one stray line.
  */
-export function ownsTab(harness: Harness, claudePid = process.env.CLAUDE_PID, startPid = process.ppid): boolean {
-    if (harness === "claude" && claudePid && /^\d+$/.test(claudePid)) {
-        const basics = readProcessBasics(Number(claudePid));
+export function ownsTab(harness: Harness, ownPid = ownPidOf(harness), startPid = process.ppid): boolean {
+    if (ownPid && /^\d+$/.test(ownPid)) {
+        const basics = readProcessBasics(Number(ownPid));
 
         if (basics === null) {
             return true;
@@ -141,6 +143,12 @@ export function ownsTab(harness: Harness, claudePid = process.env.CLAUDE_PID, st
     }
 
     return agent.tty !== null && !isHeadlessAgent(agent);
+}
+
+/** The pid the harness names its own process by, read only from its own variable (`pidEnvKey`). */
+function ownPidOf(harness: Harness): string | undefined {
+    const key = HARNESS_FACTS[harness].pidEnvKey;
+    return key ? process.env[key] : undefined;
 }
 
 interface BindingState {
@@ -388,8 +396,8 @@ function main(raw: string): void {
 
     const entry = {
         sessionId,
-        // Absent means claude, so every record written before this field keeps its meaning.
-        ...(harness === "claude" ? {} : { provider: harness }),
+        // Absent means the journal's default harness (claude), so every record written before this field keeps its meaning.
+        ...(harness === JOURNAL_DEFAULT_HARNESS ? {} : { provider: harness }),
         // identify knows the tab's CURRENT workspace; the env value is from when the agent started.
         workspaceId: caller.workspace_id ?? workspaceId,
         surfaceId: caller.surface_id ?? surfaceId,

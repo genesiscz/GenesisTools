@@ -20,3 +20,72 @@ export const RESUME_ARGV: Readonly<Record<Harness, { plain: readonly string[]; a
         account: ["tools", "grok", "run", "{account}", "--", "-r", "{session}"],
     },
 };
+
+/** What the plugin's hooks may assume about a harness: the facts its driver states (`src/utils/harness/parts.ts`). */
+export interface HarnessFacts {
+    /** The executable a user starts. */
+    binary: string;
+    /** Flags anywhere in the command that make the CLI run one scripted turn without its terminal UI. */
+    headlessFlags: readonly string[];
+    /** Subcommands after the CLI's own word that do the same (`codex exec`). */
+    headlessSubcommands: readonly string[];
+    /** The variable the harness sets to its own process id, or null. */
+    pidEnvKey: string | null;
+    /** The SessionStart reminder of how its agents talk to each other while they work. */
+    agentsTalkHint: string;
+    /** The SessionStart line may promise that every modified file is tracked. */
+    promisesFileTracking: boolean;
+    /** Its transcript marks a compaction with a boundary row. */
+    compactBoundaryRows: boolean;
+    /** It writes a session's sub-agents beside it (`<session>/subagents/agent-<id>.jsonl`). */
+    subagentsOnDisk: boolean;
+    /** The provider plugin whose login in the session's home bills a terminal not started by `tools`, or null. */
+    accountHomeProvider: string | null;
+    /** Its session pin records the auth mode and the launch `--model` from the launch env and ancestors. */
+    launchAuthFromAncestor: boolean;
+}
+
+export const HARNESS_FACTS: Readonly<Record<Harness, HarnessFacts>> = {
+    claude: {
+        binary: "claude",
+        headlessFlags: ["-p", "--print", "--input-format"],
+        headlessSubcommands: [],
+        pidEnvKey: "CLAUDE_PID",
+        agentsTalkHint:
+            "Invoke the `genesis-tools:agents-talk` skill first when agents must talk to each other WHILE they work: a `gt:handoff-to` swarm, or an agent team whose lead may need to steer a teammate in the middle of its task (team mail to a busy teammate waits until its turn ends). Ordinary subagents that report back when finished need nothing from it. The Skill tool only accepts that full id — `gt:agents-talk` is not a valid skill name.",
+        promisesFileTracking: true,
+        compactBoundaryRows: true,
+        subagentsOnDisk: true,
+        accountHomeProvider: null,
+        launchAuthFromAncestor: true,
+    },
+    codex: {
+        binary: "codex",
+        headlessFlags: [],
+        headlessSubcommands: ["exec", "e", "app-server", "mcp-server", "mcp", "proto"],
+        pidEnvKey: null,
+        agentsTalkHint:
+            "Never invoke the `genesis-tools:agents-talk` / `agents-talk` skill: it needs a Monitor tool Codex does not have. For subagent communication use Codex's native collaboration tools (send_message for active peers, followup_task for idle ones).",
+        promisesFileTracking: false,
+        compactBoundaryRows: false,
+        subagentsOnDisk: false,
+        accountHomeProvider: "openai-sub",
+        launchAuthFromAncestor: false,
+    },
+    grok: {
+        binary: "grok",
+        headlessFlags: ["-p", "--prompt", "--prompt-file"],
+        headlessSubcommands: [],
+        pidEnvKey: null,
+        agentsTalkHint:
+            "When agents must talk to each other WHILE they work, read the `agents-talk` skill and follow its Grok section: wrap `tools agents login` in the `monitor` tool (`persistent: true`), which pushes each mail line into the chat, and pass `--session <id>` explicitly on every `tools agents` call, because a grok worker's environment may be stripped. An idle grok subagent is not woken by its mail; the parent resumes it with `spawn_subagent` `resume_from`.",
+        promisesFileTracking: false,
+        compactBoundaryRows: false,
+        subagentsOnDisk: false,
+        accountHomeProvider: "grok-sub",
+        launchAuthFromAncestor: false,
+    },
+};
+
+/** The harness whose journal lines (pins, cmux records) omit `provider`: a line without one is its. */
+export const JOURNAL_DEFAULT_HARNESS: Harness = "claude";

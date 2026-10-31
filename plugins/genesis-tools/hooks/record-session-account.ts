@@ -2,6 +2,7 @@
 import { appendFileSync, closeSync, existsSync, mkdirSync, openSync, readFileSync, readSync, statSync } from "node:fs";
 import { homedir } from "node:os";
 import { join, resolve, sep } from "node:path";
+import { HARNESS_FACTS, JOURNAL_DEFAULT_HARNESS } from "../lib/Generated/harness-facts";
 import { readProcessBasics } from "../lib/process-basics";
 import { accountEnvVarFor, type Harness, harnessFor } from "./harness";
 
@@ -367,18 +368,6 @@ function accountByAuthIdentity(home: string, provider: string): string | null {
     return names.length === 1 ? names[0] : null;
 }
 
-function providerId(harness: Harness): string | null {
-    if (harness === "codex") {
-        return "openai-sub";
-    }
-
-    if (harness === "grok") {
-        return "grok-sub";
-    }
-
-    return null;
-}
-
 /** The pin file is read in chunks this size, the newest first, so memory stays bounded however long it grows. */
 const PIN_CHUNK_BYTES = 1024 * 1024;
 
@@ -480,25 +469,28 @@ function main(raw: string): void {
     const harness = harnessFor(input);
     const fromEnv = accountFor(harness, process.env);
     const home = agentHome(transcript);
-    const provider = providerId(harness);
+    const facts = HARNESS_FACTS[harness];
+    const provider = facts.accountHomeProvider;
+    // The journal's default harness writes no `provider`, so no earlier pin of it can match `pinAccount`.
+    const journalDefault = harness === JOURNAL_DEFAULT_HARNESS;
     const fromPayload = typeof input.model === "string" ? input.model.trim() : "";
     const pin: SessionPin = {
         sessionId,
-        ...(harness === "claude" ? {} : { provider: harness }),
+        ...(journalDefault ? {} : { provider: harness }),
         // Env wins: `tools <agent> run` said which account this process is. The home binding
-        // covers a terminal the user opened themselves. Claude has no home binding.
+        // covers a terminal the user opened themselves (`accountHomeProvider`; Claude has none).
         // A session that already has a pin (resume, clear, compact) keeps it: today's home binding says
         // who is logged in now, not who owned the session. Only a new session is pinned from the home.
         account:
             fromEnv ||
-            (harness === "claude" ? null : priorAccount(PINS_PATH, sessionId, harness)) ||
+            (journalDefault ? null : priorAccount(PINS_PATH, sessionId, harness)) ||
             (home && provider ? accountBoundToHome(home, provider) : null),
-        // Claude-only, and deliberately not faked for the others: the ancestor walk looks for a
-        // `claude` process and the auth modes are Claude's.
-        ...(harness === "claude" ? resolveAuth(process.env) : {}),
+        // `launchAuthFromAncestor` (Claude only), deliberately not faked for the others: the ancestor
+        // walk looks for a `claude` process and the auth modes are Claude's.
+        ...(facts.launchAuthFromAncestor ? resolveAuth(process.env) : {}),
         // The payload wins when the harness sends it (Codex 0.155 SessionStart requires `model`).
         // Claude often omits it; the launch flag on the claude ancestor is the fallback.
-        model: fromPayload || (harness === "claude" ? modelFromAncestors() : null),
+        model: fromPayload || (facts.launchAuthFromAncestor ? modelFromAncestors() : null),
         cwd: input.cwd || process.cwd(),
         workspaceId: process.env.CMUX_WORKSPACE_ID || null,
         source: "hook",

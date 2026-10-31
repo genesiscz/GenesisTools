@@ -17,31 +17,6 @@ export interface HarnessGuardCounts {
 }
 
 export const HARNESS_GUARD_ALLOWLIST: Readonly<Record<string, HarnessGuardCounts>> = {
-    "plugins/genesis-tools/hooks/agents-talk-hint.ts": {
-        branch: 2,
-        why: "a standalone plugin hook (check-plugin-standalone.ts): the harness ids and resume argv come from the generated lib/Generated/harness-facts.ts (scripts/gen-harness-plugin.ts); what is left is per-harness behaviour no driver fact describes yet",
-    },
-    "plugins/genesis-tools/hooks/area-rules.ts": {
-        branch: 1,
-        why: "a standalone plugin hook (check-plugin-standalone.ts): the harness ids and resume argv come from the generated lib/Generated/harness-facts.ts (scripts/gen-harness-plugin.ts); what is left is per-harness behaviour no driver fact describes yet",
-    },
-    "plugins/genesis-tools/hooks/record-session-account.ts": {
-        branch: 6,
-        why: "a standalone plugin hook (check-plugin-standalone.ts): the harness ids and resume argv come from the generated lib/Generated/harness-facts.ts (scripts/gen-harness-plugin.ts); what is left is per-harness behaviour no driver fact describes yet",
-    },
-    "plugins/genesis-tools/hooks/record-session-cmux.ts": {
-        branch: 2,
-        why: "a standalone plugin hook (check-plugin-standalone.ts): the harness ids and resume argv come from the generated lib/Generated/harness-facts.ts (scripts/gen-harness-plugin.ts); what is left is per-harness behaviour no driver fact describes yet",
-    },
-    "plugins/genesis-tools/hooks/track-session-files.ts": {
-        branch: 1,
-        why: "a standalone plugin hook (check-plugin-standalone.ts): the harness ids and resume argv come from the generated lib/Generated/harness-facts.ts (scripts/gen-harness-plugin.ts); what is left is per-harness behaviour no driver fact describes yet",
-    },
-    "plugins/genesis-tools/lib/agent-process.ts": {
-        table: 2,
-        branch: 1,
-        why: "a standalone plugin hook (check-plugin-standalone.ts): the harness ids and resume argv come from the generated lib/Generated/harness-facts.ts (scripts/gen-harness-plugin.ts); what is left is per-harness behaviour no driver fact describes yet",
-    },
     "scripts/benchmarks/fs/walk-trees.ts": {
         table: 1,
         why: "benchmark tree names a baseline records (claude-listing, claude-all, grok, codex), not the harness set",

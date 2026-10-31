@@ -42,7 +42,13 @@ export const codexHarness: HarnessDriver<"codex"> = {
         },
         exit: { command: "/quit" },
         hooks: codexHooks,
-        host: { agent: "codex", sessionEnvKey: "CODEX_THREAD_ID", detects: isCodex, resolve: resolveCodexContext },
+        host: {
+            agent: "codex",
+            sessionEnvKey: "CODEX_THREAD_ID",
+            pidEnvKey: null,
+            detects: isCodex,
+            resolve: resolveCodexContext,
+        },
         process: {
             runsCli: ({ name, command }) =>
                 /^codex(?:-[\w-]+)?$/.test(name) || /@openai\/codex\/bin\/codex\.m?js\b/.test(command),
@@ -54,6 +60,7 @@ export const codexHarness: HarnessDriver<"codex"> = {
                     : /^(?:bash|sh|zsh)$/.test(name)
                       ? 1
                       : 0,
+            headless: { flags: [], subcommands: ["exec", "e", "app-server", "mcp-server", "mcp", "proto"] },
         },
         worker: codexWorker,
         dialog: {

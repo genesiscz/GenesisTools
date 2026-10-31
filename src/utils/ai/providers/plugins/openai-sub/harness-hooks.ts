@@ -13,4 +13,11 @@ export const codexHooks: HookFacts = {
     turnIsPromptId: false,
     // Codex has its own `hooks.json`; Claude's settings never reach it.
     runsClaudeSettingsHooks: false,
+    agentsTalkHint: () =>
+        "Never invoke the `genesis-tools:agents-talk` / `agents-talk` skill: it needs a Monitor tool Codex does not have. For subagent communication use Codex's native collaboration tools (send_message for active peers, followup_task for idle ones).",
+    promisesFileTracking: false,
+    compactBoundaryRows: false,
+    homeBindsAccount: true,
+    launchAuthFromAncestor: false,
+    journalOmitsProvider: false,
 };

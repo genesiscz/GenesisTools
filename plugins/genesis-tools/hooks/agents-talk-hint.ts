@@ -12,20 +12,12 @@
 import { readFileSync } from "node:fs";
 import { homedir } from "node:os";
 import { join } from "node:path";
+import { HARNESS_FACTS } from "../lib/Generated/harness-facts";
 import { harnessOf, type SessionStartPayload } from "./harness";
 
 const SafeJSON = JSON;
 
 export { harnessOf };
-
-export const CLAUDE_REMINDER =
-    "Invoke the `genesis-tools:agents-talk` skill first when agents must talk to each other WHILE they work: a `gt:handoff-to` swarm, or an agent team whose lead may need to steer a teammate in the middle of its task (team mail to a busy teammate waits until its turn ends). Ordinary subagents that report back when finished need nothing from it. The Skill tool only accepts that full id — `gt:agents-talk` is not a valid skill name.";
-
-export const CODEX_REMINDER =
-    "Never invoke the `genesis-tools:agents-talk` / `agents-talk` skill: it needs a Monitor tool Codex does not have. For subagent communication use Codex's native collaboration tools (send_message for active peers, followup_task for idle ones).";
-
-export const GROK_REMINDER =
-    "When agents must talk to each other WHILE they work, read the `agents-talk` skill and follow its Grok section: wrap `tools agents login` in the `monitor` tool (`persistent: true`), which pushes each mail line into the chat, and pass `--session <id>` explicitly on every `tools agents` call, because a grok worker's environment may be stripped. An idle grok subagent is not woken by its mail; the parent resumes it with `spawn_subagent` `resume_from`.";
 
 /** `agentsTalk.hint` in `~/.genesis-tools/agents/hooks.json`, set by `tools agents hooks config set`. */
 export function hintEnabled(configPath = hooksConfigPath()): boolean {
@@ -103,15 +95,9 @@ function hooksConfigPath(): string {
     return join(process.env.GENESIS_TOOLS_HOME || homedir(), ".genesis-tools", "agents", "hooks.json");
 }
 
-/** Codex has no Monitor, so it is told never to use the skill; Claude and Grok each get their own route. */
+/** The harness's own reminder (`hooks.agentsTalkHint` in its driver): Codex has no Monitor, so it is told never to use the skill. */
 export function reminderFor(payload: SessionStartPayload): string {
-    const harness = harnessOf(payload);
-
-    if (harness === "codex") {
-        return CODEX_REMINDER;
-    }
-
-    return harness === "grok" ? GROK_REMINDER : CLAUDE_REMINDER;
+    return HARNESS_FACTS[harnessOf(payload)].agentsTalkHint;
 }
 
 if (import.meta.main && hintEnabled()) {
