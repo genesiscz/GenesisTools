@@ -32,28 +32,30 @@ export const updateIncludeSchema = z
 /** The MCP and CLI input: the store's batch plus `include`, which only shapes the reply. */
 export const decisionBatchUpdateRequestSchema = decisionBatchUpdateSchema.extend({ include: updateIncludeSchema });
 
-interface RequestedUpdate {
-    id: string;
-    state?: string;
-}
+/**
+ * `include` and the requested states, read without validating: the store validates the batch. A field or an item of
+ * the wrong shape is skipped alone, so an odd `include` never costs the reply its notes.
+ */
+const requestReadSchema = z
+    .object({
+        include: z.array(z.string().nullable().catch(null)).catch([]),
+        updates: z
+            .array(
+                z
+                    .object({ id: z.string(), state: z.string().optional().catch(undefined) })
+                    .nullable()
+                    .catch(null)
+            )
+            .catch([]),
+    })
+    .catch({ include: [], updates: [] });
 
-/** Reads `include` and the requested states from the raw input without validating it: the store does that. */
-function readRequest(input: unknown): { include: string[]; requested: RequestedUpdate[] } {
-    const record = input && typeof input === "object" && !Array.isArray(input) ? input : {};
-    const include =
-        "include" in record && Array.isArray(record.include)
-            ? record.include.filter((field): field is string => typeof field === "string")
-            : [];
-    const updates = "updates" in record && Array.isArray(record.updates) ? record.updates : [];
-    const requested = updates.flatMap((update: unknown) => {
-        if (!update || typeof update !== "object" || !("id" in update) || typeof update.id !== "string") {
-            return [];
-        }
-
-        const state = "state" in update && typeof update.state === "string" ? update.state : undefined;
-        return [{ id: update.id, state }];
-    });
-    return { include, requested };
+function readRequest(input: unknown): { include: string[]; requested: { id: string; state?: string }[] } {
+    const { include, updates } = requestReadSchema.parse(input);
+    return {
+        include: include.filter((field) => field !== null),
+        requested: updates.filter((update) => update !== null),
+    };
 }
 
 export function updateResult(rows: DecisionRecord[], input: unknown, events: string): Record<string, unknown> {
