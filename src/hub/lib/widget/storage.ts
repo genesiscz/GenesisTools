@@ -46,7 +46,7 @@ function widgetStateDocument(directory: string): JsonDocument<WidgetState> {
 }
 
 export async function readWidgetState(root?: string): Promise<WidgetState> {
-    return widgetStateDocument(widgetRoot(root)).read();
+    return widgetStateDocument(widgetRoot(root)).readAsync();
 }
 
 export async function mutateWidgetState<T>(root: string | undefined, update: (state: WidgetState) => T): Promise<T> {

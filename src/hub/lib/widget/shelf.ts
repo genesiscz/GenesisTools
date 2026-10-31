@@ -68,7 +68,7 @@ function shelfDocument(root?: string): JsonDocument<ShelfState> {
 /** Reads inventory metadata only. It never opens, hashes or probes the staged files. */
 export async function listWidgetShelf(root?: string): Promise<ShelfState & { statePath: string }> {
     const document = shelfDocument(root);
-    return { ...document.read(), statePath: document.path };
+    return { ...(await document.readAsync()), statePath: document.path };
 }
 
 /**

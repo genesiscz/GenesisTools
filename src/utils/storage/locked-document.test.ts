@@ -138,6 +138,20 @@ describe("jsonDocument", () => {
         expect(counter(path, "refuse", { maxBytes: 500 }).read().count).toBe(1);
     });
 
+    test("readAsync answers what read answers: empty when missing, the value, too-large and unusable files refused", async () => {
+        const path = join(dir(), "counter.json");
+        expect(await counter(path).readAsync()).toEqual({ revision: 0, count: 0 });
+
+        writeFileSync(path, SafeJSON.stringify({ revision: 2, count: 7, pad: "x".repeat(100) }));
+        expect(await counter(path).readAsync()).toEqual(counter(path).read());
+        await expect(counter(path, "refuse", { maxBytes: 50 }).readAsync()).rejects.toThrow(
+            "larger than this store reads"
+        );
+
+        writeFileSync(path, "{ torn");
+        await expect(counter(path).readAsync()).rejects.toThrow(DocumentUnreadableError);
+    });
+
     test("an encode that throws refuses the write, and an aborted signal never commits", async () => {
         const path = join(dir(), "counter.json");
         const capped = counter(path, "refuse", {

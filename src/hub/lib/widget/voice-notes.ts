@@ -99,12 +99,12 @@ function indexDocument(root?: string): JsonDocument<VoiceNoteIndex> {
 }
 
 async function readIndex(root?: string): Promise<VoiceNoteIndex> {
-    return indexDocument(root).read();
+    return indexDocument(root).readAsync();
 }
 
 export async function listVoiceNotes(root?: string) {
     const document = indexDocument(root);
-    const index = document.read();
+    const index = await document.readAsync();
     return {
         ...index,
         notes: index.notes.toSorted((a, b) => b.createdAt - a.createdAt),

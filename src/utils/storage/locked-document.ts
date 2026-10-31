@@ -1,4 +1,5 @@
 import { appendFileSync, closeSync, mkdirSync, openSync, readFileSync, readSync, statSync } from "node:fs";
+import { readFile, stat } from "node:fs/promises";
 import { dirname } from "node:path";
 import { SafeJSON } from "@genesiscz/utils/json";
 import { readJsonlRows } from "@genesiscz/utils/jsonl";
@@ -104,6 +105,8 @@ export interface JsonDocument<T> {
      * entry where an update refuses it.
      */
     read(options?: { decode?: (raw: unknown) => T }): T;
+    /** {@link read} with the disk I/O off the event loop, for a server that reads a large document on every poll. */
+    readAsync(options?: { decode?: (raw: unknown) => T }): Promise<T>;
     /** Lock, read (applying `onUnreadable`), change, write atomically, unlock. The change runs synchronously. */
     update<R>(change: (current: T) => DocumentUpdate<T, R>, options?: { signal?: AbortSignal }): Promise<R>;
     /** {@link update} for a change made in place: the document is written when its JSON changed. */
@@ -125,13 +128,37 @@ function load<T>(spec: JsonDocumentSpec<T>, decode: (raw: unknown) => T): Loaded
 
         text = readFileSync(spec.path, "utf8");
     } catch (error) {
-        if (isMissingFileError(error)) {
-            return { state: "missing" };
-        }
-
-        throw mapped(spec, new DocumentUnreadableError("io", spec.path, { cause: error }));
+        return loadFailed(spec, error);
     }
 
+    return parsed(spec, decode, text);
+}
+
+async function loadAsync<T>(spec: JsonDocumentSpec<T>, decode: (raw: unknown) => T): Promise<Loaded<T>> {
+    let text: string;
+
+    try {
+        if (spec.maxBytes !== undefined && (await stat(spec.path)).size > spec.maxBytes) {
+            return { state: "unusable", problem: new DocumentUnreadableError("too-large", spec.path) };
+        }
+
+        text = await readFile(spec.path, "utf8");
+    } catch (error) {
+        return loadFailed(spec, error);
+    }
+
+    return parsed(spec, decode, text);
+}
+
+function loadFailed<T>(spec: JsonDocumentSpec<T>, error: unknown): Loaded<T> {
+    if (isMissingFileError(error)) {
+        return { state: "missing" };
+    }
+
+    throw mapped(spec, new DocumentUnreadableError("io", spec.path, { cause: error }));
+}
+
+function parsed<T>(spec: JsonDocumentSpec<T>, decode: (raw: unknown) => T, text: string): Loaded<T> {
     let raw: unknown;
 
     try {
@@ -149,6 +176,18 @@ function load<T>(spec: JsonDocumentSpec<T>, decode: (raw: unknown) => T): Loaded
 
 function mapped<T>(spec: JsonDocumentSpec<T>, problem: DocumentUnreadableError): Error {
     return spec.unreadableError ? spec.unreadableError(problem) : problem;
+}
+
+function readResult<T>(spec: JsonDocumentSpec<T>, loaded: Loaded<T>): T {
+    if (loaded.state === "ok") {
+        return loaded.value;
+    }
+
+    if (loaded.state === "missing") {
+        return spec.empty();
+    }
+
+    throw mapped(spec, loaded.problem);
 }
 
 /** The document an update starts from, after `onUnreadable` decided what an unusable file means. */
@@ -224,17 +263,10 @@ export function jsonDocument<T>(spec: JsonDocumentSpec<T>): JsonDocument<T> {
     return {
         path: spec.path,
         read(options) {
-            const loaded = load(spec, options?.decode ?? spec.decode);
-
-            if (loaded.state === "ok") {
-                return loaded.value;
-            }
-
-            if (loaded.state === "missing") {
-                return spec.empty();
-            }
-
-            throw mapped(spec, loaded.problem);
+            return readResult(spec, load(spec, options?.decode ?? spec.decode));
+        },
+        async readAsync(options) {
+            return readResult(spec, await loadAsync(spec, options?.decode ?? spec.decode));
         },
         update,
         mutate(change, options) {
