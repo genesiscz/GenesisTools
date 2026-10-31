@@ -20,6 +20,7 @@ import {
     type AppApproval,
     type ApprovalDeps,
     appApprovalFromReply,
+    approvalGraceMinutes,
     assertInsideTrash,
     BUILTIN_PRESETS,
     confirmByPerson,
@@ -31,6 +32,7 @@ import {
     evaluateTarget,
     filterRmLedger,
     findNestedRepos,
+    finishRmApproval,
     isInside,
     isTrashRootName,
     listBatches,
@@ -294,6 +296,67 @@ describe("trash", () => {
         expect(forced.items).toBeGreaterThanOrEqual(1);
         expect(existsSync(again?.items[0]?.stored ?? "x")).toBe(false);
         expect(listBatches(trashPaths)).toHaveLength(0);
+    });
+
+    test("an unwritable trash refuses the affected path and continues with writable targets", () => {
+        const blocked = resolveTarget(file(join(dir("unwritable-trash"), "blocked")), base);
+        const normal = resolveTarget(file(join(dir("unwritable-trash"), "normal")), base);
+        const refused: string[] = [];
+        const batch = moveToTrash(
+            [
+                { target: blocked, rule: "test" },
+                { target: normal, rule: "test" },
+            ],
+            {
+                config,
+                caller: AGENT,
+                graceMinutes: 60,
+                paths: trashPaths,
+                hooks: {
+                    beforeTrashRoot: (request) => {
+                        if (request.target.path === blocked.path) {
+                            throw Object.assign(new Error("mount is unwritable"), { code: "EACCES" });
+                        }
+                    },
+                },
+                onRefused: (request, reason) => {
+                    refused.push(`${request.target.path}: ${reason}`);
+                },
+            }
+        );
+        expect(refused).toHaveLength(1);
+        expect(refused[0]).toContain("kept in place");
+        expect(existsSync(blocked.path)).toBe(true);
+        expect(existsSync(normal.path)).toBe(false);
+        expect(batch?.items.map((item) => item.original)).toEqual([normal.path]);
+        expect(restoreBatch(batch?.id ?? "", { config, paths: trashPaths }).restored).toContain(normal.path);
+    });
+
+    test("an unwritable cross-volume fallback leaves the target in place", () => {
+        const target = resolveTarget(file(join(dir("unwritable-fallback"), "file")), base);
+        const refused: string[] = [];
+        const options = {
+            config,
+            caller: AGENT,
+            graceMinutes: 60,
+            paths: trashPaths,
+            hooks: {
+                beforeRename: () => {
+                    throw Object.assign(new Error("cross-volume"), { code: "EXDEV" });
+                },
+                beforeVolumeTrash: () => {
+                    throw Object.assign(new Error("read-only mount"), { code: "EROFS" });
+                },
+            },
+        };
+        const batch = moveToTrash([{ target, rule: "test" }], {
+            ...options,
+            onRefused: (_request, reason) => refused.push(reason),
+        });
+        expect(batch).toBeNull();
+        expect(refused[0]).toContain("EROFS");
+        expect(existsSync(target.path)).toBe(true);
+        expect(() => moveToTrash([{ target, rule: "test" }], options)).toThrow(/kept in place/);
     });
 
     test("assertInsideTrash refuses anything outside the trash or above item depth", () => {
@@ -645,6 +708,58 @@ describe("defaults", () => {
 });
 
 describe("security review fixes", () => {
+    test("approved requests use the requester's profile and original cwd", () => {
+        const requestsDir = dir("requester-profile-requests");
+        const workspace = dir("requester-profile-project");
+        const worker = { ...AGENT, agent: "codex" };
+        const request = createRmRequest(
+            { kind: "delete", caller: worker, cwd: workspace, reason: null, targets: [] },
+            requestsDir
+        );
+        expect(approvalGraceMinutes(request, config)).toBe(240);
+        const custom = {
+            ...config,
+            profiles: [{ name: "project", match: { cwd: workspace }, grace: { otherMinutes: 360 } }],
+        };
+        expect(approvalGraceMinutes(request, custom)).toBe(360);
+        expect(approvalGraceMinutes({ ...request, caller: null }, custom)).toBe(config.grace.otherMinutes);
+    });
+
+    test("partial approval keeps an initially blocked aside target pending and protected", () => {
+        const requestsDir = dir("partial-approval-requests");
+        const asideDir = dir("partial-approval-aside");
+        const targets = [
+            {
+                path: join(base, "blocked"),
+                stored: join(asideDir, "blocked"),
+                kind: "dir" as const,
+                rule: "test",
+                reason: "test",
+            },
+            {
+                path: join(base, "approved"),
+                stored: join(asideDir, "approved"),
+                kind: "file" as const,
+                rule: "test",
+                reason: "test",
+            },
+        ];
+        const request = createRmRequest(
+            { kind: "delete", caller: AGENT, cwd: base, reason: null, targets, asideDir },
+            requestsDir
+        );
+        finishRmApproval(request, [request.targets[0]], new Set(), "test", requestsDir);
+        const saved = loadRmRequest(request.id, requestsDir);
+        expect(saved?.status).toBe("pending");
+        expect(saved?.targets).toEqual([targets[0]]);
+        expect(pendingAsideFor(asideDir, pendingAsideDirs(requestsDir))).toBe(request.id);
+        const all = createRmRequest(
+            { kind: "delete", caller: AGENT, cwd: base, reason: null, targets, asideDir },
+            requestsDir
+        );
+        expect(finishRmApproval(all, [], new Set(), "test", requestsDir).status).toBe("approved");
+    });
+
     test("missing config uses defaults; unreadable or malformed policy fails closed", () => {
         const folder = dir("policy-load");
         expect(loadRmConfig(join(folder, "missing.json"))).toEqual(defaultRmConfig());

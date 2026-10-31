@@ -4,8 +4,9 @@ import { join } from "node:path";
 import { SafeJSON } from "@genesiscz/utils/json";
 import { logger } from "@genesiscz/utils/logger";
 import { atomicWriteFileSync } from "@genesiscz/utils/storage/atomic-file";
-import { rmDataDir } from "./config";
+import { type RmConfig, rmDataDir } from "./config";
 import { appendRmLedger } from "./ledger";
+import { effectiveConfig } from "./profiles";
 import type { RmCaller, RmTargetKind } from "./rules";
 
 export type RmRequestKind = "delete" | "root";
@@ -83,6 +84,28 @@ export function createRmRequest(
     });
     logger.debug({ id, kind: input.kind, targets: input.targets.length }, "rm: request created");
     return request;
+}
+
+/** An approved deletion uses the requester's policy, not the approving person's profile. */
+export function approvalGraceMinutes(request: RmRequest, base: RmConfig): number {
+    return (request.caller ? effectiveConfig(base, request.caller, request.cwd).config : base).grace.otherMinutes;
+}
+
+/** Keep initially blocked and later refused targets pending after a partial approval. */
+export function finishRmApproval(
+    request: RmRequest,
+    blocked: readonly RmRequestTarget[],
+    unresolved: ReadonlySet<RmRequestTarget>,
+    via: string,
+    dir = rmRequestsDir()
+): RmRequest {
+    const remaining = new Set([...blocked, ...unresolved]);
+    const result: RmRequest =
+        remaining.size > 0
+            ? { ...request, targets: request.targets.filter((target) => remaining.has(target)) }
+            : { ...request, status: "approved", decidedAt: new Date().toISOString(), decidedVia: via };
+    saveRmRequest(result, dir);
+    return result;
 }
 
 function isRmRequest(value: unknown): value is RmRequest {

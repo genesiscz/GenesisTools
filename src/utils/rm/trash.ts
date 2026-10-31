@@ -213,7 +213,10 @@ export interface MoveOptions {
     now?: Date;
     /** A path that no longer names what was checked: it stays where it is, and the run says so. */
     onRefused?: (request: MoveRequest, reason: string) => void;
-    hooks?: RenameHooks;
+    hooks?: RenameHooks & {
+        beforeTrashRoot?: (request: MoveRequest) => void;
+        beforeVolumeTrash?: (request: MoveRequest) => void;
+    };
 }
 
 /**
@@ -237,11 +240,18 @@ export function moveToTrash(requests: readonly MoveRequest[], options: MoveOptio
 
     for (const [index, request] of requests.entries()) {
         const name = trashItemName(index, request.target.path);
-        let stored = join(trashRootFor(request.target, options.config), batch.id, name);
+        let stored: string;
 
         try {
+            stored = prepareTrashDestination(
+                () => {
+                    options.hooks?.beforeTrashRoot?.(request);
+                    return trashRootFor(request.target, options.config);
+                },
+                batch.id,
+                name
+            );
             try {
-                mkdirSync(dirname(stored), { recursive: true });
                 renameVerified(request.target, stored, options.hooks);
             } catch (error) {
                 if ((error as NodeJS.ErrnoException).code !== "EXDEV") {
@@ -250,15 +260,25 @@ export function moveToTrash(requests: readonly MoveRequest[], options: MoveOptio
 
                 // The device check said one volume but the rename crossed two (a firmlink, a bind mount): fall
                 // back to the trash at the target's own mount point, where the rename stays a rename.
-                stored = join(volumeTrashDir(request.target.path), batch.id, name);
+                stored = prepareTrashDestination(
+                    () => {
+                        options.hooks?.beforeVolumeTrash?.(request);
+                        return volumeTrashDir(request.target.path);
+                    },
+                    batch.id,
+                    name
+                );
                 logger.debug(
                     { path: request.target.path, stored },
                     "rm: cross-volume rename, using the volume's trash"
                 );
-                mkdirSync(dirname(stored), { recursive: true });
                 renameVerified(request.target, stored, options.hooks);
             }
         } catch (error) {
+            if (error instanceof RmTrashUnavailableError) {
+                refuseUnavailable(request, error.message, options);
+                continue;
+            }
             if (!(error instanceof RmTargetChangedError)) {
                 throw error;
             }
@@ -284,6 +304,38 @@ export function moveToTrash(requests: readonly MoveRequest[], options: MoveOptio
     }
 
     return batch.items.length > 0 ? batch : null;
+}
+
+class RmTrashUnavailableError extends Error {}
+
+function prepareTrashDestination(root: () => string, batchId: string, name: string): string {
+    try {
+        const stored = join(root(), batchId, name);
+        mkdirSync(dirname(stored), { recursive: true });
+        return stored;
+    } catch (error) {
+        const code = (error as NodeJS.ErrnoException).code;
+        if (code === "EACCES" || code === "EPERM" || code === "EROFS") {
+            throw new RmTrashUnavailableError(`no writable private trash on this volume (${code}); kept in place`, {
+                cause: error,
+            });
+        }
+        throw error;
+    }
+}
+
+function refuseUnavailable(request: MoveRequest, reason: string, options: MoveOptions): void {
+    if (!options.onRefused) {
+        throw new RmTrashUnavailableError(`${request.target.path}: ${reason}`);
+    }
+    appendRmLedger({
+        action: "refuse",
+        path: request.original ?? request.target.path,
+        rule: "trash-unavailable",
+        reason,
+        caller: options.caller,
+    });
+    options.onRefused(request, reason);
 }
 
 function refuseChanged(request: MoveRequest, reason: string, options: MoveOptions): void {

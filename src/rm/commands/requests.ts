@@ -6,8 +6,10 @@ import { out } from "@genesiscz/utils/logger";
 import {
     appendRmLedger,
     approvalDenyReason,
+    approvalGraceMinutes,
     createRmRequest,
     denyRmRequest,
+    finishRmApproval,
     hardDenyReason,
     kickDrainer,
     listRmRequests,
@@ -19,7 +21,6 @@ import {
     recheckAfterWait,
     resolveTarget,
     saveRmConfig,
-    saveRmRequest,
 } from "@genesiscz/utils/rm";
 import type { Command } from "commander";
 import pc from "picocolors";
@@ -214,7 +215,7 @@ export function registerRequestCommands(program: Command): void {
                     {
                         config: ctx.config,
                         caller: request.caller,
-                        graceMinutes: ctx.config.grace.otherMinutes,
+                        graceMinutes: approvalGraceMinutes(request, ctx.base),
                         onRefused: (move, reason) => {
                             out.println(pc.red(`refuse ${move.original ?? move.target.path}: ${reason}`));
                             const wanted = byTarget.get(move.target);
@@ -235,17 +236,17 @@ export function registerRequestCommands(program: Command): void {
                 kickDrainer(ctx.config);
             }
 
-            if (unresolved.size > 0) {
-                saveRmRequest({ ...request, targets: request.targets.filter((t) => unresolved.has(t)) });
-                out.println(pc.yellow(`Request ${id} stays pending for ${unresolved.size} path(s) that changed.`));
+            const result = finishRmApproval(
+                request,
+                blocked.map((entry) => entry.wanted),
+                unresolved,
+                answer.via
+            );
+            if (result.status === "pending") {
+                out.println(
+                    pc.yellow(`Request ${id} stays pending for ${result.targets.length} blocked or changed path(s).`)
+                );
                 process.exitCode = 1;
-            } else {
-                saveRmRequest({
-                    ...request,
-                    status: "approved",
-                    decidedAt: new Date().toISOString(),
-                    decidedVia: answer.via,
-                });
             }
 
             appendRmLedger({ action: "approve", requestId: id, via: answer.via, caller: ctx.caller });
