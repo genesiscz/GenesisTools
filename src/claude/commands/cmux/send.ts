@@ -463,7 +463,14 @@ export async function sendCommand(
         throw new Error(`--enter-delay must be a non-negative number (got ${opts.enterDelay})`);
     }
 
-    let result = await findSessionTargets(queryTrim, { includeSelf: opts.includeSelf, deps });
+    // An option press never takes the recorded pane: it names where the queried id ran, and after a continuation that
+    // pane runs the successor, whose dialog the old id's options would answer. The matcher follows the continuation
+    // (and refuses below) or finds the pane by the id it runs now.
+    let result = await findSessionTargets(queryTrim, {
+        includeSelf: opts.includeSelf,
+        skipRecorded: option !== undefined,
+        deps,
+    });
 
     if (result.unavailable) {
         out.error(pc.red(`cmux is not reachable: ${result.unavailable}`));

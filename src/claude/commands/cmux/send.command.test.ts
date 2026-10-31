@@ -298,6 +298,36 @@ test("--option refuses after a continuation and presses nothing into the success
     expect(SafeJSON.parse(await capturedResult())).toMatchObject({ sent: false, sessionId: successor });
 });
 
+test("--option skips the queried id's recorded pane, so a continuation is still refused", async () => {
+    const successor = "77777777-7777-4777-8777-777777777777";
+    setSnapshot([pane({ id: "pane:7", surfaces: [surface({ id: "surface:41", title: successor, selected: true })] })]);
+    const read: string[] = [];
+    const answering = {
+        ...deps,
+        lookupRefs: (id: string) => (id === SESSION_A ? recordedRefs() : null),
+        continuedIn: async (id: string) => (id === SESSION_A ? successor : undefined),
+        openRecords: (id: string) => {
+            read.push(id);
+            return [askRecord({ sessionId: id })];
+        },
+    };
+
+    expect(await sendCommand(SESSION_A, "", { option: "b", json: true }, answering)).toBe(false);
+    expect(read).toEqual([]);
+    expect(events.filter((event) => event.startsWith("send"))).toEqual([]);
+
+    // An ordinary send keeps the recorded shortcut.
+    events = [];
+    process.exitCode = 0;
+    await sendCommand(
+        SESSION_A,
+        "hi",
+        { enter: false, enterDelay: "0" },
+        { ...answering, openDialog: async () => null }
+    );
+    expect(events).toContain(`send --surface ${LIVE_SURFACE_UUID} -- hi`);
+});
+
 test("--option does not close a dialog when writing a digit cannot confirm submission", async () => {
     setSnapshot([pane({ id: "pane:7", surfaces: [surface({ id: "surface:41", title: SESSION_A, selected: true })] })]);
     const closed: OpenQuestion[] = [];
