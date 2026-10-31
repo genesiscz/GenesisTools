@@ -14,8 +14,7 @@ import MachO
 package enum SnapshotGeometry {
     /// `shot.png` -> `shot.geometry.json`.
     package static func sidecarPath(for png: String) -> String {
-        let base = (png as NSString).pathExtension.lowercased() == "png" ? (png as NSString).deletingPathExtension : png
-        return base + ".geometry.json"
+        SnapshotSidecar.path(for: png, suffix: "geometry")
     }
 
     /// Writes the sidecar for the PNG at `png`. `points` is the size the image shows in points (the content view for
@@ -41,16 +40,9 @@ package enum SnapshotGeometry {
             "build": build,
             "capturedAt": ISO8601DateFormatter().string(from: Date()),
         ]
-        let path = sidecarPath(for: png)
-        do {
-            let data = try JSONSerialization.data(withJSONObject: record, options: [.prettyPrinted, .sortedKeys])
-            try data.write(to: URL(fileURLWithPath: path))
-            let ms = Int(Date().timeIntervalSince(started) * 1000)
-            FileHandle.standardError.write(Data(
-                "snapshot geometry: \(Int(shown.width))x\(Int(shown.height)) pt @\(imageScale)x in \(ms) ms -> \(path)\n".utf8))
-        } catch {
-            FileHandle.standardError.write(Data("snapshot geometry: \(error.localizedDescription)\n".utf8))
-        }
+        SnapshotSidecar.write(
+            record, png: png, suffix: "geometry", options: [.prettyPrinted, .sortedKeys], label: "snapshot geometry",
+            summary: "\(Int(shown.width))x\(Int(shown.height)) pt @\(imageScale)x", started: started)
     }
 
     private static func pixelSize(of png: String) -> CGSize? {

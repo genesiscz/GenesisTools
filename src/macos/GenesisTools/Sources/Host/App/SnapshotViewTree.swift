@@ -11,8 +11,7 @@ import ApplicationServices
 package enum SnapshotViewTree {
     /// `shot.png` -> `shot.tree.json`.
     package static func sidecarPath(for png: String) -> String {
-        let base = (png as NSString).pathExtension.lowercased() == "png" ? (png as NSString).deletingPathExtension : png
-        return base + ".tree.json"
+        SnapshotSidecar.path(for: png, suffix: "tree")
     }
 
     private static let maxNodes = 20_000
@@ -38,15 +37,9 @@ package enum SnapshotViewTree {
             "truncated": truncated,
             "nodes": nodes,
         ]
-        let path = sidecarPath(for: png)
-        do {
-            let data = try JSONSerialization.data(withJSONObject: record, options: [.sortedKeys])
-            try data.write(to: URL(fileURLWithPath: path))
-            let ms = Int(Date().timeIntervalSince(started) * 1000)
-            FileHandle.standardError.write(Data("snapshot tree: \(nodes.count) nodes (\(source)) in \(ms) ms -> \(path)\n".utf8))
-        } catch {
-            FileHandle.standardError.write(Data("snapshot tree: \(error.localizedDescription)\n".utf8))
-        }
+        SnapshotSidecar.write(
+            record, png: png, suffix: "tree", options: [.sortedKeys], label: "snapshot tree",
+            summary: "\(nodes.count) nodes (\(source))", started: started)
     }
 
     /// The top-left corner of the window in the AX coordinate space (global, y down from the primary screen's top).
