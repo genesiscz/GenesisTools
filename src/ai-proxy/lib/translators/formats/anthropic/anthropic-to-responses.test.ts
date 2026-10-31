@@ -396,6 +396,26 @@ describe("anthropicToResponses: a client tool call the model made as a custom to
         expect(out.input).toEqual([(fresh.input as unknown[])[0], reasoning, ...(fresh.input as unknown[]).slice(1)]);
     });
 
+    it("with the bridge on, a remembered function call is replayed as the custom call a fresh translation sends", () => {
+        const reasoning = { type: "reasoning", id: "rs_2", encrypted_content: "enc" };
+        const restored = [
+            reasoning,
+            { type: "function_call", call_id: "call_exec", name: "Bash", arguments: '{"command":"RUN js-1"}' },
+            { type: "function_call", call_id: "call_plain", name: "Bash", arguments: '{"command":"ls"}' },
+        ];
+        const fresh = anthropicToResponses({ messages }, "gpt-6.1-sol", {
+            reasoningItem: () => undefined,
+            customToolCall,
+        });
+        const out = anthropicToResponses({ messages }, "gpt-6.1-sol", {
+            reasoningItem: () => undefined,
+            restoreAssistantItems: () => restored,
+            customToolCall,
+        });
+
+        expect(out.input).toEqual([(fresh.input as unknown[])[0], reasoning, ...(fresh.input as unknown[]).slice(1)]);
+    });
+
     it("a remembered call whose tool_use is gone from the message is translated afresh", () => {
         const restored = [{ type: "custom_tool_call", call_id: "call_gone", name: "exec", input: "js-1" }];
         const out = anthropicToResponses({ messages }, "gpt-6.1-sol", {
