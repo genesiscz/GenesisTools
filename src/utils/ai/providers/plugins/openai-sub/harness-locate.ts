@@ -1,12 +1,13 @@
 import { existsSync, readFileSync } from "node:fs";
 import { basename, join } from "node:path";
 import type { FolderReads, RankedHit, ResolvedTranscript } from "@genesiscz/utils/ai/transcripts/resolve";
-import { idMatches, isRecord } from "@genesiscz/utils/ai/transcripts/resolve-core";
+import { idMatches } from "@genesiscz/utils/ai/transcripts/resolve-core";
 import type { TitledSession } from "@genesiscz/utils/ai/transcripts/session-title";
 import { env } from "@genesiscz/utils/env";
 import type { TranscriptLocator } from "@genesiscz/utils/harness/parts";
 import { SafeJSON } from "@genesiscz/utils/json";
 import { logger } from "@genesiscz/utils/logger";
+import { isObject } from "@genesiscz/utils/object";
 import {
     codexHomeOverrides,
     isNativeTranscript,
@@ -136,7 +137,7 @@ export function findCodexWorker(query: string, workerDir: string, fs: FolderRead
         let sessionId = name;
         try {
             const meta = SafeJSON.parse(fs.readText(join(workerDir, entry)));
-            if (isRecord(meta)) {
+            if (isObject(meta)) {
                 if (typeof meta.threadId === "string" && meta.threadId) {
                     sessionId = meta.threadId;
                 } else if (typeof meta.name === "string" && meta.name) {
@@ -189,7 +190,7 @@ function readCodexIndex(indexPath: string, found: Map<string, TitledSession>): v
         try {
             const record: unknown = line.trim() ? SafeJSON.parse(line, { strict: true }) : null;
 
-            if (isRecord(record) && typeof record.id === "string" && typeof record.thread_name === "string") {
+            if (isObject(record) && typeof record.id === "string" && typeof record.thread_name === "string") {
                 found.delete(record.id);
                 found.set(record.id, {
                     sessionId: record.id,

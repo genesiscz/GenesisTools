@@ -1,4 +1,5 @@
 /** The Claude driver's `turnState` part: the newest turn of a `<project>/<id>.jsonl` transcript. */
+
 import { claudeRecordsToEvents } from "@genesiscz/utils/ai/transcripts/activity";
 import type {
     JsonRecord,
@@ -7,7 +8,6 @@ import type {
     TurnStateInput,
 } from "@genesiscz/utils/ai/transcripts/turn-state";
 import {
-    isRecord,
     questionCallOf,
     questionTextOf,
     snapshotOf,
@@ -15,11 +15,12 @@ import {
     toEpochMs,
     toolSummaryOf,
 } from "@genesiscz/utils/ai/transcripts/turn-state-core";
+import { isObject } from "@genesiscz/utils/object";
 
 const CLAUDE_CONVERSATION: ReadonlySet<string> = new Set(["assistant", "user", "result"]);
 
 function claudeTextBlocks(record: JsonRecord): string[] {
-    const message = isRecord(record.message) ? record.message : null;
+    const message = isObject(record.message) ? record.message : null;
     const content = message?.content;
 
     if (typeof content === "string") {
@@ -31,7 +32,7 @@ function claudeTextBlocks(record: JsonRecord): string[] {
     }
 
     return content.flatMap((block) =>
-        isRecord(block) && block.type === "text" && typeof block.text === "string" ? [block.text] : []
+        isObject(block) && block.type === "text" && typeof block.text === "string" ? [block.text] : []
     );
 }
 
@@ -40,7 +41,7 @@ function claudeTextBlocks(record: JsonRecord): string[] {
  * with its `tool_use` id and options.
  */
 function claudeQuestionOf(record: JsonRecord): { text: string; call: TurnQuestionCall | null } | null {
-    const message = isRecord(record.message) ? record.message : null;
+    const message = isObject(record.message) ? record.message : null;
     const content = message?.content;
 
     if (!Array.isArray(content)) {
@@ -48,9 +49,9 @@ function claudeQuestionOf(record: JsonRecord): { text: string; call: TurnQuestio
     }
 
     const call = content.find(
-        (block) => isRecord(block) && block.type === "tool_use" && block.name === "AskUserQuestion"
+        (block) => isObject(block) && block.type === "tool_use" && block.name === "AskUserQuestion"
     );
-    if (!isRecord(call)) {
+    if (!isObject(call)) {
         return null;
     }
 
@@ -88,7 +89,7 @@ function claudeFinalMessage(records: ReadonlyArray<JsonRecord>): {
         };
     }
 
-    const lastMessage = isRecord(last.message) ? last.message : null;
+    const lastMessage = isObject(last.message) ? last.message : null;
     const messageId = typeof lastMessage?.id === "string" ? lastMessage.id : null;
     const texts: string[] = [];
     let question: { text: string; call: TurnQuestionCall | null } | null = null;
@@ -104,7 +105,7 @@ function claudeFinalMessage(records: ReadonlyArray<JsonRecord>): {
             continue;
         }
 
-        const message = isRecord(record.message) ? record.message : null;
+        const message = isObject(record.message) ? record.message : null;
 
         if (messageId !== null && message?.id !== messageId) {
             break;
@@ -137,7 +138,7 @@ function claudeInterrupted(records: ReadonlyArray<JsonRecord>): boolean {
         return false;
     }
 
-    const message = isRecord(last.message) ? last.message : null;
+    const message = isObject(last.message) ? last.message : null;
     const content = message?.content;
     const texts = typeof content === "string" ? [content] : claudeTextBlocks(last);
 
@@ -156,7 +157,7 @@ function claudeTurnStartedAt(records: ReadonlyArray<JsonRecord>): number | null 
             continue;
         }
 
-        const content = isRecord(record.message) ? record.message.content : undefined;
+        const content = isObject(record.message) ? record.message.content : undefined;
         const texts = claudeTextBlocks(record);
         const prompt = typeof content === "string" || texts.length > 0;
 
@@ -174,7 +175,7 @@ function claudeIsPrompt(record: JsonRecord): boolean {
         return false;
     }
 
-    const content = isRecord(record.message) ? record.message.content : undefined;
+    const content = isObject(record.message) ? record.message.content : undefined;
 
     if (typeof content === "string") {
         return true;
@@ -182,7 +183,7 @@ function claudeIsPrompt(record: JsonRecord): boolean {
 
     return (
         Array.isArray(content) &&
-        !content.some((block) => isRecord(block) && block.type === "tool_result") &&
+        !content.some((block) => isObject(block) && block.type === "tool_result") &&
         claudeTextBlocks(record).length > 0
     );
 }
@@ -199,14 +200,14 @@ function claudeCalls(records: ReadonlyArray<JsonRecord>): TurnCalls {
             continue;
         }
 
-        const content = isRecord(record.message) ? record.message.content : undefined;
+        const content = isObject(record.message) ? record.message.content : undefined;
 
         if (!Array.isArray(content) || (record.type !== "assistant" && record.type !== "user")) {
             continue;
         }
 
         for (const block of content) {
-            if (!isRecord(block)) {
+            if (!isObject(block)) {
                 continue;
             }
 

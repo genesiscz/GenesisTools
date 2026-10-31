@@ -1,4 +1,5 @@
 import { SafeJSON } from "@genesiscz/utils/json";
+import { isObject } from "@genesiscz/utils/object";
 
 /**
  * A generated manifest of one piece of an Azure DevOps project's configuration (fields, workflow, sprints, …).
@@ -112,7 +113,7 @@ export function parseManifestText(text: string, path: string): AdoManifest & Rec
 
     const parsed: unknown = SafeJSON.parse(json, { strict: true });
 
-    if (!isRecord(parsed) || !isRecord(parsed.meta) || typeof parsed.meta.regenerate !== "string") {
+    if (!isObject(parsed) || !isObject(parsed.meta) || typeof parsed.meta.regenerate !== "string") {
         throw new Error(`${path} is not an ADO manifest (no meta block)`);
     }
 
@@ -132,10 +133,6 @@ function readMeta(meta: Record<string, unknown>): AdoManifestMeta {
     };
 }
 
-export function isRecord(value: unknown): value is Record<string, unknown> {
-    return typeof value === "object" && value !== null && !Array.isArray(value);
-}
-
 export function sortedRecord<T>(entries: [string, T][]): Record<string, T> {
     const sorted = [...entries].sort(([a], [b]) => (a < b ? -1 : a > b ? 1 : 0));
     return Object.fromEntries(sorted);
@@ -153,7 +150,7 @@ export function diffManifestData(saved: object, live: object): string[] {
     const drift: string[] = [];
 
     const walk = (before: unknown, after: unknown, path: string): void => {
-        if (isRecord(before) && isRecord(after)) {
+        if (isObject(before) && isObject(after)) {
             const keys = [...new Set([...Object.keys(before), ...Object.keys(after)])].sort();
 
             for (const key of keys) {

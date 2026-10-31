@@ -1,10 +1,10 @@
 import {
     type AdoManifestMeta,
-    isRecord,
     parseManifestText,
     renderManifestTs as renderTs,
     sortedRecord,
 } from "@app/azure-devops/lib/ado-manifest";
+import { isObject } from "@genesiscz/utils/object";
 
 export { isIdentifier, renderManifestJson } from "@app/azure-devops/lib/ado-manifest";
 export type { AdoManifestMeta };
@@ -139,8 +139,8 @@ export function parseManifestFile(text: string, path: string): AdoFieldManifest 
 
 function isFieldTypes(value: unknown): value is Record<string, AdoTypeEntry> {
     return (
-        isRecord(value) &&
-        Object.values(value).every((type) => isRecord(type) && isRecord(type.fields) && Array.isArray(type.states))
+        isObject(value) &&
+        Object.values(value).every((type) => isObject(type) && isObject(type.fields) && Array.isArray(type.states))
     );
 }
 

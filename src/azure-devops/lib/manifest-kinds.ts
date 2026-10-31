@@ -1,6 +1,6 @@
 import type { Api } from "@app/azure-devops/api";
 import type { IterationClassificationNode } from "@app/azure-devops/api.types";
-import { type AdoManifest, diffManifestData, isRecord, sortedRecord } from "@app/azure-devops/lib/ado-manifest";
+import { type AdoManifest, diffManifestData, sortedRecord } from "@app/azure-devops/lib/ado-manifest";
 import {
     type AdoFieldManifest,
     type AdoTypeEntry,
@@ -11,6 +11,7 @@ import {
 import { concurrentMap } from "@genesiscz/utils/async";
 import { SafeJSON } from "@genesiscz/utils/json";
 import { logger } from "@genesiscz/utils/logger";
+import { isObject } from "@genesiscz/utils/object";
 
 /** One kind of manifest: how to read it from ADO and, where the generic forms do not fit, how to show and diff it. */
 export interface ManifestKind {
@@ -123,9 +124,9 @@ function isFieldManifest(
     manifest: AdoManifest & Record<string, unknown>
 ): manifest is AdoFieldManifest & Record<string, unknown> {
     return (
-        isRecord(manifest.types) &&
+        isObject(manifest.types) &&
         Object.values(manifest.types).every(
-            (type): type is AdoTypeEntry => isRecord(type) && isRecord(type.fields) && Array.isArray(type.states)
+            (type): type is AdoTypeEntry => isObject(type) && isObject(type.fields) && Array.isArray(type.states)
         )
     );
 }
@@ -325,10 +326,10 @@ export function renderGenericMd(manifest: AdoManifest & Record<string, unknown>)
         for (const [key, child] of Object.entries(value)) {
             const heading = ["", `${"#".repeat(Math.min(depth, 6))} ${key}`, ""];
 
-            if (isRecord(child) && Object.values(child).some(isRecord)) {
+            if (isObject(child) && Object.values(child).some(isObject)) {
                 lines.push(...heading);
                 walk(child, depth + 1);
-            } else if (isRecord(child)) {
+            } else if (isObject(child)) {
                 lines.push(...heading, ...Object.entries(child).map(([name, item]) => `- ${name}: ${show(item)}`));
             } else if (Array.isArray(child) && depth === 2) {
                 lines.push(...heading, ...child.map((item) => `- ${show(item)}`));

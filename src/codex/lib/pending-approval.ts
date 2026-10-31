@@ -1,5 +1,6 @@
 import { isAbsolute, relative, sep } from "node:path";
 import { toolCommand } from "@genesiscz/utils/cli/tool-command";
+import { isObject } from "@genesiscz/utils/object";
 import type { CodexSessionStore, PendingApproval, PendingFileChange } from "./store";
 
 /**
@@ -17,10 +18,6 @@ export const LIST_PREVIEW_LINES = 40;
 export const NOTICE_PREVIEW_LINES = 12;
 
 const FILE_CHANGE_METHODS = new Set(["item/fileChange/requestApproval", "applyPatchApproval"]);
-
-function isRecord(value: unknown): value is Record<string, unknown> {
-    return typeof value === "object" && value !== null && !Array.isArray(value);
-}
 
 export function isFileChangeApproval(method: string): boolean {
     return FILE_CHANGE_METHODS.has(method);
@@ -47,11 +44,11 @@ export function fileChangesFromItem(changes: unknown, cwd: string): PendingFileC
     }
 
     return changes.flatMap((change): PendingFileChange[] => {
-        if (!isRecord(change) || typeof change.path !== "string") {
+        if (!isObject(change) || typeof change.path !== "string") {
             return [];
         }
 
-        const kind = isRecord(change.kind) ? change.kind : {};
+        const kind = isObject(change.kind) ? change.kind : {};
         const movePath = typeof kind.move_path === "string" ? approvalDisplayPath(cwd, kind.move_path) : undefined;
 
         return [
@@ -67,12 +64,12 @@ export function fileChangesFromItem(changes: unknown, cwd: string): PendingFileC
 
 /** The `fileChanges` map of a legacy `applyPatchApproval` request. */
 export function fileChangesFromLegacy(fileChanges: unknown, cwd: string): PendingFileChange[] {
-    if (!isRecord(fileChanges)) {
+    if (!isObject(fileChanges)) {
         return [];
     }
 
     return Object.entries(fileChanges).flatMap(([path, change]): PendingFileChange[] => {
-        if (!isRecord(change) || typeof change.type !== "string") {
+        if (!isObject(change) || typeof change.type !== "string") {
             return [];
         }
 

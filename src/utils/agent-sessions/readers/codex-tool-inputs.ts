@@ -1,6 +1,6 @@
-import { isRecord } from "@genesiscz/utils/ai/transcripts/native-scan";
 import { parseTranscriptLine } from "@genesiscz/utils/ai/transcripts/parse-line";
 import { SafeJSON } from "@genesiscz/utils/json";
+import { isObject } from "@genesiscz/utils/object";
 
 /** Codex's reading of a rollout line into `tool call id → full input`. */
 export function codexToolInputLine(line: string, keys: Map<string, string>): void {
@@ -9,7 +9,7 @@ export function codexToolInputLine(line: string, keys: Map<string, string>): voi
     }
 
     const record = parseTranscriptLine(line);
-    const payload = record && isRecord(record.payload) ? record.payload : null;
+    const payload = record && isObject(record.payload) ? record.payload : null;
 
     if (
         payload &&
