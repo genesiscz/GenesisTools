@@ -3,8 +3,8 @@ import { appendFileSync, mkdirSync, mkdtempSync, writeFileSync } from "node:fs";
 import { tmpdir } from "node:os";
 import { join } from "node:path";
 import { parseCodexRollout } from "@genesiscz/utils/agent-sessions/readers/codex-changes";
+import { findCodexRollout, isCodexRolloutPath } from "@genesiscz/utils/agent-sessions/readers/codex-locate";
 import { SafeJSON } from "@genesiscz/utils/json";
-import { findCodexRollout, isCodexRollout } from "./codex";
 import { readClaudeTranscriptFolded } from "./fold";
 import {
     analyzeCommand,
@@ -975,6 +975,6 @@ describe("findCodexRollout (Codex 0.164 compresses old rollouts to .jsonl.zst)",
 
         expect(findCodexRollout("thread-zst", [home])).toBe(compressed);
         expect(findCodexRollout("thread-old", [home])).toBe(archived);
-        expect(isCodexRollout(compressed)).toBe(true);
+        expect(isCodexRolloutPath(compressed)).toBe(true);
     });
 });

@@ -1,13 +1,12 @@
 import { parseCodexRollout } from "@genesiscz/utils/agent-sessions/readers/codex-changes";
+import { findCodexRollout, isCodexRolloutPath } from "@genesiscz/utils/agent-sessions/readers/codex-locate";
 import { readWholeTextSync } from "@genesiscz/utils/fs/read-lines";
 import { logger } from "@genesiscz/utils/logger";
-import { findCodexRollout, isCodexRollout } from "./codex";
 import { type ComputedSessionChanges, computeSessionChanges, type SessionChangesInput } from "./compute";
 import { readClaudeTranscriptFolded } from "./fold";
 import { findClaudeTranscript } from "./transcript";
 import type { SessionTranscript } from "./types";
 
-export { findCodexRollout, isCodexRollout } from "./codex";
 export type { AnalyzeCommandInput, CommandAnalysis, StageKind } from "./command";
 export {
     analyzeCommand,
@@ -57,7 +56,7 @@ const { log } = logger.scoped("session-changes");
 
 function readTranscript(sessionId: string, path: string): SessionTranscript {
     // Folded: a resident process (the hub server) then reads only what the session's files gained since its last ask.
-    return isCodexRollout(path)
+    return isCodexRolloutPath(path)
         ? parseCodexRollout(sessionId, readWholeTextSync(path))
         : readClaudeTranscriptFolded(path);
 }

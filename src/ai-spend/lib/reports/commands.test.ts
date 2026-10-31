@@ -1,8 +1,8 @@
 import { afterEach, beforeEach, describe, expect, mock, spyOn, test } from "bun:test";
 import { homedir } from "node:os";
 import * as realCachedTitle from "@genesiscz/utils/agent-sessions/cached-title";
+import * as realCodexRollouts from "@genesiscz/utils/agent-sessions/readers/codex-locate";
 import { SafeJSON } from "@genesiscz/utils/json";
-import * as realCodexRollouts from "@genesiscz/utils/session-changes/codex";
 import { Command } from "commander";
 import * as realAccountsContext from "../accounts-context";
 import * as realConfig from "../config";
@@ -48,7 +48,7 @@ mock.module("@genesiscz/utils/agent-sessions/cached-title", () => ({
     resolveCachedSessionId: () => sessionResolution,
 }));
 
-mock.module("@genesiscz/utils/session-changes/codex", () => ({
+mock.module("@genesiscz/utils/agent-sessions/readers/codex-locate", () => ({
     ...realCodexRollouts,
     findCodexRollout: (threadId: string) => codexRollouts.get(threadId) ?? null,
 }));

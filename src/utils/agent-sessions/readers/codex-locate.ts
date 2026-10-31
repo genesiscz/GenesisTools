@@ -1,4 +1,4 @@
-import { existsSync } from "node:fs";
+import { existsSync, readdirSync } from "node:fs";
 import { homedir } from "node:os";
 import { basename, dirname, join, sep } from "node:path";
 import { readCodexTitleIndex } from "@genesiscz/utils/agent-sessions/readers/codex-title";
@@ -16,6 +16,7 @@ import type { TranscriptLocator } from "@genesiscz/utils/harness/parts";
 import { SafeJSON } from "@genesiscz/utils/json";
 import { logger } from "@genesiscz/utils/logger";
 import { codexHomesWithLegacy, isNativeTranscript, transcriptStem } from "@genesiscz/utils/providers/session-paths";
+import type { SessionPathRole } from "../types";
 
 /**
  * A Codex `locate` part whose default homes are the ones under `home`. The driver's part reads the user's home; a test
@@ -217,4 +218,81 @@ function titleOfNewestRollout(
 
     // No rollout in any of them: the default home's title, which a lookup cannot resolve either.
     return newest && session ? { ...session, locator: newest.filePath } : first;
+}
+
+/** A Codex rollout, plain or compressed (`rollout-….jsonl` or `.jsonl.zst`): the only file Codex discovery reads. */
+export function isCodexRolloutPath(path: string): boolean {
+    const name = path.split(/[/\\]/).at(-1) ?? "";
+    return name.startsWith("rollout-") && isNativeTranscript("codex", name);
+}
+
+/** `NativeSessionReader.classifyPath` for Codex: a rollout, plain or compressed, under a session root. */
+export function codexClassifyPath(relativePath: string): SessionPathRole | null {
+    const name = relativePath.split(/[/\\]/).at(-1) ?? "";
+
+    return isCodexRolloutPath(name)
+        ? {
+              owner: "session",
+              file: "transcript",
+              sessionId: codexNativeSessionId(name),
+              parentSessionId: null,
+              nested: false,
+          }
+        : null;
+}
+
+/** A folder's entries, newest name first (Codex names its day folders and rollouts by date). */
+function newestFirst(dir: string): string[] {
+    try {
+        return readdirSync(dir).sort().reverse();
+    } catch (error) {
+        logger.debug({ error, dir }, "[transcripts] codex sessions directory not readable");
+        return [];
+    }
+}
+
+/**
+ * The rollout of a Codex thread: `<home>/sessions/YYYY/MM/DD/rollout-<ts>-<thread id>.jsonl` (or `.jsonl.zst` once
+ * Codex compressed it), or the same in `archived_sessions`, which also keeps files directly in its root. Newest days
+ * are searched first.
+ */
+export function findCodexRollout(threadId: string, homes: readonly string[] = codexHomesWithLegacy()): string | null {
+    if (!/^[A-Za-z0-9-]+$/.test(threadId)) {
+        return null;
+    }
+
+    const isThread = (entry: string) =>
+        entry.startsWith("rollout-") &&
+        (entry.endsWith(`-${threadId}.jsonl`) || entry.endsWith(`-${threadId}.jsonl.zst`));
+
+    for (const home of homes) {
+        for (const bucket of ["sessions", "archived_sessions"]) {
+            const root = join(home, bucket);
+
+            if (!existsSync(root)) {
+                continue;
+            }
+
+            const flat = newestFirst(root).find(isThread);
+
+            if (flat) {
+                return join(root, flat);
+            }
+
+            for (const year of newestFirst(root)) {
+                for (const month of newestFirst(join(root, year))) {
+                    for (const day of newestFirst(join(root, year, month))) {
+                        const dayDir = join(root, year, month, day);
+                        const hit = newestFirst(dayDir).find(isThread);
+
+                        if (hit) {
+                            return join(dayDir, hit);
+                        }
+                    }
+                }
+            }
+        }
+    }
+
+    return null;
 }
