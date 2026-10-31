@@ -1,6 +1,5 @@
-import { constants } from "node:fs";
-import { open } from "node:fs/promises";
 import { asResult } from "@genesiscz/utils/cli/result";
+import { readBoundedRegularFile } from "@genesiscz/utils/fs/bounded-read";
 import { SafeJSON } from "@genesiscz/utils/json";
 import { logger } from "@genesiscz/utils/logger";
 import { WIDGET_TASK_SCOPES, type WidgetTaskFilters } from "../../lib/widget/tasks";
@@ -63,32 +62,13 @@ export const widgetCallDoor: CallDoor<string> = {
     async run(path, { signal }) {
         try {
             signal.throwIfAborted();
-            // Nonblocking open prevents a FIFO with no writer from holding the server. Check the opened file, not
-            // the path, and bound reads even if the regular file grows after stat.
-            const file = await open(path, constants.O_RDONLY | constants.O_NONBLOCK | constants.O_NOFOLLOW);
-            let bytes: Buffer;
-            try {
-                const stat = await file.stat();
-                if (!stat.isFile() || stat.size > MAX_WIDGET_REQUEST_BYTES) {
-                    throw new Error("widget request must be a regular file no larger than 1 MiB");
-                }
-                const buffer = Buffer.alloc(MAX_WIDGET_REQUEST_BYTES + 1);
-                let used = 0;
-                while (used < buffer.length) {
-                    signal.throwIfAborted();
-                    const { bytesRead } = await file.read(buffer, used, buffer.length - used, null);
-                    if (bytesRead === 0) {
-                        break;
-                    }
-                    used += bytesRead;
-                }
-                if (used > MAX_WIDGET_REQUEST_BYTES) {
-                    throw new Error("widget request must be a regular file no larger than 1 MiB");
-                }
-                bytes = buffer.subarray(0, used);
-            } finally {
-                await file.close();
-            }
+            const bytes = await readBoundedRegularFile(path, {
+                maxBytes: MAX_WIDGET_REQUEST_BYTES,
+                tooLarge: "widget request must be a regular file no larger than 1 MiB",
+                grew: "widget request must be a regular file no larger than 1 MiB",
+                noFollow: true,
+                signal,
+            });
             signal.throwIfAborted();
             let input: unknown;
             try {
