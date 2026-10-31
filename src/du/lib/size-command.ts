@@ -17,7 +17,7 @@ const DU_TIMEOUT_MS = 120_000;
  * inode once) from one parallel getattrlistbulk pass that opens no file. It runs as a child under the same deadline
  * as `du`, because open() on a protected folder can wait for the user's answer to a privacy prompt, and only a
  * process can be killed out of that wait. Null when it cannot answer (a file, no compiler for the binary, a walk
- * past the deadline, a root that could not be read), and `du` runs instead.
+ * past the deadline, a root that could not be read, a folder it could not list or was denied), and `du` runs instead.
  */
 export async function nativeDuSize(
     path: string,
@@ -57,6 +57,16 @@ export async function nativeDuSize(
 
     if (walked.dirs === 0) {
         logger.debug({ path, readErrors: walked.readErrors }, "du size: the native walk could not read the root");
+        return null;
+    }
+
+    // `dirs` counts the folders the walk opened, not a finished walk: a listing that failed part way or a denied
+    // folder below the root leaves a total that is too small, and a cached answer would serve it for the cache's age.
+    if (walked.readErrors > 0 || walked.deniedDirs > 0) {
+        logger.debug(
+            { path, readErrors: walked.readErrors, deniedDirs: walked.deniedDirs, kib: walked.kib },
+            "du size: the native walk is incomplete, du runs"
+        );
         return null;
     }
 

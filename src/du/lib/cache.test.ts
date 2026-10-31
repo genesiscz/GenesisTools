@@ -22,6 +22,7 @@ import {
 } from "node:fs";
 import { tmpdir } from "node:os";
 import { join, resolve } from "node:path";
+import { SafeJSON } from "@genesiscz/utils/json";
 import { scanWithCFfi } from "./engine";
 import { folderKb, nativeDuSize } from "./size-command";
 import type { ClonesizeResult } from "./types";
@@ -60,6 +61,49 @@ describe("du size command", () => {
         expect(await folderKb({ path: absolute, maxCacheAgeSeconds: 60, run })).toEqual({ value: 42, hit: true });
         expect(commands).toEqual([["du", "-sk", absolute]]);
     });
+
+    for (const counter of ["read_errors", "denied_dirs"]) {
+        it(`runs du instead of storing a native walk with ${counter}`, async () => {
+            const root = mkdtempSync(join(tmpdir(), "du-size-partial-"));
+            const commands: string[][] = [];
+            const walked = {
+                kib: 7,
+                bytes: 7168,
+                files: 3,
+                dirs: 2,
+                hardlinked_inodes: 0,
+                threads: 8,
+                walk_ms: 1,
+                denied_dirs: 0,
+                read_errors: 0,
+                [counter]: 1,
+            };
+            const run = async (argv: string[]) => {
+                commands.push(argv);
+                return argv[1] === "--dusize"
+                    ? { code: 0, stdout: `${SafeJSON.stringify(walked)}\n`, stderr: "" }
+                    : { code: 1, stdout: `9\t${root}\n`, stderr: "du: cannot read a folder" };
+            };
+
+            try {
+                const answer = await folderKb({
+                    path: root,
+                    maxCacheAgeSeconds: 60,
+                    run,
+                    binary: () => "/fixture/clonesize",
+                });
+
+                // The walk's 7 KiB is incomplete and du failed too: nothing is answered and nothing is stored.
+                expect(answer).toEqual({ value: null, hit: false });
+                expect(commands).toEqual([
+                    ["/fixture/clonesize", "--dusize", root],
+                    ["du", "-sk", root],
+                ]);
+            } finally {
+                rmSync(root, { recursive: true, force: true });
+            }
+        });
+    }
 
     it("runs du when the native walk passes its deadline", async () => {
         const root = mkdtempSync(join(tmpdir(), "du-size-deadline-"));
