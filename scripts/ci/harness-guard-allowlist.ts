@@ -61,7 +61,7 @@ export const HARNESS_GUARD_ALLOWLIST: Readonly<Record<string, HarnessGuardCounts
     },
     "src/macos/GenesisKit/Sources/GenesisKit/Sessions/ToolCalls/SessionNativeLog.swift": {
         branch: 3,
-        why: "the Swift format owner of the Claude and Codex transcript lines it indexes (the TS readers' counterpart): the bytes of a line pick the indexer, not the harness set",
+        why: "the Swift format owner of the Claude and Codex transcript lines it indexes (the counterpart of the TS readers/, which the guard owns): the bytes of a line pick the indexer; one indexer file per harness is a follow-up that needs a Swift build",
     },
     "src/macos/GenesisKit/Sources/GenesisKit/Widgets/LiveWidgetView.swift": {
         branch: 1,
