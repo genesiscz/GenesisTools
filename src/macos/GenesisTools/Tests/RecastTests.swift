@@ -221,6 +221,19 @@ final class RecastTests: XCTestCase {
         XCTAssertFalse(model.showReconciliation)
     }
 
+    func testUnreadableAudioIsKeptAsAnUnsupportedSnapshotInsteadOfThrowing() async throws {
+        let directory = FileManager.default.temporaryDirectory.appendingPathComponent("recast-bad-audio-" + UUID().uuidString)
+        try FileManager.default.createDirectory(at: directory, withIntermediateDirectories: true)
+        defer { try? FileManager.default.removeItem(at: directory) }
+        let url = directory.appendingPathComponent("broken.wav")
+        let bytes = Data("this is not a wav file".utf8)
+        try bytes.write(to: url)
+        let snapshot = try await NativeSourceReader.shared.snapshot(url: url)
+        XCTAssertEqual(snapshot.kind, "unsupported")
+        XCTAssertEqual(snapshot.data, bytes)
+        XCTAssertNotNil(snapshot.error)
+    }
+
     @MainActor
     func testSelectedAudioEvidenceClampsMillisecondRoundTripAtSourceEnd() throws {
         let model = RecastModel(toolsPath: "/fixture/tools")

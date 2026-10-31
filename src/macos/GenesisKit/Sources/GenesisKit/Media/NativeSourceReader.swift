@@ -130,10 +130,18 @@ public actor NativeSourceReader {
             let assetURL = directory.appendingPathComponent("audio." + ext)
             try data.write(to: assetURL, options: .atomic)
             let asset = AVURLAsset(url: assetURL)
-            let duration = try await withTaskCancellationHandler {
-                try await asset.load(.duration)
-            } onCancel: {
-                asset.cancelLoading()
+            let duration: CMTime
+            do {
+                duration = try await withTaskCancellationHandler {
+                    try await asset.load(.duration)
+                } onCancel: {
+                    asset.cancelLoading()
+                }
+            } catch {
+                try Task.checkCancellation()
+                PerfLog.mark("native-source: audio duration probe failed: \(error)")
+                result.error = "The audio could not be read. The original is preserved."
+                return result
             }
             try Task.checkCancellation()
             let milliseconds = CMTimeGetSeconds(duration) * 1000
