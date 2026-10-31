@@ -57,7 +57,7 @@ export interface CompactionEvent {
 }
 
 /** Kinds worth a warning in the proxy log: each one cost time or tokens, or means a detection gap. */
-const WARN_KINDS = new Set<CompactionEventKind>([
+export const WARN_KINDS: ReadonlySet<string> = new Set<CompactionEventKind>([
     "retry",
     "missed",
     "background-wasted",
