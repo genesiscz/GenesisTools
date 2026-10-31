@@ -27,7 +27,7 @@ for (const mode of modes) {
     for (const e of edges) {
         const delta = e.w > e.h ? 140 : e.desc.includes("Files") ? -180 : 180;
         for (let k = 0; k < repeat; k++) {
-            focusHub();
+            await focusHub();
             await Bun.sleep(600);
             const since = logSize();
             await drag(e, delta, 1.2, 1.2).exited;

@@ -13,7 +13,7 @@ if (!e) {
     console.log(`no edge "${edgeName}" in ${mode}`);
     process.exit(1);
 }
-focusHub();
+await focusHub();
 await Bun.sleep(500);
 const since = logSize();
 const run = drag(e, Number(deltaArg), 2.4, 0.1);

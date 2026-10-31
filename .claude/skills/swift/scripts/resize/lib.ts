@@ -90,7 +90,7 @@ export function drag(e: Edge, delta: number, out: number, back: number) {
     );
 }
 
-export const focusHub = () => sh(["tools", "control", "window", "--app", hubPid(), "--action", "focus"]);
+export const focusHub = async () => sh(["tools", "control", "window", "--app", await hubPid(), "--action", "focus"]);
 
 export const logSize = () => statSync(LOG).size;
 

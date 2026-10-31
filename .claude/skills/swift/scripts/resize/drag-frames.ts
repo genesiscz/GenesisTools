@@ -18,7 +18,7 @@ const g = dragGeometry(e);
 console.log(
     `${e.desc} @${e.x},${e.y} ${e.w}x${e.h}; drag ${g.vertical ? "y" : "x"} from ${g.across} by ${deltaArg} over 2.4 s`
 );
-focusHub();
+await focusHub();
 await Bun.sleep(500);
 const run = drag(e, Number(deltaArg), 2.4, 0.1);
 const started = Date.now();
