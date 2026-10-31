@@ -5,8 +5,9 @@
  * adds its module to each tool folder and edits no shared file. A module is required on its harness's first use and
  * kept, so a caller that needs one harness loads one module, and an import of the tool loads none.
  *
- * The compiler cannot see a module loaded by name, so `conformance` in each tool's test asks `toolPartsComplete`,
- * which loads every harness's module and fails on a missing one or a wrong export.
+ * The compiler cannot see a module loaded by name, so the harness conformance test imports every registry's file and
+ * asks `toolPartsComplete` of each one `toolPartsRegistered` lists: that loads every harness's module through the
+ * registry's own `isPart`, and fails on a missing module or a wrong export.
  */
 import { ACCOUNT_PROVIDER_ALIASES } from "@genesiscz/utils/ai/providers/alias-list";
 import { requireSibling } from "@genesiscz/utils/fs/module-dir";
@@ -17,6 +18,22 @@ export interface ToolParts<T> {
     of(id: HarnessId): T;
     /** Every harness's part, in the canonical harness order. */
     all(): T[];
+}
+
+/** A registry `toolParts` made in this process: where it was made, and its parts. */
+export interface ToolPartsRegistration {
+    /** The absolute path of the file that made it (its `import.meta.path`). */
+    file: string;
+    folder: string;
+    exportName: string;
+    parts: ToolParts<unknown>;
+}
+
+const registrations: ToolPartsRegistration[] = [];
+
+/** Every registry made so far in this process, in the order their files were loaded. */
+export function toolPartsRegistered(): readonly ToolPartsRegistration[] {
+    return registrations;
 }
 
 export function toolParts<T>(options: {
@@ -50,7 +67,9 @@ export function toolParts<T>(options: {
         return value;
     };
 
-    return { of, all: () => ACCOUNT_PROVIDER_ALIASES.map(of) };
+    const parts: ToolParts<T> = { of, all: () => ACCOUNT_PROVIDER_ALIASES.map(of) };
+    registrations.push({ file: options.meta.path, folder: options.folder, exportName: options.exportName, parts });
+    return parts;
 }
 
 /** Loads every harness's part, so a test fails on a missing module or a wrong export. */

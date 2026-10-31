@@ -12,6 +12,7 @@ import { moduleDir } from "@genesiscz/utils/fs/module-dir";
 import { HARNESS_PLUGIN_PATH, renderHarnessPlugin } from "../../../scripts/gen-harness-plugin";
 import { HARNESS_SWIFT_PATH, renderHarnessSwift } from "../../../scripts/gen-harness-swift";
 import { HARNESS_WEB_PATH, renderHarnessWeb } from "../../../scripts/gen-harness-web";
+import { toolPartsComplete, toolPartsRegistered } from "./tool-parts";
 import { HARNESS_PART_LOADING, HARNESS_PARTS, type HarnessDriver } from "./types";
 
 /**
@@ -207,27 +208,26 @@ describe("tool parts: every harness has its module in each toolParts folder", ()
         .toString()
         .split("\n")
         .filter((file) => file && !file.endsWith(".test.ts") && !file.endsWith("harness/tool-parts.ts"));
-    const registries = callers.flatMap((file) => {
-        const source = readFileSync(join(REPO_ROOT, file), "utf8");
-        return [...source.matchAll(/= toolParts<[\s\S]*?\(\{[\s\S]*?folder: "([^"]+)",\s*exportName: "([^"]+)"/g)].map(
-            (match) => ({ file, folder: match[1] ?? "", exportName: match[2] ?? "" })
-        );
-    });
 
     test("the search finds the registries", () => {
         expect(grep.exitCode).toBe(0);
-        expect(registries.length).toBeGreaterThanOrEqual(10);
-        expect(registries.length).toBe(callers.length);
+        expect(callers.length).toBeGreaterThanOrEqual(10);
     });
 
-    for (const { file, folder, exportName } of registries) {
-        test(`${file}: ${folder}/<id>.ts exports ${exportName}`, () => {
-            for (const id of ACCOUNT_PROVIDER_ALIASES) {
-                const module = join(REPO_ROOT, file, "..", folder, `${id}.ts`);
-                const source = readFileSync(module, "utf8");
-                expect({ id, exports: new RegExp(`\\bexport\\b[^;]*?\\b${exportName}\\b`).test(source) }).toEqual({
-                    id,
-                    exports: true,
+    for (const file of callers) {
+        test(`${file}: each registry loads every harness's part through its own guard`, async () => {
+            const path = join(REPO_ROOT, file);
+            await import(path);
+            const registries = toolPartsRegistered().filter((registration) => registration.file === path);
+
+            expect(registries.length).toBeGreaterThan(0);
+
+            for (const { folder, exportName, parts } of registries) {
+                // `toolPartsComplete` throws for a missing module or an export its `isPart` refuses.
+                expect({ folder, exportName, parts: toolPartsComplete(parts).length }).toEqual({
+                    folder,
+                    exportName,
+                    parts: ACCOUNT_PROVIDER_ALIASES.length,
                 });
             }
         });
