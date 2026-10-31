@@ -137,11 +137,6 @@ function claudeTranscriptFile(path: string): boolean {
     return name !== "sessions-index.jsonl" && !(name === "journal.jsonl" && path.split(/[/\\]/).includes("workflows"));
 }
 
-/** Transcript and metadata changes can both change indexed session information. */
-export function claudeIndexesFile(path: string): boolean {
-    return path.split(/[/\\]/).at(-1) === "sessions-index.json" || claudeTranscriptFile(path);
-}
-
 export async function discoverClaudeHistorySources(
     roots: string[],
     options: HistoryDiscoveryOptions = {}

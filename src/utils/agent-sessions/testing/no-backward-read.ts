@@ -15,9 +15,9 @@ export function noCurrentModel(): string | null {
     return null;
 }
 
-/** `indexesFile` for a test reader that no file watcher asks. */
-export function indexesNoFile(): boolean {
-    return false;
+/** `classifyPath` for a test reader that no file watcher asks. */
+export function classifiesNoPath(): null {
+    return null;
 }
 
 /** `rowAnchors` for a test reader whose rows carry no native ids. */

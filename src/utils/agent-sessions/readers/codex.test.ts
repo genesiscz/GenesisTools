@@ -16,7 +16,6 @@ import {
     readCodexRecords,
     scanCodexRecords,
 } from "./codex";
-import { codexIndexesFile } from "./codex-discovery";
 import { codexIndexRows } from "./codex-title";
 
 const CHILD_ID = "11111111-2222-4333-8444-555555555555";
@@ -1388,13 +1387,6 @@ test("currentModel is the newest turn_context's model, else the first one in the
     );
     expect(currentModel(long)).toBe("gpt-6.1-sol");
     expect(currentModel(rollout("rollout-none.jsonl", row({ type: "session_meta", payload: {} })))).toBeNull();
-});
-
-test("indexesFile takes rollouts plain or compressed", () => {
-    expect(codexIndexesFile("/fixture/sessions/2026/10/10/rollout-2026-10-10T00-00-00-fixture.jsonl")).toBe(true);
-    expect(codexIndexesFile("/fixture/sessions/2026/10/10/rollout-2026-10-10T00-00-00-fixture.jsonl.zst")).toBe(true);
-    expect(codexIndexesFile("C:\\fixture\\rollout-example.jsonl")).toBe(true);
-    expect(codexIndexesFile("/fixture/sessions/2026/10/10/history.jsonl")).toBe(false);
 });
 
 test("rowAnchors carries an open turn to its items until the turn ends or rows were skipped", () => {

@@ -12,6 +12,7 @@ import { workersDir } from "@genesiscz/utils/claude/worker-paths";
 import type { TranscriptLocator } from "@genesiscz/utils/harness/parts";
 import { logger } from "@genesiscz/utils/logger";
 import { nativeSessionRoots, nativeSessionRootsForHome } from "@genesiscz/utils/providers/session-paths";
+import { claudeSubagentFiles, claudeSubagentsDir } from "./claude-paths";
 
 /** The Claude driver's `locate` part: `<project>/<id>.jsonl` with its sub-agent files, and `tools claude worker` turn files. */
 export const claudeLocate: TranscriptLocator = {
@@ -93,7 +94,10 @@ function findClaudeSubagent(query: string, projectsDir: string, fs: FolderReads)
                 continue;
             }
 
-            const filePath = join(projectDir, session, "subagents", `agent-${agentId}.jsonl`);
+            const filePath = claudeSubagentFiles(
+                claudeSubagentsDir(join(projectDir, `${session}.jsonl`)),
+                agentId
+            ).transcript;
             if (fs.exists(filePath)) {
                 hits.push({
                     provider: "claude",

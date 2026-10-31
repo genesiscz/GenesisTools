@@ -1,5 +1,10 @@
 import { existsSync, readdirSync, readFileSync } from "node:fs";
 import { basename, isAbsolute, join } from "node:path";
+import {
+    claudeSubagentFiles,
+    claudeSubagentIdOf,
+    claudeSubagentsDir,
+} from "@genesiscz/utils/agent-sessions/readers/claude-paths";
 import { CLAUDE_DIR, PROJECTS_DIR } from "@genesiscz/utils/claude/projects";
 import { readLinesSync } from "@genesiscz/utils/fs/read-lines";
 import { SafeJSON } from "@genesiscz/utils/json";
@@ -395,7 +400,7 @@ export function parseLines(
 export function subagentFiles(
     transcriptPath: string
 ): { path: string; agentId: string; parentToolUseId: string | null }[] {
-    const dir = join(transcriptPath.replace(/\.jsonl$/, ""), "subagents");
+    const dir = claudeSubagentsDir(transcriptPath);
 
     if (!existsSync(dir)) {
         return [];
@@ -404,14 +409,14 @@ export function subagentFiles(
     const files: { path: string; agentId: string; parentToolUseId: string | null }[] = [];
 
     for (const name of readdirSync(dir)) {
-        const match = /^agent-(.+)\.jsonl$/.exec(name);
+        const agentId = claudeSubagentIdOf(name);
 
-        if (!match?.[1]) {
+        if (!agentId) {
             continue;
         }
 
         let parent: string | null = null;
-        const meta = join(dir, `agent-${match[1]}.meta.json`);
+        const { transcript, meta } = claudeSubagentFiles(dir, agentId);
 
         if (existsSync(meta)) {
             try {
@@ -421,7 +426,7 @@ export function subagentFiles(
             }
         }
 
-        files.push({ path: join(dir, name), agentId: match[1], parentToolUseId: parent });
+        files.push({ path: transcript, agentId, parentToolUseId: parent });
     }
 
     return files;

@@ -5,7 +5,7 @@ import { concurrentMap } from "@genesiscz/utils/async";
 import { SafeJSON } from "@genesiscz/utils/json";
 import { type HistoryDiscoveryOptions, walkSourceRoots } from "../source-discovery";
 import { asRecord, date, type JsonRecord, type JsonValue, text } from "../source-scan";
-import type { AgentSession, NativeSessionSource, NativeSourceIssue } from "../types";
+import type { AgentSession, NativeSessionSource, NativeSourceIssue, SessionPathRole } from "../types";
 
 interface GrokSummaryRead {
     path?: string;
@@ -138,9 +138,18 @@ const GROK_CHAT_FILES = ["chat_history.jsonl", "chatHistory.jsonl"];
  * A Grok session's chat history or its `summary.json` (title, model, kind): what discovery and `read` use. The
  * session's event, signal and rewind files change constantly and index nothing.
  */
-export function grokIndexesFile(path: string): boolean {
-    const name = path.split(/[/\\]/).at(-1) ?? "";
-    return GROK_CHAT_FILES.includes(name) || name === "summary.json";
+export function grokClassifyPath(relativePath: string): SessionPathRole | null {
+    const parts = relativePath.split(/[/\\]/);
+    const name = parts.at(-1) ?? "";
+    const sessionId = parts.length >= 2 ? (parts.at(-2) ?? null) : null;
+
+    if (GROK_CHAT_FILES.includes(name)) {
+        return { owner: "session", file: "transcript", sessionId, parentSessionId: null, nested: false };
+    }
+
+    return name === "summary.json"
+        ? { owner: "session", file: "sidecar", sessionId, parentSessionId: null, nested: false }
+        : null;
 }
 
 export async function discoverGrokHistorySources(

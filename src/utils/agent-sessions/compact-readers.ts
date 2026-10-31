@@ -3,15 +3,16 @@ import { nativeSessionRoots, nativeSessionRootsWithLegacyHomes } from "@genesisc
 import { readCompatibilityTranscript } from "./reader-compat";
 import { createClaudeHistoryOperations } from "./readers/claude";
 import { claudeDialog } from "./readers/claude-dialog";
-import { claudeIndexesFile, discoverClaudeHistorySources } from "./readers/claude-discovery";
+import { discoverClaudeHistorySources } from "./readers/claude-discovery";
+import { claudeClassifyPath } from "./readers/claude-paths";
 import { readClaudeStatistics } from "./readers/claude-statistics";
 import { createCodexHistoryOperations } from "./readers/codex";
-import { codexIndexesFile, discoverCodexHistorySources } from "./readers/codex-discovery";
+import { codexClassifyPath, discoverCodexHistorySources } from "./readers/codex-discovery";
 import { importNativeCodexSession } from "./readers/codex-import";
 import { readCodexStatistics } from "./readers/codex-statistics";
 import { createGrokHistoryOperations } from "./readers/grok";
 import { grokDialog } from "./readers/grok-dialog";
-import { discoverGrokHistorySources, grokIndexesFile } from "./readers/grok-discovery";
+import { discoverGrokHistorySources, grokClassifyPath } from "./readers/grok-discovery";
 import { readGrokStatistics } from "./readers/grok-statistics";
 import type { AgentKind, NativeSessionReader } from "./types";
 
@@ -34,7 +35,7 @@ export const claudeHistoryReader = createCompactHistoryReader({
     windowTurns: deferredWindowTurns(import.meta, "./readers/claude-window-turns", "claudeWindowTurns"),
     roots: () => nativeSessionRoots("claude"),
     discover: discoverClaudeHistorySources,
-    indexesFile: claudeIndexesFile,
+    classifyPath: claudeClassifyPath,
     // One JSONL row per record, and a record's text reads only that row (a tool result's name,
     // which comes from an earlier row, never enters the searched text).
     lineLocalRecords: true,
@@ -54,7 +55,7 @@ export const codexHistoryReader = createCompactHistoryReader({
     windowTurns: deferredWindowTurns(import.meta, "./readers/codex-turns", "codexNativeLinesToTurns"),
     roots: () => nativeSessionRootsWithLegacyHomes("codex"),
     discover: discoverCodexHistorySources,
-    indexesFile: codexIndexesFile,
+    classifyPath: codexClassifyPath,
     searchMetadata: true,
     // Metadata comes from the first header plus the state sidecars; a record never replays a header.
     scanKeepsMetadata: true,
@@ -69,7 +70,7 @@ export const grokHistoryReader = createCompactHistoryReader({
     windowTurns: deferredWindowTurns(import.meta, "../ai/transcripts/grok", "grokNativeLinesToTurns"),
     roots: () => nativeSessionRoots("grok"),
     discover: discoverGrokHistorySources,
-    indexesFile: grokIndexesFile,
+    classifyPath: grokClassifyPath,
     searchMetadata: true,
     ...createGrokHistoryOperations(),
     readStatistics: readGrokStatistics,

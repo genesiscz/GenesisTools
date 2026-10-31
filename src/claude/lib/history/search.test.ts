@@ -4,7 +4,7 @@ import { tmpdir } from "node:os";
 import { dirname, join } from "node:path";
 import type { DailyStats } from "@genesiscz/utils/agent-sessions/cache-types";
 import {
-    indexesNoFile,
+    classifiesNoPath,
     noBackwardRead,
     noContinuedIn,
     noCurrentModel,
@@ -254,7 +254,7 @@ function reader(overrides: Partial<Reader> = {}): Reader {
         continuedIn: noContinuedIn,
         currentModel: noCurrentModel,
         scanInsights: null,
-        indexesFile: indexesNoFile,
+        classifyPath: classifiesNoPath,
         rowAnchors: noRowAnchors,
         readTurnBoundary: async () => null,
         readForward: async () => ({ rows: [], file: null, endOffset: 0, issues: [] }),

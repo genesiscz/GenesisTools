@@ -12,13 +12,14 @@ import { isNativeTranscript } from "@genesiscz/utils/providers/session-paths";
 import { toolDataDir } from "@genesiscz/utils/storage/root";
 import { type HistoryDiscoveryOptions, walkSourceRoots } from "../source-discovery";
 import { asRecord, type JsonRecord, type JsonValue, scanJsonlRecords, text } from "../source-scan";
-import type { AgentSession, NativeSessionSource, NativeSourceIssue } from "../types";
+import type { AgentSession, NativeSessionSource, NativeSourceIssue, SessionPathRole } from "../types";
 import {
     type CodexProjectionIndex,
     parseCodexHeaderRow,
     readCodexProjectionFingerprint,
     readCodexProjectionIndex,
 } from "./codex";
+import { codexNativeSessionId } from "./codex-locate";
 import { codexIndexRows } from "./codex-title";
 
 interface CodexDiscoveryHeader {
@@ -353,7 +354,22 @@ function mergeMetadata(
 }
 
 /** A Codex rollout, plain or compressed (`rollout-….jsonl` or `.jsonl.zst`): the only file Codex discovery reads. */
-export function codexIndexesFile(path: string): boolean {
+/** `NativeSessionReader.classifyPath` for Codex: a rollout, plain or compressed, under a session root. */
+export function codexClassifyPath(relativePath: string): SessionPathRole | null {
+    const name = relativePath.split(/[/\\]/).at(-1) ?? "";
+
+    return codexIndexesFile(name)
+        ? {
+              owner: "session",
+              file: "transcript",
+              sessionId: codexNativeSessionId(name),
+              parentSessionId: null,
+              nested: false,
+          }
+        : null;
+}
+
+function codexIndexesFile(path: string): boolean {
     const name = path.split(/[/\\]/).at(-1) ?? "";
     return name.startsWith("rollout-") && isNativeTranscript("codex", name);
 }

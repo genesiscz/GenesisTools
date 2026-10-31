@@ -11,7 +11,6 @@ import {
     readGrokRecords,
     scanGrokRecords,
 } from "./grok";
-import { grokIndexesFile } from "./grok-discovery";
 
 const SESSION_ID = "11111111-2222-4333-8444-555555555555";
 const CWD = "/projects/shop";
@@ -790,7 +789,7 @@ test("Grok turn boundaries stay stable across replies and distinguish identical 
     expect(next?.timestamp).toBeUndefined();
 });
 
-test("currentModel reads summary.json, since Grok rows carry no model, and indexesFile takes the chat history and summary only", () => {
+test("currentModel reads summary.json, since Grok rows carry no model", () => {
     const { currentModel } = createGrokHistoryOperations();
     const session = mkdtempSync(join(tmpdir(), "gt-grok-current-model-"));
     const chat = join(session, "chat_history.jsonl");
@@ -798,14 +797,6 @@ test("currentModel reads summary.json, since Grok rows carry no model, and index
     expect(currentModel(chat)).toBeNull();
     writeFileSync(join(session, "summary.json"), SafeJSON.stringify({ current_model_id: "grok-build-1" }));
     expect(currentModel(chat)).toBe("grok-build-1");
-
-    const folder = "/fixture/grok/sessions/%2Ffixture/session-1";
-    expect(grokIndexesFile(`${folder}/chat_history.jsonl`)).toBe(true);
-    expect(grokIndexesFile(`${folder}/chatHistory.jsonl`)).toBe(true);
-    expect(grokIndexesFile(`${folder}/summary.json`)).toBe(true);
-    expect(grokIndexesFile("C:\\fixture\\chat_history.jsonl")).toBe(true);
-    expect(grokIndexesFile(`${folder}/events.jsonl`)).toBe(false);
-    expect(grokIndexesFile(`${folder}/updates.jsonl`)).toBe(false);
 });
 
 test("rowAnchors names an update's message and turn, and a tool_call update's call id", () => {

@@ -18,7 +18,13 @@ import {
 } from "./message-queue";
 import { resolveHistoryProvider } from "./provider";
 import { readSessionsContinuedIn } from "./session-backward";
-import { indexesNoFile, noBackwardRead, noContinuedIn, noCurrentModel, noRowAnchors } from "./testing/no-backward-read";
+import {
+    classifiesNoPath,
+    noBackwardRead,
+    noContinuedIn,
+    noCurrentModel,
+    noRowAnchors,
+} from "./testing/no-backward-read";
 
 afterEach(() => {
     _resetPluginsForTest();
@@ -49,7 +55,7 @@ test("a registered fourth history provider can be resolved without an account al
             continuedIn: noContinuedIn,
             currentModel: noCurrentModel,
             scanInsights: () => ({ native: null, defaultModel: null }),
-            indexesFile: indexesNoFile,
+            classifyPath: classifiesNoPath,
             rowAnchors: noRowAnchors,
             readTurnBoundary: async () => null,
             readForward: async () => ({ rows: [], file: null, endOffset: 0, issues: [] }),

@@ -767,18 +767,6 @@ test("currentModel is the newest assistant model of the session's own chain, nev
     expect(reader.currentModel(join(dir, "missing.jsonl"))).toBeNull();
 });
 
-test("indexesFile takes session transcripts only", () => {
-    const reader = claudeHistoryReader;
-
-    expect(reader.indexesFile("/fixture/projects/-fixture/11111111-2222-4333-8444-555555555555.jsonl")).toBe(true);
-    expect(reader.indexesFile("/fixture/projects/-fixture/lead/subagents/agent-a1.jsonl")).toBe(true);
-    expect(reader.indexesFile("/fixture/projects/-fixture/sessions-index.jsonl")).toBe(false);
-    expect(reader.indexesFile("/fixture/projects/-fixture/lead/subagents/workflows/wf_1/journal.jsonl")).toBe(false);
-    expect(reader.indexesFile("C:\\fixture\\sessions-index.jsonl")).toBe(false);
-    expect(reader.indexesFile("/fixture/projects/-fixture/sessions-index.json")).toBe(true);
-    expect(reader.indexesFile("/fixture/projects/-fixture/memory.md")).toBe(false);
-});
-
 test("rowAnchors names a row's uuid, its message id and its tool calls", () => {
     const walk = claudeHistoryReader.rowAnchors();
     expect(

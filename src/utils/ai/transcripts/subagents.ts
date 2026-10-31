@@ -7,8 +7,13 @@
  * every agent, and each transcript's last record says whether that agent is still working.
  */
 import { closeSync, existsSync, fstatSync, openSync, readdirSync, readFileSync, readSync, statSync } from "node:fs";
-import { basename, dirname, join } from "node:path";
+import { join } from "node:path";
 import { resolveHistoryProvider } from "@genesiscz/utils/agent-sessions/provider";
+import {
+    claudeSubagentFiles,
+    claudeSubagentIdOf,
+    claudeSubagentsDir,
+} from "@genesiscz/utils/agent-sessions/readers/claude-paths";
 import { harnessDriver } from "@genesiscz/utils/ai/providers/harness-index";
 import { isMissingPathError } from "@genesiscz/utils/fs/canonical";
 import { SafeJSON } from "@genesiscz/utils/json";
@@ -256,7 +261,7 @@ function readAgent(
     options: { now: number; staleAfterMs: number; scan: boolean; promptChars: number }
 ): SessionSubagent | null {
     const filePath = join(dir, entry);
-    const id = entry.slice("agent-".length, -".jsonl".length);
+    const id = claudeSubagentIdOf(entry) ?? entry;
     const stateOf = (working: boolean, mtimeMs: number): SubagentState =>
         !working ? "done" : options.now - mtimeMs > options.staleAfterMs ? "stopped" : "running";
     const key = `${filePath}\u0000${options.scan}\u0000${options.promptChars}`;
@@ -268,7 +273,7 @@ function readAgent(
         return null;
     }
 
-    const meta = metaIdentity(join(dir, `agent-${id}.meta.json`));
+    const meta = metaIdentity(claudeSubagentFiles(dir, id).meta);
     const settled = Date.now() - Math.max(stat.mtimeMs, meta.mtimeMs) >= 2000;
     const cached = readAgentCache.get(key);
     if (
@@ -323,7 +328,7 @@ function readAgentFresh(
     stat: { ino: number; size: number; mtimeMs: number };
 } | null {
     const filePath = join(dir, entry);
-    const id = entry.slice("agent-".length, -".jsonl".length);
+    const id = claudeSubagentIdOf(entry) ?? entry;
     let fd: number | null = null;
     try {
         fd = openSync(filePath, "r");
@@ -332,7 +337,7 @@ function readAgentFresh(
         const tailStart = Math.max(0, stat.size - TAIL_BYTES);
         const tail = readSlice(fd, tailStart, stat.size - tailStart);
         const { first, last } = firstAndLast(head, tail);
-        const meta = readMeta(join(dir, `agent-${id}.meta.json`));
+        const meta = readMeta(claudeSubagentFiles(dir, id).meta);
         const working = midWork(last);
         const scanned = scan ? scanClaudeToolCalls(filePath) : null;
         const agent: Omit<SessionSubagent, "state"> = {
@@ -375,7 +380,7 @@ export function listSubagents(resolved: ResolvedTranscript, options: ListSubagen
         return { sessionId: resolved.sessionId, subagents: [] };
     }
 
-    const dir = join(dirname(resolved.filePath), basename(resolved.filePath, ".jsonl"), "subagents");
+    const dir = claudeSubagentsDir(resolved.filePath);
     let entries: string[];
     try {
         entries = readdirSync(dir);
@@ -390,9 +395,12 @@ export function listSubagents(resolved: ResolvedTranscript, options: ListSubagen
         return { sessionId: resolved.sessionId, subagents: [] };
     }
 
-    const wanted = options.ids ? new Set(options.ids.map((id) => `agent-${id}.jsonl`)) : null;
+    const wanted = options.ids ? new Set(options.ids) : null;
     const subagents = entries
-        .filter((entry) => (wanted ? wanted.has(entry) : entry.startsWith("agent-") && entry.endsWith(".jsonl")))
+        .filter((entry) => {
+            const id = claudeSubagentIdOf(entry);
+            return id !== null && (wanted ? wanted.has(id) : true);
+        })
         .map((entry) =>
             readAgent(dir, entry, {
                 now,

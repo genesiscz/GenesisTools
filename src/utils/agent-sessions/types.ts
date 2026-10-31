@@ -330,6 +330,20 @@ export interface NativeDialogPermission {
 }
 
 /** The native ids one transcript row carries, for matching a source anchor (a message, a tool call, a turn). */
+/** What a file under a session root is (`NativeSessionReader.classifyPath`). */
+export interface SessionPathRole {
+    /** Whose file it is: a session's own, or one of its sub-agents' (written beside the session, Claude). */
+    owner: "session" | "subagent";
+    /** The transcript itself, or a metadata file beside it (a sub-agent's `.meta.json`, Grok's `summary.json`). */
+    file: "transcript" | "sidecar";
+    /** The session the file belongs to (a sub-agent's own id); null when the path names none (an index of many). */
+    sessionId: string | null;
+    /** The lead session of a sub-agent's file; null for a session's own file. */
+    parentSessionId: string | null;
+    /** A sub-agent below another agent (a workflow's agents), which the agents tree does not read directly. */
+    nested: boolean;
+}
+
 export interface RowAnchorIds {
     messageIds: string[];
     toolCallIds: string[];
@@ -395,11 +409,13 @@ export interface NativeSessionReader<Kind extends string = AgentKind> {
     /** Native data for session insights, or null when the provider has no additional data. */
     scanInsights: ((text: string) => { native: NativeScan | null; defaultModel: string | null }) | null;
     /**
-     * Whether a change to this file, under one of `roots()`, can change what `discover` and `read` return: a session
-     * transcript or the metadata beside it, not a provider's side files (Grok's event and signal logs). A file watcher
-     * asks before it refreshes a listing.
+     * What a file under one of `roots()` is to this reader, from its path relative to that root: a session's
+     * transcript, a sub-agent's, or the metadata beside one; null for a file that `discover` and `read` never read (a
+     * provider's side files, such as Grok's event and signal logs). A file watcher asks before it refreshes a listing,
+     * and the hub asks it for a sub-agent's lead instead of slicing the path. The cases are pinned by the shared
+     * fixtures in `readers/fixtures/session-paths.json`.
      */
-    indexesFile(path: string): boolean;
+    classifyPath(relativePath: string): SessionPathRole | null;
     /**
      * A new walk that names the native ids of each row of this provider's transcript (a source anchor's message id,
      * tool call id and turn id), oldest row first. Stateful: a Codex row names its turn only where the turn starts.

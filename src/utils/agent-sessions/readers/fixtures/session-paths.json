@@ -1,0 +1,24 @@
+{
+    "about": "What a file under a harness's session root is: NativeSessionReader.classifyPath(relativePath). One case per row; expect null means the reader never reads the file. The TS readers are tested against this file (readers/claude-paths.test.ts); the Swift session log reader can load the same file to check its own layout rules.",
+    "cases": [
+        { "harness": "claude", "path": "-fixture/11111111-2222-4333-8444-555555555555.jsonl", "expect": { "owner": "session", "file": "transcript", "sessionId": "11111111-2222-4333-8444-555555555555", "parentSessionId": null, "nested": false } },
+        { "harness": "claude", "path": "-fixture/sessions-index.json", "expect": { "owner": "session", "file": "sidecar", "sessionId": null, "parentSessionId": null, "nested": false } },
+        { "harness": "claude", "path": "-fixture/sessions-index.jsonl", "expect": null },
+        { "harness": "claude", "path": "-fixture/memory.md", "expect": null },
+        { "harness": "claude", "path": "-fixture/lead/subagents/agent-a1.jsonl", "expect": { "owner": "subagent", "file": "transcript", "sessionId": "a1", "parentSessionId": "lead", "nested": false } },
+        { "harness": "claude", "path": "-fixture/lead/subagents/agent-a1.meta.json", "expect": { "owner": "subagent", "file": "sidecar", "sessionId": "a1", "parentSessionId": "lead", "nested": false } },
+        { "harness": "claude", "path": "-fixture/lead/subagents/workflows/wf_1/agent-w1.jsonl", "expect": { "owner": "subagent", "file": "transcript", "sessionId": "w1", "parentSessionId": "lead", "nested": true } },
+        { "harness": "claude", "path": "-fixture/lead/subagents/workflows/wf_1/journal.jsonl", "expect": null },
+        { "harness": "claude", "path": "-fixture\\lead\\subagents\\agent-a2.jsonl", "expect": { "owner": "subagent", "file": "transcript", "sessionId": "a2", "parentSessionId": "lead", "nested": false } },
+        { "harness": "claude", "path": "-fixture/lead/tool-results/out.txt", "expect": null },
+        { "harness": "codex", "path": "2026/10/10/rollout-2026-10-10T00-00-00-01a10953-2956-7180-8465-61f7415518c0.jsonl", "expect": { "owner": "session", "file": "transcript", "sessionId": "01a10953-2956-7180-8465-61f7415518c0", "parentSessionId": null, "nested": false } },
+        { "harness": "codex", "path": "2026/10/10/rollout-2026-10-10T00-00-00-01a10953-2956-7180-8465-61f7415518c0.jsonl.zst", "expect": { "owner": "session", "file": "transcript", "sessionId": "01a10953-2956-7180-8465-61f7415518c0", "parentSessionId": null, "nested": false } },
+        { "harness": "codex", "path": "2026\\10\\10\\rollout-example.jsonl", "expect": { "owner": "session", "file": "transcript", "sessionId": "example", "parentSessionId": null, "nested": false } },
+        { "harness": "codex", "path": "2026/10/10/history.jsonl", "expect": null },
+        { "harness": "grok", "path": "%2Ffixture/session-1/chat_history.jsonl", "expect": { "owner": "session", "file": "transcript", "sessionId": "session-1", "parentSessionId": null, "nested": false } },
+        { "harness": "grok", "path": "%2Ffixture/session-1/chatHistory.jsonl", "expect": { "owner": "session", "file": "transcript", "sessionId": "session-1", "parentSessionId": null, "nested": false } },
+        { "harness": "grok", "path": "%2Ffixture/session-1/summary.json", "expect": { "owner": "session", "file": "sidecar", "sessionId": "session-1", "parentSessionId": null, "nested": false } },
+        { "harness": "grok", "path": "%2Ffixture/session-1/events.jsonl", "expect": null },
+        { "harness": "grok", "path": "%2Ffixture/session-1/updates.jsonl", "expect": null }
+    ]
+}

@@ -287,45 +287,30 @@ export function widgetRosterChange({
     roots: Record<WidgetRosterProvider, string[]>;
     listedParent: (sessionId: string) => boolean;
 }): WidgetRosterScope | "read" | undefined {
-    for (const root of roots.claude) {
-        const relative = under(root, path);
-        if (relative === undefined) {
-            continue;
-        }
+    // The roots are tried in the canonical harness order, and the first root a path is under decides it.
+    for (const provider of WIDGET_ROSTER_PROVIDERS) {
+        for (const root of roots[provider]) {
+            const relative = under(root, path);
+            if (relative === undefined) {
+                continue;
+            }
 
-        const parts = relative.split(sep);
-        if (parts.length === 2 && resolveHistoryProvider("claude").reader.indexesFile(path)) {
-            return "claude";
-        }
+            const role = resolveHistoryProvider(provider).reader.classifyPath(relative);
+            if (!role) {
+                // A file the reader never reads (Grok's event and signal logs, a workflow's journal).
+                return undefined;
+            }
 
-        if (parts.length === 4 && parts[2] === "subagents" && /\.(jsonl|json)$/.test(parts[3])) {
-            return listedParent(parts[1]) ? "read" : "claude-agents";
-        }
+            if (role.owner === "session") {
+                return provider;
+            }
 
-        const name = parts[parts.length - 1];
-        if (
-            parts.length > 4 &&
-            parts[2] === "subagents" &&
-            name.endsWith(".jsonl") &&
-            !(name === "journal.jsonl" && parts.includes("workflows"))
-        ) {
-            return "claude-agents";
-        }
-
-        return undefined;
-    }
-
-    for (const root of roots.codex) {
-        if (under(root, path) !== undefined) {
-            // A rollout, plain or compressed (Codex 0.164 renames a closed one to `.jsonl.zst`): the index changes too.
-            return resolveHistoryProvider("codex").reader.indexesFile(path) ? "codex" : undefined;
-        }
-    }
-
-    for (const root of roots.grok) {
-        if (under(root, path) !== undefined) {
-            // The files the grok reader indexes; its event, signal and rewind files change constantly and index nothing.
-            return resolveHistoryProvider("grok").reader.indexesFile(path) ? "grok" : undefined;
+            // Only a harness that writes its sub-agents beside the session (Claude) names one by path, and those
+            // have a listing of their own. The agents tree reads a listed lead's sub-agent folder itself, so a change
+            // directly in it is a read; a nested agent is in the listing only.
+            return !role.nested && role.parentSessionId && listedParent(role.parentSessionId)
+                ? "read"
+                : "claude-agents";
         }
     }
 

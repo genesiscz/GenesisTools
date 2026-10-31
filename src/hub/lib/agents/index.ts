@@ -1,5 +1,4 @@
 import { statSync } from "node:fs";
-import { basename, dirname, join } from "node:path";
 import {
     type AgentSessionRow,
     listAgentSessionRows,
@@ -8,6 +7,7 @@ import {
 import { getSessionListing } from "@app/claude/lib/history/search";
 import { teamsRoot } from "@app/claude/lib/teams/discover";
 import type { SessionMetadataRecord } from "@genesiscz/utils/agent-sessions/cache-types";
+import { claudeSubagentLead } from "@genesiscz/utils/agent-sessions/readers/claude-paths";
 import { resolveTranscripts } from "@genesiscz/utils/ai/transcripts/resolve";
 import { logger } from "@genesiscz/utils/logger";
 import { profiler } from "@genesiscz/utils/profile";
@@ -262,14 +262,12 @@ export async function parentsOfRecentAgents(
 
     const extra = new Map<string, ParentRow>();
     for (const child of children) {
-        // `<project>/<lead id>/subagents/agent-<id>.jsonl`
-        const leadDir = dirname(dirname(child.filePath));
-        const leadId = basename(leadDir);
-        if (listed.has(leadId) || extra.has(leadId) || basename(dirname(child.filePath)) !== "subagents") {
+        const lead = claudeSubagentLead(child.filePath);
+        if (!lead || listed.has(lead.sessionId) || extra.has(lead.sessionId)) {
             continue;
         }
 
-        const filePath = join(dirname(leadDir), `${leadId}.jsonl`);
+        const { sessionId: leadId, transcript: filePath } = lead;
         let mtime: number;
         try {
             mtime = statSync(filePath).mtimeMs;
