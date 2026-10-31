@@ -284,6 +284,37 @@ describe("AppServerClient", () => {
         await client.close();
     });
 
+    test("answered waits for an answer write that completes later, not only for the handler", async () => {
+        const harness = createProcessHarness();
+        let finishWrite: () => void = () => {};
+        const realWrite = harness.process.stdin.write;
+        harness.process.stdin.write = (value) => {
+            realWrite(value);
+            return new Promise<number>((resolve) => {
+                finishWrite = () => resolve(value.length);
+            });
+        };
+        const client = new AppServerClient(harness.process, { onServerRequest: () => ({ decision: "decline" }) });
+        let settled = false;
+
+        harness.push({ id: "approval-3", method: "item/fileChange/requestApproval", params: {} });
+        await Bun.sleep(0);
+        const answered = client.answered("approval-3").then(() => {
+            settled = true;
+        });
+        await Bun.sleep(5);
+
+        // The handler answered and the line is handed to stdin, but the write has not completed.
+        expect(harness.writes).toHaveLength(1);
+        expect(settled).toBe(false);
+
+        finishWrite();
+        await answered;
+
+        expect(settled).toBe(true);
+        await client.close();
+    });
+
     test("rejects pending requests when the child exits", async () => {
         let resolveExit: (code: number) => void = () => {};
         const harness = createProcessHarness();
