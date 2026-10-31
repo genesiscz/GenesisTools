@@ -1,13 +1,13 @@
 // Shared by the resize scripts: the installed app, the live hub's pid, its accessibility edges, the pointer-drag
 // binary (built once, through the app launcher so the Accessibility grant applies) and the perf log tail.
 import { existsSync, mkdirSync, readFileSync, statSync } from "node:fs";
-import { homedir } from "node:os";
 import { execTool } from "@genesiscz/utils/cli/tools";
 import { SafeJSON } from "@genesiscz/utils/json";
+import { genesisAppLauncherPath } from "@genesiscz/utils/macos/genesis-app";
 import { listPsRows } from "@genesiscz/utils/process/ps";
 import { genesisToolsDir } from "@genesiscz/utils/storage/root";
 
-export const APP = `${homedir()}/Applications/GenesisTools.app/Contents/MacOS/GenesisTools`;
+export const APP = genesisAppLauncherPath();
 export const LOG = genesisToolsDir("logs", "app-perf.log");
 
 export const sh = (argv: string[]) => {
