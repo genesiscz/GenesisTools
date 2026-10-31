@@ -155,7 +155,8 @@ function branchOf(ref: string): string | undefined {
 
 /**
  * A name git could take as a branch (the common subset of `git check-ref-format`). Shell words parsed from a command
- * (`2>&1`, `>`, `$br`) are not: each was looked up as a PR by every session every 2 minutes (2026-10-27).
+ * (`2>&1`, `>`, `$br`) are not: each was looked up as a PR by every session every 2 minutes (2026-10-27). Digits
+ * alone are a branch name (`12345`, `2026/10/30`).
  */
 export function isBranchName(name: string): boolean {
     return (
@@ -165,8 +166,7 @@ export function isBranchName(name: string): boolean {
         !name.endsWith("/") &&
         !name.endsWith(".lock") &&
         !name.includes("..") &&
-        !name.includes("//") &&
-        /[A-Za-z]/.test(name)
+        !name.includes("//")
     );
 }
 
