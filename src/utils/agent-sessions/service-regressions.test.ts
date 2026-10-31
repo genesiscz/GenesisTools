@@ -8,7 +8,7 @@ import { codexHistoryReader, grokHistoryReader } from "./compact-readers";
 import { initializeCompactHistorySchema } from "./migrations";
 import { HistoryService } from "./service";
 import { HistorySyncRepository } from "./sync-repository";
-import { indexesNoFile, noBackwardRead, noContinuedIn, noModelOfRow, noRowAnchors } from "./testing/no-backward-read";
+import { indexesNoFile, noBackwardRead, noContinuedIn, noCurrentModel, noRowAnchors } from "./testing/no-backward-read";
 import type { HistoryMetadataRecord, HistorySourceRecord, NativeSessionReader, NativeSessionSource } from "./types";
 
 interface FixtureSource {
@@ -134,7 +134,7 @@ function fixtureReader(options: {
         windowTurns: () => [],
         readBackward: noBackwardRead,
         continuedIn: noContinuedIn,
-        modelOfRow: noModelOfRow,
+        currentModel: noCurrentModel,
         scanInsights: () => ({ native: null, defaultModel: null }),
         indexesFile: indexesNoFile,
         rowAnchors: noRowAnchors,

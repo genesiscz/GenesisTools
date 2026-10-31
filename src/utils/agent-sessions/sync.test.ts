@@ -7,7 +7,7 @@ import { historySourceKey } from "./identity";
 import { initializeCompactHistorySchema } from "./migrations";
 import { synchronizeHistory } from "./sync";
 import { HistorySyncRepository } from "./sync-repository";
-import { indexesNoFile, noBackwardRead, noContinuedIn, noModelOfRow, noRowAnchors } from "./testing/no-backward-read";
+import { indexesNoFile, noBackwardRead, noContinuedIn, noCurrentModel, noRowAnchors } from "./testing/no-backward-read";
 import type { HistoryMetadataRead, NativeSessionReader, NativeSessionSource } from "./types";
 
 const PROVIDER = "fixture-provider";
@@ -67,7 +67,7 @@ function createFixture(): {
         windowTurns: () => [],
         readBackward: noBackwardRead,
         continuedIn: noContinuedIn,
-        modelOfRow: noModelOfRow,
+        currentModel: noCurrentModel,
         scanInsights: () => ({ native: null, defaultModel: null }),
         indexesFile: indexesNoFile,
         rowAnchors: noRowAnchors,
@@ -431,7 +431,7 @@ test("selective refresh reuses full discovery, retains unselected sources, and l
         windowTurns: () => [],
         readBackward: noBackwardRead,
         continuedIn: noContinuedIn,
-        modelOfRow: noModelOfRow,
+        currentModel: noCurrentModel,
         scanInsights: () => ({ native: null, defaultModel: null }),
         indexesFile: indexesNoFile,
         rowAnchors: noRowAnchors,

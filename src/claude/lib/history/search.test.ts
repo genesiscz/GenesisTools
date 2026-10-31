@@ -7,7 +7,7 @@ import {
     indexesNoFile,
     noBackwardRead,
     noContinuedIn,
-    noModelOfRow,
+    noCurrentModel,
     noRowAnchors,
 } from "@genesiscz/utils/agent-sessions/testing/no-backward-read";
 import type {
@@ -252,7 +252,7 @@ function reader(overrides: Partial<Reader> = {}): Reader {
         windowTurns: () => [],
         readBackward: noBackwardRead,
         continuedIn: noContinuedIn,
-        modelOfRow: noModelOfRow,
+        currentModel: noCurrentModel,
         scanInsights: null,
         indexesFile: indexesNoFile,
         rowAnchors: noRowAnchors,

@@ -11,6 +11,7 @@ import {
 } from "node:fs";
 import { tmpdir } from "node:os";
 import { join } from "node:path";
+import { resolveHistoryProvider } from "@genesiscz/utils/agent-sessions/provider";
 import { compressBytes } from "@genesiscz/utils/compress/zstd";
 import { SafeJSON } from "@genesiscz/utils/json";
 import * as storage from "@genesiscz/utils/storage/storage";
@@ -19,7 +20,6 @@ import {
     buildCodexParent,
     type CodexAgentRecord,
     codexAgentHeadOf,
-    codexAgentModel,
     codexAgentStatus,
 } from "./codex-agents";
 import type { ParentRow } from "./tree";
@@ -181,8 +181,11 @@ describe("codexAgentStatus", () => {
     });
 });
 
-describe("codexAgentModel", () => {
-    test("is the model of the first turn_context, found past 300 KB of instructions", () => {
+/** The model a sub-agent runs: the Codex reader's `currentModel` on its own rollout. */
+const codexAgentModel = (path: string) => resolveHistoryProvider("codex").reader.currentModel(path);
+
+describe("the Codex reader's currentModel on a sub-agent rollout", () => {
+    test("is the model of its turn_context, found past 300 KB of instructions", () => {
         const file = rollout(
             temp(),
             CHILD_A,

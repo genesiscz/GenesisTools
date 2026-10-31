@@ -18,6 +18,9 @@ import {
 import { tmpdir } from "node:os";
 import { join } from "node:path";
 import { withSpawnCounter } from "@app/benchmark/lib";
+import { claudeCurrentModel } from "@genesiscz/utils/agent-sessions/readers/claude-model";
+import { codexCurrentModel } from "@genesiscz/utils/agent-sessions/readers/codex-model";
+import { grokCurrentModel } from "@genesiscz/utils/agent-sessions/readers/grok-model";
 import { changedOnly, SHIPPED_DEFAULTS_KEY, storedOverrides } from "@genesiscz/utils/agents/hooks/config-section";
 import { env } from "@genesiscz/utils/env";
 import { SafeJSON } from "@genesiscz/utils/json";
@@ -2049,6 +2052,7 @@ describe("HARNESS_HOOK_FACTS", () => {
             transcriptMentions: true,
             modsDrawDiffs: true,
             settingsModel: true,
+            currentModel: claudeCurrentModel,
             honoursBareGlobQualifier: false,
             rendersAnsiDiffs: true,
             turnIsPromptId: true,
@@ -2059,6 +2063,7 @@ describe("HARNESS_HOOK_FACTS", () => {
             transcriptMentions: false,
             modsDrawDiffs: false,
             settingsModel: false,
+            currentModel: grokCurrentModel,
             honoursBareGlobQualifier: true,
             rendersAnsiDiffs: false,
             turnIsPromptId: false,
@@ -2069,6 +2074,7 @@ describe("HARNESS_HOOK_FACTS", () => {
             transcriptMentions: false,
             modsDrawDiffs: false,
             settingsModel: false,
+            currentModel: codexCurrentModel,
             honoursBareGlobQualifier: true,
             rendersAnsiDiffs: true,
             turnIsPromptId: false,

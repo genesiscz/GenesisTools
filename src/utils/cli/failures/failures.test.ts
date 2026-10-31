@@ -4,7 +4,7 @@ import { constants, tmpdir } from "node:os";
 import { join } from "node:path";
 import { formatLocalDate } from "@genesiscz/utils/date";
 import { Command } from "commander";
-import { claudeProjectFolder, modelInTranscriptLines } from "./caller";
+import { claudeProjectFolder } from "./caller";
 import { recordSignalEnd, signalEnd, signalOfStatus, WITHHELD_ARGV } from "./launcher";
 import { appendFailure, readFailures, type ToolFailure } from "./record";
 import { RUN_ID_ENV } from "./run-id";
@@ -239,20 +239,7 @@ describe("commandPathFromArgv", () => {
     });
 });
 
-describe("modelInTranscriptLines", () => {
-    it("reads the newest model of a Claude or a Codex transcript and skips synthetic turns", () => {
-        const claude = [
-            '{"type":"assistant","message":{"model":"claude-sonnet-5-5"}}',
-            '{"type":"user","message":{"content":"x"}}',
-            '{"type":"assistant","message":{"model":"<synthetic>"}}',
-        ];
-        expect(modelInTranscriptLines(claude)).toBe("claude-sonnet-5-5");
-        expect(modelInTranscriptLines(['{"type":"turn_context","payload":{"model":"gpt-6.1-sol"}}'])).toBe(
-            "gpt-6.1-sol"
-        );
-        expect(modelInTranscriptLines(['{"type":"user"}'])).toBeNull();
-    });
-
+describe("the calling session", () => {
     it("names the project folder the way Claude does", () => {
         expect(claudeProjectFolder("/Users/me/Projects/My App.v2")).toBe("-Users-me-Projects-My-App-v2");
     });

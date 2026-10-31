@@ -733,14 +733,42 @@ test("continuedIn is the trailing continued-in row's successor id, and nothing f
     expect(await createClaudeHistoryOperations().continuedIn(empty.source)).toBeUndefined();
 });
 
-test("modelOfRow names an assistant row's model, never a synthetic notice's, and indexesFile takes session transcripts only", () => {
+test("currentModel is the newest assistant model of the session's own chain, never a synthetic notice's", () => {
     const reader = claudeHistoryReader;
-    expect(
-        reader.modelOfRow(jsonl({ type: "assistant", message: { model: "claude-sonnet-5-5", content: [] } }).trim())
-    ).toBe("claude-sonnet-5-5");
-    expect(reader.modelOfRow(jsonl({ type: "assistant", message: { model: "<synthetic>" } }).trim())).toBeUndefined();
-    expect(reader.modelOfRow(jsonl({ type: "user", message: { model: "claude-sonnet-5-5" } }).trim())).toBeUndefined();
-    expect(reader.modelOfRow('{"type":"assistant","message":{"model":"claude-sonn')).toBeUndefined();
+    const dir = mkdtempSync(join(tmpdir(), "gt-claude-current-model-"));
+    const transcript = (name: string, rows: Record<string, unknown>[], tail = "") => {
+        const path = join(dir, name);
+        writeFileSync(path, rows.map((row) => jsonl(row)).join("") + tail);
+        return path;
+    };
+    const assistant = (model: string, extra: Record<string, unknown> = {}) => ({
+        type: "assistant",
+        message: { model, content: [] },
+        ...extra,
+    });
+
+    const lead = transcript(
+        "lead.jsonl",
+        [
+            assistant("claude-opus-5"),
+            assistant("claude-sonnet-5-5"),
+            { type: "user", message: { model: "claude-haiku-5-5" } },
+            assistant("<synthetic>"),
+            // A sub-agent's row in the parent transcript never names the parent's model.
+            assistant("claude-haiku-5-5", { isSidechain: true }),
+        ],
+        '{"type":"assistant","message":{"model":"claude-sonn'
+    );
+    expect(reader.currentModel(lead)).toBe("claude-sonnet-5-5");
+    // A sub-agent's own transcript holds only side-chain rows: they name its own model.
+    const agent = transcript("agent-a1.jsonl", [assistant("claude-haiku-5-5", { isSidechain: true })]);
+    expect(reader.currentModel(agent)).toBe("claude-haiku-5-5");
+    expect(reader.currentModel(transcript("none.jsonl", [{ type: "user", message: { content: "hi" } }]))).toBeNull();
+    expect(reader.currentModel(join(dir, "missing.jsonl"))).toBeNull();
+});
+
+test("indexesFile takes session transcripts only", () => {
+    const reader = claudeHistoryReader;
 
     expect(reader.indexesFile("/fixture/projects/-fixture/11111111-2222-4333-8444-555555555555.jsonl")).toBe(true);
     expect(reader.indexesFile("/fixture/projects/-fixture/lead/subagents/agent-a1.jsonl")).toBe(true);

@@ -33,6 +33,7 @@ import type {
     RowAnchorWalk,
     TurnBoundary,
 } from "../types";
+import { codexCurrentModel, codexModelOfRow } from "./codex-model";
 import {
     type CodexProjectionIndex,
     type ProjectionFingerprintPart,
@@ -1370,7 +1371,7 @@ export type CodexHistoryOperations = Pick<NativeSessionReader<"codex">, "parserV
             | "readTurnBoundary"
             | "readForward"
             | "continuedIn"
-            | "modelOfRow"
+            | "currentModel"
             | "scanInsights"
             | "rowAnchors"
         >
@@ -1442,29 +1443,6 @@ async function readCodexTurnBoundary(
     });
 }
 
-/** The model a `turn_context` row names: Codex writes one as each turn starts, with the model that turn runs. */
-function codexModelOfRow(row: string): string | undefined {
-    if (!row.includes('"turn_context"')) {
-        return undefined;
-    }
-
-    let value: JsonRecord;
-
-    try {
-        value = asRecord(SafeJSON.parse(row, { strict: true }) as JsonValue);
-    } catch (error) {
-        logger.debug({ error }, "A Codex rollout row did not parse; it names no model");
-        return undefined;
-    }
-
-    if (value.type !== "turn_context") {
-        return undefined;
-    }
-
-    const model = asRecord(value.payload).model;
-    return typeof model === "string" && model ? model : undefined;
-}
-
 function anchorRecord(value: unknown): Record<string, unknown> {
     return typeof value === "object" && value !== null && !Array.isArray(value)
         ? Object.fromEntries(Object.entries(value))
@@ -1533,11 +1511,11 @@ export function createCodexHistoryOperations(): CodexHistoryOperations {
         // Codex resumes a thread under its own id and never hands a conversation to a successor file, so a rollout
         // carries no pointer to another session.
         continuedIn: async () => undefined,
-        modelOfRow: codexModelOfRow,
+        currentModel: codexCurrentModel,
         scanInsights: (text) => {
             let defaultModel: string | null = null;
             eachLine(text, (row) => {
-                defaultModel = codexModelOfRow(row) ?? defaultModel;
+                defaultModel = codexModelOfRow(row)?.model ?? defaultModel;
             });
             return { native: null, defaultModel };
         },

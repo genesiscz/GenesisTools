@@ -188,6 +188,11 @@ export interface HookFacts {
     readonly modsDrawDiffs: boolean;
     /** Its model may come from `~/.claude/settings.json` when the transcript names none. */
     readonly settingsModel: boolean;
+    /**
+     * The model its session runs now: the very function its reader carries as `NativeSessionReader.currentModel`
+     * (`readers/<harness>-model.ts`), here so a hook or the failure log reads it without loading a reader.
+     */
+    currentModel(transcriptPath: string): string | null;
     /** Its shell honours a bare zsh glob qualifier such as `(N)`, so the guard allows `zsh-glob-qualifier` there. */
     readonly honoursBareGlobQualifier: boolean;
     /** It renders a hook message with ANSI colour and in full, so the diff hook shows its diffs there. */

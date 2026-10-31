@@ -386,12 +386,12 @@ export interface NativeSessionReader<Kind extends string = AgentKind> {
      */
     continuedIn(source: NativeSessionSource<Kind>, options?: ContinuedInOptions): Promise<string | undefined>;
     /**
-     * The model id one raw row of this provider's transcript names for the turn it belongs to; undefined for a row
-     * that names none, a row that does not parse, and a provider whose rows never name one. A feature that already
-     * holds a head or a tail (the failure log's model, a sub-agent's model) asks per row and never names a record
-     * type.
+     * The model a session runs now, read from a bounded window of its transcript (a sub-agent's own transcript
+     * answers with the sub-agent's model), or null when the window names none or the file cannot be read. Claude and
+     * Codex read the tail (`readers/session-model.ts`); Grok's rows name no model, so its `summary.json` answers. The
+     * same function is each harness's `HookFacts.currentModel`, so a hook reads it without loading a reader.
      */
-    modelOfRow(row: string): string | undefined;
+    currentModel(transcriptPath: string): string | null;
     /** Native data for session insights, or null when the provider has no additional data. */
     scanInsights: ((text: string) => { native: NativeScan | null; defaultModel: string | null }) | null;
     /**

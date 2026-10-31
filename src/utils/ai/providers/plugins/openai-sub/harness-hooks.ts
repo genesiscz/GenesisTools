@@ -1,3 +1,4 @@
+import { codexCurrentModel } from "@genesiscz/utils/agent-sessions/readers/codex-model";
 import type { HookFacts } from "@genesiscz/utils/harness/parts";
 
 /** The Codex driver's `hooks` part. Codex's hooks reach shell calls only, and its transcript is not read for diffs. */
@@ -6,6 +7,7 @@ export const codexHooks: HookFacts = {
     transcriptMentions: false,
     modsDrawDiffs: false,
     settingsModel: false,
+    currentModel: codexCurrentModel,
     honoursBareGlobQualifier: true,
     rendersAnsiDiffs: true,
     turnIsPromptId: false,

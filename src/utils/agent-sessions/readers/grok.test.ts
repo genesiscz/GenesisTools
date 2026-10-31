@@ -790,9 +790,14 @@ test("Grok turn boundaries stay stable across replies and distinguish identical 
     expect(next?.timestamp).toBeUndefined();
 });
 
-test("modelOfRow names nothing, since Grok rows carry no model, and indexesFile takes the chat history and summary only", () => {
-    const { modelOfRow } = createGrokHistoryOperations();
-    expect(modelOfRow(SafeJSON.stringify({ type: "assistant", content: "hi", model: "grok-4.7" }))).toBeUndefined();
+test("currentModel reads summary.json, since Grok rows carry no model, and indexesFile takes the chat history and summary only", () => {
+    const { currentModel } = createGrokHistoryOperations();
+    const session = mkdtempSync(join(tmpdir(), "gt-grok-current-model-"));
+    const chat = join(session, "chat_history.jsonl");
+    writeFileSync(chat, `${SafeJSON.stringify({ type: "assistant", content: "hi", model: "grok-4.7" })}\n`);
+    expect(currentModel(chat)).toBeNull();
+    writeFileSync(join(session, "summary.json"), SafeJSON.stringify({ current_model_id: "grok-build-1" }));
+    expect(currentModel(chat)).toBe("grok-build-1");
 
     const folder = "/fixture/grok/sessions/%2Ffixture/session-1";
     expect(grokIndexesFile(`${folder}/chat_history.jsonl`)).toBe(true);

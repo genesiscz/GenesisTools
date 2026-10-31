@@ -3,6 +3,7 @@ import { basename, dirname } from "node:path";
 import { POLLED_LISTING_REUSE_MS } from "@app/ai/lib/sessions/agent-session-rows";
 import { catalogHistory } from "@genesiscz/utils/agent-sessions/open-service";
 import { resolveHistoryProvider } from "@genesiscz/utils/agent-sessions/provider";
+import { CODEX_MODEL_HEAD_BYTES } from "@genesiscz/utils/agent-sessions/readers/codex-model";
 import { countCodexToolCalls } from "@genesiscz/utils/agent-sessions/readers/codex-turn-state";
 import { readHead } from "@genesiscz/utils/ai/transcripts/native-scan";
 import { readTurnState } from "@genesiscz/utils/ai/transcripts/turn-state";
@@ -27,8 +28,6 @@ import type { AgentNode, AgentParent, AgentStatus } from "./types";
 
 /** The link fields all sit in the first kilobyte of a rollout whose first line is 20 KB of instructions. */
 const HEAD_BYTES = 4096;
-/** The `turn_context` that names the model follows ~300 KB of instructions and world state. */
-const MODEL_SCAN_BYTES = 640 * 1024;
 const SCAN_CHUNK_BYTES = 16 * 1024 * 1024;
 /** A turn with no end record is `running` until its file is this quiet, then `killed`. */
 const TURN_STALE_MS = 15 * 60 * 1000;
@@ -179,34 +178,6 @@ export function codexAgentStatus(options: { filePath: string; now: number }): Ag
     return snapshot.state !== "FINISHED" && snapshot.silenceMs < NO_MARKER_FRESH_MS ? "running" : "completed";
 }
 
-/**
- * The model the agent runs, from its first `turn_context`. A sub-agent often runs another model than
- * the session that spawned it, so the parent's would be wrong. Null until that record is written.
- */
-export function codexAgentModel(path: string): string | null {
-    let text: string;
-
-    try {
-        text = readHead(path, MODEL_SCAN_BYTES).toString("utf8");
-    } catch (error) {
-        logger.debug({ error, path }, "[hub agents] unreadable codex agent model");
-        return null;
-    }
-
-    const { reader } = resolveHistoryProvider("codex");
-    const rows = text.split("\n");
-
-    for (const row of rows) {
-        const model = reader.modelOfRow(row);
-
-        if (model) {
-            return model;
-        }
-    }
-
-    return null;
-}
-
 interface ScanEntry {
     /** File size when last read; a smaller file starts over. */
     size: number;
@@ -327,9 +298,11 @@ function nodeOf(
     let modelFinal = known?.modelFinal ?? false;
 
     if (model === null && !modelFinal) {
-        model = codexAgentModel(record.filePath);
-        // A compressed rollout is closed: a model its head does not name never comes.
-        modelFinal = model !== null || size > MODEL_SCAN_BYTES || isZstdPath(record.filePath);
+        // A sub-agent often runs another model than the session that spawned it, so the parent's would be wrong.
+        model = resolveHistoryProvider("codex").reader.currentModel(record.filePath);
+        // A compressed rollout is closed: a model it does not name never comes. Past the head window, a rollout whose
+        // head and tail name none is not read again on every poll.
+        modelFinal = model !== null || size > CODEX_MODEL_HEAD_BYTES || isZstdPath(record.filePath);
     }
 
     const next: ScanEntry = {

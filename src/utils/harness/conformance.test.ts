@@ -165,6 +165,11 @@ describe("hooks: the light door holds the drivers' own hook facts", () => {
             const own: unknown = driver.parts.hooks;
             expect(own).toBe(harnessHooks(driver.id));
         });
+
+        test(`${driver.id}'s hook facts read the model with its reader's own currentModel`, async () => {
+            const reader = await driver.parts.history();
+            expect(driver.parts.hooks.currentModel).toBe(reader.currentModel);
+        });
     }
 });
 

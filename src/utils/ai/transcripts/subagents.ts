@@ -203,20 +203,6 @@ function promptText(record: JsonRecord | null, maxChars: number): string | null 
     return text(unwrapped.slice(0, maxChars));
 }
 
-/** The model the last reply in the tail names, as the Claude reader reads a row. */
-function lastModel(tail: string): string | null {
-    const { reader } = resolveHistoryProvider("claude");
-    const lines = tail.split("\n");
-    for (let index = lines.length - 1; index >= 0; index--) {
-        const model = reader.modelOfRow(lines[index].trim());
-        if (model) {
-            return model;
-        }
-    }
-
-    return null;
-}
-
 function readMeta(path: string): JsonRecord {
     if (!existsSync(path)) {
         return {};
@@ -355,7 +341,8 @@ function readAgentFresh(
             description: text(meta.description),
             agentType: text(meta.agentType),
             model: text(meta.model),
-            transcriptModel: lastModel(tail),
+            // The sub-agent's own transcript: its rows are all side-chain rows, so they name its own model.
+            transcriptModel: resolveHistoryProvider("claude").reader.currentModel(filePath),
             toolUseId: text(meta.toolUseId),
             spawnDepth: typeof meta.spawnDepth === "number" ? meta.spawnDepth : null,
             requestShape: text(meta.requestShape),

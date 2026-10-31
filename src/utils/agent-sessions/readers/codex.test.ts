@@ -1364,14 +1364,32 @@ test("readTurnBoundary normalizes Codex response items and user-message events",
     }
 });
 
-test("modelOfRow names a turn_context row's model, and indexesFile takes rollouts plain or compressed", () => {
-    const { modelOfRow } = createCodexHistoryOperations();
-    expect(modelOfRow(SafeJSON.stringify({ type: "turn_context", payload: { model: "gpt-6.1-sol" } }))).toBe(
-        "gpt-6.1-sol"
-    );
-    expect(modelOfRow(SafeJSON.stringify({ type: "session_meta", payload: { model: "gpt-6.1-sol" } }))).toBeUndefined();
-    expect(modelOfRow('{"type":"turn_context","payload":{"model":"gpt-6')).toBeUndefined();
+test("currentModel is the newest turn_context's model, else the first one in the head", () => {
+    const { currentModel } = createCodexHistoryOperations();
+    const dir = mkdtempSync(join(tmpdir(), "gt-codex-current-model-"));
+    const row = (value: unknown) => `${SafeJSON.stringify(value)}\n`;
+    const turnContext = (model: string) => row({ type: "turn_context", payload: { model } });
+    const rollout = (name: string, text: string) => {
+        const path = join(dir, name);
+        writeFileSync(path, text);
+        return path;
+    };
 
+    const switched = rollout(
+        "rollout-switched.jsonl",
+        `${turnContext("gpt-6.1-luna")}${row({ type: "session_meta", payload: { model: "gpt-6.1-astra" } })}${turnContext("gpt-6.1-sol")}{"type":"turn_context","payload":{"model":"gpt-6`
+    );
+    expect(currentModel(switched)).toBe("gpt-6.1-sol");
+    // One long turn: its output pushed the turn_context out of the 256 KB tail, so the head answers.
+    const long = rollout(
+        "rollout-long.jsonl",
+        `${turnContext("gpt-6.1-sol")}${row({ type: "response_item", payload: { type: "message", text: "y".repeat(300_000) } })}`
+    );
+    expect(currentModel(long)).toBe("gpt-6.1-sol");
+    expect(currentModel(rollout("rollout-none.jsonl", row({ type: "session_meta", payload: {} })))).toBeNull();
+});
+
+test("indexesFile takes rollouts plain or compressed", () => {
     expect(codexIndexesFile("/fixture/sessions/2026/10/10/rollout-2026-10-10T00-00-00-fixture.jsonl")).toBe(true);
     expect(codexIndexesFile("/fixture/sessions/2026/10/10/rollout-2026-10-10T00-00-00-fixture.jsonl.zst")).toBe(true);
     expect(codexIndexesFile("C:\\fixture\\rollout-example.jsonl")).toBe(true);

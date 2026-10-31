@@ -10,9 +10,9 @@ export async function noContinuedIn(): Promise<string | undefined> {
     return undefined;
 }
 
-/** `modelOfRow` for a test reader whose rows never name a model. */
-export function noModelOfRow(): string | undefined {
-    return undefined;
+/** `currentModel` for a test reader whose sessions never name a model. */
+export function noCurrentModel(): string | null {
+    return null;
 }
 
 /** `indexesFile` for a test reader that no file watcher asks. */

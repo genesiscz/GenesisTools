@@ -1,9 +1,8 @@
 import { stat } from "node:fs/promises";
 import { basename, dirname, join } from "node:path";
-import { SafeJSON } from "@genesiscz/utils/json";
-import { asRecord, type JsonValue } from "../source-scan";
 import type { HistoryReadOptions, HistoryStatisticsRead, NativeSessionSource } from "../types";
 import { readGrokMetadata, scanGrokRecords } from "./grok";
+import { grokModelOfSummary } from "./grok-model";
 import { createGrokUsageParser } from "./grok-usage";
 import { createIssueCollector, NativeStatisticsAccumulator, parseUsagePath } from "./native-statistics";
 
@@ -16,8 +15,7 @@ async function currentModel(
         return;
     }
     try {
-        const parsed = asRecord(SafeJSON.parse(await Bun.file(path).text(), { strict: true }) as JsonValue);
-        return typeof parsed.current_model_id === "string" ? parsed.current_model_id : undefined;
+        return grokModelOfSummary(await Bun.file(path).text());
     } catch {
         onIssue({ path, message: "Usage model summary read failed" });
     }

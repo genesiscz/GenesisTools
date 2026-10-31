@@ -1,12 +1,11 @@
 import { existsSync, readdirSync } from "node:fs";
 import { join } from "node:path";
 import type { AgentRuntimeContext } from "@genesiscz/utils/agent/context";
-import { nativeHistoryReaders } from "@genesiscz/utils/agent-sessions/compact-readers";
-import { readLastLines } from "@genesiscz/utils/fs/read-lines";
+import { harnessHooks } from "@genesiscz/utils/ai/providers/harness-hooks";
+import { harnessOfRuntimeAgent } from "@genesiscz/utils/ai/providers/harness-index";
 import { defaultNativeHome, parseCodexHomeList } from "@genesiscz/utils/providers/session-paths";
 import type { FailureCaller } from "./record";
 
-const TAIL_BYTES = 512 * 1024;
 const CODEX_DAYS_BACK = 7;
 
 /** Claude names a project folder after the session's cwd with every non-alphanumeric character as `-`. */
@@ -53,30 +52,12 @@ function codexRollout(threadId: string, codexHome: string, now: Date): string | 
             continue;
         }
 
-        // Codex 0.164 compresses old rollouts to `.jsonl.zst`; `readLastLines` below reads either form.
+        // Codex 0.164 compresses old rollouts to `.jsonl.zst`; the model read takes either form.
         const name = readdirSync(dir).find(
             (entry) => entry.endsWith(`-${threadId}.jsonl`) || entry.endsWith(`-${threadId}.jsonl.zst`)
         );
         if (name) {
             return join(dir, name);
-        }
-    }
-
-    return null;
-}
-
-/**
- * The newest model the transcript tail names, as its provider's reader reads a row (`NativeSessionReader.modelOfRow`).
- * The tail's provider is not known here, and the formats do not overlap, so every reader is asked.
- */
-export function modelInTranscriptLines(lines: string[]): string | null {
-    for (let index = lines.length - 1; index >= 0; index--) {
-        for (const reader of nativeHistoryReaders) {
-            const model = reader.modelOfRow(lines[index]);
-
-            if (model) {
-                return model;
-            }
         }
     }
 
@@ -125,10 +106,8 @@ const CALLER_TRANSCRIPTS: Record<
 export function failureCaller(inputs: CallerInputs): FailureCaller {
     const { context, processEnv } = inputs;
     const transcript = transcriptOf(inputs);
-    let model: string | null = null;
-    if (transcript) {
-        model = modelInTranscriptLines(readLastLines(transcript, { maxBytes: TAIL_BYTES }).lines);
-    }
+    const harness = harnessOfRuntimeAgent(context.agent);
+    const model = transcript && harness ? harnessHooks(harness).currentModel(transcript) : null;
 
     return {
         agent: context.agent,

@@ -1,7 +1,7 @@
 import { expect, test } from "bun:test";
 import type { CachedHistoryMetadata } from "./repository";
 import { searchHistorySource } from "./search-source";
-import { indexesNoFile, noBackwardRead, noContinuedIn, noModelOfRow, noRowAnchors } from "./testing/no-backward-read";
+import { indexesNoFile, noBackwardRead, noContinuedIn, noCurrentModel, noRowAnchors } from "./testing/no-backward-read";
 import type { HistorySourceRecord, NativeSessionReader, NativeSessionSource } from "./types";
 
 const START = "2026-09-01T10:00:00.000Z";
@@ -98,7 +98,7 @@ function reader(records: HistorySourceRecord[]): NativeSessionReader<string> {
         windowTurns: () => [],
         readBackward: noBackwardRead,
         continuedIn: noContinuedIn,
-        modelOfRow: noModelOfRow,
+        currentModel: noCurrentModel,
         scanInsights: () => ({ native: null, defaultModel: null }),
         indexesFile: indexesNoFile,
         rowAnchors: noRowAnchors,

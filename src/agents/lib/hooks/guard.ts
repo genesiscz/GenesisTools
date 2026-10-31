@@ -4,7 +4,7 @@ import type { HarnessName, HookOutcome, HooksConfig } from "./config";
 import { resolveModel } from "./model";
 import { LONG_MISREAD_DOWNGRADE, resolveOutcome } from "./outcome";
 import type { HookPayload } from "./payload";
-import { HARNESS_HOOK_FACTS, isTerminalTool, normalizeEvent } from "./payload";
+import { isTerminalTool, normalizeEvent } from "./payload";
 import { readContextCounts, safeSessionId } from "./state";
 
 export interface GuardViolation extends ShellViolation {
@@ -168,9 +168,7 @@ function modelFor(payload: HookPayload, config: HooksConfig): string {
         return "";
     }
 
-    const resolved = resolveModel(payload.transcriptPath, {
-        settingsFallback: HARNESS_HOOK_FACTS[payload.harness].settingsModel,
-    });
+    const resolved = resolveModel(payload.harness, payload.transcriptPath);
 
     return resolved.model ?? "";
 }

@@ -38,7 +38,9 @@ provider, so a new provider is a list of members to fill in and no feature parse
   real prompt's stable key and optional timestamp; `readSessionTurnBoundary` reaches it from a transcript path.
   Timestamp-free Grok prompts use their absolute byte offset as the turn key. Added 2026-10-30 (the ratchet
   migration): `continuedIn` (the successor session id a transcript ends on; Codex and Grok keep none),
-  `modelOfRow` (the model an assistant row names; Grok's rows name none), `indexesFile` (whether a path under a
+  `currentModel` (the model a session runs now, from a bounded tail, or Grok's `summary.json`; it replaced the per-row
+  `modelOfRow` on 2026-10-31, and the same function is each harness's `HookFacts.currentModel`, so a hook loads no
+  reader), `indexesFile` (whether a path under a
   session root is this provider's transcript), and `rowAnchors` (the ids a row carries: uuid, message id, tool call
   ids, the open Codex turn). `followSessionContinuations` (`session-backward.ts`) walks `continuedIn` to the live
   id, so `tools claude cmux focus`, `send` and decision delivery reach a continued session.

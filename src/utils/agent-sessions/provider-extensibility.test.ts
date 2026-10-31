@@ -13,7 +13,7 @@ import { createNativeHistoryAdapter } from "./native-adapter";
 import { openHistoryService } from "./open-service";
 import { createClaudeHistoryOperations } from "./readers/claude";
 import { discoverClaudeHistorySources } from "./readers/claude-discovery";
-import { indexesNoFile, noBackwardRead, noContinuedIn, noModelOfRow, noRowAnchors } from "./testing/no-backward-read";
+import { indexesNoFile, noBackwardRead, noContinuedIn, noCurrentModel, noRowAnchors } from "./testing/no-backward-read";
 import type { NativeSessionSource } from "./types";
 
 afterEach(() => {
@@ -56,7 +56,7 @@ test("a registered fourth provider supports listing, content, detail and unavail
             windowTurns: () => [],
             readBackward: noBackwardRead,
             continuedIn: noContinuedIn,
-            modelOfRow: noModelOfRow,
+            currentModel: noCurrentModel,
             scanInsights: () => ({ native: null, defaultModel: null }),
             indexesFile: indexesNoFile,
             rowAnchors: noRowAnchors,
