@@ -1,6 +1,6 @@
 import { randomUUID } from "node:crypto";
-import { appendFileSync, closeSync, existsSync, mkdirSync, openSync, readFileSync, readSync, statSync } from "node:fs";
-import { dirname, isAbsolute, resolve } from "node:path";
+import { readFileSync } from "node:fs";
+import { isAbsolute, resolve } from "node:path";
 import { canonicalAgent, runtimeAgentName } from "@app/handoff/targeting";
 import {
     type AgentRuntimeContext,
@@ -11,11 +11,8 @@ import {
 import { createTranscriptAnchor, type TranscriptAnchor } from "@genesiscz/utils/agent/source-anchor";
 import { formatLocalDateTimeStamp } from "@genesiscz/utils/date";
 import { env } from "@genesiscz/utils/env";
-import { SafeJSON } from "@genesiscz/utils/json";
-import { readJsonlRows } from "@genesiscz/utils/jsonl";
 import { logger } from "@genesiscz/utils/logger";
-import { atomicWriteFileSync } from "@genesiscz/utils/storage/atomic-file";
-import { withFileLock } from "@genesiscz/utils/storage/file-lock";
+import { appendFeedEvent, type JsonlLog, jsonlLog } from "@genesiscz/utils/storage/locked-document";
 import { isTestProcess } from "@genesiscz/utils/test-process";
 import type { z } from "zod";
 import { retractDecisionBanners } from "./banners";
@@ -426,7 +423,15 @@ export interface PostDecisionDeps {
  * The lock is not reentrant: never call a writer from inside it.
  */
 function withDecisionsLock<T>(file: string, fn: () => T): Promise<T> {
-    return withFileLock(`${file}.lock`, async () => fn());
+    return decisionLog(file).locked(fn);
+}
+
+/**
+ * The decision log as a locked JSONL document: a line that does not parse (a writer killed mid-append) or lacks a
+ * field every reader relies on is skipped on read and carried over verbatim by a rewrite.
+ */
+function decisionLog(file: string): JsonlLog<DecisionRecord> {
+    return jsonlLog({ path: file, isRow: isStoredDecision });
 }
 
 /**
@@ -1650,50 +1655,21 @@ export function readDecisionsWithIntegrity(file: string): {
     complete: boolean;
     missing?: true;
 } {
-    const { rows, skipped, missing } = readJsonlRows<unknown>(file);
-    const valid = rows.filter(isStoredDecision);
-    const malformed = rows.length - valid.length;
+    const { rows, torn, malformed, missing } = decisionLog(file).read();
 
-    if (skipped > 0 || malformed > 0) {
-        logger.warn({ file, skipped, malformed }, "[decisions] skipped unreadable lines in the decision log");
+    if (torn > 0 || malformed > 0) {
+        logger.warn({ file, skipped: torn, malformed }, "[decisions] skipped unreadable lines in the decision log");
     }
 
     return {
-        rows: valid,
-        complete: !missing && skipped === 0 && malformed === 0,
+        rows,
+        complete: !missing && torn === 0 && malformed === 0,
         ...(missing ? { missing: true } : {}),
     };
 }
 
 function isStoredDecision(value: unknown): value is DecisionRecord {
     return storedDecisionSchema.safeParse(value).success;
-}
-
-/** The test {@link readDecisions} applies to one line: it parses as strict JSON and has a decision's shape. */
-function isReadableDecisionLine(line: string): boolean {
-    try {
-        return isStoredDecision(SafeJSON.parse(line, { strict: true }));
-    } catch {
-        // Not an error here: the line is one readDecisions skips and warns about, and the caller keeps it.
-        return false;
-    }
-}
-
-/** The raw lines {@link readDecisions} skips (torn, unparseable or the wrong shape), in file order. */
-function unreadableLines(file: string): string[] {
-    let text: string;
-
-    try {
-        text = readFileSync(file, "utf8");
-    } catch (error) {
-        if (error instanceof Error && "code" in error && error.code === "ENOENT") {
-            return [];
-        }
-
-        throw error;
-    }
-
-    return text.split("\n").filter((line) => line.trim().length > 0 && !isReadableDecisionLine(line));
 }
 
 /**
@@ -1733,40 +1709,14 @@ function excerptFrom(
  * is logged; a reader that missed it still sees the change in the decisions log.
  */
 function appendEvent(events: string, value: Record<string, unknown>): void {
-    try {
-        append(events, value);
-    } catch (error) {
-        logger.warn({ error, events, event: value }, "[decisions] event not recorded; the decision itself is saved");
-    }
+    appendFeedEvent(events, value, (error) =>
+        logger.warn({ error, events, event: value }, "[decisions] event not recorded; the decision itself is saved")
+    );
 }
 
 /** Starts on a fresh line when the last write was torn, so one bad row cannot swallow the next. */
-function append(file: string, value: unknown): void {
-    mkdirSync(dirname(file), { recursive: true });
-    appendFileSync(file, `${endsTorn(file) ? "\n" : ""}${SafeJSON.stringify(value)}\n`);
-}
-
-function endsTorn(file: string): boolean {
-    if (!existsSync(file)) {
-        return false;
-    }
-
-    const size = statSync(file).size;
-
-    if (size === 0) {
-        return false;
-    }
-
-    const last = Buffer.alloc(1);
-    const fd = openSync(file, "r");
-
-    try {
-        readSync(fd, last, 0, 1, size - 1);
-    } finally {
-        closeSync(fd);
-    }
-
-    return last[0] !== 0x0a;
+function append(file: string, row: DecisionRecord): void {
+    decisionLog(file).append(row);
 }
 
 /**
@@ -1775,6 +1725,5 @@ function endsTorn(file: string): boolean {
  * for good. Every caller holds the decisions lock, so the file has not changed since that read.
  */
 function rewrite(file: string, rows: DecisionRecord[]): void {
-    const lines = [...unreadableLines(file), ...rows.map((row) => SafeJSON.stringify(row))];
-    atomicWriteFileSync(file, lines.length > 0 ? `${lines.join("\n")}\n` : "");
+    decisionLog(file).rewrite(rows);
 }
