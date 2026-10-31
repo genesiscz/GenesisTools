@@ -155,12 +155,14 @@ struct RmWindowContent {
             selectable: isDelete && items.count > 1)
     }
 
-    /// "Delete 3 of 5 items for shop-admin?" as rows are unticked; the CLI's title at the start.
-    static func title(selected: Int, total: Int, who: String) -> String {
+    /// "Delete 3 of 5 items for shop-admin?" as rows are unticked; the CLI's title at the start. Without an asker
+    /// (a person's own run) the title names no one: "Delete 3 of 5 items?".
+    static func title(selected: Int, total: Int, who: String?) -> String {
+        let forWho = who.map { " for \($0)" } ?? ""
         if selected == total {
-            return "Delete \(Plural.count(total, "item")) for \(who)?"
+            return "Delete \(Plural.count(total, "item"))\(forWho)?"
         }
-        return "Delete \(selected) of \(Plural.count(total, "item")) for \(who)?"
+        return "Delete \(selected) of \(Plural.count(total, "item"))\(forWho)?"
     }
 
     /// "Claude Code in shop (develop) wants to delete these. They go to the trash, and tools rm restore brings them
@@ -373,9 +375,10 @@ func approveRm(_ params: RmApproveParams) {
             allowTitle: "Use password…", deadline: Date().addingTimeInterval(rmDeadlineSeconds), identifier: "rm-approve",
             items: content.items, verifier: verifier, links: rmLinks(params.request), summary: content.summary,
             disposals: content.disposals, hint: "Esc denies · Space previews", selectable: content.selectable)
-        if let asker = params.request?.asker {
-            let who = asker.session ?? asker.project ?? asker.agent
-            model.titleForSelection = { selected, total in RmWindowContent.title(selected: selected, total: total, who: who) }
+        // The title follows the ticked count with or without an asker; with every row on it is the CLI's own title.
+        let who = params.request?.asker.map { $0.session ?? $0.project ?? $0.agent }
+        model.titleForSelection = { selected, total in
+            selected == total ? content.title : RmWindowContent.title(selected: selected, total: total, who: who)
         }
 
         let deadline = DispatchWorkItem {

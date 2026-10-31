@@ -136,6 +136,7 @@ final class RmApproveTests: XCTestCase {
 
         XCTAssertEqual(RmWindowContent.title(selected: 3, total: 3, who: "shop-admin"), "Delete 3 items for shop-admin?")
         XCTAssertEqual(RmWindowContent.title(selected: 1, total: 3, who: "shop-admin"), "Delete 1 of 3 items for shop-admin?")
+        XCTAssertEqual(RmWindowContent.title(selected: 1, total: 3, who: nil), "Delete 1 of 3 items?")
         XCTAssertEqual(RmWindowContent.ago(now.addingTimeInterval(-2), now: now), "just now")
 
         let noReason = RmWindowContent.build(RmApproveParams(
