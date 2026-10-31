@@ -68,7 +68,19 @@ describe("rm-use-tools-rm", () => {
         }
     );
 
-    it.each(["xargs -0 rm -f", "xargs -n 1 rm", "xargs -I {} rm {}", "xargs -- rm -rf"])("blocks %j", (command) => {
+    it.each([
+        "xargs -0 rm -f",
+        "xargs -n 1 rm",
+        "xargs -I {} rm {}",
+        "xargs -- rm -rf",
+        "xargs -l rm",
+        "printf '%s\\n' victim | xargs --max-args 1 rm -f",
+        "xargs --max-args=1 rm -f",
+        "xargs --max-procs 4 --delimiter , rm",
+        "xargs --arg-file list.txt rm",
+        "xargs --max-a 1 rm",
+        "xargs --null --no-run-if-empty rm",
+    ])("blocks %j", (command) => {
         expect(ids(command)).toContain("rm-use-tools-rm");
     });
 

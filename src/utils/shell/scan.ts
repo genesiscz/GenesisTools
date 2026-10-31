@@ -342,12 +342,54 @@ const OPTION_WITH_VALUE: Readonly<Record<string, ReadonlySet<string>>> = {
     sudo: new Set(["-u", "-g", "-C", "-D", "-h", "-p", "-r", "-t", "-T", "-U"]),
     timeout: new Set(["-k", "-s"]),
     nice: new Set(["-n"]),
-    xargs: new Set(["-I", "-P", "-L", "-n", "-s", "-E", "-d", "-a"]),
+    // BSD and GNU. GNU's `-e`, `-i` and `-l` take an optional value written onto the flag, never the next word.
+    xargs: new Set(["-I", "-J", "-L", "-n", "-P", "-R", "-S", "-s", "-E", "-d", "-a"]),
     env: new Set(["-u", "-C", "-S"]),
     stdbuf: new Set(["-i", "-o", "-e"]),
     caffeinate: new Set(["-t", "-w"]),
     exec: new Set(["-a"]),
 };
+
+// Long wrapper options whose REQUIRED value may be the next word (`xargs --max-args 1 rm`), and the wrapper's other
+// long options (no value, or an optional one only `--name=value` gives). getopt_long takes any unambiguous prefix
+// (`--max-a 1`), so a prefix consumes the next word when it names only value-taking options.
+const LONG_OPTION_WITH_VALUE: Readonly<Record<string, { value: readonly string[]; other: readonly string[] }>> = {
+    xargs: {
+        value: ["arg-file", "delimiter", "max-args", "max-chars", "max-procs", "process-slot-var"],
+        other: [
+            "eof",
+            "exit",
+            "help",
+            "interactive",
+            "max-lines",
+            "no-run-if-empty",
+            "null",
+            "open-tty",
+            "replace",
+            "show-limits",
+            "verbose",
+            "version",
+        ],
+    },
+};
+
+/** Whether `wrapper`'s option `token` takes the next word as its value. */
+function wrapperOptionTakesNext(wrapper: string, token: string): boolean {
+    if (OPTION_WITH_VALUE[wrapper]?.has(token)) {
+        return true;
+    }
+
+    const long = LONG_OPTION_WITH_VALUE[wrapper];
+
+    if (!long || !token.startsWith("--") || token.length === 2 || token.includes("=")) {
+        return false;
+    }
+
+    const name = token.slice(2);
+    return (
+        long.value.some((option) => option.startsWith(name)) && !long.other.some((option) => option.startsWith(name))
+    );
+}
 
 // The token as the user typed it, read from the ORIGINAL command at the token's
 // offset with surrounding quotes stripped. A cleaned token loses everything the
@@ -420,7 +462,12 @@ export function commandTokenIndex(tokens: Span[]): number {
                 (tokens[i].text.startsWith("-") ||
                     (TAKES_ARGUMENT.has(word) && /^[0-9.]+[smhd]?$/.test(tokens[i].text)))
             ) {
-                i += OPTION_WITH_VALUE[word]?.has(tokens[i].text) ? 2 : 1;
+                if (tokens[i].text === "--") {
+                    i++;
+                    break;
+                }
+
+                i += wrapperOptionTakesNext(word, tokens[i].text) ? 2 : 1;
             }
 
             continue;

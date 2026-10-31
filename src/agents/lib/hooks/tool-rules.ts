@@ -3,14 +3,7 @@
 
 import { toolCommand } from "@genesiscz/utils/cli/tool-command";
 import { SHELL_RULES, type ShellMatch, type ShellRule } from "@genesiscz/utils/shell/rules";
-import {
-    commandTokenIndex,
-    commandWord,
-    originalSlice,
-    type Span,
-    splitPipeline,
-    tokenize,
-} from "@genesiscz/utils/shell/scan";
+import { commandTokenIndex, commandWord, originalSlice, splitPipeline, tokenize } from "@genesiscz/utils/shell/scan";
 
 /** The `tools rm` verbs that let a request through, trust a folder, or change settings: a person's to run. */
 const RM_USER_VERB =
@@ -51,39 +44,6 @@ export const rmUserVerbs: ShellRule = {
     },
 };
 
-/** The xargs options (BSD and GNU) whose value is the next word. */
-const XARGS_OPTIONS_WITH_VALUE = new Set([
-    "-a",
-    "-d",
-    "-E",
-    "-e",
-    "-I",
-    "-J",
-    "-L",
-    "-l",
-    "-n",
-    "-P",
-    "-R",
-    "-S",
-    "-s",
-]);
-
-/** The index of the command xargs runs when that command is `rm`, else -1. `xargs git rm` and `xargs grep rm` run no rm. */
-function xargsRmIndex(tokens: Span[], xargsAt: number): number {
-    let i = xargsAt + 1;
-
-    while (i < tokens.length && tokens[i].text.startsWith("-")) {
-        if (tokens[i].text === "--") {
-            i++;
-            break;
-        }
-
-        i += XARGS_OPTIONS_WITH_VALUE.has(tokens[i].text) ? 2 : 1;
-    }
-
-    return i < tokens.length && commandWord(tokens[i].text) === "rm" ? i : -1;
-}
-
 /** A bare `rm` (or `xargs rm`): no undo, and no check of what it deletes. */
 export const rmUseToolsRm: ShellRule = {
     id: "rm-use-tools-rm",
@@ -116,7 +76,9 @@ export const rmUseToolsRm: ShellRule = {
                     }
 
                     const word = commandWord(tokens[cmd].text);
-                    const rmAt = word === "rm" ? cmd : word === "xargs" ? xargsRmIndex(tokens, cmd) : -1;
+                    // `commandTokenIndex` skips wrappers with their options (`xargs -n 1 rm`, `sudo rm`), so the
+                    // command word is what runs: `xargs git rm` is git.
+                    const rmAt = word === "rm" ? cmd : -1;
 
                     if (rmAt === -1) {
                         continue;
