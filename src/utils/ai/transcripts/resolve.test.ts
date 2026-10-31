@@ -565,7 +565,11 @@ describe("resolveTranscripts", () => {
         const tree = mixedTree();
         const queries = mixedQueries(tree).map(([query]) => query);
         const locate = harnessDriver("codex").parts.locate;
-        const defaults = spyOn(locate, "defaultRoots");
+        // Stubbed: the real defaults list this Mac's Codex homes, and the test only counts the calls.
+        const defaults = spyOn(locate, "defaultRoots").mockImplementation(() => ({
+            native: tree.roots.codex?.native ?? [],
+            worker: tree.roots.codex?.worker ?? "",
+        }));
 
         try {
             resolveTranscriptsWith({ queries, roots: tree.roots, reads: directReads });
