@@ -251,7 +251,14 @@ export async function closeQuestions({
             closed.push(done);
             return done;
         });
-        return closed.length === 0 ? { keep: closed } : { write: next, result: closed };
+        if (closed.length === 0) {
+            // A killed writer or a racing marker pass can leave a marker with nothing open. The read above is under
+            // the lock, so it is safe to drop that marker here, and the question hook goes back to one `stat`.
+            clearOpenAfterWrite(dialogsPath(provider, sessionId, root), current);
+            return { keep: closed };
+        }
+
+        return { write: next, result: closed };
     });
 }
 

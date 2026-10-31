@@ -301,6 +301,20 @@ describe("open markers", () => {
     });
 });
 
+describe("a stale open marker", () => {
+    test("a close that finds nothing open drops a marker left with no open record", async () => {
+        const dir = root();
+        const path = dialogsPath("claude", SESSION, dir);
+        mkdirSync(dirname(path), { recursive: true });
+        // A writer killed after its marker went down and before its open record was committed leaves exactly this.
+        writeFileSync(path, SafeJSON.stringify([question({ closedAt: "2026-10-30T10:01:00.000Z" })]));
+        writeFileSync(openMarkerPath(path), "");
+
+        await closeQuestion(question({ toolCallId: "never-asked" }), "2026-10-30T10:05:00.000Z", dir);
+        expect(existsSync(openMarkerPath(path))).toBe(false);
+    });
+});
+
 describe("dialog records across processes", () => {
     test("the hook, the watcher and cmux send writing one session at once lose no record and no close", async () => {
         const dir = root();
