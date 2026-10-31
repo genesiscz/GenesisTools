@@ -46,6 +46,7 @@ export function questionFromSnapshot(
         kind: call.kind,
         question: snapshot?.question ?? "",
         ...(call.options ? { options: call.options } : {}),
+        ...(call.questionCount ? { questionCount: call.questionCount } : {}),
         askedAt: new Date(snapshot?.lastEventAt ?? now).toISOString(),
         source: "watcher",
     };

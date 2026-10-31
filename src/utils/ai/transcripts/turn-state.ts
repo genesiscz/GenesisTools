@@ -50,6 +50,7 @@ export interface TurnQuestionCall {
     callId: string;
     /** The option labels the question tool offered, when its input lists them. */
     options?: string[];
+    questionCount?: number;
 }
 
 /** A tool call of the current turn that has no result yet. */
@@ -250,7 +251,8 @@ export function questionOptionsOf(input: unknown): string[] | undefined {
 /** A question call of the given kind, with the options its input lists. */
 function questionCallOf(kind: TurnQuestionKind, callId: string, input: unknown): TurnQuestionCall {
     const options = questionOptionsOf(input);
-    return { kind, callId, ...(options ? { options } : {}) };
+    const questionCount = questionCountOf(input);
+    return { kind, callId, ...(options ? { options } : {}), ...(questionCount ? { questionCount } : {}) };
 }
 
 /** Input keys that say what a call does, best first: a Bash `description` reads better than its command. */

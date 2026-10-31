@@ -92,7 +92,11 @@ export function planDialogKeys(question: OpenQuestion, option: string): DialogKe
         return { ok: false, reason: "the open dialog lists no options to pick; answer it in the terminal" };
     }
 
-    if ((question.questionCount ?? 1) > 1) {
+    if (question.questionCount === undefined) {
+        return { ok: false, reason: "the dialog question count is unknown; answer it in the terminal" };
+    }
+
+    if (question.questionCount > 1) {
         return {
             ok: false,
             reason: `the open dialog asks ${question.questionCount} questions, and one option answers only the first; answer it in the terminal`,

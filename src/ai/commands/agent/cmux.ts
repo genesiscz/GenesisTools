@@ -1,5 +1,5 @@
 import { type FocusOptions, focusCommand } from "@app/claude/commands/cmux/focus";
-import { type SendOptions, sendDoor } from "@app/claude/commands/cmux/send";
+import { type SendOptions, sendCommand, sendDoor } from "@app/claude/commands/cmux/send";
 import { aliasesForSession, matchingSession, type SessionFocusRecord } from "@app/claude/lib/cmux/focus";
 import type { ResolveDeps } from "@app/claude/lib/cmux/resolve";
 import { openHistoryService } from "@genesiscz/utils/agent-sessions/open-service";
@@ -122,11 +122,13 @@ export function registerAgentCmuxCommand(program: Command, spec: AgentToolSpec):
         .option("--json", "Emit the outcome as JSON instead of a status line")
         .option("--timeout <seconds>", "Give up after this long and exit 124 (the whole send: lookup, text, Enter)")
         .action(async (session: string, text: string, options: SendOptions) => {
-            if (await structuredSend(spec, session, text, options)) {
-                return;
-            }
+            await sendDoor(session, text, options, deps, async () => {
+                if (await structuredSend(spec, session, text, options)) {
+                    return true;
+                }
 
-            await sendDoor(session, text, options, deps);
+                return sendCommand(session, text, options, deps);
+            });
         });
 
     return cmux;

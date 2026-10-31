@@ -25,7 +25,7 @@ export interface OpenQuestion {
     question: string;
     /** The first question's options (`options` of `questions[0]`). */
     options?: string[];
-    /** How many questions the call asks; absent on records written before 2026-10-30, which count as one. */
+    /** How many questions the call asks; absent when the count is unknown. */
     questionCount?: number;
     /** ISO time the question was asked. */
     askedAt: string;

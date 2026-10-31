@@ -10,7 +10,6 @@ import {
 } from "@app/claude/lib/cmux/resolve";
 import { dialogRefusal } from "@genesiscz/utils/agents/dialogs/guard";
 import { type DialogKeyPress, planDialogKeys } from "@genesiscz/utils/agents/dialogs/keys";
-import { closeQuestion } from "@genesiscz/utils/agents/dialogs/store";
 import { type OpenDialog, type OpenQuestion, openQuestionKey } from "@genesiscz/utils/agents/dialogs/types";
 import { suggestCommand } from "@genesiscz/utils/cli";
 import { runCmuxOk } from "@genesiscz/utils/cmux/lib/cli";
@@ -34,6 +33,7 @@ export interface SendOptions {
      * instead of typing text; see `planDialogKeys` in `@genesiscz/utils/agents/dialogs/keys`.
      */
     option?: string;
+    expectedDialog?: string;
     enterDelay?: string;
     dryRun?: boolean;
     json?: boolean;
@@ -53,10 +53,11 @@ export async function sendWithin(
     query: string,
     text: string,
     opts: SendOptions,
-    deps: SendCommandDeps = {}
+    deps: SendCommandDeps = {},
+    run: () => Promise<boolean> = () => sendCommand(query, text, opts, deps)
 ): Promise<boolean | "timeout"> {
     if (opts.timeout === undefined) {
-        return sendCommand(query, text, opts, deps);
+        return run();
     }
 
     const seconds = Number(opts.timeout);
@@ -71,7 +72,7 @@ export async function sendWithin(
     });
 
     try {
-        return await Promise.race([sendCommand(query, text, opts, deps), expired]);
+        return await Promise.race([run(), expired]);
     } finally {
         clearTimeout(timer);
     }
@@ -82,9 +83,10 @@ export async function sendDoor(
     query: string,
     text: string,
     opts: SendOptions,
-    deps: SendCommandDeps = {}
+    deps: SendCommandDeps = {},
+    run?: () => Promise<boolean>
 ): Promise<void> {
-    const outcome = await sendWithin(query, text, opts, deps);
+    const outcome = await sendWithin(query, text, opts, deps, run);
 
     if (outcome !== "timeout") {
         return;
@@ -109,8 +111,6 @@ export interface SendCommandDeps extends ResolveDeps {
     openDialog?: (sessionId: string) => Promise<OpenDialog | null>;
     /** The session's open dialog records, newest first; defaults to `sessionOpenRecords`. */
     openRecords?: (sessionId: string) => OpenQuestion[];
-    /** Closes a record once its option was pressed; defaults to the dialog store's `closeQuestion`. */
-    closeRecord?: (record: OpenQuestion) => void;
 }
 
 /**
@@ -329,7 +329,7 @@ async function press(where: string[], presses: readonly DialogKeyPress[]): Promi
  * `--option`: answer the session's open question dialog by its option key, never by free text (handoff h_bgj1m68y
  * t7). The newest open dialog record of the session names the options; the harness key map (`planDialogKeys`) turns
  * the letter into presses. Refuses with no open record, a record without options, an option past the list, or a
- * harness whose keys are unknown. The pressed record is closed at once; the PostToolUse hook closes the same key.
+ * harness whose keys are unknown. A key write cannot prove submission, so the record stays open until acknowledgement.
  */
 async function pressDialogOption({
     target,
@@ -367,6 +367,10 @@ async function pressDialogOption({
         });
     }
 
+    if (opts.expectedDialog !== undefined && openQuestionKey(record) !== opts.expectedDialog) {
+        return refuseOption({ query, sessionId, reason: "the open dialog changed; nothing was pressed", opts });
+    }
+
     const plan = planDialogKeys(record, opts.option);
 
     if (!plan.ok) {
@@ -374,7 +378,6 @@ async function pressDialogOption({
     }
 
     await press(surfaceTargetArgs(surfaceId, target.workspaceId), plan.presses);
-    (deps.closeRecord ?? ((done: OpenQuestion) => closeQuestion(done)))(record);
     const dialog = openQuestionKey(record);
     log.info({ sessionId, dialog, index: plan.index, presses: plan.presses, surfaceId }, "dialog option pressed");
 
@@ -383,7 +386,9 @@ async function pressDialogOption({
             SafeJSON.stringify(
                 {
                     query,
-                    sent: true,
+                    sent: false,
+                    unconfirmed: true,
+                    reason: "the option key was sent, but submission is not confirmed; check the dialog before retrying",
                     option: opts.option,
                     index: plan.index,
                     label: plan.label,
@@ -397,14 +402,15 @@ async function pressDialogOption({
                 2
             )
         );
-        return true;
+        process.exitCode = 1;
+        return false;
     }
 
     out.printlnErr(
-        `${pc.green("✔")} picked ${pc.bold(plan.label)} in the dialog of ${pc.bold(target.workspaceName)} ` +
-            pc.dim(`${target.paneId} ${surfaceId}`)
+        `Option key sent to ${target.workspaceName}; submission is unconfirmed. Check the dialog before retrying.`
     );
-    return true;
+    process.exitCode = 1;
+    return false;
 }
 
 /**

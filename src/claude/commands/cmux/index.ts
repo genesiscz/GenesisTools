@@ -99,6 +99,7 @@ export function registerCmuxCommand(program: Command): void {
             "--option <letter>",
             "Answer the session's open question dialog: press this option's key (a letter, or a 1-based position) instead of typing text; refuses when no dialog record is open"
         )
+        .option("--expected-dialog <key>", "Refuse an option press if the open dialog differs from this key")
         .option("--enter-delay <ms>", "Wait this long between the text and Enter", "500")
         .option("--dry-run", "Print what would receive the text and stop")
         .option("--json", "Emit the outcome as JSON instead of a status line")

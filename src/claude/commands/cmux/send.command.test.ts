@@ -244,7 +244,12 @@ function askRecord(overrides: Partial<OpenQuestion> = {}): OpenQuestion {
     };
 }
 
-test("--option presses the option's digit into the open dialog, never text plus Enter, and closes its record", async () => {
+test("the send deadline bounds the structured delivery rung", async () => {
+    const outcome = await sendWithin(SESSION_A, "hello", { timeout: "0.001" }, deps, () => new Promise(() => {}));
+    expect(outcome).toBe("timeout");
+});
+
+test("--option presses the option's digit into the open dialog, never text plus Enter, and leaves its record open", async () => {
     setSnapshot([pane({ id: "pane:7", surfaces: [surface({ id: "surface:41", title: SESSION_A, selected: true })] })]);
     const closed: string[] = [];
     const answering = {
@@ -258,13 +263,14 @@ test("--option presses the option's digit into the open dialog, never text plus 
         },
     };
 
-    expect(await sendCommand(SESSION_A, "", { option: "c", json: true }, answering)).toBe(true);
+    expect(await sendCommand(SESSION_A, "", { option: "c", json: true }, answering)).toBe(false);
     expect(events.filter((event) => event.startsWith("send") || event.startsWith("paste"))).toEqual([
         "send --surface surface:41 --force -- 3",
     ]);
-    expect(closed).toEqual(["toolu_fixture_1"]);
+    expect(closed).toEqual([]);
     expect(SafeJSON.parse(await capturedResult())).toMatchObject({
-        sent: true,
+        sent: false,
+        unconfirmed: true,
         option: "c",
         index: 2,
         label: "Blue",
@@ -273,15 +279,39 @@ test("--option presses the option's digit into the open dialog, never text plus 
     });
 });
 
+test("--option does not close a dialog when writing a digit cannot confirm submission", async () => {
+    setSnapshot([pane({ id: "pane:7", surfaces: [surface({ id: "surface:41", title: SESSION_A, selected: true })] })]);
+    const closed: OpenQuestion[] = [];
+    const answering = {
+        ...deps,
+        openRecords: () => [askRecord()],
+        closeRecord: (record: OpenQuestion) => closed.push(record),
+    };
+
+    await sendCommand(SESSION_A, "", { option: "a", json: true }, answering);
+    expect(closed).toEqual([]);
+    expect(SafeJSON.parse(await capturedResult())).toMatchObject({ sent: false, unconfirmed: true });
+});
+
+test("--option refuses when the current dialog differs from the expected dialog", async () => {
+    setSnapshot([pane({ id: "pane:7", surfaces: [surface({ id: "surface:41", title: SESSION_A, selected: true })] })]);
+    const answering = { ...deps, openRecords: () => [askRecord()] };
+
+    expect(
+        await sendCommand(SESSION_A, "", { option: "a", json: true, expectedDialog: "claude:other:call" }, answering)
+    ).toBe(false);
+    expect(events.some((event) => event.startsWith("send") || event.startsWith("paste"))).toBe(false);
+});
+
 test("--option refuses before any key press with no open dialog, an option past the list, or text beside it", async () => {
     setSnapshot([pane({ id: "pane:7", surfaces: [surface({ id: "surface:41", title: SESSION_A, selected: true })] })]);
     const closeRecord = () => {
         throw new Error("a refused press must not close the record");
     };
 
-    expect(
-        await sendCommand(SESSION_A, "", { option: "a", json: true }, { ...deps, openRecords: () => [], closeRecord })
-    ).toBe(false);
+    expect(await sendCommand(SESSION_A, "", { option: "a", json: true }, { ...deps, openRecords: () => [] })).toBe(
+        false
+    );
     expect(process.exitCode).toBe(1);
     expect(SafeJSON.parse(await capturedResult())).toMatchObject({
         sent: false,

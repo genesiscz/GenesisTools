@@ -1435,7 +1435,18 @@ describe("answering a dialog item by its option key", () => {
         const result = await answerDialogItem({ key: KEY, option: "b" }, { recordsRoot: recordsRoot(), ...tool });
 
         expect(tool.calls).toEqual([
-            ["claude", "cmux", "send", DIALOG_SESSION, "--option", "b", "--exact-session", "--json"],
+            [
+                "claude",
+                "cmux",
+                "send",
+                DIALOG_SESSION,
+                "--option",
+                "b",
+                "--expected-dialog",
+                KEY,
+                "--exact-session",
+                "--json",
+            ],
         ]);
         expect(result).toMatchObject({ session: DIALOG_SESSION, delivered: true, channel: "cmux", text: "b) Green" });
     });

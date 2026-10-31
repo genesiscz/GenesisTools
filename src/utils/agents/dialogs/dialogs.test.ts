@@ -351,6 +351,33 @@ describe("the hub-side dialog watcher", () => {
         expect(openQuestions("codex", SESSION, dir)).toEqual([]);
     });
 
+    test("a transcript watcher retains the number of questions", async () => {
+        const dir = root();
+        const transcript = join(dir, "session.jsonl");
+        const questions = [
+            { question: "First?", options: [{ label: "Yes" }, { label: "No" }] },
+            { question: "Second?", options: [{ label: "Yes" }, { label: "No" }] },
+        ];
+        const rows = [
+            { type: "user", timestamp: new Date(at).toISOString(), message: { role: "user", content: "go" } },
+            {
+                type: "assistant",
+                timestamp: new Date(at + 5000).toISOString(),
+                message: {
+                    id: "msg_1",
+                    role: "assistant",
+                    stop_reason: "tool_use",
+                    content: [{ type: "tool_use", id: "toolu_multi", name: "AskUserQuestion", input: { questions } }],
+                },
+            },
+        ];
+        writeFileSync(transcript, `${rows.map((row) => SafeJSON.stringify(row)).join("\n")}\n`);
+        const watched = { provider: "claude" as const, sessionId: SESSION, transcriptPath: transcript };
+        const result = await syncSessionDialogs(watched, { now: at + 10_000, root: dir });
+        expect(result.opened[0]).toMatchObject({ questionCount: 2 });
+        expect(planDialogKeys(result.opened[0], "a")).toMatchObject({ ok: false });
+    });
+
     test("hook and watcher post the same question as one record, and the watcher never closes the hook's", async () => {
         const dir = root();
         await upsertQuestion(question({ provider: "codex", toolCallId: "call_q1", source: "hook" }), dir);
@@ -457,11 +484,17 @@ describe("dialog option keys", () => {
     });
 
     test("an option past the list refuses and names the valid letters", () => {
-        const plan = planDialogKeys(question({ options: ["Red", "Green", "Blue"] }), "d");
+        const plan = planDialogKeys(question({ options: ["Red", "Green", "Blue"], questionCount: 1 }), "d");
 
         expect(plan).toEqual({
             ok: false,
             reason: 'option "d" is not in the dialog; its options are a) Red, b) Green, c) Blue',
+        });
+    });
+
+    test("a dialog with unknown question count refuses a potentially incomplete answer", () => {
+        expect(planDialogKeys(question({ options: ["Yes", "No"], questionCount: undefined }), "a")).toMatchObject({
+            ok: false,
         });
     });
 

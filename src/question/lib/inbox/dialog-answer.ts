@@ -33,7 +33,7 @@ export function parseDialogKey(key: string): Pick<OpenQuestion, "provider" | "se
 }
 
 function refused(session: string | null, error: string): InboxAnswerResult {
-    log.warn({ session, error }, "dialog answer refused; no key was pressed");
+    log.warn({ session, error }, "dialog answer was not confirmed");
     return { session, text: "", channel: "cmux", delivered: false, error, detail: error };
 }
 
@@ -94,7 +94,18 @@ export async function answerDialogItem(
         };
     }
 
-    const args = ["claude", "cmux", "send", target.sessionId, "--option", option, "--exact-session", "--json"];
+    const args = [
+        "claude",
+        "cmux",
+        "send",
+        target.sessionId,
+        "--option",
+        option,
+        "--expected-dialog",
+        key,
+        "--exact-session",
+        "--json",
+    ];
     const run = await (deps.runTool ?? defaultRunTool)(args);
     let outcome: { sent?: unknown; reason?: unknown; ambiguous?: unknown } = {};
 
