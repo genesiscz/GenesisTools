@@ -723,14 +723,6 @@ enum PRProposedReply {
         guard let reply = proposed?.reply, !reply.trimmed.isEmpty, !isPosted(reply, on: thread) else { return [] }
         return [PanelFindField("proposed:\(thread.id)", reply, markdown: true)]
     }
-
-    /// Whether two proposals draw the same card (`PRThreadRow.==`): the fields its reply box reads.
-    /// `ProposalDocument.Thread` is not `Equatable`.
-    static func same(_ a: ProposalDocument.Thread?, _ b: ProposalDocument.Thread?) -> Bool {
-        guard let a, let b else { return a == nil && b == nil }
-        return a.id == b.id && a.suggestedReply == b.suggestedReply && a.editedReply == b.editedReply
-            && a.verdict == b.verdict && a.proof == b.proof && a.replyStatus == b.replyStatus
-    }
 }
 
 enum PRThreadFold {
@@ -1123,7 +1115,7 @@ private struct PRThreadRow: View, Equatable {
         let marks = a.fresh == b.fresh && a.atHead == b.atHead && a.headSha == b.headSha && a.changed == b.changed
         let store = a.stale == b.stale && a.busy == b.busy && a.forge == b.forge && a.label == b.label
             && a.isGitLab == b.isGitLab
-        return shown && marks && store && a.compact == b.compact && PRProposedReply.same(a.proposed, b.proposed)
+        return shown && marks && store && a.compact == b.compact && a.proposed == b.proposed
     }
 
     /// Live without the pointer (`liveRow(selected:)`): picked for Fix, or a reply or an edit is open.

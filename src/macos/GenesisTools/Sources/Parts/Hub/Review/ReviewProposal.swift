@@ -20,7 +20,7 @@ final class ProposalDocument {
     }
 
     /// A thread that already exists on the PR, with the agent's read of it when it gave one.
-    struct Thread {
+    struct Thread: Equatable {
         var id: String
         var path: String
         var line: Int
