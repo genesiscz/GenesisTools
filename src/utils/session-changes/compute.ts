@@ -517,6 +517,18 @@ function writesHeredocFile(text: string): boolean {
  */
 class WrittenFiles extends Map<string, string> {
     readonly heredocScripts = new Map<string, string>();
+    /** While one command is analyzed (`traced`): the texts it read before writing them, and what it wrote. */
+    private trace: FileTrace | null = null;
+
+    override get(path: string): string | undefined {
+        const text = super.get(path);
+
+        if (this.trace && !this.trace.read.has(path) && !this.trace.wrote.has(path)) {
+            this.trace.read.set(path, text);
+        }
+
+        return text;
+    }
 
     override set(path: string, text: string): this {
         if (writesHeredocFile(text)) {
@@ -525,8 +537,31 @@ class WrittenFiles extends Map<string, string> {
             this.heredocScripts.delete(path);
         }
 
+        this.trace?.wrote.set(path, text);
         return super.set(path, text);
     }
+
+    /** Runs `work` and records only the file texts it read and wrote, instead of copying the whole map around it. */
+    traced<T>(work: () => T): { result: T; trace: FileTrace } {
+        const trace: FileTrace = { read: new Map(), wrote: new Map() };
+        this.trace = trace;
+
+        try {
+            return { result: work(), trace };
+        } finally {
+            this.trace = null;
+        }
+    }
+
+    /** True when every text in `read` is still what this map holds (`undefined`: still absent). */
+    holds(read: ReadonlyArray<[string, string | undefined]>): boolean {
+        return read.every(([path, text]) => super.get(path) === text);
+    }
+}
+
+interface FileTrace {
+    read: Map<string, string | undefined>;
+    wrote: Map<string, string>;
 }
 
 /**
@@ -542,11 +577,12 @@ class WrittenFiles extends Map<string, string> {
  */
 /**
  * Each shell call's analysis, by session and call id, kept across asks in a resident process (the hub server): a
- * transcript only grows, so a call's text, its directory and the files written before it never change, and the
- * analysis of an old call is the same on every ask. Without this a warm ask of a 309 MB session analyzed its
- * thousands of commands again (976 ms of a 1,071 ms compute, `tools ts profile`, 2026-10-30), and the shell scan's
- * own 8 MB text cache was too small for that session to help. An entry also keeps what the analysis wrote into
- * `files`, so a later command that runs a script this one wrote still finds it.
+ * transcript only grows, so a call's text and its directory never change, and the analysis of an old call is the
+ * same on every ask while the file texts it read are the same. Without this a warm ask of a 309 MB session analyzed
+ * its thousands of commands again (976 ms of a 1,071 ms compute, `tools ts profile`, 2026-10-30), and the shell
+ * scan's own 8 MB text cache was too small for that session to help. An entry keeps the texts the analysis read from
+ * `files` (an earlier write can change on a later ask, when a file tool's text arrives late), so a changed one runs
+ * the analysis again, and what it wrote, so a later command that runs a script this one wrote still finds it.
  */
 const ANALYSES_SESSIONS_KEPT = 4;
 const analysesBySession = new Map<string, Map<string, KeptAnalysis>>();
@@ -555,6 +591,7 @@ interface KeptAnalysis {
     command: string;
     cwd: string;
     analysis: CommandAnalysis;
+    read: Array<[string, string | undefined]>;
     wrote: Array<[string, string]>;
 }
 
@@ -674,22 +711,16 @@ export function computeSessionChanges(input: SessionChangesInput): ComputedSessi
         const cwd = call.cwd ?? rules.roots[0] ?? "/";
         const kept = keptByCall.get(call.id);
         let analysis: CommandAnalysis;
-        if (kept && kept.command === call.command && kept.cwd === cwd) {
+        if (kept && kept.command === call.command && kept.cwd === cwd && written.holds(kept.read)) {
             analysis = kept.analysis;
             for (const [path, text] of kept.wrote) {
                 written.set(path, text);
             }
         } else {
-            const before = new Map(written);
-            analysis = analyzeCommand({ command: call.command, cwd, files: written });
-            const wrote: Array<[string, string]> = [];
-            for (const [path, text] of written) {
-                if (!before.has(path) || before.get(path) !== text) {
-                    wrote.push([path, text]);
-                }
-            }
-
-            keptByCall.set(call.id, { command: call.command, cwd, analysis, wrote });
+            const command = call.command;
+            const { result, trace } = written.traced(() => analyzeCommand({ command, cwd, files: written }));
+            analysis = result;
+            keptByCall.set(call.id, { command, cwd, analysis, read: [...trace.read], wrote: [...trace.wrote] });
         }
 
         analyses.set(call.id, analysis);

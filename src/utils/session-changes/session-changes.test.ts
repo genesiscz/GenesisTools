@@ -674,6 +674,39 @@ describe("computeSessionChanges", () => {
         expect(turn(warm)?.files.map((file) => file.path)).toEqual([`${REPO}/src/new.ts`]);
     });
 
+    it("analyzes a kept call again when a script it runs changed on a later ask", () => {
+        // The run call keeps its id, text and directory, but the script an earlier call wrote is another one now.
+        const transcriptWith = (script: string) =>
+            parseClaudeTranscript("changed-script-session", {
+                main: jsonl([
+                    prompt("p1", "write a script", 0),
+                    use("write", "Bash", { command: `cat > gen.sh <<'EOF'\n${script}\nEOF` }, 1),
+                    result("p1", "write", 2),
+                    prompt("p2", "run it", 10),
+                    use("run", "Bash", { command: "zsh gen.sh" }, 11),
+                    result("p2", "run", 12),
+                ]),
+            });
+        const log = [row("p1", `${REPO}/gen.sh`, 2), row("p2", `${REPO}/src/new.ts`, 12)];
+        const ask = (sessionId: string, script: string) =>
+            computeSessionChanges({
+                sessionId,
+                transcript: transcriptWith(script),
+                log,
+                home: HOME,
+                tempDirs: [TEMP],
+                repoRoot,
+                isDirectory: () => false,
+            });
+        ask("changed-script-session", "bun test");
+        const warm = ask("changed-script-session", "echo hi > src/new.ts");
+        const cold = ask("changed-script-session-cold", "echo hi > src/new.ts");
+        const turn = (changes: typeof warm) => changes.turns.find((item) => item.turnId === "p2");
+
+        expect(turn(warm)).toEqual(turn(cold));
+        expect(turn(warm)?.files.map((file) => file.path)).toEqual([`${REPO}/src/new.ts`]);
+    });
+
     it("judges the log alone by path rules when there is no transcript", () => {
         const logOnly = compute({
             transcript: null,
