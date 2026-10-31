@@ -12,6 +12,7 @@ import {
 import { dialogRefusal } from "@genesiscz/utils/agents/dialogs/guard";
 import { type DialogKeyPress, planDialogKeys } from "@genesiscz/utils/agents/dialogs/keys";
 import { type OpenDialog, type OpenQuestion, openQuestionKey } from "@genesiscz/utils/agents/dialogs/types";
+import { ACCOUNT_PROVIDER_ALIASES, isAccountProviderAlias } from "@genesiscz/utils/ai/providers/alias-list";
 import { runCmuxOk } from "@genesiscz/utils/cmux/lib/cli";
 import { surfaceTargetArgs } from "@genesiscz/utils/cmux/lib/target";
 import { SafeJSON } from "@genesiscz/utils/json";
@@ -39,6 +40,8 @@ export interface SendOptions {
     json?: boolean;
     /** Seconds. The whole send (lookup, text, Enter) must finish within it. */
     timeout?: string;
+    /** The session's harness, when the caller knows it: the dialog guard asks that harness only. */
+    harness?: string;
 }
 
 export interface SendCommandDeps extends ResolveDeps {
@@ -192,7 +195,10 @@ async function openDialogRefusal({
         return undefined;
     }
 
-    const dialog = await (deps.openDialog ?? ((id: string) => sessionOpenDialog({ sessionId: id })))(sessionId);
+    const provider = opts.harness && isAccountProviderAlias(opts.harness) ? opts.harness : undefined;
+    const dialog = await (deps.openDialog ?? ((id: string) => sessionOpenDialog({ sessionId: id, provider })))(
+        sessionId
+    );
 
     if (!dialog) {
         return undefined;
@@ -343,6 +349,10 @@ export async function sendToSessionPane(
 
     if (!Number.isFinite(enterDelayMs) || enterDelayMs < 0) {
         throw new Error(`--enter-delay must be a non-negative number (got ${opts.enterDelay})`);
+    }
+
+    if (opts.harness !== undefined && !isAccountProviderAlias(opts.harness)) {
+        throw new Error(`--harness is one of ${ACCOUNT_PROVIDER_ALIASES.join(", ")} (got ${opts.harness})`);
     }
 
     // An option press never takes the recorded pane: it names where the queried id ran, and after a continuation that

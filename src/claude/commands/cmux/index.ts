@@ -104,6 +104,9 @@ export function registerCmuxCommand(program: Command): void {
         .option("--dry-run", "Print what would receive the text and stop")
         .option("--json", "Emit the outcome as JSON instead of a status line")
         .option("--timeout <seconds>", "Give up after this long and exit 124 (the whole send: lookup, text, Enter)")
+        // For a caller that already knows the session's harness (decision delivery): the dialog guard asks that
+        // harness only, instead of resolving the transcript to find it again.
+        .addOption(new Option("--harness <id>", "The session's harness: claude, codex or grok").hideHelp())
         .action(async (query: string, text: string | undefined, opts: SendOptions) => {
             await sendDoor(query, text ?? "", opts);
         });

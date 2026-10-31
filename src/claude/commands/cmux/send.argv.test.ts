@@ -69,7 +69,7 @@ test.each(["- fix the typo", "-1 on option b", "--force it"])(
 
         expect(result.query).toBe(SESSION);
         expect(result.text).toBe(text);
-        expect(result.opts).toMatchObject({ json: true, paste: true, exactSession: true });
+        expect(result.opts).toMatchObject({ json: true, paste: true, exactSession: true, harness: "claude" });
     }
 );
 

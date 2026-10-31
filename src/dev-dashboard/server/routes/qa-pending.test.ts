@@ -505,6 +505,8 @@ describe("qa decision routes", () => {
                 "--json",
                 "--paste",
                 "--exact-session",
+                "--harness",
+                "claude",
                 "--",
                 SESSION,
                 relayedAnswerText(titled("b) stale")),

@@ -872,6 +872,8 @@ describe("widget source and delivery contracts", () => {
                 "--json",
                 "--paste",
                 "--exact-session",
+                "--harness",
+                "claude",
                 "--",
                 "original-session",
                 `${RELAYED_ANSWER_HEAD}\nReply to: Chat DECISION 4: next token kinds\nLedger decision 2 (${row.id})\n${media}`,

@@ -945,6 +945,8 @@ async function typeIntoPane(
             "--paste",
             "--exact-session",
             ...(force ? ["--force"] : []),
+            // The child's dialog guard asks this harness only, instead of resolving the transcript to find it again.
+            ...(harness ? ["--harness", harness] : []),
             "--",
             session,
             text,

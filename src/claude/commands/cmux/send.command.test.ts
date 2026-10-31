@@ -883,3 +883,11 @@ test("every pane send receipt reads back as the outcome it printed, so no caller
     expect(readPaneReceipt("not json")).toEqual({ kind: "unreadable" });
     expect(readPaneReceipt('{"matches":[]}')).toEqual({ kind: "unreadable" });
 });
+
+test("--harness takes a harness id only, and refuses anything else before any lookup", async () => {
+    events = [];
+    await expect(sendCommand(SESSION_A, "hi", { harness: "claude-code" }, deps)).rejects.toThrow(
+        "--harness is one of claude, codex, grok"
+    );
+    expect(events).toEqual([]);
+});
