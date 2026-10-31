@@ -35,8 +35,7 @@ export function dialogFromRecords(questions: readonly OpenQuestion[]): OpenDialo
  * the hook records (`dialogFromRecords`) can see those.
  */
 export function dialogFromSnapshot(snapshot: TurnSnapshot | null): OpenDialog | null {
-    // A FINISHED transcript (a closed Codex rollout) keeps its last turn's question, but nothing can answer it.
-    if (!snapshot?.asksQuestion || snapshot.state === "FINISHED") {
+    if (!snapshot?.asksQuestion) {
         return null;
     }
 
