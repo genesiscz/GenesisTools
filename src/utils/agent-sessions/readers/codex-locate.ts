@@ -1,4 +1,4 @@
-import { existsSync, readFileSync } from "node:fs";
+import { existsSync, readdirSync, readFileSync } from "node:fs";
 import { homedir } from "node:os";
 import { basename, dirname, join, sep } from "node:path";
 import { readCodexTitleIndex } from "@genesiscz/utils/agent-sessions/readers/codex-title";
@@ -9,7 +9,7 @@ import {
     type RankedHit,
     type ResolvedTranscript,
 } from "@genesiscz/utils/ai/transcripts/resolve";
-import { idMatches, isDir, isRecord, listDir, mtimeOf } from "@genesiscz/utils/ai/transcripts/resolve-core";
+import { idMatches, isDir, isRecord, mtimeOf } from "@genesiscz/utils/ai/transcripts/resolve-core";
 import type { TitledSession } from "@genesiscz/utils/ai/transcripts/session-title";
 import { sessionsDir } from "@genesiscz/utils/codex/worker-paths";
 import type { TranscriptLocator } from "@genesiscz/utils/harness/parts";
@@ -22,6 +22,7 @@ import {
     nativeTranscriptMaxDepth,
     transcriptStem,
 } from "@genesiscz/utils/providers/session-paths";
+import { isMissingFileError } from "@genesiscz/utils/storage/atomic-file";
 import type { SessionPathRole } from "../types";
 
 /**
@@ -243,9 +244,25 @@ export function codexClassifyPath(relativePath: string): SessionPathRole | null 
         : null;
 }
 
+/**
+ * A folder's entries for `findCodexRollout`. A folder that is there but cannot be read hides its rollouts, so it is
+ * logged; a missing one (a home with no `archived_sessions`) is the normal case and stays silent.
+ */
+function listRolloutDir(dir: string): string[] {
+    try {
+        return readdirSync(dir);
+    } catch (error) {
+        if (!isMissingFileError(error)) {
+            logger.debug({ error, dir }, "[transcripts] codex sessions directory not readable");
+        }
+
+        return [];
+    }
+}
+
 /** Direct folder reads for `findCodexRollout`, which reads outside a lookup batch. */
 const ROLLOUT_READS: FolderReads = {
-    listDir,
+    listDir: listRolloutDir,
     isDir,
     mtimeOf,
     exists: existsSync,

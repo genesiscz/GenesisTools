@@ -1,10 +1,11 @@
-import { describe, expect, it } from "bun:test";
+import { describe, expect, it, spyOn } from "bun:test";
 import { appendFileSync, mkdirSync, mkdtempSync, writeFileSync } from "node:fs";
 import { tmpdir } from "node:os";
 import { join } from "node:path";
 import { parseCodexRollout } from "@genesiscz/utils/agent-sessions/readers/codex-changes";
 import { findCodexRollout, isCodexRolloutPath } from "@genesiscz/utils/agent-sessions/readers/codex-locate";
 import { SafeJSON } from "@genesiscz/utils/json";
+import { logger } from "@genesiscz/utils/logger";
 import { readClaudeTranscriptFolded } from "./fold";
 import {
     analyzeCommand,
@@ -976,5 +977,25 @@ describe("findCodexRollout (Codex 0.164 compresses old rollouts to .jsonl.zst)",
         expect(findCodexRollout("thread-zst", [home])).toBe(compressed);
         expect(findCodexRollout("thread-old", [home])).toBe(archived);
         expect(isCodexRolloutPath(compressed)).toBe(true);
+    });
+
+    it("logs a sessions folder it cannot read, and stays silent for one that is not there", () => {
+        const home = mkdtempSync(join(tmpdir(), "gt-codex-rollouts-"));
+        // A file where the folder belongs: listing it fails with ENOTDIR, not ENOENT.
+        writeFileSync(join(home, "sessions"), "");
+        const debug = spyOn(logger, "debug");
+
+        try {
+            expect(findCodexRollout("thread-none", [home])).toBeNull();
+            const dirs = debug.mock.calls
+                .filter((call) => call[1] === "[transcripts] codex sessions directory not readable")
+                .map((call) => {
+                    const fields: unknown = call[0];
+                    return typeof fields === "object" && fields !== null && "dir" in fields ? fields.dir : undefined;
+                });
+            expect(dirs).toEqual([join(home, "sessions")]);
+        } finally {
+            debug.mockRestore();
+        }
     });
 });
