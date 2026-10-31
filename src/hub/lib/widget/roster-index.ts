@@ -5,6 +5,7 @@ import { getSessionListing } from "@app/claude/lib/history/search";
 import { HistoryDatabase } from "@genesiscz/utils/agent-sessions/database";
 import { catalogHistory } from "@genesiscz/utils/agent-sessions/open-service";
 import { resolveHistoryProvider } from "@genesiscz/utils/agent-sessions/provider";
+import type { AccountProviderAlias } from "@genesiscz/utils/ai/providers/alias-list";
 import { logger } from "@genesiscz/utils/logger";
 import { readDataVersion } from "@genesiscz/utils/workers/sqlite-wake";
 import { hubAgents } from "../agents";
@@ -83,7 +84,7 @@ const SCOPE_PROVIDER = {
     "claude-agents": "claude",
     codex: "codex",
     grok: "grok",
-} as const satisfies Record<Exclude<WidgetRosterScope, "all">, HarnessId>;
+} as const satisfies Record<Exclude<WidgetRosterScope, "all">, AccountProviderAlias>;
 
 function isProviderScope(key: string): key is keyof typeof SCOPE_PROVIDER {
     return Object.hasOwn(SCOPE_PROVIDER, key);
@@ -140,7 +141,7 @@ export function unplacedScopes({
  * a transcript with no record yet). Those scopes refresh their whole listing, as before.
  */
 async function refreshExact(
-    provider: HarnessId,
+    provider: AccountProviderAlias,
     changes: Array<{ scope: WidgetRosterScope; paths: readonly string[] }>
 ): Promise<{ written: number; unplaced: WidgetRosterScope[] }> {
     const filePaths = [...new Set(changes.flatMap((change) => change.paths))];
@@ -184,7 +185,7 @@ export async function refreshWidgetIndex(
     }
 
     const whole = new Set<Exclude<WidgetRosterScope, "all">>();
-    const exact = new Map<HarnessId, Array<{ scope: WidgetRosterScope; paths: readonly string[] }>>();
+    const exact = new Map<AccountProviderAlias, Array<{ scope: WidgetRosterScope; paths: readonly string[] }>>();
     for (const scope of scopes) {
         if (scope === "all") {
             continue;
