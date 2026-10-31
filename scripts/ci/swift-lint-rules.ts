@@ -36,8 +36,23 @@ interface SwiftStructRule {
 const STRUCT_HEAD =
     /^\s*(?:(?:public|private|fileprivate|internal|final|open)\s+)*struct\s+(\w+)(?:<[^>{]*>)?\s*(?::\s*([^{]+?))?\s*\{/;
 
+/** One parse per file: the struct rules, the row rules and the row audit all read the same `codeLines` array. */
+const structsByFile = new WeakMap<string[], SwiftStruct[]>();
+
 /** Every `struct` with its line range, nested ones included (each is its own entry). */
 export function swiftStructs(codeLines: string[]): SwiftStruct[] {
+    const known = structsByFile.get(codeLines);
+
+    if (known) {
+        return known;
+    }
+
+    const structs = parseSwiftStructs(codeLines);
+    structsByFile.set(codeLines, structs);
+    return structs;
+}
+
+function parseSwiftStructs(codeLines: string[]): SwiftStruct[] {
     const structs: SwiftStruct[] = [];
 
     for (const [index, line] of codeLines.entries()) {
