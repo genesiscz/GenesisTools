@@ -166,6 +166,12 @@ const WORKER_SESSION_READERS = toolParts<() => WorkerSessionInfo[]>({
     isPart: isFunctionPart,
 });
 
+/** The backends to read, each once and in the standard order, so `--backend codex,codex` reads one store once. */
+export function requestedWorkerBackends(backends?: readonly WorkerBackend[]): WorkerBackend[] {
+    const wanted = new Set(backends ?? ACCOUNT_PROVIDER_ALIASES);
+    return ACCOUNT_PROVIDER_ALIASES.filter((backend) => wanted.has(backend));
+}
+
 export function listWorkerSessions(backends?: readonly WorkerBackend[]): WorkerSessionInfo[] {
-    return (backends ?? ACCOUNT_PROVIDER_ALIASES).flatMap((backend) => WORKER_SESSION_READERS.of(backend)());
+    return requestedWorkerBackends(backends).flatMap((backend) => WORKER_SESSION_READERS.of(backend)());
 }

@@ -45,7 +45,7 @@ import {
     type WorkerCostRow,
     workerCostLedgerPath,
 } from "./lib/workers/ledger";
-import type { WorkerSessionInfo } from "./lib/workers/sessions";
+import { requestedWorkerBackends, type WorkerSessionInfo } from "./lib/workers/sessions";
 import { buildWorkerStats } from "./lib/workers/stats";
 
 describe("parseTranscriptLine", () => {
@@ -853,6 +853,14 @@ describe("loadEventsParallel", () => {
         const home = homeWithClaudeAndCodex();
 
         expect((await loadEventsParallel({ home, sources: ["claude"] })).map((event) => event.id)).toEqual(["m-par"]);
+    });
+});
+
+describe("requestedWorkerBackends", () => {
+    it("reads each requested backend once, in the standard order", () => {
+        expect(requestedWorkerBackends(["codex", "codex"])).toEqual(["codex"]);
+        expect(requestedWorkerBackends(["grok", "claude", "grok"])).toEqual(["claude", "grok"]);
+        expect(requestedWorkerBackends()).toEqual(["claude", "codex", "grok"]);
     });
 });
 
