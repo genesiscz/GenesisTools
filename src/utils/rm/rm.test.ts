@@ -1,4 +1,5 @@
-import { afterAll, beforeAll, describe, expect, test } from "bun:test";
+import { afterAll, beforeAll, describe, expect, spyOn, test } from "bun:test";
+import * as fs from "node:fs";
 import {
     chmodSync,
     existsSync,
@@ -1951,5 +1952,32 @@ describe("an aside size whose ledger line could not be written", () => {
         expect(lines()).toHaveLength(1);
         await measureRmRequest(request.id, { requestsDir });
         expect(lines()).toHaveLength(1);
+    });
+});
+
+describe("a measurement pass over many paths", () => {
+    test("reads each path's own saved file, not every file once per path", async () => {
+        const requestsDir = dir("many-paths-requests");
+        const folder = dir("many-paths");
+        const targets = Array.from({ length: 20 }, (_, index) => ({
+            path: file(join(folder, `f${index}.txt`)),
+            kind: "file" as const,
+            rule: "default",
+            reason: "r",
+        }));
+        const request = createRmRequest(
+            { kind: "delete", caller: AGENT, cwd: base, reason: null, targets },
+            requestsDir
+        );
+        expect(await measureRmRequest(request.id, { requestsDir })).toMatchObject({ measured: 20 });
+        const reads = spyOn(fs, "readFileSync");
+
+        try {
+            expect(await measureRmRequest(request.id, { requestsDir })).toMatchObject({ fresh: 20 });
+            const saved = reads.mock.calls.filter(([path]) => /\/measured\/.+\.json$/.test(String(path)));
+            expect(saved).toHaveLength(20);
+        } finally {
+            reads.mockRestore();
+        }
     });
 });

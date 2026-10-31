@@ -113,6 +113,16 @@ export function loadRmMeasurements(id: string, requestsDir = rmRequestsDir()): R
     return { requestId: id, items };
 }
 
+/** The saved entry of one request path, read from its own file alone; null when none was saved. */
+export function loadRmMeasurementOf(
+    id: string,
+    target: Pick<RmRequestTarget, "path" | "stored">,
+    requestsDir = rmRequestsDir()
+): RmMeasuredItem | null {
+    const file = join(measurementsDir(id, requestsDir), `${locationKey(targetLocation(target))}.json`);
+    return existsSync(file) ? readMeasuredItem(file) : null;
+}
+
 /** Saves `item` as request `id`'s entry for its location, replacing an older one; no other entry is read or written. */
 export function saveRmMeasurement(id: string, item: RmMeasuredItem, requestsDir = rmRequestsDir()): void {
     const dir = measurementsDir(id, requestsDir);
@@ -423,8 +433,9 @@ export async function measureRmRequest(
 
     try {
         for (const target of request.targets) {
-            const saved = loadRmMeasurements(id, requestsDir);
-            const fresh = freshMeasurement(saved, target);
+            // Each path reads its own file only: a pass over N paths reads N files, not N times the folder.
+            const own = loadRmMeasurementOf(id, target, requestsDir);
+            const fresh = freshMeasurement(own ? { requestId: id, items: [own] } : null, target);
 
             if (fresh) {
                 // A fresh size whose ledger line failed earlier is written now.
