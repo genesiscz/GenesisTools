@@ -15,11 +15,24 @@ function grokAccount(lookup: (home: string) => string | undefined, home: string)
     }
 }
 
+/**
+ * The account lookup reads `ai/config.json` once. When that file cannot be read, the rows still list with no account:
+ * account metadata must never hide the sessions themselves.
+ */
+async function accountLookup(): Promise<(home: string) => string | undefined> {
+    try {
+        return await grokAccountNameLookup();
+    } catch (err) {
+        logger.debug({ err }, "[ai] grok account config unavailable; rows list without an account");
+        return () => undefined;
+    }
+}
+
 /** Grok's rows, off the shared history index; the account answers from the session's own home. */
 export const rowPart = nativeRows("grok", {
     cacheTtlMs: GROK_CACHE_TTL_MS,
     accountOf: async () => {
-        const lookup = await grokAccountNameLookup();
+        const lookup = await accountLookup();
         return (record) => (record.sourceHome ? grokAccount(lookup, record.sourceHome) : null);
     },
 });
