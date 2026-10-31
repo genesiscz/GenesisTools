@@ -49,7 +49,6 @@ export const codexHarness: HarnessDriver<"codex"> = {
             turnIdsEndWithRowUuid: false,
             keepsLiveRegistry: false,
             // Codex rollouts persist no approval request; only a live app-server client sees one.
-            eventLog: () => null,
             windowTurns: deferredWindowTurns(import.meta, "harness-parse", "codexWindowTurns"),
         },
         exit: { command: "/quit" },
