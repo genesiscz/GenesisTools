@@ -101,9 +101,17 @@ func emitResult(_ result: [String: Any]) -> Never {
 }
 
 /// The reply now and the process later: a window that stays a moment to say what happens (the rm window's
-/// "Approved: moving to the trash"). The caller exits once it is done.
+/// "Approved: moving to the trash"). The caller exits once it is done. Its stdout and stderr close with the reply, so
+/// the caller reads EOF and acts on the answer at once instead of waiting out the linger.
 func emitResultAndStay(_ result: [String: Any]) {
     emit(["ok": true, "result": result])
+    fflush(stdout)
+    fflush(stderr)
+    let null = open("/dev/null", O_WRONLY)
+    guard null >= 0 else { return }
+    dup2(null, STDOUT_FILENO)
+    dup2(null, STDERR_FILENO)
+    close(null)
 }
 
 /// How long a method may wait on `usernoted` before this process gives up and says so.

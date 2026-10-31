@@ -1,6 +1,7 @@
 import { SafeJSON } from "@genesiscz/utils/json";
 import { logger } from "@genesiscz/utils/logger";
 import { installedGenesisAppLauncher } from "@genesiscz/utils/macos/genesis-app";
+import type { Subprocess } from "bun";
 
 /**
  * Ask GenesisTools.app to do something as its own bundle identity.
@@ -41,6 +42,25 @@ export interface GenesisAppHello {
 }
 
 const DEFAULT_TIMEOUT_MS = 10_000;
+
+/** How long a process that closed its output may take to exit before it counts as a window that stays. */
+const LINGER_EXIT_GRACE_MS = 250;
+
+/**
+ * The exit code once the reply streams ended. A window that stays a moment after its answer (the rm window's
+ * "Approved" state) closes its output with the reply, so the caller acts on it now; that process is left to exit by
+ * itself and no longer holds this one open.
+ */
+export async function exitedOrLingering(proc: Subprocess): Promise<number> {
+    const lingering = await Promise.race([proc.exited, Bun.sleep(LINGER_EXIT_GRACE_MS).then(() => null)]);
+
+    if (lingering === null) {
+        proc.unref();
+        return 0;
+    }
+
+    return lingering;
+}
 
 /** False when there is no bundle to talk to, or the user switched routing off. */
 export function isGenesisAppRpcAvailable(): boolean {
@@ -88,7 +108,7 @@ export async function genesisAppRpc<T>(
             new Response(proc.stdout).text(),
             new Response(proc.stderr).text(),
         ]);
-        const exitCode = await proc.exited;
+        const exitCode = await exitedOrLingering(proc);
 
         if (timedOut) {
             logger.debug({ method, timeoutMs }, "GenesisTools.app RPC timed out");

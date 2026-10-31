@@ -1,5 +1,10 @@
 import { describe, expect, test } from "bun:test";
-import { isGenesisAppRpcAvailable, isNotifyPostResult, parseReply } from "@genesiscz/utils/macos/genesis-app-rpc";
+import {
+    exitedOrLingering,
+    isGenesisAppRpcAvailable,
+    isNotifyPostResult,
+    parseReply,
+} from "@genesiscz/utils/macos/genesis-app-rpc";
 import { parseNotificationOptions } from "@genesiscz/utils/macos/notifications";
 
 describe("parseReply", () => {
@@ -101,5 +106,28 @@ describe("isGenesisAppRpcAvailable", () => {
         // This is the same code path as a machine that never built the app, and the same one as a
         // user who switched routing off with the disabled marker.
         expect(isGenesisAppRpcAvailable()).toBe(false);
+    });
+});
+
+describe("exitedOrLingering", () => {
+    test("a process that closed its output and stays is not waited for; one that exits gives its code", async () => {
+        const stays = Bun.spawn(["sh", "-c", "exec 1>&- 2>&-; sleep 5"], {
+            stdout: "pipe",
+            stderr: "pipe",
+            env: process.env,
+        });
+        const started = Date.now();
+        await Promise.all([new Response(stays.stdout).text(), new Response(stays.stderr).text()]);
+
+        try {
+            expect(await exitedOrLingering(stays)).toBe(0);
+            expect(Date.now() - started).toBeLessThan(2_000);
+            expect(stays.exitCode).toBeNull();
+        } finally {
+            stays.kill();
+        }
+
+        const exits = Bun.spawn(["sh", "-c", "exit 3"], { stdout: "pipe", stderr: "pipe", env: process.env });
+        expect(await exitedOrLingering(exits)).toBe(3);
     });
 });
