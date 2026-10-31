@@ -7,7 +7,7 @@
  *
  * - Claude: `<project>/<id>.jsonl`. The last conversation record decides (`activity.ts`).
  * - Grok:   `updates.jsonl` of a TUI session. `turn_completed` ends a turn; `hook_*` records are noise. Its
- *           permission prompts are only in `events.jsonl` beside it, read as the event log (`EVENT_LOGS`).
+ *           permission prompts are supplied by its native reader from the event log.
  * - Codex:  `rollout-*.jsonl`. `task_complete` (with `last_agent_message`) ends a turn.
  *
  * The readers are pure over parsed records. `readTurnState` is the one place that touches the disk:
@@ -15,7 +15,8 @@
  * no process spawn and no write.
  */
 import { existsSync, statSync } from "node:fs";
-import { basename, dirname, join } from "node:path";
+import { resolveHistoryProvider } from "@genesiscz/utils/agent-sessions/provider";
+import type { NativeDialogPermission } from "@genesiscz/utils/agent-sessions/types";
 import { isZstdPath } from "@genesiscz/utils/compress/zstd";
 import { SafeJSON } from "@genesiscz/utils/json";
 import { logger } from "@genesiscz/utils/logger";
@@ -159,11 +160,8 @@ export interface TurnStateInput {
     stallTimeoutMs: number;
     /** The byte offset in the file where each record's line starts, aligned with `records`. */
     offsets?: ReadonlyArray<number>;
-    /**
-     * The tail of the session's event log beside the transcript (`EVENT_LOGS`), oldest first: Grok's `events.jsonl`,
-     * the only place its permission prompts are recorded. Absent for a provider without one, or when it is missing.
-     */
-    eventLog?: ReadonlyArray<JsonRecord>;
+    /** A normalized permission request from the provider's native reader. */
+    permission?: NativeDialogPermission | null;
     /**
      * True when nothing writes the transcript any more: a `.jsonl.zst` rollout, which Codex 0.164 writes only for a
      * session it closed. The state is then `FINISHED`, whatever the last turn did; `asksQuestion`, `lastText` and the
@@ -666,48 +664,6 @@ const GROK_WAITING_TOOLS: ReadonlyMap<string, TurnQuestionKind> = new Map([
     ["exit_plan", "plan"],
 ]);
 
-/** An `events.jsonl` permission request still unanswered: the tool it asks for and the request's ISO time. */
-interface GrokPermissionRequest {
-    tool: string;
-    at: string;
-}
-
-/**
- * The permission prompt open at the end of Grok's `events.jsonl` tail: a `permission_requested` with no later
- * `permission_resolved` of the same `tool_name` in the current turn (`turn_started` and `turn_ended` reset it). The
- * records carry no call id, so an answer closes the oldest open request of its tool. Every Grok tool call passes
- * through a request and almost all are allowed in 0 ms (33,367 of 33,407 under a second on 2026-10-30), so only a
- * request still open at the tail is a prompt the user must answer.
- */
-function grokOpenPermission(eventLog: ReadonlyArray<JsonRecord>): GrokPermissionRequest | null {
-    let pending: GrokPermissionRequest[] = [];
-
-    for (const record of eventLog) {
-        if (record.type === "turn_started" || record.type === "turn_ended") {
-            pending = [];
-            continue;
-        }
-
-        const tool = typeof record.tool_name === "string" ? record.tool_name : null;
-
-        if (!tool) {
-            continue;
-        }
-
-        if (record.type === "permission_requested") {
-            pending.push({ tool, at: typeof record.ts === "string" ? record.ts : "" });
-        } else if (record.type === "permission_resolved") {
-            const index = pending.findIndex((request) => request.tool === tool);
-
-            if (index >= 0) {
-                pending.splice(index, 1);
-            }
-        }
-    }
-
-    return pending.at(-1) ?? null;
-}
-
 /**
  * The open permission prompt as a question: the tool and a summary of its input, from the newest open `tool_call` of
  * that tool in `updates.jsonl` (Grok writes the call before the prompt and its result only after the answer), and that
@@ -715,7 +671,7 @@ function grokOpenPermission(eventLog: ReadonlyArray<JsonRecord>): GrokPermission
  * with the id `permission:<request time>`; an older one belongs to a call the transcript already finished.
  */
 function grokPermissionQuestion(
-    request: GrokPermissionRequest,
+    request: NativeDialogPermission,
     calls: TurnCalls,
     lastEventAt: number | null
 ): { question: string; call: TurnQuestionCall } | null {
@@ -844,7 +800,7 @@ export function grokTurnState(input: TurnStateInput): TurnSnapshot {
 
     const asked = [...open.values()].at(-1) ?? null;
     // A question tool waits on its own; a permission prompt only while the turn is still running.
-    const request = !asked && !ended && input.eventLog ? grokOpenPermission(input.eventLog) : null;
+    const request = !asked && !ended ? input.permission : null;
     const permission = request ? grokPermissionQuestion(request, calls, events.at(-1)?.ts ?? null) : null;
     const waiting = asked !== null || permission !== null;
 
@@ -1103,26 +1059,12 @@ export function turnStateOf(provider: TurnProvider, input: TurnStateInput): Turn
 }
 
 /**
- * Where each provider keeps the second log its turn state needs beside the transcript, or null for none. One entry
- * per provider, so the next provider states its answer here.
- */
-const EVENT_LOGS: Record<TurnProvider, (transcriptPath: string) => string | null> = {
-    // Claude records no permission prompt in its transcript; only its `Notification` hook sees one.
-    claude: () => null,
-    // Codex rollouts persist no approval request; only a live app-server client sees one.
-    codex: () => null,
-    // Grok writes its permission prompts to `events.jsonl` in the session folder, never to `updates.jsonl`.
-    grok: (transcriptPath) =>
-        basename(transcriptPath) === "updates.jsonl" ? join(dirname(transcriptPath), "events.jsonl") : null,
-};
-
-/**
  * Every file `readTurnState` reads for this transcript: the transcript, and the provider's event log when it has
  * one. A caller that skips an unchanged session stats these, so a Grok permission prompt (written only to
  * `events.jsonl`) still counts as a change.
  */
 export function turnStateSources(provider: TurnProvider, transcriptPath: string): string[] {
-    const eventLog = EVENT_LOGS[provider](transcriptPath);
+    const eventLog = resolveHistoryProvider(provider).reader.dialog.eventLogPath(transcriptPath);
     return eventLog ? [transcriptPath, eventLog] : [transcriptPath];
 }
 
@@ -1149,17 +1091,24 @@ function tailRecords(tail: { raw: Buffer; start: number }): { records: JsonRecor
     return { records, offsets };
 }
 
-/** The tail of the provider's event log beside the transcript, or undefined when it has none or it cannot be read. */
-function readEventLog(provider: TurnProvider, transcriptPath: string): JsonRecord[] | undefined {
-    const path = EVENT_LOGS[provider](transcriptPath);
+/** The provider's normalized open permission, or undefined when its event log is absent or unreadable. */
+function readDialogPermission(provider: TurnProvider, transcriptPath: string): NativeDialogPermission | undefined {
+    const dialog = resolveHistoryProvider(provider).reader.dialog;
+    const path = dialog.eventLogPath(transcriptPath);
 
     if (!path || !existsSync(path)) {
         return undefined;
     }
 
     try {
-        // The cap drops only OLDER lines, never newer ones: a session that waits on a prompt stops writing.
-        return tailRecords(readTailAt(path, EVENT_LOG_TAIL_BYTES)).records;
+        const tail = readTailAt(path, EVENT_LOG_TAIL_BYTES);
+        if (tail.start > 0) {
+            logger.debug(
+                { path, cap: EVENT_LOG_TAIL_BYTES, skippedBytes: tail.start },
+                "dialog event log tail omits older records"
+            );
+        }
+        return dialog.openPermission(tailRecords(tail).records) ?? undefined;
     } catch (err) {
         logger.debug({ err, path, provider }, "[transcripts] could not read the session event log");
         return undefined;
@@ -1196,13 +1145,13 @@ export function readTurnState(
 
         const tail = readTailAt(filePath, TURN_TAIL_BYTES);
         const { records, offsets } = tailRecords(tail);
-        const eventLog = readEventLog(provider, filePath);
+        const permission = readDialogPermission(provider, filePath);
 
         return {
             ...turnStateOf(provider, {
                 records,
                 offsets,
-                ...(eventLog ? { eventLog } : {}),
+                ...(permission ? { permission } : {}),
                 lastModified: stat.mtimeMs,
                 now,
                 stallTimeoutMs: options.stallTimeoutMs,

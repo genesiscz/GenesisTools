@@ -4,7 +4,7 @@ import { loadHooksConfig } from "@app/agents/lib/hooks/config";
 import type { AgentSessionRow, AgentSessionRowsOptions } from "@app/ai/lib/sessions/agent-session-rows";
 import { POLLED_LISTING_REUSE_MS } from "@app/ai/lib/sessions/listing-reuse";
 import { readCachedSessionCwd } from "@genesiscz/utils/agent-sessions/cached-title";
-import { type OpenQuestion, openQuestionKey } from "@genesiscz/utils/agents/dialogs/types";
+import type { OpenQuestion } from "@genesiscz/utils/agents/dialogs/types";
 import { transcriptEnvelope } from "@genesiscz/utils/ai/transcripts/load";
 import { type ResolvedTranscript, resolveTranscript } from "@genesiscz/utils/ai/transcripts/resolve";
 import type { TranscriptTurn } from "@genesiscz/utils/ai/transcripts/types";
@@ -34,7 +34,7 @@ import {
     sessionDecisions,
     type TranscriptScan,
 } from "./build";
-import { listedDialogs, notifyOpenQuestions, unnotified } from "./dialogs";
+import { listedDialogs, notifiedAfterDelivery, notifyOpenQuestions } from "./dialogs";
 import { fillExcerpts, tracedReadDeps } from "./excerpts";
 import type { InboxTrace } from "./session-cursor";
 import { stagedSendText } from "./staged";
@@ -133,20 +133,16 @@ export const realInboxDeps: InboxDeps = {
     forms: async () => (await import("../pending/ask")).listPendingForms({}, 200),
     dialogs: async (sessions) => {
         const { questions } = loadHooksConfig();
-        const open = listedDialogs({ rows: sessions, questions });
+        const open = await listedDialogs({ rows: sessions, questions });
 
         if (!questions.notify) {
             return open;
         }
 
         const notified = new Set((await storage().getCacheFile<string[]>(DIALOG_BANNERS_KEY, "7 days")) ?? []);
-        const fresh = unnotified(open, notified);
-
-        if (fresh.length > 0) {
-            await notifyOpenQuestions(fresh, sessions);
-            // Only the keys still open: a question asked again under the same key is new again.
-            await storage().putCacheFile(DIALOG_BANNERS_KEY, open.map(openQuestionKey), "7 days");
-        }
+        const delivered = await notifiedAfterDelivery(open, notified, (fresh) => notifyOpenQuestions(fresh, sessions));
+        // Only the keys still open: a question asked again under the same key is new again.
+        await storage().putCacheFile(DIALOG_BANNERS_KEY, delivered, "7 days");
 
         return open;
     },

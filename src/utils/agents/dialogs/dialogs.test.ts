@@ -48,10 +48,114 @@ function snapshot(overrides: Partial<TurnSnapshot>): TurnSnapshot {
 }
 
 describe("dialog record store", () => {
-    test("one key is one record: an upsert of the same provider:session:toolCall updates it in place", () => {
+    test("writers wait for the session lock and preserve concurrent updates", async () => {
         const dir = root();
-        upsertQuestion(question({ source: "watcher" }), dir);
-        upsertQuestion(question({ question: "Ship it now?", source: "hook" }), dir);
+        const path = dialogsPath("claude", SESSION, dir);
+        await upsertQuestion(question(), dir);
+        const child = Bun.spawn(
+            [
+                process.execPath,
+                "-e",
+                `import { readFileSync, writeFileSync } from "node:fs";
+                import { withFileLock } from "./src/utils/storage/file-lock";
+                await withFileLock(${SafeJSON.stringify(`${path}.lock`)}, async () => {
+                    const records = JSON.parse(readFileSync(${SafeJSON.stringify(path)}, "utf8"));
+                    console.log("ready");
+                    await Bun.stdin.text();
+                    records.push(${SafeJSON.stringify(question({ toolCallId: "child" }))});
+                    writeFileSync(${SafeJSON.stringify(path)}, JSON.stringify(records));
+                });`,
+            ],
+            { stdin: "pipe", stdout: "pipe", stderr: "pipe", env: process.env }
+        );
+        let write: Promise<void> | undefined;
+        try {
+            const ready = await Promise.race([
+                child.stdout.getReader().read(),
+                Bun.sleep(5000).then(() => {
+                    throw new Error("lock holder did not start");
+                }),
+            ]);
+            expect(new TextDecoder().decode(ready.value)).toContain("ready");
+            let completed = false;
+            write = Promise.resolve()
+                .then(() => upsertQuestion(question({ toolCallId: "parent" }), dir))
+                .then(() => {
+                    completed = true;
+                });
+            await Bun.sleep(150);
+            expect(completed).toBe(false);
+        } finally {
+            child.stdin.end();
+            await child.exited;
+        }
+        await write;
+        await Promise.all([
+            Promise.resolve().then(() => closeQuestion(question(), "2026-10-30T10:01:00.000Z", dir)),
+            Promise.resolve().then(() => upsertQuestion(question({ toolCallId: "another" }), dir)),
+        ]);
+        expect(
+            readSessionQuestions("claude", SESSION, dir)
+                .map((item) => item.toolCallId)
+                .sort()
+        ).toEqual(["another", "child", "parent", "toolu_ask_1"]);
+        expect(
+            readSessionQuestions("claude", SESSION, dir).find((item) => item.toolCallId === "toolu_ask_1")?.closedAt
+        ).toBe("2026-10-30T10:01:00.000Z");
+    });
+
+    test("a dead writer's stale lock can be recovered without losing records", async () => {
+        const dir = root();
+        const path = dialogsPath("claude", SESSION, dir);
+        await upsertQuestion(question(), dir);
+        const child = Bun.spawn(
+            [
+                process.execPath,
+                "-e",
+                `import { withFileLock } from "./src/utils/storage/file-lock";
+                await withFileLock(${SafeJSON.stringify(`${path}.lock`)}, async () => {
+                    console.log("ready");
+                    await Bun.stdin.text();
+                });`,
+            ],
+            { stdin: "pipe", stdout: "pipe", stderr: "pipe", env: process.env }
+        );
+        try {
+            const ready = await Promise.race([
+                child.stdout.getReader().read(),
+                Bun.sleep(5000).then(() => {
+                    throw new Error("lock holder did not start");
+                }),
+            ]);
+            expect(new TextDecoder().decode(ready.value)).toContain("ready");
+        } finally {
+            child.kill("SIGKILL");
+            await child.exited;
+        }
+        await upsertQuestion(question({ toolCallId: "after-crash" }), dir);
+        expect(
+            readSessionQuestions("claude", SESSION, dir)
+                .map((item) => item.toolCallId)
+                .sort()
+        ).toEqual(["after-crash", "toolu_ask_1"]);
+    });
+
+    test("a stale watcher cannot replace or close a hook record", async () => {
+        const dir = root();
+        await upsertQuestion(question({ source: "watcher" }), dir);
+        await upsertQuestion(question({ source: "hook", question: "New hook question" }), dir);
+        await upsertQuestion(question({ source: "watcher" }), dir);
+        expect(await closeQuestion(question(), "2026-10-30T10:01:00.000Z", dir, "watcher")).toBeNull();
+        expect(openQuestions("claude", SESSION, dir)[0]).toMatchObject({
+            source: "hook",
+            question: "New hook question",
+        });
+    });
+
+    test("one key is one record: an upsert of the same provider:session:toolCall updates it in place", async () => {
+        const dir = root();
+        await upsertQuestion(question({ source: "watcher" }), dir);
+        await upsertQuestion(question({ question: "Ship it now?", source: "hook" }), dir);
 
         const stored = readSessionQuestions("claude", SESSION, dir);
         expect(stored).toHaveLength(1);
@@ -61,46 +165,51 @@ describe("dialog record store", () => {
         expect(readSessionQuestions("codex", SESSION, dir)).toEqual([]);
     });
 
-    test("an upsert without closedAt keeps a close that already landed, so a late hook does not reopen it", () => {
+    test("an upsert without closedAt keeps a close that already landed, so a late hook does not reopen it", async () => {
         const dir = root();
-        upsertQuestion(question(), dir);
-        closeQuestion(question(), "2026-10-30T10:01:00.000Z", dir);
-        upsertQuestion(question({ source: "watcher" }), dir);
+        await upsertQuestion(question(), dir);
+        await closeQuestion(question(), "2026-10-30T10:01:00.000Z", dir);
+        await upsertQuestion(question({ source: "watcher" }), dir);
 
         expect(openQuestions("claude", SESSION, dir)).toEqual([]);
         expect(readSessionQuestions("claude", SESSION, dir)[0]?.closedAt).toBe("2026-10-30T10:01:00.000Z");
     });
 
-    test("closing an unknown key is a no-op that writes nothing", () => {
+    test("closing an unknown key is a no-op that writes nothing", async () => {
         const dir = root();
-        expect(closeQuestion(question({ toolCallId: "never-asked" }), undefined, dir)).toBeNull();
+        expect(await closeQuestion(question({ toolCallId: "never-asked" }), undefined, dir)).toBeNull();
         expect(existsSync(dialogsPath("claude", SESSION, dir))).toBe(false);
 
-        upsertQuestion(question(), dir);
+        await upsertQuestion(question(), dir);
         const before = readFileSync(dialogsPath("claude", SESSION, dir), "utf8");
-        expect(closeQuestion(question({ toolCallId: "never-asked" }), undefined, dir)).toBeNull();
+        expect(await closeQuestion(question({ toolCallId: "never-asked" }), undefined, dir)).toBeNull();
         expect(readFileSync(dialogsPath("claude", SESSION, dir), "utf8")).toBe(before);
     });
 
-    test("openQuestions lists the unanswered ones newest first", () => {
+    test("openQuestions lists the unanswered ones newest first", async () => {
         const dir = root();
-        upsertQuestion(question({ toolCallId: "old", askedAt: "2026-10-30T09:00:00.000Z" }), dir);
-        upsertQuestion(question({ toolCallId: "new", askedAt: "2026-10-30T11:00:00.000Z" }), dir);
-        upsertQuestion(question({ toolCallId: "mid", askedAt: "2026-10-30T10:00:00.000Z" }), dir);
-        closeQuestion(question({ toolCallId: "mid" }), "2026-10-30T10:05:00.000Z", dir);
+        await upsertQuestion(question({ toolCallId: "old", askedAt: "2026-10-30T09:00:00.000Z" }), dir);
+        await upsertQuestion(question({ toolCallId: "new", askedAt: "2026-10-30T11:00:00.000Z" }), dir);
+        await upsertQuestion(question({ toolCallId: "mid", askedAt: "2026-10-30T10:00:00.000Z" }), dir);
+        await closeQuestion(question({ toolCallId: "mid" }), "2026-10-30T10:05:00.000Z", dir);
 
         expect(openQuestions("claude", SESSION, dir).map((item) => item.toolCallId)).toEqual(["new", "old"]);
     });
 
-    test("an unreadable file reads as empty, a malformed row is dropped, and an unsafe session id is refused", () => {
+    test("an unreadable file reads as empty, a malformed row is dropped, and an unsafe session id is refused", async () => {
         const dir = root();
-        upsertQuestion(question(), dir);
+        await upsertQuestion(question(), dir);
         const path = dialogsPath("claude", SESSION, dir);
-        writeFileSync(path, SafeJSON.stringify([question({ toolCallId: "kept" }), { provider: "claude" }]));
+        const mixed = SafeJSON.stringify([question({ toolCallId: "kept" }), { provider: "claude" }]);
+        writeFileSync(path, mixed);
         expect(readSessionQuestions("claude", SESSION, dir).map((item) => item.toolCallId)).toEqual(["kept"]);
+        await expect(upsertQuestion(question(), dir)).rejects.toThrow("malformed dialog records");
+        expect(readFileSync(path, "utf8")).toBe(mixed);
 
         writeFileSync(path, "{ not json");
         expect(readSessionQuestions("claude", SESSION, dir)).toEqual([]);
+        await expect(upsertQuestion(question(), dir)).rejects.toThrow();
+        expect(readFileSync(path, "utf8")).toBe("{ not json");
         expect(() => dialogsPath("claude", "../escape", dir)).toThrow("a session id is");
     });
 });
@@ -131,7 +240,7 @@ describe("dialog guard", () => {
         expect(dialogFromSnapshot(null)).toBeNull();
     });
 
-    test("openDialogFor prefers an open hook record over the transcript, and reads the transcript without one", () => {
+    test("openDialogFor prefers an open hook record over the transcript, and reads the transcript without one", async () => {
         const dir = root();
         const transcript = join(dir, "session.jsonl");
         const at = Date.parse("2026-10-30T10:00:00.000Z");
@@ -164,13 +273,13 @@ describe("dialog guard", () => {
             signal: "turn-state",
         });
 
-        upsertQuestion(question({ kind: "permission", question: "Allow Bash?" }), dir);
+        await upsertQuestion(question({ kind: "permission", question: "Allow Bash?" }), dir);
         expect(openDialogFor({ ...query, transcriptPath: transcript })).toMatchObject({
             kind: "permission",
             signal: "hook",
         });
 
-        closeQuestion(question(), "2026-10-30T10:00:20.000Z", dir);
+        await closeQuestion(question(), "2026-10-30T10:00:20.000Z", dir);
         // Without a transcript only the records count, and they are all closed now.
         expect(openDialogFor(query)).toBeNull();
     });
@@ -198,9 +307,9 @@ describe("the hub-side dialog watcher", () => {
         lastEventAt: at,
     });
 
-    test("a question the transcript shows is recorded once, as the watcher's, and closed when it is answered", () => {
+    test("a question the transcript shows is recorded once, as the watcher's, and closed when it is answered", async () => {
         const dir = root();
-        const first = syncSessionDialogs(session, { now: at, root: dir, snapshot: waiting });
+        const first = await syncSessionDialogs(session, { now: at, root: dir, snapshot: waiting });
 
         expect(first.opened.map(openQuestionKey)).toEqual([`codex:${SESSION}:call_q1`]);
         expect(openQuestions("codex", SESSION, dir)[0]).toMatchObject({
@@ -209,37 +318,40 @@ describe("the hub-side dialog watcher", () => {
             options: ["main", "dev"],
             source: "watcher",
         });
-        expect(syncSessionDialogs(session, { now: at, root: dir, snapshot: waiting }).opened).toEqual([]);
+        expect((await syncSessionDialogs(session, { now: at, root: dir, snapshot: waiting })).opened).toEqual([]);
 
-        const answered = syncSessionDialogs(session, { now: at + 5_000, root: dir, snapshot: snapshot({}) });
+        const answered = await syncSessionDialogs(session, { now: at + 5_000, root: dir, snapshot: snapshot({}) });
         expect(answered.closed).toEqual([`codex:${SESSION}:call_q1`]);
         expect(openQuestions("codex", SESSION, dir)).toEqual([]);
     });
 
-    test("hook and watcher post the same question as one record, and the watcher never closes the hook's", () => {
+    test("hook and watcher post the same question as one record, and the watcher never closes the hook's", async () => {
         const dir = root();
-        upsertQuestion(question({ provider: "codex", toolCallId: "call_q1", source: "hook" }), dir);
-        upsertQuestion(
+        await upsertQuestion(question({ provider: "codex", toolCallId: "call_q1", source: "hook" }), dir);
+        await upsertQuestion(
             question({ provider: "codex", toolCallId: "permission:x", kind: "permission", source: "hook" }),
             dir
         );
 
-        expect(syncSessionDialogs(session, { now: at, root: dir, snapshot: waiting }).opened).toEqual([]);
+        expect((await syncSessionDialogs(session, { now: at, root: dir, snapshot: waiting })).opened).toEqual([]);
         expect(readSessionQuestions("codex", SESSION, dir)).toHaveLength(2);
-        expect(syncSessionDialogs(session, { now: at, root: dir, snapshot: snapshot({}) }).closed).toEqual([]);
+        expect((await syncSessionDialogs(session, { now: at, root: dir, snapshot: snapshot({}) })).closed).toEqual([]);
         expect(openQuestions("codex", SESSION, dir).map((open) => open.source)).toEqual(["hook", "hook"]);
     });
 
-    test("an unreadable transcript changes nothing, and a closed one waits on nobody", () => {
+    test("an unreadable transcript changes nothing, and a closed one waits on nobody", async () => {
         const dir = root();
-        syncSessionDialogs(session, { now: at, root: dir, snapshot: waiting });
+        await syncSessionDialogs(session, { now: at, root: dir, snapshot: waiting });
 
-        expect(syncSessionDialogs(session, { now: at, root: dir, snapshot: null })).toEqual({ opened: [], closed: [] });
+        expect(await syncSessionDialogs(session, { now: at, root: dir, snapshot: null })).toEqual({
+            opened: [],
+            closed: [],
+        });
         expect(openQuestions("codex", SESSION, dir)).toHaveLength(1);
         expect(questionFromSnapshot(session, { ...waiting, state: "FINISHED" }, at)).toBeNull();
     });
 
-    test("a live Grok permission prompt opens a record, an unchanged session is not read again, the answer closes it", () => {
+    test("a live Grok permission prompt opens a record, an unchanged session is not read again, the answer closes it", async () => {
         const dir = root();
         const folder = mkdtempSync(join(tmpdir(), "agents-dialogs-grok-"));
         const updates = join(folder, "updates.jsonl");
@@ -270,15 +382,15 @@ describe("the hub-side dialog watcher", () => {
         const grok = { provider: "grok" as const, sessionId: "grok-fixture-1", transcriptPath: updates };
         const watcher = new DialogWatcher();
 
-        expect(watcher.sync([grok], { now: at + 30_000, root: dir }).opened).toMatchObject([
+        expect((await watcher.sync([grok], { now: at + 30_000, root: dir })).opened).toMatchObject([
             { kind: "permission", toolCallId: "call-g1", question: "run_terminal_command: Push the branch" },
         ]);
         // Nothing changed on disk: the record stays, and nothing is read again.
         writeFileSync(join(dir, "grok", "grok-fixture-1.json"), "[]");
-        expect(watcher.sync([grok], { now: at + 31_000, root: dir })).toEqual({ opened: [], closed: [] });
+        expect(await watcher.sync([grok], { now: at + 31_000, root: dir })).toEqual({ opened: [], closed: [] });
         expect(readSessionQuestions("grok", "grok-fixture-1", dir)).toEqual([]);
 
-        upsertQuestion({ ...questionFromSnapshotFixture(), sessionId: "grok-fixture-1" }, dir);
+        await upsertQuestion({ ...questionFromSnapshotFixture(), sessionId: "grok-fixture-1" }, dir);
         appendFileSync(
             events,
             line({
@@ -291,7 +403,9 @@ describe("the hub-side dialog watcher", () => {
         );
         appendFileSync(updates, update(41, { sessionUpdate: "tool_call_update", status: "completed", ...call }));
 
-        expect(watcher.sync([grok], { now: at + 45_000, root: dir }).closed).toEqual(["grok:grok-fixture-1:call-g1"]);
+        expect((await watcher.sync([grok], { now: at + 45_000, root: dir })).closed).toEqual([
+            "grok:grok-fixture-1:call-g1",
+        ]);
     });
 });
 

@@ -385,6 +385,16 @@ final class WidgetDecisionSurfacesTests: XCTestCase {
         XCTAssertTrue(text.contains("You have 2 decisions staged"), text)
     }
 
+    func testUnfinishedWidthPreviewExpires() async throws {
+        let model = try model(preferences: ["showWidget": true])
+        let coordinator = WidgetCoordinator(binaryPath: "/fixture/tools", openHub: { _ in }, model: model)
+        defer { coordinator.stop() }
+        coordinator.showLivePreview(width: 400, done: false, fallbackSeconds: 0.15)
+        XCTAssertEqual(model.livePreviewWidth, 400)
+        try await Task.sleep(for: .seconds(0.3))
+        XCTAssertNil(model.livePreviewWidth)
+    }
+
     func testDecisionLinkSelectsTheDecisionInAnOpenPanel() throws {
         let model = try model(preferences: ["showWidget": true])
         let coordinator = WidgetCoordinator(binaryPath: "/fixture/tools", openHub: { _ in }, model: model)

@@ -311,7 +311,9 @@ export function registerInboxCommand(program: Command, deps: InboxCommandDeps = 
                     String(session.waiting),
                     truncateDisplay(
                         session.items
-                            .map((item) => (item.kind === "form" ? `form ${item.id}` : `DECISION ${item.number}`))
+                            .map((item) =>
+                                item.kind === "decision" ? `DECISION ${item.number}` : `${item.kind} ${item.id}`
+                            )
                             .join(", "),
                         40
                     ),

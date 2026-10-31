@@ -2,6 +2,7 @@ import { describe, expect, it } from "bun:test";
 import { appendFileSync, mkdtempSync, readFileSync, statSync, writeFileSync } from "node:fs";
 import { tmpdir } from "node:os";
 import { join } from "node:path";
+import { resolveHistoryProvider } from "@genesiscz/utils/agent-sessions/provider";
 import { compressBytes, SeekableZstdWriter } from "@genesiscz/utils/compress/zstd";
 import { SafeJSON } from "@genesiscz/utils/json";
 import { readHead, readTailAt } from "./native-scan";
@@ -15,6 +16,27 @@ import {
     toolSummaryOf,
 } from "./turn-state";
 
+describe("provider-owned dialog facts", () => {
+    it("lets every native reader describe its own dialog source", () => {
+        expect(resolveHistoryProvider("claude").reader.dialog.eventLogPath("/tmp/session.jsonl")).toBeNull();
+        expect(resolveHistoryProvider("codex").reader.dialog.eventLogPath("/tmp/session.jsonl")).toBeNull();
+        const grok = resolveHistoryProvider("grok").reader.dialog;
+        expect(grok.eventLogPath("/tmp/session/updates.jsonl")).toBe("/tmp/session/events.jsonl");
+        expect(grok.openPermission([{ type: "permission_requested", tool_name: "run", ts: "t" }])).toEqual({
+            tool: "run",
+            at: "t",
+        });
+        expect(
+            grok.openPermission([
+                { type: "permission_requested", tool_name: "run", ts: "t" },
+                { type: "permission_resolved", tool_name: "run" },
+            ])
+        ).toBeNull();
+    });
+});
+
+const permission = (records: Record<string, unknown>[]) =>
+    resolveHistoryProvider("grok").reader.dialog.openPermission(records);
 const T0 = Date.parse("2026-10-08T12:00:00.000Z");
 const iso = (offsetSec: number): string => new Date(T0 + offsetSec * 1000).toISOString();
 
@@ -652,7 +674,7 @@ describe("permission prompts and the question call", () => {
     ];
 
     it("Grok: an open permission request waits on the user, with the command and the call's id", () => {
-        const snap = grokTurnState({ ...input(updates, 60), eventLog: requested });
+        const snap = grokTurnState({ ...input(updates, 60), permission: permission(requested) });
 
         expect(snap.state).toBe("AWAITING-INPUT");
         expect(snap.asksQuestion).toBe(true);
@@ -671,7 +693,7 @@ describe("permission prompts and the question call", () => {
         ];
 
         for (const eventLog of [answered, [...requested, grokEvent(51_000, "turn_ended", { outcome: "cancelled" })]]) {
-            const snap = grokTurnState({ ...input(updates, 60), eventLog });
+            const snap = grokTurnState({ ...input(updates, 60), permission: permission(eventLog) });
             expect(snap.state).toBe("RUNNING");
             expect(snap.asksQuestion).toBe(false);
             expect(snap.questionCall).toBeUndefined();
@@ -679,17 +701,17 @@ describe("permission prompts and the question call", () => {
 
         expect(grokTurnState(input(updates, 60)).state).toBe("RUNNING");
         const ended = [...updates, grokLine(6, "turn_completed", { stop_reason: "end_turn" })];
-        expect(grokTurnState({ ...input(ended, 60), eventLog: requested }).asksQuestion).toBe(false);
+        expect(grokTurnState({ ...input(ended, 60), permission: permission(requested) }).asksQuestion).toBe(false);
     });
 
     it("Grok: a request whose call left the tail gets a time id only while it is newer than the transcript", () => {
         const noCall = [updates[0] ?? {}, grokLine(2, "agent_message_chunk", { content: { type: "text", text: "x" } })];
-        const fresh = grokTurnState({ ...input(noCall, 60), eventLog: requested });
+        const fresh = grokTurnState({ ...input(noCall, 60), permission: permission(requested) });
         expect(fresh.questionCall).toEqual({ kind: "permission", callId: `permission:${iso(4.084)}` });
         expect(fresh.question).toBe("run_terminal_command");
 
         const later = [...noCall, grokLine(9, "agent_message_chunk", { content: { type: "text", text: "y" } })];
-        expect(grokTurnState({ ...input(later, 60), eventLog: requested }).asksQuestion).toBe(false);
+        expect(grokTurnState({ ...input(later, 60), permission: permission(requested) }).asksQuestion).toBe(false);
     });
 
     it("Grok: a question tool wins over its own instant permission pair, with kind, id and options", () => {
@@ -699,7 +721,7 @@ describe("permission prompts and the question call", () => {
             _meta: { "x.ai/tool": { name: "ask_user_question", kind: "ask_user" } },
         });
         const eventLog = [grokEvent(3_000, "permission_requested", { tool_name: "ask_user_question" })];
-        const snap = grokTurnState({ ...input([updates[0] ?? {}, ask], 60), eventLog });
+        const snap = grokTurnState({ ...input([updates[0] ?? {}, ask], 60), permission: permission(eventLog) });
 
         expect(snap.question).toBe("Which one?");
         expect(snap.questionCall).toEqual({ kind: "decision", callId: "call-ask", options: ["A", "B"] });

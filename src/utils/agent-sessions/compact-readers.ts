@@ -8,6 +8,7 @@ import { createCodexHistoryOperations } from "./readers/codex";
 import { discoverCodexHistorySources } from "./readers/codex-discovery";
 import { readCodexStatistics } from "./readers/codex-statistics";
 import { createGrokHistoryOperations } from "./readers/grok";
+import { grokDialog } from "./readers/grok-dialog";
 import { discoverGrokHistorySources } from "./readers/grok-discovery";
 import { readGrokStatistics } from "./readers/grok-statistics";
 import type { AgentKind, NativeSessionReader } from "./types";
@@ -26,6 +27,8 @@ function createCompactHistoryReader<Kind extends AgentKind>(
 
 export const claudeHistoryReader = createCompactHistoryReader({
     kind: "claude",
+    // Claude permission prompts are delivered through hooks, not a transcript event log.
+    dialog: { eventLogPath: () => null, openPermission: () => null },
     roots: () => nativeSessionRoots("claude"),
     discover: discoverClaudeHistorySources,
     // One JSONL row per record, and a record's text reads only that row (a tool result's name,
@@ -37,6 +40,8 @@ export const claudeHistoryReader = createCompactHistoryReader({
 
 export const codexHistoryReader = createCompactHistoryReader({
     kind: "codex",
+    // Codex rollouts do not persist the app-server's live permission prompts.
+    dialog: { eventLogPath: () => null, openPermission: () => null },
     roots: () => nativeSessionRootsWithLegacyHomes("codex"),
     discover: discoverCodexHistorySources,
     searchMetadata: true,
@@ -49,6 +54,7 @@ export const codexHistoryReader = createCompactHistoryReader({
 
 export const grokHistoryReader = createCompactHistoryReader({
     kind: "grok",
+    dialog: grokDialog,
     roots: () => nativeSessionRoots("grok"),
     discover: discoverGrokHistorySources,
     searchMetadata: true,

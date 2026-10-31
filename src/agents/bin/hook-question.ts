@@ -39,7 +39,7 @@ try {
     const action = questionHookAction(payload, now);
 
     if (action) {
-        const result = applyQuestionHookAction(payload, action, { now });
+        const result = await applyQuestionHookAction(payload, action, { now });
 
         if (result.recorded || result.closed.length > 0) {
             logDecision(

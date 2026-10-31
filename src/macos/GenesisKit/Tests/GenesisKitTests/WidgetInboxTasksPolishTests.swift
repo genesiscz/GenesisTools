@@ -1322,6 +1322,22 @@ final class WidgetStagingTests: XCTestCase {
         wait(for: [expired], timeout: 3)
     }
 
+    func testUnrelatedLiveNotesDoNotExtendEarlierPreference() async throws {
+        let model = StagingFixture.model()
+        defer { model.stop() }
+        model.receive([try snapshot(draftOption: nil)])
+        let savedPosition = model.snapshot?.state.preferences.sidePosition
+        model.livePreferenceWindow = 0.3
+        model.showLivePreferences(["sidePosition": .number(0.3)])
+        try await Task.sleep(for: .seconds(0.2))
+        model.showLivePreferences(["previewWidth": .number(400)])
+        try await Task.sleep(for: .seconds(0.25))
+        XCTAssertEqual(model.snapshot?.state.preferences.sidePosition, savedPosition)
+        XCTAssertEqual(model.agentsPreviewWidth, 400)
+        try await Task.sleep(for: .seconds(0.25))
+        XCTAssertEqual(model.agentsPreviewWidth, WidgetModel.defaultPreviewWidth)
+    }
+
     /// A slider posts up to 60 notes a second. The widget applies the first at once, merges the rest, applies the last
     /// one after the interval, and publishes nothing for a value it already shows.
     func testABurstOfLiveNotesIsAppliedFirstAndLastOnly() throws {

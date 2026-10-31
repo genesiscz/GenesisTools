@@ -3,11 +3,14 @@ import { existsSync, mkdtempSync, writeFileSync } from "node:fs";
 import { tmpdir } from "node:os";
 import { join } from "node:path";
 import type { AgentSessionRow } from "@app/ai/lib/sessions/agent-session-rows";
+import { QaDialogItem } from "@app/dev-dashboard/ui/src/components/QaDialogItem";
 import type { OpenQuestion } from "@genesiscz/utils/agents/dialogs/types";
 import type { TranscriptTurn } from "@genesiscz/utils/ai/transcripts/types";
 import { SafeJSON } from "@genesiscz/utils/json";
 import { answerGitWithoutSpawning } from "@genesiscz/utils/test/no-git";
 import { Command } from "commander";
+import { createElement } from "react";
+import { renderToStaticMarkup } from "react-dom/server";
 import { type InboxCommandDeps, registerInboxCommand } from "../../commands/inbox";
 import { paneMiss } from "../decisions/deliver";
 import { livePaneTargets } from "../decisions/deliver.fixtures";
@@ -25,7 +28,7 @@ import { type AskDeps, getAskForm, postAskForm } from "../pending/ask";
 import type { AskForm } from "../pending/types";
 import { answerInboxDecision, answerInboxDecisions, answerInboxForm } from "./answer";
 import { buildInbox, type InboxSessionInfo, inboxDelivery, scanTurns, sessionDecisions } from "./build";
-import { DIALOG_WATCH_WINDOW_MS, unnotified, watchedSessions } from "./dialogs";
+import { DIALOG_WATCH_WINDOW_MS, notifiedAfterDelivery, unnotified, watchedSessions } from "./dialogs";
 import { locateRef } from "./excerpts";
 import {
     type InboxDeps,
@@ -1309,14 +1312,23 @@ describe("structural questions in the inbox", () => {
 
         expect(inbox).toHaveLength(1);
         expect(inbox[0]?.waiting).toBe(2);
-        expect(inbox[0]?.items.map((item) => [item.id, item.kind === "decision" ? item.source : null])).toEqual([
+        expect(inbox[0]?.items.map((item) => [item.id, item.kind])).toEqual([
             [`claude:${SESSION.sessionId}:toolu_ask_9`, "dialog"],
             [`claude:${SESSION.sessionId}:permission:2026-03-01T10:04:30.000Z`, "dialog"],
         ]);
         const [first] = inbox[0]?.items ?? [];
         expect(
-            first?.kind === "decision" ? [first.title, first.prompt, first.choices.map((c) => c.label)] : null
+            first?.kind === "dialog" ? [first.title, first.prompt, first.choices.map((c) => c.label)] : null
         ).toEqual(["Question", "Which parser?", ["peg", "hand-written"]]);
+        if (first?.kind !== "dialog") {
+            throw new Error("expected a dialog item");
+        }
+        expect("number" in first).toBe(false);
+        const html = renderToStaticMarkup(createElement(QaDialogItem, { item: first }));
+        expect(html).toContain("Which parser?");
+        expect(html).toContain("open the session and answer");
+        expect(html).not.toContain("<button");
+        expect(html).not.toContain("<textarea");
     });
 
     test("loadInbox lists what InboxDeps.dialogs returns beside the transcript decisions", async () => {
@@ -1340,6 +1352,15 @@ describe("structural questions in the inbox", () => {
             `claude:${SESSION.sessionId}:toolu_ask_9`,
         ]);
         expect(result.sessions[0]?.waiting).toBe(2);
+    });
+
+    test("a failed banner delivery remains eligible for retry", async () => {
+        const previouslyNotified = new Set<string>();
+        const failed = await notifiedAfterDelivery([asked], previouslyNotified, async () => false);
+        expect(failed).toEqual([]);
+        expect(unnotified([asked], new Set(failed))).toEqual([asked]);
+        const delivered = await notifiedAfterDelivery([asked], previouslyNotified, async () => true);
+        expect(unnotified([asked], new Set(delivered))).toEqual([]);
     });
 
     test("the watcher reads only recent sessions of a harness that has the feature on, and each banner goes out once", () => {

@@ -322,12 +322,22 @@ export interface BackwardRead {
     lastAssistantOffset?: number;
 }
 
+export interface NativeDialogPermission {
+    tool: string;
+    at: string;
+}
+
 /**
  * One coding agent's native sessions (Claude, Codex, Grok). Every fact a feature reads from a transcript is a member
  * here, implemented by each provider from its own format, so a feature never parses a transcript itself
  * (`.claude/rules/agent-transcripts.md`). A required member makes a new provider name what it cannot answer.
  */
 export interface NativeSessionReader<Kind extends string = AgentKind> {
+    /** The auxiliary dialog log for this harness, and its normalized pending permission. */
+    readonly dialog: {
+        eventLogPath(transcriptPath: string): string | null;
+        openPermission(records: readonly Record<string, unknown>[]): NativeDialogPermission | null;
+    };
     /**
      * The newest entries of a session, read from the end of its source back to the first entry `options.until`
      * accepts: the conversation after a known point (a decision's ask) without reading the whole file.

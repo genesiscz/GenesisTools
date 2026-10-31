@@ -58,10 +58,10 @@ export function questionFromSnapshot(
  * the watcher's records of one question the same record, and the hook closes its own. An unreadable transcript
  * changes nothing.
  */
-export function syncSessionDialogs(
+export async function syncSessionDialogs(
     session: WatchedSession,
     { now = Date.now(), root, snapshot }: { now?: number; root?: string; snapshot?: TurnSnapshot | null } = {}
-): WatchResult {
+): Promise<WatchResult> {
     const state =
         snapshot === undefined
             ? readTurnState(session.provider, session.transcriptPath, { now, stallTimeoutMs: WATCH_STALL_TIMEOUT_MS })
@@ -77,7 +77,7 @@ export function syncSessionDialogs(
     const closed: string[] = [];
 
     if (waiting && !records.some((record) => openQuestionKey(record) === openQuestionKey(waiting))) {
-        upsertQuestion(waiting, root);
+        await upsertQuestion(waiting, root);
         opened.push(waiting);
     }
 
@@ -86,7 +86,7 @@ export function syncSessionDialogs(
             continue;
         }
 
-        const done = closeQuestion(record, new Date(now).toISOString(), root);
+        const done = await closeQuestion(record, new Date(now).toISOString(), root, "watcher");
 
         if (done) {
             closed.push(openQuestionKey(done));
@@ -109,9 +109,22 @@ export function syncSessionDialogs(
  */
 export class DialogWatcher {
     private readonly seen = new Map<string, string>();
+    private pending: Promise<void> = Promise.resolve();
 
     /** One pass over the sessions; an unchanged session costs one `stat` per source file. */
-    sync(sessions: readonly WatchedSession[], options: { now?: number; root?: string } = {}): WatchResult {
+    sync(sessions: readonly WatchedSession[], options: { now?: number; root?: string } = {}): Promise<WatchResult> {
+        const pass = this.pending.then(() => this.syncNow(sessions, options));
+        this.pending = pass.then(
+            () => undefined,
+            () => undefined
+        );
+        return pass;
+    }
+
+    private async syncNow(
+        sessions: readonly WatchedSession[],
+        options: { now?: number; root?: string }
+    ): Promise<WatchResult> {
         const result: WatchResult = { opened: [], closed: [] };
 
         for (const session of sessions) {
@@ -123,7 +136,7 @@ export class DialogWatcher {
             }
 
             try {
-                const pass = syncSessionDialogs(session, options);
+                const pass = await syncSessionDialogs(session, options);
                 result.opened.push(...pass.opened);
                 result.closed.push(...pass.closed);
                 this.seen.set(key, stamp);

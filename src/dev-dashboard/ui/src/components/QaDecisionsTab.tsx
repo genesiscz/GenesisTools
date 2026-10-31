@@ -1,7 +1,7 @@
 import { deliveryLabel } from "@app/dev-dashboard/lib/qa-decision-delivery";
 import { renderQaQuestionHtml } from "@app/dev-dashboard/lib/qa-render";
 import type { InboxAnswerResult } from "@app/question/lib/inbox/answer";
-import type { InboxDecision, InboxSession } from "@app/question/lib/inbox/build";
+import type { InboxDecision, InboxDialog, InboxSession } from "@app/question/lib/inbox/build";
 import { toolCommand } from "@genesiscz/utils/cli/tool-command";
 import { useMutation, useQuery, useQueryClient } from "@tanstack/react-query";
 import { Button } from "@ui/components/button";
@@ -9,6 +9,7 @@ import { Textarea } from "@ui/components/textarea";
 import { useMemo, useState } from "react";
 import { truncateMiddle } from "@/components/handoff/handoff-format";
 import { QaClockProvider } from "@/components/QaClockProvider";
+import { QaDialogItem } from "@/components/QaDialogItem";
 import { QaRecencyTime } from "@/components/QaRecencyTime";
 import { QaSessionActions } from "@/components/QaSessionActions";
 import { qaDecisionsApi } from "@/lib/api";
@@ -25,12 +26,22 @@ function isWaiting(item: InboxDecision): boolean {
 }
 
 function decisionsOf(session: InboxSession): InboxDecision[] {
-    return session.items.filter((item): item is InboxDecision => item.kind === "decision");
+    return session.items.filter((item): item is InboxDecision => item.kind === "decision" && item.source !== "dialog");
 }
 
-/** Decisions the session still waits on, across the inbox: the tab's badge. */
+function dialogsOf(session: InboxSession): Array<InboxDialog | InboxDecision> {
+    return session.items.filter(
+        (item): item is InboxDialog | InboxDecision =>
+            item.kind === "dialog" || (item.kind === "decision" && item.source === "dialog")
+    );
+}
+
+/** Decisions and dialogs the session still waits on, across the inbox: the tab's badge. */
 export function waitingDecisionCount(sessions: readonly InboxSession[]): number {
-    return sessions.reduce((sum, session) => sum + decisionsOf(session).filter(isWaiting).length, 0);
+    return sessions.reduce(
+        (sum, session) => sum + decisionsOf(session).filter(isWaiting).length + dialogsOf(session).length,
+        0
+    );
 }
 
 /** The drafted answers of one session in the batch shape `answerInboxDecisions` takes. */
@@ -282,7 +293,8 @@ function DecisionSessionCard({ session, onSent }: { session: InboxSession; onSen
     });
     const items = showAll && history.data ? history.data.decisions : decisionsOf(session);
     const queued = items.filter((item) => item.status === "answered").length;
-    const forms = session.items.length - decisionsOf(session).length;
+    const dialogs = dialogsOf(session);
+    const forms = session.items.filter((item) => item.kind === "form").length;
     const error = send.error ?? resend.error ?? history.error;
 
     return (
@@ -315,6 +327,9 @@ function DecisionSessionCard({ session, onSent }: { session: InboxSession; onSen
                 ) : null}
             </div>
 
+            {dialogs.map((item) => (
+                <QaDialogItem key={item.id} item={item} />
+            ))}
             {items.map((item) => (
                 <DecisionItem
                     key={item.id}
@@ -380,7 +395,8 @@ export function useDecisionInbox() {
         queryKey: INBOX_QUERY_KEY,
         queryFn: qaDecisionsApi.inbox,
         refetchInterval: INBOX_REFRESH_MS,
-        select: (data) => data.sessions.filter((session) => decisionsOf(session).length > 0),
+        select: (data) =>
+            data.sessions.filter((session) => decisionsOf(session).length > 0 || dialogsOf(session).length > 0),
     });
 }
 

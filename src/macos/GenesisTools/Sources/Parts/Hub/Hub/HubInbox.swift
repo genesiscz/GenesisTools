@@ -163,6 +163,8 @@ struct InboxItem: Decodable, Identifiable, Hashable {
     var answeredVia: String? = nil
 
     var isForm: Bool { kind == "form" }
+    var isDialog: Bool { kind == "dialog" || source == "dialog" }
+    var isDecision: Bool { kind == "decision" && !isDialog }
     var isOpen: Bool { status == "waiting" || status == "drafted" }
     /// The recorded answer's own words, when they say more than the picked options do. Nil when the answer only repeats
     /// a picked option ("b", "b) Keep it", "Keep it"), so a closed card never prints the same option twice (F7).
@@ -272,7 +274,7 @@ struct InboxSession: Decodable, Identifiable, Hashable {
     var date: Date? { HubFormat.date(lastAt) }
     /// Decisions with an unsent pick or note, ready for the session's Send.
     var draftedItems: [InboxItem] {
-        items.filter { $0.kind == "decision" && $0.isOpen && ($0.draftOption?.isEmpty == false || $0.draft?.trimmed.isEmpty == false) }
+        items.filter { $0.isDecision && $0.isOpen && ($0.draftOption?.isEmpty == false || $0.draft?.trimmed.isEmpty == false) }
     }
     var searchText: String {
         ([displayTitle, projectName, branch ?? "", account ?? "", sessionId ?? "", reply?.ask ?? ""]
@@ -661,7 +663,7 @@ final class HubInboxModel: ObservableObject {
 
     /// The card the number keys act on: the one named, else the first open decision of the selected session.
     func keyCard(in rows: [InboxSession]) -> (session: InboxSession, item: InboxItem)? {
-        let open = rows.flatMap { session in session.items.filter { !$0.isForm && $0.isOpen }.map { (session, $0) } }
+        let open = rows.flatMap { session in session.items.filter { $0.isDecision && $0.isOpen }.map { (session, $0) } }
         if let id = keyCardID, let hit = open.first(where: { $0.1.id == id }) { return hit }
         if let selected = selectedID, let hit = open.first(where: { $0.0.id == selected }) { return hit }
         return nil
@@ -670,7 +672,7 @@ final class HubInboxModel: ObservableObject {
     /// Up and Down in the main list: the key card moves to the open decision above or below, across sessions.
     @discardableResult
     func moveKeyCard(_ step: Int, in rows: [InboxSession]) -> String? {
-        let ids = rows.flatMap { $0.items.filter { !$0.isForm && $0.isOpen }.map(\.id) }
+        let ids = rows.flatMap { $0.items.filter { $0.isDecision && $0.isOpen }.map(\.id) }
         guard !ids.isEmpty else { return nil }
         let current = keyCard(in: rows)?.item.id
         let index = current.flatMap { ids.firstIndex(of: $0) }
@@ -1706,6 +1708,8 @@ struct InboxMain: View {
             Group {
                 if item.isForm {
                     InboxFormCard(inbox: inbox, item: item)
+                } else if item.isDialog {
+                    InboxDialogCard(model: model, inbox: inbox, session: session, item: item)
                 } else {
                     InboxDecisionCard(model: model, inbox: inbox, session: session, item: item,
                                       keyed: keysFocused && inbox.keyCardID == item.id,
@@ -1915,6 +1919,28 @@ private struct InboxSessionHeader: View {
         }
     }
 
+}
+
+private struct InboxDialogCard: View {
+    @ObservedObject var model: HubModel
+    @ObservedObject var inbox: HubInboxModel
+    let session: InboxSession
+    let item: InboxItem
+
+    var body: some View {
+        VStack(alignment: .leading, spacing: 8) {
+            Text(item.title ?? "Question").font(.headline)
+            Text(item.prompt ?? "")
+            ForEach(item.choices ?? [], id: \.id) { choice in
+                Text(choice.label).foregroundColor(ReviewPalette.dim)
+            }
+            Button("Open session to answer") {
+                inbox.focusPane(session) { model.post($0, $1) }
+            }
+            .buttonStyle(.genHoverPlain())
+            .disabled(session.sessionId == nil)
+        }
+    }
 }
 
 /// One session's Send: "Send N answers to <session>", the exact message under it, then where it went

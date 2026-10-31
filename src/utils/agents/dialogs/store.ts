@@ -2,6 +2,7 @@ import { existsSync, mkdirSync, readFileSync, renameSync, writeFileSync } from "
 import { dirname, join } from "node:path";
 import { SafeJSON } from "@genesiscz/utils/json";
 import { logger } from "@genesiscz/utils/logger";
+import { withFileLock } from "@genesiscz/utils/storage/file-lock";
 import { genesisToolsDir } from "@genesiscz/utils/storage/root";
 import { type DialogProvider, type OpenQuestion, openQuestionKey } from "./types";
 
@@ -40,6 +41,18 @@ export function readSessionQuestions(provider: DialogProvider, sessionId: string
     }
 }
 
+function readQuestionsForUpdate(provider: DialogProvider, sessionId: string, root?: string): OpenQuestion[] {
+    const path = dialogsPath(provider, sessionId, root);
+    if (!existsSync(path)) {
+        return [];
+    }
+    const parsed: unknown = SafeJSON.parse(readFileSync(path, "utf8"), { strict: true });
+    if (!Array.isArray(parsed) || !parsed.every(isOpenQuestion)) {
+        throw new Error(`Cannot update malformed dialog records at ${path}`);
+    }
+    return parsed;
+}
+
 /** The questions of a session that nobody answered yet, newest first. */
 export function openQuestions(provider: DialogProvider, sessionId: string, root?: string): OpenQuestion[] {
     return readSessionQuestions(provider, sessionId, root)
@@ -48,38 +61,47 @@ export function openQuestions(provider: DialogProvider, sessionId: string, root?
 }
 
 /** Record a question. The same key again updates the record in place, so a hook and a watcher never double-post. */
-export function upsertQuestion(question: OpenQuestion, root?: string): OpenQuestion[] {
-    const key = openQuestionKey(question);
-    const current = readSessionQuestions(question.provider, question.sessionId, root);
-    const next = current.filter((item) => openQuestionKey(item) !== key);
-    const previous = current.find((item) => openQuestionKey(item) === key);
-    next.push(previous ? { ...previous, ...question, closedAt: question.closedAt ?? previous.closedAt } : question);
-    writeSessionQuestions(question.provider, question.sessionId, next, root);
-    return next;
+export async function upsertQuestion(question: OpenQuestion, root?: string): Promise<OpenQuestion[]> {
+    return withFileLock(`${dialogsPath(question.provider, question.sessionId, root)}.lock`, async () => {
+        const key = openQuestionKey(question);
+        const current = readQuestionsForUpdate(question.provider, question.sessionId, root);
+        const next = current.filter((item) => openQuestionKey(item) !== key);
+        const previous = current.find((item) => openQuestionKey(item) === key);
+        if (previous?.source === "hook" && question.source === "watcher") {
+            return current;
+        }
+
+        next.push(previous ? { ...previous, ...question, closedAt: question.closedAt ?? previous.closedAt } : question);
+        writeSessionQuestions(question.provider, question.sessionId, next, root);
+        return next;
+    });
 }
 
 /** Mark a question answered or withdrawn. Unknown keys are ignored: the close may arrive before the hook that asked. */
-export function closeQuestion(
+export async function closeQuestion(
     target: Pick<OpenQuestion, "provider" | "sessionId" | "toolCallId">,
     closedAt: string = new Date().toISOString(),
-    root?: string
-): OpenQuestion | null {
-    const key = openQuestionKey(target);
-    const current = readSessionQuestions(target.provider, target.sessionId, root);
-    const found = current.find((item) => openQuestionKey(item) === key);
+    root?: string,
+    source?: OpenQuestion["source"]
+): Promise<OpenQuestion | null> {
+    return withFileLock(`${dialogsPath(target.provider, target.sessionId, root)}.lock`, async () => {
+        const key = openQuestionKey(target);
+        const current = readQuestionsForUpdate(target.provider, target.sessionId, root);
+        const found = current.find((item) => openQuestionKey(item) === key);
 
-    if (!found) {
-        return null;
-    }
+        if (!found || (source !== undefined && found.source !== source)) {
+            return null;
+        }
 
-    const closed = { ...found, closedAt };
-    writeSessionQuestions(
-        target.provider,
-        target.sessionId,
-        current.map((item) => (openQuestionKey(item) === key ? closed : item)),
-        root
-    );
-    return closed;
+        const closed = { ...found, closedAt };
+        writeSessionQuestions(
+            target.provider,
+            target.sessionId,
+            current.map((item) => (openQuestionKey(item) === key ? closed : item)),
+            root
+        );
+        return closed;
+    });
 }
 
 function writeSessionQuestions(

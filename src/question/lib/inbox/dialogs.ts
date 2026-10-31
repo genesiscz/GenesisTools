@@ -35,7 +35,7 @@ export function watchedSessions(
  * The hub-side watcher's pass, then every open dialog record of the listed sessions. The records come from the
  * harness hooks and from this watcher alike, keyed `provider:sessionId:toolCallId`, so one question is one item.
  */
-export function listedDialogs({
+export async function listedDialogs({
     rows,
     questions,
     now = Date.now(),
@@ -45,8 +45,8 @@ export function listedDialogs({
     questions: QuestionsConfig;
     now?: number;
     root?: string;
-}): OpenQuestion[] {
-    watcher.sync(watchedSessions(rows, questions, now), { now, root });
+}): Promise<OpenQuestion[]> {
+    await watcher.sync(watchedSessions(rows, questions, now), { now, root });
 
     return rows.flatMap((row) => {
         try {
@@ -61,6 +61,16 @@ export function listedDialogs({
 /** The open questions whose key is not in `notified`: each raises one banner, once. */
 export function unnotified(open: readonly OpenQuestion[], notified: ReadonlySet<string>): OpenQuestion[] {
     return open.filter((question) => !notified.has(openQuestionKey(question)));
+}
+
+export async function notifiedAfterDelivery(
+    open: readonly OpenQuestion[],
+    notified: ReadonlySet<string>,
+    deliver: (fresh: readonly OpenQuestion[]) => Promise<boolean>
+): Promise<string[]> {
+    const fresh = unnotified(open, notified);
+    const delivered = fresh.length > 0 && (await deliver(fresh));
+    return open.map(openQuestionKey).filter((key) => notified.has(key) || delivered);
 }
 
 function clip(text: string): string {
@@ -100,7 +110,7 @@ export async function notifyOpenQuestions(
     const row = rows.find((candidate) => candidate.sessionId === first.sessionId);
 
     try {
-        await dispatchNotification({
+        const delivered = await dispatchNotification({
             app: "question",
             title:
                 questions.length === 1
@@ -112,8 +122,10 @@ export async function notifyOpenQuestions(
             execute: click,
             actions: [{ id: "open-hub", title: "Open in hub", execute: click }],
         });
-        log.info({ ids: questions.map(openQuestionKey) }, "question banner sent");
-        return true;
+        if (delivered) {
+            log.info({ ids: questions.map(openQuestionKey) }, "question banner sent");
+        }
+        return delivered;
     } catch (err) {
         log.warn({ err, id }, "could not notify about open questions");
         return false;

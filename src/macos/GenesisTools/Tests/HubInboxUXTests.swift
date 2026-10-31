@@ -154,6 +154,19 @@ final class HubInboxUXTests: XCTestCase {
         XCTAssertEqual(InboxMain.numberRow[25], 9)
     }
 
+    @MainActor
+    func testDialogsNeverReceiveDecisionKeyboardActions() throws {
+        let inbox = HubInboxModel()
+        let dialog = try Self.decision(#"{"id":"dialog-1","kind":"dialog","source":"dialog"}"#)
+        let legacy = try Self.decision(#"{"id":"dialog-2","kind":"decision","source":"dialog"}"#)
+        let decision = try Self.decision(#"{"id":"d_1_s1"}"#)
+        let session = Self.session("s1", items: [dialog, legacy, decision])
+        XCTAssertTrue(dialog.isDialog)
+        XCTAssertTrue(legacy.isDialog)
+        XCTAssertEqual(inbox.keyCard(in: [session])?.item.id, decision.id)
+        XCTAssertEqual(inbox.moveKeyCard(1, in: [session]), decision.id)
+    }
+
     /// F8: Up and Down walk the open decisions across sessions and stop at the ends; the selected session's first open
     /// decision is the key card until one is picked.
     @MainActor

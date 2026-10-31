@@ -541,7 +541,7 @@ public final class WidgetCoordinator: NSObject, NSWindowDelegate {
 
     /// The hover list opens at the slider's width while it moves, laid out again in place (no new panel, so nothing
     /// blinks), and closes 2 s after the slider is let go, once the saved width has arrived.
-    private func showLivePreview(width: CGFloat?, done: Bool) {
+    func showLivePreview(width: CGFloat?, done: Bool, fallbackSeconds: TimeInterval = WidgetModel.livePreferenceSeconds) {
         guard let width else { return }
         liveSettingsEnd?.cancel()
         model.livePreviewWidth = WidgetModel.clampedPreviewWidth(width)
@@ -552,9 +552,8 @@ public final class WidgetCoordinator: NSObject, NSWindowDelegate {
             model.hoveredSurface = surface
             sync()
         }
-        guard done else { return }
         liveSettingsEnd = Task { @MainActor [weak self] in
-            do { try await Task.sleep(for: .seconds(2)) } catch { return }
+            do { try await Task.sleep(for: .seconds(done ? 2 : fallbackSeconds)) } catch { return }
             guard let self else { return }
             self.model.livePreviewWidth = nil
             self.model.endLivePreview()

@@ -136,7 +136,18 @@ export interface InboxForm {
     at: string;
 }
 
-export type InboxItem = InboxDecision | InboxForm;
+export interface InboxDialog {
+    kind: "dialog";
+    id: string;
+    title: string;
+    prompt: string;
+    choices: InboxChoice[];
+    status: "waiting";
+    source: "dialog";
+    at: string;
+}
+
+export type InboxItem = InboxDecision | InboxForm | InboxDialog;
 
 /** A delivery as the inbox shows it: the stored record, plus the raw dump an old row kept, behind `raw`. */
 export type InboxDeliveryView = DecisionDelivery & { raw?: string };
@@ -431,36 +442,19 @@ const DIALOG_TITLES: Record<OpenQuestion["kind"], string> = {
 };
 
 /**
- * An open dialog record as an inbox decision, under the record's own key, so the hub, the widget and the answer guard
- * name one item. It has no decision number: the agent asked through its harness, not with `❓ DECISION N`.
+ * An open dialog record as a non-answerable inbox item under its own key. The agent asked through its harness,
+ * not with a numbered decision; the session itself handles the answer.
  */
-export function fromDialog(question: OpenQuestion): InboxDecision {
+export function fromDialog(question: OpenQuestion): InboxDialog {
     return {
-        kind: "decision",
+        kind: "dialog",
         id: openQuestionKey(question),
-        number: 0,
         title: DIALOG_TITLES[question.kind],
         prompt: question.question || DIALOG_TITLES[question.kind],
         choices: choicesOf(question.options ?? [], undefined, null),
-        recommended: null,
-        blocking: true,
         status: "waiting",
-        option: null,
-        answer: null,
-        answeredVia: null,
         source: "dialog",
         at: question.askedAt,
-        context: null,
-        notes: null,
-        proposal: null,
-        reasoning: null,
-        confidence: null,
-        excerpt: null,
-        refs: [],
-        draftOption: null,
-        draft: null,
-        delivery: null,
-        revision: 1,
     };
 }
 

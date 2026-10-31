@@ -2447,13 +2447,18 @@ public final class WidgetModel: ObservableObject {
                 self?.applyLivePreferences()
             }
         }
-        // A write that never arrives (it failed, or nothing was written) must not hold the value: the stored one
-        // shows again when the window ends, with no snapshot needed.
-        liveExpiry?.cancel()
+        scheduleLiveExpiry()
+    }
+
+    private func scheduleLiveExpiry() {
+        guard liveExpiry == nil, let earliest = livePreferences.first?.at else { return }
+        let delay = max(0, earliest.addingTimeInterval(livePreferenceWindow).timeIntervalSinceNow) + 0.1
         liveExpiry = Task { [weak self] in
-            guard let window = self?.livePreferenceWindow else { return }
-            do { try await Task.sleep(for: .seconds(window + 0.1)) } catch { return }
-            self?.dropExpiredLivePreferences()
+            do { try await Task.sleep(for: .seconds(delay)) } catch { return }
+            guard let self else { return }
+            self.liveExpiry = nil
+            self.dropExpiredLivePreferences()
+            self.scheduleLiveExpiry()
         }
     }
 

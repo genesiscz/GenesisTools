@@ -101,11 +101,11 @@ export interface QuestionHookResult {
 }
 
 /** Applies the action to the session's dialog records; `root` is the records root, for tests. */
-export function applyQuestionHookAction(
+export async function applyQuestionHookAction(
     payload: HookPayload,
     action: QuestionHookAction,
     { now, root }: { now: string; root?: string }
-): QuestionHookResult {
+): Promise<QuestionHookResult> {
     const sessionId = payload.sessionId;
 
     if (!sessionId) {
@@ -113,7 +113,7 @@ export function applyQuestionHookAction(
     }
 
     if (action.ask) {
-        upsertQuestion(action.ask, root);
+        await upsertQuestion(action.ask, root);
     }
 
     // Only open records close: an answered one keeps the time it was answered at.
@@ -128,7 +128,7 @@ export function applyQuestionHookAction(
     const closed: string[] = [];
 
     for (const toolCallId of closing) {
-        const done = closeQuestion({ provider: payload.harness, sessionId, toolCallId }, now, root);
+        const done = await closeQuestion({ provider: payload.harness, sessionId, toolCallId }, now, root);
 
         if (done) {
             closed.push(openQuestionKey(done));

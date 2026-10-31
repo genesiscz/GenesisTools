@@ -3488,7 +3488,7 @@ describe("the questions feature", () => {
         expect(gone.hooks?.Notification).toEqual([{ hooks: [{ type: "command", command: "/theirs.sh" }] }]);
     });
 
-    it("records AskUserQuestion with its options, and its PostToolUse answers it", () => {
+    it("records AskUserQuestion with its options, and its PostToolUse answers it", async () => {
         const root = mkdtempSync(join(tmpdir(), "gt-dialogs-"));
         const now = "2026-10-30T19:00:00.000Z";
         const ask = claudePayload({
@@ -3509,11 +3509,11 @@ describe("the questions feature", () => {
             askedAt: now,
             source: "hook",
         });
-        expect(applyQuestionHookAction(ask, action ?? { closes: "none" }, { now, root }).recorded).toBe(
+        expect((await applyQuestionHookAction(ask, action ?? { closes: "none" }, { now, root })).recorded).toBe(
             "claude:s-questions-1:toolu_q1"
         );
         // The same question again (a retried hook) stays one record.
-        applyQuestionHookAction(ask, action ?? { closes: "none" }, { now, root });
+        await applyQuestionHookAction(ask, action ?? { closes: "none" }, { now, root });
         expect(readSessionQuestions("claude", "s-questions-1", root)).toHaveLength(1);
 
         const answered = claudePayload({
@@ -3521,16 +3521,20 @@ describe("the questions feature", () => {
             tool_name: "AskUserQuestion",
             tool_use_id: "toolu_q1",
         });
-        const result = applyQuestionHookAction(answered, questionHookAction(answered, now) ?? { closes: "none" }, {
-            now,
-            root,
-        });
+        const result = await applyQuestionHookAction(
+            answered,
+            questionHookAction(answered, now) ?? { closes: "none" },
+            {
+                now,
+                root,
+            }
+        );
 
         expect(result.closed).toEqual(["claude:s-questions-1:toolu_q1"]);
         expect(openQuestions("claude", "s-questions-1", root)).toEqual([]);
     });
 
-    it("records ExitPlanMode as a plan and a permission notification as a permission, closed by the next tool", () => {
+    it("records ExitPlanMode as a plan and a permission notification as a permission, closed by the next tool", async () => {
         const root = mkdtempSync(join(tmpdir(), "gt-dialogs-"));
         const plan = claudePayload({
             hook_event_name: "PreToolUse",
@@ -3557,22 +3561,22 @@ describe("the questions feature", () => {
             questionHookAction(claudePayload({ hook_event_name: "Notification", notification_type: "idle_prompt" }), at)
         ).toBeNull();
 
-        applyQuestionHookAction(plan, questionHookAction(plan, at) ?? { closes: "none" }, { now: at, root });
-        applyQuestionHookAction(prompt, asked ?? { closes: "none" }, { now: at, root });
+        await applyQuestionHookAction(plan, questionHookAction(plan, at) ?? { closes: "none" }, { now: at, root });
+        await applyQuestionHookAction(prompt, asked ?? { closes: "none" }, { now: at, root });
         expect(openQuestions("claude", "s-questions-1", root)).toHaveLength(2);
 
         // Any tool's PostToolUse closes the permission prompt, but not the plan still waiting.
         const bash = claudePayload({ hook_event_name: "PostToolUse", tool_name: "Bash", tool_use_id: "toolu_b1" });
-        applyQuestionHookAction(bash, questionHookAction(bash, at) ?? { closes: "none" }, { now: at, root });
+        await applyQuestionHookAction(bash, questionHookAction(bash, at) ?? { closes: "none" }, { now: at, root });
         expect(openQuestions("claude", "s-questions-1", root).map((open) => open.kind)).toEqual(["plan"]);
 
         // A prompt the user typed closes everything left.
         const typed = claudePayload({ hook_event_name: "UserPromptSubmit", prompt: "go on" });
-        applyQuestionHookAction(typed, questionHookAction(typed, at) ?? { closes: "none" }, { now: at, root });
+        await applyQuestionHookAction(typed, questionHookAction(typed, at) ?? { closes: "none" }, { now: at, root });
         expect(openQuestions("claude", "s-questions-1", root)).toEqual([]);
     });
 
-    it("leaves a question tool without a call id to the watcher, and the gate finds the store's file", () => {
+    it("leaves a question tool without a call id to the watcher, and the gate finds the store's file", async () => {
         const noId = claudePayload({ hook_event_name: "PreToolUse", tool_name: "AskUserQuestion", tool_input: {} });
         expect(questionHookAction(noId, "t")).toBeNull();
         expect(questionHookAction(claudePayload({ hook_event_name: "PreToolUse", tool_name: "Bash" }), "t")).toBeNull();
@@ -3586,7 +3590,7 @@ describe("the questions feature", () => {
             tool_use_id: "toolu_g1",
         });
         // The default records root, the one the gate checks without importing the store.
-        applyQuestionHookAction(payload, questionHookAction(payload, "t") ?? { closes: "none" }, { now: "t" });
+        await applyQuestionHookAction(payload, questionHookAction(payload, "t") ?? { closes: "none" }, { now: "t" });
         expect(existsSync(dialogsPath("claude", sessionId))).toBe(true);
         expect(hasDialogRecords("claude", sessionId)).toBe(true);
         expect(hasDialogRecords("claude", "../escape")).toBe(false);
