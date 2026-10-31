@@ -1700,10 +1700,20 @@ public final class WidgetModel: ObservableObject {
         }
     }
 
+    /// A decision id's parts (`d_<n>_<session>`): split at its first two underscores, so the session keeps its own.
+    private nonisolated static func decisionIDParts(_ id: String) -> [Substring] {
+        id.split(separator: "_", maxSplits: 2)
+    }
+
     /// The number in a decision id (`d_<n>_<session>`).
     nonisolated static func decisionNumber(_ id: String) -> Int? {
-        let parts = id.split(separator: "_", maxSplits: 2)
+        let parts = decisionIDParts(id)
         return parts.count >= 2 && parts[0] == "d" ? Int(parts[1]) : nil
+    }
+
+    /// The session part of a decision id (`d_<n>_<session>`), or nil when it has none.
+    nonisolated static func decisionSession(_ id: String) -> String? {
+        decisionIDParts(id).dropFirst(2).first.map(String.init)
     }
 
     /// Find an assistant's decision heading, not a later acknowledgement or a user's quotation.
