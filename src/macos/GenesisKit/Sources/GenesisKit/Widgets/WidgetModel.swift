@@ -148,9 +148,13 @@ public final class WidgetModel: ObservableObject {
     /// How the open popup takes another alert, and how long it stays while the pointer is not on it (0: until closed).
     public private(set) var peekMany: WidgetAlerts.PopupMany = .newest
     private(set) var peekSeconds: Double = 7
-    /// Duration and the inbox generation when each displayed or waiting alert arrived.
-    private var peekDurations: [String: Double] = [:]
-    private var peekInboxGenerations: [String: Int] = [:]
+    /// Duration and the inbox generation when each displayed or waiting alert arrived, by item id. One entry per
+    /// alert, so a queue edit that drops an alert drops both.
+    private struct PeekTiming {
+        var seconds: Double
+        var inboxGeneration: Int
+    }
+    private var peekTimings: [String: PeekTiming] = [:]
     private var inboxGeneration = 0
     private var peekOutcomeInboxGeneration = 0
     private var peekTask: Task<Void, Never>?
@@ -1040,8 +1044,7 @@ public final class WidgetModel: ObservableObject {
                 if peekOutcome != nil { return }
                 peekItem = item
                 peekSeconds = seconds
-                peekDurations[item.id] = seconds
-                peekInboxGenerations[item.id] = inboxGeneration
+                peekTimings[item.id] = PeekTiming(seconds: seconds, inboxGeneration: inboxGeneration)
                 PerfLog.mark("widget.peek replaced id=\(item.id) answered=\(item.isAnsweredElsewhere)")
                 schedulePeekEnd(on: peeked)
                 presentationChanged?()
@@ -1049,11 +1052,9 @@ public final class WidgetModel: ObservableObject {
             }
             if let index = peekQueue.firstIndex(where: { $0.sourceId == item.sourceId }) {
                 let previous = peekQueue[index]
-                peekDurations[previous.id] = nil
-                peekInboxGenerations[previous.id] = nil
+                peekTimings[previous.id] = nil
                 peekQueue[index] = item
-                peekDurations[item.id] = seconds
-                peekInboxGenerations[item.id] = inboxGeneration
+                peekTimings[item.id] = PeekTiming(seconds: seconds, inboxGeneration: inboxGeneration)
                 presentationChanged?()
                 return
             }
@@ -1061,8 +1062,7 @@ public final class WidgetModel: ObservableObject {
         if let shown = peekItem, many != .newest, let peeked = hoveredSurface {
             if shown.id != item.id, !peekQueue.contains(where: { $0.id == item.id }) {
                 peekQueue.append(item)
-                peekDurations[item.id] = seconds
-                peekInboxGenerations[item.id] = inboxGeneration
+                peekTimings[item.id] = PeekTiming(seconds: seconds, inboxGeneration: inboxGeneration)
             }
             peekMany = many
             PerfLog.mark("widget.peek added id=\(item.id) mode=\(many.rawValue) waiting=\(peekQueue.count)")
@@ -1081,8 +1081,7 @@ public final class WidgetModel: ObservableObject {
         hoverTask?.cancel()
         peekItem = item
         peekQueue = []
-        peekDurations = [item.id: seconds]
-        peekInboxGenerations = [item.id: inboxGeneration]
+        peekTimings = [item.id: PeekTiming(seconds: seconds, inboxGeneration: inboxGeneration)]
         peekMany = many
         peekSeconds = seconds
         hoveredSurface = surface
@@ -1163,14 +1162,13 @@ public final class WidgetModel: ObservableObject {
         let waiting = peekQueue[index]
         if peekSettled(waiting) {
             peekQueue.remove(at: index)
-            peekDurations[waiting.id] = nil
-            peekInboxGenerations[waiting.id] = nil
+            peekTimings[waiting.id] = nil
             presentationChanged?()
             return
         }
         peekQueue[index] = shown
         peekItem = waiting
-        peekSeconds = peekDurations[waiting.id] ?? 7
+        peekSeconds = peekTimings[waiting.id]?.seconds ?? 7
         if let surface = hoveredSurface { schedulePeekEnd(on: surface) }
         PerfLog.mark("widget.peek swapped id=\(waiting.id) for=\(shown.id)")
         presentationChanged?()
@@ -1243,7 +1241,7 @@ public final class WidgetModel: ObservableObject {
     /// Only a newer complete snapshot with the uncapped decision list can prove settlement.
     private func peekSettled(_ item: WidgetInboxItem) -> Bool {
         guard item.kind == "decision", item.needsAnswer, inbox.complete,
-              inboxGeneration > (peekInboxGenerations[item.id] ?? inboxGeneration),
+              inboxGeneration > (peekTimings[item.id]?.inboxGeneration ?? inboxGeneration),
               let pending = inbox.pendingDecisionIDs else { return false }
         return !pending.contains(item.sourceId)
     }
@@ -1253,8 +1251,7 @@ public final class WidgetModel: ObservableObject {
         while !peekQueue.isEmpty {
             let next = peekQueue.removeFirst()
             if peekSettled(next) {
-                peekDurations[next.id] = nil
-                peekInboxGenerations[next.id] = nil
+                peekTimings[next.id] = nil
                 continue
             }
             guard let fresh = inboxOverviewItems.first(where: { $0.id == next.id }) else { return next }
@@ -1269,10 +1266,9 @@ public final class WidgetModel: ObservableObject {
         peekTask = nil
         guard let item = peekItem else { return }
         if advance, (peekMany == .queue || includeListed), let surface = hoveredSurface, let next = nextQueuedPeek() {
-            peekDurations[item.id] = nil
-            peekInboxGenerations[item.id] = nil
+            peekTimings[item.id] = nil
             peekItem = next
-            peekSeconds = peekDurations[next.id] ?? 7
+            peekSeconds = peekTimings[next.id]?.seconds ?? 7
             PerfLog.mark("widget.peek next id=\(next.id) after=\(item.id) waiting=\(peekQueue.count)")
             presentationChanged?()
             schedulePeekEnd(on: surface)
@@ -1280,8 +1276,7 @@ public final class WidgetModel: ObservableObject {
         }
         peekItem = nil
         peekQueue = []
-        peekDurations = [:]
-        peekInboxGenerations = [:]
+        peekTimings = [:]
         if expanded == nil, let surface = hoveredSurface, !pointerInside.contains(surface.key) {
             hoveredSurface = nil
         }
@@ -1442,18 +1437,14 @@ public final class WidgetModel: ObservableObject {
         if !settledWaiting.isEmpty {
             let ids = Set(settledWaiting.map(\.id))
             peekQueue.removeAll { ids.contains($0.id) }
-            for id in ids {
-                peekDurations[id] = nil
-                peekInboxGenerations[id] = nil
-            }
+            for id in ids { peekTimings[id] = nil }
             presentationChanged?()
         }
         if let shown = peekItem, peekSettled(shown), !keepSettledPeek(shown) {
             if peekMany == .list, let next = peekQueue.first {
                 showWaitingPeek(next)
                 peekQueue.removeAll { $0.id == shown.id }
-                peekDurations[shown.id] = nil
-                peekInboxGenerations[shown.id] = nil
+                peekTimings[shown.id] = nil
                 presentationChanged?()
             } else {
                 endPeek()
