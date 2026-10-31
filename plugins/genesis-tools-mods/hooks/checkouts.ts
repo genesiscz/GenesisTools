@@ -153,14 +153,21 @@ function branchOf(ref: string): string | undefined {
     return name === "HEAD" || name.startsWith("refs/") || !isBranchName(name) ? undefined : name;
 }
 
+/** Characters git refuses in a ref, and the shell's own (`$`, `&`, `>`, quotes), which no branch here carries. */
+const NOT_IN_BRANCH = /[\p{Cc}\s~^:?*[\\$`'"<>|;&(){}!]/u;
+
 /**
- * A name git could take as a branch (the common subset of `git check-ref-format`). Shell words parsed from a command
- * (`2>&1`, `>`, `$br`) are not: each was looked up as a PR by every session every 2 minutes (2026-10-27). Digits
- * alone are a branch name (`12345`, `2026/10/30`).
+ * A name git could take as a branch (`git check-ref-format`), less the shell's own characters. Shell words parsed
+ * from a command (`2>&1`, `>`, `$br`) are not: each was looked up as a PR by every session every 2 minutes
+ * (2026-10-27). Digits alone and letters beyond ASCII are branch names (`12345`, `2026/10/30`, `fix/číslo`, `修正`).
  */
 export function isBranchName(name: string): boolean {
     return (
-        /^[A-Za-z0-9._/+@#-]+$/.test(name) &&
+        name.length > 0 &&
+        !NOT_IN_BRANCH.test(name) &&
+        !name.includes("@{") &&
+        !name.split("/").some((part) => part.startsWith(".")) &&
+        !name.endsWith(".") &&
         !name.startsWith("-") &&
         !name.startsWith("/") &&
         !name.endsWith("/") &&
