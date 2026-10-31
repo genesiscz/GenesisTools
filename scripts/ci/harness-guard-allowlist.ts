@@ -64,6 +64,7 @@ export const HARNESS_GUARD_ALLOWLIST: Readonly<Record<string, HarnessGuardCounts
     "src/hub/lib/agents/index.ts": { table: 2 },
     "src/hub/lib/composer/dispatch.ts": { branch: 6 },
     "src/hub/lib/widget/context.ts": { table: 2 },
+    "src/hub/lib/widget/roster-index.ts": { table: 1 },
     "src/hub/lib/widget/snapshot.ts": { table: 2 },
     "src/macos/GenesisKit/Sources/GenesisKit/Controls/AgentRosterRow.swift": { branch: 2 },
     "src/macos/GenesisKit/Sources/GenesisKit/Providers/AIProviderMark.swift": { branch: 6 },
