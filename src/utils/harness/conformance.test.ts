@@ -8,6 +8,7 @@ import { harnessDriver, harnessDrivers } from "@genesiscz/utils/ai/providers/har
 import { registerBuiltInPlugins } from "@genesiscz/utils/ai/providers/plugins";
 import { allProviderPlugins } from "@genesiscz/utils/ai/providers/registry";
 import { directReads } from "@genesiscz/utils/ai/transcripts/resolve";
+import { env } from "@genesiscz/utils/env";
 import { moduleDir } from "@genesiscz/utils/fs/module-dir";
 import { HARNESS_PLUGIN_PATH, renderHarnessPlugin } from "../../../scripts/gen-harness-plugin";
 import { HARNESS_SWIFT_PATH, renderHarnessSwift } from "../../../scripts/gen-harness-swift";
@@ -202,7 +203,7 @@ describe("tool parts: every harness has its module in each toolParts folder", ()
     // Found by search, so a new registry is checked without a list here (`src/utils/harness/tool-parts.ts`).
     const grep = Bun.spawnSync(["git", "grep", "-l", "-e", "toolParts<", "--", "src/*.ts"], {
         cwd: REPO_ROOT,
-        env: process.env,
+        env: env.getProcessEnv(),
     });
     const callers = grep.stdout
         .toString()
