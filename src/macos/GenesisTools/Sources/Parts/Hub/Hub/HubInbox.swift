@@ -1329,7 +1329,7 @@ final class HubInboxModel: ObservableObject {
                         GenAnnounce.post(delivery.summary)
                         self.load()
                     } else {
-                        self.writeErrors[item.id] = "Not pressed: \(delivery.error ?? "the dialog did not take the option.")"
+                        self.writeErrors[item.id] = "Answer not confirmed: \(delivery.error ?? "check the dialog before retrying.")"
                         self.writeErrorDetails[item.id] = delivery.raw
                     }
                 }
