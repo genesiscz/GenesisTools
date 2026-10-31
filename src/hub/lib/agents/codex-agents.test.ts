@@ -179,6 +179,28 @@ describe("codexAgentStatus", () => {
         expect(stateOf(turn("task_started") + turn("turn_aborted"), 5_000)).toBe("killed");
         expect(stateOf(turn("task_started") + turn("turn_aborted") + turn("task_started"), 5_000)).toBe("running");
     });
+
+    test("a turn that waits on an unanswered request_user_input is idle, and runs again once it is answered", () => {
+        const ask = line({
+            timestamp: "2026-10-05T10:00:02.000Z",
+            type: "response_item",
+            payload: {
+                type: "function_call",
+                name: "request_user_input",
+                call_id: "call-ask",
+                arguments: SafeJSON.stringify({ questions: [{ question: "Which branch?" }] }),
+            },
+        });
+        const answer = line({
+            timestamp: "2026-10-05T10:00:03.000Z",
+            type: "response_item",
+            payload: { type: "function_call_output", call_id: "call-ask", output: "main" },
+        });
+
+        expect(stateOf(turn("task_started") + ask, 5_000)).toBe("idle");
+        expect(stateOf(turn("task_started") + ask, 20 * 60_000)).toBe("idle");
+        expect(stateOf(turn("task_started") + ask + answer, 5_000)).toBe("running");
+    });
 });
 
 /** The model a sub-agent runs: the Codex reader's `currentModel` on its own rollout. */
