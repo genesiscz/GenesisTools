@@ -39,9 +39,15 @@ class FakeRpcClient implements RpcClient {
     rejectRevert: Error | null = null;
     /** How many requests were sent when each `answered` was awaited: the wire order of a decline and a steer. */
     readonly answeredAt: Array<{ id: unknown; sent: number }> = [];
+    /** An answer write that never completes, as a wedged stdin sink leaves it. */
+    answerWedged = false;
 
     async answered(id: unknown): Promise<void> {
         this.answeredAt.push({ id, sent: this.requests.length });
+
+        if (this.answerWedged) {
+            await new Promise<never>(() => undefined);
+        }
     }
 
     async request<T>(method: string, params?: unknown): Promise<T> {
@@ -801,6 +807,39 @@ describe("CodexSessionRuntime", () => {
                 expect(store.readMeta("reviewer")?.queuedSteers).toBeUndefined();
             } finally {
                 warn.mockRestore();
+            }
+        });
+    });
+
+    test("a decline whose write never completes answers attributed false by the deadline and steers nothing", async () => {
+        const home = mkdtempSync(join(tmpdir(), "gt-codex-refusal-wedged-"));
+        await env.testing.withOverrides({ GENESIS_TOOLS_HOME: home }, async () => {
+            const store = new CodexSessionStore();
+            const meta = { ...makeMeta(home), writePolicy: "ask" as const, approvalPolicy: "untrusted" as const };
+            store.writeMeta(meta);
+            const client = new FakeRpcClient();
+            const runtime = new CodexSessionRuntime({ client, store, meta, answerWriteTimeoutMs: 10 });
+            await runtime.start({ prompt: "Begin" });
+            const { answer } = await parkApproval(runtime, "7");
+            client.answerWedged = true;
+            const sent = client.requests.length;
+            const warn = spyOn(getLogger(), "warn").mockImplementation(() => undefined);
+
+            try {
+                await expect(
+                    runtime.execute({ op: "deny", requestId: "7", refusal: { by: "parent", reason: "wrong file" } })
+                ).resolves.toEqual({ resolved: true, attributed: false });
+                await expect(answer).resolves.toEqual({ decision: "decline" });
+                // The steer would queue behind the same wedged sink, so it never goes out.
+                expect(client.requests.slice(sent)).toEqual([]);
+                expect(
+                    warn.mock.calls.filter(
+                        (call) => call[1] === "the refusal reason could not be steered to the worker"
+                    )
+                ).toHaveLength(1);
+            } finally {
+                warn.mockRestore();
+                await runtime.close();
             }
         });
     });

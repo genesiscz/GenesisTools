@@ -55,6 +55,8 @@ interface RuntimeOptions {
     meta: CodexSessionMeta;
     onApprovalRequest?: (notice: Record<string, unknown>) => void | Promise<void>;
     unsubscribeTimeoutMs?: number;
+    /** How long a refusal waits for its decline to reach the app-server's stdin before it gives up on the steer. */
+    answerWriteTimeoutMs?: number;
     /** `tools codex spawn --project`: a Desktop project id, name or root. Without it the cwd decides. */
     project?: string;
     /** Starts the escalated review session the depth gate asked for; the daemon wires it to `spawnCodexSession`. */
@@ -130,6 +132,7 @@ export class CodexSessionRuntime {
     private meta: CodexSessionMeta;
     private readonly onApprovalRequest: RuntimeOptions["onApprovalRequest"];
     private readonly unsubscribeTimeoutMs: number;
+    private readonly answerWriteTimeoutMs: number;
     private readonly pendingApprovalDecisions = new Map<string, PendingApprovalDecision>();
     private readonly projectSelector?: string;
     private chosenProject?: CodexProject;
@@ -153,6 +156,7 @@ export class CodexSessionRuntime {
         this.meta = options.meta;
         this.onApprovalRequest = options.onApprovalRequest;
         this.unsubscribeTimeoutMs = options.unsubscribeTimeoutMs ?? 1000;
+        this.answerWriteTimeoutMs = options.answerWriteTimeoutMs ?? 5000;
         this.projectSelector = options.project;
         this.escalateReview = options.escalateReview;
         this.onReviewGate = options.onReviewGate;
@@ -853,9 +857,15 @@ export class CodexSessionRuntime {
 
         // Codex tells the worker only `Rejected("rejected by user")`. The actor and the reason follow in words, as
         // a steer, so a lead's quality refusal is never read as a human permission decision. The decline goes on the
-        // wire first: resolving only wakes the handler that writes it, and the steer would otherwise overtake it.
+        // wire first: resolving only wakes the handler that writes it, and the steer would otherwise overtake it. A
+        // write that never completes (a wedged stdin sink) ends the wait at the deadline: the steer would queue
+        // behind the same sink, so the refusal answers unattributed instead of hanging.
         try {
-            await this.client.answered(pending.request.id);
+            await withTimeout(
+                this.client.answered(pending.request.id),
+                this.answerWriteTimeoutMs,
+                new Error("the decline did not reach the app-server stdin")
+            );
 
             await this.steer(refusalNotice(requestId, refusal), false);
             return { resolved: true, attributed: true };
