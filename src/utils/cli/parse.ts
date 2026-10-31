@@ -15,7 +15,8 @@ export function parseNonNegativeInt(value: string, flag: string): number {
 
 /** Parses a CLI flag value as a finite number from 0 up to `max` (when given), rejecting anything else with a clear error. */
 export function parseNonNegativeNumber(value: string, flag: string, { max }: { max?: number } = {}): number {
-    const parsed = Number(value);
+    // `Number("")` and `Number("  ")` are 0, so a blank value would pass as an explicit zero.
+    const parsed = value.trim() === "" ? Number.NaN : Number(value);
 
     if (!Number.isFinite(parsed) || parsed < 0 || (max !== undefined && parsed > max)) {
         throw new Error(`${flag} must be a number from 0${max === undefined ? "" : ` to ${max}`}, got "${value}"`);

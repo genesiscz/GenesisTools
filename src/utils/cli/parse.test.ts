@@ -17,6 +17,8 @@ describe("parseNonNegativeNumber", () => {
         );
         expect(() => parseNonNegativeNumber("abc", "--min-area")).toThrow('got "abc"');
         expect(() => parseNonNegativeNumber("Infinity", "--min-area")).toThrow('got "Infinity"');
+        expect(() => parseNonNegativeNumber("", "--min-area")).toThrow('got ""');
+        expect(() => parseNonNegativeNumber("   ", "--min-area")).toThrow('got "   "');
         expect(() => parseNonNegativeNumber("2", "--threshold", { max: 1 })).toThrow(
             '--threshold must be a number from 0 to 1, got "2"'
         );
