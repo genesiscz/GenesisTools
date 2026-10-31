@@ -1,5 +1,5 @@
+import { execTool } from "@genesiscz/utils/cli/tools";
 import { logger } from "@genesiscz/utils/logger";
-import { boundedCommand } from "@genesiscz/utils/process/bounded-command";
 import { dispatchSystem } from "./channels/system";
 import { dispatchTelegram } from "./channels/telegram";
 import { dispatchWebhook } from "./channels/webhook";
@@ -25,18 +25,19 @@ export async function dispatchSay(
     }
 
     const voice = config.voice ?? "Samantha";
-    const args = ["tools", "say", message, "--voice", voice];
+    const args = ["say", message, "--voice", voice];
 
     if (config.provider) {
         args.push("--provider", config.provider);
     }
 
     try {
-        const result = await boundedCommand({ command: args, timeoutMs });
+        // execTool runs this checkout's tools (not whatever `tools` is on PATH) and stops its process group at the deadline.
+        const result = await execTool(args, { timeout: timeoutMs });
 
-        if (result.error || result.status !== 0) {
+        if (!result.success) {
             logger.warn(
-                { err: result.error, exitCode: result.status, signal: result.signal, stderr: result.stderr.trim() },
+                { exitCode: result.exitCode, timedOut: result.timedOut === true, stderr: result.stderr },
                 "Say notification dispatch failed"
             );
             return false;
