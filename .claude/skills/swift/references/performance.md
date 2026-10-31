@@ -154,8 +154,9 @@ are in [genesistools.md](genesistools.md)). Add a new entry at the end of its se
 - **Fix:** the dense-list rule above, applied: `PRRow` takes values (`Equatable`, `.equatable()`) and is live only
   while hovered or selected (`LiveButton`, `liveTooltip`, `restingButton` keeps it a button to VoiceOver).
 - **Measured (real pointer, 45 s after the mode switch):** step gap p50 50 → 41 ms, p95 334 to 540 → 54, max 593
-  to 717 → 58, release 459 to 608 → 90 ms, no stall. The Agents sidebar, whose rows were not touched, still costs
-  119 ms per step: the same fix is due there.
+  to 717 → 58, release 459 to 608 → 90 ms, no stall. The Agents sidebar, whose rows were not touched then, cost
+  119 ms per step; its rows got the same value-row change in bc9300fe09 (`.liveRow` in `HubAgents.swift` and
+  `HubAgentProcs.swift`) and were not measured again.
 
 ### A control an agent drives owns its press in AppKit (2026-10-29)
 - A window-addressed drag (`tools control act --action drag --background`: mouse events posted to the process, the
