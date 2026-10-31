@@ -1,7 +1,7 @@
 import { createHash, randomUUID } from "node:crypto";
-import { constants } from "node:fs";
 import { mkdir, open, unlink } from "node:fs/promises";
 import { basename, isAbsolute, join } from "node:path";
+import { readBoundedRegularFile } from "@genesiscz/utils/fs/bounded-read";
 import { logger } from "@genesiscz/utils/logger";
 import { toolDataDir } from "@genesiscz/utils/storage/root";
 import { z } from "zod";
@@ -89,31 +89,11 @@ export function parseImageAttachmentInputs(value: unknown): ImageAttachmentInput
 }
 
 async function readBoundedImage(path: string): Promise<Buffer> {
-    // O_NONBLOCK: opening a FIFO with no writer would otherwise wait for one forever; a regular file ignores it.
-    const file = await open(path, constants.O_RDONLY | constants.O_NONBLOCK);
-    try {
-        const info = await file.stat();
-        if (!info.isFile() || info.size > MAX_IMAGE_ATTACHMENT_BYTES) {
-            throw new Error("Image attachment must be a regular file of at most 25 MiB");
-        }
-
-        const chunks: Buffer[] = [];
-        let length = 0;
-
-        for await (const chunk of file.createReadStream({ autoClose: false, highWaterMark: 64 * 1024 })) {
-            length += chunk.length;
-
-            if (length > MAX_IMAGE_ATTACHMENT_BYTES) {
-                throw new Error("Image attachment grew beyond 25 MiB while being read");
-            }
-
-            chunks.push(chunk);
-        }
-
-        return Buffer.concat(chunks, length);
-    } finally {
-        await file.close();
-    }
+    return readBoundedRegularFile(path, {
+        maxBytes: MAX_IMAGE_ATTACHMENT_BYTES,
+        tooLarge: "Image attachment must be a regular file of at most 25 MiB",
+        grew: "Image attachment grew beyond 25 MiB while being read",
+    });
 }
 
 type StillFormat = { mime: ImageAttachment["mimeType"]; ext: string };
