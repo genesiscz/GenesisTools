@@ -1,6 +1,5 @@
 import { readFileSync } from "node:fs";
 import { claudeHistoryReader } from "@genesiscz/utils/agent-sessions/compact-readers";
-import { scanClaudeNative } from "@genesiscz/utils/agent-sessions/readers/claude-native-scan";
 import { claudeToolInputLine } from "@genesiscz/utils/agent-sessions/readers/claude-tool-inputs";
 import { claudeMessagesToTurns } from "@genesiscz/utils/ai/transcripts/claude";
 import { toolInputKeysOf } from "@genesiscz/utils/ai/transcripts/native-scan";
