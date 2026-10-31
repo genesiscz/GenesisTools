@@ -26,6 +26,7 @@ import { renderSharePage } from "@app/dev-dashboard/lib/obsidian/share-template"
 import { publicBaseUrl } from "@app/dev-dashboard/lib/public-base";
 import type { RouteContext, RouteDef, RouteResult } from "@app/dev-dashboard/server/types";
 import { zipAsync } from "@genesiscz/utils/fs/zip";
+import { parseByteRange } from "@genesiscz/utils/http/range";
 import { logger } from "@genesiscz/utils/logger";
 import { redactSecretsInText } from "@genesiscz/utils/transclude";
 
@@ -115,8 +116,6 @@ function decodeFragment(fragment: string): string {
     }
 }
 
-const RANGE_RE = /^bytes=(\d*)-(\d*)$/;
-
 /**
  * An asset's bytes, or the one byte range asked for: Safari plays `<audio>` and `<video>` only from a server
  * that answers ranges. A PDF goes without the sandbox policy, because a sandboxed document cannot open the
@@ -131,18 +130,14 @@ function assetBytes(options: { asset: ShareAsset; body: Buffer; range: string | 
         "Accept-Ranges": "bytes",
         "Content-Disposition": `inline; filename*=UTF-8''${encodeURIComponent(asset.name)}`,
     };
-    const match = range ? RANGE_RE.exec(range.trim()) : null;
+    const size = body.length;
+    const parsed = parseByteRange(range, size);
 
-    if (!match || (match[1] === "" && match[2] === "")) {
+    if (parsed.kind === "none") {
         return { kind: "binary", status: 200, contentType: asset.contentType, body, headers };
     }
 
-    const size = body.length;
-    // `bytes=-500` is the last 500 bytes.
-    const start = match[1] === "" ? Math.max(0, size - Number(match[2])) : Number(match[1]);
-    const end = match[1] === "" || match[2] === "" ? size - 1 : Math.min(size - 1, Number(match[2]));
-
-    if (start >= size || start > end) {
+    if (parsed.kind === "unsatisfiable") {
         return {
             kind: "binary",
             status: 416,
@@ -156,8 +151,8 @@ function assetBytes(options: { asset: ShareAsset; body: Buffer; range: string | 
         kind: "binary",
         status: 206,
         contentType: asset.contentType,
-        body: body.subarray(start, end + 1),
-        headers: { ...headers, "Content-Range": `bytes ${start}-${end}/${size}` },
+        body: body.subarray(parsed.start, parsed.end + 1),
+        headers: { ...headers, "Content-Range": `bytes ${parsed.start}-${parsed.end}/${size}` },
     };
 }
 

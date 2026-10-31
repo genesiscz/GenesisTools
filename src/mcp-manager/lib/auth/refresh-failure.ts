@@ -1,3 +1,4 @@
+import { TRANSPORT_ERROR_CODES } from "@genesiscz/utils/net/transport-codes";
 import { OutboundUrlPolicyError } from "./url-policy.ts";
 
 /**
@@ -9,28 +10,6 @@ import { OutboundUrlPolicyError } from "./url-policy.ts";
  * (2026-10-30, rohlik: `getaddrinfo ENOTFOUND` on the token endpoint, then again on discovery).
  */
 export type RefreshVerdict = { kind: "retry-later"; reason: string } | { kind: "login" };
-
-/**
- * Transport codes that mean no answer came back. Node's `http` and `dns` use the `E*` codes; Bun's `fetch` uses the
- * camel-case ones (Bun 1.3.13 reports an unresolvable host as `ConnectionRefused` on some paths, `ENOTFOUND` on
- * others).
- */
-const NETWORK_CODES = new Set([
-    "ENOTFOUND",
-    "EAI_AGAIN",
-    "ECONNREFUSED",
-    "ECONNRESET",
-    "ECONNABORTED",
-    "ETIMEDOUT",
-    "ENETUNREACH",
-    "ENETDOWN",
-    "EHOSTUNREACH",
-    "EHOSTDOWN",
-    "EPIPE",
-    "ConnectionRefused",
-    "ConnectionClosed",
-    "FailedToOpenSocket",
-]);
 
 /** `OutboundUrlPolicyError` keeps only the lookup's message, so its code is read back out of the text. */
 const DNS_POLICY_RE = /DNS resolution (?:failed|returned no addresses)/;
@@ -54,7 +33,7 @@ function networkReason(error: unknown, depth: number): string | undefined {
 
     const code = "code" in error ? error.code : undefined;
 
-    if (typeof code === "string" && NETWORK_CODES.has(code)) {
+    if (typeof code === "string" && TRANSPORT_ERROR_CODES.has(code)) {
         return code;
     }
 
