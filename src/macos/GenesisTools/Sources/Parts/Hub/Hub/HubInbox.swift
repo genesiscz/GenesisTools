@@ -183,6 +183,10 @@ struct InboxItem: Decodable, Identifiable, Hashable {
     var isDecision: Bool { kind == "decision" && !isDialog }
     var isOpen: Bool { status == "waiting" || status == "drafted" }
     var answerRoute: InboxAnswerRoute { InboxAnswerRoute(source: source, kind: kind) }
+    /// The picked letters as the card and the not-waiting notice write them: "a) c)".
+    var pickedLetters: String {
+        (option ?? "").map { "\($0))" }.joined(separator: " ")
+    }
     /// The recorded answer's own words, when they say more than the picked options do. Nil when the answer only repeats
     /// a picked option ("b", "b) Keep it", "Keep it"), so a closed card never prints the same option twice (F7).
     var answerBeyondPick: String? {
@@ -754,8 +758,7 @@ final class HubInboxModel: ObservableObject {
         case "superseded": state = "a later decision replaced it"
         default: state = "it is \(item.status)"
         }
-        let picks = (item.option ?? "").map { "\($0))" }.joined(separator: " ")
-        let words = [picks, item.answer?.trimmed ?? ""].filter { !$0.isEmpty }.joined(separator: " ")
+        let words = [item.pickedLetters, item.answer?.trimmed ?? ""].filter { !$0.isEmpty }.joined(separator: " ")
         return "\(WidgetWords.decision(number)) is not waiting: \(state)" + (words.isEmpty ? "." : " (\(words.prefix(160))).")
     }
 
@@ -2399,7 +2402,7 @@ struct InboxDecisionCard: View, Equatable {
                     .foregroundColor(ReviewPalette.dim)
             } else {
                 // The widget's phrase and the letters it took: "Sent · b)", "Waiting to send · a) c)" (F7).
-                let picks = (item.option ?? "").map { "\($0))" }.joined(separator: " ")
+                let picks = item.pickedLetters
                 Label(picks.isEmpty ? statusPhrase : "\(statusPhrase) · \(picks)",
                       systemImage: closedTint == ReviewPalette.dim ? "minus.circle" : "checkmark.circle.fill")
                     .font(.system(size: 11.5))
