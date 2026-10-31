@@ -77,8 +77,8 @@ export function registerReportCommand(program: Command): void {
         .option("--json", "machine-readable result JSON on stdout")
         .action(async (input: string, opts: ReportCommandOptions) => {
             const inputPath = resolve(input);
+            // `stat` answers for a folder too, where `exists()` is false.
             if (
-                !(await Bun.file(inputPath).exists()) &&
                 !(await Bun.file(inputPath)
                     .stat()
                     .catch(() => undefined))

@@ -12,6 +12,9 @@ import {
 } from "./native-record";
 import { type AxResult, runAx, runAxAsync } from "./runner";
 
+/** The most accessibility elements one app-state read returns; the native bridge cuts the tree there. */
+const ELEMENT_LIMIT = 4000;
+
 function required(result: AxResult): AxResult {
     if (!result.ok) {
         throw new Error(result.error ?? "Native inspection failed.");
@@ -144,7 +147,7 @@ export class NativeCaptureControls {
                     app: options.app,
                     window_id: this.binding.windowId,
                     image: options.image ?? false,
-                    element_limit: 4000,
+                    element_limit: ELEMENT_LIMIT,
                 });
                 if (state.window.id !== this.binding.windowId) {
                     throw new Error("The bound recording window changed. Select the target again.");
@@ -185,7 +188,7 @@ export class NativeCaptureControls {
                 app,
                 window_id: this.capture.windowId,
                 image: options.image ?? false,
-                element_limit: 4000,
+                element_limit: ELEMENT_LIMIT,
             });
         }
         // Resolve only recorded windows belonging to this app; never choose the first match silently.
@@ -225,7 +228,7 @@ export class NativeCaptureControls {
                     app,
                     window_id: windowId,
                     image: options.image ?? false,
-                    element_limit: 4000,
+                    element_limit: ELEMENT_LIMIT,
                 });
                 last = state;
                 if (action && (action.do === "ax-set" || action.do === "ax-press" || action.do === "ax-perform")) {
@@ -251,7 +254,7 @@ export class NativeCaptureControls {
                 app,
                 window_id: matches[0].window.id,
                 image: options.image ?? false,
-                element_limit: 4000,
+                element_limit: ELEMENT_LIMIT,
             });
         }
         const listed = required(await this.native.run({ args: ["window", "--app", app], timeoutMs: 5000 }));
@@ -270,7 +273,7 @@ export class NativeCaptureControls {
                 app,
                 window_index: indexes[0],
                 image: options.image ?? false,
-                element_limit: 4000,
+                element_limit: ELEMENT_LIMIT,
             });
         }
         if (action && (action.do === "ax-set" || action.do === "ax-press" || action.do === "ax-perform")) {
@@ -280,7 +283,7 @@ export class NativeCaptureControls {
                     app,
                     window_index: windowIndex,
                     image: false,
-                    element_limit: 4000,
+                    element_limit: ELEMENT_LIMIT,
                 });
                 const count = state.elements.filter((element) => match(element, action)).length;
                 if (count > 1) {
@@ -295,7 +298,7 @@ export class NativeCaptureControls {
                     app,
                     window_id: matches[0].window.id,
                     image: false,
-                    element_limit: 4000,
+                    element_limit: ELEMENT_LIMIT,
                 });
             }
         }
