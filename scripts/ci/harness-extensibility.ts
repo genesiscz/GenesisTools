@@ -6,15 +6,18 @@
  * 1. The plant: the alias in `alias-list.ts` (the `HarnessId` type) and its `byHarness` row, one `DRIVERS` entry in
  *    `harness-index.ts`, one `HOOKS` entry in `harness-hooks.ts`, and the plugin folder
  *    `src/utils/ai/providers/plugins/testbot-sub/` with its driver (identity, launch, a locator over a fixture folder;
- *    the parts the probe does not run are borrowed from the Codex driver, where a real harness writes its own).
+ *    the parts the probe does not run are borrowed from the Codex driver, where a real harness writes its own) and
+ *    its provider plugin, registered in `plugins.ts`, whose `codingAgent` is the history reader (the Codex reader's
+ *    members under the kind `testbot`).
  *    Beside it, `note-probe.ts` puts a note (`{ note: true, reason }`) in place of each part in turn: the compiler must
  *    refuse every one, so a fourth harness has to write each part's code, its history reader included, not a note.
  * 2. The seam: `tsgo` lists every file the compiler then refuses. A file is expected when it is a driver-side owner
  *    (the plugin folders, `src/utils/harness/`, the light doors), a test, or an allowlist entry of the harness guard
  *    that says why it keeps a table keyed by the harness type. Any other file is a seam a new harness would have to
  *    find by hand, and the run exits 1 naming it.
- * 3. The runtime: inside the worktree, `resolveTranscript` finds a testbot session through the driver's locator, and
- *    its driver's `launch` part builds its resume argv.
+ * 3. The runtime: inside the worktree, `resolveTranscript` finds a testbot session through the driver's locator, its
+ *    driver's `launch` part builds its resume argv, and `nativeReaderFor("testbot")` reaches its history reader through
+ *    the plugin registry, so a harness without a reader fails here.
  *
  *   bun scripts/ci/harness-extensibility.ts
  *
@@ -109,6 +112,20 @@ export const testbotHarness: HarnessDriver<"testbot"> = {
 };
 `;
 
+const TESTBOT_PLUGIN = `import { codexHistoryReader } from "@genesiscz/utils/agent-sessions/compact-readers";
+import type { ProviderPlugin } from "../../plugin-types";
+import { openAiSubPlugin } from "../openai-sub";
+import { testbotHarness } from "./harness";
+
+/** The testbot plugin of scripts/ci/harness-extensibility.ts: its driver and its history reader. */
+export const testbotSubPlugin: ProviderPlugin = {
+    ...openAiSubPlugin,
+    id: "testbot-sub",
+    harness: testbotHarness,
+    codingAgent: { ...codexHistoryReader, kind: "testbot" },
+};
+`;
+
 /** One line per part, each putting a note where that part's code belongs; the compiler must refuse every line. */
 const NOTE_PROBE = `import type { HarnessParts } from "@genesiscz/utils/harness/types";
 import { codexHarness } from "../openai-sub/harness";
@@ -180,6 +197,17 @@ function main(): void {
     mkdirSync(join(WORKTREE, "src/utils/ai/providers/plugins/testbot-sub"), { recursive: true });
     writeFileSync(join(WORKTREE, "src/utils/ai/providers/plugins/testbot-sub/harness.ts"), TESTBOT_DRIVER);
     writeFileSync(join(WORKTREE, NOTE_PROBE_FILE), NOTE_PROBE);
+    writeFileSync(join(WORKTREE, "src/utils/ai/providers/plugins/testbot-sub/index.ts"), TESTBOT_PLUGIN);
+    plant(
+        "src/utils/ai/providers/plugins.ts",
+        "    registerPlugin(grokSubPlugin);\n",
+        "    registerPlugin(grokSubPlugin);\n    registerPlugin(testbotSubPlugin);\n"
+    );
+    plant(
+        "src/utils/ai/providers/plugins.ts",
+        'import { openRouterPlugin } from "./plugins/openrouter";',
+        'import { openRouterPlugin } from "./plugins/openrouter";\nimport { testbotSubPlugin } from "./plugins/testbot-sub";'
+    );
 
     // 2. The seam the compiler names.
     const typed = run(["bunx", "tsgo", "--noEmit", "-p", "tsconfig.json"], WORKTREE);
@@ -227,8 +255,10 @@ function main(): void {
             [
                 'const { resolveTranscript } = await import("@genesiscz/utils/ai/transcripts/resolve");',
                 'const { harnessDriver } = await import("@genesiscz/utils/ai/providers/harness-index");',
+                'const { nativeReaderFor } = await import("@genesiscz/utils/agent-sessions/native-adapter");',
                 'const hit = await resolveTranscript("testbot-session-1", {}, "testbot");',
-                'console.log(JSON.stringify({ hit, argv: harnessDriver("testbot").parts.launch.resumeArgv("s-1", {}) }));',
+                'const argv = harnessDriver("testbot").parts.launch.resumeArgv("s-1", {});',
+                'console.log(JSON.stringify({ hit, argv, reader: nativeReaderFor("testbot").kind }));',
             ].join("\n"),
         ],
         { cwd: WORKTREE, env: { ...process.env, TESTBOT_HOME: fixture }, stdout: "pipe", stderr: "pipe" }
@@ -237,7 +267,8 @@ function main(): void {
     const runtimeOk =
         probe.exitCode === 0 &&
         runtimeOut.includes('"provider":"testbot"') &&
-        runtimeOut.includes('"argv":["testbot","--resume","s-1"]');
+        runtimeOut.includes('"argv":["testbot","--resume","s-1"]') &&
+        runtimeOut.includes('"reader":"testbot"');
 
     console.log(
         `harness-extensibility: runtime ${runtimeOk ? "OK" : "FAILED"}: ${runtimeOut || probe.stderr.toString().trim()}`
