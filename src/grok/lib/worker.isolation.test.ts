@@ -19,9 +19,6 @@ import {
     subscriptionAuthPath,
 } from "./worker";
 
-// These tests check how the default agent homes resolve, so they start with no override set.
-startWithDefaultNativeHomes();
-
 /**
  * Regression test: PR #330 review t2 — the worker's isolation contract was
  * documented ("verified against grok CLI 1.0.3") but never asserted anywhere.
@@ -101,6 +98,10 @@ describe("worker contract on argv", () => {
  * user's subscription sat idle.
  */
 describe("worker auth mode", () => {
+    // The `~/.grok` fallback is read with no override set; every other test keeps the preload's sandbox home, so no
+    // test probes the real login file.
+    startWithDefaultNativeHomes();
+
     test("subscription mode strips the API key and points at the real login file", () => {
         const built = buildTurnEnv({ XAI_API_KEY: "xai-secret", PATH: "/usr/bin" }, "/tmp/worker-home", null, {
             mode: "subscription",
