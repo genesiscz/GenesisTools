@@ -217,24 +217,31 @@ export function sessionRepos(
     texts: readonly string[],
     githubHost = "github.com"
 ): { linked: Map<number, ForgeProject>; named: ForgeProject[] } {
-    const linked = new Map<number, ForgeProject>();
-    const named = new Map<string, ForgeProject>();
+    const found = { linked: new Map<number, ForgeProject>(), named: new Map<string, ForgeProject>() };
+    addSessionRepos(found, texts, githubHost);
 
+    return { linked: found.linked, named: [...found.named.values()] };
+}
+
+/** `sessionRepos` over more messages, added to what earlier ones said (`named` keyed by kind and lowercase path). */
+export function addSessionRepos(
+    found: { linked: Map<number, ForgeProject>; named: Map<string, ForgeProject> },
+    texts: readonly string[],
+    githubHost: string
+): void {
     for (const text of texts) {
         for (const mention of mentionsIn(text, githubHost)) {
             if (!mention.project) {
                 continue;
             }
 
-            named.set(`${mention.project.kind}:${mention.project.path.toLowerCase()}`, mention.project);
+            found.named.set(`${mention.project.kind}:${mention.project.path.toLowerCase()}`, mention.project);
 
             if (mention.number !== undefined && mention.project.kind === "github") {
-                linked.set(mention.number, mention.project);
+                found.linked.set(mention.number, mention.project);
             }
         }
     }
-
-    return { linked, named: [...named.values()] };
 }
 
 /**
