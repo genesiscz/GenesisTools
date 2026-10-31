@@ -46,12 +46,16 @@ function hashOf(text: string): string {
     return hash.toString(16).padStart(8, "0");
 }
 
-/** The cache key of a command, and the file its answer is shared in (the claim is that path with `.lock.json`). */
+/**
+ * The cache key of a command, and the file its answer is shared in (the claim is that path with `.lock.json`).
+ * `scope` names state the answer depends on that the argv does not show: `gh pr view` without a branch answers for
+ * the branch checked out at the time.
+ */
 export function sharedRunFiles(
     dir: string | undefined,
-    ask: { argv: readonly string[]; cwd: string }
+    ask: { argv: readonly string[]; cwd: string; scope?: string }
 ): { key: string; path: string | undefined } {
-    const key = `${ask.cwd}\n${ask.argv.join("\u0000")}`;
+    const key = `${ask.cwd}\n${ask.argv.join("\u0000")}${ask.scope ? `\n${ask.scope}` : ""}`;
 
     return { key, path: dir ? `${dir}/mods-state/shared-runs/${hashOf(key)}.json` : undefined };
 }
@@ -222,7 +226,7 @@ async function runShared(
  */
 export async function sharedRun(
     host: Host,
-    ask: { argv: readonly string[]; cwd: string; ttlMs: number; timeoutMs: number }
+    ask: { argv: readonly string[]; cwd: string; ttlMs: number; timeoutMs: number; scope?: string }
 ): Promise<SharedRunResult | undefined> {
     const { key, path } = sharedRunFiles(await agentsDir(host), ask);
 
