@@ -60,6 +60,12 @@ export interface SessionLaunchExtras {
 /** The spinner glyph a busy or idle agent draws in front of its tab title. */
 export const SPINNER_PREFIX = /^[⠋⠙⠹⠸⠼⠴⠦⠧⠇⠏✳⠐●○◐◑◒◓]\s*/u;
 
+/** A title stripper for a CLI that appends ` - <name>` (and an optional ` · <short id>`) to its tab title. */
+export function harnessSuffixStripper(name: string): (title: string) => string {
+    const suffix = new RegExp(`\\s+-\\s+${name}(?:\\s+·\\s+[0-9a-f]{7,8})?\\s*$`, "i");
+    return (title) => title.replace(suffix, "").trim();
+}
+
 /**
  * The cmux part of every harness: `agents/<harness id>.ts` exports it as `cmuxPart` (`toolParts`), because its launch
  * extras need the cmux and grok tools, which `@genesiscz/utils` cannot import. A new harness adds its module there.

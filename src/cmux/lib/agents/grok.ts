@@ -1,5 +1,5 @@
 import { grokLeaderSocket } from "@app/grok/lib/leader";
-import type { CmuxAdapter, SessionLaunchExtras, TrustPrompt } from "../session-agents";
+import { type CmuxAdapter, harnessSuffixStripper, type SessionLaunchExtras, type TrustPrompt } from "../session-agents";
 
 /** Grok joins one leader per account; the leader socket and the session id go into the record. */
 function grokLaunchExtras({ account, sessionId }: { account: string; sessionId: string }): SessionLaunchExtras {
@@ -10,9 +10,7 @@ function grokLaunchExtras({ account, sessionId }: { account: string; sessionId: 
     };
 }
 
-function stripGrokSuffix(title: string): string {
-    return title.replace(/\s+-\s+grok(?:\s+·\s+[0-9a-f]{7,8})?\s*$/i, "").trim();
-}
+const stripGrokSuffix = harnessSuffixStripper("grok");
 
 /** Grok's first-run dialog. Until it is answered, grok has not opened the session it was asked to resume. */
 const GROK_TRUST_PROMPT: TrustPrompt = {
