@@ -233,15 +233,21 @@ public struct GitWorkingTreeSource {
     /// The limit for a file a reader asked to see anyway (`fullFiles`): past it the page would stall drawing it.
     public static let maxShownBytes = 20_000_000
 
+    /// The start of a skip note for a file that can be shown on request; `largeNote` writes it, `isLarge` reads it.
+    private static let largePrefix = "large file, "
+
     /// A size skip: only the soft limit may be overridden with `fullFiles`.
     public static func largeNote(_ size: Int) -> String {
         size > maxShownBytes
             ? "file exceeds the \(maxShownBytes / 1_000_000) MB display limit, \(size / 1024) KB"
-            : "large file, \(size / 1024) KB"
+            : largePrefix + "\(size / 1024) KB"
     }
 
     /// Whether `note` (`DiffFile.skipped`) says the file was skipped only for its size, so it can be shown on request.
-    public static func isLarge(_ note: String?) -> Bool { note?.hasPrefix("large file, ") == true }
+    public static func isLarge(_ note: String?) -> Bool { note?.hasPrefix(largePrefix) == true }
+
+    /// The byte limit of a file: `maxShownBytes` when the reader asked to see it (`fullFiles`), else `maxBytes`.
+    private static func limit(full: Bool) -> Int { full ? maxShownBytes : maxBytes }
     public static let emptyTree = "4b825dc642cb6eb9a060e54bf8d69288fbee4904"
 
     public let repo: URL
@@ -780,7 +786,7 @@ public struct GitWorkingTreeSource {
             let fields = line.split(separator: " ")
             guard fields.count == 3, fields[1] == "blob", let size = Int(fields[2]), size >= 0 else { continue }
             result.oids[name] = String(fields[0])
-            if size > (full.contains(name) ? Self.maxShownBytes : Self.maxBytes) {
+            if size > Self.limit(full: full.contains(name)) {
                 result.contents[name] = .skipped(Self.largeNote(size))
             } else {
                 eligible.append((name, String(fields[0])))
@@ -800,7 +806,7 @@ public struct GitWorkingTreeSource {
                   size < data.distance(from: cursor, to: data.endIndex) else { break }
             let end = data.index(cursor, offsetBy: size)
             result.contents[name] = decode(data[cursor..<end], size: size,
-                                           limit: full.contains(name) ? Self.maxShownBytes : Self.maxBytes)
+                                           limit: Self.limit(full: full.contains(name)))
             cursor = data.index(after: end)
         }
 
@@ -817,7 +823,7 @@ public struct GitWorkingTreeSource {
         }
 
         let size = (try? url.resourceValues(forKeys: [.fileSizeKey]).fileSize) ?? 0
-        let limit = fullFiles.contains(path) ? Self.maxShownBytes : Self.maxBytes
+        let limit = Self.limit(full: fullFiles.contains(path))
         guard size <= limit else { return .skipped(Self.largeNote(size)) }
         guard let data = try? Data(contentsOf: url) else { return .skipped("unreadable") }
         return decode(data[...], size: data.count, limit: limit)
