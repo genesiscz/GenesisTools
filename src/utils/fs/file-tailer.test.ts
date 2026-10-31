@@ -48,4 +48,19 @@ describe("FileTailer<T>", () => {
         watcher.stop();
         expect(existsSync(missing)).toBe(false);
     });
+
+    it("drops a buffered partial line on restart, since the restart reads those bytes again", () => {
+        const f = join(mkdtempSync(join(tmpdir(), "ft-")), "log.jsonl");
+        writeFileSync(f, `${SafeJSON.stringify({ id: "a" })}\n{"id":`);
+        const seen: string[] = [];
+        const t = new FileTailer<{ id: string }>(f, { onLine: (e) => seen.push(e.id) }, { from: 0 });
+        t.start();
+        t.flush();
+        t.stop();
+        appendFileSync(f, `"b"}\n`);
+        t.start();
+        t.flush();
+        t.stop();
+        expect(seen).toEqual(["a", "a", "b"]);
+    });
 });

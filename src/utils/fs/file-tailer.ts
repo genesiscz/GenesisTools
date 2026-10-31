@@ -82,6 +82,8 @@ export class FileTailer<T = unknown> {
         }
 
         this.offset = this.options.from ?? (existsSync(this.path) ? fstatSyncSize(this.path) : 0);
+        // A partial line buffered before a stop belongs to the old offset; the new one reads its bytes again.
+        this.remainder = Buffer.alloc(0);
         this.fingerprint = existsSync(this.path) ? headFingerprint(this.path) : "";
         const tick = (): void => this.drain();
         try {
