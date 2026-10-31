@@ -224,6 +224,29 @@ describe("approve in the window", () => {
         expect(pendingAsideDirs().some((entry) => entry.requestId === request.id)).toBe(true);
     });
 
+    test("a person denial survives a CLI recovery retry for every original target", () => {
+        const request = asideRequest("denial-history");
+        const paths = request.targets.map((target) => target.path);
+        const blocked = paths[0];
+        if (!blocked) {
+            throw new Error("expected a target");
+        }
+        file(blocked);
+        denyRequest(request, { caller: PERSON, via: "touch-id", note: "keep these files" });
+        const pending = loadRmRequest(request.id);
+        if (!pending) {
+            throw new Error("expected a pending request");
+        }
+        renameSync(blocked, `${blocked}.replacement`);
+        denyRequest(pending, { caller: PERSON, via: "cli" });
+        const saved = loadRmRequest(request.id);
+        expect(saved).toMatchObject({ status: "denied", decidedVia: "touch-id", deniedNote: "keep these files" });
+        expect(priorDenials(paths, "sess-2222", listRmRequests({ all: true })).map((item) => item.note)).toEqual([
+            "keep these files",
+            "keep these files",
+        ]);
+    });
+
     test("a permanent delete is due at once", () => {
         const request = asideRequest("gone");
         const { batch } = approveDelete({

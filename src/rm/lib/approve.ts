@@ -145,16 +145,23 @@ export function denyRequest(
         removeEmptyAsideDir(request.asideDir);
     }
 
-    const note = options.note ?? undefined;
+    const retry = options.via === "cli" && request.decidedVia !== undefined && request.decidedVia !== "cli";
+    const note = retry ? request.deniedNote : (options.note ?? undefined);
+    const decision = {
+        ...request.decided,
+        approved: request.decided?.approved ?? [],
+        denied: [...new Set([...(request.decided?.denied ?? []), ...request.targets.map((target) => target.path)])],
+    };
     saveRmRequest({
         ...request,
+        decided: decision,
         status: back.kept.length > 0 ? "pending" : request.decided?.approved.length ? "approved" : "denied",
         targets:
             back.kept.length > 0
                 ? request.targets.filter((target) => back.kept.some((kept) => kept.path === target.path))
                 : request.targets,
-        decidedAt: new Date().toISOString(),
-        decidedVia: options.via,
+        decidedAt: retry ? request.decidedAt : new Date().toISOString(),
+        decidedVia: retry ? request.decidedVia : options.via,
         deniedNote: note,
     });
     appendRmLedger({

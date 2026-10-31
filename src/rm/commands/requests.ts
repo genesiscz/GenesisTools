@@ -37,7 +37,7 @@ import { type PersonAnswer, printRequestHint, type RunContext, requirePerson, ru
 function printDecision(request: RmRequest): void {
     if (request.decided && request.decided.denied.length > 0) {
         out.println(
-            pc.dim(`  decided: ${request.decided.approved.length} approved, ${request.decided.denied.length} put back`)
+            pc.dim(`  decided: ${request.decided.approved.length} approved, ${request.decided.denied.length} denied`)
         );
     }
 

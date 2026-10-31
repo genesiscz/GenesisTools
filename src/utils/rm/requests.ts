@@ -280,7 +280,10 @@ export function priorDenials(
     const result: RmPriorDenial[] = [];
 
     for (const path of paths) {
-        const hit = denied.find((request) => request.targets.some((target) => target.path === path));
+        const hit = denied.find(
+            (request) =>
+                request.decided?.denied.includes(path) || request.targets.some((target) => target.path === path)
+        );
 
         if (hit) {
             result.push({
