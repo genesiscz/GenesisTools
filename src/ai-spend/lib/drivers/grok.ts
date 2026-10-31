@@ -136,3 +136,6 @@ export const grokDriver: MonitorDriver = {
     // ai-spend keys Grok usage by the session id itself (the session folder's name).
     spendSessionId: (sessionId) => sessionId,
 };
+
+/** This harness's spend part, the export `drivers/index.ts` loads by the harness id. */
+export const spendPart = grokDriver;

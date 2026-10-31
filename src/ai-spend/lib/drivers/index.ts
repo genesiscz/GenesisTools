@@ -1,8 +1,6 @@
 import { UNBOUND_ACCOUNT_ID } from "@genesiscz/utils/ai/usage";
-import { claudeDriver } from "./claude";
-import { codexDriver } from "./codex";
-import { grokDriver } from "./grok";
-import { AGENT_IDS, type AgentId, type ByAgent, type MonitorDriver } from "./types";
+import { hasMembers, toolParts } from "@genesiscz/utils/harness/tool-parts";
+import { AGENT_IDS, type AgentId, type MonitorDriver } from "./types";
 
 export { spendScopeRoots } from "./account-scope";
 export { claudeDriver } from "./claude";
@@ -20,14 +18,19 @@ export type {
 export { AGENT_IDS, agentPluginId } from "./types";
 
 /**
- * The spend part of every harness, and the one table of it in ai-spend: each harness driver's `spend` note names
- * this module (`toolOwned`), because MonitorDriver reads ai-spend's own parsers and pricing. Every other file reads
- * a driver through `spendDriver` or `MONITOR_DRIVERS`, never by a name of its own.
+ * The spend part of every harness: `drivers/<harness id>.ts` exports it as `spendPart` (`toolParts`), because a
+ * MonitorDriver reads ai-spend's own parsers and pricing, which the harness drivers cannot import. A new harness adds
+ * its module here and edits no table. Every other file reads a driver through `spendDriver` or `MONITOR_DRIVERS`.
  */
-const SPEND_DRIVERS: Readonly<ByAgent<MonitorDriver>> = { claude: claudeDriver, codex: codexDriver, grok: grokDriver };
+const SPEND_PARTS = toolParts<MonitorDriver>({
+    meta: import.meta,
+    folder: ".",
+    exportName: "spendPart",
+    isPart: hasMembers<MonitorDriver>("id", "roots"),
+});
 
 export function spendDriver(agent: AgentId): MonitorDriver {
-    return SPEND_DRIVERS[agent];
+    return SPEND_PARTS.of(agent);
 }
 
 /** Walk order is the report order: the canonical harness order, Claude first (it is the biggest tree). */

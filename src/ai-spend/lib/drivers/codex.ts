@@ -114,3 +114,6 @@ export const codexDriver: MonitorDriver = {
         return rollout ? transcriptStem(basename(rollout)) : null;
     },
 };
+
+/** This harness's spend part, the export `drivers/index.ts` loads by the harness id. */
+export const spendPart = codexDriver;

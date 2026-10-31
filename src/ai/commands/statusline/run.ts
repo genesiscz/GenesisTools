@@ -1,4 +1,8 @@
 #!/usr/bin/env bun
+import type { StatuslineCache } from "@genesiscz/utils/ai/statusline/cache";
+import { loadStatuslineConfig } from "@genesiscz/utils/ai/statusline/config";
+import { renderStatusline } from "@genesiscz/utils/ai/statusline/render";
+import type { StatuslineFeature } from "@genesiscz/utils/ai/statusline/types";
 /**
  * The hot entry: what the host runs on every statusline render.
  *
@@ -7,11 +11,7 @@
  * seconds in every session on the machine. This file imports the renderer and one host feature
  * and nothing else. `tools ai statusline run` is the same code behind the ordinary door.
  */
-import { claudeCodeStatusline } from "@genesiscz/utils/ai/providers/plugins/anthropic-sub/statusline";
-import type { StatuslineCache } from "@genesiscz/utils/ai/statusline/cache";
-import { loadStatuslineConfig } from "@genesiscz/utils/ai/statusline/config";
-import { renderStatusline } from "@genesiscz/utils/ai/statusline/render";
-import type { StatuslineFeature } from "@genesiscz/utils/ai/statusline/types";
+import { toolParts } from "@genesiscz/utils/harness/tool-parts";
 import type { HarnessId } from "@genesiscz/utils/harness/types";
 import { SafeJSON } from "@genesiscz/utils/json";
 import { logger, out } from "@genesiscz/utils/logger";
@@ -31,20 +31,22 @@ export interface RunStatuslineOptions {
     raw?: Record<string, unknown>;
 }
 
+type HostFeature = ((cache?: StatuslineCache) => StatuslineFeature) | null;
+
 /**
- * The statusline feature of each host, null where the harness has no statusline hook yet. Harness-guard: this is the
- * one host table the drivers' pending `statusline` part names (P4); the hot entry imports the Claude feature directly,
- * since a lazy driver part would add an import hop to a render that runs every six seconds in every session.
+ * The statusline feature of each host: `hosts/<harness id>.ts` exports it as `statuslinePart`, null where the harness
+ * has no statusline hook yet. Only the rendering host's module loads (one synchronous require per render process).
  */
-const HOST_FEATURES: { readonly [Host in StatuslineHost]: ((cache?: StatuslineCache) => StatuslineFeature) | null } = {
-    claude: claudeCodeStatusline,
-    codex: null,
-    grok: null,
-};
+export const HOST_FEATURES = toolParts<HostFeature>({
+    meta: import.meta,
+    folder: "hosts",
+    exportName: "statuslinePart",
+    isPart: (value): value is HostFeature => value === null || typeof value === "function",
+});
 
 /** The host feature for a host, or null when that host has no statusline hook yet. */
 export function featureFor(host: StatuslineHost, cache?: StatuslineCache): StatuslineFeature | null {
-    return HOST_FEATURES[host]?.(cache) ?? null;
+    return HOST_FEATURES.of(host)?.(cache) ?? null;
 }
 
 /** Render once and return the lines; the caller decides how to print and when to exit. */

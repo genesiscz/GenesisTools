@@ -109,3 +109,6 @@ export const claudeDriver: MonitorDriver = {
     // ai-spend keys Claude usage by the session id itself.
     spendSessionId: (sessionId) => sessionId,
 };
+
+/** This harness's spend part, the export `drivers/index.ts` loads by the harness id. */
+export const spendPart = claudeDriver;

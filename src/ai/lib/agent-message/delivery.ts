@@ -1,7 +1,6 @@
 import { NoSessionMatchError, resolveSessionTranscript } from "@app/ai/lib/sessions/resolve-transcript";
 import { type LiveAgentSurface, matchLiveAgentSurfaces } from "@app/cmux/lib/session-adopt";
 import { agentsOnTtyNow, liveAgentSurfacesNow, tmuxPaneStillShownNow } from "@app/cmux/lib/session-close-live";
-import type { PerHarness } from "@genesiscz/utils/ai/providers/alias-list";
 import type { TurnProvider } from "@genesiscz/utils/ai/transcripts/turn-state";
 import {
     attestingSender,
@@ -16,6 +15,7 @@ import { currentClaudeSender } from "@genesiscz/utils/claude/peer-sender";
 import { toolCommand } from "@genesiscz/utils/cli/tool-command";
 import { type CmuxRunResult, runCmux } from "@genesiscz/utils/cmux/lib/cli";
 import { formatDuration } from "@genesiscz/utils/format";
+import { isFunctionPart, toolParts } from "@genesiscz/utils/harness/tool-parts";
 import { logger } from "@genesiscz/utils/logger";
 import { type BoundedCommandResult, boundedCommand } from "@genesiscz/utils/process/bounded-command";
 import { childDeadlineTermination } from "@genesiscz/utils/process/child-deadline";
@@ -486,17 +486,19 @@ export async function pasteIntoSurface(input: {
 }
 
 /**
- * The one table of the message part: each driver is this tool's code (Claude's peer channel, the Codex thread queue,
- * Grok's leader), which the harness drivers in `src/utils` cannot import (harness guard).
+ * The message part of each harness: `drivers/<harness id>.ts` exports it as `messagePart` (`toolParts`). Each driver is
+ * this tool's code (Claude's peer channel, the Codex thread queue, Grok's leader), which the harness drivers in
+ * `src/utils` cannot import. A new harness writes its driver in its own module there and edits no table.
  */
-const MESSAGE_DRIVERS: PerHarness<() => MessageDriver> = {
-    claude: claudeMessageDriver,
-    codex: codexMessageDriver,
-    grok: grokMessageDriver,
-};
+export const MESSAGE_DRIVERS = toolParts<() => MessageDriver>({
+    meta: import.meta,
+    folder: "drivers",
+    exportName: "messagePart",
+    isPart: isFunctionPart,
+});
 
 export function messageDriverFor(alias: TurnProvider): MessageDriver {
-    return MESSAGE_DRIVERS[alias]();
+    return MESSAGE_DRIVERS.of(alias)();
 }
 
 /**
