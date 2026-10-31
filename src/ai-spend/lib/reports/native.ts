@@ -346,9 +346,10 @@ function parseClaudeFile({ file, sessionId }: ParseFileOptions): SpendEvent[] | 
 function parseDriverFiles(options: DriverFilesOptions): SpendEvent[] {
     const { driver, source, roots, files, sessionId } = options;
     const events: SpendEvent[] = [];
+    const { parseFile } = nativeRead(source);
 
     for (const file of files) {
-        const parsed = nativeRead(source).parseFile({ driver, source, file, sessionId });
+        const parsed = parseFile({ driver, source, file, sessionId });
 
         if (parsed === null) {
             continue;
