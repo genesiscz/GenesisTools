@@ -174,7 +174,7 @@ struct RmWindowContent {
     static let permanentDisposal = "permanent"
 
     static func build(_ params: RmApproveParams, home: String = NSHomeDirectory(), icons: Bool = true,
-                      markdownApp: Bool = PathOpener.genesisMarkdownApp() != nil, now: Date = Date()) -> RmWindowContent {
+                      markdownApp: Bool = PathOpener.genesisMarkdownApp() != nil, now: Date = Date(), iconCache: RmIconCache? = nil) -> RmWindowContent {
         guard let request = params.request else { return lineContent(params, home: home) }
 
         var facts: [ApprovalFact] = []
@@ -193,7 +193,7 @@ struct RmWindowContent {
         let ordered = request.items.enumerated().sorted { a, b in
             (a.element.kind == "missing" ? 1 : 0, a.offset) < (b.element.kind == "missing" ? 1 : 0, b.offset)
         }.map(\.element)
-        let items = ordered.map { item($0, home: home, icons: icons, markdownApp: markdownApp, now: now) }
+        let items = ordered.map { item($0, home: home, icons: icons, markdownApp: markdownApp, now: now, iconCache: iconCache) }
         let ledger = "Every decision is written to the tools rm ledger."
         let isDelete = request.kind == "delete"
         return RmWindowContent(
@@ -303,7 +303,8 @@ struct RmWindowContent {
         return "\(count)\(newest)."
     }
 
-    static func item(_ item: RmApproveItem, home: String, icons: Bool, markdownApp: Bool, now: Date = Date()) -> ApprovalItem {
+    static func item(_ item: RmApproveItem, home: String, icons: Bool, markdownApp: Bool, now: Date = Date(),
+                     iconCache: RmIconCache? = nil) -> ApprovalItem {
         let gone = item.kind == "missing"
         let location = item.storedAt ?? item.path
         let isFolder = item.kind == "dir"
@@ -319,7 +320,7 @@ struct RmWindowContent {
             aside: item.storedAt != nil,
             isFolder: isFolder,
             opensInMarkdown: !gone && markdownApp && ["md", "markdown"].contains(ext),
-            icon: icons ? icon(for: location, isFolder: isFolder, gone: gone) : nil,
+            icon: icons ? (iconCache?.icon(for: location, isFolder: isFolder, gone: gone) ?? icon(for: location, isFolder: isFolder, gone: gone)) : nil,
             git: item.git.map { ApprovalGitState(state: $0.state, lastCommit: $0.lastCommit) },
             detail: isFolder && !gone ? folderDetail(item.folderStats, now: now) : nil,
             alsoIn: item.alsoIn ?? [])
@@ -417,6 +418,23 @@ extension RmWindowContent {
     }
 }
 
+/// The Finder icons of one window's rows, read once per path: a size or git fact that arrives later rebuilds the rows
+/// without asking the file system and NSWorkspace for every icon again on the main thread.
+final class RmIconCache {
+    private var images: [String: NSImage] = [:]
+    /// How many icons were read, not served from the cache.
+    private(set) var loads = 0
+
+    func icon(for path: String, isFolder: Bool, gone: Bool) -> NSImage {
+        let key = "\(gone ? "gone" : isFolder ? "folder" : "file"):\(path)"
+        if let image = images[key] { return image }
+        loads += 1
+        let image = RmWindowContent.icon(for: path, isFolder: isFolder, gone: gone)
+        images[key] = image
+        return image
+    }
+}
+
 @MainActor private let rmPresenter = ApprovalPanelPresenter()
 
 /// Where the person can look before deciding: the asking session's inbox in the hub, and its terminal.
@@ -469,7 +487,8 @@ private func rmFollowUpdates(onUpdate: @escaping @MainActor (RmApproveItemUpdate
 }
 
 func approveRm(_ params: RmApproveParams) {
-    let content = RmWindowContent.build(params)
+    let iconCache = RmIconCache()
+    let content = RmWindowContent.build(params, iconCache: iconCache)
     let audit: [String: Any] = ["title": params.title, "lines": params.lines, "caller": params.caller ?? "", "folder": params.folder ?? "",
                                 "request": params.request?.id ?? ""]
     func record(_ event: String, _ extra: [String: Any] = [:]) {
@@ -531,7 +550,7 @@ func approveRm(_ params: RmApproveParams) {
         var current = params
         @MainActor func show(_ next: RmApproveParams) {
             current = next
-            let rebuilt = RmWindowContent.build(next)
+            let rebuilt = RmWindowContent.build(next, iconCache: iconCache)
             model.refresh(items: rebuilt.items, summary: rebuilt.summary)
         }
         rmFollowUpdates(

@@ -209,6 +209,25 @@ final class RmApproveTests: XCTestCase {
         XCTAssertEqual(RmWindowContent.summary(Array(items.dropFirst())), "2 items, 2 kB")
     }
 
+    /// Each size that arrives rebuilds the rows; the icons come from the window's cache, read once per path.
+    func testARebuildReadsEachIconOnce() throws {
+        let items = [
+            RmApproveItem(path: "/w/cache", kind: "dir", bytes: nil, empty: nil, storedAt: nil, reason: "r", measuring: true),
+            RmApproveItem(path: "/w/out.bin", kind: "file", bytes: 2_000, empty: nil, storedAt: nil, reason: "r"),
+            RmApproveItem(path: "/w/old.txt", kind: "missing", bytes: nil, empty: nil, storedAt: nil, reason: "r"),
+        ]
+        let cache = RmIconCache()
+        var params = request(items)
+        let first = RmWindowContent.build(params, home: "/Users/someone", markdownApp: false, iconCache: cache)
+        params = params.applying(RmApproveItemUpdate(path: "/w/cache", bytes: 4_096, measuring: false))
+        let second = RmWindowContent.build(params, home: "/Users/someone", markdownApp: false, iconCache: cache)
+
+        XCTAssertEqual(cache.loads, 3)
+        XCTAssertEqual(second.items.map(\.size), ["4 kB", "2 kB", "Already gone"])
+        let before = try XCTUnwrap(first.items.first?.icon)
+        XCTAssertTrue(second.items.first?.icon === before)
+    }
+
     /// A refresh replaces the rows and the total, and the ticks stay as the person left them.
     @MainActor func testARefreshKeepsTheTicks() {
         func rows(_ size: String?) -> [ApprovalItem] {
