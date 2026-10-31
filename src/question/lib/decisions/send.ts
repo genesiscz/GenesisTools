@@ -58,6 +58,7 @@ export async function sendAnsweredDecisions({
     inSession = false,
     promptReceipt,
     releasePrompt,
+    force = false,
     files = decisionFiles(),
     deps = {},
 }: {
@@ -76,6 +77,8 @@ export async function sendAnsweredDecisions({
     promptReceipt?: PromptReceipt;
     /** A submission failed before the session accepted the prompt. Release only that preparation's lease. */
     releasePrompt?: boolean;
+    /** Type the answer into the pane even while the session shows a dialog (`tools question send --force`). */
+    force?: boolean;
     files?: { file: string; events: string };
     deps?: DeliverDeps;
 }): Promise<SendResult> {
@@ -166,6 +169,7 @@ export async function sendAnsweredDecisions({
                         sourceHome,
                         text: relayedAnswerText(text),
                         deliveryKey,
+                        force,
                     },
                     deps
                 );

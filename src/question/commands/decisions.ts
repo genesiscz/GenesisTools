@@ -244,12 +244,14 @@ export function registerDecisionCommands(program: Command): void {
         .option("--session <id>", "defaults to the harness session")
         .option("--provider <name>", "claude, codex or grok (the store's value when omitted)")
         .option("--dry-run", "Print the message and the route; change nothing")
-        .action(async (options: { session?: string; provider?: string; dryRun?: boolean }) => {
+        .option("--force", "Type into the cmux pane even while the session shows a question, plan or permission dialog")
+        .action(async (options: { session?: string; provider?: string; dryRun?: boolean; force?: boolean }) => {
             out.result(
                 await sendAnsweredDecisions({
                     session: sessionOrThrow(options.session),
                     ...(options.provider ? { provider: options.provider } : {}),
                     dryRun: options.dryRun,
+                    force: options.force === true,
                 })
             );
         });
