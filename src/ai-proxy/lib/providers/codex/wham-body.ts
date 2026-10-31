@@ -394,6 +394,11 @@ export function hasReasoningInput(body: Record<string, unknown>): boolean {
     return Array.isArray(body.input) && body.input.some((item) => isObject(item) && item.type === "reasoning");
 }
 
+/** An encrypted compaction item in the input: only the login that made it can decrypt it. */
+export function hasCompactionInput(body: Record<string, unknown>): boolean {
+    return Array.isArray(body.input) && body.input.some((item) => isObject(item) && item.type === "compaction");
+}
+
 /** The first 12 hex of a SHA-256: enough to match a blob across turns in a log, nothing of its content. */
 export function contentHash(value: string): string {
     return createHash("sha256").update(value).digest("hex").slice(0, 12);

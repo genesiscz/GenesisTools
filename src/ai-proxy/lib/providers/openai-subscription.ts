@@ -16,6 +16,7 @@ import { execToolBridge } from "@app/ai-proxy/lib/providers/codex/exec/tool";
 import {
     buildWhamResponsesBody,
     contentHash,
+    hasCompactionInput,
     hasReasoningInput,
     nonStrictByDefault,
     reasoningOptions,
@@ -1114,6 +1115,9 @@ export class OpenAiSubscriptionProvider implements ProxyProvider {
             return failoverBodyText;
         };
 
+        // A compaction item in the body was expanded for the primary login, and a rebuilt one is saved as the primary's:
+        // another login cannot decrypt the first and would sign the second, so neither request fails over.
+        const primaryOnly = client?.primaryOnly === true || hasCompactionInput(whamBody);
         const started = performance.now();
         let upstream: Response | undefined;
         let servedBy: string | undefined;
@@ -1121,6 +1125,14 @@ export class OpenAiSubscriptionProvider implements ProxyProvider {
         const tried: string[] = [];
 
         for (const candidate of this.tokenCandidates()) {
+            if (primaryOnly && !candidate.primary) {
+                lastFailure ??= jsonError(
+                    503,
+                    "The Codex login that holds this compacted conversation is unavailable, and its compaction cannot move to another login."
+                );
+                continue;
+            }
+
             const coolingMs = this.failover ? cooldownRemainingMs(candidate.key) : 0;
             if (coolingMs > 0) {
                 logger.debug(

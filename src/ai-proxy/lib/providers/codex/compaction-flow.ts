@@ -292,6 +292,8 @@ export interface FailureClient {
     sessionId?: string;
     /** Filled by `respond`: the login that answered, which signs the reply's reasoning. */
     servedIdentity?: string;
+    /** Only the primary login may answer: the reply is saved as the primary's (a compaction rebuilt for it). */
+    primaryOnly?: boolean;
 }
 
 /** Where compaction records live: the saved history and the encrypted item per login, by `gtc1.` id. */
@@ -630,11 +632,12 @@ export class CodexCompactionFlow {
             this.compactionItem({ ...input, id, ancestors })
         );
         const cleanHistory = history.filter((item) => !isObject(item) || item.type !== "reasoning");
+        // The item is saved under `input.accountHash`, so the login with that hash must make it: no failover.
         const response = await this.deps.upstream(
             input.req,
             input.model,
             { ...input.template, input: [...cleanHistory, { type: "compaction_trigger" }], stream: true },
-            input.client
+            { ...input.client, primaryOnly: true }
         );
         if (!response.ok) {
             throw new CompactionRestoreError(
