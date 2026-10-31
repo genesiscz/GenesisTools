@@ -5,6 +5,24 @@ import { SafeJSON } from "@genesiscz/utils/json";
 import { logger } from "@genesiscz/utils/logger";
 import { isObject } from "@genesiscz/utils/object";
 
+/** One read that rejects with `message` when the upstream sends nothing for `idleMs`. */
+async function readWithIdle(
+    reader: ReadableStreamDefaultReader<Uint8Array>,
+    idleMs: number,
+    message: string
+): ReturnType<ReadableStreamDefaultReader<Uint8Array>["read"]> {
+    let timer: ReturnType<typeof setTimeout> | undefined;
+    const idle = new Promise<never>((_resolve, reject) => {
+        timer = setTimeout(() => reject(new Error(message)), idleMs);
+    });
+
+    try {
+        return await Promise.race([reader.read(), idle]);
+    } finally {
+        clearTimeout(timer);
+    }
+}
+
 /** Read a compaction stream with the same 120-second idle limit as response capture. */
 export async function readCompactionText(response: Response, idleMs = 120_000): Promise<string> {
     if (!response.body) {
@@ -17,17 +35,7 @@ export async function readCompactionText(response: Response, idleMs = 120_000): 
 
     try {
         while (true) {
-            let timer: ReturnType<typeof setTimeout> | undefined;
-            const idle = new Promise<never>((_resolve, reject) => {
-                timer = setTimeout(() => reject(new Error("Compaction upstream stream timed out.")), idleMs);
-            });
-            let chunk: Awaited<ReturnType<typeof reader.read>>;
-
-            try {
-                chunk = await Promise.race([reader.read(), idle]);
-            } finally {
-                clearTimeout(timer);
-            }
+            const chunk = await readWithIdle(reader, idleMs, "Compaction upstream stream timed out.");
 
             if (chunk.done) {
                 return text + decoder.decode();
@@ -105,16 +113,7 @@ export async function* whamSsePayloads(stream: ReadableStream<Uint8Array>, idleM
     let data: string[] = [];
     try {
         while (true) {
-            let timer: ReturnType<typeof setTimeout> | undefined;
-            const idle = new Promise<never>((_resolve, reject) => {
-                timer = setTimeout(() => reject(new Error("WHAM upstream stream timed out.")), idleMs);
-            });
-            let chunk: Awaited<ReturnType<typeof reader.read>>;
-            try {
-                chunk = await Promise.race([reader.read(), idle]);
-            } finally {
-                clearTimeout(timer);
-            }
+            const chunk = await readWithIdle(reader, idleMs, "WHAM upstream stream timed out.");
             pending += decoder.decode(chunk.value, { stream: !chunk.done });
             let end = SSE_LINE_END.exec(pending);
             while (end && !(end[0] === "\r" && end.index === pending.length - 1 && !chunk.done)) {

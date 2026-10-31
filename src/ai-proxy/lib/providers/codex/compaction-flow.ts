@@ -59,6 +59,16 @@ export function inputHasFallback(input: unknown[], id: string): boolean {
 }
 
 /** Bound compaction preparation and send SSE pings while the provider is still preparing a response. */
+/** The same request with another abort signal (the deadline's), its body carried as text. */
+export function requestWithSignal(req: Request, bodyText: string, signal: AbortSignal): Request {
+    return new Request(req.url, {
+        method: req.method,
+        headers: req.headers,
+        ...(req.method === "GET" || req.method === "HEAD" ? {} : { body: bodyText }),
+        signal,
+    });
+}
+
 export async function compactionDispatch({
     signal,
     stream,

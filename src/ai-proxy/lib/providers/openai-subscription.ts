@@ -11,6 +11,7 @@ import {
     type FailureClient,
     fileCompactionStore,
     inputHasFallback,
+    requestWithSignal,
 } from "@app/ai-proxy/lib/providers/codex/compaction-flow";
 import { execToolBridge } from "@app/ai-proxy/lib/providers/codex/exec/tool";
 import {
@@ -190,17 +191,7 @@ export class OpenAiSubscriptionProvider implements ProxyProvider {
                     signal: req.signal,
                     stream: parsed.stream === true,
                     run: (signal) =>
-                        this.nativeMessages(
-                            new Request(req.url, {
-                                method: req.method,
-                                headers: req.headers,
-                                ...(req.method === "GET" || req.method === "HEAD" ? {} : { body: bodyText }),
-                                signal,
-                            }),
-                            model,
-                            bodyText,
-                            context
-                        ),
+                        this.nativeMessages(requestWithSignal(req, bodyText, signal), model, bodyText, context),
                 });
             };
         }
@@ -642,12 +633,7 @@ export class OpenAiSubscriptionProvider implements ProxyProvider {
                     stream: false,
                     timeoutMs: 120_000,
                     run: async (signal) => {
-                        const restoreReq = new Request(req.url, {
-                            method: req.method,
-                            headers: req.headers,
-                            ...(req.method === "GET" || req.method === "HEAD" ? {} : { body: bodyText }),
-                            signal,
-                        });
+                        const restoreReq = requestWithSignal(req, bodyText, signal);
                         expanded = await expandCompactionMarkers(rawInput, async (id) => {
                             try {
                                 return await this.compaction.compactionItem({
