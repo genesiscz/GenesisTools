@@ -1,6 +1,10 @@
 import { existsSync, readFileSync, realpathSync } from "node:fs";
 import { join } from "node:path";
-import { ACCOUNT_PROVIDER_ALIASES } from "@genesiscz/utils/ai/providers/alias-list";
+import { userMessageOutcome } from "@app/question/lib/decisions/chat-answer-run";
+import { decisionStopWanted } from "@app/question/lib/decisions/hook-config";
+import { hooksConfigPath } from "@genesiscz/utils/agents/hooks/config-section";
+import { harnessHooks } from "@genesiscz/utils/ai/providers/harness-hooks";
+import { harnessLabel } from "@genesiscz/utils/ai/providers/harness-index";
 import { suggestCommand, suggestEnumFlag } from "@genesiscz/utils/cli";
 import { toolCommand } from "@genesiscz/utils/cli/tool-command";
 import { ui } from "@genesiscz/utils/cli/ui";
@@ -11,7 +15,7 @@ import type { ShellRule } from "@genesiscz/utils/shell/rules/types";
 import { createBoxTable, renderCliHeader } from "@genesiscz/utils/table";
 import type { Command } from "commander";
 import pc from "picocolors";
-import { chatAnswerLogPath, readChatAnswerRuns, userMessageOutcome } from "../lib/hooks/chat-answer-log";
+import { chatAnswerLogPath, readChatAnswerRuns } from "../lib/hooks/chat-answer-log";
 import {
     type CodexWiring,
     codexHooksPath,
@@ -21,11 +25,10 @@ import {
 } from "../lib/hooks/codex";
 import {
     DEFAULT_HOOKS_CONFIG,
-    decisionStopWanted,
     diffFor,
+    HARNESS_NAMES,
     type HarnessName,
     type HooksConfig,
-    hooksConfigPath,
     lastConfigLoadError,
     lastConfigProblems,
     loadHooksConfig,
@@ -69,7 +72,6 @@ import { BUILT_IN_RULES } from "../lib/hooks/tool-rules";
 import { writeJsonFile } from "../lib/hooks/write-json";
 import { registerRuleCommands, registerRulePicker, ruleState, shortPath } from "./hooks-rules";
 
-const HARNESSES: readonly HarnessName[] = ACCOUNT_PROVIDER_ALIASES;
 type InstallableHarness = keyof typeof HOOK_INSTALLERS;
 
 /** `--harness` for install and uninstall: the value, or `null` after printing the choices. */
@@ -145,6 +147,8 @@ interface HookInstaller {
     afterUninstall(): void;
     /** Whether its hook file is wired, as `doctor --json` reports it (Claude's full status, Codex's state). */
     wiring(): WiringStatus | CodexWiring["state"];
+    /** Its row in `doctor`'s wiring table, and the warnings with their fix that its state calls for. */
+    doctor(): { wiring: string; warnings: string[] };
 }
 
 /**
@@ -187,6 +191,24 @@ const HOOK_INSTALLERS = {
             ui.raw(`${pc.bold("recorded")}  ${hooksConfigPath()}`);
         },
         wiring: () => wiringStatus(),
+        doctor() {
+            const wired = wiringStatus();
+            const state =
+                wired.state === "stale"
+                    ? pc.yellow(`stale (${wired.events.join(", ")} differ)`)
+                    : wired.state === "installed"
+                      ? "installed"
+                      : pc.yellow("not installed");
+            return {
+                wiring: `${shortPath(claudeSettingsPath())}: ${state}`,
+                warnings:
+                    wired.state === "stale"
+                        ? [
+                              `settings.json holds an older wiring of these hooks. Fix: ${suggestCommand("tools agents", { replaceCommand: ["hooks", "install", "--write"] })}`,
+                          ]
+                        : [],
+            };
+        },
     },
     codex: {
         install(options) {
@@ -208,11 +230,25 @@ const HOOK_INSTALLERS = {
         // Codex keeps no install record.
         afterUninstall() {},
         wiring: () => codexWiring().state,
+        doctor() {
+            const codex = codexWiring();
+            const warnings =
+                codex.state !== "installed"
+                    ? [
+                          `Codex has no ${codex.state === "stale" ? "current " : ""}shell guard of ours. Fix: ${suggestCommand("tools agents", { replaceCommand: ["hooks", "install", "--harness", "codex", "--write"] })}`,
+                      ]
+                    : codex.trust.some((entry) => !entry.recorded)
+                      ? [
+                            "Codex has not trusted every hook of ours yet. It asks at its next interactive start; until then it does not run them.",
+                        ]
+                      : [];
+            return { wiring: codexLabel(codex), warnings };
+        },
     },
 } satisfies Partial<Record<HarnessName, HookInstaller>>;
 
 /** The harnesses with a hook file of their own, in the canonical order. */
-const INSTALLABLE: readonly InstallableHarness[] = HARNESSES.filter((name): name is InstallableHarness =>
+const INSTALLABLE: readonly InstallableHarness[] = HARNESS_NAMES.filter((name): name is InstallableHarness =>
     Object.hasOwn(HOOK_INSTALLERS, name)
 );
 
@@ -316,7 +352,7 @@ function printCustomRules(config: HooksConfig, custom: CustomRules | null): void
 
 /** Which harnesses render the diff, so a harness that is switched off is visible at a glance. */
 function perHarnessDiff(config: HooksConfig): string {
-    return HARNESSES.map((harness) => {
+    return HARNESS_NAMES.map((harness) => {
         const resolved = diffFor(config, harness);
 
         return `${harness} ${resolved.enabled ? "on" : pc.yellow("off")}`;
@@ -325,9 +361,9 @@ function perHarnessDiff(config: HooksConfig): string {
 
 /** The `questions` feature per harness (`tools agents hooks config set questions.<harness> on`), all off by default. */
 function perHarnessQuestions(config: HooksConfig): string {
-    return HARNESSES.map((harness) => `${harness} ${config.questions.harnesses[harness] ? "on" : pc.dim("off")}`).join(
-        " · "
-    );
+    return HARNESS_NAMES.map(
+        (harness) => `${harness} ${config.questions.harnesses[harness] ? "on" : pc.dim("off")}`
+    ).join(" · ");
 }
 
 export function registerHooksCommands(program: Command): void {
@@ -392,38 +428,29 @@ export function registerHooksCommands(program: Command): void {
 
             printCustomRules(config, set.custom);
 
-            const wired = wiringStatus();
-            const codex = codexWiring();
             const seen = lastSeenPerHarness(config.logPath);
             const dist = hooksDistPath();
             const distTarget = existsSync(dist) ? realpathSync(dist) : "not created";
             const wiring = createBoxTable(["HARNESS", "WIRING", "LAST DECISION IN THE LOG"]);
 
-            wiring.push([
-                "claude",
-                `${shortPath(claudeSettingsPath())}: ${
-                    wired.state === "stale"
-                        ? pc.yellow(`stale (${wired.events.join(", ")} differ)`)
-                        : wired.state === "installed"
-                          ? "installed"
-                          : pc.yellow("not installed")
-                }`,
-                seenLabel(seen.claude),
-            ]);
-            wiring.push(["codex", codexLabel(codex), seenLabel(seen.codex)]);
-            wiring.push([
-                "grok",
-                `no file of its own: Grok runs the hooks in ${shortPath(claudeSettingsPath())}`,
-                seenLabel(seen.grok),
-            ]);
+            const warnings: string[] = [];
+
+            for (const harness of HARNESS_NAMES) {
+                const installer = INSTALLABLE.find((name) => name === harness);
+                const row = installer
+                    ? HOOK_INSTALLERS[installer].doctor()
+                    : {
+                          wiring: harnessHooks(harness).runsClaudeSettingsHooks
+                              ? `no file of its own: ${harnessLabel(harness)} runs the hooks in ${shortPath(claudeSettingsPath())}`
+                              : pc.yellow("no hook file of its own, and it runs no other harness's hooks"),
+                          warnings: [],
+                      };
+                wiring.push([harness, row.wiring, seenLabel(seen[harness])]);
+                warnings.push(...row.warnings);
+            }
+
             out.println(wiring.toString());
             ui.raw(`${pc.bold("dist symlink")}  ${dist} → ${distTarget}`);
-
-            if (wired.state === "stale") {
-                ui.warn(
-                    `settings.json holds an older wiring of these hooks. Fix: ${suggestCommand("tools agents", { replaceCommand: ["hooks", "install", "--write"] })}`
-                );
-            }
 
             if (decisionStopWanted(config) && !stopWired) {
                 ui.warn(
@@ -431,14 +458,8 @@ export function registerHooksCommands(program: Command): void {
                 );
             }
 
-            if (codex.state !== "installed") {
-                ui.warn(
-                    `Codex has no ${codex.state === "stale" ? "current " : ""}shell guard of ours. Fix: ${suggestCommand("tools agents", { replaceCommand: ["hooks", "install", "--harness", "codex", "--write"] })}`
-                );
-            } else if (codex.trust.some((entry) => !entry.recorded)) {
-                ui.warn(
-                    "Codex has not trusted every hook of ours yet. It asks at its next interactive start; until then it does not run them."
-                );
+            for (const warning of warnings) {
+                ui.warn(warning);
             }
 
             for (const problem of lastConfigProblems()) {

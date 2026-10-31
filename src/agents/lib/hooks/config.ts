@@ -1,6 +1,18 @@
-import { readFileSync } from "node:fs";
-import { join } from "node:path";
-import { ACCOUNT_PROVIDER_ALIASES, byHarness, byHarnessWhere } from "@genesiscz/utils/ai/providers/alias-list";
+import { DECISIONS_HOOK_SECTION, type DecisionsHookConfig } from "@app/question/lib/decisions/hook-config";
+import { QUESTIONS_HOOK_SECTION, type QuestionsConfig } from "@genesiscz/utils/agents/dialogs/hook-config";
+import {
+    boolOr,
+    type CheckedNumber,
+    type HookConfigSection,
+    hooksConfigPath,
+    isCount,
+    oneOf,
+    partOf,
+    readStoredHooksConfig,
+    reportRejected,
+    countOr as sharedCountOr,
+} from "@genesiscz/utils/agents/hooks/config-section";
+import { ACCOUNT_PROVIDER_ALIASES, byHarnessWhere } from "@genesiscz/utils/ai/providers/alias-list";
 import { harnessHooks } from "@genesiscz/utils/ai/providers/harness-hooks";
 import type { HarnessId } from "@genesiscz/utils/harness/types";
 import { SafeJSON } from "@genesiscz/utils/json";
@@ -8,6 +20,8 @@ import { genesisToolsDir, toolDataDir } from "@genesiscz/utils/storage/root";
 import type { DiffCategory } from "./diff/classify";
 import { FULL_DIFF_MODES, type FullDiffMode } from "./diff/full";
 import { DIFF_THEMES, type DiffThemeName } from "./diff/theme";
+import { AGENTS_TALK_HOOK_SECTION, type AgentsTalkConfig } from "./sections/agents-talk";
+import { UNPUSHED_HOOK_SECTION, type UnpushedConfig } from "./sections/unpushed";
 
 export type HookOutcome = "allow" | "context" | "warn" | "block";
 export type HarnessName = HarnessId;
@@ -234,63 +248,6 @@ export interface GuardConfig {
  */
 export type LogCommandsPolicy = "shadow" | "always" | "never";
 
-export type DecisionStopHook = "off" | "warn" | "block";
-export const DECISION_CHAT_ANSWERS = ["off", "record", "remind"] as const;
-export type DecisionChatAnswers = (typeof DECISION_CHAT_ANSWERS)[number];
-
-/**
- * The decision hub's optional hooks. Everything ships OFF, and `tools agents hooks install` only
- * wires the Stop and UserPromptSubmit entries once one of them is turned on here.
- */
-export interface DecisionsHookConfig {
-    /**
-     * A final reply that asks `❓ DECISION N` without posting it through question_post: `warn`
-     * tells the user, `block` sends the agent back to post it, at most `maxBlocksPerSession`
-     * times per session, then it only warns (the loop guard).
-     */
-    stopHook: DecisionStopHook;
-    /**
-     * A final reply that asks the user to decide (a cue: the word decision, decisions, decide or
-     * choose, or ❓; and a sentence that ends in "?", both outside code and quotes) while this
-     * session logged no decision since the turn's prompt: `warn` tells the user, `block` sends the
-     * agent back once per turn to post it with question_post. A reply that names `❓ DECISION N`
-     * belongs to `stopHook`. Its blocks count against `maxBlocksPerSession` apart from `stopHook`'s.
-     * It needs only the Stop entry, so turning it on wires no UserPromptSubmit hook.
-     */
-    questionNudge: DecisionStopHook;
-    /**
-     * Answers the user typed in the chat to an open `❓ DECISION N` (`D14 b)`), read from the session's transcript
-     * after the decision was asked, through its provider's `readBackward`. `record`: an unambiguous answer is stored
-     * as acknowledged with `answeredVia: "automatic_heuristic"`, and the agent is sent back once per unclear one to
-     * record it; `remind`: nothing is stored, the agent is sent back once per decision to record what it finds;
-     * `off`. It needs only the Stop entry.
-     */
-    chatAnswers: DecisionChatAnswers;
-    maxBlocksPerSession: number;
-    harnesses: HarnessName[];
-    /** Safety net: store an unposted `❓ DECISION N` block as an open decision under its number. */
-    harvest: boolean;
-    /**
-     * The inbox (`tools question inbox`, the hub) stores the unposted `❓ DECISION N` blocks it lists as open decisions
-     * under their numbers, so the widget counts them and every surface can answer them; the widget reads the decision
-     * log only, so it counted one fewer than the hub (2026-10-27, decision audit F6). Default on. The agent's own post
-     * of that number later becomes the decision's next revision.
-     */
-    harvestListed: boolean;
-    /** UserPromptSubmit: hand answered, undelivered decisions to the session's next prompt. */
-    injectAnswers: boolean;
-    /**
-     * A blocking decision still waiting this long raises one notification per threshold. Read by
-     * `tools question stale --notify`, which `tools question stale --install` runs every 5 minutes.
-     */
-    staleness: { warnAfterMinutes: number; alarmAfterMinutes: number; notify: boolean };
-}
-
-/** The genesis-tools plugin's SessionStart reminder about the agents-talk skill. */
-export interface AgentsTalkConfig {
-    hint: boolean;
-}
-
 /**
  * The Claude Code mods of the `genesis-tools-mods` plugin (`tools agents hooks mods install`), one object per
  * feature (`mods.<feature>.<field>`). The plugin reads this section of the hooks file itself, so a change here
@@ -406,36 +363,6 @@ export interface ModsConfig {
     stall: { enabled: boolean; action: "button" | "auto"; minutes: number };
 }
 
-/**
- * The Stop-phase reminder about commits that are not pushed yet. It fires for a branch with an
- * upstream when MORE than `maxCommits` commits are unpushed, or when the oldest unpushed commit
- * is older than `maxAgeMinutes`, whichever comes first. One reminder per repository per
- * `remindEveryMinutes`, across every session on the machine. It never pushes.
- */
-export interface UnpushedConfig {
-    enabled: boolean;
-    maxCommits: number;
-    maxAgeMinutes: number;
-    remindEveryMinutes: number;
-}
-
-/**
- * The agents' own structural questions (`tools agents hooks set questions on`): a question tool (Claude
- * `AskUserQuestion`, Codex `request_user_input`, Grok `ask_user_question`), a plan to approve, or a permission prompt,
- * recorded as one dialog record per question (`~/.genesis-tools/agents/dialogs/`, identity
- * `provider:sessionId:toolCallId`) that the hub inbox, the widget and the answer guard read. Everything ships OFF.
- *
- * Per harness, because each one exposes the questions differently: Claude through its hooks (PreToolUse and
- * PostToolUse on the question tools, Notification for a permission prompt); Grok through the same entries (it runs
- * Claude's `settings.json` hooks) plus the hub watcher for its permission prompts, which no Grok hook sees; Codex
- * through the hub watcher only, since its hooks reach shell calls alone.
- */
-export interface QuestionsConfig {
-    harnesses: Record<HarnessName, boolean>;
-    /** A banner when the hub watcher sees a newly recorded question that waits for the user. */
-    notify: boolean;
-}
-
 export interface HooksConfig {
     guard: GuardConfig;
     diff: DiffConfig;
@@ -460,6 +387,17 @@ export interface HooksConfig {
     maxLogMB: number;
 }
 
+/** The hook features that own a section of `hooks.json`: its defaults, its merge and its `set` keys. */
+export const HOOK_SECTION_NAMES = ["decisions", "questions", "agentsTalk", "unpushed"] as const;
+export type HookSectionName = (typeof HOOK_SECTION_NAMES)[number];
+
+export const HOOK_CONFIG_SECTIONS: { readonly [Name in HookSectionName]: HookConfigSection<HooksConfig[Name]> } = {
+    decisions: DECISIONS_HOOK_SECTION,
+    questions: QUESTIONS_HOOK_SECTION,
+    agentsTalk: AGENTS_TALK_HOOK_SECTION,
+    unpushed: UNPUSHED_HOOK_SECTION,
+};
+
 /**
  * `~/.genesis-tools/agents`, the same directory `new Storage("agents")` resolves.
  *
@@ -468,10 +406,6 @@ export interface HooksConfig {
  */
 export function agentsDataDir(): string {
     return toolDataDir("agents");
-}
-
-export function hooksConfigPath(): string {
-    return join(agentsDataDir(), "hooks.json");
 }
 
 /**
@@ -550,19 +484,9 @@ export const DEFAULT_HOOKS_CONFIG: HooksConfig = {
         // its driver's hooks part). The capture is skipped too, so such a session pays nothing for a render.
         harnesses: byHarnessWhere((id) => (harnessHooks(id).rendersAnsiDiffs ? undefined : { enabled: false })),
     },
-    decisions: {
-        stopHook: "off",
-        questionNudge: "off",
-        chatAnswers: "off",
-        maxBlocksPerSession: 2,
-        harnesses: [...ACCOUNT_PROVIDER_ALIASES],
-        harvest: false,
-        harvestListed: true,
-        injectAnswers: false,
-        staleness: { warnAfterMinutes: 30, alarmAfterMinutes: 120, notify: true },
-    },
-    questions: { harnesses: byHarness(() => false), notify: true },
-    agentsTalk: { hint: true },
+    decisions: DECISIONS_HOOK_SECTION.defaults(),
+    questions: QUESTIONS_HOOK_SECTION.defaults(),
+    agentsTalk: AGENTS_TALK_HOOK_SECTION.defaults(),
     // Every mod past the full diff and the idle compaction starts off: `tools agents hooks mods enable <name> --write`.
     mods: {
         diff: { fullDiff: true, collapseGitSync: true },
@@ -591,7 +515,7 @@ export const DEFAULT_HOOKS_CONFIG: HooksConfig = {
         sidebar: { hints: true, feedback: "line", focus: "command" },
         stall: { enabled: false, action: "button", minutes: 5 },
     },
-    unpushed: { enabled: true, maxCommits: 3, maxAgeMinutes: 60, remindEveryMinutes: 30 },
+    unpushed: UNPUSHED_HOOK_SECTION.defaults(),
     logPath: defaultLogPath(),
     // 🛑 `shadow: true` AND `logCommands: "shadow"` together mean `keepsCommand()` is true out
     // of the box, so EVERY Bash command this machine runs through a hook is written verbatim
@@ -605,45 +529,9 @@ export const DEFAULT_HOOKS_CONFIG: HooksConfig = {
     maxLogMB: 16,
 };
 
-/**
- * Every number in this config is a count: files, lines, bytes, notes. So it must be a whole
- * number, and at least 1 unless zero means something (`contextLines: 0` is `git diff -U0`, a
- * `contextCapPerSession` of 0 shows no context notes). `-1`, `2.5` and `NaN` used to pass: a
- * negative `maxLogBytes` rotated the log on every record.
- */
-export function isCount(value: unknown, min: number): value is number {
-    return typeof value === "number" && Number.isInteger(value) && value >= min;
-}
-
-interface CheckedNumber {
-    /** Where the value sits in `hooks.json`, for the problem `hooks doctor` prints. */
-    field: string;
-    value: unknown;
-    fallback: number;
-}
-
-/**
- * A stored value that was present but rejected. `hooks doctor` prints these, so a hand-edited
- * `"maxFiles": "15"` is named instead of silently turning into the default. An absent field is
- * not a problem.
- */
-function reportRejected({ field, value, fallback }: CheckedNumber, expected: string): void {
-    if (value !== undefined) {
-        lastProblems.push(`${field} is ${SafeJSON.stringify(value)}, not ${expected}; using ${fallback}`);
-    }
-}
-
-/** A hand-edited value outside its count domain (or not a number at all) falls back to the default. */
+/** A hand-edited value outside its count domain falls back to the default, and is named in `lastConfigProblems`. */
 function countOr(checked: CheckedNumber & { min?: number }): number {
-    const min = checked.min ?? 1;
-
-    if (isCount(checked.value, min)) {
-        return checked.value;
-    }
-
-    reportRejected(checked, `a whole number of at least ${min}`);
-
-    return checked.fallback;
+    return sharedCountOr(lastProblems, checked);
 }
 
 /**
@@ -660,7 +548,7 @@ function megabytesOr(checked: CheckedNumber): number {
         return checked.value;
     }
 
-    reportRejected(checked, "a positive number");
+    reportRejected(lastProblems, checked, "a positive number");
 
     return checked.fallback;
 }
@@ -715,10 +603,6 @@ function pathListOr(field: string, value: unknown, fallback: string[]): string[]
     );
 
     return fallback;
-}
-
-function boolOr(value: unknown, fallback: boolean): boolean {
-    return typeof value === "boolean" ? value : fallback;
 }
 
 /**
@@ -1015,68 +899,6 @@ function checkedOverride(stored: DiffOverrides, path: string): DiffOverrides {
 }
 
 /** The copy of the shipped defaults a writer stores beside the full settings (see `storedOverrides`). */
-export const SHIPPED_DEFAULTS_KEY = "_shippedDefaults";
-/** The installer's record of what it wired, kept in the same file; not a setting. */
-export const INSTALLED_KEY = "installed";
-
-function isPlainRecord(value: unknown): value is Record<string, unknown> {
-    return typeof value === "object" && value !== null && !Array.isArray(value);
-}
-
-/**
- * The parts of `value` that differ from `fallback`, or `undefined` when nothing does.
- *
- * 🛑 Only overrides may take effect. `applySetting` works on the fully resolved config, so a file
- * read verbatim froze every default it listed: observed 2026-09-22, one `diff.maxFiles` change
- * pinned ten unrelated settings, and a later default would never have reached that machine again.
- *
- * An array is compared whole. These are small literal lists, and a per-element merge would
- * make "the user cleared this list" indistinguishable from "the user did not touch it".
- */
-export function changedOnly(value: unknown, fallback: unknown): unknown {
-    if (Array.isArray(value) || Array.isArray(fallback)) {
-        return SafeJSON.stringify(value) === SafeJSON.stringify(fallback) ? undefined : value;
-    }
-
-    if (isPlainRecord(value) && isPlainRecord(fallback)) {
-        const out: Record<string, unknown> = {};
-
-        for (const [inner, held] of Object.entries(value)) {
-            const diff = changedOnly(held, fallback[inner]);
-
-            if (diff !== undefined) {
-                out[inner] = diff;
-            }
-        }
-
-        return Object.keys(out).length > 0 ? out : undefined;
-    }
-
-    return value === fallback ? undefined : value;
-}
-
-/**
- * The user's overrides inside a stored `hooks.json`. Writers store EVERY setting, so the file
- * shows each knob, plus `_shippedDefaults`, the defaults at write time. A value counts as an
- * override only when it differs from that copy, so a default that changes later still reaches
- * every setting the user never touched. A file without the copy (hand-written, or older) is
- * all overrides, as before.
- */
-export function storedOverrides(raw: unknown): Record<string, unknown> {
-    if (!isPlainRecord(raw)) {
-        return {};
-    }
-
-    const { [SHIPPED_DEFAULTS_KEY]: shipped, [INSTALLED_KEY]: _installed, ...settings } = raw;
-
-    if (!isPlainRecord(shipped)) {
-        return settings;
-    }
-
-    const overrides = changedOnly(settings, shipped);
-    return isPlainRecord(overrides) ? overrides : {};
-}
-
 /**
  * Synchronous on purpose: three hook entrypoints call this before they read stdin, and
  * the process must not pay for an async config reader. `agentsDataDir()` resolves the same
@@ -1088,13 +910,11 @@ export function loadHooksConfig(path = hooksConfigPath()): HooksConfig {
     lastLoadError = undefined;
     lastProblems = [];
 
-    try {
-        stored = storedOverrides(SafeJSON.parse(readFileSync(path, "utf8"))) as StoredHooksConfig;
-    } catch (err) {
-        // No config file is the normal case, not an error: the defaults below ARE the
-        // shipped configuration. `hooks doctor` prints which of the two is in effect.
-        lastLoadError = err;
-    }
+    // No config file is the normal case, not an error: the defaults below ARE the shipped configuration.
+    // `hooks doctor` prints which of the two is in effect.
+    const read = readStoredHooksConfig(path);
+    lastLoadError = read.error;
+    stored = read.stored;
 
     if (!stored) {
         return { ...DEFAULT_HOOKS_CONFIG, logPath: defaultLogPath() };
@@ -1145,11 +965,11 @@ export function mergeStoredConfig(stored: StoredHooksConfig): HooksConfig {
             customRules: pathListOr("guard.customRules", guard?.customRules, base.customRules),
         },
         diff: mergeDiff(stored.diff),
-        decisions: mergeDecisions(stored.decisions),
-        questions: mergeQuestions(stored.questions),
-        agentsTalk: { hint: boolOr(stored.agentsTalk?.hint, DEFAULT_HOOKS_CONFIG.agentsTalk.hint) },
+        decisions: DECISIONS_HOOK_SECTION.merge(stored.decisions, lastProblems),
+        questions: QUESTIONS_HOOK_SECTION.merge(stored.questions, lastProblems),
+        agentsTalk: AGENTS_TALK_HOOK_SECTION.merge(stored.agentsTalk, lastProblems),
         mods: mergeMods(stored.mods),
-        unpushed: mergeUnpushed(stored.unpushed),
+        unpushed: UNPUSHED_HOOK_SECTION.merge(stored.unpushed, lastProblems),
         shadow: boolOr(stored.shadow, DEFAULT_HOOKS_CONFIG.shadow),
         logCommands: logCommandsOr(stored.logCommands, DEFAULT_HOOKS_CONFIG.logCommands),
         maxLogMB: megabytesOr({
@@ -1159,21 +979,6 @@ export function mergeStoredConfig(stored: StoredHooksConfig): HooksConfig {
         }),
         logPath: typeof stored.logPath === "string" && stored.logPath.length > 0 ? stored.logPath : defaultLogPath(),
     };
-}
-
-const STOP_HOOK_MODES: readonly DecisionStopHook[] = ["off", "warn", "block"];
-
-function isPlainObject(value: unknown): value is Record<string, unknown> {
-    return typeof value === "object" && value !== null && !Array.isArray(value);
-}
-
-function partOf(value: unknown): Record<string, unknown> {
-    return isPlainObject(value) ? value : {};
-}
-
-/** `value` when it is one of `choices`, else `fallback`. */
-function oneOf<T extends string>(value: unknown, choices: readonly T[], fallback: T): T {
-    return choices.find((choice) => choice === value) ?? fallback;
 }
 
 /**
@@ -1306,106 +1111,6 @@ function minutesOr(field: string, value: unknown, fallback: number, max: number)
     const minutes = countOr({ field, value, fallback });
 
     return minutes <= max ? minutes : fallback;
-}
-
-function mergeQuestions(stored: unknown): QuestionsConfig {
-    const base = DEFAULT_HOOKS_CONFIG.questions;
-    const part = partOf(stored);
-    const harnesses = partOf(part.harnesses);
-
-    return {
-        harnesses: byHarness((id) => boolOr(harnesses[id], base.harnesses[id])),
-        notify: boolOr(part.notify, base.notify),
-    };
-}
-
-function mergeUnpushed(stored: Partial<UnpushedConfig> | undefined): UnpushedConfig {
-    const base = DEFAULT_HOOKS_CONFIG.unpushed;
-
-    return {
-        enabled: boolOr(stored?.enabled, base.enabled),
-        maxCommits: countOr({
-            field: "unpushed.maxCommits",
-            value: stored?.maxCommits,
-            fallback: base.maxCommits,
-            min: 0,
-        }),
-        maxAgeMinutes: countOr({
-            field: "unpushed.maxAgeMinutes",
-            value: stored?.maxAgeMinutes,
-            fallback: base.maxAgeMinutes,
-        }),
-        remindEveryMinutes: countOr({
-            field: "unpushed.remindEveryMinutes",
-            value: stored?.remindEveryMinutes,
-            fallback: base.remindEveryMinutes,
-            min: 0,
-        }),
-    };
-}
-
-function mergeDecisions(stored: Partial<DecisionsHookConfig> | undefined): DecisionsHookConfig {
-    const base = DEFAULT_HOOKS_CONFIG.decisions;
-    const staleness = stored?.staleness;
-    const harnesses = Array.isArray(stored?.harnesses)
-        ? stored.harnesses.filter((name): name is HarnessName => HARNESS_NAMES.includes(name))
-        : base.harnesses;
-
-    return {
-        stopHook: STOP_HOOK_MODES.includes(stored?.stopHook as DecisionStopHook)
-            ? (stored?.stopHook as DecisionStopHook)
-            : base.stopHook,
-        questionNudge: STOP_HOOK_MODES.includes(stored?.questionNudge as DecisionStopHook)
-            ? (stored?.questionNudge as DecisionStopHook)
-            : base.questionNudge,
-        chatAnswers: oneOf(stored?.chatAnswers, DECISION_CHAT_ANSWERS, base.chatAnswers),
-        maxBlocksPerSession: countOr({
-            field: "decisions.maxBlocksPerSession",
-            value: stored?.maxBlocksPerSession,
-            fallback: base.maxBlocksPerSession,
-            min: 0,
-        }),
-        harnesses,
-        harvest: boolOr(stored?.harvest, base.harvest),
-        harvestListed: boolOr(stored?.harvestListed, base.harvestListed),
-        injectAnswers: boolOr(stored?.injectAnswers, base.injectAnswers),
-        staleness: {
-            warnAfterMinutes: countOr({
-                field: "decisions.staleness.warnAfterMinutes",
-                value: staleness?.warnAfterMinutes,
-                fallback: base.staleness.warnAfterMinutes,
-            }),
-            alarmAfterMinutes: countOr({
-                field: "decisions.staleness.alarmAfterMinutes",
-                value: staleness?.alarmAfterMinutes,
-                fallback: base.staleness.alarmAfterMinutes,
-            }),
-            notify: boolOr(staleness?.notify, base.staleness.notify),
-        },
-    };
-}
-
-/** Whether the decision hub needs its Stop and UserPromptSubmit hooks wired at all. */
-export function decisionHooksWanted(config: HooksConfig): boolean {
-    return config.decisions.stopHook !== "off" || config.decisions.harvest || config.decisions.injectAnswers;
-}
-
-/** Whether the Stop hook has decision work: the hub's own checks, or the question nudge, which needs only Stop. */
-export function decisionStopWanted(config: HooksConfig): boolean {
-    return decisionHooksWanted(config) || stopOnlyDecisionsWanted(config);
-}
-
-/** The decision checks that need only the Stop entry: the question nudge and the chat answers. */
-export function stopOnlyDecisionsWanted(config: HooksConfig): boolean {
-    return config.decisions.questionNudge !== "off" || config.decisions.chatAnswers !== "off";
-}
-
-/**
- * Whether Claude's `settings.json` needs the question hooks: Claude reads them, and so does Grok, which runs Claude's
- * hooks. Codex is served by the hub watcher alone.
- */
-export function questionHooksWanted(config: HooksConfig): boolean {
-    return config.questions.harnesses.claude || config.questions.harnesses.grok;
 }
 
 /** Whether this run should record the command verbatim in the decision log. */

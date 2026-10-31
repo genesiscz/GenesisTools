@@ -60,7 +60,7 @@ export const HARNESS_GUARD_ALLOWLIST: Readonly<Record<string, HarnessGuardCounts
         why: "HOOK_INSTALLERS, the agents tool's one table of hook-file installers (they write settings.json and hooks.json, which the tool owns); Grok runs Claude's hooks and has no entry",
     },
     "src/agents/lib/hooks/config.ts": {
-        table: 6,
+        table: 5,
         why: "the user's per-harness hook config shape (guard, diff and question overrides keyed by HarnessName), read from hooks.json; its defaults come from the drivers' hooks parts",
     },
     "src/agents/lib/hooks/diff/theme.ts": {
@@ -164,6 +164,10 @@ export const HARNESS_GUARD_ALLOWLIST: Readonly<Record<string, HarnessGuardCounts
     "src/utils/agent-sessions/search.ts": {
         table: 1,
         why: "the SearchAdapters map type, filled from the canonical list (SEARCH_PROVIDERS); it holds no fact per harness",
+    },
+    "src/utils/agents/dialogs/hook-config.ts": {
+        table: 1,
+        why: "the user's per-harness questions switch in hooks.json (QuestionsConfig.harnesses keyed by HarnessId), moved out of the agents hook config; which harness the hooks reach is the drivers' runsClaudeSettingsHooks",
     },
     "src/utils/cli/failures/caller.ts": {
         table: 1,

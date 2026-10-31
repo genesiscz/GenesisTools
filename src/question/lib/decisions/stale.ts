@@ -1,10 +1,10 @@
 import { resolve } from "node:path";
-import { loadHooksConfig } from "@app/agents/lib/hooks/config";
 import { isTaskRegistered, registerTask, unregisterTask } from "@app/daemon/lib/register";
 import { toolCommand } from "@genesiscz/utils/cli/tool-command";
 import { logger } from "@genesiscz/utils/logger";
 import { dispatchNotification } from "@genesiscz/utils/notifications";
 import { shellCommandLine } from "@genesiscz/utils/shell/quote";
+import { loadDecisionsHookConfig } from "./hook-config";
 import { decisionFiles, staleCrossings } from "./read";
 import { markNotified, readDecisions } from "./store";
 
@@ -26,7 +26,7 @@ export interface StaleReport {
  * so the next check does not raise it again.
  */
 export async function checkStaleDecisions({ notify }: { notify: boolean }): Promise<StaleReport> {
-    const { staleness } = loadHooksConfig().decisions;
+    const { staleness } = loadDecisionsHookConfig();
     const { file, events } = decisionFiles();
     const crossings = staleCrossings(readDecisions(file), staleness);
     const notified = notify && staleness.notify;

@@ -1,4 +1,5 @@
 import { homedir } from "node:os";
+import { hooksConfigPath } from "@genesiscz/utils/agents/hooks/config-section";
 import { isInteractive, suggestCommand, suggestEnumFlag } from "@genesiscz/utils/cli";
 import { ui } from "@genesiscz/utils/cli/ui";
 import { logger, out } from "@genesiscz/utils/logger";
@@ -8,13 +9,7 @@ import type { ShellRule } from "@genesiscz/utils/shell/rules/types";
 import { createBoxTable, renderCliHeader } from "@genesiscz/utils/table";
 import type { Command } from "commander";
 import pc from "picocolors";
-import {
-    HARNESS_NAMES,
-    type HarnessName,
-    type HooksConfig,
-    hooksConfigPath,
-    loadHooksConfig,
-} from "../lib/hooks/config";
+import { HARNESS_NAMES, type HarnessName, type HooksConfig, loadHooksConfig } from "../lib/hooks/config";
 import { recentBashCommands } from "../lib/hooks/corpus";
 import {
     BUILT_IN_SOURCE,

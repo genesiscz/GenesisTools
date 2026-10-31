@@ -11,4 +11,5 @@ export const claudeHooks: HookFacts = {
     rendersAnsiDiffs: true,
     // Claude's change-log turn is the prompt's `promptId` (`turnPrompts`).
     turnIsPromptId: true,
+    runsClaudeSettingsHooks: true,
 };

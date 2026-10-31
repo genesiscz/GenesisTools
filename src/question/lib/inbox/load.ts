@@ -1,9 +1,10 @@
 import { statSync } from "node:fs";
 import { dirname } from "node:path";
-import { loadHooksConfig } from "@app/agents/lib/hooks/config";
 import type { AgentSessionRow, AgentSessionRowsOptions } from "@app/ai/lib/sessions/agent-session-rows";
 import { POLLED_LISTING_REUSE_MS } from "@app/ai/lib/sessions/listing-reuse";
+import { loadDecisionsHookConfig } from "@app/question/lib/decisions/hook-config";
 import { readCachedSessionCwd } from "@genesiscz/utils/agent-sessions/cached-title";
+import { loadQuestionsHookConfig } from "@genesiscz/utils/agents/dialogs/hook-config";
 import type { OpenQuestion } from "@genesiscz/utils/agents/dialogs/types";
 import { transcriptEnvelope } from "@genesiscz/utils/ai/transcripts/load";
 import { type ResolvedTranscript, resolveTranscript } from "@genesiscz/utils/ai/transcripts/resolve";
@@ -115,7 +116,7 @@ export const realInboxDeps: InboxDeps = {
     },
     rows: () => readDecisions(decisionFiles().file),
     harvest: async ({ sessionId, provider, cwd, found, at }) => {
-        if (!loadHooksConfig().decisions.harvestListed) {
+        if (!loadDecisionsHookConfig().harvestListed) {
             return 0;
         }
 
@@ -132,7 +133,7 @@ export const realInboxDeps: InboxDeps = {
     },
     forms: async () => (await import("../pending/ask")).listPendingForms({}, 200),
     dialogs: async (sessions) => {
-        const { questions } = loadHooksConfig();
+        const questions = loadQuestionsHookConfig();
         const open = await listedDialogs({ rows: sessions, questions });
 
         if (!questions.notify) {

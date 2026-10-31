@@ -9,4 +9,6 @@ export const codexHooks: HookFacts = {
     honoursBareGlobQualifier: true,
     rendersAnsiDiffs: true,
     turnIsPromptId: false,
+    // Codex has its own `hooks.json`; Claude's settings never reach it.
+    runsClaudeSettingsHooks: false,
 };

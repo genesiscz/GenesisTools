@@ -1,13 +1,7 @@
 import { readFileSync } from "node:fs";
+import { hooksConfigPath, INSTALLED_KEY, SHIPPED_DEFAULTS_KEY } from "@genesiscz/utils/agents/hooks/config-section";
 import { SafeJSON } from "@genesiscz/utils/json";
-import {
-    DEFAULT_HOOKS_CONFIG,
-    type HooksConfig,
-    hooksConfigPath,
-    INSTALLED_KEY,
-    loadHooksConfigForWrite,
-    SHIPPED_DEFAULTS_KEY,
-} from "./config";
+import { DEFAULT_HOOKS_CONFIG, type HooksConfig, loadHooksConfigForWrite } from "./config";
 import { claudeSettingsPath, wiringStatus } from "./install";
 import { writeJsonFile } from "./write-json";
 

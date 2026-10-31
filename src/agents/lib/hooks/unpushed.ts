@@ -2,10 +2,10 @@ import { spawnSync } from "node:child_process";
 import { readFileSync, statSync, writeFileSync } from "node:fs";
 import { basename, join } from "node:path";
 import { SafeJSON } from "@genesiscz/utils/json";
-import type { UnpushedConfig } from "./config";
 import { assertPrivateFile, makePrivateDir } from "./diff/private-dir";
 import { hookDiag } from "./log";
 import { unpushedRoot } from "./paths";
+import type { UnpushedConfig } from "./sections/unpushed";
 
 /**
  * The Stop-phase reminder about work that is committed but not pushed. It runs at the end of

@@ -1,16 +1,24 @@
+import {
+    asBoolean,
+    asCount,
+    type HookConfigSection,
+    hooksConfigPath,
+    isCount,
+    listed,
+} from "@genesiscz/utils/agents/hooks/config-section";
 import { SafeJSON } from "@genesiscz/utils/json";
 import {
-    DECISION_CHAT_ANSWERS,
     DEFAULT_HOOKS_CONFIG,
     FILL_MODES,
     HARNESS_NAMES,
     type HarnessName,
     HIGHLIGHT_MODES,
     HIGHLIGHTERS,
+    HOOK_CONFIG_SECTIONS,
+    HOOK_SECTION_NAMES,
     type HookOutcome,
+    type HookSectionName,
     type HooksConfig,
-    hooksConfigPath,
-    isCount,
     isMegabytes,
     loadHooksConfigForWrite,
     type ModsConfig,
@@ -24,7 +32,6 @@ import { type SubagentLinePlan, wireSubagentLine } from "./install";
 import { BUILT_IN_RULES } from "./tool-rules";
 
 const OUTCOMES: readonly HookOutcome[] = ["allow", "context", "warn", "block"];
-const HARNESSES: readonly HarnessName[] = HARNESS_NAMES;
 const NUMERIC_DIFF = [
     "maxFiles",
     "maxLinesPerFile",
@@ -58,28 +65,18 @@ export const SETTABLE_KEYS = [
     "diff.fullDiff",
     "diff.replaceNative",
     "diff.showTempScratch",
-    "unpushed.<enabled|maxCommits|maxAgeMinutes|remindEveryMinutes>",
-    "diff.harnesses.<claude|codex|grok>.<enabled|maxFiles|…>",
+    ...HOOK_CONFIG_SECTIONS.unpushed.settable,
+    `diff.harnesses.<${HARNESS_NAMES.join("|")}>.<enabled|maxFiles|…>`,
     "maxLogMB",
     "guard.longCommand.lines",
     "guard.longCommand.chars",
     "guard.contextCapPerSession",
     "guard.customRules",
     "rules.<rule-id>",
-    "harnesses.<claude|codex|grok>.<rule-id>",
-    "decisions.stopHook",
-    "decisions.questionNudge",
-    "decisions.chatAnswers",
-    "decisions.maxBlocksPerSession",
-    "decisions.harnesses",
-    "decisions.harvest",
-    "decisions.harvestListed",
-    "decisions.injectAnswers",
-    "decisions.staleness.<warnAfterMinutes|alarmAfterMinutes|notify>",
-    "questions",
-    "questions.<claude|codex|grok>",
-    "questions.notify",
-    "agentsTalk.hint",
+    `harnesses.<${HARNESS_NAMES.join("|")}>.<rule-id>`,
+    ...HOOK_CONFIG_SECTIONS.decisions.settable,
+    ...HOOK_CONFIG_SECTIONS.questions.settable,
+    ...HOOK_CONFIG_SECTIONS.agentsTalk.settable,
     "mods.diff.<fullDiff|collapseGitSync>",
     "mods.idleCompact.<enabled|minutes|minTokens>",
     "mods.agentModel.<enabled|format>",
@@ -137,11 +134,6 @@ const MOD_CHOICES: Record<string, readonly string[]> = {
     "stall.action": ["button", "auto"],
 };
 
-/** `a or b`, `a, b or c`. */
-function listed(choices: readonly string[]): string {
-    return choices.length < 2 ? (choices[0] ?? "") : `${choices.slice(0, -1).join(", ")} or ${choices.at(-1)}`;
-}
-
 function isFields(value: unknown): value is Record<string, unknown> {
     return typeof value === "object" && value !== null && !Array.isArray(value);
 }
@@ -186,134 +178,6 @@ function withMods(mods: ModsConfig, key: string, value: string): ModsConfig {
     return mergeMods({ ...mods, [feature]: part });
 }
 
-/** One `decisions.*` key. The stop hook and the question nudge take off|warn|block; `harnesses` a comma list. */
-function withDecisions(next: HooksConfig, key: string, value: string): HooksConfig {
-    const decisions = { ...next.decisions, staleness: { ...next.decisions.staleness } };
-    next.decisions = decisions;
-
-    switch (key) {
-        case "decisions.stopHook":
-        case "decisions.questionNudge": {
-            if (value !== "off" && value !== "warn" && value !== "block") {
-                throw new Error(`${key} takes off, warn or block, not ${SafeJSON.stringify(value)}`);
-            }
-
-            decisions[key === "decisions.stopHook" ? "stopHook" : "questionNudge"] = value;
-            return next;
-        }
-        case "decisions.chatAnswers": {
-            const mode = DECISION_CHAT_ANSWERS.find((choice) => choice === value);
-
-            if (!mode) {
-                throw new Error(`${key} takes ${listed(DECISION_CHAT_ANSWERS)}, not ${SafeJSON.stringify(value)}`);
-            }
-
-            decisions.chatAnswers = mode;
-            return next;
-        }
-        case "decisions.maxBlocksPerSession":
-            decisions.maxBlocksPerSession = asCount(key, value, 0);
-            return next;
-        case "decisions.harnesses": {
-            const names = value
-                .split(",")
-                .map((name) => name.trim())
-                .filter(Boolean);
-            const unknown = names.filter((name) => !(HARNESSES as readonly string[]).includes(name));
-
-            if (unknown.length > 0) {
-                throw new Error(`no such harness: ${unknown.join(", ")}`);
-            }
-
-            decisions.harnesses = names as HarnessName[];
-            return next;
-        }
-        case "decisions.harvest":
-            decisions.harvest = asBoolean(key, value);
-            return next;
-        case "decisions.harvestListed":
-            decisions.harvestListed = asBoolean(key, value);
-            return next;
-        case "decisions.injectAnswers":
-            decisions.injectAnswers = asBoolean(key, value);
-            return next;
-        case "decisions.staleness.warnAfterMinutes":
-        case "decisions.staleness.alarmAfterMinutes":
-            decisions.staleness[key.endsWith("warnAfterMinutes") ? "warnAfterMinutes" : "alarmAfterMinutes"] = asCount(
-                key,
-                value
-            );
-            return next;
-        case "decisions.staleness.notify":
-            decisions.staleness.notify = asBoolean(key, value);
-            return next;
-        default:
-            throw new Error(`unknown key: ${key}. Settable: ${SETTABLE_KEYS.join(", ")}`);
-    }
-}
-
-/** `on` and `off`, or `true` and `false`: a feature switch reads either way. */
-function asSwitch(key: string, value: string): boolean {
-    if (value === "on" || value === "off") {
-        return value === "on";
-    }
-
-    return asBoolean(key, value);
-}
-
-/**
- * `questions on|off` switches every harness; `questions.<harness>` (or `questions.harnesses.<harness>`) one of them;
- * `questions.notify` the hub watcher's banner. Turning a harness on needs `tools agents hooks install --write`
- * afterwards for the Claude and Grok hook entries.
- */
-function withQuestions(next: HooksConfig, key: string, value: string): HooksConfig {
-    const questions = { ...next.questions, harnesses: { ...next.questions.harnesses } };
-    next.questions = questions;
-
-    if (key === "questions") {
-        const on = asSwitch(key, value);
-
-        for (const harness of HARNESSES) {
-            questions.harnesses[harness] = on;
-        }
-
-        return next;
-    }
-
-    if (key === "questions.notify") {
-        questions.notify = asBoolean(key, value);
-        return next;
-    }
-
-    const harness = HARNESSES.find((name) => key === `questions.${name}` || key === `questions.harnesses.${name}`);
-
-    if (!harness) {
-        throw new Error(`unknown key: ${key}. Settable: ${SETTABLE_KEYS.join(", ")}`);
-    }
-
-    questions.harnesses[harness] = asSwitch(key, value);
-    return next;
-}
-
-function asBoolean(key: string, value: string): boolean {
-    if (value === "true" || value === "false") {
-        return value === "true";
-    }
-
-    throw new Error(`${key} takes true or false, not ${SafeJSON.stringify(value)}`);
-}
-
-/** The same count domain the loader enforces, so `config set` cannot persist what a load would drop. */
-function asCount(key: string, value: string, min = 1): number {
-    const parsed = Number(value);
-
-    if (value.trim() === "" || !isCount(parsed, min)) {
-        throw new Error(`${key} takes a whole number of at least ${min}, not ${SafeJSON.stringify(value)}`);
-    }
-
-    return parsed;
-}
-
 /** An MB cap: any positive number, because `0.256` is a valid per-file ceiling. */
 function asMegabytes(key: string, value: string): number {
     const parsed = Number(value);
@@ -347,7 +211,7 @@ function asOutcome(key: string, value: string): HookOutcome {
  * harness's own display makes wrong, and every other field is shared for a reason.
  */
 function withHarnessDiff(next: HooksConfig, key: string, value: string, harness: string, field: string): HooksConfig {
-    if (!(HARNESSES as readonly string[]).includes(harness)) {
+    if (!HARNESS_NAMES.some((name) => name === harness)) {
         throw new Error(`no such harness: ${harness}`);
     }
 
@@ -414,6 +278,36 @@ function knownRuleIds(options: RuleIdOptions): ReadonlySet<string> {
 }
 
 /** Applies one dotted key to a config, validating the key and the value. Pure. */
+/** `set <key>` for a key one of the hook sections owns, or null when none does. */
+function withSection(config: HooksConfig, key: string, value: string): HooksConfig | null {
+    for (const name of HOOK_SECTION_NAMES) {
+        const next = withSectionNamed(config, name, key, value);
+
+        if (next) {
+            return next;
+        }
+    }
+
+    return null;
+}
+
+function withSectionNamed<Name extends HookSectionName>(
+    config: HooksConfig,
+    name: Name,
+    key: string,
+    value: string
+): HooksConfig | null {
+    const section: HookConfigSection<HooksConfig[Name]> = HOOK_CONFIG_SECTIONS[name];
+
+    if (!section.owns(key)) {
+        return null;
+    }
+
+    const next = { ...config };
+    next[name] = section.set(config[name], key, value);
+    return next;
+}
+
 export function applySetting(
     config: HooksConfig,
     key: string,
@@ -433,6 +327,12 @@ export function applySetting(
         // `diff` spread would have it writing into the config it was handed.
         diff: { ...config.diff, harnesses: { ...config.diff.harnesses } },
     };
+
+    const sectioned = withSection(next, key, value);
+
+    if (sectioned) {
+        return sectioned;
+    }
 
     if (key === "shadow") {
         next.shadow = asBoolean(key, value);
@@ -466,29 +366,6 @@ export function applySetting(
     if (key === "diff.showTempScratch") {
         next.diff.showTempScratch = asBoolean(key, value);
         return next;
-    }
-
-    if (key.startsWith("unpushed.")) {
-        const field = key.slice("unpushed.".length);
-
-        if (field === "enabled") {
-            next.unpushed = { ...config.unpushed, enabled: asBoolean(key, value) };
-            return next;
-        }
-
-        if (field === "maxCommits" || field === "remindEveryMinutes") {
-            next.unpushed = { ...config.unpushed, [field]: asCount(key, value, 0) };
-            return next;
-        }
-
-        if (field === "maxAgeMinutes") {
-            next.unpushed = { ...config.unpushed, maxAgeMinutes: asCount(key, value) };
-            return next;
-        }
-
-        throw new Error(
-            `unknown key: ${key}. Settable: unpushed.enabled, maxCommits, maxAgeMinutes, remindEveryMinutes`
-        );
     }
 
     if (key === "diff.highlighter") {
@@ -584,19 +461,6 @@ export function applySetting(
         return next;
     }
 
-    if (key.startsWith("decisions.")) {
-        return withDecisions(next, key, value);
-    }
-
-    if (key === "questions" || key.startsWith("questions.")) {
-        return withQuestions(next, key, value);
-    }
-
-    if (key === "agentsTalk.hint") {
-        next.agentsTalk = { ...config.agentsTalk, hint: asBoolean(key, value) };
-        return next;
-    }
-
     if (key.startsWith("mods.")) {
         next.mods = withMods(config.mods, key, value);
         return next;
@@ -638,7 +502,7 @@ export function applySetting(
         const harness = perHarness[1];
         const ruleId = perHarness[2];
 
-        if (!(HARNESSES as readonly string[]).includes(harness)) {
+        if (!HARNESS_NAMES.some((name) => name === harness)) {
             throw new Error(`no such harness: ${harness}`);
         }
 

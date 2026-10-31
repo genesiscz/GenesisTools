@@ -18,6 +18,12 @@ import {
 import { tmpdir } from "node:os";
 import { join } from "node:path";
 import { withSpawnCounter } from "@app/benchmark/lib";
+import { type ChatAnswerRun, userMessageOutcome } from "@app/question/lib/decisions/chat-answer-run";
+import {
+    type DecisionsHookConfig,
+    decisionHooksWanted,
+    decisionStopWanted,
+} from "@app/question/lib/decisions/hook-config";
 import { sendAnsweredDecisions } from "@app/question/lib/decisions/send";
 import { postDecisions, readDecisions, updateDecision } from "@app/question/lib/decisions/store";
 import { createClaudeHistoryOperations } from "@genesiscz/utils/agent-sessions/readers/claude";
@@ -25,26 +31,20 @@ import { createCodexHistoryOperations } from "@genesiscz/utils/agent-sessions/re
 import { createGrokHistoryOperations } from "@genesiscz/utils/agent-sessions/readers/grok";
 import type { NativeHistoryEntry } from "@genesiscz/utils/agent-sessions/types";
 import { dialogsPath, openQuestions, readSessionQuestions } from "@genesiscz/utils/agents/dialogs/store";
+import { changedOnly, SHIPPED_DEFAULTS_KEY, storedOverrides } from "@genesiscz/utils/agents/hooks/config-section";
 import { env } from "@genesiscz/utils/env";
 import { SafeJSON } from "@genesiscz/utils/json";
 import { SHELL_RULES } from "@genesiscz/utils/shell/rules";
 import { atomicWriteIo } from "@genesiscz/utils/storage/atomic-file";
-import { type ChatAnswerRun, userMessageOutcome } from "./chat-answer-log";
 import { codexEntriesFor, codexWiring, installCodexHooks, uninstallCodexHooks } from "./codex";
 import {
-    changedOnly,
     DEFAULT_HOOKS_CONFIG,
-    type DecisionsHookConfig,
-    decisionHooksWanted,
-    decisionStopWanted,
     defaultLogPath,
     diffFor,
     keepsCommand,
     lastConfigLoadError,
     lastConfigProblems,
     loadHooksConfig,
-    SHIPPED_DEFAULTS_KEY,
-    storedOverrides,
 } from "./config";
 import { recentBashCommands } from "./corpus";
 import { type DetectFailure, expandRulePath, guardRules, loadCustomRules, loadRuleSet } from "./custom-rules";
@@ -3690,6 +3690,7 @@ describe("HARNESS_HOOK_FACTS", () => {
             honoursBareGlobQualifier: false,
             rendersAnsiDiffs: true,
             turnIsPromptId: true,
+            runsClaudeSettingsHooks: true,
         });
         expect(HARNESS_HOOK_FACTS.grok).toEqual({
             diffLogFromTranscript: true,
@@ -3699,6 +3700,7 @@ describe("HARNESS_HOOK_FACTS", () => {
             honoursBareGlobQualifier: true,
             rendersAnsiDiffs: false,
             turnIsPromptId: false,
+            runsClaudeSettingsHooks: true,
         });
         expect(HARNESS_HOOK_FACTS.codex).toEqual({
             diffLogFromTranscript: false,
@@ -3708,6 +3710,7 @@ describe("HARNESS_HOOK_FACTS", () => {
             honoursBareGlobQualifier: true,
             rendersAnsiDiffs: true,
             turnIsPromptId: false,
+            runsClaudeSettingsHooks: false,
         });
         expect(harnessHookFacts("cursor")).toBeUndefined();
         expect(harnessHookFacts("constructor")).toBeUndefined();

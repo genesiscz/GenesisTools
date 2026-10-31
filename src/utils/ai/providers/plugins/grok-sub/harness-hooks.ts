@@ -14,4 +14,6 @@ export const grokHooks: HookFacts = {
     // makes 200 characters a diff. The capture is skipped too, so a Grok session pays nothing for a render it cannot have.
     rendersAnsiDiffs: false,
     turnIsPromptId: false,
+    // Grok reads the hook entries of `~/.claude/settings.json` (the same `PreToolUse`, `Notification`, … wiring).
+    runsClaudeSettingsHooks: true,
 };

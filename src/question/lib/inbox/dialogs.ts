@@ -1,5 +1,5 @@
-import type { QuestionsConfig } from "@app/agents/lib/hooks/config";
 import type { AgentSessionRow } from "@app/ai/lib/sessions/agent-session-rows";
+import type { QuestionsConfig } from "@genesiscz/utils/agents/dialogs/hook-config";
 import { openQuestions } from "@genesiscz/utils/agents/dialogs/store";
 import { type OpenQuestion, openQuestionKey } from "@genesiscz/utils/agents/dialogs/types";
 import { DialogWatcher, type WatchedSession } from "@genesiscz/utils/agents/dialogs/watcher";

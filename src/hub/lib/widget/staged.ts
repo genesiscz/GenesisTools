@@ -1,5 +1,5 @@
-import { loadHooksConfig } from "@app/agents/lib/hooks/config";
 import type { DeliverDeps } from "@app/question/lib/decisions/deliver";
+import { loadDecisionsHookConfig } from "@app/question/lib/decisions/hook-config";
 import { decisionFiles } from "@app/question/lib/decisions/read";
 import { sendAnsweredDecisions } from "@app/question/lib/decisions/send";
 import {
@@ -46,7 +46,7 @@ export interface StagedSendResult {
  * either, only a later send delivers it, and the widget must not say "it waits for the next prompt".
  */
 function deliversLater(queueId: string | undefined): boolean {
-    return queueId !== undefined || loadHooksConfig().decisions.injectAnswers === true;
+    return queueId !== undefined || loadDecisionsHookConfig().injectAnswers === true;
 }
 
 /**

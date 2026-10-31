@@ -1,7 +1,8 @@
 #!/usr/bin/env bun
+import { decisionStopWanted } from "@app/question/lib/decisions/hook-config";
 import { env } from "@genesiscz/utils/env";
 import { SafeJSON } from "@genesiscz/utils/json";
-import { decisionStopWanted, loadHooksConfig, megabytes } from "../lib/hooks/config";
+import { loadHooksConfig, megabytes } from "../lib/hooks/config";
 import { readSessionState } from "../lib/hooks/diff/mentions";
 import { gitOut } from "../lib/hooks/git";
 import { hookDiag, logDecision, setDiagLogPath, setMaxLogBytes } from "../lib/hooks/log";

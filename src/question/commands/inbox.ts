@@ -547,15 +547,15 @@ export function registerInboxCommand(program: Command, deps: InboxCommandDeps = 
                 return;
             }
 
-            const [{ resolveDeliveryTarget }, { loadHooksConfig }] = await Promise.all([
+            const [{ resolveDeliveryTarget }, { loadDecisionsHookConfig }] = await Promise.all([
                 import("../lib/decisions/deliver"),
-                import("@app/agents/lib/hooks/config"),
+                import("../lib/decisions/hook-config"),
             ]);
             const target = await resolveDeliveryTarget({
                 session: flags.session,
                 ...(flags.provider ? { provider: flags.provider } : {}),
             });
             // Whether "Keep queued" means anything: only the UserPromptSubmit hook delivers a queued answer.
-            out.result({ ...target, queueHookOn: loadHooksConfig().decisions.injectAnswers === true });
+            out.result({ ...target, queueHookOn: loadDecisionsHookConfig().injectAnswers === true });
         });
 }

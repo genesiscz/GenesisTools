@@ -201,6 +201,8 @@ export interface HookFacts {
     readonly rendersAnsiDiffs: boolean;
     /** Its change-log turn is the id of the prompt row that started it, so a blame line can show the prompt. */
     readonly turnIsPromptId: boolean;
+    /** It runs the hook entries of Claude's `settings.json`, so a feature wired there reaches its sessions too. */
+    readonly runsClaudeSettingsHooks: boolean;
 }
 
 /** Parts that wrap parsers and readers: a driver holds a loader, so reading the driver never loads them. */

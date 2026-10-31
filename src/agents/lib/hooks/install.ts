@@ -10,17 +10,12 @@ import {
     symlinkSync,
 } from "node:fs";
 import { dirname, join, resolve } from "node:path";
+import { decisionHooksWanted, stopOnlyDecisionsWanted } from "@app/question/lib/decisions/hook-config";
+import { questionHooksWanted } from "@genesiscz/utils/agents/dialogs/hook-config";
 import { SafeJSON } from "@genesiscz/utils/json";
 import { nativeHomePath } from "@genesiscz/utils/providers/session-paths";
 import { shellQuote } from "@genesiscz/utils/shell/quote";
-import {
-    agentsDataDir,
-    decisionHooksWanted,
-    diffFor,
-    loadHooksConfig,
-    questionHooksWanted,
-    stopOnlyDecisionsWanted,
-} from "./config";
+import { agentsDataDir, diffFor, loadHooksConfig } from "./config";
 import { hookDiag } from "./log";
 import { QUESTION_TOOL_MATCHER } from "./questions-gate";
 import { writeJsonFile } from "./write-json";
