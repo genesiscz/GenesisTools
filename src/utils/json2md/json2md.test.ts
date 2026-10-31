@@ -843,7 +843,7 @@ describe("three-file pattern", () => {
         const definition = definitionFor("./doc.json");
         const result = await writeDocument(modulePath, definition, { dryRun: true });
 
-        expect(result.outcome).toBe("unchanged");
+        expect(result.outcome).toBe("would-write");
         expect(await Bun.file(result.outPath).exists()).toBe(false);
     });
 
@@ -1204,7 +1204,7 @@ describe("front matter another tool adds", () => {
         await Bun.write(first.outPath, withSessions);
 
         const preview = await writeDocument(modulePath, definition, { mergeFrontmatter: false, dryRun: true });
-        expect(preview.outcome).toBe("unchanged");
+        expect(preview.outcome).toBe("would-write");
         expect(preview.markdown).not.toContain("sessions:");
         expect(await Bun.file(first.outPath).text()).toBe(withSessions);
 

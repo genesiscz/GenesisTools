@@ -190,6 +190,18 @@ export function ownedFrontmatterKeys(stamp: Stamp | null, regenerated?: string):
 }
 
 /**
+ * A pre-frontmatter-tracking stamp whose full-body hash still matches: every key in the body is the generator's,
+ * so all of them are owned. Null for any other stamp.
+ */
+export function legacyOwnedKeys(stamp: Stamp, body: string): Set<string> | null {
+    if (stamp.frontmatter !== undefined || hashText(body) !== stamp.content) {
+        return null;
+    }
+
+    return new Set(yamlFrontmatterKeys(body) ?? []);
+}
+
+/**
  * Decides which of the two drifts happened.
  *
  * 🛑 The hand-edited verdict is decided ONLY by the content hash, never by diffing against
@@ -219,8 +231,7 @@ export function checkMarkdown(input: CheckInput): CheckResult {
 
     // A key another tool added to the front matter is not a hand edit of what the generator wrote.
     const owned = ownedFrontmatterKeys(stamp, input.regenerated);
-    const legacyUnchanged = stamp.frontmatter === undefined && hashText(body) === stamp.content;
-    const generatedPart = owned && !legacyUnchanged ? keepFrontmatterKeys(body, owned) : body;
+    const generatedPart = owned && !legacyOwnedKeys(stamp, body) ? keepFrontmatterKeys(body, owned) : body;
     const actual = hashText(generatedPart);
     const dataChanged = Boolean(input.sourceHash && stamp.source && input.sourceHash !== stamp.source);
 
