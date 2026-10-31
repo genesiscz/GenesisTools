@@ -438,7 +438,8 @@ async function loadTail(host: Host, agentId: string): Promise<void> {
 
     tails.set(agentId, { at: Date.now(), said: held?.said ?? "", mark: held?.mark });
     const done = path ? await host.run(["tail", "-c", "131072", path], { timeoutMs: 5_000 }) : undefined;
-    if (done?.exitCode !== 0) {
+    // A failed or cut-off read keeps the last words and the mark they were read at, so the next refresh reads again.
+    if (done?.exitCode !== 0 || done.isStdoutTruncated) {
         return;
     }
     const said = lastSaidOf(done.stdout);
