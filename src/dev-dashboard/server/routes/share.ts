@@ -430,7 +430,7 @@ export function shareRoutes(): RouteDef[] {
                                   zip: `/share/${encodeURIComponent(slug)}?download=zip`,
                                   html: `/share/${encodeURIComponent(slug)}?download=html`,
                               },
-                        embeddedPanels: embed?.panels,
+                        embeddedPanels: embed ? { panels: embed.panels, raws: embed.raws } : undefined,
                         offlineAssets: embed ? localAssets : undefined,
                         mermaidCode: localAssets?.mermaid,
                     });

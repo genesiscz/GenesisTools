@@ -669,9 +669,14 @@ export function embeddedPanelKey(baseUrl: string, lines: { start: number; end: n
 export interface ShareEmbed {
     /** Media hash (image, audio, video, PDF) to a `data:` URL holding the bytes the page would serve. */
     media: Map<string, string>;
-    /** `embeddedPanelKey` to the rendered panel body and a `data:` URL of the raw file. */
+    /** `embeddedPanelKey` to the rendered panel body and the hash of its raw file in `raws`. */
     panels: Record<string, { html: string; raw: string }>;
+    /** Asset hash to a `data:` URL of the raw file, held once however many line ranges a note links to it. */
+    raws: Record<string, string>;
 }
+
+/** The part of an embed a saved page carries as JSON: the panels and the raw files they share. */
+export type ShareEmbedPanels = Pick<ShareEmbed, "panels" | "raws">;
 
 function dataUrl(contentType: string, body: Buffer): string {
     return `data:${contentType.replace(/\s+/g, "")};base64,${body.toString("base64")}`;
@@ -690,7 +695,7 @@ export async function buildShareEmbed(options: {
     sourceBytes: number;
 }): Promise<ShareEmbed | null> {
     const { vaultRoot, index, panelBase, sourceBytes } = options;
-    const embed: ShareEmbed = { media: new Map(), panels: {} };
+    const embed: ShareEmbed = { media: new Map(), panels: {}, raws: {} };
     const bodies = new Map<string, Buffer>();
     let total = sourceBytes;
 
@@ -729,9 +734,10 @@ export async function buildShareEmbed(options: {
 
         const lines = lineRangeOf(target);
         const key = embeddedPanelKey(panelBase(asset.hash), lines);
+        embed.raws[asset.hash] ??= dataUrl(asset.contentType, body);
         embed.panels[key] ??= {
             html: renderShareAssetFragment(asset, body.toString("utf8"), lines),
-            raw: dataUrl(asset.contentType, body),
+            raw: asset.hash,
         };
     }
 

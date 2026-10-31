@@ -10,7 +10,7 @@ import {
     downloadBaseName,
     noteSection,
     SHARE_BUNDLE_MAX_BYTES,
-    type ShareEmbed,
+    type ShareEmbedPanels,
 } from "@app/dev-dashboard/lib/obsidian/share-assets";
 import { getDevDashboardStorage, resetDevDashboardStorage } from "@app/dev-dashboard/lib/storage";
 import { shareRoutes } from "@app/dev-dashboard/server/routes/share";
@@ -636,14 +636,19 @@ describe("GET /share/:slug assets", () => {
         expect(res.body).toMatch(new RegExp(`<a href="https?://[^"]+/share/${pubSlug}" class="dd-wikilink">Pub</a>`));
 
         const json = /<script type="application\/json" id="dd-share-embedded-panels">([^<]*)<\/script>/.exec(res.body);
-        const panels: ShareEmbed["panels"] = SafeJSON.parse(json?.[1] ?? "{}", { strict: true });
+        const { panels, raws }: ShareEmbedPanels = SafeJSON.parse(json?.[1] ?? "{}", { strict: true });
 
         expect(Object.keys(panels)).toContain(`?asset=${sha(TOOL)}|5-6`);
         expect(Object.keys(panels)).toContain(`?asset=${sha(DATA)}|`);
         expect(panels[`?asset=${sha(TOOL)}|5-6`].html).toContain("line5");
-        expect(panels[`?asset=${sha(DATA)}|`].raw).toBe(
+        expect(panels[`?asset=${sha(DATA)}|`].raw).toBe(sha(DATA));
+        expect(raws[sha(DATA)]).toBe(
             `data:application/json;charset=utf-8;base64,${Buffer.from(DATA).toString("base64")}`
         );
+        // The note links tool.ts at two line ranges; its raw file is in the page once, under both panels.
+        expect(panels[`?asset=${sha(TOOL)}|5-6`].raw).toBe(sha(TOOL));
+        expect(panels[`?asset=${sha(TOOL)}|500-500`].raw).toBe(sha(TOOL));
+        expect(res.body.split(Buffer.from(TOOL).toString("base64").slice(0, 64)).length - 1).toBe(1);
     });
 
     test("repeated transclusions have independent heading, block and footnote IDs", async () => {

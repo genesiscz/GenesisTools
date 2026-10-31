@@ -780,7 +780,7 @@ function resolveWikilinkHtml(opts: RenderOptions, target: string, display: strin
 }
 
 function buildMarked(opts: RenderOptions, book: FootnoteBook, openHtml: string[]): Marked {
-    const usedSlugs = new Map<string, number>();
+    const usedIds = new Set<string>();
 
     return new Marked(
         { gfm: true, breaks: false },
@@ -823,10 +823,17 @@ function buildMarked(opts: RenderOptions, book: FootnoteBook, openHtml: string[]
                     return `<p>${inner}</p>\n`;
                 },
                 heading(token: Tokens.Heading): string {
+                    // The suffix counts emitted ids, not repeats of the base: `# Foo`, `# Foo`, `# Foo-1` give
+                    // foo, foo-1, foo-1-1, so a later heading never lands on an id an earlier repeat took.
                     const base = headingSlug(token.text);
-                    const seen = usedSlugs.get(base) ?? 0;
-                    usedSlugs.set(base, seen + 1);
-                    const id = `${opts.idPrefix ?? ""}${seen === 0 ? base : `${base}-${seen}`}`;
+                    let slug = base;
+
+                    for (let n = 1; usedIds.has(slug); n++) {
+                        slug = `${base}-${n}`;
+                    }
+
+                    usedIds.add(slug);
+                    const id = `${opts.idPrefix ?? ""}${slug}`;
 
                     return `<h${token.depth} id="${escapeHtml(id)}">${this.parser.parseInline(token.tokens)}</h${token.depth}>\n`;
                 },
@@ -856,7 +863,11 @@ function buildMarked(opts: RenderOptions, book: FootnoteBook, openHtml: string[]
                     return `<a href="${href}"${title}>${inner}</a>`;
                 },
                 image(token: Tokens.Image): string {
-                    const { label, size } = splitObsidianSize(token.text);
+                    // `![alt|360](x.png)` carries a size; `![2026](x.png)` is a numeric alt, not a width. An embed
+                    // alias (`![[x|360]]`) arrives without its pipe, so only this markdown form needs one.
+                    const { label, size } = token.text.includes("|")
+                        ? splitObsidianSize(token.text)
+                        : { label: token.text, size: undefined };
 
                     return renderImage(opts, { href: token.href, alt: label, title: token.title, size });
                 },

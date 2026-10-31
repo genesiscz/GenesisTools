@@ -365,6 +365,26 @@ describe("Obsidian syntax", () => {
         expect(html).not.toContain("footnotes");
     });
 
+    test("a repeated heading never takes an id a later heading spells out", () => {
+        const { html } = renderMarkdown("# Foo\n\n# Foo\n\n# Foo-1\n\n# Foo", noop);
+
+        expect(html).toContain('<h1 id="foo">Foo</h1>');
+        expect(html).toContain('<h1 id="foo-1">Foo</h1>');
+        expect(html).toContain('<h1 id="foo-1-1">Foo-1</h1>');
+        expect(html).toContain('<h1 id="foo-2">Foo</h1>');
+        expect(html.match(/ id="foo-1"/g)).toHaveLength(1);
+    });
+
+    test("a markdown image takes a size only after a pipe; a numeric alt stays an alt", () => {
+        const sized = renderMarkdown("![alt|360](https://example.com/x.png)", noop).html;
+        const numeric = renderMarkdown("![2026](https://example.com/x.png)", noop).html;
+
+        expect(sized).toContain('alt="alt"');
+        expect(sized).toContain('width="360"');
+        expect(numeric).toContain('alt="2026"');
+        expect(numeric).not.toContain("width=");
+    });
+
     test("headings get ids, and [[#Heading]] and [[#^block]] link to them", () => {
         const md =
             "# My Heading!\n\n## My Heading\n\nA paragraph ^para-1\n\n[[#My Heading]] [[#^para-1|the paragraph]]";

@@ -1,6 +1,6 @@
 import type { RenderResult } from "@app/dev-dashboard/lib/obsidian/markdown";
 import type { OfflineShareAssets } from "@app/dev-dashboard/lib/obsidian/offline-assets";
-import { codeLanguageFor } from "@app/dev-dashboard/lib/obsidian/share-assets";
+import { codeLanguageFor, type ShareEmbedPanels } from "@app/dev-dashboard/lib/obsidian/share-assets";
 import { SafeJSON } from "@genesiscz/utils/json";
 import { escapeHtml } from "@genesiscz/utils/string";
 
@@ -15,8 +15,8 @@ interface ShareTemplateOptions {
     attachmentCount?: number;
     /** URLs of the note as a zip with its attachments and as one self-contained HTML file. */
     downloads?: { zip: string; html: string };
-    /** A saved copy of the page: panel bodies by `embeddedPanelKey`, read instead of fetched. */
-    embeddedPanels?: Record<string, { html: string; raw: string }>;
+    /** A saved copy of the page: panel bodies by `embeddedPanelKey` and their raw files, read instead of fetched. */
+    embeddedPanels?: ShareEmbedPanels;
     offlineAssets?: OfflineShareAssets;
     mermaidCode?: string;
 }
@@ -1226,9 +1226,9 @@ function buildAssetPanelScript(): string {
         isOpen = true;
         var request = ++panelRequest;
         if (embedded) {
-            var entry = embedded[base + "|" + (lines ? lines.start + "-" + lines.end : "")] || embedded[base + "|"];
+            var entry = embedded.panels[base + "|" + (lines ? lines.start + "-" + lines.end : "")] || embedded.panels[base + "|"];
             if (entry) {
-                rawLink.href = entry.raw;
+                rawLink.href = embedded.raws[entry.raw];
                 rawLink.setAttribute("download", name);
                 content.innerHTML = entry.html;
                 content.scrollTop = 0;
