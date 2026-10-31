@@ -4,6 +4,7 @@ import { connectBrowser, extensionTargets, launchWithExtension } from "@app/chro
 import { GENESIS_EXTENSION_ID } from "@genesiscz/utils/browser-extension/registry";
 import { SafeJSON } from "@genesiscz/utils/json";
 import { logger } from "@genesiscz/utils/logger";
+import { isObject } from "@genesiscz/utils/object";
 import { DIST_DIR, ROUTER_HOSTS_FILE } from "./build";
 
 const { log } = logger.scoped("browser-extension-verify");
@@ -57,7 +58,7 @@ function builtRouterHosts(distDir: string): { linkHost: string | null; hosts: st
     try {
         const data: unknown = SafeJSON.parse(readFileSync(path, "utf8"), { strict: true });
 
-        if (isRecord(data)) {
+        if (isObject(data)) {
             return {
                 linkHost: typeof data.linkHost === "string" ? data.linkHost : null,
                 hosts: Array.isArray(data.hosts) ? data.hosts.filter((host) => typeof host === "string") : [],
@@ -68,10 +69,6 @@ function builtRouterHosts(distDir: string): { linkHost: string | null; hosts: st
     }
 
     return { linkHost: null, hosts: [] };
-}
-
-function isRecord(value: unknown): value is Record<string, unknown> {
-    return typeof value === "object" && value !== null && !Array.isArray(value);
 }
 
 function strings(value: unknown): string[] {
@@ -88,12 +85,12 @@ const WIDE_LOOPBACK = /^(?:<all_urls>|(?:\*|http):\/\/(?:\*|127\.0\.0\.1|localho
  * script on a loopback origin. Reads the built manifest only.
  */
 export function loopbackGrantCheck(manifest: unknown): VerifyCheck {
-    const record = isRecord(manifest) ? manifest : {};
+    const record = isObject(manifest) ? manifest : {};
     const granted = [...strings(record.host_permissions), ...strings(record.optional_host_permissions)];
     const wide = granted.filter((origin) => WIDE_LOOPBACK.test(origin));
     const scripts = Array.isArray(record.content_scripts) ? record.content_scripts : [];
     const scripted = scripts
-        .flatMap((script) => (isRecord(script) ? strings(script.matches) : []))
+        .flatMap((script) => (isObject(script) ? strings(script.matches) : []))
         .filter((match) => /localhost|127\.0\.0\.1|\[::1\]|<all_urls>|^\*:\/\/\*|^http:\/\/\*/.test(match));
     const ports = new Map<string, number>();
 
@@ -165,7 +162,7 @@ export async function verifyExtension(distDir: string = DIST_DIR): Promise<Verif
             browser.send("Target.attachToTarget", { targetId: worker.targetId, flatten: true }),
             WAIT_MS
         );
-        const sessionId = isRecord(attached) && typeof attached.sessionId === "string" ? attached.sessionId : undefined;
+        const sessionId = isObject(attached) && typeof attached.sessionId === "string" ? attached.sessionId : undefined;
         const wanted = builtRouterHosts(distDir);
         const expectsRules = wanted.linkHost !== null || wanted.hosts.length > 0;
 
@@ -190,7 +187,7 @@ export async function verifyExtension(distDir: string = DIST_DIR): Promise<Verif
                 sessionId
             );
             const ids =
-                isRecord(reply) && isRecord(reply.result) && Array.isArray(reply.result.value)
+                isObject(reply) && isObject(reply.result) && Array.isArray(reply.result.value)
                     ? reply.result.value
                     : [];
             return ids.length > 0 ? ids : null;
@@ -209,7 +206,7 @@ export async function verifyExtension(distDir: string = DIST_DIR): Promise<Verif
 
         if (sample) {
             const created = await within(browser.send("Target.createTarget", { url: sample }), WAIT_MS);
-            const targetId = isRecord(created) && typeof created.targetId === "string" ? created.targetId : "";
+            const targetId = isObject(created) && typeof created.targetId === "string" ? created.targetId : "";
             const landed = await until(async () => {
                 const page = (await extensionTargets(browser, GENESIS_EXTENSION_ID)).find(
                     (info) => info.targetId === targetId && info.url.includes("/route.html")

@@ -1,3 +1,4 @@
+import { isObject } from "@genesiscz/utils/object";
 /**
  * `resume` — release targets that a debugger client left held. Browser-level `Target.setAutoAttach` makes Chrome
  * hold every window.open() popup until `Runtime.runIfWaitingForDebugger`; a held popup pauses its renderer, and
@@ -60,19 +61,15 @@ export interface ResumeOpts {
     totalMs?: number;
 }
 
-function isRecord(value: unknown): value is Record<string, unknown> {
-    return typeof value === "object" && value !== null;
-}
-
 function optionalString(value: unknown): string | undefined {
     return typeof value === "string" && value ? value : undefined;
 }
 
 export function parseTargetInfos(reply: unknown): ResumeTargetInfo[] {
-    const infos = isRecord(reply) && Array.isArray(reply.targetInfos) ? reply.targetInfos : [];
+    const infos = isObject(reply) && Array.isArray(reply.targetInfos) ? reply.targetInfos : [];
 
     return infos.flatMap((info): ResumeTargetInfo[] =>
-        isRecord(info) && typeof info.targetId === "string" && typeof info.type === "string"
+        isObject(info) && typeof info.targetId === "string" && typeof info.type === "string"
             ? [
                   {
                       targetId: info.targetId,
@@ -128,7 +125,7 @@ function errorMessage(err: unknown): string {
 async function readTargetUrl(conn: ResumeConn, targetId: string, signal: AbortSignal): Promise<string | undefined> {
     const reply = await conn.send("Target.getTargetInfo", { targetId }, undefined, { timeoutMs: STEP_MS, signal });
 
-    if (isRecord(reply) && isRecord(reply.targetInfo) && typeof reply.targetInfo.url === "string") {
+    if (isObject(reply) && isObject(reply.targetInfo) && typeof reply.targetInfo.url === "string") {
         return reply.targetInfo.url;
     }
 
@@ -225,7 +222,7 @@ async function resumeOne({
                 signal,
             }
         );
-        sessionId = isRecord(attached) ? optionalString(attached.sessionId) : undefined;
+        sessionId = isObject(attached) ? optionalString(attached.sessionId) : undefined;
         if (!sessionId) {
             return { ...base, outcome: "error", step, message: "attachToTarget returned no sessionId" };
         }
