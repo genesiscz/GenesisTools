@@ -73,6 +73,11 @@ let loading: Promise<Touch[]> | undefined;
 let mutations: Promise<unknown> = Promise.resolve();
 const rootByDir = new Map<string, string | null>();
 
+/** Settles once every ledger write queued so far has finished, whether it saved or failed. */
+export function checkoutWritesDone(): Promise<void> {
+    return mutations.then(() => undefined);
+}
+
 /** Merge against the latest state and save in order across concurrent tool completions and sidebar actions. */
 function mutateCheckouts<T>(change: () => Promise<T>): Promise<T> {
     const work = mutations.then(change);

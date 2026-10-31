@@ -27,6 +27,7 @@ import { cacheBand, cacheRowsOf, cacheTone, markEnded } from "../hooks/cache-ban
 import {
     addCheckout,
     addedCheckouts,
+    checkoutWritesDone,
     folderSuggestions,
     forgetCheckouts,
     gitWriteDirs,
@@ -888,7 +889,7 @@ test("git band: a call's branch is read before its result returns, so a switch r
     await recordCheckout(host, { tool: "Edit", file_path: "/work/wt-b/y.ts" });
     // The next call switches the branch while this call's ledger write still runs.
     files["/work/main/.git/worktrees/wt-b/HEAD"] = "ref: refs/heads/fix/b\n";
-    await new Promise((resolve) => setTimeout(resolve, 20));
+    await checkoutWritesDone();
 
     expect((await sessionCheckouts(host))[0]).toMatchObject({ root: "/work/wt-b", branches: ["fix/a"] });
 });
@@ -900,6 +901,10 @@ test("git band: calls are written in the order they finished, even when the firs
     const gate = new Promise<void>((resolve) => {
         release = resolve;
     });
+    let secondRead = () => {};
+    const secondDone = new Promise<void>((resolve) => {
+        secondRead = resolve;
+    });
     const host: Host = {
         ...base,
         async run(argv, init) {
@@ -907,17 +912,28 @@ test("git band: calls are written in the order they finished, even when the firs
                 await gate;
             }
 
-            return base.run(argv, init);
+            const ran = await base.run(argv, init);
+
+            if (argv[2] === "/work/wt-b" && argv[3] === "check-ignore") {
+                secondRead();
+            }
+
+            return ran;
         },
     };
 
     await recordCheckout(host, { tool: "Edit", file_path: "/work/wt-a/src/x.ts" });
     await recordCheckout(host, { tool: "Edit", file_path: "/work/wt-b/y.ts" });
-    await new Promise((resolve) => setTimeout(resolve, 10));
+    // The second call's check-ignore is done while the first one's is still held.
+    await secondDone;
     release();
-    await new Promise((resolve) => setTimeout(resolve, 20));
+    await checkoutWritesDone();
 
-    expect((await sessionCheckouts(host)).map((touch) => touch.root)).toEqual(["/work/wt-b", "/work/wt-a"]);
+    // Both rows were written by the calls (a journal row has no branches), the later call first.
+    expect((await sessionCheckouts(host)).map((touch) => [touch.root, touch.branches])).toEqual([
+        ["/work/wt-b", []],
+        ["/work/wt-a", []],
+    ]);
 });
 
 test("git band: folders added by hand, and the folders proposed for them", async () => {
