@@ -140,6 +140,25 @@ describe("fable-replace scratch stays inside the session that wrote it", () => {
         expect(fs.lstatSync(path.join(scratchRoot(), "linked-session")).isSymbolicLink()).toBe(true);
     });
 
+    test("two session ids that sanitize or truncate to the same text keep separate folders", () => {
+        const long = "x".repeat(80);
+        for (const [first, second] of [
+            ["lead/worker", "lead_worker"],
+            [`${long}-alpha`, `${long}-beta`],
+        ]) {
+            asSession(first);
+            const foreign = aged(finished(scratchDir("cli")));
+            asSession(second);
+            const own = aged(finished(scratchDir("cli")));
+
+            pruneScratch();
+
+            expect(path.dirname(own)).not.toBe(path.dirname(foreign));
+            expect(fs.existsSync(own)).toBe(false);
+            expect(fs.existsSync(foreign)).toBe(true);
+        }
+    });
+
     test("an inherited TMPDIR with no session variable keys the folder by the parent process", () => {
         asSession(undefined);
 
@@ -154,7 +173,8 @@ describe("fable-replace scratch stays inside the session that wrote it", () => {
         setEnv("CODEX_THREAD_ID", "codex-thread-1");
         setEnv("CLAUDE_CODE_SESSION_ID", "claude-session-1");
         setEnv("FABLE_REPLACE_SESSION", "lead/worker 2");
-        expect(folder()).toBe("lead_worker_2");
+        // An unsafe key keeps a readable prefix plus a digest of the whole id, so it can never equal a safe key.
+        expect(folder()).toMatch(/^lead_worker_2~[0-9a-f]{16}$/);
         setEnv("FABLE_REPLACE_SESSION", undefined);
         expect(folder()).toBe("claude-session-1");
         setEnv("CLAUDE_CODE_SESSION_ID", undefined);

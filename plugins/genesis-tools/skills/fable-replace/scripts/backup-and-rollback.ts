@@ -233,6 +233,9 @@ export const scratchRoot = (): string => path.join(os.tmpdir(), "fable-replace")
 
 const SESSION_KEY_UNSAFE = /[^A-Za-z0-9._-]/g;
 const SESSION_KEY_MAX = 80;
+/** A key used as is: safe characters only, no leading dot, short enough. It can never contain the `~` below. */
+const SESSION_KEY_VERBATIM = new RegExp(`^(?!\\.)[A-Za-z0-9._-]{1,${SESSION_KEY_MAX}}$`);
+const SESSION_KEY_PREFIX_MAX = 48;
 
 /**
  * The session this process edits for. A worker inherits its lead's TMPDIR, so every session on the machine shares
@@ -244,8 +247,16 @@ export const scratchSessionKey = (): string => {
     const named =
         process.env.FABLE_REPLACE_SESSION || process.env.CLAUDE_CODE_SESSION_ID || process.env.CODEX_THREAD_ID;
     const key = named && named.trim().length > 0 ? named.trim() : `ppid-${process.ppid}`;
+    if (SESSION_KEY_VERBATIM.test(key)) {
+        return key;
+    }
+
+    // Any other key gets a readable prefix plus a digest of the whole id, joined by `~`, which no verbatim key holds.
+    // So "lead/worker" never shares a folder with "lead_worker", nor two long ids with the same first 80 characters.
     // A leading dot goes too: "." or ".." would name the root or the temp dir itself as the session folder.
-    return key.replace(SESSION_KEY_UNSAFE, "_").replace(/^\./, "_").slice(0, SESSION_KEY_MAX);
+    const prefix = key.replace(SESSION_KEY_UNSAFE, "_").replace(/^\./, "_").slice(0, SESSION_KEY_PREFIX_MAX);
+    const digest = createHash("sha256").update(key).digest("hex").slice(0, 16);
+    return `${prefix}~${digest}`;
 };
 
 /** This session's own folder under the root: the only place an ordinary run writes or prunes. */
