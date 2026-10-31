@@ -1,4 +1,5 @@
 import type { CrossSessionInbound } from "@app/claude/lib/config";
+import { passthroughSets } from "@app/claude/lib/passthrough";
 import { SafeJSON } from "@genesiscz/utils/json";
 
 /**
@@ -10,10 +11,6 @@ import { SafeJSON } from "@genesiscz/utils/json";
  * starts, by the claude config's `launch.crossSessionInbound` (default "accept") or a per-run flag.
  */
 export const CROSS_MESSAGES_SETTINGS = { crossSessionInbound: "accept" } as const;
-
-function hasOwnSettings(passthrough: readonly string[]): boolean {
-    return passthrough.some((arg) => arg === "--settings" || arg.startsWith("--settings="));
-}
 
 /**
  * Whether `tools claude run` passes the accept setting. A per-run flag wins (`--cross-messages` is true,
@@ -30,7 +27,7 @@ export function resolveCrossMessages(input: {
         return input.flag;
     }
 
-    if (hasOwnSettings(input.passthrough)) {
+    if (passthroughSets(input.passthrough, "--settings")) {
         return false;
     }
 
@@ -39,7 +36,7 @@ export function resolveCrossMessages(input: {
 
 /** Claude args with the accept setting in front; refuses to merge with a caller's own `--settings`. */
 export function withCrossMessages(passthrough: readonly string[]): string[] {
-    if (hasOwnSettings(passthrough)) {
+    if (passthroughSets(passthrough, "--settings")) {
         throw new Error(
             '--cross-messages cannot be combined with your own --settings; add "crossSessionInbound": "accept" to that settings file instead'
         );

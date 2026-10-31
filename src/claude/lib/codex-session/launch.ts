@@ -11,6 +11,7 @@ import {
 import type { SessionAgent } from "@app/ai-proxy/lib/sessions/records";
 import type { AiProxyAccountConfig } from "@app/ai-proxy/lib/types";
 import { CLAUDE_MODELS } from "@app/claude/lib/models";
+import { passthroughSets } from "@app/claude/lib/passthrough";
 import { type CodexModelInfo, describeCodexEfforts, resolveCodexEffort } from "@genesiscz/utils/ai/openai/codex-models";
 import { resolveOpenAiSubModel } from "@genesiscz/utils/ai/openai/sub-models";
 import type { AccountUsageSnapshot } from "@genesiscz/utils/ai/providers/account-features";
@@ -183,11 +184,6 @@ export function sessionEnv(
     };
 }
 
-/** A user flag after `--` that the launcher also sets: theirs wins, ours is left out. */
-export function passthroughSets(passthrough: string[], flag: "--effort" | "--model"): boolean {
-    return passthrough.some((arg) => arg === flag || arg.startsWith(`${flag}=`));
-}
-
 /**
  * Claude Code's arguments: the session id (new) or the resumed id, the effort, the subagents, the settings, the user's
  * own. `settingsEnv` rides in `--settings`, because Claude Code applies the `env` of ~/.claude/settings.json over the
@@ -209,7 +205,7 @@ export function sessionArgs(input: {
     leadPrompt: string;
     passthrough: string[];
 }): string[] {
-    const ownSettings = input.passthrough.some((arg) => arg === "--settings" || arg.startsWith("--settings="));
+    const ownSettings = passthroughSets(input.passthrough, "--settings");
     const ownPrompt = input.passthrough.some((arg) => arg.startsWith("--append-system-prompt"));
 
     return [
