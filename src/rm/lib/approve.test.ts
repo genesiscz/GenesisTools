@@ -1,5 +1,14 @@
 import { afterAll, beforeAll, describe, expect, test } from "bun:test";
-import { chmodSync, existsSync, mkdirSync, mkdtempSync, realpathSync, renameSync, writeFileSync } from "node:fs";
+import {
+    chmodSync,
+    existsSync,
+    mkdirSync,
+    mkdtempSync,
+    readdirSync,
+    realpathSync,
+    renameSync,
+    writeFileSync,
+} from "node:fs";
 import { tmpdir } from "node:os";
 import { dirname, join } from "node:path";
 import {
@@ -363,7 +372,13 @@ describe("config set", () => {
         saveRmConfig(own, configPath);
         // While the person decided: a batch reached the old root, and another setting was saved.
         const target = resolveTarget(file(join(base, "settings-recheck", "late.txt")), base);
-        const batch = moveToTrash([{ target, rule: "test" }], { config: own, caller: AGENT, graceMinutes: 60, paths });
+        const batch = moveToTrash([{ target, rule: "test" }], {
+            config: own,
+            caller: AGENT,
+            graceMinutes: 60,
+            paths,
+            currentTrashRoot: () => loadRmConfig(configPath).trashRoot,
+        });
         saveRmConfig({ ...own, approval: "code" }, configPath);
 
         const blocked = saveRmSetting({
@@ -388,5 +403,97 @@ describe("config set", () => {
 
         expect("saved" in saved && saved.saved.trashRoot).toBe(newRoot);
         expect(loadRmConfig(configPath)).toMatchObject({ trashRoot: newRoot, approval: "code" });
+    });
+
+    describe("a move and a trash-root change at the same time", () => {
+        /** A config file with its own old root, its own batches, and one file to move. */
+        function race(name: string) {
+            const folder = join(base, name);
+            const configPath = join(folder, "config.json");
+            const paths = { batchesDir: join(folder, "batches"), lockPath: join(folder, "lock") };
+            const oldRoot = join(folder, "GenesisTools", "rm");
+            const newRoot = join(folder, "other", "GenesisTools", "rm");
+            const loaded = { ...defaultRmConfig(), trashRoot: oldRoot };
+            saveRmConfig(loaded, configPath);
+            const target = resolveTarget(file(join(folder, "src", "a.txt")), base);
+            const refused: string[] = [];
+            const move = (config: RmConfig, hooks?: { afterClaim?: () => void }) =>
+                moveToTrash([{ target, rule: "test" }], {
+                    config,
+                    caller: AGENT,
+                    graceMinutes: 60,
+                    paths,
+                    currentTrashRoot: () => loadRmConfig(configPath).trashRoot,
+                    onRefused: (_request, reason) => refused.push(reason),
+                    hooks,
+                });
+            const setRoot = (hooks?: { afterCheck?: () => void }) =>
+                saveRmSetting({
+                    key: "trash-root",
+                    value: newRoot,
+                    drainCommand: "drain-now",
+                    paths,
+                    configPath,
+                    hooks,
+                });
+            return { configPath, paths, oldRoot, newRoot, loaded, target, refused, move, setRoot };
+        }
+
+        test("a claim written before the change's check refuses the change, and the move lands in the old root", () => {
+            const r = race("race-claim-first");
+            const changes: Array<ReturnType<typeof r.setRoot>> = [];
+            const batch = r.move(r.loaded, {
+                afterClaim: () => {
+                    changes.push(r.setRoot());
+                },
+            });
+
+            expect(changes).toEqual([{ blocked: expect.stringContaining("drain-now") }]);
+            expect(loadRmConfig(r.configPath).trashRoot).toBe(r.oldRoot);
+            expect(r.refused).toEqual([]);
+            expect(batch?.items[0]?.stored.startsWith(r.oldRoot)).toBe(true);
+            expect(existsSync(r.target.path)).toBe(false);
+
+            restoreBatch(batch?.id ?? "", { config: r.loaded, paths: r.paths });
+        });
+
+        test("a claim written while the change runs moves nothing, and the change is saved", () => {
+            const r = race("race-change-first");
+            let batch: ReturnType<typeof r.move> | undefined;
+            const change = r.setRoot({
+                afterCheck: () => {
+                    batch = r.move(r.loaded);
+                },
+            });
+
+            expect(change).toMatchObject({ saved: { trashRoot: r.newRoot } });
+            expect(batch).toBeNull();
+            expect(r.refused).toEqual([expect.stringContaining("being changed right now")]);
+            expect(existsSync(r.target.path)).toBe(true);
+            expect(readdirSync(r.paths.batchesDir)).toEqual([]);
+        });
+
+        test("a run that read the config before a finished change moves nothing into the old root", () => {
+            const r = race("race-stale-config");
+
+            expect(r.setRoot()).toMatchObject({ saved: { trashRoot: r.newRoot } });
+            expect(r.move(r.loaded)).toBeNull();
+            expect(r.refused).toEqual([expect.stringContaining(`changed to ${r.newRoot}`)]);
+            expect(existsSync(r.target.path)).toBe(true);
+            expect(readdirSync(r.paths.batchesDir)).toEqual([]);
+        });
+
+        test("without overlap both work: the root changes, then a run that reads the new config moves into it", () => {
+            const r = race("race-no-overlap");
+
+            expect(r.setRoot()).toMatchObject({ saved: { trashRoot: r.newRoot } });
+            const batch = r.move(loadRmConfig(r.configPath));
+
+            expect(r.refused).toEqual([]);
+            expect(batch?.items[0]?.stored.startsWith(r.newRoot)).toBe(true);
+            expect(existsSync(r.target.path)).toBe(false);
+
+            restoreBatch(batch?.id ?? "", { config: loadRmConfig(r.configPath), paths: r.paths });
+        });
     });
 });

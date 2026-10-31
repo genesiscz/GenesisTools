@@ -4,6 +4,7 @@ import {
     allPresets,
     appendRmLedger,
     BUILTIN_PROFILES,
+    defaultTrashPaths,
     isAskAction,
     isRmApproval,
     isTrashRootName,
@@ -15,6 +16,7 @@ import {
     saveRmConfig,
     type TrashPaths,
     trashRootChangeBlocker,
+    whileChangingTrashRoot,
 } from "@genesiscz/utils/rm";
 import type { Command } from "commander";
 import pc from "picocolors";
@@ -110,7 +112,8 @@ export function applyRmSetting(config: RmConfig, key: Setting, value: string): R
 /**
  * Saves `config set <key> <value>` onto the config as it is now. The person may take minutes to confirm, so the
  * file is read again (a setting saved meanwhile stays), and a trash-root move checks the old root again right before
- * the save: a batch moved there while the person decided would otherwise be left behind the new root.
+ * the save: a batch moved there while the person decided would otherwise be left behind the new root. That check
+ * and the save run under the trash-root change marker, so a run that claims a batch meanwhile moves nothing.
  */
 export function saveRmSetting(input: {
     key: Setting;
@@ -118,20 +121,27 @@ export function saveRmSetting(input: {
     drainCommand: string;
     paths?: TrashPaths;
     configPath?: string;
+    /** Between the trash-root check and the save. */
+    hooks?: { afterCheck?: () => void };
 }): { saved: RmConfig } | { blocked: string } {
-    const current = loadRmConfig(input.configPath);
-    const blocked =
-        input.key === "trash-root"
-            ? trashRootChangeBlocker(current, input.value, input.paths, input.drainCommand)
-            : null;
+    const save = (): { saved: RmConfig } | { blocked: string } => {
+        const current = loadRmConfig(input.configPath);
+        const blocked =
+            input.key === "trash-root"
+                ? trashRootChangeBlocker(current, input.value, input.paths, input.drainCommand)
+                : null;
 
-    if (blocked) {
-        return { blocked };
-    }
+        if (blocked) {
+            return { blocked };
+        }
 
-    const saved = applyRmSetting(current, input.key, input.value);
-    saveRmConfig(saved, input.configPath);
-    return { saved };
+        input.hooks?.afterCheck?.();
+        const saved = applyRmSetting(current, input.key, input.value);
+        saveRmConfig(saved, input.configPath);
+        return { saved };
+    };
+
+    return input.key === "trash-root" ? whileChangingTrashRoot(input.paths ?? defaultTrashPaths(), save) : save();
 }
 
 export function registerSettingsCommands(program: Command): void {

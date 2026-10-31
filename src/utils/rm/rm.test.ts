@@ -79,6 +79,7 @@ import {
     restoreBatch,
     returnAside,
     runDrainer,
+    saveRmConfig,
     saveRmRequest,
     scanPresets,
     sweepOrphans,
@@ -139,6 +140,8 @@ beforeAll(() => {
     base = realpathSync(mkdtempSync(join(tmpdir(), "gt-rm-")));
     config = { ...defaultRmConfig(), trashRoot: join(base, "GenesisTools", "rm") };
     trashPaths = { batchesDir: join(base, "state", "batches"), lockPath: join(base, "state", "drainer.lock") };
+    // A move re-reads the saved trash root once its claim is on record, so the suite's root is the saved one.
+    saveRmConfig(config);
 });
 
 afterAll(async () => {
@@ -1294,7 +1297,13 @@ describe("changing the trash root", () => {
         expect(trashRootChangeBlocker(own, next, paths)).toBeNull();
 
         const target = resolveTarget(file(join(dir("root-move-src"), "a.txt")), base);
-        const batch = moveToTrash([{ target, rule: "test" }], { config: own, caller: AGENT, graceMinutes: 60, paths });
+        const batch = moveToTrash([{ target, rule: "test" }], {
+            config: own,
+            caller: AGENT,
+            graceMinutes: 60,
+            paths,
+            currentTrashRoot: () => own.trashRoot,
+        });
 
         expect(trashRootChangeBlocker(own, next, paths, "tools rm drain --now")).toContain("run tools rm drain --now");
         expect(trashRootChangeBlocker(own, next, paths)).toContain("drain the trash");
@@ -1329,6 +1338,7 @@ describe("security review fixes: private trash", () => {
             caller: AGENT,
             graceMinutes: 60,
             paths: ownPaths,
+            currentTrashRoot: () => own.trashRoot,
         });
 
         expect(batch?.items).toHaveLength(1);
@@ -1617,6 +1627,7 @@ describe("crash safety: the record comes before the move", () => {
                 "const [config, paths, ...targets] = args;",
                 "rm.moveToTrash(targets.map((path) => ({ target: rm.resolveTarget(path, '/'), rule: 'test' })), {",
                 "    config: JSON.parse(config), caller: null, graceMinutes: 0, paths: JSON.parse(paths), hooks,",
+                "    currentTrashRoot: () => JSON.parse(config).trashRoot,",
                 "});",
             ].join("\n"),
             [SafeJSON.stringify(crashConfig), SafeJSON.stringify(crashPaths), first, second]
@@ -1664,6 +1675,7 @@ describe("crash safety: the record comes before the move", () => {
                 caller: null,
                 graceMinutes: 0,
                 paths: crashPaths,
+                currentTrashRoot: () => crashConfig.trashRoot,
                 hooks: {
                     beforeRename: () => {
                         renames++;

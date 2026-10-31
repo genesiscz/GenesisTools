@@ -11,6 +11,7 @@ import {
     rmdirSync,
     statSync,
     unlinkSync,
+    writeFileSync,
     writeSync,
 } from "node:fs";
 import { rm } from "node:fs/promises";
@@ -21,7 +22,7 @@ import { SafeJSON } from "@genesiscz/utils/json";
 import { logger } from "@genesiscz/utils/logger";
 import { isProcessAlive } from "@genesiscz/utils/process-alive";
 import { atomicWriteFileSync } from "@genesiscz/utils/storage/atomic-file";
-import { isTrashRootName, type RmConfig, rmDataDir } from "./config";
+import { isTrashRootName, loadRmConfig, type RmConfig, rmDataDir } from "./config";
 import { appendRmLedger } from "./ledger";
 import {
     canonicalPath,
@@ -233,9 +234,16 @@ export interface MoveOptions {
     now?: Date;
     /** A path that no longer names what was checked: it stays where it is, and the run says so. */
     onRefused?: (request: MoveRequest, reason: string) => void;
+    /**
+     * The trash root the saved config names now (default: read from the config file). Read once the claim is on
+     * record; when it is no longer `config`'s root, nothing moves.
+     */
+    currentTrashRoot?: () => string;
     hooks?: RenameHooks & {
         beforeTrashRoot?: (request: MoveRequest) => void;
         beforeVolumeTrash?: (request: MoveRequest) => void;
+        /** Between the claim and the trash-root re-check. */
+        afterClaim?: () => void;
     };
 }
 
@@ -299,6 +307,19 @@ export function moveToTrash(requests: readonly MoveRequest[], options: MoveOptio
     let published: TrashBatch | null = null;
 
     try {
+        // The claim first, then the look at the root: a trash-root change counts claims after it marks itself, so
+        // either it sees this claim and refuses, or this run sees its marker or its new root here and moves nothing.
+        options.hooks?.afterClaim?.();
+        const changed = trashRootChangedSince(options.config, paths, options.currentTrashRoot);
+
+        if (changed) {
+            for (const { request } of planned) {
+                refuseRootChanged({ request, reason: changed, options });
+            }
+
+            return null;
+        }
+
         for (const { request, item } of planned) {
             try {
                 moveOne({ request, item, batch, paths, claim, options });
@@ -435,6 +456,20 @@ function refuseUnavailable({ request, reason, options }: MoveRefusal): void {
         action: "refuse",
         path: request.original ?? request.target.path,
         rule: "trash-unavailable",
+        reason,
+        caller: options.caller,
+    });
+    options.onRefused(request, reason);
+}
+
+function refuseRootChanged({ request, reason, options }: MoveRefusal): void {
+    if (!options.onRefused) {
+        throw new Error(`${request.target.path}: ${reason}`);
+    }
+    appendRmLedger({
+        action: "refuse",
+        path: request.original ?? request.target.path,
+        rule: "trash-root-changed",
         reason,
         caller: options.caller,
     });
@@ -776,7 +811,8 @@ export async function sweepOrphans(options: DrainOptions & { minAgeMs?: number }
 /**
  * Why the trash root cannot move to `next` now, or null when it can. Batch records keep their stored paths and the
  * drain checks each against the configured root, so a move while the old root holds anything would leave it there.
- * `drainCommand` is the caller's command that empties the trash now, named in the refusal when given.
+ * `drainCommand` is the caller's command that empties the trash now, named in the refusal when given. Only an answer
+ * given inside `whileChangingTrashRoot`, followed there by the save, is final; outside it, it is a preview.
  */
 export function trashRootChangeBlocker(
     config: RmConfig,
@@ -803,6 +839,50 @@ export function trashRootChangeBlocker(
         `the trash at ${config.trashRoot} still holds ${batches} batch(es) or leftover folders. ` +
         `Restore what you want back, ${drainCommand ? `run ${drainCommand}` : "drain the trash"}, then change trash-root.`
     );
+}
+
+const ROOT_CHANGE_NAME = /^root-change-(\d+)$/;
+
+/**
+ * Runs `change` (the check that the old root is empty, then the save of the new root) under a `root-change-<pid>`
+ * marker in the batches folder. No lock: a producer writes its claim, then looks for this marker and re-reads the
+ * root, so a claim the check missed belongs to a run that sees the marker or the new root and moves nothing.
+ */
+export function whileChangingTrashRoot<T>(paths: TrashPaths, change: () => T): T {
+    mkdirSync(paths.batchesDir, { recursive: true });
+    const marker = join(paths.batchesDir, `root-change-${process.pid}`);
+    writeFileSync(marker, "");
+
+    try {
+        return change();
+    } finally {
+        unlinkSync(marker);
+    }
+}
+
+/** Why a run that loaded `config` must not move into its trash root now, or null when that root still stands. */
+function trashRootChangedSince(
+    config: RmConfig,
+    paths: TrashPaths,
+    currentTrashRoot: () => string = () => loadRmConfig().trashRoot
+): string | null {
+    // A marker whose process died is a change that never finished; it blocks nothing.
+    const changing = readdirSync(paths.batchesDir).some((name) => {
+        const marker = ROOT_CHANGE_NAME.exec(name);
+        return marker !== null && isProcessAlive(Number(marker[1]));
+    });
+
+    if (changing) {
+        return "the trash root is being changed right now; nothing moved, run it again";
+    }
+
+    const now = currentTrashRoot();
+
+    if (realOrSelf(now) !== realOrSelf(config.trashRoot)) {
+        return `the trash root changed to ${now} after this run read its config; nothing moved, run it again`;
+    }
+
+    return null;
 }
 
 /** True when the configured trash root holds anything (a batch, or an orphan the drainer should sweep). */
