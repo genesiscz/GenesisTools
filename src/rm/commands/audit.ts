@@ -6,7 +6,9 @@ import {
     isRmLedgerGroup,
     ledgerAgent,
     RM_LEDGER_GROUPS,
+    type RmLedgerFilter,
     readRmLedger,
+    readRmLedgerNewest,
     totalRmLedger,
 } from "@genesiscz/utils/rm";
 import { createBoxTable, truncateDisplay } from "@genesiscz/utils/table";
@@ -38,13 +40,13 @@ export function registerAuditCommands(program: Command): void {
         .option("--limit <n>", "how many entries to print (newest)", (v) => Number.parseInt(v, 10), 50)
         .option("--json", "print as JSON")
         .action((flags: LogFlags) => {
-            const entries = filterRmLedger(readRmLedger(), {
+            const filter: RmLedgerFilter = {
                 since: flags.since === undefined ? undefined : new Date(Date.now() - flags.since * 60_000),
                 agent: flags.agent,
                 session: flags.session,
                 actions: flags.action?.split(",").map((a) => a.trim()),
                 path: flags.path,
-            });
+            };
 
             if (flags.by !== undefined) {
                 if (!isRmLedgerGroup(flags.by)) {
@@ -53,7 +55,8 @@ export function registerAuditCommands(program: Command): void {
                     return;
                 }
 
-                const totals = totalRmLedger(entries, flags.by);
+                // Totals cover every matching entry, so they read the whole ledger; the entry view below does not.
+                const totals = totalRmLedger(filterRmLedger(readRmLedger(), filter), flags.by);
 
                 if (flags.json) {
                     out.result(totals);
@@ -86,7 +89,9 @@ export function registerAuditCommands(program: Command): void {
                 return;
             }
 
-            const newest = entries.slice(-flags.limit);
+            // One more than shown, so the note below knows older entries exist without reading them all.
+            const read = readRmLedgerNewest(filter, flags.limit + 1);
+            const newest = read.slice(-flags.limit);
 
             if (flags.json) {
                 out.result(newest);
@@ -121,8 +126,8 @@ export function registerAuditCommands(program: Command): void {
                 out.println(pc.dim(`                 ${who}${entry.via ? ` via ${entry.via}` : ""}`));
             }
 
-            if (entries.length > newest.length) {
-                out.println(pc.dim(`${entries.length - newest.length} older entries hidden (--limit).`));
+            if (read.length > newest.length) {
+                out.println(pc.dim("Older entries hidden (--limit)."));
             }
         });
 }
