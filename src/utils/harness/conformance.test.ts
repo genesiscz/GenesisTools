@@ -97,7 +97,7 @@ describe("every part of every driver loads", () => {
         }
     }
 
-    test("each plugin's coding agent reader reads its own harness's sessions", () => {
+    test("each plugin's coding agent reader is of the kind its harness driver names", () => {
         for (const plugin of codingAgents) {
             expect(plugin.codingAgent?.kind).toBe(driverOf(plugin.id).id);
         }
