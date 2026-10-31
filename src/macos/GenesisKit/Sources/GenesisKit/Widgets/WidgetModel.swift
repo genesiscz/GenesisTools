@@ -811,6 +811,9 @@ public final class WidgetModel: ObservableObject {
         sendCloseRevision += 1
         // A Discard still in its Undo window is what the user chose: it goes out now, not never.
         commitHeldDiscard()
+        // An open own answer holds the session's draft slot: park its words under its decision and put the reply back,
+        // so a restart restores each to its own field instead of the own answer as the session's reply.
+        if ownAnswerCardID != nil { ownAnswerCardID = nil }
         peekTask?.cancel()
         preferenceTask?.cancel()
         flushPreferences()

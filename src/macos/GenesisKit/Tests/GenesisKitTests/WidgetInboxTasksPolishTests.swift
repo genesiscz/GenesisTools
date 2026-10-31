@@ -1137,8 +1137,8 @@ private enum StagingFixture {
         return String(decoding: data, as: UTF8.self)
     }
 
-    static func model(root: URL? = nil) -> WidgetModel {
-        let defaults = UserDefaults(suiteName: "widget.staging." + UUID().uuidString)!
+    static func model(root: URL? = nil, defaults given: UserDefaults? = nil) -> WidgetModel {
+        let defaults = given ?? UserDefaults(suiteName: "widget.staging." + UUID().uuidString)!
         return WidgetModel(binaryPath: root?.appendingPathComponent("missing-tools").path ?? "/fixture/tools",
             stateRoot: root?.path ?? FileManager.default.temporaryDirectory.path,
             defaults: defaults, appearance: NativeSettingsAppearance(defaults: defaults,
@@ -1313,6 +1313,30 @@ final class WidgetStagingTests: XCTestCase {
         XCTAssertEqual(model.draft.text, "a reply\nfor d1 only", "Reply instead moves the words into the reply box")
         model.openOwnAnswer(second)
         XCTAssertEqual(model.draft.text, "for d2")
+    }
+
+    /// A quit with an own answer open keeps both texts in their own fields: the decision's words parked under it, the
+    /// reply restored as the session's draft.
+    func testAnOpenOwnAnswerSurvivesARestartInItsOwnField() throws {
+        let defaults = UserDefaults(suiteName: "widget.staging." + UUID().uuidString)!
+        let model = StagingFixture.model(defaults: defaults)
+        model.actionRunner = { _ in ["ok": true] }
+        model.receive([try StagingFixture.snapshot(draftOption: nil, second: true)])
+        model.select(key)
+        let first = try XCTUnwrap(model.cards.first { $0.sourceId == "d1" })
+        model.setText("a reply")
+        model.openOwnAnswer(first)
+        model.setText("for d1 only")
+        model.stop()
+
+        let restarted = StagingFixture.model(defaults: defaults)
+        defer { restarted.stop() }
+        restarted.actionRunner = { _ in ["ok": true] }
+        restarted.receive([try StagingFixture.snapshot(draftOption: nil, second: true)])
+        restarted.select(key)
+        XCTAssertEqual(restarted.draft.text, "a reply", "the reply comes back as the session's draft")
+        restarted.openOwnAnswer(try XCTUnwrap(restarted.cards.first { $0.sourceId == "d1" }))
+        XCTAssertEqual(restarted.draft.text, "for d1 only", "and the decision gets its own words back")
     }
 
     func testUnstageRestoresTheNoteWithoutChangingTheReply() throws {
