@@ -7,11 +7,13 @@ import {
     isAskAction,
     isRmApproval,
     isTrashRootName,
+    loadRmConfig,
     presetsFor,
     RM_APPROVALS,
     type RmConfig,
     rmConfigPath,
     saveRmConfig,
+    type TrashPaths,
     trashRootChangeBlocker,
 } from "@genesiscz/utils/rm";
 import type { Command } from "commander";
@@ -105,6 +107,33 @@ export function applyRmSetting(config: RmConfig, key: Setting, value: string): R
     }
 }
 
+/**
+ * Saves `config set <key> <value>` onto the config as it is now. The person may take minutes to confirm, so the
+ * file is read again (a setting saved meanwhile stays), and a trash-root move checks the old root again right before
+ * the save: a batch moved there while the person decided would otherwise be left behind the new root.
+ */
+export function saveRmSetting(input: {
+    key: Setting;
+    value: string;
+    drainCommand: string;
+    paths?: TrashPaths;
+    configPath?: string;
+}): { saved: RmConfig } | { blocked: string } {
+    const current = loadRmConfig(input.configPath);
+    const blocked =
+        input.key === "trash-root"
+            ? trashRootChangeBlocker(current, input.value, input.paths, input.drainCommand)
+            : null;
+
+    if (blocked) {
+        return { blocked };
+    }
+
+    const saved = applyRmSetting(current, input.key, input.value);
+    saveRmConfig(saved, input.configPath);
+    return { saved };
+}
+
 export function registerSettingsCommands(program: Command): void {
     program
         .command("presets")
@@ -159,11 +188,11 @@ export function registerSettingsCommands(program: Command): void {
                 return;
             }
 
-            const next = applyRmSetting(ctx.base, key, value);
+            const drainCommand = `${toolCommand("rm")} drain --now`;
+            // A value the setting does not take throws here, before anyone is asked.
+            applyRmSetting(ctx.base, key, value);
             const blocked =
-                key === "trash-root"
-                    ? trashRootChangeBlocker(ctx.base, value, undefined, `${toolCommand("rm")} drain --now`)
-                    : null;
+                key === "trash-root" ? trashRootChangeBlocker(ctx.base, value, undefined, drainCommand) : null;
 
             if (blocked) {
                 out.println(pc.red(`Not changing trash-root: ${blocked}`));
@@ -178,7 +207,14 @@ export function registerSettingsCommands(program: Command): void {
             });
 
             if (answer.approved) {
-                saveRmConfig(next);
+                const result = saveRmSetting({ key, value, drainCommand });
+
+                if ("blocked" in result) {
+                    out.println(pc.red(`Not changing trash-root: ${result.blocked}`));
+                    process.exitCode = 1;
+                    return;
+                }
+
                 appendRmLedger({
                     action: "config-set",
                     reason: `${key} = ${value}`,
