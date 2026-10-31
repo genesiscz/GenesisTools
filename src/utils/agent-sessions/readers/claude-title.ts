@@ -10,25 +10,50 @@ import { SafeJSON } from "@genesiscz/utils/json";
 /** Where a `/rename` row starts: Claude writes `type` as its first key. */
 const CUSTOM_TITLE_ROW = '"type":"custom-title"';
 
-/** Bytes kept after each candidate row's start: a row (so a title) longer than this is not read. */
+/** Bytes kept after each candidate row's start: a title whose field ends past this is not read. */
 const TITLE_WINDOW = 4096;
+
+/** The `customTitle` field of a row's raw text, its value a JSON string literal. */
+const CUSTOM_TITLE_FIELD = /"customTitle":("(?:[^"\\]|\\.)*")/;
 
 /** The title one parsed Claude row names: a `/rename` row's `customTitle`, else empty. */
 export function claudeCustomTitleOfRow(row: Record<string, unknown>): string {
     return row.type === "custom-title" && typeof row.customTitle === "string" ? row.customTitle : "";
 }
 
-/** The title of one candidate row's raw text (from its `"type"` key to the window's end), or empty. */
+/**
+ * The title of one candidate row's raw text (from its `"type"` key to the window's end), or empty. A whole row is
+ * parsed by the row rule; a row the window cuts (a long one, or one still being written) still names its title when
+ * the `customTitle` field itself ends inside the window, so that field is decoded on its own.
+ */
 function titleOfCandidate(slice: string): string {
     const end = slice.indexOf("\n");
+    const text = end === -1 ? slice : slice.slice(0, end);
 
     try {
-        const row: unknown = SafeJSON.parse(`{${end === -1 ? slice : slice.slice(0, end)}`, { strict: true });
+        const row: unknown = SafeJSON.parse(`{${text}`, { strict: true });
         return typeof row === "object" && row !== null && !Array.isArray(row)
             ? claudeCustomTitleOfRow(Object.fromEntries(Object.entries(row)))
             : "";
     } catch {
-        // A row cut by the window, or one still being written: it names no title this read can trust.
+        // The row is cut by the window: its title field may still be whole.
+        return titleFieldOf(text);
+    }
+}
+
+/** The decoded `customTitle` of a cut row's text, or empty when the field does not end inside it. */
+function titleFieldOf(text: string): string {
+    const literal = CUSTOM_TITLE_FIELD.exec(text)?.[1];
+
+    if (!literal) {
+        return "";
+    }
+
+    try {
+        const title: unknown = SafeJSON.parse(literal, { strict: true });
+        return typeof title === "string" ? title : "";
+    } catch {
+        // A literal the pattern matched always decodes; a broken escape names no title this read can trust.
         return "";
     }
 }

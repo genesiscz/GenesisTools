@@ -39,6 +39,15 @@ describe("lastClaudeTitle", () => {
         expect(lastClaudeTitle(text)).toBe('say "hi"');
         expect(lastClaudeTitle('{"type":"user"}')).toBeNull();
     });
+
+    it("reads the title of a rename row that ends past the read window", () => {
+        const text = [
+            '{"type":"custom-title","customTitle":"first","sessionId":"a"}',
+            `{"type":"custom-title","customTitle":"second","sessionId":"a","note":"${"x".repeat(5_000)}"}`,
+        ].join("\n");
+
+        expect(lastClaudeTitle(text)).toBe("second");
+    });
 });
 
 describe("findSessionsByTitle", () => {
