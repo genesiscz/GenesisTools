@@ -1,5 +1,6 @@
 import { logger } from "@genesiscz/utils/logger";
 import { dispatchNotification } from "@genesiscz/utils/notifications";
+import { clipOneLine } from "@genesiscz/utils/string";
 import { hubItemClickCommand } from "../hub-link";
 import { decisionNotificationId } from "./banners";
 import { type DecisionRecord, kindOf } from "./store";
@@ -32,11 +33,6 @@ function label(row: DecisionRecord): string {
     return row.title ? `${head}: ${row.title}` : head;
 }
 
-function clip(text: string): string {
-    const flat = text.replace(/\s+/g, " ").trim();
-    return flat.length > MESSAGE_MAX ? `${flat.slice(0, MESSAGE_MAX - 1)}…` : flat;
-}
-
 /**
  * One banner for the rows of a post that wait for the human, sent only when GenesisTools.app is
  * installed: its click and its "Open in hub" button open the hub's Inbox at the first of them. Never
@@ -64,7 +60,7 @@ export async function notifyPostedDecisions(rows: DecisionRecord[], bundle?: str
             app: "question",
             title: waiting.length === 1 ? label(first) : `${waiting.length} decisions wait for you`,
             subtitle: waiting.length === 1 ? where : `${label(first)}${where ? ` · ${where}` : ""}`,
-            message: clip(first.prompt),
+            message: clipOneLine(first.prompt, MESSAGE_MAX),
             id: decisionNotificationId(first),
             execute: click,
             actions: [{ id: "open-hub", title: "Open in hub", execute: click }],

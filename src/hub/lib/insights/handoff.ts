@@ -9,6 +9,7 @@ import {
 } from "@genesiscz/utils/ai/transcripts/tool-kind";
 import { promptLabel, sectionsOf } from "@genesiscz/utils/ai/transcripts/turn-cost";
 import { formatLocalDateTimeStamp } from "@genesiscz/utils/date";
+import { clipOneLine } from "@genesiscz/utils/string";
 
 // The handoff composer: a markdown brief of a range of prompts, built from the transcript's
 // structure alone (no model call), so the same range always gives the same text. The hub's
@@ -60,11 +61,6 @@ export interface HandoffDraft {
 }
 
 export class HandoffRangeError extends Error {}
-
-function clip(text: string, max: number): string {
-    const flat = text.replace(/\s+/g, " ").trim();
-    return flat.length > max ? `${flat.slice(0, max - 1)}…` : flat;
-}
 
 /**
  * Inline code that survives backticks inside the value: the fence is one backtick longer than the longest
@@ -222,7 +218,7 @@ export function gist(text: string, max = 280): string {
         /(\d+)/g,
         (_, index: string) => spans[Number(index)] ?? ""
     );
-    return clip(lead.trim() || flat, max);
+    return clipOneLine(lead.trim() || flat, max);
 }
 
 /** "2026-10-06 11:47 to 11:49" in local time, the second date only when the day changes. */
@@ -244,7 +240,7 @@ function openItemsOf(turns: readonly TranscriptTurn[], isRangeEnd: boolean): str
     const lastOwn = turns.findLast((turn) => !(turn.role === "user" && isHarnessDeliveryText(turn.text)));
 
     if (lastOwn?.role === "user") {
-        items.push(`Answer the last prompt, which has no reply yet: "${clip(lastOwn.text, 200)}"`);
+        items.push(`Answer the last prompt, which has no reply yet: "${clipOneLine(lastOwn.text, 200)}"`);
     }
 
     const tools = turns.flatMap((turn) => turn.tools);
@@ -277,7 +273,7 @@ function openItemsOf(turns: readonly TranscriptTurn[], isRangeEnd: boolean): str
             ?.trim();
         const exit = tool.exitCode !== undefined && tool.exitCode !== 0 ? ` (exit ${tool.exitCode})` : "";
         items.push(
-            `${toolDisplayName(tool.name)} failed${exit}: ${code(keyArgument(tool))}${firstLine ? `: ${clip(firstLine, 160)}` : ""}`
+            `${toolDisplayName(tool.name)} failed${exit}: ${code(keyArgument(tool))}${firstLine ? `: ${clipOneLine(firstLine, 160)}` : ""}`
         );
     }
 
@@ -285,7 +281,7 @@ function openItemsOf(turns: readonly TranscriptTurn[], isRangeEnd: boolean): str
 
     for (const line of reply?.text.split("\n") ?? []) {
         if (TODO_LINE.test(line)) {
-            items.push(`From the last reply: ${clip(line.replace(/^\s*[-*]\s*/, ""), 200)}`);
+            items.push(`From the last reply: ${clipOneLine(line.replace(/^\s*[-*]\s*/, ""), 200)}`);
         }
     }
 
@@ -340,7 +336,7 @@ export function composeHandoff(options: {
     // Without a title, the session is named by its first working prompt, not by the range's.
     const namedBy = turns.find(isWorkPrompt) ?? goalTurn;
     const name = meta.title?.trim() || (namedBy ? promptLabel(namedBy.text, 80) : meta.sessionId.slice(0, 8));
-    const title = clip(`Continue: ${name}`, 120);
+    const title = clipOneLine(`Continue: ${name}`, 120);
     const goal = goalTurn ? goalTurn.text.trim() : "";
     const files = [...filesOf(tools).values()];
     const changedFiles = files.filter((file) => file.edits + file.writes > 0);

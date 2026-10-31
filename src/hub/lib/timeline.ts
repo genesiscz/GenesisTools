@@ -20,6 +20,7 @@ import { logger } from "@genesiscz/utils/logger";
 import { profiler } from "@genesiscz/utils/profile";
 import { Storage } from "@genesiscz/utils/storage";
 import { cached, capMaxCacheAge } from "@genesiscz/utils/storage/cache-flag";
+import { clipOneLine } from "@genesiscz/utils/string";
 import { startedAtOf } from "./agents/parent";
 import type { NotifyItem } from "./notify";
 import { readNotifyState } from "./notify-poll";
@@ -237,11 +238,6 @@ function short(sha: string): string {
 
 function inWindow(ms: number, window: TimelineWindow): boolean {
     return Number.isFinite(ms) && ms >= window.since.getTime() && ms <= window.upper.getTime();
-}
-
-function cut(text: string, max: number): string {
-    const one = text.replace(/\s+/g, " ").trim();
-    return one.length > max ? `${one.slice(0, max - 1)}…` : one;
 }
 
 /**
@@ -524,13 +520,13 @@ function decisionEvents(rows: readonly DecisionRecord[], window: TimelineWindow)
         }
 
         const answer = row.option
-            ? `${row.option})${row.answer ? ` ${cut(row.answer, 80)}` : ""}`
-            : cut(row.answer ?? "", 80);
+            ? `${row.option})${row.answer ? ` ${clipOneLine(row.answer, 80)}` : ""}`
+            : clipOneLine(row.answer ?? "", 80);
         events.push({
             id: `decision:${row.id}`,
             kind: "decision",
             at: iso(at),
-            title: row.title ?? cut(row.prompt, 160),
+            title: row.title ?? clipOneLine(row.prompt, 160),
             detail: open ? `#${row.number} waiting` : `#${row.number} ${row.state}${answer ? `: ${answer}` : ""}`,
             project: row.project ?? (row.cwd ? basename(row.cwd) : null),
             repo: row.repoRoot ?? null,
