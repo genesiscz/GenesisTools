@@ -23,6 +23,9 @@ if (!payload || !config.questions.harnesses[payload.harness]) {
     process.exit(0);
 }
 
+setDiagLogPath(config.logPath);
+setMaxLogBytes(megabytes(config.maxLogMB));
+
 const event = normalizeEvent(payload.event);
 const asks = event === "pretooluse" || event === "notification";
 
@@ -32,16 +35,19 @@ if (!asks && !hasOpenDialogRecords(payload.harness, payload.sessionId)) {
     }
 
     // Once per machine: record files from before the open markers get theirs, so their open records still close.
-    const { indexOpenDialogMarkers } = await import("@genesiscz/utils/agents/dialogs/store");
-    indexOpenDialogMarkers();
+    // A failed pass must not block the tool call; the next call tries again, because the indexed flag is not set.
+    try {
+        const { indexOpenDialogMarkers } = await import("@genesiscz/utils/agents/dialogs/store");
+        indexOpenDialogMarkers();
+    } catch (err) {
+        hookDiag("The one-time open-marker pass failed; older open records stay unmarked", { err });
+        process.exit(0);
+    }
 
     if (!hasOpenDialogRecords(payload.harness, payload.sessionId)) {
         process.exit(0);
     }
 }
-
-setDiagLogPath(config.logPath);
-setMaxLogBytes(megabytes(config.maxLogMB));
 
 try {
     const { applyQuestionHookAction, questionHookAction } = await import("../lib/hooks/questions");
