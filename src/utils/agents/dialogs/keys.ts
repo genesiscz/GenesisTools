@@ -29,6 +29,11 @@ export function optionLetters(count: number): string[] {
     return Array.from({ length: count }, (_, index) => String.fromCharCode(97 + index));
 }
 
+/** The first letter of `pick` (a single letter or several, like `ac`) that names no option of `count`; undefined when all are in range. */
+export function letterPastOptions(pick: string, count: number): string | undefined {
+    return [...pick].find((letter) => letter.charCodeAt(0) - 97 >= count);
+}
+
 /** The 0-based option an answer names: a letter (`b`) or a 1-based position (`2`); null for anything else. */
 export function optionIndexOf(option: string): number | null {
     const value = option.trim().toLowerCase().replace(/\)$/, "");

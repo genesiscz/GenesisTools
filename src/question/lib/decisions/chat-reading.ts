@@ -1,5 +1,6 @@
 import { readSessionBackward } from "@genesiscz/utils/agent-sessions/session-backward";
 import type { BackwardRead, ReadBackwardOptions } from "@genesiscz/utils/agent-sessions/types";
+import { optionLetters } from "@genesiscz/utils/agents/dialogs/keys";
 import { resolveTranscript } from "@genesiscz/utils/ai/transcripts/resolve";
 import { logger } from "@genesiscz/utils/logger";
 import { type AmbiguousAnswer, type ChatAnswer, chatAnswers, type OpenDecisionRef } from "./chat-answers";
@@ -25,10 +26,6 @@ export function askedAtOf(row: DecisionRecord): string {
     return row.revisedTs ?? row.createdTs ?? row.updatedTs;
 }
 
-function lettersFor(count: number): string[] {
-    return Array.from({ length: count }, (_, index) => String.fromCharCode(97 + index));
-}
-
 /** The finder's view of `rows`. `askedBefore` names the rows asked before the first entry that was read. */
 export function openDecisionRefs(
     rows: readonly DecisionRecord[],
@@ -36,7 +33,7 @@ export function openDecisionRefs(
 ): OpenDecisionRef[] {
     return rows.map((row) => ({
         number: row.number,
-        letters: lettersFor(row.options.length),
+        letters: optionLetters(row.options.length),
         askedAt: askedAtOf(row),
         revision: row.revision ?? 1,
         ...(askedBefore(row) ? { askedBefore: true } : {}),

@@ -1,4 +1,5 @@
 import { canonicalAgent } from "@app/handoff/targeting";
+import { letterPastOptions } from "@genesiscz/utils/agents/dialogs/keys";
 import type { DeliveryResult } from "./deliver";
 import { DeliveryUnknownError, NotDeliveredError } from "./delivery-errors";
 import { decisionLine, decisionLines, deliverDecisions, optionLetters } from "./read";
@@ -121,7 +122,7 @@ export async function checkAnswer({
 
     const options = row?.options ?? found?.options ?? [];
 
-    if (option && options.length > 0 && [...option].some((letter) => letter.charCodeAt(0) - 97 >= options.length)) {
+    if (option && options.length > 0 && letterPastOptions(option, options.length) !== undefined) {
         throw new AnswerRefusedError(
             "option-range",
             `DECISION ${answer.number} has options a-${String.fromCharCode(96 + options.length)}`
