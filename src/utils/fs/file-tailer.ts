@@ -9,6 +9,13 @@ export interface FileTailerHandlers<T> {
     onLine: (entry: T, index: number) => void;
 }
 
+export interface FileTailerOptions {
+    /** Byte offset to read from instead of the file's size at `start()`: the end of a backlog the caller already read. */
+    from?: number;
+    /** Create a missing file (and its folder) at `start()`. A read-only observer passes false and waits for it. */
+    create?: boolean;
+}
+
 const FINGERPRINT_BYTES = 64;
 
 function fstatSyncSize(path: string): number {
@@ -42,7 +49,7 @@ function headFingerprint(path: string): string {
  * Watches a JSONL file and emits each newly-appended entry. Generalized from
  * ClaudeSessionTailer: byte-offset reads + parseJsonlChunk remainder buffering
  * + truncation reset. Pre-existing content is NOT replayed (offset starts at
- * current size). No daemon — fs.watch + a 300ms safety poll.
+ * current size, or at `options.from`). No daemon — fs.watch + a 300ms safety poll.
  */
 export class FileTailer<T = unknown> {
     private offset = 0;
@@ -55,7 +62,8 @@ export class FileTailer<T = unknown> {
 
     constructor(
         private readonly path: string,
-        private readonly handlers: FileTailerHandlers<T>
+        private readonly handlers: FileTailerHandlers<T>,
+        private readonly options: FileTailerOptions = {}
     ) {}
 
     start(): void {
@@ -64,7 +72,7 @@ export class FileTailer<T = unknown> {
         }
 
         this.started = true;
-        if (!existsSync(this.path)) {
+        if (this.options.create !== false && !existsSync(this.path)) {
             mkdirSync(dirname(this.path), { recursive: true });
             try {
                 writeFileSync(this.path, "", { flag: "wx" });
@@ -73,7 +81,7 @@ export class FileTailer<T = unknown> {
             }
         }
 
-        this.offset = existsSync(this.path) ? fstatSyncSize(this.path) : 0;
+        this.offset = this.options.from ?? (existsSync(this.path) ? fstatSyncSize(this.path) : 0);
         this.fingerprint = existsSync(this.path) ? headFingerprint(this.path) : "";
         const tick = (): void => this.drain();
         try {
