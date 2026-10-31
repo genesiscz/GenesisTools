@@ -237,15 +237,8 @@ final class HubInboxUXTests: XCTestCase {
 
     @MainActor
     func testNoteSurvivesRejectedWriteAndCardRecreation() async throws {
-        let inbox = HubInboxModel()
-        let item = try Self.decision(#"{"id":"d_4_s1","draft":"old","revision":1}"#)
-        let session = Self.session("s1", items: [item])
-        let settled = expectation(description: "rejected write settled")
-        inbox.captureWrite = { _ in ProcessCapture(status: 1, stdout: Data(#"{"error":"DECISION 4 changed"}"#.utf8), stderr: Data()) }
-        inbox.reloadAfterWrite = { settled.fulfill() }
-        inbox.noteTexts[item.id] = "unsaved note"
-        inbox.stageNote(item, in: session, note: "unsaved note")
-        await fulfillment(of: [settled], timeout: 2)
+        let (inbox, item, session) = try await stagedNote(
+            "unsaved note", result: ProcessCapture(status: 1, stdout: Data(#"{"error":"DECISION 4 changed"}"#.utf8), stderr: Data()))
         XCTAssertNotNil(inbox.writeErrors[item.id])
         XCTAssertEqual(inbox.noteForCard(item), "unsaved note", "a recreated card uses the unsaved note")
         XCTAssertEqual(inbox.noteTexts[item.id], "unsaved note", "the note remains dirty for retry")
@@ -280,15 +273,7 @@ final class HubInboxUXTests: XCTestCase {
 
     @MainActor
     func testSuccessfulMatchingNoteWriteClearsTheDirtyCopy() async throws {
-        let inbox = HubInboxModel()
-        let item = try Self.decision(#"{"id":"d_4_s1","draft":"old","revision":1}"#)
-        let session = Self.session("s1", items: [item])
-        let settled = expectation(description: "successful write settled")
-        inbox.captureWrite = { _ in ProcessCapture(status: 0, stdout: Data(), stderr: Data()) }
-        inbox.reloadAfterWrite = { settled.fulfill() }
-        inbox.noteTexts[item.id] = "saved"
-        inbox.stageNote(item, in: session, note: "saved")
-        await fulfillment(of: [settled], timeout: 2)
+        let (inbox, item, session) = try await stagedNote("saved", result: ProcessCapture(status: 0, stdout: Data(), stderr: Data()))
         XCTAssertNil(inbox.writeErrors[item.id])
         XCTAssertNil(inbox.noteTexts[item.id], "only a matching successful write acknowledges the note")
         XCTAssertEqual(inbox.cardState(for: item, in: session, hubSession: nil).noteAcknowledgement, 1)
@@ -313,6 +298,22 @@ final class HubInboxUXTests: XCTestCase {
     }
 
     // MARK: - Fixtures
+
+    /// Decision 4 of session s1 (stored draft "old") with `note` typed and staged, its write answering `result`;
+    /// returns once the reload after the write ran.
+    @MainActor
+    private func stagedNote(_ note: String, result: ProcessCapture) async throws -> (HubInboxModel, InboxItem, InboxSession) {
+        let inbox = HubInboxModel()
+        let item = try Self.decision(#"{"id":"d_4_s1","draft":"old","revision":1}"#)
+        let session = Self.session("s1", items: [item])
+        let settled = expectation(description: "note write settled")
+        inbox.captureWrite = { _ in result }
+        inbox.reloadAfterWrite = { settled.fulfill() }
+        inbox.noteTexts[item.id] = note
+        inbox.stageNote(item, in: session, note: note)
+        await fulfillment(of: [settled], timeout: 2)
+        return (inbox, item, session)
+    }
 
     static func decision(_ fields: String) throws -> InboxItem {
         var json = try XCTUnwrap(JSONSerialization.jsonObject(with: Data(fields.utf8)) as? [String: Any])
