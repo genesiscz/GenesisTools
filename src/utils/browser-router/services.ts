@@ -1,5 +1,5 @@
 import { listDashboards, listPortRegistry } from "@genesiscz/utils/ui/dashboards";
-import { hostPattern, linkPattern, type RouteRule, type RouterConfig } from "./route";
+import { hostPattern, linkPattern, plainNavigationFlag, type RouteRule, type RouterConfig } from "./route";
 
 export interface RegistryService {
     key: string;
@@ -34,14 +34,6 @@ function pick(services: RegistryService[], only: string[] | undefined): Registry
  * The flag as the saved action carries it: present only when true. `parseAction` keeps only a literal true, so a
  * `false` written here never survived a reload and every sync then reported the six web services as drift.
  */
-function plainNavigationFlag(
-    service: RegistryService
-): { allowExecuteByPlainBrowserNavigationMightBeDangerous: true } | Record<never, never> {
-    return service.allowExecuteByPlainBrowserNavigationMightBeDangerous
-        ? { allowExecuteByPlainBrowserNavigationMightBeDangerous: true }
-        : {};
-}
-
 /** The `local-services` preset: a click on `localhost:<port>` starts that registered server first. */
 export function localServiceRoutes(only?: string[]): RouteRule[] {
     return pick(registryServices(), only).map((service) => ({
@@ -53,7 +45,7 @@ export function localServiceRoutes(only?: string[]): RouteRule[] {
             port: service.port,
             name: service.name,
             to: `http://localhost:${service.port}$1`,
-            ...plainNavigationFlag(service),
+            ...plainNavigationFlag(service.allowExecuteByPlainBrowserNavigationMightBeDangerous),
         },
     }));
 }
@@ -98,7 +90,7 @@ export function dashboardNameRoutes({
     return dashboardNames({ only, names }).flatMap(({ name, service }) => {
         const action = {
             type: "service" as const,
-            ...plainNavigationFlag(service),
+            ...plainNavigationFlag(service.allowExecuteByPlainBrowserNavigationMightBeDangerous),
             port: service.port,
             name: service.name,
             to: `http://localhost:${service.port}$1`,

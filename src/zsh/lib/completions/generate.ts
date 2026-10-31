@@ -1,5 +1,6 @@
 import { env } from "@genesiscz/utils/env";
 import { logger } from "@genesiscz/utils/logger";
+import { boundedCommand } from "@genesiscz/utils/process/bounded-command";
 import { atomicWriteFileSync, readFileIfExistsSync } from "@genesiscz/utils/storage/atomic-file";
 import type { CompletionProvider } from "./providers";
 import { completionFilePath } from "./rc-block";
@@ -29,19 +30,16 @@ export type CommandLocator = (cli: string) => string | null;
 
 export const runCommand: CommandRunner = async (argv, options) => {
     logger.debug({ argv, timeoutMs: options.timeoutMs }, "zsh completions: running");
-    const proc = Bun.spawn([...argv], {
-        stdin: "ignore",
-        stdout: "pipe",
-        stderr: "pipe",
-        env: options.env ? { ...env.getProcessEnv(), ...options.env } : undefined,
-        timeout: options.timeoutMs,
-        killSignal: "SIGKILL",
+    const result = await boundedCommand({
+        command: [...argv],
+        timeoutMs: options.timeoutMs,
+        environment: options.env ? { ...env.getProcessEnv(), ...options.env } : undefined,
     });
-    const [stdout, stderr] = await Promise.all([new Response(proc.stdout).text(), new Response(proc.stderr).text()]);
-    const exitCode = await proc.exited;
-    const timedOut = proc.signalCode === "SIGKILL";
-    logger.debug({ argv, exitCode, timedOut, bytes: stdout.length }, "zsh completions: finished");
-    return { exitCode, stdout, stderr, timedOut };
+    const timedOut = result.error?.code === "ETIMEDOUT";
+    const exitCode = result.status ?? 1;
+    const stderr = result.error && !timedOut ? `${result.stderr}${result.error.message}` : result.stderr;
+    logger.debug({ argv, exitCode, timedOut, bytes: result.stdout.length }, "zsh completions: finished");
+    return { exitCode, stdout: result.stdout, stderr, timedOut };
 };
 
 export const locateCommand: CommandLocator = (cli) => Bun.which(cli);
