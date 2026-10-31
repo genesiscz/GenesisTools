@@ -276,7 +276,7 @@ export function moveToTrash(requests: readonly MoveRequest[], options: MoveOptio
                 throw error;
             }
 
-            refuseUnavailable(request, error.message, options);
+            refuseUnavailable({ request, reason: error.message, options });
             continue;
         }
 
@@ -301,17 +301,17 @@ export function moveToTrash(requests: readonly MoveRequest[], options: MoveOptio
     try {
         for (const { request, item } of planned) {
             try {
-                moveOne(request, item, { batch, paths, claim, options });
+                moveOne({ request, item, batch, paths, claim, options });
             } catch (error) {
                 if (error instanceof RmTrashUnavailableError) {
-                    refuseUnavailable(request, error.message, options);
+                    refuseUnavailable({ request, reason: error.message, options });
                     continue;
                 }
                 if (!(error instanceof RmTargetChangedError)) {
                     throw error;
                 }
 
-                refuseChanged(request, error.message, options);
+                refuseChanged({ request, reason: error.message, options });
                 continue;
             }
 
@@ -336,11 +336,15 @@ export function moveToTrash(requests: readonly MoveRequest[], options: MoveOptio
 }
 
 /** Moves one planned item; a cross-volume fallback puts its new destination on record before it moves there. */
-function moveOne(
-    request: MoveRequest,
-    item: TrashItem,
-    context: { batch: TrashBatch; paths: TrashPaths; claim: string; options: MoveOptions }
-): void {
+function moveOne(context: {
+    request: MoveRequest;
+    item: TrashItem;
+    batch: TrashBatch;
+    paths: TrashPaths;
+    claim: string;
+    options: MoveOptions;
+}): void {
+    const { request, item } = context;
     inTrash(() => mkdirSync(dirname(item.stored), { recursive: true }));
 
     try {
@@ -416,7 +420,14 @@ function inTrash<T>(step: () => T): T {
 
 class RmTrashUnavailableError extends Error {}
 
-function refuseUnavailable(request: MoveRequest, reason: string, options: MoveOptions): void {
+/** A path that stays in place, why, and the move's options (its `onRefused` and caller). */
+interface MoveRefusal {
+    request: MoveRequest;
+    reason: string;
+    options: MoveOptions;
+}
+
+function refuseUnavailable({ request, reason, options }: MoveRefusal): void {
     if (!options.onRefused) {
         throw new RmTrashUnavailableError(`${request.target.path}: ${reason}`);
     }
@@ -430,7 +441,7 @@ function refuseUnavailable(request: MoveRequest, reason: string, options: MoveOp
     options.onRefused(request, reason);
 }
 
-function refuseChanged(request: MoveRequest, reason: string, options: MoveOptions): void {
+function refuseChanged({ request, reason, options }: MoveRefusal): void {
     logger.warn({ path: request.target.path, reason }, "rm: the path changed since it was checked");
     appendRmLedger({
         action: "refuse",

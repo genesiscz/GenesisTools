@@ -756,7 +756,13 @@ describe("security review fixes", () => {
             { kind: "delete", caller: AGENT, cwd: base, reason: null, targets, asideDir },
             requestsDir
         );
-        finishRmApproval(request, [request.targets[0]], new Set(), "test", requestsDir);
+        finishRmApproval({
+            request,
+            blocked: [request.targets[0]],
+            unresolved: new Set(),
+            via: "test",
+            dir: requestsDir,
+        });
         const saved = loadRmRequest(request.id, requestsDir);
         expect(saved?.status).toBe("pending");
         expect(saved?.targets).toEqual([targets[0]]);
@@ -765,7 +771,9 @@ describe("security review fixes", () => {
             { kind: "delete", caller: AGENT, cwd: base, reason: null, targets, asideDir },
             requestsDir
         );
-        expect(finishRmApproval(all, [], new Set(), "test", requestsDir).status).toBe("approved");
+        expect(
+            finishRmApproval({ request: all, blocked: [], unresolved: new Set(), via: "test", dir: requestsDir }).status
+        ).toBe("approved");
     });
 
     test("missing config uses defaults; unreadable or malformed policy fails closed", () => {

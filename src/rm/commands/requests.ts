@@ -238,12 +238,12 @@ export function registerRequestCommands(program: Command): void {
                 kickDrainer(ctx.config);
             }
 
-            const result = finishRmApproval(
+            const result = finishRmApproval({
                 request,
-                blocked.map((entry) => entry.wanted),
+                blocked: blocked.map((entry) => entry.wanted),
                 unresolved,
-                answer.via
-            );
+                via: answer.via,
+            });
             if (result.status === "pending") {
                 out.println(
                     pc.yellow(`Request ${id} stays pending for ${result.targets.length} blocked or changed path(s).`)

@@ -98,14 +98,25 @@ export function approvalGraceMinutes(request: RmRequest, base: RmConfig): number
     return (request.caller ? effectiveConfig(base, request.caller, request.cwd).config : base).grace.otherMinutes;
 }
 
+export interface RmApprovalOutcome {
+    request: RmRequest;
+    /** Targets refused before the person answered: they stay pending. */
+    blocked: readonly RmRequestTarget[];
+    /** Targets refused or changed after the answer: they stay pending too. */
+    unresolved: ReadonlySet<RmRequestTarget>;
+    /** How the person approved (`touch-id`, `tty`, ...). */
+    via: string;
+    dir?: string;
+}
+
 /** Keep initially blocked and later refused targets pending after a partial approval. */
-export function finishRmApproval(
-    request: RmRequest,
-    blocked: readonly RmRequestTarget[],
-    unresolved: ReadonlySet<RmRequestTarget>,
-    via: string,
-    dir = rmRequestsDir()
-): RmRequest {
+export function finishRmApproval({
+    request,
+    blocked,
+    unresolved,
+    via,
+    dir = rmRequestsDir(),
+}: RmApprovalOutcome): RmRequest {
     const remaining = new Set([...blocked, ...unresolved]);
     const result: RmRequest =
         remaining.size > 0

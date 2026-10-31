@@ -165,9 +165,12 @@ function validateRmConfig(value: unknown): void {
     if (!isRecord(value)) {
         throw new Error("config must be an object");
     }
-    const check = (object: Record<string, unknown>, key: string, valid: (v: unknown) => boolean): void => {
-        if (key in object && !valid(object[key])) {
-            throw new Error(`invalid ${key}`);
+    /** Throws for the first key of `fields` that `object` has with a value its validator refuses. */
+    const check = (object: Record<string, unknown>, fields: Record<string, (v: unknown) => boolean>): void => {
+        for (const [key, valid] of Object.entries(fields)) {
+            if (key in object && !valid(object[key])) {
+                throw new Error(`invalid ${key}`);
+            }
         }
     };
     const text = (v: unknown): boolean => typeof v === "string";
@@ -178,63 +181,50 @@ function validateRmConfig(value: unknown): void {
         if (!isRecord(v)) {
             return false;
         }
-        check(v, "presetMinutes", nonnegative);
-        check(v, "otherMinutes", nonnegative);
+        check(v, { presetMinutes: nonnegative, otherMinutes: nonnegative });
         return true;
     };
     const policy = (v: Record<string, unknown>): void => {
-        for (const key of ["asideUnsaved", "allowSessionScratch", "allowOwnFiles"]) {
-            check(v, key, boolean);
-        }
-        check(v, "askAction", isAskAction);
-        check(v, "grace", grace);
+        check(v, {
+            asideUnsaved: boolean,
+            allowSessionScratch: boolean,
+            allowOwnFiles: boolean,
+            askAction: isAskAction,
+            grace,
+        });
     };
-    for (const key of ["protect", "disabledPresets", "enabledPresets", "disabledProfiles"]) {
-        check(value, key, texts);
-    }
+    const preset = (item: unknown): boolean => {
+        if (!isRecord(item) || parsePreset(item) === null) {
+            return false;
+        }
+        check(item, {
+            description: text,
+            within: text,
+            names: texts,
+            markers: texts,
+            parentNames: texts,
+            optIn: boolean,
+        });
+        return true;
+    };
+    const profile = (item: unknown): boolean => {
+        if (!isRecord(item) || parseProfile(item) === null || !isRecord(item.match)) {
+            return false;
+        }
+        check(item.match, { agent: text, session: text, project: text, cwd: text });
+        check(item, { disabledPresets: texts, roots: texts, protect: texts, note: text });
+        policy(item);
+        return true;
+    };
+    check(value, { protect: texts, disabledPresets: texts, enabledPresets: texts, disabledProfiles: texts });
     policy(value);
-    check(value, "approval", isRmApproval);
-    check(value, "trashRoot", isTrashRootName);
-    check(value, "roots", (v) => Array.isArray(v) && v.every((item) => parseRoot(item) !== null));
-    check(
-        value,
-        "customPresets",
-        (v) =>
-            Array.isArray(v) &&
-            v.every((item) => {
-                if (!isRecord(item) || parsePreset(item) === null) {
-                    return false;
-                }
-                for (const key of ["description", "within"]) {
-                    check(item, key, text);
-                }
-                for (const key of ["names", "markers", "parentNames"]) {
-                    check(item, key, texts);
-                }
-                check(item, "optIn", boolean);
-                return true;
-            })
-    );
-    check(
-        value,
-        "profiles",
-        (v) =>
-            Array.isArray(v) &&
-            v.every((item) => {
-                if (!isRecord(item) || parseProfile(item) === null || !isRecord(item.match)) {
-                    return false;
-                }
-                for (const key of ["agent", "session", "project", "cwd"]) {
-                    check(item.match, key, text);
-                }
-                for (const key of ["disabledPresets", "roots", "protect"]) {
-                    check(item, key, texts);
-                }
-                check(item, "note", text);
-                policy(item);
-                return true;
-            })
-    );
+    check(value, {
+        approval: isRmApproval,
+        trashRoot: isTrashRootName,
+        roots: (v) => Array.isArray(v) && v.every((item) => parseRoot(item) !== null),
+        customPresets: (v) => Array.isArray(v) && v.every(preset),
+        profiles: (v) => Array.isArray(v) && v.every(profile),
+    });
 }
 
 function strings(value: unknown): string[] {
