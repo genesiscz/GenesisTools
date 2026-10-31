@@ -10,11 +10,9 @@ import {
     type SessionTargetsResult,
     SOFT_SOURCES,
 } from "@app/claude/lib/cmux/resolve";
-import { ClaudeWorkerStore, claudeWorkerSourceHome } from "@app/claude/lib/worker/store";
 import { isCodexDaemonPid } from "@app/codex/lib/spawn";
 import { CodexSessionStore, codexWorkerHome } from "@app/codex/lib/store";
 import { type GrokLeaderClient, leaderSocketsFor, sendToGrokLeader } from "@app/grok/lib/leader";
-import { GrokSessionStore } from "@app/grok/lib/store";
 import { canonicalAgent } from "@app/handoff/targeting";
 import {
     enqueueSessionMessage,
@@ -39,6 +37,7 @@ import { sessionSenderMode, standInSender } from "@genesiscz/utils/claude/peer-s
 import { execTool } from "@genesiscz/utils/cli";
 import { toolCommand } from "@genesiscz/utils/cli/tool-command";
 import { type CmuxLiveSnapshot, fetchCmuxLiveSnapshot } from "@genesiscz/utils/cmux/lib/live-snapshot";
+import { hasMembers, toolParts } from "@genesiscz/utils/harness/tool-parts";
 import { SafeJSON } from "@genesiscz/utils/json";
 import { logger } from "@genesiscz/utils/logger";
 import { runsAgent } from "@genesiscz/utils/process/classify";
@@ -160,7 +159,7 @@ type NoTarget = Extract<DeliveryTarget, { kind: "none" }>;
 type TargetOf<Kind extends DeliveryTarget["kind"]> = Extract<DeliveryTarget, { kind: Kind }>;
 
 export interface NativeDeliveryWorker {
-    /** A harness whose answer route resumes a session by a worker turn (`ANSWER_ROUTES[provider].ownedWorkers`). */
+    /** A harness whose answer route resumes a session by a worker turn (`ANSWER_ROUTES.of(provider).ownedWorkers`). */
     provider: AccountProviderAlias;
     name: string;
     sessionId: string;
@@ -183,7 +182,7 @@ interface OwnedWorkerMeta {
 }
 
 /** The owned headless workers of one harness, each with whether it can take another turn now. */
-function ownedWorkers<Meta extends OwnedWorkerMeta>({
+export function ownedWorkers<Meta extends OwnedWorkerMeta>({
     provider,
     label,
     store,
@@ -284,7 +283,7 @@ function codexWorkerFor(sessionId: string, sourceHome?: string): string | null {
 const LIVE_EDGES: DeliveryEdges = {
     runTool: (args, { timeoutMs }) => execTool(args, { timeout: timeoutMs }),
     codexWorkerFor,
-    nativeWorkers: (provider) => ANSWER_ROUTES[provider].ownedWorkers(),
+    nativeWorkers: (provider) => ANSWER_ROUTES.of(provider).ownedWorkers(),
     claudePeers: (sourceHome, sessionId) => liveClaudePeers(sessionId, sourceHome),
     sendClaudePeer: sendClaudePeerMessage,
     receiverMode: sessionSenderMode,
@@ -407,7 +406,7 @@ interface RouteHit {
  * next route, a `none` target stops the ladder (the route holds the session but cannot take the answer now), and a
  * hit carries the send that reads the route's own receipt.
  */
-interface AnswerRoute {
+export interface AnswerRoute {
     find(query: RouteQuery, edges: DeliveryEdges): Promise<RouteHit | NoTarget | undefined>;
 }
 
@@ -488,7 +487,7 @@ function steerRefusal(receipt: SteerReceipt, worker: { backend: string; name: st
  * An owned Claude or Grok worker that runs this session, when one does. Its steer resumes the session by one turn,
  * and only a completed same-session, same-home, next-turn receipt counts as delivered.
  */
-function ownedWorkerRoute(provider: AccountProviderAlias): AnswerRoute {
+export function ownedWorkerRoute(provider: AccountProviderAlias): AnswerRoute {
     return {
         async find({ session, sourceHome }, edges) {
             const owned = edges
@@ -620,7 +619,7 @@ function claimingPeer(
 }
 
 /** The live Claude session itself, through its peer socket. A dialog cannot swallow a socket message. */
-const claudePeerRoute: AnswerRoute = {
+export const claudePeerRoute: AnswerRoute = {
     async find(query, edges) {
         const claimed = claimingPeer(query, edges);
         if (!claimed || "kind" in claimed) {
@@ -697,7 +696,7 @@ async function sendToClaudePeer(
  * asked too). Only a socket file that exists counts, so a session with no leader falls through to cmux at once.
  * A leader that does not hold the session is `absent`, and the guarded pane is the next rung.
  */
-const grokLeaderRoute: AnswerRoute = {
+export const grokLeaderRoute: AnswerRoute = {
     async find({ session }, edges) {
         const sockets = edges.grokLeaderSockets(session);
         if (sockets.length === 0) {
@@ -742,7 +741,7 @@ const CODEX_WORKER_BACKEND: AccountProviderAlias = "codex";
  * A `tools codex` worker that runs the thread, the only Codex route (a Codex session is never typed into). Only a
  * provider input acknowledgement counts as delivered.
  */
-const codexWorkerRoute: AnswerRoute = {
+export const codexWorkerRoute: AnswerRoute = {
     async find({ session, sourceHome }, edges) {
         const worker = edges.codexWorkerFor(session, sourceHome);
         if (!worker) {
@@ -816,7 +815,7 @@ async function steerCodexWorker(
 }
 
 /** How one harness's answers travel before the cmux pane. */
-interface HarnessAnswer {
+export interface HarnessAnswer {
     /** The routes, tried in order; the cmux pane comes after them. */
     routes: readonly AnswerRoute[];
     /** The owned headless workers that resume a session by a worker turn (the `ownedWorkerRoute` reads them). */
@@ -824,36 +823,18 @@ interface HarnessAnswer {
 }
 
 /**
- * Each harness's answer routes: the drivers' tool-owned `answer` part (each driver names this module), the one table
- * keyed by harness in the delivery code. Codex only through its `tools codex` worker (it is never typed into, so its
- * route answers `none` rather than passing on, and it lists no owned workers: that worker is the route); Claude
- * through an owned worker, then its own peer socket; Grok through an owned worker, then the leader its TUI runs in.
+ * Each harness's answer routes: `routes/<harness id>.ts` exports them as `harnessAnswer` (`toolParts`), so a new
+ * harness adds its module and edits no table here. Codex only through its `tools codex` worker (it is never typed
+ * into, so its route answers `none` rather than passing on, and it lists no owned workers: that worker is the
+ * route); Claude through an owned worker, then its own peer socket; Grok through an owned worker, then the leader its
+ * TUI runs in.
  */
-const ANSWER_ROUTES: { readonly [Id in AccountProviderAlias]: HarnessAnswer } = {
-    claude: {
-        routes: [ownedWorkerRoute("claude"), claudePeerRoute],
-        ownedWorkers: () =>
-            ownedWorkers({
-                provider: "claude",
-                label: "Claude",
-                store: new ClaudeWorkerStore(),
-                sourceHome: claudeWorkerSourceHome,
-                started: (meta) => meta.turns > 0,
-            }),
-    },
-    codex: { routes: [codexWorkerRoute], ownedWorkers: () => [] },
-    grok: {
-        routes: [ownedWorkerRoute("grok"), grokLeaderRoute],
-        ownedWorkers: () =>
-            ownedWorkers({
-                provider: "grok",
-                label: "Grok",
-                store: new GrokSessionStore(),
-                sourceHome: (meta) => meta.workerHome,
-                started: (meta) => meta.sessionStarted ?? (meta.turns > 0 && meta.lastTurn?.ended === true),
-            }),
-    },
-};
+const ANSWER_ROUTES = toolParts<HarnessAnswer>({
+    meta: import.meta,
+    folder: "routes",
+    exportName: "harnessAnswer",
+    isPart: hasMembers<HarnessAnswer>("routes", "ownedWorkers"),
+});
 
 /** The cmux pane rung alone: the one pane that demonstrably runs this session, checked against the live tree. */
 async function findPane(session: string, edges: DeliveryEdges): Promise<TargetOf<"cmux"> | NoTarget> {
@@ -1023,7 +1004,7 @@ export async function locateDelivery(
     const edges = edgesOf(deps);
     const harness = nativeHarness(provider);
 
-    for (const route of harness ? ANSWER_ROUTES[harness].routes : []) {
+    for (const route of harness ? ANSWER_ROUTES.of(harness).routes : []) {
         const found = await route.find({ session, sourceHome }, edges);
         if (found) {
             return found;
@@ -1149,7 +1130,7 @@ export async function deliverToSession(
         }
     }
 
-    for (const route of [...(harness ? ANSWER_ROUTES[harness].routes : []), paneRoute]) {
+    for (const route of [...(harness ? ANSWER_ROUTES.of(harness).routes : []), paneRoute]) {
         const found = await route.find(message, edges);
         if (!found) {
             continue;
