@@ -40,7 +40,9 @@ export function registerTrashCommands(program: Command): void {
             const batches = listBatches();
             const rows = batches.map((batch) => ({
                 ...batch,
-                bytes: flags.sizes ? batch.items.reduce((sum, item) => sum + measureBytes(item.stored), 0) : null,
+                bytes: flags.sizes
+                    ? batch.items.reduce((sum, item) => sum + (item.bytes ?? measureBytes(item.stored)), 0)
+                    : null,
             }));
 
             if (flags.json) {

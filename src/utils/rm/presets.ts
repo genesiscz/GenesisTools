@@ -155,9 +155,19 @@ export function allPresets(config: Pick<RmConfig, "customPresets">): RmPreset[] 
     return [...BUILTIN_PRESETS, ...OPT_IN_PRESETS, ...config.customPresets];
 }
 
+const globCache = new Map<string, RegExp>();
+
+/** Compiled once per pattern: the preset scan tests every folder name of a walk against the same few globs. */
 function globToRegExp(glob: string): RegExp {
-    const escaped = glob.replace(/[.+?^${}()|[\]\\]/g, "\\$&").replace(/\*/g, ".*");
-    return new RegExp(`^${escaped}$`);
+    let compiled = globCache.get(glob);
+
+    if (!compiled) {
+        const escaped = glob.replace(/[.+?^${}()|[\]\\]/g, "\\$&").replace(/\*/g, ".*");
+        compiled = new RegExp(`^${escaped}$`);
+        globCache.set(glob, compiled);
+    }
+
+    return compiled;
 }
 
 function matchesName(name: string, patterns: readonly string[]): boolean {

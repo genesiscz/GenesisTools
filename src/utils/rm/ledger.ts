@@ -1,5 +1,6 @@
 import { appendFileSync, existsSync, mkdirSync, readFileSync } from "node:fs";
 import { dirname } from "node:path";
+import { formatLocalDate } from "@genesiscz/utils/date";
 import { readLinesBackwardSync } from "@genesiscz/utils/fs/read-lines";
 import { SafeJSON } from "@genesiscz/utils/json";
 import { logger } from "@genesiscz/utils/logger";
@@ -224,7 +225,7 @@ function groupKey(entry: RmLedgerEntry, by: RmLedgerGroup): string {
         case "session":
             return `${ledgerAgent(entry)} ${entry.caller?.sessionId ? entry.caller.sessionId.slice(0, 8) : "no session"}`;
         case "day":
-            return new Date(entry.at).toLocaleDateString("sv-SE");
+            return formatLocalDate(new Date(entry.at));
         case "rule":
             return entry.rule ?? "(none)";
         case "action":

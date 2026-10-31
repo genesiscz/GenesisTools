@@ -1,8 +1,9 @@
-import { existsSync, lstatSync, opendirSync } from "node:fs";
-import { dirname, join, relative, sep } from "node:path";
+import { lstatSync, opendirSync } from "node:fs";
+import { join, relative, sep } from "node:path";
 import { formatRelativeTime } from "@genesiscz/utils/format";
 import { createGit } from "@genesiscz/utils/git/core";
 import { porcelain, type StatusEntry } from "@genesiscz/utils/git/porcelain";
+import { repoRootOf } from "@genesiscz/utils/git/repo-root";
 import { logger } from "@genesiscz/utils/logger";
 
 /** What git says about a path: not in any commit, ignored, changed, as committed, or outside a repository. */
@@ -34,25 +35,6 @@ export interface GitProbe {
 
 const GIT_TIMEOUT_MS = 10_000;
 export const FOLDER_WALK_CAP = 2000;
-
-/** The nearest folder at or above `path` that holds a `.git`; null outside any repository. */
-export function findRepoTop(path: string): string | null {
-    let dir = path;
-
-    while (true) {
-        if (existsSync(join(dir, ".git"))) {
-            return dir;
-        }
-
-        const parent = dirname(dir);
-
-        if (parent === dir) {
-            return null;
-        }
-
-        dir = parent;
-    }
-}
 
 function posixRelative(repo: string, path: string): string {
     return relative(repo, path).split(sep).join("/");
@@ -171,10 +153,14 @@ async function probeRepo(repo: string, probes: readonly GitProbe[]): Promise<Map
         return found;
     }
 
+    // The `git log` calls do not depend on each other; the approval window waits for all of them.
+    const lastCommits = await Promise.all(
+        rels.map((rel) => (coveredState(entries, rel) ? null : lastCommitOf(repo, rel)))
+    );
+
     for (const [index, probe] of probes.entries()) {
         const rel = rels[index] ?? "";
-        const covered = coveredState(entries, rel);
-        const lastCommit = covered ? null : await lastCommitOf(repo, rel);
+        const lastCommit = lastCommits[index] ?? null;
         const state = itemGitState({ entries, rel, aside: probe.aside ?? false, tracked: lastCommit !== null });
         found.set(probe.path, lastCommit ? { state, repo, lastCommit } : { state, repo });
     }
@@ -191,7 +177,7 @@ export async function probeItemGit(probes: readonly GitProbe[]): Promise<Map<str
     const byRepo = new Map<string, GitProbe[]>();
 
     for (const probe of probes) {
-        const repo = findRepoTop(probe.path);
+        const repo = repoRootOf(probe.path);
 
         if (!repo) {
             found.set(probe.path, { state: "none" });
@@ -201,8 +187,10 @@ export async function probeItemGit(probes: readonly GitProbe[]): Promise<Map<str
         byRepo.set(repo, [...(byRepo.get(repo) ?? []), probe]);
     }
 
-    for (const [repo, group] of byRepo) {
-        for (const [path, git] of await probeRepo(repo, group)) {
+    const perRepo = await Promise.all([...byRepo].map(([repo, group]) => probeRepo(repo, group)));
+
+    for (const facts of perRepo) {
+        for (const [path, git] of facts) {
             found.set(path, git);
         }
     }
