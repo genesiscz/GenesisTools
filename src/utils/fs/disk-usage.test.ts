@@ -132,6 +132,7 @@ describe("disk-usage per-file sizers + walkFiles", () => {
     });
 });
 
+import * as fs from "node:fs";
 import { isWalkTimeout, type WalkOptions } from "@genesiscz/utils/fs/disk-usage";
 import * as bulk from "@genesiscz/utils/macos/getattrlistbulk";
 
@@ -254,6 +255,46 @@ describe("walkFiles stops on a deadline or an abort", () => {
             expect(new Set(files).size).toBe(files.length);
             expect(new Set(entered).size).toBe(entered.length);
         } finally {
+            rmSync(dir, { recursive: true, force: true });
+        }
+    });
+
+    it("a stat that crosses the deadline hands out no file after it (the readdir path)", () => {
+        const dir = mkdtempSync(join(tmpdir(), "gt-walk-deadline-stat-"));
+        let now = 1_000_000;
+        const realStat = fs.statSync;
+        const clock = spyOn(Date, "now").mockImplementation(() => now);
+        const supported = spyOn(bulk, "isGetattrlistbulkSupported").mockReturnValue(false);
+        // Each file's stat "costs" 10 ms of the fake clock, so the deadline lands inside the second one.
+        const stat = spyOn(fs, "statSync").mockImplementation(((...args: Parameters<typeof fs.statSync>) => {
+            const result = realStat(...args);
+
+            if (String(args[0]).endsWith(".txt")) {
+                now += 10;
+            }
+
+            return result;
+        }) as typeof fs.statSync);
+        try {
+            for (let i = 0; i < 5; i++) {
+                writeFileSync(join(dir, `f${i}.txt`), "x");
+            }
+
+            const deadlineAt = now + 15;
+            let late = 0;
+            const { files, thrown } = walkUntilStop(dir, { deadlineAt }, () => {
+                if (now >= deadlineAt) {
+                    late++;
+                }
+            });
+
+            expect(isWalkTimeout(thrown)).toBe(true);
+            expect(files.length).toBe(1);
+            expect(late).toBe(0);
+        } finally {
+            stat.mockRestore();
+            supported.mockRestore();
+            clock.mockRestore();
             rmSync(dir, { recursive: true, force: true });
         }
     });

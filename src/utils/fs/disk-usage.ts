@@ -321,16 +321,12 @@ export function* walkFiles(root: string, opts: WalkOptions = {}): Generator<Walk
                 }
                 yield* walkFiles(p, opts);
             } else {
-                try {
-                    const st = statSync(p, { bigint: true });
-                    yield {
-                        path: p,
-                        logical: Number(st.size),
-                        allocated: Number(st.blocks) * BLOCK_SIZE,
-                        mtimeNs: st.mtimeNs,
-                    };
-                } catch (err) {
-                    opts.onError?.({ path: p, errno: errnoOf(err) });
+                const file = statWalkedFile(p, opts);
+
+                if (file) {
+                    // The stat can cross the deadline: the check right before the file is handed out.
+                    throwIfWalkStopped(opts);
+                    yield file;
                 }
             }
         }
@@ -429,18 +425,24 @@ export function* walkFiles(root: string, opts: WalkOptions = {}): Generator<Walk
 
             yield* walkFiles(p, opts);
         } else if (entry.isFile()) {
-            try {
-                const st = statSync(p, { bigint: true });
-                yield {
-                    path: p,
-                    logical: Number(st.size),
-                    allocated: Number(st.blocks) * BLOCK_SIZE,
-                    mtimeNs: st.mtimeNs,
-                };
-            } catch (err) {
-                opts.onError?.({ path: p, errno: errnoOf(err) });
+            const file = statWalkedFile(p, opts);
+
+            if (file) {
+                throwIfWalkStopped(opts);
+                yield file;
             }
         }
+    }
+}
+
+/** One file's sizes from `stat`, or null after `onError` for one that cannot be read. A stop is not caught here. */
+function statWalkedFile(p: string, opts: WalkOptions): WalkEntry | null {
+    try {
+        const st = statSync(p, { bigint: true });
+        return { path: p, logical: Number(st.size), allocated: Number(st.blocks) * BLOCK_SIZE, mtimeNs: st.mtimeNs };
+    } catch (err) {
+        opts.onError?.({ path: p, errno: errnoOf(err) });
+        return null;
     }
 }
 
