@@ -51,13 +51,17 @@ public enum WidgetAlerts {
     /// Seconds the alert popup stays while the pointer is not on it (`alertPopupSeconds`, default 7); 0 keeps it
     /// until it is closed, answered or opened.
     public static func popupSeconds(_ preferences: WidgetPreferences?) -> Double {
-        let seconds = preferences?.alertPopupSeconds ?? 7
-        return seconds <= 0 ? 0 : max(3, min(60, seconds))
+        popupDuration(preferences?.alertPopupSeconds, fallback: 7)
     }
 
     /// Seconds the popup of a decision answered elsewhere stays (`autoDecisionSeconds`, default 5); 0 keeps it.
     public static func autoDecisionSeconds(_ preferences: WidgetPreferences?) -> Double {
-        let seconds = preferences?.autoDecisionSeconds ?? 5
+        popupDuration(preferences?.autoDecisionSeconds, fallback: 5)
+    }
+
+    /// A stored popup duration in the range both popups allow: 0 (until closed), else 3 to 60 seconds.
+    private static func popupDuration(_ value: Double?, fallback: Double) -> Double {
+        let seconds = value ?? fallback
         return seconds <= 0 ? 0 : max(3, min(60, seconds))
     }
 

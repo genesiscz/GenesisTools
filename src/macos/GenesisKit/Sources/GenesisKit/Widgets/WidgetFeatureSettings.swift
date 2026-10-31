@@ -384,17 +384,8 @@ private struct WidgetGeneralSettings: View {
                         Divider()
                     }
                     NativeSettingsRow("Preview stays", detail: "How long the preview stays while the pointer is not on it. Until closed keeps it until you answer, open or close it. × or Esc closes it sooner.") {
-                        Picker(
-                            "Preview stays",
-                            selection: Binding(
-                                get: { Int(WidgetAlerts.popupSeconds(prefs)) },
-                                set: { patch(["alertPopupSeconds": .number(Double($0))]) })
-                        ) {
-                            ForEach(Self.popupSecondsChoices(current: Int(WidgetAlerts.popupSeconds(prefs))), id: \.self) {
-                                Text($0 == 0 ? "Until closed" : "\($0) seconds").tag($0)
-                            }
-                        }.labelsHidden().frame(width: 150, alignment: .trailing)
-                            .accessibilityIdentifier("widget.alertPopupSeconds")
+                        secondsPicker("Preview stays", key: "alertPopupSeconds",
+                                      current: Int(WidgetAlerts.popupSeconds(prefs)))
                     }
                     Divider()
                     NativeSettingsToggle(
@@ -462,17 +453,8 @@ private struct WidgetGeneralSettings: View {
                 Divider()
                 Group {
                     NativeSettingsRow("Preview stays", detail: "How long the preview stays while the pointer is not on it. Several at once in Alerts applies here too.") {
-                        Picker(
-                            "Automatic decision preview stays",
-                            selection: Binding(
-                                get: { Int(WidgetAlerts.autoDecisionSeconds(prefs)) },
-                                set: { patch(["autoDecisionSeconds": .number(Double($0))]) })
-                        ) {
-                            ForEach(Self.popupSecondsChoices(current: Int(WidgetAlerts.autoDecisionSeconds(prefs))), id: \.self) {
-                                Text($0 == 0 ? "Until closed" : "\($0) seconds").tag($0)
-                            }
-                        }.labelsHidden().frame(width: 150, alignment: .trailing)
-                            .accessibilityIdentifier("widget.autoDecisionSeconds")
+                        secondsPicker("Automatic decision preview stays", key: "autoDecisionSeconds",
+                                      current: Int(WidgetAlerts.autoDecisionSeconds(prefs)))
                     }
                     Divider()
                     NativeSettingsRow("Sound", detail: "Plays at the Sound volume set in Alerts.") {
@@ -526,6 +508,17 @@ private struct WidgetGeneralSettings: View {
     }
 
     /// A system sound picker with a play button. `same` adds "Same as decisions", stored as "same".
+    /// A popup duration picker for the preference `key`: the offered seconds, a stored value that is none of them, and
+    /// "Until closed" (0). The alert and the automatic decision popups draw this one control.
+    private func secondsPicker(_ label: String, key: String, current: Int) -> some View {
+        Picker(label, selection: Binding(get: { current }, set: { patch([key: .number(Double($0))]) })) {
+            ForEach(Self.popupSecondsChoices(current: current), id: \.self) {
+                Text($0 == 0 ? "Until closed" : "\($0) seconds").tag($0)
+            }
+        }.labelsHidden().frame(width: 150, alignment: .trailing)
+            .accessibilityIdentifier("widget." + key)
+    }
+
     private func soundPicker(_ key: String, _ value: String, same: Bool, label: String? = nil) -> some View {
         let played = value == "same" ? prefs?.alertSound ?? WidgetAlerts.defaultSound : value
         return HStack(spacing: 6) {
