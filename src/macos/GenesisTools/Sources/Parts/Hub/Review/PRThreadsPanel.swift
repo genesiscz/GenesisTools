@@ -1658,11 +1658,7 @@ private struct PRRestingDim: ViewModifier {
 /// The questions asked before a write that others see (a post) or that cannot be undone (a delete).
 /// The same alerts for the threads list and the diff's thread cards.
 enum PRConfirm {
-    static func post(_ text: String, on store: PRThreadsStore, where_: String) -> Bool {
-        post(text, label: store.label, isGitLab: store.pr?.identity.isGitLab == true, where_: where_)
-    }
-
-    /// The same from values, for a card that observes no store (`PRThreadRow`).
+    /// From values, so a card that observes no store (`PRThreadRow`) asks the same question.
     static func post(_ text: String, label: String, isGitLab: Bool, where_: String) -> Bool {
         let alert = NSAlert()
         alert.messageText = "Post on \(label) now?"
@@ -1671,10 +1667,6 @@ enum PRConfirm {
         alert.addButton(withTitle: "Post")
         alert.addButton(withTitle: "Cancel")
         return alert.runModal() == .alertFirstButtonReturn
-    }
-
-    static func deleteDraft(on store: PRThreadsStore) -> Bool {
-        deleteDraft(label: store.label)
     }
 
     static func deleteDraft(label: String) -> Bool {

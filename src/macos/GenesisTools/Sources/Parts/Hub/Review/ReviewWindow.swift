@@ -2208,11 +2208,12 @@ final class ReviewModel: ObservableObject {
         }
         switch input.confirmation {
         case .post?:
-            if !PRConfirm.post(input.body?.trimmed ?? "", on: store, where_: "A reply in the existing thread.") {
+            if !PRConfirm.post(input.body?.trimmed ?? "", label: store.label, isGitLab: store.pr?.identity.isGitLab == true,
+                               where_: "A reply in the existing thread.") {
                 return finished(false)
             }
         case .deleteDraft?:
-            if !PRConfirm.deleteDraft(on: store) {
+            if !PRConfirm.deleteDraft(label: store.label) {
                 return finished(false)
             }
         case nil:
