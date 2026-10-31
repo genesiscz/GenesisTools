@@ -1,4 +1,5 @@
 import { canonicalAgent } from "@app/handoff/targeting";
+import type { DeliveryResult } from "./deliver";
 import { DeliveryUnknownError, NotDeliveredError } from "./delivery-errors";
 import { decisionLines, deliverDecisions, optionLetters } from "./read";
 import {
@@ -10,6 +11,7 @@ import {
     kindOf,
     moveDecisions,
     readDecisions,
+    recordDelivery,
     restoreUndelivered,
     staleRevisionError,
 } from "./store";
@@ -239,30 +241,30 @@ export function planDoorAnswer(row: DecisionRecord | undefined, answer: HeldAnsw
     };
 }
 
+interface Claim {
+    /** The due rows' ids, as read before the lock: what a failed send puts back to `answered`. */
+    due: string[];
+    /** The rows moved to `sent` under the lock, with the text and numbers built from them. */
+    moved: string[];
+    sent: SentDecisions;
+}
+
 /**
- * Delivers a session's answered decisions: the batch is marked `sent` in ONE store transition
- * FIRST, and only then handed to `emit`. Marking row by row after emitting let a crash leave
- * delivered answers still `answered`, and the next send delivered them again. Both the CLI and
- * the MCP door send through this. Throws "nothing to send" before any change when none is due.
- * An `emit` that throws puts the batch back to `answered`; one that returns normally delivered it.
+ * Claims what is due in one store transition: the batch is marked `sent` FIRST, and only then handed to the
+ * transport. Marking row by row after emitting let a crash leave delivered answers still `answered`, and the next
+ * send delivered them again. Throws "nothing to send" before any change when none is due.
  */
-export async function sendSessionDecisions({
+async function claimDue({
     file,
     events,
     session,
     ids: selectedIds,
-    emit,
 }: {
     file: string;
     events: string;
     session: string;
     ids?: readonly string[];
-    /**
-     * Returns (or resolves) when delivered; throws (or rejects) when not. Its value is ignored.
-     * `numbers` are the decisions in `text`, for a caller that frames the message.
-     */
-    emit: (text: string, numbers: number[]) => unknown;
-}): Promise<SentDecisions> {
+}): Promise<Claim> {
     const selected = selectedIds ? new Set(selectedIds) : undefined;
     // Without ids: only the answers waiting to go out, never a chat answer an agent recorded as `answered`.
     const rows = readDecisions(file).filter(
@@ -276,24 +278,150 @@ export async function sendSessionDecisions({
     // The text comes from the rows as they stood UNDER the lock, not from the read above: an
     // answer edited in between would otherwise be marked sent while the old one was delivered.
     const moved = await moveDecisions(file, events, ids, "sent");
-    const sent = { text: decisionLines(moved), numbers: moved.map((row) => row.number) };
+    return {
+        due: ids,
+        moved: moved.map((row) => row.id),
+        sent: { text: decisionLines(moved), numbers: moved.map((row) => row.number) },
+    };
+}
+
+/**
+ * A claim whose transport failed goes back to `answered`, except after an unknown outcome: that one may have
+ * arrived, so it stays `sent` (marked uncertain by the caller) and is never put back on an automatic queue.
+ */
+async function releaseClaim({
+    file,
+    events,
+    claim,
+    error,
+}: {
+    file: string;
+    events: string;
+    claim: Claim;
+    error: unknown;
+}): Promise<void> {
+    if (error instanceof DeliveryUnknownError) {
+        return;
+    }
+
+    const queued = error instanceof NotDeliveredError && error.result.queueId ? error.result : undefined;
+    await restoreUndelivered({
+        file,
+        events,
+        ids: claim.due,
+        ...(queued ? { delivery: { route: "queued", queueId: queued.queueId, error: queued.error } } : {}),
+    });
+}
+
+/**
+ * Delivers a session's answered decisions through `emit`: claim, emit, and on failure release (`claimDue`,
+ * `releaseClaim`). An `emit` that throws puts the batch back to `answered`; one that returns normally delivered it.
+ * It records no delivery route; `deliverDueAnswers` is the send that does.
+ */
+export async function sendSessionDecisions({
+    file,
+    events,
+    session,
+    ids,
+    emit,
+}: {
+    file: string;
+    events: string;
+    session: string;
+    ids?: readonly string[];
+    /**
+     * Returns (or resolves) when delivered; throws (or rejects) when not. Its value is ignored.
+     * `numbers` are the decisions in `text`, for a caller that frames the message.
+     */
+    emit: (text: string, numbers: number[]) => unknown;
+}): Promise<SentDecisions> {
+    const claim = await claimDue({ file, events, session, ids });
 
     try {
-        await emit(sent.text, sent.numbers);
+        await emit(claim.sent.text, claim.sent.numbers);
     } catch (error) {
-        if (!(error instanceof DeliveryUnknownError)) {
-            const queued = error instanceof NotDeliveredError && error.result.queueId ? error.result : undefined;
-            await restoreUndelivered({
-                file,
-                events,
-                ids,
-                ...(queued ? { delivery: { route: "queued", queueId: queued.queueId, error: queued.error } } : {}),
-            });
-        }
+        await releaseClaim({ file, events, claim, error });
         throw error;
     }
 
-    return sent;
+    return claim.sent;
+}
+
+/** What delivering the due answers came to: delivered (and recorded), or not delivered and stored as queued. */
+export type DueAnswersOutcome =
+    | { kind: "delivered"; sent: SentDecisions; route: DeliveryResult }
+    | { kind: "queued"; text: string; route: DeliveryResult };
+
+/**
+ * The whole send of a session's due answers, in one place: claim them (`sent`), hand them to `deliver`, then record
+ * the route. A delivery that did not reach the agent puts the batch back to `answered` and records it as queued (with
+ * its session-queue entry, when one was saved); an unknown outcome records the batch as uncertain and rethrows, so
+ * nothing resends it; any other failure puts the batch back and rethrows.
+ *
+ * The CLI `send`, the hub, the inbox, the dashboard and the next-prompt hook all send through this. A record that
+ * fails after the answers reached the agent throws, unless `onRecordError` takes it (the hook logs it: the bytes are
+ * already in the harness).
+ */
+export async function deliverDueAnswers({
+    file,
+    events,
+    session,
+    ids,
+    deliver,
+    onRecordError,
+}: {
+    file: string;
+    events: string;
+    session: string;
+    ids?: readonly string[];
+    /** The transport: resolves with its result; `delivered: false` means nothing reached the agent. */
+    deliver: (text: string, numbers: number[]) => Promise<DeliveryResult>;
+    onRecordError?: (error: unknown) => void;
+}): Promise<DueAnswersOutcome> {
+    const claim = await claimDue({ file, events, session, ids });
+    let route: DeliveryResult;
+
+    try {
+        route = await deliver(claim.sent.text, claim.sent.numbers);
+        if (!route.delivered) {
+            throw new NotDeliveredError(route);
+        }
+    } catch (error) {
+        await releaseClaim({ file, events, claim, error });
+
+        if (error instanceof DeliveryUnknownError) {
+            await recordDelivery(file, events, claim.moved, { route: "queued", uncertain: true, error: error.message });
+            throw error;
+        }
+
+        if (!(error instanceof NotDeliveredError)) {
+            throw error;
+        }
+
+        // Not a failure: the answers stay `answered`, and the next prompt pulls them. The sentence is stored; the raw
+        // output stays in the log and in the result only.
+        await recordDelivery(file, events, claim.moved, {
+            route: "queued",
+            ...(error.result.queueId ? { queueId: error.result.queueId } : {}),
+            ...(error.result.error ? { error: error.result.error } : {}),
+        });
+        return { kind: "queued", text: claim.sent.text, route: error.result };
+    }
+
+    try {
+        await recordDelivery(file, events, claim.moved, {
+            route: route.channel,
+            ...(route.target ? { target: route.target } : {}),
+        });
+    } catch (error) {
+        if (!onRecordError) {
+            throw error;
+        }
+
+        onRecordError(error);
+    }
+
+    return { kind: "delivered", sent: claim.sent, route };
 }
 
 export interface SentDecisions {

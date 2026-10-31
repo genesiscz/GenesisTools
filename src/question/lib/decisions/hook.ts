@@ -3,7 +3,7 @@ import type { TurnBoundary } from "@genesiscz/utils/agent-sessions/types";
 import { safeSessionId } from "@genesiscz/utils/agents/session-id";
 import type { HarnessId } from "@genesiscz/utils/harness/types";
 import { SafeJSON } from "@genesiscz/utils/json";
-import { type SentDecisions, sendSessionDecisions } from "./answers";
+import { deliverDueAnswers } from "./answers";
 import { type ChatAnswerRun, loggedUserMessage } from "./chat-answer-run";
 import { type AmbiguousAnswer, type ChatAnswer, chatAnswers, userText } from "./chat-answers";
 import {
@@ -23,7 +23,7 @@ import {
     questionNudgeVerdict,
     stopHookVerdict,
 } from "./read";
-import { type DecisionRecord, harvestDecisions, kindOf, readDecisions, recordDelivery } from "./store";
+import { type DecisionRecord, harvestDecisions, kindOf, readDecisions } from "./store";
 
 /**
  * The most the chat-answer step reads back when it has no offset yet (a first read, a new transcript): back to the
@@ -585,18 +585,22 @@ export async function runDecisionInject(
         return null;
     }
 
-    let sent: SentDecisions;
     let output: PromptHookOutput | null = null;
 
     try {
-        sent = await sendSessionDecisions({
+        // The rows are `sent` once the harness has the bytes, and their delivery reads "prompt", not the "queued" of
+        // a send that found no pane. The answers already reached the harness, so a record failure is logged.
+        await deliverDueAnswers({
             file: deps.log.file,
             events: deps.log.events,
             session,
-            emit: async (text, numbers) => {
+            deliver: async (text, numbers) => {
                 output = promptOutput(text, numbers);
                 await deps.emit(output);
+                return { channel: "prompt", delivered: true };
             },
+            onRecordError: (err) =>
+                deps.diag("The answers were delivered, but their delivery route was not recorded", { err, session }),
         });
     } catch (err) {
         if (err instanceof Error && err.message === "nothing to send") {
@@ -604,20 +608,6 @@ export async function runDecisionInject(
         }
 
         throw err;
-    }
-
-    // The rows are `sent` now; without this their delivery still reads "queued" from the send
-    // that found no pane, and the hub and /qa would say the answer is still waiting for a prompt.
-    // The answers already reached the harness, so a failure here is logged, not thrown.
-    try {
-        const ids = readDecisions(deps.log.file)
-            .filter(
-                (row) => row.sessionId === session && kindOf(row) === "decision" && sent.numbers.includes(row.number)
-            )
-            .map((row) => row.id);
-        await recordDelivery(deps.log.file, deps.log.events, ids, { route: "prompt" });
-    } catch (err) {
-        deps.diag("The answers were delivered, but their delivery route was not recorded", { err, session });
     }
 
     return output;

@@ -1,4 +1,4 @@
-import { type DeliverDeps, resolveDeliveryTarget } from "../decisions/deliver";
+import { type DeliverDeps, isLiveDelivery, type LocatedDelivery, locateDelivery } from "../decisions/deliver";
 import { optionLetters } from "../decisions/read";
 import { type SendResult, sendAnsweredDecisions } from "../decisions/send";
 import {
@@ -240,21 +240,22 @@ export async function sendDrafts(
         );
     }
 
-    // A just-resumed session boots for a few seconds: wait, bounded, for its pane to be live.
-    let live = false;
+    // A just-resumed session boots for a few seconds: wait, bounded, for its pane to be live. The place found is
+    // handed to the send, which then types there without looking the session up again.
+    let live: LocatedDelivery | undefined;
 
     if (input.waitLiveMs && input.waitLiveMs > 0) {
         const sleep = deps.sleep ?? ((ms: number) => Bun.sleep(ms));
         const attempts = Math.max(1, Math.ceil(input.waitLiveMs / WAIT_STEP_MS));
 
         for (let attempt = 0; attempt < attempts; attempt++) {
-            const target = await resolveDeliveryTarget(
+            const located = await locateDelivery(
                 { session: input.session, ...(input.provider ? { provider: input.provider } : {}) },
                 deps.deliver ?? {}
             );
 
-            if (target.kind !== "none") {
-                live = true;
+            if (isLiveDelivery(located)) {
+                live = located;
                 break;
             }
 
@@ -295,6 +296,7 @@ export async function sendDrafts(
         session: input.session,
         ...(input.provider ? { provider: input.provider } : {}),
         ...(input.inSession ? { inSession: true } : {}),
+        ...(live ? { located: live } : {}),
         files: deps,
         ...(deps.deliver ? { deps: deps.deliver } : {}),
     });

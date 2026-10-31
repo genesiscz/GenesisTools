@@ -381,6 +381,8 @@ describe("sendDrafts", () => {
         );
 
         expect(slept).toEqual([1000, 1000]);
+        // Three polls found the pane; the send typed into the place the last one found, with no lookup of its own.
+        expect(polls).toBe(3);
         expect(typed).toEqual([
             [
                 "claude",

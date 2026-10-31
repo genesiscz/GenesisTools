@@ -998,21 +998,40 @@ async function typeIntoPane(
  * agent is worse than not typing.
  */
 export async function resolveDeliveryTarget(
-    { session, provider, sourceHome }: { session: string; provider?: string; sourceHome?: string },
+    query: { session: string; provider?: string; sourceHome?: string },
     deps: DeliverDeps = {}
 ): Promise<DeliveryTarget> {
+    const located = await locateDelivery(query, deps);
+    return isHit(located) ? located.target : located;
+}
+
+/**
+ * Where a send would go (`resolveDeliveryTarget`), with the send bound to it: a caller that waits for a target to
+ * come up (the resume dialog's `sendDrafts`) hands it to `deliverToSession` as `located`, so the send does not look
+ * the session up a second time.
+ */
+export type LocatedDelivery = RouteHit;
+
+export async function locateDelivery(
+    { session, provider, sourceHome }: { session: string; provider?: string; sourceHome?: string },
+    deps: DeliverDeps = {}
+): Promise<LocatedDelivery | NoTarget> {
     const edges = edgesOf(deps);
     const harness = nativeHarness(provider);
 
     for (const route of harness ? ANSWER_ROUTES[harness].routes : []) {
         const found = await route.find({ session, sourceHome }, edges);
         if (found) {
-            return isHit(found) ? found.target : found;
+            return found;
         }
     }
 
-    const pane = await paneRoute.find({ session }, edges);
-    return isHit(pane) ? pane.target : pane;
+    return paneRoute.find({ session }, edges);
+}
+
+/** Whether a located delivery holds a live place to send to. */
+export function isLiveDelivery(located: LocatedDelivery | NoTarget): located is LocatedDelivery {
+    return isHit(located);
 }
 
 /**
@@ -1029,6 +1048,7 @@ export async function deliverToSession(
         text,
         deliveryKey,
         force = false,
+        located,
     }: {
         session: string;
         provider?: string;
@@ -1037,6 +1057,8 @@ export async function deliverToSession(
         deliveryKey?: string;
         /** Type into the pane even while a dialog is open there. The structural rungs never need it. */
         force?: boolean;
+        /** The live place `locateDelivery` found for this session just before, so the send skips the lookup. */
+        located?: LocatedDelivery;
     },
     deps: DeliverDeps = {}
 ): Promise<DeliveryResult> {
@@ -1090,19 +1112,8 @@ export async function deliverToSession(
     }
 
     const message: RouteMessage = { session, sourceHome, text, harness, force };
-
-    for (const route of [...(harness ? ANSWER_ROUTES[harness].routes : []), paneRoute]) {
-        const found = await route.find(message, edges);
-        if (!found) {
-            continue;
-        }
-
-        if (!isHit(found)) {
-            log.info({ session, provider, reason: found.reason }, "no live target; the answers stay queued");
-            return undelivered(found.reason);
-        }
-
-        const outcome = await found.send(message);
+    /** A route's outcome as the result, or undefined when the route turned out not to hold the session. */
+    const settle = async (found: RouteHit, outcome: SendOutcome): Promise<DeliveryResult | undefined> => {
         switch (outcome.kind) {
             case "delivered":
                 return { channel: outcome.channel, delivered: true, target: outcome.target };
@@ -1120,9 +1131,34 @@ export async function deliverToSession(
                     { session, reason: outcome.reason },
                     `the ${found.target.kind} route does not hold the session; trying the next`
                 );
-                continue;
+                return undefined;
             default:
                 return outcome satisfies never;
+        }
+    };
+
+    // The caller already found the live place (it waited for it to come up): send there without a second lookup.
+    if (located) {
+        const settled = await settle(located, await located.send(message));
+        if (settled) {
+            return settled;
+        }
+    }
+
+    for (const route of [...(harness ? ANSWER_ROUTES[harness].routes : []), paneRoute]) {
+        const found = await route.find(message, edges);
+        if (!found) {
+            continue;
+        }
+
+        if (!isHit(found)) {
+            log.info({ session, provider, reason: found.reason }, "no live target; the answers stay queued");
+            return undelivered(found.reason);
+        }
+
+        const settled = await settle(found, await found.send(message));
+        if (settled) {
+            return settled;
         }
     }
 

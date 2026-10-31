@@ -1,8 +1,7 @@
 import { canonicalAgent } from "@app/handoff/targeting";
 import { logger } from "@genesiscz/utils/logger";
-import { sendSessionDecisions } from "./answers";
-import { type DeliverDeps, type DeliveryResult, deliverToSession } from "./deliver";
-import { DeliveryUnknownError, NotDeliveredError } from "./delivery-errors";
+import { deliverDueAnswers } from "./answers";
+import { type DeliverDeps, type DeliveryResult, deliverToSession, type LocatedDelivery } from "./deliver";
 import { relayedAnswerText } from "./delivery-text";
 import { decisionFiles, decisionLine, decisionLines } from "./read";
 import {
@@ -11,7 +10,6 @@ import {
     kindOf,
     type PromptReceipt,
     readDecisions,
-    recordDelivery,
     reservePromptDecisions,
 } from "./store";
 
@@ -55,6 +53,7 @@ export async function sendAnsweredDecisions({
     promptReceipt,
     releasePrompt,
     force = false,
+    located,
     files = decisionFiles(),
     deps = {},
 }: {
@@ -75,6 +74,8 @@ export async function sendAnsweredDecisions({
     releasePrompt?: boolean;
     /** Type the answer into the pane even while the session shows a dialog (`tools question send --force`). */
     force?: boolean;
+    /** The live place the caller found just before (`locateDelivery`), so the delivery skips its own lookup. */
+    located?: LocatedDelivery;
     files?: { file: string; events: string };
     deps?: DeliverDeps;
 }): Promise<SendResult> {
@@ -141,71 +142,30 @@ export async function sendAnsweredDecisions({
         };
     }
 
-    const delivery: { route?: DeliveryResult; text?: string; numbers?: number[] } = {};
-    // Only the rows this send claimed under the lock; a row already reserved by another queue keeps its stamp.
-    const claimed = () =>
-        rows
-            .filter((row) => kindOf(row) === "decision" && (delivery.numbers ?? []).includes(row.number))
-            .map((row) => row.id);
+    const outcome = await deliverDueAnswers({
+        file,
+        events,
+        session,
+        ids: selectedIds,
+        deliver: (text) =>
+            deliverToSession(
+                {
+                    session,
+                    provider: provider ?? undefined,
+                    sourceHome,
+                    text: relayedAnswerText(text),
+                    deliveryKey,
+                    force,
+                    ...(located ? { located } : {}),
+                },
+                deps
+            ),
+    });
 
-    try {
-        const sent = await sendSessionDecisions({
-            ids: selectedIds,
-            file,
-            events,
-            session,
-            emit: async (text, numbers) => {
-                delivery.text = text;
-                delivery.numbers = numbers;
-
-                const route = await deliverToSession(
-                    {
-                        session,
-                        provider: provider ?? undefined,
-                        sourceHome,
-                        text: relayedAnswerText(text),
-                        deliveryKey,
-                        force,
-                    },
-                    deps
-                );
-                delivery.route = route;
-
-                if (!route.delivered) {
-                    throw new NotDeliveredError(route);
-                }
-            },
-        });
-
-        const moved = rows.filter((row) => kindOf(row) === "decision" && sent.numbers.includes(row.number));
-        await recordDelivery(
-            file,
-            events,
-            moved.map((row) => row.id),
-            {
-                route: delivery.route?.channel ?? "cmux",
-                ...(delivery.route?.target ? { target: delivery.route.target } : {}),
-            }
-        );
-        return { session, provider, ...sent, ...delivery.route, dryRun: false };
-    } catch (error) {
-        if (error instanceof DeliveryUnknownError) {
-            await recordDelivery(file, events, claimed(), { route: "queued", uncertain: true, error: error.message });
-            throw error;
-        }
-
-        if (!(error instanceof NotDeliveredError)) {
-            throw error;
-        }
-
-        // Not a failure: the answers stay `answered`, and the next prompt pulls them. The sentence
-        // is stored; the raw output stays in the log and in this result only.
-        log.info({ session, error: error.result.error, raw: error.result.raw }, "decision answers queued");
-        await recordDelivery(file, events, claimed(), {
-            route: "queued",
-            ...(error.result.queueId ? { queueId: error.result.queueId } : {}),
-            ...(error.result.error ? { error: error.result.error } : {}),
-        });
-        return { session, provider, text: delivery.text ?? "", numbers: [], ...error.result, dryRun: false };
+    if (outcome.kind === "delivered") {
+        return { session, provider, ...outcome.sent, ...outcome.route, dryRun: false };
     }
+
+    log.info({ session, error: outcome.route.error, raw: outcome.route.raw }, "decision answers queued");
+    return { session, provider, text: outcome.text, numbers: [], ...outcome.route, dryRun: false };
 }
