@@ -357,6 +357,34 @@ describe("session scratch and roots", () => {
 });
 
 describe("trash", () => {
+    test("an unwritable cross-volume fallback keeps the target in place", () => {
+        const target = resolveTarget(file(join(dir("unwritable-fallback"), "file")), base);
+        const refused: string[] = [];
+        const options = {
+            config,
+            caller: AGENT,
+            graceMinutes: 60,
+            paths: trashPaths,
+            hooks: {
+                beforeRename: () => {
+                    throw Object.assign(new Error("cross-volume"), { code: "EXDEV" });
+                },
+                beforeVolumeTrash: () => {
+                    throw Object.assign(new Error("read-only mount"), { code: "EROFS" });
+                },
+            },
+        };
+        expect(
+            moveToTrash([{ target, rule: "test" }], {
+                ...options,
+                onRefused: (_request, reason) => refused.push(reason),
+            })
+        ).toBeNull();
+        expect(refused[0]).toContain("EROFS");
+        expect(existsSync(target.path)).toBe(true);
+        expect(() => moveToTrash([{ target, rule: "test" }], options)).toThrow(/kept in place/);
+    });
+
     test("moves aside, restores, then drains only inside the trash", async () => {
         const target = resolveTarget(file(join(dir("t1"), "a.txt"), "hello"), base);
         const batch = moveToTrash([{ target, rule: "test" }], {
