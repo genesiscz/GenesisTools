@@ -2617,6 +2617,20 @@ describe("round 7 review regressions", () => {
         const typo = s.execute(["--min-age-hour", "0"]);
         expect(typo.exitCode).toBe(1);
         expect(typo.stderr.toString()).toContain("unknown argument --min-age-hour");
+        // A value flag never swallows the next option or a missing value: each is a usage error (exit 2).
+        for (const args of [
+            ["--protect", "--help"],
+            ["--protect", "--typo"],
+            ["--run", "--help"],
+            ["--run", "--bogus"],
+            ["--protect"],
+        ]) {
+            const malformed = s.execute(args);
+            expect({ args, code: malformed.exitCode }).toEqual({ args, code: 2 });
+            expect(malformed.stderr.toString()).toContain(`✖ ${args[0]} needs `);
+            expect(malformed.stderr.toString()).toContain("usage: bun tmp-reclaim.ts");
+            expect(malformed.stdout.toString()).not.toContain("plan:");
+        }
         const plans = fs.readdirSync(s.root, { recursive: true }).filter((name) => String(name).includes("plan"));
         expect([...plans, ...fs.readdirSync(s.run)]).toEqual([]);
     });

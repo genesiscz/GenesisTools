@@ -140,17 +140,27 @@ const USAGE = `usage: bun tmp-reclaim.ts [--run <dir>] [--min-age-hours 6] [--li
 
 Without --apply it is a dry run: it lists the candidates and writes a plan file. --apply removes only what that
 plan names, when the plan is at most 30 minutes old.`;
-const VALUE_FLAGS = new Set([
-    "--run",
-    "--min-age-hours",
-    "--live-hours",
-    "--protect",
-    "--own-session",
-    "--min-age-minutes",
-    "--plan",
+/** Each flag that takes a value, with what its value is, for the usage error when the value is missing. */
+const VALUE_FLAGS = new Map([
+    ["--run", "a run folder"],
+    ["--min-age-hours", "a number of hours"],
+    ["--live-hours", "a number of hours"],
+    ["--protect", "a session id or a path"],
+    ["--own-session", "the full session uuid"],
+    ["--min-age-minutes", "a number of minutes"],
+    ["--plan", "a plan file"],
 ]);
 
-/** Help and an unknown flag exit before any scan, so neither one runs a dry run or writes a plan. */
+/** An option token, not a value. A negative number such as "-1" stays a value, so its own check names it. */
+function isOptionToken(value: string): boolean {
+    return value.startsWith("--") || value === "-h";
+}
+
+/**
+ * Help, an unknown flag and a value flag with no value exit before any scan, so none of them runs a dry run or
+ * writes a plan. A value flag never consumes the next option as its value: `--protect --help` or `--run --typo`
+ * would otherwise skip that option's own check.
+ */
 function checkArgs(args: string[]): void {
     for (let i = 0; i < args.length; i++) {
         const arg = args[i] ?? "";
@@ -160,7 +170,15 @@ function checkArgs(args: string[]): void {
             process.exit(0);
         }
 
-        if (VALUE_FLAGS.has(arg)) {
+        const needs = VALUE_FLAGS.get(arg);
+        if (needs !== undefined) {
+            const value = args[i + 1];
+            // Exit 2 like this tool's other usage errors (a bad --own-session, --apply without --plan).
+            if (value === undefined || isOptionToken(value)) {
+                console.error(`✖ ${arg} needs ${needs}\n\n${USAGE}`);
+                process.exit(2);
+            }
+
             i++;
             continue;
         }
