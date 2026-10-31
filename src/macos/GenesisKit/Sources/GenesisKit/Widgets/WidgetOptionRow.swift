@@ -59,6 +59,19 @@ struct WidgetRecommendedMark: View {
     }
 }
 
+/// The small rounded badge before an option's text: the key that picks it, or its letter. The option row and the
+/// answered option row draw this one view.
+struct WidgetOptionBadge: View {
+    let text: String
+
+    var body: some View {
+        Text(verbatim: text).font(.system(size: 11, weight: .semibold, design: .rounded))
+            .padding(.horizontal, 4)
+            .frame(minWidth: 20, minHeight: 20)
+            .background(.white.opacity(0.07), in: RoundedRectangle(cornerRadius: 5))
+    }
+}
+
 /// One option row of a decision: the badge (the key that picks it, or its letter), the text, Staged, the recommended
 /// mark and the keyboard's ring. The alert card, a session's inbox and the inbox of every session draw this one view.
 struct WidgetOptionLabel: View {
@@ -75,10 +88,7 @@ struct WidgetOptionLabel: View {
     var body: some View {
         let shape = RoundedRectangle(cornerRadius: Self.cornerRadius)
         HStack(alignment: .top, spacing: 8) {
-            Text(verbatim: badge).font(.system(size: 11, weight: .semibold, design: .rounded))
-                .padding(.horizontal, 4)
-                .frame(minWidth: 20, minHeight: 20)
-                .background(.white.opacity(0.07), in: RoundedRectangle(cornerRadius: 5))
+            WidgetOptionBadge(text: badge)
             HStack(alignment: .firstTextBaseline, spacing: 5) {
                 if let letter {
                     Text(verbatim: letter + ")").foregroundStyle(SessionPalette.secondary)
