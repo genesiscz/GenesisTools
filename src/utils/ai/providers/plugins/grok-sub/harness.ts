@@ -1,5 +1,6 @@
 import { isGrok, resolveGrokContext } from "@genesiscz/utils/agent/hosts/grok";
 import { grokTurnState } from "@genesiscz/utils/agent-sessions/readers/grok-turn-state";
+import { interpreterScriptIndex } from "@genesiscz/utils/harness/interpreter-entry";
 import type { HarnessDriver } from "@genesiscz/utils/harness/types";
 import { pending, toolOwned, unsupported } from "@genesiscz/utils/harness/types";
 import { grokLaunch } from "./harness-launch";
@@ -65,7 +66,14 @@ export const grokHarness: HarnessDriver<"grok"> = {
                 name === "grok" ||
                 /^grok-\d+(?:\.\d+)*(?:-[\w-]+)?$/.test(name) ||
                 /\bgrok-cli\/dist\/index\.m?js\b/.test(command),
-            cliEntryIndex: ({ name }) => (/^(?:node|bun|bash|sh|zsh)$/.test(name) ? 1 : 0),
+            cliEntryIndex: ({ name, command }) =>
+                /^(?:node|bun)$/.test(name)
+                    ? interpreterScriptIndex(command, (arg) =>
+                          /(?:^|[/\\])(?:grok-cli[/\\]dist[/\\]index\.m?js|grok)$/.test(arg)
+                      )
+                    : /^(?:bash|sh|zsh)$/.test(name)
+                      ? 1
+                      : 0,
         },
         history: () => import("@genesiscz/utils/agent-sessions/compact-readers").then((m) => m.grokHistoryReader),
         cmux: toolOwned(

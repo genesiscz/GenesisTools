@@ -1,59 +1,16 @@
 import { isClaude, resolveClaudeContext } from "@genesiscz/utils/agent/hosts/claude";
 import { claudeTurnState } from "@genesiscz/utils/agent-sessions/readers/claude-turn-state";
+import { interpreterScriptIndex } from "@genesiscz/utils/harness/interpreter-entry";
 import type { HarnessDriver } from "@genesiscz/utils/harness/types";
 import { pending, toolOwned } from "@genesiscz/utils/harness/types";
 import { claudeDialog } from "./harness-dialog";
 import { claudeLaunch } from "./harness-launch";
 import { claudeWorker } from "./harness-worker";
 
-const INTERPRETER_OPTIONS_WITH_VALUE = new Set([
-    "-r",
-    "--require",
-    "--import",
-    "--loader",
-    "--experimental-loader",
-    "--conditions",
-    "-C",
-    "--env-file",
-    "--env-file-if-exists",
-    "--inspect-port",
-]);
-const INTERPRETER_FLAGS = new Set([
-    "--no-warnings",
-    "--trace-warnings",
-    "--trace-uncaught",
-    "--enable-source-maps",
-    "--inspect",
-    "--inspect-brk",
-    "--smol",
-]);
-
 function claudeScriptIndex(command: string): number | null {
-    const args = command.split(/\s+/).slice(1);
-
-    for (let i = 0; i < args.length; i++) {
-        const arg = args[i];
-
-        if (arg === "--") {
-            return /(?:^|[/\\])@anthropic-ai[/\\]claude-code[/\\]cli\.m?js$/.test(args[i + 1] ?? "") ? i + 2 : null;
-        }
-
-        if (INTERPRETER_OPTIONS_WITH_VALUE.has(arg)) {
-            i++;
-            continue;
-        }
-
-        if (
-            INTERPRETER_FLAGS.has(arg) ||
-            [...INTERPRETER_OPTIONS_WITH_VALUE].some((option) => arg.startsWith(`${option}=`))
-        ) {
-            continue;
-        }
-
-        return /(?:^|[/\\])@anthropic-ai[/\\]claude-code[/\\]cli\.m?js$/.test(arg) ? i + 1 : null;
-    }
-
-    return null;
+    return interpreterScriptIndex(command, (arg) =>
+        /(?:^|[/\\])@anthropic-ai[/\\]claude-code[/\\]cli\.m?js$/.test(arg)
+    );
 }
 
 /**

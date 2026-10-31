@@ -115,6 +115,28 @@ describe("classifyCommand", () => {
         expect(classifyCommand(`node --no-warnings ${cli} --resume ${S1} mcp`).service).toBe(false);
     });
 
+    test.each([
+        ["codex", `${HOME}/node_modules/@openai/codex/bin/codex.js`],
+        ["grok", `${HOME}/node_modules/grok-cli/dist/index.js`],
+    ] as const)("%s script skips interpreter flags when finding MCP services", (provider, cli) => {
+        const command = `node --no-warnings ${cli} mcp serve`;
+        expect(classifyCommand(command)).toMatchObject({ provider, service: true });
+        expect(isAgentProcess(command, provider)).toBe(false);
+    });
+
+    test.each([
+        ["codex", `${HOME}/node_modules/@openai/codex/bin/codex.js`],
+        ["grok", `${HOME}/node_modules/grok-cli/dist/index.js`],
+    ])("%s script ignores interpreter preload session IDs", (provider, cli) => {
+        expect(classifyCommand(`node --no-warnings -r ${S1} ${cli}`)).toMatchObject({
+            provider,
+            sessionId: null,
+        });
+        expect(classifyCommand(`node -r ${S1} ${cli} --resume ${S2}`).sessionId).toBe(S2);
+        expect(classifyCommand(`bun --require=${S1} -- ${cli} --resume ${S2}`).sessionId).toBe(S2);
+        expect(classifyCommand(`node ${cli} --resume ${S2}`).sessionId).toBe(S2);
+    });
+
     test("runsAgent takes a tools <agent> run|start|resume launcher from any checkout or off PATH", () => {
         expect(runsAgent("bun /repo/tools codex run work", "codex")).toBe(true);
         expect(runsAgent(`zsh -ic exec tools cc resume ${S1}`, "claude")).toBe(true);

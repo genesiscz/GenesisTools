@@ -1,5 +1,6 @@
 import { isCodex, resolveCodexContext } from "@genesiscz/utils/agent/hosts/codex";
 import { codexTurnState } from "@genesiscz/utils/agent-sessions/readers/codex-turn-state";
+import { interpreterScriptIndex } from "@genesiscz/utils/harness/interpreter-entry";
 import type { HarnessDriver } from "@genesiscz/utils/harness/types";
 import { pending, toolOwned, unsupported } from "@genesiscz/utils/harness/types";
 import { codexLaunch } from "./harness-launch";
@@ -59,7 +60,14 @@ export const codexHarness: HarnessDriver<"codex"> = {
         process: {
             runsCli: ({ name, command }) =>
                 /^codex(?:-[\w-]+)?$/.test(name) || /@openai\/codex\/bin\/codex\.m?js\b/.test(command),
-            cliEntryIndex: ({ name }) => (/^(?:node|bun|bash|sh|zsh)$/.test(name) ? 1 : 0),
+            cliEntryIndex: ({ name, command }) =>
+                /^(?:node|bun)$/.test(name)
+                    ? interpreterScriptIndex(command, (arg) =>
+                          /(?:^|[/\\])(?:@openai[/\\]codex[/\\]bin[/\\]codex\.m?js|codex)$/.test(arg)
+                      )
+                    : /^(?:bash|sh|zsh)$/.test(name)
+                      ? 1
+                      : 0,
         },
         history: () => import("@genesiscz/utils/agent-sessions/compact-readers").then((m) => m.codexHistoryReader),
         cmux: toolOwned(
