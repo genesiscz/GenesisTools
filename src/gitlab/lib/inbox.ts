@@ -445,34 +445,26 @@ export async function collectInbox(api: GitLabApi, opts: CollectOptions): Promis
 
     report("reading pending to-dos and the merge requests updated since the mark");
     const todoPath = `/todos?state=pending${opts.projectId === null ? "" : `&project_id=${opts.projectId}`}`;
-    const [rawTodos, own, reviewed, openOwn, openReviewed] = await Promise.all([
+    // Each side reads the MRs updated since the mark and every still-open one.
+    const lists = [
+        { label: "your MRs", side: "author", filter: `author_username=${user}`, since: opts.since },
+        { label: "MRs you review", side: "reviewer", filter: `reviewer_username=${user}`, since: opts.since },
+        { label: "open own MRs", side: "author", filter: `author_username=${user}`, since: undefined },
+        { label: "open reviewed MRs", side: "reviewer", filter: `reviewer_username=${user}`, since: undefined },
+    ].filter((list) => opts.role === "all" || opts.role === list.side);
+    const [rawTodos, ...listed] = await Promise.all([
         attempt("to-dos", () => restGetPaginated<RawTodo>(api, todoPath)),
-        opts.role === "reviewer"
-            ? Promise.resolve([])
-            : attempt("your MRs", () =>
-                  restGetPaginated<RawListMr>(api, mrListPath(opts.projectId, `author_username=${user}`, opts.since))
-              ),
-        opts.role === "author"
-            ? Promise.resolve([])
-            : attempt("MRs you review", () =>
-                  restGetPaginated<RawListMr>(api, mrListPath(opts.projectId, `reviewer_username=${user}`, opts.since))
-              ),
-        opts.role === "reviewer"
-            ? Promise.resolve([])
-            : attempt("open own MRs", () =>
-                  restGetPaginated<RawListMr>(api, mrListPath(opts.projectId, `author_username=${user}`))
-              ),
-        opts.role === "author"
-            ? Promise.resolve([])
-            : attempt("open reviewed MRs", () =>
-                  restGetPaginated<RawListMr>(api, mrListPath(opts.projectId, `reviewer_username=${user}`))
-              ),
+        ...lists.map((list) =>
+            attempt(list.label, () =>
+                restGetPaginated<RawListMr>(api, mrListPath(opts.projectId, list.filter, list.since))
+            )
+        ),
     ]);
 
     // Pending to-dos remain actionable until GitLab marks them done, regardless of when they arrived.
     const todos = (rawTodos ?? []).map(toInboxTodo);
     const mrs = new Map<string, InboxMr>();
-    for (const raw of [...(own ?? []), ...(reviewed ?? []), ...(openOwn ?? []), ...(openReviewed ?? [])]) {
+    for (const raw of listed.flatMap((list) => list ?? [])) {
         mrs.set(mrKey(raw.project_id, raw.iid), toInboxMr(raw));
     }
 
@@ -483,6 +475,7 @@ export async function collectInbox(api: GitLabApi, opts: CollectOptions): Promis
             extra.set(mrKey(todo.projectId, todo.iid), [todo.projectId, todo.iid]);
         }
     }
+    const withTodo = new Set(extra.keys());
 
     if (opts.role !== "author") {
         for (const pair of (await attempt("your comments", () => commentedMrs(api, opts))) ?? []) {
@@ -495,9 +488,7 @@ export async function collectInbox(api: GitLabApi, opts: CollectOptions): Promis
         const raw = await attempt(`!${iid}`, () =>
             restGet<RawListMr>(api, `/projects/${projectId}/merge_requests/${iid}`)
         );
-        const hasTodo = todos.some((t) => t.projectId === projectId && t.iid === iid);
-
-        if (raw && (hasTodo || raw.state === "opened" || after(raw.updated_at, opts.since))) {
+        if (raw && (withTodo.has(key) || raw.state === "opened" || after(raw.updated_at, opts.since))) {
             mrs.set(key, toInboxMr(raw));
         }
     });
