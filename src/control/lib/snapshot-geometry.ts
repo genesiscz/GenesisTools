@@ -1,5 +1,4 @@
-import { SafeJSON } from "@genesiscz/utils/json";
-import { logger } from "@genesiscz/utils/logger";
+import { objectFields, readJsonSidecar } from "./json-sidecar";
 
 /**
  * The capture geometry GenesisTools.app writes beside every `--snapshot` PNG (`shot.png` -> `shot.geometry.json`,
@@ -24,14 +23,8 @@ export function geometrySidecarPath(png: string): string {
     return `${png.replace(/\.png$/i, "")}.geometry.json`;
 }
 
-function record(value: unknown): Record<string, unknown> | undefined {
-    return typeof value === "object" && value !== null && !Array.isArray(value)
-        ? Object.fromEntries(Object.entries(value))
-        : undefined;
-}
-
 function size(value: unknown): { width: number; height: number } | undefined {
-    const fields = record(value);
+    const fields = objectFields(value);
     if (!fields || typeof fields.width !== "number" || typeof fields.height !== "number") {
         return undefined;
     }
@@ -45,10 +38,10 @@ function text(value: unknown): string | null {
 
 /** Narrows a parsed sidecar; undefined when a required field is missing or of another type. */
 export function parseSnapshotGeometry(value: unknown): SnapshotGeometry | undefined {
-    const fields = record(value);
+    const fields = objectFields(value);
     const window = size(fields?.window);
     const image = size(fields?.image);
-    const build = record(fields?.build);
+    const build = objectFields(fields?.build);
     if (!fields || !window || !image || typeof fields.scale !== "number" || typeof fields.version !== "number") {
         return undefined;
     }
@@ -72,19 +65,12 @@ export function parseSnapshotGeometry(value: unknown): SnapshotGeometry | undefi
 }
 
 /** The sidecar of `png`, or undefined when there is none (a screenshot from another tool) or it does not parse. */
-export async function readSnapshotGeometry(png: string): Promise<SnapshotGeometry | undefined> {
-    const path = geometrySidecarPath(png);
-    const file = Bun.file(path);
-    if (!(await file.exists())) {
-        return undefined;
-    }
-
-    const parsed = parseSnapshotGeometry(SafeJSON.parse(await file.text(), { strict: true }));
-    if (!parsed) {
-        logger.warn({ path }, "snapshot geometry sidecar has an unknown shape; comparing by pixels only");
-    }
-
-    return parsed;
+export function readSnapshotGeometry(png: string): Promise<SnapshotGeometry | undefined> {
+    return readJsonSidecar({
+        path: geometrySidecarPath(png),
+        parse: parseSnapshotGeometry,
+        warning: "snapshot geometry sidecar has an unknown shape; comparing by pixels only",
+    });
 }
 
 /** `1440x900 pt @2x`. */

@@ -1,7 +1,6 @@
 import type { Annotation, AnnotationRect } from "@genesiscz/utils/image";
-import { SafeJSON } from "@genesiscz/utils/json";
-import { logger } from "@genesiscz/utils/logger";
 import { CHANGE_COLOR, DATA_COLOR, regionAnnotations } from "./diff-regions";
+import { objectFields, readJsonSidecar } from "./json-sidecar";
 
 /**
  * The view tree GenesisTools.app writes beside a `--snapshot` PNG (`shot.png` -> `shot.tree.json`,
@@ -63,14 +62,8 @@ export function treeSidecarPath(pathOrPng: string): string {
     return pathOrPng.endsWith(".tree.json") ? pathOrPng : `${pathOrPng.replace(/\.png$/i, "")}.tree.json`;
 }
 
-function fieldsOf(value: unknown): Record<string, unknown> | undefined {
-    return typeof value === "object" && value !== null && !Array.isArray(value)
-        ? Object.fromEntries(Object.entries(value))
-        : undefined;
-}
-
 function rectOf(value: unknown): AnnotationRect | undefined {
-    const fields = fieldsOf(value);
+    const fields = objectFields(value);
     if (
         !fields ||
         typeof fields.x !== "number" ||
@@ -85,7 +78,7 @@ function rectOf(value: unknown): AnnotationRect | undefined {
 }
 
 function nodeOf(value: unknown): TreeNode | undefined {
-    const fields = fieldsOf(value);
+    const fields = objectFields(value);
     if (!fields || typeof fields.path !== "string" || typeof fields.role !== "string") {
         return undefined;
     }
@@ -111,8 +104,8 @@ function nodeOf(value: unknown): TreeNode | undefined {
 const V1_DEPTH_LIMIT = 60;
 
 export function parseViewTree(value: unknown): ViewTree | undefined {
-    const fields = fieldsOf(value);
-    const window = fieldsOf(fields?.window);
+    const fields = objectFields(value);
+    const window = objectFields(fields?.window);
     if (
         !fields ||
         !Array.isArray(fields.nodes) ||
@@ -135,19 +128,12 @@ export function parseViewTree(value: unknown): ViewTree | undefined {
 }
 
 /** The tree for a PNG or a `.tree.json` path; undefined when the file is missing or of another shape. */
-export async function readViewTree(pathOrPng: string): Promise<ViewTree | undefined> {
-    const path = treeSidecarPath(pathOrPng);
-    const file = Bun.file(path);
-    if (!(await file.exists())) {
-        return undefined;
-    }
-
-    const tree = parseViewTree(SafeJSON.parse(await file.text(), { strict: true }));
-    if (!tree) {
-        logger.warn({ path }, "view tree has an unknown shape");
-    }
-
-    return tree;
+export function readViewTree(pathOrPng: string): Promise<ViewTree | undefined> {
+    return readJsonSidecar({
+        path: treeSidecarPath(pathOrPng),
+        parse: parseViewTree,
+        warning: "view tree has an unknown shape",
+    });
 }
 
 /** Containers whose children are data rows: their count is data, only the first row's layout is compared. */

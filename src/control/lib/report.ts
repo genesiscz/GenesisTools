@@ -12,6 +12,7 @@ import {
 import { SafeJSON } from "@genesiscz/utils/json";
 import { logger } from "@genesiscz/utils/logger";
 import { shellQuote } from "@genesiscz/utils/shell/quote";
+import { slugify } from "@genesiscz/utils/string";
 import {
     CHANGE_COLOR,
     DATA_COLOR,
@@ -20,6 +21,7 @@ import {
     findDiffRegions,
     regionAnnotations,
 } from "./diff-regions";
+import { objectFields } from "./json-sidecar";
 import { comparePairGeometry, describeGeometry, readSnapshotGeometry } from "./snapshot-geometry";
 import { diffViewTrees, readViewTree, scaleRect, type TreeDiff, treeDiffAnnotations } from "./view-tree-diff";
 
@@ -38,12 +40,6 @@ export interface ReportInput {
     pairs: ReportPair[];
 }
 
-function fieldsOf(value: unknown): Record<string, unknown> | undefined {
-    return typeof value === "object" && value !== null && !Array.isArray(value)
-        ? Object.fromEntries(Object.entries(value))
-        : undefined;
-}
-
 function optionalText(value: unknown): string | undefined {
     return typeof value === "string" && value.length > 0 ? value : undefined;
 }
@@ -53,8 +49,8 @@ export type ReportNotes = Record<string, { fix?: string; note?: string }>;
 
 export function parseReportNotes(value: unknown): ReportNotes {
     const notes: ReportNotes = {};
-    for (const [screen, entry] of Object.entries(fieldsOf(value) ?? {})) {
-        const fields = fieldsOf(entry);
+    for (const [screen, entry] of Object.entries(objectFields(value) ?? {})) {
+        const fields = objectFields(entry);
         notes[screen] = { fix: optionalText(fields?.fix), note: optionalText(fields?.note) };
     }
 
@@ -63,13 +59,13 @@ export function parseReportNotes(value: unknown): ReportNotes {
 
 /** A shot list: `{title?, pairs: [{screen, before, after, fix?, note?}]}`, paths relative to the file's folder. */
 export function parseShotList(value: unknown, folder: string): ReportInput {
-    const fields = fieldsOf(value);
+    const fields = objectFields(value);
     if (!fields || !Array.isArray(fields.pairs)) {
         throw new Error('a shot list is {"title"?, "pairs": [{"screen", "before", "after", "fix"?, "note"?}]}');
     }
 
     const pairs = fields.pairs.map((entry, index) => {
-        const pair = fieldsOf(entry);
+        const pair = objectFields(entry);
         const before = optionalText(pair?.before);
         const after = optionalText(pair?.after);
         if (!before || !after) {
@@ -116,13 +112,9 @@ export async function pairsInFolder(folder: string): Promise<ReportPair[]> {
     return pairs;
 }
 
-function slug(text: string): string {
-    return (
-        text
-            .toLowerCase()
-            .replace(/[^a-z0-9]+/g, "-")
-            .replace(/^-|-$/g, "") || "screen"
-    );
+/** `NN-<screen>`: the file prefix both the annotated pair and the raw copy use, so Preview sorts them the same. */
+function pairPrefix(index: number, screen: string): string {
+    return `${String(index).padStart(2, "0")}-${slugify(screen).toLowerCase() || "screen"}`;
 }
 
 function overlaps(a: AnnotationRect, b: AnnotationRect, margin: number): boolean {
@@ -195,18 +187,21 @@ function regionPlan(regions: ClassifiedRegion[]): Annotation[] {
 
 /** Checks, diffs and annotates one pair, writing `NN-<screen>-1-before.png` and `NN-<screen>-2-after.png`. */
 export async function reportPair(pair: ReportPair, index: number, options: ReportOptions): Promise<PairResult> {
-    const prefix = `${String(index).padStart(2, "0")}-${slug(pair.screen)}`;
+    const prefix = pairPrefix(index, pair.screen);
     const base: PairResult = { ...pair, index, status: "ok", regions: [] };
-    const geometry = comparePairGeometry(
-        await readSnapshotGeometry(pair.before),
-        await readSnapshotGeometry(pair.after)
-    );
+    const [geometryBefore, geometryAfter, treeBefore, treeAfter] = await Promise.all([
+        readSnapshotGeometry(pair.before),
+        readSnapshotGeometry(pair.after),
+        readViewTree(pair.before),
+        readViewTree(pair.after),
+    ]);
+    const geometry = comparePairGeometry(geometryBefore, geometryAfter);
     if (geometry.kind === "size-mismatch" && !options.resizeToMatch) {
         return { ...base, status: "refused", message: geometry.message };
     }
 
-    const a = await decodeImageRgba(pair.before);
-    let b = await decodeImageRgba(pair.after);
+    const [a, decodedB] = await Promise.all([decodeImageRgba(pair.before), decodeImageRgba(pair.after)]);
+    let b = decodedB;
     let afterInput: string | Buffer = pair.after;
     let note = geometry.kind === "rescale" || geometry.kind === "size-mismatch" ? geometry.message : undefined;
     if (a.width !== b.width || a.height !== b.height) {
@@ -228,7 +223,6 @@ export async function reportPair(pair: ReportPair, index: number, options: Repor
         mergeDistance: options.mergeDistance ?? DEFAULT_REGION_OPTIONS.mergeDistance,
         minArea: options.minArea ?? DEFAULT_REGION_OPTIONS.minArea,
     });
-    const [treeBefore, treeAfter] = await Promise.all([readViewTree(pair.before), readViewTree(pair.after)]);
     const usable = treeBefore && treeAfter && treeBefore.source !== "none" && treeAfter.source !== "none";
     // A cut tree is silent about the controls it left out, and the trees of two point sizes do not share coordinates
     // once B is resampled: either way no region may be called data, so every region stays a change.
@@ -393,7 +387,7 @@ export async function loadReportInput(path: string, notes: ReportNotes = {}): Pr
 
 /** Copies a source image beside the report when asked for raw pairs (`--raw`), named for Preview's sort. */
 export async function copyRaw(result: PairResult, outDir: string): Promise<string[]> {
-    const prefix = `${String(result.index).padStart(2, "0")}-${slug(result.screen)}`;
+    const prefix = pairPrefix(result.index, result.screen);
     const targets = [
         join(outDir, "raw", `${prefix}-1-before${extname(result.before)}`),
         join(outDir, "raw", `${prefix}-2-after${extname(result.after)}`),
