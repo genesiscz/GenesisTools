@@ -335,6 +335,22 @@ describe("image size", () => {
         expect(html).not.toContain("position");
         expect(html).not.toContain("javascript:");
     });
+
+    test("an entity in an attribute is read as the browser reads it and escaped once", () => {
+        const { html } = renderMarkdown(
+            '<a href="https://example.org/?a=1&amp;b=2" title="Tom &amp; Jerry">q</a>\n\n<img src="my&#32;shot.webp" alt="A &lt;b&gt;">\n\n<a href="&#106;avascript:alert(1)">x</a>',
+            {
+                ...asset,
+                resolveAsset: (target: string) => (target === "my shot.webp" ? asset.resolveAsset(target) : null),
+            }
+        );
+
+        expect(html).toContain('href="https://example.org/?a=1&amp;b=2"');
+        expect(html).not.toContain("&amp;amp;");
+        expect(html).toContain('title="Tom &amp; Jerry"');
+        expect(html).toContain('<img src="/a/my shot.webp" alt="A &lt;b&gt;"');
+        expect(html).not.toContain("javascript:");
+    });
 });
 
 describe("Obsidian syntax", () => {

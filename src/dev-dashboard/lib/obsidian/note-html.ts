@@ -95,11 +95,26 @@ function escapeText(text: string): string {
         .replace(/"/g, "&quot;");
 }
 
+const NAMED_ENTITIES: Record<string, string> = { amp: "&", lt: "<", gt: ">", quot: '"', apos: "'", nbsp: "\u00a0" };
+
+/** An attribute value as the browser reads it: `&amp;` is `&`, `&#47;` is `/`. An unknown name stays as written. */
+function decodeAttribute(value: string): string {
+    return value.replace(/&(?:#(\d{1,7})|#x([0-9a-f]{1,6})|([a-z]{2,8}));/gi, (match, dec, hex, name) => {
+        if (name !== undefined) {
+            return NAMED_ENTITIES[name.toLowerCase()] ?? match;
+        }
+
+        const code = dec !== undefined ? Number(dec) : Number.parseInt(hex, 16);
+        return code > 0 && code <= 0x10ffff ? String.fromCodePoint(code) : "\ufffd";
+    });
+}
+
+/** The tag's attributes, decoded: each is checked as the browser reads it and escaped once when it is written. */
 function attributes(text: string): Map<string, string> {
     const attrs = new Map<string, string>();
 
     for (const match of text.matchAll(ATTR_RE)) {
-        attrs.set(match[1].toLowerCase(), match[2] ?? match[3] ?? match[4] ?? "");
+        attrs.set(match[1].toLowerCase(), decodeAttribute(match[2] ?? match[3] ?? match[4] ?? ""));
     }
 
     return attrs;
