@@ -588,8 +588,7 @@ public struct LiveWidgetView: View {
     /// A card whose pick or note is staged, here or in the snapshot.
     private func staged(_ card: WidgetCard) -> Bool {
         card.kind == "decision" && card.needsAnswer
-            && (model.shownStagedOption(card.sourceId, stored: card.draftOption) != nil
-                || model.shownStagedNote(card.sourceId, card.draft) != nil)
+            && model.shownStaged(card.sourceId, option: card.draftOption, draft: card.draft)
     }
 
     /// One option of a decision: the key badge, "a)" and the text, Staged, the recommended mark and the focus ring.

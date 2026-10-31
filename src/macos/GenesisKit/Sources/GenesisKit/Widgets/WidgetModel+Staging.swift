@@ -71,9 +71,8 @@ extension WidgetModel {
     /// staged on it, or media waits in the field (the media goes with a typed answer, never alone).
     @discardableResult
     func sendStagedFromOwnAnswer(_ card: WidgetCard) -> Bool {
+        guard draft.assetIds.isEmpty, isStaged(card) else { return false }
         let note = pendingStageNotes[card.sourceId] ?? card.draft
-        guard draft.assetIds.isEmpty, !heldDecisionIDs.contains(card.sourceId),
-              stagedOption(card.sourceId, stored: card.draftOption) != nil || note?.isEmpty == false else { return false }
         PerfLog.mark("widget.own-answer send staged \(card.sourceId)")
         // The note staged a moment ago is not in a snapshot yet; the item carries it, as the leave question's does.
         var item = Self.inboxItem(card)

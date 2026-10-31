@@ -27,6 +27,11 @@ extension WidgetModel {
     func shownStagedNote(_ sourceId: String, _ draft: String?) -> String? {
         heldDecisionIDs.contains(sourceId) ? nil : draft
     }
+
+    /// Whether a view draws the decision as staged: its pick or its note, here or in the snapshot, with the same rule.
+    func shownStaged(_ sourceId: String, option: String?, draft: String?) -> Bool {
+        shownStagedOption(sourceId, stored: option) != nil || shownStagedNote(sourceId, draft) != nil
+    }
 }
 
 /// The row under a session inbox's filter that says what is staged and opens the staged view.

@@ -841,8 +841,7 @@ struct WidgetPeekView: View {
 
     /// The decision's staged pick or note, here or in the snapshot.
     private var staged: Bool {
-        model.shownStagedOption(item.sourceId, stored: item.draftOption) != nil
-            || model.shownStagedNote(item.sourceId, item.draft) != nil
+        model.shownStaged(item.sourceId, option: item.draftOption, draft: item.draft)
     }
 
     /// Real buttons where "Click to answer" was a hint: the own answer, then Send now while a pick waits, else Open.
