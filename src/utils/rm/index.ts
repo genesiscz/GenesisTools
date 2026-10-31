@@ -79,12 +79,15 @@ export function planRemoval(inputs: readonly string[], ctx: RmRuleContext): RmPl
         plan.push({ target, verdict: evaluateTarget(target, ctx) });
     }
 
+    // A path inside an allowed folder goes with it, and so does an asked path inside an asked folder: one decision
+    // covers both, and the inner path never names something the outer move already took. An allowed path inside an
+    // asked folder stays; the run moves it before the asked folder is set aside.
     return plan.filter(
         (item) =>
             !plan.some(
                 (outer) =>
-                    outer.verdict.kind === "allow" &&
                     outer.target.kind === "dir" &&
+                    (outer.verdict.kind === "allow" || (outer.verdict.kind === "ask" && item.verdict.kind === "ask")) &&
                     isInside(item.target.canonical, outer.target.canonical)
             )
     );

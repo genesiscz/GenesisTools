@@ -150,6 +150,9 @@ export async function executePlan(
 
     result.refused = refused.length;
 
+    // The request (and its aside move) waits until the allowed paths moved, since one may lie inside an asked folder.
+    let requestLater = false;
+
     if (asked.length > 0) {
         if (!ctx.caller.isInAgent && isInteractive() && options.aside !== true) {
             const confirmed = await confirmAtTerminal(asked, ctx, options);
@@ -175,9 +178,7 @@ export async function executePlan(
                 confirmedMinutes.set(item, minutes);
             }
         } else {
-            const asking = requestForAsked(asked, ctx, options);
-            result.requestId = asking.id;
-            result.denials = asking.denials;
+            requestLater = true;
         }
     }
 
@@ -215,6 +216,12 @@ export async function executePlan(
                 out.println(pc.dim(`  undo: ${toolCommand("rm")} restore ${batch.id}`));
             }
         }
+    }
+
+    if (requestLater) {
+        const asking = requestForAsked(asked, ctx, options);
+        result.requestId = asking.id;
+        result.denials = asking.denials;
     }
 
     kickDrainer(ctx.config);
