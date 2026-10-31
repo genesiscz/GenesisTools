@@ -2,6 +2,7 @@
 // binary (built once, through the app launcher so the Accessibility grant applies) and the perf log tail.
 import { existsSync, mkdirSync, readFileSync, statSync } from "node:fs";
 import { homedir } from "node:os";
+import { execTool } from "@genesiscz/utils/cli/tools";
 import { SafeJSON } from "@genesiscz/utils/json";
 import { listPsRows } from "@genesiscz/utils/process/ps";
 import { genesisToolsDir } from "@genesiscz/utils/storage/root";
@@ -13,6 +14,12 @@ export const sh = (argv: string[]) => {
     const p = Bun.spawnSync(argv, { stdout: "pipe", stderr: "pipe", timeout: 60_000 });
     return `${p.stdout}${p.stderr}`;
 };
+
+/// `tools control <args>` of this checkout (execTool, not whatever `tools` is on PATH), its stdout and stderr joined.
+export async function control(args: string[]): Promise<string> {
+    const result = await execTool(["control", ...args], { timeout: 60_000 });
+    return `${result.stdout}${result.stderr}`;
+}
 
 /// The live hub's pid (the process table through the kit's reader, not a `pgrep` per call).
 export async function hubPid(): Promise<string> {
@@ -39,7 +46,7 @@ export type Edge = { desc: string; x: number; y: number; w: number; h: number };
 
 /// The resize edges of the live hub: the accessibility elements labelled "Resize <title>", long and thin.
 export async function resizeEdges(): Promise<Edge[]> {
-    const out = sh(["tools", "control", "dump", "--app", await hubPid()]);
+    const out = await control(["dump", "--app", await hubPid()]);
     const j = SafeJSON.parse(out.slice(out.indexOf("{")), { strict: true }) as { elements: Edge[] };
     return j.elements.filter(
         (e) => typeof e.desc === "string" && /^Resize /.test(e.desc) && e.w > 0 && e.h > 0 && Math.max(e.w, e.h) > 100
@@ -90,7 +97,7 @@ export function drag(e: Edge, delta: number, out: number, back: number) {
     );
 }
 
-export const focusHub = () => sh(["tools", "control", "window", "--app", hubPid(), "--action", "focus"]);
+export const focusHub = async () => control(["window", "--app", await hubPid(), "--action", "focus"]);
 
 export const logSize = () => statSync(LOG).size;
 

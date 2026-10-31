@@ -2,7 +2,7 @@
 // dragged panel's far edge can be judged frame by frame (does right-aligned content jump or get cut?).
 // Usage: bun drag-frames.ts <mode> <edge label prefix> <delta pt> <out dir> [--pr <ref>] [--worktree <path>]
 import { mkdirSync } from "node:fs";
-import { drag, dragGeometry, flag, focusHub, openHub, resizeEdges, sh } from "./lib";
+import { control, drag, dragGeometry, flag, focusHub, openHub, resizeEdges } from "./lib";
 
 const [mode, edgeName, deltaArg, out] = process.argv.slice(2);
 const opts = { pr: flag("--pr"), worktree: flag("--worktree") };
@@ -18,15 +18,13 @@ const g = dragGeometry(e);
 console.log(
     `${e.desc} @${e.x},${e.y} ${e.w}x${e.h}; drag ${g.vertical ? "y" : "x"} from ${g.across} by ${deltaArg} over 2.4 s`
 );
-focusHub();
+await focusHub();
 await Bun.sleep(500);
 const run = drag(e, Number(deltaArg), 2.4, 0.1);
 const started = Date.now();
 let n = 0;
 while (Date.now() - started < 2300) {
-    sh([
-        "tools",
-        "control",
+    await control([
         "screenshot",
         "--app",
         "GenesisTools",
