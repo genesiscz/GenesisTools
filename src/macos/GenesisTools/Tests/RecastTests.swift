@@ -280,6 +280,29 @@ final class RecastTests: XCTestCase {
     }
 
     @MainActor
+    func testRevealingATextAnchorOnAnotherPageSelectsPageLocalText() async throws {
+        var document = try file()
+        let text = String(repeating: "a", count: 32000) + "bbbbbHIT" + String(repeating: "c", count: 100)
+        let data = Data(text.utf8)
+        let original = source(data)
+        document.sources = [original]
+        document.anchors = [RecastAnchor(id: "anchor", sourceId: original.id, sourceHash: original.contentHash,
+            label: "Hit", region: RecastRegion(kind: "text", start: 32005, end: 32008, quote: "HIT", prefix: "", suffix: ""))]
+        let model = RecastModel(toolsPath: "/fixture/tools")
+        defer { model.stop() }
+        model.install(RecastState(file: document, assets: [original.assetName: data]))
+        let loaded = expectation(description: "page two preview")
+        model.onReady = { if model.sourceTextOffset == 32000, !model.previewBusy { loaded.fulfill() } }
+        model.reveal(try XCTUnwrap(document.anchors.first))
+        XCTAssertEqual(model.page, 1)
+        await fulfillment(of: [loaded], timeout: 5)
+        XCTAssertEqual(model.sourceTextOffset, 32000)
+        XCTAssertEqual(model.textSelection, NSRange(location: 5, length: 3))
+        let ns = model.sourceText as NSString
+        XCTAssertEqual(ns.substring(with: model.textSelection), "HIT")
+    }
+
+    @MainActor
     func testAudioIntervalPlaybackStopsAtTheSelectedMediaTime() async throws {
         guard ProcessInfo.processInfo.environment["RUN_AUDIO_DEVICE"] == "1" else {
             throw XCTSkip("Explicit local audio-device check; playback is muted.")

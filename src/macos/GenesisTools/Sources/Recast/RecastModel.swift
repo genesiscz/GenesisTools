@@ -87,6 +87,9 @@ final class RecastModel: ObservableObject {
     private let sourceRoot: URL
     private var task: Task<Void, Never>?
     private var previewTask: Task<Void, Never>?
+    /// Absolute source offsets of an anchor being revealed. Its page-local selection can only be computed once
+    /// the preview has set `sourceTextOffset`, which `loadPreview` resets to zero while it loads.
+    private var pendingTextRange: Range<Int>?
     private var audioReadiness: AnyCancellable?
     private var epoch = UUID()
     private var renderingRequestID = UUID()
@@ -356,6 +359,7 @@ final class RecastModel: ObservableObject {
 
     func loadPreview() {
         previewTask?.cancel()
+        pendingTextRange = nil
         sourceImage = nil; sourceText = ""; sourceTextOffset = 0
         textSelection = NSRange(location: 0, length: 0)
         guard let source, let data = assets[source.assetName] else { audio.clear(); previewBusy = false; return }
@@ -384,6 +388,7 @@ final class RecastModel: ObservableObject {
                     }.value
                     try Task.checkCancellation()
                     sourceText = slice.0; sourceTextOffset = slice.1
+                    rebasePendingTextSelection()
                 } else {
                     let png = try await RecastPreviewCache.shared.preview(RecastPreviewRequest(data: data,
                         sourceHash: source.contentHash, kind: source.kind, page: requestedPage))
@@ -474,10 +479,22 @@ final class RecastModel: ObservableObject {
         if anchor.region.kind == "audio", let start = anchor.region.startMs, let end = anchor.region.endMs {
             audio.select(start: start / 1000, end: end / 1000)
         }
-        if anchor.region.kind == "text", let start = anchor.region.start, let end = anchor.region.end {
-            // The preview completes asynchronously; the text view also resolves selectedAnchor.
-            textSelection = NSRange(location: max(0, start - sourceTextOffset), length: end - start)
+        if anchor.region.kind == "text", let start = anchor.region.start, let end = anchor.region.end, start <= end {
+            // A page change started an asynchronous preview, so the offset is not known yet; the preview
+            // rebases the selection when it completes. The text view also resolves selectedAnchor itself.
+            pendingTextRange = start..<end
+            if !previewBusy { rebasePendingTextSelection() }
+        } else {
+            pendingTextRange = nil
         }
+    }
+
+    private func rebasePendingTextSelection() {
+        guard let range = pendingTextRange else { return }
+        pendingTextRange = nil
+        guard range.lowerBound >= sourceTextOffset,
+              range.upperBound - sourceTextOffset <= (sourceText as NSString).length else { return }
+        textSelection = NSRange(location: range.lowerBound - sourceTextOffset, length: range.count)
     }
 
     var destinationIssues: [RecastIssue] {
