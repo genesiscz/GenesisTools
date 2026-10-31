@@ -1,4 +1,5 @@
 import type { AccountProviderAlias } from "@genesiscz/utils/ai/providers/alias-list";
+import type { NativeScan } from "@genesiscz/utils/ai/transcripts/insights-types";
 import type { DailyStats, HistoryFileStatistics, SessionMetadataRecord, TokenUsage } from "./cache-types";
 
 export type AgentKind = AccountProviderAlias;
@@ -389,6 +390,8 @@ export interface NativeSessionReader<Kind extends string = AgentKind> {
      * type.
      */
     modelOfRow(row: string): string | undefined;
+    /** Native data for session insights, or null when the provider has no additional data. */
+    scanInsights: ((text: string) => { native: NativeScan | null; defaultModel: string | null }) | null;
     /**
      * Whether a change to this file, under one of `roots()`, can change what `discover` and `read` return: a session
      * transcript or the metadata beside it, not a provider's side files (Grok's event and signal logs). A file watcher

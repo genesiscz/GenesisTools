@@ -134,6 +134,7 @@ function fixtureReader(options: {
         readBackward: noBackwardRead,
         continuedIn: noContinuedIn,
         modelOfRow: noModelOfRow,
+        scanInsights: () => ({ native: null, defaultModel: null }),
         indexesFile: indexesNoFile,
         rowAnchors: noRowAnchors,
         readTurnBoundary: async () => null,

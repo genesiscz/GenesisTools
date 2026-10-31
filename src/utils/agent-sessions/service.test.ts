@@ -45,6 +45,7 @@ function createReader(options: { kind: string; roots: string[] }): NativeSession
             sessionAlive: () => null,
             registryDirectory: () => null,
         },
+        scanInsights: () => ({ native: null, defaultModel: null }),
         indexesFile: claudeIndexesFile,
         roots: () => options.roots,
         read: async () => {

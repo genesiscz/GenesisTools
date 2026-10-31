@@ -96,26 +96,6 @@ const TOOL_INPUT_LINES: Record<TranscriptProvider, (line: string, keys: Map<stri
     grok: () => undefined,
 };
 
-/** The model a Codex rollout ran with: the last `turn_context` line's `model`. */
-export function codexModelOf(text: string): string | null {
-    let model: string | null = null;
-
-    eachLine(text, (line) => {
-        if (!line.includes('"turn_context"')) {
-            return;
-        }
-
-        const record = parseTranscriptLine(line);
-        const payload = record && isRecord(record.payload) ? record.payload : null;
-
-        if (payload && typeof payload.model === "string" && payload.model) {
-            model = payload.model;
-        }
-    });
-
-    return model;
-}
-
 /** The last `bytes` of a file as text, starting at a line boundary. Throws when the file cannot be read. */
 export function readTail(path: string, bytes: number): string {
     return readTailAt(path, bytes).text;

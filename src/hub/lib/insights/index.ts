@@ -10,7 +10,7 @@ import { costOf, DEFAULT_PRICING, priceFor, resolvePrice } from "@app/ai-spend/l
 import { DASHBOARD_ACTOR, type HandoffDeps, type PostHandoffResponse, postHandoff } from "@app/handoff/executor";
 import { resumeCommandLine } from "@genesiscz/utils/agent-sessions";
 import { readCachedHistoryTitle } from "@genesiscz/utils/agent-sessions/cached-title";
-import { scanClaudeNative } from "@genesiscz/utils/agent-sessions/readers/claude-native-scan";
+import { resolveHistoryProvider } from "@genesiscz/utils/agent-sessions/provider";
 import { cleanSessionTitle } from "@genesiscz/utils/agent-sessions/user-text";
 import { PROVIDER_ALIASES } from "@genesiscz/utils/ai/providers/aliases";
 import {
@@ -22,9 +22,8 @@ import {
     transcriptEnvelope,
 } from "@genesiscz/utils/ai/transcripts";
 import type { NativeScan } from "@genesiscz/utils/ai/transcripts/insights-types";
-import { codexModelOf, readTail, toolInputKeys } from "@genesiscz/utils/ai/transcripts/native-scan";
+import { readTail, toolInputKeys } from "@genesiscz/utils/ai/transcripts/native-scan";
 import { buildToolStats, buildTurnCosts, type CallPricer } from "@genesiscz/utils/ai/transcripts/turn-cost";
-import type { TranscriptProvider } from "@genesiscz/utils/ai/transcripts/types";
 import { concurrentMap } from "@genesiscz/utils/async";
 import { toolCommand } from "@genesiscz/utils/cli/tool-command";
 import { readWholeTextSync } from "@genesiscz/utils/fs/read-lines";
@@ -134,32 +133,18 @@ interface Loaded {
     defaultModel: string | null;
 }
 
-/**
- * What a second read of a native session file adds: Claude's usage, model and folders (`scanClaudeNative`), Codex's
- * default model. Grok's file adds nothing to its turns, so it is not read again (null).
- */
-const NATIVE_INSIGHTS: Record<
-    TranscriptProvider,
-    ((text: string) => { native: NativeScan | null; defaultModel: string | null }) | null
-> = {
-    claude: (text) => ({ native: scanClaudeNative(text), defaultModel: null }),
-    codex: (text) => ({ native: null, defaultModel: codexModelOf(text) }),
-    grok: null,
-};
-
 /** `withNative: false` skips the second full read of the session file (a caller that needs no usage, model or folder). */
 async function loadTranscript(resolved: ResolvedTranscript, { withNative = true } = {}): Promise<Loaded> {
     const turns = await allTranscriptTurns(resolved);
     let native: NativeScan | null = null;
     let defaultModel: string | null = null;
 
-    const nativeRead = NATIVE_INSIGHTS[resolved.provider];
+    if (withNative && resolved.source === "native") {
+        const scan = resolveHistoryProvider(resolved.provider).reader.scanInsights;
+        const text = scan ? readText(resolved.filePath) : null;
 
-    if (withNative && resolved.source === "native" && nativeRead) {
-        const text = readText(resolved.filePath);
-
-        if (text !== null) {
-            ({ native, defaultModel } = nativeRead(text));
+        if (scan && text !== null) {
+            ({ native, defaultModel } = scan(text));
         }
     }
 

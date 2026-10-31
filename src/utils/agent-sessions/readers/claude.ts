@@ -31,6 +31,7 @@ import type {
     RowAnchorWalk,
     TurnBoundary,
 } from "../types";
+import { scanClaudeNative } from "./claude-native-scan";
 import { claudeNativeId, claudeProjectDirectory, claudeProjectName, isClaudeSubagentPath } from "./claude-paths";
 
 const TOOL_INPUT_FIELD_CAP = 2_000;
@@ -641,6 +642,7 @@ export type ClaudeHistoryOperations = Pick<NativeSessionReader<"claude">, "parse
             | "readForward"
             | "continuedIn"
             | "modelOfRow"
+            | "scanInsights"
             | "rowAnchors"
         >
     >;
@@ -806,6 +808,7 @@ export function createClaudeHistoryOperations(): ClaudeHistoryOperations {
         readForward: readClaudeForward,
         continuedIn: readClaudeContinuedIn,
         modelOfRow: claudeModelOfRow,
+        scanInsights: (text) => ({ native: scanClaudeNative(text), defaultModel: null }),
         rowAnchors: claudeRowAnchors,
     };
 }

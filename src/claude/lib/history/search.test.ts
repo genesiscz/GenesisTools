@@ -252,6 +252,7 @@ function reader(overrides: Partial<Reader> = {}): Reader {
         readBackward: noBackwardRead,
         continuedIn: noContinuedIn,
         modelOfRow: noModelOfRow,
+        scanInsights: null,
         indexesFile: indexesNoFile,
         rowAnchors: noRowAnchors,
         readTurnBoundary: async () => null,

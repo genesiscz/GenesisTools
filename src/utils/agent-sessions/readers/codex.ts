@@ -8,6 +8,7 @@ import { readJsonlForward } from "@genesiscz/utils/agent-sessions/read-forward";
 import type { JsonRecord, JsonValue } from "@genesiscz/utils/agent-sessions/source-scan";
 import { asRecord, blocksMetadata, scanJsonlRecords } from "@genesiscz/utils/agent-sessions/source-scan";
 import { isWrapperUserText } from "@genesiscz/utils/agent-sessions/user-text";
+import { eachLine } from "@genesiscz/utils/ai/transcripts/native-scan";
 import { SafeJSON } from "@genesiscz/utils/json";
 import { logger } from "@genesiscz/utils/logger";
 import { profiler } from "@genesiscz/utils/profile";
@@ -1370,6 +1371,7 @@ export type CodexHistoryOperations = Pick<NativeSessionReader<"codex">, "parserV
             | "readForward"
             | "continuedIn"
             | "modelOfRow"
+            | "scanInsights"
             | "rowAnchors"
         >
     >;
@@ -1532,6 +1534,13 @@ export function createCodexHistoryOperations(): CodexHistoryOperations {
         // carries no pointer to another session.
         continuedIn: async () => undefined,
         modelOfRow: codexModelOfRow,
+        scanInsights: (text) => {
+            let defaultModel: string | null = null;
+            eachLine(text, (row) => {
+                defaultModel = codexModelOfRow(row) ?? defaultModel;
+            });
+            return { native: null, defaultModel };
+        },
         rowAnchors: codexRowAnchors,
     };
 }

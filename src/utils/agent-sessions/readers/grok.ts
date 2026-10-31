@@ -729,6 +729,7 @@ export type GrokHistoryOperations = Pick<NativeSessionReader<"grok">, "parserVer
             | "readForward"
             | "continuedIn"
             | "modelOfRow"
+            | "scanInsights"
             | "rowAnchors"
         >
     >;
@@ -841,6 +842,7 @@ export function createGrokHistoryOperations(): GrokHistoryOperations {
         // Grok's chat history rows name no model: the session's model is `summary.json` `current_model_id`, which
         // `readMetadata` reads, not a row.
         modelOfRow: () => undefined,
+        scanInsights: null,
         rowAnchors: grokRowAnchors,
     };
 }

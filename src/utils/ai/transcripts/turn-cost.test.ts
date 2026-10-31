@@ -1,7 +1,8 @@
 import { describe, expect, test } from "bun:test";
+import { codexHistoryReader } from "@genesiscz/utils/agent-sessions/compact-readers";
 import { scanClaudeNative } from "@genesiscz/utils/agent-sessions/readers/claude-native-scan";
 import { SafeJSON } from "@genesiscz/utils/json";
-import { codexModelOf, toolInputKeys } from "./native-scan";
+import { toolInputKeys } from "./native-scan";
 import { buildToolStats, buildTurnCosts, type CallPricer } from "./turn-cost";
 import type { TranscriptTool, TranscriptTurn } from "./types";
 
@@ -163,7 +164,10 @@ describe("scanClaudeNative", () => {
         const keys = toolInputKeys(text, "claude");
 
         expect(keys.get("e1")).not.toBe(keys.get("e2"));
-        expect(codexModelOf(line({ type: "turn_context", payload: { model: "gpt-5.5" } }))).toBe("gpt-5.5");
+        expect(
+            codexHistoryReader.scanInsights?.(line({ type: "turn_context", payload: { model: "gpt-5.5" } }))
+                .defaultModel
+        ).toBe("gpt-5.5");
     });
 });
 

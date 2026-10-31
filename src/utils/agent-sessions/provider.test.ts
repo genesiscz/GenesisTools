@@ -47,6 +47,7 @@ test("a registered fourth history provider can be resolved without an account al
             readBackward: noBackwardRead,
             continuedIn: noContinuedIn,
             modelOfRow: noModelOfRow,
+            scanInsights: () => ({ native: null, defaultModel: null }),
             indexesFile: indexesNoFile,
             rowAnchors: noRowAnchors,
             readTurnBoundary: async () => null,
@@ -95,6 +96,29 @@ test("a registered fourth history provider can be resolved without an account al
     await expect(readSessionsContinuedIn(request)).rejects.toThrow("Source root read failed");
     discoveryFails = false;
     expect(await readSessionsContinuedIn(request)).toEqual(new Map());
+});
+
+test("native insight scans come from each provider reader", () => {
+    const claude = resolveHistoryProvider("claude").reader;
+    const codex = resolveHistoryProvider("codex").reader;
+    const grok = resolveHistoryProvider("grok").reader;
+    const claudeRow = SafeJSON.stringify(
+        {
+            type: "assistant",
+            uuid: "row-1",
+            cwd: "/fixture",
+            message: { id: "msg-1", model: "test-model", usage: { input_tokens: 7 }, content: [] },
+        },
+        { strict: true }
+    );
+    const codexRows = [
+        SafeJSON.stringify({ type: "turn_context", payload: { model: "first" } }, { strict: true }),
+        SafeJSON.stringify({ type: "turn_context", payload: { model: "second" } }, { strict: true }),
+    ].join("\n");
+    expect(claude.scanInsights?.(claudeRow).native?.calls[0]?.input).toBe(7);
+    expect(claude.scanInsights?.(claudeRow).native?.cwd).toBe("/fixture");
+    expect(codex.scanInsights?.(codexRows).defaultModel).toBe("second");
+    expect(grok.scanInsights).toBeNull();
 });
 
 test("session queue inspections are read-only and exact provider/session/home scope survives restart", async () => {
