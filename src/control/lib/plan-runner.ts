@@ -1,3 +1,4 @@
+import { type FocusStealGuard, loadJevSettings } from "@genesiscz/utils/ai/evaluation/settings";
 import { abortableSleep, untilAborted } from "@genesiscz/utils/async";
 import { SafeJSON } from "@genesiscz/utils/json";
 import type { Plan } from "./capture-plan";
@@ -5,6 +6,7 @@ import { type CaptureFocusGuard, type RunResult, runCapturePlan, runCapturePlanW
 import { assertEl, waitFor } from "./conditions";
 import { guardFocusSteal, isFocusStealingVerb } from "./focus-guard";
 import { type AxResult, type AxRun, runAx } from "./runner";
+import { targetArgs } from "./target";
 
 /**
  * The declarative plan runner behind `control run`, the `control_run` MCP tool and any later door.
@@ -20,61 +22,43 @@ export const ACTION_ALIASES: Record<string, string> = {
     axPerform: "perform",
 };
 
-// `hittest` asks the window server what is under a SCREEN point; it resolves no
-// app, and native ax-tool rejects the --app shape for it.
-export const NO_APP_COMMANDS = new Set(["snapshot", "restore", "hotkey", "apps", "hittest"]);
+interface StepVerbRule {
+    /**
+     * Steps whose failure is transient and happens BEFORE anything is dispatched, the only ones `retries` may wrap.
+     *
+     * A mutating verb must never retry: `type` can post its keystrokes and then fail its hard verification, so a
+     * retry types the text a second time. Same shape for click, set, press and the rest.
+     */
+    retryable: boolean;
+    /** `hittest` asks the window server what is under a SCREEN point; it resolves no app, and native ax-tool rejects the --app shape for it. */
+    needsApp: boolean;
+}
 
-/**
- * Steps whose failure is transient and happens BEFORE anything is dispatched —
- * the only ones `retries` may wrap.
- *
- * A mutating verb must never retry: `type` can post its keystrokes and then fail
- * its hard verification, so a retry types the text a second time. Same shape for
- * click, set, press and the rest.
- */
-const RETRYABLE_STEP_COMMANDS = new Set([
-    "get",
-    "find",
-    "attrs",
-    "actions",
-    "window",
-    "screenshot",
-    "ocr",
-    "dump",
-    "typography",
-    "hittest",
-    "apps",
-    "wait",
-    "assert",
-]);
+const MUTATING: StepVerbRule = { retryable: false, needsApp: true };
+const READ: StepVerbRule = { retryable: true, needsApp: true };
 
-/** `retries` above this is a typo or an overflow, not an intention. */
-const MAX_RETRIES = 10;
-
-/** `Bun.sleep` clamps a huge delay to ~24 days, which reads as a hang. */
-const MAX_RETRY_DELAY_MS = 60_000;
-
-export const KNOWN_STEP_COMMANDS = new Set([
-    "focus",
-    "press",
-    "click",
-    "set",
-    "type",
-    "get",
-    "find",
-    "attrs",
-    "actions",
-    "perform",
-    "window",
-    "scroll",
-    "hotkey",
-    "screenshot",
-    "ocr",
-    "wait",
-    "assert",
-    "snapshot",
-    "restore",
-    "apps",
+/** Every verb a plan step may name, with the two facts the runner needs about it. A new verb is one row. */
+const STEP_VERBS: Record<string, StepVerbRule> = {
+    focus: MUTATING,
+    press: MUTATING,
+    click: MUTATING,
+    set: MUTATING,
+    type: MUTATING,
+    get: READ,
+    find: READ,
+    attrs: READ,
+    actions: READ,
+    perform: MUTATING,
+    window: READ,
+    scroll: MUTATING,
+    hotkey: { retryable: false, needsApp: false },
+    screenshot: READ,
+    ocr: READ,
+    wait: READ,
+    assert: READ,
+    snapshot: { retryable: false, needsApp: false },
+    restore: { retryable: false, needsApp: false },
+    apps: { retryable: true, needsApp: false },
     // The verb set used to be smaller than the CLI, so a plan could act but
     // never read pixels: it had to shell out after the runner had already
     // exited, by which time the UI had moved on. These three exist in native
@@ -86,10 +70,24 @@ export const KNOWN_STEP_COMMANDS = new Set([
     // reach its `default: errorExit("unknown command")` and fail every time.
     // Accepting them in the plan schema would be a promise the runner cannot
     // keep. Shell out for those two until the runner grows TypeScript dispatch.
-    "dump",
-    "typography",
-    "hittest",
-]);
+    dump: READ,
+    typography: READ,
+    hittest: { retryable: true, needsApp: false },
+};
+
+function stepVerbRule(cmd: string): StepVerbRule | undefined {
+    return Object.hasOwn(STEP_VERBS, cmd) ? STEP_VERBS[cmd] : undefined;
+}
+
+const RETRYABLE_VERB_NAMES = Object.entries(STEP_VERBS)
+    .filter(([, verb]) => verb.retryable)
+    .map(([name]) => name);
+
+/** `retries` above this is a typo or an overflow, not an intention. */
+const MAX_RETRIES = 10;
+
+/** `Bun.sleep` clamps a huge delay to ~24 days, which reads as a hang. */
+const MAX_RETRY_DELAY_MS = 60_000;
 
 /** Fields the runner consumes itself; everything else becomes a `--flag value`. */
 const RUNNER_ONLY_STEP_FIELDS = new Set(["do", "app", "delay", "atMs", "retries", "retryDelayMs", "saveAs"]);
@@ -170,19 +168,21 @@ export function validatePlan(steps: Array<Record<string, unknown>>, planApp: str
         }
 
         const raw = String(step.do ?? "");
-        const cmd = ACTION_ALIASES[raw] ?? raw;
+        const cmd = stepCommand(step);
 
         if (!raw) {
             problems.push(`${where}: missing 'do'`);
             return;
         }
 
-        if (!KNOWN_STEP_COMMANDS.has(cmd)) {
-            problems.push(`${where}: unknown step command '${raw}' — valid: ${[...KNOWN_STEP_COMMANDS].join(", ")}`);
+        const rule = stepVerbRule(cmd);
+
+        if (!rule) {
+            problems.push(`${where}: unknown step command '${raw}' — valid: ${Object.keys(STEP_VERBS).join(", ")}`);
             return;
         }
 
-        if (!NO_APP_COMMANDS.has(cmd) && !step.app && !planApp) {
+        if (rule.needsApp && !step.app && !planApp) {
             problems.push(`${where} (${cmd}): missing 'app', and the plan sets no default`);
         }
 
@@ -193,10 +193,10 @@ export function validatePlan(steps: Array<Record<string, unknown>>, planApp: str
             // accepts and which makes the retry loop unbounded.
             if (!Number.isInteger(retries) || (retries as number) < 0 || (retries as number) > MAX_RETRIES) {
                 problems.push(`${where} (${cmd}): 'retries' must be a whole number from 0 to ${MAX_RETRIES}`);
-            } else if ((retries as number) > 0 && !RETRYABLE_STEP_COMMANDS.has(cmd)) {
+            } else if ((retries as number) > 0 && !rule.retryable) {
                 problems.push(
                     `${where} (${cmd}): 'retries' is not allowed on a mutating step — a retry would act twice. ` +
-                        `Retryable: ${[...RETRYABLE_STEP_COMMANDS].join(", ")}`
+                        `Retryable: ${RETRYABLE_VERB_NAMES.join(", ")}`
                 );
             }
         }
@@ -341,6 +341,9 @@ export function normalizeCapturePlan(plan: PlanDocument): Plan {
     return normalized as unknown as Plan;
 }
 
+/** The selector fields a wait/assert step may carry; `targetArgs` turns them into ax-tool flags. */
+const CONDITION_TARGET_FIELDS = ["q", "id", "role", "title", "desc", "subrole", "window", "depth"];
+
 async function runConditionStep({
     cmd,
     step,
@@ -354,12 +357,14 @@ async function runConditionStep({
     deps: PlanRunDeps;
     signal?: AbortSignal;
 }): Promise<AxResult> {
-    const target: string[] = [];
-    for (const k of ["q", "id", "role", "title", "desc", "subrole", "window", "depth"]) {
+    const selector: Record<string, string> = {};
+    for (const k of CONDITION_TARGET_FIELDS) {
         if (step[k] != null) {
-            target.push(`--${k}`, String(step[k]));
+            selector[k] = String(step[k]);
         }
     }
+
+    const target = targetArgs(selector);
 
     const cond = {
         app,
@@ -491,6 +496,12 @@ async function runSteps({
         }
     };
     let stoppedAt = -1;
+    // The saved setting cannot change mid-run, so read it at most once, and only if a guarded step comes.
+    let guardSetting: Promise<FocusStealGuard | undefined> | undefined;
+    const loadGuard = () => {
+        guardSetting ??= loadJevSettings().then((settings) => settings.focusStealGuard);
+        return guardSetting;
+    };
 
     for (const [index, step] of steps.entries()) {
         if (stoppedAt >= 0 || signal?.aborted) {
@@ -539,7 +550,7 @@ async function runSteps({
         }
 
         const args: string[] = [cmd];
-        if (!NO_APP_COMMANDS.has(cmd)) {
+        if (stepVerbRule(cmd)?.needsApp ?? true) {
             args.push("--app", app);
         }
 
@@ -578,6 +589,7 @@ async function runSteps({
                   toPid: step["to-pid"] == null ? undefined : String(step["to-pid"]),
                   stealFocus,
                   run: deps.run,
+                  loadGuard,
               })
             : null;
 
