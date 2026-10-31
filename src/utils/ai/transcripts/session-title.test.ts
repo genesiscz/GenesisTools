@@ -3,8 +3,8 @@ import { mkdirSync, mkdtempSync, utimesSync, writeFileSync } from "node:fs";
 import { tmpdir } from "node:os";
 import { join } from "node:path";
 import { env } from "@genesiscz/utils/env";
-import { lastClaudeTitle } from "../providers/plugins/anthropic-sub/harness-locate";
-import { grokTitleOf } from "../providers/plugins/grok-sub/harness-locate";
+import { lastClaudeTitle } from "../../agent-sessions/readers/claude-title";
+import { grokTitleOf } from "../../agent-sessions/readers/grok-title";
 import { findSessionsByTitle, rankByTitle } from "./session-title";
 
 const titled = (title: string, mtime: number) => ({ sessionId: title, title, mtime, locator: title });

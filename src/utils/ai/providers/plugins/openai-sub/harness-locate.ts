@@ -1,5 +1,6 @@
-import { existsSync, readFileSync } from "node:fs";
+import { existsSync } from "node:fs";
 import { basename, join } from "node:path";
+import { readCodexTitleIndex } from "@genesiscz/utils/agent-sessions/readers/codex-title";
 import type { FolderReads, RankedHit, ResolvedTranscript } from "@genesiscz/utils/ai/transcripts/resolve";
 import { idMatches, isRecord } from "@genesiscz/utils/ai/transcripts/resolve-core";
 import type { TitledSession } from "@genesiscz/utils/ai/transcripts/session-title";
@@ -177,29 +178,9 @@ export function codexSessions(indexPaths: readonly string[]): TitledSession[] {
 
     for (const indexPath of indexPaths) {
         if (existsSync(indexPath)) {
-            readCodexIndex(indexPath, found);
+            readCodexTitleIndex(indexPath, found);
         }
     }
 
     return [...found.values()];
-}
-
-function readCodexIndex(indexPath: string, found: Map<string, TitledSession>): void {
-    for (const line of readFileSync(indexPath, "utf8").split("\n")) {
-        try {
-            const record: unknown = line.trim() ? SafeJSON.parse(line, { strict: true }) : null;
-
-            if (isRecord(record) && typeof record.id === "string" && typeof record.thread_name === "string") {
-                found.delete(record.id);
-                found.set(record.id, {
-                    sessionId: record.id,
-                    title: record.thread_name,
-                    mtime: Date.parse(String(record.updated_at)) || 0,
-                    locator: record.id,
-                });
-            }
-        } catch (err) {
-            logger.debug({ err, indexPath }, "[session-title] skipped an unreadable Codex index line");
-        }
-    }
 }

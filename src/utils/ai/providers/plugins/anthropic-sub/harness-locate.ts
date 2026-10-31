@@ -1,4 +1,5 @@
 import { join } from "node:path";
+import { lastClaudeTitleIn } from "@genesiscz/utils/agent-sessions/readers/claude-title";
 import type { FolderReads, LocateRoots, RankedHit } from "@genesiscz/utils/ai/transcripts/resolve";
 import { findTurnFileWorker, idMatches, workerTurnChain } from "@genesiscz/utils/ai/transcripts/resolve-core";
 import {
@@ -8,9 +9,7 @@ import {
     type TitledSession,
 } from "@genesiscz/utils/ai/transcripts/session-title";
 import type { TranscriptLocator } from "@genesiscz/utils/harness/parts";
-import { SafeJSON } from "@genesiscz/utils/json";
 import { logger } from "@genesiscz/utils/logger";
-import { scanFileMatches } from "../../../transcripts/file-scan";
 
 /** The roots a Claude lookup reads: an injected projects folder is the whole answer, else every root `nativeSessionRoots` knows. */
 function claudeRoots({ injected, resolved }: LocateRoots): string[] {
@@ -112,43 +111,6 @@ function findClaudeSubagent(query: string, projectsDir: string, fs: FolderReads)
 
 export function findClaudeWorker(query: string, workerDir: string, fs: FolderReads): RankedHit[] {
     return findTurnFileWorker(query, workerDir, "claude", fs);
-}
-
-const CUSTOM_TITLE = /"type":"custom-title","customTitle":"((?:[^"\\]|\\.)*)"/g;
-
-/** The last `/rename` title in a Claude transcript's text, or null. */
-export function lastClaudeTitle(text: string): string | null {
-    let last: string | null = null;
-
-    for (const match of text.matchAll(CUSTOM_TITLE)) {
-        last = match[1];
-    }
-
-    if (last === null) {
-        return null;
-    }
-
-    try {
-        const decoded = SafeJSON.parse(`"${last}"`, { strict: true });
-
-        return typeof decoded === "string" ? decoded : last;
-    } catch (err) {
-        logger.debug({ err }, "[session-title] title escape unreadable; using it raw");
-        return last;
-    }
-}
-
-/** Bytes kept after each `custom-title` match: a title longer than this is not read. */
-const TITLE_WINDOW = 4096;
-
-/** The last `/rename` title of a transcript, streamed: a 200 MB transcript is never one string. */
-function lastClaudeTitleIn(path: string): string | null {
-    const found: { last: Buffer | null } = { last: null };
-    scanFileMatches(path, '"type":"custom-title","customTitle":"', TITLE_WINDOW, (slice) => {
-        found.last = Buffer.from(slice);
-    });
-
-    return found.last === null ? null : lastClaudeTitle(found.last.toString("utf8"));
 }
 
 export function claudeSessions({

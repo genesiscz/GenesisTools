@@ -1,5 +1,6 @@
 import { existsSync, readFileSync } from "node:fs";
 import { basename, dirname, join } from "node:path";
+import { grokTitleOf } from "@genesiscz/utils/agent-sessions/readers/grok-title";
 import type { FolderReads, RankedHit } from "@genesiscz/utils/ai/transcripts/resolve";
 import { findTurnFileWorker, idMatches, isRecord, workerTurnChain } from "@genesiscz/utils/ai/transcripts/resolve-core";
 import { listDir, mtimeOf, type TitledSession } from "@genesiscz/utils/ai/transcripts/session-title";
@@ -60,19 +61,6 @@ export function findGrokNative(query: string, grokHome: string, fs: FolderReads)
 
 export function findGrokWorker(query: string, workerDir: string, fs: FolderReads): RankedHit[] {
     return findTurnFileWorker(query, workerDir, "grok", fs);
-}
-
-/** A Grok `/rename` lands in `generated_title` with `title_is_manual: true`; it beats the generated summary. */
-export function grokTitleOf(summary: Record<string, unknown>): string | null {
-    const manual = summary.title_is_manual === true ? summary.generated_title : undefined;
-
-    if (typeof manual === "string" && manual.trim() !== "") {
-        return manual;
-    }
-
-    return typeof summary.session_summary === "string" && summary.session_summary.trim() !== ""
-        ? summary.session_summary
-        : null;
 }
 
 export function grokSessions(roots: string[]): TitledSession[] {
