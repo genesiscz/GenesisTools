@@ -68,7 +68,9 @@ export function registerResume(program: Command): void {
                     }
                 }
 
-                process.exitCode = report.timedOut ? 1 : 0;
+                // A target that timed out or failed to resume is not recovered.
+                process.exitCode =
+                    report.timedOut || report.records.some((record) => record.outcome === "error") ? 1 : 0;
             } finally {
                 conn.close();
             }
