@@ -785,13 +785,9 @@ public struct LiveWidgetView: View {
             }
     }
 
-    /// "inbox": answers, results and questions; "decisions": decisions and tasks; anything else: every card.
+    /// The cards `filter` shows (`WidgetModel.filteredOut`).
     static func filtered(_ cards: [WidgetCard], by filter: String) -> [WidgetCard] {
-        switch filter {
-        case "inbox": return cards.filter { !["decision", "todo"].contains($0.kind) }
-        case "decisions": return cards.filter { ["decision", "todo"].contains($0.kind) }
-        default: return cards
-        }
+        cards.filter { !WidgetModel.filteredOut(kind: $0.kind, by: filter) }
     }
 
     /// A composer message lands under the list, and the list follows it. An answer sent from a card leaves the list

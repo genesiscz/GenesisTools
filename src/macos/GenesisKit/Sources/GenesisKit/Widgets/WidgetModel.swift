@@ -648,8 +648,7 @@ public final class WidgetModel: ObservableObject {
     /// list. Only then do the number keys answer it; a key used to stage an option of a decision nobody could see.
     public var answerCardOnScreen: WidgetCard? {
         guard activeModuleID == "agents", !inboxOverview, section == "Inbox", stagedView == nil else { return nil }
-        guard let card = answerCard, LiveWidgetView.filtered([card], by: inboxFilter).contains(where: { $0.id == card.id })
-        else { return nil }
+        guard let card = answerCard, !Self.filteredOut(kind: card.kind, by: inboxFilter) else { return nil }
         return card
     }
     /// The decision whose own answer field holds the draft (its toolbar open, the reply composer parked).
@@ -1713,7 +1712,9 @@ public final class WidgetModel: ObservableObject {
         return turns.first { $0.role == "assistant" && $0.text.range(of: pattern, options: .regularExpression) != nil }
     }
 
-    /// The inbox filter hides a card of this kind (`LiveWidgetView.filtered`).
+    /// The inbox filter hides a card of this kind: "inbox" shows answers, results and questions, "decisions" shows
+    /// decisions and tasks, anything else shows every card. The one rule `LiveWidgetView.filtered` and an explicit
+    /// open use.
     nonisolated static func filteredOut(kind: String, by filter: String) -> Bool {
         switch filter {
         case "inbox": return ["decision", "todo"].contains(kind)
@@ -1838,8 +1839,7 @@ public final class WidgetModel: ObservableObject {
         selectedCardID = item.id
         foldedCardIDs.remove(item.id)
         // An explicit open must reveal its target even if the reader had picked the opposite filter.
-        let decisionLike = ["decision", "todo"].contains(item.kind)
-        if (inboxFilter == "inbox" && decisionLike) || (inboxFilter == "decisions" && !decisionLike) {
+        if Self.filteredOut(kind: item.kind, by: inboxFilter) {
             inboxFilterPicked = true
             inboxFilter = "all"
         }
