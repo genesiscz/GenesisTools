@@ -1,5 +1,6 @@
 import { runTool } from "@genesiscz/utils/cli";
 import { env } from "@genesiscz/utils/env";
+import { nativeRootsKey } from "@genesiscz/utils/providers/session-paths";
 import { Command } from "commander";
 import { registerAgentsCommand } from "./commands/agents";
 import { callHubServer } from "./server/client";
@@ -10,7 +11,13 @@ import { callHubServer } from "./server/client";
 // flags, the command does its own work below, as before. The wait is short because the own work costs under a
 // second: a server that is draining for new code answered three asks in 7 to 8.5 s with a 5 s wait (2026-10-30 19:10).
 if (env.tools.hubServerEnabled() && process.argv.includes("--json")) {
-    const answered = await callHubServer({ argv: ["hub", ...process.argv.slice(2)], timeoutMs: 2_500 });
+    // The server reads transcripts under its own provider roots; with another CODEX_HOME (or Claude or Grok home)
+    // here, it declines and this process answers from the caller's roots.
+    const answered = await callHubServer({
+        argv: ["hub", ...process.argv.slice(2)],
+        timeoutMs: 2_500,
+        rootsKey: nativeRootsKey(),
+    });
 
     if (answered) {
         await Promise.all([Bun.write(Bun.stdout, answered.stdout), Bun.write(Bun.stderr, answered.stderr)]);

@@ -1,7 +1,7 @@
 import { existsSync, readdirSync } from "node:fs";
 import { homedir } from "node:os";
 import { join } from "node:path";
-import type { AccountProviderAlias } from "@genesiscz/utils/ai/providers/alias-list";
+import { ACCOUNT_PROVIDER_ALIASES, type AccountProviderAlias } from "@genesiscz/utils/ai/providers/alias-list";
 import { env } from "@genesiscz/utils/env";
 import { defaultWorkerHome } from "@genesiscz/utils/grok/worker-paths";
 
@@ -123,6 +123,17 @@ export function nativeSessionRootsForHome(kind: NativeSessionProvider, home: str
     }
 
     return [join(home, "sessions")];
+}
+
+/**
+ * Every provider's home and session roots as this process resolves them (`CLAUDE_CONFIG_DIR`, `CODEX_HOME`,
+ * `GROK_HOME`, the home folder), as one string. A resident process that reads transcripts for a caller (the hub
+ * server) answers it only when both strings are equal: a caller with another root reads other transcripts.
+ */
+export function nativeRootsKey(home = homedir()): string {
+    return ACCOUNT_PROVIDER_ALIASES.map((kind) =>
+        [kind, nativeHome(kind, home), ...nativeSessionRoots(kind, home)].join("\t")
+    ).join("\n");
 }
 
 /** Codex CLI 0.164 compresses its old rollouts to `rollout-….jsonl.zst` (single-frame zstd). */

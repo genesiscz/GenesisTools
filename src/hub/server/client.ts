@@ -20,11 +20,14 @@ export async function callHubServer({
     timeoutMs,
     socketPath = hubServerSocketPath(),
     maxReplyChars = MAX_REPLY_CHARS,
+    rootsKey,
 }: {
     argv: string[];
     timeoutMs: number;
     socketPath?: string;
     maxReplyChars?: number;
+    /** The caller's `nativeRootsKey()`: a server that resolves other provider roots answers null instead. */
+    rootsKey?: string;
 }): Promise<CallResult | null> {
     if (!existsSync(socketPath)) {
         return null;
@@ -53,7 +56,7 @@ export async function callHubServer({
         };
         const timer = setTimeout(() => finish(null, `no answer in ${timeoutMs} ms`), timeoutMs);
         socket.once("connect", () => {
-            socket.write(`${SafeJSON.stringify({ id: 1, op: "call", argv, timeoutMs }, { strict: true })}\n`);
+            socket.write(`${SafeJSON.stringify({ id: 1, op: "call", argv, timeoutMs, rootsKey }, { strict: true })}\n`);
         });
         // Decode across chunks: a multi-byte character split between two chunks must not become U+FFFD.
         socket.setEncoding("utf8");

@@ -6,6 +6,7 @@ import { SafeJSON } from "@genesiscz/utils/json";
 import { logger } from "@genesiscz/utils/logger";
 import { physFootprintBytes } from "@genesiscz/utils/process/footprint";
 import { profiler } from "@genesiscz/utils/profile";
+import { nativeRootsKey } from "@genesiscz/utils/providers/session-paths";
 import { withFileLock } from "@genesiscz/utils/storage/file-lock";
 import { withTraceId } from "@genesiscz/utils/trace";
 import { type Door, DoorUnsupported, doorlessPrefix } from "./doors/types";
@@ -33,6 +34,8 @@ export interface HubServerOptions {
     sourceRoot?: string;
     /** Called once, after the drain, with the reason. The CLI exits the process here. */
     onStopped?: (reason: string) => void;
+    /** This server's provider roots (`nativeRootsKey()` at start by default); a call naming other roots is refused. */
+    rootsKey?: string;
 }
 
 export interface HubServerHandle {
@@ -117,6 +120,7 @@ async function startHubServerOwned(options: HubServerOptions): Promise<HubServer
     let draining: Promise<void> | null = null;
     let idleTimer: ReturnType<typeof setTimeout> | null = null;
 
+    const rootsKey = options.rootsKey ?? nativeRootsKey();
     const callDoors = options.doors.filter((door) => door.kind === "call");
     const streamDoors = options.doors.filter((door) => door.kind === "stream");
     // `noDoor`: the prefix under which nothing has a door, so the client skips the server for it from now on and a
@@ -361,6 +365,13 @@ async function startHubServerOwned(options: HubServerOptions): Promise<HubServer
 
         if (draining) {
             send(connection, { id: request.id, ok: false, code: "draining" });
+            return;
+        }
+
+        // The doors read transcripts under this process's roots; a caller with another CODEX_HOME (or Claude or
+        // Grok home) would get another home's answer, so it does the work itself.
+        if (request.op === "call" && request.rootsKey !== undefined && request.rootsKey !== rootsKey) {
+            send(connection, { id: request.id, ok: false, code: "other-roots" });
             return;
         }
 

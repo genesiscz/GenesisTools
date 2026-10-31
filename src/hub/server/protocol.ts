@@ -5,7 +5,7 @@ import { isTraceId } from "@genesiscz/utils/trace";
  * The hub server's wire format: one JSON object per line, both directions, over a unix socket.
  * The request names the same argv the CLI takes, so the client's fallback is the process.
  *
- *   → {"id":1,"op":"call","argv":["hub","agents","counts",…]}
+ *   → {"id":1,"op":"call","argv":["hub","agents","counts",…],"rootsKey":"…"}
  *   ← {"id":1,"ok":true,"stdout":"…","stderr":"","exit":0,"ms":12,"cpuMs":9}
  *   → {"id":2,"op":"subscribe","argv":["ai","sessions","tail","X","--live","--offset","10"]}
  *   ← {"id":2,"lines":["…"]}            (one message per burst)
@@ -15,10 +15,13 @@ import { isTraceId } from "@genesiscz/utils/trace";
  *   ← {"id":3,"ok":true,"health":{…}}
  *   → {"id":4,"op":"drain"}   (finish calls, end subscriptions with reason "restart", exit)
  *   ← {"id":4,"ok":true}
- *   ← {"id":N,"ok":false,"code":"unsupported"|"bad-request"|"draining"}
+ *   ← {"id":N,"ok":false,"code":"unsupported"|"bad-request"|"draining"|"other-roots"}
+ *
+ * A call's optional `rootsKey` is the caller's `nativeRootsKey()` (its provider homes and session roots); a server
+ * whose own key differs answers `other-roots`, and the caller does the work with its own environment.
  */
 export type HubServerRequest =
-    | { id: number; op: "call"; argv: string[]; timeoutMs?: number; traceId?: string }
+    | { id: number; op: "call"; argv: string[]; timeoutMs?: number; traceId?: string; rootsKey?: string }
     | { id: number; op: "subscribe"; argv: string[]; traceId?: string }
     | { id: number; op: "cancel" }
     | { id: number; op: "health" }
@@ -87,6 +90,7 @@ export function parseRequest(line: string): HubServerRequest | null {
                 argv,
                 timeoutMs: typeof record.timeoutMs === "number" ? record.timeoutMs : undefined,
                 traceId,
+                rootsKey: typeof record.rootsKey === "string" ? record.rootsKey : undefined,
             };
         case "subscribe":
             return argv ? { id, op: "subscribe", argv, traceId } : null;

@@ -3,7 +3,9 @@ import { mkdtempSync, statSync, writeFileSync } from "node:fs";
 import { createConnection, type Socket } from "node:net";
 import { tmpdir } from "node:os";
 import { join } from "node:path";
+import { env } from "@genesiscz/utils/env";
 import { SafeJSON } from "@genesiscz/utils/json";
+import { nativeRootsKey } from "@genesiscz/utils/providers/session-paths";
 import { currentTraceId } from "@genesiscz/utils/trace";
 import { parseArgv } from "./argv";
 import { askHubServer, callHubServer } from "./client";
@@ -709,6 +711,26 @@ describe("callHubServer", () => {
         expect(
             await callHubServer({ argv: ["echo", word], timeoutMs: 5000, socketPath, maxReplyChars: 1000 })
         ).toBeNull();
+    });
+});
+
+describe("provider roots", () => {
+    it("answers a caller with the server's roots and declines one with other roots", async () => {
+        const { socketPath } = await start();
+        const call = (rootsKey?: string) =>
+            callHubServer({ argv: ["echo", "hi"], timeoutMs: 5000, socketPath, rootsKey });
+        let otherKey = "";
+        await env.testing.withOverrides({ CODEX_HOME: "/fixture/other-codex-home" }, () => {
+            otherKey = nativeRootsKey();
+        });
+
+        expect(otherKey).not.toBe(nativeRootsKey());
+        expect(otherKey).toContain("/fixture/other-codex-home/sessions");
+        expect(await call(nativeRootsKey())).toEqual({ stdout: "hi\n", stderr: "", exit: 0 });
+        // A caller with another CODEX_HOME does the work itself, under its own roots.
+        expect(await call(otherKey)).toBeNull();
+        // A caller that names no roots (the app) is answered as before.
+        expect(await call()).toEqual({ stdout: "hi\n", stderr: "", exit: 0 });
     });
 });
 
