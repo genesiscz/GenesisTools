@@ -345,7 +345,7 @@ export async function runCodexSession(
             window: model.info.window,
             // A user-provided --settings may override the launch limit, so its effective value is unknown here.
             ...(!passthrough.some((arg) => arg === "--settings" || arg.startsWith("--settings="))
-                ? { pickerContextTokens: model.info.usableTokens }
+                ? { pickerContextTokens: model.info.window }
                 : {}),
             compactPercent: compact.percent,
             cacheKeyPolicy: "claude-session",
