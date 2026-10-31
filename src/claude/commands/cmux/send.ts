@@ -83,15 +83,27 @@ export async function sendDoor(
 }
 
 /**
- * The CLI face of a pane send: `--json` prints the receipt (`paneSendReceipt`), else one human line and its hints.
- * Every outcome but a typed send sets exit status 1; a dry run sets none, and cmux being unreachable exits at once.
+ * cmux is not reachable: exit 1 at once. The `--json` receipt still goes to stdout (`readPaneReceipt` reads it as a
+ * refusal with its reason, not an unreadable answer), and the output is flushed before the exit.
  */
-function printPaneSend(outcome: PaneSendOutcome, opts: SendOptions): boolean {
-    if (outcome.kind === "unavailable") {
-        out.error(pc.red(`cmux is not reachable: ${outcome.reason}`));
-        process.exit(1);
+async function exitUnreachable(
+    outcome: Extract<PaneSendOutcome, { kind: "unavailable" }>,
+    opts: SendOptions
+): Promise<never> {
+    if (opts.json) {
+        out.result(SafeJSON.stringify(paneSendReceipt(outcome), null, 2));
     }
 
+    out.error(pc.red(`cmux is not reachable: ${outcome.reason}`));
+    await out.flush();
+    process.exit(1);
+}
+
+/**
+ * The CLI face of a pane send: `--json` prints the receipt (`paneSendReceipt`), else one human line and its hints.
+ * Every outcome but a typed send sets exit status 1; a dry run sets none.
+ */
+function printPaneSend(outcome: Exclude<PaneSendOutcome, { kind: "unavailable" }>, opts: SendOptions): boolean {
     if (outcome.kind !== "typed" && outcome.kind !== "dry-run") {
         process.exitCode = 1;
     }
@@ -202,5 +214,11 @@ export async function sendCommand(
     opts: SendOptions,
     deps: SendCommandDeps = {}
 ): Promise<boolean> {
-    return printPaneSend(await sendToSessionPane(query, text, opts, deps), opts);
+    const outcome = await sendToSessionPane(query, text, opts, deps);
+
+    if (outcome.kind === "unavailable") {
+        return exitUnreachable(outcome, opts);
+    }
+
+    return printPaneSend(outcome, opts);
 }

@@ -1,4 +1,4 @@
-import { afterEach, beforeEach, expect, mock, test } from "bun:test";
+import { afterEach, beforeEach, expect, mock, spyOn, test } from "bun:test";
 import type { OpenQuestion } from "@genesiscz/utils/agents/dialogs/types";
 import type { CmuxLivePane, CmuxLiveSnapshot, CmuxLiveSurface } from "@genesiscz/utils/cmux/lib/live-snapshot";
 import type { SessionCmuxRefs } from "@genesiscz/utils/cmux/session-refs";
@@ -151,6 +151,26 @@ test("paste can leave the complete message unsubmitted and never retries an unce
     const dead = { ...deps, lookupRefs: () => recordedRefs({ surfaceId: DEAD_SURFACE_UUID }) };
     await expect(sendCommand(SESSION_A, "a\nb", { paste: true }, dead)).rejects.toThrow("Surface is not a terminal");
     expect(events.filter((event) => event.includes(DEAD_SURFACE_UUID))).toHaveLength(1);
+});
+
+test("cmux being unreachable still prints the --json receipt, flushed, before the exit", async () => {
+    snapshot = { ...snapshot, available: false, error: "socket refused" };
+    const exit = spyOn(process, "exit").mockImplementation((() => {
+        throw new Error("exited");
+    }) as typeof process.exit);
+
+    try {
+        await expect(sendCommand(SESSION_A, "hi", { json: true }, deps)).rejects.toThrow("exited");
+        expect(exit).toHaveBeenCalledWith(1);
+        expect(stdout.join("")).toContain('"unavailable": true');
+        expect(SafeJSON.parse(stdout.join(""))).toMatchObject({
+            sent: false,
+            unavailable: true,
+            reason: "socket refused",
+        });
+    } finally {
+        exit.mockRestore();
+    }
 });
 
 test("an open dialog in the session refuses the send before any keystroke; --force types anyway", async () => {
