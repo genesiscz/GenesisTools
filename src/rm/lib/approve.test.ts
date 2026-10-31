@@ -1,7 +1,7 @@
 import { afterAll, beforeAll, describe, expect, test } from "bun:test";
-import { existsSync, mkdirSync, mkdtempSync, realpathSync, renameSync, writeFileSync } from "node:fs";
+import { chmodSync, existsSync, mkdirSync, mkdtempSync, realpathSync, renameSync, writeFileSync } from "node:fs";
 import { tmpdir } from "node:os";
-import { join } from "node:path";
+import { dirname, join } from "node:path";
 import {
     createRmRequest,
     defaultRmConfig,
@@ -20,6 +20,7 @@ import {
     type RmRequest,
     resolveTarget,
     saveRmConfig,
+    stillAside,
 } from "@genesiscz/utils/rm";
 import { saveApproved } from "../commands/requests";
 import { type ApproveEntry, approveDelete, denyRequest, splitBySelection } from "./approve";
@@ -245,6 +246,64 @@ describe("approve in the window", () => {
             "keep these files",
             "keep these files",
         ]);
+    });
+
+    test("a put-back that fails on I/O keeps its copy pending and guarded instead of throwing", () => {
+        const request = asideRequest("io-fail");
+        const [a, b] = request.targets.map((target) => target.path);
+        if (!a || !b) {
+            throw new Error("expected two targets");
+        }
+        const home = dirname(b);
+        const { approved, denied } = splitBySelection(entriesOf(request), [a]);
+        const choices = { selected: [a], disposal: "trash" as const, remember: "once" as const, note: null };
+        chmodSync(home, 0o555);
+
+        try {
+            const { batch, back } = approveDelete({ ctx: context(), request, approved, denied, choices });
+            expect(back.kept.map((item) => item.path)).toEqual([b]);
+            expect(back.kept[0]?.reason).toContain("the put-back failed");
+            const pending = stillAside(
+                denied.map((entry) => entry.wanted),
+                back
+            );
+            expect(pending.map((target) => target.path)).toEqual([b]);
+            saveApproved({
+                request,
+                answer: { approved: true, via: "touch-id", choices, deniedByPerson: false },
+                approved,
+                denied,
+                pending,
+                batchId: batch?.id,
+                ctx: context(),
+            });
+        } finally {
+            chmodSync(home, 0o755);
+        }
+
+        const saved = loadRmRequest(request.id);
+        expect(saved).toMatchObject({ status: "pending", decided: { approved: [a], denied: [b] } });
+        expect(pendingAsideDirs().some((entry) => entry.requestId === request.id)).toBe(true);
+        if (!saved) {
+            throw new Error("expected a pending request");
+        }
+        expect(denyRequest(saved, { caller: PERSON, via: "cli" }).kept).toEqual([]);
+        expect(existsSync(b)).toBe(true);
+        expect(loadRmRequest(request.id)?.status).toBe("approved");
+    });
+
+    test("a deny whose aside copy is gone closes the request, since nothing is left to guard", () => {
+        const request = asideRequest("copy-gone");
+        const stored = request.targets[0]?.stored;
+        if (!stored) {
+            throw new Error("expected an aside copy");
+        }
+        renameSync(stored, join(base, "copy-gone-elsewhere.txt"));
+
+        expect(denyRequest(request, { caller: PERSON, via: "cli" }).kept.map((item) => item.reason)).toEqual([
+            `the aside copy is gone (${stored})`,
+        ]);
+        expect(loadRmRequest(request.id)?.status).toBe("denied");
     });
 
     test("a permanent delete is due at once", () => {

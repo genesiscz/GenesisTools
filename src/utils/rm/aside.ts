@@ -334,17 +334,26 @@ export function returnAside(
             continue;
         }
 
-        mkdirSync(dirname(target.path), { recursive: true });
-        hooks.beforeMove?.(target.path);
-
         try {
+            mkdirSync(dirname(target.path), { recursive: true });
+            hooks.beforeMove?.(target.path);
             renameNoReplace(target.stored, target.path);
         } catch (error) {
-            if (!DESTINATION_TAKEN.has((error as NodeJS.ErrnoException).code ?? "")) {
-                throw error;
+            const code = (error as NodeJS.ErrnoException).code ?? "";
+
+            if (DESTINATION_TAKEN.has(code)) {
+                result.kept.push(taken);
+                continue;
             }
 
-            result.kept.push(taken);
+            // Any other failure (a folder that cannot be written, another volume) leaves the copy aside, and the
+            // caller keeps the request pending for it, instead of a throw that loses what already went back.
+            const message = error instanceof Error ? error.message : String(error);
+            logger.warn({ path: target.path, stored: target.stored, error }, "rm: put-back failed");
+            result.kept.push({
+                path: target.path,
+                reason: `the put-back failed (${message}); it waits at ${target.stored}`,
+            });
             continue;
         }
 
@@ -371,6 +380,17 @@ export function mayDenyRmRequest(request: RmRequest, caller: RmCaller): boolean 
     );
 }
 
+/**
+ * The aside copies of `targets` that did not go back and still exist: the request must stay pending for them, so
+ * their aside folder stays guarded. A copy that is gone has nothing left to guard.
+ */
+export function stillAside(targets: readonly RmRequestTarget[], back: ReturnResult): RmRequestTarget[] {
+    const returned = new Set(back.returned);
+    return targets.filter(
+        (t) => t.stored !== undefined && !returned.has(t.path) && (existsSync(t.stored) || isLink(t.stored))
+    );
+}
+
 export interface DenyResult extends ReturnResult {
     /** Aside copies that could not go home (the path is taken): the request stays pending for them. */
     waiting: RmRequestTarget[];
@@ -386,10 +406,7 @@ export function denyRmRequest(
     options: { requestsDir?: string; now?: Date; hooks?: ReturnHooks } = {}
 ): DenyResult {
     const back = returnAside(request.targets, caller, request.id, options.hooks);
-    const returned = new Set(back.returned);
-    const waiting = request.targets.filter(
-        (t) => t.stored !== undefined && !returned.has(t.path) && (existsSync(t.stored) || isLink(t.stored))
-    );
+    const waiting = stillAside(request.targets, back);
     const decidedAt = (options.now ?? new Date()).toISOString();
 
     if (waiting.length > 0) {

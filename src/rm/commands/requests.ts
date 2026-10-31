@@ -5,8 +5,6 @@ import {
     appendRmLedger,
     approvalDenyReason,
     createRmRequest,
-    denyRmRequest,
-    finishRmApproval,
     hardDenyReason,
     kickDrainer,
     listRmRequests,
@@ -19,6 +17,7 @@ import {
     rememberOptions,
     resolveTarget,
     saveRmRequest,
+    stillAside,
 } from "@genesiscz/utils/rm";
 import type { Command } from "commander";
 import pc from "picocolors";
@@ -91,7 +90,9 @@ export function saveApproved(input: {
         decidedAt: new Date().toISOString(),
         decidedVia: answer.via,
         decided: {
-            approved: [...new Set([...(request.decided?.approved ?? []), ...approved.map((entry) => entry.wanted.path)])],
+            approved: [
+                ...new Set([...(request.decided?.approved ?? []), ...approved.map((entry) => entry.wanted.path)]),
+            ],
             denied: [...new Set([...(request.decided?.denied ?? []), ...denied.map((entry) => entry.wanted.path)])],
             disposal: request.kind === "delete" ? answer.choices.disposal : undefined,
             remember: request.kind === "delete" ? answer.choices.remember : undefined,
@@ -106,7 +107,9 @@ function exitPendingFor(id: string, pending: readonly RmRequestTarget[]): void {
         return;
     }
 
-    out.println(pc.yellow(`Request ${id} stays pending for ${pending.length} blocked or changed path(s).`));
+    out.println(
+        pc.yellow(`Request ${id} stays pending for ${pending.length} blocked, changed or not put back path(s).`)
+    );
     process.exitCode = 1;
 }
 
@@ -321,8 +324,12 @@ export function registerRequestCommands(program: Command): void {
             });
             const moved = ready.filter((entry) => !pending.includes(entry.wanted));
             // An unticked aside copy that could not go home stays pending, so its aside folder stays guarded.
-            const notBack = (entry: ApproveEntry) => back.kept.some((kept) => kept.path === entry.wanted.path);
-            pending.push(...denied.filter(notBack).map((entry) => entry.wanted));
+            pending.push(
+                ...stillAside(
+                    denied.map((entry) => entry.wanted),
+                    back
+                )
+            );
             saveApproved({ request, answer, approved: moved, denied, pending, batchId: batch?.id, ctx });
             kickDrainer(ctx.config);
             exitPendingFor(id, pending);

@@ -31,6 +31,7 @@ import {
     returnAside,
     saveRmConfig,
     saveRmRequest,
+    stillAside,
     type TrashBatch,
 } from "@genesiscz/utils/rm";
 import pc from "picocolors";
@@ -140,6 +141,7 @@ export function denyRequest(
     options: { caller: RmCaller | null; via: string; note?: string | null }
 ): ReturnResult {
     const back = putBack(request.targets, options.caller, request.id);
+    const waiting = stillAside(request.targets, back);
 
     if (back.kept.length === 0) {
         removeEmptyAsideDir(request.asideDir);
@@ -155,11 +157,8 @@ export function denyRequest(
     saveRmRequest({
         ...request,
         decided: decision,
-        status: back.kept.length > 0 ? "pending" : request.decided?.approved.length ? "approved" : "denied",
-        targets:
-            back.kept.length > 0
-                ? request.targets.filter((target) => back.kept.some((kept) => kept.path === target.path))
-                : request.targets,
+        status: waiting.length > 0 ? "pending" : request.decided?.approved.length ? "approved" : "denied",
+        targets: waiting.length > 0 ? waiting : request.targets,
         decidedAt: retry ? request.decidedAt : new Date().toISOString(),
         decidedVia: retry ? request.decidedVia : options.via,
         deniedNote: note,
