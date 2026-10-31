@@ -28,6 +28,7 @@ import type {
     TurnBoundary,
 } from "../types";
 import { grokCurrentModel } from "./grok-model";
+import { grokSessionTitleOf, grokSummaryOf } from "./grok-title";
 
 const USER_QUERY_RE = /<user_query>\s*([\s\S]*?)\s*<\/user_query>/i;
 
@@ -525,8 +526,8 @@ async function readSummary(
     return {
         nativeId: asText(info.id) || null,
         cwd: asText(info.cwd) || null,
-        title: asText(row.generated_title) || null,
-        summary: asText(row.session_summary) || null,
+        title: grokSessionTitleOf(row),
+        summary: grokSummaryOf(row),
         createdAt: validTimestamp(asText(row.created_at)),
         updatedAt: validTimestamp(asText(row.updated_at)),
         lastActiveAt: validTimestamp(asText(row.last_active_at)),

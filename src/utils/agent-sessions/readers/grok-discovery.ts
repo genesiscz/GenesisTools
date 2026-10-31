@@ -6,6 +6,7 @@ import { SafeJSON } from "@genesiscz/utils/json";
 import { type HistoryDiscoveryOptions, walkSourceRoots } from "../source-discovery";
 import { asRecord, date, type JsonRecord, type JsonValue, text } from "../source-scan";
 import type { AgentSession, NativeSessionSource, NativeSourceIssue, SessionPathRole } from "../types";
+import { grokSessionTitleOf, grokSummaryOf } from "./grok-title";
 
 interface GrokSummaryRead {
     path?: string;
@@ -99,8 +100,8 @@ async function readSummary(options: {
     const info = asRecord(summary.info);
     const nativeId = text(info.id);
     const cwd = text(info.cwd);
-    const title = text(summary.generated_title);
-    const summaryText = text(summary.session_summary);
+    const title = grokSessionTitleOf(summary);
+    const summaryText = grokSummaryOf(summary);
     const updated = date(summary.updated_at ?? summary.created_at);
     const created = date(summary.created_at);
     const sessionKind = text(summary.session_kind);

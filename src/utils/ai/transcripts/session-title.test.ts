@@ -99,14 +99,15 @@ describe("findSessionsByTitle", () => {
         expect(findSessionsByTitle("new name", { provider: "codex", codexIndexPath: index })).toHaveLength(1);
     });
 
-    it("finds a Grok session by its /rename name, which beats the generated summary", () => {
+    it("finds a Grok session by the title the session lists show, renamed or generated, else by its summary", () => {
         expect(
             grokTitleOf({ generated_title: "shop", title_is_manual: true, session_summary: "Shop layout notes" })
         ).toBe("shop");
-        // Not renamed: the generated title is Grok's own guess, the summary stays the name.
+        // Not renamed: the generated title is still the name the lists show (one rule with discovery, 2026-10-31).
         expect(
             grokTitleOf({ generated_title: "guess", title_is_manual: false, session_summary: "Shop layout notes" })
-        ).toBe("Shop layout notes");
+        ).toBe("guess");
+        expect(grokTitleOf({ generated_title: " ", session_summary: "Shop layout notes" })).toBe("Shop layout notes");
         expect(grokTitleOf({})).toBeNull();
     });
 

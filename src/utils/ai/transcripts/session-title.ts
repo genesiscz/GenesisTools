@@ -7,8 +7,8 @@
  * time budget:
  *
  * - Claude: the last `custom-title` record (`/rename`) of each transcript modified within `maxAgeDays`.
- * - Grok:   `summary.json` of each session directory: the `/rename` name (`generated_title` with
- *           `title_is_manual: true`), else the generated `session_summary`.
+ * - Grok:   `summary.json` of each session directory, by the one rule in `readers/grok-title.ts`: the session's
+ *           title (`generated_title`, renamed or generated), else its `session_summary`.
  * - Codex:  `session_index.jsonl` -> `thread_name`, in every home `CODEX_HOME` names (else `~/.codex`).
  */
 

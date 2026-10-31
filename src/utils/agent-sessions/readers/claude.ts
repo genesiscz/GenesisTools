@@ -35,6 +35,7 @@ import type {
 import { claudeCurrentModel } from "./claude-model";
 import { scanClaudeNative } from "./claude-native-scan";
 import { claudeNativeId, claudeProjectDirectory, claudeProjectName, isClaudeSubagentPath } from "./claude-paths";
+import { claudeCustomTitleOfRow } from "./claude-title";
 
 const TOOL_INPUT_FIELD_CAP = 2_000;
 const TOOL_INPUT_TOTAL_CAP = 8_000;
@@ -257,7 +258,7 @@ function claudeRecordContext(row: JsonRecord): Pick<HistorySourceRecord, "timest
               ? "system"
               : undefined;
     const sessionId = asText(row.sessionId);
-    const customTitle = row.type === "custom-title" ? asText(row.customTitle) : "";
+    const customTitle = claudeCustomTitleOfRow(row);
     const summary = autoTitleOf(row);
     const gitBranch = asText(row.gitBranch);
     const cwd = asText(row.cwd);
@@ -297,7 +298,7 @@ function recordEntries(row: JsonRecord, line: number, tools: ToolContext): Nativ
             row.type === "summary" || row.type === "ai-title"
                 ? autoTitleOf(row)
                 : row.type === "custom-title"
-                  ? asText(row.customTitle)
+                  ? claudeCustomTitleOfRow(row)
                   : asText(row.content);
         const entry = historyEntry({
             role: "system",
@@ -515,8 +516,8 @@ function foldClaudeMetadataRow(fold: ClaudeMetadataFold, row: JsonRecord): void 
     if (autoTitleOf(row)) {
         fold.summary = autoTitleOf(row);
     }
-    if (row.type === "custom-title" && asText(row.customTitle)) {
-        fold.customTitle = asText(row.customTitle);
+    if (claudeCustomTitleOfRow(row)) {
+        fold.customTitle = claudeCustomTitleOfRow(row);
     }
     if (!fold.sessionId && asText(row.sessionId)) {
         fold.sessionId = asText(row.sessionId);
