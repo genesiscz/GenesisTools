@@ -798,6 +798,7 @@ test("modelOfRow names nothing, since Grok rows carry no model, and indexesFile 
     expect(grokIndexesFile(`${folder}/chat_history.jsonl`)).toBe(true);
     expect(grokIndexesFile(`${folder}/chatHistory.jsonl`)).toBe(true);
     expect(grokIndexesFile(`${folder}/summary.json`)).toBe(true);
+    expect(grokIndexesFile("C:\\fixture\\chat_history.jsonl")).toBe(true);
     expect(grokIndexesFile(`${folder}/events.jsonl`)).toBe(false);
     expect(grokIndexesFile(`${folder}/updates.jsonl`)).toBe(false);
 });

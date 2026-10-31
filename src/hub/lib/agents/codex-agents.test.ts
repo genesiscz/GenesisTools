@@ -194,6 +194,11 @@ describe("codexAgentModel", () => {
         expect(codexAgentModel(file.filePath)).toBe("gpt-6.1-sol");
     });
 
+    test("reads a complete final model row without a newline", () => {
+        const file = rollout(temp(), CHILD_A, turnContext("gpt-6.1-sol").trimEnd(), 60_000);
+        expect(codexAgentModel(file.filePath)).toBe("gpt-6.1-sol");
+    });
+
     test("is null before the turn_context is written", () => {
         const file = rollout(
             temp(),

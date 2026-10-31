@@ -133,7 +133,7 @@ export function claudeIndexesFile(path: string): boolean {
         return false;
     }
 
-    const name = basename(path);
+    const name = path.split(/[/\\]/).at(-1) ?? "";
     return name !== "sessions-index.jsonl" && !(name === "journal.jsonl" && path.split(/[/\\]/).includes("workflows"));
 }
 

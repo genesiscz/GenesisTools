@@ -139,7 +139,7 @@ const GROK_CHAT_FILES = ["chat_history.jsonl", "chatHistory.jsonl"];
  * session's event, signal and rewind files change constantly and index nothing.
  */
 export function grokIndexesFile(path: string): boolean {
-    const name = basename(path);
+    const name = path.split(/[/\\]/).at(-1) ?? "";
     return GROK_CHAT_FILES.includes(name) || name === "summary.json";
 }
 

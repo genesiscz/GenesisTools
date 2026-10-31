@@ -1374,5 +1374,6 @@ test("modelOfRow names a turn_context row's model, and indexesFile takes rollout
 
     expect(codexIndexesFile("/fixture/sessions/2026/10/10/rollout-2026-10-10T00-00-00-fixture.jsonl")).toBe(true);
     expect(codexIndexesFile("/fixture/sessions/2026/10/10/rollout-2026-10-10T00-00-00-fixture.jsonl.zst")).toBe(true);
+    expect(codexIndexesFile("C:\\fixture\\rollout-example.jsonl")).toBe(true);
     expect(codexIndexesFile("/fixture/sessions/2026/10/10/history.jsonl")).toBe(false);
 });

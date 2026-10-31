@@ -367,7 +367,7 @@ function mergeMetadata(
 
 /** A Codex rollout, plain or compressed (`rollout-….jsonl` or `.jsonl.zst`): the only file Codex discovery reads. */
 export function codexIndexesFile(path: string): boolean {
-    const name = basename(path);
+    const name = path.split(/[/\\]/).at(-1) ?? "";
     return name.startsWith("rollout-") && isNativeTranscript("codex", name);
 }
 

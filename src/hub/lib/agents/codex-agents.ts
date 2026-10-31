@@ -205,8 +205,7 @@ export function codexAgentModel(path: string): string | null {
     }
 
     const { reader } = resolveHistoryProvider("codex");
-    // Only whole rows: the last one may be cut by the read window.
-    const rows = text.slice(0, text.lastIndexOf("\n") + 1).split("\n");
+    const rows = text.split("\n");
 
     for (const row of rows) {
         const model = reader.modelOfRow(row);
