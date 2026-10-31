@@ -842,11 +842,8 @@ final class HubInboxModel: ObservableObject {
             return hint
         }
         noteTexts[item.id] = note
-        if stages {
-            draft(item, in: session, option: nil, text: note)
-        } else {
-            draft(item, in: session, option: nil, text: note) { [weak self] in self?.sendStaged([item.id], in: session) }
-        }
+        draft(item, in: session, option: nil, text: note,
+              then: stages ? nil : { [weak self] in self?.sendStaged([item.id], in: session) })
         return nil
     }
 
