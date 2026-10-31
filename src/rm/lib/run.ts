@@ -150,6 +150,8 @@ export async function executePlan(
 
     result.refused = refused.length;
 
+    // Paths a person kept at the prompt; the run did not do what it was asked, so it does not exit 0.
+    let declined = 0;
     // The request (and its aside move) waits until the allowed paths moved, since one may lie inside an asked folder.
     let requestLater = false;
 
@@ -177,6 +179,8 @@ export async function executePlan(
                 allowed.push(item);
                 confirmedMinutes.set(item, minutes);
             }
+
+            declined = asked.length - confirmed.size;
         } else {
             requestLater = true;
         }
@@ -225,7 +229,7 @@ export async function executePlan(
     }
 
     kickDrainer(ctx.config);
-    process.exitCode = result.refused > 0 ? 1 : result.requestId ? 3 : 0;
+    process.exitCode = result.refused > 0 || declined > 0 ? 1 : result.requestId ? 3 : 0;
 
     if (options.json) {
         out.result({
