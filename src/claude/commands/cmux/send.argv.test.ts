@@ -1,6 +1,6 @@
 import { afterAll, expect, spyOn, test } from "bun:test";
 import { deliverToSession } from "@app/question/lib/decisions/deliver";
-import { livePaneTargets } from "@app/question/lib/decisions/deliver.fixtures";
+import { livePaneTargets, noNativeReceivers } from "@app/question/lib/decisions/deliver.fixtures";
 import { Command } from "commander";
 import { registerCmuxCommand } from "./index";
 import * as sendModule from "./send";
@@ -44,6 +44,7 @@ async function argsDeliverToSessionRuns(text: string): Promise<string[]> {
     await deliverToSession(
         { session: SESSION, provider: "claude-code", text },
         {
+            ...noNativeReceivers,
             findTargets: livePaneTargets,
             runTool: async (args) => {
                 calls.push(args);

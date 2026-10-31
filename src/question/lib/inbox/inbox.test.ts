@@ -14,7 +14,7 @@ import { createElement } from "react";
 import { renderToStaticMarkup } from "react-dom/server";
 import { type InboxCommandDeps, registerInboxCommand } from "../../commands/inbox";
 import { paneMiss } from "../decisions/deliver";
-import { livePaneTargets } from "../decisions/deliver.fixtures";
+import { livePaneTargets, noNativeReceivers } from "../decisions/deliver.fixtures";
 import { RELAYED_ANSWER_HEAD } from "../decisions/delivery-text";
 import { decisionFiles } from "../decisions/paths";
 import { parseDecisionBlocks } from "../decisions/read";
@@ -627,6 +627,7 @@ describe("answerInboxDecision", () => {
                 events,
                 block: async () => block,
                 deliver: {
+                    ...noNativeReceivers,
                     runTool: async (args) => {
                         delivered.push(args);
                         return { success: true, stdout: '{"sent":true}', stderr: "" };
@@ -1138,6 +1139,7 @@ test("answering one inbox card does not deliver an older queued answer", async (
             ...files,
             block: async () => null,
             deliver: {
+                ...noNativeReceivers,
                 findTargets: livePaneTargets,
                 runTool: async (args) => {
                     sent.push(args);

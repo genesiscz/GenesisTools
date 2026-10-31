@@ -1,4 +1,14 @@
 import type { SessionTargetsResult } from "@app/claude/lib/cmux/resolve";
+import type { DeliverDeps } from "./deliver";
+
+/**
+ * No live Claude receiver and no Grok leader. Delivery reads both from the real machine by default (the peer
+ * registry in the Claude home and the leader sockets), so a test that does not script them passes these.
+ */
+export const noNativeReceivers = {
+    claudePeers: () => [],
+    grokLeaderSockets: () => [],
+} satisfies DeliverDeps;
 
 /**
  * Delivery fakes for tests. `deliverToSession` resolves a live target BEFORE it types (R4), so a

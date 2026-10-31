@@ -7,7 +7,7 @@ import { mkdir, mkdtemp, readdir, readFile, unlink, writeFile } from "node:fs/pr
 import { tmpdir } from "node:os";
 import { dirname, join, resolve } from "node:path";
 import { DeliveryUnknownError } from "@app/question/lib/decisions/deliver";
-import { livePaneTargets } from "@app/question/lib/decisions/deliver.fixtures";
+import { livePaneTargets, noNativeReceivers } from "@app/question/lib/decisions/deliver.fixtures";
 import { RELAYED_ANSWER_HEAD } from "@app/question/lib/decisions/delivery-text";
 import { decisionFiles, deliverDecisions } from "@app/question/lib/decisions/read";
 import {
@@ -836,6 +836,7 @@ describe("widget source and delivery contracts", () => {
         const dispatcher = widgetDispatcher({
             files,
             deliver: {
+                ...noNativeReceivers,
                 findTargets: livePaneTargets,
                 runTool: async (args) => {
                     calls.push(args);

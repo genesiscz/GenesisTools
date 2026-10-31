@@ -5,6 +5,7 @@ import { join } from "node:path";
 import { SafeJSON } from "@genesiscz/utils/json";
 import { withFileLock } from "@genesiscz/utils/storage/file-lock";
 import { answerGitWithoutSpawning } from "@genesiscz/utils/test/no-git";
+import { noNativeReceivers } from "../decisions/deliver.fixtures";
 import { RELAYED_ANSWER_HEAD } from "../decisions/delivery-text";
 import { deliverDecisions, parseDecisionBlocks } from "../decisions/read";
 import {
@@ -307,6 +308,7 @@ describe("sendDrafts", () => {
             {
                 ...deps,
                 deliver: {
+                    ...noNativeReceivers,
                     runTool: async (args) => {
                         typed.push(args);
                         return { success: true, stdout: '{"sent":true}', stderr: "" };
@@ -362,6 +364,7 @@ describe("sendDrafts", () => {
                     slept.push(ms);
                 },
                 deliver: {
+                    ...noNativeReceivers,
                     // The pane is not live for the first two polls (claude is booting), then it is.
                     findTargets: async () =>
                         ++polls < 3

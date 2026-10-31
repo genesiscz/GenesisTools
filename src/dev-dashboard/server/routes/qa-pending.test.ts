@@ -5,7 +5,7 @@ import { join } from "node:path";
 import { QA_ANSWER_MAX_CHARS } from "@app/dev-dashboard/lib/qa-clip";
 import type { RouteContext, RouteDef, RouteResult } from "@app/dev-dashboard/server/types";
 import type { DeliverDeps, ToolRun } from "@app/question/lib/decisions/deliver";
-import { livePaneTargets } from "@app/question/lib/decisions/deliver.fixtures";
+import { livePaneTargets, noNativeReceivers } from "@app/question/lib/decisions/deliver.fixtures";
 import { relayedAnswerText } from "@app/question/lib/decisions/delivery-text";
 import { parseDecisionBlocks } from "@app/question/lib/decisions/read";
 import { postDecisions, readDecisions, updateDecisions } from "@app/question/lib/decisions/store";
@@ -353,6 +353,7 @@ describe("qa decision routes", () => {
     let prompts: string[] = [];
     let runResult: ToolRun = { success: true, stdout: '{"sent":true}', stderr: "" };
     const fakeDeliver: DeliverDeps = {
+        ...noNativeReceivers,
         runTool: async (args) => {
             runs.push(args);
             const promptFile = args.includes("--prompt-file") ? args[args.indexOf("--prompt-file") + 1] : undefined;

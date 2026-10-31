@@ -20,7 +20,7 @@ import type { OutboxDispatcher } from "./engine";
 
 /** The transport the widget delivers through: the `tools` runner of the widget's own checkout. */
 export function widgetDeliverDeps(signal?: AbortSignal): DeliverDeps {
-    return { runTool: (args: string[]) => runWidgetDelivery({ args, signal }) };
+    return { runTool: (args, { timeoutMs }) => runWidgetDelivery({ args, signal, timeoutMs }) };
 }
 
 /** The `tools` verb path of the cmux transport (`tools claude cmux send`): a command path, not a harness branch. */
@@ -41,15 +41,19 @@ function workerRun(args: readonly string[]): WorkerCapabilities | undefined {
     return worker.verbs.some((verb) => verb.split(" ")[0] === args[1]) ? worker : undefined;
 }
 
-/** A worker that steers between turns runs a whole native turn before it answers, so its run may take minutes. */
-function runsNativeTurn(args: readonly string[]): boolean {
-    return workerRun(args)?.steering === "between-turns";
-}
-
-async function runWidgetDelivery({ args, signal }: { args: string[]; signal?: AbortSignal }) {
+/** One transport run, bounded by the deadline the delivery route gives it (a worker turn may take minutes). */
+async function runWidgetDelivery({
+    args,
+    signal,
+    timeoutMs,
+}: {
+    args: string[];
+    signal?: AbortSignal;
+    timeoutMs: number;
+}) {
     const result = await boundedCommand({
         command: [process.execPath, resolve(import.meta.dir, "../../../../widget-tools"), ...args],
-        timeoutMs: runsNativeTurn(args) ? 15 * 60_000 : 60_000,
+        timeoutMs,
         signal,
     });
     return widgetDeliveryReceipt({ args, result });
@@ -175,7 +179,7 @@ export function widgetDispatcher({
     files?: { file: string; events: string };
     ask?: AskDeps;
 } = {}): OutboxDispatcher {
-    const deliver = supplied ?? { runTool: (args: string[]) => runWidgetDelivery({ args, signal }) };
+    const deliver = supplied ?? widgetDeliverDeps(signal);
     return {
         async validate(message, assets, text = message.payload.text) {
             const payload = message.payload;

@@ -25,7 +25,7 @@ import {
 import { dialogRefusal } from "@genesiscz/utils/agents/dialogs/guard";
 import type { DialogProvider, OpenDialog } from "@genesiscz/utils/agents/dialogs/types";
 import { type AccountProviderAlias, isAccountProviderAlias } from "@genesiscz/utils/ai/providers/alias-list";
-
+import { harnessWorker } from "@genesiscz/utils/ai/providers/harness-index";
 import {
     type ClaudeLiveSession,
     claudeSessionsDir,
@@ -43,8 +43,9 @@ import { logger } from "@genesiscz/utils/logger";
 import { runsAgent } from "@genesiscz/utils/process/classify";
 import { batchPsInfo } from "@genesiscz/utils/process/ps";
 import { isProcessAlive } from "@genesiscz/utils/process-alive";
-import { isTestProcess } from "@genesiscz/utils/test-process";
 import { workerSourceHome } from "@genesiscz/utils/worker/delivery";
+import type { WorkerMetaStore } from "@genesiscz/utils/worker/meta-store";
+import { z } from "zod";
 import { DeliveryUnknownError, NotDeliveredError } from "./delivery-errors";
 import { deliverySentence } from "./delivery-text";
 
@@ -78,6 +79,14 @@ export interface ToolRun {
     stdout: string;
     stderr: string;
 }
+
+/** Runs `tools <args>` and waits at most `timeoutMs`; the route that runs it knows how long its send may take. */
+export type ToolRunner = (args: string[], options: { timeoutMs: number }) => Promise<ToolRun>;
+
+/** A quick send: the cmux pane, a Codex steer (it acknowledges the input, it does not wait for the turn). */
+const SEND_TIMEOUT_MS = 60_000;
+/** A worker steer resumes a whole turn and waits for it, so it gets a turn's time. */
+const TURN_TIMEOUT_MS = 15 * 60_000;
 
 function liveClaudePeers(session: string, sourceHome?: string): ClaudeLiveSession[] {
     const directory = sourceHome ? join(workerSourceHome(sourceHome), "sessions") : claudeSessionsDir();
@@ -144,11 +153,11 @@ export type DeliveryTarget =
     | { kind: "grok-leader"; label: string; sockets: string[] }
     | { kind: "none"; reason: string };
 
-/** What the cmux pane rung alone resolves to. */
-type PaneTarget = Extract<DeliveryTarget, { kind: "cmux" | "none" }>;
+type NoTarget = Extract<DeliveryTarget, { kind: "none" }>;
+type TargetOf<Kind extends DeliveryTarget["kind"]> = Extract<DeliveryTarget, { kind: Kind }>;
 
 export interface NativeDeliveryWorker {
-    /** A harness whose answer route resumes a session by a worker turn (`ANSWER_ROUTES[provider].workers`). */
+    /** A harness whose answer route resumes a session by a worker turn (`ANSWER_ROUTES[provider].ownedWorkers`). */
     provider: AccountProviderAlias;
     name: string;
     sessionId: string;
@@ -162,95 +171,87 @@ function busy(active?: { ownerPid: number; childPid?: number }): boolean {
     return Boolean(active && (isProcessAlive(active.ownerPid) || (active.childPid && isProcessAlive(active.childPid))));
 }
 
-function claudeNativeWorkers(): NativeDeliveryWorker[] {
-    const provider = "claude" as const;
-    const store = new ClaudeWorkerStore();
+/** The meta fields every owned worker store keeps, which the delivery reads. */
+interface OwnedWorkerMeta {
+    name: string;
+    sessionId: string;
+    turns: number;
+    activeTurn?: { ownerPid: number; childPid?: number };
+}
+
+/** The owned headless workers of one harness, each with whether it can take another turn now. */
+function ownedWorkers<Meta extends OwnedWorkerMeta>({
+    provider,
+    label,
+    store,
+    sourceHome,
+    started,
+}: {
+    provider: AccountProviderAlias;
+    label: string;
+    store: WorkerMetaStore<Meta>;
+    sourceHome: (meta: Meta) => string;
+    /** Whether the worker's original session exists, so a resumed turn continues it rather than starting one. */
+    started: (meta: Meta) => boolean;
+}): NativeDeliveryWorker[] {
     return store.listNames().flatMap((name) => {
         const meta = store.readMeta(name);
         if (!meta) {
             return [];
         }
+
         const running = busy(meta.activeTurn);
         return [
             {
                 provider,
                 name,
                 sessionId: meta.sessionId,
-                sourceHome: claudeWorkerSourceHome(meta),
+                sourceHome: sourceHome(meta),
                 turns: meta.turns,
-                ready: !running && meta.turns > 0,
+                ready: !running && started(meta),
                 reason: running
-                    ? "The Claude worker is busy; the answer remains queued for a later turn."
-                    : "The original Claude worker session has not started.",
+                    ? `The ${label} worker is busy; the answer remains queued for a later turn.`
+                    : `The original ${label} worker session has not started.`,
             },
         ];
     });
 }
 
-function grokNativeWorkers(): NativeDeliveryWorker[] {
-    const provider = "grok" as const;
-    const store = new GrokSessionStore();
-    return store.listNames().flatMap((name) => {
-        const meta = store.readMeta(name);
-        if (!meta) {
-            return [];
-        }
-        const running = busy(meta.activeTurn);
-        const started = meta.sessionStarted ?? (meta.turns > 0 && meta.lastTurn?.ended === true);
-        return [
-            {
-                provider,
-                name,
-                sessionId: meta.sessionId,
-                sourceHome: meta.workerHome,
-                turns: meta.turns,
-                ready: !running && started,
-                reason: running
-                    ? "The Grok worker is busy; the answer remains queued for a later turn."
-                    : "The original Grok worker session has not started.",
-            },
-        ];
-    });
-}
-
-/** The owned headless workers of a harness that resumes a session by a worker turn; none for Codex, which has its own route. */
-function nativeWorkers(provider: AccountProviderAlias): NativeDeliveryWorker[] {
-    return ANSWER_ROUTES[provider].workers?.list() ?? [];
-}
-
-export interface DeliverDeps {
-    /** Runs `tools <args>`; tests replace it with a spy. */
-    runTool?: (args: string[]) => Promise<ToolRun>;
-    queueRoot?: string;
+/**
+ * Everything the delivery reads from or writes to the machine. `LIVE_EDGES` is the real machine; a caller replaces
+ * the edges it scripts (the widget its `tools` transport, a test its fakes), and the rest stay live.
+ */
+interface DeliveryEdges {
+    /** Runs `tools <args>`: the worker steers and the cmux pane send. */
+    runTool: ToolRunner;
     /** The `tools codex` worker name that runs this Codex thread, or null. */
-    codexWorkerFor?: (sessionId: string, sourceHome?: string) => string | null;
-    nativeWorkers?: (provider: AccountProviderAlias) => NativeDeliveryWorker[];
-    claudePeers?: (sourceHome?: string) => ClaudeLiveSession[];
-    sendClaudePeer?: typeof sendClaudePeerMessage;
-    /** The receiving Claude session's permission class; read from its transcript by default. */
-    receiverMode?: (sessionId: string) => Promise<PeerSenderMode | null>;
-    peerToken?: typeof readPeerToken;
-    /** The cmux panes a session runs in; tests pass a fake. */
-    findTargets?: (sessionId: string, opts: { skipRecorded?: boolean }) => Promise<SessionTargetsResult>;
-    /** The panes that exist right now, to check a recorded ref against. */
-    snapshot?: () => Promise<CmuxLiveSnapshot>;
-    /** Is a dialog open in the receiving session? Asked before text is typed into a pane; tests pass a fake. */
-    openDialog?: (input: OpenDialogInput) => Promise<OpenDialog | null> | OpenDialog | null;
-    /** The Grok leader sockets to ask for a session (its record's, then the default); tests pass a fake. */
-    grokLeaderSockets?: (sessionId: string) => string[];
-    /** An ACP client on one leader socket; tests pass a fake leader. */
+    codexWorkerFor: (sessionId: string, sourceHome?: string) => string | null;
+    nativeWorkers: (provider: AccountProviderAlias) => NativeDeliveryWorker[];
+    /** The live Claude receivers of the session in a source home (the default home when none is given). */
+    claudePeers: (sourceHome: string | undefined, sessionId: string) => ClaudeLiveSession[];
+    sendClaudePeer: typeof sendClaudePeerMessage;
+    /** The receiving Claude session's permission class; read from its transcript. */
+    receiverMode: (sessionId: string) => Promise<PeerSenderMode | null>;
+    peerToken: typeof readPeerToken;
+    /** The cmux panes a session runs in. */
+    findTargets: (sessionId: string, opts: { skipRecorded?: boolean }) => Promise<SessionTargetsResult>;
+    /** Is a dialog open in the receiving session? Asked before text is typed into a pane. */
+    openDialog: (input: OpenDialogInput) => Promise<OpenDialog | null> | OpenDialog | null;
+    /** The Grok leader sockets to ask for a session (its record's, then the default). */
+    grokLeaderSockets: (sessionId: string) => string[];
+    /** An ACP client on one leader socket; the leader module's own client when absent. */
     grokLeaderClient?: (socket: string) => GrokLeaderClient;
 }
+
+export type DeliverDeps = Partial<DeliveryEdges> & {
+    /** The durable session queue's root; the shared one when absent. */
+    queueRoot?: string;
+};
 
 export interface OpenDialogInput {
     provider: DialogProvider;
     sessionId: string;
     sourceHome?: string;
-}
-
-/** State signals only (the hook records, then the transcript's turn state), the same guard `cmux send` asks. */
-function defaultOpenDialog(input: OpenDialogInput): Promise<OpenDialog | null> {
-    return sessionOpenDialog({ sessionId: input.sessionId, provider: input.provider });
 }
 
 function codexWorkerFor(sessionId: string, sourceHome?: string): string | null {
@@ -277,12 +278,35 @@ function codexWorkerFor(sessionId: string, sourceHome?: string): string | null {
     return null;
 }
 
-async function runTool(args: string[]): Promise<ToolRun> {
-    // A worker steer resumes a whole turn and waits for it, so it gets a turn's time; every other send is quick.
-    const resumed = Object.values(ANSWER_ROUTES).some(
-        (route) => route.workers?.steer.every((word, index) => args[index] === word) ?? false
-    );
-    return execTool(args, { timeout: resumed ? 15 * 60_000 : 60_000 });
+const LIVE_EDGES: DeliveryEdges = {
+    runTool: (args, { timeoutMs }) => execTool(args, { timeout: timeoutMs }),
+    codexWorkerFor,
+    nativeWorkers: (provider) => ANSWER_ROUTES[provider].ownedWorkers(),
+    claudePeers: (sourceHome, sessionId) => liveClaudePeers(sessionId, sourceHome),
+    sendClaudePeer: sendClaudePeerMessage,
+    receiverMode: sessionSenderMode,
+    peerToken: readPeerToken,
+    findTargets: (sessionId, opts) => findSessionTargets(sessionId, opts),
+    // State signals only (the hook records, then the transcript's turn state), the same guard `cmux send` asks.
+    openDialog: (input) => sessionOpenDialog({ sessionId: input.sessionId, provider: input.provider }),
+    grokLeaderSockets: (sessionId) => leaderSocketsFor(sessionId),
+};
+
+/** The caller's edges over the live ones; an edge given as undefined stays live. */
+function edgesOf(deps: DeliverDeps): DeliveryEdges {
+    return {
+        runTool: deps.runTool ?? LIVE_EDGES.runTool,
+        codexWorkerFor: deps.codexWorkerFor ?? LIVE_EDGES.codexWorkerFor,
+        nativeWorkers: deps.nativeWorkers ?? LIVE_EDGES.nativeWorkers,
+        claudePeers: deps.claudePeers ?? LIVE_EDGES.claudePeers,
+        sendClaudePeer: deps.sendClaudePeer ?? LIVE_EDGES.sendClaudePeer,
+        receiverMode: deps.receiverMode ?? LIVE_EDGES.receiverMode,
+        peerToken: deps.peerToken ?? LIVE_EDGES.peerToken,
+        findTargets: deps.findTargets ?? LIVE_EDGES.findTargets,
+        openDialog: deps.openDialog ?? LIVE_EDGES.openDialog,
+        grokLeaderSockets: deps.grokLeaderSockets ?? LIVE_EDGES.grokLeaderSockets,
+        grokLeaderClient: deps.grokLeaderClient,
+    };
 }
 
 const LABEL_MAX = 40;
@@ -310,7 +334,7 @@ function isLive(target: FocusTarget, snapshot: CmuxLiveSnapshot | undefined): bo
     );
 }
 
-function named(target: FocusTarget, snapshot: CmuxLiveSnapshot | undefined): PaneTarget {
+function named(target: FocusTarget, snapshot: CmuxLiveSnapshot | undefined): TargetOf<"cmux"> {
     const pane = snapshot?.panes.find((candidate) => candidate.id === target.paneId);
     const workspace = snapshot?.workspaces.find(
         (candidate) => candidate.id === (pane?.workspaceId ?? target.workspaceId)
@@ -345,141 +369,492 @@ interface RouteQuery {
     sourceHome?: string;
 }
 
-/** An owned Claude or Grok worker that runs this session, when one does. */
-function ownedWorkerRoute(
-    provider: NativeDeliveryWorker["provider"],
-    { session, sourceHome }: RouteQuery,
-    deps: DeliverDeps
-): DeliveryTarget | undefined {
-    const owned = (deps.nativeWorkers ?? nativeWorkers)(provider).filter(
-        (worker) => worker.provider === provider && worker.sessionId === session
-    );
-    const matching = owned.filter(
-        (worker) => !sourceHome || workerSourceHome(worker.sourceHome) === workerSourceHome(sourceHome)
-    );
-    if (owned.length > 0 && matching.length !== 1) {
-        return {
-            kind: "none",
-            reason:
-                matching.length > 1
-                    ? "Several owned workers match this session; none was picked."
-                    : "The owned worker belongs to another source home; no prompt was sent.",
-        };
-    }
-    const worker = matching[0];
-    if (worker) {
-        return worker.ready
-            ? { kind: "worker", label: `${worker.provider} worker ${worker.name}`, worker }
-            : { kind: "none", reason: worker.reason ?? "The worker is not ready for another turn." };
-    }
-
-    return undefined;
+/** What one route is asked to deliver. */
+interface RouteMessage extends RouteQuery {
+    text: string;
+    /** The session's harness, when the caller knows it: the pane route's dialog guard needs it. */
+    harness?: AccountProviderAlias;
+    /** Type into the pane even while a dialog is open there. The structural routes never need it. */
+    force: boolean;
 }
 
-/** The live Claude session itself, through its peer socket. */
-function claudePeerRoute({ session, sourceHome }: RouteQuery, deps: DeliverDeps): DeliveryTarget | undefined {
-    const peers = deps.claudePeers
-        ? deps.claudePeers(sourceHome)
-        : isTestProcess()
-          ? []
-          : liveClaudePeers(session, sourceHome);
-    const matching = peers.filter((peer) => peer.sessionId === session);
-    if (matching.length > 0) {
-        const picked = pickClaudePeer(matching);
-        if ("reason" in picked) {
-            return { kind: "none", reason: picked.reason };
-        }
+/** What one send through a route came to. Each route reads its own receipt into exactly one of these. */
+type SendOutcome =
+    | { kind: "delivered"; channel: DeliveryChannel; target: string }
+    /** Proven before any input: nothing reached the session. The durable session queue may keep the message. */
+    | { kind: "refused"; reason: string; raw?: string }
+    /** Proven before any input: the route does not hold the session after all, so the next route is tried. */
+    | { kind: "absent"; reason: string }
+    /** Attempted, and no receipt says whether it arrived: never resent automatically (`DeliveryUnknownError`). */
+    | { kind: "unknown"; reason: string }
+    /**
+     * The pane send failed and printed nothing readable. Reported as not delivered, and not saved for a later
+     * replay, since nothing proves it failed before any input.
+     */
+    | { kind: "failed"; reason: string; raw: string };
 
-        const { peer, others } = picked;
-        if (sourceHome && workerSourceHome(dirname(dirname(peer.file))) !== workerSourceHome(sourceHome)) {
-            return { kind: "none", reason: "The native Claude receiver belongs to another source home." };
-        }
-        const label =
-            others > 0
-                ? `the Claude terminal active last (pid ${peer.pid}; ${others} older copy idle)`
-                : "original Claude session";
-        return { kind: "claude-peer", label, peer };
+/** A route that holds the session: the place it found, and the send bound to it. */
+interface RouteHit {
+    target: Exclude<DeliveryTarget, NoTarget>;
+    send(message: RouteMessage): Promise<SendOutcome>;
+}
+
+/**
+ * One way a harness's answers travel. `find` answers whether the route holds the session: undefined passes to the
+ * next route, a `none` target stops the ladder (the route holds the session but cannot take the answer now), and a
+ * hit carries the send that reads the route's own receipt.
+ */
+interface AnswerRoute {
+    find(query: RouteQuery, edges: DeliveryEdges): Promise<RouteHit | NoTarget | undefined>;
+}
+
+function isHit(found: RouteHit | NoTarget): found is RouteHit {
+    return "send" in found;
+}
+
+/** The `tools` verb that steers a harness's worker, read from its driver's worker verbs (`steer`, `worker steer`). */
+function steerCommand(harness: AccountProviderAlias): string[] {
+    const verb = harnessWorker(harness).verbs.find((entry) => entry.split(" ").at(-1) === "steer");
+
+    if (!verb) {
+        throw new Error(`The ${harness} worker lists no steer verb.`);
     }
 
-    return undefined;
+    // A harness's `tools` command is named after it (`tools claude worker steer`, `tools codex steer`).
+    return [harness, ...verb.split(" ")];
+}
+
+/** Writes the text to a private prompt file for one run, and removes it after the run, whatever it returned. */
+async function withPromptFile<T>(text: string, run: (promptFile: string) => Promise<T>): Promise<T> {
+    const directory = mkdtempSync(join(tmpdir(), "worker-delivery-"));
+    try {
+        const promptFile = join(directory, "prompt.txt");
+        writeFileSync(promptFile, text, { mode: 0o600 });
+        return await run(promptFile);
+    } finally {
+        rmSync(directory, { recursive: true, force: true });
+    }
+}
+
+/**
+ * The `--json` receipt of a worker steer, any harness. A refusal is `kind: "rejected"` with the worker's backend,
+ * name and error. A Claude or Grok steer answers with its completed turn; a Codex steer with its input acknowledgement
+ * (`queued: false` and the provider's `turnId`) or its daemon queue (`queued: true`).
+ */
+const steerReceiptSchema = z.looseObject({
+    kind: z.string().optional(),
+    backend: z.string().optional(),
+    name: z.string().optional(),
+    error: z.string().optional(),
+    completed: z.boolean().optional(),
+    exitCode: z.number().optional(),
+    sessionId: z.string().optional(),
+    sourceHome: z.string().optional(),
+    turn: z.number().optional(),
+    queued: z.boolean().optional(),
+    turnId: z.string().optional(),
+});
+
+type SteerReceipt = z.infer<typeof steerReceiptSchema>;
+
+/** The steer receipt, `invalid` for JSON that is no receipt object, or `unreadable` for output that is no JSON. */
+function readSteerReceipt(stdout: string): SteerReceipt | "invalid" | "unreadable" {
+    let raw: unknown;
+    try {
+        raw = SafeJSON.parse(stdout, { strict: true });
+    } catch (error) {
+        log.warn({ error, stdout: stdout.slice(0, 200) }, "a worker steer printed no JSON receipt");
+        return "unreadable";
+    }
+
+    const parsed = steerReceiptSchema.safeParse(raw);
+    return parsed.success ? parsed.data : "invalid";
+}
+
+/** The refusal a steer receipt names for this exact worker, or undefined when it names none. */
+function steerRefusal(receipt: SteerReceipt, worker: { backend: string; name: string }): SendOutcome | undefined {
+    return receipt.kind === "rejected" &&
+        receipt.backend === worker.backend &&
+        receipt.name === worker.name &&
+        receipt.error !== undefined
+        ? { kind: "refused", reason: receipt.error }
+        : undefined;
+}
+
+/**
+ * An owned Claude or Grok worker that runs this session, when one does. Its steer resumes the session by one turn,
+ * and only a completed same-session, same-home, next-turn receipt counts as delivered.
+ */
+function ownedWorkerRoute(provider: AccountProviderAlias): AnswerRoute {
+    return {
+        async find({ session, sourceHome }, edges) {
+            const owned = edges
+                .nativeWorkers(provider)
+                .filter((worker) => worker.provider === provider && worker.sessionId === session);
+            const matching = owned.filter(
+                (worker) => !sourceHome || workerSourceHome(worker.sourceHome) === workerSourceHome(sourceHome)
+            );
+            if (owned.length > 0 && matching.length !== 1) {
+                return {
+                    kind: "none",
+                    reason:
+                        matching.length > 1
+                            ? "Several owned workers match this session; none was picked."
+                            : "The owned worker belongs to another source home; no prompt was sent.",
+                };
+            }
+
+            const worker = matching[0];
+            if (!worker) {
+                return undefined;
+            }
+
+            if (!worker.ready) {
+                return { kind: "none", reason: worker.reason ?? "The worker is not ready for another turn." };
+            }
+
+            const target: TargetOf<"worker"> = {
+                kind: "worker",
+                label: `${worker.provider} worker ${worker.name}`,
+                worker,
+            };
+            return { target, send: (message) => steerOwnedWorker(target, message, edges) };
+        },
+    };
+}
+
+async function steerOwnedWorker(
+    target: TargetOf<"worker">,
+    { session, text }: RouteMessage,
+    edges: DeliveryEdges
+): Promise<SendOutcome> {
+    const { worker } = target;
+    const result = await withPromptFile(text, (promptFile) =>
+        edges.runTool(
+            [
+                ...steerCommand(worker.provider),
+                "--name",
+                worker.name,
+                "--prompt-file",
+                promptFile,
+                "--json",
+                "--expect-session",
+                worker.sessionId,
+                "--expect-home",
+                worker.sourceHome,
+                "--expect-turn",
+                String(worker.turns),
+            ],
+            { timeoutMs: TURN_TIMEOUT_MS }
+        )
+    );
+    const receipt = readSteerReceipt(result.stdout);
+
+    if (receipt === "unreadable") {
+        return {
+            kind: "unknown",
+            reason: "The resumed worker returned no readable receipt. Check its conversation before retrying.",
+        };
+    }
+
+    if (receipt === "invalid") {
+        return {
+            kind: "unknown",
+            reason: "The resumed worker returned an invalid receipt. Check its conversation before retrying.",
+        };
+    }
+
+    const refusal = steerRefusal(receipt, { backend: worker.provider, name: worker.name });
+    if (refusal) {
+        return refusal;
+    }
+
+    if (
+        result.success &&
+        receipt.backend === worker.provider &&
+        receipt.name === worker.name &&
+        receipt.kind === "turn" &&
+        receipt.completed === true &&
+        receipt.exitCode === 0 &&
+        receipt.sessionId === worker.sessionId &&
+        receipt.sourceHome !== undefined &&
+        workerSourceHome(receipt.sourceHome) === workerSourceHome(worker.sourceHome) &&
+        receipt.turn === worker.turns + 1
+    ) {
+        log.info(
+            { session, provider: worker.provider, worker: worker.name, turn: receipt.turn },
+            "Answer acknowledged by completed same-session worker turn"
+        );
+        return { kind: "delivered", channel: "resume", target: `${target.label} · resumed turn ${receipt.turn}` };
+    }
+
+    return {
+        kind: "unknown",
+        reason: "The resumed worker did not acknowledge this exact session and turn. Check its conversation before retrying.",
+    };
+}
+
+/** The one live Claude receiver that claims the session in the source home, the reason none does, or undefined. */
+function claimingPeer(
+    { session, sourceHome }: RouteQuery,
+    edges: DeliveryEdges
+): { peer: ClaudeLiveSession; others: number } | NoTarget | undefined {
+    const matching = edges.claudePeers(sourceHome, session).filter((peer) => peer.sessionId === session);
+    if (matching.length === 0) {
+        return undefined;
+    }
+
+    const picked = pickClaudePeer(matching);
+    if ("reason" in picked) {
+        return { kind: "none", reason: picked.reason };
+    }
+
+    if (sourceHome && workerSourceHome(dirname(dirname(picked.peer.file))) !== workerSourceHome(sourceHome)) {
+        return { kind: "none", reason: "The native Claude receiver belongs to another source home." };
+    }
+
+    return picked;
+}
+
+/** The live Claude session itself, through its peer socket. A dialog cannot swallow a socket message. */
+const claudePeerRoute: AnswerRoute = {
+    async find(query, edges) {
+        const claimed = claimingPeer(query, edges);
+        if (!claimed || "kind" in claimed) {
+            return claimed;
+        }
+
+        const { peer, others } = claimed;
+        const target: TargetOf<"claude-peer"> = {
+            kind: "claude-peer",
+            label:
+                others > 0
+                    ? `the Claude terminal active last (pid ${peer.pid}; ${others} older copy idle)`
+                    : "original Claude session",
+            peer,
+        };
+        return { target, send: (message) => sendToClaudePeer(target, message, edges) };
+    },
+};
+
+async function sendToClaudePeer(
+    target: TargetOf<"claude-peer">,
+    message: RouteMessage,
+    edges: DeliveryEdges
+): Promise<SendOutcome> {
+    const { session, text } = message;
+    // The same lookup again, right before the write: a receiver that changed since `find` gets nothing.
+    const again = claimingPeer(message, edges);
+    if (
+        !again ||
+        "kind" in again ||
+        again.peer.pid !== target.peer.pid ||
+        again.peer.socketPath !== target.peer.socketPath ||
+        again.peer.file !== target.peer.file
+    ) {
+        return {
+            kind: "refused",
+            reason: "The native Claude receiver changed before delivery; no message was written.",
+        };
+    }
+
+    // A receiver in bypass holds a plain frame for approval, so the answer goes out with a stand-in sender of
+    // the same class, as `tools claude message` attests one (DECISION 25 a)). Any other receiver gets the plain
+    // frame, as before.
+    const receiverMode = await edges.receiverMode(session);
+    const sender = receiverMode === "bypass" ? standInSender("bypass") : null;
+    try {
+        await edges.sendClaudePeer({
+            session: target.peer,
+            text,
+            token: edges.peerToken(target.peer, dirname(target.peer.file)),
+            priority: "next",
+            sender,
+            timeoutMs: 5_000,
+        });
+    } catch (error) {
+        log.warn({ session, pid: target.peer.pid, error }, "native Claude peer delivery has an unknown outcome");
+        return {
+            kind: "unknown",
+            reason: "The native Claude message may have been received. Inspect the conversation before retrying.",
+        };
+    }
+
+    log.info(
+        { session, pid: target.peer.pid, receiverMode, attested: sender !== null },
+        "native Claude peer message flushed"
+    );
+    // This confirms a complete transport write, not an agent-processing acknowledgement.
+    // DECISION remains sent until the receiving agent records acknowledged/implemented.
+    return { kind: "delivered", channel: "claude-peer", target: target.label };
 }
 
 /**
  * The Grok leader the session may run in (`tools cmux agents new grok` records its socket; the default socket is
  * asked too). Only a socket file that exists counts, so a session with no leader falls through to cmux at once.
+ * A leader that does not hold the session is `absent`, and the guarded pane is the next rung.
  */
-function grokLeaderRoute({ session }: RouteQuery, deps: DeliverDeps): DeliveryTarget | undefined {
-    const sockets = deps.grokLeaderSockets
-        ? deps.grokLeaderSockets(session)
-        : isTestProcess()
-          ? []
-          : leaderSocketsFor(session);
-    return sockets.length > 0 ? { kind: "grok-leader", label: "Grok leader", sockets } : undefined;
-}
+const grokLeaderRoute: AnswerRoute = {
+    async find({ session }, edges) {
+        const sockets = edges.grokLeaderSockets(session);
+        if (sockets.length === 0) {
+            return undefined;
+        }
 
-/** How the answers of one harness's sessions travel before the cmux pane. */
-interface AnswerRoute {
-    /** The structured routes, tried before the cmux pane; undefined falls through to cmux. */
-    structured(query: RouteQuery, deps: DeliverDeps): Promise<DeliveryTarget | undefined>;
-    /**
-     * The owned headless workers that resume a session by a worker turn, and the `tools` verb that steers one with the
-     * exact session and turn it expects; null for a harness whose worker has a route of its own.
-     */
-    workers: { list(): NativeDeliveryWorker[]; steer: readonly string[] } | null;
-}
+        const target: TargetOf<"grok-leader"> = { kind: "grok-leader", label: "Grok leader", sockets };
+        return {
+            target,
+            async send({ text }) {
+                const sent = await sendToGrokLeader(
+                    { sessionId: session, text },
+                    { sockets: () => sockets, ...(edges.grokLeaderClient ? { client: edges.grokLeaderClient } : {}) }
+                );
 
-/**
- * Each harness's answer route: the drivers' tool-owned `answer` part (each driver names this module), the one table
- * keyed by harness in the delivery code. Codex only through its `tools codex` worker (it is never typed into);
- * Claude through an owned worker, then its own peer socket; Grok through an owned worker, then the leader its TUI
- * runs in.
- */
-const ANSWER_ROUTES: { readonly [Id in AccountProviderAlias]: AnswerRoute } = {
-    codex: {
-        structured: async ({ session, sourceHome }, deps) => {
-            const worker = (deps.codexWorkerFor ?? codexWorkerFor)(session, sourceHome);
-            return worker
-                ? { kind: "codex", label: `codex worker ${worker}`, worker }
-                : { kind: "none", reason: `no live ${toolCommand("codex")} worker runs this thread` };
-        },
-        // `tools codex steer` is the Codex route itself, with its own receipt.
-        workers: null,
-    },
-    claude: {
-        structured: async (query, deps) => ownedWorkerRoute("claude", query, deps) ?? claudePeerRoute(query, deps),
-        workers: { list: claudeNativeWorkers, steer: ["claude", "worker", "steer"] },
-    },
-    grok: {
-        structured: async (query, deps) => ownedWorkerRoute("grok", query, deps) ?? grokLeaderRoute(query, deps),
-        workers: { list: grokNativeWorkers, steer: ["grok", "steer"] },
+                if (sent.kind === "delivered") {
+                    // The leader queued the prompt in this exact session; the turn runs there and the TUI renders it.
+                    return {
+                        kind: "delivered",
+                        channel: "grok-leader",
+                        target: `Grok leader · session ${sent.sessionId}${sent.promptId ? ` · prompt ${sent.promptId}` : ""}`,
+                    };
+                }
+
+                if (sent.kind === "unknown") {
+                    return {
+                        kind: "unknown",
+                        reason: "The Grok leader may have queued the answer without acknowledging it. Check the conversation before retrying.",
+                    };
+                }
+
+                return { kind: "absent", reason: sent.reason };
+            },
+        };
     },
 };
 
-/**
- * The live place a session's answers can go, decided BEFORE anything is typed. A recorded pane
- * ref is checked against the panes that exist now: the ref outlives a closed workspace, and typing
- * into it failed with a JSON dump. Several weak matches are `none`, since typing into the wrong
- * agent is worse than not typing.
- */
-export async function resolveDeliveryTarget(
-    { session, provider, sourceHome }: { session: string; provider?: string; sourceHome?: string },
-    deps: DeliverDeps = {}
-): Promise<DeliveryTarget> {
-    const harness = nativeHarness(provider);
-    const structured = harness ? await ANSWER_ROUTES[harness].structured({ session, sourceHome }, deps) : undefined;
+/** The backend a `tools codex steer` receipt names: the Codex route's own worker. */
+const CODEX_WORKER_BACKEND: AccountProviderAlias = "codex";
 
-    if (structured) {
-        return structured;
+/**
+ * A `tools codex` worker that runs the thread, the only Codex route (a Codex session is never typed into). Only a
+ * provider input acknowledgement counts as delivered.
+ */
+const codexWorkerRoute: AnswerRoute = {
+    async find({ session, sourceHome }, edges) {
+        const worker = edges.codexWorkerFor(session, sourceHome);
+        if (!worker) {
+            return { kind: "none", reason: `no live ${toolCommand("codex")} worker runs this thread` };
+        }
+
+        const target: TargetOf<"codex"> = { kind: "codex", label: `codex worker ${worker}`, worker };
+        return { target, send: (message) => steerCodexWorker(target, message, edges) };
+    },
+};
+
+async function steerCodexWorker(
+    target: TargetOf<"codex">,
+    { session, sourceHome, text }: RouteMessage,
+    edges: DeliveryEdges
+): Promise<SendOutcome> {
+    const steered = await withPromptFile(text, (promptFile) =>
+        edges.runTool(
+            [
+                ...steerCommand(CODEX_WORKER_BACKEND),
+                "--name",
+                target.worker,
+                "--json",
+                "--prompt-file",
+                promptFile,
+                ...(sourceHome ? ["--expect-session", session, "--expect-home", sourceHome] : []),
+            ],
+            { timeoutMs: SEND_TIMEOUT_MS }
+        )
+    );
+    log.info({ session, worker: target.worker, ok: steered.success }, "decision answers steered into codex");
+    const receipt = readSteerReceipt(steered.stdout);
+
+    if (receipt === "unreadable") {
+        return {
+            kind: "unknown",
+            reason: "Codex returned no input acknowledgement. Check the conversation before retrying.",
+        };
     }
 
-    return resolvePaneTarget(session, deps);
+    const refusal =
+        receipt === "invalid"
+            ? undefined
+            : steerRefusal(receipt, { backend: CODEX_WORKER_BACKEND, name: target.worker });
+    if (refusal) {
+        return refusal;
+    }
+
+    if (steered.success && receipt !== "invalid" && receipt.queued === false && receipt.turnId) {
+        // `steerCodexMessage` reports this receipt as `delivered: false`, because there `delivered` means
+        // consumer-acknowledged (run.test.ts). For a Decision answer an acknowledged provider turn is enough to mark
+        // the batch sent, so it maps to delivered here.
+        return {
+            kind: "delivered",
+            channel: "codex",
+            target: `${target.label} · input acknowledged (turn ${receipt.turnId})`,
+        };
+    }
+
+    if (steered.success && receipt !== "invalid" && receipt.queued === true) {
+        return {
+            kind: "unknown",
+            reason: "Codex accepted the message into its daemon queue, but has not acknowledged a provider turn. Do not resend before checking the conversation.",
+        };
+    }
+
+    return {
+        kind: "unknown",
+        reason: "Codex did not return a valid input acknowledgement. Check the conversation before retrying.",
+    };
 }
 
+/** How one harness's answers travel before the cmux pane. */
+interface HarnessAnswer {
+    /** The routes, tried in order; the cmux pane comes after them. */
+    routes: readonly AnswerRoute[];
+    /** The owned headless workers that resume a session by a worker turn (the `ownedWorkerRoute` reads them). */
+    ownedWorkers(): NativeDeliveryWorker[];
+}
+
+/**
+ * Each harness's answer routes: the drivers' tool-owned `answer` part (each driver names this module), the one table
+ * keyed by harness in the delivery code. Codex only through its `tools codex` worker (it is never typed into, so its
+ * route answers `none` rather than passing on, and it lists no owned workers: that worker is the route); Claude
+ * through an owned worker, then its own peer socket; Grok through an owned worker, then the leader its TUI runs in.
+ */
+const ANSWER_ROUTES: { readonly [Id in AccountProviderAlias]: HarnessAnswer } = {
+    claude: {
+        routes: [ownedWorkerRoute("claude"), claudePeerRoute],
+        ownedWorkers: () =>
+            ownedWorkers({
+                provider: "claude",
+                label: "Claude",
+                store: new ClaudeWorkerStore(),
+                sourceHome: claudeWorkerSourceHome,
+                started: (meta) => meta.turns > 0,
+            }),
+    },
+    codex: { routes: [codexWorkerRoute], ownedWorkers: () => [] },
+    grok: {
+        routes: [ownedWorkerRoute("grok"), grokLeaderRoute],
+        ownedWorkers: () =>
+            ownedWorkers({
+                provider: "grok",
+                label: "Grok",
+                store: new GrokSessionStore(),
+                sourceHome: (meta) => meta.workerHome,
+                started: (meta) => meta.sessionStarted ?? (meta.turns > 0 && meta.lastTurn?.ended === true),
+            }),
+    },
+};
+
 /** The cmux pane rung alone: the one pane that demonstrably runs this session, checked against the live tree. */
-async function resolvePaneTarget(session: string, deps: DeliverDeps): Promise<PaneTarget> {
-    const find = deps.findTargets ?? ((id, opts) => findSessionTargets(id, opts));
-    const snapshotOf = deps.snapshot ?? (() => fetchCmuxLiveSnapshot({ previews: "none", allWindows: true }));
-    let result = await find(session, {});
+async function findPane(session: string, edges: DeliveryEdges): Promise<TargetOf<"cmux"> | NoTarget> {
+    let result = await edges.findTargets(session, {});
 
     if (result.unavailable) {
         return { kind: "none", reason: "cmux is not running" };
@@ -489,11 +864,11 @@ async function resolvePaneTarget(session: string, deps: DeliverDeps): Promise<Pa
     let stale = false;
 
     if (result.targets.length > 0 && result.source === "recorded") {
-        snapshot = snapshot ?? (await snapshotOf());
+        snapshot = snapshot ?? (await fetchCmuxLiveSnapshot({ previews: "none", allWindows: true }));
 
         if (!result.targets.some((target) => isLive(target, snapshot))) {
             stale = true;
-            result = await find(session, { skipRecorded: true });
+            result = await edges.findTargets(session, { skipRecorded: true });
             snapshot = result.snapshot ?? snapshot;
         }
     }
@@ -526,19 +901,95 @@ async function resolvePaneTarget(session: string, deps: DeliverDeps): Promise<Pa
     return named(target, snapshot);
 }
 
-/** Agent replies use one bracketed paste, preserving JSON, paths and paragraph boundaries. */
-export function paneText(text: string): string {
-    return text;
+/**
+ * The last rung: free text typed into the session's cmux pane as one bracketed paste (JSON, paths and paragraph
+ * boundaries survive). It is the only rung a dialog can swallow, so it asks the dialog guard first.
+ */
+const paneRoute = {
+    async find({ session }: RouteQuery, edges: DeliveryEdges): Promise<RouteHit | NoTarget> {
+        const target = await findPane(session, edges);
+        return target.kind === "none" ? target : { target, send: (message) => typeIntoPane(target, message, edges) };
+    },
+};
+
+async function typeIntoPane(
+    target: TargetOf<"cmux">,
+    { session, sourceHome, text, harness, force }: RouteMessage,
+    edges: DeliveryEdges
+): Promise<SendOutcome> {
+    if (!force && harness) {
+        const dialog = await edges.openDialog({ provider: harness, sessionId: session, sourceHome });
+
+        if (dialog) {
+            log.warn({ session, provider: harness, dialog }, "a dialog is open in the session; the text is not typed");
+            return { kind: "refused", reason: dialogRefusal(dialog) };
+        }
+    }
+
+    // After `--`: a message that starts with a hyphen is text, not an option. Without force the send asks the same
+    // dialog guard again right before it types, so a dialog that opened since the check above still stops it.
+    const sent = await edges.runTool(
+        [
+            "claude",
+            "cmux",
+            "send",
+            "--json",
+            "--paste",
+            "--exact-session",
+            ...(force ? ["--force"] : []),
+            "--",
+            session,
+            text,
+        ],
+        { timeoutMs: SEND_TIMEOUT_MS }
+    );
+    const outcome = parseSent(sent.stdout);
+    log.info(
+        { session, provider: harness, ok: sent.success, sent: outcome, stderr: sent.stderr.slice(0, 400) },
+        "decision answers typed into the cmux pane"
+    );
+
+    if (sent.success && outcome.sent) {
+        return { kind: "delivered", channel: "cmux", target: outcome.pane ?? target.label };
+    }
+
+    // A readable `sent: false` is a refusal before any input, so the durable session queue may take it.
+    // Unreadable output leaves the outcome unknown, and that stays a plain queued result.
+    const reason = paneMiss(sent.stdout, sent.stderr);
+    return outcome.readable && !outcome.sent
+        ? { kind: "refused", reason, raw: sent.stderr.trim() }
+        : { kind: "failed", reason, raw: sent.stderr.trim() };
 }
 
-/** The backend a `tools codex steer` receipt names: the Codex route's own worker. */
-const CODEX_WORKER_BACKEND: AccountProviderAlias = "codex";
+/**
+ * The live place a session's answers can go, decided BEFORE anything is typed. A recorded pane
+ * ref is checked against the panes that exist now: the ref outlives a closed workspace, and typing
+ * into it failed with a JSON dump. Several weak matches are `none`, since typing into the wrong
+ * agent is worse than not typing.
+ */
+export async function resolveDeliveryTarget(
+    { session, provider, sourceHome }: { session: string; provider?: string; sourceHome?: string },
+    deps: DeliverDeps = {}
+): Promise<DeliveryTarget> {
+    const edges = edgesOf(deps);
+    const harness = nativeHarness(provider);
+
+    for (const route of harness ? ANSWER_ROUTES[harness].routes : []) {
+        const found = await route.find({ session, sourceHome }, edges);
+        if (found) {
+            return isHit(found) ? found.target : found;
+        }
+    }
+
+    const pane = await paneRoute.find({ session }, edges);
+    return isHit(pane) ? pane.target : pane;
+}
 
 /**
- * Resolve an exact owned worker before the optional cmux route. Claude/Grok receipts require a
- * completed same-session turn; Codex requires a provider input acknowledgement. With a source
- * home and stable delivery key, a proven pre-input refusal persists a portable queue entry.
- * An attempted transport with no valid acknowledgement is unknown and must not be resent.
+ * Tries the session's harness routes in order, then the cmux pane, then the durable session queue. Claude/Grok
+ * receipts require a completed same-session turn; Codex requires a provider input acknowledgement. With a source
+ * home and stable delivery key, a proven pre-input refusal persists a portable queue entry. An attempted transport
+ * with no valid acknowledgement is unknown and must not be resent.
  */
 export async function deliverToSession(
     {
@@ -559,7 +1010,7 @@ export async function deliverToSession(
     },
     deps: DeliverDeps = {}
 ): Promise<DeliveryResult> {
-    const run = deps.runTool ?? runTool;
+    const edges = edgesOf(deps);
     const harness = nativeHarness(provider);
     const queueTarget: { provider: AccountProviderAlias; sessionId: string; sourceHome: string } | undefined =
         deliveryKey && sourceHome && harness ? { provider: harness, sessionId: session, sourceHome } : undefined;
@@ -608,272 +1059,45 @@ export async function deliverToSession(
         return undelivered("An earlier attempt already saved this message for this exact session.");
     }
 
-    const resolved = await resolveDeliveryTarget({ session, provider, sourceHome }, deps);
+    const message: RouteMessage = { session, sourceHome, text, harness, force };
 
-    if (resolved.kind === "grok-leader") {
-        const sockets = resolved.sockets;
-        const sent = await sendToGrokLeader(
-            { sessionId: session, text },
-            { sockets: () => sockets, ...(deps.grokLeaderClient ? { client: deps.grokLeaderClient } : {}) }
-        );
-
-        if (sent.kind === "delivered") {
-            // The leader queued the prompt in this exact session; the turn runs there and the TUI renders it.
-            return {
-                channel: "grok-leader",
-                delivered: true,
-                target: `Grok leader · session ${sent.sessionId}${sent.promptId ? ` · prompt ${sent.promptId}` : ""}`,
-            };
+    for (const route of [...(harness ? ANSWER_ROUTES[harness].routes : []), paneRoute]) {
+        const found = await route.find(message, edges);
+        if (!found) {
+            continue;
         }
 
-        if (sent.kind === "unknown") {
-            throw new DeliveryUnknownError(
-                "The Grok leader may have queued the answer without acknowledging it. Check the conversation before retrying."
-            );
+        if (!isHit(found)) {
+            log.info({ session, provider, reason: found.reason }, "no live target; the answers stay queued");
+            return undelivered(found.reason);
         }
 
-        log.info({ session, reason: sent.reason }, "no Grok leader took the answer; trying the cmux pane");
-    }
-
-    // No leader took a Grok answer: the guarded pane is the next rung.
-    const target = resolved.kind === "grok-leader" ? await resolvePaneTarget(session, deps) : resolved;
-
-    if (target.kind === "none") {
-        log.info({ session, provider, reason: target.reason }, "no live target; the answers stay queued");
-        return undelivered(target.reason);
-    }
-
-    if (target.kind === "claude-peer") {
-        const current = deps.claudePeers
-            ? deps.claudePeers(sourceHome).filter((peer) => peer.sessionId === session)
-            : liveClaudePeers(session, sourceHome);
-        const again = pickClaudePeer(current);
-        if (
-            "reason" in again ||
-            again.peer.pid !== target.peer.pid ||
-            again.peer.socketPath !== target.peer.socketPath ||
-            again.peer.file !== target.peer.file
-        ) {
-            return undelivered("The native Claude receiver changed before delivery; no message was written.");
-        }
-        const directory = dirname(target.peer.file);
-        // A receiver in bypass holds a plain frame for approval, so the answer goes out with a stand-in sender of
-        // the same class, as `tools claude message` attests one (DECISION 25 a)). Any other receiver gets the plain
-        // frame, as before.
-        const receiverMode = await (deps.receiverMode ?? sessionSenderMode)(session);
-        const sender = receiverMode === "bypass" ? standInSender("bypass") : null;
-        try {
-            await (deps.sendClaudePeer ?? sendClaudePeerMessage)({
-                session: target.peer,
-                text,
-                token: (deps.peerToken ?? readPeerToken)(target.peer, directory),
-                priority: "next",
-                sender,
-                timeoutMs: 5_000,
-            });
-        } catch (error) {
-            log.warn({ session, pid: target.peer.pid, error }, "native Claude peer delivery has an unknown outcome");
-            throw new DeliveryUnknownError(
-                "The native Claude message may have been received. Inspect the conversation before retrying."
-            );
-        }
-        log.info(
-            { session, pid: target.peer.pid, receiverMode, attested: sender !== null },
-            "native Claude peer message flushed"
-        );
-        // This confirms a complete transport write, not an agent-processing acknowledgement.
-        // DECISION remains sent until the receiving agent records acknowledged/implemented.
-        return { channel: "claude-peer", delivered: true, target: target.label };
-    }
-
-    if (target.kind === "worker") {
-        const { worker } = target;
-        const prefix = ANSWER_ROUTES[worker.provider].workers?.steer;
-
-        if (!prefix) {
-            return undelivered(`A ${worker.provider} session has no owned worker to steer; no prompt was sent.`);
-        }
-
-        const directory = mkdtempSync(join(tmpdir(), "worker-delivery-"));
-        const promptFile = join(directory, "prompt.txt");
-        try {
-            writeFileSync(promptFile, text, { mode: 0o600 });
-            const result = await run([
-                ...prefix,
-                "--name",
-                worker.name,
-                "--prompt-file",
-                promptFile,
-                "--json",
-                "--expect-session",
-                worker.sessionId,
-                "--expect-home",
-                worker.sourceHome,
-                "--expect-turn",
-                String(worker.turns),
-            ]);
-            let receipt: unknown;
-            try {
-                receipt = SafeJSON.parse(result.stdout, { strict: true });
-            } catch (error) {
-                log.warn({ error, session, provider }, "Native worker returned no machine receipt");
-                throw new DeliveryUnknownError(
-                    "The resumed worker returned no readable receipt. Check its conversation before retrying."
-                );
-            }
-            if (typeof receipt !== "object" || receipt === null) {
-                throw new DeliveryUnknownError(
-                    "The resumed worker returned an invalid receipt. Check its conversation before retrying."
-                );
-            }
-            const value = receipt as Record<string, unknown>;
-            const sameWorker = value.backend === worker.provider && value.name === worker.name;
-            if (sameWorker && value.kind === "rejected" && typeof value.error === "string") {
-                return undelivered(value.error);
-            }
-            if (
-                result.success &&
-                sameWorker &&
-                value.kind === "turn" &&
-                value.completed === true &&
-                value.exitCode === 0 &&
-                value.sessionId === worker.sessionId &&
-                typeof value.sourceHome === "string" &&
-                workerSourceHome(value.sourceHome) === workerSourceHome(worker.sourceHome) &&
-                value.turn === worker.turns + 1
-            ) {
-                log.info(
-                    { session, provider, worker: worker.name, turn: value.turn },
-                    "Answer acknowledged by completed same-session worker turn"
-                );
-                return { channel: "resume", delivered: true, target: `${target.label} · resumed turn ${value.turn}` };
-            }
-            throw new DeliveryUnknownError(
-                "The resumed worker did not acknowledge this exact session and turn. Check its conversation before retrying."
-            );
-        } finally {
-            rmSync(directory, { recursive: true, force: true });
-        }
-    }
-
-    // The routes that returned above leave two: a `tools codex` worker, or the cmux pane below.
-    if (target.kind !== "cmux") {
-        const directory = mkdtempSync(join(tmpdir(), "worker-delivery-"));
-        const promptFile = join(directory, "prompt.txt");
-        let steered: ToolRun;
-        try {
-            writeFileSync(promptFile, text, { mode: 0o600 });
-            steered = await run([
-                "codex",
-                "steer",
-                "--name",
-                target.worker,
-                "--json",
-                "--prompt-file",
-                promptFile,
-                ...(sourceHome ? ["--expect-session", session, "--expect-home", sourceHome] : []),
-            ]);
-        } finally {
-            rmSync(directory, { recursive: true, force: true });
-        }
-        log.info({ session, worker: target.worker, ok: steered.success }, "decision answers steered into codex");
-
-        let receipt: unknown;
-        try {
-            receipt = SafeJSON.parse(steered.stdout, { strict: true });
-        } catch (error) {
-            log.warn({ error, session }, "Codex transport returned no readable acknowledgement");
-            throw new DeliveryUnknownError(
-                "Codex returned no input acknowledgement. Check the conversation before retrying."
-            );
-        }
-        if (
-            typeof receipt === "object" &&
-            receipt !== null &&
-            "kind" in receipt &&
-            receipt.kind === "rejected" &&
-            "backend" in receipt &&
-            receipt.backend === CODEX_WORKER_BACKEND &&
-            "name" in receipt &&
-            receipt.name === target.worker &&
-            "error" in receipt &&
-            typeof receipt.error === "string"
-        ) {
-            return undelivered(receipt.error);
-        }
-        if (steered.success && typeof receipt === "object" && receipt !== null && "queued" in receipt) {
-            if (
-                receipt.queued === false &&
-                "turnId" in receipt &&
-                typeof receipt.turnId === "string" &&
-                receipt.turnId
-            ) {
-                // `steerCodexMessage` reports this receipt as `delivered: false`, because there
-                // `delivered` means consumer-acknowledged (run.test.ts). For a Decision answer an
-                // acknowledged provider turn is enough to mark the batch sent, so it maps to true here.
+        const outcome = await found.send(message);
+        switch (outcome.kind) {
+            case "delivered":
+                return { channel: outcome.channel, delivered: true, target: outcome.target };
+            case "refused":
                 return {
-                    channel: "codex",
-                    delivered: true,
-                    target: `${target.label} · input acknowledged (turn ${receipt.turnId})`,
+                    ...(await undelivered(outcome.reason)),
+                    ...(outcome.raw === undefined ? {} : { raw: outcome.raw }),
                 };
-            }
-            if (receipt.queued === true) {
-                throw new DeliveryUnknownError(
-                    "Codex accepted the message into its daemon queue, but has not acknowledged a provider turn. Do not resend before checking the conversation."
+            case "unknown":
+                throw new DeliveryUnknownError(outcome.reason);
+            case "failed":
+                return { channel: "queued", delivered: false, error: outcome.reason, raw: outcome.raw };
+            case "absent":
+                log.info(
+                    { session, reason: outcome.reason },
+                    `the ${found.target.kind} route does not hold the session; trying the next`
                 );
-            }
-        }
-        throw new DeliveryUnknownError(
-            "Codex did not return a valid input acknowledgement. Check the conversation before retrying."
-        );
-    }
-
-    // The last rung types free text into the pane, so it is the only one a dialog can swallow. Structural rungs
-    // (the Claude peer socket, an owned worker, the Codex app-server) answered above and never reach this.
-    if (!force && harness) {
-        const dialog = await (deps.openDialog ?? defaultOpenDialog)({
-            provider: harness,
-            sessionId: session,
-            sourceHome,
-        });
-
-        if (dialog) {
-            log.warn({ session, provider, dialog }, "a dialog is open in the session; the text is not typed");
-            return undelivered(dialogRefusal(dialog));
+                continue;
+            default:
+                return outcome satisfies never;
         }
     }
 
-    // After `--`: a message that starts with a hyphen is text, not an option. Without force the send asks the same
-    // dialog guard again right before it types, so a dialog that opened since the check above still stops it.
-    const sent = await run([
-        "claude",
-        "cmux",
-        "send",
-        "--json",
-        "--paste",
-        "--exact-session",
-        ...(force ? ["--force"] : []),
-        "--",
-        session,
-        paneText(text),
-    ]);
-    const outcome = parseSent(sent.stdout);
-    log.info(
-        { session, provider, ok: sent.success, sent: outcome, stderr: sent.stderr.slice(0, 400) },
-        "decision answers typed into the cmux pane"
-    );
-
-    if (sent.success && outcome.sent) {
-        return { channel: "cmux", delivered: true, target: outcome.pane ?? target.label };
-    }
-
-    // A readable `sent: false` is a refusal before any input, so the durable session queue may take it.
-    // Unreadable output leaves the outcome unknown, and that stays a plain queued result.
-    if (outcome.readable && !outcome.sent) {
-        return { ...(await undelivered(paneMiss(sent.stdout, sent.stderr))), raw: sent.stderr.trim() };
-    }
-
-    return { channel: "queued", delivered: false, error: paneMiss(sent.stdout, sent.stderr), raw: sent.stderr.trim() };
+    // The pane route always finds a pane or says why there is none, so the ladder ends above.
+    return undelivered("no cmux pane runs this session");
 }
 
 /** Why `cmux send --json` typed nothing, in one sentence: no pane, several panes, a closed workspace. */
