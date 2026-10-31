@@ -74,7 +74,10 @@ export interface AiProxySessionRecord {
     model?: string;
     effort?: string;
     window?: number;
-    /** Effective launch context limit for picker filtering; absent when custom settings make it unknown. */
+    /**
+     * Effective launch context limit for picker filtering: the model's window, which the launcher passes as
+     * `CLAUDE_CODE_MAX_CONTEXT_TOKENS`. Absent when custom settings make it unknown.
+     */
     pickerContextTokens?: number;
     compactPercent?: number;
     cacheKeyPolicy?: PromptCacheKeyPolicy;

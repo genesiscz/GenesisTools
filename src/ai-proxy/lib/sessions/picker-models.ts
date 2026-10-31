@@ -64,10 +64,11 @@ export function sessionPickerModels({
     groups: readonly PickerModelGroup[];
     contextLimit?: number;
 }): PickerModelList {
-    // Unknown launch limits cannot safely admit a smaller model.
+    // Unknown launch limits cannot safely admit a smaller model. The launch hands Claude Code the model's whole window,
+    // and Claude Code keeps that limit after a switch, so a candidate's window must reach it.
     const knownLimit = typeof contextLimit === "number" && Number.isFinite(contextLimit) && contextLimit > 0;
     const data = groups.flatMap((group) =>
-        (knownLimit ? group.models.filter((model) => model.usableTokens >= contextLimit) : []).map(
+        (knownLimit ? group.models.filter((model) => model.window >= contextLimit) : []).map(
             (model): PickerModel => ({
                 type: "model",
                 id: `${group.agent}${PICKER_ID_SUFFIX}/${model.slug}`,
