@@ -75,6 +75,7 @@ import {
     readRmLedger,
     readRmLedgerNewest,
     recheckAfterWait,
+    recordRmMeasurement,
     recoverAsideJournals,
     rememberOptions,
     renameNoReplace,
@@ -1892,5 +1893,20 @@ describe("measurements written by two processes at once", () => {
         expect(
             readRmLedger().filter((entry) => entry.action === "measure" && entry.requestId === "conc01")
         ).toHaveLength(30);
+    });
+});
+
+describe("the size of an aside copy in the ledger", () => {
+    test("is counted under the rule that set the copy aside", () => {
+        const request = { id: "rule01", caller: AGENT };
+        const target = { path: "/work/shop/notes", stored: "/aside/notes", rule: "git-untracked" };
+        const item = { path: target.path, location: target.stored, at: "", mtimeMs: 1, bytes: 5000 };
+        recordRmMeasurement({ request, target, item, requestsDir: dir("rule-requests") });
+        const totals = totalRmLedger(
+            readRmLedger().filter((entry) => entry.requestId === "rule01"),
+            "rule"
+        );
+
+        expect(totals).toEqual([expect.objectContaining({ key: "git-untracked", aside: 5000 })]);
     });
 });

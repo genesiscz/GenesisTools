@@ -73,7 +73,7 @@ function isEmptyDir(dir: string): boolean {
 }
 
 /** A path to measure: where the request names it, and its aside copy while it waits. */
-type MeasuredPath = Pick<RmRequestTarget, "path" | "stored">;
+type MeasuredPath = Pick<RmRequestTarget, "path" | "stored"> & Partial<Pick<RmRequestTarget, "rule">>;
 
 /** How the rows get their sizes and git facts; tests replace them. */
 export interface ApprovalRowDeps {

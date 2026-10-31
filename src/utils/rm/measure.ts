@@ -277,7 +277,8 @@ export async function measureTarget(
  */
 export function recordRmMeasurement(input: {
     request: Pick<RmRequest, "id" | "caller">;
-    target: Pick<RmRequestTarget, "path" | "stored">;
+    /** `rule` keeps the aside bytes under the rule that set the copy aside in `tools rm log --by rule`. */
+    target: Pick<RmRequestTarget, "path" | "stored"> & Partial<Pick<RmRequestTarget, "rule">>;
     item: RmMeasuredItem;
     requestsDir?: string;
 }): void {
@@ -290,6 +291,7 @@ export function recordRmMeasurement(input: {
             action: "measure",
             path: target.path,
             stored: target.stored,
+            rule: target.rule,
             bytes: item.bytes,
             requestId: request.id,
             caller: request.caller,
