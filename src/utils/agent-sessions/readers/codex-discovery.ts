@@ -20,7 +20,7 @@ import {
     readCodexProjectionIndex,
 } from "./codex";
 import { codexNativeSessionId } from "./codex-locate";
-import { codexIndexRows } from "./codex-title";
+import { codexIndexRows, codexTimeMs } from "./codex-title";
 
 interface CodexDiscoveryHeader {
     nativeId: string;
@@ -37,9 +37,8 @@ interface IndexedMetadata {
 }
 
 function nativeDate(value: JsonValue | undefined): Date | undefined {
-    const parsed =
-        typeof value === "number" ? new Date(value < 10_000_000_000 ? value * 1000 : value) : new Date(text(value));
-    return Number.isNaN(parsed.getTime()) ? undefined : parsed;
+    const ms = codexTimeMs(value);
+    return ms === undefined ? undefined : new Date(ms);
 }
 
 function sourceHome(root: string): string {

@@ -22,6 +22,22 @@ export interface CodexIndexRow {
     updatedAt?: string | number;
 }
 
+/**
+ * Epoch ms of a Codex time: ISO text, or a number of epoch seconds (below 1e10) or ms. Undefined when it reads as no
+ * time. History discovery and title search both read `updated_at` through it, so both order sessions the same way.
+ */
+export function codexTimeMs(value: unknown): number | undefined {
+    const ms =
+        typeof value === "number"
+            ? value < 10_000_000_000
+                ? value * 1000
+                : value
+            : typeof value === "string"
+              ? Date.parse(value)
+              : Number.NaN;
+    return Number.isNaN(ms) ? undefined : ms;
+}
+
 function field(value: unknown, key: string): unknown {
     return typeof value === "object" && value !== null && key in value ? Reflect.get(value, key) : undefined;
 }
@@ -89,7 +105,7 @@ export function readCodexTitleIndex(indexPath: string, found: Map<string, Titled
         found.set(row.id, {
             sessionId: row.id,
             title: row.title,
-            mtime: Date.parse(String(row.updatedAt)) || 0,
+            mtime: codexTimeMs(row.updatedAt) ?? 0,
             locator: row.id,
         });
     }

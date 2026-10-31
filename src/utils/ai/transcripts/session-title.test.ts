@@ -128,4 +128,23 @@ describe("findSessionsByTitle", () => {
             expect(titles("side thread")[0]?.sessionId).toBe("019c0000-0000-7000-8000-000000000012");
         });
     });
+
+    it("orders Codex titles by an updated_at in epoch seconds as discovery does", async () => {
+        const home = mkdtempSync(join(tmpdir(), "titles-codex-epoch-"));
+        writeFileSync(
+            join(home, "session_index.jsonl"),
+            [
+                '{"id":"019c0000-0000-7000-8000-000000000031","thread_name":"nightly","updated_at":"2025-01-01T00:00:00Z"}',
+                '{"id":"019c0000-0000-7000-8000-000000000032","thread_name":"nightly","updated_at":1793000000}',
+            ].join("\n")
+        );
+
+        await env.testing.withOverrides({ CODEX_HOME: home }, () => {
+            const hits = codexTitles(mkdtempSync(join(tmpdir(), "titles-codex-home-")))("nightly");
+            expect(hits.map((hit) => [hit.sessionId, hit.mtime])).toEqual([
+                ["019c0000-0000-7000-8000-000000000032", 1_793_000_000_000],
+                ["019c0000-0000-7000-8000-000000000031", Date.parse("2025-01-01T00:00:00Z")],
+            ]);
+        });
+    });
 });
