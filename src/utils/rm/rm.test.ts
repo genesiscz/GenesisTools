@@ -20,6 +20,7 @@ import { SafeJSON } from "@genesiscz/utils/json";
 import {
     type AppApproval,
     type ApprovalDeps,
+    ApprovalUpdates,
     appApprovalFromReply,
     appApproveParams,
     appendRmLedger,
@@ -59,6 +60,7 @@ import {
     pendingAsideFor,
     planRemoval,
     presetsFor,
+    printApprovalUpdates,
     priorDenials,
     probeGit,
     probeItemGit,
@@ -1815,5 +1817,23 @@ describe("measureBytesAsync", () => {
         expect(measured.turned).toBe(true);
         expect(measured.bytes).toBe(measureBytes(root));
         expect(measured.bytes).toBeGreaterThan(0);
+    });
+});
+
+describe("printApprovalUpdates", () => {
+    test("the typed code stops waiting for sizes at its deadline instead of holding the prompt", async () => {
+        const updates = new ApprovalUpdates();
+        updates.push({ path: "/work/shop/out", bytes: 4096, measuring: false });
+
+        // The second row's walk never ends, and nothing closes the updates.
+        expect(await printApprovalUpdates(updates, { timeoutMs: 30 })).toBe("timeout");
+    });
+
+    test("it ends at once when every size is in", async () => {
+        const updates = new ApprovalUpdates();
+        updates.push({ path: "/work/shop/out", bytes: 4096, measuring: false });
+        updates.close();
+
+        expect(await printApprovalUpdates(updates, { timeoutMs: 60_000 })).toBe("complete");
     });
 });

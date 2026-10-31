@@ -201,12 +201,47 @@ export interface ApprovalDeps {
 
 const MAX_DIALOG_LINES = 15;
 
-/** On a terminal the sizes print under the note as they are measured, before the code is asked for. */
-async function printUpdates(updates: ApprovalUpdates): Promise<void> {
-    for await (const update of updates.read()) {
-        if (update.bytes !== undefined) {
-            out.println(`  ${update.path}  ${formatBytes(update.bytes)}`);
+/** How long the typed code waits for the sizes before it asks without the rest. */
+export const TYPED_SIZES_WAIT_MS = 30_000;
+
+/**
+ * On a terminal the sizes print under the note as they are measured, before the code is asked for. A walk that takes
+ * longer than `timeoutMs` does not hold the prompt back: the code is asked for without the sizes still missing, and
+ * the walk stops once the person answered (the caller aborts it).
+ */
+export async function printApprovalUpdates(
+    updates: ApprovalUpdates,
+    options: { timeoutMs?: number } = {}
+): Promise<"complete" | "timeout"> {
+    const timeoutMs = options.timeoutMs ?? TYPED_SIZES_WAIT_MS;
+    const reader = updates.read();
+    let timer: ReturnType<typeof setTimeout> | undefined;
+    const expired = new Promise<"timeout">((resolve) => {
+        timer = setTimeout(() => resolve("timeout"), timeoutMs);
+    });
+
+    try {
+        while (true) {
+            const next = await Promise.race([reader.next(), expired]);
+
+            if (next === "timeout") {
+                out.println(
+                    `  Some sizes are still measured after ${Math.round(timeoutMs / 1000)} s; asking without them.`
+                );
+                void reader.return(undefined);
+                return "timeout";
+            }
+
+            if (next.done) {
+                return "complete";
+            }
+
+            if (next.value.bytes !== undefined) {
+                out.println(`  ${next.value.path}  ${formatBytes(next.value.bytes)}`);
+            }
         }
+    } finally {
+        clearTimeout(timer);
     }
 }
 
@@ -214,7 +249,7 @@ async function askTyped(prompt: ApprovalPrompt): Promise<boolean> {
     p.note(prompt.lines.join("\n"), prompt.title);
 
     if (prompt.updates) {
-        await printUpdates(prompt.updates);
+        await printApprovalUpdates(prompt.updates);
     }
 
     try {
