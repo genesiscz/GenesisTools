@@ -508,42 +508,34 @@ struct ApprovalVerifyFooter: View {
     @FocusState private var noteFocused: Bool
 
     var body: some View {
-        VStack(alignment: .leading, spacing: 12) {
-            Divider().padding(.horizontal, -20)
-            HStack(alignment: .center, spacing: 12) {
-                sensor
-                VStack(alignment: .leading, spacing: 2) {
-                    Text(headline)
-                        .font(.system(size: 13, weight: .semibold))
-                        .accessibilityIdentifier("\(model.identifier)-verify-state")
-                    if let message {
-                        Text(message.text)
-                            .font(.system(size: 11))
-                            .foregroundStyle(message.isProblem ? Color.orange : Color.secondary)
-                            .fixedSize(horizontal: false, vertical: true)
-                    }
-                    HStack(spacing: 6) {
-                        if let deadline = model.deadline {
-                            (Text("Denies itself in ") + Text(timerInterval: Date()...max(Date(), deadline), countsDown: true))
-                                .font(.system(size: 11).monospacedDigit())
-                                .foregroundStyle(.secondary)
-                                .lineLimit(1)
-                        }
-                        if let hint = model.hint {
-                            Text(verbatim: "· \(hint)")
-                                .font(.system(size: 11))
-                                .foregroundStyle(.tertiary)
-                                .lineLimit(1)
-                        }
-                    }
+        ApprovalFooterLayout(identifier: model.identifier, headline: headline) {
+            sensor
+        } detail: {
+            if let message {
+                Text(message.text)
+                    .font(.system(size: 11))
+                    .foregroundStyle(message.isProblem ? Color.orange : Color.secondary)
+                    .fixedSize(horizontal: false, vertical: true)
+            }
+            HStack(spacing: 6) {
+                if let deadline = model.deadline {
+                    (Text("Denies itself in ") + Text(timerInterval: Date()...max(Date(), deadline), countsDown: true))
+                        .font(.system(size: 11).monospacedDigit())
+                        .foregroundStyle(.secondary)
+                        .lineLimit(1)
                 }
-                .frame(maxWidth: .infinity, alignment: .leading)
-                .accessibilityElement(children: .combine)
-                if model.denying {
-                    denyNote
-                } else {
-                    buttons
+                if let hint = model.hint {
+                    Text(verbatim: "· \(hint)")
+                        .font(.system(size: 11))
+                        .foregroundStyle(.tertiary)
+                        .lineLimit(1)
                 }
+            }
+        } trailing: {
+            if model.denying {
+                denyNote
+            } else {
+                buttons
             }
         }
         // Esc denies at once, with the note open or not: the Deny… button only opens the note.
@@ -561,23 +553,11 @@ struct ApprovalVerifyFooter: View {
     private var sensor: some View {
         switch verifier.state {
         case .unavailable, .password:
-            Image(systemName: "lock.fill")
-                .font(.system(size: 18, weight: .medium))
-                .foregroundStyle(.secondary)
-                .frame(width: 32, height: 32)
-                .accessibilityHidden(true)
+            ApprovalStateGlyph(symbol: "lock.fill", size: 18, style: .secondary)
         case .paused:
-            Image(systemName: "checklist")
-                .font(.system(size: 18, weight: .medium))
-                .foregroundStyle(.secondary)
-                .frame(width: 32, height: 32)
-                .accessibilityHidden(true)
+            ApprovalStateGlyph(symbol: "checklist", size: 18, style: .secondary)
         case .verified:
-            Image(systemName: "checkmark.circle.fill")
-                .font(.system(size: 22, weight: .medium))
-                .foregroundStyle(.green)
-                .frame(width: 32, height: 32)
-                .accessibilityHidden(true)
+            ApprovalStateGlyph<Color>.approved
         default:
             ApprovalTouchIDGlyph(verifier: verifier)
                 .frame(width: 32, height: 32)
@@ -664,41 +644,89 @@ struct ApprovalFinishedFooter: View {
     let finish: ApprovalFinish
 
     var body: some View {
-        VStack(alignment: .leading, spacing: 12) {
-            Divider().padding(.horizontal, -20)
-            HStack(alignment: .center, spacing: 12) {
-                Image(systemName: "checkmark.circle.fill")
-                    .font(.system(size: 22, weight: .medium))
-                    .foregroundStyle(.green)
-                    .frame(width: 32, height: 32)
-                    .accessibilityHidden(true)
-                VStack(alignment: .leading, spacing: 2) {
-                    Text(finish.headline)
-                        .font(.system(size: 13, weight: .semibold))
-                        .accessibilityIdentifier("\(model.identifier)-verify-state")
-                    Text(finish.detail)
-                        .font(.system(size: 11))
-                        .foregroundStyle(.secondary)
-                        .fixedSize(horizontal: false, vertical: true)
+        ApprovalFooterLayout(identifier: model.identifier, headline: finish.headline) {
+            ApprovalStateGlyph<Color>.approved
+        } detail: {
+            Text(finish.detail)
+                .font(.system(size: 11))
+                .foregroundStyle(.secondary)
+                .fixedSize(horizontal: false, vertical: true)
+        } trailing: {
+            if let copy = finish.copy {
+                Button {
+                    Clipboard.copy(copy, what: "command")
+                } label: {
+                    Label(copy, systemImage: "doc.on.doc")
+                        .font(.system(size: 11, design: .monospaced))
+                        .lineLimit(1)
                 }
-                .frame(maxWidth: .infinity, alignment: .leading)
-                .accessibilityElement(children: .combine)
-                if let copy = finish.copy {
-                    Button {
-                        Clipboard.copy(copy, what: "command")
-                    } label: {
-                        Label(copy, systemImage: "doc.on.doc")
-                            .font(.system(size: 11, design: .monospaced))
-                            .lineLimit(1)
-                    }
-                    .pointerCursor()
-                    .help("Copy the command")
-                    .accessibilityIdentifier("\(model.identifier)-copy")
-                }
+                .pointerCursor()
+                .help("Copy the command")
+                .accessibilityIdentifier("\(model.identifier)-copy")
             }
         }
         .controlSize(.regular)
         .environment(\.controlActiveState, .key)
+    }
+}
+
+/// The frame both approval footers share: a divider to the window's edges, the 32-pt state glyph, the headline (its
+/// `-verify-state` identifier) over the detail lines, and the trailing controls.
+struct ApprovalFooterLayout<Icon: View, Detail: View, Trailing: View>: View {
+    let identifier: String
+    let headline: String
+    let icon: Icon
+    let detail: Detail
+    let trailing: Trailing
+
+    init(identifier: String, headline: String, @ViewBuilder icon: () -> Icon, @ViewBuilder detail: () -> Detail,
+         @ViewBuilder trailing: () -> Trailing) {
+        self.identifier = identifier
+        self.headline = headline
+        self.icon = icon()
+        self.detail = detail()
+        self.trailing = trailing()
+    }
+
+    var body: some View {
+        VStack(alignment: .leading, spacing: 12) {
+            Divider().padding(.horizontal, -20)
+            HStack(alignment: .center, spacing: 12) {
+                icon
+                VStack(alignment: .leading, spacing: 2) {
+                    Text(headline)
+                        .font(.system(size: 13, weight: .semibold))
+                        .accessibilityIdentifier("\(identifier)-verify-state")
+                    detail
+                }
+                .frame(maxWidth: .infinity, alignment: .leading)
+                .accessibilityElement(children: .combine)
+                trailing
+            }
+        }
+    }
+}
+
+/// A footer's state glyph: an SF Symbol in the 32-pt square the Touch ID glyph takes, hidden from VoiceOver (the
+/// headline says the state).
+struct ApprovalStateGlyph<Style: ShapeStyle>: View {
+    let symbol: String
+    let size: CGFloat
+    let style: Style
+
+    var body: some View {
+        Image(systemName: symbol)
+            .font(.system(size: size, weight: .medium))
+            .foregroundStyle(style)
+            .frame(width: 32, height: 32)
+            .accessibilityHidden(true)
+    }
+}
+
+extension ApprovalStateGlyph where Style == Color {
+    /// The green check of an approved request.
+    static var approved: ApprovalStateGlyph<Color> {
+        ApprovalStateGlyph(symbol: "checkmark.circle.fill", size: 22, style: .green)
     }
 }
 
