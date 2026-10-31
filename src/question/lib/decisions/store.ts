@@ -9,6 +9,7 @@ import {
     gatherHarnessPoster,
 } from "@genesiscz/utils/agent/runtime";
 import { createTranscriptAnchor, type TranscriptAnchor } from "@genesiscz/utils/agent/source-anchor";
+import { letterPastOptions } from "@genesiscz/utils/agents/dialogs/keys";
 import { formatLocalDateTimeStamp } from "@genesiscz/utils/date";
 import { env } from "@genesiscz/utils/env";
 import { SafeJSON } from "@genesiscz/utils/json";
@@ -791,7 +792,7 @@ function patched(
 
     // A letter past the options would be delivered as `DECISION 1: z)`, naming nothing.
     for (const pick of [patch.option, patch.draftOption]) {
-        const past = [...(pick ?? "")].find((letter) => letter.charCodeAt(0) - 97 >= row.options.length);
+        const past = letterPastOptions(pick ?? "", row.options.length);
 
         if (past && row.options.length > 0) {
             const last = String.fromCharCode(96 + row.options.length);

@@ -1,3 +1,4 @@
+import { letterPastOptions } from "@genesiscz/utils/agents/dialogs/keys";
 import { logger } from "@genesiscz/utils/logger";
 import type { DeliverDeps, DeliveryResult } from "../decisions/deliver";
 import { decisionLine, optionLetters } from "../decisions/read";
@@ -116,7 +117,7 @@ async function checkAnswer(
 
     const options = row?.options ?? block?.options ?? [];
 
-    if (option && options.length > 0 && [...option].some((letter) => letter.charCodeAt(0) - 97 >= options.length)) {
+    if (option && options.length > 0 && letterPastOptions(option, options.length) !== undefined) {
         throw new Error(`DECISION ${answer.number} has options a-${String.fromCharCode(96 + options.length)}`);
     }
 
