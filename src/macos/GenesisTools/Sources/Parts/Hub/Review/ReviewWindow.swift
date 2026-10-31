@@ -3479,6 +3479,7 @@ struct FileSidebar: View {
 /// of `==`; one left out of `==` leaves the rows stale until another input changes.
 struct FileSidebarRows: View, Equatable {
     /// The table's scroll handle: the same object for the shell's life, so it is no input of `==`.
+    // lint-rules-ignore: a reference that lives as long as the shell and draws nothing
     let box: GenTreeScrollBox
     /// The rows, each with its own fold state (`ChangedFilesTreeRow.expanded`).
     let rows: [ChangedFilesTreeRow]

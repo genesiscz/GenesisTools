@@ -929,6 +929,7 @@ private struct MarkdownFileTreeRows: View, Equatable {
     let tree: FileTreeModel
     /// For the hover preview only: not observed.
     let model: MarkdownDocumentsModel
+    // lint-rules-ignore: the table's scroll handle, one object for the tree's life that draws nothing
     let box: MarkdownTreeScrollBox
 
     /// What the cells draw besides the rows: when it changes, the cells on screen are built again.
