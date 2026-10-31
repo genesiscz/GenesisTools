@@ -11,6 +11,7 @@ import {
 } from "@genesiscz/utils/image";
 import { SafeJSON } from "@genesiscz/utils/json";
 import { logger } from "@genesiscz/utils/logger";
+import { shellQuote } from "@genesiscz/utils/shell/quote";
 import {
     CHANGE_COLOR,
     DATA_COLOR,
@@ -229,7 +230,20 @@ export async function reportPair(pair: ReportPair, index: number, options: Repor
     });
     const [treeBefore, treeAfter] = await Promise.all([readViewTree(pair.before), readViewTree(pair.after)]);
     const usable = treeBefore && treeAfter && treeBefore.source !== "none" && treeAfter.source !== "none";
-    const tree = usable ? diffViewTrees(treeBefore, treeAfter) : undefined;
+    // A cut tree is silent about the controls it left out, and the trees of two point sizes do not share coordinates
+    // once B is resampled: either way no region may be called data, so every region stays a change.
+    const truncated = usable && (treeBefore.truncated || treeAfter.truncated);
+    const resampledPoints = geometry.kind === "size-mismatch";
+    const tree = usable && !truncated && !resampledPoints ? diffViewTrees(treeBefore, treeAfter) : undefined;
+    if (truncated) {
+        note = [note, "a view tree was cut at its node or depth limit, so no region is called data"]
+            .filter(Boolean)
+            .join("; ");
+    } else if (usable && resampledPoints) {
+        note = [note, "the point sizes differ, so the view trees do not classify the regions"]
+            .filter(Boolean)
+            .join("; ");
+    }
     const scale = geometry.kind === "unknown" ? 1 : geometry.a.scale;
     const classified = classifyRegions({ regions, tree, scale });
 
@@ -357,7 +371,7 @@ export function orderLines(results: PairResult[]): string[] {
 
 /** One line that opens the pairs in Preview in order; a fresh folder keeps Preview from skipping open files. */
 export function previewOpenCommand(orderFile: string): string {
-    return `tr '\\n' '\\0' < '${orderFile}' | xargs -0 open -a Preview`;
+    return `tr '\\n' '\\0' < ${shellQuote(orderFile)} | xargs -0 open -a Preview`;
 }
 
 /** Loads the report input: a shot list JSON file, or a folder of existing `-before`/`-after` pairs. */

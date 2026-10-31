@@ -23,16 +23,18 @@ package enum SnapshotViewTree {
         let started = Date()
         var nodes: [[String: Any]] = []
         var source = "none"
+        var truncated = false
         if AXIsProcessTrusted(), let root = windowElement(window) {
             source = "ax"
-            walk(root, path: "AXWindow", depth: 0, origin: topLeft(of: window), into: &nodes)
+            walk(root, path: "AXWindow", depth: 0, origin: topLeft(of: window), into: &nodes, truncated: &truncated)
         }
         let record: [String: Any] = [
             "version": 1,
             "face": face,
             "source": source,
             "window": ["width": Double(window.frame.width.rounded()), "height": Double(window.frame.height.rounded())],
-            "truncated": nodes.count >= maxNodes,
+            // Set when the node cap or the depth cap left an element out, so a reader never takes the tree as whole.
+            "truncated": truncated,
             "nodes": nodes,
         ]
         let path = sidecarPath(for: png)
@@ -65,8 +67,13 @@ package enum SnapshotViewTree {
         } ?? windows.first
     }
 
-    private static func walk(_ element: AXUIElement, path: String, depth: Int, origin: CGPoint, into nodes: inout [[String: Any]]) {
-        guard depth < maxDepth, nodes.count < maxNodes else { return }
+    private static func walk(
+        _ element: AXUIElement, path: String, depth: Int, origin: CGPoint, into nodes: inout [[String: Any]], truncated: inout Bool
+    ) {
+        guard depth < maxDepth, nodes.count < maxNodes else {
+            truncated = true
+            return
+        }
         let role = string(element, kAXRoleAttribute) ?? "AXUnknown"
         var node: [String: Any] = ["path": path, "role": role, "depth": depth]
         if let subrole = string(element, kAXSubroleAttribute) { node["subrole"] = subrole }
@@ -94,7 +101,7 @@ package enum SnapshotViewTree {
             let childRole = string(child, kAXRoleAttribute) ?? "AXUnknown"
             let index = seen[childRole, default: 0]
             seen[childRole] = index + 1
-            walk(child, path: "\(path)/\(childRole)[\(index)]", depth: depth + 1, origin: origin, into: &nodes)
+            walk(child, path: "\(path)/\(childRole)[\(index)]", depth: depth + 1, origin: origin, into: &nodes, truncated: &truncated)
         }
     }
 
