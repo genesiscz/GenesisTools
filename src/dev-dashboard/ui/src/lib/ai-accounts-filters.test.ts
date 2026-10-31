@@ -8,6 +8,8 @@ import {
     toggleFilterId,
     windowStepMs,
 } from "./ai-accounts-filters";
+import { HARNESS_META } from "./harness-meta.generated";
+import { providerMeta } from "./provider-meta";
 
 const NOW = new Date("2026-09-04T17:40:00").getTime();
 
@@ -161,4 +163,10 @@ describe("toggleFilterId", () => {
         toggleFilterId(list, "grok", ALL);
         expect(list).toEqual(["claude"]);
     });
+});
+
+test("provider display names come from the generated driver labels", () => {
+    for (const harness of HARNESS_META) {
+        expect(providerMeta(harness.id).displayName).toBe(harness.label);
+    }
 });

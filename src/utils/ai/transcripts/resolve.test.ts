@@ -2,6 +2,8 @@ import { describe, expect, test } from "bun:test";
 import { mkdirSync, mkdtempSync, utimesSync, writeFileSync } from "node:fs";
 import { tmpdir } from "node:os";
 import { dirname, join } from "node:path";
+import { codexLocate } from "@genesiscz/utils/ai/providers/plugins/openai-sub/harness-locate";
+import { env } from "@genesiscz/utils/env";
 import { SafeJSON } from "@genesiscz/utils/json";
 import {
     directReads,
@@ -583,4 +585,44 @@ test("native readers expose window turns and ignore malformed text blocks", asyn
         { uuid: "good", type: "user", message: { content: "hello" } },
     ]);
     expect(turns.map((turn) => turn.id)).toEqual(["tool", "good"]);
+});
+
+test("codex worker without home resolves a rollout in the default home list", async () => {
+    const root = fixtureRoot();
+    const first = join(root, "first");
+    const second = join(root, "second");
+    const id = "eeeeeeee-1111-2222-3333-444444444444";
+    const dir = join(second, "archived_sessions");
+    mkdirSync(dir, { recursive: true });
+    const rollout = join(dir, `rollout-2026-10-13T17-00-00-${id}.jsonl`);
+    writeFileSync(rollout, "{}\n");
+    const workerPath = join(root, "worker.jsonl");
+    writeFileSync(workerPath, "{}\n");
+    writeFileSync(join(root, "worker.meta.json"), SafeJSON.stringify({ threadId: id }));
+    await env.testing.withOverrides({ CODEX_HOME: `${first},${second}` }, () => {
+        expect(
+            codexLocate.workerNative(
+                { provider: "codex", source: "worker", sessionId: id, filePath: workerPath },
+                directReads
+            )
+        ).toMatchObject({ source: "native", filePath: rollout });
+        writeFileSync(join(root, "worker.meta.json"), SafeJSON.stringify({ threadId: id, home: "" }));
+        expect(
+            codexLocate.workerNative(
+                { provider: "codex", source: "worker", sessionId: id, filePath: workerPath },
+                directReads
+            )
+        ).toMatchObject({ source: "native", filePath: rollout });
+        const explicitDir = join(first, "archived_sessions");
+        mkdirSync(explicitDir, { recursive: true });
+        const explicit = join(explicitDir, `rollout-2026-10-13T17-00-00-${id}.jsonl`);
+        writeFileSync(explicit, "{}\n");
+        writeFileSync(join(root, "worker.meta.json"), SafeJSON.stringify({ threadId: id, home: first }));
+        expect(
+            codexLocate.workerNative(
+                { provider: "codex", source: "worker", sessionId: id, filePath: workerPath },
+                directReads
+            )
+        ).toMatchObject({ source: "native", filePath: explicit });
+    });
 });

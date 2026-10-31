@@ -19,7 +19,7 @@ export interface ProviderMeta {
 export const PROVIDER_META: readonly ProviderMeta[] = HARNESS_META.map((harness) => ({
     id: harness.plugin,
     alias: harness.id,
-    displayName: harness.id.charAt(0).toUpperCase() + harness.id.slice(1),
+    displayName: harness.label,
     glyph: harness.letter,
     color: harness.color,
 }));

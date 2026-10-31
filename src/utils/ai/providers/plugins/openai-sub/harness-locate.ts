@@ -37,11 +37,7 @@ export const codexLocate: TranscriptLocator = {
         codexSessions(options.codexIndexPath ? [options.codexIndexPath] : codexIndexPaths()),
     // A `tools codex spawn` worker runs a real native thread; its rollout sits in the worker's own Codex home.
     workerNative: (worker, fs) => {
-        const home = workerHomeOf(worker, fs);
-
-        if (!home) {
-            return null;
-        }
+        const home = workerHomeOf(worker, fs) || env.codex.getHomeOverride() || nativeHome("codex");
 
         const best = findCodexNative(worker.sessionId, home, fs).sort((a, b) => b.mtime - a.mtime)[0];
         return best
