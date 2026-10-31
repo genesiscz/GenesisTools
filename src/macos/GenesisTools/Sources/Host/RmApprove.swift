@@ -331,6 +331,27 @@ struct RmWindowContent {
     }
 }
 
+extension RmWindowContent {
+    /// The approval window for this content; `who` names the asker in the title once items are deselected.
+    @MainActor
+    func dialogModel(items: [ApprovalItem], rememberChoices: [ApprovalRemember], verifier: ApprovalVerifier,
+                     links: [ApprovalLink], deadline: Date, who: String?) -> ApprovalDialogModel {
+        let model = ApprovalDialogModel(
+            title: title, purpose: purpose,
+            symbol: "trash.fill", facts: facts, details: details, warning: nil,
+            footnote: footnote, rememberChoices: rememberChoices, rememberNote: nil,
+            allowTitle: "Use password…", deadline: deadline, identifier: "rm-approve",
+            items: items, verifier: verifier, links: links, summary: summary,
+            disposals: disposals, hint: "Esc denies · Space previews", selectable: selectable)
+        // The title follows the ticked count with or without an asker; with every row on it is the CLI's own title.
+        let full = title
+        model.titleForSelection = { selected, total in
+            selected == total ? full : RmWindowContent.title(selected: selected, total: total, who: who)
+        }
+        return model
+    }
+}
+
 @MainActor private let rmPresenter = ApprovalPanelPresenter()
 
 /// Where the person can look before deciding: the asking session's inbox in the hub, and its terminal.
@@ -374,18 +395,10 @@ func approveRm(_ params: RmApproveParams) {
         verifier.onEvent = { event in logClick("rm.approve \(event)") }
         let rememberIds = (params.remember ?? []).map(\.id)
         let rememberChoices = (params.remember ?? []).map { ApprovalRemember(seconds: nil, title: $0.title) }
-        let model = ApprovalDialogModel(
-            title: content.title, purpose: content.purpose,
-            symbol: "trash.fill", facts: content.facts, details: content.details, warning: nil,
-            footnote: content.footnote, rememberChoices: rememberChoices, rememberNote: nil,
-            allowTitle: "Use password…", deadline: Date().addingTimeInterval(rmDeadlineSeconds), identifier: "rm-approve",
-            items: content.items, verifier: verifier, links: rmLinks(params.request), summary: content.summary,
-            disposals: content.disposals, hint: "Esc denies · Space previews", selectable: content.selectable)
-        // The title follows the ticked count with or without an asker; with every row on it is the CLI's own title.
-        let who = params.request?.asker.map { $0.session ?? $0.project ?? $0.agent }
-        model.titleForSelection = { selected, total in
-            selected == total ? content.title : RmWindowContent.title(selected: selected, total: total, who: who)
-        }
+        let model = content.dialogModel(
+            items: content.items, rememberChoices: rememberChoices, verifier: verifier, links: rmLinks(params.request),
+            deadline: Date().addingTimeInterval(rmDeadlineSeconds),
+            who: params.request?.asker.map { $0.session ?? $0.project ?? $0.agent })
 
         let deadline = DispatchWorkItem {
             verifier.cancel()

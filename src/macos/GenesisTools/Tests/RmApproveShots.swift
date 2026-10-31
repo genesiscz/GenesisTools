@@ -80,15 +80,12 @@ final class RmApproveShots: XCTestCase {
                                 git: item.git, detail: item.detail, alsoIn: item.alsoIn)
         }
         let verifier = ApprovalVerifier(reason: "approve: fixture", evaluator: evaluator)
-        let model = ApprovalDialogModel(
-            title: content.title, purpose: content.purpose, symbol: "trash.fill", facts: content.facts, details: content.details,
-            warning: nil, footnote: content.footnote,
+        let model = content.dialogModel(
+            items: shown,
             rememberChoices: [ApprovalRemember(seconds: nil, title: "Just this once"), ApprovalRemember(seconds: nil, title: "Always for this folder")],
-            rememberNote: nil, allowTitle: "Use password…",
-            deadline: Date().addingTimeInterval(169), identifier: "rm-approve", items: shown, verifier: verifier,
+            verifier: verifier,
             links: [ApprovalLink(title: "Open its inbox", symbol: "tray") {}, ApprovalLink(title: "Its terminal", symbol: "terminal") {}],
-            summary: content.summary, disposals: content.disposals, hint: "Esc denies · Space previews", selectable: content.selectable)
-        model.titleForSelection = { selected, total in RmWindowContent.title(selected: selected, total: total, who: "shop-admin-2.0") }
+            deadline: Date().addingTimeInterval(169), who: "shop-admin-2.0")
         try render(ApprovalDialogView(model: model), to: path)
         verifier.cancel()
     }
