@@ -36,12 +36,13 @@ function screen(boxes: Rect[]): Buffer {
     return encodeRgbaToPng(data, width, height);
 }
 
-function treeJson(button: Rect): string {
+function treeJson(button: Rect, { truncated = false }: { truncated?: boolean } = {}): string {
     return SafeJSON.stringify({
         version: 1,
         face: "hub",
         source: "ax",
         window: { width: 200, height: 120 },
+        truncated,
         nodes: [
             { path: "AXWindow", role: "AXWindow", depth: 0, hasLabel: true, frame: { x: 0, y: 0, w: 200, h: 120 } },
             {
@@ -107,6 +108,32 @@ describe("control report", () => {
         expect(result.beforeOut).toBe(join(folder, "out", "01-sessions-1-before.png"));
         expect(result.afterOut).toBe(join(folder, "out", "01-sessions-2-after.png"));
         expect(await Bun.file(result.afterOut ?? "").exists()).toBe(true);
+    });
+
+    it("marks every region red when a view tree was cut or the point sizes differ", async () => {
+        const folder = mkdtempSync(join(tmpdir(), "control-report-"));
+        await writePair(folder, "cut", { tree: true });
+        await Bun.write(join(folder, "cut-after.tree.json"), treeJson(buttonAfter, { truncated: true }));
+        const pair = { screen: "cut", before: join(folder, "cut-before.png"), after: join(folder, "cut-after.png") };
+
+        const cut = await reportPair(pair, 3, options(join(folder, "out")));
+        expect(cut.tree).toBeUndefined();
+        expect(cut.regions.every((region) => region.kind === "change")).toBe(true);
+        expect(cut.message).toContain("cut at its node or depth limit");
+
+        await Bun.write(join(folder, "cut-after.tree.json"), treeJson(buttonAfter));
+        await Bun.write(join(folder, "cut-before.geometry.json"), geometryJson(200, 120));
+        await Bun.write(join(folder, "cut-after.geometry.json"), geometryJson(400, 240));
+        const resized = await reportPair(pair, 3, { ...options(join(folder, "out")), resizeToMatch: true });
+        expect(resized.status).toBe("ok");
+        expect(resized.tree).toBeUndefined();
+        expect(resized.regions.every((region) => region.kind === "change")).toBe(true);
+    });
+
+    it("quotes an order file path with an apostrophe in the Preview command", () => {
+        expect(previewOpenCommand("/tmp/a b's/order.txt")).toBe(
+            "tr '\\n' '\\0' < '/tmp/a b'\\''s/order.txt' | xargs -0 open -a Preview"
+        );
     });
 
     it("marks every region red without a view tree, and refuses another point size", async () => {
