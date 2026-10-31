@@ -68,6 +68,19 @@ describe("rm-use-tools-rm", () => {
         }
     );
 
+    it.each(["xargs -0 rm -f", "xargs -n 1 rm", "xargs -I {} rm {}", "xargs -- rm -rf"])("blocks %j", (command) => {
+        expect(ids(command)).toContain("rm-use-tools-rm");
+    });
+
+    it.each([
+        "git ls-files -d | xargs git rm --cached",
+        "git ls-files | xargs grep -l rm",
+        "xargs echo rm",
+        "xargs -I rm echo rm",
+    ])("leaves %j alone: xargs runs no rm", (command) => {
+        expect(ids(command)).not.toContain("rm-use-tools-rm");
+    });
+
     it.each(["git rm --cached x", "docker rm app", "tools rm build", "npm rm left-pad", "echo rm is banned"])(
         "leaves %j alone",
         (command) => {
