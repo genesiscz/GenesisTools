@@ -348,6 +348,14 @@ tools github review respond t5 "/gemini Won't fix — the projectNameCache alrea
 tools github review respond t1,t3,t5 "@coderabbitai Fixed in [abc1234](https://github.com/owner/repo/commit/abc1234def5678) — addressed review feedback." -s <session-id>
 ```
 
+**Many threads, each with its own reply (preferred):** write one JSONL line per thread and post them as ONE
+review. Each `respond` call is a review of its own, and GitHub's Conversation tab then lists every reply as a
+separate entry under a copy of its thread; one review lists them once. It refuses while you hold a pending review.
+```bash
+# replies.jsonl: {"ref": "t1", "body": "@coderabbitai Fixed in [abc1234](…) — …"} per line
+tools github review respond-batch replies.jsonl -s <session-id>
+```
+
 #### Dispatching to a background agent
 
 Build the full list of `tools github review respond` commands, then spawn a **haiku** agent with `run_in_background: true`:

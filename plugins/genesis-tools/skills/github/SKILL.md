@@ -339,6 +339,9 @@ tools github review expand t1,t3 -s pr137-session
 # Reply to threads using refs
 tools github review respond t1 "Fixed in abc123" --resolve -s pr137-session
 
+# Many threads, each with its own text, as ONE review (one Conversation entry, not one per reply)
+tools github review respond-batch replies.jsonl -s pr137-session   # {"ref":"t1","body":"…"} per line
+
 # Resolve multiple threads
 tools github review resolve t1,t2,t3 -s pr137-session
 

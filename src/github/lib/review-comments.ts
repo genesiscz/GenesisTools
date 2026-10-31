@@ -306,3 +306,113 @@ export async function postReviewComment(
         url: first?.url,
     };
 }
+
+const SUBMIT_REVIEW = `
+mutation($reviewId: ID!) {
+  submitPullRequestReview(input: {pullRequestReviewId: $reviewId, event: COMMENT}) {
+    pullRequestReview { id url }
+  }
+}`;
+
+const DELETE_REVIEW = `
+mutation($reviewId: ID!) {
+  deletePullRequestReview(input: {pullRequestReviewId: $reviewId}) { pullRequestReview { id } }
+}`;
+
+export interface ThreadReply {
+    /** The review thread (a `PRRT_…` node id). */
+    threadId: string;
+    body: string;
+}
+
+export interface OneReviewRepliesResult {
+    /** The submitted review; absent when no reply landed and the empty review was deleted. */
+    reviewUrl?: string;
+    posted: Array<{ threadId: string; commentId: string; url: string }>;
+    failed: Array<{ threadId: string; error: string }>;
+}
+
+/**
+ * Posts replies to several threads of one PR as ONE review. A reply sent alone is a review of its own, and GitHub's
+ * conversation tab lists each one as a separate entry under the thread excerpt; one review lists them once.
+ * Refuses while the viewer holds a pending review, because submitting would publish its drafts too. Every thread is
+ * checked to belong to the PR before anything is written.
+ */
+export async function postRepliesAsOneReview(
+    input: { owner: string; repo: string; number: number; replies: ThreadReply[] },
+    client: ReviewCommentClient = defaultReviewCommentClient()
+): Promise<OneReviewRepliesResult> {
+    const replies = input.replies.map((reply) => ({ threadId: reply.threadId, body: reply.body.trim() }));
+    const empty = replies.find((reply) => !reply.body);
+    if (empty) {
+        throw new Error(`the reply to ${empty.threadId} is empty`);
+    }
+
+    if (replies.length === 0) {
+        throw new Error("no replies to post");
+    }
+
+    const target: ReviewCommentInput = {
+        owner: input.owner,
+        repo: input.repo,
+        number: input.number,
+        body: "",
+        publish: false,
+    };
+    const { pr, mine } = await viewersPendingReview(client, target);
+    if (mine) {
+        throw new Error(
+            `you have a pending review on ${input.owner}/${input.repo}#${input.number}: submit or discard it on GitHub first, because submitting these replies would publish its drafts too`
+        );
+    }
+
+    for (const reply of replies) {
+        await assertThreadOnPullRequest(client, { ...target, threadId: reply.threadId });
+    }
+
+    const started = await client.graphql<{ addPullRequestReview: { pullRequestReview: { id: string } } }>(
+        START_REVIEW,
+        {
+            pullRequestId: pr.id,
+            commitOID: pr.headRefOid,
+        }
+    );
+    const reviewId = started.addPullRequestReview.pullRequestReview.id;
+    const result: OneReviewRepliesResult = { posted: [], failed: [] };
+
+    for (const reply of replies) {
+        try {
+            const sent = await client.graphql<{
+                addPullRequestReviewThreadReply: { comment: { id: string; url: string } };
+            }>(REPLY, { threadId: reply.threadId, body: reply.body, reviewId });
+            const comment = sent.addPullRequestReviewThreadReply.comment;
+            result.posted.push({ threadId: reply.threadId, commentId: comment.id, url: comment.url });
+        } catch (error) {
+            logger.warn({ error, pr: input.number, thread: reply.threadId }, "github: a batched reply failed");
+            result.failed.push({
+                threadId: reply.threadId,
+                error: error instanceof Error ? error.message : String(error),
+            });
+        }
+    }
+
+    if (result.posted.length === 0) {
+        await client.graphql(DELETE_REVIEW, { reviewId });
+        logger.info(
+            { pr: input.number, failed: result.failed.length },
+            "github: no batched reply landed; deleted the empty review"
+        );
+        return result;
+    }
+
+    const submitted = await client.graphql<{ submitPullRequestReview: { pullRequestReview: { url: string } } }>(
+        SUBMIT_REVIEW,
+        { reviewId }
+    );
+    result.reviewUrl = submitted.submitPullRequestReview.pullRequestReview.url;
+    logger.info(
+        { pr: input.number, posted: result.posted.length, failed: result.failed.length },
+        "github: submitted batched replies as one review"
+    );
+    return result;
+}

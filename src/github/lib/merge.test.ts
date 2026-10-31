@@ -9,7 +9,7 @@ import type {
     PullRef,
 } from "./merge";
 import { NATIVE_STACK_BASE_ERROR } from "./native-stack";
-import { postReviewComment, type ReviewCommentClient } from "./review-comments";
+import { postRepliesAsOneReview, postReviewComment, type ReviewCommentClient } from "./review-comments";
 import type { PullCommitSubject } from "./squash-message";
 import type { RestackBranchInput, RestackBranchResult, StackRestackOps } from "./stack-restack";
 
@@ -1806,16 +1806,25 @@ describe("postReviewComment (the review window's GitHub writes)", () => {
         raceWinner?: string;
         /** The REST comment write fails with this message. */
         commentError?: string;
+        /** Replies to these threads fail. */
+        replyFailsFor?: string[];
     }) {
         const calls: string[] = [];
         let pending = options.pending;
         const client: ReviewCommentClient = {
             async graphql<T>(query: string, variables: Record<string, unknown>): Promise<T> {
                 const op =
-                    /(viewer|node|addPullRequestReviewThreadReply|addPullRequestReviewThread|addPullRequestReview)\b/.exec(
+                    /(viewer|node|addPullRequestReviewThreadReply|addPullRequestReviewThread|addPullRequestReview|submitPullRequestReview|deletePullRequestReview)\b/.exec(
                         query
                     )?.[1] ?? "?";
                 calls.push(`${op}${variables.reviewId ? `@${variables.reviewId}` : ""}`);
+
+                if (
+                    op === "addPullRequestReviewThreadReply" &&
+                    options.replyFailsFor?.includes(String(variables.threadId))
+                ) {
+                    throw new Error(`thread ${variables.threadId} is locked`);
+                }
 
                 if (op === "addPullRequestReview" && options.raceWinner) {
                     pending = options.raceWinner;
@@ -1852,6 +1861,10 @@ describe("postReviewComment (the review window's GitHub writes)", () => {
                     addPullRequestReviewThreadReply: {
                         addPullRequestReviewThreadReply: { comment: { id: "C_2", url: "u2" } },
                     },
+                    submitPullRequestReview: {
+                        submitPullRequestReview: { pullRequestReview: { id: "REV_new", url: "rev-url" } },
+                    },
+                    deletePullRequestReview: { deletePullRequestReview: { pullRequestReview: { id: "REV_new" } } },
                 };
                 return answers[op] as T;
             },
@@ -1870,6 +1883,75 @@ describe("postReviewComment (the review window's GitHub writes)", () => {
         };
         return { client, calls };
     }
+
+    test("batched replies go into one new review that is submitted once", async () => {
+        const { client, calls } = fakeClient({});
+        const replies = [
+            { threadId: "PRRT_1", body: "Fixed in abc." },
+            { threadId: "PRRT_2", body: "Won't fix: by design." },
+        ];
+        const result = await postRepliesAsOneReview({ owner: "acme", repo: "web", number: 7, replies }, client);
+
+        expect(result.posted.map((p) => p.threadId)).toEqual(["PRRT_1", "PRRT_2"]);
+        expect(result.reviewUrl).toBe("rev-url");
+        expect(calls).toEqual([
+            "viewer",
+            "node",
+            "node",
+            "addPullRequestReview",
+            "addPullRequestReviewThreadReply@REV_new",
+            "addPullRequestReviewThreadReply@REV_new",
+            "submitPullRequestReview@REV_new",
+        ]);
+    });
+
+    test("batched replies refuse while the viewer holds a pending review, and write nothing", async () => {
+        const { client, calls } = fakeClient({ pending: "REV_mine" });
+        await expect(
+            postRepliesAsOneReview(
+                { owner: "acme", repo: "web", number: 7, replies: [{ threadId: "PRRT_1", body: "x" }] },
+                client
+            )
+        ).rejects.toThrow("pending review");
+        expect(calls).toEqual(["viewer"]);
+    });
+
+    test("a thread of another PR stops the batch before any write", async () => {
+        const { client, calls } = fakeClient({ threadOn: { number: 8, nameWithOwner: "acme/web" } });
+        await expect(
+            postRepliesAsOneReview(
+                { owner: "acme", repo: "web", number: 7, replies: [{ threadId: "PRRT_x", body: "x" }] },
+                client
+            )
+        ).rejects.toThrow("belongs to");
+        expect(calls.some((call) => call.startsWith("add"))).toBe(false);
+    });
+
+    test("a failed reply is reported and the rest are submitted; when none lands the empty review is deleted", async () => {
+        const partial = fakeClient({ replyFailsFor: ["PRRT_2"] });
+        const some = await postRepliesAsOneReview(
+            {
+                owner: "acme",
+                repo: "web",
+                number: 7,
+                replies: [
+                    { threadId: "PRRT_1", body: "a" },
+                    { threadId: "PRRT_2", body: "b" },
+                ],
+            },
+            partial.client
+        );
+        expect(some.failed.map((f) => f.threadId)).toEqual(["PRRT_2"]);
+        expect(partial.calls.at(-1)).toBe("submitPullRequestReview@REV_new");
+
+        const none = fakeClient({ replyFailsFor: ["PRRT_2"] });
+        const nothing = await postRepliesAsOneReview(
+            { owner: "acme", repo: "web", number: 7, replies: [{ threadId: "PRRT_2", body: "b" }] },
+            none.client
+        );
+        expect(nothing.reviewUrl).toBeUndefined();
+        expect(none.calls.at(-1)).toBe("deletePullRequestReview@REV_new");
+    });
 
     test("a draft on a line starts the pending review when there is none, and never publishes", async () => {
         const { client, calls } = fakeClient({});
