@@ -485,8 +485,7 @@ public final class ClickyModel: ObservableObject {
             || previous.delayWarningMilliseconds != preferences.delayWarningMilliseconds {
             refreshOutputInBackground()
         }
-        audio?.idleRelease = TimeInterval(preferences.releaseOutputSeconds)
-        audio?.pauseAfter = TimeInterval(preferences.pauseAfterSeconds)
+        applyAudioPreferences()
         if preferences.muteOnBluetooth, !previous.muteOnBluetooth, silencedByBluetooth {
             audio?.stop()
         }
@@ -502,9 +501,14 @@ public final class ClickyModel: ObservableObject {
 
     private func makeAudio() {
         audio = ClickyAudio()
+        applyAudioPreferences()
+        audio?.setOutput(output?.effective?.id)
+    }
+
+    /// The engine timings the preferences set: how long it runs, then pauses, then gives the output back.
+    private func applyAudioPreferences() {
         audio?.idleRelease = TimeInterval(preferences.releaseOutputSeconds)
         audio?.pauseAfter = TimeInterval(preferences.pauseAfterSeconds)
-        audio?.setOutput(output?.effective?.id)
     }
 
     /// Reads the outputs again, decides where Clicky plays, and offers a faster output when that one is late.
