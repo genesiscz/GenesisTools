@@ -67,15 +67,27 @@ export function ObsidianReader({ path }: Props) {
         [navigate, open]
     );
 
+    // Runs again when reading mode mounts the article, so a fragment restored with source mode on still scrolls.
     useEffect(() => {
         const hash = window.location.hash.slice(1);
 
-        if (!data?.html || !hash) {
+        if (!data?.html || !hash || viewMode !== "reading") {
             return;
         }
 
-        document.getElementById(decodeURIComponent(hash))?.scrollIntoView({ block: "start" });
-    }, [data?.html]);
+        const target = document.getElementById(fragmentId(hash));
+
+        if (!target) {
+            return;
+        }
+
+        // A heading inside a folded callout (`details.ts` renders it closed) is opened first, or there is nothing to see.
+        for (let fold = target.closest("details"); fold; fold = fold.parentElement?.closest("details") ?? null) {
+            fold.open = true;
+        }
+
+        target.scrollIntoView({ block: "start" });
+    }, [data?.html, viewMode]);
 
     if (isPending) {
         return (
@@ -151,4 +163,13 @@ export function ObsidianReader({ path }: Props) {
             )}
         </div>
     );
+}
+
+/** A URL fragment as an element id; a malformed escape (`#100%`) is used as written instead of throwing. */
+function fragmentId(hash: string): string {
+    try {
+        return decodeURIComponent(hash);
+    } catch {
+        return hash;
+    }
 }
