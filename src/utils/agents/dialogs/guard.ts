@@ -104,10 +104,13 @@ export function openDialogFor(query: OpenDialogQuery): OpenDialog | null {
     );
 }
 
-/** The reason a typed delivery is refused while a dialog is open; the caller queues the text with it. */
-export function dialogRefusal(dialog: OpenDialog): string {
+/**
+ * The reason a typed delivery is refused while a dialog is open; the caller queues the text with it. `override`
+ * names the caller's override the way its user writes it (`force` in an API, `--force` on a CLI).
+ */
+export function dialogRefusal(dialog: OpenDialog, override = "force"): string {
     if (dialog.signal === "unreadable") {
-        return "could not read the session's dialog records; typed delivery is blocked until they are repaired, or pass force to type anyway.";
+        return `could not read the session's dialog records; typed delivery is blocked until they are repaired, or pass ${override} to type anyway.`;
     }
     const what =
         dialog.kind === "permission"
@@ -117,5 +120,5 @@ export function dialogRefusal(dialog: OpenDialog): string {
               : "a question dialog";
     const question = dialog.question ? ` (${dialog.question.slice(0, 160)})` : "";
 
-    return `${what} is open in the session${question}; free text would land in the dialog instead of the prompt. Answer the dialog first, or pass force to type anyway.`;
+    return `${what} is open in the session${question}; free text would land in the dialog instead of the prompt. Answer the dialog first, or pass ${override} to type anyway.`;
 }
