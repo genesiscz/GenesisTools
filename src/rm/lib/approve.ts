@@ -185,8 +185,13 @@ async function measureRows(input: {
             logger.debug({ error, path: wanted.path }, "rm: could not measure a path for the approval window");
         }
 
+        // The window still gets the size when it cannot be saved (a full disk): the next approve measures again.
         if (item && request) {
-            deps.record(request, wanted, item);
+            try {
+                deps.record(request, wanted, item);
+            } catch (error) {
+                logger.warn({ error, path: wanted.path, request: request.id }, "rm: could not save a measured size");
+            }
         }
 
         updates.push(sizeUpdate(wanted.path, item));
@@ -249,6 +254,7 @@ export function liveSizes(
     const entries = paths.map((path) => ({ wanted: { path } }));
     void nextTurn()
         .then(() => measureRows({ request: null, entries, updates, deps, signal: options.signal }))
+        .catch((error: unknown) => logger.warn({ error }, "rm: measuring the sizes for the approval window failed"))
         .finally(() => updates.close());
     return updates;
 }
@@ -314,7 +320,10 @@ export function approvalRows(
         updates,
         deps,
         signal: options.signal,
-    }).finally(() => updates.close());
+    })
+        // Nothing awaits this while the person decides: a failure is logged, never an unhandled rejection.
+        .catch((error: unknown) => logger.warn({ error }, "rm: filling the approval window's rows failed"))
+        .finally(() => updates.close());
     return { items, updates, done };
 }
 

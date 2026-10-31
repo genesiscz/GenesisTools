@@ -691,6 +691,28 @@ describe("sizes measured with the request", () => {
         ]);
     });
 
+    test("a size that cannot be saved still reaches the window, and the rows never reject", async () => {
+        const request = inPlaceRequest("unsaved");
+        const rows = approvalRows(request, entriesOf(request), {
+            signal: new AbortController().signal,
+            deps: {
+                ...noWalk(),
+                measure: async (target) => ({
+                    path: target.path,
+                    location: target.path,
+                    at: "",
+                    mtimeMs: 0,
+                    bytes: 4096,
+                }),
+                record: () => {
+                    throw new Error("ENOSPC: no space left on device");
+                },
+            },
+        });
+
+        expect(await collect(rows)).toContainEqual({ path: request.targets[0]?.path, bytes: 4096, measuring: false });
+    });
+
     test("the window follows a running pass instead of walking the same tree", async () => {
         const request = inPlaceRequest("following");
         let running = true;
