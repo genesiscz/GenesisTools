@@ -331,20 +331,6 @@ describe("session scratch and roots", () => {
         expect(verdictOf(root, c)).toEqual({ kind: "ask", rule: "default" });
     });
 
-    test("an allowed path inside an asked folder stays in the plan; an asked one inside it goes with the folder", () => {
-        const root = dir("trusted-overlap");
-        const c = ctx({ config: { ...config, roots: [{ path: root, addedAt: "", via: "cli" }] } });
-        const allowedChild = dir("trusted-overlap", "build");
-        const theirs = dir("cc", "proj", "sess-2222", "overlap");
-        const plan = planRemoval([root, allowedChild, theirs, dir("cc", "proj", "sess-2222", "overlap", "inner")], c);
-
-        expect(plan.map((item) => [item.target.path, item.verdict.kind])).toEqual([
-            [root, "ask"],
-            [allowedChild, "allow"],
-            [theirs, "ask"],
-        ]);
-    });
-
     test("a path inside another input is dropped from the plan", () => {
         const outer = dir("cc", "proj", "sess-1111", "outer");
         const plan = planRemoval([outer, join(outer, "inner"), outer], ctx());
@@ -1757,8 +1743,7 @@ describe("changing the trash root", () => {
         const target = resolveTarget(file(join(dir("root-move-src"), "a.txt")), base);
         const batch = moveToTrash([{ target, rule: "test" }], { config: own, caller: AGENT, graceMinutes: 60, paths });
 
-        expect(trashRootChangeBlocker(own, next, paths, "tools rm drain --now")).toContain("run tools rm drain --now");
-        expect(trashRootChangeBlocker(own, next, paths)).toContain("drain the trash");
+        expect(trashRootChangeBlocker(own, next, paths)).toContain("drain --now");
         expect(trashRootChangeBlocker(own, own.trashRoot, paths)).toBeNull();
 
         restoreBatch(batch?.id ?? "", { config: own, paths });

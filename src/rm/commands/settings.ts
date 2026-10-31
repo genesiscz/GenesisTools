@@ -2,16 +2,17 @@ import { toolCommand } from "@genesiscz/utils/cli";
 import { out } from "@genesiscz/utils/logger";
 import {
     allPresets,
+    appendRmLedger,
     BUILTIN_PROFILES,
     isAskAction,
     isRmApproval,
     isTrashRootName,
-    OPT_IN_PRESETS,
     presetsFor,
     RM_APPROVALS,
     type RmConfig,
     rmConfigPath,
     saveRmConfig,
+    trashRootChangeBlocker,
 } from "@genesiscz/utils/rm";
 import type { Command } from "commander";
 import pc from "picocolors";
@@ -43,13 +44,14 @@ function yesNo(value: string): boolean {
 
     throw new Error(`Not yes or no: ${value}`);
 }
-type Setting = (typeof SETTINGS)[number];
+export type Setting = (typeof SETTINGS)[number];
 
 function isSetting(key: string): key is Setting {
     return SETTINGS.some((setting) => setting === key);
 }
 
-function apply(config: RmConfig, key: Setting, value: string): RmConfig {
+/** The config after `config set <key> <value>`; throws on a value the setting does not take. */
+export function applyRmSetting(config: RmConfig, key: Setting, value: string): RmConfig {
     switch (key) {
         case "approval":
             if (!isRmApproval(value)) {
@@ -85,7 +87,8 @@ function apply(config: RmConfig, key: Setting, value: string): RmConfig {
             return {
                 ...config,
                 disabledPresets: config.disabledPresets.filter((id) => id !== value),
-                enabledPresets: OPT_IN_PRESETS.some((p) => p.id === value)
+                // Custom presets can be opt-in too, so every preset the config knows counts, not only the shipped ones.
+                enabledPresets: allPresets(config).some((p) => p.id === value && p.optIn)
                     ? [...new Set([...config.enabledPresets, value])]
                     : config.enabledPresets,
             };
@@ -156,7 +159,15 @@ export function registerSettingsCommands(program: Command): void {
                 return;
             }
 
-            const next = apply(ctx.base, key, value);
+            const next = applyRmSetting(ctx.base, key, value);
+            const blocked = key === "trash-root" ? trashRootChangeBlocker(ctx.base, value) : null;
+
+            if (blocked) {
+                out.println(pc.red(`Not changing trash-root: ${blocked}`));
+                process.exitCode = 1;
+                return;
+            }
+
             const answer = await requirePerson(ctx, {
                 title: `Set ${key} to ${value}?`,
                 lines: [`${key} = ${value}`],
@@ -165,6 +176,12 @@ export function registerSettingsCommands(program: Command): void {
 
             if (answer.approved) {
                 saveRmConfig(next);
+                appendRmLedger({
+                    action: "config-set",
+                    reason: `${key} = ${value}`,
+                    via: answer.via,
+                    caller: ctx.caller,
+                });
                 out.println(pc.green(`${key} = ${value}`));
             }
         });

@@ -15,6 +15,7 @@ import {
 } from "node:fs";
 import { rm } from "node:fs/promises";
 import { basename, dirname, isAbsolute, join, relative } from "node:path";
+import { toolCommand } from "@genesiscz/utils/cli/tool-command";
 import { createStopwatch } from "@genesiscz/utils/format";
 import { walkFiles } from "@genesiscz/utils/fs/disk-usage";
 import { SafeJSON } from "@genesiscz/utils/json";
@@ -777,6 +778,31 @@ export async function sweepOrphans(options: DrainOptions & { minAgeMs?: number }
         bytes: sizes.reduce((sum, size) => sum + size, 0),
         held,
     };
+}
+
+/**
+ * Why the trash root cannot move to `next` now, or null when it can. Batch records keep their stored paths and the
+ * drain checks each against the configured root, so a move while the old root holds anything would leave it there.
+ */
+export function trashRootChangeBlocker(
+    config: RmConfig,
+    next: string,
+    paths: TrashPaths = defaultTrashPaths()
+): string | null {
+    if (realOrSelf(next) === realOrSelf(config.trashRoot)) {
+        return null;
+    }
+
+    const batches = listBatches(paths).length;
+
+    if (batches === 0 && !trashHasEntries(config)) {
+        return null;
+    }
+
+    return (
+        `the trash at ${config.trashRoot} still holds ${batches} batch(es) or leftover folders. ` +
+        `Restore what you want back, run ${toolCommand("rm")} drain --now, then change trash-root.`
+    );
 }
 
 /** True when the configured trash root holds anything (a batch, or an orphan the drainer should sweep). */
