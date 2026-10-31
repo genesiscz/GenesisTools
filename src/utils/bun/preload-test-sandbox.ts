@@ -136,6 +136,37 @@ function isolateCodexModelsCache(): void {
     env.testing.set("GENESIS_TOOLS_CODEX_MODELS_CACHE", env.getTrimmed("GENESIS_TOOLS_CODEX_MODELS_CACHE") ?? missing);
 }
 
+/**
+ * The native agent homes (`CLAUDE_CONFIG_DIR`, `GROK_HOME`) live outside `~/.genesis-tools` too. Decision delivery
+ * reads the live Claude receivers from `<claude home>/sessions` and asks the Grok leader on `<grok home>/leader.sock`,
+ * so a test that did not script them read this Mac's real peer registry, or connected to the real Grok leader. Each
+ * variable points at an empty folder unless the run already set it; a test that needs a home passes its own.
+ */
+function isolateNativeHomes(): void {
+    if (env.test.allowsRealHome()) {
+        return;
+    }
+
+    const homes = {
+        CLAUDE_CONFIG_DIR: env.getTrimmed("CLAUDE_CONFIG_DIR") ?? mkdtempSync(join(tmpdir(), "gt-test-claude-home-")),
+        GROK_HOME: env.getTrimmed("GROK_HOME") ?? mkdtempSync(join(tmpdir(), "gt-test-grok-home-")),
+    };
+
+    for (const [name, home] of Object.entries(homes)) {
+        env.testing.set(name, home);
+    }
+
+    // A test that unsets one for its own case must not leave the rest of the run on the real home.
+    afterEach(() => {
+        for (const [name, home] of Object.entries(homes)) {
+            if (!env.getTrimmed(name)) {
+                env.testing.set(name, home);
+            }
+        }
+    });
+}
+
 installSandbox();
 isolateObsidian();
 isolateCodexModelsCache();
+isolateNativeHomes();

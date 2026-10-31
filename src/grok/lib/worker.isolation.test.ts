@@ -4,6 +4,7 @@ import { tmpdir } from "node:os";
 import { join } from "node:path";
 import { env } from "@genesiscz/utils/env";
 import { withFileLock } from "@genesiscz/utils/storage";
+import { startWithDefaultNativeHomes } from "@genesiscz/utils/test/default-native-homes";
 import { keptBin } from "@genesiscz/utils/test/kept-executable";
 import { sessionMetaPath, turnLogPath } from "./paths";
 import { GrokSessionStore } from "./store";
@@ -17,6 +18,9 @@ import {
     steerSession,
     subscriptionAuthPath,
 } from "./worker";
+
+// These tests check how the default agent homes resolve, so they start with no override set.
+startWithDefaultNativeHomes();
 
 /**
  * Regression test: PR #330 review t2 — the worker's isolation contract was

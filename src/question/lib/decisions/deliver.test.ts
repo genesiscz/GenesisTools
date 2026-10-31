@@ -1,13 +1,13 @@
 import { describe, expect, test } from "bun:test";
-import { existsSync, mkdtempSync, readFileSync, writeFileSync } from "node:fs";
-import { tmpdir } from "node:os";
-import { join } from "node:path";
+import { existsSync, mkdirSync, mkdtempSync, readFileSync, unlinkSync, writeFileSync } from "node:fs";
+import { homedir, tmpdir } from "node:os";
+import { dirname, join } from "node:path";
 import { type CodexSessionMeta, CodexSessionStore } from "@app/codex/lib/store";
-import { type GrokLeaderClient, matchLeaderSession } from "@app/grok/lib/leader";
+import { defaultGrokLeaderSocket, type GrokLeaderClient, matchLeaderSession } from "@app/grok/lib/leader";
 import { listSessionMessages } from "@genesiscz/utils/agent-sessions/message-queue";
 import { GrokAcpRefusedError } from "@genesiscz/utils/ai/grok/acp";
 import { withTimeout } from "@genesiscz/utils/async";
-import { listClaudeSessionInventory } from "@genesiscz/utils/claude/peer-message";
+import { claudeSessionsDir, listClaudeSessionInventory } from "@genesiscz/utils/claude/peer-message";
 import { standInSender } from "@genesiscz/utils/claude/peer-sender";
 import { env } from "@genesiscz/utils/env";
 import { SafeJSON } from "@genesiscz/utils/json";
@@ -1221,6 +1221,34 @@ describe("delivery routes", () => {
             });
         } finally {
             alive.kill();
+        }
+    });
+});
+
+describe("the live receiver edges in a test run", () => {
+    test("without noNativeReceivers a delivery reads the sandboxed agent homes, never this Mac's real ones", async () => {
+        const realHome = homedir();
+        const claudeSessions = claudeSessionsDir();
+        const grokSocket = defaultGrokLeaderSocket();
+
+        // The preload points both homes at empty folders (isolateNativeHomes in preload-test-sandbox.ts).
+        expect(claudeSessions.startsWith(join(realHome, ".claude"))).toBe(false);
+        expect(grokSocket.startsWith(join(realHome, ".grok"))).toBe(false);
+
+        // With nothing in the sandbox, the live edges find no receiver: the Claude session falls to the pane.
+        expect(
+            await resolveLive({ session: "sandbox-session", provider: "claude" }, { findTargets: noPaneTargets })
+        ).toEqual({ kind: "none", reason: "no cmux pane runs this session" });
+
+        // Positive control: a leader socket file in the sandboxed Grok home IS what the live edge reads.
+        mkdirSync(dirname(grokSocket), { recursive: true });
+        writeFileSync(grokSocket, "");
+        try {
+            expect(
+                await resolveLive({ session: "sandbox-session", provider: "grok" }, { findTargets: noPaneTargets })
+            ).toMatchObject({ kind: "grok-leader", sockets: [grokSocket] });
+        } finally {
+            unlinkSync(grokSocket);
         }
     });
 });

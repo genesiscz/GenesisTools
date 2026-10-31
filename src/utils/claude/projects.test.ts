@@ -3,6 +3,10 @@ import { describe, expect, it } from "bun:test";
 import { existsSync, readdirSync } from "node:fs";
 import { homedir } from "node:os";
 import { basename, resolve } from "node:path";
+import { startWithDefaultNativeHomes } from "@genesiscz/utils/test/default-native-homes";
+
+// These tests check how the default agent homes resolve, so they start with no override set.
+startWithDefaultNativeHomes();
 
 const PROJECTS_DIR = resolve(homedir(), ".claude", "projects");
 

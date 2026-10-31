@@ -3,6 +3,7 @@ import { mkdirSync, mkdtempSync, realpathSync } from "node:fs";
 import { tmpdir } from "node:os";
 import { join } from "node:path";
 import { env } from "@genesiscz/utils/env";
+import { startWithDefaultNativeHomes } from "@genesiscz/utils/test/default-native-homes";
 import {
     claudeJsonPath,
     claudeJsonPathInConfigDir,
@@ -21,6 +22,9 @@ import {
     primaryCodexHome,
     transcriptStem,
 } from "./session-paths";
+
+// These tests check how the default agent homes resolve, so they start with no override set.
+startWithDefaultNativeHomes();
 
 describe("nativeSessionRootsWithLegacyHomes", () => {
     test("codex adds the session roots of every legacy profile home; claude and grok keep their roots", async () => {

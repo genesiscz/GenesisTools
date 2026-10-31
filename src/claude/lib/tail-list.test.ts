@@ -3,6 +3,7 @@ import { mkdirSync, mkdtempSync, rmSync, utimesSync, writeFileSync } from "node:
 import * as realOs from "node:os";
 import { join } from "node:path";
 import type { SessionInfo } from "@genesiscz/utils/claude/session.types";
+import { env } from "@genesiscz/utils/env";
 import { SafeJSON } from "@genesiscz/utils/json";
 import { out } from "@genesiscz/utils/logger";
 import { stripAnsi } from "@genesiscz/utils/string";
@@ -10,6 +11,8 @@ import { stripAnsi } from "@genesiscz/utils/string";
 // The statusline folder is ~/.claude/statusline, resolved at import time. Point the home at a temp folder first.
 const home = mkdtempSync(join(realOs.tmpdir(), "gt-tail-list-"));
 mock.module("node:os", () => ({ ...realOs, homedir: () => home }));
+// The test preload points CLAUDE_CONFIG_DIR at an empty folder; this file's Claude home is the temp one.
+env.testing.set("CLAUDE_CONFIG_DIR", join(home, ".claude"));
 const { ClaudeSession } = await import("@genesiscz/utils/claude/session");
 const { getActiveSessionIds, renderActiveSessionList, renderSessionList } = await import("./tail-list");
 
