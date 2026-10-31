@@ -399,7 +399,10 @@ async function rowPrs(
     const mine = own
         ? { ...own, own: true, tracked: tracked.includes(own.number), hidden: hidden.includes(own.number) }
         : null;
-    const prs = [mine, ...others].filter((pr): pr is BandPr => pr !== null);
+    // A tracked PR hidden while it was the branch's own stays hidden after a switch makes it one of the others.
+    const prs = [mine, ...others.map((pr) => (pr ? { ...pr, hidden: hidden.includes(pr.number) } : null))].filter(
+        (pr): pr is BandPr => pr !== null
+    );
     const names = (at.touch?.branches ?? [])
         .filter((name) => name !== at.branch && isBranchName(name))
         .slice(0, EARLIER_PRS);
