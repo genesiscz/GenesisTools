@@ -788,7 +788,12 @@ export function trashRootChangeBlocker(
         return null;
     }
 
-    const batches = listBatches(paths).length;
+    // Every record counts, claims too: a producer holds `<id>.json.restoring-<pid>` from before its first move until
+    // it publishes, and a drain or a restore holds its own claim; `listBatches` reads only the plain records.
+    const records = existsSync(paths.batchesDir)
+        ? readdirSync(paths.batchesDir).filter((name) => name.endsWith(".json") || CLAIM_NAME.test(name))
+        : [];
+    const batches = records.length;
 
     if (batches === 0 && !trashHasEntries(config)) {
         return null;

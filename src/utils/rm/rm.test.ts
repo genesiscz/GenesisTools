@@ -1295,6 +1295,12 @@ describe("changing the trash root", () => {
         restoreBatch(batch?.id ?? "", { config: own, paths });
 
         expect(trashRootChangeBlocker(own, next, paths)).toBeNull();
+
+        // A producer's claim, held from before its first move until it publishes, counts too.
+        const claim = join(paths.batchesDir, `${batch?.id ?? "x"}-next.json.restoring-${process.pid}`);
+        writeFileSync(claim, "{}");
+
+        expect(trashRootChangeBlocker(own, next, paths)).toContain("1 batch(es)");
     });
 });
 
