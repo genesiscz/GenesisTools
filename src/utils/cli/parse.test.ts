@@ -1,5 +1,27 @@
 import { describe, expect, test } from "bun:test";
-import { commandWords, parseNonNegativeInt } from "./parse";
+import { commandWords, parseNonNegativeInt, parseNonNegativeNumber } from "./parse";
+
+describe("parseNonNegativeNumber", () => {
+    test("parses zero and decimals", () => {
+        expect(parseNonNegativeNumber("0", "--threshold")).toBe(0);
+        expect(parseNonNegativeNumber("0.25", "--threshold")).toBe(0.25);
+    });
+
+    test("accepts the max itself", () => {
+        expect(parseNonNegativeNumber("1", "--threshold", { max: 1 })).toBe(1);
+    });
+
+    test("rejects a negative number, a non-number, infinity and a value over max", () => {
+        expect(() => parseNonNegativeNumber("-1", "--min-area")).toThrow(
+            '--min-area must be a number from 0, got "-1"'
+        );
+        expect(() => parseNonNegativeNumber("abc", "--min-area")).toThrow('got "abc"');
+        expect(() => parseNonNegativeNumber("Infinity", "--min-area")).toThrow('got "Infinity"');
+        expect(() => parseNonNegativeNumber("2", "--threshold", { max: 1 })).toThrow(
+            '--threshold must be a number from 0 to 1, got "2"'
+        );
+    });
+});
 
 describe("parseNonNegativeInt", () => {
     test("parses a valid non-negative integer", () => {
