@@ -159,18 +159,20 @@ private struct PaneHold: ViewModifier {
         withTransaction(transaction) {
             guard size.width > 0 else { frozen = nil; return }
             if let release {
+                // Pinned to the edge away from the panel: that edge does not move while the panel's slot catches up,
+                // and the frozen content already fills what the raised panel leaves uncovered.
                 switch release.edge {
                 case .leading:
-                    alignment = .topLeading
-                    frozen = CGSize(width: max(0, size.width - release.shift), height: size.height)
-                case .trailing:
                     alignment = .topTrailing
                     frozen = CGSize(width: max(0, size.width - release.shift), height: size.height)
-                case .top:
+                case .trailing:
                     alignment = .topLeading
+                    frozen = CGSize(width: max(0, size.width - release.shift), height: size.height)
+                case .top:
+                    alignment = .bottomLeading
                     frozen = CGSize(width: size.width, height: max(0, size.height - release.shift))
                 case .bottom:
-                    alignment = .bottomLeading
+                    alignment = .topLeading
                     frozen = CGSize(width: size.width, height: max(0, size.height - release.shift))
                 }
             } else if holds {
