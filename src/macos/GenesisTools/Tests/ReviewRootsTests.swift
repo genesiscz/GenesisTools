@@ -305,11 +305,7 @@ final class ReviewRootsTests: XCTestCase {
         XCTAssertEqual(whole.oldContents?.count, GitWorkingTreeSource.maxBytes + 100)
 
         let model = ReviewModel(repo: nested, options: DiffViewOptions(), renderer: NullRenderer())
-        model.reload()
-        let deadline = Date().addingTimeInterval(10)
-        while model.loading && Date() < deadline {
-            RunLoop.current.run(until: Date().addingTimeInterval(0.1))
-        }
+        reload(model)
         XCTAssertFalse(model.loading)
         XCTAssertEqual(model.repo.path, root.path)
         XCTAssertEqual(model.roots.first?.folder, nested.path)
@@ -355,19 +351,21 @@ final class ReviewRootsTests: XCTestCase {
         for name in ["upper-1", "upper-2"] { try commit(name) }
 
         let model = ReviewModel(repo: root, options: DiffViewOptions(), renderer: NullRenderer())
-        func load() {
-            model.reload()
-            let deadline = Date().addingTimeInterval(10)
-            while model.loading && Date() < deadline {
-                RunLoop.current.run(until: Date().addingTimeInterval(0.05))
-            }
-        }
-        load()
+        reload(model)
         XCTAssertEqual(model.commits.map(\.subject), ["upper-2", "upper-1", "lower-3", "lower-2", "lower-1"],
                        "without a target the default branch is the base")
         model.useBranchTarget("lower")
-        load()
+        reload(model)
         XCTAssertEqual(model.commits.map(\.subject), ["upper-2", "upper-1"])
+    }
+
+    /// Reloads `model` and runs the main run loop until its load ends, or for 10 s.
+    private func reload(_ model: ReviewModel) {
+        model.reload()
+        let deadline = Date().addingTimeInterval(10)
+        while model.loading && Date() < deadline {
+            RunLoop.current.run(until: Date().addingTimeInterval(0.05))
+        }
     }
 
     @discardableResult
