@@ -372,8 +372,8 @@ package func runHub(_ args: [String]) -> Never {
                                 let web = (review()?.renderer as? PierreWebDiffRenderer)?.webView
                                 let showsDiff = model.mode == .prs || model.panes.contains(.changes)
                                 // A modal panel covers the diff: the web view's own image, drawn last, showed through it.
-                                let covered = request.digest || request.rules || request.prompts || request.handoff
-                                    || request.sessionSearch != nil || request.palette != nil || request.find != nil
+                                // Every overlay with a load to wait for is such a panel.
+                                let covered = !request.snapshotLoads.isEmpty || request.sessionSearch != nil || request.palette != nil || request.find != nil
                                 if let rows = HubBench.transcriptRowsLine(in: window) {
                                     PerfLog.mark("hub.snapshot \(rows)")
                                     FileHandle.standardError.write(Data("hub snapshot: \(rows)\n".utf8))
