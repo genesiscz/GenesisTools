@@ -587,12 +587,12 @@ extension WidgetModel {
     /// Send closes it once the hub says every answer was delivered, and leaves it open with the reason otherwise. Stay
     /// (a click beside the box, Dismiss, its close button) only ends the question: the panel stays as it was.
     public func resolveStagedLeave(_ choice: String) {
-        PerfLog.mark("widget.staged-leave \(choice): \(stagedForLeave.count) staged")
+        let items = stagedForLeave
+        PerfLog.mark("widget.staged-leave \(choice): \(items.count) staged")
         guard choice != "stay" else {
             stagedLeavePrompt = false
             return
         }
-        let items = stagedForLeave
         let ids = items.map(\.sourceId)
         stagedLeavePrompt = false
         stagedView = nil
