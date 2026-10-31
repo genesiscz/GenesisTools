@@ -35,6 +35,12 @@ class FakeRpcClient implements RpcClient {
     /** The most turns one `thread/turns/list` page holds, whatever limit was asked for. */
     turnPageCap = Number.POSITIVE_INFINITY;
     rejectRevert: Error | null = null;
+    /** How many requests were sent when each `answered` was awaited: the wire order of a decline and a steer. */
+    readonly answeredAt: Array<{ id: unknown; sent: number }> = [];
+
+    async answered(id: unknown): Promise<void> {
+        this.answeredAt.push({ id, sent: this.requests.length });
+    }
 
     async request<T>(method: string, params?: unknown): Promise<T> {
         this.requests.push({ method, params });
@@ -712,6 +718,8 @@ describe("CodexSessionRuntime", () => {
                 expect(store.readMeta("reviewer")?.pendingApprovals[id]).toBeUndefined();
                 const notice = refusalNotice(id, refusal);
                 expect(client.requests.slice(sent)).toEqual([steeredTurn(notice)]);
+                // The decline was on the wire before the steer went out.
+                expect(client.answeredAt.at(-1)).toEqual({ id: expect.anything(), sent });
                 expect(notice).toContain(actor);
                 expect(notice.includes(`Reason: ${refusal.reason}`)).toBe(refusal.reason !== undefined);
             }
@@ -1152,6 +1160,7 @@ describe("CodexSessionRuntime", () => {
             const client: RpcClient = {
                 request: async () => new Promise<never>(() => {}),
                 notify: async () => {},
+                answered: async () => {},
                 close: async () => {
                     closed = true;
                 },
