@@ -3,9 +3,7 @@ import { resolve } from "node:path";
 import { cleanPromptText } from "@app/claude/lib/cmux/sessions";
 import {
     type CacheStatus,
-    CODEX_CACHE_TTL_MS,
     computeCacheStatus,
-    GROK_CACHE_TTL_MS,
     listSessionRows,
     type SessionCmuxLocation,
 } from "@app/claude/lib/usage/session-rows";
@@ -19,8 +17,8 @@ import {
     type AccountProviderAlias,
     PROVIDER_ALIASES,
 } from "@genesiscz/utils/ai/providers/aliases";
-import { grokAccountNameLookup } from "@genesiscz/utils/ai/providers/plugins/grok-sub/discover";
 import { loadAllSessionCmuxRefs, resolveRefsProvider, type SessionCmuxRefs } from "@genesiscz/utils/cmux/session-refs";
+import { isFunctionPart, toolParts } from "@genesiscz/utils/harness/tool-parts";
 import { logger } from "@genesiscz/utils/logger";
 import { collapsePath } from "@genesiscz/utils/paths";
 
@@ -125,18 +123,6 @@ function titleOf(record: {
     return record.customTitle ?? record.summary ?? (prompt && prompt.length > 0 ? prompt : null);
 }
 
-/** Grok names a login by its home; a home with no account simply has none. */
-function grokAccount(lookup: (home: string) => string | undefined, home: string): string | null {
-    try {
-        return lookup(home) ?? null;
-    } catch (err) {
-        // An unreadable auth file or an unparseable ai/config.json is a REASON, and silence made
-        // it indistinguishable from "this home has no account" with nothing in the log.
-        logger.debug({ err, home }, "[ai] grok account for home unavailable");
-        return null;
-    }
-}
-
 function lastCacheAtMs(record: { lastTimestamp?: string | null; mtime: number }): number {
     if (record.lastTimestamp) {
         const parsed = Date.parse(record.lastTimestamp);
@@ -153,7 +139,7 @@ function lastCacheAtMs(record: { lastTimestamp?: string | null; mtime: number })
 type RowAccount = (record: { sessionId: string | null; sourceHome?: string | null }) => string | null;
 
 /** How one harness's rows are listed. */
-type RowLister = (options: AgentSessionRowsOptions) => Promise<AgentSessionRow[]>;
+export type RowLister = (options: AgentSessionRowsOptions) => Promise<AgentSessionRow[]>;
 
 /** What differs between the providers `nativeRows` lists straight off the history index. */
 interface NativeRowSpec {
@@ -207,7 +193,7 @@ export function cmuxLocationForRow(
  * tool stayed pinned to one provider, which is why nothing downstream of it had a Codex or
  * Grok equivalent.
  */
-function nativeRows(alias: AccountProviderAlias, spec: NativeRowSpec): RowLister {
+export function nativeRows(alias: AccountProviderAlias, spec: NativeRowSpec): RowLister {
     return (options) => nativeRowsOf(alias, spec, options);
 }
 
@@ -357,7 +343,7 @@ async function exactPathsByProvider(filePaths: string[]): Promise<ExactPathScope
 }
 
 /** Claude's rows come from its own listing (`listSessionRows`), which also reads usage and the cache from transcripts. */
-async function claudeRows(options: AgentSessionRowsOptions): Promise<AgentSessionRow[]> {
+export async function claudeRows(options: AgentSessionRowsOptions): Promise<AgentSessionRow[]> {
     const claude = await listSessionRows({
         ...(options.hours === undefined ? {} : { hours: options.hours }),
         ...(options.filePaths === undefined ? {} : { filePaths: options.filePaths }),
@@ -372,27 +358,16 @@ async function claudeRows(options: AgentSessionRowsOptions): Promise<AgentSessio
 }
 
 /**
- * How each harness's rows are listed: Claude by its own listing, Codex and Grok off the shared history index with
- * their cache clock and account lookup. Harness-guard: this one tool-owned table stays here, because Claude's listing
- * and the cache clocks are the claude tool's (`@app/claude/lib/usage/session-rows`), which a driver cannot import.
+ * How each harness's rows are listed: `row-listers/<harness id>.ts` exports it as `rowPart` (`toolParts`). Claude by its
+ * own listing, Codex and Grok off the shared history index with their cache clock and account lookup. A new harness
+ * adds its module there and edits no table.
  */
-const ROW_LISTERS: { readonly [Id in AccountProviderAlias]: RowLister } = {
-    claude: claudeRows,
-    // Codex cannot name the account on its own, so it falls back to the SessionStart pin its launcher's
-    // `TOOLS_CODEX_ACCOUNT` produced.
-    codex: nativeRows("codex", {
-        cacheTtlMs: CODEX_CACHE_TTL_MS,
-        accountOf: async (pins) => (record) => (record.sessionId ? pins.get(record.sessionId)?.account : null) ?? null,
-    }),
-    // Grok answers from the session's own home.
-    grok: nativeRows("grok", {
-        cacheTtlMs: GROK_CACHE_TTL_MS,
-        accountOf: async () => {
-            const lookup = await grokAccountNameLookup();
-            return (record) => (record.sourceHome ? grokAccount(lookup, record.sourceHome) : null);
-        },
-    }),
-};
+const ROW_LISTERS = toolParts<RowLister>({
+    meta: import.meta,
+    folder: "row-listers",
+    exportName: "rowPart",
+    isPart: isFunctionPart,
+});
 
 /** Every provider's sessions in one list, newest first. */
 export async function listAgentSessionRows(options: AgentSessionRowsOptions = {}): Promise<AgentSessionRow[]> {
@@ -409,7 +384,7 @@ export async function listAgentSessionRows(options: AgentSessionRowsOptions = {}
                 }
 
                 const scopedOptions = scopes ? { ...options, filePaths: scopes.paths.get(alias) ?? [] } : options;
-                return await ROW_LISTERS[alias](scopedOptions);
+                return await ROW_LISTERS.of(alias)(scopedOptions);
             } catch (error) {
                 // One provider's index being unreadable must not blank the other two.
                 logger.warn({ error, provider: alias }, "[ai] could not list this provider's sessions");
