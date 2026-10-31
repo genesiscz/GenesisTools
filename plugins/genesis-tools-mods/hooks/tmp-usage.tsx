@@ -10,6 +10,7 @@ import type { ElementTable, RenderElement } from "claude-code";
 import type { SessionWorktree, TmpReading, TmpUsage } from "../types";
 import { sessionDirOf } from "./agents-band";
 import { genesisProbe } from "./genesis";
+import { checkoutStatus } from "./git-band";
 import { liveAgo } from "./live";
 import { bareDescription } from "./model-label";
 import { type Feature, type Host, isRecord, logMod, logReading, paceAfter, settingsOf } from "./shared";
@@ -519,21 +520,26 @@ async function worktreesOf(host: Host, scratch: string, main: string): Promise<S
     }
 
     const trees: SessionWorktree[] = [];
+    // The statuses at once, shared with the git band's reads of the same checkouts; the sizes stay paced below.
+    const read = await Promise.all(
+        [...from].map(async ([path, source]) => {
+            const there = await host.exists(`${path}/.git`);
 
-    for (const [path, source] of from) {
-        if (!(await host.exists(`${path}/.git`))) {
+            return { path, source, there, status: there ? await checkoutStatus(host, path) : undefined };
+        })
+    );
+
+    for (const { path, source, there, status } of read) {
+        if (!there) {
             continue;
         }
 
-        const status = await host
-            .run(["git", "-C", path, "status", "--porcelain", "--branch"], { timeoutMs: 10_000 })
-            .catch(() => undefined);
         trees.push({
             path,
             source,
-            ...(status?.exitCode === 0 ? statusOf(status.stdout) : { branch: "?", changes: 0 }),
+            ...(status !== undefined ? statusOf(status) : { branch: "?", changes: 0 }),
             isLocked: locked.has(path),
-            kb: await worktreeSize(host, path, status?.stdout ?? ""),
+            kb: await worktreeSize(host, path, status ?? ""),
         });
     }
 
