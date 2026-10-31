@@ -348,7 +348,7 @@ export async function loadSessionDecisions(
     let found: TranscriptScan | null = null;
 
     try {
-        found = await scan(session, { ...(transcript ? { transcript } : {}), ...(trace ? { trace } : {}) });
+        found = await scan(session, { transcript, trace });
     } catch (error) {
         log.debug({ error, session }, "session decisions: transcript not readable, stored rows only");
         trace?.cannotProve("the transcript could not be read");
@@ -418,11 +418,7 @@ export async function loadSessionInbox(
         transcript,
         trace,
         decisions = (id: string, stored: DecisionRecord[]) =>
-            loadSessionDecisions(id, {
-                rows: () => stored,
-                ...(transcript ? { transcript } : {}),
-                ...(trace ? { trace } : {}),
-            }),
+            loadSessionDecisions(id, { rows: () => stored, transcript, trace }),
     }: {
         rows?: () => DecisionRecord[];
         forms?: (session: string) => AskForm[];

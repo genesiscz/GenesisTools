@@ -249,9 +249,9 @@ async function sessionInboxAnswer(options: InboxListOptions & { session: string 
     const trace = cursors.baseTrace();
     const inbox = await loadSessionInbox(session, {
         trace,
-        ...(options.transcript ? { transcript: { path: options.transcript, provider } } : {}),
+        transcript: options.transcript ? { path: options.transcript, provider } : undefined,
     });
-    const { cursor, delta } = cursors.recordAnswer({ session, answer: inbox, trace, ...(since ? { since } : {}) });
+    const { cursor, delta } = cursors.recordAnswer({ session, answer: inbox, trace, since });
 
     return delta ? { sessionId: session, cursor, full: false, ...delta } : { ...inbox, cursor, full: true };
 }
