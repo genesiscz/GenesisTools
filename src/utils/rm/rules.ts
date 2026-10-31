@@ -603,17 +603,21 @@ export function probeGit(target: RmTarget): RmGitFacts {
 
     const rel = relative(realOrSelf(top), target.canonical);
     facts.workTree = top;
+    // One call for both counts: `-t` tags each path, `? ` for untracked and a letter (`H`, `S`, ...) for tracked.
     // Literal: `--` ends the options but not the pathspec magic, so `:draft.txt` would name `draft.txt`.
-    facts.tracked = countZ(git(top, ["--literal-pathspecs", "ls-files", "-z", "--", rel]));
+    const listed = (
+        git(top, ["--literal-pathspecs", "ls-files", "-z", "-t", "-c", "-o", "--exclude-standard", "--", rel]) ?? ""
+    )
+        .split("\0")
+        .filter(Boolean);
+    facts.untracked = listed.filter((entry) => entry.startsWith("? ")).length;
+    facts.tracked = listed.length - facts.untracked;
     facts.dirty =
         facts.tracked > 0
             ? countZ(
                   git(top, ["--literal-pathspecs", "status", "--porcelain", "-z", "--untracked-files=no", "--", rel])
               )
             : 0;
-    facts.untracked = countZ(
-        git(top, ["--literal-pathspecs", "ls-files", "-z", "--others", "--exclude-standard", "--", rel])
-    );
     logger.debug({ path: target.path, top, tracked: facts.tracked, untracked: facts.untracked }, "rm: git facts");
     return facts;
 }
