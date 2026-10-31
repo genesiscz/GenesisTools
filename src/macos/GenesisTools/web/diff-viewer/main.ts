@@ -3018,6 +3018,8 @@ function probeFrame(now: number): void {
         probe.slowFrames += 1;
     }
 
+    // The probe's own layout reads (scrollTop, scrollHeight, the sticky pin) count as probe time, not the page's.
+    const probeStarted = performance.now();
     const top = host.scrollTop;
     const atEdge = top <= 0 || top >= host.scrollHeight - host.clientHeight - 1;
 
@@ -3033,7 +3035,6 @@ function probeFrame(now: number): void {
 
     probe.wheelSinceFrame = 0;
     probe.frameTop = top;
-    const probeStarted = performance.now();
     probe.renderedMax = Math.max(probe.renderedMax, viewer.getRenderedItems().length);
     trackJump(top);
     probe.probeMs += performance.now() - probeStarted;
