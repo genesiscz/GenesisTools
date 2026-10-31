@@ -6,6 +6,7 @@ import { join } from "node:path";
 import { publishNote } from "@app/dev-dashboard/lib/obsidian/publish";
 import * as shareAssets from "@app/dev-dashboard/lib/obsidian/share-assets";
 import {
+    buildShareAssetIndex,
     buildShareBundle,
     buildShareEmbed,
     downloadBaseName,
@@ -638,6 +639,31 @@ describe("GET /share/:slug assets", () => {
         } finally {
             read.mockRestore();
         }
+    });
+
+    test("a bundle reads each path itself: of two files with the same bytes, the one that changed is left out", async () => {
+        const vault = mkdtempSync(join(dir, "twins-"));
+        const twin = Buffer.from("\u0089PNG twin-bytes");
+        mkdirSync(join(vault, "N"));
+        writeFileSync(join(vault, "N/a.png"), twin);
+        writeFileSync(join(vault, "N/b.png"), twin);
+        const source = "![[a.png]]\n\n![[b.png]]";
+        const index = await buildShareAssetIndex({ vaultRoot: vault, notePath: "N/Twins.md", source });
+        expect(index.byTarget.size).toBe(2);
+
+        writeFileSync(join(vault, "N/a.png"), Buffer.from("\u0089PNG a-changed-after-indexing"));
+        const bundle = await buildShareBundle({
+            vaultRoot: vault,
+            index,
+            notePath: "N/Twins.md",
+            noteText: source,
+            folderName: "Twins",
+        });
+
+        expect(bundle?.skipped).toBe(1);
+        expect(bundle?.entries.map((entry) => entry.name).sort()).toEqual(["Twins/Twins.md", "Twins/b.png"]);
+        const b = bundle?.entries.find((entry) => entry.name === "Twins/b.png");
+        expect(Buffer.from(b?.data ?? []).equals(twin)).toBe(true);
     });
 
     test("both downloads count source bytes without attachments", async () => {

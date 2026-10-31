@@ -481,18 +481,28 @@ export async function readShareAsset(options: {
         return null;
     }
 
+    const body = await readIndexedAsset(vaultRoot, asset);
+
+    return body ? { asset, body } : null;
+}
+
+/**
+ * The servable body of this exact asset: its own path re-read, re-checked and re-hashed, masked by its own kind.
+ * Two paths with the same bytes share a hash, so a caller that holds the asset reads it here rather than by hash.
+ */
+async function readIndexedAsset(vaultRoot: string, asset: ShareAsset): Promise<Buffer | null> {
     const loaded = await loadCandidate(vaultRoot, await realpath(resolve(vaultRoot)), asset.vaultPath);
 
-    if (!loaded || hashAsset(loaded.bytes) !== hash) {
+    if (!loaded || hashAsset(loaded.bytes) !== asset.hash) {
         return null;
     }
 
     // An SVG is XML text: it is masked like the other text assets. The hash still names the bytes on disk.
     if (isMediaKind(asset.kind) && !asset.vaultPath.toLowerCase().endsWith(".svg")) {
-        return { asset, body: loaded.bytes };
+        return loaded.bytes;
     }
 
-    return { asset, body: Buffer.from(redactSecretsInText(loaded.bytes.toString("utf8")), "utf8") };
+    return Buffer.from(redactSecretsInText(loaded.bytes.toString("utf8")), "utf8");
 }
 
 /** Pretty JSON as a ```json fence rendered by the note renderer, or the raw text when it does not parse. */
@@ -576,18 +586,17 @@ function commonDir(paths: string[]): string {
 }
 
 /**
- * The masked bytes of `assets`, read one after another through `readShareAsset`. A file that changed since
+ * The masked bytes of `assets`, read one after another, each from its own path. A file that changed since
  * indexing is skipped and counted. Returns null as soon as `startBytes` plus the bodies exceed
  * `SHARE_BUNDLE_MAX_BYTES`.
  */
 async function readAssetBodies(options: {
     vaultRoot: string;
-    index: ShareAssetIndex;
     assets: Iterable<ShareAsset>;
     startBytes: number;
     what: string;
 }): Promise<{ bodies: Map<ShareAsset, Buffer>; skipped: number; total: number } | null> {
-    const { vaultRoot, index, assets, what } = options;
+    const { vaultRoot, assets, what } = options;
     const bodies = new Map<ShareAsset, Buffer>();
     let total = options.startBytes;
     let skipped = 0;
@@ -597,22 +606,22 @@ async function readAssetBodies(options: {
     }
 
     for (const asset of assets) {
-        const found = await readShareAsset({ vaultRoot, index, hash: asset.hash });
+        const body = await readIndexedAsset(vaultRoot, asset);
 
-        if (!found) {
+        if (!body) {
             log.warn({ asset: asset.vaultPath }, `${what} skipped an attachment that changed`);
             skipped++;
             continue;
         }
 
-        total += found.body.length;
+        total += body.length;
 
         if (total > SHARE_BUNDLE_MAX_BYTES) {
             log.warn({ total }, `${what} is over the size limit`);
             return null;
         }
 
-        bodies.set(asset, found.body);
+        bodies.set(asset, body);
     }
 
     return { bodies, skipped, total };
@@ -645,7 +654,6 @@ export async function buildShareBundle(options: {
 
     const read = await readAssetBodies({
         vaultRoot,
-        index: { byTarget: index.byTarget, byHash: new Map([...byPath.values()].map((asset) => [asset.hash, asset])) },
         assets: byPath.values(),
         startBytes: noteData.length,
         what: "share bundle",
@@ -724,7 +732,6 @@ export async function buildShareEmbed(options: {
     const embed: ShareEmbed = { media: new Map(), panels: {}, raws: {} };
     const read = await readAssetBodies({
         vaultRoot,
-        index,
         assets: index.byHash.values(),
         startBytes: sourceBytes,
         what: "share embed",
