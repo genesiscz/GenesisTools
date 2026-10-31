@@ -189,18 +189,20 @@ function regionPlan(regions: ClassifiedRegion[]): Annotation[] {
 export async function reportPair(pair: ReportPair, index: number, options: ReportOptions): Promise<PairResult> {
     const prefix = pairPrefix(index, pair.screen);
     const base: PairResult = { ...pair, index, status: "ok", regions: [] };
-    const [geometryBefore, geometryAfter, treeBefore, treeAfter] = await Promise.all([
-        readSnapshotGeometry(pair.before),
-        readSnapshotGeometry(pair.after),
-        readViewTree(pair.before),
-        readViewTree(pair.after),
-    ]);
-    const geometry = comparePairGeometry(geometryBefore, geometryAfter);
+    const geometry = comparePairGeometry(
+        ...(await Promise.all([readSnapshotGeometry(pair.before), readSnapshotGeometry(pair.after)]))
+    );
+    // Refused before the trees are read, so a broken tree sidecar never hides the refusal.
     if (geometry.kind === "size-mismatch" && !options.resizeToMatch) {
         return { ...base, status: "refused", message: geometry.message };
     }
 
-    const [a, decodedB] = await Promise.all([decodeImageRgba(pair.before), decodeImageRgba(pair.after)]);
+    const [a, decodedB, treeBefore, treeAfter] = await Promise.all([
+        decodeImageRgba(pair.before),
+        decodeImageRgba(pair.after),
+        readViewTree(pair.before),
+        readViewTree(pair.after),
+    ]);
     let b = decodedB;
     let afterInput: string | Buffer = pair.after;
     let note = geometry.kind === "rescale" || geometry.kind === "size-mismatch" ? geometry.message : undefined;

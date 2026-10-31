@@ -175,6 +175,10 @@ describe("control report", () => {
         expect(refused.status).toBe("refused");
         expect(refused.message).toContain("200");
         expect(refused.message).toContain("400");
+
+        // The refusal comes before the trees are read, so a broken tree sidecar cannot turn it into a thrown error.
+        await Bun.write(join(folder, "inbox-after.tree.json"), "{ not json");
+        expect((await reportPair(pair, 2, options(join(folder, "out")))).status).toBe("refused");
     });
 
     it("encodes image paths with spaces and parentheses in Markdown", () => {
