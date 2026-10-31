@@ -86,6 +86,12 @@ describe("renderBlock", () => {
         expect(shellPath("/tmp/a b/$x", HOME)).toBe('"/tmp/a b/\\$x"');
         expect(shellPath(`${HOME}/x`, HOME)).toBe('"$HOME/x"');
     });
+
+    it("keeps shell syntax in a path under the home folder literal; only the leading $HOME expands", () => {
+        expect(shellPath(`${HOME}/cache/$(touch marker)/\`x\`/"q"`, HOME)).toBe(
+            '"$HOME/cache/\\$(touch marker)/\\`x\\`/\\"q\\""'
+        );
+    });
 });
 
 describe("planCompletions", () => {
