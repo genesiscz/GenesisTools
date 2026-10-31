@@ -1981,3 +1981,33 @@ describe("a measurement pass over many paths", () => {
         }
     });
 });
+
+describe("the git facts of a big request", () => {
+    test("run at most `concurrency` git processes at once, across every path", async () => {
+        const repo = dir("git-bound-repo");
+        git(repo, "init", "-q");
+        const paths = Array.from({ length: 40 }, (_, index) => file(join(repo, `f${index}.txt`)));
+        let running = 0;
+        let most = 0;
+        let calls = 0;
+        const facts = await probeItemGit(
+            paths.map((path) => ({ path })),
+            {
+                concurrency: 4,
+                git: async () => {
+                    calls++;
+                    running++;
+                    most = Math.max(most, running);
+                    await Bun.sleep(2);
+                    running--;
+                    return "";
+                },
+            }
+        );
+
+        // One status for the repository, one log per path.
+        expect(calls).toBe(41);
+        expect(most).toBeLessThanOrEqual(4);
+        expect(facts.size).toBe(40);
+    });
+});
