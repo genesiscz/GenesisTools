@@ -56,6 +56,7 @@ export const claudeHarness: HarnessDriver<"claude"> = {
             turnIdsEndWithRowUuid: true,
             keepsLiveRegistry: true,
             // Claude records no permission prompt in its transcript; only its `Notification` hook sees one.
+            eventLog: () => null,
             windowTurns: deferredWindowTurns(import.meta, "harness-parse", "claudeWindowTurns"),
         },
         exit: { command: "/exit" },

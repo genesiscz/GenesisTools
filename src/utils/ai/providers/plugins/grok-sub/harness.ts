@@ -49,6 +49,11 @@ export const grokHarness: HarnessDriver<"grok"> = {
             timestampResolutionMs: 1000,
             turnIdsEndWithRowUuid: false,
             keepsLiveRegistry: false,
+            // Grok writes its permission prompts to `events.jsonl` in the session folder, never to `updates.jsonl`.
+            eventLog: (transcriptPath) =>
+                /(^|[/\\])updates\.jsonl$/.test(transcriptPath)
+                    ? transcriptPath.replace(/updates\.jsonl$/, "events.jsonl")
+                    : null,
             windowTurns: deferredWindowTurns(import.meta, "harness-parse", "grokWindowTurns"),
         },
         exit: { command: "/exit" },
