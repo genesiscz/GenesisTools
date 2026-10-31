@@ -9,7 +9,7 @@ import type {
     PullRef,
 } from "./merge";
 import { NATIVE_STACK_BASE_ERROR } from "./native-stack";
-import { postRepliesAsOneReview, postReviewComment, type ReviewCommentClient } from "./review-comments";
+import { batchOutcome, postRepliesAsOneReview, postReviewComment, type ReviewCommentClient } from "./review-comments";
 import type { PullCommitSubject } from "./squash-message";
 import type { RestackBranchInput, RestackBranchResult, StackRestackOps } from "./stack-restack";
 
@@ -1957,6 +1957,26 @@ describe("postReviewComment (the review window's GitHub writes)", () => {
         );
         expect(nothing.reviewUrl).toBeUndefined();
         expect(none.calls.at(-1)).toBe("deletePullRequestReview@REV_new");
+    });
+
+    test("a batch where no reply landed prints no success line and fails the run", () => {
+        const none = batchOutcome({ posted: [], failed: [{ threadId: "PRRT_2", error: "locked" }] }, "acme/web#7");
+
+        expect(none.failed).toBe(true);
+        expect(none.lines.some((line) => line.level === "ok")).toBe(false);
+        expect(none.lines.at(-1)).toEqual({
+            level: "error",
+            text: "No reply was posted; the empty review was deleted",
+        });
+
+        const some = batchOutcome(
+            { reviewUrl: "rev-url", posted: [{ threadId: "PRRT_1", commentId: "C", url: "u" }], failed: [] },
+            "acme/web#7"
+        );
+        expect(some).toEqual({
+            lines: [{ level: "ok", text: "Replied to 1 thread(s) in one review: rev-url" }],
+            failed: false,
+        });
     });
 
     test("a failed submit returns the posted replies and the review id, and never deletes the review", async () => {

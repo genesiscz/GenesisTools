@@ -337,6 +337,54 @@ export interface OneReviewRepliesResult {
     submitFailed?: { reviewId: string; error: string };
 }
 
+/** One line `respond-batch` prints about a batch: `ok` goes to stdout, the others to stderr. */
+export interface BatchOutcomeLine {
+    level: "ok" | "warn" | "error";
+    text: string;
+}
+
+/**
+ * What `respond-batch` says about a batch, and whether the run failed. A batch where no reply landed gets no success
+ * line, and a failed submit says not to rerun it, because its replies may already be on the review.
+ */
+export function batchOutcome(
+    result: OneReviewRepliesResult,
+    pr: string
+): { lines: BatchOutcomeLine[]; failed: boolean } {
+    const lines: BatchOutcomeLine[] = result.failed.map((failure) => ({
+        level: "error",
+        text: `Failed ${failure.threadId}: ${failure.error}`,
+    }));
+
+    if (result.submitFailed) {
+        lines.push(
+            {
+                level: "error",
+                text: `${result.posted.length} reply(ies) were added to review ${result.submitFailed.reviewId}, but submitting it failed: ${result.submitFailed.error}`,
+            },
+            {
+                level: "warn",
+                text: `Do not rerun this batch. Open ${pr} on GitHub: if the review is still pending, submit or discard it there; if it was submitted, the replies are already posted.`,
+            }
+        );
+
+        return { lines, failed: true };
+    }
+
+    if (result.posted.length === 0) {
+        lines.push({ level: "error", text: "No reply was posted; the empty review was deleted" });
+
+        return { lines, failed: true };
+    }
+
+    lines.push({
+        level: "ok",
+        text: `Replied to ${result.posted.length} thread(s) in one review${result.reviewUrl ? `: ${result.reviewUrl}` : ""}`,
+    });
+
+    return { lines, failed: result.failed.length > 0 };
+}
+
 /**
  * Posts replies to several threads of one PR as ONE review. A reply sent alone is a review of its own, and GitHub's
  * conversation tab lists each one as a separate entry under the thread excerpt; one review lists them once.

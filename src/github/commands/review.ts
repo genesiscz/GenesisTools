@@ -1,6 +1,6 @@
 // Review command - fetch, display, reply to, and resolve PR review threads
 
-import { postRepliesAsOneReview, postReviewComment } from "@app/github/lib/review-comments";
+import { batchOutcome, postRepliesAsOneReview, postReviewComment } from "@app/github/lib/review-comments";
 import {
     formatPrCommentsLLM,
     formatReviewJSON,
@@ -309,32 +309,17 @@ async function respondBatchCommand(file: string, options: { session?: string }):
         replies: rows.map((row) => ({ threadId: byRef.get(row.ref) ?? row.ref, body: row.body })),
     });
 
-    for (const failure of result.failed) {
-        out.error(chalk.red(`Failed ${failure.threadId}: ${failure.error}`));
+    const outcome = batchOutcome(result, `${owner}/${repo}#${prNumber}`);
+
+    for (const line of outcome.lines) {
+        if (line.level === "ok") {
+            out.println(chalk.green(line.text));
+        } else {
+            out.error(line.level === "warn" ? chalk.yellow(line.text) : chalk.red(line.text));
+        }
     }
 
-    if (result.submitFailed) {
-        out.error(
-            chalk.red(
-                `${result.posted.length} reply(ies) were added to review ${result.submitFailed.reviewId}, but submitting it failed: ${result.submitFailed.error}`
-            )
-        );
-        out.error(
-            chalk.yellow(
-                `Do not rerun this batch. Open ${owner}/${repo}#${prNumber} on GitHub: if the review is still pending, submit or discard it there; if it was submitted, the replies are already posted.`
-            )
-        );
-        process.exitCode = 1;
-        return;
-    }
-
-    out.println(
-        chalk.green(
-            `Replied to ${result.posted.length} thread(s) in one review${result.reviewUrl ? `: ${result.reviewUrl}` : ""}`
-        )
-    );
-
-    if (result.failed.length > 0) {
+    if (outcome.failed) {
         process.exitCode = 1;
     }
 }
