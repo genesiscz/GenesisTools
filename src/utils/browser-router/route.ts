@@ -903,13 +903,18 @@ function parseAction(value: Record<string, unknown>, index: number): RouteAction
             port: value.port,
             name: value.name,
             to: value.to,
-            ...(value.allowExecuteByPlainBrowserNavigationMightBeDangerous === true
-                ? { allowExecuteByPlainBrowserNavigationMightBeDangerous: true }
-                : {}),
+            ...plainNavigationFlag(value.allowExecuteByPlainBrowserNavigationMightBeDangerous),
         };
     }
 
     throw new RouteError(`routes[${index}].action.type must be open, forward, unwrap, token, run, tool, or service`);
+}
+
+/** The service action's opt-in flag, present only when it is exactly `true`. */
+export function plainNavigationFlag(
+    flag: unknown
+): { allowExecuteByPlainBrowserNavigationMightBeDangerous: true } | Record<never, never> {
+    return flag === true ? { allowExecuteByPlainBrowserNavigationMightBeDangerous: true } : {};
 }
 
 function parseNames(value: unknown, id: string): Record<string, string> {

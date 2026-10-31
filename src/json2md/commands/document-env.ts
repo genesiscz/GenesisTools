@@ -91,8 +91,12 @@ async function unlinkedImporterDir(modulePath: string): Promise<string | null> {
 }
 
 /** The GenesisTools commands a document's stamp and its `{{kind …}}` tokens name. */
+let hints: DocumentHints | undefined;
+
+/** Built once per process: the transclusion registry is the same for every file a command touches. */
 function documentHints(): DocumentHints {
-    return { rebuildCommand: json2mdBuild, transclusions: defaultTransclusionRegistry(transclusionHints()) };
+    hints ??= { rebuildCommand: json2mdBuild, transclusions: defaultTransclusionRegistry(transclusionHints()) };
+    return hints;
 }
 
 export function documentEnvironment(): DocumentEnvironment {

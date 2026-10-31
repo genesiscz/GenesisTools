@@ -1,5 +1,5 @@
 import { basename, dirname, isAbsolute, relative, resolve } from "node:path";
-
+import { colorizeUnifiedDiff } from "@genesiscz/utils/diff";
 import { SafeJSON } from "@genesiscz/utils/json";
 import {
     checkDocument,
@@ -67,23 +67,6 @@ function guidance(check: CheckResult): string[] {
     }
 
     return [];
-}
-
-function colourDiff(diff: string): string {
-    return diff
-        .split("\n")
-        .map((line) => {
-            if (line.startsWith("+")) {
-                return pc.green(line);
-            }
-
-            if (line.startsWith("-")) {
-                return pc.red(line);
-            }
-
-            return pc.dim(line);
-        })
-        .join("\n");
 }
 
 /** Finds the generator that a markdown file's own stamp names. */
@@ -330,7 +313,7 @@ function registerCheck(program: Command, env: DocumentEnvironment): void {
 
                 if (result.diff) {
                     out.println("");
-                    out.println(colourDiff(result.diff));
+                    out.println(colorizeUnifiedDiff(result.diff));
                 }
             }
 

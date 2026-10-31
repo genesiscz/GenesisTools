@@ -1,6 +1,7 @@
 import { join, resolve } from "node:path";
 import { isInteractive } from "@genesiscz/utils/cli";
 import { toolCommand } from "@genesiscz/utils/cli/tool-command";
+import { colorizeUnifiedDiff } from "@genesiscz/utils/diff";
 import { env } from "@genesiscz/utils/env";
 import { logger, out } from "@genesiscz/utils/logger";
 import * as p from "@genesiscz/utils/prompts/p";
@@ -60,31 +61,6 @@ function lineSpan(block: FoundHandBlock): string {
     const first = block.range.start + 1;
     const last = block.range.end + 1;
     return first === last ? `line ${first}` : `lines ${first}-${last}`;
-}
-
-function colorDiff(diff: string): string {
-    return diff
-        .split("\n")
-        .map((line) => {
-            if (line.startsWith("+++") || line.startsWith("---")) {
-                return pc.bold(line);
-            }
-
-            if (line.startsWith("+")) {
-                return pc.green(line);
-            }
-
-            if (line.startsWith("-")) {
-                return pc.red(line);
-            }
-
-            if (line.startsWith("@@")) {
-                return pc.cyan(line);
-            }
-
-            return line;
-        })
-        .join("\n");
 }
 
 /** The first and last lines of a hand block, for the question about it. */
@@ -307,13 +283,13 @@ async function installAction(opts: InstallOptions): Promise<void> {
                 ? `Would generate: ${plan.wired.map((provider) => completionFilePath(completionsDir(), provider.cli)).join(", ")}`
                 : "Would generate no file"
         );
-        out.print(diff ? `${colorDiff(diff)}\n` : `${rcPath}: no change\n`);
+        out.print(diff ? `${colorizeUnifiedDiff(diff)}\n` : `${rcPath}: no change\n`);
         return;
     }
 
     if (interactive) {
         if (diff) {
-            out.log.message(colorDiff(diff));
+            out.log.message(colorizeUnifiedDiff(diff));
         }
 
         const ok = await p.confirm({
@@ -517,7 +493,7 @@ async function uninstallAction(opts: InstallOptions): Promise<void> {
 
     if (opts.dryRun) {
         const diff = before === undefined || after === undefined ? "" : rcDiff({ rcPath, before, after });
-        out.print(diff ? `${colorDiff(diff)}\n` : `${rcPath}: no change\n`);
+        out.print(diff ? `${colorizeUnifiedDiff(diff)}\n` : `${rcPath}: no change\n`);
         return;
     }
 

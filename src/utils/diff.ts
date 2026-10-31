@@ -10,6 +10,32 @@ import { createPatch } from "diff";
 // Use logger for clean diff output (no timestamps, no level for info)
 const diffLogger = logger;
 
+/** Colours a unified diff for a terminal: file headers bold, additions green, removals red, hunk headers cyan. */
+export function colorizeUnifiedDiff(diff: string): string {
+    return diff
+        .split("\n")
+        .map((line) => {
+            if (line.startsWith("+++") || line.startsWith("---")) {
+                return chalk.bold(line);
+            }
+
+            if (line.startsWith("+")) {
+                return chalk.green(line);
+            }
+
+            if (line.startsWith("-")) {
+                return chalk.red(line);
+            }
+
+            if (line.startsWith("@@")) {
+                return chalk.cyan(line);
+            }
+
+            return line;
+        })
+        .join("\n");
+}
+
 export interface RenderUnifiedDiffArgs {
     before: string;
     after: string;
