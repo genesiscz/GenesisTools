@@ -494,6 +494,12 @@ export function sweepCompactions(retentionDays: number, now = Date.now()): strin
     const fileNames = new Set(files);
     const cutoff = now - retentionDays * 86_400_000;
     const retained = new Set(files.filter((name) => statSync(join(dir, name)).mtimeMs >= cutoff));
+
+    // Nothing is past the cutoff, so nothing can be deleted: skip parsing every kept record's history.
+    if (retained.size === files.length) {
+        return [];
+    }
+
     const pending = [...retained];
 
     while (pending.length > 0) {
