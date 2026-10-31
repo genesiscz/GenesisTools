@@ -462,6 +462,14 @@ async function gitText(host: Host, argv: string[], root: string, ttlMs: number):
     return done?.exitCode === 0 ? done.stdout : undefined;
 }
 
+/**
+ * A checkout's `git status --porcelain --branch`, shared with every session (and the /tmp usage mod) that reads the
+ * same checkout. `--no-optional-locks`: a background read never takes the index lock a commit or a stage needs.
+ */
+export function checkoutStatus(host: Host, root: string, ttlMs = TIMER_SHARED_MS): Promise<string | undefined> {
+    return gitText(host, ["git", "--no-optional-locks", "status", "--porcelain", "--branch"], root, ttlMs);
+}
+
 async function readRow(
     host: Host,
     root: string,
@@ -469,13 +477,7 @@ async function readRow(
     ask: { ttlMs: number; freshPrs: boolean }
 ): Promise<GitBand | null | undefined> {
     const { ttlMs } = ask;
-    // `--no-optional-locks`: a background read never takes the index lock a commit or a stage in the checkout needs.
-    const status = await gitText(
-        host,
-        ["git", "--no-optional-locks", "status", "--porcelain", "--branch"],
-        root,
-        ttlMs
-    );
+    const status = await checkoutStatus(host, root, ttlMs);
     const earlier = (await settingsOf(host)).git.earlier === "show";
     const touch = earlier ? (await sessionCheckouts(host)).find((held) => held.root === root) : undefined;
 
