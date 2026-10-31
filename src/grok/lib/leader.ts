@@ -1,9 +1,10 @@
 import { createHash } from "node:crypto";
-import { existsSync, realpathSync } from "node:fs";
+import { existsSync } from "node:fs";
 import { tmpdir } from "node:os";
 import { join } from "node:path";
 import { fileSessionStore, openSessions, type SessionStore } from "@app/cmux/lib/session-store";
 import { GrokAcpClient, GrokAcpError, GrokAcpRefusedError, type GrokLeaderSession } from "@genesiscz/utils/ai/grok/acp";
+import { canonicalPath } from "@genesiscz/utils/fs/canonical";
 import { logger } from "@genesiscz/utils/logger";
 import { nativeHomePath } from "@genesiscz/utils/providers/session-paths";
 import { toolDataDir } from "@genesiscz/utils/storage/root";
@@ -85,15 +86,6 @@ export function leaderSocketsFor(
         deps.defaultSocket ?? defaultGrokLeaderSocket(),
     ];
     return [...new Set(candidates)].filter((socket) => exists(socket));
-}
-
-function canonicalPath(path: string): string {
-    try {
-        return realpathSync(path);
-    } catch (error) {
-        log.debug({ error, path }, "the path has no realpath; comparing it as written");
-        return path;
-    }
 }
 
 /**

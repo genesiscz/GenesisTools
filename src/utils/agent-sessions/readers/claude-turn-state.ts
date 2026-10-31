@@ -14,6 +14,7 @@ import {
     TurnCalls,
     toEpochMs,
     toolSummaryOf,
+    waitingOn,
 } from "@genesiscz/utils/ai/transcripts/turn-state-core";
 import { isObject } from "@genesiscz/utils/object";
 
@@ -236,7 +237,7 @@ export function claudeTurnState(input: TurnStateInput): TurnSnapshot {
     const raw = claudeRecordsToEvents(input.records);
     const last = raw.at(-1);
     // An interrupt ends the turn the way a question does: the session waits for the user.
-    const events = interrupted && last ? [...raw.slice(0, -1), { ...last, kind: "question" as const }] : raw;
+    const events = interrupted ? waitingOn(raw) : raw;
     const final = claudeFinalMessage(input.records);
 
     return snapshotOf({
