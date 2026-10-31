@@ -125,6 +125,18 @@ describe("the exec runner's script", () => {
         expect(other.endsWith("Output:\nundefined")).toBe(true);
     });
 
+    it("a missing key loads undefined from the file store as from the memory store, inherited names too", () => {
+        const store = fileExecStore(join(mkdtempSync(join(tmpdir(), "exec-store-")), "session-c.json"));
+        store.store("kept", 1);
+
+        for (const key of ["constructor", "toString", "__proto__", "hasOwnProperty"]) {
+            expect(store.load(key)).toBeUndefined();
+            expect(memoryExecStore().load(key)).toBeUndefined();
+        }
+
+        expect(store.load("kept")).toBe(1);
+    });
+
     it(`keeps the whole output under Claude Code's 30,000-char Bash limit (${EXEC_OUTPUT_CHARS} chars of body)`, async () => {
         const output = await run('text("x".repeat(100000));\ntext("tail");');
 

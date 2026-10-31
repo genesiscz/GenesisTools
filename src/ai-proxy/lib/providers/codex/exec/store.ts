@@ -31,7 +31,11 @@ function readValues(path: string): Record<string, unknown> {
  */
 export function fileExecStore(path: string): ExecStore {
     return {
-        load: (key) => readValues(path)[key],
+        // Own keys only, like the Map of memoryExecStore: `constructor` or `toString` is a missing key, not Object's.
+        load: (key) => {
+            const values = readValues(path);
+            return Object.hasOwn(values, key) ? values[key] : undefined;
+        },
         store: (key, value) => {
             const values = { ...readValues(path), [key]: value };
             const temp = `${path}.${process.pid}.tmp`;
