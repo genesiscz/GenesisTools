@@ -296,7 +296,15 @@ function sameRect(a: AnnotationRect | undefined, b: AnnotationRect | undefined, 
 function textWidthOnly(was: Keyed, now: Keyed, tolerance: number): boolean {
     const a = was.node.frame;
     const b = now.node.frame;
-    if (!a || !b || !was.leaf || Math.abs(a.h - b.h) > tolerance || Math.abs(a.y - b.y) > tolerance) {
+    if (
+        !a ||
+        !b ||
+        !was.leaf ||
+        was.node.role !== "AXStaticText" ||
+        now.node.role !== "AXStaticText" ||
+        Math.abs(a.h - b.h) > tolerance ||
+        Math.abs(a.y - b.y) > tolerance
+    ) {
         return false;
     }
 

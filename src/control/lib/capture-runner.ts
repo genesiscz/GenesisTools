@@ -229,8 +229,12 @@ async function startPeekabooCapture({
     return attempt;
 }
 
-export async function runCapturePlan(plan: Plan): Promise<RunResult> {
-    return withInterrupt((signal) => runCapturePlanWithSignal({ plan, signal }), { handleTermination: true });
+export type CaptureFocusGuard = (app: string | undefined) => Promise<string | null>;
+
+export async function runCapturePlan(plan: Plan, guardFocus?: CaptureFocusGuard): Promise<RunResult> {
+    return withInterrupt((signal) => runCapturePlanWithSignal({ plan, signal, guardFocus }), {
+        handleTermination: true,
+    });
 }
 
 /** How long a cancelled recorder gets to finalize its movie before its process tree is killed. */
@@ -282,9 +286,11 @@ export async function runCapturePlanWithSignal({
     stopGraceMs = RECORDER_STOP_GRACE_MS,
     onRecording,
     onPreparing,
+    guardFocus,
 }: {
     plan: Plan;
     signal: AbortSignal;
+    guardFocus?: CaptureFocusGuard;
     stopGraceMs?: number;
     onRecording?: () => void;
     /** The native recorder has to compile first (after a source change), which takes up to a minute. */
@@ -336,7 +342,7 @@ export async function runCapturePlanWithSignal({
             throw error;
         }
     }
-    using nativeControls = backend === "native" ? new NativeCaptureControls(cap) : undefined;
+    using nativeControls = backend === "native" ? new NativeCaptureControls(cap, { signal }) : undefined;
 
     // CAPTURE_HELP still recommends noRemote/captureEngine, which are peekaboo transport flags.
     // nativeCaptureArgv drops both; report ignored legacy transport flags explicitly.
@@ -353,6 +359,11 @@ export async function runCapturePlanWithSignal({
     }
 
     if (plan.focus) {
+        const refusal = await guardFocus?.(plan.focus.app);
+        if (refusal) {
+            throw new CaptureRunError(refusal);
+        }
+        throwIfCancelled("before focus");
         const f = nativeControls
             ? await nativeControls.focus(plan.focus, { preRecording: true })
             : focusWindow(plan.focus);
@@ -491,6 +502,37 @@ export async function runCapturePlanWithSignal({
 
         const actualMs = Date.now() - t0;
         let result: { ok: boolean; stdout: string; stderr: string; data?: unknown };
+
+        if (guardFocus && (REFOCUS_ACTIONS.has(action.do) || action.do === "focus")) {
+            const relativeApp = "relativeTo" in action ? action.relativeTo?.app : undefined;
+            const actionApp = "app" in action ? action.app : undefined;
+            const target = actionApp ?? relativeApp ?? ambientFocusApp ?? cap.app;
+            const targets = new Set([
+                target,
+                ...(ambientFocusApp && REFOCUS_ACTIONS.has(action.do) ? [ambientFocusApp] : []),
+            ]);
+            let refusal: string | null = null;
+            for (const app of targets) {
+                refusal = await guardFocus(app);
+                if (refusal || signal.aborted) {
+                    break;
+                }
+            }
+            if (refusal || signal.aborted) {
+                fired.push({
+                    action,
+                    plannedMs: action.atMs,
+                    actualMs,
+                    ok: false,
+                    error: refusal ?? "cancelled",
+                    skipped: signal.aborted,
+                });
+                if (refusal && (action.onError ?? "continue") === "abort") {
+                    aborted = true;
+                }
+                continue;
+            }
+        }
 
         if (!nativeControls && ambientFocusApp && REFOCUS_ACTIONS.has(action.do)) {
             const f = runCmd(["osascript", "-e", `tell application "${ambientFocusApp}" to activate`], 3_000);

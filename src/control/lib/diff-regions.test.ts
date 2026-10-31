@@ -1,6 +1,6 @@
 import { describe, expect, it } from "bun:test";
 import type { DecodedRgba } from "@genesiscz/utils/image/raster";
-import { DEFAULT_REGION_OPTIONS, findDiffRegions, regionAnnotations } from "./diff-regions";
+import { clusterMask, DEFAULT_REGION_OPTIONS, findDiffRegions, regionAnnotations } from "./diff-regions";
 
 type Rgb = [number, number, number];
 
@@ -76,6 +76,22 @@ describe("findDiffRegions", () => {
         expect(regions.map(({ x, y, w, h }) => ({ x, y, w, h }))).toEqual([
             { x: 20, y: 20, w: 26, h: 10 },
             { x: 300, y: 200, w: 10, h: 10 },
+        ]);
+    });
+
+    it("drops sparse noise without losing a nearby cluster", () => {
+        const width = 256;
+        const height = 256;
+        const mask = new Uint8ClampedArray(width * height * 4);
+        for (let y = 0; y < height; y += 4) {
+            for (let x = 0; x < width; x += 4) {
+                mask[(y * width + x) * 4 + 3] = 255;
+            }
+        }
+        mask[(1 * width + 1) * 4 + 3] = 255;
+
+        expect(clusterMask({ mask, width, height, mergeDistance: 0, minArea: 2 })).toEqual([
+            { x: 0, y: 0, w: 2, h: 2, pixels: 2 },
         ]);
     });
 

@@ -55,6 +55,7 @@ function captureFixture(
         selectedApps?: boolean;
         explicitIds?: number[];
         lateDuplicate?: boolean;
+        signal?: AbortSignal;
     } = {}
 ) {
     const calls: string[][] = [];
@@ -117,6 +118,7 @@ function captureFixture(
               }
             : { mode: "window", app: "Fixture", windowId: options.recordedWindow, duration: 5 },
         {
+            signal: options.signal,
             native: {
                 run: async ({ args, timeoutMs }): Promise<AxResult> => {
                     calls.push(args);
@@ -171,6 +173,15 @@ function captureFixture(
 }
 
 describe("native capture target binding", () => {
+    it("does not dispatch native calls after cancellation", async () => {
+        const controller = new AbortController();
+        const fixture = captureFixture({ signal: controller.signal });
+        controller.abort();
+        const result = await fixture.controls.run({ atMs: 0, do: "ax-press", app: "Fixture", axId: "save" });
+        expect(result.ok).toBe(false);
+        expect(fixture.calls).toEqual([]);
+    });
+
     it("uses the recorder's pinned IDs for app-only, mixed and explicit selections", async () => {
         for (const selection of [
             { selectedApps: true },

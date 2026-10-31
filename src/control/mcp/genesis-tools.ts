@@ -155,14 +155,18 @@ export function controlToolEntries(): Record<string, ToolEntry> {
                 toolCommand("control run") +
                 "`. Prefer control_workflow_run for anything that changes the UI.",
             inputSchema: z.toJSONSchema(runSchema, { io: "input" }),
-            handler: async (args) => {
+            handler: async (args, context) => {
                 const input = runSchema.parse(args);
                 const outcome = await executePlan({
                     plan: parsePlanDocument(input.plan),
                     stopOnFail: input.stop_on_fail,
                     stealFocus: input.steal_focus,
                     dryRun: input.dry_run,
-                    deps: MCP_PLAN_DEPS,
+                    signal: context?.signal,
+                    deps: {
+                        ...MCP_PLAN_DEPS,
+                        run: (args, timeoutMs) => runAxAsync({ args, timeoutMs, signal: context?.signal }),
+                    },
                 });
                 log.debug({ kind: outcome.kind }, "control MCP plan");
                 return SafeJSON.stringify(outcome);

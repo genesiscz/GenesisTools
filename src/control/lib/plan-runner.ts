@@ -1,6 +1,7 @@
+import { untilAborted } from "@genesiscz/utils/async";
 import { SafeJSON } from "@genesiscz/utils/json";
 import type { Plan } from "./capture-plan";
-import { type RunResult, runCapturePlan } from "./capture-runner";
+import { type CaptureFocusGuard, type RunResult, runCapturePlan, runCapturePlanWithSignal } from "./capture-runner";
 import { assertEl, waitFor } from "./conditions";
 import { guardFocusSteal, isFocusStealingVerb } from "./focus-guard";
 import { type AxResult, type AxRun, runAx } from "./runner";
@@ -269,7 +270,7 @@ export interface PlanRunDeps {
     waitFor: typeof waitFor;
     assertEl: typeof assertEl;
     guard: typeof guardFocusSteal;
-    capture: (plan: Plan) => Promise<RunResult>;
+    capture: (plan: Plan, signal?: AbortSignal, guardFocus?: CaptureFocusGuard) => Promise<RunResult>;
     sleep: (ms: number) => Promise<void>;
     now: () => number;
 }
@@ -279,7 +280,8 @@ export const DEFAULT_PLAN_RUN_DEPS: PlanRunDeps = {
     waitFor,
     assertEl,
     guard: guardFocusSteal,
-    capture: runCapturePlan,
+    capture: (plan, signal, guardFocus) =>
+        signal ? runCapturePlanWithSignal({ plan, signal, guardFocus }) : runCapturePlan(plan, guardFocus),
     sleep: (ms) => Bun.sleep(ms),
     now: () => performance.now(),
 };
@@ -344,11 +346,13 @@ async function runConditionStep({
     step,
     app,
     deps,
+    signal,
 }: {
     cmd: "wait" | "assert";
     step: Record<string, unknown>;
     app: string;
     deps: PlanRunDeps;
+    signal?: AbortSignal;
 }): Promise<AxResult> {
     const target: string[] = [];
     for (const k of ["q", "id", "role", "title", "desc", "subrole", "window", "depth"]) {
@@ -365,6 +369,7 @@ async function runConditionStep({
         value: typeof step.expect === "string" ? step.expect : undefined,
         contains: typeof step.contains === "string" ? step.contains : undefined,
         run: deps.run,
+        signal,
     };
 
     if (cmd === "assert") {
@@ -388,6 +393,7 @@ export async function executePlan({
     stopOnFail: stopOnFailFlag,
     stealFocus,
     dryRun,
+    signal,
     onStep,
     deps = DEFAULT_PLAN_RUN_DEPS,
 }: {
@@ -395,6 +401,7 @@ export async function executePlan({
     stopOnFail?: boolean;
     stealFocus?: boolean;
     dryRun?: boolean;
+    signal?: AbortSignal;
     onStep?: (entry: PlanStepResult) => void;
     deps?: PlanRunDeps;
 }): Promise<PlanOutcome> {
@@ -430,13 +437,23 @@ export async function executePlan({
     }
 
     if (plan.capture) {
-        const { captureFailed, ...result } = await deps.capture(normalizeCapturePlan(plan));
+        if (signal && plan.capture.backend === "peekaboo") {
+            return {
+                kind: "invalid",
+                problems: ["The peekaboo capture backend cannot cancel in-flight actions. Use the native backend."],
+            };
+        }
+        const guardFocus: CaptureFocusGuard = async (app) => {
+            const refusal = await deps.guard({ verb: "hotkey", app, stealFocus, run: deps.run });
+            return refusal?.error ?? (refusal ? "focus refused" : null);
+        };
+        const { captureFailed, ...result } = await deps.capture(normalizeCapturePlan(plan), signal, guardFocus);
         return { kind: "capture", result, captureFailed };
     }
 
     return {
         kind: "ran",
-        report: await runSteps({ plan, steps, stopOnFail: stopOnFailFlag, stealFocus, onStep, deps }),
+        report: await runSteps({ plan, steps, stopOnFail: stopOnFailFlag, stealFocus, signal, onStep, deps }),
     };
 }
 
@@ -445,6 +462,7 @@ async function runSteps({
     steps,
     stopOnFail: stopOnFailFlag,
     stealFocus,
+    signal,
     onStep,
     deps,
 }: {
@@ -452,23 +470,36 @@ async function runSteps({
     steps: Array<Record<string, unknown>>;
     stopOnFail?: boolean;
     stealFocus?: boolean;
+    signal?: AbortSignal;
     onStep?: (entry: PlanStepResult) => void;
     deps: PlanRunDeps;
 }): Promise<PlanRunReport> {
     const timeline = steps.some((s) => typeof s.atMs === "number");
     const delay = plan.delayMs ?? 200;
-    const snapshot: AxResult | null = plan.restore ? await deps.run(["snapshot"]) : null;
+    const snapshot: AxResult | null = plan.restore && !signal?.aborted ? await deps.run(["snapshot"]) : null;
     const startedAt = deps.now();
     const results: PlanStepResult[] = [];
     const saved = new Map<string, AxResult>();
     const stopOnFail = stopOnFailFlag === true || plan.stopOnFail === true;
+    const sleep = async (ms: number) => {
+        try {
+            await untilAborted(deps.sleep(ms), signal);
+        } catch (error) {
+            if (!signal?.aborted) {
+                throw error;
+            }
+        }
+    };
     let stoppedAt = -1;
 
     for (const [index, step] of steps.entries()) {
-        if (stoppedAt >= 0) {
+        if (stoppedAt >= 0 || signal?.aborted) {
             results.push({
                 step,
-                result: { ok: false, error: "skipped after an earlier failure" },
+                result: {
+                    ok: false,
+                    error: signal?.aborted ? "skipped after cancellation" : "skipped after an earlier failure",
+                },
                 ms: 0,
                 skipped: true,
             });
@@ -481,8 +512,13 @@ async function runSteps({
         if (timeline && typeof step.atMs === "number") {
             const wait = step.atMs - (deps.now() - startedAt);
             if (wait > 0) {
-                await deps.sleep(wait);
+                await sleep(wait);
             }
+        }
+
+        if (signal?.aborted) {
+            results.push({ step, result: { ok: false, error: "skipped after cancellation" }, ms: 0, skipped: true });
+            continue;
         }
 
         // wait/assert are TS-side condition steps, not binary commands. They leave the loop body
@@ -490,7 +526,7 @@ async function runSteps({
         // condition let every later step run anyway.
         if (cmd === "wait" || cmd === "assert") {
             const t0w = deps.now();
-            const result = await runConditionStep({ cmd, step, app, deps });
+            const result = await runConditionStep({ cmd, step, app, deps, signal });
             const entry = { step, result, ms: Math.round(deps.now() - t0w) };
             results.push(entry);
             onStep?.(entry);
@@ -545,6 +581,11 @@ async function runSteps({
               })
             : null;
 
+        if (signal?.aborted) {
+            results.push({ step, result: { ok: false, error: "skipped after cancellation" }, ms: 0, skipped: true });
+            continue;
+        }
+
         if (refusal !== null) {
             result = refusal;
             attempts = 1;
@@ -558,7 +599,12 @@ async function runSteps({
                 attempts++;
 
                 if (attempts > 1 && retryDelay > 0) {
-                    await deps.sleep(retryDelay);
+                    await sleep(retryDelay);
+                }
+
+                if (signal?.aborted) {
+                    result = { ok: false, error: "cancelled before dispatch" };
+                    break;
                 }
 
                 result = await deps.run(args);
@@ -581,12 +627,12 @@ async function runSteps({
         if (!timeline) {
             const stepDelay = typeof step.delay === "number" ? step.delay : delay;
             if (stepDelay > 0) {
-                await deps.sleep(stepDelay);
+                await sleep(stepDelay);
             }
         }
     }
 
-    if (plan.restore && snapshot?.ok) {
+    if (plan.restore && snapshot?.ok && !signal?.aborted) {
         await deps.run(["restore", "--snapshot", SafeJSON.stringify(snapshot)]);
     }
 
@@ -594,13 +640,13 @@ async function runSteps({
     // the same step twice and overstated the damage.
     const failedSteps = results.filter((r) => !r.result.ok && !r.skipped).length;
     return {
-        ok: failedSteps === 0,
+        ok: failedSteps === 0 && !signal?.aborted,
         failedSteps,
         totalSteps: results.length,
         mode: timeline ? "timeline" : "sequential",
         stoppedAtStep: stoppedAt >= 0 ? stoppedAt + 1 : undefined,
-        skippedSteps: stoppedAt >= 0 ? results.length - stoppedAt - 1 : 0,
+        skippedSteps: results.filter((entry) => entry.skipped).length,
         steps: results,
-        restored: !!plan.restore,
+        restored: !!plan.restore && !!snapshot?.ok && !signal?.aborted,
     };
 }

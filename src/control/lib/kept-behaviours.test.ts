@@ -417,6 +417,72 @@ describe("the plan runner", () => {
         expect(native.calls).toHaveLength(0);
     });
 
+    test("cancellation during a step skips every later action and restore", async () => {
+        const controller = new AbortController();
+        native = fakeAx((args) => {
+            if (args[0] === "get") {
+                controller.abort();
+            }
+            return { ok: true };
+        });
+        const outcome = await executePlan({
+            plan: {
+                app: "Fixture",
+                restore: true,
+                steps: [
+                    { do: "get", id: "a" },
+                    { do: "press", id: "b" },
+                ],
+            },
+            signal: controller.signal,
+            deps: deps(native.run),
+        });
+
+        expect(native.calls.map((call) => call[0])).toEqual(["snapshot", "get"]);
+        expect(outcome.kind === "ran" && outcome.report.ok).toBe(false);
+        expect(outcome.kind === "ran" && outcome.report.skippedSteps).toBe(1);
+    });
+
+    test("cancellation interrupts the delay before a later action", async () => {
+        const controller = new AbortController();
+        native = fakeAx();
+        const running = executePlan({
+            plan: {
+                app: "Fixture",
+                steps: [
+                    { do: "get", id: "a" },
+                    { do: "press", id: "b" },
+                ],
+            },
+            signal: controller.signal,
+            deps: { ...deps(native.run), sleep: () => new Promise<void>(() => {}) },
+        });
+        setTimeout(() => controller.abort(), 10);
+        const outcome = await running;
+        expect(native.calls.map((call) => call[0])).toEqual(["get"]);
+        expect(outcome.kind === "ran" && outcome.report.skippedSteps).toBe(1);
+    });
+
+    test("a cancellable plan refuses the synchronous recording backend before dispatch", async () => {
+        native = fakeAx();
+        const outcome = await executePlan({
+            plan: {
+                app: "Fixture",
+                capture: { backend: "peekaboo", mode: "screen", duration: 1 },
+                steps: [{ do: "type", text: "test" }],
+            },
+            signal: new AbortController().signal,
+            deps: {
+                ...deps(native.run),
+                capture: async () => {
+                    throw new Error("capture must not start");
+                },
+            },
+        });
+        expect(outcome.kind).toBe("invalid");
+        expect(native.calls).toHaveLength(0);
+    });
+
     test("restore snapshots before the first step and restores after the last", async () => {
         native = fakeAx((args) => (args[0] === "snapshot" ? { ok: true, app: "Fixture" } : { ok: true }));
         await executePlan({

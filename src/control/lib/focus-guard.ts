@@ -162,7 +162,9 @@ export function focusStealRefusal({
 
     const pid = toPid === undefined ? undefined : Number(toPid);
     const targetIsFront =
-        (pid !== undefined && front.pid === pid) || (app !== undefined && front.app !== undefined && front.app === app);
+        (pid !== undefined || app !== undefined) &&
+        (pid === undefined || front.pid === pid) &&
+        (app === undefined || (front.app !== undefined && front.app === app));
 
     if (targetIsFront) {
         return null;

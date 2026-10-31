@@ -74,9 +74,15 @@ export class NativeCaptureControls {
     }
     constructor(
         private readonly capture: CaptureSpec,
-        options: { native?: NativeBridge } = {}
+        options: { native?: NativeBridge; signal?: AbortSignal } = {}
     ) {
-        this.native = options.native ?? { run: runAxAsync };
+        const native = options.native ?? { run: runAxAsync };
+        this.native = {
+            run: (request) => {
+                options.signal?.throwIfAborted();
+                return native.run({ ...request, signal: options.signal ?? request.signal });
+            },
+        };
         this.computer = new ComputerUse({
             native: {
                 run: async (request) => {

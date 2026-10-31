@@ -34,6 +34,11 @@ describe("focusStealRefusal", () => {
         expect(focusStealRefusal({ verb: "type", app: "Finder", front: null })).toContain("could not be read");
     });
 
+    test("a frontmost delivery PID cannot authorize a different app", () => {
+        expect(focusStealRefusal({ verb: "type", app: "Finder", toPid: "501", front: cmuxFront })).not.toBeNull();
+        expect(focusStealRefusal({ verb: "hotkey", app: "cmux", toPid: "777", front: cmuxFront })).not.toBeNull();
+    });
+
     describe("negative control: nothing is taken, so it runs", () => {
         test("the target app is already frontmost", () => {
             expect(focusStealRefusal({ verb: "type", app: "cmux", front: cmuxFront })).toBeNull();

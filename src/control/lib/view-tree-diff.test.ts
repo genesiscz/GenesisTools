@@ -80,6 +80,17 @@ describe("diffViewTrees", () => {
         ]);
     });
 
+    it("reports a leaf button width change as a resize", () => {
+        const before = hub({ title: 180, rows: 3 });
+        const after = tree(
+            before.nodes.map((node) =>
+                node.identifier === "hub.refresh" && node.frame ? { ...node, frame: { ...node.frame, w: 60 } } : node
+            )
+        );
+
+        expect(diffViewTrees(before, after).changes).toMatchObject([{ kind: "resized", identifier: "hub.refresh" }]);
+    });
+
     it("reports added, removed and restyled controls, and a moved parent once", () => {
         const before = hub({ title: 180, rows: 3 });
         const after = tree([

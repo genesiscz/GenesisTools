@@ -1,3 +1,4 @@
+import { abortableSleep } from "@genesiscz/utils/async";
 import { type AxResult, type AxRun, runAx } from "./runner";
 
 /** One element condition: `wait` polls it, `assert` checks it once. The CLI, the plan runner and the MCP twin share it. */
@@ -10,6 +11,7 @@ export interface CheckOpts {
     contains?: string;
     /** The native read; injected by tests so no condition ever reaches the real window server. */
     run?: AxRun;
+    signal?: AbortSignal;
 }
 
 async function checkOnce(o: CheckOpts): Promise<{ pass: boolean; state: AxResult }> {
@@ -65,8 +67,14 @@ export async function waitFor(o: CheckOpts & { timeout: number; interval: number
     let last: { pass: boolean; state: AxResult } = { pass: false, state: { ok: false } };
     let polls = 0;
     while (performance.now() - t0 < o.timeout) {
+        if (o.signal?.aborted) {
+            return { ok: false, action: "wait", error: "cancelled" };
+        }
         last = await checkOnce(o);
         polls++;
+        if (o.signal?.aborted) {
+            return { ok: false, action: "wait", error: "cancelled" };
+        }
         if (last.pass) {
             return {
                 ok: true,
@@ -84,7 +92,14 @@ export async function waitFor(o: CheckOpts & { timeout: number; interval: number
             break;
         }
 
-        await Bun.sleep(Math.min(o.interval, remaining));
+        try {
+            await abortableSleep(Math.min(o.interval, remaining), o.signal);
+        } catch (error) {
+            if (!o.signal?.aborted) {
+                throw error;
+            }
+            return { ok: false, action: "wait", error: "cancelled" };
+        }
     }
 
     const cond = o.gone ? "gone" : conditionLabel(o);

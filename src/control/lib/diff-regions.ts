@@ -153,10 +153,15 @@ function mergeNearBoxes(boxes: Box[], distance: number): Box[] {
     let changed = true;
     while (changed) {
         changed = false;
+        list.sort((a, b) => a.x0 - b.x0 || a.y0 - b.y0);
         for (let i = 0; i < list.length && !changed; i++) {
             for (let j = i + 1; j < list.length; j++) {
                 const p = list[i];
                 const q = list[j];
+                if (q.x0 > p.x1 + distance + 1) {
+                    break;
+                }
+
                 const gapX = Math.max(0, Math.max(p.x0, q.x0) - Math.min(p.x1, q.x1) - 1);
                 const gapY = Math.max(0, Math.max(p.y0, q.y0) - Math.min(p.y1, q.y1) - 1);
                 if (gapX <= distance && gapY <= distance) {

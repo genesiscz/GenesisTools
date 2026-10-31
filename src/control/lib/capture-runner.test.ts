@@ -156,6 +156,40 @@ function reset(recorder?: FakeRecorder): void {
 }
 
 describe("recorder lifetime", () => {
+    test("a recording refuses implicit refocus before input dispatch", async () => {
+        const recorder = fakeRecorder({ envelope: { ok: true, data: { frames: [] } } });
+        reset(recorder);
+        recorder.finish(0);
+        const targets: Array<string | undefined> = [];
+        const result = await runCapturePlanWithSignal({
+            plan: regionPlan({ actions: [{ atMs: 0, do: "type", text: "fixture" }] }),
+            signal: new AbortController().signal,
+            guardFocus: async (app) => {
+                targets.push(app);
+                return "focus refused";
+            },
+        });
+        expect(targets).toEqual([undefined]);
+        expect(result.actions[0]).toMatchObject({ ok: false, error: "focus refused" });
+    });
+
+    test("a recording checks the explicit app before an AX action", async () => {
+        const recorder = fakeRecorder({ envelope: { ok: true, data: { frames: [] } } });
+        reset(recorder);
+        recorder.finish(0);
+        const targets: Array<string | undefined> = [];
+        const result = await runCapturePlanWithSignal({
+            plan: regionPlan({ actions: [{ atMs: 0, do: "ax-set", app: "Fixture", axId: "value", value: "test" }] }),
+            signal: new AbortController().signal,
+            guardFocus: async (app) => {
+                targets.push(app);
+                return "focus refused";
+            },
+        });
+        expect(targets).toEqual(["Fixture"]);
+        expect(result.actions[0]).toMatchObject({ ok: false, error: "focus refused" });
+    });
+
     test("a recorder that exits 0 with an ok envelope completes the run", async () => {
         const recorder = fakeRecorder({ envelope: { ok: true, data: { frames: [] } } });
         reset(recorder);
