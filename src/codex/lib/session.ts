@@ -23,7 +23,7 @@ import type {
     TurnStartParams,
 } from "./_generated/protocol";
 import type { CodexAccountBinding } from "./account";
-import type { RpcId, RpcNotification, RpcServerRequest } from "./app-server-client";
+import type { RpcNotification, RpcServerRequest } from "./app-server-client";
 import { type ApprovalRefusal, type CodexControl, refusalNotice } from "./control";
 import { assignThreadToProject, type CodexProject, resolveProjectSelector } from "./desktop-project";
 import {
@@ -43,8 +43,6 @@ const log = logger.child({ component: "codex:session" });
 export interface RpcClient {
     request<T>(method: string, params?: unknown): Promise<T>;
     notify(method: string, params?: unknown): Promise<void>;
-    /** Settles once the answer to the server request `id` is on the wire (`AppServerClient.answered`). */
-    answered(id: RpcId): Promise<void>;
     close(): Promise<void>;
 }
 
@@ -852,11 +850,8 @@ export class CodexSessionRuntime {
         }
 
         // Codex tells the worker only `Rejected("rejected by user")`. The actor and the reason follow in words, as
-        // a steer, so a lead's quality refusal is never read as a human permission decision. The decline goes on the
-        // wire first: resolving only wakes the handler that writes it, and the steer would otherwise overtake it.
+        // a steer, so a lead's quality refusal is never read as a human permission decision.
         try {
-            await this.client.answered(pending.request.id);
-
             await this.steer(refusalNotice(requestId, refusal), false);
             return { resolved: true, attributed: true };
         } catch (err) {

@@ -73,8 +73,6 @@ function responseError(value: unknown): Error {
 
 export class AppServerClient {
     private readonly pending = new Map<RpcId, PendingRequest>();
-    /** The server requests whose answer is not on the wire yet, settled once it is (or failed to go). */
-    private readonly answering = new Map<RpcId, Promise<void>>();
     private readonly options: AppServerClientOptions;
     private nextId = 1;
     private closed = false;
@@ -305,33 +303,7 @@ export class AppServerClient {
         });
     }
 
-    /**
-     * Settles once this client's answer to the server request `id` has been written, or failed to be. A caller that
-     * resolved the answer awaits it before its next message, so the server reads the answer first. An id with no
-     * answer in flight settles at once.
-     */
-    answered(id: RpcId): Promise<void> {
-        return this.answering.get(id) ?? Promise.resolve();
-    }
-
     private async handleServerRequest(request: RpcServerRequest): Promise<void> {
-        const written = this.answerServerRequest(request);
-        const settled = written.then(
-            () => undefined,
-            () => undefined
-        );
-        this.answering.set(request.id, settled);
-
-        try {
-            await written;
-        } finally {
-            if (this.answering.get(request.id) === settled) {
-                this.answering.delete(request.id);
-            }
-        }
-    }
-
-    private async answerServerRequest(request: RpcServerRequest): Promise<void> {
         if (!this.options.onServerRequest) {
             await this.writeMessage({
                 id: request.id,

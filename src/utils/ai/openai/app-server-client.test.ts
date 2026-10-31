@@ -256,34 +256,6 @@ describe("AppServerClient", () => {
         await client.close();
     });
 
-    test("answered settles once the answer to a server request is written, so a caller can send after it", async () => {
-        const harness = createProcessHarness();
-        let resolveApproval: (decision: { decision: string }) => void = () => {};
-        const approval = new Promise<{ decision: string }>((resolve) => {
-            resolveApproval = resolve;
-        });
-        const client = new AppServerClient(harness.process, { onServerRequest: () => approval });
-
-        harness.push({ id: "approval-2", method: "item/fileChange/requestApproval", params: {} });
-        await Bun.sleep(0);
-        let settled = false;
-        const answered = client.answered("approval-2").then(() => {
-            settled = true;
-        });
-        await Bun.sleep(0);
-
-        expect(settled).toBe(false);
-
-        resolveApproval({ decision: "decline" });
-        await answered;
-
-        expect(harness.writes.map((line) => SafeJSON.parse(line, { strict: true }))).toEqual([
-            { id: "approval-2", result: { decision: "decline" } },
-        ]);
-        await expect(client.answered("never-asked")).resolves.toBeUndefined();
-        await client.close();
-    });
-
     test("rejects pending requests when the child exits", async () => {
         let resolveExit: (code: number) => void = () => {};
         const harness = createProcessHarness();
