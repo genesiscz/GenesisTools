@@ -326,6 +326,61 @@ function noteCustomCalls(items: JsonRecord[], customCalls: Set<unknown>): void {
     }
 }
 
+function functionCallItem(toolUse: JsonRecord): JsonRecord {
+    return {
+        type: "function_call",
+        call_id: toolUse.id,
+        name: toolUse.name,
+        arguments: typeof toolUse.input === "string" ? toolUse.input : SafeJSON.stringify(toolUse.input ?? {}),
+    };
+}
+
+/**
+ * Remembered items with each call in the form the current bridge gives it: a `custom_tool_call` remembered while
+ * exec was on becomes a function call once it is off (and back), so a history translates the same with or without
+ * its thinking. Calls that already agree, and the reasoning items, stay as remembered. Undefined when a call has no
+ * `tool_use` in the message, so the message is translated afresh.
+ */
+function reconcileRestoredCalls(
+    restored: JsonRecord[],
+    content: unknown[],
+    hooks: ResponsesTranslationHooks
+): JsonRecord[] | undefined {
+    const uses = new Map<unknown, JsonRecord>();
+
+    for (const part of content) {
+        if (isObject(part) && part.type === "tool_use") {
+            uses.set(part.id, part);
+        }
+    }
+
+    const reconciled: JsonRecord[] = [];
+
+    for (const item of restored) {
+        if (item.type !== "custom_tool_call" && item.type !== "function_call") {
+            reconciled.push(item);
+            continue;
+        }
+
+        const part = uses.get(item.call_id);
+
+        if (!part) {
+            return undefined;
+        }
+
+        const custom = hooks.customToolCall?.(part);
+
+        if ((custom !== undefined) === (item.type === "custom_tool_call")) {
+            reconciled.push(item);
+            continue;
+        }
+
+        reconciled.push(custom ?? functionCallItem(part));
+    }
+
+    return reconciled;
+}
+
 function appendAssistantMessage(
     input: JsonRecord[],
     content: unknown,
@@ -346,7 +401,8 @@ function appendAssistantMessage(
     }
 
     const thinking = content.some((part) => isObject(part) && part.type === "thinking");
-    const restored = thinking ? undefined : hooks.restoreAssistantItems?.(content);
+    const remembered = thinking ? undefined : hooks.restoreAssistantItems?.(content);
+    const restored = remembered ? reconcileRestoredCalls(remembered, content, hooks) : undefined;
 
     if (restored) {
         noteCustomCalls(restored, customCalls);
@@ -385,12 +441,7 @@ function appendAssistantMessage(
                 continue;
             }
 
-            input.push({
-                type: "function_call",
-                call_id: part.id,
-                name: part.name,
-                arguments: typeof part.input === "string" ? part.input : SafeJSON.stringify(part.input ?? {}),
-            });
+            input.push(functionCallItem(part));
             continue;
         }
 
