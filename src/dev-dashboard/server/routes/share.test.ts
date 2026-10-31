@@ -679,6 +679,32 @@ describe("GET /share/:slug assets", () => {
         expect(noteSection(note, "install")).toBe("");
     });
 
+    test("section lookup finds a Setext heading and stops at one, as the renderer reads them", () => {
+        const note = [
+            "Intro",
+            "=====",
+            "",
+            "## Install",
+            "steps",
+            "",
+            "Setup",
+            "-----",
+            "configure",
+            "",
+            "- an item",
+            "---",
+            "",
+            "Other part",
+            "----------",
+            "tail",
+        ].join("\n");
+
+        expect(noteSection(note, "Setup")).toBe("Setup\n-----\nconfigure\n\n- an item\n---\n");
+        expect(noteSection(note, "Install")).toBe("## Install\nsteps\n");
+        expect(noteSection(note, "Intro")).toBe(note);
+        expect(noteSection(note, "an item")).toBe("");
+    });
+
     test("audio, video and PDF embeds render as a player, a sized video and a PDF frame with its fragment", async () => {
         const page = await get({}, "text/html", mediaSlug);
         const html = page.kind === "raw" ? page.body : "";
