@@ -264,8 +264,17 @@ export function sameOwner(name: string, home: ForgeProject | undefined): ForgePr
     return home && owner ? { kind: "github", host: home.host, path: `${owner}/${name}` } : undefined;
 }
 
-const pathProjects = new Map<string, Promise<ForgeProject | undefined>>();
-const rootProjects = new Map<string, Promise<ForgeProject | undefined>>();
+/**
+ * A lookup's answer, and whether git gave it: outside a checkout and without an `origin` are answers, while a run that
+ * could not start or timed out says nothing, and is asked again the next time instead of being kept for the session.
+ */
+interface Lookup {
+    project: ForgeProject | undefined;
+    settled: boolean;
+}
+
+const pathProjects = new Map<string, Promise<Lookup>>();
+const rootProjects = new Map<string, Promise<Lookup>>();
 
 /** Forgets the checkouts read so far (tests). */
 export function forgetRepoMentions(): void {
@@ -273,24 +282,37 @@ export function forgetRepoMentions(): void {
     rootProjects.clear();
 }
 
+/** One lookup per key while it runs and after it settled; an unsettled one is dropped once it answers. */
+function remembered(held: Map<string, Promise<Lookup>>, key: string, look: () => Promise<Lookup>): Promise<Lookup> {
+    const known = held.get(key);
+
+    if (known) {
+        return known;
+    }
+
+    const fresh = look();
+    held.set(key, fresh);
+    void fresh.then((found) => {
+        if (!found.settled && held.get(key) === fresh) {
+            held.delete(key);
+        }
+    });
+
+    return fresh;
+}
+
 /** The forge project of the checkout an absolute path lies in (its `origin`); undefined outside a checkout. */
-export function projectOfPath(host: Host, path: string, home: string): Promise<ForgeProject | undefined> {
+export async function projectOfPath(host: Host, path: string, home: string): Promise<ForgeProject | undefined> {
     const absolute = path.startsWith("~/") ? `${home}${path.slice(1)}` : path;
     const clean = absolute
         .replace(/[.,:;!?]+$/, "")
         .replace(/:\d+(-\d+)?$/, "")
         .replace(/\/+$/, "");
-    let held = pathProjects.get(clean);
 
-    if (!held) {
-        held = checkoutProject(host, clean);
-        pathProjects.set(clean, held);
-    }
-
-    return held;
+    return (await remembered(pathProjects, clean, () => checkoutProject(host, clean))).project;
 }
 
-async function checkoutProject(host: Host, path: string): Promise<ForgeProject | undefined> {
+async function checkoutProject(host: Host, path: string): Promise<Lookup> {
     let dir: string | undefined = path;
 
     // A file names its folder; a path that is gone names the nearest folder above it that is not.
@@ -306,7 +328,7 @@ async function checkoutProject(host: Host, path: string): Promise<ForgeProject |
     }
 
     if (!dir) {
-        return undefined;
+        return { project: undefined, settled: true };
     }
 
     const top = await host
@@ -315,18 +337,17 @@ async function checkoutProject(host: Host, path: string): Promise<ForgeProject |
     const root = top?.exitCode === 0 ? top.stdout.trim() : "";
 
     if (!root) {
-        return undefined;
+        return { project: undefined, settled: top !== undefined && /not a git repository/i.test(top.stderr) };
     }
 
-    let held = rootProjects.get(root);
-
-    if (!held) {
-        held = host
+    return remembered(rootProjects, root, async () => {
+        const origin = await host
             .run(["git", "-C", root, "remote", "get-url", "origin"], { timeoutMs: 3_000 })
-            .then((origin) => (origin.exitCode === 0 ? forgeProject(origin.stdout) : undefined))
             .catch(() => undefined);
-        rootProjects.set(root, held);
-    }
 
-    return held;
+        return {
+            project: origin?.exitCode === 0 ? forgeProject(origin.stdout) : undefined,
+            settled: origin !== undefined && (origin.exitCode === 0 || /no such remote/i.test(origin.stderr)),
+        };
+    });
 }

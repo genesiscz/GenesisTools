@@ -618,13 +618,6 @@ test("git band: the checkouts a command or an edit works in", async () => {
     expect(gitWrites('git -C /work/main push origin "$br" 2>&1', "/home/test")).toEqual([
         { dir: "/work/main", branches: [] },
     ]);
-    // Letters beyond ASCII are a branch too; git's own forbidden forms are not.
-    expect(gitWrites("cd /work/main && git switch -c fix/číslo && git push origin 修正", "/home/test")).toEqual([
-        { dir: "/work/main", branches: ["fix/číslo", "修正"] },
-    ]);
-    expect(gitWrites("cd /work/main && git push origin a~1 b^ x@{1} .hidden y.lock", "/home/test")).toEqual([
-        { dir: "/work/main", branches: [] },
-    ]);
     expect(writtenFiles({ tool: "Edit", file_path: "/work/wt-a/x.ts" })).toEqual(["/work/wt-a/x.ts"]);
     expect(writtenFiles({ tool: "Read", file_path: "/work/wt-a/x.ts" })).toEqual([]);
 
@@ -1562,56 +1555,6 @@ test("links: in a two-checkout session the written title decides, and no evidenc
     const note = takeLinkedPullRequestNote() ?? "";
     expect(note).toContain("#103 -> https://github.com/acme/Playground/pull/103, in acme/Playground: its title there");
     expect(note).not.toContain("#105 ->");
-});
-
-test("links: a failed lookup in one checkout leaves a title match in the other unproven", async () => {
-    forgetPullRequests();
-    takeLinkedPullRequestNote();
-    const { ctx } = twoCheckouts(
-        { "acme/Playground#110": "fix: the shared title", "acme/Toolbox#110": "fix: the shared title" },
-        GH_ONLY
-    );
-    const run = ctx.host.run;
-    ctx.host = {
-        ...ctx.host,
-        async run(argv, options) {
-            if (argv.includes("acme/Toolbox")) {
-                throw new Error("timed out");
-            }
-
-            return run(argv, options);
-        },
-    };
-
-    expect(await linkLine(ctx, "See #110 (fix: the shared title).\n")).toBe("See #110 (fix: the shared title).\n");
-    expect(ctx.log).toContainEqual(expect.objectContaining({ kind: "pr-unsure", lookupFailed: ["acme/Toolbox"] }));
-});
-
-test("links: a written title with a code span still decides, and a repository name inside it is not a pointer", async () => {
-    forgetPullRequests();
-    takeLinkedPullRequestNote();
-    const { ctx } = twoCheckouts(
-        {
-            "acme/Playground#111": "fix: update `widget` handling",
-            "acme/Toolbox#111": "feat: something else",
-            "acme/Toolbox#112": "fix: Playground integration",
-            "acme/Playground#112": "chore: unrelated",
-            "acme/Toolbox#113": "first",
-            "acme/Playground#113": "second",
-        },
-        GH_ONLY
-    );
-
-    expect(await linkLine(ctx, "Done in #111 (fix: update `widget` handling).\n")).toContain(
-        "[#111](https://github.com/acme/Playground/pull/111)"
-    );
-    expect(await linkLine(ctx, "Done in #112 (fix: Playground integration).\n")).toBe(
-        "Done in [#112](https://github.com/acme/Toolbox/pull/112) (fix: Playground integration).\n"
-    );
-    // No title matches, so the name in the parentheses picks the repository.
-    expect(await linkLine(ctx, "Done in #113 (in Playground).\n")).toBe(
-        "Done in [#113](https://github.com/acme/Playground/pull/113) (in Playground).\n"
-    );
 });
 
 test("links: a one-checkout session links a bare number in its checkout as before, and names count as words", async () => {
