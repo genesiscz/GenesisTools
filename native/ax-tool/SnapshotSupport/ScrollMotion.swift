@@ -88,6 +88,18 @@ public enum ScrollMotion {
         if index == count - 1 { return 4 }
         return 2
     }
+
+    /// `kCGScrollPhaseCancelled`: the phase of the empty event that ends a gesture cut short.
+    public static let cancelledPhase: Int64 = 8
+
+    /// `--time` as asked (0, or 0.05 to 30 seconds) into the scroll's length: nil for one event, the default length
+    /// when nothing was asked. NaN (an unreadable value) is out of range.
+    public static func seconds(asked: Double?, pixels: Int) throws -> Double? {
+        if let asked, asked != 0, !(0.05...30).contains(asked) {
+            throw ScrollNumericError.outOfRange("--time must be 0 (one event) or 0.05–30 seconds")
+        }
+        return asked == nil ? defaultSeconds(pixels: pixels) : asked == 0 ? nil : asked
+    }
 }
 
 public enum ScrollNumericError: Error, Equatable, CustomStringConvertible {
@@ -129,11 +141,7 @@ public struct ScrollNumericOptions {
         guard (1...100_000).contains(pixels) else { throw ScrollNumericError.outOfRange("--pixels must be 1–100000") }
         // Animated unless asked otherwise (Martin, 2026-10-26: "the scrolling should always be animated"): a single
         // wheel event jumps the page by the whole distance, which no person does. `--time 0` is that one event.
-        let asked = try decimal("--time")
-        if let asked, asked != 0, !(0.05...30).contains(asked) {
-            throw ScrollNumericError.outOfRange("--time must be 0 (one event) or 0.05–30 seconds")
-        }
-        seconds = asked == nil ? ScrollMotion.defaultSeconds(pixels: pixels) : asked == 0 ? nil : asked
+        seconds = try ScrollMotion.seconds(asked: try decimal("--time"), pixels: pixels)
         repeats = try integer("--repeat") ?? 1
         guard (1...200).contains(repeats) else { throw ScrollNumericError.outOfRange("--repeat must be 1–200") }
         pause = try decimal("--pause") ?? 0.3

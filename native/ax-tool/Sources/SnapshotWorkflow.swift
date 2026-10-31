@@ -92,19 +92,6 @@ private func workflowFailure(_ error: Error, extras: [String: Any] = [:]) -> Nev
 /// A refusal that omits the rectangle it was compared against sends the caller hunting: a window
 /// that repositioned itself between `see` and `act` is indistinguishable from a coordinate that was
 /// always wrong. Name the received point, the window and its bounds, so one read settles which.
-/// The window server's on-screen windows, front to back, for naming the owner of a refused point.
-private func listedOnScreenWindows() -> [ListedWindow] {
-    let list = CGWindowListCopyWindowInfo([.optionOnScreenOnly, .excludeDesktopElements], kCGNullWindowID)
-        as? [[CFString: Any]] ?? []
-    return list.compactMap { info in
-        guard let id = info[kCGWindowNumber] as? Int, let owner = info[kCGWindowOwnerPID] as? Int32,
-              let raw = info[kCGWindowBounds] as? NSDictionary,
-              let bounds = CGRect(dictionaryRepresentation: raw) else { return nil }
-        return ListedWindow(id: id, ownerPid: owner, ownerName: (info[kCGWindowOwnerName] as? String) ?? "pid \(owner)",
-                            title: info[kCGWindowName] as? String, layer: (info[kCGWindowLayer] as? Int) ?? 0,
-                            bounds: bounds)
-    }
-}
 
 /// The element an AX hit test returned, with the app that owns it.
 private func describeHit(_ hit: AXUIElement?) -> HitElement? {
@@ -1766,11 +1753,12 @@ func cmdAct(appName _: String) {
                 }
                 // Animated like a trackpad swipe, as `control scroll` is (ScrollMotion): one event jumped the page by the
                 // whole distance. `--time 0` keeps that single event.
-                let asked = workflowArgument("--time").map { Double($0) ?? .nan }
-                if let asked, asked != 0, !(asked.isFinite && (0.05...30).contains(asked)) {
-                    throw WindowEventError.unavailable("--time must be 0 (one event) or 0.05–30 seconds")
+                let seconds: Double?
+                do {
+                    seconds = try ScrollMotion.seconds(asked: workflowArgument("--time").map { Double($0) ?? .nan }, pixels: pixels)
+                } catch {
+                    throw WindowEventError.unavailable("\(error)")
                 }
-                let seconds: Double? = asked == nil ? ScrollMotion.defaultSeconds(pixels: pixels) : asked == 0 ? nil : asked
                 let count = ScrollMotion.eventCount(seconds: seconds)
                 let interval = ScrollMotion.interval(seconds: seconds, count: count)
                 let towardStart = direction == "up" || direction == "left"
@@ -1800,7 +1788,7 @@ func cmdAct(appName _: String) {
                 }, dispatch: {
                     let cancellation = try factory.scroll(point: point, deltaX: 0, deltaY: 0)
                     cancellation.setIntegerValueField(.scrollWheelEventIsContinuous, value: 1)
-                    cancellation.setIntegerValueField(.scrollWheelEventScrollPhase, value: 8)
+                    cancellation.setIntegerValueField(.scrollWheelEventScrollPhase, value: ScrollMotion.cancelledPhase)
                     try ScrollMotion.dispatch(count: events.count, interval: interval, remaining: workflowRemaining,
                                               sleep: { Thread.sleep(forTimeInterval: $0) }, cancel: {
                         inputGate.deliver { cancellation.postToPid(pid) }

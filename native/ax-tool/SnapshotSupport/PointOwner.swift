@@ -20,6 +20,21 @@ public struct ListedWindow: Equatable {
     }
 }
 
+/// The window server's on-screen windows, front to back: for naming the owner of a refused point, and for the
+/// window a scroll is addressed to.
+public func listedOnScreenWindows() -> [ListedWindow] {
+    let list = CGWindowListCopyWindowInfo([.optionOnScreenOnly, .excludeDesktopElements], kCGNullWindowID)
+        as? [[CFString: Any]] ?? []
+    return list.compactMap { info in
+        guard let id = info[kCGWindowNumber] as? Int, let owner = info[kCGWindowOwnerPID] as? Int32,
+              let raw = info[kCGWindowBounds] as? NSDictionary,
+              let bounds = CGRect(dictionaryRepresentation: raw) else { return nil }
+        return ListedWindow(id: id, ownerPid: owner, ownerName: (info[kCGWindowOwnerName] as? String) ?? "pid \(owner)",
+                            title: info[kCGWindowName] as? String, layer: (info[kCGWindowLayer] as? Int) ?? 0,
+                            bounds: bounds)
+    }
+}
+
 /// What the accessibility hit test returned at the point: the element's role and label, and its app.
 public struct HitElement: Equatable {
     public let app: String?

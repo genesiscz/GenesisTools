@@ -157,15 +157,5 @@ func cmdScroll(appName: String) {
 
 /// The front-most normal window of `pid` that contains `point`, with its CG window id and bounds.
 private func windowAt(_ point: CGPoint, pid: pid_t) -> (Int, CGRect)? {
-    let list = CGWindowListCopyWindowInfo([.optionOnScreenOnly, .excludeDesktopElements], kCGNullWindowID) as? [[String: Any]] ?? []
-    for info in list {
-        guard (info[kCGWindowOwnerPID as String] as? Int).map(pid_t.init) == pid,
-              (info[kCGWindowLayer as String] as? Int) == 0,
-              let id = info[kCGWindowNumber as String] as? Int,
-              let raw = info[kCGWindowBounds as String] as? NSDictionary,
-              let bounds = CGRect(dictionaryRepresentation: raw),
-              bounds.contains(point) else { continue }
-        return (id, bounds)
-    }
-    return nil
+    listedOnScreenWindows().first { $0.ownerPid == pid && $0.layer == 0 && $0.bounds.contains(point) }.map { ($0.id, $0.bounds) }
 }
