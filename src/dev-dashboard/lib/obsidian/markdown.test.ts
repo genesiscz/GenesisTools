@@ -46,6 +46,16 @@ describe("renderMarkdown", () => {
         expect(html).toContain("/obsidian?note=GenesisTools%2F2026-05-17-TranscriptionFixes.md");
     });
 
+    test("wikilink to a heading of a vault note keeps the heading in the obsidian route", () => {
+        const { html } = renderMarkdown("See [[Other#Some Part]]", {
+            resolveWikilink: () => null,
+            resolveVaultNotePath: (name) => (name === "Other" || name === "Other#Some Part" ? "Other.md" : null),
+        });
+
+        expect(html).toContain('href="/obsidian?note=Other.md#some-part"');
+        expect(html).toContain('data-obsidian-note="Other.md"');
+    });
+
     test("wikilink to published note links to share slug", () => {
         const { html } = renderMarkdown("see [[Other Note]] here", {
             resolveWikilink: (name) => (name === "Other Note" ? "abc123" : null),

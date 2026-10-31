@@ -765,7 +765,7 @@ function resolveWikilinkHtml(opts: RenderOptions, target: string, display: strin
     const vaultPath = opts.resolveVaultNotePath?.(target) ?? null;
 
     if (vaultPath) {
-        const href = buildObsidianNoteHref(vaultPath);
+        const href = `${buildObsidianNoteHref(vaultPath)}${hash}`;
 
         return `<a href="${escapeHtml(href)}" class="dd-wikilink" data-obsidian-note="${escapeHtml(vaultPath)}">${escapeHtml(display)}</a>`;
     }

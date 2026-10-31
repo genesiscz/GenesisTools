@@ -60,10 +60,22 @@ export function ObsidianReader({ path }: Props) {
                 search.open = openSerialized;
             }
 
-            navigate({ search, replace: false });
+            // `[[Note#Heading]]` carries its heading in the link's fragment; the effect below scrolls to it.
+            const hash = anchor instanceof HTMLAnchorElement ? anchor.hash.slice(1) : "";
+            navigate({ search, hash: hash || undefined, replace: false });
         },
         [navigate, open]
     );
+
+    useEffect(() => {
+        const hash = window.location.hash.slice(1);
+
+        if (!data?.html || !hash) {
+            return;
+        }
+
+        document.getElementById(decodeURIComponent(hash))?.scrollIntoView({ block: "start" });
+    }, [data?.html]);
 
     if (isPending) {
         return (
