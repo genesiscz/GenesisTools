@@ -618,6 +618,13 @@ test("git band: the checkouts a command or an edit works in", async () => {
     expect(gitWrites('git -C /work/main push origin "$br" 2>&1', "/home/test")).toEqual([
         { dir: "/work/main", branches: [] },
     ]);
+    // Letters beyond ASCII are a branch too; git's own forbidden forms are not.
+    expect(gitWrites("cd /work/main && git switch -c fix/číslo && git push origin 修正", "/home/test")).toEqual([
+        { dir: "/work/main", branches: ["fix/číslo", "修正"] },
+    ]);
+    expect(gitWrites("cd /work/main && git push origin a~1 b^ x@{1} .hidden y.lock", "/home/test")).toEqual([
+        { dir: "/work/main", branches: [] },
+    ]);
     expect(writtenFiles({ tool: "Edit", file_path: "/work/wt-a/x.ts" })).toEqual(["/work/wt-a/x.ts"]);
     expect(writtenFiles({ tool: "Read", file_path: "/work/wt-a/x.ts" })).toEqual([]);
 
