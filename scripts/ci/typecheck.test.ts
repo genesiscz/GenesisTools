@@ -150,3 +150,11 @@ describe("build info and the CI step", () => {
 function buildInfoText(fileNames: string[]): string {
     return SafeJSON.stringify({ fileNames });
 }
+
+it("rejects failed compiler probes without usable file diagnostics", async () => {
+    const { compilerProbeUsable } = await import("./harness-extensibility");
+    expect(compilerProbeUsable({ status: 127, out: "tsgo: command not found" })).toBe(false);
+    expect(compilerProbeUsable({ status: 1, out: "error TS18003: No inputs were found" })).toBe(false);
+    expect(compilerProbeUsable({ status: 1, out: "src/test.ts(1,2): error TS2322: incompatible" })).toBe(true);
+    expect(compilerProbeUsable({ status: 0, out: "" })).toBe(false);
+});

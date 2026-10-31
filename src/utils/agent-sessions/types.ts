@@ -1,5 +1,6 @@
 import type { AccountProviderAlias } from "@genesiscz/utils/ai/providers/alias-list";
 import type { NativeScan } from "@genesiscz/utils/ai/transcripts/insights-types";
+import type { TranscriptTurn } from "@genesiscz/utils/ai/transcripts/types";
 import type { DailyStats, HistoryFileStatistics, SessionMetadataRecord, TokenUsage } from "./cache-types";
 
 export type AgentKind = AccountProviderAlias;
@@ -362,6 +363,7 @@ export interface NativeSessionReader<Kind extends string = AgentKind> {
         /** The registry owning a transcript, when this provider has one. */
         registryDirectory(transcriptPath: string): string | null;
     };
+    windowTurns(values: Record<string, unknown>[]): TranscriptTurn[];
     /**
      * The newest entries of a session, read from the end of its source back to the first entry `options.until`
      * accepts: the conversation after a known point (a decision's ask) without reading the whole file.

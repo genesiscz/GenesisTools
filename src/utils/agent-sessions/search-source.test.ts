@@ -95,6 +95,7 @@ function reader(records: HistorySourceRecord[]): NativeSessionReader<string> {
             sessionAlive: () => null,
             registryDirectory: () => null,
         },
+        windowTurns: () => [],
         readBackward: noBackwardRead,
         continuedIn: noContinuedIn,
         modelOfRow: noModelOfRow,

@@ -1,3 +1,4 @@
+import { codexHistoryReader } from "@genesiscz/utils/agent-sessions/compact-readers";
 import { codexToolInputLine } from "@genesiscz/utils/agent-sessions/readers/codex-tool-inputs";
 import { codexNativeLinesToTurns, createCodexTurnParser } from "@genesiscz/utils/agent-sessions/readers/codex-turns";
 import { toolInputKeysOf } from "@genesiscz/utils/ai/transcripts/native-scan";
@@ -11,10 +12,7 @@ import { toWorkerEvent as codexToWorkerEvent, type StoredCodexEvent } from "@gen
 import type { TranscriptParser } from "@genesiscz/utils/harness/parts";
 import type { WorkerEvent } from "@genesiscz/utils/worker/events";
 
-/** A window of rollout records to turns (`TranscriptFacts.windowTurns`). */
-export function codexWindowTurns(values: Record<string, unknown>[]): TranscriptTurn[] {
-    return codexNativeLinesToTurns(values);
-}
+export const codexWindowTurns = codexHistoryReader.windowTurns;
 
 /** Codex transcripts to turns: a native rollout (folded append-only when large) or stored worker events. Moved from `TURN_READERS` in load.ts. */
 export const codexParse: TranscriptParser = {

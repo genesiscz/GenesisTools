@@ -558,3 +558,29 @@ test("a codex spawn worker's thread id resolves to the worker log, and resolveCo
     });
     expect(resolveCodexNative("00000000-0000-0000-0000-000000000000", roots)).toBeNull();
 });
+
+test("native readers expose window turns and ignore malformed text blocks", async () => {
+    const { claudeHistoryReader, codexHistoryReader, grokHistoryReader } = await import(
+        "@genesiscz/utils/agent-sessions/compact-readers"
+    );
+    for (const reader of [claudeHistoryReader, codexHistoryReader, grokHistoryReader]) {
+        expect(typeof reader.windowTurns).toBe("function");
+    }
+    const turns = claudeHistoryReader.windowTurns([
+        { uuid: "bad", type: "user", message: { content: [{ type: "text" }] } },
+        { uuid: "bad-assistant", type: "assistant", message: { content: [{ type: "text" }] } },
+        { uuid: "bad-tool", type: "assistant", message: { content: [{ type: "tool_use", id: "x", name: "read" }] } },
+        {
+            uuid: "tool",
+            type: "assistant",
+            message: { content: [{ type: "tool_use", id: "call", name: "Read", input: {} }] },
+        },
+        {
+            uuid: "bad-result",
+            type: "user",
+            message: { content: [{ type: "tool_result", tool_use_id: "call", content: [null] }] },
+        },
+        { uuid: "good", type: "user", message: { content: "hello" } },
+    ]);
+    expect(turns.map((turn) => turn.id)).toEqual(["tool", "good"]);
+});

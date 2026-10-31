@@ -38,6 +38,7 @@ function createReader(options: { kind: string; roots: string[] }): NativeSession
 
     return {
         kind: options.kind,
+        windowTurns: () => [],
         ...operations,
         dialog: {
             eventLogPath: () => null,

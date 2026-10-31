@@ -53,6 +53,7 @@ test("a registered fourth provider supports listing, content, detail and unavail
                 sessionAlive: () => null,
                 registryDirectory: () => null,
             },
+            windowTurns: () => [],
             readBackward: noBackwardRead,
             continuedIn: noContinuedIn,
             modelOfRow: noModelOfRow,

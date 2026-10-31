@@ -131,6 +131,7 @@ function fixtureReader(options: {
             sessionAlive: () => null,
             registryDirectory: () => null,
         },
+        windowTurns: () => [],
         readBackward: noBackwardRead,
         continuedIn: noContinuedIn,
         modelOfRow: noModelOfRow,

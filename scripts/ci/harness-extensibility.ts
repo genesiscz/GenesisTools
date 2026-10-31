@@ -123,6 +123,14 @@ ${PARTS_AS_NOTES.map((part) => `        ${part}: unsupported("testbot has no ${p
 };
 `;
 
+export function compilerProbeUsable(result: { status: number; out: string }): boolean {
+    return (
+        (result.status === 1 || result.status === 2) &&
+        /^[^\s(]+\.tsx?\(\d+,\d+\): error TS/m.test(result.out) &&
+        !/^error TS\d+:/m.test(result.out)
+    );
+}
+
 function main(): void {
     if (existsSync(WORKTREE)) {
         console.error(`harness-extensibility: ${WORKTREE} exists from an earlier run; inspect it, then run:`);
@@ -176,6 +184,11 @@ function main(): void {
 
     // 2. The seam the compiler names.
     const typed = run(["bunx", "tsgo", "--noEmit", "-p", "tsconfig.json"], WORKTREE);
+    if (!compilerProbeUsable(typed)) {
+        console.error(`harness-extensibility: compiler probe failed (exit ${typed.status}):\n${typed.out}`);
+        process.exitCode = 2;
+        return;
+    }
     const named = [
         ...new Set([...typed.out.matchAll(/^([^\s(]+\.tsx?)\(\d+,\d+\): error TS/gm)].map((m) => m[1])),
     ].sort();

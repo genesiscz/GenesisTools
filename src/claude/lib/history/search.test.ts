@@ -249,6 +249,7 @@ function reader(overrides: Partial<Reader> = {}): Reader {
             sessionAlive: () => null,
             registryDirectory: () => null,
         },
+        windowTurns: () => [],
         readBackward: noBackwardRead,
         continuedIn: noContinuedIn,
         modelOfRow: noModelOfRow,

@@ -1,13 +1,10 @@
 import { readFileSync } from "node:fs";
+import { grokHistoryReader } from "@genesiscz/utils/agent-sessions/compact-readers";
 import { grokNativeLinesToTurns, grokWorkerTextToTurns } from "@genesiscz/utils/ai/transcripts/grok";
 import { readTranscriptRecords } from "@genesiscz/utils/ai/transcripts/record-cache";
-import type { TranscriptTurn } from "@genesiscz/utils/ai/transcripts/types";
 import type { TranscriptParser } from "@genesiscz/utils/harness/parts";
 
-/** A window of `updates.jsonl` records to turns (`TranscriptFacts.windowTurns`). */
-export function grokWindowTurns(values: Record<string, unknown>[]): TranscriptTurn[] {
-    return grokNativeLinesToTurns(values);
-}
+export const grokWindowTurns = grokHistoryReader.windowTurns;
 
 /** Grok transcripts to turns: a native chat history or a worker text file. Moved from `TURN_READERS` in load.ts. */
 export const grokParse: TranscriptParser = {
