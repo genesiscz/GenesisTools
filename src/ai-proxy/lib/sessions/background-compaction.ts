@@ -1,6 +1,7 @@
 import { createHash } from "node:crypto";
 import { existsSync, mkdirSync, readdirSync, readFileSync, statSync, unlinkSync } from "node:fs";
 import { join } from "node:path";
+import { withSystemReminders } from "@app/ai-proxy/lib/sessions/cache-shape";
 import type { BackgroundCompactionSettings } from "@app/ai-proxy/lib/sessions/settings";
 import { getAiProxyStorage } from "@app/ai-proxy/lib/storage";
 import { claudeCodeThreadKey } from "@app/ai-proxy/lib/translators/formats/anthropic/claude-code-turns";
@@ -353,15 +354,8 @@ export function withUserReminder(input: unknown[], text: string): unknown[] {
         return input;
     }
 
-    const reminder = { type: "input_text", text: `<system-reminder>\n${text}\n</system-reminder>` };
-    const content =
-        typeof message.content === "string"
-            ? [{ type: "input_text", text: message.content }, reminder]
-            : Array.isArray(message.content)
-              ? [...message.content, reminder]
-              : [reminder];
-
-    return input.map((item, index) => (index === at ? { ...message, content } : item));
+    const reminded = withSystemReminders(message, [text]);
+    return input.map((item, index) => (index === at ? reminded : item));
 }
 
 /** Tests start clean. */

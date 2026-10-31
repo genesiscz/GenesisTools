@@ -57,20 +57,27 @@ export function preserveCacheReminders(thread: string, input: unknown[], notice?
     }
     return input.map((item, index) => {
         const matches = byIndex.get(index);
-        if (!matches || !isObject(item)) {
-            return item;
-        }
-        const content =
-            typeof item.content === "string"
-                ? [{ type: "input_text", text: item.content }]
-                : Array.isArray(item.content)
-                  ? [...item.content]
-                  : [];
-        for (const text of matches) {
-            content.push({ type: "input_text", text: `<system-reminder>\n${text}\n</system-reminder>` });
-        }
-        return { ...item, content };
+        return matches && isObject(item) ? withSystemReminders(item, matches) : item;
     });
+}
+
+/** A user message with each text appended to its content as an `input_text` `<system-reminder>` block. */
+export function withSystemReminders(
+    message: Record<string, unknown>,
+    texts: readonly string[]
+): Record<string, unknown> {
+    const content: unknown[] =
+        typeof message.content === "string"
+            ? [{ type: "input_text", text: message.content }]
+            : Array.isArray(message.content)
+              ? [...message.content]
+              : [];
+
+    for (const text of texts) {
+        content.push({ type: "input_text", text: `<system-reminder>\n${text}\n</system-reminder>` });
+    }
+
+    return { ...message, content };
 }
 
 /** What changed between two requests of one thread. */
