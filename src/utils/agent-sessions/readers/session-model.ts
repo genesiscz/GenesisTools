@@ -19,28 +19,21 @@ export interface RowModel {
 export type RowModelProbe = (row: string) => RowModel | undefined;
 
 /**
- * The newest model the rows name, newest first. A side-chain row (a sub-agent's, in a parent transcript) counts only
- * when no row of the session's own chain names one: in a sub-agent's own transcript every row is a side-chain row, so
- * that one then answers with its own model, and a parent transcript never answers with a sub-agent's.
+ * The newest model the rows name, newest first. A side-chain row is a sub-agent's: it counts only with
+ * `acceptSidechain`, which a caller passes for a sub-agent's own transcript (every row there is a side-chain row). A
+ * parent transcript never answers with a sub-agent's model: when no row of its own chain is in the window, the model
+ * is unknown.
  */
-export function newestModelIn(lines: readonly string[], probe: RowModelProbe): string | null {
-    let sidechain: string | null = null;
-
+export function newestModelIn(lines: readonly string[], probe: RowModelProbe, acceptSidechain = false): string | null {
     for (let index = lines.length - 1; index >= 0; index--) {
         const found = probe(lines[index].trim());
 
-        if (!found) {
-            continue;
-        }
-
-        if (!found.sidechain) {
+        if (found && (acceptSidechain || !found.sidechain)) {
             return found.model;
         }
-
-        sidechain ??= found.model;
     }
 
-    return sidechain;
+    return null;
 }
 
 /** The first or last `bytes` of a transcript. A `.jsonl.zst` one is decompressed by the sibling loaded on demand. */
@@ -87,14 +80,14 @@ function windowLines(path: string, bytes: number, from: "head" | "tail"): string
     }
 }
 
-/** The newest model in the last `tailBytes` of a transcript. */
+/** The newest model in the last `tailBytes` of a transcript; `acceptSidechain` as in `newestModelIn`. */
 export function newestModelInTail(
     path: string,
     probe: RowModelProbe,
-    tailBytes = SESSION_MODEL_TAIL_BYTES
+    options: { acceptSidechain?: boolean; tailBytes?: number } = {}
 ): string | null {
-    const lines = windowLines(path, tailBytes, "tail");
-    return lines ? newestModelIn(lines, probe) : null;
+    const lines = windowLines(path, options.tailBytes ?? SESSION_MODEL_TAIL_BYTES, "tail");
+    return lines ? newestModelIn(lines, probe, options.acceptSidechain) : null;
 }
 
 /** The first model in the first `headBytes` of a transcript, for a format that names its model once near the top. */

@@ -763,6 +763,12 @@ test("currentModel is the newest assistant model of the session's own chain, nev
     // A sub-agent's own transcript holds only side-chain rows: they name its own model.
     const agent = transcript("agent-a1.jsonl", [assistant("claude-haiku-5-5", { isSidechain: true })]);
     expect(reader.currentModel(agent)).toBe("claude-haiku-5-5");
+    // A parent whose own chain left the tail, with only a sub-agent's rows in it: unknown, never the sub-agent's model.
+    const busy = transcript("busy-lead.jsonl", [
+        { type: "user", message: { content: "hi" } },
+        assistant("claude-haiku-5-5", { isSidechain: true }),
+    ]);
+    expect(reader.currentModel(busy)).toBeNull();
     expect(reader.currentModel(transcript("none.jsonl", [{ type: "user", message: { content: "hi" } }]))).toBeNull();
     expect(reader.currentModel(join(dir, "missing.jsonl"))).toBeNull();
 });

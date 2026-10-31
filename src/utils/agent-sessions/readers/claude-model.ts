@@ -1,5 +1,6 @@
 /** Claude's `currentModel`: the newest assistant row of the session's own chain names it. */
 import { SafeJSON } from "@genesiscz/utils/json";
+import { isClaudeSubagentPath } from "./claude-subagent-path";
 import { newestModelInTail, type RowModel } from "./session-model";
 
 /**
@@ -34,7 +35,13 @@ export function claudeModelOfRow(row: string): RowModel | undefined {
     return { model, sidechain: "isSidechain" in value && value.isSidechain === true };
 }
 
-/** The model a Claude session (or a sub-agent's own transcript) runs now, from the tail of its transcript. */
+/**
+ * The model a Claude session (or a sub-agent's own transcript) runs now, from the tail of its transcript. Side-chain
+ * rows count only in a sub-agent's own transcript; a parent whose own chain left the tail has no known model, so the
+ * guard judges it as a session with no model rather than by a sub-agent's.
+ */
 export function claudeCurrentModel(transcriptPath: string): string | null {
-    return newestModelInTail(transcriptPath, claudeModelOfRow);
+    return newestModelInTail(transcriptPath, claudeModelOfRow, {
+        acceptSidechain: isClaudeSubagentPath(transcriptPath),
+    });
 }
