@@ -1,15 +1,20 @@
 # eve PR review (docs: eve-ai-layer docs/eve-review-config.md). Read at the PR head.
-# Show every finding the verifier is at least 75% sure of, whatever its severity,
+# Show every finding the verifier is at least 60% sure of, whatever its severity,
 # and give big stacked PRs the full tool budget instead of a degraded pass.
+# assertive: a comment budget that grows with the PR (chill keeps a flat one).
+profile: assertive
 severityFloor: info
-confidenceFloor: 75
+confidenceFloor: 60
 maxComments: 100
 verdictPosture: gating
 summaryVerbosity: standard
 depth:
   mode: always
+  # 24 is the schema maximum: a higher value fails the parse, and a failed parse
+  # silently resets the whole file to eve's defaults.
   maxToolSteps: 24
-# Big PRs (+12k lines in 125 files) lost 13-44 patches to the 600k diff budget,
+# largePrMode and checks take effect once eve-ai-layer PR #1046 ships; until then
+# the parser drops them. Big PRs (+12k lines in 125 files) lost 13-44 patches to the 600k diff budget,
 # and a pass with a gap re-reviewed the whole PR on every push. Large-PR mode
 # reviews every patch in slices and carries what it misses into the next push.
 largePrMode: auto
