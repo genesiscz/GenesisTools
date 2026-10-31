@@ -202,20 +202,21 @@ export class GrokAcpClient {
             logger.debug({ bid: this.bid, error: err }, "grok-acp read loop ended");
         });
 
+        const handshakeTimeout = this.leader ? 15_000 : 60_000;
         const initialized = await this.rpc(
             "initialize",
             {
                 protocolVersion: 1,
                 clientCapabilities: { fs: { readTextFile: false, writeTextFile: false }, terminal: false },
             },
-            60_000
+            handshakeTimeout
         );
         if (this.leader && initialized.error) {
             throw new GrokAcpError(`grok-acp leader initialize failed: ${SafeJSON.stringify(initialized.error)}`);
         }
 
         // cached_token = the ~/.grok/auth.json credential (NOT xai.api_key, which 401s)
-        const authenticated = await this.rpc("authenticate", { methodId: "cached_token" }, 60_000);
+        const authenticated = await this.rpc("authenticate", { methodId: "cached_token" }, handshakeTimeout);
         if (this.leader && authenticated.error) {
             throw new GrokAcpError(`grok-acp leader authenticate failed: ${SafeJSON.stringify(authenticated.error)}`);
         }
@@ -322,12 +323,16 @@ export class GrokAcpClient {
 
     private async rpc(method: string, params: Record<string, unknown>, timeoutMs: number): Promise<RpcReply> {
         const { id, reply } = await this.send(method, params);
+        let timer: ReturnType<typeof setTimeout> | undefined;
         const timeout = new Promise<RpcReply>((resolve) => {
-            setTimeout(() => resolve({ error: { timeout: true, method } }), timeoutMs);
+            timer = setTimeout(() => resolve({ error: { timeout: true, method } }), timeoutMs);
         });
-        const result = await Promise.race([reply, timeout]);
-        this.pending.delete(id);
-        return result;
+        try {
+            return await Promise.race([reply, timeout]);
+        } finally {
+            clearTimeout(timer);
+            this.pending.delete(id);
+        }
     }
 
     /** Run `fn` after every earlier call of this client finished; one stdio pipe carries one call at a time. */

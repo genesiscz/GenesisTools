@@ -39,6 +39,25 @@ export async function grokLaunchAuth(
     return { authPath: grant.authPath, home: resolveGrokHome(), release: grant.release };
 }
 
+/** A detached leader cannot use a grant whose owner exits with its first TUI. */
+export function assertGrokLeaderAuthSafe({
+    leaderSocket,
+    authFile,
+    passthrough = [],
+}: {
+    leaderSocket?: unknown;
+    authFile?: string;
+    passthrough?: readonly string[];
+}): void {
+    const leaderRequested =
+        typeof leaderSocket === "string" || passthrough.some((arg) => /^--leader(?:-socket)?(?:=|$)/.test(arg));
+    if (leaderRequested && !authFile) {
+        throw new Error(
+            "A shared Grok leader cannot use a vault-only account yet; bind an auth file or run without a leader."
+        );
+    }
+}
+
 interface LegacyWorkerFlags {
     name?: string;
     cwd?: string;
@@ -121,6 +140,11 @@ export const grokLauncher: AgentLauncher = {
     },
 
     async launch(input) {
+        assertGrokLeaderAuthSafe({
+            leaderSocket: input.flags.leaderSocket,
+            authFile: input.account.credentials.authFile,
+            passthrough: input.passthrough,
+        });
         const binary = resolveGrokBinary();
         const auth = await grokLaunchAuth(input.account);
 

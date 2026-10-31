@@ -2062,6 +2062,10 @@ public final class WidgetModel: ObservableObject {
         return target < count ? .option(target) : .leave
     }
 
+    nonisolated static func returnStagesChoice(kind: String, decisionClickStages: Bool) -> Bool {
+        kind == "decision" && decisionClickStages
+    }
+
     /// A session's inbox, as drawn: the filter's rows, newest first. Up and Down open the row above or below (the
     /// inbox shows one open row) and, in an open decision, walk its options first; Return folds or opens the current
     /// row, or picks the chosen option the way a click does. No motion: the keys repeat.
@@ -2079,7 +2083,7 @@ public final class WidgetModel: ObservableObject {
         case .open:
             guard let current else { return false }
             if let decision, let focused {
-                guard decisionClickStages else {
+                guard Self.returnStagesChoice(kind: decision.kind, decisionClickStages: decisionClickStages) else {
                     // Return never sends (ux checklist, Keyboard); with "Send at once" the number key does.
                     postNote("Return does not send an answer. Press \(focused + 1) to send this one.")
                     return true

@@ -28,6 +28,11 @@ final class HubInboxUXTests: XCTestCase {
         XCTAssertEqual(InboxAnswerRoute(source: nil), .ledger)
     }
 
+    func testDialogPromptIsSearchableAlongsideItsTitle() throws {
+        let item = try Self.decision(#"{"kind":"dialog","source":"dialog","title":"Question","prompt":"Which path?"}"#)
+        XCTAssertTrue(item.findFields.contains { $0.key == "prompt" && $0.text == "Which path?" })
+    }
+
     /// F19: Cancel on a slow send stops its `tools` child at once instead of letting it run out its two minutes.
     func testACancelledCaptureTerminatesItsChildAtOnce() async throws {
         let process = Process()

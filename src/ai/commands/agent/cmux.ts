@@ -66,7 +66,7 @@ async function structuredSend(
     text: string,
     options: SendOptions
 ): Promise<boolean> {
-    if (!spec.structuredSend || options.dryRun || options.enter === false) {
+    if (!spec.structuredSend || options.dryRun || options.enter === false || !text) {
         return false;
     }
 

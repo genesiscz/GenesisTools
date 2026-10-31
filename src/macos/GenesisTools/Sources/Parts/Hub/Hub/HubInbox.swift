@@ -214,8 +214,8 @@ extension InboxItem {
     /// (`FindText(_, field:)` and `.findField`). Styled texts are given as their shown characters.
     var findFields: [PanelFindField] {
         var fields = [PanelFindField("title", title ?? prompt ?? "")]
-        if isDialog, let title, let prompt, !prompt.isEmpty, prompt != title {
-            fields.append(PanelFindField("prompt", prompt))
+        if answerRoute == .dialog, let prompt, !prompt.isEmpty, prompt != title {
+            fields.append(PanelFindField("prompt", String(inlineMarkdown(prompt).characters)))
         }
         if let context, !context.isEmpty {
             fields.append(PanelFindField("context", context, markdown: true))
@@ -2275,6 +2275,11 @@ struct InboxDecisionCard: View, Equatable {
         let _ = RenderProbe.hit("inbox.decisionCard.body")
         VStack(alignment: .leading, spacing: 9) {
             headerRow
+            if item.answerRoute == .dialog, let prompt = item.prompt, !prompt.isEmpty, prompt != item.title {
+                FindText(inlineMarkdown(prompt), field: "prompt")
+                    .font(.system(size: 12.5))
+                    .textSelection(.enabled)
+            }
             if let ask = session.reply?.ask, !ask.isEmpty, item.source == "transcript" {
                 askRow(ask)
             }
@@ -2359,7 +2364,7 @@ struct InboxDecisionCard: View, Equatable {
         HStack(spacing: 8) {
             // The decision's number in its session, outlined: a filled orange shape is the "waiting" count only.
             let tint = item.isOpen ? InboxStyle.accent : closedTint
-            Text(verbatim: WidgetWords.decision(item.number))
+            Text(verbatim: item.answerRoute == .dialog ? "Dialog" : WidgetWords.decision(item.number))
                 .font(.system(size: 10.5, weight: .semibold))
                 .foregroundColor(tint)
                 .padding(.horizontal, 5)

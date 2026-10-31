@@ -429,6 +429,9 @@ export class HistoryService {
             Boolean(filters.excludeAgents),
             Boolean(filters.agentsOnly),
             filters.project ?? null,
+            filters.mtimeFrom ?? null,
+            filters.newest ?? null,
+            filters.limit ?? null,
             this.options.roots,
             ...(filters.filePaths === undefined ? [] : [[...filters.filePaths].sort()]),
         ]);
@@ -436,7 +439,9 @@ export class HistoryService {
         const recent = age !== null && options.maxDiscoveryAgeMs !== undefined && age < options.maxDiscoveryAgeMs;
         let synchronized: { report: NativeIndexSyncResult; reindexed: boolean };
         const running =
-            freshness && options.maxDiscoveryAgeMs !== undefined ? refreshesInFlight.get(freshnessKey) : undefined;
+            freshness && options.maxDiscoveryAgeMs !== undefined && options.maxDiscoveryAgeMs > 0
+                ? refreshesInFlight.get(freshnessKey)
+                : undefined;
 
         if (recent || options.refresh === false || filters.filePaths?.length === 0) {
             logger.trace(

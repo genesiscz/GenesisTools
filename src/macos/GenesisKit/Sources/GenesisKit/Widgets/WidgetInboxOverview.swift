@@ -57,7 +57,7 @@ struct WidgetInboxOverview: View {
 
     /// The option letters of `item` when it is an open decision that waits for an answer: "a", "b", ….
     private func openOptions(_ item: WidgetInboxItem) -> [String] {
-        guard openID == item.id, item.kind == "decision", item.needsAnswer, let options = item.options else { return [] }
+        guard openID == item.id, ["decision", "dialog"].contains(item.kind), item.needsAnswer, let options = item.options else { return [] }
         return options.indices.map(Self.letter)
     }
 
@@ -112,6 +112,14 @@ struct WidgetInboxOverview: View {
     /// other". `model.choose` reads ⌘ from the key event, so a send that must happen without ⌘ seen stages first and
     /// sends that staged pick.
     private func answer(_ item: WidgetInboxItem, letter: String, alternate: Bool) {
+        if item.kind == "dialog" {
+            if alternate {
+                model.choose(item, option: letter)
+            } else {
+                model.postNote("Return does not send an answer. Press ⌘-Return to send it.")
+            }
+            return
+        }
         let preferences = model.snapshot?.state.preferences
         let stages = DecisionAnswering.clickStages(preferences, command: alternate)
         let swaps = preferences?.decisionCommandSwaps ?? true
@@ -274,7 +282,7 @@ struct WidgetInboxOverview: View {
     /// An open decision's options, each staging (or sending, by the setting) that pick from here; the shared option
     /// row, so this list, the alert and a session's inbox draw an option one way.
     @ViewBuilder private func choices(_ item: WidgetInboxItem) -> some View {
-        if item.kind == "decision", item.needsAnswer, let options = item.options, !options.isEmpty {
+        if ["decision", "dialog"].contains(item.kind), item.needsAnswer, let options = item.options, !options.isEmpty {
             VStack(alignment: .leading, spacing: 6) {
                 ForEach(Array(options.enumerated()), id: \.offset) { index, option in
                     let letter = Self.letter(index)

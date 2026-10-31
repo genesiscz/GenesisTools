@@ -566,7 +566,7 @@ test("a catalog with maxDiscoveryAgeMs reuses a recent refresh of the same scope
 
         clock += 10_000;
         const reused = await service.catalog(
-            { excludeAgents: true, mtimeFrom: NOW - 72 * HOUR },
+            { excludeAgents: true, mtimeFrom: NOW - 24 * HOUR },
             { maxDiscoveryAgeMs: 30_000 }
         );
         expect(walks).toBe(1);
@@ -578,8 +578,40 @@ test("a catalog with maxDiscoveryAgeMs reuses a recent refresh of the same scope
         expect(walks).toBe(2);
 
         clock += 30_000;
-        await service.catalog({ excludeAgents: true, mtimeFrom: NOW - 72 * HOUR }, { maxDiscoveryAgeMs: 30_000 });
+        await service.catalog({ excludeAgents: true, mtimeFrom: NOW - 24 * HOUR }, { maxDiscoveryAgeMs: 30_000 });
         expect(walks).toBe(3);
+    } finally {
+        database.close();
+        rmSync(root, { recursive: true, force: true });
+    }
+});
+
+test("a windowed refresh never makes a full catalog fresh", async () => {
+    const root = mkdtempSync(join(tmpdir(), "history-catalog-fresh-scope-"));
+    const fresh = "11111111-2222-4333-8444-000000000061";
+    const old = "11111111-2222-4333-8444-000000000062";
+    session(root, fresh, HOUR);
+    session(root, old, 96 * HOUR);
+    const database = new Database(":memory:");
+    initializeCompactHistorySchema(database);
+    const stamps = new Set<string>();
+    const service = new HistoryService({
+        providerId: "anthropic-sub",
+        roots: [root],
+        repository: new HistorySyncRepository(database),
+        reader: claudeHistoryReader,
+        now: () => new Date(NOW),
+        freshness: {
+            age: (key) => (stamps.has(key) ? 0 : null),
+            touch: (key) => {
+                stamps.add(key);
+            },
+        },
+    });
+    try {
+        await service.catalog({ mtimeFrom: NOW - 24 * HOUR }, { maxDiscoveryAgeMs: 30_000 });
+        const full = await service.catalog({}, { maxDiscoveryAgeMs: 30_000 });
+        expect(full.metadata.map((entry) => entry.nativeId)).toContain(old);
     } finally {
         database.close();
         rmSync(root, { recursive: true, force: true });
@@ -773,6 +805,20 @@ test("a tolerant listing joins a refresh of its scope in flight, and a strict on
 
         discover.mockClear();
         await Promise.all([service.catalog(window, { maxDiscoveryAgeMs: 30_000 }), service.catalog(window)]);
+        expect(discover).toHaveBeenCalledTimes(2);
+
+        discover.mockClear();
+        await Promise.all([
+            service.catalog(window, { maxDiscoveryAgeMs: 30_000 }),
+            service.catalog({}, { maxDiscoveryAgeMs: 30_000 }),
+        ]);
+        expect(discover).toHaveBeenCalledTimes(2);
+
+        discover.mockClear();
+        await Promise.all([
+            service.catalog(window, { maxDiscoveryAgeMs: 30_000 }),
+            service.catalog(window, { maxDiscoveryAgeMs: 0 }),
+        ]);
         expect(discover).toHaveBeenCalledTimes(2);
     } finally {
         discover.mockRestore();

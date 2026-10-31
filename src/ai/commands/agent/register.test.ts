@@ -10,6 +10,7 @@ import { WORKER_CAPABILITIES } from "@genesiscz/utils/worker/capabilities";
 import type { WorkerDriver, WorkerMeta } from "@genesiscz/utils/worker/driver";
 import { WorkerMetaStore } from "@genesiscz/utils/worker/meta-store";
 import { Command } from "commander";
+import { registerAgentCmuxCommand } from "./cmux";
 import { registerAgentTool } from "./register";
 import type { AgentToolSpec } from "./spec";
 
@@ -90,6 +91,22 @@ function flagsOf(spec: AgentToolSpec, verb: string): string[] {
 
     return command.options.map((option) => option.long ?? option.short ?? "").sort();
 }
+
+test("an empty send never reaches the structured delivery rung", async () => {
+    let called = false;
+    const program = new Command();
+    registerAgentCmuxCommand(program, {
+        ...kimiSpec,
+        structuredSend: async () => {
+            called = true;
+            return { kind: "delivered", rung: "fixture", target: "fixture" };
+        },
+    });
+    await expect(program.parseAsync(["node", "fixture", "cmux", "send", "session", ""])).rejects.toThrow(
+        "give the text"
+    );
+    expect(called).toBe(false);
+});
 
 test("a fourth tool built from a spec alone answers exactly the verbs its siblings do", () => {
     expect(verbsOf(kimiSpec)).toEqual(verbsOf(grokSpec));

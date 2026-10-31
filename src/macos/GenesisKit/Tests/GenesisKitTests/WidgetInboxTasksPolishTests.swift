@@ -1182,6 +1182,12 @@ final class WidgetStagingTests: XCTestCase {
         return try XCTUnwrap(object["payload"] as? [String: Any])
     }
 
+    func testReturnNeverSendsADialogEvenWhenDecisionClicksStage() {
+        XCTAssertFalse(WidgetModel.returnStagesChoice(kind: "dialog", decisionClickStages: true))
+        XCTAssertFalse(WidgetModel.returnStagesChoice(kind: "decision", decisionClickStages: false))
+        XCTAssertTrue(WidgetModel.returnStagesChoice(kind: "decision", decisionClickStages: true))
+    }
+
     func testDialogPickUsesFullKeyAndDoesNotStage() async throws {
         let model = StagingFixture.model()
         defer { model.stop() }

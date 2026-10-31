@@ -154,6 +154,10 @@ extension WidgetModel {
     /// A click on a decision option in the inbox of every session. With "Send at once" the pick is staged on the
     /// item's own session and sent once the hub has it.
     public func choose(_ item: WidgetInboxItem, option: String) {
+        if item.kind == "dialog" {
+            answerDialog(key: item.sourceId, option: option)
+            return
+        }
         guard let session = session(forKey: item.key), let revision = item.revision else { return }
         let adding = NSEvent.modifierFlags.contains(.shift)
         guard clickStagesNow || adding else {

@@ -1425,6 +1425,12 @@ test("widget snapshot exposes the selected session's open dialog with its full k
             },
         ],
     };
+    const overview = await widgetSnapshot({ root: directory, sources });
+    expect(overview.notifications?.sessions.find((session) => session.key === key)?.pendingItem).toMatchObject({
+        kind: "dialog",
+        sourceId: `codex:${target.sessionId}:call:one`,
+        needsAnswer: true,
+    });
     const snapshot = await widgetSnapshot({ root: directory, sources, selectedKey: key });
     expect(snapshot.cards).toContainEqual(
         expect.objectContaining({

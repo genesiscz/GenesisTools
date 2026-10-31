@@ -379,7 +379,9 @@ export function registerInboxCommand(program: Command, deps: InboxCommandDeps = 
                           "--answers",
                           '[{"itemId":"q1","selectedChoices":["c1"]}]',
                       ]
-                    : ["inbox", "answer", "--session", "ID", "--decision", "1", "--option", "a"];
+                    : flags.dialog
+                      ? ["inbox", "answer", "--dialog", flags.dialog, "--option", "a"]
+                      : ["inbox", "answer", "--session", "ID", "--decision", "1", "--option", "a"];
                 const { suggestCommand } = await import("@genesiscz/utils/cli");
                 out.printlnErr(suggestCommand("tools question", { replaceCommand: example }));
                 process.exitCode = 1;

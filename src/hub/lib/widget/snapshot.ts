@@ -232,7 +232,7 @@ export interface WidgetInboxData {
 export interface WidgetInboxItem {
     id: string;
     sourceId: string;
-    kind: "answer" | "result" | "decision" | "form";
+    kind: "answer" | "result" | "decision" | "dialog" | "form";
     key: string;
     at: number;
     needsAnswer: boolean;
@@ -1151,6 +1151,41 @@ export async function widgetSnapshot({
         }
         inboxSessions.set(session.key, entry);
     };
+    const dialogBySession = new Map<string, OpenQuestion[]>();
+    let pendingDialogs = 0;
+    if (sources.dialogs) {
+        for (const session of sessions.values()) {
+            const provider = session.target.provider;
+            if (provider === "unknown") {
+                continue;
+            }
+            const dialogs = await read(
+                "dialogs",
+                () => sources.dialogs?.(provider, session.target.sessionId) ?? [],
+                []
+            );
+            dialogBySession.set(session.key, dialogs);
+            for (const dialog of dialogs) {
+                const sourceId = openQuestionKey(dialog);
+                pendingDialogs++;
+                session.status = "waiting";
+                putInbox(
+                    session,
+                    {
+                        id: `dialog:${sourceId}`,
+                        sourceId,
+                        kind: "dialog",
+                        key: session.key,
+                        at: timeOf(dialog.askedAt),
+                        needsAnswer: true,
+                        title: widgetTitle(dialog.question),
+                        options: dialog.options ?? [],
+                    },
+                    1
+                );
+            }
+        }
+    }
     // Counted per item: each SQL group carries its session's newest item and how many of its items fall after the
     // clear watermark and after the stale cut-off. A listed group counts by its session's freshness; the groups past
     // the row limit count by the session-blind rule (`recentAfterClearTotal` minus what the listed groups hold).
@@ -1318,7 +1353,7 @@ export async function widgetSnapshot({
     }
     const notifications: WidgetInboxSummary = {
         unread: inboxCount("answer", inboxData.answers) + unreadResults,
-        needsAnswer: inboxCount("form", inboxData.forms) + pendingDecisions,
+        needsAnswer: inboxCount("form", inboxData.forms) + pendingDecisions + pendingDialogs,
         complete: inboxData.complete && errors.length === 0,
         truncated: inboxData.truncated || inboxSessions.size > 512,
         sessions: [...inboxSessions.values()]
@@ -1385,13 +1420,7 @@ export async function widgetSnapshot({
     }
     const cards: WidgetCard[] = [];
     for (const key of cardKeys ?? []) {
-        const session = sessions.get(key);
-        const provider = session?.target.provider;
-        if (!session || !provider || provider === "unknown" || !sources.dialogs) {
-            continue;
-        }
-        const dialogs = await read("dialogs", () => sources.dialogs?.(provider, session.target.sessionId) ?? [], []);
-        for (const dialog of dialogs) {
+        for (const dialog of dialogBySession.get(key) ?? []) {
             const id = openQuestionKey(dialog);
             cards.push({
                 id: `dialog:${id}`,

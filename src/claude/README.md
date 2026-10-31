@@ -258,13 +258,14 @@ passes `--force` to `cmux paste`.
 
 `send <id> --option <letter>` answers the session's open question dialog by key presses, never
 by text. It reads the newest open dialog record of the session (only a record carries the
-options), maps the letter (or a 1-based position) to the option, presses its key, and closes the
-record. It refuses, with nothing pressed, when no record is open, when the record has no options
-(a plan or permission prompt), when it asks several questions, when the letter is past the list,
-or when the harness has no measured keys. The keys per harness are `DIALOG_KEY_MAPS` in
-`src/utils/agents/dialogs/keys.ts`. Claude's are measured (2.1.314, 2026-10-30): the option's digit,
-typed with `cmux send --force`, picks and submits it wherever the highlight is. Codex and Grok are
-"unknown" there, so their dialogs refuse. An inbox item from a dialog record (`source: "dialog"`)
+options), maps the letter (or a 1-based position) to the option, and writes its key. A key write
+cannot confirm submission: it exits 1, reports `sent: false` and `unconfirmed: true` in JSON,
+and leaves the record open for a hook or watcher to close on acknowledgement. Check the dialog
+before retrying. It refuses without a key press when no record is open, when the record has no
+options (a plan or permission prompt), when the question count is unknown or exceeds one, when
+the letter is past the list, or when the harness has no measured keys. The keys per harness are
+`DIALOG_KEY_MAPS` in `src/utils/agents/dialogs/keys.ts`. Claude's option digit does not work when
+focus is in the "Chat about this" text row. Codex and Grok keys remain unmeasured. An inbox item from a dialog record (`source: "dialog"`)
 is answered through this path: `tools question inbox answer --dialog <provider:session:toolCallId>
 --option <letter>`, or the widget action `dialog-answer`, which the widget setting `dialogAnswer`
 (`press` by default, or `refuse`) governs.

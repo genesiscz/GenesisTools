@@ -1,5 +1,5 @@
 import { expect, test } from "bun:test";
-import { grokLauncher } from "./launcher";
+import { assertGrokLeaderAuthSafe, grokLauncher } from "./launcher";
 
 /**
  * `tools grok run <account> --name x --cwd y` is grok's SECOND spawn door: the legacy headless
@@ -10,6 +10,36 @@ import { grokLauncher } from "./launcher";
  */
 
 const workerFlags = { name: "rv4-probe", cwd: "/tmp" };
+
+test("a shared leader refuses a vault-only grant before any credential is materialised", () => {
+    expect(() => assertGrokLeaderAuthSafe({ leaderSocket: "/fixture/leader.sock" })).toThrow(/vault-only/);
+    expect(() => assertGrokLeaderAuthSafe({ passthrough: ["--leader"] })).toThrow(/vault-only/);
+    expect(() =>
+        assertGrokLeaderAuthSafe({ leaderSocket: "/fixture/leader.sock", authFile: "/fixture/auth.json" })
+    ).not.toThrow();
+    expect(() => assertGrokLeaderAuthSafe({})).not.toThrow();
+});
+
+test("the TUI launcher refuses a vault-only leader before opening its grant", async () => {
+    await expect(
+        grokLauncher.launch({
+            account: {
+                id: "acc_work",
+                name: "work",
+                provider: "grok-sub",
+                enabled: true,
+                billing: { mode: "subscription" },
+                credentials: {},
+                useEnvApiKey: false,
+            },
+            nativeResume: false,
+            continueLast: false,
+            cwd: "/fixture",
+            passthrough: [],
+            flags: { leaderSocket: "/fixture/leader.sock" },
+        })
+    ).rejects.toThrow(/vault-only/);
+});
 
 test("the legacy worker door refuses a positional account instead of discarding it", async () => {
     await expect(

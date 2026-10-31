@@ -1,4 +1,4 @@
-import { describe, expect, test } from "bun:test";
+import { describe, expect, spyOn, test } from "bun:test";
 import { SafeJSON } from "@genesiscz/utils/json";
 import {
     GrokAcpClient,
@@ -100,6 +100,19 @@ function leaderAgent(prompt: (request: Request, reply: Reply) => void) {
 }
 
 describe("GrokAcpClient leader form", () => {
+    test("settled leader RPCs clear their deadline timers", async () => {
+        const cleared = spyOn(globalThis, "clearTimeout");
+        const agent = leaderAgent(() => undefined);
+        const client = new GrokAcpClient(0, { leader: { socket: "/fixture/leader.sock" }, spawn: agent.spawn });
+        try {
+            await client.listSessions();
+            expect(cleared).toHaveBeenCalledTimes(3);
+        } finally {
+            client.reset();
+            cleared.mockRestore();
+        }
+    });
+
     test("joins the leader with the flags before stdio, initializes, authenticates and lists its sessions", async () => {
         const agent = leaderAgent(() => undefined);
         const client = new GrokAcpClient(0, {

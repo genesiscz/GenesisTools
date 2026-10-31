@@ -539,7 +539,7 @@ struct WidgetPeekView: View {
 
     /// The options a click answers here: an open decision's.
     private var options: [String] {
-        guard item.kind == "decision", item.needsAnswer else { return [] }
+        guard ["decision", "dialog"].contains(item.kind), item.needsAnswer else { return [] }
         return item.options ?? []
     }
 
