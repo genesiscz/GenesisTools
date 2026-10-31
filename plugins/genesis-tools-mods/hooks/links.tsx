@@ -16,6 +16,7 @@ import { sessionCheckouts } from "./checkouts";
 import { COMMIT, checkHubLink, commitLink, type ForgeProject } from "./commit-links";
 import { decisionLink, encodePath, finderLink, type GenesisProbe, genesisProbe, mdLink } from "./genesis";
 import {
+    addSessionRepos,
     checkoutOf,
     mentionsIn,
     namesIn,
@@ -24,7 +25,6 @@ import {
     QUALIFIED_PR,
     type RepoMention,
     sameOwner,
-    sessionRepos,
     titleMatches,
 } from "./pr-repos";
 import { agentsDir, type Host, isRecord, logReading } from "./shared";
@@ -819,6 +819,74 @@ export async function linkLine(ctx: LinkContext, line: string): Promise<string> 
     return out;
 }
 
+/**
+ * What the session's earlier messages say, kept between model steps: each step scans only the messages added since
+ * the last one, where the whole history was scanned on every step before. A history that changed below the scanned
+ * part (a compaction, a rewind) is scanned again from the start.
+ */
+interface HistoryScan {
+    sessionId: string;
+    githubHost: string;
+    count: number;
+    first: string | undefined;
+    last: string | undefined;
+    askedBefore: Set<number>;
+    linked: Map<number, ForgeProject>;
+    named: Map<string, ForgeProject>;
+}
+
+let historyScan: HistoryScan | undefined;
+
+function scanHistory(
+    messages: readonly { role: string; text: string }[],
+    sessionId: string,
+    githubHost: string
+): HistoryScan {
+    const held = historyScan;
+    const kept =
+        held !== undefined &&
+        held.sessionId === sessionId &&
+        held.githubHost === githubHost &&
+        held.count <= messages.length &&
+        messages[0]?.text === held.first &&
+        messages[held.count - 1]?.text === held.last;
+    const scan: HistoryScan = kept
+        ? held
+        : {
+              sessionId,
+              githubHost,
+              count: 0,
+              first: undefined,
+              last: undefined,
+              askedBefore: new Set(),
+              linked: new Map(),
+              named: new Map(),
+          };
+    const added = messages.slice(scan.count);
+
+    for (const message of added) {
+        if (message.role !== "assistant") {
+            continue;
+        }
+
+        for (const match of message.text.matchAll(/(^|[^[])❓\s*\**\s*DECISION\s+(\d+)/gm)) {
+            scan.askedBefore.add(Number(match[2]));
+        }
+    }
+
+    addSessionRepos(
+        scan,
+        added.map((message) => message.text),
+        githubHost
+    );
+    scan.count = messages.length;
+    scan.first = messages[0]?.text;
+    scan.last = messages[messages.length - 1]?.text;
+    historyScan = scan;
+
+    return scan;
+}
+
 /** `messageCount`: the messages the request carried; later ones are this reply itself, which asks nothing earlier. */
 async function contextOf(host: Host, messageCount: number): Promise<LinkContext> {
     const home = (await host.env("HOME")) ?? "";
@@ -826,35 +894,17 @@ async function contextOf(host: Host, messageCount: number): Promise<LinkContext>
     const sessionId = await host.sessionId();
     const { root, project } = await checkoutOf(host, cwd);
     const repo = project?.path;
-    const askedBefore = new Set<number>();
     const messages = (await host.messages()).slice(0, messageCount);
-
-    for (const message of messages) {
-        if (message.role !== "assistant") {
-            continue;
-        }
-
-        for (const match of message.text.matchAll(/(^|[^[])❓\s*\**\s*DECISION\s+(\d+)/gm)) {
-            askedBefore.add(Number(match[2]));
-        }
-    }
-
-    const { linked, named } = sessionRepos(
-        messages.map((message) => message.text),
-        project?.kind === "github" ? project.host : "github.com"
-    );
+    const scan = scanHistory(messages, sessionId, project?.kind === "github" ? project.host : "github.com");
+    const askedBefore = new Set(scan.askedBefore);
+    const linked = new Map(scan.linked);
+    const named = [...scan.named.values()];
     // The checkouts the git band already keeps for this session; each root's origin is read once per module load.
-    const touches = await sessionCheckouts(host).catch(() => []);
-    const worked: ForgeProject[] = [];
-
     // Every root the ledger keeps: a cut here could hide the one checkout of a second repository.
-    for (const touch of touches) {
-        const touched = await projectOfPath(host, touch.root, home);
-
-        if (touched) {
-            worked.push(touched);
-        }
-    }
+    const touches = await sessionCheckouts(host).catch(() => []);
+    const worked = (await Promise.all(touches.map((touch) => projectOfPath(host, touch.root, home)))).filter(
+        (touched): touched is ForgeProject => touched !== undefined
+    );
 
     return {
         host,
