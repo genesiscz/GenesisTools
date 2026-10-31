@@ -522,7 +522,8 @@ describe("completion uninstall", () => {
     });
 });
 
-describe("zsh wiring", () => {
+// Some CI runner images ship without zsh; there the wiring cannot be observed, so the case is skipped, not failed.
+describe.skipIf(!Bun.which("zsh"))("zsh wiring", () => {
     it("registers an fpath CLI and a source CLI in an interactive zsh after compinit", async () => {
         const zdot = join(root, "zdot");
         const dir = join(zdot, "completions");
