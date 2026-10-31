@@ -6,6 +6,55 @@ import { claudeDialog } from "./harness-dialog";
 import { claudeLaunch } from "./harness-launch";
 import { claudeWorker } from "./harness-worker";
 
+const INTERPRETER_OPTIONS_WITH_VALUE = new Set([
+    "-r",
+    "--require",
+    "--import",
+    "--loader",
+    "--experimental-loader",
+    "--conditions",
+    "-C",
+    "--env-file",
+    "--env-file-if-exists",
+    "--inspect-port",
+]);
+const INTERPRETER_FLAGS = new Set([
+    "--no-warnings",
+    "--trace-warnings",
+    "--enable-source-maps",
+    "--inspect",
+    "--inspect-brk",
+    "--smol",
+]);
+
+function executesClaudeScript(command: string): boolean {
+    const args = command.split(/\s+/).slice(1);
+
+    for (let i = 0; i < args.length; i++) {
+        const arg = args[i];
+
+        if (arg === "--") {
+            return /(?:^|[/\\])@anthropic-ai[/\\]claude-code[/\\]cli\.m?js$/.test(args[i + 1] ?? "");
+        }
+
+        if (INTERPRETER_OPTIONS_WITH_VALUE.has(arg)) {
+            i++;
+            continue;
+        }
+
+        if (
+            INTERPRETER_FLAGS.has(arg) ||
+            [...INTERPRETER_OPTIONS_WITH_VALUE].some((option) => arg.startsWith(`${option}=`))
+        ) {
+            continue;
+        }
+
+        return /(?:^|[/\\])@anthropic-ai[/\\]claude-code[/\\]cli\.m?js$/.test(arg);
+    }
+
+    return false;
+}
+
 /**
  * The Claude Code driver: what GenesisTools knows about the harness, part by part. Every part the plan has not moved yet
  * names the phase that moves it and where it lives today (inventory of 2026-10-30 in the plan note). Light on
@@ -66,8 +115,7 @@ export const claudeHarness: HarnessDriver<"claude"> = {
             runsCli: ({ argv0, name, command }) =>
                 name === "claude" ||
                 /\/claude\/versions\/[\d.]+$/.test(argv0) ||
-                ((name === "node" || name === "bun") &&
-                    /(?:^|[/\\])@anthropic-ai[/\\]claude-code[/\\]cli\.m?js$/.test(command.split(/\s+/)[1] ?? "")),
+                ((name === "node" || name === "bun") && executesClaudeScript(command)),
         },
         history: () => import("@genesiscz/utils/agent-sessions/compact-readers").then((m) => m.claudeHistoryReader),
         cmux: toolOwned(

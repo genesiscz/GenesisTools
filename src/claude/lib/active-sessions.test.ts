@@ -70,6 +70,14 @@ describe("classifyClaudeArgs", () => {
         expect(classifyClaudeArgs("/usr/bin/bun /x/node_modules/@anthropic-ai/claude-code/cli.mjs")).toBe("tui");
     });
 
+    test("recognizes interpreter flags without mistaking option values for scripts", () => {
+        const cli = "/x/node_modules/@anthropic-ai/claude-code/cli.js";
+        expect(classifyClaudeArgs(`node --no-warnings ${cli} --resume abc`)).toBe("tui");
+        expect(classifyClaudeArgs(`node --require /x/preload.js ${cli}`)).toBe("tui");
+        expect(classifyClaudeArgs(`node --require ${cli} /x/other.js`)).toBeNull();
+        expect(classifyClaudeArgs(`node -e ${cli}`)).toBeNull();
+    });
+
     test("a gt-claude line that names the CLI package stays the wrapper", () => {
         expect(
             classifyClaudeArgs("/Users/x/.genesis-tools/bin/gt-claude /x/node_modules/@anthropic-ai/claude-code/cli.js")
