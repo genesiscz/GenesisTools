@@ -10,12 +10,13 @@ import * as transcriptResolver from "@genesiscz/utils/ai/transcripts/resolve";
 import { SafeJSON } from "@genesiscz/utils/json";
 import { Command } from "commander";
 import { registerAgentsCommand } from "../../commands/agents";
+import { agentsMailDoor } from "../../server/doors/agents";
 import { hubArgs, hubUrl } from "../open";
 import { commitFlagsProblem, isHubCommitSha } from "../pr-ref";
 import * as codexAgents from "./codex-agents";
 import { agentCounts } from "./counts";
 import { freshMtime, hubAgents, parentsOfRecentAgents } from "./index";
-import { readAgentMail } from "./mail";
+import { agentMail, readAgentMail } from "./mail";
 import { readParent } from "./parent";
 import { unreadInbox } from "./team";
 import { type ParentRow, promptPreview, withoutFullPrompts } from "./tree";
@@ -286,6 +287,74 @@ describe("hub agents tree", () => {
 
 describe("hub agents mail", () => {
     const { teams, dir } = fixture();
+
+    test("mail rejects path traversal through both local and server entry points", async () => {
+        const root = mkdtempSync(join(tmpdir(), "gt-hub-mail-"));
+        const session = "fixture-session";
+        const subagents = join(root, session, "subagents");
+        const parentFile = join(root, `${session}.jsonl`);
+        mkdirSync(subagents, { recursive: true });
+        writeFileSync(parentFile, "");
+        writeFileSync(
+            join(subagents, "agent-a123.jsonl"),
+            lines(prompt("2026-03-10T10:00:00.000Z", '<teammate-message teammate_id="alice">normal</teammate-message>'))
+        );
+        writeFileSync(
+            join(root, session, "outside.jsonl"),
+            lines(
+                prompt("2026-03-10T10:00:00.000Z", '<teammate-message teammate_id="alice">outside</teammate-message>')
+            )
+        );
+        const resolveSpy = spyOn(transcriptResolver, "resolveTranscript").mockResolvedValue({
+            provider: "claude",
+            source: "native",
+            sessionId: session,
+            filePath: parentFile,
+        });
+        try {
+            const normal = await agentMail({ session, agent: "agent-a123.jsonl", teamsRoot: root });
+            expect(normal.received[0]?.text).toBe("normal");
+            for (const agent of ["../../../outside", "..\\..\\outside", "a123/child", "a123\0child", ""]) {
+                await expect(agentMail({ session, agent, teamsRoot: root })).rejects.toThrow("Invalid agent id");
+            }
+            const normalParsed = agentsMailDoor.match([
+                "hub",
+                "agents",
+                "mail",
+                "--session",
+                session,
+                "--agent",
+                "a123",
+                "--json",
+            ]);
+            if (!normalParsed) {
+                throw new Error("server did not match the normal mail request");
+            }
+            const allowed = await agentsMailDoor.run(normalParsed, { signal: new AbortController().signal });
+            expect(allowed.exit).toBe(0);
+            expect(allowed.stdout).toContain("normal");
+            const parsed = agentsMailDoor.match([
+                "hub",
+                "agents",
+                "mail",
+                "--session",
+                session,
+                "--agent",
+                "../../../outside",
+                "--json",
+            ]);
+            expect(parsed).not.toBeNull();
+            if (!parsed) {
+                throw new Error("server did not match the mail request");
+            }
+            const denied = await agentsMailDoor.run(parsed, { signal: new AbortController().signal });
+            expect(denied.exit).toBe(1);
+            expect(denied.stdout).not.toContain("outside");
+            expect(denied.stderr).toContain("Invalid agent id");
+        } finally {
+            resolveSpy.mockRestore();
+        }
+    });
 
     test("received messages keep their arrival time; sent ones come from SendMessage calls", () => {
         const unread = unreadInbox(teams, TEAM, "worker-one").map((entry) => ({

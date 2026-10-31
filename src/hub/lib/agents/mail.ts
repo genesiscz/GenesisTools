@@ -124,9 +124,13 @@ function readMetaName(path: string): { name: string | null; teamName: string | n
 }
 
 export async function agentMail(options: AgentMailOptions): Promise<AgentMail> {
+    const agentId = options.agent.replace(/^agent-/, "").replace(/\.jsonl$/, "");
+    if (!agentId || /[/\\\0]/.test(agentId)) {
+        throw new Error("Invalid agent id");
+    }
+
     const parent = await resolveTranscript(options.session, {}, "claude");
     const dir = join(dirname(parent.filePath), basename(parent.filePath, ".jsonl"), "subagents");
-    const agentId = options.agent.replace(/^agent-/, "").replace(/\.jsonl$/, "");
     const transcript = join(dir, `agent-${agentId}.jsonl`);
     if (!existsSync(transcript)) {
         throw new Error(`No agent ${agentId} under session ${parent.sessionId} (${dir})`);

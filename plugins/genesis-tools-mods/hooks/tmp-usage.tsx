@@ -511,8 +511,8 @@ async function measure(host: Host): Promise<void> {
         return;
     }
 
-    // lint-rules-ignore: /tmp/cc/<project>/<session> is the agents' scratch folder by convention, not a temp file.
     const { project, main } = await projectOf(host);
+    // lint-rules-ignore: /tmp/cc/<project>/<session> is the agents' scratch folder by convention, not a temp file.
     const scratch = `/tmp/cc/${project}/${await host.sessionId()}`;
     const sessionDir = await sessionDirOf(host);
     const uid = await uidOf(host);
