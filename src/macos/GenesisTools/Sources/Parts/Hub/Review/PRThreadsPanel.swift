@@ -571,11 +571,18 @@ struct PRThreadsList: View {
             Image(systemName: store.payload == nil ? "bubble.left.and.bubble.right" : "checkmark.bubble")
                 .font(.system(size: 20))
                 .foregroundColor(ReviewPalette.dim)
-            Text(store.payload == nil ? "No threads loaded yet." : onlyThisFile ? "No \(showClosed ? "" : "open ")thread on \(thisFileName)." : showClosed ? "No thread matches these filters." : model.proposal?.drafts.isEmpty == false ? "No open PR threads." : "No open threads.")
+            Text(emptyMessage)
                 .font(.system(size: 12))
                 .foregroundColor(ReviewPalette.dim)
         }
         .frame(maxWidth: .infinity)
+    }
+
+    private var emptyMessage: String {
+        if store.payload == nil { return "No threads loaded yet." }
+        if onlyThisFile { return "No \(showClosed ? "" : "open ")thread on \(thisFileName)." }
+        if showClosed { return "No thread matches these filters." }
+        return model.proposal?.drafts.isEmpty == false ? "No open PR threads." : "No open threads."
     }
 
     /// Reads the previous visit once per PR and records this one.
@@ -616,9 +623,9 @@ struct PRThreadsList: View {
     private func toolbar(all: [PRThread], placed: [String: PRThreadPlacement], shown: [PRThread], files: Int) -> some View {
         let openCount = all.filter { Self.isOpen($0, placed[$0.id]) }.count
         let fixable = shown.filter { !$0.resolved && !$0.isMyDraft && !model.selectedThreads.contains($0.id) }.map(\.id)
-        let threads = "\(shown.count) \(shown.count == 1 ? "thread" : "threads")"
+        let threads = Plural.count(shown.count, "thread")
         // "This file" follows the file the diff counts as current (the topmost one while scrolling), so name it.
-        let summary = onlyThisFile ? "\(threads) on \(thisFileName)" : "\(threads) in \(files) \(files == 1 ? "file" : "files")"
+        let summary = onlyThisFile ? "\(threads) on \(thisFileName)" : "\(threads) in \(Plural.count(files, "file"))"
         VStack(alignment: .leading, spacing: 6) {
             HStack(spacing: 6) {
                 PRFilterChip(title: "Open", count: openCount, on: !showClosed,
