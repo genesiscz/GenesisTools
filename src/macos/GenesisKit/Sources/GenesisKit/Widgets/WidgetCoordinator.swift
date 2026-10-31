@@ -267,7 +267,7 @@ public final class WidgetCoordinator: NSObject, NSWindowDelegate {
             model.openDecision(id: id, sessionKey: item.key)
             return
         }
-        let sessionID = id.split(separator: "_", maxSplits: 2).dropFirst(2).first.map(String.init) ?? id
+        let sessionID = WidgetModel.decisionSession(id) ?? id
         guard let key = (model.snapshot?.sessions ?? []).first(where: { $0.key.contains(sessionID) })?.key else {
             model.notice = "That decision's session is not in the widget."
             return
