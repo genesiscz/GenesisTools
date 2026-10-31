@@ -1,5 +1,5 @@
 import { existsSync, mkdirSync, readdirSync, readFileSync, unlinkSync, writeFileSync } from "node:fs";
-import { join } from "node:path";
+import { dirname, join } from "node:path";
 import { SafeJSON } from "@genesiscz/utils/json";
 import { logger } from "@genesiscz/utils/logger";
 import { isMissingFileError } from "@genesiscz/utils/storage/atomic-file";
@@ -53,7 +53,8 @@ function recordsDocument(provider: DialogProvider, sessionId: string, root?: str
         onUnreadable: "refuse",
         writes: "always",
         unreadableError: (problem) => (problem.cause instanceof Error ? problem.cause : problem),
-        afterWrite: (records) => syncOpenMarker(path, records),
+        beforeWrite: (records) => markOpenBeforeWrite(path, records),
+        afterWrite: (records) => clearOpenAfterWrite(path, records),
     });
 }
 
@@ -66,16 +67,30 @@ export function openMarkerPath(recordsPath: string): string {
     return `${recordsPath.replace(/\.json$/, "")}.open`;
 }
 
-function syncOpenMarker(recordsPath: string, records: readonly OpenQuestion[]): void {
+function holdsOpen(records: readonly OpenQuestion[]): boolean {
+    return records.some((record) => record.closedAt === undefined);
+}
+
+/**
+ * The marker goes down before an open record is committed and comes up only after a state with none is committed.
+ * A writer killed between the two steps then leaves at worst a marker with no open record (one extra store load),
+ * never an open record the question hook skips.
+ */
+function markOpenBeforeWrite(recordsPath: string, records: readonly OpenQuestion[]): void {
     const marker = openMarkerPath(recordsPath);
 
-    if (records.some((record) => record.closedAt === undefined)) {
-        if (!existsSync(marker)) {
-            writeFileSync(marker, "");
-        }
+    if (holdsOpen(records) && !existsSync(marker)) {
+        mkdirSync(dirname(marker), { recursive: true });
+        writeFileSync(marker, "");
+    }
+}
 
+function clearOpenAfterWrite(recordsPath: string, records: readonly OpenQuestion[]): void {
+    if (holdsOpen(records)) {
         return;
     }
+
+    const marker = openMarkerPath(recordsPath);
 
     try {
         unlinkSync(marker);
