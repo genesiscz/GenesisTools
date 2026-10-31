@@ -1,4 +1,4 @@
-import { existsSync, readdirSync } from "node:fs";
+import { existsSync, readFileSync } from "node:fs";
 import { homedir } from "node:os";
 import { basename, dirname, join, sep } from "node:path";
 import { readCodexTitleIndex } from "@genesiscz/utils/agent-sessions/readers/codex-title";
@@ -9,13 +9,19 @@ import {
     type RankedHit,
     type ResolvedTranscript,
 } from "@genesiscz/utils/ai/transcripts/resolve";
-import { idMatches, isRecord } from "@genesiscz/utils/ai/transcripts/resolve-core";
+import { idMatches, isDir, isRecord, listDir, mtimeOf } from "@genesiscz/utils/ai/transcripts/resolve-core";
 import type { TitledSession } from "@genesiscz/utils/ai/transcripts/session-title";
 import { sessionsDir } from "@genesiscz/utils/codex/worker-paths";
 import type { TranscriptLocator } from "@genesiscz/utils/harness/parts";
 import { SafeJSON } from "@genesiscz/utils/json";
 import { logger } from "@genesiscz/utils/logger";
-import { codexHomesWithLegacy, isNativeTranscript, transcriptStem } from "@genesiscz/utils/providers/session-paths";
+import {
+    codexHomesWithLegacy,
+    isNativeTranscript,
+    nativeSessionRootsForHome,
+    nativeTranscriptMaxDepth,
+    transcriptStem,
+} from "@genesiscz/utils/providers/session-paths";
 import type { SessionPathRole } from "../types";
 
 /**
@@ -81,50 +87,46 @@ export function codexNativeSessionId(entry: string): string {
     return uuid?.[0] ?? stem;
 }
 
-/** Files of one Codex bucket: the `YYYY/MM/DD` tree, and files directly in it (`archived_sessions` is flat). */
-function* codexBucketEntries(root: string, fs: FolderReads): Generator<{ dir: string; entry: string }> {
-    for (const year of fs.listDir(root)) {
-        const yearDir = join(root, year);
-        if (!fs.isDir(yearDir)) {
-            yield { dir: root, entry: year };
-            continue;
-        }
-        for (const month of fs.listDir(yearDir)) {
-            const monthDir = join(yearDir, month);
-            if (!fs.isDir(monthDir)) {
-                continue;
-            }
-            for (const day of fs.listDir(monthDir)) {
-                const dayDir = join(monthDir, day);
-                if (!fs.isDir(dayDir)) {
-                    continue;
-                }
-                for (const entry of fs.listDir(dayDir)) {
-                    yield { dir: dayDir, entry };
-                }
+/**
+ * Every rollout under one Codex home, the one walk the locator and the rollout finder share: each session root of the
+ * home (`nativeSessionRootsForHome`, the roots history discovery walks too), folders down to
+ * `nativeTranscriptMaxDepth("codex")` (`YYYY/MM/DD`, and `archived_sessions` keeps files flat), and the files
+ * `isCodexRolloutPath` accepts (discovery's own filter). Newest name first at every level, so a caller looking for one
+ * thread can stop at the first hit. A rollout name is matched before the folder test, so a file costs no `stat`.
+ */
+export function* codexRollouts(home: string, fs: FolderReads): Generator<{ dir: string; entry: string }> {
+    const maxDepth = nativeTranscriptMaxDepth("codex");
+
+    function* walk(dir: string, depth: number): Generator<{ dir: string; entry: string }> {
+        for (const entry of [...fs.listDir(dir)].sort().reverse()) {
+            if (isCodexRolloutPath(entry)) {
+                yield { dir, entry };
+            } else if (depth < maxDepth && fs.isDir(join(dir, entry))) {
+                yield* walk(join(dir, entry), depth + 1);
             }
         }
+    }
+
+    for (const root of nativeSessionRootsForHome("codex", home)) {
+        yield* walk(root, 1);
     }
 }
 
 export function findCodexNative(query: string, homes: readonly string[], fs: FolderReads): RankedHit[] {
     const hits: RankedHit[] = [];
     for (const home of homes) {
-        for (const bucket of ["sessions", "archived_sessions"]) {
-            for (const { dir, entry } of codexBucketEntries(join(home, bucket), fs)) {
-                // Codex 0.164 compresses old rollouts to `.jsonl.zst`.
-                if (!isNativeTranscript("codex", entry) || !idMatches(query, entry)) {
-                    continue;
-                }
-                const filePath = join(dir, entry);
-                hits.push({
-                    provider: "codex",
-                    source: "native",
-                    sessionId: codexNativeSessionId(entry),
-                    filePath,
-                    mtime: fs.mtimeOf(filePath),
-                });
+        for (const { dir, entry } of codexRollouts(home, fs)) {
+            if (!idMatches(query, entry)) {
+                continue;
             }
+            const filePath = join(dir, entry);
+            hits.push({
+                provider: "codex",
+                source: "native",
+                sessionId: codexNativeSessionId(entry),
+                filePath,
+                mtime: fs.mtimeOf(filePath),
+            });
         }
     }
     return hits;
@@ -241,20 +243,19 @@ export function codexClassifyPath(relativePath: string): SessionPathRole | null 
         : null;
 }
 
-/** A folder's entries, newest name first (Codex names its day folders and rollouts by date). */
-function newestFirst(dir: string): string[] {
-    try {
-        return readdirSync(dir).sort().reverse();
-    } catch (error) {
-        logger.debug({ error, dir }, "[transcripts] codex sessions directory not readable");
-        return [];
-    }
-}
+/** Direct folder reads for `findCodexRollout`, which reads outside a lookup batch. */
+const ROLLOUT_READS: FolderReads = {
+    listDir,
+    isDir,
+    mtimeOf,
+    exists: existsSync,
+    readText: (path) => readFileSync(path, "utf8"),
+};
 
 /**
  * The rollout of a Codex thread: `<home>/sessions/YYYY/MM/DD/rollout-<ts>-<thread id>.jsonl` (or `.jsonl.zst` once
  * Codex compressed it), or the same in `archived_sessions`, which also keeps files directly in its root. Newest days
- * are searched first.
+ * are searched first (`codexRollouts`), and the first hit answers.
  */
 export function findCodexRollout(threadId: string, homes: readonly string[] = codexHomesWithLegacy()): string | null {
     if (!/^[A-Za-z0-9-]+$/.test(threadId)) {
@@ -262,34 +263,12 @@ export function findCodexRollout(threadId: string, homes: readonly string[] = co
     }
 
     const isThread = (entry: string) =>
-        entry.startsWith("rollout-") &&
-        (entry.endsWith(`-${threadId}.jsonl`) || entry.endsWith(`-${threadId}.jsonl.zst`));
+        entry.endsWith(`-${threadId}.jsonl`) || entry.endsWith(`-${threadId}.jsonl.zst`);
 
     for (const home of homes) {
-        for (const bucket of ["sessions", "archived_sessions"]) {
-            const root = join(home, bucket);
-
-            if (!existsSync(root)) {
-                continue;
-            }
-
-            const flat = newestFirst(root).find(isThread);
-
-            if (flat) {
-                return join(root, flat);
-            }
-
-            for (const year of newestFirst(root)) {
-                for (const month of newestFirst(join(root, year))) {
-                    for (const day of newestFirst(join(root, year, month))) {
-                        const dayDir = join(root, year, month, day);
-                        const hit = newestFirst(dayDir).find(isThread);
-
-                        if (hit) {
-                            return join(dayDir, hit);
-                        }
-                    }
-                }
+        for (const { dir, entry } of codexRollouts(home, ROLLOUT_READS)) {
+            if (isThread(entry)) {
+                return join(dir, entry);
             }
         }
     }
