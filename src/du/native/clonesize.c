@@ -3386,6 +3386,7 @@ static void usage(const char *me) {
         "  --include-cloud      walk ~/Library/CloudStorage and iCloud Drive, and open cloud-backed files\n"
         "                       (default: dataless files and File Provider domains are measured by stat only)\n"
         "  --cloudfiles         list cloud-backed files that are on disk (evictable) under the dir (JSON)\n"
+        "  --dusize             what du -sk prints for the dir, from the listing walk (JSON, `tools du size`)\n"
         "  --index              per-directory NDJSON rows for `tools du index` (one dir)\n"
         "  --min-dir-bytes N    with --index: fold directories whose subtree is < N (default 1 MiB)\n"
         "  --big-file-floor N   with --index: report files with datalength >= N (default 8 MiB)\n"
@@ -3401,7 +3402,7 @@ static void usage(const char *me) {
 int main(int argc, char **argv) {
     const char *target = NULL, *partners_of = NULL;
     int json = 0, quiet = 0, volume = 0, topn = 30, bigfiles = 0, cloudfiles = 0;
-    int index_mode = 0, dropped_excludes = 0;
+    int index_mode = 0, dropped_excludes = 0, dusize = 0;
     const char *keep_file = NULL;
     // Grown on demand: a fixed 4096 cap dropped every root past it with no
     // diagnostic, so a large fleet got a silently incomplete listing.
@@ -3426,6 +3427,7 @@ int main(int argc, char **argv) {
         else if (!strcmp(a, "--bigfiles"))               bigfiles = 1;
         else if (!strcmp(a, "--cloudfiles"))             cloudfiles = 1;
         else if (!strcmp(a, "--index"))                  index_mode = 1;
+        else if (!strcmp(a, "--dusize"))                 dusize = 1;
         else if (!strcmp(a, "--region"))                 g_idx_region = 1;
         else if (!strcmp(a, "--keep-file") && i + 1 < argc) keep_file = argv[++i];
         else if (!strcmp(a, "--min-dir-bytes") && i + 1 < argc) g_idx_min_dir = strtoull(argv[++i], NULL, 10);
@@ -3470,6 +3472,17 @@ int main(int argc, char **argv) {
         int rc = run_index(target, nt);
         free(roots);
         return rc;
+    }
+
+    if (dusize) {
+        // `tools du size` runs this as a child under a deadline: open() on a protected folder can wait for the
+        // user's answer to a privacy prompt, and only a process can be killed out of that wait.
+        if (nroots != 1) { fprintf(stderr, "--dusize takes exactly one directory\n"); free(roots); return 2; }
+        free(roots);
+        char *d = clonesize_dusize_json(target, g_nthreads);
+        fputs(d, stdout);
+        free(d);
+        return 0;
     }
 
     if (bigfiles || cloudfiles) {

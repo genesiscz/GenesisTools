@@ -22,8 +22,8 @@ import {
 } from "node:fs";
 import { tmpdir } from "node:os";
 import { join, resolve } from "node:path";
-import { duSize, scanWithCFfi } from "./engine";
-import { folderKb } from "./size-command";
+import { scanWithCFfi } from "./engine";
+import { folderKb, nativeDuSize } from "./size-command";
 import type { ClonesizeResult } from "./types";
 
 describe("du size command", () => {
@@ -61,6 +61,35 @@ describe("du size command", () => {
         expect(commands).toEqual([["du", "-sk", absolute]]);
     });
 
+    it("runs du when the native walk passes its deadline", async () => {
+        const root = mkdtempSync(join(tmpdir(), "du-size-deadline-"));
+        const commands: Array<{ argv: string[]; timeoutMs: number }> = [];
+        const run = async (argv: string[], { timeoutMs }: { cwd: string; timeoutMs: number }) => {
+            commands.push({ argv, timeoutMs });
+            // What spawnRunner answers when the deadline killed the child.
+            return argv[1] === "--dusize"
+                ? { code: 127, stdout: "", stderr: "Command timed out after 120000ms" }
+                : { code: 0, stdout: `42\t${root}\n`, stderr: "" };
+        };
+
+        try {
+            const answer = await folderKb({
+                path: root,
+                maxCacheAgeSeconds: 0,
+                run,
+                binary: () => "/fixture/clonesize",
+            });
+
+            expect(answer).toEqual({ value: 42, hit: false });
+            expect(commands).toEqual([
+                { argv: ["/fixture/clonesize", "--dusize", root], timeoutMs: 120_000 },
+                { argv: ["du", "-sk", root], timeoutMs: 120_000 },
+            ]);
+        } finally {
+            rmSync(root, { recursive: true, force: true });
+        }
+    });
+
     it.skipIf(process.platform !== "darwin")(
         "the native walk prints what du -sk prints: hard links once, a sparse file as allocated",
         async () => {
@@ -81,11 +110,11 @@ describe("du size command", () => {
                 const du = Number(
                     execFileSync("du", ["-sk", root], { encoding: "utf8", env: process.env }).trim().split(/\s+/)[0]
                 );
-                const walked = duSize(root);
+                const walked = await nativeDuSize(root);
 
-                expect(walked.kib).toBe(du);
-                expect(walked.files).toBe(6);
-                expect(walked.hardlinkedInodes).toBe(1);
+                expect(walked?.kib).toBe(du);
+                expect(walked?.files).toBe(6);
+                expect(walked?.hardlinkedInodes).toBe(1);
                 // A size the cache serves comes from the same walk.
                 await expect(folderKb({ path: root, maxCacheAgeSeconds: 0 })).resolves.toEqual({
                     value: du,

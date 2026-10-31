@@ -177,8 +177,6 @@ function openLib() {
             args: [FFIType.ptr, FFIType.i32, FFIType.u64, FFIType.i32],
             returns: FFIType.ptr,
         },
-        // char* clonesize_dusize_json(const char* root, int threads)
-        clonesize_dusize_json: { args: [FFIType.ptr, FFIType.i32], returns: FFIType.ptr },
         clonesize_free: { args: [FFIType.ptr], returns: FFIType.void },
     });
 }
@@ -303,7 +301,7 @@ export function listCloudFiles(opts: {
     };
 }
 
-/** Read the volume's authoritative used/free bytes (ATTR_VOL_*) for a mount point. */
+/** What `clonesize --dusize <root>` answers (`tools du size`). */
 export interface DuSizeResult {
     /** What `du -sk` prints: allocated KiB, rounded up. */
     kib: number;
@@ -317,21 +315,11 @@ export interface DuSizeResult {
 }
 
 /**
- * What `du -sk root` reports, from the engine's listing walk: one parallel getattrlistbulk pass, no file opened, a
- * hard-linked inode once. The dylib's own failures throw; a root that could not be read answers with `dirs` 0.
+ * The reply of `clonesize --dusize <root>`: what `du -sk root` reports, from the engine's listing walk (one parallel
+ * getattrlistbulk pass, no file opened, a hard-linked inode once). A root that could not be read answers with `dirs`
+ * 0. Throws on a reply that is not JSON.
  */
-export function duSize(root: string, threads = 0): DuSizeResult {
-    const { symbols } = getLib();
-    const rootBuf = Buffer.from(`${root}\0`, "utf8");
-    const end = prof.start("c-ffi.dusize");
-    const resPtr = symbols.clonesize_dusize_json(ptr(rootBuf), threads > 0 ? threads : 0);
-    end();
-    if (!resPtr) {
-        throw new Error("clonesize dylib returned NULL (du size failed)");
-    }
-
-    const json = new CString(resPtr).toString();
-    symbols.clonesize_free(resPtr);
+export function parseDuSize(json: string): DuSizeResult {
     const raw = SafeJSON.parse(json) as DuSizeWire;
     return {
         kib: raw.kib,
@@ -345,6 +333,7 @@ export function duSize(root: string, threads = 0): DuSizeResult {
     };
 }
 
+/** Read the volume's authoritative used/free bytes (ATTR_VOL_*) for a mount point. */
 export function readVolumeInfo(mount: string): VolumeInfo {
     const { symbols } = getLib();
     const buf = Buffer.from(`${mount}\0`, "utf8");

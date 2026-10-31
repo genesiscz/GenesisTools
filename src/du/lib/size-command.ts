@@ -6,36 +6,62 @@ import { logger, out } from "@genesiscz/utils/logger";
 import { cached, maxCacheAgeOption } from "@genesiscz/utils/storage/cache-flag";
 import { Storage } from "@genesiscz/utils/storage/storage";
 import type { Command } from "commander";
-import { duSize } from "./engine";
+import { type DuSizeResult, ensureBinary, parseDuSize } from "./engine";
 
 const storage = new Storage("du");
 /** `du` on a 5-6 GB worktree took up to 17 s on a full, loaded disk (2026-10-27). */
 const DU_TIMEOUT_MS = 120_000;
 
 /**
- * The engine's listing walk: the figure `du -sk` prints (allocated blocks, a hard-linked inode once) from one parallel
- * getattrlistbulk pass that opens no file. Null when it cannot answer (a file, no compiler for the dylib, a root that
- * could not be read), and `du` runs instead.
+ * The engine's listing walk, `clonesize --dusize <path>`: the figure `du -sk` prints (allocated blocks, a hard-linked
+ * inode once) from one parallel getattrlistbulk pass that opens no file. It runs as a child under the same deadline
+ * as `du`, because open() on a protected folder can wait for the user's answer to a privacy prompt, and only a
+ * process can be killed out of that wait. Null when it cannot answer (a file, no compiler for the binary, a walk
+ * past the deadline, a root that could not be read), and `du` runs instead.
  */
-function nativeKb(path: string): number | null {
+export async function nativeDuSize(
+    path: string,
+    { run = spawnRunner, binary = ensureBinary }: { run?: CommandRunner; binary?: () => string } = {}
+): Promise<DuSizeResult | null> {
+    let argv: string[];
+
     try {
         if (!statSync(path).isDirectory()) {
             return null;
         }
 
-        const walked = duSize(path);
-
-        if (walked.dirs === 0) {
-            logger.debug({ path, readErrors: walked.readErrors }, "du size: the native walk could not read the root");
-            return null;
-        }
-
-        logger.debug({ path, files: walked.files, walkMs: walked.walkMs, kib: walked.kib }, "du size: native walk");
-        return walked.kib;
+        argv = [binary(), "--dusize", path];
     } catch (err) {
         logger.debug({ err, path }, "du size: native walk unavailable, du runs");
         return null;
     }
+
+    const done = await run(argv, { cwd: "/", timeoutMs: DU_TIMEOUT_MS });
+
+    if (done.code !== 0) {
+        logger.debug(
+            { path, exit: done.code, stderr: done.stderr.slice(-300) },
+            "du size: the native walk failed or passed its deadline, du runs"
+        );
+        return null;
+    }
+
+    let walked: DuSizeResult;
+
+    try {
+        walked = parseDuSize(done.stdout);
+    } catch (err) {
+        logger.debug({ err, path }, "du size: the native walk's reply is not JSON, du runs");
+        return null;
+    }
+
+    if (walked.dirs === 0) {
+        logger.debug({ path, readErrors: walked.readErrors }, "du size: the native walk could not read the root");
+        return null;
+    }
+
+    logger.debug({ path, files: walked.files, walkMs: walked.walkMs, kib: walked.kib }, "du size: native walk");
+    return walked;
 }
 
 /**
@@ -48,10 +74,13 @@ export async function folderKb({
     path,
     maxCacheAgeSeconds,
     run = spawnRunner,
+    binary = ensureBinary,
 }: {
     path: string;
     maxCacheAgeSeconds?: number;
     run?: CommandRunner;
+    /** The native binary's path; compiled on demand by default. */
+    binary?: () => string;
 }): Promise<{ value: number | null; hit: boolean }> {
     const absolutePath = resolve(path);
 
@@ -62,10 +91,10 @@ export async function folderKb({
         // Sessions that ask together after an install wait for one walk instead of each walking the folder.
         shareInFlight: `du/${absolutePath}`,
         fetch: async () => {
-            const native = nativeKb(absolutePath);
+            const native = await nativeDuSize(absolutePath, { run, binary });
 
             if (native !== null) {
-                return native;
+                return native.kib;
             }
 
             const done = await run(["du", "-sk", absolutePath], { cwd: "/", timeoutMs: DU_TIMEOUT_MS });
