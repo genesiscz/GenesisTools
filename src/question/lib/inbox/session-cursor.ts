@@ -118,7 +118,7 @@ export function baseTrace(): InboxTrace {
         names = [];
     }
 
-    trace.probes.push({ path: `${dir}/`, id: logNamesId(dir) });
+    trace.probes.push({ path: `${dir}/`, id: namesId(names) });
 
     for (const name of names) {
         trace.probe(join(dir, name));
@@ -128,15 +128,21 @@ export function baseTrace(): InboxTrace {
 }
 
 /** The Q→A day log names, as one id: a new day's file moves it. */
+function namesId(names: readonly string[]): string {
+    return `names:${hashOf(names.join("\n"))}`;
+}
+
+/** The id of the Q→A day log names in `dir` now; an unreadable folder gets an id that never matches. */
 function logNamesId(dir: string): string {
     try {
-        const names = readdirSync(dir)
-            .filter((name) => name.endsWith(".jsonl"))
-            .sort();
-        return `names:${hashOf(names.join("\n"))}`;
+        return namesId(
+            readdirSync(dir)
+                .filter((name) => name.endsWith(".jsonl"))
+                .sort()
+        );
     } catch (error) {
         if (error instanceof Error && "code" in error && error.code === "ENOENT") {
-            return `names:${hashOf("")}`;
+            return namesId([]);
         }
 
         return `unreadable:${Date.now()}`;
