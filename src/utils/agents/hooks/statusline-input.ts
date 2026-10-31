@@ -1,4 +1,5 @@
 import { SafeJSON } from "@genesiscz/utils/json";
+import { isObject } from "@genesiscz/utils/object";
 
 /**
  * Claude Code's statusline input: the JSON document it pipes to the `statusLine` command on every render. It is not
@@ -32,12 +33,8 @@ export interface StatuslineContextWindow {
     currentUsage?: { inputTokens?: number; cacheCreationInputTokens?: number; cacheReadInputTokens?: number };
 }
 
-function isRecord(value: unknown): value is Record<string, unknown> {
-    return typeof value === "object" && value !== null && !Array.isArray(value);
-}
-
 function record(value: unknown): Record<string, unknown> | undefined {
-    return isRecord(value) ? value : undefined;
+    return isObject(value) ? value : undefined;
 }
 
 /** An empty string counts as absent: Claude Code sends `""` for a field it has no value for yet. */

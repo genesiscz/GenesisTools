@@ -23,7 +23,7 @@ function isTranscriptLocator(value: unknown): value is TranscriptLocator {
     );
 }
 
-/** A window of native records to turns, the shape of `TranscriptFacts.windowTurns`. */
+/** A window of native records to turns, the shape of `NativeSessionReader.windowTurns`. */
 type WindowTurns = (values: Record<string, unknown>[]) => TranscriptTurn[];
 
 function isWindowTurns(value: unknown): value is WindowTurns {
@@ -31,56 +31,59 @@ function isWindowTurns(value: unknown): value is WindowTurns {
 }
 
 /**
- * The window-turns function of a driver's `transcript` part, loaded beside the driver on the first call, for the same
- * reason as `deferredLocator`: the turn parsers it reaches cost 31 to 42 ms to import (measured 2026-10-31), and
- * `transcriptAround` is synchronous.
+ * One export of a module beside `meta`, loaded on the first call and kept: the module is required synchronously
+ * (`requireSibling`), its export checked by `guard`, and a missing or wrong export throws with both names.
  */
-export function deferredWindowTurns(meta: ImportMeta, module: string, exportName: string): WindowTurns {
-    let loaded: WindowTurns | undefined;
+function lazyExport<T>(
+    meta: ImportMeta,
+    module: string,
+    exportName: string,
+    guard: (value: unknown) => value is T,
+    what: string
+): () => T {
+    let loaded: T | undefined;
 
-    return (values) => {
-        if (!loaded) {
+    return () => {
+        if (loaded === undefined) {
             const exports: unknown = requireSibling(meta, module);
             const value: unknown =
                 typeof exports === "object" && exports !== null ? Reflect.get(exports, exportName) : undefined;
 
-            if (!isWindowTurns(value)) {
-                throw new Error(`${module} exports no window-turns function named ${exportName}`);
+            if (!guard(value)) {
+                throw new Error(`${module} exports no ${what} named ${exportName}`);
             }
 
             loaded = value;
         }
 
-        return loaded(values);
+        return loaded;
     };
+}
+
+/**
+ * A reader's window-turns function, loaded beside the caller on the first call: the turn parsers it reaches cost 31 to
+ * 42 ms to import (measured 2026-10-31), and `transcriptAround` is synchronous.
+ */
+export function deferredWindowTurns(meta: ImportMeta, module: string, exportName: string): WindowTurns {
+    const impl = lazyExport(meta, module, exportName, isWindowTurns, "window-turns function");
+    return (values) => impl()(values);
 }
 
 /**
  * A `locate` part that loads its implementation from the harness's reader files (`src/utils/agent-sessions/readers/
  * <module>.ts`, where every fact of its session files lives) on the first call, so importing a driver stays cheap on
- * the hook path while the part stays synchronous (`resolveTranscriptsWith`). Measured
- * 2026-10-31, medians of 9 interleaved runs: the three locator modules added 1.7 ms to `src/utils/agent/host.ts`
- * when the drivers imported them directly (4.11 ms against 2.41 ms).
+ * the hook path while the part stays synchronous (`resolveTranscriptsWith`). Measured 2026-10-31, medians of 9
+ * interleaved runs: the three locator modules added 1.7 ms to `src/utils/agent/host.ts` when the drivers imported them
+ * directly (4.11 ms against 2.41 ms).
  */
 export function deferredLocator(module: string, exportName: string): TranscriptLocator {
-    let loaded: TranscriptLocator | undefined;
-
-    const impl = (): TranscriptLocator => {
-        if (loaded) {
-            return loaded;
-        }
-
-        const exports: unknown = requireSibling(import.meta, `../agent-sessions/readers/${module}`);
-        const value: unknown =
-            typeof exports === "object" && exports !== null ? Reflect.get(exports, exportName) : undefined;
-
-        if (!isTranscriptLocator(value)) {
-            throw new Error(`${module} exports no transcript locator named ${exportName}`);
-        }
-
-        loaded = value;
-        return value;
-    };
+    const impl = lazyExport(
+        import.meta,
+        `../agent-sessions/readers/${module}`,
+        exportName,
+        isTranscriptLocator,
+        "transcript locator"
+    );
 
     return {
         defaultRoots: () => impl().defaultRoots(),

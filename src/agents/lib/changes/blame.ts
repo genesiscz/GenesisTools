@@ -1,14 +1,13 @@
 import { spawnSync } from "node:child_process";
 import { readdirSync, readFileSync, statSync } from "node:fs";
 import { dirname, join } from "node:path";
-import { isAccountProviderAlias } from "@genesiscz/utils/ai/providers/alias-list";
-import { harnessHooks } from "@genesiscz/utils/ai/providers/harness-hooks";
 import { listWorktrees } from "@genesiscz/utils/git";
 import { SafeJSON } from "@genesiscz/utils/json";
 import { logger } from "@genesiscz/utils/logger";
 import { findClaudeTranscript } from "@genesiscz/utils/session-changes";
 import { Storage } from "@genesiscz/utils/storage";
 import { diffArrays } from "diff";
+import { harnessHookFacts } from "../hooks/payload";
 import { readBlobs } from "./diff";
 import { type ChangeEvent, sessionChangesPath } from "./log";
 
@@ -540,7 +539,7 @@ export async function blameFiles(
 
     const prompted = sources.filter(
         // A turn that is the prompt row's id lets `deps.prompts` find the prompt (`HookFacts.turnIsPromptId`).
-        (source) => isAccountProviderAlias(source.provider) && harnessHooks(source.provider).turnIsPromptId
+        (source) => harnessHookFacts(source.provider)?.turnIsPromptId === true
     );
 
     for (const session of new Set(prompted.map((source) => source.session))) {
