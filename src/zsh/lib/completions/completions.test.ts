@@ -1,8 +1,18 @@
 import { describe, expect, it } from "bun:test";
-import { existsSync, mkdirSync, mkdtempSync, readdirSync, readFileSync, symlinkSync, writeFileSync } from "node:fs";
+import {
+    chmodSync,
+    existsSync,
+    mkdirSync,
+    mkdtempSync,
+    readdirSync,
+    readFileSync,
+    symlinkSync,
+    writeFileSync,
+} from "node:fs";
 import { tmpdir } from "node:os";
 import { join } from "node:path";
 import { env } from "@genesiscz/utils/env";
+import { persistentFixture } from "@genesiscz/utils/test/persistent-fixture";
 import { type CommandRunner, generateCompletions, looksLikeZshCompletion, versionChanged } from "./generate";
 import { COMPLETION_PROVIDERS, type CompletionProvider, getCompletionProvider } from "./providers";
 import {
@@ -356,6 +366,85 @@ describe("completion install", () => {
         await Promise.all([new Response(proc.stdout).text(), new Response(proc.stderr).text()]);
         expect(await proc.exited).toBe(0);
         expect(readStateReadOnly(statePath).state.replacedHand).toEqual(records);
+    });
+});
+
+describe("completion install and refresh", () => {
+    // A fake gh that prints a zsh completion; made once and kept, since macOS checks each new executable it runs.
+    const fakeGh = persistentFixture("gh", "zsh-completions-fake-gh-v1", (path) => {
+        writeFileSync(path, "#!/bin/sh\nprintf '#compdef gh\\n_gh() { :; }\\n'\n", { mode: 0o755 });
+    });
+
+    function run(home: string, args: string[]) {
+        const bin = join(home, "bin");
+        mkdirSync(bin, { recursive: true });
+
+        if (!existsSync(join(bin, "gh"))) {
+            symlinkSync(fakeGh, join(bin, "gh"));
+        }
+
+        return Bun.spawn([process.execPath, join(import.meta.dir, "../../index.ts"), ...args], {
+            env: { PATH: `${bin}:/usr/bin:/bin`, HOME: home, GENESIS_TOOLS_HOME: home },
+            stdout: "pipe",
+            stderr: "pipe",
+        });
+    }
+
+    it("puts the rc back when the state that records its replaced hand blocks cannot be saved", async () => {
+        const home = join(root, "state-fails-home");
+        const rc = join(home, ".zshrc");
+        const zshDir = join(home, ".genesis-tools", "zsh");
+        const original = 'export A=1\neval "$(gh completion -s zsh)"\n';
+        mkdirSync(join(zshDir, "completions"), { recursive: true });
+        writeFileSync(rc, original);
+        chmodSync(zshDir, 0o500);
+
+        try {
+            const proc = run(home, ["completions", "--yes", "--replace-hand", "--rc", rc]);
+            await Promise.all([new Response(proc.stdout).text(), new Response(proc.stderr).text()]);
+
+            expect(await proc.exited).not.toBe(0);
+            expect(readFileSync(rc, "utf8")).toBe(original);
+        } finally {
+            chmodSync(zshDir, 0o755);
+        }
+
+        // The control: with a writable state folder the same run replaces the line and records it.
+        const proc = run(home, ["completions", "--yes", "--replace-hand", "--rc", rc]);
+        await Promise.all([new Response(proc.stdout).text(), new Response(proc.stderr).text()]);
+
+        expect(await proc.exited).toBe(0);
+        expect(readFileSync(rc, "utf8")).not.toContain("eval");
+        expect(Object.keys(readStateReadOnly(join(zshDir, "completions.json")).state.replacedHand ?? {})).toEqual([
+            "gh",
+        ]);
+    });
+
+    it("refresh --dry-run writes neither a completion file nor the state", async () => {
+        const home = join(root, "refresh-dry-home");
+        const dir = join(home, ".genesis-tools", "zsh", "completions");
+        const statePath = join(home, ".genesis-tools", "zsh", "completions.json");
+        mkdirSync(dir, { recursive: true });
+        const before = {
+            version: 1 as const,
+            clis: {
+                gh: {
+                    file: join(dir, "_gh"),
+                    wiring: "fpath" as const,
+                    version: "old",
+                    generatedAt: "2026-10-01T00:00:00.000Z",
+                    sha256: "0".repeat(64),
+                },
+            },
+        };
+        writeState(before, statePath);
+        const proc = run(home, ["completions", "--dry-run", "refresh"]);
+        const output = await Promise.all([new Response(proc.stdout).text(), new Response(proc.stderr).text()]);
+
+        expect(await proc.exited).toBe(0);
+        expect(output.join("")).toContain("Dry run");
+        expect(readdirSync(dir)).toEqual([]);
+        expect(readStateReadOnly(statePath).state).toEqual(before);
     });
 });
 

@@ -371,7 +371,20 @@ async function installAction(opts: InstallOptions): Promise<void> {
         replacedHand[block.provider.cli] = [...(replacedHand[block.provider.cli] ?? []), replacedRecord(block)];
     }
 
-    writeState({ version: 1, rc: rcPath, clis, replacedHand });
+    try {
+        writeState({ version: 1, rc: rcPath, clis, replacedHand });
+    } catch (error) {
+        // The rc already lost the hand blocks the state was to record: without that record no uninstall can put
+        // them back, so the rc goes back to what it was.
+        if (rcBefore !== undefined) {
+            replaceRc(rcPath, plan.after, rcBefore);
+        }
+
+        throw new Error(`Could not save the completions state, so ${rcPath} was put back as it was.`, {
+            cause: error,
+        });
+    }
+
     logger.debug({ rcPath, wired: Object.keys(clis) }, "zsh completions: installed");
 
     out.log.success(
@@ -382,7 +395,24 @@ async function installAction(opts: InstallOptions): Promise<void> {
     out.log.info("Open a new shell to use them.");
 }
 
-async function refreshAction(): Promise<void> {
+async function refreshAction(opts: InstallOptions): Promise<void> {
+    if (opts.dryRun) {
+        // A preview reads only: no generator runs, no file and no state is written.
+        const { state, problem } = readStateReadOnly();
+
+        if (problem) {
+            out.log.warn(problem);
+        }
+
+        const names = Object.keys(state.clis);
+        out.log.info(
+            names.length > 0
+                ? `Dry run: refresh would regenerate ${names.join(", ")} in ${completionsDir()}. Nothing written.`
+                : `Nothing installed yet: ${toolCommand("zsh completions")}`
+        );
+        return;
+    }
+
     const state = readStateForUpdate();
     const names = Object.keys(state.clis);
 
@@ -529,9 +559,11 @@ export function registerCompletionsCommand(program: Command): void {
 
     completions
         .command("refresh")
-        .description("Regenerate every installed completion file (after a CLI update) and report which changed")
-        .action(async () => {
-            await refreshAction();
+        .description(
+            "Regenerate every installed completion file (after a CLI update) and report which changed (honours --dry-run)"
+        )
+        .action(async (_opts: unknown, command: Command) => {
+            await refreshAction(command.optsWithGlobals<InstallOptions>());
         });
 
     completions
