@@ -6,6 +6,14 @@ public enum WidgetOptionText {
     /// "a", "b", … for the option at `index`.
     public static func letter(_ index: Int) -> String { String(UnicodeScalar(97 + index).map(Character.init) ?? "?") }
 
+    /// The index of the option `letter` names ("a" is 0) among `count` options, or nil. The reverse of `letter(_:)`;
+    /// it does not lowercase, so a caller that accepts "A" lowercases first.
+    public static func index(of letter: Character, count: Int) -> Int? {
+        guard let scalar = letter.unicodeScalars.first?.value, scalar >= 97 else { return nil }
+        let index = Int(scalar) - 97
+        return index < count ? index : nil
+    }
+
     /// The hub names the recommended option by its letter ("b") or its whole text.
     public static func isRecommended(_ option: String, at index: Int, _ recommended: String?) -> Bool {
         guard let recommended = recommended?.trimmingCharacters(in: .whitespaces).lowercased(), !recommended.isEmpty

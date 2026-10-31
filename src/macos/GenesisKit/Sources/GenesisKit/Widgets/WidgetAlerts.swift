@@ -83,10 +83,10 @@ public enum WidgetAlerts {
         let options = item.options ?? []
         return (item.option ?? "").compactMap { character in
             let letter = String(character).lowercased()
-            guard let ascii = letter.unicodeScalars.first?.value, ascii >= 97, Int(ascii) - 97 < options.count else {
+            guard let first = letter.first, let index = WidgetOptionText.index(of: first, count: options.count) else {
                 return nil
             }
-            return (letter, WidgetOptionText.text(options[Int(ascii) - 97], letter: letter))
+            return (letter, WidgetOptionText.text(options[index], letter: letter))
         }
     }
 
