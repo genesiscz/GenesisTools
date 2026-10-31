@@ -75,6 +75,7 @@ import {
     parseNumstat,
     parseStatus,
     prChecksOf,
+    recordCheckout,
     refresh as refreshGit,
     toggle as toggleGit,
     wordingFor,
@@ -865,6 +866,31 @@ test("git band: a worktree's main checkout and the branches the session worked o
     // A reload keeps them.
     forgetCheckouts();
     expect((await sessionCheckouts(host))[0]?.branches).toEqual(["fix/z", "fix/x", "fix/y"]);
+});
+
+test("git band: a call's branch is read before its result returns, so a switch right after it does not rename it", async () => {
+    forgetCheckouts();
+    const base = checkoutHost();
+    const files: Record<string, string> = {
+        "/work/wt-b/.git": "gitdir: /work/main/.git/worktrees/wt-b\n",
+        "/work/main/.git/worktrees/wt-b/HEAD": "ref: refs/heads/fix/a\n",
+    };
+    const host: Host = {
+        ...base,
+        async stat(path) {
+            return path in files ? { kind: "file", size: 1, mtimeMs: 0, isLink: false } : base.stat(path);
+        },
+        async read(path) {
+            return files[path] ?? base.read(path);
+        },
+    };
+
+    await recordCheckout(host, { tool: "Edit", file_path: "/work/wt-b/y.ts" });
+    // The next call switches the branch while this call's ledger write still runs.
+    files["/work/main/.git/worktrees/wt-b/HEAD"] = "ref: refs/heads/fix/b\n";
+    await new Promise((resolve) => setTimeout(resolve, 20));
+
+    expect((await sessionCheckouts(host))[0]).toMatchObject({ root: "/work/wt-b", branches: ["fix/a"] });
 });
 
 test("git band: folders added by hand, and the folders proposed for them", async () => {

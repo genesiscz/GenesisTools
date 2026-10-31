@@ -21,13 +21,14 @@ import type { BandCheck, BandPr, GitBand, GitBandRows, GitBandSwitch } from "../
 import {
     addCheckout,
     addedCheckouts,
+    captureToolCall,
     type FolderSuggestion,
     folderSuggestions,
     headOf,
     hideCheckout,
     isBranchName,
-    noteToolCall,
     pickRoots,
+    recordToolCall,
     removeAdded,
     sessionCheckouts,
     type Touch,
@@ -703,14 +704,23 @@ async function command(host: Host, args: string): Promise<string> {
 /** Whether a call's checkouts moved, written while the tool result already returns; `afterTool` waits for it. */
 const checkoutMoves = new WeakMap<object, Promise<boolean>>();
 
-export function recordCheckout(host: Host, input: object): void {
-    checkoutMoves.set(
-        input,
-        noteToolCall(host, input).catch(async (error: unknown) => {
-            await logMod(host, "git", { event: "checkout-failed", error: String(error) }).catch(() => undefined);
-            return false;
-        })
-    );
+/**
+ * Reads a finished call's checkouts and their branches before its result returns, since the next call may switch a
+ * branch, then writes them to the ledger in the background.
+ */
+export async function recordCheckout(host: Host, input: object): Promise<void> {
+    const failed = async (error: unknown): Promise<false> => {
+        await logMod(host, "git", { event: "checkout-failed", error: String(error) }).catch(() => undefined);
+        return false;
+    };
+    const facts = await captureToolCall(host, input).catch(async (error: unknown) => {
+        await failed(error);
+        return undefined;
+    });
+
+    if (facts) {
+        checkoutMoves.set(input, recordToolCall(host, facts).catch(failed));
+    }
 }
 
 export const gitBand: Feature = {

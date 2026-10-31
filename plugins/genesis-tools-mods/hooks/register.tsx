@@ -741,7 +741,7 @@ export const register: Register = (on) => {
         try {
             const result = await next(e);
 
-            recordCheckout(host, e);
+            await recordCheckout(host, e);
             afterTools({ host, event: e, features: liveFeatures() });
 
             // The PR numbers the links mod linked in the message that asked for this call: the model reads which

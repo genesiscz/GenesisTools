@@ -529,20 +529,62 @@ function withBranches(first: readonly (string | undefined)[], before: readonly s
 }
 
 /**
- * Records the checkouts a finished tool call worked in, each with its branch and the branches the command made or
- * pushed there. True when one of them was not already the newest, so the band's rows may have moved.
+ * What a finished tool call touched, read before its result returns: the files, the git writes, when, and the branch
+ * each checkout above them has checked out. The next call may switch a branch, so the branch is read here and not
+ * when the ledger is written.
  */
-export async function noteToolCall(host: Host, input: unknown): Promise<boolean> {
+export interface ToolCallFacts {
+    files: string[];
+    writes: GitWrite[];
+    at: number;
+    heads: Map<string, { repo: string; branch?: string }>;
+}
+
+/** The facts of a finished tool call that the next call could change; undefined when it touched no file. */
+export async function captureToolCall(host: Host, input: unknown): Promise<ToolCallFacts | undefined> {
     const home = await host.env("HOME");
     const files = writtenFiles(input);
     const command = isRecord(input) && input.tool === "Bash" && typeof input.command === "string" ? input.command : "";
     const writes = command ? gitWrites(command, home) : [];
 
     if (files.length === 0 && writes.length === 0) {
-        return false;
+        return undefined;
     }
 
-    const now = Date.now();
+    const at = Date.now();
+    const roots = new Set<string>();
+
+    for (const dir of [...files.map(parentOf), ...writes.map((write) => write.dir)]) {
+        const root = await rootAbove(host, dir);
+
+        if (root !== null) {
+            roots.add(root);
+        }
+    }
+
+    const heads = new Map<string, { repo: string; branch?: string }>();
+    await Promise.all(
+        [...roots].map(async (root) => {
+            heads.set(root, await headOf(host, root));
+        })
+    );
+
+    return { files, writes, at, heads };
+}
+
+/**
+ * Records the checkouts a finished tool call worked in, each with its branch and the branches the command made or
+ * pushed there. True when one of them was not already the newest, so the band's rows may have moved.
+ */
+export async function noteToolCall(host: Host, input: unknown): Promise<boolean> {
+    const facts = await captureToolCall(host, input);
+
+    return facts ? recordToolCall(host, facts) : false;
+}
+
+/** Writes captured facts into the ledger: `git check-ignore` and the store write may run after the result returned. */
+export async function recordToolCall(host: Host, facts: ToolCallFacts): Promise<boolean> {
+    const { files, writes, at: now } = facts;
     const named = new Map<string, string[]>();
 
     for (const touch of await datedRoots(host, files)) {
@@ -563,7 +605,7 @@ export async function noteToolCall(host: Host, input: unknown): Promise<boolean>
         return false;
     }
 
-    const heads = await Promise.all(roots.map((root) => headOf(host, root)));
+    const heads = await Promise.all(roots.map((root) => facts.heads.get(root) ?? headOf(host, root)));
 
     return mutateCheckouts(async () => {
         const before = await sessionCheckouts(host);
