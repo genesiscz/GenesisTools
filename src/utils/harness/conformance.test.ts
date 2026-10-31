@@ -196,3 +196,40 @@ describe("the Swift mirror of the drivers", () => {
         expect(readFileSync(HARNESS_WEB_PATH, "utf8")).toBe(renderHarnessWeb());
     });
 });
+
+describe("tool parts: every harness has its module in each toolParts folder", () => {
+    // Found by search, so a new registry is checked without a list here (`src/utils/harness/tool-parts.ts`).
+    const grep = Bun.spawnSync(["git", "grep", "-l", "-e", "toolParts<", "--", "src/*.ts"], {
+        cwd: REPO_ROOT,
+        env: process.env,
+    });
+    const callers = grep.stdout
+        .toString()
+        .split("\n")
+        .filter((file) => file && !file.endsWith(".test.ts") && !file.endsWith("harness/tool-parts.ts"));
+    const registries = callers.flatMap((file) => {
+        const source = readFileSync(join(REPO_ROOT, file), "utf8");
+        return [...source.matchAll(/= toolParts<[\s\S]*?\(\{[\s\S]*?folder: "([^"]+)",\s*exportName: "([^"]+)"/g)].map(
+            (match) => ({ file, folder: match[1] ?? "", exportName: match[2] ?? "" })
+        );
+    });
+
+    test("the search finds the registries", () => {
+        expect(grep.exitCode).toBe(0);
+        expect(registries.length).toBeGreaterThanOrEqual(10);
+        expect(registries.length).toBe(callers.length);
+    });
+
+    for (const { file, folder, exportName } of registries) {
+        test(`${file}: ${folder}/<id>.ts exports ${exportName}`, () => {
+            for (const id of ACCOUNT_PROVIDER_ALIASES) {
+                const module = join(REPO_ROOT, file, "..", folder, `${id}.ts`);
+                const source = readFileSync(module, "utf8");
+                expect({ id, exports: new RegExp(`\\bexport\\b[^;]*?\\b${exportName}\\b`).test(source) }).toEqual({
+                    id,
+                    exports: true,
+                });
+            }
+        });
+    }
+});
