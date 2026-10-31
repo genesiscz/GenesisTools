@@ -17,6 +17,7 @@ import {
     scanCodexRecords,
 } from "./codex";
 import { codexIndexesFile } from "./codex-discovery";
+import { codexIndexRows } from "./codex-title";
 
 const CHILD_ID = "11111111-2222-4333-8444-555555555555";
 const PARENT_ID = "aaaaaaaa-bbbb-4ccc-8ddd-eeeeeeeeeeee";
@@ -1411,4 +1412,24 @@ test("rowAnchors carries an open turn to its items until the turn ends or rows w
         toolCallIds: [],
         turnIds: [],
     });
+});
+
+test("the session index is parsed once for discovery and title search: id or session_id, thread_name or title", () => {
+    const malformed: number[] = [];
+    const rows = codexIndexRows(
+        [
+            '{"id":"t-1","thread_name":"First","updated_at":"2026-10-30T10:00:00Z"}',
+            "{not json",
+            '{"session_id":"t-2","title":"Older shape","updated_at":1761818400}',
+            '{"thread_name":"no id"}',
+            "",
+        ].join("\n"),
+        (line) => malformed.push(line)
+    );
+
+    expect(malformed).toEqual([2]);
+    expect(rows.map(({ id, title, updatedAt }) => ({ id, title, updatedAt }))).toEqual([
+        { id: "t-1", title: "First", updatedAt: "2026-10-30T10:00:00Z" },
+        { id: "t-2", title: "Older shape", updatedAt: 1761818400 },
+    ]);
 });

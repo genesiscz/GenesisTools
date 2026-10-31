@@ -19,6 +19,7 @@ import {
     readCodexProjectionFingerprint,
     readCodexProjectionIndex,
 } from "./codex";
+import { codexIndexRows } from "./codex-title";
 
 interface CodexDiscoveryHeader {
     nativeId: string;
@@ -245,38 +246,24 @@ async function readSessionIndex(options: {
         options.incompleteRoots.add(options.root);
         return values;
     }
-    for (const [index, original] of raw.split("\n").entries()) {
-        if (!original.trim()) {
-            continue;
-        }
-        let row: JsonRecord;
-        try {
-            row = asRecord(SafeJSON.parse(original, { strict: true }) as JsonValue);
-        } catch {
-            options.issues.push({
-                path: options.path,
-                message: `Malformed Codex session index record at line ${index + 1}`,
-            });
-            options.incompleteRoots.add(options.root);
-            continue;
-        }
-        const nativeId = text(row.id ?? row.session_id);
-        if (!nativeId) {
-            continue;
-        }
-        const title = text(row.thread_name ?? row.title);
-        const updated = nativeDate(row.updated_at);
-        const previous = values.get(nativeId);
+    const path = options.path;
+    const rows = codexIndexRows(raw, (line) => {
+        options.issues.push({ path, message: `Malformed Codex session index record at line ${line}` });
+        options.incompleteRoots.add(options.root);
+    });
+    for (const row of rows) {
+        const updated = row.updatedAt === undefined ? undefined : nativeDate(row.updatedAt);
+        const previous = values.get(row.id);
         if (previous?.metadata.mtime && updated && updated < previous.metadata.mtime) {
             continue;
         }
-        values.set(nativeId, {
+        values.set(row.id, {
             metadata: {
-                sessionId: nativeId,
-                ...(title ? { title } : {}),
+                sessionId: row.id,
+                ...(row.title ? { title: row.title } : {}),
                 ...(updated ? { mtime: updated } : {}),
             },
-            fingerprint: original,
+            fingerprint: row.original,
         });
     }
     return values;

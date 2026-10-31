@@ -1,30 +1,96 @@
-/** Codex's session titles: the `session_index.jsonl` of a home. The Codex driver's `locate` part reads them. */
+/**
+ * Codex's `session_index.jsonl`: one row per thread rename, `{id, thread_name, updated_at}`. Parsed here once, for both
+ * readers of it: history discovery (`codex-discovery.ts`, a thread's title and update time) and the Codex driver's
+ * `locate` part (title search).
+ */
 import { readFileSync } from "node:fs";
-import { isRecord } from "@genesiscz/utils/ai/transcripts/resolve-core";
 import type { TitledSession } from "@genesiscz/utils/ai/transcripts/session-title";
 import { SafeJSON } from "@genesiscz/utils/json";
 import { logger } from "@genesiscz/utils/logger";
+
+/** One parsed row of a session index. */
+export interface CodexIndexRow {
+    /** 1-based line in the file. */
+    line: number;
+    /** The row's own text, a fingerprint of what it says. */
+    original: string;
+    /** The thread id (`id`, older rows `session_id`). */
+    id: string;
+    /** The thread's name (`thread_name`, older rows `title`), when the row names one. */
+    title?: string;
+    /** The raw `updated_at` (ISO text or epoch seconds or ms). */
+    updatedAt?: string | number;
+}
+
+function field(value: unknown, key: string): unknown {
+    return typeof value === "object" && value !== null && key in value ? Reflect.get(value, key) : undefined;
+}
+
+function textOf(value: unknown): string | undefined {
+    return typeof value === "string" && value.trim() ? value : undefined;
+}
+
+/**
+ * Every row of a session index's text that names a thread, in file order. A line that does not parse is reported to
+ * `onMalformed` with its 1-based number and skipped; a row with no id is skipped silently.
+ */
+export function codexIndexRows(raw: string, onMalformed: (line: number) => void): CodexIndexRow[] {
+    const rows: CodexIndexRow[] = [];
+
+    for (const [index, original] of raw.split("\n").entries()) {
+        if (!original.trim()) {
+            continue;
+        }
+
+        let value: unknown;
+
+        try {
+            value = SafeJSON.parse(original, { strict: true });
+        } catch {
+            onMalformed(index + 1);
+            continue;
+        }
+
+        const id = textOf(field(value, "id")) ?? textOf(field(value, "session_id"));
+
+        if (!id) {
+            continue;
+        }
+
+        const title = textOf(field(value, "thread_name")) ?? textOf(field(value, "title"));
+        const updated = field(value, "updated_at");
+        rows.push({
+            line: index + 1,
+            original,
+            id,
+            ...(title ? { title } : {}),
+            ...(typeof updated === "string" || typeof updated === "number" ? { updatedAt: updated } : {}),
+        });
+    }
+
+    return rows;
+}
 
 /**
  * Adds the titles of one `session_index.jsonl` to `found`. Codex appends a line per rename, in write order, so the
  * last line of an id is its current title.
  */
 export function readCodexTitleIndex(indexPath: string, found: Map<string, TitledSession>): void {
-    for (const line of readFileSync(indexPath, "utf8").split("\n")) {
-        try {
-            const record: unknown = line.trim() ? SafeJSON.parse(line, { strict: true }) : null;
+    const rows = codexIndexRows(readFileSync(indexPath, "utf8"), (line) =>
+        logger.debug({ indexPath, line }, "[session-title] skipped an unreadable Codex index line")
+    );
 
-            if (isRecord(record) && typeof record.id === "string" && typeof record.thread_name === "string") {
-                found.delete(record.id);
-                found.set(record.id, {
-                    sessionId: record.id,
-                    title: record.thread_name,
-                    mtime: Date.parse(String(record.updated_at)) || 0,
-                    locator: record.id,
-                });
-            }
-        } catch (err) {
-            logger.debug({ err, indexPath }, "[session-title] skipped an unreadable Codex index line");
+    for (const row of rows) {
+        if (!row.title) {
+            continue;
         }
+
+        found.delete(row.id);
+        found.set(row.id, {
+            sessionId: row.id,
+            title: row.title,
+            mtime: Date.parse(String(row.updatedAt)) || 0,
+            locator: row.id,
+        });
     }
 }
