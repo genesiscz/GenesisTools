@@ -223,4 +223,6 @@ export interface DuSizeWire {
     read_errors: number;
     /** Folders du enters and the walk does not: cloud-provider roots and dataless folders. */
     skipped_cloud: number;
+    /** Mounted volumes inside the root that the walk does not cross and du does. Absent from an older binary. */
+    skipped_mounts?: number;
 }

@@ -62,7 +62,7 @@ describe("du size command", () => {
         expect(commands).toEqual([["du", "-sk", absolute]]);
     });
 
-    for (const counter of ["read_errors", "denied_dirs", "skipped_cloud"]) {
+    for (const counter of ["read_errors", "denied_dirs", "skipped_cloud", "skipped_mounts"]) {
         it(`runs du instead of storing a native walk with ${counter}`, async () => {
             const root = mkdtempSync(join(tmpdir(), "du-size-partial-"));
             const commands: string[][] = [];
@@ -162,6 +162,14 @@ describe("du size command", () => {
             } finally {
                 rmSync(root, { recursive: true, force: true });
             }
+        }
+    );
+
+    it.skipIf(process.platform !== "darwin")(
+        "a root with mounted volumes inside it is left to du, which crosses them",
+        async () => {
+            // Every child of /System/Volumes is a mount point (Data, VM, Preboot, ...): the walk enters none of them.
+            expect(await nativeDuSize("/System/Volumes")).toBeNull();
         }
     );
 

@@ -1523,3 +1523,20 @@ scan T1 old 36.2 s (30.1 to 41.5), new 39.8 s (34.3 to 51.6), ranges overlapping
 `bench.sh` moved between its two runs (`files_listed` 89,903 to 103,965, `naive_bytes` +166.8 MB) because the tree
 did: the test wrapper installed `apps/eve/node_modules` (14,061 files, 163 MB) at 02:02. The old and the new binary
 on the same tree at 02:08 printed identical scan totals.
+
+## 2026-10-31 14:33 — `tools du size`: a mounted volume inside the root sends the ask to du
+
+The listing walk does not cross a foreign mount inside its root (`add_foreign_mounts`, then `is_excluded` in
+`big_process_dir`), while `du -sk` crosses it. That hole was the one kind of skipped subtree no counter named, so a
+root holding another volume passed every completeness check of `nativeDuSize` and `folderKb` cached the short total.
+Sum-only mode now counts each mount it does not enter (`g_big_mounts_skipped`), the `--dusize` reply carries it as
+`skipped_mounts`, and `nativeDuSize` answers null when it is above 0, so du measures such a root. A reply from an
+older binary has no field and reads as 0.
+
+Which totals move: only `tools du size`, only for a root with a mounted volume below it, which now answers du's figure
+instead of the walk's. `--dusize /System/Volumes` reports `skipped_mounts` 7; a plain folder reports 0. Every other
+tree is unchanged: the worktree printed 1,732,216 KiB from the old and the new binary.
+
+Cost: one atomic add on the excluded branch only, which the hot loop reaches once per mount. The old and the new
+binary ran interleaved on the worktree (104,185 files), 5 rounds each, 14:33, load 10.5: system CPU old 2.96, 4.62,
+2.26, 2.32, 1.85 s; new 2.77, 4.01, 2.12, 2.01, 1.79 s. The ranges overlap, as expected for an unchanged loop.

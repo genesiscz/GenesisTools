@@ -2186,6 +2186,8 @@ static int g_big_sum_only = 0;
 // --dusize: the folders du would enter and this walk does not (a provider root, a dataless folder), so the caller
 // knows the total is short and asks du instead.
 static uint64_t g_big_cloud_pruned = 0;
+// --dusize: the mounted volumes inside the root the walk does not cross, where du would.
+static uint64_t g_big_mounts_skipped = 0;
 static uint64_t g_big_dataless_skipped = 0;   // dataless files left out of a --bigfiles listing
 
 static void big_setup_attrlist(void) {
@@ -2277,7 +2279,11 @@ static void big_process_dir(BigOut *o, const char *dirpath, int dircloud) {
                 // Same pruning as the scan walk: without it --bigfiles descends
                 // into every other volume mounted inside a root, so cross-volume
                 // pairs join duplicate sets that clonefile can never share.
-                if ((g_nexcludes || g_nforeign) && is_excluded(sub)) { free(sub); continue; }
+                if ((g_nexcludes || g_nforeign) && is_excluded(sub)) {
+                    if (g_big_sum_only) __atomic_add_fetch(&g_big_mounts_skipped, 1, __ATOMIC_RELAXED);
+                    free(sub);
+                    continue;
+                }
                 int childcloud = dircloud;
                 if (!childcloud && is_domain_candidate(dirpath, name)) childcloud = domain_bucket_for(sub);
                 if (g_skip_cloud && (fflags & SF_DATALESS)) {
@@ -2510,7 +2516,8 @@ static int cmp_linkrec(const void *a, const void *b) {
  * regular file and counts a hard-linked inode once; so does this, from one parallel getattrlistbulk pass that never
  * opens a file and never asks for PRIVATESIZE. The dedupe scan's `naive_bytes` is the same figure, but that scan
  * opens every candidate for its extents (13.6 s cold against du's 5.5 s on a 5 GB worktree, 2026-10-30). A foreign
- * mount inside the root is not entered, where du would cross it. A cloud-provider root (Library/CloudStorage,
+ * mount inside the root is not entered, where du would cross it; `skipped_mounts` counts them, and the caller then
+ * asks du. A cloud-provider root (Library/CloudStorage,
  * Library/Mobile Documents) and a dataless folder are not entered either, since reading them can block in the
  * provider or download; `skipped_cloud` counts them, and the caller then asks du. `kib` rounds up, as du does.
  */
@@ -2523,6 +2530,7 @@ char *clonesize_dusize_json(const char *root, int threads) {
     g_big_dataless_skipped = 0;
     g_big_sum_only = 1;
     g_big_cloud_pruned = 0;
+    g_big_mounts_skipped = 0;
     g_nthreads = threads;
     g_big_min = 0;
     g_nprune = 0;
@@ -2576,11 +2584,12 @@ char *clonesize_dusize_json(const char *root, int threads) {
     if (!out) { perror("malloc dusize json"); exit(1); }
     snprintf(out, 512,
              "{\"kib\":%llu,\"bytes\":%llu,\"files\":%llu,\"dirs\":%llu,\"hardlinked_inodes\":%llu,\"threads\":%d,"
-             "\"walk_ms\":%llu,\"denied_dirs\":%llu,\"read_errors\":%llu,\"skipped_cloud\":%llu}\n",
+             "\"walk_ms\":%llu,\"denied_dirs\":%llu,\"read_errors\":%llu,\"skipped_cloud\":%llu,"
+             "\"skipped_mounts\":%llu}\n",
              (unsigned long long)((bytes + 1023) / 1024), (unsigned long long)bytes, (unsigned long long)files,
              (unsigned long long)dirs, (unsigned long long)inodes, nthreads, (unsigned long long)(walk_s * 1000.0),
              (unsigned long long)g_denied_dirs, (unsigned long long)g_read_errors,
-             (unsigned long long)g_big_cloud_pruned);
+             (unsigned long long)g_big_cloud_pruned, (unsigned long long)g_big_mounts_skipped);
     return out;
 }
 

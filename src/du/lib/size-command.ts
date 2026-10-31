@@ -17,8 +17,8 @@ const DU_TIMEOUT_MS = 120_000;
  * inode once) from one parallel getattrlistbulk pass that opens no file. It runs as a child under the same deadline
  * as `du`, because open() on a protected folder can wait for the user's answer to a privacy prompt, and only a
  * process can be killed out of that wait. Null when it cannot answer (a file, no compiler for the binary, a walk
- * past the deadline, a root that could not be read, a folder it could not list or was denied, a cloud folder it did
- * not enter), and `du` runs instead.
+ * past the deadline, a root that could not be read, a folder it could not list or was denied, a cloud folder or a
+ * mounted volume it did not enter), and `du` runs instead.
  */
 export async function nativeDuSize(
     path: string,
@@ -77,6 +77,15 @@ export async function nativeDuSize(
         logger.debug(
             { path, skippedCloud: walked.skippedCloud, kib: walked.kib },
             "du size: the native walk left out cloud folders, du runs"
+        );
+        return null;
+    }
+
+    // A volume mounted inside the root is not crossed by the walk; du crosses it and counts what is there.
+    if (walked.skippedMounts > 0) {
+        logger.debug(
+            { path, skippedMounts: walked.skippedMounts, kib: walked.kib },
+            "du size: the native walk left out mounted volumes, du runs"
         );
         return null;
     }
