@@ -291,7 +291,7 @@ async function renameServerInProvider(
 
         if (removeResult === WriteResult.Rejected) {
             logger.warn(
-                `Partial rename in ${provider.getName()}: '${newName}' was added, but removing '${oldName}' was rejected, so both names remain.`
+                `Partial rename in ${provider.getName()}: removing '${oldName}' was rejected, so '${oldName}' remains there.`
             );
             return false;
         }

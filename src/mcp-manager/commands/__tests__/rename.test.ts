@@ -152,6 +152,8 @@ describe("renameServer", () => {
         const warnCalls = warnSpy.mock.calls.map((call) => call[0]);
         expect(infoCalls.some((msg) => typeof msg === "string" && msg.includes("in claude"))).toBe(false);
         expect(warnCalls.some((msg) => typeof msg === "string" && msg.includes("Partial rename in claude"))).toBe(true);
+        // It names only what is known: the old name stayed. Whether the new one was installed depends on the provider.
+        expect(warnCalls.some((msg) => typeof msg === "string" && msg.includes("both names remain"))).toBe(false);
     });
 
     it("should update enabledMcpServers when renaming", async () => {
