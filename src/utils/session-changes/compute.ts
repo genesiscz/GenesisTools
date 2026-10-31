@@ -1,7 +1,8 @@
 import { createHash } from "node:crypto";
-import { existsSync, statSync } from "node:fs";
+import { statSync } from "node:fs";
 import { homedir } from "node:os";
-import { basename, dirname, join, resolve } from "node:path";
+import { basename, dirname, resolve } from "node:path";
+import { repoRootOf } from "@genesiscz/utils/git/repo-root";
 import { analyzeCommand, type CommandAnalysis, isLockOrManifest, namedBy } from "./command";
 import { type PathRuleContext, pathExclusion, rootOf } from "./rules";
 import { fileToolVia, isShellTool } from "./transcript";
@@ -22,25 +23,6 @@ import type {
 /** The id git gives these bytes as a blob (`git hash-object`), computed without spawning git. */
 export function gitBlobOid(bytes: Buffer): string {
     return createHash("sha1").update(`blob ${bytes.length}\0`).update(bytes).digest("hex");
-}
-
-/** The repository a directory sits in (the nearest ancestor holding `.git`), or null. */
-export function repoRootOf(dir: string): string | null {
-    let current = resolve(dir);
-
-    while (true) {
-        if (existsSync(join(current, ".git"))) {
-            return current;
-        }
-
-        const parent = dirname(current);
-
-        if (parent === current) {
-            return null;
-        }
-
-        current = parent;
-    }
 }
 
 export interface SessionChangesInput {

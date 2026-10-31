@@ -7,6 +7,7 @@ import { readClaudeTranscriptFolded } from "./fold";
 import { findClaudeTranscript } from "./transcript";
 import type { SessionTranscript } from "./types";
 
+export { repoRootOf } from "@genesiscz/utils/git/repo-root";
 export type { AnalyzeCommandInput, CommandAnalysis, StageKind } from "./command";
 export {
     analyzeCommand,
@@ -23,7 +24,6 @@ export {
     gitBlobOid,
     lastChangedTurns,
     mergeTurnFiles,
-    repoRootOf,
     storeBlobs,
 } from "./compute";
 export type { PathRuleContext } from "./rules";
