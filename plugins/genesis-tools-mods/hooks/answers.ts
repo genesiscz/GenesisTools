@@ -23,6 +23,7 @@ import {
     readJsonFile,
     settingsOf,
 } from "./shared";
+import { cliLacks } from "./shared-run";
 import { pressed } from "./sidebar";
 
 export type DecisionStatus =
@@ -638,7 +639,7 @@ async function rowsFromIndex(
         !Array.isArray(parsed.asks) ||
         !Array.isArray(parsed.calls)
     ) {
-        if (/unknown command/.test(done.stderr)) {
+        if (cliLacks(done)) {
             rowsUnsupported = true;
         }
 
@@ -919,7 +920,7 @@ async function readInbox(host: Host, session: string): Promise<InboxRead> {
             .catch((error: unknown) => ({ exitCode: -1, stdout: "", stderr: String(error) }));
     let done = await run(argv);
 
-    if (!cursorUnsupported && done.exitCode !== 0 && /unknown option/.test(done.stderr)) {
+    if (!cursorUnsupported && cliLacks(done)) {
         cursorUnsupported = true;
         await logMod(host, "answers", { event: "cursor-unsupported", stderr: done.stderr.slice(-200) });
         done = await run(base);
