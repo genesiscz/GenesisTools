@@ -151,7 +151,8 @@ export function codexAgentHeadOf(path: string): CodexAgentHead | null {
  * Where the agent's last turn stands, from the shared turn-state read of its rollout (`readTurnState`):
  * - a turn that ended: completed;
  * - a turn the user stopped (`turn_aborted`): killed;
- * - a turn that waits on a question for the user (an unanswered `request_user_input`): idle, however quiet the file;
+ * - a question waiting for the user (`request_user_input`, open or the turn's last call): idle, the status the hub
+ *   gives an agent parked on its user, unless Codex closed the rollout;
  * - a turn that began and has not ended: running while the file is fresh, killed once it went quiet for
  *   `TURN_STALE_MS` or once Codex closed it (a `.jsonl.zst` rollout);
  * - no turn record in the tail: running while the file is fresh, else completed.
@@ -169,7 +170,7 @@ export function codexAgentStatus(options: { filePath: string; now: number }): Ag
     }
 
     // A question the turn waits on also counts as its end, so it is checked first.
-    if (snapshot.asksQuestion) {
+    if (snapshot.asksQuestion && snapshot.state !== "FINISHED") {
         return "idle";
     }
 
