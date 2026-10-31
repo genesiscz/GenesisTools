@@ -175,6 +175,14 @@ async function runShared(
     key: string,
     path: string | undefined
 ): Promise<SharedRunResult | undefined> {
+    if (path) {
+        const held = await readAnswer(host, { path, key, ttlMs: ask.ttlMs });
+
+        if (held) {
+            return held;
+        }
+    }
+
     const lockPath = path?.replace(/\.json$/, ".lock.json");
     const token = `${sharedRunClock.now().toString(36)}-${Math.random().toString(36).slice(2)}`;
 
@@ -229,15 +237,7 @@ export async function sharedRun(
     ask: { argv: readonly string[]; cwd: string; ttlMs: number; timeoutMs: number; scope?: string }
 ): Promise<SharedRunResult | undefined> {
     const { key, path } = sharedRunFiles(await agentsDir(host), ask);
-
-    if (path) {
-        const held = await readAnswer(host, { path, key, ttlMs: ask.ttlMs });
-
-        if (held) {
-            return held;
-        }
-    }
-
+    // The flight starts with the shared file, so callers that come while it runs read nothing themselves.
     const running = inFlight.get(key);
 
     if (running) {
