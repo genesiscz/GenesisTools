@@ -432,14 +432,19 @@ function ownedWorkerRoute(
     return undefined;
 }
 
+/** The live Claude receivers of this session; a test process without a fake reads none from the real registry. */
+function claudePeersFor({ session, sourceHome }: RouteQuery, deps: DeliverDeps): ClaudeLiveSession[] {
+    if (deps.claudePeers) {
+        return deps.claudePeers(sourceHome).filter((peer) => peer.sessionId === session);
+    }
+
+    return isTestProcess() ? [] : liveClaudePeers(session, sourceHome);
+}
+
 /** The live Claude session itself, through its peer socket. */
-function claudePeerRoute({ session, sourceHome }: RouteQuery, deps: DeliverDeps): DeliveryTarget | undefined {
-    const peers = deps.claudePeers
-        ? deps.claudePeers(sourceHome)
-        : isTestProcess()
-          ? []
-          : liveClaudePeers(session, sourceHome);
-    const matching = peers.filter((peer) => peer.sessionId === session);
+function claudePeerRoute(query: RouteQuery, deps: DeliverDeps): DeliveryTarget | undefined {
+    const { sourceHome } = query;
+    const matching = claudePeersFor(query, deps);
     if (matching.length > 0) {
         const picked = pickClaudePeer(matching);
         if ("reason" in picked) {
@@ -715,10 +720,7 @@ export async function deliverToSession(
     }
 
     if (target.kind === "claude-peer") {
-        const current = deps.claudePeers
-            ? deps.claudePeers(sourceHome).filter((peer) => peer.sessionId === session)
-            : liveClaudePeers(session, sourceHome);
-        const again = pickClaudePeer(current);
+        const again = pickClaudePeer(claudePeersFor({ session, sourceHome }, deps));
         if (
             "reason" in again ||
             again.peer.pid !== target.peer.pid ||
