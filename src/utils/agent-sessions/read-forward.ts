@@ -84,6 +84,8 @@ export function readJsonlForward(
 
         let position = from;
         let carry: Buffer = Buffer.alloc(0);
+        // One buffer for every read; nothing keeps a view of it past its iteration.
+        const chunk = Buffer.allocUnsafe(Math.min(CHUNK_BYTES, size));
         let oversizedStart: number | undefined;
         const skipped = (start: number, end: number) => {
             const message = `Oversized row at bytes ${start}-${end} exceeded ${MAX_ROW_BYTES} bytes; skipped`;
@@ -101,7 +103,6 @@ export function readJsonlForward(
             }
 
             const want = Math.min(CHUNK_BYTES, size - position);
-            const chunk = Buffer.allocUnsafe(want);
             const got = readSync(fd, chunk, 0, want, position);
 
             if (got <= 0) {
@@ -134,7 +135,8 @@ export function readJsonlForward(
                     oversizedStart = base;
                     carry = Buffer.alloc(0);
                 } else {
-                    carry = data;
+                    // A copy: `data` may be a view of the chunk buffer the next read overwrites.
+                    carry = Buffer.from(data);
                 }
 
                 continue;

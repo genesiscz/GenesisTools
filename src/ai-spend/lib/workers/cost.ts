@@ -53,8 +53,7 @@ export interface WorkerCostCard {
     };
 }
 
-/** The counterfactual: what the same tokens would cost on Claude. */
-/** The current Opus and Sonnet, through the catalog's family aliases. */
+/** The counterfactual: what the same tokens would cost on the current Claude Opus and Sonnet (the catalog's family aliases). */
 export const CLAUDE_COUNTERFACTUAL = {
     opus: resolveAnthropicSubModel("opus"),
     sonnet: resolveAnthropicSubModel("sonnet"),
