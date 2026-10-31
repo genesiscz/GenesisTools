@@ -20,7 +20,7 @@ const runNative: AxRun = (args, timeoutMs) => runAxAsync({ args, timeoutMs });
 
 const MCP_PLAN_DEPS: PlanRunDeps = { ...DEFAULT_PLAN_RUN_DEPS, run: runNative };
 
-/** The workflow twin is exact-only: a semantic postcondition needs Jev, which `" + toolCommand("control workflow run --jev") + "` offers. */
+/** The workflow twin is exact-only: a semantic postcondition needs Jev, which `tools control workflow run --jev` offers. */
 const noJev: Evaluator = async () => {
     throw new Error("control_workflow_run makes no model call; use exact postconditions or the CLI with --jev");
 };
@@ -58,7 +58,7 @@ const runSchema = z
         plan: z
             .record(z.string(), z.unknown())
             .describe(
-                'the plan object `" + toolCommand("control run") + "` takes: {"app":"…","steps":[{"do":"press","q":"Save"}, …]}'
+                `the plan object \`${toolCommand("control run")}\` takes: {"app":"…","steps":[{"do":"press","q":"Save"}, …]}`
             ),
         stop_on_fail: z.boolean().optional().describe("stop at the first failed step; the rest report as skipped"),
         steal_focus: z
@@ -113,7 +113,7 @@ function queryEntry(
 }
 
 /**
- * The `" + toolCommand("control") + "` tools in the shape the genesis-tools MCP registry consumes (capability
+ * The `tools control` tools in the shape the genesis-tools MCP registry consumes (capability
  * `control`). Every handler is a thin door over the same lib function the CLI command calls, so a
  * plan behaves the same from either door: validation before the first step, the focus-steal guard,
  * per-step ms, failedSteps and stopOnFail.

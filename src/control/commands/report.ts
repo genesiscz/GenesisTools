@@ -1,5 +1,6 @@
 import { mkdir } from "node:fs/promises";
 import { join, resolve } from "node:path";
+import { formatLocalDateTimeStamp } from "@genesiscz/utils/date";
 import { SafeJSON } from "@genesiscz/utils/json";
 import { logger, out } from "@genesiscz/utils/logger";
 import type { Command } from "commander";
@@ -38,11 +39,6 @@ function numberOption(value: string, flag: string, { max }: { max?: number } = {
     }
 
     return parsed;
-}
-
-function localMinute(date: Date): string {
-    const pad = (value: number) => String(value).padStart(2, "0");
-    return `${date.getFullYear()}-${pad(date.getMonth() + 1)}-${pad(date.getDate())} ${pad(date.getHours())}:${pad(date.getMinutes())}`;
 }
 
 async function readNotes(path: string | undefined): Promise<ReportNotes> {
@@ -144,7 +140,7 @@ export function registerReportCommand(program: Command): void {
                 results,
                 notePath,
                 openCommand,
-                writtenAt: localMinute(new Date()),
+                writtenAt: formatLocalDateTimeStamp(new Date(), { seconds: false }),
             });
             await Bun.write(notePath, markdown);
             const refused = results.filter((result) => result.status === "refused").length;

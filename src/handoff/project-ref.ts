@@ -1,7 +1,7 @@
 import { existsSync, statSync } from "node:fs";
-import { homedir } from "node:os";
-import { isAbsolute, join, resolve } from "node:path";
+import { isAbsolute, resolve } from "node:path";
 import { gatherHarnessPoster } from "@genesiscz/utils/agent/runtime";
+import { expandTilde } from "@genesiscz/utils/paths";
 
 export interface ResolvedHandoffProject {
     /** The project name the handoff is filed under. */
@@ -34,8 +34,7 @@ export function resolveHandoffProject(raw: unknown, field = "project"): Resolved
         return { project: value, launchCwd: null };
     }
 
-    const expanded = value === "~" ? homedir() : value.startsWith("~/") ? join(homedir(), value.slice(2)) : value;
-    const abs = resolve(expanded);
+    const abs = resolve(expandTilde(value));
 
     if (!existsSync(abs) || !statSync(abs).isDirectory()) {
         throw new Error(
