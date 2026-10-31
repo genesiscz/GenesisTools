@@ -35,7 +35,7 @@ import {
 import { type GenesisProbe, genesisProbe, hubLink } from "./genesis";
 import { liveAgo } from "./live";
 import { checkoutRoot } from "./pr-repos";
-import { type Feature, type Host, isRecord, jsonOf, logMod, logReading, settingsOf } from "./shared";
+import { type Feature, type Host, isRecord, jsonOf, logMod, logReading, namedPaths, settingsOf } from "./shared";
 import { type SharedRunResult, sharedRun } from "./shared-run";
 import {
     actionButton,
@@ -569,8 +569,10 @@ export function onlyReads(command: string): boolean {
 
 /** The shown checkouts a tool call can have changed: those holding a path it names, else the session's own. */
 function rootsOfCall(e: ToolCallInput, cwdRoot: string | undefined): string[] {
-    const text = JSON.stringify(e);
-    const named = rows.map((row) => row.root).filter((root) => text.includes(root));
+    const named = namedPaths(
+        e,
+        rows.map((row) => row.root)
+    );
 
     return named.length > 0 ? named : cwdRoot ? [cwdRoot] : [];
 }

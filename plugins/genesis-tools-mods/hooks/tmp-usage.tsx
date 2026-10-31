@@ -20,6 +20,7 @@ import {
     jsonOfRun,
     logMod,
     logReading,
+    namedPaths,
     paceAfter,
     readJsonFile,
     settingsOf,
@@ -625,8 +626,7 @@ export const tmpUsage: Feature = {
             ...(usage.tasks.path ? [usage.tasks.path] : []),
             ...usage.worktrees.map((tree) => tree.path),
         ];
-        const text = JSON.stringify(e);
-        const named = known.filter((path) => text.includes(path));
+        const named = namedPaths(e, known);
         const cwd = await host.cwd();
         const touched = named.length > 0 ? named : known.filter((path) => cwd === path || cwd.startsWith(`${path}/`));
 
