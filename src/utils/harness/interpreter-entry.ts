@@ -15,11 +15,22 @@ const INTERPRETER_FLAGS = new Set([
     "--no-warnings",
     "--trace-warnings",
     "--trace-uncaught",
+    "--trace-deprecation",
+    "--throw-deprecation",
+    "--no-deprecation",
+    "--pending-deprecation",
+    "--expose-gc",
+    "--abort-on-uncaught-exception",
+    "--preserve-symlinks",
+    "--preserve-symlinks-main",
     "--enable-source-maps",
     "--inspect",
     "--inspect-brk",
     "--smol",
 ]);
+
+/** A word that names a script file Node or Bun would run. */
+const SCRIPT_FILE = /\.(?:[cm]?[jt]sx?)$/;
 
 /** Options that make the interpreter run something other than a script operand: eval, print, a syntax check, a REPL. */
 const INTERPRETER_MODES = new Set([
@@ -81,7 +92,9 @@ export function interpreterScriptIndex(command: string, matchesScript: (arg: str
             return i + 1;
         }
 
-        if (!mayBeValue) {
+        // After an option the parser does not know, a word that names a script file is that script, not the option's
+        // value: `node --trace-deprecation /tmp/search.js <agent cli>` runs search.js. It is not this agent's.
+        if (!mayBeValue || SCRIPT_FILE.test(arg)) {
             return null;
         }
 

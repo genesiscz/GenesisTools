@@ -142,6 +142,18 @@ describe("classifyCommand", () => {
         expect(classifyCommand(`node ${cli} --resume ${S2}`).sessionId).toBe(S2);
     });
 
+    test("a script after another script is that script's argument, not Claude Code", () => {
+        const cli = `${HOME}/node_modules/@anthropic-ai/claude-code/cli.js`;
+
+        for (const option of ["--trace-deprecation", "--some-future-flag"]) {
+            expect(isAgentProcess(`node ${option} /tmp/search.js ${cli}`, "claude")).toBe(false);
+        }
+
+        // The controls: a known valueless flag and an unknown option with a plain value still find the agent.
+        expect(isAgentProcess(`node --trace-deprecation ${cli} --resume ${S1}`, "claude")).toBe(true);
+        expect(classifyCommand(`node --some-future-flag value ${cli} --resume ${S1}`).sessionId).toBe(S1);
+    });
+
     test("runsAgent takes a tools <agent> run|start|resume launcher from any checkout or off PATH", () => {
         expect(runsAgent("bun /repo/tools codex run work", "codex")).toBe(true);
         expect(runsAgent(`zsh -ic exec tools cc resume ${S1}`, "claude")).toBe(true);
