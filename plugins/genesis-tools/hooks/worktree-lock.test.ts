@@ -43,10 +43,26 @@ const admin = join(main, ".git", "worktrees", "wt");
 const otherMain = join(base, "other-main");
 const otherWt = join(base, "other-wt");
 const otherAdmin = join(otherMain, ".git", "worktrees", "other-wt");
-/** A stand-in agent: `sleep` started through a link named `claude`, so `ps` shows an agent program at its pid. */
+/**
+ * A stand-in agent: an idle bun started through a link named `claude`, so `ps` shows an agent program at its pid. Not
+ * `/bin/sleep`: Ubuntu 26.04's coreutils (uutils) is one multi-call binary that refuses an argv[0] other than its own
+ * name, so a `claude` link to it exits at once and every lock it holds reads as stale. The cwd keeps the repo's bunfig
+ * preloads out of it.
+ */
 const agentLink = join(base, "claude");
-symlinkSync("/bin/sleep", agentLink);
-const fakeAgent = Bun.spawn([agentLink, "600"], { env: process.env, stdout: "ignore", stderr: "ignore" });
+symlinkSync(process.execPath, agentLink);
+
+function spawnAgent(): Bun.Subprocess<"ignore", "ignore", "ignore"> {
+    return Bun.spawn([agentLink, "-e", "setTimeout(() => {}, 600_000)"], {
+        cwd: base,
+        env: process.env,
+        stdin: "ignore",
+        stdout: "ignore",
+        stderr: "ignore",
+    });
+}
+
+const fakeAgent = spawnAgent();
 const me: AgentProcess = { harness: "claude", pid: fakeAgent.pid };
 /** Above the macOS pid ceiling (99998), so no process ever has it. */
 const DEAD_PID = 999999;
@@ -925,7 +941,7 @@ describe("handoff h_grb12ao1: a command that only names a worktree never becomes
 
     it("h_grb12ao1: A holds, B names the checkout, A's pid dies; B's mentions leave A's stale lock, only B's work takes it", async () => {
         // A has its own agent process, so its lock can turn stale while B's session stays alive.
-        const agentA = Bun.spawn([agentLink, "600"], { env: process.env, stdout: "ignore", stderr: "ignore" });
+        const agentA = spawnAgent();
         const head = readFileSync(join(admin, "HEAD"), "utf8");
         const dirty = join(wt, "campaign-notes.txt");
         writeFileSync(dirty, "campaign work in progress\n");
