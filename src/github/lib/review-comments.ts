@@ -330,6 +330,11 @@ export interface OneReviewRepliesResult {
     reviewUrl?: string;
     posted: Array<{ threadId: string; commentId: string; url: string }>;
     failed: Array<{ threadId: string; error: string }>;
+    /**
+     * Set when the replies landed but the submit call failed. The review may still be pending with the posted replies
+     * as drafts, or the submit may have gone through; it is never deleted here, because a retry would duplicate them.
+     */
+    submitFailed?: { reviewId: string; error: string };
 }
 
 /**
@@ -405,11 +410,21 @@ export async function postRepliesAsOneReview(
         return result;
     }
 
-    const submitted = await client.graphql<{ submitPullRequestReview: { pullRequestReview: { url: string } } }>(
-        SUBMIT_REVIEW,
-        { reviewId }
-    );
-    result.reviewUrl = submitted.submitPullRequestReview.pullRequestReview.url;
+    try {
+        const submitted = await client.graphql<{ submitPullRequestReview: { pullRequestReview: { url: string } } }>(
+            SUBMIT_REVIEW,
+            { reviewId }
+        );
+        result.reviewUrl = submitted.submitPullRequestReview.pullRequestReview.url;
+    } catch (error) {
+        logger.warn(
+            { error, pr: input.number, reviewId, posted: result.posted.length },
+            "github: submitting the batched review failed; it may still be pending"
+        );
+        result.submitFailed = { reviewId, error: error instanceof Error ? error.message : String(error) };
+        return result;
+    }
+
     logger.info(
         { pr: input.number, posted: result.posted.length, failed: result.failed.length },
         "github: submitted batched replies as one review"

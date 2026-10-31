@@ -313,6 +313,21 @@ async function respondBatchCommand(file: string, options: { session?: string }):
         out.error(chalk.red(`Failed ${failure.threadId}: ${failure.error}`));
     }
 
+    if (result.submitFailed) {
+        out.error(
+            chalk.red(
+                `${result.posted.length} reply(ies) were added to review ${result.submitFailed.reviewId}, but submitting it failed: ${result.submitFailed.error}`
+            )
+        );
+        out.error(
+            chalk.yellow(
+                `Do not rerun this batch. Open ${owner}/${repo}#${prNumber} on GitHub: if the review is still pending, submit or discard it there; if it was submitted, the replies are already posted.`
+            )
+        );
+        process.exitCode = 1;
+        return;
+    }
+
     out.println(
         chalk.green(
             `Replied to ${result.posted.length} thread(s) in one review${result.reviewUrl ? `: ${result.reviewUrl}` : ""}`

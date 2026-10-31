@@ -1808,6 +1808,8 @@ describe("postReviewComment (the review window's GitHub writes)", () => {
         commentError?: string;
         /** Replies to these threads fail. */
         replyFailsFor?: string[];
+        /** The submit of the batched review fails with this message. */
+        submitError?: string;
     }) {
         const calls: string[] = [];
         let pending = options.pending;
@@ -1824,6 +1826,10 @@ describe("postReviewComment (the review window's GitHub writes)", () => {
                     options.replyFailsFor?.includes(String(variables.threadId))
                 ) {
                     throw new Error(`thread ${variables.threadId} is locked`);
+                }
+
+                if (op === "submitPullRequestReview" && options.submitError) {
+                    throw new Error(options.submitError);
                 }
 
                 if (op === "addPullRequestReview" && options.raceWinner) {
@@ -1951,6 +1957,28 @@ describe("postReviewComment (the review window's GitHub writes)", () => {
         );
         expect(nothing.reviewUrl).toBeUndefined();
         expect(none.calls.at(-1)).toBe("deletePullRequestReview@REV_new");
+    });
+
+    test("a failed submit returns the posted replies and the review id, and never deletes the review", async () => {
+        const { client, calls } = fakeClient({ submitError: "connection reset" });
+        const result = await postRepliesAsOneReview(
+            {
+                owner: "acme",
+                repo: "web",
+                number: 7,
+                replies: [
+                    { threadId: "PRRT_1", body: "a" },
+                    { threadId: "PRRT_2", body: "b" },
+                ],
+            },
+            client
+        );
+
+        expect(result.posted.map((p) => p.threadId)).toEqual(["PRRT_1", "PRRT_2"]);
+        expect(result.reviewUrl).toBeUndefined();
+        expect(result.submitFailed).toEqual({ reviewId: "REV_new", error: "connection reset" });
+        expect(calls.at(-1)).toBe("submitPullRequestReview@REV_new");
+        expect(calls.some((call) => call.startsWith("deletePullRequestReview"))).toBe(false);
     });
 
     test("a draft on a line starts the pending review when there is none, and never publishes", async () => {
