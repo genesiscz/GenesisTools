@@ -106,7 +106,7 @@ describe("the helpers the rules match with", () => {
             }
 
             const tokens = tokenize(statement);
-            return tokens[commandTokenIndex(tokens)]?.text;
+            return tokens[commandTokenIndex(tokens, command)]?.text;
         };
 
         expect(commandAfter("sudo -n git checkout -- a.ts")).toBe("git");
@@ -125,6 +125,10 @@ describe("the helpers the rules match with", () => {
         expect(commandAfter("xargs -l rm")).toBe("rm");
         expect(commandAfter("xargs -J % rm % /tmp/x")).toBe("rm");
         expect(commandAfter("xargs -- rm -rf")).toBe("rm");
+        // A quoted value is blanked by the scanner; it is still the option's value, not the command.
+        expect(commandAfter("xargs -J '%' rm %")).toBe("rm");
+        expect(commandAfter('xargs -I "{}" rm "{}"')).toBe("rm");
+        expect(commandAfter("xargs --max-args '1' rm")).toBe("rm");
     });
 });
 

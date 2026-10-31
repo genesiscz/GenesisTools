@@ -48,7 +48,7 @@ export function findRgCluster(scan: ShellScan): RgClusterMatch | null {
 
             for (const element of splitPipeline(statement)) {
                 const tokens = tokenize(element);
-                const cmd = commandTokenIndex(tokens);
+                const cmd = commandTokenIndex(tokens, scan.command);
 
                 if (cmd === -1 || commandWord(tokens[cmd].text) !== "rg") {
                     continue;

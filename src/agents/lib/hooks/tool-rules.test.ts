@@ -74,6 +74,8 @@ describe("rm-use-tools-rm", () => {
         "xargs -I {} rm {}",
         "xargs -- rm -rf",
         "xargs -l rm",
+        "printf '%s\\n' victim | xargs -J '%' rm %",
+        "xargs -I '{}' rm '{}'",
         "printf '%s\\n' victim | xargs --max-args 1 rm -f",
         "xargs --max-args=1 rm -f",
         "xargs --max-procs 4 --delimiter , rm",

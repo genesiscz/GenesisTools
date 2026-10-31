@@ -373,6 +373,18 @@ const LONG_OPTION_WITH_VALUE: Readonly<Record<string, { value: readonly string[]
     },
 };
 
+/** Whether the value after option `tokens[i]` was quoted, so the scanner blanked it and the next token is not it. */
+function quotedValueFollows(tokens: Span[], i: number, command: string | undefined): boolean {
+    const option = tokens[i];
+    const next = tokens[i + 1];
+
+    if (command === undefined || !option || !next) {
+        return false;
+    }
+
+    return /\S/.test(command.slice(option.start + option.text.length, next.start));
+}
+
 /** Whether `wrapper`'s option `token` takes the next word as its value. */
 function wrapperOptionTakesNext(wrapper: string, token: string): boolean {
     if (OPTION_WITH_VALUE[wrapper]?.has(token)) {
@@ -439,7 +451,10 @@ export const RESERVED_PREFIX: ReadonlySet<string> = new Set([
 // The index of the command word in a token list: skips `VAR=value` prefixes,
 // reserved words like `do` / `then` / `!`, and wrappers like `sudo`, `env`,
 // `timeout 30`. Returns -1 when there is none.
-export function commandTokenIndex(tokens: Span[]): number {
+//
+// `command`, the scanned command the tokens point into, lets a wrapper option see a value the scanner blanked:
+// `xargs -J '%' rm %` cleans to `xargs -J     rm %`, and without it `-J` would take `rm` as its value.
+export function commandTokenIndex(tokens: Span[], command?: string): number {
     let i = 0;
 
     while (i < tokens.length) {
@@ -467,7 +482,7 @@ export function commandTokenIndex(tokens: Span[]): number {
                     break;
                 }
 
-                i += wrapperOptionTakesNext(word, tokens[i].text) ? 2 : 1;
+                i += wrapperOptionTakesNext(word, tokens[i].text) && !quotedValueFollows(tokens, i, command) ? 2 : 1;
             }
 
             continue;

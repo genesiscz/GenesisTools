@@ -66,7 +66,7 @@ export const biomeUnsafeDeletesComments: ShellRule = {
 
                 for (const element of splitPipeline(statement)) {
                     const tokens = tokenize(element);
-                    const cmd = commandTokenIndex(tokens);
+                    const cmd = commandTokenIndex(tokens, scan.command);
 
                     if (cmd === -1) {
                         continue;

@@ -89,7 +89,7 @@ export const findFromRoot: ShellRule = {
 
                 for (const element of splitPipeline(statement)) {
                     const tokens = tokenize(element);
-                    const cmd = commandTokenIndex(tokens);
+                    const cmd = commandTokenIndex(tokens, scan.command);
 
                     if (cmd === -1) {
                         continue;
@@ -356,7 +356,7 @@ export const searchFromRoot: ShellRule = {
 
                 for (const element of splitPipeline(statement)) {
                     const tokens = tokenize(element);
-                    const cmd = commandTokenIndex(tokens);
+                    const cmd = commandTokenIndex(tokens, scan.command);
 
                     if (cmd === -1) {
                         continue;

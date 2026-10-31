@@ -161,7 +161,7 @@ function cdTargets(command: string): string[] {
 
             for (const element of elements) {
                 const tokens = tokenize(element);
-                const index = commandTokenIndex(tokens);
+                const index = commandTokenIndex(tokens, scanned.command);
                 const token = index === -1 ? undefined : tokens[index];
 
                 if (token && commandWord(token.text) === "cd") {
@@ -356,7 +356,7 @@ function gitDirectory({
     bases: string[];
     known: Map<string, string>;
 }): string | null {
-    const index = commandTokenIndex(tokens);
+    const index = commandTokenIndex(tokens, command);
     const word = index === -1 ? undefined : tokens[index];
 
     if (!word || commandWord(word.text) !== "git") {

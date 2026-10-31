@@ -144,7 +144,7 @@ export function gitOperation(command: string): string | null {
         for (const statement of unit) {
             for (const element of splitPipeline(statement)) {
                 const tokens = tokenize(element);
-                const index = commandTokenIndex(tokens);
+                const index = commandTokenIndex(tokens, command);
                 const word = index === -1 ? undefined : tokens[index];
 
                 if (!word || commandWord(word.text) !== "git") {
@@ -198,7 +198,7 @@ export function readOnlyCommand(command: string): boolean {
         for (const statement of unit) {
             for (const element of splitPipeline(statement)) {
                 const tokens = tokenize(element);
-                const index = commandTokenIndex(tokens);
+                const index = commandTokenIndex(tokens, command);
                 const word = index === -1 ? undefined : tokens[index];
 
                 if (!word) {
