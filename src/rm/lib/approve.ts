@@ -193,10 +193,27 @@ async function measureRows(input: {
     }
 }
 
+/** A folder's emptiness and file count for rows whose size is known but whose stats were not saved with it. */
+async function folderFacts(
+    entries: readonly ApproveEntry[],
+    updates: ApprovalUpdates,
+    signal: AbortSignal
+): Promise<void> {
+    for (const { wanted, target } of entries) {
+        if (signal.aborted) {
+            return;
+        }
+
+        updates.push({ path: wanted.path, empty: isEmptyDir(target.path), folderStats: folderStats(target.path) });
+        await nextTurn();
+    }
+}
+
 async function fillRows(input: {
     request: RmRequest;
     entries: readonly ApproveEntry[];
     measuring: readonly ApproveEntry[];
+    statsLater: readonly ApproveEntry[];
     updates: ApprovalUpdates;
     deps: ApprovalRowDeps;
     signal: AbortSignal;
@@ -212,7 +229,11 @@ async function fillRows(input: {
             }
         })
         .catch((error: unknown) => logger.debug({ error }, "rm: git facts for the approval window failed"));
-    await Promise.all([git, measureRows({ ...input, entries: input.measuring })]);
+    await Promise.all([
+        git,
+        folderFacts(input.statsLater, updates, input.signal),
+        measureRows({ ...input, entries: input.measuring }),
+    ]);
 }
 
 /**
@@ -251,6 +272,8 @@ export function approvalRows(
     );
     const saved = request.kind === "delete" ? deps.loadMeasurements(request.id) : null;
     const measuring: ApproveEntry[] = [];
+    // A folder's stats walk up to 2000 entries: unless the saved measurement holds them, they follow the window too.
+    const statsLater: ApproveEntry[] = [];
     const items = entries.map((entry): ApprovalItem => {
         const { wanted, target } = entry;
         const isDelete = request.kind === "delete" && target.kind !== "missing";
@@ -271,17 +294,27 @@ export function approvalRows(
             return { ...base, measuring: true };
         }
 
+        if (isDir && !fresh?.folderStats) {
+            statsLater.push(entry);
+        }
+
         return {
             ...base,
             bytes: isDelete ? (fresh?.bytes ?? wanted.bytes) : undefined,
-            empty: isDir ? (fresh?.empty ?? isEmptyDir(target.path)) : undefined,
-            folderStats: isDir ? (fresh?.folderStats ?? folderStats(target.path)) : undefined,
+            empty: isDir ? fresh?.empty : undefined,
+            folderStats: isDir ? fresh?.folderStats : undefined,
         };
     });
     const updates = new ApprovalUpdates();
-    const done = fillRows({ request, entries, measuring, updates, deps, signal: options.signal }).finally(() =>
-        updates.close()
-    );
+    const done = fillRows({
+        request,
+        entries,
+        measuring,
+        statsLater,
+        updates,
+        deps,
+        signal: options.signal,
+    }).finally(() => updates.close());
     return { items, updates, done };
 }
 

@@ -666,6 +666,31 @@ describe("sizes measured with the request", () => {
         expect(walks).toBe(1);
     });
 
+    test("a size known from an older aside move opens at once, and its folder stats follow the window", async () => {
+        const dir = join(base, "older-aside", "cache");
+        file(join(dir, "a.bin"));
+        file(join(dir, "sub", "b.bin"));
+        const request = createRmRequest({
+            kind: "delete",
+            caller: AGENT,
+            cwd: join(base, "older-aside"),
+            reason: "cleanup",
+            targets: [{ path: dir, kind: "dir", rule: "default", reason: "no rule allows it", bytes: 8192 }],
+        });
+        const rows = approvalRows(request, entriesOf(request), {
+            signal: new AbortController().signal,
+            deps: noWalk(),
+        });
+
+        // Nothing under the folder is listed before the window opens.
+        expect(rows.items[0]).toMatchObject({ bytes: 8192 });
+        expect(rows.items[0]?.folderStats).toBeUndefined();
+        expect(rows.items[0]?.measuring).toBeUndefined();
+        expect(await collect(rows)).toEqual([
+            { path: dir, empty: false, folderStats: expect.objectContaining({ files: 2 }) },
+        ]);
+    });
+
     test("the window follows a running pass instead of walking the same tree", async () => {
         const request = inPlaceRequest("following");
         let running = true;
