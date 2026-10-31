@@ -1,6 +1,16 @@
 import { createHash } from "node:crypto";
-import { closeSync, existsSync, lstatSync, mkdirSync, openSync, readdirSync, readFileSync } from "node:fs";
-import { join } from "node:path";
+import {
+    closeSync,
+    existsSync,
+    lstatSync,
+    mkdirSync,
+    openSync,
+    readdirSync,
+    readFileSync,
+    unlinkSync,
+    writeSync,
+} from "node:fs";
+import { dirname, join } from "node:path";
 import { type WalkError, walkFiles } from "@genesiscz/utils/fs/disk-usage";
 import { SafeJSON } from "@genesiscz/utils/json";
 import { logger } from "@genesiscz/utils/logger";
@@ -110,20 +120,96 @@ export function saveRmMeasurement(id: string, item: RmMeasuredItem, requestsDir 
     atomicWriteFileSync(join(dir, `${locationKey(item.location)}.json`), `${SafeJSON.stringify(item, null, 2)}\n`);
 }
 
+const LEDGER_DONE = "done";
+
+function ledgerMarker(id: string, location: string, requestsDir: string): string {
+    return join(measurementsDir(id, requestsDir), `${locationKey(location)}.ledger`);
+}
+
 /**
- * True for the one caller, across processes, that first claims the ledger line of `location`: the marker file is
- * created with O_EXCL, so two writers that measure the same aside copy log its size once.
+ * Claims the ledger line of `location` for this process: the marker is created with O_EXCL and holds this pid until
+ * the line is written, then `done`. A marker of a process that died before it wrote the line is taken over, so a
+ * crash between the claim and the write never loses the line. False when the line is written, or a live process
+ * writes it now.
  */
-function claimLedgerLine(id: string, location: string, requestsDir: string): boolean {
-    const dir = measurementsDir(id, requestsDir);
-    mkdirSync(dir, { recursive: true });
+function claimLedgerLine(marker: string): boolean {
+    mkdirSync(dirname(marker), { recursive: true });
+
+    for (let attempt = 0; attempt < 2; attempt++) {
+        try {
+            const fd = openSync(marker, "wx");
+            writeSync(fd, String(process.pid));
+            closeSync(fd);
+            return true;
+        } catch (error) {
+            const holder = readMarker(marker);
+
+            if (holder === LEDGER_DONE || isProcessAlive(Number(holder))) {
+                return false;
+            }
+
+            logger.debug({ marker, holder, error }, "rm: taking over the ledger line of a process that died");
+            unlinkQuietly(marker);
+        }
+    }
+
+    return false;
+}
+
+function readMarker(marker: string): string {
+    try {
+        return readFileSync(marker, "utf8").trim();
+    } catch (error) {
+        logger.debug({ marker, error }, "rm: unreadable ledger marker");
+        return "";
+    }
+}
+
+function unlinkQuietly(path: string): void {
+    try {
+        unlinkSync(path);
+    } catch (error) {
+        logger.debug({ path, error }, "rm: marker already gone");
+    }
+}
+
+/**
+ * Writes the size of an aside copy into the ledger once, for the audit's aside total: the aside move itself does not
+ * measure. The marker is `done` only after the line is written; a failed write drops the claim, so the next
+ * measurement pass (which runs this for fresh sizes too) writes it then.
+ */
+function logAsideSize(input: {
+    request: Pick<RmRequest, "id" | "caller">;
+    target: Pick<RmRequestTarget, "path" | "stored"> & Partial<Pick<RmRequestTarget, "rule">>;
+    item: RmMeasuredItem;
+    requestsDir: string;
+}): void {
+    const { request, target, item } = input;
+    const marker = ledgerMarker(request.id, item.location, input.requestsDir);
+
+    if (!target.stored || !claimLedgerLine(marker)) {
+        return;
+    }
+
+    const written = appendRmLedger({
+        action: "measure",
+        path: target.path,
+        stored: target.stored,
+        rule: target.rule,
+        bytes: item.bytes,
+        requestId: request.id,
+        caller: request.caller,
+    });
+
+    if (!written) {
+        unlinkQuietly(marker);
+        return;
+    }
 
     try {
-        closeSync(openSync(join(dir, `${locationKey(location)}.ledger`), "wx"));
-        return true;
+        atomicWriteFileSync(marker, LEDGER_DONE);
     } catch (error) {
-        logger.debug({ id, location, error }, "rm: the size of this aside copy is already in the ledger");
-        return false;
+        logger.warn({ marker, error }, "rm: could not mark an aside size as written to the ledger");
     }
 }
 
@@ -282,21 +368,9 @@ export function recordRmMeasurement(input: {
     item: RmMeasuredItem;
     requestsDir?: string;
 }): void {
-    const { request, target, item } = input;
     const requestsDir = input.requestsDir ?? rmRequestsDir();
-    saveRmMeasurement(request.id, item, requestsDir);
-
-    if (target.stored && claimLedgerLine(request.id, item.location, requestsDir)) {
-        appendRmLedger({
-            action: "measure",
-            path: target.path,
-            stored: target.stored,
-            rule: target.rule,
-            bytes: item.bytes,
-            requestId: request.id,
-            caller: request.caller,
-        });
-    }
+    saveRmMeasurement(input.request.id, input.item, requestsDir);
+    logAsideSize({ ...input, requestsDir });
 }
 
 /** A live process measures request `id` now. */
@@ -350,8 +424,11 @@ export async function measureRmRequest(
     try {
         for (const target of request.targets) {
             const saved = loadRmMeasurements(id, requestsDir);
+            const fresh = freshMeasurement(saved, target);
 
-            if (freshMeasurement(saved, target)) {
+            if (fresh) {
+                // A fresh size whose ledger line failed earlier is written now.
+                logAsideSize({ request, target, item: fresh, requestsDir });
                 result.fresh++;
                 continue;
             }

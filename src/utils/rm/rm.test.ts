@@ -54,6 +54,7 @@ import {
     mayDenyRmRequest,
     measureBytes,
     measureBytesAsync,
+    measureRmRequest,
     measureTarget,
     moveAside,
     moveToTrash,
@@ -85,6 +86,7 @@ import {
     resolveTarget,
     restoreBatch,
     returnAside,
+    rmLedgerPath,
     runDrainer,
     saveRmConfig,
     saveRmRequest,
@@ -1908,5 +1910,46 @@ describe("the size of an aside copy in the ledger", () => {
         );
 
         expect(totals).toEqual([expect.objectContaining({ key: "git-untracked", aside: 5000 })]);
+    });
+});
+
+describe("an aside size whose ledger line could not be written", () => {
+    test("is written by the next measurement pass, once, though the size is still fresh", async () => {
+        const requestsDir = dir("ledger-retry-requests");
+        const stored = file(join(dir("ledger-retry-aside"), "notes.md"), "kept for the user");
+        const target = {
+            path: "/work/shop/notes.md",
+            kind: "file" as const,
+            rule: "git-untracked",
+            reason: "r",
+            stored,
+        };
+        const request = createRmRequest(
+            { kind: "delete", caller: AGENT, cwd: base, reason: null, targets: [target] },
+            requestsDir
+        );
+        const lines = () =>
+            readRmLedger().filter((entry) => entry.action === "measure" && entry.requestId === request.id);
+        const ledger = rmLedgerPath();
+        appendRmLedger({ action: "request", requestId: "warm-up" });
+        chmodSync(ledger, 0o444);
+
+        try {
+            const item = await measureTarget(target);
+
+            if (!item) {
+                throw new Error("the aside copy was not measured");
+            }
+
+            recordRmMeasurement({ request, target, item, requestsDir });
+        } finally {
+            chmodSync(ledger, 0o644);
+        }
+
+        expect(lines()).toHaveLength(0);
+        expect(await measureRmRequest(request.id, { requestsDir })).toMatchObject({ fresh: 1, measured: 0 });
+        expect(lines()).toHaveLength(1);
+        await measureRmRequest(request.id, { requestsDir });
+        expect(lines()).toHaveLength(1);
     });
 });

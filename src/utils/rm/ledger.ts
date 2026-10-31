@@ -50,14 +50,17 @@ export function rmLedgerPath(): string {
     return rmDataDir("ledger.jsonl");
 }
 
-export function appendRmLedger(entry: Omit<RmLedgerEntry, "at"> & { at?: string }, path = rmLedgerPath()): void {
+/** Appends one line; false when it could not be written (logged), for a caller that must retry it later. */
+export function appendRmLedger(entry: Omit<RmLedgerEntry, "at"> & { at?: string }, path = rmLedgerPath()): boolean {
     const line: RmLedgerEntry = { ...entry, at: entry.at ?? new Date().toISOString(), cwd: entry.cwd ?? process.cwd() };
 
     try {
         mkdirSync(dirname(path), { recursive: true });
         appendFileSync(path, `${SafeJSON.stringify(line)}\n`);
+        return true;
     } catch (error) {
         logger.warn({ path, error, action: entry.action }, "rm: cannot append to the ledger");
+        return false;
     }
 }
 
