@@ -142,13 +142,31 @@ async function folderKb(host: Host, path: string, skip: readonly string[] = []):
     return (await host.exists(path)) ? kbOf(host, ["du", "-sk", ...masks, path], 0) : 0;
 }
 
-/** One `du -sk` over several folders: a size per folder `du` could read, by the path as it was given. */
+/**
+ * One `du -sk` over several folders: a size per folder `du` could read, by the path as it was given. `du` prints a
+ * subtotal for a folder it could read only in part and exits 1, so a failed or cut run trusts none of its lines: each
+ * folder is then asked alone, and only a clean exit counts.
+ */
 async function foldersKb(host: Host, paths: readonly string[], skip: readonly string[]): Promise<Map<string, number>> {
     const masks = skip.flatMap((name) => ["-I", name]);
     const done = await host.run(["du", "-sk", ...masks, ...paths], { timeoutMs: 60_000 }).catch(() => undefined);
     const found = new Map<string, number>();
 
-    for (const line of done?.stdout.split("\n") ?? []) {
+    if (done?.exitCode !== 0 || done.isStdoutTruncated) {
+        if (paths.length > 1) {
+            for (const path of paths) {
+                const kb = await kbOf(host, ["du", "-sk", ...masks, path], 0);
+
+                if (kb !== null) {
+                    found.set(path, kb);
+                }
+            }
+        }
+
+        return found;
+    }
+
+    for (const line of done.stdout.split("\n")) {
         const [token = "", ...rest] = line.trim().split(/\s+/);
 
         if (/^\d+$/.test(token) && rest.length > 0) {

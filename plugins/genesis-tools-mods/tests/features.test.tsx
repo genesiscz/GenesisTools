@@ -172,6 +172,39 @@ test("session folder measurements apply exclusions only to the matching operand 
     ]);
 });
 
+test("a failed du over several folders trusts none of its subtotals and asks each folder alone", async () => {
+    const base = checkoutHost();
+    const calls: string[][] = [];
+    const host: Host = {
+        ...base,
+        exists: async () => true,
+        async run(argv) {
+            calls.push([...argv]);
+            const operands = argv.slice(2);
+            // One folder below /fixture/partial-r4 cannot be read: du still prints its subtotal, then exits 1.
+            const failed = operands.includes("/fixture/partial-r4");
+            return {
+                stdout: operands.map((path) => `${path.includes("partial") ? 3 : 5}\t${path}\n`).join(""),
+                stderr: failed ? "du: /fixture/partial-r4/locked: Permission denied" : "",
+                exitCode: failed ? 1 : 0,
+                isStdoutTruncated: false,
+                isStderrTruncated: false,
+            };
+        },
+    };
+    const sizes = await pacedKbs(host, [
+        { path: "/fixture/whole-r4", skip: [] },
+        { path: "/fixture/partial-r4", skip: [] },
+    ]);
+    expect(sizes.get("/fixture/whole-r4")).toBe(5);
+    expect(sizes.get("/fixture/partial-r4")).toBeNull();
+    expect(calls).toEqual([
+        ["du", "-sk", "/fixture/whole-r4", "/fixture/partial-r4"],
+        ["du", "-sk", "/fixture/whole-r4"],
+        ["du", "-sk", "/fixture/partial-r4"],
+    ]);
+});
+
 test("project lookup retries nonzero results and caches a successful lookup", async () => {
     const base = checkoutHost();
     let calls = 0;
