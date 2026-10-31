@@ -19,9 +19,10 @@ const { log } = logger.scoped("cmux-dialog-guard");
  */
 export function claudeRegistryDialog(
     sessionId: string,
-    sessions: () => ClaudeLiveSession[] = () => listClaudeSessionInventory()
+    sessions: (directory?: string) => ClaudeLiveSession[] = (dir) => listClaudeSessionInventory({ dir }),
+    directory?: string | null
 ): OpenDialog | null {
-    const waiting = sessions().some(
+    const waiting = sessions(directory ?? undefined).some(
         (session) => session.sessionId === sessionId && session.status === "waiting" && !session.parkedJobId
     );
 
@@ -88,7 +89,11 @@ export async function sessionOpenDialog({
 
     // The registry is this Mac's live processes, which a test must not read.
     if (providers.includes("claude") && !isTestProcess()) {
-        return claudeRegistryDialog(sessionId);
+        const directory =
+            transcript?.source === "native"
+                ? resolveHistoryProvider(transcript.provider).reader.dialog.registryDirectory(transcript.filePath)
+                : null;
+        return claudeRegistryDialog(sessionId, undefined, directory);
     }
 
     return null;

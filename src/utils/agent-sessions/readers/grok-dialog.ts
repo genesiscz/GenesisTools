@@ -3,6 +3,7 @@ import type { NativeSessionReader } from "../types";
 
 export const grokDialog: NativeSessionReader<"grok">["dialog"] = {
     sessionAlive: () => null,
+    registryDirectory: () => null,
     eventLogPath(transcriptPath) {
         return basename(transcriptPath) === "updates.jsonl" ? join(dirname(transcriptPath), "events.jsonl") : null;
     },

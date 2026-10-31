@@ -39,7 +39,12 @@ function createReader(options: { kind: string; roots: string[] }): NativeSession
     return {
         kind: options.kind,
         ...operations,
-        dialog: { eventLogPath: () => null, openPermission: () => null, sessionAlive: () => null },
+        dialog: {
+            eventLogPath: () => null,
+            openPermission: () => null,
+            sessionAlive: () => null,
+            registryDirectory: () => null,
+        },
         roots: () => options.roots,
         read: async () => {
             throw new Error("fixture reader does not read transcripts");

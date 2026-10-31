@@ -42,7 +42,12 @@ export const claudeHistoryReader = createCompactHistoryReader({
 export const codexHistoryReader = createCompactHistoryReader({
     kind: "codex",
     // Codex rollouts do not persist the app-server's live permission prompts.
-    dialog: { eventLogPath: () => null, openPermission: () => null, sessionAlive: () => null },
+    dialog: {
+        eventLogPath: () => null,
+        openPermission: () => null,
+        sessionAlive: () => null,
+        registryDirectory: () => null,
+    },
     roots: () => nativeSessionRootsWithLegacyHomes("codex"),
     discover: discoverCodexHistorySources,
     searchMetadata: true,

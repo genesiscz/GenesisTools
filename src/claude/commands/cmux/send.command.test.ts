@@ -595,6 +595,33 @@ test("Claude's registry status `waiting` is an open dialog for that session only
     expect(claudeRegistryDialog("another-session", () => [entry])).toBeNull();
 });
 
+test("Claude waiting status reads the registry that owns the transcript", async () => {
+    const { claudeRegistryDialog } = await import("@app/claude/lib/cmux/dialog-guard");
+    const { claudeHistoryReader } = await import("@genesiscz/utils/agent-sessions/compact-readers");
+    const transcript = `/fixture/other-account/projects/project/${SESSION_A}.jsonl`;
+    const entry = {
+        pid: 42,
+        sessionId: SESSION_A,
+        name: null,
+        cwd: null,
+        status: "waiting",
+        kind: "interactive",
+        socketPath: "/fixture/42.sock",
+        file: "/fixture/other-account/sessions/42.json",
+    };
+    let directory: string | undefined;
+    const dialog = claudeRegistryDialog(
+        SESSION_A,
+        (dir) => {
+            directory = dir;
+            return dir === "/fixture/other-account/sessions" ? [entry] : [];
+        },
+        claudeHistoryReader.dialog.registryDirectory(transcript)
+    );
+    expect(directory).toBe("/fixture/other-account/sessions");
+    expect(dialog?.signal).toBe("turn-state");
+});
+
 test("multi-line text goes as one paste even without --paste; a single line keeps the typed path", async () => {
     setSnapshot([pane({ id: "pane:7", surfaces: [surface({ id: "surface:41", title: SESSION_A, selected: true })] })]);
 

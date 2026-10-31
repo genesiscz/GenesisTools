@@ -339,6 +339,8 @@ export interface NativeSessionReader<Kind extends string = AgentKind> {
         openPermission(records: readonly Record<string, unknown>[]): NativeDialogPermission | null;
         /** True or false when native liveness is known, null when this provider cannot establish it. */
         sessionAlive(transcriptPath: string, sessionId: string): boolean | null;
+        /** The registry owning a transcript, when this provider has one. */
+        registryDirectory(transcriptPath: string): string | null;
     };
     /**
      * The newest entries of a session, read from the end of its source back to the first entry `options.until`
