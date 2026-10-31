@@ -277,6 +277,17 @@ export function codexHomesIn(root: string): string[] {
     return homes.sort();
 }
 
+/**
+ * Every Codex home this machine has: the `CODEX_HOME` list (else `~/.codex`), then the legacy profile homes beside
+ * it (`~/.codex-work`). The one root policy for Codex: history discovery (`nativeSessionRootsWithLegacyHomes`),
+ * transcript lookup and title search all read these homes, so a session history lists is one `resolveTranscript`
+ * finds. Only folder names are read, never a home's credentials.
+ */
+export function codexHomesWithLegacy(root = homedir()): string[] {
+    const overrides = codexHomeOverrides();
+    return [...new Set([...(overrides.length > 0 ? overrides : [nativeHome("codex", root)]), ...codexHomesIn(root)])];
+}
+
 /** History discovery includes legacy Codex profile homes without reading their credentials. */
 export function nativeSessionRootsWithLegacyHomes(kind: NativeSessionProvider, root = homedir()): string[] {
     const roots = nativeSessionRoots(kind, root);

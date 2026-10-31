@@ -13,7 +13,7 @@ import {
 } from "@genesiscz/utils/ai/providers/harness-index";
 import { registerBuiltInPlugins } from "@genesiscz/utils/ai/providers/plugins";
 import { allProviderPlugins } from "@genesiscz/utils/ai/providers/registry";
-import { defaultTranscriptRoots, directReads } from "@genesiscz/utils/ai/transcripts/resolve";
+import { directReads } from "@genesiscz/utils/ai/transcripts/resolve";
 import { moduleDir } from "@genesiscz/utils/fs/module-dir";
 import { HARNESS_SWIFT_PATH, renderHarnessSwift } from "../../../scripts/gen-harness-swift";
 import { HARNESS_WEB_PATH, renderHarnessWeb } from "../../../scripts/gen-harness-web";
@@ -178,13 +178,8 @@ describe("locate: the deferred finders of every harness", () => {
         test(`${driver.id} loads its finders on the first call and finds nothing under empty roots`, () => {
             const locate = harnessLocate(driver.id);
             const empty = join(REPO_ROOT, ".no-such-transcript-root");
-            const resolved = Object.fromEntries(
-                Object.entries(defaultTranscriptRoots()).map(([key, value]) => [
-                    key,
-                    Array.isArray(value) ? [empty] : empty,
-                ])
-            );
-            const roots = { injected: {}, resolved: { ...defaultTranscriptRoots(), ...resolved } };
+            const roots = { native: [empty], worker: empty };
+            expect(locate.defaultRoots().native.length).toBeGreaterThan(0);
 
             expect(locate.find("0123456789abcdef", roots, directReads)).toEqual([]);
             expect(locate.pathRoots(roots).length).toBeGreaterThan(0);

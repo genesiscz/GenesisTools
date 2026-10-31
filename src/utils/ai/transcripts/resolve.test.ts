@@ -5,6 +5,7 @@ import { dirname, join } from "node:path";
 import { codexLocate } from "@genesiscz/utils/ai/providers/plugins/openai-sub/harness-locate";
 import { env } from "@genesiscz/utils/env";
 import { SafeJSON } from "@genesiscz/utils/json";
+import { codexHomesWithLegacy, nativeSessionRootsWithLegacyHomes } from "@genesiscz/utils/providers/session-paths";
 import {
     directReads,
     type FolderReads,
@@ -12,11 +13,33 @@ import {
     resolveTranscript,
     resolveTranscripts,
     resolveTranscriptsWith,
+    type TranscriptRoots,
 } from "./resolve";
 import { rescanWorkerTurns } from "./resolve-core";
 
 function fixtureRoot(): string {
     return mkdtempSync(join(tmpdir(), "gt-transcript-"));
+}
+
+/** The fixture folders, named flat, as the per-harness roots a lookup takes. */
+function harnessRoots(dirs: {
+    claudeProjects?: string;
+    claudeWorker?: string;
+    grokHome?: string;
+    grokWorker?: string;
+    codexHome?: string;
+    codexWorker?: string;
+}): TranscriptRoots {
+    const entry = (native: string | undefined, worker: string | undefined) => ({
+        ...(native ? { native: [native] } : {}),
+        ...(worker ? { worker } : {}),
+    });
+
+    return {
+        claude: entry(dirs.claudeProjects, dirs.claudeWorker),
+        codex: entry(dirs.codexHome, dirs.codexWorker),
+        grok: entry(dirs.grokHome, dirs.grokWorker),
+    };
 }
 
 describe("resolveTranscript", () => {
@@ -28,13 +51,16 @@ describe("resolveTranscript", () => {
         mkdirSync(dir, { recursive: true });
         writeFileSync(join(dir, "updates.jsonl"), "{}\n");
 
-        const hit = await resolveTranscript(sessionId.slice(0, 8), {
-            grokHome,
-            grokWorker: join(root, "empty-worker"),
-            claudeProjects: join(root, "empty-claude"),
-            codexHome: join(root, "empty-codex"),
-            codexWorker: join(root, "empty-codex-w"),
-        });
+        const hit = await resolveTranscript(
+            sessionId.slice(0, 8),
+            harnessRoots({
+                grokHome,
+                grokWorker: join(root, "empty-worker"),
+                claudeProjects: join(root, "empty-claude"),
+                codexHome: join(root, "empty-codex"),
+                codexWorker: join(root, "empty-codex-w"),
+            })
+        );
         expect(hit.provider).toBe("grok");
         expect(hit.source).toBe("native");
         expect(hit.sessionId).toBe(sessionId);
@@ -60,13 +86,16 @@ describe("resolveTranscript", () => {
         writeFileSync(join(worker, "demo.turn1.jsonl"), "{}\n");
         writeFileSync(join(worker, "demo.turn2.jsonl"), "{}\n");
 
-        const hit = await resolveTranscript("demo", {
-            grokHome: join(root, "empty-grok"),
-            grokWorker: worker,
-            claudeProjects: join(root, "empty-claude"),
-            codexHome: join(root, "empty-codex"),
-            codexWorker: join(root, "empty-codex-w"),
-        });
+        const hit = await resolveTranscript(
+            "demo",
+            harnessRoots({
+                grokHome: join(root, "empty-grok"),
+                grokWorker: worker,
+                claudeProjects: join(root, "empty-claude"),
+                codexHome: join(root, "empty-codex"),
+                codexWorker: join(root, "empty-codex-w"),
+            })
+        );
         expect(hit.provider).toBe("grok");
         expect(hit.source).toBe("worker");
         expect(hit.filePath).toBe(join(worker, "demo.turn2.jsonl"));
@@ -81,13 +110,16 @@ describe("resolveTranscript", () => {
         const file = join(dir, `rollout-2026-08-27T20-00-00-${id}.jsonl`);
         writeFileSync(file, "{}\n");
 
-        const hit = await resolveTranscript(id.slice(0, 8), {
-            grokHome: join(root, "empty-grok"),
-            grokWorker: join(root, "empty-worker"),
-            claudeProjects: join(root, "empty-claude"),
-            codexHome: join(root, "codex"),
-            codexWorker: join(root, "empty-codex-w"),
-        });
+        const hit = await resolveTranscript(
+            id.slice(0, 8),
+            harnessRoots({
+                grokHome: join(root, "empty-grok"),
+                grokWorker: join(root, "empty-worker"),
+                claudeProjects: join(root, "empty-claude"),
+                codexHome: join(root, "codex"),
+                codexWorker: join(root, "empty-codex-w"),
+            })
+        );
         expect(hit.provider).toBe("codex");
         expect(hit.source).toBe("native");
         expect(hit.filePath).toBe(file);
@@ -96,13 +128,13 @@ describe("resolveTranscript", () => {
 
     test("finds a compressed codex rollout (.jsonl.zst) and one directly in archived_sessions, with the thread id", async () => {
         const root = fixtureRoot();
-        const roots = {
+        const roots = harnessRoots({
             grokHome: join(root, "empty-grok"),
             grokWorker: join(root, "empty-worker"),
             claudeProjects: join(root, "empty-claude"),
             codexHome: join(root, "codex"),
             codexWorker: join(root, "empty-codex-w"),
-        };
+        });
         const compressed = "eeeeeeee-1111-2222-3333-444444444444";
         const dir = join(root, "codex", "sessions", "2026", "10", "01");
         mkdirSync(dir, { recursive: true });
@@ -133,13 +165,16 @@ describe("resolveTranscript", () => {
         const file = join(dir, `${id}.jsonl`);
         writeFileSync(file, "{}\n");
 
-        const hit = await resolveTranscript(id, {
-            grokHome: join(root, "empty-grok"),
-            grokWorker: join(root, "empty-worker"),
-            claudeProjects: join(root, "projects"),
-            codexHome: join(root, "empty-codex"),
-            codexWorker: join(root, "empty-codex-w"),
-        });
+        const hit = await resolveTranscript(
+            id,
+            harnessRoots({
+                grokHome: join(root, "empty-grok"),
+                grokWorker: join(root, "empty-worker"),
+                claudeProjects: join(root, "projects"),
+                codexHome: join(root, "empty-codex"),
+                codexWorker: join(root, "empty-codex-w"),
+            })
+        );
         expect(hit.provider).toBe("claude");
         expect(hit.filePath).toBe(file);
         expect(hit.sessionId).toBe(id);
@@ -148,13 +183,16 @@ describe("resolveTranscript", () => {
     test("throws when no provider has the id", async () => {
         const root = fixtureRoot();
         await expect(
-            resolveTranscript("zzzzzzzz-missing", {
-                grokHome: join(root, "empty-grok"),
-                grokWorker: join(root, "empty-worker"),
-                claudeProjects: join(root, "empty-claude"),
-                codexHome: join(root, "empty-codex"),
-                codexWorker: join(root, "empty-codex-w"),
-            })
+            resolveTranscript(
+                "zzzzzzzz-missing",
+                harnessRoots({
+                    grokHome: join(root, "empty-grok"),
+                    grokWorker: join(root, "empty-worker"),
+                    claudeProjects: join(root, "empty-claude"),
+                    codexHome: join(root, "empty-codex"),
+                    codexWorker: join(root, "empty-codex-w"),
+                })
+            )
         ).rejects.toThrow(/No session file/);
     });
 });
@@ -237,14 +275,14 @@ describe("rescanWorkerTurns", () => {
 
 describe("resolveTranscript: sub-agent ids and absolute paths", () => {
     function roots(root: string) {
-        return {
+        return harnessRoots({
             claudeProjects: join(root, "claude"),
             claudeWorker: join(root, "claude-w"),
             grokHome: join(root, "grok"),
             grokWorker: join(root, "grok-w"),
             codexHome: join(root, "codex"),
             codexWorker: join(root, "codex-w"),
-        };
+        });
     }
 
     function subagentFile(root: string, agentId: string): string {
@@ -361,7 +399,7 @@ describe("resolveTranscript: sub-agent ids and absolute paths", () => {
 /** Every provider and source in one tree, so a lookup change is checked against all of them at once. */
 function mixedTree() {
     const root = fixtureRoot();
-    const roots = {
+    const dirs = {
         claudeProjects: join(root, "claude"),
         claudeWorker: join(root, "claude-worker"),
         grokHome: join(root, "grok"),
@@ -381,14 +419,14 @@ function mixedTree() {
     const claudeId = "11111111-2222-3333-4444-555555555555";
     const twinId = "99999999-2222-3333-4444-555555555555";
     const files = {
-        claude: write(join(roots.claudeProjects, "-proj-a", `${claudeId}.jsonl`)),
+        claude: write(join(dirs.claudeProjects, "-proj-a", `${claudeId}.jsonl`)),
         // The same session id under two projects: the newer file is the answer.
-        twinOld: write(join(roots.claudeProjects, "-proj-a", `${twinId}.jsonl`), "{}\n", 1_000),
-        twinNew: write(join(roots.claudeProjects, "-proj-b", `${twinId}.jsonl`), "{}\n", 2_000),
-        subagent: write(join(roots.claudeProjects, "-proj-a", claudeId, "subagents", "agent-a0564229bc9945515.jsonl")),
+        twinOld: write(join(dirs.claudeProjects, "-proj-a", `${twinId}.jsonl`), "{}\n", 1_000),
+        twinNew: write(join(dirs.claudeProjects, "-proj-b", `${twinId}.jsonl`), "{}\n", 2_000),
+        subagent: write(join(dirs.claudeProjects, "-proj-a", claudeId, "subagents", "agent-a0564229bc9945515.jsonl")),
         grok: write(
             join(
-                roots.grokHome,
+                dirs.grokHome,
                 "sessions",
                 encodeURIComponent("/tmp/p"),
                 "aaaaaaaa-0000-0000-0000-00000000000a",
@@ -397,7 +435,7 @@ function mixedTree() {
         ),
         codex: write(
             join(
-                roots.codexHome,
+                dirs.codexHome,
                 "sessions",
                 "2026",
                 "10",
@@ -405,23 +443,23 @@ function mixedTree() {
                 "rollout-2026-10-12T10-00-00-bbbbbbbb-0000-0000-0000-00000000000b.jsonl"
             )
         ),
-        codexWorker: write(join(roots.codexWorker, "cw-task.jsonl")),
-        claudeWorkerTurn1: write(join(roots.claudeWorker, "cl-task.turn1.jsonl")),
-        claudeWorkerTurn2: write(join(roots.claudeWorker, "cl-task.turn2.jsonl")),
+        codexWorker: write(join(dirs.codexWorker, "cw-task.jsonl")),
+        claudeWorkerTurn1: write(join(dirs.claudeWorker, "cl-task.turn1.jsonl")),
+        claudeWorkerTurn2: write(join(dirs.claudeWorker, "cl-task.turn2.jsonl")),
     };
     write(
-        join(roots.codexWorker, "cw-task.meta.json"),
+        join(dirs.codexWorker, "cw-task.meta.json"),
         SafeJSON.stringify({ threadId: "cccccccc-0000-0000-0000-00000000000c" })
     );
     write(
-        join(roots.claudeWorker, "cl-task.meta.json"),
+        join(dirs.claudeWorker, "cl-task.meta.json"),
         SafeJSON.stringify({ sessionId: "dddddddd-0000-0000-0000-00000000000d" })
     );
     // A project folder with no transcripts and a stray file at the projects root must not break the walk.
-    mkdirSync(join(roots.claudeProjects, "-proj-empty"), { recursive: true });
-    write(join(roots.claudeProjects, "stray.txt"), "x");
+    mkdirSync(join(dirs.claudeProjects, "-proj-empty"), { recursive: true });
+    write(join(dirs.claudeProjects, "stray.txt"), "x");
 
-    return { roots, files, claudeId, twinId };
+    return { roots: harnessRoots(dirs), files, claudeId, twinId };
 }
 
 /** The queries the hub sends, each with the file it must find, or null for "no session file". */
@@ -543,13 +581,13 @@ test("a codex spawn worker's thread id resolves to the worker log, and resolveCo
     writeFileSync(join(workers, "reviewer.meta.json"), SafeJSON.stringify({ name: "reviewer", threadId: id }));
     writeFileSync(join(workers, "reviewer.jsonl"), "{}\n");
     utimesSync(rollout, new Date(1_000_000_000_000), new Date(1_000_000_000_000));
-    const roots = {
+    const roots = harnessRoots({
         grokHome: join(root, "empty-grok"),
         grokWorker: join(root, "empty-worker"),
         claudeProjects: join(root, "empty-claude"),
         codexHome: join(root, "codex"),
         codexWorker: workers,
-    };
+    });
 
     expect((await resolveTranscript(id, roots)).source).toBe("worker");
     expect(resolveCodexNative(id, roots)).toEqual({
@@ -585,6 +623,29 @@ test("native readers expose window turns and ignore malformed text blocks", asyn
         { uuid: "good", type: "user", message: { content: "hello" } },
     ]);
     expect(turns.map((turn) => turn.id)).toEqual(["tool", "good"]);
+});
+
+test("a rollout in a legacy Codex profile home is found by id, as history discovery lists it", async () => {
+    const home = fixtureRoot();
+    const id = "ffffffff-1111-2222-3333-444444444444";
+    const dir = join(home, ".codex-work", "sessions", "2026", "10", "31");
+    mkdirSync(dir, { recursive: true });
+    const rollout = join(dir, `rollout-2026-10-31T10-00-00-${id}.jsonl`);
+    writeFileSync(rollout, "{}\n");
+
+    await env.testing.withOverrides({ CODEX_HOME: undefined }, async () => {
+        // One policy: the homes history discovery walks are the homes a lookup searches by default.
+        const homes = codexHomesWithLegacy(home);
+        expect(homes).toEqual([join(home, ".codex"), join(home, ".codex-work")]);
+        expect(new Set(nativeSessionRootsWithLegacyHomes("codex", home))).toEqual(
+            new Set(homes.flatMap((codexHome) => [join(codexHome, "sessions"), join(codexHome, "archived_sessions")]))
+        );
+        expect(codexLocate.defaultRoots().native).toEqual(codexHomesWithLegacy());
+        expect(await resolveTranscript(id, { codex: { native: homes } }, "codex")).toMatchObject({
+            source: "native",
+            filePath: rollout,
+        });
+    });
 });
 
 test("codex worker without home resolves a rollout in the default home list", async () => {

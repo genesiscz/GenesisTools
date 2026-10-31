@@ -1,6 +1,6 @@
 import { join } from "node:path";
 import { lastClaudeTitleIn } from "@genesiscz/utils/agent-sessions/readers/claude-title";
-import type { FolderReads, LocateRoots, RankedHit } from "@genesiscz/utils/ai/transcripts/resolve";
+import type { FolderReads, RankedHit } from "@genesiscz/utils/ai/transcripts/resolve";
 import { findTurnFileWorker, idMatches, workerTurnChain } from "@genesiscz/utils/ai/transcripts/resolve-core";
 import {
     type FindByTitleOptions,
@@ -8,19 +8,19 @@ import {
     mtimeOf,
     type TitledSession,
 } from "@genesiscz/utils/ai/transcripts/session-title";
+import { workersDir } from "@genesiscz/utils/claude/worker-paths";
 import type { TranscriptLocator } from "@genesiscz/utils/harness/parts";
 import { logger } from "@genesiscz/utils/logger";
-
-/** The roots a Claude lookup reads: an injected projects folder is the whole answer, else every root `nativeSessionRoots` knows. */
-function claudeRoots({ injected, resolved }: LocateRoots): string[] {
-    return injected.claudeProjects ? [injected.claudeProjects] : resolved.claudeProjectsAll;
-}
+import { nativeSessionRoots, nativeSessionRootsForHome } from "@genesiscz/utils/providers/session-paths";
 
 /** The Claude driver's `locate` part: `<project>/<id>.jsonl` with its sub-agent files, and `tools claude worker` turn files. */
 export const claudeLocate: TranscriptLocator = {
+    // `nativeSessionRoots` owns the root policy: a hard-coded `~/.claude/projects` missed `~/.config/claude/projects`
+    // and `$CLAUDE_CONFIG_DIR` (PR #341 review round 4, t3).
+    defaultRoots: () => ({ native: nativeSessionRoots("claude"), worker: workersDir() }),
     pathRoots: (roots) => [
-        ...claudeRoots(roots).map((root) => ({ root, source: "native" as const })),
-        { root: roots.resolved.claudeWorker, source: "worker" },
+        ...roots.native.map((root) => ({ root, source: "native" as const })),
+        { root: roots.worker, source: "worker" },
     ],
     // A worker writes one turn file per turn, so its chain is followed (`rescanWorkerTurns`).
     sessionOfPath: ({ source, stem, filePath }) =>
@@ -28,12 +28,12 @@ export const claudeLocate: TranscriptLocator = {
             ? workerTurnChain({ provider: "claude", stem, filePath })
             : { provider: "claude", source, sessionId: stem.replace(/^agent-/, ""), filePath },
     find: (query, roots, fs) => [
-        ...claudeRoots(roots).flatMap((root) => findClaude(query, root, fs)),
-        ...findClaudeWorker(query, roots.resolved.claudeWorker, fs),
+        ...roots.native.flatMap((root) => findClaude(query, root, fs)),
+        ...findClaudeWorker(query, roots.worker, fs),
     ],
     // A `tools claude worker` writes only its own turn files.
     workerNative: () => null,
-    rootsOfHome: (home) => ({ claudeProjects: join(home, "projects"), claudeProjectsAll: [join(home, "projects")] }),
+    rootsOfHome: (home) => ({ native: nativeSessionRootsForHome("claude", home) }),
     // The `custom-title` rows of the transcripts written in the last `maxAgeDays`, within a time budget.
     titledSessions: ({ options, roots, now }) =>
         claudeSessions({ roots, maxAgeDays: options.maxAgeDays ?? 14, budgetMs: options.budgetMs ?? 8000, now }),

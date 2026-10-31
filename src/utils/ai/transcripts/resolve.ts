@@ -1,33 +1,26 @@
 import { existsSync, readFileSync, realpathSync } from "node:fs";
 import { basename, isAbsolute, relative, resolve, sep } from "node:path";
-import { ACCOUNT_PROVIDER_ALIASES } from "@genesiscz/utils/ai/providers/alias-list";
+import { ACCOUNT_PROVIDER_ALIASES, byHarnessWhere } from "@genesiscz/utils/ai/providers/alias-list";
 import { harnessLocate } from "@genesiscz/utils/ai/providers/harness-index";
 import { isDir, listDir, mtimeOf } from "@genesiscz/utils/ai/transcripts/resolve-core";
-import { workersDir as claudeWorkerDir } from "@genesiscz/utils/claude/worker-paths";
-import { sessionsDir as codexWorkerDir } from "@genesiscz/utils/codex/worker-paths";
-import { env } from "@genesiscz/utils/env";
-import { sessionsDir as grokWorkerDir } from "@genesiscz/utils/grok/worker-paths";
-import {
-    nativeHome,
-    nativeHomePath,
-    nativeSessionRoots,
-    transcriptStem,
-} from "@genesiscz/utils/providers/session-paths";
+import { transcriptStem } from "@genesiscz/utils/providers/session-paths";
 import type { TranscriptProvider } from "./types";
 
 export type TranscriptSource = "native" | "worker";
 
-export interface TranscriptRoots {
-    claudeProjects?: string;
-    /** Every Claude root, so auto-resolution is not limited to the first. */
-    claudeProjectsAll?: string[];
-    /** `tools claude worker` sessions: `<name>.meta.json` + `<name>.turn<N>.jsonl`. */
-    claudeWorker?: string;
-    grokHome?: string;
-    grokWorker?: string;
-    codexHome?: string;
-    codexWorker?: string;
+/** The folders one harness keeps its transcripts in, as its locator reads them (`TranscriptLocator.defaultRoots`). */
+export interface HarnessRoots {
+    /** Where its native sessions sit: Claude's `projects` folders, the Codex homes, the Grok homes. */
+    native: string[];
+    /** The folder of its `tools <agent>` worker logs (Claude: `<name>.meta.json` + `<name>.turn<N>.jsonl`). */
+    worker: string;
 }
+
+/**
+ * The roots a caller injects, keyed by harness. A harness or a field it leaves out reads its locator's defaults, so a
+ * test that fixes one harness's folders leaves the others at theirs.
+ */
+export type TranscriptRoots = { readonly [Provider in TranscriptProvider]?: Partial<HarnessRoots> };
 
 export interface ResolvedTranscript {
     provider: TranscriptProvider;
@@ -39,12 +32,6 @@ export interface ResolvedTranscript {
 
 export interface RankedHit extends ResolvedTranscript {
     mtime: number;
-}
-
-/** The roots one lookup reads: what the caller injected, and the defaults merged under it (`TranscriptLocator`). */
-export interface LocateRoots {
-    injected: TranscriptRoots;
-    resolved: Required<TranscriptRoots>;
 }
 
 /**
@@ -95,19 +82,14 @@ function memoReads(base: FolderReads): FolderReads {
     };
 }
 
-export function defaultTranscriptRoots(): Required<TranscriptRoots> {
-    return {
-        // nativeSessionRoots owns the root policy for every provider; hard-coding
-        // PROJECTS_DIR here missed ~/.config/claude/projects and $CLAUDE_CONFIG_DIR
-        // (PR #341 review round 4, t3).
-        claudeProjects: nativeSessionRoots("claude")[0] ?? nativeHomePath("claude", "projects"),
-        claudeProjectsAll: nativeSessionRoots("claude"),
-        claudeWorker: claudeWorkerDir(),
-        grokHome: env.grok.getHome(),
-        grokWorker: grokWorkerDir(),
-        codexHome: env.codex.getHomeOverride() ?? nativeHome("codex"),
-        codexWorker: codexWorkerDir(),
-    };
+/** One harness's roots for one lookup: what the caller injected, over its locator's defaults. */
+export function harnessRootsOf(provider: TranscriptProvider, roots: TranscriptRoots = {}): HarnessRoots {
+    return { ...harnessLocate(provider).defaultRoots(), ...roots[provider] };
+}
+
+/** Roots that read one harness's transcripts from one of its homes (a session's own source home) only. */
+export function rootsOfHome(provider: TranscriptProvider, home: string): TranscriptRoots {
+    return byHarnessWhere((id) => (id === provider ? harnessLocate(id).rootsOfHome(home) : undefined));
 }
 
 /** The real path when it exists, so a symlinked home (or `~/.claude`) still contains its files. */
@@ -124,12 +106,12 @@ function isInside(root: string, path: string): boolean {
  * An existing absolute transcript path, with its provider and source read off the root it lives
  * under. Null when the path is under no known root and no provider was named.
  */
-function resolvePath(path: string, roots: LocateRoots, provider?: TranscriptProvider): ResolvedTranscript | null {
+function resolvePath(path: string, roots: TranscriptRoots, provider?: TranscriptProvider): ResolvedTranscript | null {
     const filePath = resolve(path);
     const stem = transcriptStem(basename(filePath));
     const located = ACCOUNT_PROVIDER_ALIASES.flatMap((id) =>
         harnessLocate(id)
-            .pathRoots(roots)
+            .pathRoots(harnessRootsOf(id, roots))
             .map((entry) => ({ ...entry, provider: id }))
     );
     const hit = located.find((entry) => isInside(entry.root, filePath));
@@ -158,9 +140,8 @@ export async function resolveTranscript(
  * own transcript (waiting for its turn to end) asks here.
  */
 export function resolveCodexNative(threadId: string, roots: TranscriptRoots = {}): ResolvedTranscript | null {
-    const locate: LocateRoots = { injected: roots, resolved: { ...defaultTranscriptRoots(), ...roots } };
     const best = harnessLocate("codex")
-        .find(threadId, locate, directReads)
+        .find(threadId, harnessRootsOf("codex", roots), directReads)
         .filter((hit) => hit.source === "native")
         .sort((a, b) => b.mtime - a.mtime)[0];
 
@@ -224,12 +205,10 @@ function resolveWith({
     provider?: TranscriptProvider;
     fs: FolderReads;
 }): ResolvedTranscript {
-    const locate: LocateRoots = { injected: roots, resolved: { ...defaultTranscriptRoots(), ...roots } };
-
     // An existing absolute path (a sub-agent's agent-<id>.jsonl, a worker turn file) is the answer
     // as it is: its provider comes from the root it lives under.
     if (isAbsolute(query) && existsSync(query)) {
-        const byPath = resolvePath(query, locate, provider);
+        const byPath = resolvePath(query, roots, provider);
         if (!byPath) {
             throw new Error(`"${query}" is under no known transcript root; pass --provider to read it`);
         }
@@ -239,7 +218,9 @@ function resolveWith({
 
     // The search order of the providers when none is given (the canonical harness order); ties in `mtime` keep it.
     const searched: readonly TranscriptProvider[] = provider ? [provider] : ACCOUNT_PROVIDER_ALIASES;
-    const hits: RankedHit[] = searched.flatMap((name) => harnessLocate(name).find(query, locate, fs));
+    const hits: RankedHit[] = searched.flatMap((name) =>
+        harnessLocate(name).find(query, harnessRootsOf(name, roots), fs)
+    );
     if (hits.length === 0) {
         throw new Error(`No session file found for "${query}"`);
     }

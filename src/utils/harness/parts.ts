@@ -4,10 +4,9 @@ import type { NativeSessionReader } from "@genesiscz/utils/agent-sessions/types"
 import type { DialogKeyMap } from "@genesiscz/utils/agents/dialogs/keys";
 import type {
     FolderReads,
-    LocateRoots,
+    HarnessRoots,
     RankedHit,
     ResolvedTranscript,
-    TranscriptRoots,
     TranscriptSource,
 } from "@genesiscz/utils/ai/transcripts/resolve";
 import type { TitledSession, TitleSearch } from "@genesiscz/utils/ai/transcripts/session-title";
@@ -28,20 +27,23 @@ import type { WorkerCapabilities } from "@genesiscz/utils/worker/capabilities";
 
 /**
  * C: where a harness keeps its transcripts, and how a query or an absolute path maps to a session. Synchronous,
- * because `resolveTranscriptsWith` and `resolveCodexNative` are; each locator reads its own fields of the shared
- * `TranscriptRoots` and only folder reads (`FolderReads`), so the batch memo counts every read.
+ * because `resolveTranscriptsWith` and `resolveCodexNative` are; each locator gets only its own harness's roots
+ * (`HarnessRoots`, the caller's injection over `defaultRoots`) and reads only through `FolderReads`, so the batch memo
+ * counts every read.
  */
 export interface TranscriptLocator {
+    /** Where the harness keeps its transcripts on this machine, every home the history reader lists included. */
+    defaultRoots(): HarnessRoots;
     /** The roots a transcript path of the harness can sit under, in the order a path is matched against them. */
-    pathRoots(roots: LocateRoots): { root: string; source: TranscriptSource }[];
+    pathRoots(roots: HarnessRoots): { root: string; source: TranscriptSource }[];
     /** The session a transcript file of the harness names. */
     sessionOfPath(file: { source: TranscriptSource; stem: string; filePath: string }): ResolvedTranscript;
     /** Every transcript of the harness whose id equals or starts with `query`, with its modification time. */
-    find(query: string, roots: LocateRoots, fs: FolderReads): RankedHit[];
+    find(query: string, roots: HarnessRoots, fs: FolderReads): RankedHit[];
     /** The native transcript a headless worker of the harness writes beside its own log, or null when it writes none. */
     workerNative(worker: ResolvedTranscript, fs: FolderReads): ResolvedTranscript | null;
     /** The transcript roots inside one provider home of the harness (a session's own source home). */
-    rootsOfHome(home: string): TranscriptRoots;
+    rootsOfHome(home: string): Partial<HarnessRoots>;
     /** Every session the harness gave a title, read where it keeps titles (`findSessionsByTitle` ranks them). */
     titledSessions(search: TitleSearch): TitledSession[];
 }

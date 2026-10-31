@@ -80,6 +80,7 @@ export function deferredLocator(meta: ImportMeta, module: string, exportName: st
     };
 
     return {
+        defaultRoots: () => impl().defaultRoots(),
         pathRoots: (roots) => impl().pathRoots(roots),
         sessionOfPath: (file) => impl().sessionOfPath(file),
         find: (query, roots, fs) => impl().find(query, roots, fs),

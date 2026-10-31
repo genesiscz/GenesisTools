@@ -6,9 +6,8 @@ import { readDecisions } from "@app/question/lib/decisions/store";
 import { getForm } from "@app/question/lib/pending/store";
 import { getStoredEntryById } from "@app/question/lib/read-model";
 import type { TranscriptAnchor } from "@genesiscz/utils/agent/source-anchor";
-import { harnessLocate } from "@genesiscz/utils/ai/providers/harness-index";
 import { type TranscriptAround, transcriptAround } from "@genesiscz/utils/ai/transcripts/around";
-import { resolveTranscript, type TranscriptRoots } from "@genesiscz/utils/ai/transcripts/resolve";
+import { resolveTranscript, rootsOfHome, type TranscriptRoots } from "@genesiscz/utils/ai/transcripts/resolve";
 
 import { logger } from "@genesiscz/utils/logger";
 import { profiler } from "@genesiscz/utils/profile";
@@ -160,9 +159,7 @@ export async function readWidgetReceiptContext({
     if (anchor.provider !== target.provider || anchor.sessionId !== target.sessionId) {
         throw new Error("The stored receipt anchor belongs to a different provider/session");
     }
-    const roots: TranscriptRoots = target.sourceHome
-        ? harnessLocate(anchor.provider).rootsOfHome(target.sourceHome)
-        : {};
+    const roots: TranscriptRoots = target.sourceHome ? rootsOfHome(anchor.provider, target.sourceHome) : {};
     try {
         const resolved = await resolveTranscript(target.sessionId, roots, anchor.provider);
         signal?.throwIfAborted();

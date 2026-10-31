@@ -4,6 +4,8 @@ import { grokTitleOf } from "@genesiscz/utils/agent-sessions/readers/grok-title"
 import type { FolderReads, RankedHit } from "@genesiscz/utils/ai/transcripts/resolve";
 import { findTurnFileWorker, idMatches, isRecord, workerTurnChain } from "@genesiscz/utils/ai/transcripts/resolve-core";
 import { listDir, mtimeOf, type TitledSession } from "@genesiscz/utils/ai/transcripts/session-title";
+import { env } from "@genesiscz/utils/env";
+import { sessionsDir } from "@genesiscz/utils/grok/worker-paths";
 import type { TranscriptLocator } from "@genesiscz/utils/harness/parts";
 import { SafeJSON } from "@genesiscz/utils/json";
 import { logger } from "@genesiscz/utils/logger";
@@ -11,22 +13,23 @@ import { logger } from "@genesiscz/utils/logger";
 /** The Grok driver's `locate` part: `<cwd>/<sessionId>/updates.jsonl` under the Grok home, and worker turn files. */
 export const grokLocate: TranscriptLocator = {
     // A worker home can be the native home of a worker process, so the worker root is matched first.
-    pathRoots: ({ resolved }) => [
-        { root: resolved.grokWorker, source: "worker" },
-        { root: resolved.grokHome, source: "native" },
+    defaultRoots: () => ({ native: [env.grok.getHome()], worker: sessionsDir() }),
+    pathRoots: (roots) => [
+        { root: roots.worker, source: "worker" },
+        ...roots.native.map((root) => ({ root, source: "native" as const })),
     ],
     // Native grok is `<cwd>/<sessionId>/updates.jsonl`: the id is the folder.
     sessionOfPath: ({ source, stem, filePath }) =>
         source === "worker"
             ? workerTurnChain({ provider: "grok", stem, filePath })
             : { provider: "grok", source, sessionId: basename(dirname(filePath)), filePath },
-    find: (query, { resolved }, fs) => [
-        ...findGrokNative(query, resolved.grokHome, fs),
-        ...findGrokWorker(query, resolved.grokWorker, fs),
+    find: (query, roots, fs) => [
+        ...roots.native.flatMap((home) => findGrokNative(query, home, fs)),
+        ...findGrokWorker(query, roots.worker, fs),
     ],
     // A `tools grok` worker writes only its own turn files.
     workerNative: () => null,
-    rootsOfHome: (home) => ({ grokHome: home }),
+    rootsOfHome: (home) => ({ native: [home] }),
     // Each session folder's summary names its title.
     titledSessions: ({ roots }) => grokSessions(roots),
 };

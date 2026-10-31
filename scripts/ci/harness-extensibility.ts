@@ -85,6 +85,7 @@ export const testbotHarness: HarnessDriver<"testbot"> = {
             resumeSyntax: { flags: ["--resume"], subcommand: false, render: (sessionId) => \`--resume \${sessionId}\` },
         },
         locate: {
+            defaultRoots: () => ({ native: [process.env.TESTBOT_HOME ?? "/nonexistent"], worker: "/nonexistent" }),
             pathRoots: () => [{ root: process.env.TESTBOT_HOME ?? "/nonexistent", source: "native" }],
             sessionOfPath: ({ source, stem, filePath }) => ({ provider: "testbot", source, sessionId: stem, filePath }),
             find: (query, _roots, fs) => {
