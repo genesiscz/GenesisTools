@@ -29,7 +29,7 @@ tools rm profile set <name> --agent codex --ask-action request [...]
 tools rm profile remove <name>
 ```
 
-Exit codes: 0 done, 1 something was refused, 3 a request waits for the user.
+Exit codes: 0 done, 1 something was refused or a person kept it at the prompt, 3 a request waits for the user.
 
 ## The rules
 
