@@ -338,6 +338,7 @@ async function pressDialogOption({
     opts,
     deps,
     source,
+    continuedTo,
 }: {
     target: FocusTarget;
     surfaceId: string;
@@ -345,8 +346,10 @@ async function pressDialogOption({
     opts: SendOptions & { option: string };
     deps: SendCommandDeps;
     source: string;
+    /** The live id when the queried session continued in another one: its pane gets the keys, so its record names them. */
+    continuedTo?: string;
 }): Promise<boolean> {
-    const sessionId = sessionIdsIn(query)[0] ?? target.sessionIds[0];
+    const sessionId = continuedTo ?? sessionIdsIn(query)[0] ?? target.sessionIds[0];
 
     if (!sessionId) {
         return refuseOption({
@@ -524,6 +527,7 @@ export async function sendCommand(
             opts: { ...opts, option },
             deps,
             source: result.source,
+            continuedTo: result.continuedTo,
         });
     }
 

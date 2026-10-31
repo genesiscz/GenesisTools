@@ -279,6 +279,24 @@ test("--option presses the option's digit into the open dialog, never text plus 
     });
 });
 
+test("--option on a continued session reads the live session's dialog record", async () => {
+    const successor = "77777777-7777-4777-8777-777777777777";
+    setSnapshot([pane({ id: "pane:7", surfaces: [surface({ id: "surface:41", title: successor, selected: true })] })]);
+    const read: string[] = [];
+    const answering = {
+        ...deps,
+        continuedIn: async (id: string) => (id === SESSION_A ? successor : undefined),
+        openRecords: (id: string) => {
+            read.push(id);
+            return id === successor ? [askRecord({ sessionId: successor })] : [askRecord()];
+        },
+    };
+
+    await sendCommand(SESSION_A, "", { option: "b", json: true }, answering);
+    expect(read).toEqual([successor]);
+    expect(events.filter((event) => event.startsWith("send"))).toEqual(["send --surface surface:41 --force -- 2"]);
+});
+
 test("--option does not close a dialog when writing a digit cannot confirm submission", async () => {
     setSnapshot([pane({ id: "pane:7", surfaces: [surface({ id: "surface:41", title: SESSION_A, selected: true })] })]);
     const closed: OpenQuestion[] = [];
