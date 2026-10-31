@@ -68,6 +68,13 @@ struct ExternalLink: View {
             }
             .font(font)
             .foregroundColor(color)
+            // No responder at rest, but still the same link to VoiceOver and `tools control`, which open it through its
+            // default action (the hover that makes the row live never comes from the VoiceOver cursor).
+            .restingButton { ExternalOpener.open(url) }
+            .accessibilityRemoveTraits(.isButton)
+            .accessibilityAddTraits(.isLink)
+            .accessibilityLabel(Text(text))
+            .accessibilityValue(Text(url.absoluteString))
         } else if let url {
             Button {
                 ExternalOpener.open(url)
