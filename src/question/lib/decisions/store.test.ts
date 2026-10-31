@@ -2372,6 +2372,41 @@ test("decision dry-run applies the same selected-kind filter as delivery", async
     expect(readDecisions(file).map((row) => row.state)).toEqual(["sent", "answered"]);
 });
 
+test("a relayed decision send passes --force to the pane send when asked", async () => {
+    const dir = mkdtempSync(join(tmpdir(), "decision-force-"));
+    const file = join(dir, "decisions.jsonl");
+    const events = join(dir, "events.jsonl");
+    const [row] = await postDecisions(file, events, {
+        sessionId: "dialog-session",
+        decisions: [{ prompt: "Ship it?", options: ["yes", "no"] }],
+    });
+    writeFileSync(file, `${SafeJSON.stringify({ ...row, state: "answered", option: "a", answeredVia: "inbox" })}\n`);
+    const calls: string[][] = [];
+
+    await sendAnsweredDecisions({
+        session: "dialog-session",
+        provider: "claude",
+        force: true,
+        files: { file, events },
+        deps: {
+            nativeWorkers: () => [],
+            claudePeers: () => [],
+            findTargets: livePaneTargets,
+            openDialog: () => {
+                throw new Error("force must not ask the dialog guard");
+            },
+            runTool: async (args) => {
+                calls.push(args);
+                return { success: true, stdout: '{"sent":true}', stderr: "" };
+            },
+        },
+    });
+
+    expect(calls).toHaveLength(1);
+    expect(calls[0]?.slice(0, 3)).toEqual(["claude", "cmux", "send"]);
+    expect(calls[0]).toContain("--force");
+});
+
 test("a lost receipt stamps only the decisions this send claimed, never one reserved by another queue", async () => {
     const dir = mkdtempSync(join(tmpdir(), "decision-claimed-"));
     const file = join(dir, "decisions.jsonl");
