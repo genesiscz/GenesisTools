@@ -36,7 +36,10 @@ export interface RmRequestMeasurements {
     items: RmMeasuredItem[];
 }
 
-/** How many walk entries pass between two event-loop turns, so a window's reply is read while a big tree is walked. */
+/**
+ * How many walk entries (files and folders) pass between two event-loop turns, so a window's reply is read while a
+ * big tree is walked.
+ */
 const YIELD_EVERY = 2000;
 
 export function rmMeasurementsDir(requestsDir = rmRequestsDir()): string {
@@ -126,8 +129,10 @@ function nextTurn(): Promise<void> {
 }
 
 /**
- * `measureBytes` that gives the event loop a turn every few thousand entries: the CLI reads the approval window's
- * answer while it walks. Throws the signal's reason when aborted; 0 when the path cannot be read.
+ * `measureBytes` that gives the event loop a turn every few thousand entries, folders included: the CLI reads the
+ * approval window's answer while it walks. `walkFiles` hands out files only and goes down into an empty folder
+ * without one, so it lists one folder per call here and the folders below go on this function's own stack. Throws
+ * the signal's reason when aborted; 0 when the path cannot be read.
  */
 export async function measureBytesAsync(path: string, signal?: AbortSignal): Promise<number> {
     let stat: ReturnType<typeof lstatSync>;
@@ -145,10 +150,25 @@ export async function measureBytesAsync(path: string, signal?: AbortSignal): Pro
 
     let total = 0;
     let seen = 0;
+    const folders = [path];
+    const below = (dir: string): false => {
+        folders.push(dir);
+        return false;
+    };
 
     try {
-        for (const entry of walkFiles(path, { signal })) {
-            total += entry.allocated;
+        while (folders.length > 0) {
+            const dir = folders.pop() ?? path;
+
+            for (const entry of walkFiles(dir, { signal, shouldEnter: below })) {
+                total += entry.allocated;
+                seen++;
+
+                if (seen % YIELD_EVERY === 0) {
+                    await nextTurn();
+                }
+            }
+
             seen++;
 
             if (seen % YIELD_EVERY === 0) {

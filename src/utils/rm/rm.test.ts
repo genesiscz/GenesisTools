@@ -50,6 +50,8 @@ import {
     loadRmConfig,
     loadRmRequest,
     mayDenyRmRequest,
+    measureBytes,
+    measureBytesAsync,
     moveAside,
     moveToTrash,
     parseRmConfig,
@@ -1791,5 +1793,27 @@ describe("crash safety: the record comes before the move", () => {
         expect(request.targets.map((t) => t.stored)).toEqual(aside?.moved.map((t) => t.stored) ?? []);
         expect(request.asideDir).toBe(aside?.dir);
         expect(recoverAsideJournals(requestsDir)).toEqual([]);
+    });
+});
+
+describe("measureBytesAsync", () => {
+    test("gives the event loop a turn in a tree of empty folders, and counts what measureBytes counts", async () => {
+        const root = dir("measure-empty-folders");
+
+        for (let index = 0; index < 2500; index++) {
+            mkdirSync(join(root, `d${index}`));
+        }
+
+        file(join(root, "d7", "only.bin"), "abc");
+        let turned = false;
+        setImmediate(() => {
+            turned = true;
+        });
+        // The callback can only run before the walk ends when the walk gave the event loop a turn.
+        const measured = await measureBytesAsync(root).then((bytes) => ({ bytes, turned }));
+
+        expect(measured.turned).toBe(true);
+        expect(measured.bytes).toBe(measureBytes(root));
+        expect(measured.bytes).toBeGreaterThan(0);
     });
 });
