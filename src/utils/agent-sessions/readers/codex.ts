@@ -20,11 +20,11 @@ import type {
     BoundedMetadataField,
     ForwardRead,
     HistoryMetadataRead,
+    HistoryOperations,
     HistoryReadOptions,
     HistoryRecordRead,
     HistorySourceRecord,
     NativeHistoryEntry,
-    NativeSessionReader,
     NativeSessionSource,
     NativeSourceIssue,
     ReadBackwardOptions,
@@ -1327,21 +1327,7 @@ async function readCodexMetadataUncounted(
     };
 }
 
-export type CodexHistoryOperations = Pick<NativeSessionReader<"codex">, "parserVersion"> &
-    Required<
-        Pick<
-            NativeSessionReader<"codex">,
-            | "readMetadata"
-            | "scan"
-            | "readRecords"
-            | "readBackward"
-            | "readTurnBoundary"
-            | "readForward"
-            | "continuedIn"
-            | "modelOfRow"
-            | "rowAnchors"
-        >
-    >;
+export type CodexHistoryOperations = HistoryOperations<"codex">;
 
 /** The rollout JSONL from an offset to its end. Its rows carry no id, so a row's key is `@<byte offset>`. */
 async function readCodexForward(

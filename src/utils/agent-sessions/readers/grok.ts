@@ -15,11 +15,11 @@ import type {
     BoundedMetadataField,
     ForwardRead,
     HistoryMetadataRead,
+    HistoryOperations,
     HistoryReadOptions,
     HistoryRecordRead,
     HistorySourceRecord,
     NativeHistoryEntry,
-    NativeSessionReader,
     NativeSessionSource,
     NativeSourceIssue,
     ReadBackwardOptions,
@@ -685,21 +685,7 @@ async function readGrokMetadataUncounted(
     };
 }
 
-export type GrokHistoryOperations = Pick<NativeSessionReader<"grok">, "parserVersion"> &
-    Required<
-        Pick<
-            NativeSessionReader<"grok">,
-            | "readMetadata"
-            | "scan"
-            | "readRecords"
-            | "readBackward"
-            | "readTurnBoundary"
-            | "readForward"
-            | "continuedIn"
-            | "modelOfRow"
-            | "rowAnchors"
-        >
-    >;
+export type GrokHistoryOperations = HistoryOperations<"grok">;
 
 /**
  * The chat history JSONL from an offset to its end. Its rows carry no id, so a row's key is `@<byte offset>`; a

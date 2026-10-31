@@ -21,11 +21,11 @@ import type {
     ContinuedInOptions,
     ForwardRead,
     HistoryMetadataRead,
+    HistoryOperations,
     HistoryReadOptions,
     HistoryRecordRead,
     HistorySourceRecord,
     NativeHistoryEntry,
-    NativeSessionReader,
     NativeSessionSource,
     NativeSourceIssue,
     ReadBackwardOptions,
@@ -688,21 +688,7 @@ async function readClaudeMetadataUncounted(
     };
 }
 
-export type ClaudeHistoryOperations = Pick<NativeSessionReader<"claude">, "parserVersion"> &
-    Required<
-        Pick<
-            NativeSessionReader<"claude">,
-            | "readMetadata"
-            | "scan"
-            | "readRecords"
-            | "readBackward"
-            | "readTurnBoundary"
-            | "readForward"
-            | "continuedIn"
-            | "modelOfRow"
-            | "rowAnchors"
-        >
-    >;
+export type ClaudeHistoryOperations = HistoryOperations<"claude">;
 
 /** The session JSONL from an offset to its end; a row's key is its `uuid`, the id a transcript scroll targets. */
 async function readClaudeForward(
