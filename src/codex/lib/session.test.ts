@@ -17,6 +17,7 @@ import {
     LIST_PREVIEW_LINES,
     listPendingRequests,
     NOTICE_PREVIEW_LINES,
+    renderFileChanges,
     renderPendingApproval,
 } from "./pending-approval";
 import { readReviewRecords } from "./review/ledger";
@@ -1121,6 +1122,32 @@ describe("CodexSessionRuntime", () => {
         });
         expect(lines).toContain("last");
         expect(lines.filter((line) => line === "line")).toHaveLength(200_000);
+    });
+
+    test("a bounded preview of a 200,001-line file keeps its budget and still counts every line", () => {
+        const big = `${"line\n".repeat(200_000)}last`;
+        const lines = renderFileChanges({
+            name: "reviewer",
+            requestId: "large",
+            maxLines: 12,
+            approval: {
+                method: "item/fileChange/requestApproval",
+                changes: [
+                    { path: "large.txt", kind: "add", diff: big },
+                    { path: "next.txt", kind: "add", diff: "a\nb\n" },
+                    { path: "empty.txt", kind: "add", diff: "" },
+                ],
+            },
+        });
+
+        expect(lines[0]).toBe("=== add large.txt: proposed file, 200001 lines ===");
+        expect(lines.filter((line) => line === "line")).toHaveLength(12);
+        expect(lines[13]).toStartWith("… 199989 more lines, ");
+        expect(lines.slice(14, 16)).toEqual([
+            "=== add next.txt: proposed file, 2 lines ===",
+            expect.stringMatching(/^… 2 more lines, /),
+        ]);
+        expect(lines.slice(16)).toEqual(["=== add empty.txt: proposed file, 0 lines ==="]);
     });
 
     test("declines and clears unresolved approvals while closing", async () => {

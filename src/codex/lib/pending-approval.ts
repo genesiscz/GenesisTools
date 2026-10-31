@@ -120,17 +120,33 @@ export function listPendingRequests(store: CodexSessionStore, name?: string): Pe
     return requests;
 }
 
-function contentLines(diff: string): string[] {
-    if (!diff) {
-        return [];
+/**
+ * The first `max` content lines of `diff` and how many it has in all, as `diff.split("\n")` without its trailing
+ * empty line would give. It walks the newline offsets and copies only the lines it keeps, so a preview of a large
+ * generated file costs its few shown lines, not one string per line of the file.
+ */
+function contentLines(diff: string, max = Number.POSITIVE_INFINITY): { shown: string[]; total: number } {
+    const shown: string[] = [];
+    let total = 0;
+    let start = 0;
+
+    while (start < diff.length) {
+        const newline = diff.indexOf("\n", start);
+        const end = newline === -1 ? diff.length : newline;
+
+        if (shown.length < max) {
+            shown.push(diff.slice(start, end));
+        }
+
+        total++;
+        start = end + 1;
+
+        if (newline === -1) {
+            break;
+        }
     }
 
-    const lines = diff.split("\n");
-    if (lines.at(-1) === "") {
-        lines.pop();
-    }
-
-    return lines;
+    return { shown, total };
 }
 
 function changeLabel(change: PendingFileChange): string {
@@ -184,14 +200,13 @@ export function renderFileChanges(options: {
             continue;
         }
 
-        const body = contentLines(change.diff);
-        lines.push(`=== ${change.kind} ${change.path}${moved}: ${changeLabel(change)}, ${body.length} lines ===`);
-        const shown = body.slice(0, Math.max(0, budget));
+        const { shown, total } = contentLines(change.diff, Math.max(0, budget));
+        lines.push(`=== ${change.kind} ${change.path}${moved}: ${changeLabel(change)}, ${total} lines ===`);
         for (const line of shown) {
             lines.push(line);
         }
         budget -= shown.length;
-        const hidden = body.length - shown.length;
+        const hidden = total - shown.length;
 
         if (hidden > 0) {
             lines.push(`… ${hidden} more lines, ${fullRequestCommand(name, requestId)}`);
