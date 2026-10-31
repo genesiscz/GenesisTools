@@ -1,6 +1,5 @@
 import { closeSync, fstatSync, openSync, readSync } from "node:fs";
 import { isZstdPath, readZstdFramesSync, zstdContentBytes } from "@genesiscz/utils/compress/zstd";
-import { parseTranscriptLine } from "./parse-line";
 
 // The provider's own session file, for what `tools ai sessions tail` turns leave out: per-call
 // usage with cache writes and the model (Claude turns carry no usage at all), exact tool timing
