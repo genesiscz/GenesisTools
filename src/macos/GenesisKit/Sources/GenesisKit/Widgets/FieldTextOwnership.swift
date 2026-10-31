@@ -67,11 +67,4 @@ struct FieldTextOwnership {
         if let last = lastEdit[key], now.timeIntervalSince(last) < quietPeriod { return false }
         return revision >= floors[key, default: Int.min]
     }
-
-    /// When the typing hold on `key` ends by time alone, if it has not yet.
-    func quietEnds(_ key: String, now: Date) -> Date? {
-        guard let last = lastEdit[key] else { return nil }
-        let end = last.addingTimeInterval(quietPeriod)
-        return end > now ? end : nil
-    }
 }
