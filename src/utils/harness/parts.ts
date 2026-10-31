@@ -148,11 +148,6 @@ export interface TranscriptFacts {
      */
     readonly keepsLiveRegistry: boolean;
     /**
-     * The second log the turn state needs beside a transcript, or null for none: Grok writes its permission prompts
-     * to `events.jsonl` in the session folder; Claude's go to its `Notification` hook and Codex persists none.
-     */
-    eventLog(transcriptPath: string): string | null;
-    /**
      * The turns of a window of native records (a receipt's context in `around.ts`). A driver holds a
      * `deferredWindowTurns` (`deferred.ts`) that loads its turn parser on the first call.
      */
