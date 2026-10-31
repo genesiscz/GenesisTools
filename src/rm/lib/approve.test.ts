@@ -47,7 +47,7 @@ import {
     denyRequest,
     splitBySelection,
 } from "./approve";
-import type { RunContext } from "./run";
+import { executePlan, type RunContext } from "./run";
 
 const AGENT: RmCaller = { agent: "claude-code", sessionId: "sess-2222", isInAgent: true };
 const PERSON: RmCaller = { agent: "person", sessionId: null, isInAgent: false };
@@ -680,5 +680,38 @@ describe("sizes measured with the request", () => {
         expect(await collect(rows)).toEqual([
             expect.objectContaining({ path: request.targets[0]?.path, measuring: false, bytes: expect.any(Number) }),
         ]);
+    });
+});
+
+describe("a run that asks", () => {
+    test("opens one request per run, and that request owns the aside copies", async () => {
+        const paths = [file(join(base, "ask-once", "a.txt")), file(join(base, "ask-once", "b.txt"))];
+        const verdict = { kind: "ask" as const, rule: "default", reason: "no rule allows it" };
+        const plan = paths.map((path) => ({ target: resolveTarget(path, base), verdict }));
+        const before = new Set(listRmRequests().map((request) => request.id));
+        const started: string[] = [];
+        const exitCode = process.exitCode;
+
+        try {
+            const result = await executePlan(
+                plan,
+                { ...context(), caller: AGENT },
+                { aside: true },
+                {
+                    startMeasurement: (id) => started.push(id),
+                    kickDrainer: () => undefined,
+                    asideRoot: join(base, "aside", "ask-once"),
+                }
+            );
+            const opened = listRmRequests().filter((request) => !before.has(request.id));
+
+            expect(opened.map((request) => request.id)).toEqual([result.requestId ?? ""]);
+            expect(started).toEqual([result.requestId ?? ""]);
+            expect(opened[0]?.targets.map((target) => target.path).sort()).toEqual([...paths].sort());
+            expect(opened[0]?.targets.every((target) => target.stored && existsSync(target.stored))).toBe(true);
+            expect(paths.some((path) => existsSync(path))).toBe(false);
+        } finally {
+            process.exitCode = exitCode;
+        }
     });
 });

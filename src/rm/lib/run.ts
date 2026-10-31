@@ -84,6 +84,16 @@ export interface ExecuteResult {
     denials: RmPriorDenial[];
 }
 
+/** The background processes a run starts, and where its aside moves go; tests replace them. */
+export interface ExecuteDeps {
+    startMeasurement: (requestId: string) => void;
+    kickDrainer: (config: RmConfig) => void;
+    /** The aside root; the caller's session scratch when absent. */
+    asideRoot?: string;
+}
+
+const DEFAULT_EXECUTE_DEPS: ExecuteDeps = { startMeasurement: startRmMeasurement, kickDrainer };
+
 /**
  * Carries out a plan: refused paths are reported, paths that need a person become a request (or, for a person at a
  * terminal, a confirmation by person), and allowed paths move to the trash for the background drain.
@@ -91,7 +101,8 @@ export interface ExecuteResult {
 export async function executePlan(
     plan: RmPlanItem[],
     ctx: RunContext,
-    options: ExecuteOptions
+    options: ExecuteOptions,
+    deps: ExecuteDeps = DEFAULT_EXECUTE_DEPS
 ): Promise<ExecuteResult> {
     const result: ExecuteResult = { batches: [], requestId: null, refused: 0, denials: [] };
     const confirmedMinutes = new Map<RmPlanItem, number>();
@@ -233,18 +244,12 @@ export async function executePlan(
     }
 
     if (requestLater) {
-        const asking = requestForAsked(asked, ctx, options);
+        const asking = requestForAsked(asked, ctx, options, deps);
         result.requestId = asking.id;
         result.denials = asking.denials;
     }
 
-    if (requestLater) {
-        const asking = requestForAsked(asked, ctx, options);
-        result.requestId = asking.id;
-        result.denials = asking.denials;
-    }
-
-    kickDrainer(ctx.config);
+    deps.kickDrainer(ctx.config);
 
     if (moveError !== undefined) {
         throw moveError;
@@ -357,7 +362,8 @@ function printPriorDenials(denials: readonly RmPriorDenial[], cwd: string): void
 function requestForAsked(
     asked: RmPlanItem[],
     ctx: RunContext,
-    options: ExecuteOptions
+    options: ExecuteOptions,
+    deps: ExecuteDeps
 ): { id: string; denials: RmPriorDenial[] } {
     const denials = priorDenials(
         asked.map((item) => item.target.path),
@@ -378,10 +384,11 @@ function requestForAsked(
         caller: ctx.caller,
         cwd: ctx.cwd,
         reason: options.reason ?? null,
+        root: deps.asideRoot,
     });
 
     // The sizes are measured in the background, so `approve` opens its window without walking the trees.
-    startRmMeasurement(request.id);
+    deps.startMeasurement(request.id);
 
     if (!options.json) {
         if (aside && aside.moved.length > 0) {
