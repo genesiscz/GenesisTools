@@ -86,7 +86,14 @@ import { applyQuestionHookAction, questionHookAction } from "./questions";
 import { hasDialogRecords, QUESTION_TOOL_MATCHER } from "./questions-gate";
 import { checkRuleExamples, replayCorpus } from "./rules-check";
 import { applyRuleSelection, applySetting, ruleEnabled, setHooksConfig, setRuleSelection } from "./set-config";
-import { bumpContextCounts, hooksStateDir, readContextCounts } from "./state";
+import {
+    bumpContextCounts,
+    type HookSessionState,
+    hooksStateDir,
+    migrateHookState,
+    readContextCounts,
+    readHookState,
+} from "./state";
 import { BUILT_IN_RULES } from "./tool-rules";
 import { unpushedReminders, unpushedState } from "./unpushed";
 import { writeJsonFile } from "./write-json";
@@ -1550,6 +1557,45 @@ describe("hook state across processes", () => {
             expect(readContextCounts("sess-parallel")).toEqual({ "rule-x": 45 });
         });
     }, 30_000);
+
+    it("a version 1 file (one flat bag of numbers) reads as the typed state and is rewritten as version 2", async () => {
+        const home = mkdtempSync(join(tmpdir(), "gt-hook-state-"));
+        const old = {
+            "rule-x": 3,
+            "decisions-stop-block": 1,
+            "decisions-nudge-block": 2,
+            "decisions-nudge-turn": 77,
+            "decisions-chat-checked": 1000,
+            "decisions-chat-offset:0123456789abcdef": 512,
+            "decisions-chat-sent-back:d_3_sess-old": 1,
+        };
+        const expected: HookSessionState = {
+            version: 2,
+            guard: { contextNotes: { "rule-x": 3 } },
+            decisions: {
+                stopBlocks: 1,
+                nudge: { blocks: 2, lastTurn: 77 },
+                chat: { checkedAt: 1000, offsets: { "0123456789abcdef": 512 }, sentBack: ["d_3_sess-old"] },
+            },
+        };
+
+        await env.testing.withOverrides({ GENESIS_TOOLS_HOME: home }, async () => {
+            const path = join(hooksStateDir(), "sess-old.json");
+            mkdirSync(hooksStateDir(), { recursive: true });
+            writeFileSync(path, SafeJSON.stringify(old));
+
+            expect(readHookState("sess-old")).toEqual(expected);
+            expect(readContextCounts("sess-old")).toEqual({ "rule-x": 3 });
+            // A read never migrates the file; the next update does.
+            expect(SafeJSON.parse(readFileSync(path, "utf8"))).toEqual(old);
+
+            await bumpContextCounts("sess-old", ["rule-x"]);
+
+            const written = SafeJSON.parse(readFileSync(path, "utf8"));
+            expect(written).toEqual({ ...expected, guard: { contextNotes: { "rule-x": 4 } } });
+            expect(migrateHookState(written)).toEqual(written);
+        });
+    });
 
     it("a state file that does not parse is kept aside and the counter starts over", async () => {
         const home = mkdtempSync(join(tmpdir(), "gt-hook-state-"));
