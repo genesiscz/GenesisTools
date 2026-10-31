@@ -1495,6 +1495,56 @@ test("links: in a two-checkout session the written title decides, and no evidenc
     expect(note).not.toContain("#105 ->");
 });
 
+test("links: a failed lookup in one checkout leaves a title match in the other unproven", async () => {
+    forgetPullRequests();
+    takeLinkedPullRequestNote();
+    const { ctx } = twoCheckouts(
+        { "acme/Playground#110": "fix: the shared title", "acme/Toolbox#110": "fix: the shared title" },
+        GH_ONLY
+    );
+    const run = ctx.host.run;
+    ctx.host = {
+        ...ctx.host,
+        async run(argv, options) {
+            if (argv.includes("acme/Toolbox")) {
+                throw new Error("timed out");
+            }
+
+            return run(argv, options);
+        },
+    };
+
+    expect(await linkLine(ctx, "See #110 (fix: the shared title).\n")).toBe("See #110 (fix: the shared title).\n");
+    expect(ctx.log).toContainEqual(expect.objectContaining({ kind: "pr-unsure", lookupFailed: ["acme/Toolbox"] }));
+});
+
+test("links: a written title with a code span still decides, and a repository name inside it is not a pointer", async () => {
+    forgetPullRequests();
+    takeLinkedPullRequestNote();
+    const { ctx } = twoCheckouts(
+        {
+            "acme/Playground#111": "fix: update `widget` handling",
+            "acme/Toolbox#111": "feat: something else",
+            "acme/Toolbox#112": "fix: Playground integration",
+            "acme/Playground#112": "chore: unrelated",
+            "acme/Toolbox#113": "first",
+            "acme/Playground#113": "second",
+        },
+        GH_ONLY
+    );
+
+    expect(await linkLine(ctx, "Done in #111 (fix: update `widget` handling).\n")).toContain(
+        "[#111](https://github.com/acme/Playground/pull/111)"
+    );
+    expect(await linkLine(ctx, "Done in #112 (fix: Playground integration).\n")).toBe(
+        "Done in [#112](https://github.com/acme/Toolbox/pull/112) (fix: Playground integration).\n"
+    );
+    // No title matches, so the name in the parentheses picks the repository.
+    expect(await linkLine(ctx, "Done in #113 (in Playground).\n")).toBe(
+        "Done in [#113](https://github.com/acme/Playground/pull/113) (in Playground).\n"
+    );
+});
+
 test("links: a one-checkout session links a bare number in its checkout as before, and names count as words", async () => {
     forgetPullRequests();
     takeLinkedPullRequestNote();
