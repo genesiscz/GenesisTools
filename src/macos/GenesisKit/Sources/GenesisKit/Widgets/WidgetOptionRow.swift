@@ -148,10 +148,9 @@ struct WidgetItemOptionButton: View {
         }
         .buttonStyle(RowButtonStyle(cornerRadius: WidgetOptionLabel.cornerRadius))
         .disabled(model.sendingDecisionIDs.contains(item.sourceId) || model.dialogSendingIDs.contains(item.sourceId))
-        .instantTooltip(item.kind == "dialog" ? "Send this option to the open dialog." :
-            LiveWidgetView.choiceTooltip(WidgetChoice(id: letter, title: text, recommended: recommended),
-                                         index: 10, stages: stages, picked: picked,
-                                         swaps: model.snapshot?.state.preferences.decisionCommandSwaps ?? true))
+        .instantTooltip(item.kind == "dialog" ? "Send this option to the open dialog." : DecisionAnswering.optionTooltip(
+            letter, recommended: recommended, stages: stages, picked: picked,
+            swaps: model.snapshot?.state.preferences.decisionCommandSwaps ?? true))
         .accessibilityLabel(WidgetOptionText.accessibilityLabel(letter: letter, text: text, stages: stages,
                                                                 recommended: recommended))
         .accessibilityValue(picked ? "Staged" : "")

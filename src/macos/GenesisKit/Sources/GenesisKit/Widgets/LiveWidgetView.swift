@@ -610,9 +610,9 @@ public struct LiveWidgetView: View {
         .disabled(model.importing > 0 || model.cardPending || model.sendingDecisionIDs.contains(card.sourceId)
                   || model.dialogSendingIDs.contains(card.sourceId))
         .id("choice-" + card.id + "-" + choice.id)
-        .instantTooltip(card.kind == "dialog" ? "Send this option to the open dialog." :
-            Self.choiceTooltip(choice, index: index, stages: stages, picked: picked,
-                               swaps: model.snapshot?.state.preferences.decisionCommandSwaps ?? true))
+        .instantTooltip(card.kind == "dialog" ? "Send this option to the open dialog." : DecisionAnswering.optionTooltip(
+            choice.id, recommended: choice.recommended, stages: stages, picked: picked,
+            swaps: model.snapshot?.state.preferences.decisionCommandSwaps ?? true, key: index < 9 ? index + 1 : nil))
         .accessibilityLabel(WidgetOptionText.accessibilityLabel(letter: choice.id, text: text, stages: stages,
                                                                 recommended: choice.recommended))
         .accessibilityValue(picked ? "Staged" : "")
@@ -632,11 +632,6 @@ public struct LiveWidgetView: View {
     /// the note with Undo goes away.
     private func holdMove(_ card: WidgetCard, to state: String) {
         ledgerUndo.hold(card, to: state, model: model, reduceMotion: reduceMotion)
-    }
-
-    static func choiceTooltip(_ choice: WidgetChoice, index: Int, stages: Bool, picked: Bool, swaps: Bool = true) -> String {
-        DecisionAnswering.optionTooltip(choice.id, recommended: choice.recommended, stages: stages, picked: picked,
-                                        swaps: swaps, key: index < 9 ? index + 1 : nil)
     }
 
     @ViewBuilder private func cardDetail(_ card: WidgetCard) -> some View {
