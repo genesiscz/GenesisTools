@@ -371,12 +371,42 @@ describe("anthropicToResponses: a client tool call the model made as a custom to
         const out = anthropicToResponses({ messages: [messages[1], messages[2]] }, "gpt-6.1-sol", {
             reasoningItem: () => undefined,
             restoreAssistantItems: () => restored,
+            customToolCall,
         });
         const output = (out.input as Array<{ type?: string; call_id?: string }>).find(
             (item) => item.call_id === "call_exec" && item.type !== "custom_tool_call"
         );
 
         expect(output?.type).toBe("custom_tool_call_output");
+    });
+
+    it("with the bridge off, a remembered custom call is replayed as the function call a fresh translation sends", () => {
+        const reasoning = { type: "reasoning", id: "rs_1", encrypted_content: "enc" };
+        const restored = [
+            reasoning,
+            { type: "custom_tool_call", call_id: "call_exec", name: "exec", input: "js-1" },
+            { type: "function_call", call_id: "call_plain", name: "Bash", arguments: '{"command":"ls"}' },
+        ];
+        const fresh = anthropicToResponses({ messages }, "gpt-6.1-sol", { reasoningItem: () => undefined });
+        const out = anthropicToResponses({ messages }, "gpt-6.1-sol", {
+            reasoningItem: () => undefined,
+            restoreAssistantItems: () => restored,
+        });
+
+        expect(out.input).toEqual([(fresh.input as unknown[])[0], reasoning, ...(fresh.input as unknown[]).slice(1)]);
+    });
+
+    it("a remembered call whose tool_use is gone from the message is translated afresh", () => {
+        const restored = [{ type: "custom_tool_call", call_id: "call_gone", name: "exec", input: "js-1" }];
+        const out = anthropicToResponses({ messages }, "gpt-6.1-sol", {
+            reasoningItem: () => undefined,
+            restoreAssistantItems: () => restored,
+            customToolCall,
+        });
+
+        expect(out.input).toEqual(
+            anthropicToResponses({ messages }, "gpt-6.1-sol", { reasoningItem: () => undefined, customToolCall }).input
+        );
     });
 });
 
