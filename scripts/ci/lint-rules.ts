@@ -508,7 +508,7 @@ const RULES: Rule[] = [
             "scripts/ci/native-home-ratchet.ts lists the files not migrated yet.",
         test: buildsClaudeHome,
         allowedIn: new RegExp(
-            `(?:^|/)(?:src/utils/claude/(?:projects|auth|executable|peer-message)\\.ts|src/utils/providers/session-paths\\.ts|src/utils/env/[^/]+\\.ts|src/agents/lib/hooks/(?:install|mods)\\.ts|src/mcp-manager/utils/harnesses\\.ts|src/ai-spend/lib/drivers/test-env\\.ts)$|${NATIVE_HOME_TESTS.source}`
+            `(?:^|/)(?:src/utils/claude/(?:projects|auth|executable|peer-message)\\.ts|src/utils/providers/session-paths\\.ts|src/utils/providers/homes/[^/]+\\.ts|src/utils/env/[^/]+\\.ts|src/agents/lib/hooks/(?:install|mods)\\.ts|src/mcp-manager/utils/harnesses\\.ts|src/ai-spend/lib/drivers/test-env\\.ts)$|${NATIVE_HOME_TESTS.source}`
         ),
         allowedFiles: NATIVE_HOME_CLAUDE_RATCHET,
     },
@@ -523,7 +523,7 @@ const RULES: Rule[] = [
             "scripts/ci/native-home-ratchet.ts lists the files not migrated yet.",
         test: buildsCodexGrokHome,
         allowedIn: new RegExp(
-            `(?:^|/)(?:src/utils/providers/session-paths\\.ts|src/utils/env/[^/]+\\.ts|src/utils/grok/worker-paths\\.ts|src/utils/codex/worker-paths\\.ts|src/utils/agent-sessions/grok-sessions\\.ts|src/utils/agent-sessions/readers/[^/]+\\.ts|src/utils/ai/grok/paths\\.ts|src/agents/lib/hooks/codex\\.ts|src/mcp-manager/utils/harnesses\\.ts|src/ai-spend/lib/drivers/test-env\\.ts)$|${NATIVE_HOME_TESTS.source}`
+            `(?:^|/)(?:src/utils/providers/session-paths\\.ts|src/utils/providers/homes/[^/]+\\.ts|src/utils/env/[^/]+\\.ts|src/utils/grok/worker-paths\\.ts|src/utils/codex/worker-paths\\.ts|src/utils/agent-sessions/grok-sessions\\.ts|src/utils/agent-sessions/readers/[^/]+\\.ts|src/utils/ai/grok/paths\\.ts|src/agents/lib/hooks/codex\\.ts|src/mcp-manager/utils/harnesses\\.ts|src/ai-spend/lib/drivers/test-env\\.ts)$|${NATIVE_HOME_TESTS.source}`
         ),
         allowedFiles: NATIVE_HOME_CODEX_GROK_RATCHET,
     },

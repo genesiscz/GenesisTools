@@ -81,11 +81,7 @@ export const HARNESS_GUARD_ALLOWLIST: Readonly<Record<string, HarnessGuardCounts
     },
     "src/utils/env/envVariables.ts": {
         table: 1,
-        why: "a false positive: the env accessor object has get/has/isFlag members, not harness names",
-    },
-    "src/utils/providers/session-paths.ts": {
-        table: 1,
-        why: "the native-home lint owner: the home folder names may appear only here, so the per-harness NativeHomeLayout objects and their exhaustive table stay in this file",
+        why: "the env accessor namespaces (x, grok, codex, copilot, aiProxy, …): variables grouped by the tool or service that reads them, a wider set than the harnesses",
     },
     "src/utils/rm/approval.ts": {
         table: 1,
