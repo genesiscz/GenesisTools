@@ -26,7 +26,7 @@ import {
 import { dialogRefusal } from "@genesiscz/utils/agents/dialogs/guard";
 import type { DialogProvider, OpenDialog } from "@genesiscz/utils/agents/dialogs/types";
 import { type AccountProviderAlias, isAccountProviderAlias } from "@genesiscz/utils/ai/providers/alias-list";
-import { harnessWorker } from "@genesiscz/utils/ai/providers/harness-index";
+import { harnessDriver } from "@genesiscz/utils/ai/providers/harness-index";
 import {
     type ClaudeLiveSession,
     claudeSessionsDir,
@@ -417,7 +417,7 @@ function isHit(found: RouteHit | NoTarget): found is RouteHit {
 
 /** The `tools` verb that steers a harness's worker, read from its driver's worker verbs (`steer`, `worker steer`). */
 function steerCommand(harness: AccountProviderAlias): string[] {
-    const verb = harnessWorker(harness).verbs.find((entry) => entry.split(" ").at(-1) === "steer");
+    const verb = harnessDriver(harness).parts.worker.verbs.find((entry) => entry.split(" ").at(-1) === "steer");
 
     if (!verb) {
         throw new Error(`The ${harness} worker lists no steer verb.`);

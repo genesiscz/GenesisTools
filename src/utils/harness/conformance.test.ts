@@ -4,13 +4,7 @@ import { join } from "node:path";
 import { ACCOUNT_PROVIDER_ALIASES } from "@genesiscz/utils/ai/providers/alias-list";
 import { providerAliasOf } from "@genesiscz/utils/ai/providers/aliases";
 import { harnessHooks } from "@genesiscz/utils/ai/providers/harness-hooks";
-import {
-    harnessDriver,
-    harnessDrivers,
-    harnessLaunch,
-    harnessLocate,
-    harnessTurnState,
-} from "@genesiscz/utils/ai/providers/harness-index";
+import { harnessDriver, harnessDrivers } from "@genesiscz/utils/ai/providers/harness-index";
 import { registerBuiltInPlugins } from "@genesiscz/utils/ai/providers/plugins";
 import { allProviderPlugins } from "@genesiscz/utils/ai/providers/registry";
 import { directReads } from "@genesiscz/utils/ai/transcripts/resolve";
@@ -103,11 +97,8 @@ describe("every part of every driver loads", () => {
         }
     }
 
-    test("the history part is the plugin's own coding agent reader", async () => {
+    test("each plugin's coding agent reader reads its own harness's sessions", () => {
         for (const plugin of codingAgents) {
-            const reader: unknown = await driverOf(plugin.id).parts.history();
-            const own: unknown = plugin.codingAgent;
-            expect(reader).toBe(own);
             expect(plugin.codingAgent?.kind).toBe(driverOf(plugin.id).id);
         }
     });
@@ -132,7 +123,7 @@ describe("dialog: the keys of every harness's question dialog, or why it has non
 describe("launch: the resume command of every harness", () => {
     for (const driver of harnessDrivers()) {
         test(`${driver.id} resumes with its own binary, and through tools when an account is pinned`, () => {
-            const launch = harnessLaunch(driver.id);
+            const launch = harnessDriver(driver.id).parts.launch;
 
             expect(launch.resumeArgv("s-1", {})[0]).toBe(driver.identity.binary);
             expect(launch.resumeArgv("s-1", {})).toContain("s-1");
@@ -145,7 +136,7 @@ describe("launch: the resume command of every harness", () => {
 describe("turnState: an empty tail of every harness", () => {
     for (const driver of harnessDrivers()) {
         test(`${driver.id} reads a tail with no whole record from the modification time alone`, () => {
-            const reader = harnessTurnState(driver.id);
+            const reader = harnessDriver(driver.id).parts.turnState;
             const base = { records: [], now: 600_000, stallTimeoutMs: 60_000 };
             const stale = reader.read({ ...base, lastModified: 0 });
             const fresh = reader.read({ ...base, lastModified: 599_000 });
@@ -166,9 +157,10 @@ describe("hooks: the light door holds the drivers' own hook facts", () => {
             expect(own).toBe(harnessHooks(driver.id));
         });
 
-        test(`${driver.id}'s hook facts read the model with its reader's own currentModel`, async () => {
-            const reader = await driver.parts.history();
-            expect(driver.parts.hooks.currentModel).toBe(reader.currentModel);
+        test(`${driver.id}'s hook facts read the model with its reader's own currentModel`, () => {
+            const reader = allProviderPlugins().find((plugin) => plugin.harness === driver)?.codingAgent;
+            const own: unknown = reader?.currentModel;
+            expect(own).toBe(driver.parts.hooks.currentModel);
         });
     }
 });
@@ -176,7 +168,7 @@ describe("hooks: the light door holds the drivers' own hook facts", () => {
 describe("locate: the deferred finders of every harness", () => {
     for (const driver of harnessDrivers()) {
         test(`${driver.id} loads its finders on the first call and finds nothing under empty roots`, () => {
-            const locate = harnessLocate(driver.id);
+            const locate = harnessDriver(driver.id).parts.locate;
             const empty = join(REPO_ROOT, ".no-such-transcript-root");
             const roots = { native: [empty], worker: empty };
             expect(locate.defaultRoots().native.length).toBeGreaterThan(0);

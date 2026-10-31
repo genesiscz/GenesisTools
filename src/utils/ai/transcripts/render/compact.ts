@@ -1,4 +1,4 @@
-import { harnessTranscriptFacts } from "@genesiscz/utils/ai/providers/harness-index";
+import { harnessDriver } from "@genesiscz/utils/ai/providers/harness-index";
 import { formatTokens } from "@genesiscz/utils/format";
 import { sliceWhole } from "@genesiscz/utils/string";
 import type { PromptPart } from "../prompt-parts";
@@ -76,7 +76,8 @@ export function formatTotals(envelope: TranscriptEnvelope): string {
         `out ${formatTokens(totals.outputTokens ?? 0)} (reasoning ${formatTokens(totals.reasoningTokens ?? 0)})`;
     const cost = totals.costUsd !== undefined ? ` · $${totals.costUsd.toFixed(4)}` : "";
     const ended =
-        envelope.terminated ?? (harnessTranscriptFacts(envelope.provider).recordsTerminalEvent ? "running" : null);
+        envelope.terminated ??
+        (harnessDriver(envelope.provider).parts.transcript.recordsTerminalEvent ? "running" : null);
     return `${totals.modelCalls} model calls · ${tokens}${cost}${ended ? ` · ended: ${ended}` : ""}`;
 }
 

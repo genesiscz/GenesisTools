@@ -3,7 +3,7 @@ import { getActiveSessionIds } from "@app/claude/lib/tail-list";
 import { accountFromEnv, type LiveAccount } from "@genesiscz/utils/ai/account-env";
 import { type PsProcessRow, parseLsofCwd, parsePsLine } from "@genesiscz/utils/ai/active-processes";
 import type { AgentSessionFacts, AgentWhoSource } from "@genesiscz/utils/ai/active-sessions";
-import { harnessProcess } from "@genesiscz/utils/ai/providers/harness-index";
+import { harnessDriver } from "@genesiscz/utils/ai/providers/harness-index";
 import { cleanTranscriptText } from "@genesiscz/utils/ai/transcripts/clean-text";
 import { humanTextOf, readTailBytes } from "@genesiscz/utils/claude/session.utils";
 import type { ContentBlock } from "@genesiscz/utils/claude/types";
@@ -158,7 +158,7 @@ export function classifyClaudeArgs(args: string): ClaudeProcessKind | null {
         return tokens[tokens.length - 1] === "mcp" ? "mcp" : "sdk";
     }
 
-    if (harnessProcess("claude").runsCli({ argv0, name: base, command: args })) {
+    if (harnessDriver("claude").parts.process.runsCli({ argv0, name: base, command: args })) {
         return "tui";
     }
 
@@ -169,7 +169,7 @@ export function extractLaunchDetails(args: string): { resumeId: string | null; m
     const tokens = args.split(/\s+/);
     const argv0 = tokens[0] ?? "";
     const name = argv0.split("/").pop() ?? "";
-    const entry = harnessProcess("claude").cliEntryIndex({ argv0, name, command: args });
+    const entry = harnessDriver("claude").parts.process.cliEntryIndex({ argv0, name, command: args });
     let resumeId: string | null = null;
     let model: string | null = null;
 

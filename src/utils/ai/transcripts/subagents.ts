@@ -9,7 +9,7 @@
 import { closeSync, existsSync, fstatSync, openSync, readdirSync, readFileSync, readSync, statSync } from "node:fs";
 import { basename, dirname, join } from "node:path";
 import { resolveHistoryProvider } from "@genesiscz/utils/agent-sessions/provider";
-import { harnessTranscriptFacts } from "@genesiscz/utils/ai/providers/harness-index";
+import { harnessDriver } from "@genesiscz/utils/ai/providers/harness-index";
 import { isMissingPathError } from "@genesiscz/utils/fs/canonical";
 import { SafeJSON } from "@genesiscz/utils/json";
 import { logger } from "@genesiscz/utils/logger";
@@ -371,7 +371,7 @@ function readAgentFresh(
 export function listSubagents(resolved: ResolvedTranscript, options: ListSubagentsOptions = {}): SessionSubagents {
     const now = options.now ?? Date.now();
     const staleAfterMs = options.staleAfterMs ?? DEFAULT_STALE_MS;
-    if (!harnessTranscriptFacts(resolved.provider).subagentsOnDisk) {
+    if (!harnessDriver(resolved.provider).parts.transcript.subagentsOnDisk) {
         return { sessionId: resolved.sessionId, subagents: [] };
     }
 

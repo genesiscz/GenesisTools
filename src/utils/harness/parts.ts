@@ -1,6 +1,5 @@
 import type { AgentRuntimeContext } from "@genesiscz/utils/agent/context";
 import type { ResumeOptions } from "@genesiscz/utils/agent-sessions/resume-argv";
-import type { NativeSessionReader } from "@genesiscz/utils/agent-sessions/types";
 import type { DialogKeyMap } from "@genesiscz/utils/agents/dialogs/keys";
 import type {
     FolderReads,
@@ -20,7 +19,8 @@ import type { WorkerCapabilities } from "@genesiscz/utils/worker/capabilities";
  * driver's parts are lazy loaders, and importing this module costs nothing at run time.
  *
  * Each contract is written from the code it wraps, not invented: the turn-state reader returns the existing
- * `TurnSnapshot`, and the history part is the existing `NativeSessionReader`. A per-harness table whose code lives in
+ * `TurnSnapshot`. The history reader is not a part: it is `ProviderPlugin.codingAgent`, reached through
+ * `resolveHistoryProvider`, the one door to it. A per-harness table whose code lives in
  * a tool (`src/cmux`, `src/question`, `src/ai-spend`, `src/mcp-manager`, `src/hub`, the worker drivers) stays in that
  * tool, keyed by `HarnessId`, because `src/utils/**` never imports `@app/*`.
  */
@@ -208,7 +208,6 @@ export interface HookFacts {
 /** Parts that wrap parsers and readers: a driver holds a loader, so reading the driver never loads them. */
 export interface LazyPartContracts {
     parse: TranscriptParser;
-    history: NativeSessionReader;
 }
 
 /**

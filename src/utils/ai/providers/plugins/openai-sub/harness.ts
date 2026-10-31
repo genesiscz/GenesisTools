@@ -56,7 +56,6 @@ export const codexHarness: HarnessDriver<"codex"> = {
                       ? 1
                       : 0,
         },
-        history: () => import("@genesiscz/utils/agent-sessions/compact-readers").then((m) => m.codexHistoryReader),
         worker: codexWorker,
         dialog: {
             supported: false,

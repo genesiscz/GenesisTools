@@ -1,7 +1,7 @@
 import { existsSync, readFileSync, realpathSync } from "node:fs";
 import { basename, isAbsolute, relative, resolve, sep } from "node:path";
 import { ACCOUNT_PROVIDER_ALIASES, byHarnessWhere } from "@genesiscz/utils/ai/providers/alias-list";
-import { harnessLocate } from "@genesiscz/utils/ai/providers/harness-index";
+import { harnessDriver } from "@genesiscz/utils/ai/providers/harness-index";
 import { isDir, listDir, mtimeOf } from "@genesiscz/utils/ai/transcripts/resolve-core";
 import { transcriptStem } from "@genesiscz/utils/providers/session-paths";
 import type { TranscriptProvider } from "./types";
@@ -84,12 +84,12 @@ function memoReads(base: FolderReads): FolderReads {
 
 /** One harness's roots for one lookup: what the caller injected, over its locator's defaults. */
 export function harnessRootsOf(provider: TranscriptProvider, roots: TranscriptRoots = {}): HarnessRoots {
-    return { ...harnessLocate(provider).defaultRoots(), ...roots[provider] };
+    return { ...harnessDriver(provider).parts.locate.defaultRoots(), ...roots[provider] };
 }
 
 /** Roots that read one harness's transcripts from one of its homes (a session's own source home) only. */
 export function rootsOfHome(provider: TranscriptProvider, home: string): TranscriptRoots {
-    return byHarnessWhere((id) => (id === provider ? harnessLocate(id).rootsOfHome(home) : undefined));
+    return byHarnessWhere((id) => (id === provider ? harnessDriver(id).parts.locate.rootsOfHome(home) : undefined));
 }
 
 /** The real path when it exists, so a symlinked home (or `~/.claude`) still contains its files. */
@@ -110,8 +110,8 @@ function resolvePath(path: string, roots: TranscriptRoots, provider?: Transcript
     const filePath = resolve(path);
     const stem = transcriptStem(basename(filePath));
     const located = ACCOUNT_PROVIDER_ALIASES.flatMap((id) =>
-        harnessLocate(id)
-            .pathRoots(harnessRootsOf(id, roots))
+        harnessDriver(id)
+            .parts.locate.pathRoots(harnessRootsOf(id, roots))
             .map((entry) => ({ ...entry, provider: id }))
     );
     const hit = located.find((entry) => isInside(entry.root, filePath));
@@ -123,7 +123,7 @@ function resolvePath(path: string, roots: TranscriptRoots, provider?: Transcript
     const resolvedProvider = provider ?? hit?.provider ?? "claude";
     const source = hit?.source ?? "native";
 
-    return harnessLocate(resolvedProvider).sessionOfPath({ source, stem, filePath });
+    return harnessDriver(resolvedProvider).parts.locate.sessionOfPath({ source, stem, filePath });
 }
 
 export async function resolveTranscript(
@@ -140,8 +140,8 @@ export async function resolveTranscript(
  * own transcript (waiting for its turn to end) asks here.
  */
 export function resolveCodexNative(threadId: string, roots: TranscriptRoots = {}): ResolvedTranscript | null {
-    const best = harnessLocate("codex")
-        .find(threadId, harnessRootsOf("codex", roots), directReads)
+    const best = harnessDriver("codex")
+        .parts.locate.find(threadId, harnessRootsOf("codex", roots), directReads)
         .filter((hit) => hit.source === "native")
         .sort((a, b) => b.mtime - a.mtime)[0];
 
@@ -219,7 +219,7 @@ function resolveWith({
     // The search order of the providers when none is given (the canonical harness order); ties in `mtime` keep it.
     const searched: readonly TranscriptProvider[] = provider ? [provider] : ACCOUNT_PROVIDER_ALIASES;
     const hits: RankedHit[] = searched.flatMap((name) =>
-        harnessLocate(name).find(query, harnessRootsOf(name, roots), fs)
+        harnessDriver(name).parts.locate.find(query, harnessRootsOf(name, roots), fs)
     );
     if (hits.length === 0) {
         throw new Error(`No session file found for "${query}"`);

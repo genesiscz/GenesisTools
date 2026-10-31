@@ -13,7 +13,7 @@
  */
 
 import { readdirSync, statSync } from "node:fs";
-import { harnessLocate } from "@genesiscz/utils/ai/providers/harness-index";
+import { harnessDriver } from "@genesiscz/utils/ai/providers/harness-index";
 import { logger } from "@genesiscz/utils/logger";
 import { nativeSessionRoots } from "@genesiscz/utils/providers/session-paths";
 import type { TurnProvider } from "./turn-state";
@@ -85,5 +85,5 @@ export interface TitleSearch {
 export function findSessionsByTitle(query: string, options: FindByTitleOptions): TitledSession[] {
     const now = options.now ?? Date.now();
     const roots = options.roots ?? nativeSessionRoots(options.provider);
-    return rankByTitle(query, harnessLocate(options.provider).titledSessions({ options, roots, now }));
+    return rankByTitle(query, harnessDriver(options.provider).parts.locate.titledSessions({ options, roots, now }));
 }

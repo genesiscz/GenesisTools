@@ -28,7 +28,6 @@ export const HARNESS_PART_LOADING = {
     process: "eager",
     host: "eager",
     worker: "eager",
-    history: "lazy",
     transcript: "eager",
     dialog: "eager",
 } as const satisfies {

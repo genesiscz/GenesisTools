@@ -13,7 +13,7 @@
 
 import type { AgentRuntimeContext } from "@genesiscz/utils/agent/context";
 import { ACCOUNT_PROVIDER_ALIASES, isAccountProviderAlias } from "@genesiscz/utils/ai/providers/alias-list";
-import { harnessDrivers, harnessHost } from "@genesiscz/utils/ai/providers/harness-index";
+import { harnessDriver, harnessDrivers } from "@genesiscz/utils/ai/providers/harness-index";
 import type { HarnessId } from "@genesiscz/utils/harness/types";
 import { targetMatchesSession } from "./fold";
 import type { HandoffEventBy, HandoffTarget } from "./types";
@@ -35,7 +35,7 @@ export const HANDOFF_AGENTS_LIST = HANDOFF_AGENTS.join(", ");
  */
 const AGENT_ALIASES: ReadonlyMap<string, HandoffAgent> = new Map<string, HandoffAgent>([
     ...harnessDrivers().flatMap((driver) =>
-        [driver.id, driver.identity.binary, harnessHost(driver.id).agent, ...driver.identity.aliases].map(
+        [driver.id, driver.identity.binary, harnessDriver(driver.id).parts.host.agent, ...driver.identity.aliases].map(
             (name): [string, HandoffAgent] => [name, driver.id]
         )
     ),
@@ -61,7 +61,7 @@ export function canonicalAgent(raw: string | null | undefined): HandoffAgent | n
  * its own (Claude is `claude-code`); Copilot keeps its name.
  */
 export function runtimeAgentName(agent: HandoffAgent): AgentRuntimeContext["agent"] {
-    return isAccountProviderAlias(agent) ? harnessHost(agent).agent : agent;
+    return isAccountProviderAlias(agent) ? harnessDriver(agent).parts.host.agent : agent;
 }
 
 export function isKnownAgent(raw: string | null | undefined): boolean {

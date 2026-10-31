@@ -74,14 +74,3 @@ export const grokHistoryReader = createCompactHistoryReader({
     ...createGrokHistoryOperations(),
     readStatistics: readGrokStatistics,
 });
-
-/**
- * The three native readers, for code that holds a transcript row but not its provider (the failure log names the
- * model of whichever session ran a tool) and must not load the provider registry on its synchronous path. Code that
- * knows the provider asks `resolveHistoryProvider(kind)`.
- */
-export const nativeHistoryReaders: readonly NativeSessionReader<AgentKind>[] = [
-    claudeHistoryReader,
-    codexHistoryReader,
-    grokHistoryReader,
-];

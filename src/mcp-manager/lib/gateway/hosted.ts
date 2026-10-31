@@ -4,7 +4,7 @@ import { callerSessionReadable } from "@app/genesis-tools-mcp/lib/http-caller";
 import type { UnifiedMCPServerConfig } from "@app/mcp-manager/utils/providers/types.js";
 import type { MCPProviderName } from "@app/mcp-manager/utils/types.js";
 import { ACCOUNT_PROVIDER_ALIASES } from "@genesiscz/utils/ai/providers/alias-list";
-import { harnessHost } from "@genesiscz/utils/ai/providers/harness-index";
+import { harnessDriver } from "@genesiscz/utils/ai/providers/harness-index";
 import { moduleDir } from "@genesiscz/utils/fs/module-dir";
 import { SafeJSON } from "@genesiscz/utils/json";
 import { logger } from "@genesiscz/utils/logger";
@@ -51,7 +51,7 @@ export interface HostedServer {
  * session ids only in a stdio child's env, so they keep stdio.
  */
 export const HOSTED_HTTP_PROVIDERS: ReadonlySet<MCPProviderName> = new Set<MCPProviderName>(
-    ACCOUNT_PROVIDER_ALIASES.filter((id) => callerSessionReadable(harnessHost(id).agent))
+    ACCOUNT_PROVIDER_ALIASES.filter((id) => callerSessionReadable(harnessDriver(id).parts.host.agent))
 );
 
 const SOURCE_ROOT = resolve(moduleDir(import.meta), "../../..");

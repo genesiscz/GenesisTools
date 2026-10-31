@@ -2,7 +2,7 @@ import type { TranscriptAnchor } from "@genesiscz/utils/agent/source-anchor";
 import { resolveHistoryProvider } from "@genesiscz/utils/agent-sessions/provider";
 
 import { isAccountProviderAlias } from "@genesiscz/utils/ai/providers/alias-list";
-import { harnessTranscriptFacts } from "@genesiscz/utils/ai/providers/harness-index";
+import { harnessDriver } from "@genesiscz/utils/ai/providers/harness-index";
 
 import { logger } from "@genesiscz/utils/logger";
 
@@ -68,7 +68,7 @@ function turns({
     toolCallId?: string;
 }): { turns: TranscriptTurn[]; truncated: boolean } {
     const values = records.map((item) => item.value);
-    const result = harnessTranscriptFacts(resolved.provider).windowTurns(values);
+    const result = harnessDriver(resolved.provider).parts.transcript.windowTurns(values);
     const truncated = result.some(
         (turn) => turn.text.length > 8_000 || (turn.reasoning?.length ?? 0) > 2_000 || turn.tools.length > 12
     );
@@ -224,7 +224,7 @@ export function transcriptAround({
             turnIndex < 0 &&
             anchor.kind === "native" &&
             anchor.messageId &&
-            harnessTranscriptFacts(resolved.provider).turnIdsEndWithRowUuid
+            harnessDriver(resolved.provider).parts.transcript.turnIdsEndWithRowUuid
         ) {
             const uuid = anchorRow.value.uuid;
             turnIndex = window.findIndex((turn) => typeof uuid === "string" && turn.id.endsWith(`:${uuid}`));

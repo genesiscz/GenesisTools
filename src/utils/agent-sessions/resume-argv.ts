@@ -1,4 +1,4 @@
-import { harnessLaunch } from "@genesiscz/utils/ai/providers/harness-index";
+import { harnessDriver } from "@genesiscz/utils/ai/providers/harness-index";
 import { escapeShellArg } from "@genesiscz/utils/string";
 import type { AgentKind } from "./types";
 
@@ -22,7 +22,7 @@ export function resumeArgv(
         typeof accountOrOptions === "object" && accountOrOptions !== null
             ? accountOrOptions
             : { account: accountOrOptions };
-    return harnessLaunch(kind).resumeArgv(sessionId, options);
+    return harnessDriver(kind).parts.launch.resumeArgv(sessionId, options);
 }
 
 export function resumeCommandLine(

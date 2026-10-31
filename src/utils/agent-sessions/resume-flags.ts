@@ -1,5 +1,5 @@
 import type { AccountProviderAlias } from "@genesiscz/utils/ai/providers/alias-list";
-import { harnessLaunch } from "@genesiscz/utils/ai/providers/harness-index";
+import { harnessDriver } from "@genesiscz/utils/ai/providers/harness-index";
 import { shellWords } from "@genesiscz/utils/session-changes/words";
 import { lastSimpleCommandOnLine } from "@genesiscz/utils/shell/scan";
 
@@ -21,7 +21,7 @@ export interface CarriedFlags {
 export function carryAgentFlags(kind: AccountProviderAlias, command: string): CarriedFlags {
     const args = shellWords(lastSimpleCommandOnLine(command)).slice(1);
     // The flags each agent accepts and a resume may carry over are its launch recipe's `resumeFlags`.
-    const known = harnessLaunch(kind).resumeFlags;
+    const known = harnessDriver(kind).parts.launch.resumeFlags;
     const kept: string[] = [];
     const dropped: string[] = [];
     const unresolved: string[] = [];

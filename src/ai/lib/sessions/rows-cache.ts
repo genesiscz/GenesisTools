@@ -3,7 +3,7 @@ import { dirname } from "node:path";
 import type { AgentSessionRow, AgentSessionRowsOptions } from "@app/ai/lib/sessions/agent-session-rows";
 import { computeCacheStatus } from "@app/claude/lib/usage/cache-clock";
 import { aiDataDir } from "@genesiscz/utils/ai/config/paths";
-import { harnessTranscriptFacts } from "@genesiscz/utils/ai/providers/harness-index";
+import { harnessDriver } from "@genesiscz/utils/ai/providers/harness-index";
 import { liveClaudeSessionIds } from "@genesiscz/utils/claude/peer-message";
 import { type TmuxCmuxLocation, tmuxCmuxLocations } from "@genesiscz/utils/cmux/tmux-host";
 import { SafeJSON } from "@genesiscz/utils/json";
@@ -180,7 +180,7 @@ async function withTmuxLocations(
  */
 export function withLiveness(rows: AgentSessionRow[], live: Set<string> | null): AgentSessionRow[] {
     return rows.map((row) => {
-        if (!harnessTranscriptFacts(row.provider).keepsLiveRegistry) {
+        if (!harnessDriver(row.provider).parts.transcript.keepsLiveRegistry) {
             return row;
         }
 

@@ -58,7 +58,6 @@ export const grokHarness: HarnessDriver<"grok"> = {
                       ? 1
                       : 0,
         },
-        history: () => import("@genesiscz/utils/agent-sessions/compact-readers").then((m) => m.grokHistoryReader),
         worker: grokWorker,
         dialog: {
             supported: false,

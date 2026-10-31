@@ -1,6 +1,6 @@
 import { basename } from "node:path";
 import { resolveAgentHost } from "@genesiscz/utils/agent/host";
-import { harnessDrivers, harnessHost } from "@genesiscz/utils/ai/providers/harness-index";
+import { harnessDriver, harnessDrivers } from "@genesiscz/utils/ai/providers/harness-index";
 import { env } from "@genesiscz/utils/env";
 import { logger } from "@genesiscz/utils/logger";
 import { ancestry, readExecutablePath } from "@genesiscz/utils/process/processes";
@@ -47,7 +47,10 @@ const MAX_COMMAND_CHARS = 240;
  * its driver (Claude's binary is `claude`, its runtime name `claude-code`); Copilot is no harness and keeps its name.
  */
 const AGENT_BASENAMES: ReadonlyMap<string, string> = new Map([
-    ...harnessDrivers().map((driver): [string, string] => [driver.identity.binary, harnessHost(driver.id).agent]),
+    ...harnessDrivers().map((driver): [string, string] => [
+        driver.identity.binary,
+        harnessDriver(driver.id).parts.host.agent,
+    ]),
     ["copilot", "copilot"],
 ]);
 

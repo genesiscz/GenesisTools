@@ -24,7 +24,7 @@ import {
     writeFileSync,
 } from "node:fs";
 import { join } from "node:path";
-import { harnessTranscriptFacts } from "@genesiscz/utils/ai/providers/harness-index";
+import { harnessDriver } from "@genesiscz/utils/ai/providers/harness-index";
 import { agentProgressToSubagent } from "@genesiscz/utils/claude/session.utils";
 import type { ConversationMessage, ProgressMessage } from "@genesiscz/utils/claude/types";
 import { SafeJSON } from "@genesiscz/utils/json";
@@ -359,7 +359,7 @@ export function indexedTurnAt(path: string, index: TurnIndex, position: number):
 
 /** Whether a provider's native session file is read by turn through this index: its driver's transcript facts. */
 export function pagesByTurnIndex(provider: TranscriptProvider): boolean {
-    return harnessTranscriptFacts(provider).pagesByTurnIndex;
+    return harnessDriver(provider).parts.transcript.pagesByTurnIndex;
 }
 
 /** The current index when `resolved` is a plain Claude session file large enough to have one. */

@@ -1,5 +1,5 @@
 import { ACCOUNT_PROVIDER_ALIASES } from "@genesiscz/utils/ai/providers/alias-list";
-import { harnessDrivers, harnessProcess } from "@genesiscz/utils/ai/providers/harness-index";
+import { harnessDriver, harnessDrivers } from "@genesiscz/utils/ai/providers/harness-index";
 
 /**
  * What a process is, from its argv alone: an agent CLI (claude, codex, grok, cursor-agent), a
@@ -69,7 +69,7 @@ function agentOf(command: string): AgentProvider | null {
 
     const name = basename(first);
     const harness = harnessDrivers().find((driver) =>
-        harnessProcess(driver.id).runsCli({ argv0: first, name, command })
+        harnessDriver(driver.id).parts.process.runsCli({ argv0: first, name, command })
     );
 
     if (harness) {
@@ -138,7 +138,7 @@ export function classifyCommand(raw: string): ProcClass {
         const first = argv0(command);
         const driver = harnessDrivers().find((candidate) => candidate.id === provider);
         const entryIndex = driver
-            ? harnessProcess(driver.id).cliEntryIndex({ argv0: first, name: basename(first), command })
+            ? harnessDriver(driver.id).parts.process.cliEntryIndex({ argv0: first, name: basename(first), command })
             : null;
         const sessionArgs =
             entryIndex === null

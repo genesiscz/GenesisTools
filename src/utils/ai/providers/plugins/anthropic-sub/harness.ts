@@ -68,7 +68,6 @@ export const claudeHarness: HarnessDriver<"claude"> = {
                       ? claudeScriptIndex(command)
                       : null,
         },
-        history: () => import("@genesiscz/utils/agent-sessions/compact-readers").then((m) => m.claudeHistoryReader),
         worker: claudeWorker,
         dialog: claudeDialog,
     },

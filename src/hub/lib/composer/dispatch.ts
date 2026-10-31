@@ -11,7 +11,7 @@ import { type AskDeps, answerAskForm, checkAskAnswer, getAskForm } from "@app/qu
 import { attachImageFiles, MAX_ANSWER_IMAGE_BYTES } from "@app/question/lib/pending/form";
 import type { AskAnswer, AskForm } from "@app/question/lib/pending/types";
 import { isAccountProviderAlias } from "@genesiscz/utils/ai/providers/alias-list";
-import { harnessWorker } from "@genesiscz/utils/ai/providers/harness-index";
+import { harnessDriver } from "@genesiscz/utils/ai/providers/harness-index";
 import { logger } from "@genesiscz/utils/logger";
 import { boundedCommand } from "@genesiscz/utils/process/bounded-command";
 import type { WorkerCapabilities } from "@genesiscz/utils/worker/capabilities";
@@ -37,7 +37,7 @@ function workerRun(args: readonly string[]): WorkerCapabilities | undefined {
         return undefined;
     }
 
-    const worker = harnessWorker(tool);
+    const worker = harnessDriver(tool).parts.worker;
     return worker.verbs.some((verb) => verb.split(" ")[0] === args[1]) ? worker : undefined;
 }
 

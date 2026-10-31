@@ -1,7 +1,7 @@
 import { readFileSync } from "node:fs";
 import { join } from "node:path";
 import type { AgentCaller } from "@genesiscz/utils/agent/runtime";
-import { harnessDrivers, harnessHost } from "@genesiscz/utils/ai/providers/harness-index";
+import { harnessDriver, harnessDrivers } from "@genesiscz/utils/ai/providers/harness-index";
 import { claudeSessionsDir } from "@genesiscz/utils/claude/peer-message";
 import { SafeJSON } from "@genesiscz/utils/json";
 import { logger } from "@genesiscz/utils/logger";
@@ -22,7 +22,7 @@ const log = logger.child({ component: "genesis-tools-mcp:http-caller" });
 const HARNESS_BY_NAME: ReadonlyMap<string, AgentCaller["agent"]> = new Map([
     ...harnessDrivers().map((driver): [string, AgentCaller["agent"]] => [
         driver.identity.binary,
-        harnessHost(driver.id).agent,
+        harnessDriver(driver.id).parts.host.agent,
     ]),
     ["copilot", "copilot"],
 ]);

@@ -15,12 +15,7 @@
 
 import { existsSync, mkdirSync, readFileSync, writeFileSync } from "node:fs";
 import { dirname, join } from "node:path";
-import {
-    harnessDrivers,
-    harnessExit,
-    harnessLaunch,
-    harnessTranscriptFacts,
-} from "@genesiscz/utils/ai/providers/harness-index";
+import { harnessDriver, harnessDrivers } from "@genesiscz/utils/ai/providers/harness-index";
 import type { HarnessColor, HarnessDriver } from "@genesiscz/utils/harness/types";
 import { SafeJSON } from "@genesiscz/utils/json";
 
@@ -57,7 +52,7 @@ function swiftColor(color: HarnessColor): string {
  * the Swift side keeps exactly the TypeScript argv. A recipe that ignores the account switches on the prompt only.
  */
 function startArgsCase(driver: HarnessDriver): string[] {
-    const launch = harnessLaunch(driver.id);
+    const launch = harnessDriver(driver.id).parts.launch;
     const argv = (account: boolean, prompt: boolean) =>
         launch.startArgv({
             account: account ? ACCOUNT_PLACEHOLDER : "",
@@ -140,7 +135,7 @@ export function renderHarnessSwift(): string {
         "",
         "    /// Whether the harness writes a session's sub-agents beside it on disk (`<session>/subagents/`).",
         "    public var subagentsOnDisk: Bool {",
-        ...switchOverHarnesses((driver) => String(harnessTranscriptFacts(driver.id).subagentsOnDisk)),
+        ...switchOverHarnesses((driver) => String(harnessDriver(driver.id).parts.transcript.subagentsOnDisk)),
         "    }",
         "",
         "    /// The executable a user starts.",
@@ -150,22 +145,24 @@ export function renderHarnessSwift(): string {
         "",
         "    /// The slash command that ends an interactive session.",
         "    public var exitCommand: String {",
-        ...switchOverHarnesses((driver) => swiftString(harnessExit(driver.id).command)),
+        ...switchOverHarnesses((driver) => swiftString(harnessDriver(driver.id).parts.exit.command)),
         "    }",
         "",
         "    /// Argv that resumes a session in the default home (no pinned account).",
         "    public func resumeArgs(sessionId: String) -> [String] {",
-        ...switchOverHarnesses((driver) => swiftArgv(harnessLaunch(driver.id).resumeArgv(SESSION_PLACEHOLDER, {}))),
+        ...switchOverHarnesses((driver) =>
+            swiftArgv(harnessDriver(driver.id).parts.launch.resumeArgv(SESSION_PLACEHOLDER, {}))
+        ),
         "    }",
         "",
         "    /// Whether `tools <agent> cmux open-session` resumes a session into a chosen cmux pane under its own account.",
         "    public var cmuxOpenSession: Bool {",
-        ...switchOverHarnesses((driver) => String(harnessLaunch(driver.id).cmuxOpenSession)),
+        ...switchOverHarnesses((driver) => String(harnessDriver(driver.id).parts.launch.cmuxOpenSession)),
         "    }",
         "",
         "    /// Whether `startArgs` pins the account it is given; a new-session sheet asks for one only then.",
         "    public var startPinsAccount: Bool {",
-        ...switchOverHarnesses((driver) => String(harnessLaunch(driver.id).startPinsAccount)),
+        ...switchOverHarnesses((driver) => String(harnessDriver(driver.id).parts.launch.startPinsAccount)),
         "    }",
         "",
         "    /// Argv that starts a new interactive session; an empty account pins none, a prompt is the first message.",

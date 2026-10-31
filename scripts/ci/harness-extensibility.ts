@@ -14,7 +14,7 @@
  *    that says why it keeps a table keyed by the harness type. Any other file is a seam a new harness would have to
  *    find by hand, and the run exits 1 naming it.
  * 3. The runtime: inside the worktree, `resolveTranscript` finds a testbot session through the driver's locator, and
- *    `harnessLaunch` builds its resume argv.
+ *    its driver's `launch` part builds its resume argv.
  *
  *   bun scripts/ci/harness-extensibility.ts
  *
@@ -226,9 +226,9 @@ function main(): void {
             "-e",
             [
                 'const { resolveTranscript } = await import("@genesiscz/utils/ai/transcripts/resolve");',
-                'const { harnessLaunch } = await import("@genesiscz/utils/ai/providers/harness-index");',
+                'const { harnessDriver } = await import("@genesiscz/utils/ai/providers/harness-index");',
                 'const hit = await resolveTranscript("testbot-session-1", {}, "testbot");',
-                'console.log(JSON.stringify({ hit, argv: harnessLaunch("testbot").resumeArgv("s-1", {}) }));',
+                'console.log(JSON.stringify({ hit, argv: harnessDriver("testbot").parts.launch.resumeArgv("s-1", {}) }));',
             ].join("\n"),
         ],
         { cwd: WORKTREE, env: { ...process.env, TESTBOT_HOME: fixture }, stdout: "pipe", stderr: "pipe" }

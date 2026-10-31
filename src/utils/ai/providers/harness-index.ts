@@ -1,16 +1,5 @@
-import type { NativeSessionReader } from "@genesiscz/utils/agent-sessions/types";
 import { ACCOUNT_PROVIDER_ALIASES } from "@genesiscz/utils/ai/providers/alias-list";
-import type {
-    ExitCommand,
-    HostResolver,
-    LaunchRecipe,
-    ProcessSignature,
-    TranscriptFacts,
-    TranscriptLocator,
-    TurnStateReader,
-} from "@genesiscz/utils/harness/parts";
 import type { HarnessDriver, HarnessId } from "@genesiscz/utils/harness/types";
-import type { WorkerCapabilities } from "@genesiscz/utils/worker/capabilities";
 import { claudeHarness } from "./plugins/anthropic-sub/harness";
 import { grokHarness } from "./plugins/grok-sub/harness";
 import { codexHarness } from "./plugins/openai-sub/harness";
@@ -44,52 +33,7 @@ export function harnessPluginId(id: HarnessId): string {
     return harnessDriver(id).identity.plugin;
 }
 
-/** The launch recipe of a harness. */
-export function harnessLaunch(id: HarnessId): LaunchRecipe {
-    return harnessDriver(id).parts.launch;
-}
-
-/** The history reader of a harness (its driver's lazy `history` part). */
-export async function harnessHistory(id: HarnessId): Promise<NativeSessionReader> {
-    return harnessDriver(id).parts.history();
-}
-
-/** Where a harness keeps its transcripts (its driver's `locate` part). */
-export function harnessLocate(id: HarnessId): TranscriptLocator {
-    return harnessDriver(id).parts.locate;
-}
-
-/** The turn-state reader of a harness (its driver's `turnState` part). */
-export function harnessTurnState(id: HarnessId): TurnStateReader {
-    return harnessDriver(id).parts.turnState;
-}
-
-/** How a harness is recognised from the environment of a process it started. */
-export function harnessHost(id: HarnessId): HostResolver {
-    return harnessDriver(id).parts.host;
-}
-
-/** How a harness's CLI is recognised in a process command line. */
-export function harnessProcess(id: HarnessId): ProcessSignature {
-    return harnessDriver(id).parts.process;
-}
-
-/** What a `tools <agent>` worker of the harness can do. */
-export function harnessWorker(id: HarnessId): WorkerCapabilities {
-    return harnessDriver(id).parts.worker;
-}
-
-/** The static facts about a harness's transcript shape. */
-export function harnessTranscriptFacts(id: HarnessId): TranscriptFacts {
-    return harnessDriver(id).parts.transcript;
-}
-
-/** The slash command that ends an interactive session of the harness. */
-export function harnessExit(id: HarnessId): ExitCommand {
-    return harnessDriver(id).parts.exit;
-}
-
 /** The harness whose host part reports this runtime agent name (`claude-code` is Claude), or null for a non-harness. */
 export function harnessOfRuntimeAgent(agent: string): HarnessId | null {
-    return harnessDrivers().find((driver) => harnessHost(driver.id).agent === agent)?.id ?? null;
+    return harnessDrivers().find((driver) => driver.parts.host.agent === agent)?.id ?? null;
 }

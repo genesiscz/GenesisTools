@@ -16,7 +16,7 @@
 
 import type { AgentRuntimeContext } from "@genesiscz/utils/agent/context";
 import { isCopilot, resolveCopilotContext } from "@genesiscz/utils/agent/hosts/copilot";
-import { harnessDrivers, harnessHost } from "@genesiscz/utils/ai/providers/harness-index";
+import { harnessDriver, harnessDrivers } from "@genesiscz/utils/ai/providers/harness-index";
 
 export type AgentHostKind = AgentRuntimeContext["agent"];
 
@@ -38,8 +38,8 @@ export interface AgentSessionId {
  */
 export const AGENT_SESSION_KEYS: readonly { agent: AgentHostKind; key: string }[] = [
     ...harnessDrivers().map((driver) => ({
-        agent: harnessHost(driver.id).agent,
-        key: harnessHost(driver.id).sessionEnvKey,
+        agent: harnessDriver(driver.id).parts.host.agent,
+        key: harnessDriver(driver.id).parts.host.sessionEnvKey,
     })),
     { agent: "copilot", key: "COPILOT_AGENT_SESSION_ID" },
 ];
@@ -69,7 +69,7 @@ export function assignedSessionId(env: NodeJS.ProcessEnv): string | null {
 /** The host chain. First match wins; see AGENT_SESSION_KEYS for why. */
 export function resolveAgentHost(env: NodeJS.ProcessEnv): Partial<AgentRuntimeContext> {
     for (const driver of harnessDrivers()) {
-        const host = harnessHost(driver.id);
+        const host = harnessDriver(driver.id).parts.host;
 
         if (host.detects(env)) {
             return host.resolve(env);

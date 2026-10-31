@@ -2,7 +2,7 @@ import { isAgentLauncher } from "@app/cmux/lib/launchers";
 import { grokLeaderSocket } from "@app/grok/lib/leader";
 import type { AccountEntry } from "@genesiscz/utils/ai/config/schema";
 import { ACCOUNT_PROVIDER_ALIASES } from "@genesiscz/utils/ai/providers/alias-list";
-import { harnessExit, harnessLaunch, harnessPluginId } from "@genesiscz/utils/ai/providers/harness-index";
+import { harnessDriver, harnessPluginId } from "@genesiscz/utils/ai/providers/harness-index";
 import { toolsEntrypoint } from "@genesiscz/utils/cli/tools";
 import { shellWords } from "@genesiscz/utils/session-changes/words";
 import { shellCommandLine, shellQuote } from "@genesiscz/utils/shell/quote";
@@ -119,8 +119,8 @@ export function sessionAgent(id: SessionAgentId): SessionAgent {
     return {
         id,
         provider: harnessPluginId(id),
-        exitCommand: harnessExit(id).command,
-        resumeSubcommand: harnessLaunch(id).resumeSyntax.subcommand ? "resume" : null,
+        exitCommand: harnessDriver(id).parts.exit.command,
+        resumeSubcommand: harnessDriver(id).parts.launch.resumeSyntax.subcommand ? "resume" : null,
         ...CMUX_AGENTS[id],
     };
 }

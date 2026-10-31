@@ -2,7 +2,7 @@ import { matchLiveAgentSurfaces } from "@app/cmux/lib/session-adopt";
 import { recordedSessionIdOf } from "@app/cmux/lib/session-close";
 import { liveAgentSurfacesNow } from "@app/cmux/lib/session-close-live";
 import { fileSessionStore, type SessionCreatedRecord, type SessionRecordLine } from "@app/cmux/lib/session-store";
-import { harnessLocate, harnessWorker } from "@genesiscz/utils/ai/providers/harness-index";
+import { harnessDriver } from "@genesiscz/utils/ai/providers/harness-index";
 import { directReads, type ResolvedTranscript, resolveTranscript } from "@genesiscz/utils/ai/transcripts/resolve";
 import { findSessionsByTitle } from "@genesiscz/utils/ai/transcripts/session-title";
 import type { TurnProvider } from "@genesiscz/utils/ai/transcripts/turn-state";
@@ -15,7 +15,7 @@ const { log } = logger.scoped("agent-wait");
 
 /** The command that reads a headless worker of the harness: the status and read verbs of its driver's worker part. */
 function workerReadCommand(alias: TurnProvider): string {
-    const verbs = harnessWorker(alias).verbs;
+    const verbs = harnessDriver(alias).parts.worker.verbs;
     const picked = ["status", "read"]
         .map((verb) => verbs.find((each) => each === verb || each.endsWith(` ${verb}`)))
         .filter((each): each is string => each !== undefined);
@@ -140,7 +140,7 @@ export async function resolveSessionTranscript(
     }
 
     if (resolved.source === "worker") {
-        const native = harnessLocate(resolved.provider).workerNative(resolved, directReads);
+        const native = harnessDriver(resolved.provider).parts.locate.workerNative(resolved, directReads);
 
         if (native) {
             return native;

@@ -1,7 +1,7 @@
 import { dirname } from "node:path";
+import { nativeReaderFor } from "@genesiscz/utils/agent-sessions/native-adapter";
 import type { NativeHistoryEntry, NativeSessionReader } from "@genesiscz/utils/agent-sessions/types";
 import { ACCOUNT_PROVIDER_ALIASES } from "@genesiscz/utils/ai/providers/alias-list";
-import { harnessHistory } from "@genesiscz/utils/ai/providers/harness-index";
 import { logger } from "@genesiscz/utils/logger";
 import { detectCompactFormat, parseCompactDocument } from "./format";
 import { type MessageRow, pairRows } from "./pairing";
@@ -89,7 +89,7 @@ export async function readNativeTranscript(options: {
     filePath: string;
     signal?: AbortSignal;
 }): Promise<CompactMessage[]> {
-    const reader = await harnessHistory(options.source);
+    const reader = nativeReaderFor(options.source);
     log.info({ source: options.source, filePath: options.filePath }, "Reading a native transcript for compaction");
     const transcript = await reader.read(sourceFor(reader, options.filePath), options.signal);
     if (transcript.issues.length) {

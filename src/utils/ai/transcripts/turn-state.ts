@@ -21,7 +21,7 @@ import { existsSync, statSync } from "node:fs";
 import { resolveHistoryProvider } from "@genesiscz/utils/agent-sessions/provider";
 import type { NativeDialogPermission } from "@genesiscz/utils/agent-sessions/types";
 import { isAccountProviderAlias } from "@genesiscz/utils/ai/providers/alias-list";
-import { harnessTurnState } from "@genesiscz/utils/ai/providers/harness-index";
+import { harnessDriver } from "@genesiscz/utils/ai/providers/harness-index";
 import { isZstdPath } from "@genesiscz/utils/compress/zstd";
 import { logger } from "@genesiscz/utils/logger";
 import { readTailAt } from "./native-scan";
@@ -134,7 +134,7 @@ export function isTurnProvider(value: string): value is TurnProvider {
 
 /** The state of the newest turn, read by the harness driver's turnState part (`readers/<harness>-turn-state.ts`). */
 export function turnStateOf(provider: TurnProvider, input: TurnStateInput): TurnSnapshot {
-    return harnessTurnState(provider).read(input);
+    return harnessDriver(provider).parts.turnState.read(input);
 }
 
 /**
