@@ -22,12 +22,14 @@ export interface FoundHandBlock {
 /** `"$HOME/…"` when the path is under the home folder, so the rc line stays readable and portable. */
 export function shellPath(path: string, home: string): string {
     const trimmedHome = home.replace(/\/+$/, "");
+    const quoted = (text: string) => text.replace(/(["\\$`])/g, "\\$1");
 
+    // Only the leading $HOME expands; the rest is literal, so a folder named `$(touch x)` stays a name.
     if (trimmedHome && (path === trimmedHome || path.startsWith(`${trimmedHome}/`))) {
-        return `"$HOME${path.slice(trimmedHome.length)}"`;
+        return `"$HOME${quoted(path.slice(trimmedHome.length))}"`;
     }
 
-    return `"${path.replace(/(["\\$`])/g, "\\$1")}"`;
+    return `"${quoted(path)}"`;
 }
 
 /**
