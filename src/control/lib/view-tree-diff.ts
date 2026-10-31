@@ -182,9 +182,14 @@ function visible(node: TreeNode, window: { width: number; height: number }): boo
  * Gives every node a key: its identifier when one is set and unique (not an image's, which names its symbol and follows
  * the data), else its role path. A repeated group (three or more same-role siblings under a table, outline or list,
  * inside a scroll area, or with children of their own) keeps only its first member as `role[*]`; the others are data
- * rows. Elements outside the window (scrolled away) are not in the picture and are left out.
+ * rows. `alsoRepeated` names the groups the other tree of the pair repeats, so a table of three rows and the same
+ * table of two key their rows alike. Elements outside the window (scrolled away) are not in the picture and are left
+ * out.
  */
-function keyNodes(tree: ViewTree): { keyed: Keyed[]; rowCounts: Map<string, number> } {
+function keyNodes(
+    tree: ViewTree,
+    alsoRepeated: ReadonlySet<string> = new Set()
+): { keyed: Keyed[]; rowCounts: Map<string, number> } {
     const children = new Map<string, TreeNode[]>();
     const byPath = new Map<string, TreeNode>();
     for (const node of tree.nodes) {
@@ -218,9 +223,12 @@ function keyNodes(tree: ViewTree): { keyed: Keyed[]; rowCounts: Map<string, numb
 
         for (const [role, group] of byRole) {
             const hasChildren = group.every((member) => (children.get(member.path)?.length ?? 0) > 0);
-            if (group.length >= REPEAT_MIN && (ROW_CONTAINERS.has(parentRole) || hasChildren || inScroll(parent))) {
-                repeated.add(`${parent}/${role}`);
-                rowCounts.set(`${parent}/${role}`, group.length);
+            const groupKey = `${parent}/${role}`;
+            const repeats =
+                group.length >= REPEAT_MIN && (ROW_CONTAINERS.has(parentRole) || hasChildren || inScroll(parent));
+            if (repeats || alsoRepeated.has(groupKey)) {
+                repeated.add(groupKey);
+                rowCounts.set(groupKey, group.length);
             }
         }
     }
@@ -323,8 +331,10 @@ export function diffViewTrees(
     after: ViewTree,
     { tolerance = 1 }: { tolerance?: number } = {}
 ): TreeDiff {
-    const a = keyNodes(before);
-    const b = keyNodes(after);
+    // Each tree's repeated groups key the other's rows too: a row count that crosses REPEAT_MIN is data, not layout.
+    const groups = new Set([...keyNodes(before).rowCounts.keys(), ...keyNodes(after).rowCounts.keys()]);
+    const a = keyNodes(before, groups);
+    const b = keyNodes(after, groups);
     const dataOnly: DataDifference[] = [];
     for (const [group, count] of a.rowCounts) {
         const next = b.rowCounts.get(group);

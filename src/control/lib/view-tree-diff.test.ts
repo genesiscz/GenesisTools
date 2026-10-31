@@ -91,6 +91,21 @@ describe("diffViewTrees", () => {
         expect(diffViewTrees(before, after).changes).toMatchObject([{ kind: "resized", identifier: "hub.refresh" }]);
     });
 
+    it("keys rows alike when the row count crosses the repetition threshold", () => {
+        for (const [from, to] of [
+            [3, 2],
+            [2, 3],
+            [3, 1],
+        ]) {
+            const diff = diffViewTrees(hub({ title: 180, rows: from }), hub({ title: 180, rows: to }));
+
+            expect(diff.changes).toEqual([]);
+            expect(diff.dataOnly).toContainEqual(
+                expect.objectContaining({ reason: "row count", detail: `${from} -> ${to}` })
+            );
+        }
+    });
+
     it("reports a resized control in a repeated row", () => {
         const row = "AXWindow/AXGroup[0]/AXTable[0]/AXRow[0]";
         const button = { path: `${row}/AXButton[0]`, role: "AXButton", frame: { x: 200, y: 130, w: 28, h: 28 } };
