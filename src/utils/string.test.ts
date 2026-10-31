@@ -3,6 +3,7 @@ import { afterEach, beforeEach, describe, expect, it } from "bun:test";
 import { skip } from "@genesiscz/utils/test/skip";
 import { clipResult } from "./ai/transcripts/types";
 import {
+    clipOneLine,
     escapeShellArg,
     fuzzyFind,
     fuzzyMatch,
@@ -401,5 +402,12 @@ describe("sliceWhole", () => {
 
     it("keeps truncateText from splitting an emoji", () => {
         expect(truncateText("abcd🧹efgh", 8)).toBe("abcd...");
+    });
+
+    it("clips one line to at most max characters, and to nothing for a max of zero or less", () => {
+        expect(clipOneLine("a  b\nc", 10)).toBe("a b c");
+        expect(clipOneLine("abcdef", 4)).toBe("abc…");
+        expect(clipOneLine("abcdef", 0)).toBe("");
+        expect(clipOneLine("abcdef", -3)).toBe("");
     });
 });

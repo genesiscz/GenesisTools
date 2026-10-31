@@ -120,16 +120,20 @@ export function detachedCopy(text: string): string {
     return structuredClone(text);
 }
 
-/**
- * Truncate text to a maximum length, appending "..." if truncated. A truncated result is a copy of its own, so
- * keeping it does not keep the long text alive (see `detachedCopy`).
- */
 /** `text` on one line (every whitespace run becomes one space), cut to at most `max` characters with a trailing `…`. */
 export function clipOneLine(text: string, max: number): string {
+    if (max <= 0) {
+        return "";
+    }
+
     const flat = text.replace(/\s+/g, " ").trim();
     return flat.length > max ? `${sliceWhole(flat, max - 1)}…` : flat;
 }
 
+/**
+ * Truncate text to a maximum length, appending "..." if truncated. A truncated result is a copy of its own, so
+ * keeping it does not keep the long text alive (see `detachedCopy`).
+ */
 export function truncateText(text: string, maxLength: number = 100): string {
     if (text.length <= maxLength) {
         return text;
