@@ -6,6 +6,7 @@ import { QA_ANSWER_MAX_CHARS } from "@app/dev-dashboard/lib/qa-clip";
 import type { RouteContext, RouteDef, RouteResult } from "@app/dev-dashboard/server/types";
 import type { DeliverDeps, ToolRun } from "@app/question/lib/decisions/deliver";
 import { livePaneTargets } from "@app/question/lib/decisions/deliver.fixtures";
+import { relayedAnswerText } from "@app/question/lib/decisions/delivery-text";
 import { parseDecisionBlocks } from "@app/question/lib/decisions/read";
 import { postDecisions, readDecisions, updateDecisions } from "@app/question/lib/decisions/store";
 import { scanTurns } from "@app/question/lib/inbox/build";
@@ -496,7 +497,17 @@ describe("qa decision routes", () => {
         expect(res.status).toBe(200);
         expect(res.body).toMatchObject({ channel: "cmux", delivered: true });
         expect(runs).toEqual([
-            ["claude", "cmux", "send", "--json", "--paste", "--exact-session", "--", SESSION, titled("b) stale")],
+            [
+                "claude",
+                "cmux",
+                "send",
+                "--json",
+                "--paste",
+                "--exact-session",
+                "--",
+                SESSION,
+                relayedAnswerText(titled("b) stale")),
+            ],
         ]);
         expect(readDecisions(scratchFiles().file)).toMatchObject([
             { id: `d_3_${SESSION}`, state: "sent", option: "b", harvested: true },
@@ -569,7 +580,7 @@ describe("qa decision routes", () => {
 
         expect(resent.body).toMatchObject({ channel: "codex", delivered: true, provider: "codex" });
         expect(runs).toEqual([["codex", "steer", "--name", "w1", "--json", "--prompt-file", expect.any(String)]]);
-        expect(prompts).toEqual(["DECISION 1: b) 4000"]);
+        expect(prompts).toEqual([relayedAnswerText("DECISION 1: b) 4000")]);
 
         const [row] = await postDecisions(file, events, {
             sessionId: "s-beta",
@@ -585,6 +596,6 @@ describe("qa decision routes", () => {
 
         expect(answered.body).toMatchObject({ channel: "codex", delivered: true });
         expect(runs.at(-1)).toEqual(["codex", "steer", "--name", "w1", "--json", "--prompt-file", expect.any(String)]);
-        expect(prompts.at(-1)).toBe("DECISION 2: a) yes");
+        expect(prompts.at(-1)).toBe(relayedAnswerText("DECISION 2: a) yes"));
     });
 });
