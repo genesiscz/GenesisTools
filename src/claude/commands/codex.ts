@@ -36,7 +36,6 @@ import {
 import {
     autoAccount,
     claudeModelByAlias,
-    passthroughSets,
     resolveSessionEffort,
     resolveSessionModel,
     SESSION_MODEL_ALIASES,
@@ -46,6 +45,7 @@ import {
 import { sessionKeyProblem } from "@app/claude/lib/codex-session/proxy-check";
 import { guardSharedModel } from "@app/claude/lib/codex-session/settings-guard";
 import { ensureOnboardingSkippedForOAuthToken } from "@app/claude/lib/launch-env";
+import { passthroughSets } from "@app/claude/lib/passthrough";
 import { scoreAccounts, sortGrouped } from "@app/claude/lib/usage/account-picker";
 import { getSharedAccountsUsage } from "@app/claude/lib/usage/shared-cache";
 import { pickSmart } from "@app/claude/lib/usage/smart-alias";
@@ -344,9 +344,7 @@ export async function runCodexSession(
             effort: effort.effort,
             window: model.info.window,
             // A user-provided --settings may override the launch limit, so its effective value is unknown here.
-            ...(!passthrough.some((arg) => arg === "--settings" || arg.startsWith("--settings="))
-                ? { pickerContextTokens: model.info.window }
-                : {}),
+            ...(!passthroughSets(passthrough, "--settings") ? { pickerContextTokens: model.info.window } : {}),
             compactPercent: compact.percent,
             cacheKeyPolicy: "claude-session",
             ...(ownAgents ? { agents: ownAgents } : {}),
