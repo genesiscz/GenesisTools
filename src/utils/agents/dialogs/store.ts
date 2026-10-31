@@ -101,16 +101,46 @@ export async function closeQuestion(
     root?: string,
     source?: OpenQuestion["source"]
 ): Promise<OpenQuestion | null> {
-    return recordsDocument(target.provider, target.sessionId, root).update<OpenQuestion | null>((current) => {
-        const key = openQuestionKey(target);
-        const found = current.find((item) => openQuestionKey(item) === key);
+    const key = openQuestionKey(target);
+    const closed = await closeQuestions({
+        provider: target.provider,
+        sessionId: target.sessionId,
+        closedAt,
+        root,
+        which: (record) => openQuestionKey(record) === key && (source === undefined || record.source === source),
+    });
+    return closed[0] ?? null;
+}
 
-        if (!found || (source !== undefined && found.source !== source)) {
-            return { keep: null };
-        }
+/**
+ * Close every record of the session that `which` picks, in one locked read and one write, and return them. `which`
+ * sees the records as they are under the lock, so a record another process closed or added meanwhile is judged right.
+ */
+export async function closeQuestions({
+    provider,
+    sessionId,
+    closedAt = new Date().toISOString(),
+    root,
+    which,
+}: {
+    provider: DialogProvider;
+    sessionId: string;
+    closedAt?: string;
+    root?: string;
+    which: (record: OpenQuestion) => boolean;
+}): Promise<OpenQuestion[]> {
+    return recordsDocument(provider, sessionId, root).update<OpenQuestion[]>((current) => {
+        const closed: OpenQuestion[] = [];
+        const next = current.map((record) => {
+            if (!which(record)) {
+                return record;
+            }
 
-        const closed = { ...found, closedAt };
-        return { write: current.map((item) => (openQuestionKey(item) === key ? closed : item)), result: closed };
+            const done = { ...record, closedAt };
+            closed.push(done);
+            return done;
+        });
+        return closed.length === 0 ? { keep: closed } : { write: next, result: closed };
     });
 }
 

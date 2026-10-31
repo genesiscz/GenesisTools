@@ -1,7 +1,6 @@
-import { closeQuestion, openQuestions, upsertQuestion } from "@genesiscz/utils/agents/dialogs/store";
+import { closeQuestions, upsertQuestion } from "@genesiscz/utils/agents/dialogs/store";
 import { type OpenQuestion, openQuestionKey } from "@genesiscz/utils/agents/dialogs/types";
 import { questionCountOf, questionOptionsOf, questionTextOf } from "@genesiscz/utils/ai/transcripts/turn-state-core";
-import type { HooksConfig } from "./config";
 import { type HookPayload, normalizeEvent } from "./payload";
 import { QUESTION_TOOL_KINDS } from "./questions-gate";
 
@@ -119,28 +118,19 @@ export async function applyQuestionHookAction(
     }
 
     // Only open records close: an answered one keeps the time it was answered at.
-    const closing = openQuestions(payload.harness, sessionId, root)
-        .filter(
-            (open) =>
-                open.toolCallId === action.answered ||
-                action.closes === "all" ||
-                (action.closes === "permissions" && open.kind === "permission")
-        )
-        .map((open) => open.toolCallId);
-    const closed: string[] = [];
-
-    for (const toolCallId of closing) {
-        const done = await closeQuestion({ provider: payload.harness, sessionId, toolCallId }, now, root);
-
-        if (done) {
-            closed.push(openQuestionKey(done));
-        }
-    }
+    const closed = (
+        await closeQuestions({
+            provider: payload.harness,
+            sessionId,
+            closedAt: now,
+            root,
+            which: (record) =>
+                record.closedAt === undefined &&
+                (record.toolCallId === action.answered ||
+                    action.closes === "all" ||
+                    (action.closes === "permissions" && record.kind === "permission")),
+        })
+    ).map(openQuestionKey);
 
     return { recorded: action.ask ? openQuestionKey(action.ask) : null, closed };
-}
-
-/** Whether the questions feature is on for the harness this payload came from. */
-export function questionsOn(config: HooksConfig, payload: HookPayload): boolean {
-    return config.questions.harnesses[payload.harness];
 }

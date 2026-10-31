@@ -9,6 +9,7 @@ import { dialogFromRecords, dialogFromSnapshot, dialogRefusal, openDialogFor } f
 import { dialogKeysOf, optionIndexOf, planDialogKeys } from "./keys";
 import {
     closeQuestion,
+    closeQuestions,
     dialogsPath,
     openQuestions,
     readSessionQuestions,
@@ -238,6 +239,33 @@ describe("dialog record store", () => {
             expect(readSessionQuestions("claude", SESSION, dir)).toEqual([]);
             expect(() => readSessionQuestionsStrict("claude", SESSION, dir)).toThrow("malformed dialog records");
         }
+    });
+});
+
+describe("closeQuestions", () => {
+    test("closes every picked record in one write and leaves the file alone when it picks none", async () => {
+        const dir = root();
+        await upsertQuestion(question({ toolCallId: "a", kind: "permission" }), dir);
+        await upsertQuestion(question({ toolCallId: "b" }), dir);
+        await upsertQuestion(question({ toolCallId: "c", kind: "permission" }), dir);
+
+        const closed = await closeQuestions({
+            provider: "claude",
+            sessionId: SESSION,
+            closedAt: "2026-10-30T10:05:00.000Z",
+            root: dir,
+            which: (record) => record.kind === "permission",
+        });
+
+        expect(closed.map((record) => record.toolCallId)).toEqual(["a", "c"]);
+        expect(openQuestions("claude", SESSION, dir).map((record) => record.toolCallId)).toEqual(["b"]);
+
+        const path = dialogsPath("claude", SESSION, dir);
+        const before = readFileSync(path, "utf8");
+        expect(await closeQuestions({ provider: "claude", sessionId: SESSION, root: dir, which: () => false })).toEqual(
+            []
+        );
+        expect(readFileSync(path, "utf8")).toBe(before);
     });
 });
 

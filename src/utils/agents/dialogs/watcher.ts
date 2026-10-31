@@ -1,7 +1,7 @@
 import { existsSync, statSync } from "node:fs";
 import { readTurnState, type TurnSnapshot, turnStateSources } from "@genesiscz/utils/ai/transcripts/turn-state";
 import { logger } from "@genesiscz/utils/logger";
-import { closeQuestion, readSessionQuestions, upsertQuestion } from "./store";
+import { closeQuestions, readSessionQuestions, upsertQuestion } from "./store";
 import { type DialogProvider, type OpenQuestion, openQuestionKey } from "./types";
 
 const log = logger.child({ component: "agents:dialogs-watcher" });
@@ -75,24 +75,24 @@ export async function syncSessionDialogs(
     const waiting = questionFromSnapshot(session, state, now);
     const records = readSessionQuestions(session.provider, session.sessionId, root);
     const opened: OpenQuestion[] = [];
-    const closed: string[] = [];
 
     if (waiting && !records.some((record) => openQuestionKey(record) === openQuestionKey(waiting))) {
         await upsertQuestion(waiting, root);
         opened.push(waiting);
     }
 
-    for (const record of records) {
-        if (record.source !== "watcher" || record.closedAt !== undefined || record.toolCallId === waiting?.toolCallId) {
-            continue;
-        }
-
-        const done = await closeQuestion(record, new Date(now).toISOString(), root, "watcher");
-
-        if (done) {
-            closed.push(openQuestionKey(done));
-        }
-    }
+    const closed = (
+        await closeQuestions({
+            provider: session.provider,
+            sessionId: session.sessionId,
+            closedAt: new Date(now).toISOString(),
+            root,
+            which: (record) =>
+                record.source === "watcher" &&
+                record.closedAt === undefined &&
+                record.toolCallId !== waiting?.toolCallId,
+        })
+    ).map(openQuestionKey);
 
     if (opened.length > 0 || closed.length > 0) {
         log.info(
