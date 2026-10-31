@@ -1,6 +1,6 @@
 /** Codex's `currentModel`: every turn writes a `turn_context` row that names the turn's model. */
 import { SafeJSON } from "@genesiscz/utils/json";
-import { firstModelInHead, newestModelInTail, type RowModel } from "./session-model";
+import { newestModelInHead, newestModelInTail, type RowModel } from "./session-model";
 
 /** The first `turn_context` follows ~300 KB of instructions and world state. */
 export const CODEX_MODEL_HEAD_BYTES = 640 * 1024;
@@ -31,11 +31,13 @@ export function codexModelOfRow(row: string): RowModel | undefined {
 
 /**
  * The model a Codex session runs now: the newest `turn_context` in the tail, else (one long turn whose output pushed
- * its `turn_context` out of the tail) the first one in the head.
+ * its `turn_context` out of the tail) the newest one in the head. A rollout longer than both windows can hold a newer
+ * `turn_context` between them; the head's answer is then the newest one the bound shows, which the hub showed before
+ * this reader member existed (it always read the head's first `turn_context`).
  */
 export function codexCurrentModel(transcriptPath: string): string | null {
     return (
         newestModelInTail(transcriptPath, codexModelOfRow) ??
-        firstModelInHead(transcriptPath, codexModelOfRow, CODEX_MODEL_HEAD_BYTES)
+        newestModelInHead(transcriptPath, codexModelOfRow, CODEX_MODEL_HEAD_BYTES)
     );
 }

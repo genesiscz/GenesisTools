@@ -1364,7 +1364,7 @@ test("readTurnBoundary normalizes Codex response items and user-message events",
     }
 });
 
-test("currentModel is the newest turn_context's model, else the first one in the head", () => {
+test("currentModel is the newest turn_context's model, else the newest one in the head", () => {
     const { currentModel } = createCodexHistoryOperations();
     const dir = mkdtempSync(join(tmpdir(), "gt-codex-current-model-"));
     const row = (value: unknown) => `${SafeJSON.stringify(value)}\n`;
@@ -1386,6 +1386,12 @@ test("currentModel is the newest turn_context's model, else the first one in the
         `${turnContext("gpt-6.1-sol")}${row({ type: "response_item", payload: { type: "message", text: "y".repeat(300_000) } })}`
     );
     expect(currentModel(long)).toBe("gpt-6.1-sol");
+    // The model switched before that long turn: the head's newest turn_context answers, not its first (obsolete) one.
+    const switchedThenLong = rollout(
+        "rollout-switched-long.jsonl",
+        `${turnContext("gpt-6.1-luna")}${turnContext("gpt-6.1-sol")}${row({ type: "response_item", payload: { type: "message", text: "y".repeat(300_000) } })}`
+    );
+    expect(currentModel(switchedThenLong)).toBe("gpt-6.1-sol");
     expect(currentModel(rollout("rollout-none.jsonl", row({ type: "session_meta", payload: {} })))).toBeNull();
 });
 

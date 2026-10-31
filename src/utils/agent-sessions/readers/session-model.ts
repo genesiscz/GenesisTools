@@ -90,17 +90,11 @@ export function newestModelInTail(
     return lines ? newestModelIn(lines, probe, options.acceptSidechain) : null;
 }
 
-/** The first model in the first `headBytes` of a transcript, for a format that names its model once near the top. */
-export function firstModelInHead(path: string, probe: RowModelProbe, headBytes: number): string | null {
+/**
+ * The newest model in the first `headBytes` of a transcript, for a session whose newest turn left the tail. When the
+ * head and the tail windows meet, that is the session's latest model; past them a turn in between can name a newer one.
+ */
+export function newestModelInHead(path: string, probe: RowModelProbe, headBytes: number): string | null {
     const lines = windowLines(path, headBytes, "head");
-
-    for (const line of lines ?? []) {
-        const found = probe(line.trim());
-
-        if (found) {
-            return found.model;
-        }
-    }
-
-    return null;
+    return lines ? newestModelIn(lines, probe) : null;
 }
