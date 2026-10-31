@@ -2755,7 +2755,7 @@ private struct ReviewHeader: View {
         // One row of one height at every width. It used to wrap its controls to a second row in a
         // narrow pane: 44 pt ↔ 61 pt, and a drag across that width moved the whole diff up and
         // down (9 flips in one sweep, measured with --bench). Now only the controls condense.
-        HStack(spacing: 10) {
+        HStack(spacing: Self.rowSpacing) {
             if !model.embedded, model.pr != nil {
                 IconButton(systemName: "rectangle.3.group", tooltip: "Show this PR in the hub: its review, threads, commits and the sessions on it") {
                     model.showInHub()
@@ -2767,7 +2767,7 @@ private struct ReviewHeader: View {
             if let news = model.pushNews {
                 ReloadPill(news: news) { model.reloadToNewest() }
             }
-            Spacer(minLength: 8)
+            Spacer(minLength: Self.spacerMin)
             controlsRow(choice.controls, live: true)
                 .layoutPriority(1)
         }
@@ -2806,13 +2806,16 @@ private struct ReviewHeader: View {
     }
 
     private static let summaryLevels: [SummaryLevel] = [.full, .noCompare, .totals, .scope]
+    /// The row's gap between its views, and the Spacer's minimum: `choose` adds them up.
+    private static let rowSpacing: CGFloat = 10
+    private static let spacerMin: CGFloat = 8
 
     /// The first controls variant that fits beside the smallest summary, then the fullest summary that fits beside
     /// those controls: what the two `ViewThatFits` picked, the controls first (they had the layout priority).
     private func choose(width: CGFloat) -> HeaderChoice {
         guard width > 0 else { return choice }
         // The row's gaps: summary to Spacer, the Spacer's minimum, Spacer to controls.
-        let fixed = extrasWidth + 10 + 8 + 10
+        let fixed = extrasWidth + Self.rowSpacing + Self.spacerMin + Self.rowSpacing
         let smallest = summaryWidths[.scope] ?? 0
         let controls = (0..<2).first { (controlsWidths[$0] ?? 0) + smallest + fixed <= width } ?? 2
         let room = width - fixed - (controlsWidths[controls] ?? 0)
