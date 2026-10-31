@@ -193,6 +193,41 @@ test("an open dialog in the session refuses the send before any keystroke; --for
     expect(events).toContain("paste --surface surface:41 --submit -- hello");
 });
 
+test("the dialog guard checks a continued session before sending and after stale refs", async () => {
+    const successor = "77777777-7777-4777-8777-777777777777";
+    setSnapshot([pane({ id: "pane:7", surfaces: [surface({ id: "surface:41", title: successor, selected: true })] })]);
+    const asked: string[] = [];
+    let allowFirst = false;
+    const continued = {
+        ...deps,
+        continuedIn: async (id: string) => (id === SESSION_A ? successor : undefined),
+        lookupRefs: (id: string) =>
+            id === successor ? recordedRefs({ sessionId: successor, surfaceId: DEAD_SURFACE_UUID }) : null,
+        openDialog: async (id: string) => {
+            asked.push(id);
+            if (allowFirst && asked.length === 1) {
+                return null;
+            }
+            return id === successor
+                ? { kind: "permission" as const, question: "Allow?", signal: "hook" as const }
+                : null;
+        },
+    };
+
+    expect(await sendCommand(SESSION_A, "hello", { enter: false }, continued)).toBe(false);
+    expect(asked).toEqual([successor]);
+    expect(events.some((event) => event.startsWith("send"))).toBe(false);
+
+    events = [];
+    asked.length = 0;
+    process.exitCode = 0;
+    allowFirst = true;
+    expect(await sendCommand(SESSION_A, "hello", { enter: false }, continued)).toBe(false);
+    expect(asked).toEqual([successor, successor]);
+    expect(events).toContain(`send --surface ${DEAD_SURFACE_UUID} -- hello`);
+    expect(events.some((event) => event.includes("--surface surface:41"))).toBe(false);
+});
+
 test("the dialog guard asks about the session the matched pane runs when the query is not an id", async () => {
     setSnapshot([
         pane({

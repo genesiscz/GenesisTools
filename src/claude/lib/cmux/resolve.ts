@@ -41,6 +41,8 @@ export interface SessionTargetsResult {
      * session's, and `targets[n].sessionIds` name the live id.
      */
     continuedFrom?: string;
+    /** The final session id after following a continuation chain. */
+    continuedTo?: string;
 }
 
 export interface ResolveDeps {
@@ -331,7 +333,7 @@ export async function findSessionTargets(
                 followContinued: false,
                 deps: { ...deps, identify: () => identityPromise },
             });
-            return { ...live, continuedFrom };
+            return { ...live, continuedFrom, continuedTo: liveId };
         }
     }
 

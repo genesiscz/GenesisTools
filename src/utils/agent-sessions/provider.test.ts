@@ -17,6 +17,7 @@ import {
     sessionMessageTextHash,
 } from "./message-queue";
 import { resolveHistoryProvider } from "./provider";
+import { readSessionsContinuedIn } from "./session-backward";
 import { noBackwardRead, noContinuedIn } from "./testing/no-backward-read";
 
 afterEach(() => {
@@ -25,6 +26,7 @@ afterEach(() => {
 });
 
 test("a registered fourth history provider can be resolved without an account alias", async () => {
+    let discoveryFails = false;
     registerPlugin({
         id: "fixture-sub",
         kind: "subscription",
@@ -48,7 +50,11 @@ test("a registered fourth history provider can be resolved without an account al
             readForward: async () => ({ rows: [], file: null, endOffset: 0, issues: [] }),
             roots: () => [],
             async discover() {
-                return { sources: [], issues: [], completeRoots: [] };
+                return {
+                    sources: [],
+                    issues: discoveryFails ? [{ path: "/invented/history", message: "Source root read failed" }] : [],
+                    completeRoots: [],
+                };
             },
             async read(source) {
                 return {
@@ -80,6 +86,12 @@ test("a registered fourth history provider can be resolved without an account al
     expect(transcript.session.sessionId).toBe("native-one");
     expect(transcript.session.kind).toBe("fixture");
     expect(() => resolveHistoryProvider("missing-provider")).toThrow("Unknown AI provider");
+    const request = { kind: "fixture-sub", transcriptPaths: ["/invented/history/native-one"] };
+    expect(await readSessionsContinuedIn(request)).toEqual(new Map());
+    discoveryFails = true;
+    await expect(readSessionsContinuedIn(request)).rejects.toThrow("Source root read failed");
+    discoveryFails = false;
+    expect(await readSessionsContinuedIn(request)).toEqual(new Map());
 });
 
 test("session queue inspections are read-only and exact provider/session/home scope survives restart", async () => {

@@ -241,17 +241,19 @@ async function refuseOpenDialog({
     query,
     opts,
     deps,
+    continuedTo,
 }: {
     target: FocusTarget;
     query: string;
     opts: SendOptions;
     deps: SendCommandDeps;
+    continuedTo?: string;
 }): Promise<boolean> {
     if (opts.force) {
         return false;
     }
 
-    const sessionId = sessionIdsIn(query)[0] ?? target.sessionIds[0];
+    const sessionId = continuedTo ?? sessionIdsIn(query)[0] ?? target.sessionIds[0];
 
     if (!sessionId) {
         log.debug({ query, paneId: target.paneId }, "the pane names no session; the dialog guard has nothing to ask");
@@ -360,7 +362,7 @@ export async function sendCommand(
     const force = opts.force === true;
 
     if (surfaceId) {
-        if (await refuseOpenDialog({ target, query: queryTrim, opts, deps })) {
+        if (await refuseOpenDialog({ target, query: queryTrim, opts, deps, continuedTo: result.continuedTo })) {
             return false;
         }
 
@@ -408,7 +410,7 @@ export async function sendCommand(
     target = fallback;
     surfaceId = fallbackSurface;
 
-    if (await refuseOpenDialog({ target, query: queryTrim, opts, deps })) {
+    if (await refuseOpenDialog({ target, query: queryTrim, opts, deps, continuedTo: result.continuedTo })) {
         return false;
     }
 

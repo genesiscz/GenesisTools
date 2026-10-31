@@ -82,6 +82,9 @@ export async function readSessionsContinuedIn({
 
     for (const issue of found.issues) {
         logger.debug(issue, "Continued-in discovery issue");
+        if (issue.code !== "root-missing") {
+            throw new Error(`Continued-in discovery incomplete: ${issue.message} (${issue.path})`);
+        }
     }
 
     for (const path of transcriptPaths) {
