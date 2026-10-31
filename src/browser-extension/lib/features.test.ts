@@ -849,6 +849,29 @@ describe("router", () => {
         expect(elsewhere.calls.tools.filter((args) => args[1] === "ensure")).toEqual([]);
     });
 
+    it("a granted loopback port with no matching route (dashboard names only) still starts its own server", async () => {
+        const unrouted = routerDeps({
+            decision: SafeJSON.stringify({ kind: "open", via: "default", url: "http://127.0.0.1:3096/" }),
+            ensured: { code: 0, stdout: "started Artifact Library\n", stderr: "" },
+        });
+
+        expect(await ensureLink(unrouted.deps, "http://127.0.0.1:3096/", HOSTS)).toEqual({
+            port: 3096,
+            name: "Artifact Library",
+            started: true,
+            target: "http://127.0.0.1:3096/",
+        });
+        expect(unrouted.calls.tools.map((args) => args.slice(0, 3))).toContainEqual([
+            "browser-router",
+            "ensure",
+            "3096",
+        ]);
+
+        // The flag stays the only authorization: a closed port is not started from the registry either.
+        const closed = { ...HOSTS, services: [...HOSTS.services, service(4000, "Closed", false)] };
+        await expect(ensureLink(unrouted.deps, "http://127.0.0.1:4000/", closed)).rejects.toThrow();
+    });
+
     it("starts an allowed server and hands back the rewritten URL for the same tab, never to the app", async () => {
         const target = "http://localhost:3096/a/notes/index?x=1#top";
         const cold = routerDeps({
