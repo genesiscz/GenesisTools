@@ -769,6 +769,14 @@ test("currentModel is the newest assistant model of the session's own chain, nev
         assistant("claude-haiku-5-5", { isSidechain: true }),
     ]);
     expect(reader.currentModel(busy)).toBeNull();
+    // The parent's own model is in the file, but a sub-agent's rows pushed it out of the 256 KiB tail.
+    const pushed = transcript("pushed-lead.jsonl", [
+        assistant("claude-sonnet-5-5"),
+        ...Array.from({ length: 30 }, () =>
+            assistant("claude-haiku-5-5", { isSidechain: true, padding: "x".repeat(10_000) })
+        ),
+    ]);
+    expect(reader.currentModel(pushed)).toBeNull();
     expect(reader.currentModel(transcript("none.jsonl", [{ type: "user", message: { content: "hi" } }]))).toBeNull();
     expect(reader.currentModel(join(dir, "missing.jsonl"))).toBeNull();
 });
