@@ -36,7 +36,7 @@ public enum AIProviders {
         AIProviderMeta(
             id: harness.plugin,
             alias: harness.rawValue,
-            displayName: harness.rawValue.capitalized,
+            displayName: harness.label,
             glyph: harness.markLetter,
             color: harness.color
         )
