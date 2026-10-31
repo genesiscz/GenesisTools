@@ -82,9 +82,38 @@ function memoReads(base: FolderReads): FolderReads {
     };
 }
 
-/** One harness's roots for one lookup: what the caller injected, over its locator's defaults. */
+/**
+ * One harness's roots for one lookup: what the caller injected, over its locator's defaults. Roots the caller gave in
+ * full skip the defaults, since Codex's list the user's home folder (`codexHomesWithLegacy`).
+ */
 export function harnessRootsOf(provider: TranscriptProvider, roots: TranscriptRoots = {}): HarnessRoots {
-    return { ...harnessDriver(provider).parts.locate.defaultRoots(), ...roots[provider] };
+    const injected = roots[provider];
+
+    if (injected?.native !== undefined && injected.worker !== undefined) {
+        return { native: injected.native, worker: injected.worker };
+    }
+
+    return { ...harnessDriver(provider).parts.locate.defaultRoots(), ...injected };
+}
+
+/** The roots of each harness for one lookup or one batch. */
+type RootsOf = (provider: TranscriptProvider) => HarnessRoots;
+
+/** `harnessRootsOf` resolved once per harness, so a batch of ids reads each harness's default roots once. */
+function batchRootsOf(roots: TranscriptRoots): RootsOf {
+    const seen = new Map<TranscriptProvider, HarnessRoots>();
+
+    return (provider) => {
+        const known = seen.get(provider);
+
+        if (known) {
+            return known;
+        }
+
+        const resolved = harnessRootsOf(provider, roots);
+        seen.set(provider, resolved);
+        return resolved;
+    };
 }
 
 /** Roots that read one harness's transcripts from one of its homes (a session's own source home) only. */
@@ -106,12 +135,12 @@ function isInside(root: string, path: string): boolean {
  * An existing absolute transcript path, with its provider and source read off the root it lives
  * under. Null when the path is under no known root and no provider was named.
  */
-function resolvePath(path: string, roots: TranscriptRoots, provider?: TranscriptProvider): ResolvedTranscript | null {
+function resolvePath(path: string, rootsOf: RootsOf, provider?: TranscriptProvider): ResolvedTranscript | null {
     const filePath = resolve(path);
     const stem = transcriptStem(basename(filePath));
     const located = ACCOUNT_PROVIDER_ALIASES.flatMap((id) =>
         harnessDriver(id)
-            .parts.locate.pathRoots(harnessRootsOf(id, roots))
+            .parts.locate.pathRoots(rootsOf(id))
             .map((entry) => ({ ...entry, provider: id }))
     );
     const hit = located.find((entry) => isInside(entry.root, filePath));
@@ -131,7 +160,7 @@ export async function resolveTranscript(
     roots: TranscriptRoots = {},
     provider?: TranscriptProvider
 ): Promise<ResolvedTranscript> {
-    return resolveWith({ query, roots, provider, fs: directReads });
+    return resolveWith({ query, rootsOf: batchRootsOf(roots), provider, fs: directReads });
 }
 
 /**
@@ -177,6 +206,7 @@ export function resolveTranscriptsWith({
     reads: FolderReads;
 }): Map<string, ResolvedTranscript | Error> {
     const fs = memoReads(reads);
+    const rootsOf = batchRootsOf(roots);
     const answers = new Map<string, ResolvedTranscript | Error>();
 
     for (const query of queries) {
@@ -185,7 +215,7 @@ export function resolveTranscriptsWith({
         }
 
         try {
-            answers.set(query, resolveWith({ query, roots, provider, fs }));
+            answers.set(query, resolveWith({ query, rootsOf, provider, fs }));
         } catch (err) {
             answers.set(query, err instanceof Error ? err : new Error(String(err)));
         }
@@ -196,19 +226,19 @@ export function resolveTranscriptsWith({
 
 function resolveWith({
     query,
-    roots,
+    rootsOf,
     provider,
     fs,
 }: {
     query: string;
-    roots: TranscriptRoots;
+    rootsOf: RootsOf;
     provider?: TranscriptProvider;
     fs: FolderReads;
 }): ResolvedTranscript {
     // An existing absolute path (a sub-agent's agent-<id>.jsonl, a worker turn file) is the answer
     // as it is: its provider comes from the root it lives under.
     if (isAbsolute(query) && existsSync(query)) {
-        const byPath = resolvePath(query, roots, provider);
+        const byPath = resolvePath(query, rootsOf, provider);
         if (!byPath) {
             throw new Error(`"${query}" is under no known transcript root; pass --provider to read it`);
         }
@@ -219,7 +249,7 @@ function resolveWith({
     // The search order of the providers when none is given (the canonical harness order); ties in `mtime` keep it.
     const searched: readonly TranscriptProvider[] = provider ? [provider] : ACCOUNT_PROVIDER_ALIASES;
     const hits: RankedHit[] = searched.flatMap((name) =>
-        harnessDriver(name).parts.locate.find(query, harnessRootsOf(name, roots), fs)
+        harnessDriver(name).parts.locate.find(query, rootsOf(name), fs)
     );
     if (hits.length === 0) {
         throw new Error(`No session file found for "${query}"`);

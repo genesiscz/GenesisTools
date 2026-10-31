@@ -1,8 +1,9 @@
-import { describe, expect, test } from "bun:test";
+import { describe, expect, spyOn, test } from "bun:test";
 import { mkdirSync, mkdtempSync, utimesSync, writeFileSync } from "node:fs";
 import { tmpdir } from "node:os";
 import { dirname, join } from "node:path";
 import { createCodexLocate } from "@genesiscz/utils/agent-sessions/readers/codex-locate";
+import { harnessDriver } from "@genesiscz/utils/ai/providers/harness-index";
 import { env } from "@genesiscz/utils/env";
 import { SafeJSON } from "@genesiscz/utils/json";
 import { codexHomesWithLegacy, nativeSessionRootsWithLegacyHomes } from "@genesiscz/utils/providers/session-paths";
@@ -558,6 +559,26 @@ describe("resolveTranscripts", () => {
         expect(once.length).toBeGreaterThan(0);
         expect(once.every((count) => count === 1)).toBe(true);
         expect([...listed.values()].every((count) => count === 2)).toBe(true);
+    });
+
+    test("a batch reads a harness's default roots once, and never for roots given in full", () => {
+        const tree = mixedTree();
+        const queries = mixedQueries(tree).map(([query]) => query);
+        const locate = harnessDriver("codex").parts.locate;
+        const defaults = spyOn(locate, "defaultRoots");
+
+        try {
+            resolveTranscriptsWith({ queries, roots: tree.roots, reads: directReads });
+            expect(defaults).toHaveBeenCalledTimes(0);
+
+            // The worker folder left out: the defaults fill it, once for the whole batch.
+            const partial: TranscriptRoots = { ...tree.roots, codex: { native: tree.roots.codex?.native } };
+            resolveTranscriptsWith({ queries, roots: partial, reads: directReads });
+            expect(queries.length).toBeGreaterThan(1);
+            expect(defaults).toHaveBeenCalledTimes(1);
+        } finally {
+            defaults.mockRestore();
+        }
     });
 
     test("an empty list reads nothing and answers nothing", () => {
