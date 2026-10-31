@@ -85,6 +85,7 @@ import {
     type TrashPaths,
     totalRmLedger,
     trashItemName,
+    trashRootChangeBlocker,
 } from "./index";
 
 const AGENT: RmCaller = { agent: "claude-code", sessionId: "sess-1111", isInAgent: true };
@@ -1256,6 +1257,29 @@ describe("security review fixes: trash root", () => {
 
         expect(() => assertInsideTrash(victimFile, linked, "item")).toThrow(/resolves to/);
         expect(existsSync(victimFile)).toBe(true);
+    });
+});
+
+describe("changing the trash root", () => {
+    test("is refused while the current root holds a batch, and allowed once it is empty or unchanged", () => {
+        const own = { ...config, trashRoot: join(dir("root-move"), "GenesisTools", "rm") };
+        const paths = {
+            batchesDir: dir("root-move-state", "batches"),
+            lockPath: join(base, "root-move-state", "lock"),
+        };
+        const next = join(base, "elsewhere", "GenesisTools", "rm");
+
+        expect(trashRootChangeBlocker(own, next, paths)).toBeNull();
+
+        const target = resolveTarget(file(join(dir("root-move-src"), "a.txt")), base);
+        const batch = moveToTrash([{ target, rule: "test" }], { config: own, caller: AGENT, graceMinutes: 60, paths });
+
+        expect(trashRootChangeBlocker(own, next, paths)).toContain("drain --now");
+        expect(trashRootChangeBlocker(own, own.trashRoot, paths)).toBeNull();
+
+        restoreBatch(batch?.id ?? "", { config: own, paths });
+
+        expect(trashRootChangeBlocker(own, next, paths)).toBeNull();
     });
 });
 

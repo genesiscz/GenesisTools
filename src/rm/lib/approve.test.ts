@@ -14,6 +14,7 @@ import {
     moveAside,
     newBatchId,
     pendingAsideDirs,
+    presetsFor,
     priorDenials,
     type RmCaller,
     type RmConfig,
@@ -23,6 +24,7 @@ import {
     stillAside,
 } from "@genesiscz/utils/rm";
 import { saveApproved } from "../commands/requests";
+import { applyRmSetting } from "../commands/settings";
 import { type ApproveEntry, approveDelete, denyRequest, splitBySelection } from "./approve";
 import type { RunContext } from "./run";
 
@@ -333,5 +335,17 @@ describe("approve in the window", () => {
                 listRmRequests({ all: true })
             ).map((denial) => denial.note)
         ).toEqual(["these are fixtures", "these are fixtures"]);
+    });
+});
+
+describe("config set", () => {
+    test("enable-preset turns on a custom opt-in preset, not only a shipped one", () => {
+        const custom = { id: "shared-cache", description: "a shared cache", names: ["cache"], optIn: true };
+        const config = { ...defaultRmConfig(), customPresets: [custom] };
+        const next = applyRmSetting(config, "enable-preset", "shared-cache");
+
+        expect(presetsFor(config).some((p) => p.id === "shared-cache")).toBe(false);
+        expect(presetsFor(next).some((p) => p.id === "shared-cache")).toBe(true);
+        expect(applyRmSetting(config, "enable-preset", "no-such-preset").enabledPresets).toEqual(config.enabledPresets);
     });
 });

@@ -102,7 +102,7 @@ tools rm profile set web-repo --project web-app --protect ~/projects/web-app/.en
 ## The audit log
 
 `~/.genesis-tools/rm/ledger.jsonl` holds one line per move, aside, return, drain, restore, refusal, request, decision,
-root and profile change. Each line carries the time, the folder, the path and where it went, the rule, the bytes
+root, profile and setting change. Each line carries the time, the folder, the path and where it went, the rule, the bytes
 (moved: measured right after the rename; reclaimed: at the drain) and the caller: agent, session id and title, model,
 project, and the operating-system user for a person. `tools rm log` prints the newest entries (local time) with filters;
 `--by agent|session|day|rule|action` prints the totals moved, set aside and reclaimed.
