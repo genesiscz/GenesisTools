@@ -104,6 +104,12 @@ function nodeOf(value: unknown): TreeNode | undefined {
     };
 }
 
+/**
+ * The writer's depth cap. A version 1 sidecar set `truncated` only for the node cap, so a node at the deepest level it
+ * kept may have lost its children unmarked; such a tree reads as cut. Version 2 marks both caps itself.
+ */
+const V1_DEPTH_LIMIT = 60;
+
 export function parseViewTree(value: unknown): ViewTree | undefined {
     const fields = fieldsOf(value);
     const window = fieldsOf(fields?.window);
@@ -117,12 +123,13 @@ export function parseViewTree(value: unknown): ViewTree | undefined {
     }
 
     const nodes = fields.nodes.map(nodeOf).filter((node): node is TreeNode => node !== undefined);
+    const version = typeof fields.version === "number" ? fields.version : 1;
     return {
-        version: typeof fields.version === "number" ? fields.version : 1,
+        version,
         face: typeof fields.face === "string" ? fields.face : "unknown",
         source: typeof fields.source === "string" ? fields.source : "unknown",
         window: { width: window.width, height: window.height },
-        truncated: fields.truncated === true,
+        truncated: fields.truncated === true || (version < 2 && nodes.some((node) => node.depth >= V1_DEPTH_LIMIT - 1)),
         nodes,
     };
 }

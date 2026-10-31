@@ -57,6 +57,23 @@ function hub({ title, rows, buttonX = 1200 }: { title: number; rows: number; but
     ]);
 }
 
+describe("parseViewTree", () => {
+    it("reads a version 1 tree that reached the depth cap as cut, and trusts a version 2 tree's own flag", () => {
+        const deep = (version: number) => ({
+            version,
+            face: "hub",
+            source: "ax",
+            window: { width: 100, height: 100 },
+            truncated: false,
+            nodes: [{ path: "AXWindow", role: "AXWindow", depth: 59, hasLabel: false }],
+        });
+
+        expect(parseViewTree(deep(1))?.truncated).toBe(true);
+        expect(parseViewTree(deep(2))?.truncated).toBe(false);
+        expect(parseViewTree({ ...deep(1), nodes: [{ ...deep(1).nodes[0], depth: 3 }] })?.truncated).toBe(false);
+    });
+});
+
 describe("diffViewTrees", () => {
     it("reports zero changes for the same build showing other titles and counts", () => {
         const diff = diffViewTrees(hub({ title: 180, rows: 9 }), hub({ title: 260, rows: 4 }));

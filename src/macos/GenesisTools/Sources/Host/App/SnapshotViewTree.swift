@@ -29,7 +29,8 @@ package enum SnapshotViewTree {
             walk(root, path: "AXWindow", depth: 0, origin: topLeft(of: window), into: &nodes, truncated: &truncated)
         }
         let record: [String: Any] = [
-            "version": 1,
+            // 2: `truncated` covers the depth cap too (version 1 set it for the node cap only).
+            "version": 2,
             "face": face,
             "source": source,
             "window": ["width": Double(window.frame.width.rounded()), "height": Double(window.frame.height.rounded())],
