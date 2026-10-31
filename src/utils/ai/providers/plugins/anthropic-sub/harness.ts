@@ -1,6 +1,6 @@
 import { isClaude, resolveClaudeContext } from "@genesiscz/utils/agent/hosts/claude";
 import { claudeTurnState } from "@genesiscz/utils/agent-sessions/readers/claude-turn-state";
-import { deferredLocator, deferredWindowTurns } from "@genesiscz/utils/harness/deferred";
+import { deferredLocator } from "@genesiscz/utils/harness/deferred";
 import { interpreterScriptIndex } from "@genesiscz/utils/harness/interpreter-entry";
 import type { HarnessDriver } from "@genesiscz/utils/harness/types";
 import { claudeDialog } from "./harness-dialog";
@@ -34,8 +34,8 @@ export const claudeHarness: HarnessDriver<"claude"> = {
         },
     },
     parts: {
-        locate: deferredLocator(import.meta, "harness-locate", "claudeLocate"),
-        parse: () => import("./harness-parse").then((m) => m.claudeParse),
+        locate: deferredLocator("claude-locate", "claudeLocate"),
+        parse: () => import("@genesiscz/utils/agent-sessions/readers/claude-parse").then((m) => m.claudeParse),
         turnState: { read: claudeTurnState },
         launch: claudeLaunch,
         transcript: {
@@ -45,8 +45,6 @@ export const claudeHarness: HarnessDriver<"claude"> = {
             timestampResolutionMs: 0,
             turnIdsEndWithRowUuid: true,
             keepsLiveRegistry: true,
-            // Claude records no permission prompt in its transcript; only its `Notification` hook sees one.
-            windowTurns: deferredWindowTurns(import.meta, "harness-parse", "claudeWindowTurns"),
         },
         exit: { command: "/exit" },
         hooks: claudeHooks,

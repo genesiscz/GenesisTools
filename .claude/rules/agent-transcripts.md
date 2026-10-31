@@ -22,10 +22,25 @@ Loaded by Claude Code when you read, write or edit a file in a folder that reads
 (2026-10-25): every fact read from a session transcript is a member of the provider interface, implemented by every
 provider, so a new provider is a list of members to fill in and no feature parses a transcript format itself.
 
-- **The interface is `NativeSessionReader`** (`src/utils/agent-sessions/types.ts`), reached through
-  `ProviderPlugin.codingAgent` and `resolveHistoryProvider(kind)` (`src/utils/agent-sessions/provider.ts`).
-  Claude, Codex and Grok implement it in `src/utils/agent-sessions/readers/<provider>.ts`. Never add another
-  provider registry or a `switch (harness)` over transcript formats in a tool.
+- **The interface is `NativeSessionReader`** (`src/utils/agent-sessions/types.ts`), reached through one door:
+  `resolveHistoryProvider(kind)` over `ProviderPlugin.codingAgent` (`src/utils/agent-sessions/provider.ts`;
+  `nativeReaderFor(kind)` in `native-adapter.ts` when the caller needs the kind narrowed). Claude, Codex and Grok
+  implement it in `src/utils/agent-sessions/readers/<provider>.ts`. The driver has no history part and there is no
+  reader list (both went on 2026-10-31). Never add another provider registry or a `switch (harness)` over
+  transcript formats in a tool.
+- **One owner per harness for its session files: `src/utils/agent-sessions/readers/<harness>-*.ts`.** The reader,
+  its discovery, its title parser, its turn-state dialect (`<harness>-turn-state.ts`), its locator
+  (`<harness>-locate.ts`: default roots, path and id lookup, title search), its turn parser (`<harness>-parse.ts`)
+  and its current-model probe (`<harness>-model.ts`) all live there, and a fact is parsed in one function both sides
+  call (Codex's `session_index.jsonl`: `codexIndexRows` in `codex-title.ts`). The harness driver
+  (`src/utils/ai/providers/plugins/<plugin>/harness.ts`) only points at them: `locate` through `deferredLocator`
+  (`src/utils/harness/deferred.ts`, so a hook loads no locator), `parse` through a dynamic import, `turnState`
+  directly, and `transcript` holds static facts only. Callers reach a part as `harnessDriver(id).parts.<part>`
+  (`src/utils/ai/providers/harness-index.ts`); the one-line accessors went on 2026-10-31.
+- **Roots are a per-harness table.** `TranscriptRoots` (`src/utils/ai/transcripts/resolve.ts`) is keyed by harness,
+  each entry `{ native, worker }`; a field a caller leaves out takes the locator's `defaultRoots()`. Codex has one
+  home policy, `codexHomesWithLegacy()` (`src/utils/providers/session-paths.ts`): history discovery, lookup and
+  title search read the same homes, legacy profile homes (`~/.codex-work`) included.
 - **A new transcript capability is a REQUIRED member**, implemented by all three readers in the same change. The
   compiler then names every provider (and test fake) that lacks it. When a provider cannot answer, its member says
   so in code and in a comment (Grok's chat history carries no timestamps, so its `readBackward` is bounded by
@@ -50,9 +65,10 @@ provider, so a new provider is a list of members to fill in and no feature parse
 - **The format parsers live beside the readers** (`src/utils/agent-sessions/readers/`: `codex-turns.ts`,
   `codex-changes.ts`, `codex-import.ts`, `codex-usage.ts`, `grok-usage.ts`, `claude-tail-usage.ts`,
   `claude-native-scan.ts`, moved there 2026-10-30). `src/utils/ai/transcripts/` keeps provider-neutral logic and
-  tables keyed by provider. The turn-state readers moved there too on 2026-10-30
-  (`readers/<harness>-turn-state.ts`), reached through each harness driver's `turnState` part
-  (`harnessTurnState(id)` in `src/utils/ai/providers/harness-index.ts`). Do not add a new parser outside the readers.
+  tables keyed by provider. The turn-state dialects moved there too on 2026-10-30
+  (`readers/<harness>-turn-state.ts`); the one door from a transcript path to a `TurnSnapshot` is `readTurnState`
+  (`src/utils/ai/transcripts/turn-state.ts`), and its shapes are in `turn-state-types.ts`. Do not add a new parser
+  outside the readers.
 - **Lint enforces it**: `no-transcript-format-outside-readers` in `scripts/ci/lint-rules.ts` fails a transcript record
   type or field literal (`"continued-in"`, `"turn_context"`, `'"type":"user"'`, …) outside the readers. Its list in
   `scripts/ci/transcript-format-ratchet.ts` was emptied on 2026-10-30, so a new offender fails the lint at once.

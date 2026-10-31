@@ -1,6 +1,4 @@
 import { readFileSync } from "node:fs";
-import { claudeHistoryReader } from "@genesiscz/utils/agent-sessions/compact-readers";
-import { claudeToolInputLine } from "@genesiscz/utils/agent-sessions/readers/claude-tool-inputs";
 import { claudeMessagesToTurns } from "@genesiscz/utils/ai/transcripts/claude";
 import { toolInputKeysOf } from "@genesiscz/utils/ai/transcripts/native-scan";
 import { parseTranscriptLine } from "@genesiscz/utils/ai/transcripts/parse-line";
@@ -9,6 +7,8 @@ import { workerEventsToTurns } from "@genesiscz/utils/ai/transcripts/worker-even
 import { ClaudeSession } from "@genesiscz/utils/claude/session";
 import { parseTurnEvents as parseClaudeTurnEvents } from "@genesiscz/utils/claude/worker-stream";
 import type { TranscriptParser } from "@genesiscz/utils/harness/parts";
+import { claudeToolInputLine } from "./claude-tool-inputs";
+import { claudeWindowTurns } from "./claude-window-turns";
 
 /** Claude transcripts to turns: a session file, or a `claude -p` worker turn file. Moved from `TURN_READERS` in load.ts. */
 export const claudeParse: TranscriptParser = {
@@ -29,8 +29,6 @@ export const claudeParse: TranscriptParser = {
     fromLines: (resolved, lines) =>
         resolved.source === "worker"
             ? workerEventsToTurns(parseClaudeTurnEvents(lines.join("\n"), resolved.sessionId), resolved.sessionId, 1)
-            : claudeHistoryReader.windowTurns(lines.map(parseTranscriptLine).filter(isRecord)),
+            : claudeWindowTurns(lines.map(parseTranscriptLine).filter(isRecord)),
     toolInputKeys: (text) => toolInputKeysOf(text, claudeToolInputLine),
 };
-
-export const claudeWindowTurns = claudeHistoryReader.windowTurns;

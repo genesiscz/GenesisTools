@@ -1,6 +1,6 @@
 import { isGrok, resolveGrokContext } from "@genesiscz/utils/agent/hosts/grok";
 import { grokTurnState } from "@genesiscz/utils/agent-sessions/readers/grok-turn-state";
-import { deferredLocator, deferredWindowTurns } from "@genesiscz/utils/harness/deferred";
+import { deferredLocator } from "@genesiscz/utils/harness/deferred";
 import { interpreterScriptIndex } from "@genesiscz/utils/harness/interpreter-entry";
 import type { HarnessDriver } from "@genesiscz/utils/harness/types";
 import { grokHooks } from "./harness-hooks";
@@ -27,8 +27,8 @@ export const grokHarness: HarnessDriver<"grok"> = {
         },
     },
     parts: {
-        locate: deferredLocator(import.meta, "harness-locate", "grokLocate"),
-        parse: () => import("./harness-parse").then((m) => m.grokParse),
+        locate: deferredLocator("grok-locate", "grokLocate"),
+        parse: () => import("@genesiscz/utils/agent-sessions/readers/grok-parse").then((m) => m.grokParse),
         turnState: { read: grokTurnState },
         launch: grokLaunch,
         transcript: {
@@ -39,7 +39,6 @@ export const grokHarness: HarnessDriver<"grok"> = {
             timestampResolutionMs: 1000,
             turnIdsEndWithRowUuid: false,
             keepsLiveRegistry: false,
-            windowTurns: deferredWindowTurns(import.meta, "harness-parse", "grokWindowTurns"),
         },
         exit: { command: "/exit" },
         hooks: grokHooks,

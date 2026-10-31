@@ -2,7 +2,7 @@ import { describe, expect, test } from "bun:test";
 import { mkdirSync, mkdtempSync, utimesSync, writeFileSync } from "node:fs";
 import { tmpdir } from "node:os";
 import { dirname, join } from "node:path";
-import { codexLocate } from "@genesiscz/utils/ai/providers/plugins/openai-sub/harness-locate";
+import { codexLocate } from "@genesiscz/utils/agent-sessions/readers/codex-locate";
 import { env } from "@genesiscz/utils/env";
 import { SafeJSON } from "@genesiscz/utils/json";
 import { codexHomesWithLegacy, nativeSessionRootsWithLegacyHomes } from "@genesiscz/utils/providers/session-paths";

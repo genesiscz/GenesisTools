@@ -142,11 +142,6 @@ export interface TranscriptFacts {
      * row's liveness can be read from it instead of guessed.
      */
     readonly keepsLiveRegistry: boolean;
-    /**
-     * The turns of a window of native records (a receipt's context in `around.ts`). A driver holds a
-     * `deferredWindowTurns` (`deferred.ts`) that loads its turn parser on the first call.
-     */
-    windowTurns(values: Record<string, unknown>[]): TranscriptTurn[];
 }
 
 /** H: the slash command that ends an interactive session. */

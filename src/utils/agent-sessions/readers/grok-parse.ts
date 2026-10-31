@@ -1,10 +1,7 @@
 import { readFileSync } from "node:fs";
-import { grokHistoryReader } from "@genesiscz/utils/agent-sessions/compact-readers";
 import { grokNativeLinesToTurns, grokWorkerTextToTurns } from "@genesiscz/utils/ai/transcripts/grok";
 import { readTranscriptRecords } from "@genesiscz/utils/ai/transcripts/record-cache";
 import type { TranscriptParser } from "@genesiscz/utils/harness/parts";
-
-export const grokWindowTurns = grokHistoryReader.windowTurns;
 
 /** Grok transcripts to turns: a native chat history or a worker text file. Moved from `TURN_READERS` in load.ts. */
 export const grokParse: TranscriptParser = {

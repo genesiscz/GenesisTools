@@ -6,6 +6,8 @@ function isTranscriptLocator(value: unknown): value is TranscriptLocator {
     return (
         typeof value === "object" &&
         value !== null &&
+        "defaultRoots" in value &&
+        typeof value.defaultRoots === "function" &&
         "find" in value &&
         typeof value.find === "function" &&
         "pathRoots" in value &&
@@ -54,12 +56,13 @@ export function deferredWindowTurns(meta: ImportMeta, module: string, exportName
 }
 
 /**
- * A `locate` part that loads its implementation beside the driver on the first call (`requireSibling`), so importing
- * a driver stays cheap on the hook path while the part stays synchronous (`resolveTranscriptsWith`). Measured
+ * A `locate` part that loads its implementation from the harness's reader files (`src/utils/agent-sessions/readers/
+ * <module>.ts`, where every fact of its session files lives) on the first call, so importing a driver stays cheap on
+ * the hook path while the part stays synchronous (`resolveTranscriptsWith`). Measured
  * 2026-10-31, medians of 9 interleaved runs: the three locator modules added 1.7 ms to `src/utils/agent/host.ts`
  * when the drivers imported them directly (4.11 ms against 2.41 ms).
  */
-export function deferredLocator(meta: ImportMeta, module: string, exportName: string): TranscriptLocator {
+export function deferredLocator(module: string, exportName: string): TranscriptLocator {
     let loaded: TranscriptLocator | undefined;
 
     const impl = (): TranscriptLocator => {
@@ -67,7 +70,7 @@ export function deferredLocator(meta: ImportMeta, module: string, exportName: st
             return loaded;
         }
 
-        const exports: unknown = requireSibling(meta, module);
+        const exports: unknown = requireSibling(import.meta, `../agent-sessions/readers/${module}`);
         const value: unknown =
             typeof exports === "object" && exports !== null ? Reflect.get(exports, exportName) : undefined;
 

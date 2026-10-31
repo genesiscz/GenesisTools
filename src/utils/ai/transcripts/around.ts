@@ -68,7 +68,7 @@ function turns({
     toolCallId?: string;
 }): { turns: TranscriptTurn[]; truncated: boolean } {
     const values = records.map((item) => item.value);
-    const result = harnessDriver(resolved.provider).parts.transcript.windowTurns(values);
+    const result = resolveHistoryProvider(resolved.provider).reader.windowTurns(values);
     const truncated = result.some(
         (turn) => turn.text.length > 8_000 || (turn.reasoning?.length ?? 0) > 2_000 || turn.tools.length > 12
     );
