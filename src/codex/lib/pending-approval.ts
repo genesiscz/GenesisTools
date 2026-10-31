@@ -187,7 +187,9 @@ export function renderFileChanges(options: {
         const body = contentLines(change.diff);
         lines.push(`=== ${change.kind} ${change.path}${moved}: ${changeLabel(change)}, ${body.length} lines ===`);
         const shown = body.slice(0, Math.max(0, budget));
-        lines.push(...shown);
+        for (const line of shown) {
+            lines.push(line);
+        }
         budget -= shown.length;
         const hidden = body.length - shown.length;
 
@@ -217,7 +219,9 @@ export function renderPendingApproval(options: {
         lines.push(`cwd: ${approval.cwd}`);
     }
 
-    lines.push(...renderFileChanges(options));
+    for (const line of renderFileChanges(options)) {
+        lines.push(line);
+    }
     lines.push(
         `answer: ${toolCommand("codex approve", "--name", name, "--request", requestId)} or ${toolCommand("codex deny", "--name", name, "--request", requestId)}`
     );

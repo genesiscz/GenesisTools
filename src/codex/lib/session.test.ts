@@ -1039,6 +1039,12 @@ describe("CodexSessionRuntime", () => {
                     item: { type: "fileChange", id: "patch-2", changes: [{ path: outside, kind: { type: "add" } }] },
                 },
             });
+            const revised = runtime.handleServerRequest({
+                id: "revised",
+                method: "item/fileChange/requestApproval",
+                params: { threadId: "thread-1", itemId: "patch-2", reason: "update docs" },
+            });
+            await Bun.sleep(0);
             await runtime.handleNotification({
                 method: "item/fileChange/patchUpdated",
                 params: {
@@ -1046,11 +1052,6 @@ describe("CodexSessionRuntime", () => {
                     itemId: "patch-2",
                     changes: [{ path: outside, kind: { type: "update", move_path: join(scratch, "b.md") }, diff }],
                 },
-            });
-            const revised = runtime.handleServerRequest({
-                id: "revised",
-                method: "item/fileChange/requestApproval",
-                params: { threadId: "thread-1", itemId: "patch-2" },
             });
             const legacy = runtime.handleServerRequest({
                 id: "legacy",
@@ -1071,7 +1072,11 @@ describe("CodexSessionRuntime", () => {
             const records = store.readMeta(meta.name)?.pendingApprovals ?? {};
             // A path outside the cwd stays absolute, and a move names its destination too.
             expect(records.revised.paths).toEqual([outside, "b.md"]);
+            expect(records.revised.detail).toBe(`edit ${outside}, b.md (update docs)`);
             expect(records.revised.changes).toEqual([{ path: outside, kind: "update", movePath: "b.md", diff }]);
+            expect(await runtime.execute({ op: "read" })).toMatchObject({
+                pendingApprovals: { revised: records.revised },
+            });
             expect(records.legacy.detail).toBe("edit new.md, gone.md");
             expect(records.legacy.changes).toEqual([
                 { path: "new.md", kind: "add", diff: "hello\n" },
@@ -1091,6 +1096,23 @@ describe("CodexSessionRuntime", () => {
             await expect(revised).resolves.toEqual({ decision: "accept" });
             await expect(legacy).resolves.toEqual({ decision: "denied" });
         });
+    });
+
+    test("renders a full approval with 200,001 content lines", () => {
+        const content = `${"line\n".repeat(200_000)}last`;
+        const lines = renderPendingApproval({
+            name: "reviewer",
+            requestId: "large",
+            approval: {
+                rpcId: "large",
+                method: "item/fileChange/requestApproval",
+                detail: "edit large.txt",
+                requestedAt: "2026-01-01T00:00:00Z",
+                changes: [{ path: "large.txt", kind: "add", diff: content }],
+            },
+        });
+        expect(lines).toContain("last");
+        expect(lines.filter((line) => line === "line")).toHaveLength(200_000);
     });
 
     test("declines and clears unresolved approvals while closing", async () => {

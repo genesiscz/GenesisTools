@@ -82,6 +82,7 @@ interface ReviewStartResult {
 
 interface PendingApprovalDecision {
     method: string;
+    request: RpcServerRequest;
     resolve: (response: unknown) => void;
 }
 
@@ -252,7 +253,7 @@ export class CodexSessionRuntime {
         }
 
         await this.fileUnderProject(notification);
-        this.trackFileChange(notification);
+        await this.trackFileChange(notification);
 
         this.trackAgentMessage(notification);
         const finished = this.costTracker.observe(notification, new Date());
@@ -362,11 +363,10 @@ export class CodexSessionRuntime {
             cwd: commandRequest && typeof params.cwd === "string" ? params.cwd : undefined,
             requestedAt: new Date().toISOString(),
         };
-        await this.updateMeta({ pendingApprovals: { ...this.meta.pendingApprovals, [requestId]: record } });
-
         const response = new Promise<unknown>((resolve) => {
-            this.pendingApprovalDecisions.set(requestId, { method: request.method, resolve });
+            this.pendingApprovalDecisions.set(requestId, { method: request.method, request, resolve });
         });
+        await this.updateMeta({ pendingApprovals: { ...this.meta.pendingApprovals, [requestId]: record } });
         // A file change carries what it would write, cut to a few lines; the marker names the command for the rest.
         const preview = isFileChangeApproval(request.method)
             ? {
@@ -422,12 +422,39 @@ export class CodexSessionRuntime {
      * Keeps a file-change item's files and proposed content from its start to its end, for the approval asked in
      * between. `item/fileChange/patchUpdated` replaces them when Codex revises the patch of an item in flight.
      */
-    private trackFileChange(notification: RpcNotification): void {
+    private async trackFileChange(notification: RpcNotification): Promise<void> {
         const params = isRecord(notification.params) ? notification.params : {};
 
         if (notification.method === "item/fileChange/patchUpdated") {
             if (typeof params.itemId === "string" && Array.isArray(params.changes)) {
-                this.fileChanges.set(params.itemId, fileChangesFromItem(params.changes, this.meta.cwd));
+                const changes = fileChangesFromItem(params.changes, this.meta.cwd);
+                this.fileChanges.set(params.itemId, changes);
+                const pendingApprovals = { ...this.meta.pendingApprovals };
+                let updated = false;
+                for (const [id, pending] of this.pendingApprovalDecisions) {
+                    const requestParams = isRecord(pending.request.params) ? pending.request.params : {};
+                    const record = pendingApprovals[id];
+                    if (
+                        pending.method !== "item/fileChange/requestApproval" ||
+                        requestParams.itemId !== params.itemId ||
+                        !record
+                    ) {
+                        continue;
+                    }
+                    const paths = changes.flatMap((change) =>
+                        change.movePath ? [change.path, change.movePath] : [change.path]
+                    );
+                    pendingApprovals[id] = {
+                        ...record,
+                        changes,
+                        paths,
+                        detail: this.describeApproval(pending.request, paths),
+                    };
+                    updated = true;
+                }
+                if (updated) {
+                    await this.updateMeta({ pendingApprovals });
+                }
             }
 
             return;
