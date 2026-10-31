@@ -4256,6 +4256,41 @@ test("shared run: identical calls in one session start one process", async () =>
     expect(runs.count).toBe(1);
 });
 
+test("shared run: a ttl 0 refresh during a timer's cached read runs the command instead of joining it", async () => {
+    const files = new Map<string, string>();
+    const { key, path } = sharedFiles();
+    files.set(path, JSON.stringify({ key, at: sharedRunClock.now(), exitCode: 0, stdout: "cached", stderr: "" }));
+    const { host: base, runs } = sharedRunHost(files, 0);
+    let release = () => {};
+    const gate = new Promise<void>((resolve) => {
+        release = resolve;
+    });
+    let readStarted = () => {};
+    const reading = new Promise<void>((resolve) => {
+        readStarted = resolve;
+    });
+    const host: Host = {
+        ...base,
+        async read(file) {
+            if (file === path) {
+                readStarted();
+                await gate;
+            }
+
+            return base.read(file);
+        },
+    };
+
+    const timer = sharedRun(host, SHARED_ASK);
+    await reading;
+    const refresh = sharedRun(host, { ...SHARED_ASK, ttlMs: 0 });
+    release();
+
+    expect((await timer)?.stdout).toBe("cached");
+    expect((await refresh)?.stdout).toBe("mine");
+    expect(runs.count).toBe(1);
+});
+
 test("shared run: a session waits for another session's claimed run and takes its answer", async () => {
     const files = new Map<string, string>();
     const { host, runs } = sharedRunHost(files, 0);

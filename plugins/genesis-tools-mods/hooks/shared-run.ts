@@ -31,8 +31,11 @@ export const sharedRunClock = { now: (): number => Date.now() };
 const WAIT_MS = 10_000;
 const POLL_MS = 250;
 
-/** The same command in this session while it runs: one process, every caller gets its answer. */
-const inFlight = new Map<string, Promise<SharedRunResult | undefined>>();
+/**
+ * The same command in this session while it runs: one process, every caller gets its answer. A flight may answer
+ * from the shared file up to its own `ttlMs` old, so it keeps that ttl, and only a caller that accepts the age joins.
+ */
+const inFlight = new Map<string, { ttlMs: number; answer: Promise<SharedRunResult | undefined> }>();
 
 /** FNV-1a, 32 bits: a file name for the key. The file holds the key itself, so a collision reads as a miss. */
 function hashOf(text: string): string {
@@ -225,19 +228,22 @@ export async function sharedRun(
     ask: { argv: readonly string[]; cwd: string; ttlMs: number; timeoutMs: number; scope?: string }
 ): Promise<SharedRunResult | undefined> {
     const { key, path } = sharedRunFiles(await agentsDir(host), ask);
-    // The flight starts with the shared file, so callers that come while it runs read nothing themselves.
+    // The flight starts with the shared file, so callers that come while it runs read nothing themselves. A refresh
+    // (`ttlMs: 0`) never joins a timer's flight, which may be serving a cached answer.
     const running = inFlight.get(key);
 
-    if (running) {
-        return running;
+    if (running && running.ttlMs <= ask.ttlMs) {
+        return running.answer;
     }
 
-    const flight = runShared(host, ask, key, path);
+    const flight = { ttlMs: ask.ttlMs, answer: runShared(host, ask, key, path) };
     inFlight.set(key, flight);
 
     try {
-        return await flight;
+        return await flight.answer;
     } finally {
-        inFlight.delete(key);
+        if (inFlight.get(key) === flight) {
+            inFlight.delete(key);
+        }
     }
 }
