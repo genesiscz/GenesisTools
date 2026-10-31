@@ -1,5 +1,27 @@
 import { describe, expect, test } from "bun:test";
-import { renderUnifiedDiff } from "./diff";
+import chalk from "chalk";
+import { colorizeUnifiedDiff, renderUnifiedDiff } from "./diff";
+
+describe("colorizeUnifiedDiff", () => {
+    test("bolds only real file headers; an added `++x` or removed `--x` line keeps its colour", () => {
+        const level = chalk.level;
+        chalk.level = 1;
+
+        try {
+            const lines = colorizeUnifiedDiff("--- a/x\n+++ b/x\n@@ -1 +1 @@\n---old\n+++new").split("\n");
+
+            expect(lines).toEqual([
+                chalk.bold("--- a/x"),
+                chalk.bold("+++ b/x"),
+                chalk.cyan("@@ -1 +1 @@"),
+                chalk.red("---old"),
+                chalk.green("+++new"),
+            ]);
+        } finally {
+            chalk.level = level;
+        }
+    });
+});
 
 describe("renderUnifiedDiff", () => {
     test("returns a unified diff between two strings", () => {

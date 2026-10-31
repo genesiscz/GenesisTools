@@ -15,7 +15,8 @@ export function colorizeUnifiedDiff(diff: string): string {
     return diff
         .split("\n")
         .map((line) => {
-            if (line.startsWith("+++") || line.startsWith("---")) {
+            // A header is the marker then a space, a tab or the end; `+++x` is an added line `++x`.
+            if (/^(?:\+\+\+|---)(?:[ \t]|$)/.test(line)) {
                 return chalk.bold(line);
             }
 
