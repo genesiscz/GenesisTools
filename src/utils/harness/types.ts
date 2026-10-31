@@ -11,72 +11,41 @@ export type HarnessId = AccountProviderAlias;
 
 export type Lazy<T> = () => Promise<T>;
 
-/** The phases of the plan that move a part into its driver. */
-export type HarnessPhase = "P1" | "P2" | "P3" | "P4" | "P5" | "P6" | "P7";
-
 /**
- * Parts implemented in `@genesiscz/utils` whose contract is written in the phase that moves them (plan section 3):
- * `live` (P2), `hooks`, `statusline` (P4), `compaction` (P5). Until then a driver can only declare them pending.
+ * Every part, by name. A part lists only code a caller reads: a part a harness cannot have says so inside its own
+ * contract (the `dialog` part is a `DialogKeyMap`, whose `supported: false` arm carries the reason), never as a note
+ * in place of the code. The planned parts that had no code yet (questions, live, statusline, compaction, and the
+ * tool-owned cmux, answer, spend, mcp and subagents tables) were dropped on 2026-10-31; each tool keeps its own
+ * exhaustive table keyed by `HarnessId`.
  */
-export type PendingContractPart = "live" | "statusline" | "compaction";
+export const HARNESS_PART_LOADING = {
+    locate: "eager",
+    parse: "lazy",
+    turnState: "eager",
+    launch: "eager",
+    exit: "eager",
+    hooks: "eager",
+    process: "eager",
+    host: "eager",
+    worker: "eager",
+    history: "lazy",
+    transcript: "eager",
+    dialog: "eager",
+} as const satisfies {
+    readonly [P in keyof HarnessPartContracts]: P extends keyof LazyPartContracts ? "lazy" : "eager";
+};
 
-/**
- * Parts whose implementation lives in a tool, so the shared package can never import it: cmux capture and restore
- * (`src/cmux`), answer delivery (`src/question`), the worker drivers (`src/claude`, `src/codex`, `src/grok`), spend
- * (`src/ai-spend`), MCP config (`src/mcp-manager`), the subagent tree (`src/hub`). The driver names the tool module
- * that owns the part's exhaustive table keyed by `HarnessId` (`toolOwned`).
- */
-export type ToolOwnedPart = "cmux" | "answer" | "spend" | "mcp" | "subagents";
-
-export type HarnessPartName = keyof HarnessPartContracts | PendingContractPart | ToolOwnedPart;
+export type HarnessPartName = keyof HarnessPartContracts;
 
 /** Every part, in the order of the inventory sections (plan section 1). */
-export const HARNESS_PARTS = [
-    "locate",
-    "parse",
-    "turnState",
-    "questions",
-    "live",
-    "launch",
-    "exit",
-    "hooks",
-    "statusline",
-    "spend",
-    "compaction",
-    "cmux",
-    "process",
-    "host",
-    "worker",
-    "answer",
-    "mcp",
-    "history",
-    "subagents",
-    "transcript",
-    "dialog",
-] as const satisfies readonly HarnessPartName[];
-
-/** Why a driver does not carry a part's implementation itself. Every variant carries a reason a person can read. */
-export type PartNote =
-    /** The harness cannot have the part ("Codex rollouts do not persist approval requests"). */
-    | { readonly note: true; readonly kind: "unsupported"; readonly reason: string }
-    /** The part still lives at its old sites; `phase` moves it here. */
-    | { readonly note: true; readonly kind: "pending"; readonly phase: HarnessPhase; readonly reason: string }
-    /** A tool owns the part; `owner` is the repo-relative module with the table keyed by `HarnessId`. */
-    | { readonly note: true; readonly kind: "tool-owned"; readonly owner: string; readonly reason: string };
-
-/** A lazy part: a loader, or a note. */
-export type PartSlot<T> = Lazy<T> | PartNote;
-/** An eager part: the value itself, or a note (`note: true` tells them apart). */
-export type EagerSlot<T> = T | PartNote;
+export const HARNESS_PARTS = Object.keys(HARNESS_PART_LOADING) as HarnessPartName[];
 
 /**
- * Every part is a required key, so the compiler names each driver that says nothing about a part. A part with a
- * contract is a lazy loader or a note; a part without one can only be a note.
+ * Every part is a required key, so the compiler names each driver that lacks one. A lazy part is a loader, so reading
+ * the driver never loads its parser; an eager part is the value itself.
  */
-export type HarnessParts = { readonly [P in keyof LazyPartContracts]: PartSlot<LazyPartContracts[P]> } & {
-    readonly [P in keyof EagerPartContracts]: EagerSlot<EagerPartContracts[P]>;
-} & {
-    readonly [P in PendingContractPart | ToolOwnedPart]: PartNote;
+export type HarnessParts = { readonly [P in keyof LazyPartContracts]: Lazy<LazyPartContracts[P]> } & {
+    readonly [P in keyof EagerPartContracts]: EagerPartContracts[P];
 };
 
 /** Static facts about a harness. Plain data, so reading identity never loads a part. */
@@ -129,20 +98,4 @@ export interface HarnessDriver<Id extends HarnessId = HarnessId> {
     readonly id: Id;
     readonly identity: HarnessIdentity;
     readonly parts: HarnessParts;
-}
-
-export function unsupported(reason: string): PartNote {
-    return { note: true, kind: "unsupported", reason };
-}
-
-export function pending(phase: HarnessPhase, reason: string): PartNote {
-    return { note: true, kind: "pending", phase, reason };
-}
-
-export function toolOwned(owner: string, reason: string): PartNote {
-    return { note: true, kind: "tool-owned", owner, reason };
-}
-
-export function isPartNote(slot: unknown): slot is PartNote {
-    return typeof slot === "object" && slot !== null && "note" in slot && slot.note === true;
 }

@@ -1,4 +1,4 @@
-import type { DialogKeys } from "@genesiscz/utils/agents/dialogs/keys";
+import type { DialogKeyMap } from "@genesiscz/utils/agents/dialogs/keys";
 
 /**
  * Measured live on 2026-10-30 21:51 to 21:53 (Claude Code 2.1.314, Haiku, a scratch session in a background cmux
@@ -14,7 +14,8 @@ import type { DialogKeys } from "@genesiscz/utils/agents/dialogs/keys";
  * So the digit is the press: one key, independent of where the highlight is, and no Enter. When the dialog is
  * already gone, the digit stays in the prompt as one unsent character, while Enter would submit the prompt.
  */
-export const claudeDialog: DialogKeys = {
+export const claudeDialog: DialogKeyMap = {
+    supported: true,
     select: (index) => [{ text: String(index + 1) }],
     maxOptions: 9,
 };

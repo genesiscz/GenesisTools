@@ -1,5 +1,4 @@
 import { harnessDriver } from "@genesiscz/utils/ai/providers/harness-index";
-import { isPartNote } from "@genesiscz/utils/harness/types";
 import type { DialogProvider, OpenQuestion } from "./types";
 
 /** One key press for a pane: a named key (`cmux send-key`) or a character typed as text (`cmux send`). */
@@ -18,17 +17,11 @@ export type DialogKeyMap = ({ supported: true } & DialogKeys) | { supported: fal
 
 /**
  * The option keys of a harness: its driver's `dialog` part. A harness whose dialog keys were not measured live says so
- * in an `unsupported` note; its answers then go as typed text through the normal delivery, which the dialog guard
- * refuses while its dialog is open.
+ * with `supported: false` and a reason; its answers then go as typed text through the normal delivery, which the
+ * dialog guard refuses while its dialog is open.
  */
 export function dialogKeysOf(provider: DialogProvider): DialogKeyMap {
-    const slot = harnessDriver(provider).parts.dialog;
-
-    if (isPartNote(slot)) {
-        return { supported: false, reason: slot.reason };
-    }
-
-    return { supported: true, ...slot };
+    return harnessDriver(provider).parts.dialog;
 }
 
 /** The letters of `count` options: a) b) c) and so on. */

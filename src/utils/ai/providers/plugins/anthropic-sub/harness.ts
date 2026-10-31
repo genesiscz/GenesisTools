@@ -3,7 +3,6 @@ import { claudeTurnState } from "@genesiscz/utils/agent-sessions/readers/claude-
 import { deferredLocator, deferredWindowTurns } from "@genesiscz/utils/harness/deferred";
 import { interpreterScriptIndex } from "@genesiscz/utils/harness/interpreter-entry";
 import type { HarnessDriver } from "@genesiscz/utils/harness/types";
-import { pending, toolOwned } from "@genesiscz/utils/harness/types";
 import { claudeDialog } from "./harness-dialog";
 import { claudeHooks } from "./harness-hooks";
 import { claudeLaunch } from "./harness-launch";
@@ -17,9 +16,8 @@ function claudeScriptIndex(command: string): number | null {
 }
 
 /**
- * The Claude Code driver: what GenesisTools knows about the harness, part by part. Every part the plan has not moved yet
- * names the phase that moves it and where it lives today (inventory of 2026-10-30 in the plan note). Light on
- * purpose: identity is data and each part is a lazy import, so reading the driver never loads a parser.
+ * The Claude Code driver: what GenesisTools knows about the harness, part by part, each one the code its callers
+ * read. Light on purpose: identity is data and each part is a lazy import, so reading the driver never loads a parser.
  */
 export const claudeHarness: HarnessDriver<"claude"> = {
     id: "claude",
@@ -39,14 +37,6 @@ export const claudeHarness: HarnessDriver<"claude"> = {
         locate: deferredLocator(import.meta, "harness-locate", "claudeLocate"),
         parse: () => import("./harness-parse").then((m) => m.claudeParse),
         turnState: { read: claudeTurnState },
-        questions: pending(
-            "P2",
-            "the claude question signals inside src/utils/agent-sessions/readers/claude-turn-state.ts (TurnSnapshot.questionCall)"
-        ),
-        live: pending(
-            "P2",
-            "live.ts is provider-neutral since 053da21ed7 (it reads the turnState part and the transcript facts); a live contract of its own only if a harness needs one"
-        ),
         launch: claudeLaunch,
         transcript: {
             recordsTerminalEvent: false,
@@ -60,11 +50,6 @@ export const claudeHarness: HarnessDriver<"claude"> = {
         },
         exit: { command: "/exit" },
         hooks: claudeHooks,
-        statusline: pending("P4", "the claude statusline host in src/ai/commands/statusline"),
-        compaction: pending(
-            "P5",
-            "compaction reads the history part today (src/utils/ai/compact/sources.ts); a contract of its own only if a harness needs one"
-        ),
         host: {
             agent: "claude-code",
             sessionEnvKey: "CLAUDE_CODE_SESSION_ID",
@@ -84,18 +69,7 @@ export const claudeHarness: HarnessDriver<"claude"> = {
                       : null,
         },
         history: () => import("@genesiscz/utils/agent-sessions/compact-readers").then((m) => m.claudeHistoryReader),
-        cmux: toolOwned(
-            "src/cmux/lib/session-agents.ts",
-            "cmux capture, replay and restore live in the cmux tool (P3)"
-        ),
-        answer: toolOwned(
-            "src/question/lib/decisions/deliver.ts",
-            "the delivery ladder lives in the question tool (P6)"
-        ),
         worker: claudeWorker,
         dialog: claudeDialog,
-        spend: toolOwned("src/ai-spend/lib/drivers/index.ts", "MonitorDriver lives in the ai-spend tool (P5)"),
-        mcp: toolOwned("src/mcp-manager/utils/providers/index.ts", "the MCP config writers live in mcp-manager (P6)"),
-        subagents: toolOwned("src/hub/lib/agents/index.ts", "the agents tree lives in the hub tool (P6)"),
     },
 };

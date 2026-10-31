@@ -1,7 +1,7 @@
 import type { AgentRuntimeContext } from "@genesiscz/utils/agent/context";
 import type { ResumeOptions } from "@genesiscz/utils/agent-sessions/resume-argv";
 import type { NativeSessionReader } from "@genesiscz/utils/agent-sessions/types";
-import type { DialogKeys } from "@genesiscz/utils/agents/dialogs/keys";
+import type { DialogKeyMap } from "@genesiscz/utils/agents/dialogs/keys";
 import type {
     FolderReads,
     LocateRoots,
@@ -11,7 +11,7 @@ import type {
     TranscriptSource,
 } from "@genesiscz/utils/ai/transcripts/resolve";
 import type { TitledSession, TitleSearch } from "@genesiscz/utils/ai/transcripts/session-title";
-import type { TurnQuestionCall, TurnSnapshot, TurnStateInput } from "@genesiscz/utils/ai/transcripts/turn-state-types";
+import type { TurnSnapshot, TurnStateInput } from "@genesiscz/utils/ai/transcripts/turn-state-types";
 import type { TranscriptTurn } from "@genesiscz/utils/ai/transcripts/types";
 import type { WorkerCapabilities } from "@genesiscz/utils/worker/capabilities";
 
@@ -20,11 +20,10 @@ import type { WorkerCapabilities } from "@genesiscz/utils/worker/capabilities";
  * provider plugin (plan "Plugenize the harnesses", section 2.7, refreshed 2026-10-30). Type-only on purpose: a
  * driver's parts are lazy loaders, and importing this module costs nothing at run time.
  *
- * Each contract is written from the code it will wrap, not invented: the turn-state reader returns the existing
- * `TurnSnapshot`, the question reader the existing `TurnQuestionCall`, and the history part is the existing
- * `NativeSessionReader`. A part whose implementation lives in a tool (`src/cmux`, `src/question`, `src/ai-spend`,
- * `src/mcp-manager`, `src/hub`, the worker drivers) has its contract in that tool, because `src/utils/**` never
- * imports `@app/*`; the driver then names the tool owner (`toolOwned`, `types.ts`).
+ * Each contract is written from the code it wraps, not invented: the turn-state reader returns the existing
+ * `TurnSnapshot`, and the history part is the existing `NativeSessionReader`. A per-harness table whose code lives in
+ * a tool (`src/cmux`, `src/question`, `src/ai-spend`, `src/mcp-manager`, `src/hub`, the worker drivers) stays in that
+ * tool, keyed by `HarnessId`, because `src/utils/**` never imports `@app/*`.
  */
 
 /**
@@ -68,12 +67,6 @@ export interface TurnStateReader {
     read(input: TurnStateInput): TurnSnapshot;
     /** How many tail bytes the reader needs; `TURN_TAIL_BYTES` when absent. */
     readonly tailBytes?: number;
-}
-
-/** The structural question signals: a question tool, a plan approval, a permission prompt. */
-export interface QuestionSignalReader {
-    /** Every question the tail leaves open, each with the tool call id hooks, inbox and widget agree on. */
-    open(input: TurnStateInput): TurnQuestionCall[];
 }
 
 /** How a flag takes its value: none, a required next word (or `=value`), or only an `=value`. */
@@ -208,7 +201,6 @@ export interface HookFacts {
 /** Parts that wrap parsers and readers: a driver holds a loader, so reading the driver never loads them. */
 export interface LazyPartContracts {
     parse: TranscriptParser;
-    questions: QuestionSignalReader;
     history: NativeSessionReader;
 }
 
@@ -229,8 +221,11 @@ export interface EagerPartContracts {
      * held directly; it is pure over parsed records and imports no parser.
      */
     turnState: TurnStateReader;
-    /** The keys that answer the harness's question dialog in a terminal pane (`tools claude cmux send`, the inbox). */
-    dialog: DialogKeys;
+    /**
+     * The keys that answer the harness's question dialog in a terminal pane (`tools claude cmux send`, the inbox), or
+     * `supported: false` with the reason a harness has none yet; its answers then go as typed text.
+     */
+    dialog: DialogKeyMap;
     /**
      * C: synchronous, because `resolveTranscriptsWith` is; a driver holds a `deferredLocator` (`deferred.ts`) that loads
      * its finders on the first call, so the finders cost the hook path nothing.
@@ -240,8 +235,5 @@ export interface EagerPartContracts {
     hooks: HookFacts;
 }
 
-/**
- * The parts whose contract is written here, by name. `types.ts` adds the parts whose contract is not written yet
- * (`PendingContractPart`), so a driver can only declare those pending.
- */
+/** The parts whose contract is written here, by name: every part a driver has. */
 export type HarnessPartContracts = LazyPartContracts & EagerPartContracts;

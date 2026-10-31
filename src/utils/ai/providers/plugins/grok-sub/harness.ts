@@ -3,16 +3,14 @@ import { grokTurnState } from "@genesiscz/utils/agent-sessions/readers/grok-turn
 import { deferredLocator, deferredWindowTurns } from "@genesiscz/utils/harness/deferred";
 import { interpreterScriptIndex } from "@genesiscz/utils/harness/interpreter-entry";
 import type { HarnessDriver } from "@genesiscz/utils/harness/types";
-import { pending, toolOwned, unsupported } from "@genesiscz/utils/harness/types";
 import { grokHooks } from "./harness-hooks";
 import { grokLaunch } from "./harness-launch";
 
 import { grokWorker } from "./harness-worker";
 
 /**
- * The Grok driver: what GenesisTools knows about the harness, part by part. Every part the plan has not moved yet
- * names the phase that moves it and where it lives today (inventory of 2026-10-30 in the plan note). Light on
- * purpose: identity is data and each part is a lazy import, so reading the driver never loads a parser.
+ * The Grok driver: what GenesisTools knows about the harness, part by part, each one the code its callers
+ * read. Light on purpose: identity is data and each part is a lazy import, so reading the driver never loads a parser.
  */
 export const grokHarness: HarnessDriver<"grok"> = {
     id: "grok",
@@ -32,14 +30,6 @@ export const grokHarness: HarnessDriver<"grok"> = {
         locate: deferredLocator(import.meta, "harness-locate", "grokLocate"),
         parse: () => import("./harness-parse").then((m) => m.grokParse),
         turnState: { read: grokTurnState },
-        questions: pending(
-            "P2",
-            "the grok question signals inside src/utils/agent-sessions/readers/grok-turn-state.ts (TurnSnapshot.questionCall)"
-        ),
-        live: pending(
-            "P2",
-            "live.ts is provider-neutral since 053da21ed7 (it reads the turnState part and the transcript facts); a live contract of its own only if a harness needs one"
-        ),
         launch: grokLaunch,
         transcript: {
             recordsTerminalEvent: true,
@@ -53,11 +43,6 @@ export const grokHarness: HarnessDriver<"grok"> = {
         },
         exit: { command: "/exit" },
         hooks: grokHooks,
-        statusline: pending("P4", "the grok statusline host in src/ai/commands/statusline"),
-        compaction: pending(
-            "P5",
-            "compaction reads the history part today (src/utils/ai/compact/sources.ts); a contract of its own only if a harness needs one"
-        ),
         host: { agent: "grok", sessionEnvKey: "GROK_SESSION_ID", detects: isGrok, resolve: resolveGrokContext },
         process: {
             runsCli: ({ name, command }) =>
@@ -74,20 +59,10 @@ export const grokHarness: HarnessDriver<"grok"> = {
                       : 0,
         },
         history: () => import("@genesiscz/utils/agent-sessions/compact-readers").then((m) => m.grokHistoryReader),
-        cmux: toolOwned(
-            "src/cmux/lib/session-agents.ts",
-            "cmux capture, replay and restore live in the cmux tool (P3)"
-        ),
-        answer: toolOwned(
-            "src/question/lib/decisions/deliver.ts",
-            "the delivery ladder lives in the question tool (P6)"
-        ),
         worker: grokWorker,
-        dialog: unsupported(
-            "the keys of the Grok ask_user_question dialog were not measured live yet; answer it in the terminal"
-        ),
-        spend: toolOwned("src/ai-spend/lib/drivers/index.ts", "MonitorDriver lives in the ai-spend tool (P5)"),
-        mcp: toolOwned("src/mcp-manager/utils/providers/index.ts", "the MCP config writers live in mcp-manager (P6)"),
-        subagents: toolOwned("src/hub/lib/agents/index.ts", "the agents tree lives in the hub tool (P6)"),
+        dialog: {
+            supported: false,
+            reason: "the keys of the Grok ask_user_question dialog were not measured live yet; answer it in the terminal",
+        },
     },
 };

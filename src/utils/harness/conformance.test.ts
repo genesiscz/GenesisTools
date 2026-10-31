@@ -1,5 +1,5 @@
 import { describe, expect, test } from "bun:test";
-import { existsSync, readFileSync } from "node:fs";
+import { readFileSync } from "node:fs";
 import { join } from "node:path";
 import { ACCOUNT_PROVIDER_ALIASES } from "@genesiscz/utils/ai/providers/alias-list";
 import { providerAliasOf } from "@genesiscz/utils/ai/providers/aliases";
@@ -17,15 +17,13 @@ import { defaultTranscriptRoots, directReads } from "@genesiscz/utils/ai/transcr
 import { moduleDir } from "@genesiscz/utils/fs/module-dir";
 import { HARNESS_SWIFT_PATH, renderHarnessSwift } from "../../../scripts/gen-harness-swift";
 import { HARNESS_WEB_PATH, renderHarnessWeb } from "../../../scripts/gen-harness-web";
-import { HARNESS_PARTS, type HarnessDriver, isPartNote } from "./types";
+import { HARNESS_PART_LOADING, HARNESS_PARTS, type HarnessDriver } from "./types";
 
 /**
  * The conformance suite of the harness drivers (plan `.claude/plans/2026-10-30-PlugenizeHarnesses.md`, P0). For every
- * provider plugin that is a coding agent and every part, the part either loads or the driver says why it is not
- * there. A fourth harness gets every check by adding its plugin; nothing here names one.
- *
- * Contract tests per part (locate finds a fixture by prefix, turnState reads RUNNING on a fixture, ...) join this file
- * in the phase that moves the part, and P8 turns a `pending` note into a failure.
+ * provider plugin that is a coding agent, every part loads, and the contract tests below run each part's code on a
+ * fixture (locate finds nothing under empty roots, turnState reads an empty tail, the history part is the plugin's
+ * reader). A fourth harness gets every check by adding its plugin; nothing here names one.
  */
 registerBuiltInPlugins();
 
@@ -91,24 +89,15 @@ describe("harness drivers hang off the provider plugins", () => {
     });
 });
 
-describe("every part of every driver loads or says why not", () => {
+describe("every part of every driver loads", () => {
     for (const plugin of codingAgents) {
         for (const part of HARNESS_PARTS) {
             test(`${plugin.id} ${part}`, async () => {
-                const slot = driverOf(plugin.id).parts[part];
+                const slot: unknown = driverOf(plugin.id).parts[part];
 
-                if (isPartNote(slot)) {
-                    expect(slot.reason.trim().length).toBeGreaterThan(0);
-
-                    if (slot.kind === "tool-owned") {
-                        expect(existsSync(join(REPO_ROOT, slot.owner))).toBe(true);
-                    }
-
-                    return;
-                }
-
-                // A lazy part is a loader; an eager part (launch, exit, host, process) is the value itself.
-                const loaded = typeof slot === "function" ? await slot() : slot;
+                // A lazy part is a loader, so reading the driver loads no parser; an eager part is the value itself.
+                expect(typeof slot === "function").toBe(HARNESS_PART_LOADING[part] === "lazy");
+                const loaded: unknown = typeof slot === "function" ? await slot() : slot;
                 expect(loaded).toBeTruthy();
             });
         }
@@ -116,18 +105,28 @@ describe("every part of every driver loads or says why not", () => {
 
     test("the history part is the plugin's own coding agent reader", async () => {
         for (const plugin of codingAgents) {
-            const slot = driverOf(plugin.id).parts.history;
-
-            if (isPartNote(slot)) {
-                throw new Error(`${plugin.id} declares no history part, but its plugin has a reader`);
-            }
-
-            const reader: unknown = await slot();
+            const reader: unknown = await driverOf(plugin.id).parts.history();
             const own: unknown = plugin.codingAgent;
             expect(reader).toBe(own);
             expect(plugin.codingAgent?.kind).toBe(driverOf(plugin.id).id);
         }
     });
+});
+
+describe("dialog: the keys of every harness's question dialog, or why it has none", () => {
+    for (const driver of harnessDrivers()) {
+        test(`${driver.id} picks option 2 within its option count, or names the reason it cannot`, () => {
+            const dialog = driver.parts.dialog;
+
+            if (!dialog.supported) {
+                expect(dialog.reason.trim().length).toBeGreaterThan(0);
+                return;
+            }
+
+            expect(dialog.maxOptions).toBeGreaterThanOrEqual(2);
+            expect(dialog.select(1).length).toBeGreaterThan(0);
+        });
+    }
 });
 
 describe("launch: the resume command of every harness", () => {

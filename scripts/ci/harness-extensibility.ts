@@ -5,8 +5,10 @@
  *
  * 1. The plant: the alias in `alias-list.ts` (the `HarnessId` type) and its `byHarness` row, one `DRIVERS` entry in
  *    `harness-index.ts`, one `HOOKS` entry in `harness-hooks.ts`, and the plugin folder
- *    `src/utils/ai/providers/plugins/testbot-sub/` with its driver (identity, launch, a locator over a fixture folder,
- *    every other part an `unsupported` note).
+ *    `src/utils/ai/providers/plugins/testbot-sub/` with its driver (identity, launch, a locator over a fixture folder;
+ *    the parts the probe does not run are borrowed from the Codex driver, where a real harness writes its own).
+ *    Beside it, `note-probe.ts` puts a note (`{ note: true, reason }`) in place of each part in turn: the compiler must
+ *    refuse every one, so a fourth harness has to write each part's code, its history reader included, not a note.
  * 2. The seam: `tsgo` lists every file the compiler then refuses. A file is expected when it is a driver-side owner
  *    (the plugin folders, `src/utils/harness/`, the light doors), a test, or an allowlist entry of the harness guard
  *    that says why it keeps a table keyed by the harness type. Any other file is a seam a new harness would have to
@@ -24,6 +26,7 @@
 import { existsSync, mkdirSync, readFileSync, symlinkSync, writeFileSync } from "node:fs";
 import { tmpdir } from "node:os";
 import { join } from "node:path";
+import { HARNESS_PARTS } from "@genesiscz/utils/harness/types";
 import { SafeJSON } from "@genesiscz/utils/json";
 import { HARNESS_GUARD_ALLOWLIST } from "./harness-guard-allowlist";
 
@@ -52,33 +55,14 @@ function plant(file: string, needle: string, replacement: string): void {
     writeFileSync(path, text.replace(needle, replacement));
 }
 
-const PARTS_AS_NOTES = [
-    "parse",
-    "questions",
-    "live",
-    "statusline",
-    "compaction",
-    "transcript",
-    "exit",
-    "hooks",
-    "host",
-    "process",
-    "worker",
-    "turnState",
-    "dialog",
-    "history",
-    "spend",
-    "cmux",
-    "answer",
-    "mcp",
-    "subagents",
-];
-
 const TESTBOT_DRIVER = `import { join } from "node:path";
 import type { HarnessDriver } from "@genesiscz/utils/harness/types";
-import { unsupported } from "@genesiscz/utils/harness/types";
+import { codexHarness } from "../openai-sub/harness";
 
-/** The testbot driver of scripts/ci/harness-extensibility.ts: a launch recipe, a locator over TESTBOT_HOME, notes. */
+/**
+ * The testbot driver of scripts/ci/harness-extensibility.ts: a launch recipe and a locator over TESTBOT_HOME. The parts
+ * the probe does not run are the Codex driver's; a real harness writes its own.
+ */
 export const testbotHarness: HarnessDriver<"testbot"> = {
     id: "testbot",
     identity: {
@@ -90,6 +74,8 @@ export const testbotHarness: HarnessDriver<"testbot"> = {
         mark: { letter: "T", color: { red: 0.5, green: 0.5, blue: 0.5 }, logo: null },
     },
     parts: {
+        ...codexHarness.parts,
+        dialog: { supported: false, reason: "testbot has no question dialog" },
         launch: {
             resumeArgv: (sessionId) => ["testbot", "--resume", sessionId],
             startArgv: () => ["testbot"],
@@ -118,10 +104,21 @@ export const testbotHarness: HarnessDriver<"testbot"> = {
             titledSessions: () => [],
             rootsOfHome: () => ({}),
         },
-${PARTS_AS_NOTES.map((part) => `        ${part}: unsupported("testbot has no ${part} part"),`).join("\n")}
     },
 };
 `;
+
+/** One line per part, each putting a note where that part's code belongs; the compiler must refuse every line. */
+const NOTE_PROBE = `import type { HarnessParts } from "@genesiscz/utils/harness/types";
+import { codexHarness } from "../openai-sub/harness";
+
+const note = { note: true, reason: "testbot has no such part" } as const;
+
+${HARNESS_PARTS.map((part) => `export const ${part}AsNote: HarnessParts = { ...codexHarness.parts, ${part}: note };`).join("\n")}
+`;
+const NOTE_PROBE_FILE = "src/utils/ai/providers/plugins/testbot-sub/note-probe.ts";
+/** The 1-based line of the first part's note in `NOTE_PROBE`. */
+const NOTE_PROBE_FIRST_LINE = 6;
 
 export function compilerProbeUsable(result: { status: number; out: string }): boolean {
     return (
@@ -181,6 +178,7 @@ function main(): void {
     );
     mkdirSync(join(WORKTREE, "src/utils/ai/providers/plugins/testbot-sub"), { recursive: true });
     writeFileSync(join(WORKTREE, "src/utils/ai/providers/plugins/testbot-sub/harness.ts"), TESTBOT_DRIVER);
+    writeFileSync(join(WORKTREE, NOTE_PROBE_FILE), NOTE_PROBE);
 
     // 2. The seam the compiler names.
     const typed = run(["bunx", "tsgo", "--noEmit", "-p", "tsconfig.json"], WORKTREE);
@@ -193,6 +191,18 @@ function main(): void {
         ...new Set([...typed.out.matchAll(/^([^\s(]+\.tsx?)\(\d+,\d+\): error TS/gm)].map((m) => m[1])),
     ].sort();
     const unexpected = named.filter((file) => !EXPECTED_OWNERS.test(file) && !HARNESS_GUARD_ALLOWLIST[file]?.why);
+    const refusedLines = new Set(
+        [...typed.out.matchAll(/^([^\s(]+\.tsx?)\((\d+),\d+\): error TS/gm)]
+            .filter((m) => m[1] === NOTE_PROBE_FILE)
+            .map((m) => Number(m[2]))
+    );
+    const notesAccepted = HARNESS_PARTS.filter((_, index) => !refusedLines.has(NOTE_PROBE_FIRST_LINE + index));
+
+    console.log(
+        notesAccepted.length === 0
+            ? `harness-extensibility: the compiler refuses a note in place of each of the ${HARNESS_PARTS.length} parts`
+            : `harness-extensibility: a note still type-checks in place of: ${notesAccepted.join(", ")}`
+    );
 
     console.log(`harness-extensibility: the compiler names ${named.length} files for a fourth harness`);
 
@@ -234,8 +244,10 @@ function main(): void {
     console.log(`harness-extensibility: worktree kept for inspection; remove it with:`);
     console.log(`    git -C ${REPO} worktree remove --force ${WORKTREE}`);
 
-    if (unexpected.length > 0 || !runtimeOk) {
-        console.log(`harness-extensibility: FAILED (${unexpected.length} unexpected files)`);
+    if (unexpected.length > 0 || !runtimeOk || notesAccepted.length > 0) {
+        console.log(
+            `harness-extensibility: FAILED (${unexpected.length} unexpected files, ${notesAccepted.length} parts that take a note)`
+        );
         process.exitCode = 1;
         return;
     }

@@ -1,7 +1,6 @@
 import { statSync } from "node:fs";
 import { harnessDriver } from "@genesiscz/utils/ai/providers/harness-index";
 import type { TranscriptParser } from "@genesiscz/utils/harness/parts";
-import { isPartNote } from "@genesiscz/utils/harness/types";
 import { logger } from "@genesiscz/utils/logger";
 import type { ResolvedTranscript } from "./resolve";
 import { indexedClaudeEnvelope } from "./turn-index";
@@ -17,13 +16,7 @@ import {
 
 /** The transcript parser of a provider: its harness driver's `parse` part, loaded on first use. */
 export async function transcriptParser(provider: TranscriptProvider): Promise<TranscriptParser> {
-    const slot = harnessDriver(provider).parts.parse;
-
-    if (isPartNote(slot)) {
-        throw new Error(`The ${provider} harness driver has no transcript parser: ${slot.reason}`);
-    }
-
-    return slot();
+    return harnessDriver(provider).parts.parse();
 }
 
 async function turnsFromFile(resolved: ResolvedTranscript, path: string, index = 1): Promise<TranscriptTurn[]> {
