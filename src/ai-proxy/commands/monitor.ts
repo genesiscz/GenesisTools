@@ -5,7 +5,7 @@
  */
 import { existsSync, readFileSync } from "node:fs";
 import { join } from "node:path";
-import { type CompactionEvent, compactionEventsPath } from "@app/ai-proxy/lib/sessions/compaction-events";
+import { type CompactionEvent, compactionEventsPath, WARN_KINDS } from "@app/ai-proxy/lib/sessions/compaction-events";
 import { getAiProxyStorage } from "@app/ai-proxy/lib/storage";
 import type { PrefixDiff } from "@app/ai-proxy/lib/usage/prefix-diff";
 import type { UsageRequestRecord } from "@app/ai-proxy/lib/usage/types";
@@ -33,8 +33,6 @@ export interface MonitorOptions {
     /** Print the backlog and stop (no follow). */
     once?: boolean;
 }
-
-const WARN_EVENTS = new Set(["retry", "missed", "background-wasted", "background-failed", "blocked", "cache-reset"]);
 
 function requestsFile(): string {
     return join(getAiProxyStorage().getBaseDir(), "usage", "requests.jsonl");
@@ -73,7 +71,7 @@ export function eventPasses(event: CompactionEvent, options: MonitorOptions): bo
         return false;
     }
 
-    return !options.errors || WARN_EVENTS.has(event.kind);
+    return !options.errors || WARN_KINDS.has(event.kind);
 }
 
 function clock(ts: string): string {
@@ -144,7 +142,7 @@ function missCause(prefix: PrefixDiff | undefined): string {
 }
 
 export function formatEvent(event: CompactionEvent): string {
-    const kind = WARN_EVENTS.has(event.kind)
+    const kind = WARN_KINDS.has(event.kind)
         ? pc.yellow(`compaction:${event.kind}`)
         : pc.cyan(`compaction:${event.kind}`);
     const tokens =

@@ -37,10 +37,6 @@ function messageKey(conversation: string, content: unknown[]): string | undefine
     return `${conversation}\u0000${hash}`;
 }
 
-export function hasThinking(content: unknown[]): boolean {
-    return content.some((block) => isObject(block) && block.type === "thinking");
-}
-
 /** Remember the items a message produced with its thinking; only when at least one is a reasoning item. */
 export function rememberMessageItems(
     conversation: string,

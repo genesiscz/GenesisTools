@@ -1,6 +1,5 @@
 import { providerDefinition } from "@app/ai-proxy/lib/providers/registry";
 import type { AiProxyAccountConfig, ProxyModelMeta } from "@app/ai-proxy/lib/types";
-import { suggestCommand } from "@genesiscz/utils/cli";
 import { formatTokens } from "@genesiscz/utils/format";
 import { out } from "@genesiscz/utils/logger";
 import {
@@ -12,6 +11,7 @@ import {
     truncateDisplay,
 } from "@genesiscz/utils/table";
 import pc from "picocolors";
+import { aiProxyCommand } from "./command-hints";
 
 function formatVisibility(visibility: string): string {
     switch (visibility) {
@@ -139,17 +139,13 @@ function accountNote(account: AiProxyAccountConfig, modelCount: number): string 
     return "—";
 }
 
-function cmd(replaceCommand: string[]): string {
-    return suggestCommand("tools ai-proxy", { replaceCommand });
-}
-
 export function displayModelsTable(models: ProxyModelMeta[]): void {
     renderCliHeader("Proxy Models", "ids Cursor / clients can call");
 
     if (models.length === 0) {
         out.println(pc.dim("  No models in catalog.\n"));
         out.println(
-            `${pc.dim("  Next: ")}${pc.cyan(cmd(["accounts", "list"]))}${pc.dim("  ·  ")}${pc.cyan(cmd(["config", "detect"]))}`
+            `${pc.dim("  Next: ")}${pc.cyan(aiProxyCommand(["accounts", "list"]))}${pc.dim("  ·  ")}${pc.cyan(aiProxyCommand(["config", "detect"]))}`
         );
         out.println();
         return;
@@ -208,9 +204,9 @@ export function displayModelsTable(models: ProxyModelMeta[]): void {
     out.println();
 
     out.println(
-        `${pc.dim("  Next  ")}${pc.cyan(cmd(["models", "--visibility", "high"]))}${pc.dim("  ·  ")}${pc.cyan(
-            cmd(["models", "--provider", "grok"])
-        )}${pc.dim("  ·  ")}${pc.cyan(cmd(["models", "--json"]))}`
+        `${pc.dim("  Next  ")}${pc.cyan(aiProxyCommand(["models", "--visibility", "high"]))}${pc.dim("  ·  ")}${pc.cyan(
+            aiProxyCommand(["models", "--provider", "grok"])
+        )}${pc.dim("  ·  ")}${pc.cyan(aiProxyCommand(["models", "--json"]))}`
     );
 
     if (fail > 0) {
@@ -218,8 +214,8 @@ export function displayModelsTable(models: ProxyModelMeta[]): void {
             models.find((model) => model.probeStatus === "fail")?.accountName ?? models[0]?.accountName ?? "<name>";
 
         out.println(
-            `${pc.dim("  Debug ")}${pc.cyan(cmd(["accounts", "test", failAccount]))}${pc.dim("  ·  ")}${pc.cyan(
-                cmd(["internal", "update-models"])
+            `${pc.dim("  Debug ")}${pc.cyan(aiProxyCommand(["accounts", "test", failAccount]))}${pc.dim("  ·  ")}${pc.cyan(
+                aiProxyCommand(["internal", "update-models"])
             )}${pc.dim("  ·  re-probes Grok catalog only")}`
         );
         out.println(
@@ -227,9 +223,9 @@ export function displayModelsTable(models: ProxyModelMeta[]): void {
         );
     } else {
         out.println(
-            `${pc.dim("  Debug ")}${pc.cyan(cmd(["accounts", "list"]))}${pc.dim("  ·  ")}${pc.cyan(
-                cmd(["accounts", "test", "<name>"])
-            )}${pc.dim("  ·  ")}${pc.cyan(cmd(["status"]))}`
+            `${pc.dim("  Debug ")}${pc.cyan(aiProxyCommand(["accounts", "list"]))}${pc.dim("  ·  ")}${pc.cyan(
+                aiProxyCommand(["accounts", "test", "<name>"])
+            )}${pc.dim("  ·  ")}${pc.cyan(aiProxyCommand(["status"]))}`
         );
         out.println(
             `${pc.dim("  Tip   ")}${pc.cyan("PROBE=ok")} = live catalog (Claude/Codex/xAI) or Grok probe. Prefer those.`
@@ -245,7 +241,7 @@ export function displayAccountsTable(rows: AccountListRow[]): void {
     if (rows.length === 0) {
         out.println(pc.dim("  No accounts configured.\n"));
         out.println(
-            `${pc.dim("  Next: ")}${pc.cyan(cmd(["config", "detect"]))}${pc.dim("  ·  ")}${pc.cyan(cmd(["config", "init"]))}`
+            `${pc.dim("  Next: ")}${pc.cyan(aiProxyCommand(["config", "detect"]))}${pc.dim("  ·  ")}${pc.cyan(aiProxyCommand(["config", "init"]))}`
         );
         out.println();
         return;
@@ -296,14 +292,14 @@ export function displayAccountsTable(rows: AccountListRow[]): void {
 
     const firstName = rows[0]?.account.name ?? "<name>";
     out.println(
-        `${pc.dim("  Next  ")}${pc.cyan(cmd(["accounts", "test", firstName]))}${pc.dim("  ·  ")}${pc.cyan(
-            cmd(["models"])
-        )}${pc.dim("  ·  ")}${pc.cyan(cmd(["usage", "--account", firstName]))}`
+        `${pc.dim("  Next  ")}${pc.cyan(aiProxyCommand(["accounts", "test", firstName]))}${pc.dim("  ·  ")}${pc.cyan(
+            aiProxyCommand(["models"])
+        )}${pc.dim("  ·  ")}${pc.cyan(aiProxyCommand(["usage", "--account", firstName]))}`
     );
     out.println(
-        `${pc.dim("  Debug ")}${pc.cyan(cmd(["config", "show"]))}${pc.dim("  ·  ")}${pc.cyan(
-            cmd(["config", "detect"])
-        )}${pc.dim("  ·  ")}${pc.cyan(cmd(["status"]))}`
+        `${pc.dim("  Debug ")}${pc.cyan(aiProxyCommand(["config", "show"]))}${pc.dim("  ·  ")}${pc.cyan(
+            aiProxyCommand(["config", "detect"])
+        )}${pc.dim("  ·  ")}${pc.cyan(aiProxyCommand(["status"]))}`
     );
 
     if (zeroModels > 0) {
@@ -339,9 +335,9 @@ export function displayAccountTestResult(input: {
 
     out.println();
     out.println(
-        `${pc.dim("  Next  ")}${pc.cyan(cmd(["models", "--provider", input.providerSlug]))}${pc.dim("  ·  ")}${pc.cyan(
-            cmd(["usage", "--account", input.name])
-        )}${pc.dim("  ·  ")}${pc.cyan(cmd(["status"]))}`
+        `${pc.dim("  Next  ")}${pc.cyan(aiProxyCommand(["models", "--provider", input.providerSlug]))}${pc.dim("  ·  ")}${pc.cyan(
+            aiProxyCommand(["usage", "--account", input.name])
+        )}${pc.dim("  ·  ")}${pc.cyan(aiProxyCommand(["status"]))}`
     );
     out.println();
 }

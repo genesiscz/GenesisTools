@@ -26,8 +26,6 @@ export interface BackgroundResult {
     /** How many raw Responses input items the item compacts, and their hash. */
     prefixLength: number;
     prefixHash: string;
-    /** The raw input it compacted (markers left as text): the history of the record a used result becomes. */
-    prefix: unknown[];
     /** The context of the turn it compacted (input plus cached tokens). */
     contextTokens: number;
     startedAt: number;
@@ -132,7 +130,6 @@ function isBackgroundResult(value: unknown): value is BackgroundResult {
         isObject(value.item) &&
         typeof value.accountHash === "string" &&
         typeof value.prefixHash === "string" &&
-        Array.isArray(value.prefix) &&
         [value.prefixLength, value.contextTokens, value.startedAt, value.readyAt].every(
             (number) => typeof number === "number" && Number.isFinite(number) && number >= 0
         ) &&

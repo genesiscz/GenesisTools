@@ -538,7 +538,6 @@ export class CodexCompactionFlow {
                 accountHash: servedBy ? accountHash8(servedBy) : input.stamp.accountHash,
                 prefixLength: input.rawInput.length,
                 prefixHash: prefixHash(input.rawInput),
-                prefix: input.rawInput,
                 contextTokens: input.contextTokens,
                 startedAt,
                 readyAt: Date.now(),
