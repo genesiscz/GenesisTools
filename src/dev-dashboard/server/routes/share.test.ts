@@ -703,6 +703,9 @@ describe("GET /share/:slug assets", () => {
         expect(noteSection(note, "Install")).toBe("## Install\nsteps\n");
         expect(noteSection(note, "Intro")).toBe(note);
         expect(noteSection(note, "an item")).toBe("");
+        // A thematic break ends the paragraph above it, so the line after it is a heading's own text.
+        expect(noteSection("Intro\n***\nSetup\n-----\nbody", "Setup")).toBe("Setup\n-----\nbody");
+        expect(noteSection("Intro\n___\nSetup\n=====\nbody", "Setup")).toBe("Setup\n=====\nbody");
     });
 
     test("audio, video and PDF embeds render as a player, a sized video and a PDF frame with its fragment", async () => {

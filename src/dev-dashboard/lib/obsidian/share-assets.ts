@@ -751,6 +751,8 @@ const HEADING_LINE_RE = /^(#{1,6})[ \t]+(.*?)[ \t]*#*[ \t]*$/;
 const SETEXT_UNDERLINE_RE = /^ {0,3}(=+|-+)[ \t]*$/;
 /** A line that cannot be the text of a Setext heading: a list item or a quote (a `---` under it is a rule). */
 const NOT_SETEXT_TEXT_RE = /^ {0,3}(?:[-*+][ \t]|\d{1,9}[.)][ \t]|>)/;
+/** A thematic break (`***`, `___`, `- - -`): it ends a paragraph, so the text after it starts a new one. */
+const THEMATIC_BREAK_RE = /^ {0,3}(?:(?:\*[ \t]*){3,}|(?:-[ \t]*){3,}|(?:_[ \t]*){3,})$/;
 
 /**
  * The part of a note an embed shows: the whole body without frontmatter, the section under `#Heading`
@@ -822,7 +824,13 @@ export function noteSection(text: string, fragment: string): string {
               : null;
 
         if (!heading) {
-            paragraph = !line.trim() || NOT_SETEXT_TEXT_RE.test(line) ? -1 : paragraph === -1 ? index : paragraph;
+            // A `---` right under paragraph text is its Setext underline (read above); anywhere else a break.
+            paragraph =
+                !line.trim() || NOT_SETEXT_TEXT_RE.test(line) || THEMATIC_BREAK_RE.test(line)
+                    ? -1
+                    : paragraph === -1
+                      ? index
+                      : paragraph;
             continue;
         }
 
