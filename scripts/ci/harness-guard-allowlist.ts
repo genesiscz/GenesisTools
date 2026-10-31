@@ -46,10 +46,6 @@ export const HARNESS_GUARD_ALLOWLIST: Readonly<Record<string, HarnessGuardCounts
         table: 1,
         why: "benchmark tree names a baseline records (claude-listing, claude-all, grok, codex), not the harness set",
     },
-    "src/agents/commands/hooks.ts": {
-        table: 2,
-        why: "HOOK_INSTALLERS, the agents tool's one table of hook-file installers (they write settings.json and hooks.json, which the tool owns); Grok runs Claude's hooks and has no entry",
-    },
     "src/agents/lib/hooks/diff/theme.ts": {
         branch: 1,
         why: "a DiffThemeName: the theme named claude follows Claude Code's own /theme, it is no harness",
@@ -79,42 +75,14 @@ export const HARNESS_GUARD_ALLOWLIST: Readonly<Record<string, HarnessGuardCounts
         list: 1,
         why: "the ai-proxy upstream-route axis (which upstream answers a request), not the coding-agent harness of a session (plan decision G5)",
     },
-    "src/ai-spend/lib/drivers/index.ts": {
-        table: 1,
-        why: "SPEND_DRIVERS, ai-spend's one exhaustive table: each MonitorDriver reads ai-spend's own parsers and pricing (@app code a driver cannot import), so a new harness adds one entry here",
-    },
     "src/ai-spend/lib/reports/types.ts": {
         list: 1,
         table: 3,
         why: "keyed by SourceId, ccusage's report-source axis (17 sources, three of them harnesses), whose rows mirror ccusage's CLI per source (parity.test.ts)",
     },
-    "src/ai-spend/lib/workers/sessions.ts": {
-        table: 1,
-        why: "the worker store readers in listing order; they import the worker tools' stores (@app/codex, @app/grok, @app/claude), which the spend table must not load",
-    },
-    "src/ai/commands/statusline/run.ts": {
-        table: 1,
-        why: "HOST_FEATURES, the statusline host table: only Claude has a statusline, the hot entry imports it itself so a render pays no driver hop; a part comes back with a second host",
-    },
-    "src/ai/lib/agent-message/delivery.ts": {
-        table: 1,
-        why: "the one table of the message part: each MessageDriver is this tool's code (peer channel, thread queue, Grok leader), which src/utils cannot import",
-    },
-    "src/ai/lib/sessions/agent-session-rows.ts": {
-        table: 1,
-        why: "ROW_LISTERS, the one tool-owned session-row table: Claude's listing and the cache clocks are the claude tool's (@app/claude/lib/usage/session-rows), which a driver cannot import",
-    },
-    "src/cmux/lib/session-agents.ts": {
-        table: 1,
-        why: "CMUX_AGENTS, cmux's one exhaustive table (CmuxAdapter): its launch extras need the cmux and grok tools, which @genesiscz/utils cannot import",
-    },
     "src/genesis-tools-mcp/lib/http-caller.ts": {
         table: 1,
         why: "SESSION_ID_OF, keyed by the gateway's runtime-agent caller axis (with copilot and unknown); its readers spawn lsof and read the session registry, which the hook-path drivers must not load",
-    },
-    "src/hub/lib/agents/index.ts": {
-        table: 1,
-        why: "the hub's one exhaustive table of parent builders: a parent is built from the hub's own agent records and workers (@app code)",
     },
     "src/macos/GenesisKit/Sources/GenesisKit/Sessions/ToolCalls/SessionNativeLog.swift": {
         branch: 3,
@@ -131,10 +99,6 @@ export const HARNESS_GUARD_ALLOWLIST: Readonly<Record<string, HarnessGuardCounts
     "src/mcp-manager/utils/harnesses.ts": {
         table: 1,
         why: "the MCP-client axis (Gemini and Cursor too), not the harness set: each client's stored default config home",
-    },
-    "src/question/lib/decisions/deliver.ts": {
-        table: 1,
-        why: "ANSWER_ROUTES, the question tool's one exhaustive table (src/question owns the delivery ladder; @genesiscz/utils cannot import it)",
     },
     "src/utils/cli/failures/caller.ts": {
         table: 1,
