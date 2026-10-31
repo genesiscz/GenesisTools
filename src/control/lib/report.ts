@@ -233,7 +233,12 @@ export async function reportPair(pair: ReportPair, index: number, options: Repor
     // A cut tree is silent about the controls it left out, and the trees of two point sizes do not share coordinates
     // once B is resampled: either way no region may be called data, so every region stays a change.
     const truncated = usable && (treeBefore.truncated || treeAfter.truncated);
-    const resampledPoints = geometry.kind === "size-mismatch";
+    // The trees' own window sizes say it too when no geometry sidecar does (`geometry.kind === "unknown"`).
+    const resampledPoints =
+        geometry.kind === "size-mismatch" ||
+        (usable &&
+            (Math.abs(treeBefore.window.width - treeAfter.window.width) > 1 ||
+                Math.abs(treeBefore.window.height - treeAfter.window.height) > 1));
     const tree = usable && !truncated && !resampledPoints ? diffViewTrees(treeBefore, treeAfter) : undefined;
     if (truncated) {
         note = [note, "a view tree was cut at its node or depth limit, so no region is called data"]

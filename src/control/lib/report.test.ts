@@ -36,12 +36,18 @@ function screen(boxes: Rect[]): Buffer {
     return encodeRgbaToPng(data, width, height);
 }
 
-function treeJson(button: Rect, { truncated = false }: { truncated?: boolean } = {}): string {
+function treeJson(
+    button: Rect,
+    {
+        truncated = false,
+        window = { width: 200, height: 120 },
+    }: { truncated?: boolean; window?: { width: number; height: number } } = {}
+): string {
     return SafeJSON.stringify({
-        version: 1,
+        version: 2,
         face: "hub",
         source: "ax",
-        window: { width: 200, height: 120 },
+        window,
         truncated,
         nodes: [
             { path: "AXWindow", role: "AXWindow", depth: 0, hasLabel: true, frame: { x: 0, y: 0, w: 200, h: 120 } },
@@ -128,6 +134,20 @@ describe("control report", () => {
         expect(resized.status).toBe("ok");
         expect(resized.tree).toBeUndefined();
         expect(resized.regions.every((region) => region.kind === "change")).toBe(true);
+    });
+
+    it("calls no region data when the trees' windows differ and no geometry says so", async () => {
+        const folder = mkdtempSync(join(tmpdir(), "control-report-"));
+        await writePair(folder, "wide", { tree: true });
+        await Bun.write(
+            join(folder, "wide-after.tree.json"),
+            treeJson(buttonAfter, { window: { width: 400, height: 240 } })
+        );
+        const pair = { screen: "wide", before: join(folder, "wide-before.png"), after: join(folder, "wide-after.png") };
+
+        const result = await reportPair(pair, 4, { ...options(join(folder, "out")), resizeToMatch: true });
+        expect(result.tree).toBeUndefined();
+        expect(result.regions.every((region) => region.kind === "change")).toBe(true);
     });
 
     it("quotes an order file path with an apostrophe in the Preview command", () => {
