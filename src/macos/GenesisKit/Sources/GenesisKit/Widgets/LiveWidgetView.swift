@@ -1225,7 +1225,8 @@ public struct LiveWidgetView: View {
             parkedLabel: parked == nil ? nil : placeholder,
             // Held in the layout while the own answer is closed, so the field does not move or rewrap as it opens.
             sendShown: open,
-            sendDisabled: model.importing > 0 || parked != nil || (ownAnswer != nil && model.ownAnswerIdle),
+            sendDisabled: model.importing > 0 || parked != nil
+                || (ownAnswer.map { model.ownAnswerIdle && !model.isStaged($0) } ?? false),
             sendTooltip: ownAnswer == nil ? "Send (Return)"
                 : "Send as your answer now (" + (model.ownAnswerReturnStages ? "⌘-Return" : "Return") + ")",
             panelMoving: panelMoving,

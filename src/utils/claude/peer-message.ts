@@ -161,12 +161,10 @@ export function liveClaudeSessionIds(
         try {
             const parsed: unknown = SafeJSON.parse(readFileSync(join(dir, name), "utf8"), { strict: true });
 
-            if (
-                isRecord(parsed) &&
-                typeof parsed.pid === "number" &&
-                text(parsed.sessionId) &&
-                !text(parsed.parkedJobId)
-            ) {
+            if (!isRecord(parsed) || typeof parsed.pid !== "number" || !text(parsed.sessionId)) {
+                return null;
+            }
+            if (!text(parsed.parkedJobId)) {
                 byPid.set(parsed.pid, String(parsed.sessionId).toLowerCase());
             }
         } catch (error) {

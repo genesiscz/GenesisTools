@@ -125,7 +125,7 @@ function fixtureReader(options: {
     return {
         kind: "fixture",
         parserVersion: "fixture-v1",
-        dialog: { eventLogPath: () => null, openPermission: () => null },
+        dialog: { eventLogPath: () => null, openPermission: () => null, sessionAlive: () => null },
         readBackward: noBackwardRead,
         readTurnBoundary: async () => null,
         readForward: async () => ({ rows: [], file: null, endOffset: 0, issues: [] }),

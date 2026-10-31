@@ -45,7 +45,7 @@ extension WidgetModel {
     /// (`ownAnswerEmptyReturn`): send it ("send", the default), ask first in a note with Send ("confirm"), or only say
     /// so ("nothing"). False when nothing is staged on it, so the caller says the field is empty.
     func emptyReturnOnStaged(_ card: WidgetCard) -> Bool {
-        guard isStaged(card) else { return false }
+        guard isStaged(card), draft.assetIds.isEmpty else { return false }
         let decision = WidgetWords.decision(card.number)
         switch snapshot?.state.preferences.ownAnswerEmptyReturn ?? "send" {
         case "confirm":
@@ -217,9 +217,9 @@ extension WidgetModel {
         discardStaged([card.sourceId])
         guard let note = card.draft?.trimmingCharacters(in: .whitespacesAndNewlines), !note.isEmpty,
               selectedKey == card.sessionKey else { return }
+        openOwnAnswer(card)
         let typed = draft.text.trimmingCharacters(in: .whitespacesAndNewlines)
         if !typed.contains(note) { setText(typed.isEmpty ? note : typed + "\n" + note) }
-        openOwnAnswer(card)
         draftSavedAt[card.id] = nil
     }
 

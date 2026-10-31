@@ -58,7 +58,7 @@ function createFixture(): {
     const reader: NativeSessionReader<string> = {
         kind: "fixture",
         parserVersion: "fixture-v1",
-        dialog: { eventLogPath: () => null, openPermission: () => null },
+        dialog: { eventLogPath: () => null, openPermission: () => null, sessionAlive: () => null },
         readBackward: noBackwardRead,
         readTurnBoundary: async () => null,
         readForward: async () => ({ rows: [], file: null, endOffset: 0, issues: [] }),
@@ -411,7 +411,7 @@ test("selective refresh reuses full discovery, retains unselected sources, and l
     const reader: NativeSessionReader<string> = {
         kind: "fixture",
         parserVersion: "fixture-v1",
-        dialog: { eventLogPath: () => null, openPermission: () => null },
+        dialog: { eventLogPath: () => null, openPermission: () => null, sessionAlive: () => null },
         readBackward: noBackwardRead,
         readTurnBoundary: async () => null,
         readForward: async () => ({ rows: [], file: null, endOffset: 0, issues: [] }),

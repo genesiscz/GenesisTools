@@ -337,6 +337,8 @@ export interface NativeSessionReader<Kind extends string = AgentKind> {
     readonly dialog: {
         eventLogPath(transcriptPath: string): string | null;
         openPermission(records: readonly Record<string, unknown>[]): NativeDialogPermission | null;
+        /** True or false when native liveness is known, null when this provider cannot establish it. */
+        sessionAlive(transcriptPath: string, sessionId: string): boolean | null;
     };
     /**
      * The newest entries of a session, read from the end of its source back to the first entry `options.until`

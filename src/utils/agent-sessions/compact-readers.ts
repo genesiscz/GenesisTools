@@ -2,6 +2,7 @@ import { importNativeCodexSession } from "@genesiscz/utils/ai/openai/native-sess
 import { nativeSessionRoots, nativeSessionRootsWithLegacyHomes } from "@genesiscz/utils/providers/session-paths";
 import { readCompatibilityTranscript } from "./reader-compat";
 import { createClaudeHistoryOperations } from "./readers/claude";
+import { claudeDialog } from "./readers/claude-dialog";
 import { discoverClaudeHistorySources } from "./readers/claude-discovery";
 import { readClaudeStatistics } from "./readers/claude-statistics";
 import { createCodexHistoryOperations } from "./readers/codex";
@@ -28,7 +29,7 @@ function createCompactHistoryReader<Kind extends AgentKind>(
 export const claudeHistoryReader = createCompactHistoryReader({
     kind: "claude",
     // Claude permission prompts are delivered through hooks, not a transcript event log.
-    dialog: { eventLogPath: () => null, openPermission: () => null },
+    dialog: claudeDialog,
     roots: () => nativeSessionRoots("claude"),
     discover: discoverClaudeHistorySources,
     // One JSONL row per record, and a record's text reads only that row (a tool result's name,
@@ -41,7 +42,7 @@ export const claudeHistoryReader = createCompactHistoryReader({
 export const codexHistoryReader = createCompactHistoryReader({
     kind: "codex",
     // Codex rollouts do not persist the app-server's live permission prompts.
-    dialog: { eventLogPath: () => null, openPermission: () => null },
+    dialog: { eventLogPath: () => null, openPermission: () => null, sessionAlive: () => null },
     roots: () => nativeSessionRootsWithLegacyHomes("codex"),
     discover: discoverCodexHistorySources,
     searchMetadata: true,

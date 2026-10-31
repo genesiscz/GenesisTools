@@ -199,6 +199,9 @@ extension InboxItem {
     /// (`FindText(_, field:)` and `.findField`). Styled texts are given as their shown characters.
     var findFields: [PanelFindField] {
         var fields = [PanelFindField("title", title ?? prompt ?? "")]
+        if isDialog, let title, let prompt, !prompt.isEmpty, prompt != title {
+            fields.append(PanelFindField("prompt", prompt))
+        }
         if let context, !context.isEmpty {
             fields.append(PanelFindField("context", context, markdown: true))
         }
@@ -1929,10 +1932,15 @@ private struct InboxDialogCard: View {
 
     var body: some View {
         VStack(alignment: .leading, spacing: 8) {
-            Text(item.title ?? "Question").font(.headline)
-            Text(item.prompt ?? "")
+            FindText(item.title ?? item.prompt ?? "Question", field: "title").font(.headline)
+            if let title = item.title, let prompt = item.prompt, !prompt.isEmpty, prompt != title {
+                FindText(prompt, field: "prompt")
+            }
             ForEach(item.choices ?? [], id: \.id) { choice in
-                Text(choice.label).foregroundColor(ReviewPalette.dim)
+                HStack(alignment: .firstTextBaseline, spacing: 4) {
+                    Text("\(choice.id))")
+                    FindText(inlineMarkdown(choice.shownLabel), field: "choice:\(choice.id)")
+                }.foregroundColor(ReviewPalette.dim)
             }
             Button("Open session to answer") {
                 inbox.focusPane(session) { model.post($0, $1) }
@@ -1940,6 +1948,7 @@ private struct InboxDialogCard: View {
             .buttonStyle(.genHoverPlain())
             .disabled(session.sessionId == nil)
         }
+        .findRow(item.id, cornerRadius: 11)
     }
 }
 

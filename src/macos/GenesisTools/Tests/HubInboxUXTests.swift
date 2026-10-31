@@ -97,6 +97,13 @@ final class HubInboxUXTests: XCTestCase {
         XCTAssertFalse(item.searchText.contains("a) a)"), item.searchText)
     }
 
+    func testDialogFindFieldsMatchTheTitlePromptAndChoice() throws {
+        let item = try Self.decision(#"{"kind":"dialog","title":"Question","prompt":"Which branch?","choices":[{"id":"a","label":"a) Main"}]}"#)
+        XCTAssertTrue(item.findFields.contains { $0.key == "title" && $0.text == "Question" })
+        XCTAssertTrue(item.findFields.contains { $0.key == "prompt" && $0.text == "Which branch?" })
+        XCTAssertTrue(item.findFields.contains { $0.key == "choice:a" && $0.text == "Main" })
+    }
+
     /// P12: Return in an empty note says what to do, as a hint; a note or a staged letter is enough to act.
     func testReturnInAnEmptyNoteSaysWhatItNeeds() {
         XCTAssertEqual(HubInboxModel.emptyNoteHint(note: " ", stored: nil, letters: "", stages: true), "Write a note first.")

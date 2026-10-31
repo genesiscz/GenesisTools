@@ -71,6 +71,10 @@ export const widgetPreferencesSchema = z.object({
     alertSound: z.string().trim().min(1).max(40).default("Glass"),
     /** Show the widget's own popup with an alert. */
     alertPopup: z.boolean().default(true),
+    /** Show the question's summary in the alert popup. */
+    alertSummary: z.boolean().default(true),
+    /** Show a compact answer field instead of a footer button in the alert popup. */
+    alertCompactAnswer: z.boolean().default(true),
     /** The agents hover list: only sessions that need you, or every active session too. */
     previewFilter: z.enum(["needs-you", "active"]).default("needs-you"),
     /** The agents hover list's order: waiting for you first, newest activity first, or by project. */

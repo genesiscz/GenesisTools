@@ -294,6 +294,9 @@ public struct WidgetPreferences: Codable, Equatable, Sendable {
     public var alertAnswers: Bool?
     public var alertSound: String?
     public var alertPopup: Bool?
+    /// Alert summary and compact answer field; nil means on for older saved settings.
+    public var alertSummary: Bool?
+    public var alertCompactAnswer: Bool?
     /// The agents hover list: "needs-you" (default) or "active" (sessions that work now too).
     public var previewFilter: String?
     /// The agents hover list's order: "attention" (default), "recent" or "project".

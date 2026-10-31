@@ -152,6 +152,31 @@ final class ClickyTests: XCTestCase {
         }
     }
 
+    @MainActor
+    func testFunctionKeyFilterAppliesToMonitorEvents() throws {
+        let monitor = InputMonitorStub()
+        monitor.granted = true
+        let (model, defaults, suite) = monitorFixture(monitor)
+        defer { model.shutdown(); disposeIntegrationDefaults(defaults, suite: suite) }
+        model.preferences.volume = 0
+        model.preferences.releaseSounds = true
+        model.activate()
+        let down = try XCTUnwrap(CGEvent(keyboardEventSource: nil, virtualKey: 122, keyDown: true))
+        let up = try XCTUnwrap(CGEvent(keyboardEventSource: nil, virtualKey: 122, keyDown: false))
+        let initialPulse = model.pulse
+        monitor.handler?(.keyDown, down)
+        monitor.handler?(.keyUp, up)
+        XCTAssertEqual(model.statistics.presses, 0)
+        XCTAssertEqual(model.statistics.releases, 0)
+        XCTAssertEqual(model.pulse, initialPulse)
+        model.preferences.ignoreFunctionKeys = false
+        monitor.handler?(.keyDown, down)
+        monitor.handler?(.keyUp, up)
+        XCTAssertEqual(model.statistics.presses, 1)
+        XCTAssertEqual(model.statistics.releases, 1)
+        XCTAssertGreaterThan(model.pulse, initialPulse)
+    }
+
     func testPitchRangeDefaultsToFourPercentAndIsClampedWhenRead() throws {
         let old = try JSONDecoder().decode(ClickyPreferences.self, from: Data(#"{"randomizedPitch":true}"#.utf8))
         XCTAssertEqual(old.pitchRange, 0.04)

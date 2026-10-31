@@ -1,3 +1,4 @@
+import { resolveHistoryProvider } from "@genesiscz/utils/agent-sessions/provider";
 import { openDialogFor } from "@genesiscz/utils/agents/dialogs/guard";
 import type { DialogProvider, OpenDialog } from "@genesiscz/utils/agents/dialogs/types";
 import { ACCOUNT_PROVIDER_ALIASES } from "@genesiscz/utils/ai/providers/alias-list";
@@ -61,9 +62,20 @@ export async function sessionOpenDialog({
           ? [transcript.provider]
           : ACCOUNT_PROVIDER_ALIASES;
 
+    // An unreadable registry is unknown, not evidence that the session exited.
+    const sessionAlive =
+        transcript?.source === "native"
+            ? resolveHistoryProvider(transcript.provider).reader.dialog.sessionAlive(transcript.filePath, sessionId)
+            : null;
+
     for (const owner of providers) {
         try {
-            const dialog = openDialogFor({ provider: owner, sessionId, transcriptPath: transcript?.filePath });
+            const dialog = openDialogFor({
+                provider: owner,
+                sessionId,
+                transcriptPath: transcript?.filePath,
+                sessionAlive,
+            });
 
             if (dialog) {
                 return dialog;

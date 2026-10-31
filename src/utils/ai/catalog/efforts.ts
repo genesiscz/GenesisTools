@@ -30,11 +30,11 @@ type Between<
  * never as a union literal of its own: `type ReviewEffort = EffortRange<"low", "max">` is
  * `"low" | "medium" | "high" | "xhigh" | "max"`. The runtime twin is `effortRange(from, to)`.
  */
-export type EffortRange<From extends ReasoningEffort, To extends ReasoningEffort> = Between<
-    typeof REASONING_EFFORTS,
-    From,
-    To
->;
+export type EffortRange<From extends ReasoningEffort, To extends ReasoningEffort> = From extends From
+    ? To extends To
+        ? Between<typeof REASONING_EFFORTS, From, To>
+        : never
+    : never;
 
 /** The efforts from `from` to `to`, both included, weakest first: `effortRange("low", "max")`. */
 export function effortRange<From extends ReasoningEffort, To extends ReasoningEffort>(

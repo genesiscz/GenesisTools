@@ -365,6 +365,17 @@ private struct WidgetGeneralSettings: View {
                     identifier: "widget.alertPopup", isOn: boolean("alertPopup", prefs?.alertPopup ?? true))
                 Divider()
                 Group {
+                    Group {
+                        NativeSettingsToggle(
+                            "Show the question summary", detail: "Show the question's description in the alert preview.",
+                            identifier: "widget.alertSummary", isOn: boolean("alertSummary", prefs?.alertSummary ?? true))
+                        Divider()
+                        NativeSettingsToggle(
+                            "Show the compact answer field", detail: "Turn off to use an answer button in the alert footer.",
+                            identifier: "widget.alertCompactAnswer",
+                            isOn: boolean("alertCompactAnswer", prefs?.alertCompactAnswer ?? true))
+                        Divider()
+                    }
                     NativeSettingsRow("Preview stays", detail: "How long the preview stays while the pointer is not on it. Until closed keeps it until you answer, open or close it. × or Esc closes it sooner.") {
                         Picker(
                             "Preview stays",

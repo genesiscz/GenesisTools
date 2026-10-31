@@ -1256,6 +1256,20 @@ final class WidgetStagingTests: XCTestCase {
         XCTAssertEqual(model.draft.text, "for d2")
     }
 
+    func testUnstageRestoresTheNoteWithoutChangingTheReply() throws {
+        let model = StagingFixture.model()
+        defer { model.stop() }
+        model.actionRunner = { _ in ["ok": true] }
+        model.receive([try snapshot(draftOption: "a", draft: "staged note")])
+        model.select(key)
+        let card = try XCTUnwrap(model.cards.first)
+        model.setText("reply text")
+        model.unstage(card)
+        XCTAssertEqual(model.draft.text, "staged note")
+        model.ownAnswerCardID = nil
+        XCTAssertEqual(model.draft.text, "reply text")
+    }
+
     /// A click beside the leave question, its Dismiss or its close button ends the question and keeps the panel open
     /// with everything staged.
     func testLeaveQuestionStayKeepsThePanelOpen() async throws {
@@ -1296,6 +1310,19 @@ final class WidgetStagingTests: XCTestCase {
         model.returnInOwnAnswer(command: false)
         try await Task.sleep(for: .milliseconds(300))
         XCTAssertTrue(names(actions).contains("send-staged"), "the second Return sends the staged decision")
+    }
+
+    func testEmptyReturnWithMediaFallsThroughInsteadOfSendingTheStagedDecision() throws {
+        let model = StagingFixture.model()
+        defer { model.stop() }
+        model.actionRunner = { _ in ["ok": true] }
+        model.receive([try snapshot(draftOption: "a")])
+        model.select(key)
+        let card = try XCTUnwrap(model.cards.first)
+        model.openOwnAnswer(card)
+        model.drafts[key] = WidgetDraft(assetIds: ["fixture-image"])
+        XCTAssertFalse(model.emptyReturnOnStaged(card), "media must go through the ordinary answer path")
+        XCTAssertEqual(model.draft.assetIds, ["fixture-image"])
     }
 
     /// A change in the settings window shows in the widget at once, and a snapshot written before it does not take it
@@ -2422,6 +2449,32 @@ private final class FirstClickHost: NSHostingView<AnyView> {
 /// box's padding, starts typing. Real mouse events at a probed frame, in a hidden window.
 @MainActor
 final class WidgetComposerClickTests: XCTestCase {
+    func testSendArrowSendsAnEmptyStagedOwnAnswer() async throws {
+        _ = NSApplication.shared
+        let model = StagingFixture.model()
+        defer { model.stop() }
+        var sent = false
+        model.actionRunner = { value in
+            if case .object(let fields) = value, fields["action"] == .string("send-staged") { sent = true }
+            return ["sent": 1, "failed": 0, "ok": true]
+        }
+        model.receive([try StagingFixture.snapshot(draftOption: "a")])
+        model.select(StagingFixture.key)
+        let card = try XCTUnwrap(model.cards.first)
+        model.openCard(card)
+        model.openOwnAnswer(card)
+        FrameProbe.enabled = true
+        FrameProbe.reset()
+        defer { FrameProbe.enabled = false }
+        let window = hostedWidget(model)
+        defer { window.orderOut(nil); window.close() }
+        pump(1.0)
+        let button = try XCTUnwrap(FrameProbe.frames["widget.ownAnswer.send"])
+        click(window, at: NSPoint(x: button.midX, y: Self.size.height - button.midY))
+        try await Task.sleep(for: .milliseconds(300))
+        XCTAssertTrue(sent, "the rendered arrow sends the staged decision with an empty field")
+    }
+
     func testAClickInTheBoxBesideTheFieldStartsTyping() throws {
         _ = NSApplication.shared
         let model = StagingFixture.model()
@@ -2505,6 +2558,32 @@ final class WidgetComposerClickTests: XCTestCase {
         let fieldInWindow = NSRect(x: text.minX, y: Self.size.height - text.maxY, width: text.width, height: text.height)
         XCTAssertLessThanOrEqual(editor.visibleRect.minY, 1, "the editor does not scroll its first line away")
         XCTAssertLessThanOrEqual(editorInWindow.maxY, fieldInWindow.maxY + 2, "the first line is inside the field")
+    }
+
+    func testAlertContentPreferencesChangeTheRenderedControls() throws {
+        _ = NSApplication.shared
+        let model = StagingFixture.model()
+        defer { model.stop() }
+        model.actionRunner = { _ in ["ok": true] }
+        model.receive([try StagingFixture.snapshot(draftOption: nil)])
+        model.select(StagingFixture.key)
+        var item = try XCTUnwrap(model.inboxFor(StagingFixture.key)?.pendingItem)
+        item.summary = "A description"
+        FrameProbe.enabled = true
+        FrameProbe.reset()
+        defer { FrameProbe.enabled = false }
+        let popup = NSSize(width: 310, height: 300)
+        let window = hosted(AnyView(WidgetPeekView(model: model, item: item).frame(width: popup.width)), size: popup)
+        defer { window.orderOut(nil); window.close() }
+        pump(0.5)
+        XCTAssertNotNil(FrameProbe.frames["widget.peek.summary"])
+        XCTAssertNotNil(FrameProbe.frames["widget.peek.ownAnswer"])
+        model.showLivePreferences(["alertSummary": .bool(false), "alertCompactAnswer": .bool(false)])
+        FrameProbe.reset()
+        pump(0.5)
+        XCTAssertNil(FrameProbe.frames["widget.peek.summary"])
+        XCTAssertNil(FrameProbe.frames["widget.peek.ownAnswer"])
+        XCTAssertNotNil(FrameProbe.frames["widget.peek.answerButton"])
     }
 
     /// Martin, 2026-10-28, of the alert popup: "'Write my own answer' can probably be just under the buttons as a smaller

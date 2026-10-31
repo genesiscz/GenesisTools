@@ -222,8 +222,22 @@ describe("dialog guard", () => {
         writeFileSync(path, "{ not json");
         const blocked = openDialogFor({ provider: "claude", sessionId: SESSION, recordsRoot: dir });
         expect(blocked?.signal).toBe("unreadable");
+        expect(
+            openDialogFor({ provider: "claude", sessionId: SESSION, recordsRoot: dir, sessionAlive: false })?.signal
+        ).toBe("unreadable");
         expect(blocked && dialogRefusal(blocked)).toContain("could not read");
         expect(openDialogFor({ provider: "codex", sessionId: SESSION, recordsRoot: dir })).toBeNull();
+    });
+
+    test("a dead Claude session does not keep an old hook dialog open", async () => {
+        const dir = root();
+        await upsertQuestion(question(), dir);
+        const askedAt = Date.parse("2026-10-30T10:00:00.000Z");
+        const query = { provider: "claude" as const, sessionId: SESSION, recordsRoot: dir, now: askedAt + 61_000 };
+        expect(openDialogFor({ ...query, sessionAlive: false })).toBeNull();
+        expect(openDialogFor({ ...query, sessionAlive: true })?.signal).toBe("hook");
+        expect(openDialogFor({ ...query, sessionAlive: null })?.signal).toBe("hook");
+        expect(openDialogFor({ ...query, sessionAlive: false, now: askedAt + 10_000 })?.signal).toBe("hook");
     });
 
     test("dialogFromRecords takes the first open record and skips closed ones", () => {

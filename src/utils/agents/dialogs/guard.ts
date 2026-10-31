@@ -5,6 +5,8 @@ import type { DialogProvider, OpenDialog, OpenQuestion } from "./types";
 
 /** A turn that ended on a question waits for the user; past this the reader calls a silent turn stalled instead. */
 const DIALOG_STALL_TIMEOUT_MS = 90_000;
+/** Allow a new hook record time to reach its process registry before treating the missing process as proof of exit. */
+const REGISTRY_GRACE_MS = 60_000;
 
 /**
  * The newest open question of the session's dialog records, or null. The records come from the harness hooks and
@@ -52,6 +54,8 @@ export interface OpenDialogQuery {
     transcriptPath?: string;
     /** The dialog records root, for tests. */
     recordsRoot?: string;
+    /** False only when the owning Claude registry proves that the session has exited. */
+    sessionAlive?: boolean | null;
     now?: number;
 }
 
@@ -63,17 +67,27 @@ export interface OpenDialogQuery {
  */
 export function openDialogFor(query: OpenDialogQuery): OpenDialog | null {
     let recorded: OpenDialog | null;
+    let recentRecord = false;
     try {
         const questions = readSessionQuestionsStrict(query.provider, query.sessionId, query.recordsRoot)
             .filter((question) => question.closedAt === undefined)
             .sort((a, b) => b.askedAt.localeCompare(a.askedAt));
         recorded = dialogFromRecords(questions);
+        recentRecord = questions.some((question) => {
+            const askedAt = Date.parse(question.askedAt);
+            return !Number.isFinite(askedAt) || (query.now ?? Date.now()) - askedAt < REGISTRY_GRACE_MS;
+        });
     } catch (error) {
         logger.warn(
             { error, sessionId: query.sessionId, provider: query.provider },
             "dialog records unreadable; blocking typed delivery"
         );
         return { kind: "decision", question: null, signal: "unreadable" };
+    }
+
+    // A crashed session cannot still hold a dialog. Unknown liveness keeps the guard fail-closed.
+    if (query.sessionAlive === false && !recentRecord) {
+        return null;
     }
 
     if (recorded) {

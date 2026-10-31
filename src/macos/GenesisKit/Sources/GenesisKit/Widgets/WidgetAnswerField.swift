@@ -181,6 +181,7 @@ struct WidgetAnswerField<Above: View, Below: View>: View {
                 .disabled(sendDisabled)
                 .instantTooltip(sendTooltip)
                 .accessibilityLabel(ownAnswerID == nil ? "Send reply" : "Send your answer")
+                .frameProbe(ownAnswerID == nil ? "widget.composer.send" : "widget.ownAnswer.send")
                 .opacity(sendShown ? 1 : 0).allowsHitTesting(sendShown).accessibilityHidden(!sendShown)
         }
     }

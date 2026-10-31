@@ -555,6 +555,22 @@ test("a session in tmux is typed into the tab running its tmux client, and refus
     expect(events.filter((event) => event.startsWith("send"))).toEqual([]);
 });
 
+test("Claude liveness uses the transcript's own registry and keeps unknown evidence unknown", async () => {
+    const { claudeNativeSessionAlive } = await import("@genesiscz/utils/agent-sessions/readers/claude-dialog");
+    const transcriptPath = `/fixture/other-account/projects/project/${SESSION_A}.jsonl`;
+    let directory = "";
+    expect(
+        claudeNativeSessionAlive(transcriptPath, SESSION_A, (path) => {
+            directory = path;
+            return new Set([SESSION_A.toLowerCase()]);
+        })
+    ).toBe(true);
+    expect(directory).toBe("/fixture/other-account/sessions");
+    expect(claudeNativeSessionAlive(transcriptPath, SESSION_A, () => new Set())).toBe(false);
+    expect(claudeNativeSessionAlive(transcriptPath, SESSION_A, () => null)).toBeNull();
+    expect(claudeNativeSessionAlive("/fixture/unknown/session.jsonl", SESSION_A, () => new Set())).toBeNull();
+});
+
 test("Claude's registry status `waiting` is an open dialog for that session only, never for a parked copy", async () => {
     const { claudeRegistryDialog } = await import("@app/claude/lib/cmux/dialog-guard");
     const entry = {

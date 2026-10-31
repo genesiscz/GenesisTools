@@ -1,4 +1,5 @@
 import { describe, expect, test } from "bun:test";
+import { type EffortRange, effortRange } from "./efforts";
 import { effectivePricing } from "./pricing";
 import {
     aliasMapFor,
@@ -13,6 +14,13 @@ import {
 } from "./static";
 
 describe("static catalog", () => {
+    test("effort ranges include each possible union endpoint", () => {
+        const upper: EffortRange<"low", "high" | "max"> = "max";
+        const lower: EffortRange<"low" | "high", "max"> = "low";
+        expect(effortRange("low", "max")).toContain(upper);
+        expect(effortRange("low", "max")).toContain(lower);
+    });
+
     /**
      * Uniqueness is per provider, not global: `gpt-5.4` names both a 272K
      * Codex-subscription model and a 1.05M OpenAI API model, and both are real.

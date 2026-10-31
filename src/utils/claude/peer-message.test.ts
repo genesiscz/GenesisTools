@@ -36,6 +36,11 @@ describe("liveClaudeSessionIds", () => {
         expect(liveClaudeSessionIds(dir, () => new Set([1]))).toBeNull();
     });
 
+    it("answers unknown when a registry entry has no session identity", () => {
+        const dir = registry([{ pid: 1, sessionId: "live" }, { pid: 2 }]);
+        expect(liveClaudeSessionIds(dir, () => new Set([1, 2]))).toBeNull();
+    });
+
     it("answers null, not empty, when the registry cannot be read", () => {
         expect(liveClaudeSessionIds(join(tmpdir(), "no-such-registry-dir"), () => new Set())).toBeNull();
     });

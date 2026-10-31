@@ -1779,6 +1779,18 @@ test("send-and-close timing defaults to 2.5 seconds and can keep the panel open"
     expect(widgetPreferencesSchema.safeParse({ sendCloseSeconds: 61 }).success).toBe(false);
 });
 
+test("alert content preferences default on and can be changed independently", () => {
+    expect(widgetPreferencesSchema.parse({})).toMatchObject({ alertSummary: true, alertCompactAnswer: true });
+    expect(widgetPreferencesSchema.parse({ alertSummary: false, alertCompactAnswer: true })).toMatchObject({
+        alertSummary: false,
+        alertCompactAnswer: true,
+    });
+    expect(widgetPreferencesSchema.parse({ alertSummary: true, alertCompactAnswer: false })).toMatchObject({
+        alertSummary: true,
+        alertCompactAnswer: false,
+    });
+});
+
 test("staging keys default to Return stages, ⌘ does the other, and a reminder at start", () => {
     const defaults = widgetPreferencesSchema.parse({});
     expect(defaults.decisionCommandSwaps).toBe(true);

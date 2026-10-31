@@ -565,7 +565,8 @@ struct WidgetPeekView: View {
                 } else {
                     // The context the agent wrote under the title, so a pick here is not made blind (Martin,
                     // 2026-10-28: "in this window you should probably have the description").
-                    if let summary = item.summary, !summary.isEmpty, item.needsAnswer { summaryText(summary) }
+                    if model.snapshot?.state.preferences.alertSummary ?? true,
+                       let summary = item.summary, !summary.isEmpty, item.needsAnswer { summaryText(summary) }
                     if !options.isEmpty { optionList }
                     if item.isAnsweredElsewhere { answeredBody }
                     if isReminder { stagedBody }
@@ -679,6 +680,7 @@ struct WidgetPeekView: View {
             .padding(.horizontal, 8)
             .frame(maxWidth: .infinity, alignment: .leading)
             .accessibilityIdentifier("widget.peek.summary")
+            .frameProbe("widget.peek.summary")
     }
 
     /// The decision's options as the inbox draws them: a click stages one (or sends it, by the Decision click
@@ -699,7 +701,7 @@ struct WidgetPeekView: View {
                 moreButton("\(options.count - Self.shownOptions) more in its session",
                            tooltip: "Opens the decision in its session with all its options") { open() }
             }
-            ownAnswerField
+            if model.snapshot?.state.preferences.alertCompactAnswer ?? true { ownAnswerField }
         }
     }
 
@@ -862,9 +864,14 @@ struct WidgetPeekView: View {
         .padding(.horizontal, 2)
     }
 
-    /// The footer while nothing was sent from the popup: Send now while a pick waits, else Open. The own answer is the
-    /// compact field under the options (`ownAnswerField`), not a second button here.
+    /// The footer while nothing was sent: Send now while a pick waits, else Open. The answer button replaces the
+    /// compact field when the alert's settings ask for it.
     @ViewBuilder private var footerButtons: some View {
+        if !options.isEmpty && !(model.snapshot?.state.preferences.alertCompactAnswer ?? true) {
+            Button("Write my own answer") { open(ownAnswer: true) }
+                .accessibilityIdentifier("widget.peek.answerButton")
+                .frameProbe("widget.peek.answerButton")
+        }
         Spacer(minLength: 0)
         if isReminder {
             let ids = model.stagedItems.map(\.sourceId)

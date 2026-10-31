@@ -47,7 +47,7 @@ test("a registered fourth provider supports listing, content, detail and unavail
         codingAgent: {
             kind: "fixture",
             parserVersion: "1",
-            dialog: { eventLogPath: () => null, openPermission: () => null },
+            dialog: { eventLogPath: () => null, openPermission: () => null, sessionAlive: () => null },
             readBackward: noBackwardRead,
             readTurnBoundary: async () => null,
             readForward: async () => ({ rows: [], file: null, endOffset: 0, issues: [] }),
