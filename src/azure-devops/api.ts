@@ -1363,6 +1363,21 @@ export class Api {
      */
     private static readonly ITERATION_NODE_DEPTH = 10;
 
+    /** A tree cut at the depth cap: a warning for a listing, an error under `strict` (a manifest must be whole). */
+    private static reportTruncatedTree(what: string, root: IterationClassificationNode, strict?: boolean): void {
+        const truncated = findTruncatedNodes(root);
+        if (truncated.length === 0) {
+            return;
+        }
+
+        const message = `${what} tree truncated at depth ${Api.ITERATION_NODE_DEPTH}; ${truncated.length} node(s) have unlisted children, first: ${truncated[0]}`;
+        if (strict) {
+            throw new Error(message);
+        }
+
+        logger.warn(`[api] ${message}`);
+    }
+
     /**
      * Every dated iteration of the project, with no team involved.
      *
@@ -1370,7 +1385,7 @@ export class Api {
      * to a subset of them. This endpoint therefore returns a superset of what
      * `getTeamIterations()` returns, which is what makes `--team` optional.
      */
-    async getProjectIterations(): Promise<TeamIteration[]> {
+    async getProjectIterations(options: { strict?: boolean } = {}): Promise<TeamIteration[]> {
         // Depth 3 covered the common `Project > Release > Sprint` shape and
         // silently dropped anything nested deeper, which the caller could not
         // tell apart from "that sprint does not exist" (review t1).
@@ -1378,12 +1393,7 @@ export class Api {
             $depth: String(Api.ITERATION_NODE_DEPTH),
         });
         const root = await this.get<IterationClassificationNode>(url, "project iteration classification nodes");
-        const truncated = findTruncatedNodes(root);
-        if (truncated.length > 0) {
-            logger.warn(
-                `[api] iteration tree truncated at depth ${Api.ITERATION_NODE_DEPTH}; ${truncated.length} node(s) have unlisted children, first: ${truncated[0]}`
-            );
-        }
+        Api.reportTruncatedTree("iteration", root, options.strict);
 
         const iterations = flattenIterationNodes(root);
         logger.debug(`[api] Project "${this.config.project}" has ${iterations.length} dated iterations`);
@@ -1599,17 +1609,12 @@ export class Api {
     }
 
     /** The project's area tree (classification nodes), as deep as ADO allows. */
-    async getAreaNodes(): Promise<IterationClassificationNode> {
+    async getAreaNodes(options: { strict?: boolean } = {}): Promise<IterationClassificationNode> {
         const url = Api.witUrl(this.config, ["classificationnodes", "areas"], {
             $depth: String(Api.ITERATION_NODE_DEPTH),
         });
         const root = await this.get<IterationClassificationNode>(url, "project area classification nodes");
-        const truncated = findTruncatedNodes(root);
-        if (truncated.length > 0) {
-            logger.warn(
-                `[api] area tree truncated at depth ${Api.ITERATION_NODE_DEPTH}; ${truncated.length} node(s) have unlisted children, first: ${truncated[0]}`
-            );
-        }
+        Api.reportTruncatedTree("area", root, options.strict);
         return root;
     }
 
