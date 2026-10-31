@@ -63,4 +63,20 @@ describe("FileTailer<T>", () => {
         t.stop();
         expect(seen).toEqual(["a", "a", "b"]);
     });
+
+    it("keeps a buffered partial line on a default restart, which goes on at the end of the file", () => {
+        const f = join(mkdtempSync(join(tmpdir(), "ft-")), "log.jsonl");
+        writeFileSync(f, "");
+        const seen: string[] = [];
+        const t = new FileTailer<{ id: string }>(f, { onLine: (e) => seen.push(e.id) });
+        t.start();
+        appendFileSync(f, `${SafeJSON.stringify({ id: "a" })}\n{"id":`);
+        t.flush();
+        t.stop();
+        t.start();
+        appendFileSync(f, `"b"}\n`);
+        t.flush();
+        t.stop();
+        expect(seen).toEqual(["a", "b"]);
+    });
 });

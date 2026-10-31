@@ -81,9 +81,13 @@ export class FileTailer<T = unknown> {
             }
         }
 
+        // `from` reads its bytes again, so a partial line buffered before a stop would come twice; a default restart
+        // goes on at the end of the file, so the buffered start of a line is kept for the rest that is appended.
+        if (this.options.from !== undefined) {
+            this.remainder = Buffer.alloc(0);
+        }
+
         this.offset = this.options.from ?? (existsSync(this.path) ? fstatSyncSize(this.path) : 0);
-        // A partial line buffered before a stop belongs to the old offset; the new one reads its bytes again.
-        this.remainder = Buffer.alloc(0);
         this.fingerprint = existsSync(this.path) ? headFingerprint(this.path) : "";
         const tick = (): void => this.drain();
         try {
