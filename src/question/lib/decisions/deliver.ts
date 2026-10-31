@@ -46,6 +46,7 @@ import { isProcessAlive } from "@genesiscz/utils/process-alive";
 import { isTestProcess } from "@genesiscz/utils/test-process";
 import { workerSourceHome } from "@genesiscz/utils/worker/delivery";
 import type { WorkerMetaStore } from "@genesiscz/utils/worker/meta-store";
+import { z } from "zod";
 import { DeliveryUnknownError, NotDeliveredError } from "./delivery-errors";
 import { deliverySentence } from "./delivery-text";
 
@@ -213,9 +214,14 @@ function nativeWorkers(provider: AccountProviderAlias): NativeDeliveryWorker[] {
     return ANSWER_ROUTES[provider].workers?.list() ?? [];
 }
 
+export interface RunToolOptions {
+    /** How long the run may take; a quick send by default. */
+    timeoutMs?: number;
+}
+
 export interface DeliverDeps {
     /** Runs `tools <args>`; tests replace it with a spy. */
-    runTool?: (args: string[]) => Promise<ToolRun>;
+    runTool?: (args: string[], options?: RunToolOptions) => Promise<ToolRun>;
     queueRoot?: string;
     /** The `tools codex` worker name that runs this Codex thread, or null. */
     codexWorkerFor?: (sessionId: string, sourceHome?: string) => string | null;
@@ -272,12 +278,67 @@ function codexWorkerFor(sessionId: string, sourceHome?: string): string | null {
     return null;
 }
 
-async function runTool(args: string[]): Promise<ToolRun> {
-    // A worker steer resumes a whole turn and waits for it, so it gets a turn's time; every other send is quick.
-    const resumed = Object.values(ANSWER_ROUTES).some(
-        (route) => route.workers?.steer.every((word, index) => args[index] === word) ?? false
-    );
-    return execTool(args, { timeout: resumed ? 15 * 60_000 : 60_000 });
+/** Every send is quick, except a worker steer, which resumes a whole turn and waits for it. */
+const TOOL_TIMEOUT_MS = 60_000;
+const WORKER_TURN_TIMEOUT_MS = 15 * 60_000;
+
+async function runTool(args: string[], options?: RunToolOptions): Promise<ToolRun> {
+    return execTool(args, { timeout: options?.timeoutMs ?? TOOL_TIMEOUT_MS });
+}
+
+/** Writes the answer to a private temp file for a `--prompt-file` steer, and removes it once the run returns. */
+async function withPromptFile<T>(text: string, use: (promptFile: string) => Promise<T>): Promise<T> {
+    const directory = mkdtempSync(join(tmpdir(), "worker-delivery-"));
+    try {
+        const promptFile = join(directory, "prompt.txt");
+        writeFileSync(promptFile, text, { mode: 0o600 });
+        return await use(promptFile);
+    } finally {
+        rmSync(directory, { recursive: true, force: true });
+    }
+}
+
+/**
+ * The `--json` receipt of a `tools <harness> steer`. Each field keeps only a value of its type, so one odd field does
+ * not hide the others: every branch below compares the fields it needs.
+ */
+const steerReceiptSchema = z.object({
+    kind: z.string().optional().catch(undefined),
+    backend: z.string().optional().catch(undefined),
+    name: z.string().optional().catch(undefined),
+    error: z.string().optional().catch(undefined),
+    completed: z.boolean().optional().catch(undefined),
+    exitCode: z.number().optional().catch(undefined),
+    sessionId: z.string().optional().catch(undefined),
+    sourceHome: z.string().optional().catch(undefined),
+    turn: z.number().optional().catch(undefined),
+    queued: z.boolean().optional().catch(undefined),
+    turnId: z.string().optional().catch(undefined),
+});
+
+type SteerReceipt = z.infer<typeof steerReceiptSchema>;
+
+/** A steer's receipt, or null when it is JSON but not an object; output that is not JSON leaves the outcome unknown. */
+function readReceipt({
+    stdout,
+    session,
+    unreadable,
+}: {
+    stdout: string;
+    session: string;
+    /** The sentence the unknown outcome carries. */
+    unreadable: string;
+}): SteerReceipt | null {
+    let receipt: unknown;
+    try {
+        receipt = SafeJSON.parse(stdout, { strict: true });
+    } catch (error) {
+        log.warn({ error, session }, "the steer returned no readable receipt");
+        throw new DeliveryUnknownError(unreadable);
+    }
+
+    const parsed = steerReceiptSchema.safeParse(receipt);
+    return parsed.success ? parsed.data : null;
 }
 
 const LABEL_MAX = 40;
@@ -704,76 +765,68 @@ export async function deliverToSession(
             return undelivered(`A ${worker.provider} session has no owned worker to steer; no prompt was sent.`);
         }
 
-        const directory = mkdtempSync(join(tmpdir(), "worker-delivery-"));
-        const promptFile = join(directory, "prompt.txt");
-        try {
-            writeFileSync(promptFile, text, { mode: 0o600 });
-            const result = await run([
-                ...prefix,
-                "--name",
-                worker.name,
-                "--prompt-file",
-                promptFile,
-                "--json",
-                "--expect-session",
-                worker.sessionId,
-                "--expect-home",
-                worker.sourceHome,
-                "--expect-turn",
-                String(worker.turns),
-            ]);
-            let receipt: unknown;
-            try {
-                receipt = SafeJSON.parse(result.stdout, { strict: true });
-            } catch (error) {
-                log.warn({ error, session, provider }, "Native worker returned no machine receipt");
-                throw new DeliveryUnknownError(
-                    "The resumed worker returned no readable receipt. Check its conversation before retrying."
-                );
-            }
-            if (typeof receipt !== "object" || receipt === null) {
-                throw new DeliveryUnknownError(
-                    "The resumed worker returned an invalid receipt. Check its conversation before retrying."
-                );
-            }
-            const value = receipt as Record<string, unknown>;
-            const sameWorker = value.backend === worker.provider && value.name === worker.name;
-            if (sameWorker && value.kind === "rejected" && typeof value.error === "string") {
-                return undelivered(value.error);
-            }
-            if (
-                result.success &&
-                sameWorker &&
-                value.kind === "turn" &&
-                value.completed === true &&
-                value.exitCode === 0 &&
-                value.sessionId === worker.sessionId &&
-                typeof value.sourceHome === "string" &&
-                workerSourceHome(value.sourceHome) === workerSourceHome(worker.sourceHome) &&
-                value.turn === worker.turns + 1
-            ) {
-                log.info(
-                    { session, provider, worker: worker.name, turn: value.turn },
-                    "Answer acknowledged by completed same-session worker turn"
-                );
-                return { channel: "resume", delivered: true, target: `${target.label} · resumed turn ${value.turn}` };
-            }
+        const result = await withPromptFile(text, (promptFile) =>
+            run(
+                [
+                    ...prefix,
+                    "--name",
+                    worker.name,
+                    "--prompt-file",
+                    promptFile,
+                    "--json",
+                    "--expect-session",
+                    worker.sessionId,
+                    "--expect-home",
+                    worker.sourceHome,
+                    "--expect-turn",
+                    String(worker.turns),
+                ],
+                { timeoutMs: WORKER_TURN_TIMEOUT_MS }
+            )
+        );
+        const receipt = readReceipt({
+            stdout: result.stdout,
+            session,
+            unreadable: "The resumed worker returned no readable receipt. Check its conversation before retrying.",
+        });
+        if (!receipt) {
             throw new DeliveryUnknownError(
-                "The resumed worker did not acknowledge this exact session and turn. Check its conversation before retrying."
+                "The resumed worker returned an invalid receipt. Check its conversation before retrying."
             );
-        } finally {
-            rmSync(directory, { recursive: true, force: true });
         }
+
+        const sameWorker = receipt.backend === worker.provider && receipt.name === worker.name;
+        if (sameWorker && receipt.kind === "rejected" && receipt.error !== undefined) {
+            return undelivered(receipt.error);
+        }
+
+        if (
+            result.success &&
+            sameWorker &&
+            receipt.kind === "turn" &&
+            receipt.completed === true &&
+            receipt.exitCode === 0 &&
+            receipt.sessionId === worker.sessionId &&
+            receipt.sourceHome !== undefined &&
+            workerSourceHome(receipt.sourceHome) === workerSourceHome(worker.sourceHome) &&
+            receipt.turn === worker.turns + 1
+        ) {
+            log.info(
+                { session, provider, worker: worker.name, turn: receipt.turn },
+                "Answer acknowledged by completed same-session worker turn"
+            );
+            return { channel: "resume", delivered: true, target: `${target.label} · resumed turn ${receipt.turn}` };
+        }
+
+        throw new DeliveryUnknownError(
+            "The resumed worker did not acknowledge this exact session and turn. Check its conversation before retrying."
+        );
     }
 
     // The routes that returned above leave two: a `tools codex` worker, or the cmux pane below.
     if (target.kind !== "cmux") {
-        const directory = mkdtempSync(join(tmpdir(), "worker-delivery-"));
-        const promptFile = join(directory, "prompt.txt");
-        let steered: ToolRun;
-        try {
-            writeFileSync(promptFile, text, { mode: 0o600 });
-            steered = await run([
+        const steered = await withPromptFile(text, (promptFile) =>
+            run([
                 "codex",
                 "steer",
                 "--name",
@@ -782,42 +835,26 @@ export async function deliverToSession(
                 "--prompt-file",
                 promptFile,
                 ...(sourceHome ? ["--expect-session", session, "--expect-home", sourceHome] : []),
-            ]);
-        } finally {
-            rmSync(directory, { recursive: true, force: true });
-        }
+            ])
+        );
         log.info({ session, worker: target.worker, ok: steered.success }, "decision answers steered into codex");
 
-        let receipt: unknown;
-        try {
-            receipt = SafeJSON.parse(steered.stdout, { strict: true });
-        } catch (error) {
-            log.warn({ error, session }, "Codex transport returned no readable acknowledgement");
-            throw new DeliveryUnknownError(
-                "Codex returned no input acknowledgement. Check the conversation before retrying."
-            );
-        }
+        const receipt = readReceipt({
+            stdout: steered.stdout,
+            session,
+            unreadable: "Codex returned no input acknowledgement. Check the conversation before retrying.",
+        });
         if (
-            typeof receipt === "object" &&
-            receipt !== null &&
-            "kind" in receipt &&
-            receipt.kind === "rejected" &&
-            "backend" in receipt &&
+            receipt?.kind === "rejected" &&
             receipt.backend === CODEX_WORKER_BACKEND &&
-            "name" in receipt &&
             receipt.name === target.worker &&
-            "error" in receipt &&
-            typeof receipt.error === "string"
+            receipt.error !== undefined
         ) {
             return undelivered(receipt.error);
         }
-        if (steered.success && typeof receipt === "object" && receipt !== null && "queued" in receipt) {
-            if (
-                receipt.queued === false &&
-                "turnId" in receipt &&
-                typeof receipt.turnId === "string" &&
-                receipt.turnId
-            ) {
+
+        if (steered.success && receipt) {
+            if (receipt.queued === false && receipt.turnId) {
                 // `steerCodexMessage` reports this receipt as `delivered: false`, because there
                 // `delivered` means consumer-acknowledged (run.test.ts). For a Decision answer an
                 // acknowledged provider turn is enough to mark the batch sent, so it maps to true here.
@@ -827,12 +864,14 @@ export async function deliverToSession(
                     target: `${target.label} · input acknowledged (turn ${receipt.turnId})`,
                 };
             }
+
             if (receipt.queued === true) {
                 throw new DeliveryUnknownError(
                     "Codex accepted the message into its daemon queue, but has not acknowledged a provider turn. Do not resend before checking the conversation."
                 );
             }
         }
+
         throw new DeliveryUnknownError(
             "Codex did not return a valid input acknowledgement. Check the conversation before retrying."
         );
