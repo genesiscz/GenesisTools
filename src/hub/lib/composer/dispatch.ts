@@ -1,4 +1,5 @@
 import { resolve } from "node:path";
+import { readPaneReceipt } from "@app/claude/lib/cmux/pane-send";
 import { canonicalAgent } from "@app/handoff/targeting";
 import { type DeliverDeps, DeliveryUnknownError, deliverToSession } from "@app/question/lib/decisions/deliver";
 import { decisionFiles } from "@app/question/lib/decisions/read";
@@ -11,7 +12,6 @@ import { attachImageFiles, MAX_ANSWER_IMAGE_BYTES } from "@app/question/lib/pend
 import type { AskAnswer, AskForm } from "@app/question/lib/pending/types";
 import { isAccountProviderAlias } from "@genesiscz/utils/ai/providers/alias-list";
 import { harnessWorker } from "@genesiscz/utils/ai/providers/harness-index";
-import { SafeJSON } from "@genesiscz/utils/json";
 import { logger } from "@genesiscz/utils/logger";
 import { boundedCommand } from "@genesiscz/utils/process/bounded-command";
 import type { WorkerCapabilities } from "@genesiscz/utils/worker/capabilities";
@@ -88,27 +88,21 @@ export function widgetDeliveryReceipt({
         return { success: result.status === 0, stdout: result.stdout, stderr: result.stderr };
     }
 
-    let raw: unknown;
-    try {
-        raw = SafeJSON.parse(result.stdout, { strict: true });
-    } catch (error) {
-        logger.warn({ error, status: result.status }, "Widget transport receipt could not be decoded");
+    const receipt = readPaneReceipt(result.stdout);
+
+    if (receipt.kind === "unreadable") {
+        logger.warn({ status: result.status }, "Widget transport receipt could not be decoded");
         throw new DeliveryUnknownError(
             "The transport returned no readable receipt. Check the conversation before retrying."
         );
     }
 
-    if (typeof raw !== "object" || raw === null || !("sent" in raw) || typeof raw.sent !== "boolean") {
-        throw new DeliveryUnknownError(
-            "The transport returned an unreadable receipt. Check the conversation before retrying."
-        );
-    }
-
-    if (result.status !== 0 && raw.sent) {
+    const typed = receipt.kind === "typed";
+    if (result.status !== 0 && typed) {
         throw unknown;
     }
 
-    return { success: result.status === 0 && raw.sent, stdout: result.stdout, stderr: result.stderr };
+    return { success: result.status === 0 && typed, stdout: result.stdout, stderr: result.stderr };
 }
 
 type DecisionPayload = Extract<WidgetOutgoing["payload"], { kind: "decision" }>;

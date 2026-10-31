@@ -824,3 +824,62 @@ test("multi-line text goes as one paste even without --paste; a single line keep
         "send-key --surface surface:41 enter",
     ]);
 });
+
+test("every pane send receipt reads back as the outcome it printed, so no caller parses the JSON itself", async () => {
+    const { paneSendReceipt, readPaneReceipt } = await import("@app/claude/lib/cmux/pane-send");
+    const target = {
+        workspaceId: "workspace:11",
+        workspaceName: "GenesisTools",
+        paneId: "pane:7",
+        paneTitle: "agent",
+        surfaceId: "surface:41",
+        sessionIds: [SESSION_A],
+        matchedOn: "recorded" as const,
+        score: 100,
+        active: true,
+    };
+    const read = (outcome: Parameters<typeof paneSendReceipt>[0]) =>
+        readPaneReceipt(SafeJSON.stringify(paneSendReceipt(outcome)));
+
+    expect(
+        read({ kind: "typed", query: SESSION_A, target, surfaceId: "surface:41", enter: true, source: "recorded" })
+    ).toEqual({ kind: "typed", pane: { workspaceName: "GenesisTools", paneTitle: "agent" } });
+    expect(
+        read({
+            kind: "dialog",
+            query: SESSION_A,
+            reason: "a question dialog is open",
+            dialog: { kind: "decision", question: null, signal: "registry" },
+            sessionId: SESSION_A,
+            target,
+        })
+    ).toEqual({ kind: "refused", reason: "a question dialog is open", dialog: true, ambiguous: false });
+    expect(read({ kind: "ambiguous", query: SESSION_A, matches: [target, target] })).toEqual({
+        kind: "refused",
+        dialog: false,
+        ambiguous: true,
+        matches: 2,
+    });
+    expect(read({ kind: "no-match", query: SESSION_A })).toEqual({
+        kind: "refused",
+        dialog: false,
+        ambiguous: false,
+        matches: 0,
+    });
+    expect(
+        read({
+            kind: "option-pressed",
+            query: SESSION_A,
+            option: "a",
+            index: 0,
+            label: "Yes",
+            dialog: `claude:${SESSION_A}:tool-1`,
+            presses: [{ key: "1" }],
+            target,
+            surfaceId: "surface:41",
+            source: "recorded",
+        })
+    ).toMatchObject({ kind: "unconfirmed" });
+    expect(readPaneReceipt("not json")).toEqual({ kind: "unreadable" });
+    expect(readPaneReceipt('{"matches":[]}')).toEqual({ kind: "unreadable" });
+});

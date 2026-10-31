@@ -3,6 +3,7 @@ import { tmpdir } from "node:os";
 import { dirname, join } from "node:path";
 import { sessionOpenDialog } from "@app/claude/lib/cmux/dialog-guard";
 import { type FocusTarget, isUnambiguous } from "@app/claude/lib/cmux/focus";
+import { type PaneReceipt, readPaneReceipt } from "@app/claude/lib/cmux/pane-send";
 import {
     findSessionTargets,
     identifiesExactSession,
@@ -904,6 +905,13 @@ async function findPane(session: string, edges: DeliveryEdges): Promise<TargetOf
 /**
  * The last rung: free text typed into the session's cmux pane as one bracketed paste (JSON, paths and paragraph
  * boundaries survive). It is the only rung a dialog can swallow, so it asks the dialog guard first.
+ *
+ * The typing runs in a `tools claude cmux send --exact-session` child, not in this process
+ * (`sendToSessionPane` in `@app/claude/lib/cmux/pane-send`). The widget must spawn it anyway (the widget-tools
+ * identity and its abort signal), and both doors share the one `runTool` transport and one receipt
+ * (`readPaneReceipt`). The child also resolves the pane against the live cmux and asks the dialog guard again
+ * right before it types, so a pane or dialog that changed since `findPane` stops it, and a caller whose pane lookup
+ * is scripted can never type into a real surface.
  */
 const paneRoute = {
     async find({ session }: RouteQuery, edges: DeliveryEdges): Promise<RouteHit | NoTarget> {
@@ -943,20 +951,32 @@ async function typeIntoPane(
         ],
         { timeoutMs: SEND_TIMEOUT_MS }
     );
-    const outcome = parseSent(sent.stdout);
+    const receipt = readPaneReceipt(sent.stdout);
     log.info(
-        { session, provider: harness, ok: sent.success, sent: outcome, stderr: sent.stderr.slice(0, 400) },
+        { session, provider: harness, ok: sent.success, receipt, stderr: sent.stderr.slice(0, 400) },
         "decision answers typed into the cmux pane"
     );
 
-    if (sent.success && outcome.sent) {
-        return { kind: "delivered", channel: "cmux", target: outcome.pane ?? target.label };
+    if (sent.success && receipt.kind === "typed") {
+        return {
+            kind: "delivered",
+            channel: "cmux",
+            target: receipt.pane ? cmuxLabel(receipt.pane.workspaceName, receipt.pane.paneTitle) : target.label,
+        };
+    }
+
+    // A text send never presses a dialog key, so an `unconfirmed` receipt is no answer this send can trust.
+    if (receipt.kind === "unconfirmed") {
+        return {
+            kind: "unknown",
+            reason: receipt.reason ?? "The pane send is unconfirmed. Check the session before retrying.",
+        };
     }
 
     // A readable `sent: false` is a refusal before any input, so the durable session queue may take it.
     // Unreadable output leaves the outcome unknown, and that stays a plain queued result.
-    const reason = paneMiss(sent.stdout, sent.stderr);
-    return outcome.readable && !outcome.sent
+    const reason = missSentence(receipt, sent.stderr);
+    return receipt.kind === "refused"
         ? { kind: "refused", reason, raw: sent.stderr.trim() }
         : { kind: "failed", reason, raw: sent.stderr.trim() };
 }
@@ -1102,52 +1122,30 @@ export async function deliverToSession(
 
 /** Why `cmux send --json` typed nothing, in one sentence: no pane, several panes, a closed workspace. */
 export function paneMiss(stdout: string, stderr = ""): string {
+    return missSentence(readPaneReceipt(stdout), stderr);
+}
+
+function missSentence(receipt: PaneReceipt, stderr: string): string {
     const known = deliverySentence(stderr);
 
     if (known) {
         return known;
     }
 
-    try {
-        const parsed = SafeJSON.parse(stdout, { strict: true }) as {
-            matches?: unknown;
-            reason?: unknown;
-            dialog?: unknown;
-        };
+    if (receipt.kind !== "refused") {
+        return "the cmux send failed";
+    }
 
-        // The send's dialog guard refused before any keystroke and said why.
-        if (parsed.dialog && typeof parsed.reason === "string" && parsed.reason.length > 0) {
-            return parsed.reason;
-        }
+    // The send's dialog guard refused before any keystroke and said why.
+    if (receipt.dialog && receipt.reason) {
+        return receipt.reason;
+    }
 
-        if (Array.isArray(parsed.matches)) {
-            return parsed.matches.length === 0
-                ? "no cmux pane runs this session"
-                : `${parsed.matches.length} cmux panes match this session; none was picked`;
-        }
-    } catch (error) {
-        log.debug({ error, stdout: stdout.slice(0, 200) }, "cmux send printed no JSON outcome");
+    if (receipt.matches !== undefined) {
+        return receipt.matches === 0
+            ? "no cmux pane runs this session"
+            : `${receipt.matches} cmux panes match this session; none was picked`;
     }
 
     return "the cmux send failed";
-}
-
-/** `cmux send --json`: whether it typed, and the pane it typed into as `cmux · workspace · pane`. */
-function parseSent(stdout: string): { sent: boolean; readable: boolean; pane?: string } {
-    try {
-        const parsed = SafeJSON.parse(stdout, { strict: true }) as {
-            sent?: unknown;
-            target?: { workspaceName?: unknown; paneTitle?: unknown };
-        };
-        const workspace = typeof parsed.target?.workspaceName === "string" ? parsed.target.workspaceName : "";
-        const pane = typeof parsed.target?.paneTitle === "string" ? parsed.target.paneTitle : "";
-        return {
-            sent: parsed.sent === true,
-            readable: typeof parsed.sent === "boolean",
-            ...(workspace || pane ? { pane: cmuxLabel(workspace, pane) } : {}),
-        };
-    } catch (error) {
-        log.debug({ error, stdout: stdout.slice(0, 200) }, "cmux send printed no JSON outcome");
-        return { sent: false, readable: false };
-    }
 }

@@ -1,9 +1,9 @@
+import { readPaneReceipt } from "@app/claude/lib/cmux/pane-send";
 import { planDialogKeys } from "@genesiscz/utils/agents/dialogs/keys";
 import { openQuestions } from "@genesiscz/utils/agents/dialogs/store";
 import { type DialogProvider, type OpenQuestion, openQuestionKey } from "@genesiscz/utils/agents/dialogs/types";
 import { isAccountProviderAlias } from "@genesiscz/utils/ai/providers/alias-list";
 import { execTool } from "@genesiscz/utils/cli";
-import { SafeJSON } from "@genesiscz/utils/json";
 import { logger } from "@genesiscz/utils/logger";
 import { paneMiss, type ToolRun } from "../decisions/deliver";
 import type { InboxAnswerResult } from "./answer";
@@ -107,32 +107,25 @@ export async function answerDialogItem(
         "--json",
     ];
     const run = await (deps.runTool ?? defaultRunTool)(args);
-    let outcome: { sent?: unknown; reason?: unknown; ambiguous?: unknown; unconfirmed?: unknown } = {};
+    const receipt = readPaneReceipt(run.stdout);
 
-    try {
-        const parsed: unknown = SafeJSON.parse(run.stdout, { strict: true });
-        outcome = typeof parsed === "object" && parsed !== null ? parsed : {};
-    } catch (error) {
-        log.debug({ error, stdout: run.stdout.slice(0, 200) }, "cmux send --option printed no JSON outcome");
-    }
-
-    if (outcome.unconfirmed === true || (outcome.sent !== true && outcome.sent !== false)) {
+    if (receipt.kind === "unconfirmed" || receipt.kind === "unreadable") {
         return {
             session: target.sessionId,
             text: `${option}) ${plan.label}`,
             channel: "cmux",
             delivered: false,
             uncertain: true,
-            detail: typeof outcome.reason === "string" ? outcome.reason : "check the dialog before retrying",
+            detail: (receipt.kind === "unconfirmed" && receipt.reason) || "check the dialog before retrying",
         };
     }
 
-    if (outcome.sent !== true) {
+    if (receipt.kind === "refused") {
         // `--exact-session` refuses a pane found only by a title or a screen match, as the typed rung does.
         const why =
-            typeof outcome.reason === "string"
-                ? outcome.reason
-                : outcome.ambiguous === true
+            receipt.reason !== undefined
+                ? receipt.reason
+                : receipt.ambiguous
                   ? "the session's cmux pane is not identified exactly (no recorded pane, only a weak match); nothing was pressed"
                   : paneMiss(run.stdout, run.stderr);
         return refused(target.sessionId, why);
