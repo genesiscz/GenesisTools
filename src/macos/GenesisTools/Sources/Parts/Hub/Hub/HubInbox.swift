@@ -1459,13 +1459,7 @@ struct InboxListView: View {
                     // An empty Inbox says so once, in the main pane, with the header's one reload (P6).
                     let older = rows.filter(\.isStale)
                     ForEach(rows.filter { !$0.isStale }) { session in
-                        InboxSessionRow(
-                            session: session,
-                            selected: session.id == inbox.selectedID,
-                            select: { inbox.selectedID = session.id }
-                        )
-                        .equatable()
-                        .accessibilityAddTraits(session.id == inbox.selectedID ? .isSelected : [])
+                        sessionRow(session)
                     }
                     if !older.isEmpty {
                         // The header alone is the disclosure, inset like the rows; the rows keep their own insets.
@@ -1481,13 +1475,7 @@ struct InboxListView: View {
                         .instantTooltip("Nothing moved in these sessions for three days. Their questions stay answerable here; they no longer count as waiting.")
                         if inbox.showsQuiet {
                             ForEach(older) { session in
-                                InboxSessionRow(
-                                    session: session,
-                                    selected: session.id == inbox.selectedID,
-                                    select: { inbox.selectedID = session.id }
-                                )
-                                .equatable()
-                                .accessibilityAddTraits(session.id == inbox.selectedID ? .isSelected : [])
+                                sessionRow(session)
                             }
                         }
                     }
@@ -1501,6 +1489,16 @@ struct InboxListView: View {
                 if id != nil { inbox.showsQuiet = true }
             }
         }
+    }
+
+    private func sessionRow(_ session: InboxSession) -> some View {
+        InboxSessionRow(
+            session: session,
+            selected: session.id == inbox.selectedID,
+            select: { inbox.selectedID = session.id }
+        )
+        .equatable()
+        .accessibilityAddTraits(session.id == inbox.selectedID ? .isSelected : [])
     }
 }
 
