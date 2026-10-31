@@ -3293,10 +3293,19 @@ let fileInViewQueued = false;
 function reportFileInView(): void {
     fileInViewQueued = false;
     const edge = host.getBoundingClientRect().top + 1;
-    const items = viewer.getRenderedItems().map((item) => ({ id: item.id, box: item.element.getBoundingClientRect() }));
-    const covering = items.find((item) => item.box.top <= edge && item.box.bottom > edge);
-    const below = items.filter((item) => item.box.top > edge).sort((a, b) => a.box.top - b.box.top)[0];
-    const id = (covering ?? below)?.id ?? null;
+    // The item covering the edge, else the nearest one below it: of the items that end below the edge, the one that
+    // starts highest. One pass, no arrays: it runs on every frame of a flick.
+    let best: { id: string; top: number } | null = null;
+
+    for (const item of viewer.getRenderedItems()) {
+        const box = item.element.getBoundingClientRect();
+
+        if (box.bottom > edge && (best === null || box.top < best.top)) {
+            best = { id: item.id, top: box.top };
+        }
+    }
+
+    const id = best?.id ?? null;
 
     if (id && id !== fileInView) {
         fileInView = id;
