@@ -6,6 +6,7 @@ import { logger, out } from "@genesiscz/utils/logger";
 import type { Command } from "commander";
 import pc from "picocolors";
 import { DEFAULT_REGION_OPTIONS } from "../lib/diff-regions";
+import { numberFlag } from "../lib/flag-number";
 import {
     copyRaw,
     loadReportInput,
@@ -29,16 +30,6 @@ interface ReportCommandOptions {
     resizeToMatch?: boolean;
     raw?: boolean;
     json?: boolean;
-}
-
-function numberOption(value: string, flag: string, { max }: { max?: number } = {}): number {
-    const parsed = Number(value);
-    if (!Number.isFinite(parsed) || parsed < 0 || (max !== undefined && parsed > max)) {
-        logger.error(`${flag} must be a number from 0${max === undefined ? "" : ` to ${max}`} (got "${value}")`);
-        process.exit(2);
-    }
-
-    return parsed;
 }
 
 async function readNotes(path: string | undefined): Promise<ReportNotes> {
@@ -87,9 +78,9 @@ export function registerReportCommand(program: Command): void {
                 process.exit(2);
             }
 
-            const threshold = numberOption(opts.threshold, "--threshold", { max: 1 });
-            const mergeDistance = numberOption(opts.mergeDistance, "--merge-distance");
-            const minArea = numberOption(opts.minArea, "--min-area");
+            const threshold = numberFlag(opts.threshold, "--threshold", { max: 1 });
+            const mergeDistance = numberFlag(opts.mergeDistance, "--merge-distance");
+            const minArea = numberFlag(opts.minArea, "--min-area");
             const notes = await readNotes(opts.notes);
             const report = await loadReportInput(inputPath, notes);
             if (report.pairs.length === 0) {

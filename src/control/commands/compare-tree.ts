@@ -1,6 +1,7 @@
 import { logger, out } from "@genesiscz/utils/logger";
 import type { Command } from "commander";
 import pc from "picocolors";
+import { numberFlag } from "../lib/flag-number";
 import { readSnapshotGeometry } from "../lib/snapshot-geometry";
 import { diffViewTrees, readViewTree, treeDiffAnnotations, treeSidecarPath } from "../lib/view-tree-diff";
 
@@ -13,11 +14,7 @@ export function registerCompareTreeCommand(program: Command): void {
         .option("--tolerance <pt>", "frame differences up to this many points are equal", "1")
         .option("--json", "machine-readable result JSON on stdout, with draw plans for both sides in image pixels")
         .action(async (beforePath: string, afterPath: string, opts: { tolerance: string; json?: boolean }) => {
-            const tolerance = Number(opts.tolerance);
-            if (!Number.isFinite(tolerance) || tolerance < 0) {
-                logger.error(`--tolerance must be points, 0 or more (got "${opts.tolerance}")`);
-                process.exit(2);
-            }
+            const tolerance = numberFlag(opts.tolerance, "--tolerance");
 
             const [before, after] = await Promise.all([readViewTree(beforePath), readViewTree(afterPath)]);
             for (const [path, tree] of [
