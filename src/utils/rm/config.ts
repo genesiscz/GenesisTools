@@ -141,7 +141,9 @@ export function loadRmConfig(path = rmConfigPath()): RmConfig {
     }
 
     try {
-        const raw: unknown = SafeJSON.parse(contents, { strict: true });
+        // Comments and trailing commas stay valid, as they were before the loader failed closed; unbox keeps primitives
+        // plain for the validation below.
+        const raw: unknown = SafeJSON.parse(contents, { unbox: true });
         validateRmConfig(raw);
         return parseRmConfig(raw);
     } catch (error) {

@@ -780,6 +780,17 @@ describe("security review fixes", () => {
         const old = loadRmConfig(file(join(folder, "old.json"), '{"protect":["/safe"],"allowOwnFiles":false}'));
         expect(old.protect).toEqual(["/safe"]);
         expect(old.allowOwnFiles).toBe(false);
+        const commented = loadRmConfig(
+            file(
+                join(folder, "commented.json"),
+                '{\n  // keep this folder\n  "protect": ["/safe",],\n  /* person only */\n  "allowOwnFiles": false,\n}\n'
+            )
+        );
+        expect(commented.protect).toEqual(["/safe"]);
+        expect(commented.allowOwnFiles).toBe(false);
+        expect(() =>
+            loadRmConfig(file(join(folder, "commented-bad.json"), '{\n  // a comment\n  "protect": 42,\n}\n'))
+        ).toThrow(/invalid safety config/);
     });
 
     test("a child named ..name is inside its parent; a real .. step is not", () => {
