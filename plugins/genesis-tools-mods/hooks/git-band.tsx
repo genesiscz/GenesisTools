@@ -473,7 +473,13 @@ async function readRow(
     why: GitBand["why"],
     ttlMs: number
 ): Promise<GitBand | null | undefined> {
-    const status = await gitText(host, ["git", "status", "--porcelain", "--branch"], root, ttlMs);
+    // `--no-optional-locks`: a background read never takes the index lock a commit or a stage in the checkout needs.
+    const status = await gitText(
+        host,
+        ["git", "--no-optional-locks", "status", "--porcelain", "--branch"],
+        root,
+        ttlMs
+    );
     const earlier = (await settingsOf(host)).git.earlier === "show";
     const touch = earlier ? (await sessionCheckouts(host)).find((held) => held.root === root) : undefined;
 
@@ -485,7 +491,9 @@ async function readRow(
         return touch ? goneRow(host, root, touch, ttlMs) : null;
     }
 
-    const numstat = parseNumstat((await gitText(host, ["git", "diff", "--numstat", "HEAD"], root, ttlMs)) ?? "");
+    const numstat = parseNumstat(
+        (await gitText(host, ["git", "--no-optional-locks", "diff", "--numstat", "HEAD"], root, ttlMs)) ?? ""
+    );
     const state = parseStatus(status);
     const prs = await rowPrs(host, { cwd: root, root, which: "", branch: state.branch, touch });
     const { repo } = await headOf(host, root);
