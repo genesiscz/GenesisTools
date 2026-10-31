@@ -60,7 +60,7 @@ final class ForgeBadgeTests: XCTestCase {
             XCTAssertEqual(row.glyph, badge.letter, harness.plugin)
             XCTAssertEqual(AIProviders.meta(for: harness.rawValue), row, "the alias finds the same row")
         }
-        XCTAssertEqual(AIProviders.known.map(\.displayName), ["Claude", "Codex", "Grok"])
+        XCTAssertEqual(AIProviders.known.map(\.displayName), ["Claude Code", "Codex", "Grok"], "the driver labels")
         XCTAssertEqual(AIProviders.known.map(\.id), ["anthropic-sub", "openai-sub", "grok-sub"])
         XCTAssertEqual(AgentRosterStyle.harnessColor("cursor"), KitPalette.dim, "an agent with no driver gets the badge's grey")
         let marks: [String: AIProviderMark.Kind] = [
