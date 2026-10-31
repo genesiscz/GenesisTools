@@ -61,6 +61,7 @@ function day(offset: number): string {
 
 const PROXY_MODEL_FIELD = /"proxyModel":"([^"]+)"/;
 let largeModel: string | undefined;
+const PROXY_MODEL_TAIL_WINDOWS = [64 * 1024, 1024 * 1024, 16 * 1024 * 1024];
 
 /**
  * The proxy model of the large transcript's newest call. `calls --model` with it reads that one 144 MB transcript,
@@ -72,13 +73,23 @@ function largeTranscriptModel(): string {
     }
 
     const path = genesisToolsDirIn(armHome("plain"), "ai-proxy", "transcripts", TRANSCRIPTS.large);
-    const found = readLastLines(path)
-        .lines.map((line) => PROXY_MODEL_FIELD.exec(line)?.[1])
-        .filter((model): model is string => model !== undefined)
-        .at(-1);
+    let found: string | undefined;
+
+    // One proxy row holds a whole response, so the newest complete row can be larger than a small tail window.
+    for (const maxBytes of PROXY_MODEL_TAIL_WINDOWS) {
+        found = readLastLines(path, { maxBytes })
+            .lines.map((line) => PROXY_MODEL_FIELD.exec(line)?.[1])
+            .filter((model): model is string => model !== undefined)
+            .at(-1);
+
+        if (found) {
+            break;
+        }
+    }
 
     if (!found) {
-        throw new Error(`No proxyModel in the last 64 KB of ${path}: the proxy-large scenario has no filter.`);
+        const largest = PROXY_MODEL_TAIL_WINDOWS.at(-1)! / (1024 * 1024);
+        throw new Error(`No proxyModel in the last ${largest} MB of ${path}: the proxy-large scenario has no filter.`);
     }
 
     largeModel = found;
