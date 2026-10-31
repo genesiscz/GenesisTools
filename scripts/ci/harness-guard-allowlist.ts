@@ -75,10 +75,6 @@ export const HARNESS_GUARD_ALLOWLIST: Readonly<Record<string, HarnessGuardCounts
         table: 1,
         why: "the declared type of HARNESS_HOOK_FACTS, which byHarness builds from the drivers' hooks parts through harness-hooks.ts",
     },
-    "src/ai-proxy/commands/accounts-login.ts": {
-        branch: 1,
-        why: "this base's copy, from before the ccx provider seams (#624) move the provider facts into ProviderDefinition; the entry goes when #624 lands",
-    },
     "src/ai-proxy/commands/session-use.ts": {
         list: 1,
         why: "the ai-proxy upstream-route axis (which upstream answers a request), not the coding-agent harness of a session (plan decision G5)",
@@ -87,10 +83,6 @@ export const HARNESS_GUARD_ALLOWLIST: Readonly<Record<string, HarnessGuardCounts
         table: 1,
         why: "the ai-proxy upstream-route axis (which upstream answers a request), not the coding-agent harness of a session (plan decision G5)",
     },
-    "src/ai-proxy/lib/sessions/accounts.ts": {
-        table: 1,
-        why: "this base's copy, from before the ccx provider seams (#624) move the provider facts into ProviderDefinition; the entry goes when #624 lands",
-    },
     "src/ai-proxy/lib/sessions/records.ts": {
         list: 1,
         table: 2,
@@ -98,8 +90,11 @@ export const HARNESS_GUARD_ALLOWLIST: Readonly<Record<string, HarnessGuardCounts
     },
     "src/ai-proxy/lib/sessions/routing.ts": {
         list: 1,
-        table: 1,
         why: "the ai-proxy upstream-route axis (which upstream answers a request), not the coding-agent harness of a session (plan decision G5)",
+    },
+    "src/ai-proxy/lib/sessions/settings.ts": {
+        table: 1,
+        why: "an exhaustive mapped type over the upstream providers of a Claude Code session (ClaudeCodeProvider), the ai-proxy route axis (plan decision G5)",
     },
     "src/ai-proxy/lib/sessions/view.ts": {
         list: 1,
@@ -150,6 +145,10 @@ export const HARNESS_GUARD_ALLOWLIST: Readonly<Record<string, HarnessGuardCounts
         branch: 1,
         why: "the decision log's delivery channels (DeliveryChannel in src/question/lib/decisions/deliver.ts), a route axis: codex is the Codex worker route",
     },
+    "src/macos/GenesisTools/Sources/Host/RmApprove.swift": {
+        branch: 1,
+        why: "the rm approval window's terminal link runs tools claude cmux focus, which finds only Claude sessions; the generated Harness enum names no focus command yet",
+    },
     "src/macos/GenesisTools/Sources/Parts/Hub/Hub/HubInbox.swift": {
         branch: 2,
         why: "the decision log's delivery channels (DeliveryChannel in src/question/lib/decisions/deliver.ts), a route axis: codex is the Codex worker route",
@@ -181,6 +180,14 @@ export const HARNESS_GUARD_ALLOWLIST: Readonly<Record<string, HarnessGuardCounts
     "src/utils/providers/session-paths.ts": {
         table: 2,
         why: "the native-home lint owner: the home folder names may appear only here, so the per-harness NativeHomeLayout objects and their exhaustive table stay in this file",
+    },
+    "src/utils/rm/approval.ts": {
+        table: 1,
+        why: "keyed by the runtime agent of the caller (claude-code, codex, grok, cursor, gemini), a wider set than the harnesses",
+    },
+    "src/utils/rm/aside.ts": {
+        table: 1,
+        why: "keyed by the runtime agent of the caller (claude-code, codex, grok, copilot), a wider set than the harnesses",
     },
     "src/utils/worker/capabilities.ts": {
         table: 1,
