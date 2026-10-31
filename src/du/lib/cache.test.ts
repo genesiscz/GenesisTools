@@ -62,7 +62,7 @@ describe("du size command", () => {
         expect(commands).toEqual([["du", "-sk", absolute]]);
     });
 
-    for (const counter of ["read_errors", "denied_dirs"]) {
+    for (const counter of ["read_errors", "denied_dirs", "skipped_cloud"]) {
         it(`runs du instead of storing a native walk with ${counter}`, async () => {
             const root = mkdtempSync(join(tmpdir(), "du-size-partial-"));
             const commands: string[][] = [];
@@ -76,6 +76,7 @@ describe("du size command", () => {
                 walk_ms: 1,
                 denied_dirs: 0,
                 read_errors: 0,
+                skipped_cloud: 0,
                 [counter]: 1,
             };
             const run = async (argv: string[]) => {
@@ -93,7 +94,7 @@ describe("du size command", () => {
                     binary: () => "/fixture/clonesize",
                 });
 
-                // The walk's 7 KiB is incomplete and du failed too: nothing is answered and nothing is stored.
+                // The walk's 7 KiB is short and du failed too: nothing is answered and nothing is stored.
                 expect(answer).toEqual({ value: null, hit: false });
                 expect(commands).toEqual([
                     ["/fixture/clonesize", "--dusize", root],
@@ -133,6 +134,36 @@ describe("du size command", () => {
             rmSync(root, { recursive: true, force: true });
         }
     });
+
+    it.skipIf(process.platform !== "darwin")(
+        "a tree with cloud-provider folders is measured by du, which counts their files on disk",
+        async () => {
+            const root = mkdtempSync(join(tmpdir(), "du-size-cloud-"));
+
+            try {
+                for (const folder of [
+                    "Library/CloudStorage/Provider-a",
+                    "Library/Mobile Documents/x",
+                    "Library/Caches",
+                ]) {
+                    mkdirSync(join(root, folder), { recursive: true });
+                    writeFileSync(join(root, folder, "f.bin"), Buffer.alloc(100_000, 5));
+                }
+
+                const du = Number(
+                    execFileSync("du", ["-sk", root], { encoding: "utf8", env: process.env }).trim().split(/\s+/)[0]
+                );
+
+                expect(await nativeDuSize(root)).toBeNull();
+                await expect(folderKb({ path: root, maxCacheAgeSeconds: 0 })).resolves.toEqual({
+                    value: du,
+                    hit: false,
+                });
+            } finally {
+                rmSync(root, { recursive: true, force: true });
+            }
+        }
+    );
 
     it.skipIf(process.platform !== "darwin")(
         "the native walk prints what du -sk prints: hard links once, a sparse file as allocated",

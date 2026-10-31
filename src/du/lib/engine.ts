@@ -312,6 +312,8 @@ export interface DuSizeResult {
     walkMs: number;
     deniedDirs: number;
     readErrors: number;
+    /** Cloud-provider roots and dataless folders the walk did not enter, where du would. */
+    skippedCloud: number;
 }
 
 /**
@@ -330,6 +332,7 @@ export function parseDuSize(json: string): DuSizeResult {
         walkMs: raw.walk_ms,
         deniedDirs: raw.denied_dirs,
         readErrors: raw.read_errors,
+        skippedCloud: raw.skipped_cloud,
     };
 }
 

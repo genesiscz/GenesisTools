@@ -221,4 +221,6 @@ export interface DuSizeWire {
     walk_ms: number;
     denied_dirs: number;
     read_errors: number;
+    /** Folders du enters and the walk does not: cloud-provider roots and dataless folders. */
+    skipped_cloud: number;
 }

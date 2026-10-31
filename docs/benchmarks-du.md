@@ -1480,3 +1480,46 @@ Load average 6.4 to 11.8 during the worktree runs (19:43). The byte totals agree
 `cache.test.ts` "the native walk prints what du -sk prints" (darwin only): a fixture with two hard links of one file, a
 sparse file and a symlink, `duSize(root).kib` against `du -sk`, and `folderKb` serving the same figure. `bench.sh` was
 not rerun: the hot loop of the scan is unchanged, and `bench.sh` measures the scan.
+
+## 2026-10-31 02:14 — `tools du size`: the native walk runs as a child under a deadline, and a short walk sends the ask to du
+
+Four review fixes to the 2026-10-30 19:45 entry. The scan engine (`process_dir`) is untouched; the changes are in the
+listing walk (`big_process_dir`) and `main()`.
+
+- `clonesize --dusize <dir>` prints the `clonesize_dusize_json` reply, and `folderKb` (`src/du/lib/size-command.ts`)
+  runs it as a child under du's 120 s deadline instead of calling the dylib in process. open() on a protected folder
+  can wait for the user's answer to a privacy prompt, and only a process can be killed out of that wait. On expiry
+  `du -sk` runs. The FFI `duSize` and its binding are gone.
+- The reply carries `skipped_cloud`: the cloud-provider roots (`Library/CloudStorage`, `Library/Mobile Documents`)
+  and dataless folders the walk did not enter, where du does. `folderKb` asks du when it is above 0, and also when
+  `read_errors` or `denied_dirs` is above 0 (before, only `dirs` 0 did, so a partial total was cached).
+- The listing's progress line is not printed in sum-only mode (a tree past 200,000 files printed it to the caller's
+  stderr, where du prints nothing).
+
+Which totals move: only `tools du size`, and only for two kinds of tree. A root that contains a cloud-provider folder
+or a dataless folder answered the native walk's total without those folders and now answers du's: a fixture with a
+300 KB file under `Library/CloudStorage/Provider-a`, a 100 KB file under `Library/Mobile Documents/x` and a 50 KB file
+under `Library/Caches` answered 52 KiB and now 448 KiB, the same as `du -sk`. A root with a denied or unreadable folder
+answered the partial walk and cached it; it now asks du, which fails the same way, so the answer is null and is not
+stored. Every other tree is unchanged: `src/du` 928 KiB and `node_modules` 1,468,800 KiB, native equal to du.
+
+Spawn cost against the in-process call and du, interleaved, 5 rounds per target, 02:01, load 42 (median ms):
+
+| target | in-process FFI | `--dusize` child | `du -sk` |
+|---|---|---|---|
+| `src/du` (46 files) | 0 | 6 | 7 |
+| `node_modules` (worktree) | 284 | 176 | 528 |
+| the worktree (about 104,000 files) | 323 | 308 | 800 |
+
+The child costs about 6 ms of spawn, and its KiB equalled the FFI's and du's on every target. hyperfine at 02:08 to
+02:10: `--dusize` on the worktree 298 ms (system 2.27 s over 16 threads), `du -sk` 1.24 s (system 0.55 s).
+
+`bench.sh` (system CPU, mean of 5): before (01:56, load 18.2 at the start, 155 after the matrix) T1 flat 26.3 s, T1
+depth2 24.4 s, T2 flat 28.6 s, T2 depth2 30.1 s, T1 cache-warm 3.29 s; after (02:05, load 26.5 at the start, 105 after
+the matrix) 39.5 s, 42.3 s, 35.2 s, 24.3 s, 3.17 s. At that load the two runs cannot be compared, so the old and the
+new binary ran interleaved on the same tree, 6 rounds each, 02:10 to 02:11, load 122 to 175 (median system CPU):
+scan T1 old 36.2 s (30.1 to 41.5), new 39.8 s (34.3 to 51.6), ranges overlapping with an unchanged hot loop; the
+`--bigfiles --min-bytes 1048576` listing (the loop that changed) old 3.73 s, new 3.38 s. The T1 byte totals of
+`bench.sh` moved between its two runs (`files_listed` 89,903 to 103,965, `naive_bytes` +166.8 MB) because the tree
+did: the test wrapper installed `apps/eve/node_modules` (14,061 files, 163 MB) at 02:02. The old and the new binary
+on the same tree at 02:08 printed identical scan totals.
