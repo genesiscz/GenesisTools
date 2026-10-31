@@ -2242,8 +2242,15 @@ final class ReviewModel: ObservableObject {
             return finished(false)
         }
         commentOwner(comment.id)?.store.link(comment.id, thread: live.id)
-        // Only a written outbox lets the page drop its reply box; a failed write keeps the reader's text.
-        sendToAgent(ids: [comment.id], finished: finished)
+        // Only a written outbox lets the page drop its reply box; a failed write keeps the reader's text and takes the
+        // local comment back, so a retry from that box does not leave two copies for a later send.
+        sendToAgent(ids: [comment.id], finished: { [weak self] ok in
+            if !ok, let self {
+                self.commentOwner(comment.id)?.store.delete(id: comment.id)
+                self.pushComments()
+            }
+            finished(ok)
+        })
     }
 
     private func updateThread(_ id: String, editedReply: String? = nil, replyStatus: String? = nil, providerId: String? = nil) {
