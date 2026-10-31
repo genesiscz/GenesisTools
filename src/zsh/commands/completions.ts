@@ -478,9 +478,7 @@ async function uninstallAction(opts: InstallOptions): Promise<void> {
     }
 
     logger.debug({ rcPath, removed: Object.keys(updated.clis) }, "zsh completions: uninstalled");
-    out.log.info(
-        `The generated files stay in ${completionsDir()}; delete them with ${toolCommand("rm", completionsDir())}`
-    );
+    out.log.info(`The generated files stay in ${completionsDir()}; delete the folder when you no longer need them`);
 }
 
 export function registerCompletionsCommand(program: Command): void {
