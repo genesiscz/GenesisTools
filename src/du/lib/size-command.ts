@@ -81,8 +81,9 @@ export async function nativeDuSize(
         return null;
     }
 
-    // A volume mounted inside the root is not crossed by the walk; du crosses it and counts what is there.
-    if (walked.skippedMounts > 0) {
+    // A volume mounted inside the root is not crossed by the walk; du crosses it and counts what is there. A reply that
+    // does not report the count could be short the same way, so du answers then too.
+    if (walked.skippedMounts !== 0) {
         logger.debug(
             { path, skippedMounts: walked.skippedMounts, kib: walked.kib },
             "du size: the native walk left out mounted volumes, du runs"

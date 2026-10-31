@@ -23,7 +23,7 @@ import {
 import { tmpdir } from "node:os";
 import { join, resolve } from "node:path";
 import { SafeJSON } from "@genesiscz/utils/json";
-import { scanWithCFfi } from "./engine";
+import { ensureBinary, parseDuSize, scanWithCFfi } from "./engine";
 import { folderKb, nativeDuSize } from "./size-command";
 import type { ClonesizeResult } from "./types";
 
@@ -62,6 +62,40 @@ describe("du size command", () => {
         expect(commands).toEqual([["du", "-sk", absolute]]);
     });
 
+    it("treats a reply with no skipped_mounts field as unknown, so du measures the root", async () => {
+        const reply = {
+            kib: 7,
+            bytes: 7168,
+            files: 3,
+            dirs: 2,
+            hardlinked_inodes: 0,
+            walk_ms: 1,
+            denied_dirs: 0,
+            read_errors: 0,
+            skipped_cloud: 0,
+        };
+        const root = mkdtempSync(join(tmpdir(), "du-size-old-binary-"));
+
+        try {
+            const run = async () => ({ code: 0, stdout: `${SafeJSON.stringify(reply)}\n`, stderr: "" });
+
+            expect(parseDuSize(SafeJSON.stringify(reply)).skippedMounts).toBeNull();
+            expect(await nativeDuSize(root, { run, binary: () => "/fixture/clonesize" })).toBeNull();
+            expect(
+                await nativeDuSize(root, {
+                    run: async () => ({
+                        code: 0,
+                        stdout: SafeJSON.stringify({ ...reply, skipped_mounts: 0 }),
+                        stderr: "",
+                    }),
+                    binary: () => "/fixture/clonesize",
+                })
+            ).toMatchObject({ kib: 7, skippedMounts: 0 });
+        } finally {
+            rmSync(root, { recursive: true, force: true });
+        }
+    });
+
     for (const counter of ["read_errors", "denied_dirs", "skipped_cloud", "skipped_mounts"]) {
         it(`runs du instead of storing a native walk with ${counter}`, async () => {
             const root = mkdtempSync(join(tmpdir(), "du-size-partial-"));
@@ -77,6 +111,7 @@ describe("du size command", () => {
                 denied_dirs: 0,
                 read_errors: 0,
                 skipped_cloud: 0,
+                skipped_mounts: 0,
                 [counter]: 1,
             };
             const run = async (argv: string[]) => {
@@ -168,8 +203,15 @@ describe("du size command", () => {
     it.skipIf(process.platform !== "darwin")(
         "a root with mounted volumes inside it is left to du, which crosses them",
         async () => {
-            // Every child of /System/Volumes is a mount point (Data, VM, Preboot, ...): the walk enters none of them.
-            expect(await nativeDuSize("/System/Volumes")).toBeNull();
+            // Every child of /System/Volumes is a mount point (Data, VM, Preboot, ...): the walk enters none of them,
+            // also with a trailing slash, which once built `/System/Volumes//Data` and crossed into Data.
+            for (const root of ["/System/Volumes", "/System/Volumes/"]) {
+                const reply = parseDuSize(execFileSync(ensureBinary(), ["--dusize", root], { encoding: "utf8" }));
+
+                expect(reply.skippedMounts ?? 0).toBeGreaterThan(0);
+                expect(reply.files).toBe(0);
+                expect(await nativeDuSize(root)).toBeNull();
+            }
         }
     );
 

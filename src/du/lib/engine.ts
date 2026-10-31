@@ -314,8 +314,8 @@ export interface DuSizeResult {
     readErrors: number;
     /** Cloud-provider roots and dataless folders the walk did not enter, where du would. */
     skippedCloud: number;
-    /** Mounted volumes inside the root the walk did not cross, where du would. */
-    skippedMounts: number;
+    /** Mounted volumes inside the root the walk did not cross, where du would; null when the reply did not say. */
+    skippedMounts: number | null;
 }
 
 /**
@@ -335,7 +335,8 @@ export function parseDuSize(json: string): DuSizeResult {
         deniedDirs: raw.denied_dirs,
         readErrors: raw.read_errors,
         skippedCloud: raw.skipped_cloud,
-        skippedMounts: raw.skipped_mounts ?? 0,
+        // A reply without the field (an older binary) does not say; null keeps that apart from a counted 0.
+        skippedMounts: raw.skipped_mounts ?? null,
     };
 }
 
