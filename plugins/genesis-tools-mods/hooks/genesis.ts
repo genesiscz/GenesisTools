@@ -9,7 +9,7 @@
 // render: the engine aborts a render hook's process when a newer render replaces it, and on 2026-10-23 that left
 // every session believing no link kind opened. Every link this plugin writes is built here, from the probe's link
 // host, and only for a kind that opens; any other file asks for one and gets undefined when it would be dead.
-import type { Host } from "./shared";
+import { type Host, jsonOf } from "./shared";
 
 export const LINK_KINDS = ["md", "finder", "hub", "claude-find"] as const;
 export type LinkKind = (typeof LINK_KINDS)[number];
@@ -47,13 +47,7 @@ function isRecord(value: unknown): value is Record<string, unknown> {
 
 /** The probe out of `tools genesis-tools probe --json`; undefined for anything else. */
 export function probeOf(stdout: string): GenesisProbe | undefined {
-    let parsed: unknown;
-
-    try {
-        parsed = JSON.parse(stdout);
-    } catch {
-        return undefined;
-    }
+    const parsed = jsonOf(stdout);
 
     if (!isRecord(parsed) || !isRecord(parsed.links) || !isRecord(parsed.router)) {
         return undefined;

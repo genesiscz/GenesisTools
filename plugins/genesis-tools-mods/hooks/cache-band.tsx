@@ -12,7 +12,7 @@ import type { CacheRow, CacheRows } from "../types";
 import { genesisProbe } from "./genesis";
 import { idleDueAt } from "./idle";
 import { liveAgo, liveLeft } from "./live";
-import { agentsDir, type Feature, type Host, isRecord, settingsOf } from "./shared";
+import { agentsDir, type Feature, type Host, isRecord, readJsonFile, settingsOf } from "./shared";
 
 let rows: CacheRows = [];
 
@@ -62,16 +62,11 @@ async function mark(host: Host, why: "turn" | "compacted"): Promise<void> {
 
     // A turn writes the cache again; an end or a compaction keeps the time of the last write.
     if (why !== "turn") {
-        const before = await host.read(`${dir}/${sessionId}.json`).catch(() => undefined);
+        // A broken mark is rewritten whole.
+        const parsed = await readJsonFile(host, `${dir}/${sessionId}.json`);
 
-        try {
-            const parsed: unknown = before ? JSON.parse(before) : undefined;
-
-            if (isRecord(parsed) && typeof parsed.lastAt === "number") {
-                held.lastAt = parsed.lastAt;
-            }
-        } catch {
-            // A broken mark is rewritten whole.
+        if (isRecord(parsed) && typeof parsed.lastAt === "number") {
+            held.lastAt = parsed.lastAt;
         }
     }
 
@@ -150,23 +145,18 @@ async function scan(host: Host): Promise<void> {
             continue;
         }
 
-        const text = await host.read(`${dir}/${entry.name}`).catch(() => undefined);
+        // A mark half written by another session is read on the next pass.
+        const parsed = await readJsonFile(host, `${dir}/${entry.name}`);
 
-        try {
-            const parsed: unknown = text ? JSON.parse(text) : undefined;
-
-            if (isRecord(parsed) && typeof parsed.sessionId === "string" && typeof parsed.lastAt === "number") {
-                marks.push({
-                    sessionId: parsed.sessionId,
-                    label: String(parsed.label ?? parsed.sessionId.slice(0, 6)),
-                    lastAt: parsed.lastAt,
-                    ttlMs: typeof parsed.ttlMs === "number" ? parsed.ttlMs : TTL_MS,
-                    ended: parsed.ended === true,
-                    ...(typeof parsed.compactedAt === "number" ? { compactedAt: parsed.compactedAt } : {}),
-                });
-            }
-        } catch {
-            // A mark half written by another session is read on the next pass.
+        if (isRecord(parsed) && typeof parsed.sessionId === "string" && typeof parsed.lastAt === "number") {
+            marks.push({
+                sessionId: parsed.sessionId,
+                label: String(parsed.label ?? parsed.sessionId.slice(0, 6)),
+                lastAt: parsed.lastAt,
+                ttlMs: typeof parsed.ttlMs === "number" ? parsed.ttlMs : TTL_MS,
+                ended: parsed.ended === true,
+                ...(typeof parsed.compactedAt === "number" ? { compactedAt: parsed.compactedAt } : {}),
+            });
         }
     }
 

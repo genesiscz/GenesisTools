@@ -2,7 +2,7 @@
 // commits, the hub link for one (inside the PR that holds it, asked from `tools hub link`), and the checks a hub link the
 // model wrote by hand gets. Standalone, as every runtime plugin file: it imports its siblings only.
 import { type GenesisProbe, hubLink } from "./genesis";
-import { type Host, isRecord } from "./shared";
+import { type Host, isRecord, jsonOf } from "./shared";
 
 /** A forge project: `owner/repo` on GitHub, `group/sub/app` on GitLab. */
 export interface ForgeProject {
@@ -107,14 +107,7 @@ export async function commitLink({
 
 /** The place `tools hub link --json` chose: `{ pr }` or `{ repo }`; undefined for anything else. */
 function linkQuery(stdout: string): { pr: string } | { repo: string } | undefined {
-    let parsed: unknown;
-
-    try {
-        parsed = JSON.parse(stdout);
-    } catch {
-        return undefined;
-    }
-
+    const parsed = jsonOf(stdout);
     const query = isRecord(parsed) && isRecord(parsed.query) ? parsed.query : undefined;
 
     if (typeof query?.pr === "string" && query.pr) {

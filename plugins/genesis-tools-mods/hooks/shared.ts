@@ -26,6 +26,29 @@ import type { Sidebar } from "./sidebar";
 
 export { isRecord, MODS_DEFAULTS, type ModsSettings, modsSettings } from "./settings";
 
+/** A JSON text's value; undefined for no text, or text that does not parse (a file another session is writing). */
+export function jsonOf(text: string | undefined): unknown {
+    if (!text) {
+        return undefined;
+    }
+
+    try {
+        return JSON.parse(text);
+    } catch {
+        return undefined;
+    }
+}
+
+/** The JSON a command printed; undefined when it did not run, failed, or printed no JSON. */
+export function jsonOfRun(done: { exitCode: number; stdout: string } | undefined): unknown {
+    return done?.exitCode === 0 ? jsonOf(done.stdout) : undefined;
+}
+
+/** A JSON file's value; undefined when it cannot be read or does not parse. */
+export async function readJsonFile(host: Host, path: string): Promise<unknown> {
+    return jsonOf(await host.read(path).catch(() => undefined));
+}
+
 export interface Host {
     run: (argv: readonly string[], init?: ProcessRunInit) => Promise<ProcessRunResult>;
     read: (path: string) => Promise<string>;

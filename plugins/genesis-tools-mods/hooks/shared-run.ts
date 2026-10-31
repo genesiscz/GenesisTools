@@ -8,7 +8,7 @@
 // A session that finds a live claim waits for the claimant's answer instead of running, up to `WAIT_MS`. The host
 // has no exclusive create, so a claim is a write read back: two sessions that write in the same moment both see the
 // later one, and only its writer runs.
-import { agentsDir, type Host, isRecord } from "./shared";
+import { agentsDir, type Host, isRecord, readJsonFile } from "./shared";
 
 export interface SharedRunResult {
     exitCode: number;
@@ -65,28 +65,22 @@ async function readAnswer(
     host: Host,
     ask: { path: string; key: string; ttlMs: number; since?: number }
 ): Promise<SharedRunResult | undefined> {
-    const text = await host.read(ask.path).catch(() => undefined);
+    const held = await readJsonFile(host, ask.path);
 
-    try {
-        const held: unknown = text ? JSON.parse(text) : undefined;
-
-        if (
-            isRecord(held) &&
-            held.key === ask.key &&
-            typeof held.at === "number" &&
-            sharedRunClock.now() - held.at < ask.ttlMs &&
-            held.at >= (ask.since ?? 0) &&
-            typeof held.exitCode === "number" &&
-            typeof held.stdout === "string"
-        ) {
-            return {
-                exitCode: held.exitCode,
-                stdout: held.stdout,
-                stderr: typeof held.stderr === "string" ? held.stderr : "",
-            };
-        }
-    } catch {
-        // A file another session is writing: a miss.
+    if (
+        isRecord(held) &&
+        held.key === ask.key &&
+        typeof held.at === "number" &&
+        sharedRunClock.now() - held.at < ask.ttlMs &&
+        held.at >= (ask.since ?? 0) &&
+        typeof held.exitCode === "number" &&
+        typeof held.stdout === "string"
+    ) {
+        return {
+            exitCode: held.exitCode,
+            stdout: held.stdout,
+            stderr: typeof held.stderr === "string" ? held.stderr : "",
+        };
     }
 
     return undefined;
@@ -100,21 +94,15 @@ interface Claim {
 }
 
 async function readClaim(host: Host, path: string): Promise<Claim | undefined> {
-    const text = await host.read(path).catch(() => undefined);
+    const held = await readJsonFile(host, path);
 
-    try {
-        const held: unknown = text ? JSON.parse(text) : undefined;
-
-        if (
-            isRecord(held) &&
-            typeof held.token === "string" &&
-            typeof held.started === "number" &&
-            typeof held.until === "number"
-        ) {
-            return { token: held.token, started: held.started, until: held.until };
-        }
-    } catch {
-        // Being written: no claim.
+    if (
+        isRecord(held) &&
+        typeof held.token === "string" &&
+        typeof held.started === "number" &&
+        typeof held.until === "number"
+    ) {
+        return { token: held.token, started: held.started, until: held.until };
     }
 
     return undefined;

@@ -12,7 +12,17 @@
 import type { ToolCallInput } from "claude-code";
 import { sessionDirOf } from "./agents-band";
 import { decisionLink, genesisProbe } from "./genesis";
-import { agentsDir, type Host, isRecord, logMod, logReading, settingsOf } from "./shared";
+import {
+    agentsDir,
+    type Host,
+    isRecord,
+    jsonOf,
+    jsonOfRun,
+    logMod,
+    logReading,
+    readJsonFile,
+    settingsOf,
+} from "./shared";
 import { pressed } from "./sidebar";
 
 export type DecisionStatus =
@@ -204,15 +214,9 @@ function withoutLetter(label: string, letter: string): string {
 
 /** The JSON `inbox --session <id> --json --all-items` prints, as this plugin keeps it; undefined when it is not that. */
 export function answersFrom(stdout: string, at = Date.now()): SessionAnswers | undefined {
-    let parsed: unknown;
+    const parsed = jsonOf(stdout);
 
-    try {
-        parsed = JSON.parse(stdout);
-    } catch {
-        return undefined;
-    }
-
-    return answersOfValue(parsed, at);
+    return parsed === undefined ? undefined : answersOfValue(parsed, at);
 }
 
 const LISTS = ["decisions", "todos", "entries", "forms"] as const;
@@ -391,13 +395,9 @@ export function callFor(at: number, calls: readonly { id: string; at: number }[]
 }
 
 function parseLine(line: string): Record<string, unknown> | undefined {
-    try {
-        const value: unknown = JSON.parse(line);
+    const value = jsonOf(line);
 
-        return isRecord(value) ? value : undefined;
-    } catch {
-        return undefined;
-    }
+    return isRecord(value) ? value : undefined;
 }
 
 function blocksOf(entry: Record<string, unknown>): Record<string, unknown>[] {
@@ -628,13 +628,7 @@ async function rowsFromIndex(
     const done = await host
         .run(["tools", "question", "transcript-rows", "--transcript", transcript, "--json"], { timeoutMs: 60_000 })
         .catch((error: unknown) => ({ exitCode: -1, stdout: "", stderr: String(error) }));
-    let parsed: unknown;
-
-    try {
-        parsed = done.exitCode === 0 ? JSON.parse(done.stdout) : undefined;
-    } catch {
-        parsed = undefined;
-    }
+    const parsed = jsonOfRun(done);
 
     if (
         !isRecord(parsed) ||
@@ -888,17 +882,12 @@ async function inboxFile(host: Host, session: string): Promise<string | undefine
 
 async function restoreInbox(host: Host, session: string): Promise<void> {
     const file = await inboxFile(host, session);
-    const text = file ? await host.read(file).catch(() => undefined) : undefined;
+    // A file cut short by another write reads as none: the whole answer is read once.
+    const saved = file ? await readJsonFile(host, file) : undefined;
 
-    try {
-        const saved: unknown = text ? JSON.parse(text) : undefined;
-
-        if (isRecord(saved) && saved.session === session && typeof saved.cursor === "string" && isRecord(saved.raw)) {
-            heldRaw = saved.raw;
-            heldCursor = saved.cursor;
-        }
-    } catch {
-        // A file cut short by another write: read the whole answer once.
+    if (isRecord(saved) && saved.session === session && typeof saved.cursor === "string" && isRecord(saved.raw)) {
+        heldRaw = saved.raw;
+        heldCursor = saved.cursor;
     }
 }
 
@@ -936,13 +925,7 @@ async function readInbox(host: Host, session: string): Promise<InboxRead> {
         done = await run(base);
     }
 
-    let parsed: unknown;
-
-    try {
-        parsed = done.exitCode === 0 ? JSON.parse(done.stdout) : undefined;
-    } catch {
-        parsed = undefined;
-    }
+    const parsed = jsonOfRun(done);
 
     if (!isRecord(parsed)) {
         return { how: "failed", exit: done.exitCode, stderr: done.stderr.slice(-300) };
@@ -1117,13 +1100,7 @@ async function questionCommand(host: Host, args: readonly string[]): Promise<Rec
     const done = await host
         .run(["tools", "question", "inbox", "--session", session, ...args], { timeoutMs: 20_000 })
         .catch((error: unknown) => ({ exitCode: -1, stdout: "", stderr: String(error) }));
-    let parsed: unknown;
-
-    try {
-        parsed = JSON.parse(done.stdout);
-    } catch {
-        parsed = undefined;
-    }
+    const parsed = jsonOf(done.stdout);
 
     if (!isRecord(parsed)) {
         return { error: done.stderr.trim().split("\n").at(-1) || `tools question exited ${done.exitCode}` };
