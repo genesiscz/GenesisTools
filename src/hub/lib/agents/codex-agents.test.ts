@@ -331,6 +331,21 @@ describe("attachCodexAgents", () => {
         expect(again.get(ROOT)?.[0]?.id).toBe(CHILD_B);
     });
 
+    test("an agent that starts a turn on another model shows the new model on the next poll", () => {
+        const { records, cache } = family();
+        const options = { now: NOW, cachePath: cache, model: null };
+        const modelOf = () =>
+            (attachCodexAgents(records, options).get(ROOT) ?? []).find((node) => node.id === CHILD_A)?.model;
+
+        expect(modelOf()).toBe("gpt-6.1-sol");
+        writeFileSync(
+            records[0]?.filePath ?? "",
+            line({ type: "turn_context", payload: { turn_id: "t2", model: "gpt-6-luna", cwd: "/work/app" } }),
+            { flag: "a" }
+        );
+        expect(modelOf()).toBe("gpt-6-luna");
+    });
+
     test("a rollout replaced by a larger file is counted again from its start, not from the old file's count", () => {
         const { records, cache } = family();
         const options = { now: NOW, cachePath: cache, model: null };

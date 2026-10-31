@@ -304,9 +304,13 @@ function nodeOf(
     let model = known?.model ?? null;
     let modelFinal = known?.modelFinal ?? false;
 
-    if (model === null && !modelFinal) {
+    // A rollout that grew may have started a turn on another model, so its model is read again; an unchanged one
+    // keeps the cached answer.
+    const grew = known !== undefined && size > known.size;
+
+    if ((model === null && !modelFinal) || grew) {
         // A sub-agent often runs another model than the session that spawned it, so the parent's would be wrong.
-        model = resolveHistoryProvider("codex").reader.currentModel(record.filePath);
+        model = resolveHistoryProvider("codex").reader.currentModel(record.filePath) ?? model;
         // A compressed rollout is closed: a model it does not name never comes. Past the head window, a rollout whose
         // head and tail name none is not read again on every poll.
         modelFinal = model !== null || size > CODEX_MODEL_HEAD_BYTES || isZstdPath(record.filePath);
