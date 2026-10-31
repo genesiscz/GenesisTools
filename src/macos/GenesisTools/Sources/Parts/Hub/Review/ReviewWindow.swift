@@ -2231,13 +2231,12 @@ final class ReviewModel: ObservableObject {
             notice = "The thread is no longer on the PR, so there is nothing to stage the reply on."
             return finished(false)
         }
-        let primary = primaryRoot
-        guard let file = primary.files.first(where: { $0.path == live.path || (live.oldPath != nil && $0.oldPath == live.oldPath) }) else {
+        guard let anchor = primaryAnchor(of: live) else {
             notice = "The thread is on \(live.path), which is not in this diff."
             return finished(false)
         }
-        let input = CommentInput(editingID: nil, fileID: primary.global(file.id), side: live.side,
-                                 startLine: min(live.startLine ?? live.line, live.line), endLine: live.line, body: body)
+        let input = CommentInput(editingID: nil, fileID: anchor.fileID, side: live.side,
+                                 startLine: anchor.start, endLine: live.line, body: body)
         guard let comment = addComment(input) else {
             notice = "Could not anchor the reply on \(live.path):\(live.line)."
             return finished(false)
@@ -2316,11 +2315,20 @@ final class ReviewModel: ObservableObject {
         }
         if id.hasPrefix("thread:"), let thread = proposal.threads.first(where: { $0.id == String(id.dropFirst(7)) }),
            let live = pr?.payload?.threads.first(where: { $0.id == thread.id && !$0.outdated }),
-           let text = thread.reply, let file = primary.files.first(where: { $0.path == live.path || (live.oldPath != nil && $0.oldPath == live.oldPath) }) {
-            return Suggestion(text: text, path: live.path, fileID: primary.global(file.id), side: live.side,
-                              startLine: min(live.startLine ?? live.line, live.line), line: live.line, thread: live.id, kind: "thread", state: thread.replyStatus)
+           let text = thread.reply, let anchor = primaryAnchor(of: live) {
+            return Suggestion(text: text, path: live.path, fileID: anchor.fileID, side: live.side,
+                              startLine: anchor.start, line: live.line, thread: live.id, kind: "thread", state: thread.replyStatus)
         }
         return nil
+    }
+
+    /// Where a live PR thread sits in the primary root's diff: the merged id of the file it names (by path, or by its
+    /// old path for a rename) and the first line of its range. Nil when the file is not in this diff.
+    private func primaryAnchor(of live: PRThread) -> (fileID: String, start: Int)? {
+        let primary = primaryRoot
+        guard let file = primary.files.first(where: { $0.path == live.path || (live.oldPath != nil && $0.oldPath == live.oldPath) })
+        else { return nil }
+        return (primary.global(file.id), min(live.startLine ?? live.line, live.line))
     }
 
     /// One suggestion, as Martin worded it, to the agent (outbox + cmux), as a review draft on the PR, or
