@@ -10,7 +10,7 @@ setupStorageSandbox();
 const { renameServer } = await import("../rename.js");
 
 import * as configUtils from "@app/mcp-manager/utils/config.utils.js";
-import type { UnifiedMCPConfig } from "@app/mcp-manager/utils/providers/types.js";
+import { type UnifiedMCPConfig, WriteResult } from "@app/mcp-manager/utils/providers/types.js";
 import { logger } from "@genesiscz/utils/logger";
 import { createMockUnifiedConfig, MockMCPProvider } from "./test-utils.js";
 
@@ -130,6 +130,28 @@ describe("renameServer", () => {
             (msg) => typeof msg === "string" && (msg.includes("Conflict") || msg.includes("conflict"))
         );
         expect(hasConflictWarning).toBe(true);
+    });
+
+    it("reports a partial rename when the provider rejects removing the old name", async () => {
+        spyOn(configUtils, "readUnifiedConfig").mockResolvedValue(createMockUnifiedConfig());
+        spyOn(configUtils, "writeUnifiedConfig").mockResolvedValue(true);
+        const infoSpy = spyOn(logger, "info");
+        const warnSpy = spyOn(logger, "warn");
+        infoSpy.mockClear();
+        warnSpy.mockClear();
+        mockProvider.listServersResult = [
+            { name: "test-server", config: { command: "test-command" }, enabled: true, provider: "claude" },
+        ];
+        spyOn(mockProvider, "removeServers").mockResolvedValue(WriteResult.Rejected);
+
+        setMockResponses({ selectedProviders: ["claude"] });
+
+        await renameServer("test-server", "renamed-server", mockProviders);
+
+        const infoCalls = infoSpy.mock.calls.map((call) => call[0]);
+        const warnCalls = warnSpy.mock.calls.map((call) => call[0]);
+        expect(infoCalls.some((msg) => typeof msg === "string" && msg.includes("in claude"))).toBe(false);
+        expect(warnCalls.some((msg) => typeof msg === "string" && msg.includes("Partial rename in claude"))).toBe(true);
     });
 
     it("should update enabledMcpServers when renaming", async () => {

@@ -287,7 +287,14 @@ async function renameServerInProvider(
     // We need to explicitly remove the old server name from the provider config after syncing
     if (hasOldServer && oldName !== newName) {
         // Each provider removes a name from every place its own config keeps it (global, projects, exclusions).
-        await provider.removeServers([oldName]);
+        const removeResult = await provider.removeServers([oldName]);
+
+        if (removeResult === WriteResult.Rejected) {
+            logger.warn(
+                `Partial rename in ${provider.getName()}: '${newName}' was added, but removing '${oldName}' was rejected, so both names remain.`
+            );
+            return false;
+        }
     }
 
     return true;
