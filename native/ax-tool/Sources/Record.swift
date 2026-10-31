@@ -418,23 +418,23 @@ final class NativeRecorder: NSObject, SCStreamOutput, SCStreamDelegate {
             }
             return failure
         }
-        if options.videoOut == nil {
-            if let failure = encode() {
+        // On this queue: the frame is kept, or its failure is a warning.
+        func land(_ failure: String?) {
+            if let failure {
                 warnings.append(failure)
             } else {
                 kept.append(frame)
             }
+        }
+        if options.videoOut == nil {
+            land(encode())
         } else {
             pendingEncodes += 1
             encodeQueue.async { [self] in
                 let failure = encode()
                 queue.async { [self] in
                     pendingEncodes -= 1
-                    if let failure {
-                        warnings.append(failure)
-                    } else {
-                        kept.append(frame)
-                    }
+                    land(failure)
                 }
             }
         }
