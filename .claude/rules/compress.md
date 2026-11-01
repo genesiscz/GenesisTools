@@ -26,8 +26,10 @@ Loaded by Claude Code when you read, write or edit a file under `src/utils/compr
   `rg -z` and any decoder read it as plain zstd. A tail read costs one frame (4 MiB for `text`).
 - **Nothing is removed before it is verified.** Output goes through `atomicWriteFileStreamed` (temp file, fsync,
   rename). A file is decompressed and compared by size and sha256; a folder archive is listed and every file's sha256
-  compared with the folder. The original goes only after that, and a file only when its size and mtime did not change
-  while it was read: `compressFile` throws and writes nothing when the source is cut or extended during the read.
+  compared with the folder. The original goes only after that, and a file only when the name still holds the file
+  that was read (`sameSource`: device, inode, size, mtime, ctime; a same-length copy renamed over it with the old mtime
+  is another file): `compressFile` throws and writes nothing when the source is cut, extended or rewritten during the
+  read.
 - **One daily pass per logs folder.** `runDailyCompression` holds `<logs>/.daily-compress.lock` for the whole pass,
   and a second caller returns `null` at once. `tools compress daily` opens the logger, which can start the detached
   pass beside it, and two passes over one file once deleted its only copy. A plain file that is already gone when it
@@ -43,7 +45,8 @@ Loaded by Claude Code when you read, write or edit a file under `src/utils/compr
   which route a `.zst` path to the frame reader. rg over day files: `ripgrepFiles` (`@genesiscz/utils/compress/search`),
   which feeds a `.zst` into rg's stdin through a pull stream and reports exit 2 with the error when a `.zst` does not
   open or decode (rg alone would see the end of its input and answer "no match"). Both also open a plain name whose
-  file the daily pass replaced by its `.zst` (a path listed before the pass, or built by hand), and so do the
+  file the daily pass replaced by its `.zst` (a path listed before the pass, built by hand, or retired between the
+  lookup and the open: the readers fall back on the open's ENOENT, `ripgrepFiles` on rg's), and so do the
   `{{lines}}`, `{{file}}`, `{{json}}`, `{{symbol}}` and `{{tail}}` tokens and `tools compress cat`. The app launcher
   reads only today's and yesterday's failures (`LauncherFailures.swift` `recorded`), which stay plain. A new reader of
   a compressed store must do the same, in the same commit as the compression.
