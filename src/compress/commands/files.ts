@@ -9,8 +9,8 @@ import {
     verifyPath,
 } from "@genesiscz/utils/compress/operations";
 import { isPresetName, PRESET_NAMES, PRESETS } from "@genesiscz/utils/compress/presets";
-import { readZstdFrames } from "@genesiscz/utils/compress/zstd";
 import { formatBytes } from "@genesiscz/utils/format";
+import { readTextChunks, storedFilePath } from "@genesiscz/utils/fs/read-lines";
 import { logger, out } from "@genesiscz/utils/logger";
 import { renderCliKeyRow } from "@genesiscz/utils/table";
 import type { Command } from "commander";
@@ -238,21 +238,31 @@ function runVerify(archive: string, options: { against?: string; filesFrom?: str
     }
 }
 
-/** Streams a `.zst` file's content to stdout (or `--output`), frame by frame: `tools compress cat x.log.zst | rg …`. */
-async function runCat(archive: string, options: { output?: string }): Promise<void> {
+/**
+ * Streams a file's content to stdout (or `--output`): a `.zst` frame by frame, a plain file as it is, and the plain name
+ * of a file the daily pass compressed as its `.zst` (`tools compress cat ~/.genesis-tools/logs/<day>.log | rg …` works
+ * for any day).
+ */
+async function runCat(file: string, options: { output?: string }): Promise<void> {
+    const stored = storedFilePath(file);
+
+    if (!stored) {
+        throw new Error(`${file}: no such file, plain or .zst`);
+    }
+
     if (!options.output) {
-        await writeFrames(archive, process.stdout);
+        await writeContent(stored, process.stdout);
         return;
     }
 
-    const file = createWriteStream(options.output);
-    await writeFrames(archive, file);
-    await new Promise<void>((resolve) => file.end(() => resolve()));
+    const sink = createWriteStream(options.output);
+    await writeContent(stored, sink);
+    await new Promise<void>((resolve) => sink.end(() => resolve()));
 }
 
 /** Raw bytes with backpressure: a slow reader (`| less`) never makes the whole file queue up in memory. */
-async function writeFrames(archive: string, sink: NodeJS.WritableStream): Promise<void> {
-    for await (const frame of readZstdFrames(archive)) {
+async function writeContent(path: string, sink: NodeJS.WritableStream): Promise<void> {
+    for await (const frame of readTextChunks(path)) {
         if (!sink.write(frame)) {
             await new Promise<void>((resolve) => sink.once("drain", () => resolve()));
         }
@@ -306,8 +316,8 @@ export function registerFileCommands(program: Command): void {
 
     program
         .command("cat")
-        .description("Write a .zst file's content to stdout, one frame at a time (for rg, jq, less)")
-        .argument("<file>", ".zst file")
+        .description("Write a file's content to stdout, a .zst one frame at a time (for rg, jq, less)")
+        .argument("<file>", "a .zst file, or a plain name whose file is now <name>.zst")
         .option("-o, --output <path>", "write to a file instead of stdout")
         .action(runCat);
 }
