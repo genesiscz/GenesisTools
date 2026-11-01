@@ -98,7 +98,7 @@ function placeholderRefusal(source: string, placeholders: SourceScan["placeholde
     const kinds = [
         stubs > 0 ? `${stubs} with the com.dropbox.placeholder xattr, whose bytes here are zeros` : "",
         placeholders.length - stubs > 0
-            ? `${placeholders.length - stubs} with bytes in 0 blocks, which a read would download (an all-hole sparse file looks the same)`
+            ? `${placeholders.length - stubs} dataless (the SF_DATALESS flag), which a read would download`
             : "",
     ].filter(Boolean);
     return `${source} holds ${placeholders.length} cloud placeholder${placeholders.length === 1 ? "" : "s"} (${kinds.join("; ")}): ${names.join(", ")}${more > 0 ? ` and ${more} more` : ""}. Their real content lives in the cloud copy, so nothing was written. Pass --include-placeholders to pack them as they are`;
