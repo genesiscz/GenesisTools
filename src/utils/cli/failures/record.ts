@@ -1,10 +1,11 @@
-import { appendFileSync, existsSync, mkdirSync, readdirSync } from "node:fs";
+import { appendFileSync, mkdirSync } from "node:fs";
 import { dirname, join } from "node:path";
 import type { AgentRuntimeContext } from "@genesiscz/utils/agent/context";
 import { formatLocalDate } from "@genesiscz/utils/date";
 import { readLinesSync } from "@genesiscz/utils/fs/read-lines";
 import { SafeJSON } from "@genesiscz/utils/json";
 import { logger } from "@genesiscz/utils/logger";
+import { dayLogName, dayLogPath, listDayLogs } from "@genesiscz/utils/logger/day-logs";
 import { genesisToolsDir } from "@genesiscz/utils/storage/root";
 
 /**
@@ -64,14 +65,16 @@ export interface ToolFailure {
     runId?: string;
 }
 
-const FILE = /^(\d{4}-\d{2}-\d{2})-failures\.jsonl$/;
-
 export function failuresDir(): string {
     return genesisToolsDir("logs");
 }
 
+/**
+ * The plain day file a failure of `day` is appended to. Once the daily pass compressed a day it is
+ * `<day>-failures.jsonl.zst`: read through {@link readFailures}, which finds either form.
+ */
 export function failureLogPath(day: string, dir = failuresDir()): string {
-    return join(dir, `${day}-failures.jsonl`);
+    return join(dir, dayLogName(day, "failures"));
 }
 
 /** One line per failure, appended with a single write so concurrent tools never interleave a record. */
@@ -81,15 +84,11 @@ export function appendFailure(failure: ToolFailure, dir = failuresDir()): void {
     appendFileSync(path, `${SafeJSON.stringify(failure)}\n`);
 }
 
-/** The days that have a failure log, oldest first. */
+/** The days that have a failure log, plain or compressed, oldest first. */
 export function failureDays(dir = failuresDir()): string[] {
-    if (!existsSync(dir)) {
-        return [];
-    }
-
-    return readdirSync(dir)
-        .flatMap((name) => FILE.exec(name)?.[1] ?? [])
-        .sort();
+    return listDayLogs({ kind: "failures", dir })
+        .map((file) => file.day)
+        .reverse();
 }
 
 export function isToolFailure(value: unknown): value is ToolFailure {
@@ -121,7 +120,14 @@ export function* readFailures({
             continue;
         }
 
-        for (const line of readLinesSync(failureLogPath(day, dir))) {
+        // Resolved just before the read: the daily pass may have replaced the plain file since the listing.
+        const path = dayLogPath(day, { kind: "failures", dir });
+
+        if (!path) {
+            continue;
+        }
+
+        for (const line of readLinesSync(path)) {
             if (!line.trim()) {
                 continue;
             }

@@ -98,6 +98,25 @@ final class LauncherFailuresTests: XCTestCase {
         XCTAssertEqual(try lines(on: LauncherFailures.localDay(now)).count, 2)
     }
 
+    /// The record of a death is written when the run ends, so only today and yesterday are read: older days are
+    /// `.zst`, which the launcher cannot decode, and a record there belongs to an earlier moment of the run.
+    func testOnlyTodayAndYesterdayAreReadForARunThatStartedEarlier() throws {
+        let calendar = Calendar(identifier: .gregorian)
+        let now = Date()
+        let started = try XCTUnwrap(calendar.date(byAdding: .day, value: -3, to: now))
+        let yesterday = try XCTUnwrap(calendar.date(byAdding: .day, value: -1, to: now))
+        try FileManager.default.createDirectory(at: directory, withIntermediateDirectories: true)
+        for (date, runId) in [(started, "run-old"), (yesterday, "run-midnight")] {
+            let line = #"{"v":1,"id":"x","kind":"crash","tool":"fixture","at":"2026-10-22T12:00:00.000Z","runId":"\#(runId)"}"#
+            try (line + "\n").write(to: LauncherFailures.failureLogURL(day: LauncherFailures.localDay(date),
+                                                                       directory: directory),
+                                    atomically: true, encoding: .utf8)
+        }
+        XCTAssertTrue(LauncherFailures.recorded(runId: "run-midnight", since: started, now: now, directory: directory))
+        XCTAssertFalse(LauncherFailures.recorded(runId: "run-old", since: started, now: now, directory: directory),
+                       "a day older than yesterday is not read")
+    }
+
     func testTheDirectoryFollowsGenesisToolsHome() {
         XCTAssertEqual(LauncherFailures.failuresDirectory(environment: ["GENESIS_TOOLS_HOME": "/sandbox"]).path,
                        "/sandbox/.genesis-tools/logs")
@@ -138,7 +157,10 @@ final class LauncherFailuresTests: XCTestCase {
 
     func testTheDayFileAndDirectoryMatchRecordTs() throws {
         let record = try source("utils/cli/failures/record.ts")
-        XCTAssertTrue(record.contains("return join(dir, `${day}-failures.jsonl`);"), "record.ts failureLogPath changed")
+        XCTAssertTrue(record.contains(#"return join(dir, dayLogName(day, "failures"));"#), "record.ts failureLogPath changed")
+        let dayLogs = try source("utils/logger/day-logs.ts")
+        XCTAssertTrue(dayLogs.contains(#"failures: { suffix: "-failures.jsonl" },"#), "the failures day file is renamed")
+        XCTAssertTrue(dayLogs.contains("return `${day}${DAY_LOG_KINDS[kind].suffix}`;"), "day-logs.ts dayLogName changed")
         XCTAssertTrue(record.contains(#"return genesisToolsDir("logs");"#), "record.ts failuresDir changed")
         XCTAssertTrue(record.contains("formatLocalDate(new Date(failure.at))"), "the day is no longer the local day")
         let root = try source("utils/storage/root.ts")
@@ -147,6 +169,12 @@ final class LauncherFailuresTests: XCTestCase {
         XCTAssertTrue(variables.contains(#"getHome: () => getTrimmed("GENESIS_TOOLS_HOME") ?? homedir(),"#))
         XCTAssertEqual(LauncherFailures.failureLogURL(day: "2026-10-22", directory: URL(fileURLWithPath: "/d")).path,
                        "/d/2026-10-22-failures.jsonl")
+    }
+
+    func testTheDailyPassKeepsTheDaysTheLauncherReadsPlain() throws {
+        let daily = try source("utils/compress/daily.ts")
+        let value = try XCTUnwrap(try matches(#"^export const DAY_LOGS_PLAIN_DAYS = (\d+);"#, in: daily).first)
+        XCTAssertGreaterThanOrEqual(try XCTUnwrap(Int(value)), 2, "recorded() reads today and yesterday as plain files")
     }
 
     func testTheSignalTableAndVariablesMatchTheTypeScriptSide() throws {
