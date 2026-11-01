@@ -60,23 +60,31 @@ body renders as markdown. Full API: `tools artifact kit`.
 | Group | Components |
 |---|---|
 | Layout | `Page` `Hero` `Section` `Card`/`CardGrid` `Tabs` (hash-synced) `Router`/`RouterLink`/`useParams`/`useNavigate` (history API; hash fallback on file://) |
+| Design document | `Page look="document"` (display headings, 16 px prose, roomier cards; every kit component follows it) + `nav={<TopNav brand links theme />}` + `backdrop="glow"` + `footer`. `Hero highlight` (gradient phrase), `Section id number intro`, `StatItem.color`, rich `Card` (`color`+`edge`, `kicker`, `number`, `subtitle`, `mono`, `dashed`, `tilt`, `lift`, `highlight`, `muted`, `fields`, `lines`, `note`, `footer`), `CardGrid min fill`, `Legend`, `Badge tag`/`dashed`/`color`, `Callout bar`, `Compare plain hint weights`, `HUE` (seven named category colours). Build with `-t paper` |
 | Data | `StatGrid` (`delta` against a baseline, `edge`, auto-fit `min`) `EditableTable` (input cells, add/remove, validation, totals) `ChangeLedger`/`FieldDiff`/`diffFields` (sync history with field changes) `DataTable` (filter, `rowTone`, toned/markdown cells) `SeriesTable` `Timeline` `Bullets` `QA` (per-item `open`/`featured`/`meta`) |
 | Evidence | `CodeBlock` (copy, `lang="ts"` highlighting, `highlightLines`/`badLines`) `FileMark` `Claim` ([NN%] badge) `Quote` `Callout` `Badge` `Chips` `Note` `Superseded` |
 | Markdown | `Md` `MdInline` `MdViewer` (`src="../doc.md"` fetches LIVE — TOC + section filter; replaces build-time inlining). Fenced code is highlighted; a ```` ```mermaid ```` fence renders as a diagram |
-| Diagrams | `Mermaid` (`chart` = mermaid source: flowchart, sequence, state, class, ER, gantt, gitGraph, mindmap, timeline; zoom toolbar, copy source, download SVG) `ZoomPane` |
+| Diagrams | `Mermaid` (`chart` = mermaid source: flowchart, sequence, state, class, ER, gantt, gitGraph, mindmap, timeline; zoom toolbar, copy source, download SVG) `ZoomPane` `LayerDiagram` (layered architecture as in-page SVG, OFFLINE: bands of boxes with column weights, row/col spans, dashed = new, tinted, labelled arrows, bus lines) |
 | Diff | `DiffView` (`before`/`after` or a unified `patch`; `mode="split"`; `labels`) |
-| Structure | `TreeView` + `treeFromPaths(paths)` (file trees) `Steps` (done/active/pending/failed/skipped) `Compare` (A vs B columns) `KeyValue` `JsonView` `Figure` (captioned image, click = full size) |
+| Structure | `TreeView` + `treeFromPaths(paths)` (file trees; `variant="ascii"` = a command tree with ├─ guides and aligned badge and comment columns) `Steps` (done/active/pending/failed/skipped) `Compare` (A vs B columns) `KeyValue` `MappingList` (old → new rows, `arrow` or `stacked`) `JsonView` `Figure` (captioned image, click = full size) |
 | Time series | `TimeSeries` (canvas chart for dense time data: wheel/pinch zoom, drag pan, Shift-drag select, brush strip, presets, keyboard; viewer toggles series, combined/split layout, log, % of max, table, CSV/PNG; `markers` in a clustered band, `spans` as Gantt lanes; `syncId` links charts; `id` persists the view). Prefer several small synced charts, one per question, over one chart with everything: `markerKinds` picks the marker kinds shown at first, `groups` titles and orders split panels, `series={[]}` with `spans` is an activity timeline |
-| Viz | `Sparkline` (inline trend for a cell or stat) `Meter` (bar with `thresholds`) `Heatmap` (rows × cols, one tone) `Gantt` + `GanttTable` (sprint axis, lanes, baseline ghosts with a shift label, milestones, today line, drag and keyboard editing) `CapacityGrid` (load against capacity, over cells outlined) |
-| Interactive | `Simulator` (step player) `ParametricSimulator` (sliders/segments/toggles + pure `generate(params)` + presets) `SegmentedControl` `FilterChips` (toggle chips, `aria-pressed`) `SortableList` (grip drag + keyboard) `Wizard` (steps, validate, Skip, hash) `Tooltip`/`useTooltip` (one shared dark card) |
+| Viz | `Sparkline` (inline trend for a cell or stat) `Meter` (bar with `thresholds`) `Heatmap` (rows × cols, one tone) `SegmentBar` (one bar in weighted segments: a build order by size) `Gantt` + `GanttTable` (sprint axis, lanes, baseline ghosts with a shift label, milestones, today line, drag and keyboard editing) `CapacityGrid` (load against capacity, over cells outlined) |
+| Interactive | `Simulator` (step player) `ParametricSimulator` (sliders/segments/toggles + pure `generate(params)` + presets) `SegmentedControl` `FilterChips` (toggle chips, `aria-pressed`; `single` = filter by one category) `SortableList` (grip drag + keyboard) `Wizard` (steps, validate, Skip, hash) `Tooltip`/`useTooltip` (one shared dark card) |
 | Forms | `Button` (`busy`) `Field` (label, hint, error) `TextInput` `NumberInput` (draft until blur) `DateInput` (YYYY-MM-DD) `Select` `Textarea` `FileInput` (drop zone, read in page) |
-| Theme | `ThemeToggle`/`useTheme` (opt-in System, Light, Dark; needs the `auto` template) `SERIES_COLOR` (8 lane colours, light and dark pairs) |
+| Theme | `ThemeToggle`/`useTheme` (opt-in System, Light, Dark; needs the `auto` or `paper` template; `variant="cycle"` = one pill button) `SERIES_COLOR` (8 lane colours, light and dark pairs) `HUE` (named hues: sky, teal, lime, amber, rose, slate, violet) |
 
 Show-me rule: a flow, a sequence, a state machine or an architecture is a `Mermaid` (or a
 ```` ```mermaid ```` fence in an `.md`), never hand-drawn boxes. mermaid itself is NOT installed:
 the browser loads it from jsdelivr on first use, so a diagram needs the network once and a
 single-file build shows the fence source offline. A served or built `.md` renders its fences
-the same way, so `tools artifact serve notes.md` is the shortest path to a diagram.
+the same way, so `tools artifact serve notes.md` is the shortest path to a diagram. A layered
+architecture (surfaces, doors, core, stores) that must work offline or match a design is a
+`LayerDiagram`: kit SVG, no network, themed.
+
+Design-document rule: a page that must look designed (a proposal, an architecture note) is
+`Page look="document"` built with `-t paper`, made of kit components and their props only: no
+page CSS, no hand-written SVG, no one-off components. If the kit cannot draw something, add a
+generic prop or component to the kit (with its gallery page) instead of styling the page.
 
 Data rule: small → inline in the file; larger → sibling `data.json` + `fetch("./data.json")`
 (live served, embedded on build) or a static JSON import (bundled). The `<entry>.data*.json`
@@ -88,7 +96,8 @@ convention auto-embeds for single-file builds.
 graphite (default instrument dark) · bone (editorial light, print) · forest (handbook green) ·
 steel (zero-chroma, color = status only) · tan (black+tan presentation, radius 0) · cobalt
 (client-facing light) · auto (cobalt by day, graphite by night: follows the system; `build -t auto` for a
-.tsx page). Each is a `theme.css` token set bridged into Tailwind, so the SAME kit
+.tsx page) · paper (warm paper by day, graphite by night, sky accent, display headings: design
+documents; `build -t paper`). Each is a `theme.css` token set bridged into Tailwind, so the SAME kit
 code retints completely. A custom template dir may override just `theme.css`.
 
 ## Design rules (inlined — the kit already encodes most)
