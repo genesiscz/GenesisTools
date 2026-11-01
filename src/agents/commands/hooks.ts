@@ -45,6 +45,7 @@ import {
     stopHookWired,
     type WiringStatus,
 } from "../lib/hooks/install";
+import { firedLogPath } from "../lib/hooks/log";
 import {
     claudePlugin,
     claudeUserSettingsPath,
@@ -444,7 +445,8 @@ export function registerHooksCommands(program: Command): void {
         .option("--session <id>", "Only this session")
         .option("--decision <name>", "Only this decision: emitted, silent, skip, block, warn")
         .option("-n, --lines <count>", "How many records", "20")
-        .action((options: { session?: string; decision?: string; lines?: string }) => {
+        .option("--fired", "Read the log of guard decisions that were not an allow, which keeps weeks of them")
+        .action((options: { session?: string; decision?: string; lines?: string; fired?: boolean }) => {
             // `--lines abc` and `--lines 0` both sliced from 0, so they printed the whole log.
             const count = Number(options.lines ?? "20");
 
@@ -455,14 +457,21 @@ export function registerHooksCommands(program: Command): void {
             }
 
             const config = loadHooksConfig();
+            const path = options.fired ? firedLogPath(config.logPath) : config.logPath;
             const records: Record<string, unknown>[] = [];
             let skipped = 0;
+
+            if (options.fired && !existsSync(path)) {
+                // The fired log starts with the first guard decision that is not an allow.
+                out.result([]);
+                return;
+            }
 
             try {
                 // Concurrent hook processes append to this file, so a torn or partial line is
                 // a realistic state. One of them used to make the whole log unreadable, and
                 // this reader is the only way to inspect a shadow run.
-                for (const line of readFileSync(config.logPath, "utf8").split("\n")) {
+                for (const line of readFileSync(path, "utf8").split("\n")) {
                     if (line.length === 0) {
                         continue;
                     }
@@ -474,7 +483,7 @@ export function registerHooksCommands(program: Command): void {
                     }
                 }
             } catch (err) {
-                logger.error({ err, path: config.logPath }, "Cannot read the decision log");
+                logger.error({ err, path }, "Cannot read the decision log");
                 process.exitCode = 1;
                 return;
             }

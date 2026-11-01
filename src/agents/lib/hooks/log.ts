@@ -288,9 +288,20 @@ function append(path: string, record: Record<string, unknown>): void {
     }
 }
 
+/** The log of fired guard decisions beside the decision log: `agents-hooks.jsonl` → `agents-hooks-fired.jsonl`. */
+export function firedLogPath(logPath: string): string {
+    return logPath.replace(/(\.jsonl)?$/, "-fired.jsonl");
+}
+
 /** One line per hook run. A log failure must never break the tool call. */
 export function logDecision(record: DecisionRecord, logPath: string): void {
     append(logPath, record);
+
+    // Allowed calls fill the decision log to its cap in about a day, so an audit of what the guard
+    // blocked lost everything older. The few firings also go to a log of their own, under the same cap.
+    if (record.phase === "guard" && record.decision !== "allow") {
+        append(firedLogPath(logPath), record);
+    }
 }
 
 /** One record into a hook's own JSONL log, with the same modes and rotation as the hooks log; never throws. */
