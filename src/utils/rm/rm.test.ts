@@ -2134,9 +2134,13 @@ describe("the default rule says what nearly matched", () => {
             customPresets: [{ id: "shop-cache", description: "a shop cache", names: [], within, optIn: true }],
         };
         const context = ctx({ config: withPreset, presets: presetsFor(withPreset) });
-        expect(reasonOf(dir("shop-cache", "v1"), context).reason).toBe(
+        const verdict = reasonOf(dir("shop-cache", "v1"), context);
+        expect(verdict.reason).toBe(
             "matches the opt-in preset shop-cache, which is off; the user can turn it on: tools rm config set enable-preset shop-cache"
         );
+        // A live cache another install may read stays where it is while it waits.
+        expect(verdict.stayInPlace).toBe("a live cache: another install may read it");
+        expect(reasonOf(dir("elsewhere", "plain"), context).stayInPlace).toBeUndefined();
     });
 
     test("a file the session did not write with its own tools says what counts as its own", () => {

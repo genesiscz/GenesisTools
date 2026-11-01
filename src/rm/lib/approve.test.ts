@@ -831,6 +831,38 @@ describe("a run that asks", () => {
         expect(started).toHaveLength(2);
     });
 
+    test("a path whose verdict says it stays in place is not moved aside, even with aside on", async () => {
+        const cache = join(base, "live-cache", "v10");
+        file(join(cache, "index.json"));
+        const verdict = {
+            kind: "ask" as const,
+            rule: "default",
+            reason: "matches the opt-in preset shop-cache, which is off",
+            stayInPlace: "a live cache: another install may read it",
+        };
+        const exitCode = process.exitCode;
+
+        try {
+            const result = await executePlan(
+                [{ target: resolveTarget(cache, base), verdict }],
+                { ...context(), caller: AGENT },
+                { aside: true },
+                {
+                    startMeasurement: () => undefined,
+                    kickDrainer: () => undefined,
+                    asideRoot: join(base, "aside", "live-cache"),
+                    notifyRequest: async () => undefined,
+                }
+            );
+            const request = loadRmRequest(result.requestId ?? "");
+
+            expect(request?.targets.map((target) => target.stored)).toEqual([undefined]);
+            expect(existsSync(join(cache, "index.json"))).toBe(true);
+        } finally {
+            process.exitCode = exitCode;
+        }
+    });
+
     test("a new request reaches the person once per session in ten minutes, and never with notify-on-request none", async () => {
         const sent: RequestNotice[] = [];
         const notifyRequest: ExecuteDeps["notifyRequest"] = (request, ctx) =>

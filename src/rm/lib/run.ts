@@ -390,7 +390,10 @@ function requestForAsked(
     }
 
     const asideOn = options.aside ?? ctx.config.askAction === "aside";
-    const asideable = asideOn ? asked.filter((item) => ctx.config.asideUnsaved || !item.verdict.unsaved) : [];
+    // A live cache (`stayInPlace`) never moves: another install may read it while it waits.
+    const asideable = asideOn
+        ? asked.filter((item) => (ctx.config.asideUnsaved || !item.verdict.unsaved) && !item.verdict.stayInPlace)
+        : [];
     const inPlace = asked.filter((item) => !asideable.includes(item));
     // An in-place path this session already asked about waits in that request; a second one would ask twice. An
     // aside path is never matched: its moved copy is a new object.
@@ -439,7 +442,11 @@ function requestForAsked(
             out.println(pc.dim(`  kept in place ${shown(k.input.target.path, ctx.cwd)}: ${k.reason}`));
         }
 
-        for (const item of freshInPlace.filter((i) => asideOn && i.verdict.unsaved)) {
+        for (const item of freshInPlace.filter((i) => asideOn && i.verdict.stayInPlace)) {
+            out.println(pc.dim(`  kept in place ${shown(item.target.path, ctx.cwd)}: ${item.verdict.stayInPlace}`));
+        }
+
+        for (const item of freshInPlace.filter((i) => asideOn && i.verdict.unsaved && !i.verdict.stayInPlace)) {
             out.println(
                 pc.dim(`  kept in place ${shown(item.target.path, ctx.cwd)}: unsaved work, /tmp loses it on reboot`)
             );
