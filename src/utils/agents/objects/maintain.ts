@@ -1,5 +1,15 @@
 import { spawnSync } from "node:child_process";
-import { existsSync, mkdirSync, readdirSync, readFileSync, renameSync, rmSync, statSync, unlinkSync } from "node:fs";
+import {
+    existsSync,
+    linkSync,
+    mkdirSync,
+    readdirSync,
+    readFileSync,
+    renameSync,
+    rmSync,
+    statSync,
+    unlinkSync,
+} from "node:fs";
 import { dirname, join } from "node:path";
 import { formatBytes } from "@genesiscz/utils/format";
 import { SafeJSON } from "@genesiscz/utils/json";
@@ -30,7 +40,10 @@ const GARBAGE_AGE_MS = DAY_MS;
 const PACK_TIMEOUT_MS = 30 * 60_000;
 const GIT_TIMEOUT_MS = 2 * 60_000;
 const OID = /^[0-9a-f]{40}(?:[0-9a-f]{24})?$/;
-/** The index first: a reader that lists packs stops finding the pack, and one that has it open keeps reading it. */
+/**
+ * The index first: a reader that lists packs stops finding the pack once the index goes, and one that has it open keeps
+ * reading it. A pack comes back in the reverse order, so the store never lists an index without its pack.
+ */
 const PACK_EXTENSIONS = [".idx", ".pack", ".rev", ".bitmap", ".mtimes", ".promisor"];
 const RETIRED = /^retired-(\d+)-(\d+)$/;
 
@@ -113,9 +126,17 @@ export interface NamedOids {
     rows: number;
 }
 
+/** Nothing at the path: a session folder without a log, or a plain file beside the session folders. */
+function isAbsent(error: unknown): boolean {
+    return error instanceof Error && "code" in error && (error.code === "ENOENT" || error.code === "ENOTDIR");
+}
+
 /**
  * The oids change-log rows name. `since` skips logs untouched since then and rows older than it. With `offsets`,
  * each log is read only past its offset and a log not listed from its start: the rows written after an earlier read.
+ *
+ * Throws when the folder or a log exists but cannot be read (a permission or I/O error). The set would miss what that
+ * log names, and a pass would take those objects for unnamed and drop them; only a missing log names nothing.
  */
 export function namedOids({
     logsDir,
@@ -132,6 +153,12 @@ export function namedOids({
     try {
         names = readdirSync(logsDir).filter((name) => !name.startsWith("_"));
     } catch (error) {
+        if (!isAbsent(error)) {
+            throw new Error(`cannot list the change logs in ${logsDir}, so the objects they name are unknown`, {
+                cause: error,
+            });
+        }
+
         log.debug({ error, logsDir }, "no change logs");
         return named;
     }
@@ -153,8 +180,14 @@ export function namedOids({
             }
 
             body = readFileSync(path);
-        } catch {
-            continue;
+        } catch (error) {
+            if (isAbsent(error)) {
+                continue;
+            }
+
+            throw new Error(`cannot read the change log ${path}, so the objects it names are unknown`, {
+                cause: error,
+            });
         }
 
         const end = body.lastIndexOf(0x0a) + 1;
@@ -350,17 +383,128 @@ function retire(root: string, retired: string, path: string): boolean {
     }
 }
 
-function retirePack(root: string, retired: string, pack: PackFile): void {
-    for (const extension of PACK_EXTENSIONS) {
-        if (existsSync(`${pack.base}${extension}`)) {
-            retire(root, retired, `${pack.base}${extension}`);
+/**
+ * Moves a pack under `retired` so that a whole pair is there before the store loses either half: every part is
+ * hard-linked there first, then the store's copies go, the index first. A pass that dies in between leaves a pair that
+ * recovery can read (or the store's own copy, still listed). False when the pack stays in the store.
+ */
+function retirePack(root: string, retired: string, pack: PackFile): boolean {
+    const parts = PACK_EXTENSIONS.map((extension) => `${pack.base}${extension}`).filter((path) => existsSync(path));
+    const linked: string[] = [];
+
+    try {
+        for (const path of parts) {
+            const target = join(retired, path.slice(root.length + 1));
+            mkdirSync(dirname(target), { recursive: true });
+            linkSync(path, target);
+            linked.push(target);
+        }
+    } catch (error) {
+        log.debug({ error, pack: pack.base }, "could not link a pack aside; it stays");
+
+        for (const target of linked) {
+            unlinkQuietly(target);
+        }
+
+        return false;
+    }
+
+    if (!unlinkQuietly(`${pack.base}.idx`)) {
+        // Still listed, so still read; its linked copy goes with the moved-aside folder.
+        return false;
+    }
+
+    for (const path of parts.filter((path) => !path.endsWith(".idx"))) {
+        unlinkQuietly(path);
+    }
+
+    return true;
+}
+
+/**
+ * Makes every pack of a moved-aside folder whole in one place before recovery reads it. A pass that died while it
+ * retired a pack can leave the pair split: a pass before this rule renamed the index, then the pack, so the store kept a
+ * pack without its index and the folder an index without its pack, and neither could be read. Each pack the store
+ * still holds a part of gets the folder's parts back (the index last), so the store reads it again and a later pass
+ * retires it whole. A pack the store holds nothing of was moved completely: recovery reads it from the folder.
+ */
+function reconcileRetiredPacks(root: string, retired: string): void {
+    const dir = join(retired, "objects", "pack");
+
+    if (!existsSync(dir)) {
+        return;
+    }
+
+    const names = readdirSync(dir);
+    const bases = new Set(
+        names.filter((name) => name.startsWith("pack-")).map((name) => name.slice(0, name.lastIndexOf(".")))
+    );
+
+    for (const base of bases) {
+        const store = join(root, "objects", "pack", base);
+        const inStore = PACK_EXTENSIONS.filter((extension) => existsSync(`${store}${extension}`));
+
+        if (inStore.length === 0) {
+            continue;
+        }
+
+        const back = PACK_EXTENSIONS.filter(
+            (extension) => !inStore.includes(extension) && names.includes(`${base}${extension}`)
+        );
+        const whole = [".idx", ".pack"].every((extension) => inStore.includes(extension) || back.includes(extension));
+
+        if (!whole) {
+            log.warn({ root, retired, pack: base, inStore, back }, "a half-moved pack has no whole pair anywhere");
+            continue;
+        }
+
+        for (const extension of [...back].reverse()) {
+            renameSync(join(dir, `${base}${extension}`), `${store}${extension}`);
+        }
+
+        if (back.length > 0) {
+            log.info({ root, pack: store, back }, "put back a pack that a pass left half moved");
         }
     }
 }
 
+/** The oids a moved-aside folder can give back: its loose objects and every pack it holds whole. */
+function retiredOids(retired: string): Set<string> {
+    const objects = join(retired, "objects");
+    const held = new Set<string>();
+
+    if (!existsSync(objects)) {
+        return held;
+    }
+
+    for (const fan of readdirSync(objects)) {
+        if (/^[0-9a-f]{2}$/.test(fan)) {
+            for (const rest of readdirSync(join(objects, fan))) {
+                if (OID.test(fan + rest)) {
+                    held.add(fan + rest);
+                }
+            }
+        }
+    }
+
+    const packDir = join(objects, "pack");
+    const packNames = existsSync(packDir) ? readdirSync(packDir) : [];
+
+    for (const name of packNames) {
+        if (name.startsWith("pack-") && name.endsWith(".idx") && packNames.includes(`${name.slice(0, -4)}.pack`)) {
+            for (const oid of packIndexOids(join(packDir, name))) {
+                held.add(oid);
+            }
+        }
+    }
+
+    return held;
+}
+
 /**
  * Of these oids, the ones the store no longer holds, read from the moved-aside objects and written again. Throws
- * when it cannot tell, so the caller keeps the moved-aside objects for the next pass.
+ * when it cannot tell, or when an object the folder holds does not read back (git answers `missing` for an unreadable
+ * file), so the caller keeps the moved-aside objects for the next pass.
  */
 function restoreFrom({ root, retired, oids }: { root: string; retired: string; oids: Iterable<string> }): number {
     const wanted = [...oids];
@@ -403,6 +547,7 @@ function restoreFrom({ root, retired, oids }: { root: string; retired: string; o
     }
 
     const blobs: Buffer[] = [];
+    const missing: string[] = [];
     let at = 0;
 
     while (at < read.stdout.length) {
@@ -416,13 +561,25 @@ function restoreFrom({ root, retired, oids }: { root: string; retired: string; o
         at = newline + 1;
 
         if (header.length < 3) {
-            // `<oid> missing`: not among the moved-aside objects either (named before, dropped by an earlier pass).
+            // `<oid> missing`: fine when the folder does not hold it (named before, dropped by an earlier pass).
+            missing.push(header[0] ?? "");
             continue;
         }
 
         const size = Number(header[2]);
         blobs.push(read.stdout.subarray(at, at + size));
         at += size + 1;
+    }
+
+    if (missing.length > 0) {
+        const held = retiredOids(retired);
+        const unread = missing.filter((oid) => held.has(oid));
+
+        if (unread.length > 0) {
+            throw new Error(
+                `${unread.length} objects that ${retired} holds did not read back (first ${unread[0]}); it stays for the next pass`
+            );
+        }
     }
 
     if (blobs.length > 0) {
@@ -452,8 +609,9 @@ function guardAgainstGc(root: string): void {
 }
 
 /**
- * Moved-aside folders of a pass that died before it read the late rows: the objects rows from a day before that pass
- * on name go back, then the folder goes. A live pass never leaves one behind, and the lock keeps passes apart.
+ * Moved-aside folders of a pass that died before it read the late rows: a pack it left half moved goes back whole,
+ * the objects rows from a day before that pass on name go back, then the folder goes. A folder whose logs or objects
+ * cannot be read stays (the error stops the pass). A live pass never leaves one behind, and the lock keeps passes apart.
  */
 function recoverLeftovers(root: string, logsDir: string): number {
     const dir = maintenanceDir(root);
@@ -467,6 +625,7 @@ function recoverLeftovers(root: string, logsDir: string): number {
         }
 
         const retired = join(dir, name);
+        reconcileRetiredPacks(root, retired);
         restored += restoreFrom({ root, retired, oids: namedOids({ logsDir, since: started - DAY_MS }).oids.keys() });
         rmSync(retired, { recursive: true, force: true });
         log.info({ root, retired }, "recovered the moved-aside objects of a pass that did not finish");
@@ -488,6 +647,8 @@ function recoverLeftovers(root: string, logsDir: string): number {
  * - A packed object no row of the window names goes with the old pack.
  * - What goes is moved aside first. After `settle`, the rows written during the pass are read, and every object they
  *   name that is gone comes back, so a hook that re-hashed a dropped blob just before it moved never names a missing one.
+ * - A change log that exists but cannot be read stops the pass (it throws) before anything moves, and keeps a
+ *   moved-aside folder for the next pass: an unreadable log is not a log that names nothing.
  *
  * One pass at a time (a lock in the store). `dryRun` only reads.
  */
@@ -639,8 +800,9 @@ async function pass({
         }
 
         for (const pack of retirable.filter((pack) => pack.base !== base)) {
-            retirePack(root, retired, pack);
-            report.packsRetired++;
+            if (retirePack(root, retired, pack)) {
+                report.packsRetired++;
+            }
         }
     }
 
