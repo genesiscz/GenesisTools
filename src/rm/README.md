@@ -13,7 +13,7 @@ tools rm presets                    # the folder kinds deleted without asking
 tools rm trash                      # what waits for the drain (--sizes measures it)
 tools rm restore <batch|request> [paths...] # undo, while the batch is in its grace period (a request id: its batch)
 tools rm drain [--now]              # drain due batches now (--now: all of them)
-tools rm requests                   # what agents asked the user to confirm
+tools rm requests [id]              # what agents asked the user to confirm (an id: that request in full)
 tools rm request-root <dir> --reason "<why>"   # ask the user to trust a folder
 tools rm deny <id>                  # close a request and put its aside paths back (an agent may cancel its own)
 tools rm measure <id>               # measure a request's paths and save the sizes (tools rm starts it in the background)
@@ -74,13 +74,32 @@ A person at a terminal (not inside an agent) is asked to confirm an ask at once 
 With `askAction` `aside` (the default) a path that needs the user is renamed into
 `/tmp/<agent dir>/<project>/<session>/rm-aside/<batch>/` (`cc` for Claude Code, `codex`, `grok`, ...), and the request
 names where each one waits. `tools rm approve <id>` moves the aside copies into the trash; `tools rm deny <id>` moves
-them back. An aside request never expires, and `tools rm requests` shows where each path waits.
+them back. An aside request never expires, and `tools rm requests <id>` shows where each path waits.
 
 - Unsaved work stays in place with a plain request: a `.git` folder, tracked files with uncommitted edits, untracked
   files, clones with unpushed work and folders holding repositories, whichever rule asked. /tmp is cleared on a
   reboot, and that work exists nowhere else. A profile (or `aside-unsaved yes`) moves it aside too.
 - A path on another volume stays in place: a rename across volumes would be a copy.
 - `--no-aside` leaves a run's paths in place; `--aside` moves them even for a person at a terminal.
+
+## Reading the requests
+
+`tools rm requests` prints one summary line (open requests, paths, the size set aside, the paths in place, the oldest
+age), a `Needs a look` line, then one group per asking session, newest first, with one row per request: id, age
+(yellow from a day, red from three days), size, live state, a short path and why. The long reason and the aside
+location print only in the detail view: `tools rm requests <id>`, or `--long` for every listed request.
+
+The live state comes from the disk at the time of the listing, which reads only:
+
+- `aside`: the path waits in this session's rm-aside folder; `in place`: it waits where it was; `mixed`: both.
+- `gone`: no path and no aside copy is left, so nothing is left to decide.
+- `came back`: the original path exists again beside its aside copy.
+- `copy lost`: the aside copy is gone (something outside `tools rm` deleted it).
+
+Filters: `--session <id prefix>`, `--agent <name>`, `--project <name>`, `--older 1d`. `--sort age|size` prints a flat
+list instead of groups, `--paths` one row per path, `--all` also the closed requests. `--json` prints the saved
+requests as before. A flag goes after the subcommand name (`tools rm requests --json`); a delete flag typed before a
+subcommand (`tools rm -n preset all`) is refused with exit 2.
 
 ## Profiles: settings per agent, session or project
 
