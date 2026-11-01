@@ -21,7 +21,13 @@ import {
 import { tmpdir } from "node:os";
 import { join } from "node:path";
 import { env } from "@genesiscz/utils/env";
-import { readFirstLines, readLastLines, readLinesSync, readTextChunks } from "@genesiscz/utils/fs/read-lines";
+import {
+    readFirstLines,
+    readLastLines,
+    readLines,
+    readLinesSync,
+    readTextChunks,
+} from "@genesiscz/utils/fs/read-lines";
 import { startDailyCompressionOnce } from "@genesiscz/utils/logger/daily-trigger";
 import { dayLogPath, listDayLogs } from "@genesiscz/utils/logger/day-logs";
 import { ripgrepBinary } from "@genesiscz/utils/ripgrep";
@@ -45,6 +51,7 @@ import {
     unpackArchive,
     verifyArchiveAgainstFolder,
 } from "./tar";
+import { compressStream, createVerifiedZstdBatch, createVerifiedZstdWriter, ZstdVerificationError } from "./verified";
 import { readSeekTable, readZstdFramesSync, SeekableZstdWriter, walkFrames, zstdFrames } from "./zstd";
 
 const root = mkdtempSync(join(tmpdir(), "compress-test-"));
@@ -168,6 +175,189 @@ describe("compressFile", () => {
         bytes[Math.floor(bytes.length / 2)]! ^= 0xff;
         writeFileSync(result.target, bytes);
         expect(verifyCompressedFile(result.target, result)).toBe(false);
+    });
+});
+
+describe("verified zstd writer", () => {
+    /** One byte flipped in the first write to the file at `path`: a disk or a step that corrupts the output. */
+    function corruptFirstWriteTo(path: string) {
+        const write = atomicWriteIo.writeSync;
+        const inode = statSync(path).ino;
+        let corrupted = false;
+
+        return spyOn(atomicWriteIo, "writeSync").mockImplementation((fd, bytes, offset, length) => {
+            if (corrupted || fstatSync(fd).ino !== inode) {
+                return write(fd, bytes, offset, length);
+            }
+
+            corrupted = true;
+            const copy = Buffer.from(bytes);
+            copy[offset + Math.floor(length / 2)]! ^= 0xff;
+            return write(fd, copy, offset, length);
+        });
+    }
+
+    async function collect(lines: AsyncIterable<string>): Promise<string[]> {
+        const out: string[] = [];
+
+        for await (const line of lines) {
+            out.push(line);
+        }
+
+        return out;
+    }
+
+    const partials = (dir: string) => readdirSync(dir).filter((name) => name.endsWith(".partial"));
+
+    it("commits a stream to a seekable .zst with its plain file's lines, no partial left, and a ledger entry", async () => {
+        const dir = scratch("verified");
+        const text = `${logText(3000)}\n{"text":"raw   and   stay inside"}\n`;
+        const plain = join(dir, "day.log");
+        writeFileSync(plain, text);
+        const target = join(dir, "day.log.zst");
+        async function* chunks() {
+            for (let at = 0; at < text.length; at += 7000) {
+                yield text.slice(at, at + 7000);
+            }
+        }
+
+        const result = await compressStream(chunks(), {
+            target,
+            caller: "test-verified",
+            source: plain,
+            frameBytes: 8 * 1024,
+            mode: 0o600,
+        });
+
+        expect(result.frames).toBeGreaterThan(3);
+        expect(framesOf(target).table?.length).toBe(result.frames);
+        expect(digestZstdContent(target)).toEqual({ bytes: Buffer.byteLength(text), sha256: result.sha256 });
+        expect(statSync(target).mode & 0o777).toBe(0o600);
+        expect(partials(dir)).toEqual([]);
+        const lines = [...readLinesSync(plain)];
+        expect(lines.at(-2)).toContain(" ");
+        expect([...readLinesSync(target)]).toEqual(lines);
+        expect(await collect(readLines(target))).toEqual(lines);
+        const records = searchLedger({ caller: "test-verified", path: dir });
+        expect(records).toHaveLength(1);
+        expect(records[0]).toMatchObject({
+            op: "compress",
+            source: plain,
+            target,
+            sourceBytes: result.bytes,
+            targetBytes: statSync(target).size,
+            inputSha256: result.sha256,
+            outputSha256: new Bun.CryptoHasher("sha256").update(readFileSync(target)).digest("hex"),
+            preset: "text",
+            removedOriginal: false,
+        });
+    });
+
+    it("a read-back that fails leaves the existing target byte-identical, removes the partial and records nothing", async () => {
+        const dir = scratch("verified-corrupt");
+        const target = join(dir, "kept.jsonl.zst");
+        writeFileSync(target, "the existing target");
+        const writer = createVerifiedZstdWriter(target, { caller: "test-verified-corrupt", frameBytes: 4096 });
+        const probe = corruptFirstWriteTo(writer.partialPath);
+
+        try {
+            await writer.push(logText(2000));
+            expect(existsSync(writer.partialPath)).toBe(true);
+            await expect(writer.commit()).rejects.toBeInstanceOf(ZstdVerificationError);
+        } finally {
+            probe.mockRestore();
+        }
+
+        expect(readFileSync(target, "utf8")).toBe("the existing target");
+        expect(existsSync(writer.partialPath)).toBe(false);
+        expect(writer.state).toBe("aborted");
+        expect(searchLedger({ caller: "test-verified-corrupt", path: dir })).toEqual([]);
+        await expect(writer.push("more")).rejects.toThrow("aborted");
+    });
+
+    it("abort() removes the partial and keeps the target; a source that throws aborts compressStream", async () => {
+        const dir = scratch("verified-abort");
+        const target = join(dir, "x.zst");
+        writeFileSync(target, "old");
+        const writer = createVerifiedZstdWriter(target, { caller: "test-verified-abort" });
+        await writer.push("some bytes\n");
+        expect(partials(dir)).toHaveLength(1);
+        writer.abort();
+        writer.abort();
+
+        expect(existsSync(writer.partialPath)).toBe(false);
+        expect(readFileSync(target, "utf8")).toBe("old");
+        await expect(writer.commit()).rejects.toThrow("aborted");
+
+        async function* failing() {
+            yield "first\n";
+            throw new Error("source broke");
+        }
+
+        await expect(compressStream(failing(), { target, caller: "test-verified-abort" })).rejects.toThrow(
+            "source broke"
+        );
+        expect(readFileSync(target, "utf8")).toBe("old");
+        expect(readdirSync(dir)).toEqual(["x.zst"]);
+    });
+
+    it("a batch with one output that fails to verify renames none and removes every partial", async () => {
+        const dir = scratch("verified-batch-fail");
+        const first = join(dir, "2026-10-30.jsonl.zst");
+        const second = join(dir, "2026-10-31.jsonl.zst");
+        const fresh = join(dir, "2026-11-01.jsonl.zst");
+        writeFileSync(first, "old first");
+        writeFileSync(second, "old second");
+        const batch = createVerifiedZstdBatch({ caller: "test-verified-batch", frameBytes: 4096 });
+        const writers = [first, second, fresh].map((target) => batch.add(target));
+        const probe = corruptFirstWriteTo(writers[1]!.partialPath);
+        let failure: unknown;
+
+        try {
+            for (const [index, writer] of writers.entries()) {
+                await writer.push(logText(300 + index));
+            }
+
+            failure = await batch.commit().then(
+                () => undefined,
+                (err: unknown) => err
+            );
+        } finally {
+            probe.mockRestore();
+        }
+
+        expect(failure).toBeInstanceOf(ZstdVerificationError);
+        expect(failure instanceof ZstdVerificationError ? failure.targets : []).toEqual([second]);
+        expect(readFileSync(first, "utf8")).toBe("old first");
+        expect(readFileSync(second, "utf8")).toBe("old second");
+        expect(existsSync(fresh)).toBe(false);
+        expect(writers.map((writer) => writer.state)).toEqual(["aborted", "aborted", "aborted"]);
+        expect(readdirSync(dir).sort()).toEqual(["2026-10-30.jsonl.zst", "2026-10-31.jsonl.zst"]);
+        expect(searchLedger({ caller: "test-verified-batch", path: dir })).toEqual([]);
+    });
+
+    it("a batch whose outputs all verify renames each and records each; its writers commit only through it", async () => {
+        const dir = scratch("verified-batch-ok");
+        const first = join(dir, "a.jsonl.zst");
+        const second = join(dir, "b.jsonl.zst");
+        writeFileSync(first, "old first");
+        const batch = createVerifiedZstdBatch({ caller: "test-verified-batch-ok" });
+        const [one, two] = [batch.add(first), batch.add(second)];
+        expect(() => batch.add(first)).toThrow("already has a writer");
+        await one!.push(logText(20));
+        await two!.push(logText(30));
+        await expect(one!.commit()).rejects.toThrow("commit the batch");
+
+        const results = await batch.commit();
+
+        expect(results.map((result) => result.target)).toEqual([first, second]);
+        expect([...readLinesSync(first)]).toEqual(logText(20).split("\n"));
+        expect([...readLinesSync(second)]).toEqual(logText(30).split("\n"));
+        expect(partials(dir)).toEqual([]);
+        expect(searchLedger({ caller: "test-verified-batch-ok", path: dir }).map((record) => record.target)).toEqual([
+            first,
+            second,
+        ]);
     });
 });
 
