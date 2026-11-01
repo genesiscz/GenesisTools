@@ -1,4 +1,4 @@
-import { describe, expect, it } from "bun:test";
+import { describe, expect, it, spyOn } from "bun:test";
 import {
     chmodSync,
     existsSync,
@@ -25,6 +25,7 @@ import { grokCurrentModel } from "@genesiscz/utils/agent-sessions/readers/grok-m
 import { changedOnly, SHIPPED_DEFAULTS_KEY, storedOverrides } from "@genesiscz/utils/agents/hooks/config-section";
 import { env } from "@genesiscz/utils/env";
 import { SafeJSON } from "@genesiscz/utils/json";
+import { logger } from "@genesiscz/utils/logger";
 import type { RmRequest } from "@genesiscz/utils/rm";
 import { codexEntriesFor, codexWiring, installCodexHooks, uninstallCodexHooks } from "./codex";
 import {
@@ -745,8 +746,12 @@ describe("applySetting", () => {
         const user = join(dir, "settings.json");
         const named = (on: boolean) => SafeJSON.stringify({ enabledPlugins: { [MODS_PLUGIN]: on } });
 
+        const debug = spyOn(logger, "debug");
+
         // A project, local or --plugin-dir load leaves the user settings silent: the session's mark decides.
         expect(modsPluginDisabled([local, user])).toBe(false);
+        // Missing settings files are the normal case in every hook process and log nothing.
+        expect(debug).not.toHaveBeenCalled();
         writeFileSync(user, named(true));
         writeFileSync(local, named(false));
         expect(modsPluginDisabled([local, user])).toBe(true);
@@ -755,6 +760,9 @@ describe("applySetting", () => {
         expect(modsPluginDisabled([local, user])).toBe(false);
         writeFileSync(local, "not json");
         expect(modsPluginDisabled([local, user])).toBe(true);
+        // The control: a file that exists but does not parse is still logged.
+        expect(debug).toHaveBeenCalledTimes(1);
+        debug.mockRestore();
     });
 
     it("mods watch adds the mods folder to CLAUDE_CODE_PLUGIN_DIRS and takes it out again, keeping the rest", () => {
