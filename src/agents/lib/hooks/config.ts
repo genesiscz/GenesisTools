@@ -406,7 +406,8 @@ export interface CoreHooksConfig {
     /**
      * Rotate the decision log once it passes this many bytes. Append-only with no cap grows
      * forever, and while `logCommands` is `"shadow"` it accumulates every command verbatim.
-     * One generation is kept (`<log>.1`), so the ceiling is twice this.
+     * One generation is kept (`<log>.1`), so the ceiling is twice this. The fired guard decisions
+     * also go to `<log>-fired.jsonl` under the same cap.
      */
     maxLogMB: number;
 }

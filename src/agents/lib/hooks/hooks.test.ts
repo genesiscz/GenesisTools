@@ -55,7 +55,14 @@ import {
     wireSubagentLine,
     wiringStatus,
 } from "./install";
-import { logDecision, releaseRotationLock, setDiagLogPath, setMaxLogBytes, takeRotationLock } from "./log";
+import {
+    firedLogPath,
+    logDecision,
+    releaseRotationLock,
+    setDiagLogPath,
+    setMaxLogBytes,
+    takeRotationLock,
+} from "./log";
 import { readModelFromSettings } from "./model";
 import {
     MODS_PLUGIN,
@@ -1646,6 +1653,27 @@ describe("the decision log is bounded", () => {
         expect(readFileSync(`${path}.1`, "utf8").startsWith("xxx")).toBe(true);
         expect(readFileSync(path, "utf8").trim().split("\n")).toHaveLength(1);
         expect(readFileSync(path, "utf8")).toContain("after rotation");
+
+        rmSync(dir, { recursive: true, force: true });
+    });
+
+    it("keeps every guard decision that is not an allow in a fired log beside it", () => {
+        const dir = mkdtempSync(join(tmpdir(), "gt-log-fired-"));
+        const path = join(dir, "agents-hooks.jsonl");
+        const record = { at: new Date().toISOString(), harness: "claude", reason: "r" };
+
+        logDecision({ ...record, phase: "guard", decision: "allow" }, path);
+        logDecision({ ...record, phase: "guard", decision: "block", toolUseId: "t1" }, path);
+        logDecision({ ...record, phase: "guard", decision: "context", toolUseId: "t2" }, path);
+        logDecision({ ...record, phase: "pre", decision: "block" }, path);
+
+        expect(firedLogPath(path)).toBe(join(dir, "agents-hooks-fired.jsonl"));
+        expect(readFileSync(path, "utf8").trim().split("\n")).toHaveLength(4);
+        const fired = readFileSync(firedLogPath(path), "utf8")
+            .trim()
+            .split("\n")
+            .map((line) => SafeJSON.parse(line));
+        expect(fired.map((r) => r.toolUseId)).toEqual(["t1", "t2"]);
 
         rmSync(dir, { recursive: true, force: true });
     });

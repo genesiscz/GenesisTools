@@ -151,6 +151,7 @@ tools agents hooks rules explain <id>           # why the rule exists, wrong and
 tools agents hooks rules test '<command>'       # what would fire, and the resolved outcome, layer by layer
 tools agents hooks rules check [--corpus 2000]  # every enabled rule against its own examples; replay recent commands
 tools agents hooks log --decision block -n 50   # the decision log
+tools agents hooks log --fired -n 200           # weeks of blocks, notes and warnings (agents-hooks-fired.jsonl)
 tools agents hooks diff log --extended --since 6h   # each diff decision told against its call: command, files, what showed, why
 tools agents hooks install --write              # wire the hooks into ~/.claude/settings.json, additively
 tools agents hooks install --harness codex --write   # the same for Codex (<CODEX_HOME>/hooks.json)
@@ -577,7 +578,9 @@ plaintext sink for whatever a command carries inline. `rules check --corpus` rep
 from the Claude transcripts instead.
 
 The log is also **bounded**. `maxLogBytes` (16 MB) rotates it to `<log>.1` and starts fresh,
-keeping one generation, so the ceiling is twice the cap. The size is checked before EVERY
+keeping one generation, so the ceiling is twice the cap. Allowed calls fill that in about a day,
+so every guard decision that is not an allow also goes to `agents-hooks-fired.jsonl` beside it,
+under the same cap, which holds weeks of firings for an audit. The size is checked before EVERY
 record, not once per process — the count is seeded from one `stat` and then tracked in memory,
 so a long-lived writer rotates too and the hot path still pays no `stat` per record.
 `tools agents hooks doctor` prints the cap.
