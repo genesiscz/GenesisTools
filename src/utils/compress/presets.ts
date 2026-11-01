@@ -6,8 +6,10 @@ import { compressFrameSync, type ZstdParams } from "./zstd";
  * Presets per kind of data. The numbers behind each level are in README.md ("Presets") and come from
  * `scripts/benchmarks/compress/levels.ts` (2026-11-01); change a level only with a new run of that benchmark.
  * Reading costs the same at every level (the frame header carries its size, so the decoder's window is at most one
- * frame), so a level is chosen by who waits for the write: the background daily pass takes the most zstd does, a
- * step every app build waits on stays cheap.
+ * frame), so a level is chosen by what the write costs, not by the read. The rule (README.md, "How the levels were
+ * chosen"): keep the lowest level after which the next measured level costs more than 10 times the CPU per extra
+ * megabyte saved. That is level 9 for text, folders, bundles and databases. Only `max`, which the caller picks by
+ * hand, goes to 22.
  */
 export const PRESET_NAMES = ["text", "tree", "binary", "database", "media", "fast", "max"] as const;
 export type PresetName = (typeof PRESET_NAMES)[number];
@@ -31,9 +33,10 @@ export const PRESETS: Record<PresetName, CompressPreset> = {
     text: {
         name: "text",
         description: "logs, JSON, JSONL, CSV, source files: line-aligned 4 MiB frames for cheap tail reads",
-        // The daily pass (detached, priority 15, nothing waits on it). A real 696 MB day log: 8.3 MB at level 3
-        // (0.8 s of CPU), 6.1 MB at 19 (41 s), 5.8 MB at 22 (69 s, 475 MB peak); every read the same.
-        level: 22,
+        // The daily pass (detached, priority 15). A real 696 MB day log: 8.3 MB at level 3 (0.8 s of CPU), 6.1 MB
+        // at 19 (41 s), 5.8 MB at 22 (69 s). Level 9 keeps most of the gain over 3 for 2 to 3 times its CPU; 19
+        // and 22 cost 20 to 100 times more for a few percent (README.md, Presets).
+        level: 9,
         long: false,
         frameBytes: 4 * MiB,
         lineAligned: true,
@@ -43,10 +46,10 @@ export const PRESETS: Record<PresetName, CompressPreset> = {
     tree: {
         name: "tree",
         description: "folders of source, node_modules, backups of transcripts: 32 MiB frames with long mode",
-        // Written rarely (migrate-home backups, `tools compress pack`), read only on a restore. Level 19 long is 6%
-        // (a migrate-home run) to 17% (src/utils) smaller than level 6, at 3.4-4.7 MB per CPU second; 22 saves under
-        // 0.5% more.
-        level: 19,
+        // Written rarely (migrate-home backups, `tools compress pack`), read only on a restore. Level 9 long is
+        // x5.4 on a migrate-home run and x4.9 on src/utils at 72-92 MB per CPU second; 19 is 4-14% smaller at
+        // 3-5 MB per CPU second, 20 times the CPU.
+        level: 9,
         long: true,
         frameBytes: 32 * MiB,
         lineAligned: false,
@@ -69,8 +72,9 @@ export const PRESETS: Record<PresetName, CompressPreset> = {
         name: "database",
         description: "SQLite and other page-structured stores (copy the database closed or with .backup first)",
         // Only `tools compress pack` of a database copy, read only on a restore. Level 19 is 27% smaller than 9 on a
-        // 22 MB SQLite file, at 2 MB per CPU second; 22 is larger.
-        level: 19,
+        // 22 MB SQLite file but costs 13 times the CPU per extra MB saved (2 against 101 MB per CPU second), which
+        // is over the rule's limit of 10; 22 is larger than 19.
+        level: 9,
         long: false,
         frameBytes: 16 * MiB,
         lineAligned: false,

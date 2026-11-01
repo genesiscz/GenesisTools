@@ -67,10 +67,10 @@ exclusive create and a detached low-priority `bun src/utils/compress/daily-pass.
 
 | Preset | Level | Frames | Written by | Read |
 |---|---|---|---|---|
-| `text` | 22 | 4 MiB, line-aligned, 4 threads | the daily pass (day logs, profiling logs, ai-proxy transcripts, hang captures); `tools compress pack` of a text file | rarely: a day older than a week, a transcript older than yesterday (`jev sessions`, a tail, `ai-proxy calls --show`, `rg -z` by hand) |
-| `tree` | 19, long mode | 32 MiB, 4 threads | migrate-home backups at the end of an applied `tools codex migrate-home`; `tools compress pack <folder>` | on a restore only |
+| `text` | 9 | 4 MiB, line-aligned, 4 threads | the daily pass (day logs, profiling logs, ai-proxy transcripts, hang captures); `tools compress pack` of a text file | rarely: a day older than a week, a transcript older than yesterday (`jev sessions`, a tail, `ai-proxy calls --show`, `rg -z` by hand) |
+| `tree` | 9, long mode | 32 MiB, 4 threads | migrate-home backups at the end of an applied `tools codex migrate-home`; `tools compress pack <folder>` | on a restore only |
 | `binary` | 9, long mode | 32 MiB, 4 threads | retired app bundles, in every `bun run app` | on a rollback only |
-| `database` | 19 | 16 MiB, 4 threads | `tools compress pack` of a database copy | on a restore only |
+| `database` | 9 | 16 MiB, 4 threads | `tools compress pack` of a database copy | on a restore only |
 | `media` | stored | 32 MiB | nothing without `--force` | |
 | `fast` | 1 | 4 MiB, 4 threads | `--preset fast` | |
 | `max` | 22, long mode | 32 MiB, 8 threads | `--preset max`, `tools compress try` | |
@@ -98,34 +98,45 @@ to 88 on 16 cores, so the numbers are CPU time, not wall time.
    The real-command run (`read-paths.ts`) was not repeated at the new levels: it needs several GB of free disk, and
    the disk had under 1 GB free that day. `ripgrepFiles` on a `.zst` costs +20% to +40% against plain rg at every
    level, level 3 included: that is the pipe into rg, and it is why day logs keep 7 days plain.
-2. **`text` 22: the daily pass, where nothing waits.** It runs in a detached process at priority 15
-   (`startDailyCompressionOnce`), and the plain file stays until its `.zst` is verified. Level 19 is 23% to 39%
-   smaller than level 3 on every text sample the pass writes (hang captures 7%). Level 22 is 0% to 2.5% smaller again
-   on the samples and 5% on a whole day log, for 1.1 to 2.2 times the CPU of 19. A real 696 MB day log through the
-   pass's own steps (`compressFile` with `text`, then `verifyCompressedFile`, priority 15, medians of 3, load 26 to
-   101):
+2. **The rule.** Keep the lowest level after which the next measured level costs more than 10 times the CPU per extra
+   MB saved. Taken on the ladder 3, 9, 19, 22 (levels 6, 12 and 15 add almost nothing between 9 and 19): the cost of
+   a step is its extra CPU seconds divided by the extra MB it saves, and a level stays only while the step after it
+   costs more than 10 times the step into it. On every sample below the step 3 to 9 costs 0.13 to 0.52 CPU seconds
+   per MB saved, and the step 9 to 19 costs 7 to 50 (day logs 46 to 50, profiling log 12, failures log 15,
+   transcripts 18 to 19, migrate-home tar 31, SQLite 14, `src/utils` tar 9.8, app bundle 7.3), which is 35 to 165
+   times the step into 9 and always over the limit of 10. Level 22 costs a further 8 to 400 seconds per
+   MB. So the answer is 9 for text, folders, bundles and databases. The owner's objection (2026-11-01) was the same
+   arithmetic: level 3 gave 8.3 MB for 0.8 s of CPU on a real 696 MB day log, 19 gave 6.1 MB for 41 s and 22 gave
+   5.8 MB for 69 s, so the last 2.5 MB cost 68 CPU seconds. A 4 GB ai-proxy session transcript would cost about 10
+   CPU minutes at 22. That is why 19 and 22 are gone as defaults.
+3. **`text` 9: the daily pass.** The real 1.0 GB day log of 2026-11-01 (a copy of the live file, 1,045,906,400
+   bytes) through the pass's own steps (`compressFile` with the `text` frames, then `verifyCompressedFile`, priority
+   15, a fresh process per run, medians of 3, `uptime` load averages 142 / 180 / 195 at the start and 139 / 173 /
+   191 at the end, so wall time is noise and CPU is the measure):
 
    | Level | Output | CPU | Wall | Peak RSS | Verify CPU |
    |---|---|---|---|---|---|
-   | 3 | 8.3 MB (x84) | 0.8 s | 1.3 s | 228 MB | 0.34-0.40 s |
-   | 19 | 6.1 MB (x114) | 41 s | 24 s | 407 MB | 0.35-0.36 s |
-   | 22 | 5.8 MB (x120) | 69 s | 43 s | 475 MB | 0.35-0.39 s |
+   | 3 | 11.1 MB (x94) | 0.91 s | 0.58 s | 261 MB | 0.51 s |
+   | 9 | 9.3 MB (x113) | 1.64 s | 0.95 s | 298 MB | 0.51 s |
+   | 19 | 8.5 MB (x124) | 51.0 s | 13.5 s | 449 MB | 0.53 s |
 
-   The largest file the pass has met, a 4 GB ai-proxy session transcript, costs about 10 minutes of CPU at level 22
-   (6.7 MB per CPU second; 9 minutes at 19). A `tools compress pack` of a large text file by hand is slow at this
-   level: pass `--level` or `--preset fast` when the time to write matters.
-3. **`tree` 19 long: written rarely, kept for months, read only on a restore.** Level 19 long is 6% smaller than
-   level 6 long on a migrate-home run and 17% smaller on `src/utils`. Level 22 saves 0.2% to 0.4% more at 1.3 to 1.7
-   times the CPU and twice the memory (565 MB). Cost: about 3.5 CPU minutes per 1 GB run, roughly a minute of wall
-   time on 4 free cores at the end of `tools codex migrate-home` (4 such packs in the ledger since 2026-10-13).
-   Without long mode the migrate-home run compressed x3.0 to x3.7 below level 19, against x5.1 to x5.5 with it.
-4. **`binary` 9 long: every app build waits for it.** One retired bundle of about 145 MB is packed per `bun run app`.
+   Level 9 saves 1.8 MB over level 3 for 0.7 s more CPU (0.4 s per MB). Level 19 saves 0.8 MB more for 49 s more CPU
+   (59 s per MB, 150 times the step before). Every output decoded to the file's sha256 in `verifyCompressedFile`.
+   The earlier run on the 696 MB day (3: 8.3 MB, 0.8 s; 19: 6.1 MB, 41 s; 22: 5.8 MB, 69 s) gave the same shape and
+   is the reason the high levels were dropped. A `tools compress pack` of a large text file by hand is now cheap;
+   pass `--preset max` for the most zstd does.
+4. **`tree` 9 long: written rarely, read only on a restore.** Level 9 long gives x5.4 on a migrate-home run and x4.9
+   on `src/utils` at 72 to 92 MB per CPU second. Level 19 long is 4% (migrate-home) to 14% (`src/utils`) smaller at
+   3 to 5 MB per CPU second, 20 times the CPU (about 3.5 CPU minutes per GB run against 10 s). Without long mode the
+   migrate-home run compressed x3.0 to x3.7 below level 19, against x5.1 to x5.5 with it, so long mode stays.
+5. **`binary` 9 long: every app build waits for it.** One retired bundle of about 145 MB is packed per `bun run app`.
    Level 9 long is 11% smaller than level 3 long for about 1.3 s more CPU; level 12 saves 3% more for twice the CPU,
-   level 19 saves 6% more for 40 s per build. At most 5 packed bundles are kept for 14 days, so the whole difference
-   between 9 and 19 is about 20 MB.
-5. **`database` 19: by hand only.** Level 19 is 27% smaller than level 9 on the SQLite sample at 2 MB per CPU second
-   (about 8 CPU minutes per GB); level 22 is larger than 19 there.
-6. **`max` 22 long: the most zstd does**, for an archive packed by hand to keep for long. `fast` stays at level 1,
+   level 19 saves 6% more for 40 s per build.
+6. **`database` 9: the rule gives 9, though 19 is 27% smaller.** On the 22 MB SQLite sample level 19 saves 0.8 MB
+   more than 9 and costs 13 times the CPU per extra MB (2.0 against 101 MB per CPU second, 8 CPU minutes per GB),
+   which is over the limit of 10. It is a manual pack only, so `--level 19` is one flag away for a database that
+   will be kept for years.
+7. **`max` 22 long: the most zstd does**, opt-in only (`--preset max`, `tools compress try`). `fast` stays at level 1,
    `media` stores.
 
 Compression per level (cells: ratio, then MB compressed per CPU second, all threads counted):
