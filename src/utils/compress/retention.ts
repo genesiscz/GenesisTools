@@ -207,12 +207,13 @@ export async function applyFolderRetention(
 
             if (!check.ok) {
                 retire(item.archive);
-                const reason = `archive check failed: ${check.missing.length} missing, ${check.mismatched.length} different`;
+                const reason = `archive check failed: ${check.missing.length} missing, ${check.mismatched.length} different, ${check.extra.length} extra`;
                 logger.warn(
                     {
                         folder: item.folder,
                         missing: check.missing.slice(0, 5),
                         mismatched: check.mismatched.slice(0, 5),
+                        extra: check.extra.slice(0, 5),
                     },
                     `[compress] ${reason}`
                 );
