@@ -51,7 +51,7 @@ export function queryProfileLog(query: ProfileQuery): ProfileEntry[] {
     const needle = query.grep?.toLowerCase();
     const top = query.top !== undefined && Number.isFinite(query.top) && query.top > 0 ? query.top : null;
 
-    for (const file of listDayLogs({ profiling: true, dir: query.dir })) {
+    for (const file of listDayLogs({ kind: "profiling", dir: query.dir })) {
         if (!wanted.has(file.day)) {
             continue;
         }
