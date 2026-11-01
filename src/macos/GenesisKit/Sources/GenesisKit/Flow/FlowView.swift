@@ -671,14 +671,27 @@ private struct FlowInsightsPane: View {
     }
 }
 
+/// The control of a suggestion row that holds the keyboard focus.
+enum FlowSuggestionFocus: Hashable {
+    case replacement, add, dismiss
+
+    /// Whether the row stays live without the pointer: while the keyboard is in the replacement field or on Add or
+    /// Dismiss, or while a replacement is typed. The field starts empty (the proposed spelling is only its
+    /// placeholder), so a row that rested until something was typed would leave a keyboard user no Add to tab to.
+    static func keepsRowLive(replacement: String, focus: FlowSuggestionFocus?) -> Bool {
+        focus != nil || !replacement.isEmpty
+    }
+}
+
 /// One suggestion, from values: the pane reads the session, so a publish of it redraws only a suggestion that changed.
-/// Add and Dismiss are buttons while the pointer is on the row or a replacement is typed (`liveRow`), so the keyboard
-/// still reaches Add after typing; at rest the same labels, which VoiceOver still presses.
+/// Add and Dismiss are buttons while the pointer is on the row, the keyboard is in it, or a replacement is typed
+/// (`liveRow`), so Tab reaches Add from the empty field; at rest the same labels, which VoiceOver still presses.
 private struct FlowSuggestionRow: View, Equatable {
     let suggestion: FlowSuggestion
     let accept: (_ replacement: String) -> Void
     let dismiss: () -> Void
     @State private var replacement: String = ""
+    @FocusState private var focus: FlowSuggestionFocus?
 
     static func == (a: FlowSuggestionRow, b: FlowSuggestionRow) -> Bool {
         a.suggestion == b.suggestion
@@ -694,6 +707,7 @@ private struct FlowSuggestionRow: View, Equatable {
                 .foregroundStyle(Color.settingsTextMuted)
             TextField(suggestion.suggested, text: $replacement)
                 .textFieldStyle(.plain)
+                .focused($focus, equals: .replacement)
                 .font(GenTypography.mono(12))
                 .frame(width: 150)
                 .padding(.horizontal, GenSpacing.sm)
@@ -713,19 +727,21 @@ private struct FlowSuggestionRow: View, Equatable {
             } label: {
                 Text("Add")
             }
+            .focused($focus, equals: .add)
             .font(GenTypography.caption(11, weight: .semibold))
             .foregroundStyle(Color.jarvisTeal)
 
             LiveButton(tooltip: "Stop suggesting this word", pressable: true, action: dismiss) {
                 Text("Dismiss")
             }
+            .focused($focus, equals: .dismiss)
             .font(GenTypography.caption(11))
             .foregroundStyle(Color.settingsTextMuted)
         }
         .padding(GenSpacing.md)
         .background(Color.settingsCard)
         .clipShape(RoundedRectangle(cornerRadius: GenRadius.sm))
-        .liveRow(selected: !replacement.isEmpty)
+        .liveRow(selected: FlowSuggestionFocus.keepsRowLive(replacement: replacement, focus: focus))
     }
 }
 
