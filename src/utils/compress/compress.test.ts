@@ -27,8 +27,10 @@ import {
     readFirstLines,
     readLastLines,
     readLines,
+    readLinesBackwardSync,
     readLinesSync,
     readTextChunks,
+    readWholeTextSync,
     storedFilePath,
 } from "@genesiscz/utils/fs/read-lines";
 import { SafeJSON } from "@genesiscz/utils/json";
@@ -949,6 +951,40 @@ describe("day logs", () => {
         expect(parseDayLogName("app-perf.log")).toBeUndefined();
         expect(storedFilePath(join(dir, "2026-10-11-failures.jsonl"))).toBe(join(dir, "2026-10-11-failures.jsonl.zst"));
         expect(storedFilePath(join(dir, "2026-10-09.log"))).toBeUndefined();
+    });
+
+    it("every reader opens a plain name whose file the daily pass replaced by its .zst", async () => {
+        const dir = scratch("twin");
+        const plain = join(dir, "2026-10-10.log");
+        writeFileSync(plain, logText(50));
+        await compressFile({ source: plain, frameBytes: 1024 });
+        unlinkSync(plain);
+        const lines = logText(50).split("\n");
+
+        expect([...readLinesSync(plain)]).toEqual(lines);
+        expect(readWholeTextSync(plain)).toBe(logText(50));
+        expect(readFirstLines(plain).lines).toEqual(lines);
+        expect(readLastLines(plain, { maxBytes: 200 }).lines).toEqual(
+            readLastLines(`${plain}.zst`, { maxBytes: 200 }).lines
+        );
+        expect([...readLinesBackwardSync(plain)].reverse()).toEqual(lines);
+        const chunks: Buffer[] = [];
+
+        for await (const chunk of readTextChunks(plain)) {
+            chunks.push(Buffer.from(chunk));
+        }
+
+        expect(Buffer.concat(chunks).toString()).toBe(logText(50));
+        expect(() => [...readLinesSync(join(dir, "2026-10-09.log"))]).toThrow("ENOENT");
+
+        if (ripgrepBinary()) {
+            const run = await ripgrepFiles({
+                rg: ripgrepBinary()!,
+                args: ["--no-config", "--no-filename", "-F", '"n":7,'],
+                files: [plain],
+            });
+            expect([run.code, run.stdout]).toEqual([0, `${lines[7]}\n`]);
+        }
     });
 
     it("the logger closes its day file when the day ends, and no program it execs inherits the file", async () => {
