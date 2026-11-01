@@ -711,7 +711,7 @@ public final class WidgetModel: ObservableObject {
     public var preferredHeight: CGFloat {
         if section != "Inbox" { return 660 }
         guard let card else { return 440 }
-        let bodyLines = min(8, card.body.count / 65)
+        let bodyLines = min(8, card.fullText.count / 65)
         let choices = card.choices.count * 38
         let forms = (card.formItems ?? []).reduce(0) { $0 + 48 + ($1.choices?.count ?? 0) * 32 }
         let media = card.attachments.isEmpty ? 0 : 110
@@ -3212,7 +3212,7 @@ public final class WidgetModel: ObservableObject {
                 }
             }
             do {
-                try (card.title + "\n" + card.body).write(to: file, atomically: true, encoding: .utf8)
+                try (card.title + "\n" + card.fullText).write(to: file, atomically: true, encoding: .utf8)
                 let result = try await self.bridge.run(
                     subcommand: "hub", args: self.widgetArgs + ["readback", "--input", file.path],
                     timeoutSeconds: 600)
