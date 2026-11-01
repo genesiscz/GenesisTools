@@ -1,5 +1,6 @@
 import { formatLimitLine } from "@app/ai/lib/accounts/last-usage";
 import { resolveRangeFlag } from "@app/ai/lib/usage/range-flag";
+import { absentLimitText } from "@genesiscz/utils/ai/providers/account-features";
 import { PROVIDER_ALIASES, resolveProviderAlias } from "@genesiscz/utils/ai/providers/aliases";
 import { pollAccounts, usagePlugins } from "@genesiscz/utils/ai/usage-poll/poll";
 import { suggestEnumFlag } from "@genesiscz/utils/cli";
@@ -95,7 +96,11 @@ export function registerAiUsageCommand(usage: Command): void {
                 }
 
                 for (const snapshot of snapshots) {
-                    const windows = snapshot.limits.map((w) => `${w.label} ${formatLimitLine(w)}`).join("  ·  ");
+                    const windows = [
+                        ...snapshot.limits.map((w) => `${w.label} ${formatLimitLine(w)}`),
+                        // A window the account does not have: named, never a 0% window.
+                        ...(snapshot.absentLimits ?? []).map(absentLimitText),
+                    ].join("  ·  ");
                     // `join` on an empty list is "", not undefined, so `??` never fell
                     // through and an account with no windows printed a bare colon —
                     // indistinguishable from a healthy account at 0% (gap/cli).

@@ -398,6 +398,26 @@ describe("auto account", () => {
         expect(candidates.find((c) => c.target.account.id === "acc_max")?.why).toBe("5h 100% used (full)");
     });
 
+    test("an account without a 5-hour limit ranks by its weekly room and says it has no 5h limit", async () => {
+        writeConfig({});
+        const candidates = await autoAccountCandidates({
+            snapshots: [
+                usage("acc_max", [
+                    { key: "five_hour", label: "5h", kind: "session", percentUsed: 60 },
+                    { key: "seven_day", label: "Weekly", kind: "weekly", percentUsed: 10 },
+                ]),
+                {
+                    ...usage("acc_max2", [{ key: "seven_day", label: "Weekly", kind: "weekly", percentUsed: 30 }]),
+                    absentLimits: [{ key: "five_hour", kind: "session" }],
+                },
+            ],
+        });
+        const ids = candidates.map((candidate) => candidate.target.account.id);
+
+        expect(ids.indexOf("acc_max2")).toBeLessThan(ids.indexOf("acc_max"));
+        expect(candidates.find((c) => c.target.account.id === "acc_max2")?.why).toBe("Weekly 30% used, no 5h limit");
+    });
+
     test("prefers Claude, then Codex, then Grok while each keeps over 10% weekly room", async () => {
         const sub = (id: string, provider: string) => account(id, id, { provider });
         writeConfig({

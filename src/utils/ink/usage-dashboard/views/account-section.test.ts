@@ -1,7 +1,7 @@
 import { describe, expect, test } from "bun:test";
 import type { AccountUsageSnapshot } from "@genesiscz/utils/ai/providers/account-features";
 import { formatResetCountdown, windowTail } from "../lib/reset-countdown";
-import { accountHeaderParts, planRenewalLine } from "./account-section";
+import { absentRows, accountHeaderParts, planRenewalLine } from "./account-section";
 
 function snapshot(overrides: Partial<AccountUsageSnapshot>): AccountUsageSnapshot {
     return {
@@ -65,5 +65,21 @@ describe("windowTail", () => {
     test("stays empty for a spent window with no reset time", () => {
         expect(windowTail({ percentUsed: 12 }, now)).toBe("");
         expect(formatResetCountdown("not a date", now)).toBeNull();
+    });
+});
+
+describe("absentRows", () => {
+    const absent = snapshot({
+        provider: "anthropic-sub",
+        limits: [{ key: "seven_day", label: "Weekly (all)", kind: "weekly", percentUsed: 30 }],
+        absentLimits: [{ key: "five_hour", kind: "session" }],
+    });
+
+    test("a prominent window the account does not have gets its own row; a row without the field gets none", () => {
+        expect(absentRows(absent, ["five_hour", "seven_day"])).toEqual([{ key: "five_hour", kind: "session" }]);
+        expect(absentRows(absent, [])).toEqual([{ key: "five_hour", kind: "session" }]);
+        expect(absentRows(absent, ["seven_day"])).toEqual([]);
+        // A row written before the field existed is unknown, not absent.
+        expect(absentRows(snapshot({}), ["five_hour"])).toEqual([]);
     });
 });
