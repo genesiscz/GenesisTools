@@ -1293,40 +1293,81 @@ describe("files the command NAMES rather than works in", () => {
         expect(result.skipped.join(" ")).toContain("named-path cap");
     });
 
-    it("never copies a named cloud placeholder or a file under a cloud storage folder, so an ls downloads nothing", () => {
-        // A sparse file is the stand-in for a dataless placeholder: bytes, no blocks. A copy would read it, and on a
-        // real placeholder that read downloads the file (Dropbox, 2026-11-01).
-        const placeholder = join(outside, "placeholder.bin");
-        const fd = openSync(placeholder, "w");
-
-        ftruncateSync(fd, 8192);
-        closeSync(fd);
-
+    it("never copies a named file under a cloud storage folder, also one reached through a symlink or ..", () => {
+        // `~/Dropbox` is a symlink into `~/Library/CloudStorage`, and `statSync` and `copyFileSync` follow it, so the
+        // spelling of the argument alone does not decide where the read lands.
         const cloudDir = join(outside, "Library", "CloudStorage", "Provider-work");
         const cloudNote = join(cloudDir, "note.md");
+        const linked = join(outside, "provider-link");
+        const linkedNote = join(linked, "note.md");
+        const dotted = `${outside}/Library/Other/../CloudStorage/Provider-work/note.md`;
         const local = join(outside, "local.md");
+        const localLink = join(outside, "local-link.md");
 
         mkdirSync(cloudDir, { recursive: true });
+        mkdirSync(join(outside, "Library", "Other"), { recursive: true });
         writeFileSync(cloudNote, "alpha\n");
         writeFileSync(local, "alpha\n");
-        expect(statSync(placeholder).blocks).toBe(0);
+        symlinkSync(cloudDir, linked);
+        symlinkSync(local, localLink);
 
         // A command that writes: an `ls` takes no copy at all since 2026-11-01, so it would prove nothing here.
-        const current = payload({ command: `touch ${placeholder} ${cloudNote} ${local}` });
+        const current = payload({ command: `touch ${cloudNote} ${linkedNote} ${dotted} ${local} ${localLink}` });
 
         calls += 1;
         current.toolUseId = `call-cloud-${calls}`;
 
-        const result = capturePre(current, DEFAULT_HOOKS_CONFIG.diff);
-        const copies = readdirSync(join(callDir(current.harness, current.sessionId ?? "", current.toolUseId), "named"));
-        const skipped = result.skipped.join("\n");
+        try {
+            const result = capturePre(current, DEFAULT_HOOKS_CONFIG.diff);
+            const dir = join(callDir(current.harness, current.sessionId ?? "", current.toolUseId), "named");
+            const skipped = result.skipped.join("\n");
 
-        // The local file is the positive control: the pass ran and copies an ordinary file.
-        expect(result.named).toBe(1);
-        expect(copies).toEqual(["1"]);
-        expect(skipped).toContain(`${placeholder}: 8192 bytes in 0 blocks, a cloud placeholder`);
-        expect(skipped).toContain(`${cloudNote}: under a cloud storage folder`);
+            // The positive controls: a local file, and a symlink to it, are still copied.
+            expect(result.named).toBe(2);
+            expect(readdirSync(dir).sort()).toEqual(["1", "2"]);
+            expect(skipped).toContain(`${cloudNote}: under a cloud storage folder`);
+            expect(skipped).toContain(`${linkedNote}: under a cloud storage folder`);
+            expect(skipped).toContain(`${dotted}: under a cloud storage folder`);
+            expect(skipped).not.toContain(local);
+        } finally {
+            rmSync(linked, { force: true });
+            rmSync(localLink, { force: true });
+        }
     });
+
+    // `isDatalessFile` is macOS only, so on Linux a sparse file is an ordinary file and is copied.
+    it.skipIf(process.platform !== "darwin")(
+        "never copies a named cloud placeholder, so a command that names one downloads nothing",
+        () => {
+            // A sparse file is the stand-in for a dataless placeholder: bytes, no blocks. A copy would read it, and on a
+            // real placeholder that read downloads the file (Dropbox, 2026-11-01).
+            const placeholder = join(outside, "placeholder.bin");
+            const fd = openSync(placeholder, "w");
+
+            ftruncateSync(fd, 8192);
+            closeSync(fd);
+
+            const local = join(outside, "local.md");
+
+            writeFileSync(local, "alpha\n");
+            expect(statSync(placeholder).blocks).toBe(0);
+
+            const current = payload({ command: `touch ${placeholder} ${local}` });
+
+            calls += 1;
+            current.toolUseId = `call-placeholder-${calls}`;
+
+            const result = capturePre(current, DEFAULT_HOOKS_CONFIG.diff);
+            const copies = readdirSync(
+                join(callDir(current.harness, current.sessionId ?? "", current.toolUseId), "named")
+            );
+
+            // The local file is the positive control: the pass ran and copies an ordinary file.
+            expect(result.named).toBe(1);
+            expect(copies).toEqual(["1"]);
+            expect(result.skipped.join("\n")).toContain(`${placeholder}: 8192 bytes in 0 blocks, a cloud placeholder`);
+        }
+    );
 
     it("never makes a capture root of a repository inside a cloud storage folder", () => {
         const cloudRepo = join(outside, "Library", "Mobile Documents", "com~apple~CloudDocs", "repo");
@@ -1344,6 +1385,25 @@ describe("files the command NAMES rather than works in", () => {
 
         expect(result.roots).toEqual([]);
         expect(result.skipped.join("\n")).toContain(`${cloudRepo}: under a cloud storage folder, not captured`);
+
+        // Reached through a symlink, the folder is refused as the command names it, before `git` runs there.
+        const linked = join(outside, "cloud-repo-link");
+
+        symlinkSync(cloudRepo, linked);
+
+        try {
+            const viaLink = payload({ cwd: linked, command: "true" });
+
+            calls += 1;
+            viaLink.toolUseId = `call-cloud-root-${calls}`;
+
+            const linkedResult = capturePre(viaLink, DEFAULT_HOOKS_CONFIG.diff);
+
+            expect(linkedResult.roots).toEqual([]);
+            expect(linkedResult.skipped.join("\n")).toContain(`${linked}: under a cloud storage folder, not captured`);
+        } finally {
+            rmSync(linked, { force: true });
+        }
     });
 
     it("does not read a path out of a heredoc BODY", () => {
@@ -1818,30 +1878,46 @@ describe("the capture budget sees what an entry really weighs", () => {
         expect(result.skipped.join(" ")).toContain("1 of 2 dirty entries left out");
     });
 
-    it("leaves a dirty cloud placeholder out of the capture, since a copy would read it and a read downloads it", () => {
-        const placeholder = join(tree, "placeholder.bin");
-        const fd = openSync(placeholder, "w");
+    // `isDatalessFile` is macOS only, so on Linux a sparse file is an ordinary file and goes into the capture.
+    it.skipIf(process.platform !== "darwin")(
+        "leaves dirty cloud placeholders out of the capture and names them, since a copy would read them and a read downloads them",
+        () => {
+            const placeholders = [1, 2, 3, 4, 5, 6].map((index) => join(tree, `placeholder-${index}.bin`));
 
-        ftruncateSync(fd, 8192);
-        closeSync(fd);
+            for (const placeholder of placeholders) {
+                const fd = openSync(placeholder, "w");
 
-        const current = payload({ cwd: tree, toolUseId: "budget-placeholder" });
+                ftruncateSync(fd, 8192);
+                closeSync(fd);
+            }
 
-        calls += 1;
+            const current = payload({ cwd: tree, toolUseId: "budget-placeholder" });
 
-        try {
-            const result = capturePre(current, DEFAULT_HOOKS_CONFIG.diff);
-            const dir = callDir(current.harness, current.sessionId ?? "", current.toolUseId ?? "");
+            calls += 1;
 
-            expect(result.skipped.join(" ")).toContain("1 hold cloud placeholders a read would download");
-            expect(readFileSync(join(dir, "1.left"), "utf8")).toContain("placeholder.bin");
-            expect(existsSync(join(dir, "1", "placeholder.bin"))).toBe(false);
-            // The control: the ordinary dirty file in the same root still goes into the capture.
-            expect(existsSync(join(dir, "1", "note.md"))).toBe(true);
-        } finally {
-            rmSync(placeholder, { force: true });
+            try {
+                const result = capturePre(current, DEFAULT_HOOKS_CONFIG.diff);
+                const dir = callDir(current.harness, current.sessionId ?? "", current.toolUseId ?? "");
+
+                // The reason names the first five and counts the rest; the `.left` file has every one.
+                expect(result.skipped.join(" ")).toContain(
+                    "6 hold cloud placeholders a read would download (placeholder-1.bin, placeholder-2.bin, placeholder-3.bin, placeholder-4.bin, placeholder-5.bin and 1 more)"
+                );
+                expect(readFileSync(join(dir, "1.left"), "utf8")).toContain("placeholder-6.bin");
+
+                for (const placeholder of placeholders) {
+                    expect(existsSync(join(dir, "1", basename(placeholder)))).toBe(false);
+                }
+
+                // The control: the ordinary dirty file in the same root still goes into the capture.
+                expect(existsSync(join(dir, "1", "note.md"))).toBe(true);
+            } finally {
+                for (const placeholder of placeholders) {
+                    rmSync(placeholder, { force: true });
+                }
+            }
         }
-    });
+    );
 
     it("does not blame the command for earlier edits to a large tracked file it left out", () => {
         const big = join(tree, "big.txt");

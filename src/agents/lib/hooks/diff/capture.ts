@@ -325,6 +325,9 @@ function captureList({
  */
 const MAX_RECORDED_NAMES = 5_000;
 
+/** Placeholder entries the skipped reason names before it only counts the rest. */
+const NAMED_PLACEHOLDERS = 5;
+
 /**
  * Which dirty files fit the budget, SMALLEST FIRST.
  *
@@ -373,15 +376,15 @@ function fillCapture({
 
     const take: string[] = [];
     const left: string[] = [];
+    const placeholders: string[] = [];
     let copied = 0;
-    let placeholders = 0;
     let failed = 0;
 
     for (const entry of sized) {
         // A clone of a dataless file makes no sense and a copy reads it, which downloads it.
         if (entry.placeholder) {
             left.push(entry.file);
-            placeholders += 1;
+            placeholders.push(entry.file);
             continue;
         }
 
@@ -418,14 +421,19 @@ function fillCapture({
 
     const why: string[] = [];
 
-    if (left.length > placeholders + failed) {
+    if (left.length > placeholders.length + failed) {
         why.push(
             `over the ${config.clone.maxFileMB} MB per-entry clone / ${config.maxCaptureFileMB} MB per-entry copy / ${config.maxCaptureMB} MB total copied / ${config.maxCaptureFiles} entry cap`
         );
     }
 
-    if (placeholders > 0) {
-        why.push(`${placeholders} hold cloud placeholders a read would download`);
+    // Named, so the log says which file was refused; the full list is in the `.left` file.
+    if (placeholders.length > 0) {
+        const shown = placeholders.slice(0, NAMED_PLACEHOLDERS).join(", ");
+        const more =
+            placeholders.length > NAMED_PLACEHOLDERS ? ` and ${placeholders.length - NAMED_PLACEHOLDERS} more` : "";
+
+        why.push(`${placeholders.length} hold cloud placeholders a read would download (${shown}${more})`);
     }
 
     if (failed > 0) {
