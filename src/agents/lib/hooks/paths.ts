@@ -77,6 +77,11 @@ export function mentionsRoot(): string {
     return join(tmpdir(), "GenesisTools", "ai", "hooks", "mentions");
 }
 
+/** When a post phase last swept abandoned captures (`sweepAbandonedCaptures`): its mtime is the time. */
+export function sweepStampPath(): string {
+    return join(tmpdir(), "GenesisTools", "ai", "hooks", "sweep.stamp");
+}
+
 /** The unpushed reminder's per-repository cache and its once-per-interval claims. */
 export function unpushedRoot(): string {
     return join(tmpdir(), "GenesisTools", "ai", "hooks", "unpushed");

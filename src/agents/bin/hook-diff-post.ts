@@ -4,6 +4,7 @@ import { SafeJSON } from "@genesiscz/utils/json";
 import { fileToolSource } from "../lib/changes/log";
 import { loadHooksConfig, megabytes } from "../lib/hooks/config";
 import { composePostDiff, noteFileToolInput, recordFileToolChange } from "../lib/hooks/diff/run";
+import { sweepAbandonedCaptures } from "../lib/hooks/gc";
 import { logDecision, setDiagLogPath, setMaxLogBytes } from "../lib/hooks/log";
 import { isTerminalTool, normalizeEvent, parseHookPayload } from "../lib/hooks/payload";
 
@@ -62,4 +63,23 @@ for (const item of [...flushed, decision]) {
 if (message && !config.shadow) {
     // systemMessage is the only field the USER sees; additionalContext is model-only.
     process.stdout.write(SafeJSON.stringify({ systemMessage: message }));
+}
+
+// After the message: the captures of calls whose post phase never ran, at most once per ten minutes.
+const swept = sweepAbandonedCaptures({ now: Date.now() });
+
+if (swept && swept.removed.length > 0) {
+    logDecision(
+        {
+            at: new Date().toISOString(),
+            phase: "post",
+            harness: payload.harness,
+            session: payload.sessionId,
+            decision: "swept",
+            reason: "captures whose post phase never ran, or past the horizon",
+            staleCaptures: swept.removed.length,
+            bytes: swept.bytes,
+        },
+        config.logPath
+    );
 }

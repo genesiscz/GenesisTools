@@ -39,7 +39,7 @@ import {
     loadHooksConfig,
     wantedEntryKinds,
 } from "./config";
-import { collectStaleCaptures, parseHorizon } from "./gc";
+import { collectStaleCaptures, parseHorizon, sweepAbandonedCaptures } from "./gc";
 import { evaluateGuard } from "./guard";
 import { lastSeenPerHarness } from "./harnesses";
 import {
@@ -915,6 +915,61 @@ describe("collectStaleCaptures", () => {
 
         rmSync(root, { recursive: true, force: true });
         rmSync(elsewhere, { recursive: true, force: true });
+    });
+
+    it("removes a capture whose post phase never ran after an hour, and keeps a background call's until the horizon", () => {
+        // A foreground Bash call ends within its timeout (10 minutes in Claude Code), so a capture an hour old with
+        // no `background.json` belongs to a call whose post phase never ran: an interrupted turn, a killed hook.
+        // A background call's capture waits for its task, which can run for hours.
+        const root = mkdtempSync(join(tmpdir(), "gt-hooks-gc-abandoned-"));
+        const past = new Date(Date.now() - 2 * 3_600_000);
+        const call = (name: string) => join(root, "claude", "sess", "diff", name);
+
+        for (const name of ["abandoned", "background", "live"]) {
+            mkdirSync(join(call(name), "1"), { recursive: true });
+            writeFileSync(join(call(name), "1", "kept.ts"), "x");
+        }
+
+        writeFileSync(join(call("background"), "background.json"), "{}");
+        utimesSync(call("abandoned"), past, past);
+        utimesSync(call("background"), past, past);
+
+        const result = collectStaleCaptures({ now: Date.now(), abandonedMs: 3_600_000, root, write: true });
+
+        expect(result.removed.map((entry) => entry.path)).toEqual([call("abandoned")]);
+        expect(existsSync(call("background"))).toBe(true);
+        expect(existsSync(call("live"))).toBe(true);
+
+        rmSync(root, { recursive: true, force: true });
+    });
+
+    it("sweeps from the post phase at most once per interval, by a stamp beside the data root", () => {
+        const base = mkdtempSync(join(tmpdir(), "gt-hooks-gc-sweep-"));
+        const root = join(base, "data");
+        const stamp = join(base, "sweep.stamp");
+        const abandoned = (name: string) => {
+            const dir = join(root, "claude", "sess", "diff", name);
+            const past = new Date(Date.now() - 2 * 3_600_000);
+
+            mkdirSync(dir, { recursive: true });
+            utimesSync(dir, past, past);
+            return dir;
+        };
+        const first = abandoned("one");
+        const now = Date.now();
+
+        expect(sweepAbandonedCaptures({ now, root, stamp })?.removed.map((entry) => entry.path)).toEqual([first]);
+
+        const second = abandoned("two");
+
+        // Within the interval: one `stat` of the stamp, no walk.
+        expect(sweepAbandonedCaptures({ now: now + 60_000, root, stamp })).toBeNull();
+        expect(existsSync(second)).toBe(true);
+        expect(
+            sweepAbandonedCaptures({ now: now + 11 * 60_000, root, stamp })?.removed.map((entry) => entry.path)
+        ).toEqual([second]);
+
+        rmSync(base, { recursive: true, force: true });
     });
 
     it("a session sweep ignores age and touches only that session", () => {
