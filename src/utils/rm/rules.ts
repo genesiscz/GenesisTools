@@ -1,12 +1,13 @@
 import { type Dirent, existsSync, lstatSync, readdirSync, readFileSync } from "node:fs";
-import { homedir } from "node:os";
+import { homedir, tmpdir } from "node:os";
 import { basename, dirname, isAbsolute, join, parse, relative, resolve } from "node:path";
 import type { TranscriptAnchor } from "@genesiscz/utils/agent/source-anchor";
+import { toolCommand } from "@genesiscz/utils/cli/tool-command";
 import { SafeJSON } from "@genesiscz/utils/json";
 import { logger } from "@genesiscz/utils/logger";
 import { nativeHome } from "@genesiscz/utils/providers/session-paths";
 import { genesisToolsDir } from "@genesiscz/utils/storage/root";
-import { pendingAsideDirs, pendingAsideFor, sessionScratchRoots } from "./aside";
+import { asideRootFor, pendingAsideDirs, pendingAsideFor, sessionScratchRoots } from "./aside";
 import { isRootActive, type RmConfig, type RmPreset } from "./config";
 import {
     canonicalPath,
@@ -16,9 +17,10 @@ import {
     isSameOrInside,
     pathSegments,
     realOrSelf,
+    sharedTempRoot,
     VOLUME_TRASH_DIR,
 } from "./paths";
-import { matchPreset, presetsFor } from "./presets";
+import { allPresets, matchPreset, presetsFor } from "./presets";
 
 export type RmVerdictKind = "allow" | "ask" | "deny";
 
@@ -427,13 +429,73 @@ export const RM_RULES: readonly RmRule[] = [
     },
     {
         id: "default",
-        evaluate: () => ({
-            kind: "ask",
-            rule: "default",
-            reason: "no rule allows it: a preset, this session's scratch or own files, or a trusted root",
-        }),
+        evaluate: (target, ctx) => ({ kind: "ask", rule: "default", reason: defaultAskReason(target, ctx) }),
     },
 ];
+
+/** The general reason of the default rule; the listing hides it on every row and prints its legend once. */
+const DEFAULT_ASK_REASON = "no rule allows it: a preset, this session's scratch or own files, or a trusted root";
+
+/** A full session id as the harnesses write it: a UUID. */
+const SESSION_UUID = /^[0-9a-f]{8}-[0-9a-f]{4}-[0-9a-f]{4}-[0-9a-f]{4}-[0-9a-f]{12}$/i;
+
+/**
+ * Why no rule allowed `target`, naming what nearly matched: agents guessed wrong from the general sentence (one blamed
+ * curl when the cause was a scratch folder named with an 8-character id). The verdict stays `ask`; only words change.
+ */
+function defaultAskReason(target: RmTarget, ctx: RmRuleContext): string {
+    const { caller } = ctx;
+    const sessionId = caller.isInAgent ? caller.sessionId : null;
+
+    if (sessionId) {
+        for (const root of ctx.scratchRoots) {
+            const scratchRoot = realOrSelf(root);
+
+            if (!isInside(target.canonical, scratchRoot)) {
+                continue;
+            }
+
+            const [project, level] = pathSegments(relative(scratchRoot, target.canonical));
+            // Named the way an agent writes it (/tmp/cc/...), not resolved (/private/tmp/...).
+            const own = `${join(root, project ?? "", sessionId)}/`;
+
+            if (level && level !== sessionId && level.length >= 4 && sessionId.startsWith(level)) {
+                return `the scratch folder must use the full session id: ${own}`;
+            }
+
+            if (level && level !== sessionId && SESSION_UUID.test(level)) {
+                return `another session's scratch (${level.slice(0, 8)}): only that session deletes there without asking`;
+            }
+
+            if (level !== sessionId) {
+                return `no session folder: write scratch to ${own}`;
+            }
+        }
+
+        const tempRoots = new Set([realOrSelf(sharedTempRoot()), realOrSelf(tmpdir())]);
+
+        if (tempRoots.has(dirname(target.canonical))) {
+            const what = target.kind === "dir" ? "folder" : "file";
+            return `a loose temp ${what}: write scratch to ${dirname(asideRootFor(caller))}/ next time`;
+        }
+    }
+
+    if (target.kind === "dir") {
+        const enabled = new Set(ctx.presets.map((preset) => preset.id));
+        const off = allPresets(ctx.config).filter((preset) => preset.optIn && !enabled.has(preset.id));
+        const preset = matchPreset(target.path, off);
+
+        if (preset) {
+            return `matches the opt-in preset ${preset.id}, which is off; the user can turn it on: ${toolCommand("rm")} config set enable-preset ${preset.id}`;
+        }
+    }
+
+    if (sessionId && ctx.config.allowOwnFiles && target.kind === "file") {
+        return "only files written with the Write, Edit or NotebookEdit tool count as this session's own files";
+    }
+
+    return DEFAULT_ASK_REASON;
+}
 
 /**
  * The repositories inside a folder (not the folder itself): a linked worktree git still lists is refused, as it is

@@ -16,7 +16,7 @@ import {
     writeFileSync,
 } from "node:fs";
 import { tmpdir } from "node:os";
-import { join } from "node:path";
+import { dirname, join } from "node:path";
 import { SafeJSON } from "@genesiscz/utils/json";
 import {
     type AppApproval,
@@ -28,6 +28,7 @@ import {
     approvalAsker,
     approvalGraceMinutes,
     approvalItemReason,
+    asideRootFor,
     assertInsideTrash,
     BUILTIN_PRESETS,
     confirmByPerson,
@@ -2084,5 +2085,69 @@ describe("the ledger names a person's check apart from the shell that ran it", (
                 .sort()
         ).toEqual(["claude-code", "person"]);
         expect(filterRmLedger(entries, { agent: "person" }).map((entry) => entry.action)).toEqual(["approve"]);
+    });
+});
+
+describe("the default rule says what nearly matched", () => {
+    const reasonOf = (path: string, context = ctx()) => evaluateTarget(resolveTarget(path, context.cwd), context);
+    const generic = "no rule allows it: a preset, this session's scratch or own files, or a trusted root";
+
+    test("a scratch folder named with a short session id asks for the full id", () => {
+        const verdict = reasonOf(file(join(dir("cc", "proj", "sess"), "a.txt")));
+        expect(verdict).toMatchObject({ kind: "ask", rule: "default" });
+        expect(verdict.reason).toBe(
+            `the scratch folder must use the full session id: ${join(base, "cc", "proj", "sess-1111")}/`
+        );
+    });
+
+    test("another session's scratch names that session", () => {
+        const other = "bbbbbbbb-2222-4222-8222-222222222222";
+        expect(reasonOf(file(join(dir("cc", "proj", other), "a.txt"))).reason).toBe(
+            "another session's scratch (bbbbbbbb): only that session deletes there without asking"
+        );
+    });
+
+    test("a project folder in scratch with no session level says where scratch goes", () => {
+        expect(reasonOf(file(join(dir("cc", "proj", "notes"), "a.txt"))).reason).toBe(
+            `no session folder: write scratch to ${join(base, "cc", "proj", "sess-1111")}/`
+        );
+    });
+
+    test("a loose file directly in the temp folder says where scratch goes next time", () => {
+        const loose = join(realpathSync(tmpdir()), `gt-rm-loose-${process.pid}.json`);
+        writeFileSync(loose, "{}");
+
+        try {
+            expect(reasonOf(loose).reason).toBe(
+                `a loose temp file: write scratch to ${dirname(asideRootFor(AGENT))}/ next time`
+            );
+        } finally {
+            unlinkSync(loose);
+        }
+    });
+
+    test("an opt-in preset that is off is named with the command that turns it on", () => {
+        const within = dir("shop-cache");
+        const withPreset: RmConfig = {
+            ...config,
+            customPresets: [{ id: "shop-cache", description: "a shop cache", names: [], within, optIn: true }],
+        };
+        const context = ctx({ config: withPreset, presets: presetsFor(withPreset) });
+        expect(reasonOf(dir("shop-cache", "v1"), context).reason).toBe(
+            "matches the opt-in preset shop-cache, which is off; the user can turn it on: tools rm config set enable-preset shop-cache"
+        );
+    });
+
+    test("a file the session did not write with its own tools says what counts as its own", () => {
+        expect(reasonOf(file(join(dir("elsewhere"), "built.bin"))).reason).toBe(
+            "only files written with the Write, Edit or NotebookEdit tool count as this session's own files"
+        );
+    });
+
+    test("anything else keeps the general sentence", () => {
+        expect(reasonOf(dir("elsewhere", "folder")).reason).toBe(generic);
+        expect(
+            reasonOf(file(join(dir("elsewhere"), "p.txt")), ctx({ caller: { ...AGENT, isInAgent: false } })).reason
+        ).toBe(generic);
     });
 });
