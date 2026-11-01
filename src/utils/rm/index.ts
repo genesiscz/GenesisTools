@@ -32,6 +32,7 @@ export * from "./request-state";
 export * from "./request-store";
 export * from "./requests";
 export * from "./rules";
+export * from "./temp-rule";
 export * from "./trash";
 
 export interface RmPlanItem {

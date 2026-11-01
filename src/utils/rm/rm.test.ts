@@ -38,6 +38,7 @@ import {
     createAsideRequest,
     createRmRequest,
     defaultRmConfig,
+    defaultTempRoots,
     disposalGraceMinutes,
     drainDue,
     effectiveConfig,
@@ -62,6 +63,7 @@ import {
     measureBytesAsync,
     measureRmRequest,
     measureTarget,
+    measureTempTree,
     moveAside,
     moveToTrash,
     parseRmConfig,
@@ -105,12 +107,14 @@ import {
     saveRmConfig,
     saveRmRequest,
     scanPresets,
+    scratchSessionLive,
     sweepOrphans,
     type TrashPaths,
     targetChangeReason,
     totalRmLedger,
     trashItemName,
     trashRootChangeBlocker,
+    userTempDir,
 } from "./index";
 
 const AGENT: RmCaller = { agent: "claude-code", sessionId: "sess-1111", isInAgent: true };
@@ -151,6 +155,10 @@ function ctx(overrides: Partial<RmRuleContext> = {}): RmRuleContext {
         asidePending: () => null,
         git: probeGit,
         nestedRepos: (target) => findNestedRepos(target),
+        // No temp root unless a test names one: every fixture lives in the per-user temp folder.
+        tempRoots: [],
+        tempTree: measureTempTree,
+        scratchLive: () => true,
         ...overrides,
     };
 }
@@ -2670,5 +2678,143 @@ describe("the SessionStart hook names the scratch folder tools rm uses", () => {
                 dirname(asideRootFor({ agent, sessionId, isInAgent: true, project }))
             );
         }
+    });
+});
+
+describe("rule tmp-small: a small temp path goes without a request", () => {
+    let temp: string;
+    let small: RmRuleContext;
+
+    beforeAll(() => {
+        temp = dir("fake-tmp");
+        small = ctx({ tempRoots: [temp], cwd: dir("tmp-small-cwd") });
+    });
+
+    function tempDir(...parts: string[]): string {
+        return dir("fake-tmp", ...parts);
+    }
+
+    test("a temp folder of a few KB, untracked, with no repository, is deleted; the reason names the conditions", () => {
+        const loose = tempDir("loose-probe");
+        file(join(loose, "out.txt"), "x".repeat(2000));
+        const verdict = evaluateTarget(resolveTarget(loose, small.cwd), small);
+
+        expect(verdict).toMatchObject({ kind: "allow", rule: "tmp-small" });
+        expect(verdict.reason).toMatch(
+            new RegExp(
+                `^${temp.replace(/[.*+?^${}()|[\]\\]/g, "\\$&")} path, [\\d.]+ KB under 10 MB, not git-tracked, no unsaved repo inside$`
+            )
+        );
+    });
+
+    test("over the cap, with the rule off, or outside a temp root, it still needs the user", () => {
+        const big = tempDir("big-probe");
+        file(join(big, "blob.bin"), "x".repeat(1_200_000));
+        const outside = file(join(dir("not-temp"), "note.txt"));
+
+        expect(verdictOf(big, ctx({ tempRoots: [temp], config: { ...config, tmpSmallMB: 1 } }))).toEqual({
+            kind: "ask",
+            rule: "default",
+        });
+        expect(verdictOf(big, small)).toEqual({ kind: "allow", rule: "tmp-small" });
+        expect(verdictOf(big, ctx({ tempRoots: [temp], config: { ...config, tmpSmallMB: 0 } }))).toEqual({
+            kind: "ask",
+            rule: "default",
+        });
+        expect(verdictOf(outside, small)).toEqual({ kind: "ask", rule: "default" });
+        expect(verdictOf(temp, small).kind).not.toBe("allow");
+    });
+
+    test("a repository with unsaved work anywhere inside keeps the request, also deeper than the nested scan looks", () => {
+        const deep = tempDir("deep-probe", "a", "b", "c", "d", "e", "repo");
+        git(deep, "init", "-q");
+        file(join(deep, "work.txt"), "unsaved");
+        const top = join(temp, "deep-probe");
+
+        expect(findNestedRepos(resolveTarget(top, small.cwd))).toEqual([]);
+        expect(verdictOf(top, small)).toEqual({ kind: "ask", rule: "default" });
+    });
+
+    test("a socket inside keeps the request: a live process may be listening on it", async () => {
+        const holder = tempDir("socket-probe");
+        const server = Bun.listen({ unix: join(holder, "s.sock"), socket: { data() {} } });
+
+        try {
+            expect(verdictOf(holder, small)).toEqual({ kind: "ask", rule: "default" });
+        } finally {
+            server.stop(true);
+        }
+    });
+
+    test("another live session's scratch keeps its protection; a dead one's goes; a scratch root or project never", () => {
+        const scratch = tempDir("cc", "shop", "aaaaaaaa-1111-4111-8111-111111111111", "probe");
+        file(join(scratch, "x.txt"));
+        const asked: string[] = [];
+        const live = ctx({
+            tempRoots: [temp],
+            cwd: small.cwd,
+            scratchLive: (token) => {
+                asked.push(token);
+                return true;
+            },
+        });
+        const dead = ctx({ tempRoots: [temp], cwd: small.cwd, scratchLive: () => false });
+
+        expect(verdictOf(scratch, live)).toEqual({ kind: "ask", rule: "default" });
+        expect(asked).toEqual(["aaaaaaaa-1111-4111-8111-111111111111"]);
+        expect(verdictOf(scratch, dead)).toEqual({ kind: "allow", rule: "tmp-small" });
+        expect(verdictOf(join(temp, "cc", "shop"), dead).kind).toBe("ask");
+        expect(verdictOf(join(temp, "cc"), dead).kind).toBe("ask");
+    });
+
+    test("system folders at the top of a temp root stay with the person", () => {
+        const system = tempDir("com.apple.launchd.fixture");
+        file(join(system, "x"));
+        const tmux = tempDir("tmux-501");
+        file(join(tmux, "x"));
+
+        expect(verdictOf(system, small).kind).toBe("ask");
+        expect(verdictOf(tmux, small).kind).toBe("ask");
+    });
+
+    test("a session counts as live from the Claude registry, a prefix of its id, an unreadable registry, or recent change", () => {
+        const id = "bbbbbbbb-2222-4222-8222-222222222222";
+        const scratch = dir("liveness", "scratch");
+        file(join(scratch, "out.txt"));
+        const registry = (ids: string[] | null) => () => (ids ? new Set(ids) : null);
+        // A ctime cannot be set back, so "two days later" stands in for a folder nothing touched for two days.
+        const later = Date.now() + 2 * 24 * 3_600_000;
+
+        expect(scratchSessionLive(id, scratch, { claudeLive: registry([id]), now: later })).toBe(true);
+        expect(scratchSessionLive(id.slice(0, 8), scratch, { claudeLive: registry([id]), now: later })).toBe(true);
+        expect(scratchSessionLive(id, scratch, { claudeLive: registry(null), now: later })).toBe(true);
+        expect(scratchSessionLive(id, scratch, { claudeLive: registry([]), now: later })).toBe(false);
+        expect(scratchSessionLive(id, scratch, { claudeLive: registry([]) })).toBe(true);
+    });
+
+    test("the temp roots are /tmp and getconf's per-user folder, never $TMPDIR", () => {
+        const saved = process.env.TMPDIR;
+        const fake = dir("fake-tmpdir-env");
+        process.env.TMPDIR = fake;
+
+        try {
+            const roots = defaultTempRoots();
+
+            expect(roots).toContain(realpathSync("/tmp"));
+            expect(roots).not.toContain(fake);
+
+            if (process.platform === "darwin") {
+                expect(roots).toContain(realpathSync(userTempDir() ?? "/nonexistent"));
+            }
+        } finally {
+            process.env.TMPDIR = saved;
+        }
+    });
+
+    test("tmp-reclaim's own leftovers count as temp", () => {
+        const leftover = tempDir(".tmp-reclaim-12345-AbCdEf");
+        file(join(leftover, "entry"));
+
+        expect(verdictOf(leftover, small)).toEqual({ kind: "allow", rule: "tmp-small" });
     });
 });
