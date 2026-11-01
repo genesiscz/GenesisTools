@@ -1,6 +1,7 @@
 import AppKit
 import Darwin
 import GenesisKit
+import SwiftUI
 
 // The feature settings face, `GenesisTools --features [--page <id>]`: one window with every part's pages, and the
 // process the parts' background services run in (Clicky's key sounds, the widget's dictation and Focus). The window
@@ -34,7 +35,10 @@ final class FeatureSettingsShell: FeatureSettingsPluginHost {
     var shownPageID: String?
     /// A snapshot keeps no window frame and no selected page either.
     private lazy var window = FeatureSettingsWindowController(
-        sections: [FeatureSettingsPages.general, DaemonSettingsPages.section(store: daemon)], defaults: defaults,
+        sections: [
+            FeatureSettingsPages.general(extra: AnyView(QuitSettingsCard(defaults: defaults))),
+            DaemonSettingsPages.section(store: daemon),
+        ], defaults: defaults,
         appearance: appearance, frameAutosaveName: mode == .snapshot ? "" : "FeatureSettings.window")
     private var aboutInfo: [String] = []
     private(set) var plugins: [FeatureSettingsPlugin] = []
@@ -126,7 +130,7 @@ final class FeatureSettingsShell: FeatureSettingsPluginHost {
 }
 
 @MainActor
-private final class FeaturesAppDelegate: NSObject, NSApplicationDelegate {
+private final class FeaturesAppDelegate: NSObject, NSApplicationDelegate, NSMenuItemValidation {
     private var observer: NSObjectProtocol?
     private let descriptor: Int32
     private let initialPageID: String?
@@ -186,8 +190,9 @@ private final class FeaturesAppDelegate: NSObject, NSApplicationDelegate {
         let settings = application.addItem(withTitle: "Feature settings…", action: #selector(showSettings), keyEquivalent: "")
         settings.target = self
         ClickyKeymap.shared.bind(settings, to: ClickyKeymap.settings)
-        let quit = application.addItem(
-            withTitle: "Quit Settings", action: #selector(NSApplication.terminate(_:)), keyEquivalent: "")
+        // Titled by what this process runs ("Quit Clicky" while Clicky's status item is up), in `validateMenuItem`.
+        let quit = application.addItem(withTitle: "Quit Settings", action: #selector(requestQuit), keyEquivalent: "")
+        quit.target = self
         ClickyKeymap.shared.bind(quit, to: ClickyKeymap.quit)
         root.submenu = application
         menu.addItem(root)
@@ -203,6 +208,15 @@ private final class FeaturesAppDelegate: NSObject, NSApplicationDelegate {
     }
 
     @objc private func showSettings() { shell.showSettings(pageID: nil) }
+    /// ⌘Q asks before it quits while other GenesisTools parts run (Host/PartQuit). This process holds Clicky and the
+    /// settings window, so the question calls it Clicky while Clicky is up.
+    @objc private func requestQuit() { PartQuit.request(face: Self.face) }
+    private static let face = "--features"
+
+    func validateMenuItem(_ menuItem: NSMenuItem) -> Bool {
+        if menuItem.action == #selector(requestQuit) { menuItem.title = "Quit " + PartQuit.ownName(face: Self.face) }
+        return true
+    }
 
     func applicationShouldTerminate(_ sender: NSApplication) -> NSApplication.TerminateReply {
         guard !terminating else { return .terminateLater }
