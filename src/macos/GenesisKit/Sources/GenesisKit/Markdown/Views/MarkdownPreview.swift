@@ -223,15 +223,25 @@ public enum MarkdownBlocks {
         let indent = line.prefix(while: { $0 == " " || $0 == "\t" }).reduce(0) { $0 + ($1 == "\t" ? 4 : 1) }
         let t = line.trimmingCharacters(in: .whitespaces)
         for bullet in ["- ", "* ", "+ "] where t.hasPrefix(bullet) {
-            var text = String(t.dropFirst(2))
-            var task: Bool?
-            if text.hasPrefix("[ ] ") { task = false; text = String(text.dropFirst(4)) }
-            else if text.lowercased().hasPrefix("[x] ") { task = true; text = String(text.dropFirst(4)) }
-            return (indent / 2, false, "•", text, task)
+            let text = String(t.dropFirst(2))
+            let box = taskBox(text)
+            return (indent / 2, false, "•", box?.text ?? text, box?.done)
         }
         if let m = t.range(of: #"^\d{1,3}\. "#, options: .regularExpression) {
             let marker = String(t[m]).trimmingCharacters(in: .whitespaces)
-            return (indent / 2, true, marker, String(t[m.upperBound...]), nil)
+            let text = String(t[m.upperBound...])
+            let box = taskBox(text)
+            return (indent / 2, true, marker, box?.text ?? text, box?.done)
+        }
+        return nil
+    }
+
+    /// A GFM task box at the start of an item's text: `[ ]`, `[x]` or `[X]`, then a space, a tab or nothing.
+    private static func taskBox(_ text: String) -> (done: Bool, text: String)? {
+        for (box, done) in [("[ ]", false), ("[x]", true), ("[X]", true)] where text.hasPrefix(box) {
+            let rest = text.dropFirst(3)
+            guard rest.isEmpty || rest.first == " " || rest.first == "\t" else { return nil }
+            return (done, String(rest.drop(while: { $0 == " " || $0 == "\t" })))
         }
         return nil
     }

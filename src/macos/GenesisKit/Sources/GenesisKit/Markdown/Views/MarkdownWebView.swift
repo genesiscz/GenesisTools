@@ -51,6 +51,24 @@ struct MarkdownLineSync: Equatable {
     var token: Int
 }
 
+/// What a click on a task box (`- [ ]`, `- [x]`) on the page does.
+struct MarkdownTaskBoxes {
+    /// Why the boxes cannot change the note, shown as the tooltip of a disabled box. nil with `set` = they can.
+    var lock: String?
+    /// Sets the item's box in the note and answers on the main thread: true when the note now has that state, false
+    /// when it was refused (the host says why). nil = the boxes are read-only.
+    var set: ((MarkdownTaskTarget, @escaping (Bool) -> Void) -> Void)?
+
+    static let preview = MarkdownTaskBoxes(lock: "Open the note in Read or Split to check off its tasks.", set: nil)
+
+    static func locked(_ reason: String) -> MarkdownTaskBoxes { MarkdownTaskBoxes(lock: reason, set: nil) }
+
+    var editable: Bool { lock == nil && set != nil }
+
+    /// What the page is told, compared to send it only when it changed.
+    var pageMode: String { "\(editable)|\(lock ?? "")" }
+}
+
 struct MarkdownWebView: NSViewRepresentable {
     /// A changed region against HEAD, as the page marks it: 0-based body lines, like `LineHighlight.Mode.blocks`.
     struct GitMark: Equatable {
@@ -170,6 +188,9 @@ struct MarkdownWebView: NSViewRepresentable {
     /// Heading anchors, the code block bar and the sticky section. nil = what
     /// `GenesisKitMarkdownConfiguration.shared` says, followed while the page is open.
     var pageExtras: PageExtras? = nil
+    /// What a click on a task box does. The default is a page that shows the boxes and cannot change the note (a
+    /// hover preview, a diff, a past version).
+    var tasks: MarkdownTaskBoxes = .preview
 
     /// The bridge plus both schemes: the bundled assets, and the media the
     /// coordinator registered for the current document.
@@ -285,13 +306,20 @@ struct MarkdownWebView: NSViewRepresentable {
             c.lastReverseSync = reverseSync
             c.eval("window.gnReverseSync(\(reverseSync))")
         }
-        // Before the render below: the code block bar is drawn by the page's fence renderer.
+        // Before the render below: the code block bar is drawn by the page's fence renderer, the boxes by the task rule.
         let extrasNeedRender = c.syncPageExtras()
-        if extrasNeedRender || c.lastMarkdown != markdown || c.lastMediaContext != mediaContext || c.lastLineNumbers != lineNumbers {
-            c.lastMarkdown = markdown
+        if c.lastTaskMode != tasks.pageMode {
+            c.lastTaskMode = tasks.pageMode
+            c.applyTaskMode()
+        }
+        // The text from before a task click whose write is on its way: the page already shows the box as clicked,
+        // so drawing that text again would flip it back for a moment.
+        let shown = c.taskHolds.contains(markdown) ? (c.lastMarkdown ?? markdown) : markdown
+        if extrasNeedRender || c.lastMarkdown != shown || c.lastMediaContext != mediaContext || c.lastLineNumbers != lineNumbers {
+            c.lastMarkdown = shown
             c.lastMediaContext = mediaContext
             c.lastLineNumbers = lineNumbers
-            c.render(markdown)
+            c.render(shown)
         }
         if let sync = syncLine, c.lastSyncLine != sync {
             c.lastSyncLine = sync
@@ -443,6 +471,11 @@ struct MarkdownWebView: NSViewRepresentable {
         var lastLineHighlight: LineHighlight?
         var lastGitMarks: [GitMark] = []
         var lastDiffMarks: [DiffMark] = []
+        /// `MarkdownTaskBoxes.pageMode` as last sent to the page.
+        var lastTaskMode: String?
+        /// The texts the page showed before a task click whose answer has not come back. An update that brings one of
+        /// them is the document from before the click, not a change to draw.
+        var taskHolds: [String] = []
         /// The notice over the page (`MarkdownPageNotice`), and what it shows.
         var noticeHost: MarkdownPageNoticeHost?
         var currentNotice: MarkdownPageNotice?
@@ -510,6 +543,43 @@ struct MarkdownWebView: NSViewRepresentable {
         func applyTheme(_ vars: [String: String]) {
             let pairs = vars.map { "\(MarkdownWebView.jsString($0.key)):\(MarkdownWebView.jsString($0.value))" }
             eval("window.gnTheme({\(pairs.joined(separator: ","))})")
+        }
+
+        /// Turns the boxes on or off in place, and gives a disabled box the reason as its tooltip.
+        func applyTaskMode() {
+            let tasks = parent.tasks
+            eval("window.gnTaskMode(\(tasks.editable),\(MarkdownWebView.jsString(tasks.lock ?? "")))")
+        }
+
+        /// A click on a task box. The page already shows the new state. The item is found in the text the page drew,
+        /// the host sets it in the note, and the page keeps its drawing: no render, so no flicker, no scroll change and
+        /// the keyboard stays on the box. A refusal puts the box back.
+        @MainActor
+        func setTask(_ body: [String: Any]) {
+            guard let line = body["line"] as? Int, let checked = body["checked"] as? Bool else { return }
+            let text = body["text"] as? String ?? ""
+            guard let set = parent.tasks.set, parent.tasks.lock == nil, let drawn = lastMarkdown else {
+                eval("window.gnTaskRevert(\(line),\(!checked))")
+                return
+            }
+            guard let target = MarkdownTaskList.target(bodyLine: line, text: text, checked: checked, in: drawn) else {
+                MarkdownWebView.report("task: body line \(line) is no task in the drawn text")
+                eval("window.gnTaskRevert(\(line),\(!checked))")
+                show(.taskNotFound)
+                return
+            }
+            // nil when the drawn text already has that state: the drawing stays as it is.
+            let after = MarkdownTaskList.applying(target, to: drawn) ?? drawn
+            taskHolds.append(drawn)
+            lastMarkdown = after
+            set(target) { [weak self] applied in
+                guard let self else { return }
+                if let index = self.taskHolds.firstIndex(of: drawn) { self.taskHolds.remove(at: index) }
+                guard !applied else { return }
+                // The document did not take it: the next update draws whatever the note holds now.
+                if self.lastMarkdown == after { self.lastMarkdown = drawn }
+                self.eval("window.gnTaskRevert(\(line),\(!checked))")
+            }
         }
 
         init(_ parent: MarkdownWebView) { self.parent = parent }
@@ -690,6 +760,9 @@ struct MarkdownWebView: NSViewRepresentable {
             }
             // A recycled or reloaded page receives the current reverse-sync state too.
             eval("window.gnReverseSync(\(parent.onTopLine != nil))")
+            // Before the render: the task rule draws a box enabled or disabled.
+            lastTaskMode = parent.tasks.pageMode
+            applyTaskMode()
             // Before the render: the code block bar is part of it.
             applyPageExtras()
             if let p = pending { pending = nil; render(p) }
@@ -803,6 +876,8 @@ struct MarkdownWebView: NSViewRepresentable {
                 }
             case "linkHover":
                 parent.onLinkHover?(MarkdownWebView.linkHover(from: body, zoom: parent.zoom))
+            case "task":
+                MainActor.assumeIsolated { setTask(body) }
             default: break
             }
         }
@@ -838,21 +913,25 @@ extension MarkdownWebView {
         var headingAnchors: Bool
         var codeBlockBar: Bool
         var stickySection: Bool
+        /// How a checked task's text looks. A class on the page's body, so a change needs no render.
+        var taskDone: MarkdownTaskDoneStyle
 
-        init(headingAnchors: Bool, codeBlockBar: Bool, stickySection: Bool) {
+        init(headingAnchors: Bool, codeBlockBar: Bool, stickySection: Bool, taskDone: MarkdownTaskDoneStyle = .dim) {
             self.headingAnchors = headingAnchors
             self.codeBlockBar = codeBlockBar
             self.stickySection = stickySection
+            self.taskDone = taskDone
         }
 
         @MainActor
         init(_ config: GenesisKitMarkdownConfiguration) {
-            self.init(headingAnchors: config.headingAnchors, codeBlockBar: config.codeBlockBar, stickySection: config.stickySection)
+            self.init(headingAnchors: config.headingAnchors, codeBlockBar: config.codeBlockBar, stickySection: config.stickySection,
+                      taskDone: config.taskDoneStyle)
         }
 
         /// The call that hands them to the page.
         var script: String {
-            "window.gnPage({anchors:\(headingAnchors),codeBar:\(codeBlockBar),sticky:\(stickySection)})"
+            "window.gnPage({anchors:\(headingAnchors),codeBar:\(codeBlockBar),sticky:\(stickySection),taskDone:'\(taskDone.rawValue)'})"
         }
     }
 
@@ -955,6 +1034,22 @@ strong{color:var(--dd-text-strong);font-weight:600;} em{color:var(--dd-text);}
 hr{border:0;border-top:1px solid var(--dd-border);margin:2em 0;}
 ul,ol{padding-left:1.6em;margin:.95em 0;} li{margin:.45em 0;} li > ul,li > ol{margin:.35em 0;}
 ul li::marker,ol li::marker{color:var(--dd-text-faint);}
+/* Task items: a real checkbox where the bullet was, in the theme's accent. The label around it is the hit area
+   (1.5em, 24 px at the default size) and answers the pointer; a disabled box shows its reason as a tooltip. */
+li.gn-task-item{list-style:none;}
+.gn-task-hit{display:inline-flex;align-items:center;justify-content:center;width:1.5em;height:1.5em;
+  margin:0 .15em 0 -1.65em;vertical-align:middle;border-radius:6px;transition:background-color .12s ease-out;}
+/* An input's own font is the 13 px control font, so the box takes the text's size first: 14 px at the default size,
+   which WebKit draws as the regular macOS checkbox, not the small one. */
+.gn-task{font-size:inherit;width:.875em;height:.875em;margin:0;accent-color:var(--dd-accent);cursor:inherit;}
+.gn-task-hit:has(.gn-task:not(:disabled)){cursor:pointer;}
+.gn-task-hit:has(.gn-task:not(:disabled)):hover{background:rgba(127,127,127,.18);}
+.gn-task:focus-visible{outline:2px solid var(--dd-accent);outline-offset:2px;}
+body.gn-tasks-dim li.gn-task-done > .gn-task-text,body.gn-tasks-dim li.gn-task-done > .gn-task-text *,
+body.gn-tasks-dim li.gn-task-done > p > .gn-task-text,body.gn-tasks-dim li.gn-task-done > p > .gn-task-text *{color:var(--dd-text-dim);}
+body.gn-tasks-strike li.gn-task-done > .gn-task-text,body.gn-tasks-strike li.gn-task-done > p > .gn-task-text{
+  text-decoration:line-through;text-decoration-color:var(--dd-text-faint);}
+@media (prefers-reduced-motion:reduce){.gn-task-hit{transition:none;}}
 blockquote{margin:1em 0;padding:.6em 1.1em;border-left:3px solid var(--dd-border-strong);
   background:rgba(255,255,255,.015);color:var(--dd-text-dim);border-radius:0 4px 4px 0;font-style:italic;}
 blockquote > *{margin:.4em 0;}
@@ -1304,6 +1399,75 @@ md.renderer.rules.wikilink=function(tokens,idx){
   return '<a href="#" class="dd-wikilink" data-wikilink="'+gnEsc(ref)+'">'+gnEsc(label)+'</a>';
 };
 
+// GFM task items: `- [ ]`, `* [x]`, `1. [X]`, nested and quoted ones. A list item whose first paragraph starts with
+// a box and a space (or ends after it) gets a real checkbox where the bullet was; a box in code or in the middle of
+// a line stays text. The box carries its body line and the item's first source line after the box, and a change
+// posts both (`task`); Swift finds the item in the text it sent and writes the note
+// (MarkdownWebView.Coordinator.setTask). gnTaskBase is the first body line of the callout being drawn.
+var gnTaskEdit=false,gnTaskLock='',gnTaskBase=0;
+md.core.ruler.after('inline','gn_tasks',function(state){
+  var t=state.tokens;
+  for(var i=2;i<t.length;i++){
+    if(t[i].type!=='inline'||t[i-1].type!=='paragraph_open'||t[i-2].type!=='list_item_open')continue;
+    var m=/^\[([ xX])\](?=\s|$)/.exec(t[i].content||'');if(!m)continue;
+    var kids=t[i].children||[],first=kids[0],map=t[i-1].map||t[i-2].map;
+    if(!map||!first||first.type!=='text'||first.content.slice(0,3)!==m[0])continue;
+    first.content=first.content.slice(3).replace(/^[ \t]+/,'');
+    var box=new state.Token('gn_task','input',0);
+    box.meta={checked:m[1]!==' ',line:gnSourceLine(map[0])+gnTaskBase,
+      text:t[i].content.slice(3).split('\n')[0].replace(/^[ \t]+|[ \t]+$/g,'')};
+    kids.unshift(box);
+    t[i-2].attrJoin('class','gn-task-item'+(box.meta.checked?' gn-task-done':''));
+  }
+});
+// The label is the hit area (1.5em around a 1em box) and holds the reason a disabled box cannot change the note.
+md.renderer.rules.gn_task=function(tokens,idx){
+  var m=tokens[idx].meta,locked=!gnTaskEdit;
+  return '<label class="gn-task-hit"'+(locked&&gnTaskLock?' title="'+gnEsc(gnTaskLock)+'"':'')+'>'
+    +'<input type="checkbox" class="gn-task" data-task-line="'+m.line+'" data-task-text="'+gnEsc(m.text)+'"'
+    +(m.checked?' checked':'')+(locked?' disabled':'')+'></label>';
+};
+// After a render: each box's own text goes into one span (a done item dims or strikes that, not the items nested
+// under it), and the box is named after it for VoiceOver ("Mark done: Buy milk"). No text node is added: the find
+// walks the article's text.
+var GN_TASK_STOP={ul:1,ol:1,p:1,div:1,pre:1,table:1,blockquote:1,details:1,h1:1,h2:1,h3:1,h4:1,h5:1,h6:1,hr:1};
+function gnWireTasks(){
+  var boxes=document.querySelectorAll('#gn-article input.gn-task');
+  for(var i=0;i<boxes.length;i++){
+    var hit=boxes[i].parentNode,host=hit&&hit.parentNode;if(!host)continue;
+    var span=document.createElement('span');span.className='gn-task-text';
+    var n=hit.nextSibling;
+    while(n&&!(n.nodeType===1&&GN_TASK_STOP[n.localName])){var next=n.nextSibling;span.appendChild(n);n=next;}
+    host.insertBefore(span,hit.nextSibling);
+    var label=(span.textContent||'').replace(/\s+/g,' ').trim();
+    if(label.length>140)label=label.slice(0,139)+'…';
+    boxes[i].setAttribute('aria-label','Mark done: '+(label||'empty task'));
+  }
+}
+function gnTaskShow(box,on){box.checked=on;var li=box.closest('li');if(li)li.classList.toggle('gn-task-done',on);}
+// Click or Space on a box. A box that may not change the note never fires (it is disabled); a box whose page was
+// locked after the render is put back.
+document.addEventListener('change',function(e){
+  var b=e.target;if(!b||!b.classList||!b.classList.contains('gn-task'))return;
+  if(!gnTaskEdit){b.checked=!b.checked;return;}
+  gnTaskShow(b,b.checked);
+  gnPost({type:'task',line:+b.getAttribute('data-task-line'),text:b.getAttribute('data-task-text')||'',checked:b.checked});
+});
+// Swift refused the change (the item moved away, the write failed): the box shows the note's state again.
+window.gnTaskRevert=function(line,on){
+  var bs=document.querySelectorAll('#gn-article input.gn-task[data-task-line="'+(+line)+'"]');
+  for(var i=0;i<bs.length;i++)gnTaskShow(bs[i],!!on);
+};
+// Whether a box may change the note, in place: no render, so the reading position and the focus stay.
+window.gnTaskMode=function(edit,lock){
+  gnTaskEdit=!!edit;gnTaskLock=String(lock||'');
+  var bs=document.querySelectorAll('#gn-article input.gn-task');
+  for(var i=0;i<bs.length;i++){
+    bs[i].disabled=!gnTaskEdit;
+    if(gnTaskEdit||!gnTaskLock)bs[i].parentNode.removeAttribute('title');else bs[i].parentNode.setAttribute('title',gnTaskLock);
+  }
+};
+
 // Source line of a line in the text markdown-it saw: the same number, unless
 // gnExtractCallouts had to add a line (then gnLineMap says where each came from).
 var gnLineMap=null;
@@ -1318,7 +1482,7 @@ function gnExtractCallouts(text){
     if(head){
       var start=i,type=head[1],title=head[3]||'',body=[];i++;
       while(i<lines.length&&/^ {0,3}>/.test(lines[i])){body.push(lines[i].replace(/^ {0,3}> ?/,''));i++;}
-      callouts.push({type:type,title:title,body:body.join('\n')});
+      callouts.push({type:type,title:title,body:body.join('\n'),start:start});
       out.push('@@GNCALLOUT'+(callouts.length-1)+'@@');map.push(start);
       // One placeholder line per callout line, so every data-line after the
       // callout still names the source line it came from.
@@ -1336,7 +1500,11 @@ function gnRenderCallout(c,attrs){
   var group=GN_ALIAS[c.type.toLowerCase()]||'note';
   var icon=GN_ICON[group]||GN_ICON.note;
   var title=(c.title||'').trim()||(c.type.charAt(0).toUpperCase()+c.type.slice(1));
-  var bodyHtml=c.body.trim()?'<div class="markdown-alert-body">'+md.render(c.body)+'</div>':'';
+  // The body's first line is the line under the callout's head, so a task box in it names its line in the note.
+  var base=gnTaskBase;gnTaskBase=(c.start||0)+1;
+  var bodyHtml;
+  try{bodyHtml=c.body.trim()?'<div class="markdown-alert-body">'+md.render(c.body)+'</div>':'';}
+  finally{gnTaskBase=base;}
   return '<div class="markdown-alert markdown-alert-'+group+'" data-callout="'+gnEsc(c.type)+'"'+(attrs||'')+'>'
     +'<p class="markdown-alert-title"><svg class="markdown-alert-icon" viewBox="0 0 24 24" width="16" height="16" fill="none" stroke="currentColor" stroke-width="2" stroke-linecap="round" stroke-linejoin="round" aria-hidden="true">'+icon+'</svg><span>'+gnEsc(title)+'</span></p>'+bodyHtml+'</div>';
 }
@@ -1571,6 +1739,10 @@ window.gnPage=function(o){
   gnOpt={anchors:!!o.anchors,codeBar:!!o.codeBar,sticky:!!o.sticky};
   document.body.classList.toggle('gn-anchors',gnOpt.anchors);
   document.body.classList.toggle('gn-sticky-on',gnOpt.sticky);
+  // A done task's text: dimmed (the default), dimmed and struck through, or unchanged.
+  var done=o.taskDone||'dim';
+  document.body.classList.toggle('gn-tasks-dim',done==='dim'||done==='dimStrike');
+  document.body.classList.toggle('gn-tasks-strike',done==='dimStrike');
   gnStickyKey=null;gnStickyUpdate();
 };
 function gnCodeBlock(info,pre,source){
@@ -1975,7 +2147,7 @@ function gnRenderNow(markdown,props,editable,vocabulary,media,lines){
   art.classList.toggle('gn-is-empty',!String(markdown||'').trim());
   gnRenderProps(props,editable);
   gnSugClose();
-  gnWireLinks();gnWireJSON();window.gnRunMermaid();gnLastSlug='';
+  gnWireTasks();gnWireLinks();gnWireJSON();window.gnRunMermaid();gnLastSlug='';
   gnPageAfterRender();
   gnApplyGit();
   gnApplyDiff();
