@@ -11,7 +11,8 @@
  *   rg      ripgrepFiles -c (tools genesis-tools logs day, daemon stats health)
  *   frames  readZstdFramesSync, every byte (restore: tools compress unpack, verify)
  * CPU is the child's rusage with its waited-for children (rg); `op` is the CPU of the read itself, without the
- * process start. Medians per arm; outputs must agree between arms.
+ * process start and without the content check (its sha256 is timed apart). Medians per arm; the content of every
+ * read must agree between arms: each line, each tail, each rg count (an rg error stops the run), every byte.
  *
  * Samples: a folder of real data copied by hand (never the originals). The preset comes from the name:
  * `tree-*` tree, `binary-*` binary, `database-*` database, a folder (hang captures) text per file, anything else
@@ -21,13 +22,14 @@
  *   bun scripts/benchmarks/compress/levels.ts --samples <dir> --work <dir> [--levels 3,6,9,12,15,19,22]
  *     [--compress-runs 3] [--read-runs 7] [--only <sample,...>] [--out <file.json>]
  */
-import { createHash } from "node:crypto";
-import { mkdirSync, readdirSync, readFileSync, statfsSync, statSync, writeFileSync } from "node:fs";
+import { createHash, type Hash } from "node:crypto";
+import { mkdirSync, readdirSync, statfsSync, statSync, writeFileSync } from "node:fs";
 import { basename, dirname, join } from "node:path";
-import { compressFile, digestZstdContent } from "@genesiscz/utils/compress/file";
+import { type ContentDigest, compressFile, verifyCompressedFile } from "@genesiscz/utils/compress/file";
 import { type CompressPreset, PRESETS, type PresetName } from "@genesiscz/utils/compress/presets";
-import { ripgrepFiles } from "@genesiscz/utils/compress/search";
+import { type RipgrepRun, ripgrepFiles } from "@genesiscz/utils/compress/search";
 import { isZstdPath, readZstdFramesSync } from "@genesiscz/utils/compress/zstd";
+import { sha256File } from "@genesiscz/utils/fs/hash";
 import { readLastLines, readLinesSync, readTextChunksSync } from "@genesiscz/utils/fs/read-lines";
 import { SafeJSON } from "@genesiscz/utils/json";
 import { out } from "@genesiscz/utils/logger";
@@ -37,8 +39,10 @@ import { median } from "../fs/shared";
 
 type ReadMode = "lines" | "tail" | "rg" | "frames";
 const RG_PATTERN = '"level":';
-/** A sample is skipped when its outputs would leave less than this free. */
-const MIN_FREE_BYTES = 256 * 1024 * 1024;
+/** Every arm must leave this much free after its output; a sample whose next arm could not is skipped. */
+export const MIN_FREE_BYTES = 256 * 1024 * 1024;
+/** How many characters of lines the content check gathers before it hashes them. */
+const LINE_BATCH_CHARS = 1024 * 1024;
 
 interface Setting {
     tag: string;
@@ -114,6 +118,88 @@ function cpuMs(usage: NodeJS.ResourceUsage): number {
     return (usage.userCPUTime + usage.systemCPUTime) / 1000;
 }
 
+/**
+ * The content check of a read: one sha256 per file of what the reader yielded, folded into one digest when the file
+ * ends, so content cannot move between files unseen. The hashing is timed apart (`cpuMs`) and taken out of `op`: a
+ * sha256 of every byte costs about as much as the read it checks.
+ */
+export class ReadCheck {
+    private readonly files = createHash("sha256");
+    private file: Hash = createHash("sha256");
+    private lines: string[] = [];
+    private lineChars = 0;
+    cpuMs = 0;
+
+    /** Bytes or text of the current file. */
+    update(data: string | Uint8Array): void {
+        this.timed(() => this.file.update(data));
+    }
+
+    /** One line of the current file. Lines are hashed in batches, each closed by "\n", which no line holds. */
+    line(text: string): void {
+        this.lines.push(text);
+        this.lineChars += text.length + 1;
+
+        if (this.lineChars >= LINE_BATCH_CHARS) {
+            this.flushLines();
+        }
+    }
+
+    endFile(): void {
+        this.flushLines();
+        this.timed(() => this.files.update(this.file.digest()));
+        this.file = createHash("sha256");
+    }
+
+    /** The first 12 hex characters of the digest over every ended file. */
+    digest(): string {
+        return this.files.digest("hex").slice(0, 12);
+    }
+
+    private flushLines(): void {
+        if (this.lines.length === 0) {
+            return;
+        }
+
+        const lines = this.lines;
+        this.lines = [];
+        this.lineChars = 0;
+        this.timed(() => this.file.update(`${lines.join("\n")}\n`));
+    }
+
+    private timed(work: () => void): void {
+        const before = cpuMs(process.resourceUsage());
+        work();
+        this.cpuMs += cpuMs(process.resourceUsage()) - before;
+    }
+}
+
+/**
+ * rg's output for the content check. rg exits 0 on a match and 1 on none; any other exit or a kill throws with rg's
+ * stderr, so an rg that searched nothing cannot agree with the other arms through the same empty output.
+ */
+export function rgOutput(run: RipgrepRun, file: string): string {
+    if ((run.code !== 0 && run.code !== 1) || run.signal !== null) {
+        const how = run.signal ? `killed by ${run.signal}` : `exit ${run.code}`;
+        throw new Error(`rg failed on ${file} (${how}): ${run.stderr.trim().slice(0, 600)}`);
+    }
+
+    return run.stdout.trim();
+}
+
+/**
+ * The free space one arm needs before it compresses: the most it can write, and `MIN_FREE_BYTES` left after it. zstd
+ * stores an incompressible block raw, so an output can be a little larger than its input (block and frame headers,
+ * the seek table; `size / 128` is twice zstd's own bound), plus 64 KiB per file for filesystem blocks. The atomic
+ * writer's temp file is that output, written while every earlier output still exists, so the check runs against the
+ * real free space before every arm and every run.
+ */
+export function armNeedBytes(sizes: number[]): number {
+    return sizes.reduce((sum, size) => sum + size + Math.ceil(size / 128) + 64 * 1024, MIN_FREE_BYTES);
+}
+
+class LowDiskError extends Error {}
+
 // ── children ────────────────────────────────────────────────────────────────────────────────────────────────
 
 interface CompressJob {
@@ -155,38 +241,35 @@ async function childCompress(args: string[]): Promise<unknown> {
 async function childRead(args: string[]): Promise<unknown> {
     const [mode, ...files] = args as [ReadMode, ...string[]];
     const before = process.resourceUsage();
-    const hash = createHash("sha256");
+    const check = new ReadCheck();
 
     for (const file of files) {
         if (mode === "lines") {
-            let count = 0;
-            let length = 0;
-
             for (const line of readLinesSync(file)) {
-                count += 1;
-                length += line.length;
+                check.line(line);
             }
-
-            hash.update(`${count}:${length};`);
         } else if (mode === "tail") {
-            hash.update(readLastLines(file).lines.join("\n"));
+            check.update(readLastLines(file).lines.join("\n"));
         } else if (mode === "rg") {
             const run = await ripgrepFiles({
                 rg: ripgrepBinary() ?? "rg",
                 args: ["--no-config", "--no-filename", "-c", "-F", RG_PATTERN],
                 files: [file],
             });
-            hash.update(run.stdout.trim());
+            check.update(rgOutput(run, file));
         } else {
             const frames = isZstdPath(file) ? readZstdFramesSync(file) : readTextChunksSync(file);
 
             for (const frame of frames) {
-                hash.update(frame);
+                check.update(frame);
             }
         }
+
+        check.endFile();
     }
 
-    return { opCpuMs: cpuMs(process.resourceUsage()) - cpuMs(before), check: hash.digest("hex").slice(0, 12) };
+    const opCpuMs = cpuMs(process.resourceUsage()) - cpuMs(before) - check.cpuMs;
+    return { opCpuMs, check: check.digest() };
 }
 
 // ── parent ──────────────────────────────────────────────────────────────────────────────────────────────────
@@ -226,26 +309,9 @@ async function loadAverage(): Promise<string> {
     return text.trim().split("averages:")[1]?.trim() ?? text.trim();
 }
 
-function sha256Files(files: string[]): string {
-    const hash = createHash("sha256");
-
-    for (const file of files) {
-        hash.update(readFileSync(file));
-    }
-
-    return hash.digest("hex");
-}
-
-function zstSha256(files: string[]): string {
-    const hash = createHash("sha256");
-
-    for (const file of files) {
-        for (const frame of readZstdFramesSync(file)) {
-            hash.update(frame);
-        }
-    }
-
-    return hash.digest("hex");
+/** Size and sha256 of each sample file, read in chunks: a sample can be a multi-GB log, never held whole. */
+function sourceDigests(files: string[]): ContentDigest[] {
+    return files.map((file) => ({ bytes: statSync(file).size, sha256: sha256File(file) }));
 }
 
 interface CompressRow {
@@ -305,9 +371,18 @@ async function benchSample({
 }): Promise<{ compressRows: CompressRow[]; readRows: ReadRow[] }> {
     const settings = settingsFor(spec, levels);
     const compressSamples = new Map<string, Array<Spawned<{ opCpuMs: number; compressedBytes: number }>>>();
+    const need = armNeedBytes(filesOf(spec.path).map((file) => statSync(file).size));
 
     for (let run = 0; run < compressRuns; run++) {
         for (const setting of settings) {
+            const free = freeBytes(workDir);
+
+            if (free < need) {
+                throw new LowDiskError(
+                    `${setting.tag} needs ${(need / 1e6).toFixed(0)} MB free, ${(free / 1e6).toFixed(0)} MB left`
+                );
+            }
+
             const outputs = outputsFor(spec, workDir, setting.tag);
             const pairs = filesOf(spec.path).map((file, index) => [file, outputs[index]!]);
             const spawned = await spawnChild<{ opCpuMs: number; compressedBytes: number }>([
@@ -318,7 +393,7 @@ async function benchSample({
         }
     }
 
-    const plainSha = sha256Files(filesOf(spec.path));
+    const sources = sourceDigests(filesOf(spec.path));
     const compressRows = settings.map((setting): CompressRow => {
         const runs = compressSamples.get(setting.tag) ?? [];
         const outputs = outputsFor(spec, workDir, setting.tag);
@@ -339,9 +414,7 @@ async function benchSample({
             cpuMbPerS: spec.bytes / 1e6 / (opCpuMs / 1000),
             wallMs: median(runs.map((run) => run.wallMs)),
             rssMb: median(runs.map((run) => run.rssMb)),
-            identical:
-                zstSha256(outputs) === plainSha &&
-                outputs.reduce((sum, file) => sum + digestZstdContent(file).bytes, 0) === spec.bytes,
+            identical: outputs.every((output, index) => verifyCompressedFile(output, sources[index]!)),
         };
     });
 
@@ -403,16 +476,19 @@ async function parent(argv: string[]): Promise<void> {
     out.log.info(`Bun ${Bun.version}, load ${loadBefore}, ${samples.length} samples, levels ${levels.join(",")}`);
 
     for (const spec of samples) {
-        // Every arm's output exists at once while the arms are read (each at most half the input for every sample
-        // here); never fill the disk for a benchmark.
-        const need = (spec.bytes * settingsFor(spec, levels).length) / 2 + MIN_FREE_BYTES;
+        const rows = await benchSample({ spec, levels, workDir, compressRuns, readRuns }).catch((err: unknown) => {
+            if (!(err instanceof LowDiskError)) {
+                throw err;
+            }
 
-        if (freeBytes(workDir) < need) {
-            out.log.warn(`skipped ${spec.name}: needs ${(need / 1e6).toFixed(0)} MB free`);
+            out.log.warn(`skipped ${spec.name}: ${err.message}`);
+            return null;
+        });
+
+        if (!rows) {
             continue;
         }
 
-        const rows = await benchSample({ spec, levels, workDir, compressRuns, readRuns });
         compressRows.push(...rows.compressRows);
         readRows.push(...rows.readRows);
         loads.push(`${spec.name}: ${await loadAverage()}`);
@@ -535,7 +611,9 @@ function armOrder(arm: string): number {
     return level * 2 + (arm.endsWith("-long") ? 0 : 1);
 }
 
-if (process.argv[2] === "--child") {
+if (!import.meta.main) {
+    // Imported by levels.test.ts: run nothing.
+} else if (process.argv[2] === "--child") {
     const [, kind, ...rest] = process.argv.slice(2);
     const result = kind === "compress" ? await childCompress(rest) : await childRead(rest);
     process.stdout.write(SafeJSON.stringify(result));
