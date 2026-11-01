@@ -4,7 +4,11 @@ import { existsSync, mkdirSync, readdirSync, realpathSync, renameSync, statSync 
 import { appendFile, readFile, rename, writeFile } from "node:fs/promises";
 import { homedir } from "node:os";
 import { basename, dirname, join, relative, resolve } from "node:path";
-import { applyFolderRetention, planFolderRetention } from "@genesiscz/utils/compress/retention";
+import {
+    applyFolderRetention,
+    type FolderRetentionPlan,
+    planFolderRetention,
+} from "@genesiscz/utils/compress/retention";
 import { isZstdPath } from "@genesiscz/utils/compress/zstd";
 import { readFirstLines, readWholeTextSync } from "@genesiscz/utils/fs/read-lines";
 import { SafeJSON } from "@genesiscz/utils/json";
@@ -230,11 +234,21 @@ export interface BackupRetention {
  * zstd, checked file by file against the folder before the folder goes). The runs are APFS clones of each other, so
  * only packing the old ones together frees their space. Restore one with `tools compress unpack <run>.zst`.
  */
-export async function retainBackups(root: string, now = new Date()): Promise<BackupRetention> {
-    const plan = planFolderRetention({ root, keep: BACKUP_KEEP_RUNS, keepMaxAgeDays: BACKUP_KEEP_MAX_AGE_DAYS, now });
+export async function retainBackups(
+    root: string,
+    now = new Date(),
+    policy: BackupPolicy = DEFAULT_BACKUP_POLICY
+): Promise<BackupRetention> {
+    const plan = planBackupRetention(root, now, policy);
     const report = await applyFolderRetention(plan, { caller: "codex-migrate-home" });
     log.info(
-        { root, kept: plan.kept.length, packed: report.packed.length, failed: report.failed.length },
+        {
+            root,
+            kept: plan.kept.length,
+            packed: report.packed.length,
+            deleted: plan.deleteArchives.length + plan.drop.length,
+            failed: report.failed.length,
+        },
         "backup retention"
     );
     return {
@@ -248,6 +262,42 @@ export async function retainBackups(root: string, now = new Date()): Promise<Bac
         })),
         failed: report.failed,
     };
+}
+
+/** Packed snapshots stay while they are among the newest `keepArchives` or younger than `keepArchiveDays`. */
+export interface BackupPolicy {
+    keepArchives: number;
+    keepArchiveDays: number;
+}
+
+/**
+ * Two packed snapshots cover one rollback if the newest is bad, and 14 days matches how long a snapshot stays a folder.
+ * Packed snapshots of 0.2 GB each used to stay for ever. Set `migrateHome.backups` in the codex config to change it.
+ */
+export const DEFAULT_BACKUP_POLICY: BackupPolicy = { keepArchives: 2, keepArchiveDays: 14 };
+
+/** The saved policy, with a missing or invalid field replaced by its default. The newest snapshot always stays. */
+export async function readBackupPolicy(): Promise<BackupPolicy> {
+    const saved = await new Storage("codex").getConfigValue<Partial<BackupPolicy>>("migrateHome.backups");
+    const finite = (value: unknown, fallback: number) =>
+        typeof value === "number" && Number.isFinite(value) ? value : fallback;
+    return {
+        keepArchives: Math.max(1, Math.floor(finite(saved?.keepArchives, DEFAULT_BACKUP_POLICY.keepArchives))),
+        keepArchiveDays: Math.max(0, finite(saved?.keepArchiveDays, DEFAULT_BACKUP_POLICY.keepArchiveDays)),
+    };
+}
+
+/** What {@link retainBackups} would pack and delete. Reads only, so a dry run may call it. */
+export function planBackupRetention(root: string, now: Date, policy: BackupPolicy): FolderRetentionPlan {
+    return planFolderRetention({
+        root,
+        keep: BACKUP_KEEP_RUNS,
+        keepMaxAgeDays: BACKUP_KEEP_MAX_AGE_DAYS,
+        maxArchives: Math.max(1, Math.floor(policy.keepArchives)),
+        maxArchiveAgeDays: Math.max(0, policy.keepArchiveDays),
+        keepYoungArchives: true,
+        now,
+    });
 }
 
 export interface MigrateHomeOptions {
@@ -1282,7 +1332,7 @@ export async function migrateHome(options: MigrateHomeOptions = {}): Promise<Mig
         }
     }
 
-    report.backupRetention = await retainBackups(backupBase);
+    report.backupRetention = await retainBackups(backupBase, new Date(), await readBackupPolicy());
     return report;
 }
 
