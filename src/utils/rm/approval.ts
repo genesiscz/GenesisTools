@@ -65,6 +65,8 @@ export interface ApprovalItem {
     storedAt?: string;
     /** One short sentence for a person: why no rule allowed it. */
     reason: string;
+    /** The rule that asked (`default`, `git-untracked`, ...): the window colours the row's risk by it. */
+    rule?: string;
     /** What git knows about the path: its repository, its state and, when tracked, its last commit. */
     git?: ItemGit;
     /** A folder's file count and newest change, from a capped walk. */
