@@ -35,6 +35,11 @@ export interface RmVerdict {
      * clone's unpushed commits), so an aside move into /tmp, which a reboot clears, would risk it.
      */
     unsaved?: boolean;
+    /**
+     * Set on an ask whose path must not move while it waits, and why: a cache an opt-in preset names (off) may be read
+     * by another install right now, so an aside move would break it. The run leaves it where it is.
+     */
+    stayInPlace?: string;
 }
 
 export type RmTargetKind = "file" | "dir" | "symlink" | "missing";
@@ -429,12 +434,30 @@ export const RM_RULES: readonly RmRule[] = [
     },
     {
         id: "default",
-        evaluate: (target, ctx) => ({ kind: "ask", rule: "default", reason: defaultAskReason(target, ctx) }),
+        evaluate: (target, ctx) => ({
+            kind: "ask",
+            rule: "default",
+            reason: defaultAskReason(target, ctx),
+            ...(offOptInPreset(target, ctx) ? { stayInPlace: "a live cache: another install may read it" } : {}),
+        }),
     },
 ];
 
 /** The general reason of the default rule; the listing hides it on every row and prints its legend once. */
 const DEFAULT_ASK_REASON = "no rule allows it: a preset, this session's scratch or own files, or a trusted root";
+
+/** The opt-in preset that names `target` while it is off (the user has not turned it on), or null. */
+function offOptInPreset(target: RmTarget, ctx: RmRuleContext): RmPreset | null {
+    if (target.kind !== "dir") {
+        return null;
+    }
+
+    const enabled = new Set(ctx.presets.map((preset) => preset.id));
+    return matchPreset(
+        target.path,
+        allPresets(ctx.config).filter((preset) => preset.optIn && !enabled.has(preset.id))
+    );
+}
 
 /** A full session id as the harnesses write it: a UUID. */
 const SESSION_UUID = /^[0-9a-f]{8}-[0-9a-f]{4}-[0-9a-f]{4}-[0-9a-f]{4}-[0-9a-f]{12}$/i;
@@ -480,14 +503,10 @@ function defaultAskReason(target: RmTarget, ctx: RmRuleContext): string {
         }
     }
 
-    if (target.kind === "dir") {
-        const enabled = new Set(ctx.presets.map((preset) => preset.id));
-        const off = allPresets(ctx.config).filter((preset) => preset.optIn && !enabled.has(preset.id));
-        const preset = matchPreset(target.path, off);
+    const preset = offOptInPreset(target, ctx);
 
-        if (preset) {
-            return `matches the opt-in preset ${preset.id}, which is off; the user can turn it on: ${toolCommand("rm")} config set enable-preset ${preset.id}`;
-        }
+    if (preset) {
+        return `matches the opt-in preset ${preset.id}, which is off; the user can turn it on: ${toolCommand("rm")} config set enable-preset ${preset.id}`;
     }
 
     if (sessionId && ctx.config.allowOwnFiles && target.kind === "file") {
