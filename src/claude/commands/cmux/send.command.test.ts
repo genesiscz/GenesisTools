@@ -155,13 +155,18 @@ test("paste can leave the complete message unsubmitted and never retries an unce
 
 test("cmux being unreachable still prints the --json receipt, flushed, before the exit", async () => {
     snapshot = { ...snapshot, available: false, error: "socket refused" };
+    const flush = spyOn(out, "flush");
+    let flushesBeforeExit = -1;
     const exit = spyOn(process, "exit").mockImplementation((() => {
+        flushesBeforeExit = flush.mock.calls.length;
         throw new Error("exited");
     }) as typeof process.exit);
 
     try {
         await expect(sendCommand(SESSION_A, "hi", { json: true }, deps)).rejects.toThrow("exited");
         expect(exit).toHaveBeenCalledWith(1);
+        // The output is flushed before the exit, so a piped reader gets the receipt.
+        expect(flushesBeforeExit).toBeGreaterThan(0);
         expect(stdout.join("")).toContain('"unavailable": true');
         expect(SafeJSON.parse(stdout.join(""))).toMatchObject({
             sent: false,
@@ -170,6 +175,7 @@ test("cmux being unreachable still prints the --json receipt, flushed, before th
         });
     } finally {
         exit.mockRestore();
+        flush.mockRestore();
     }
 });
 
