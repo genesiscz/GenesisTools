@@ -132,7 +132,9 @@ function entriesOf(request: RmRequest): ApproveEntry[] {
 
 beforeAll(() => {
     base = realpathSync(mkdtempSync(join(tmpdir(), "gt-rm-approve-")));
-    config = { ...defaultRmConfig(), trashRoot: join(base, "GenesisTools", "rm") };
+    // Every fixture lives in the per-user temp folder, where tmp-small would delete them without the request these
+    // tests open; its own tests are in rm.test.ts.
+    config = { ...defaultRmConfig(), trashRoot: join(base, "GenesisTools", "rm"), tmpSmallMB: 0 };
     saveRmConfig(config);
 });
 
