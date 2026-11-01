@@ -37,6 +37,7 @@ import {
     type RmRoot,
     type RmTarget,
     recordRmMeasurement,
+    requestBatchIds,
     requestsAlsoNaming,
     resolveTarget,
     returnAside,
@@ -527,7 +528,8 @@ function settleShared(shared: readonly SharedRequest[], decidedBy: RmRequest, ba
                       decidedAt,
                       decidedVia: `request:${decidedBy.id}`,
                       decided: { approved: [...paths], denied: [] },
-                      batchId,
+                      batchId: batchId ?? fresh.batchId,
+                      batchIds: batchId ? [...requestBatchIds(fresh), batchId] : fresh.batchIds,
                   };
         });
 

@@ -11,7 +11,7 @@ tools rm -n <paths...>              # dry run: each rule's verdict and the sizes
 tools rm preset node_modules js-build [--in <dir>]   # find and delete preset folders
 tools rm presets                    # the folder kinds deleted without asking
 tools rm trash                      # what waits for the drain (--sizes measures it)
-tools rm restore <batch|request> [paths...] # undo, while the batch is in its grace period (a request id: its batch)
+tools rm restore <batch|request> [paths...] # undo, while the batch is in its grace period (a request id: each of its batches)
 tools rm drain [--now]              # drain due batches now (--now: all of them)
 tools rm requests [id]              # what agents asked the user to confirm (an id: that request in full)
 tools rm request-root <dir> --reason "<why>"   # ask the user to trust a folder
