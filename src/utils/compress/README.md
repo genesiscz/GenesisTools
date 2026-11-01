@@ -172,6 +172,10 @@ Reads per level (CPU ms of the whole process, the read alone in parentheses; Bun
 | migrate-home tar, every frame (`readZstdFramesSync`) | 62 (14) | 78 (29) | 79 (30) | 79 (30) | 76 (30) |
 | app bundle tar, every frame | 69 (8) | 75 (21) | 84 (21) | 84 (27) | 82 (24) |
 
+In this run the read alone of the frame rows still held the content check, a sha256 of every byte, and the line rows
+checked only the line count and length. The bench now hashes every line and times every check apart, so a rerun
+shows lower frame numbers: a 629 MB plain frame read cost 245 ms with the check and 39 ms without it (one run each).
+
 ## Numbers
 
 Measured 2026-10-13 (Apple Silicon, Bun 1.4.2; the format checks also pass on 1.3.13).
