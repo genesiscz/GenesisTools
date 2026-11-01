@@ -1,3 +1,5 @@
+import SwiftUI
+import Vision
 import XCTest
 @testable import GenesisToolsHost
 @testable import GenesisToolsHub
@@ -90,6 +92,100 @@ final class HubDailyTests: XCTestCase {
         let side = try XCTUnwrap(decode(HubForecastResult.self, forecastJSON).accounts.last)
         XCTAssertTrue(side.current.isEmpty)
         XCTAssertNil(side.headline)
+    }
+
+    func testForecastOutputWithoutTheAbsentFieldHasNothingAbsent() throws {
+        let accounts = try decode(HubForecastResult.self, forecastJSON).accounts
+        XCTAssertEqual(accounts.map(\.absent), [[], []])
+        XCTAssertFalse(try XCTUnwrap(accounts.first).tooltip.contains("limit on this account"))
+    }
+
+    // MARK: forecast, an account without a 5h limit (Anthropic, 2026-10-31)
+
+    /// `work` has a 5h window; `personal` has none, and the CLI names it in `absentWindows` instead of a 0% window.
+    private let absentForecastJSON = """
+    {"generatedAt":"2026-03-02T15:00:00.000Z","source":"/tmp/index.db","elapsedMs":3,"accounts":[
+      {"provider":"anthropic-sub","account":"work","warning":null,"absentWindows":[],"windows":[
+        {"bucket":"five_hour","kind":"session","label":"5h","utilization":70,"resetsAt":"2026-03-02T18:00:00.000Z","lastSampleAt":"2026-03-02T15:00:00.000Z","samples":5,
+         "ratePctPerHour":5,"basis":"active","exhaustAt":"2026-03-02T21:00:00.000Z","minutesToExhaust":360,"beforeReset":false,"projectedAtReset":85,"resetSinceSample":false,"stale":false},
+        {"bucket":"seven_day","kind":"weekly","label":"Weekly","utilization":30,"resetsAt":"2026-03-06T15:00:00.000Z","lastSampleAt":"2026-03-02T15:00:00.000Z","samples":2,
+         "ratePctPerHour":0.42,"basis":"window","exhaustAt":"2026-03-09T15:00:00.000Z","minutesToExhaust":10080,"beforeReset":false,"projectedAtReset":70,"resetSinceSample":false,"stale":false}]},
+      {"provider":"anthropic-sub","account":"personal","warning":null,"absentWindows":["five_hour"],"windows":[
+        {"bucket":"seven_day","kind":"weekly","label":"Weekly","utilization":61,"resetsAt":"2026-03-06T15:00:00.000Z","lastSampleAt":"2026-03-02T15:00:00.000Z","samples":4,
+         "ratePctPerHour":0.2,"basis":"window","exhaustAt":"2026-03-10T15:00:00.000Z","minutesToExhaust":11520,"beforeReset":false,"projectedAtReset":80,"resetSinceSample":false,"stale":false}]}]}
+    """
+
+    private func absentAccounts() throws -> (work: HubForecastAccount, personal: HubForecastAccount) {
+        let accounts = try decode(HubForecastResult.self, absentForecastJSON).accounts
+        return (try XCTUnwrap(accounts.first { $0.account == "work" }), try XCTUnwrap(accounts.first { $0.account == "personal" }))
+    }
+
+    func testAnAccountWithoutAFiveHourLimitHeadlinesItsWeeklyWindow() throws {
+        let (work, personal) = try absentAccounts()
+        XCTAssertEqual(personal.absent, ["five_hour"])
+        XCTAssertEqual(personal.headline?.bucket, "seven_day")
+        XCTAssertFalse(personal.current.contains { $0.kind == "session" })
+        XCTAssertEqual(work.absent, [])
+        XCTAssertEqual(work.headline?.bucket, "five_hour", "an account with a 5h window still headlines it")
+    }
+
+    /// The chip is a compact strip: it leaves the 5h out and says why in its tooltip.
+    func testTheChipTooltipSaysTheAccountHasNoFiveHourLimit() throws {
+        let (work, personal) = try absentAccounts()
+        XCTAssertTrue(personal.tooltip.contains("No 5h limit on this account"), personal.tooltip)
+        XCTAssertFalse(personal.tooltip.contains("5h 0%"), personal.tooltip)
+        XCTAssertTrue(personal.tooltip.hasPrefix("Weekly 61% used"), personal.tooltip)
+        XCTAssertFalse(work.tooltip.contains("limit on this account"), work.tooltip)
+    }
+
+    /// The digest row is a table row: `5h —` where the 5h stands in the other rows, never a percent.
+    @MainActor
+    func testTheDigestRowShowsADashForTheMissingFiveHourWindow() throws {
+        let (work, personal) = try absentAccounts()
+        XCTAssertEqual(personal.cells.map(\.id), ["absent:five_hour", "window:seven_day"])
+        XCTAssertEqual(work.cells.map(\.id), ["window:five_hour", "window:seven_day"])
+
+        let personalText = try Self.read(row: personal)
+        XCTAssertTrue(personalText.contains("5h"), personalText)
+        XCTAssertTrue(personalText.contains("61%"), personalText)
+        XCTAssertFalse(personalText.contains("5h 0"), personalText)
+        let workText = try Self.read(row: work)
+        XCTAssertTrue(workText.contains("70%"), workText)
+    }
+
+    /// A writer that still sends a 0% window beside the marker never makes it a constraint or a chip.
+    func testAWindowTheAccountHasNoLimitForIsNeverAConstraint() throws {
+        let json = """
+        {"generatedAt":"2026-03-02T15:00:00.000Z","source":null,"accounts":[
+          {"provider":"anthropic-sub","account":"personal","warning":null,"absentWindows":["five_hour"],"windows":[
+            {"bucket":"five_hour","kind":"session","label":"5h","utilization":0,"resetsAt":null,"lastSampleAt":"2026-03-02T15:00:00.000Z","samples":1,
+             "ratePctPerHour":null,"basis":null,"exhaustAt":null,"minutesToExhaust":null,"beforeReset":false,"projectedAtReset":null,"resetSinceSample":false,"stale":false},
+            {"bucket":"seven_day","kind":"weekly","label":"Weekly","utilization":61,"resetsAt":"2026-03-06T15:00:00.000Z","lastSampleAt":"2026-03-02T15:00:00.000Z","samples":4,
+             "ratePctPerHour":null,"basis":null,"exhaustAt":null,"minutesToExhaust":null,"beforeReset":false,"projectedAtReset":null,"resetSinceSample":false,"stale":false}]}]}
+        """
+        let personal = try XCTUnwrap(decode(HubForecastResult.self, json).accounts.first)
+        XCTAssertEqual(personal.current.map(\.bucket), ["seven_day"])
+        XCTAssertEqual(personal.headline?.bucket, "seven_day")
+        XCTAssertEqual(personal.cells.map(\.id), ["absent:five_hour", "window:seven_day"])
+    }
+
+    /// The row as the digest draws it, read back by text recognition (a SwiftUI view in a test has no
+    /// accessibility tree).
+    @MainActor
+    private static func read(row entry: HubForecastAccount) throws -> String {
+        let view = HubForecastRow(entry: entry)
+            .frame(width: 560)
+            .padding(10)
+            .background(Color.black)
+            .environment(\.colorScheme, .dark)
+        let renderer = ImageRenderer(content: view)
+        renderer.scale = 2
+        let image = try XCTUnwrap(renderer.cgImage)
+        let request = VNRecognizeTextRequest()
+        request.recognitionLevel = .accurate
+        request.usesLanguageCorrection = false
+        try VNImageRequestHandler(cgImage: image).perform([request])
+        return (request.results ?? []).compactMap { $0.topCandidates(1).first?.string }.joined(separator: "\n")
     }
 
     // MARK: digest
