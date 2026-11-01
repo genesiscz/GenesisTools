@@ -10,6 +10,7 @@ import {
     requestBatchIds,
     requestLive,
     requestsAlsoNaming,
+    ruledLine,
 } from "@genesiscz/utils/rm";
 import { type DotStatusKind, formatDotStatus, truncateDisplay } from "@genesiscz/utils/table";
 import pc from "picocolors";
@@ -23,11 +24,15 @@ export interface RequestView {
     sizes: (number | undefined)[];
     /** Other pending requests that name one of this request's in-place paths (none for a closed request). */
     alsoIn: string[];
+    /** Paths of an open request that a rule covers now: the next sweep deletes them without a person. */
+    covered: Array<{ path: string; rule: string; reason: string }>;
 }
 
 export interface RequestViewDeps {
     present?: (path: string) => boolean;
     sizeOf: (request: RmRequest, target: RmRequestTarget) => number | undefined;
+    /** Which paths of an open request a rule covers now (read only); none when absent. */
+    coverage?: (request: RmRequest) => Array<{ path: string; rule: string; reason: string }>;
 }
 
 export function buildRequestViews(requests: readonly RmRequest[], deps: RequestViewDeps): RequestView[] {
@@ -40,6 +45,7 @@ export function buildRequestViews(requests: readonly RmRequest[], deps: RequestV
             live: requestLive(request, deps.present),
             sizes: request.targets.map((target) => deps.sizeOf(request, target)),
             alsoIn: [...new Set([...also.values()].flat())].sort(),
+            covered: request.status === "pending" ? (deps.coverage?.(request) ?? []) : [],
         };
     });
 }
@@ -91,6 +97,7 @@ const CLOSED_STATE: Record<Exclude<RmRequestStatus, "pending">, { kind: DotStatu
     denied: { kind: "dim", label: "denied" },
     expired: { kind: "dim", label: "expired" },
     gone: { kind: "dim", label: "gone" },
+    ruled: { kind: "ok", label: "ruled" },
 };
 
 function isOpen(view: RequestView): boolean {
@@ -163,8 +170,10 @@ function decidedShort(request: RmRequest): string {
 
 function whyCell(view: RequestView): string {
     const rules = [...new Set(view.request.targets.map((target) => target.rule))].filter((rule) => rule !== "default");
+    const covering = [...new Set(view.covered.map((entry) => entry.rule))];
     const parts = [
         decidedShort(view.request),
+        covering.length > 0 ? `${covering.join(",")}: closes at the sweep` : "",
         rules.join(","),
         isOpen(view) && view.live.state === "waiting" && view.live.gone > 0 ? `${view.live.gone} gone` : "",
         view.alsoIn.length > 0 ? `same path as ${view.alsoIn.join(" ")}` : "",
@@ -253,7 +262,23 @@ function summaryLines(allViews: readonly RequestView[], now: Date): string[] {
         ids("came-back").length > 0 ? `${ids("came-back").length} came back (${ids("came-back").join(" ")})` : "",
         twice.length > 0 ? `${twice.length} asked twice (${twice.join(", ")})` : "",
     ].filter((part) => part !== "");
-    return look.length > 0 ? [head, `${pc.yellow("Needs a look:")} ${look.join(" · ")}`] : [head];
+    const ruled = views.filter((view) => view.covered.length > 0);
+    const sweep =
+        ruled.length > 0
+            ? `${pc.green("A rule covers:")} ${ruled
+                  .map(
+                      (view) =>
+                          `${view.request.id} (${[...new Set(view.covered.map((entry) => entry.rule))].join(", ")})`
+                  )
+                  .join(
+                      " "
+                  )}; the next sweep deletes ${ruled.length === 1 ? "its paths" : "their paths"} without you (${toolCommand("rm")} drain sweeps now)`
+            : "";
+    return [
+        head,
+        ...(look.length > 0 ? [`${pc.yellow("Needs a look:")} ${look.join(" · ")}`] : []),
+        ...(sweep ? [sweep] : []),
+    ];
 }
 
 function footerLines(views: readonly RequestView[], caller: RmCaller): string[] {
@@ -340,6 +365,10 @@ export function renderRequestDetail(view: RequestView, now: Date): string[] {
         lines.push(`  note     ${request.deniedNote}`);
     }
 
+    for (const entry of request.ruled ?? []) {
+        lines.push(`  ruled    ${entry.path}: ${ruledLine(entry.rule, entry.reason)}`);
+    }
+
     lines.push("  paths");
 
     request.targets.forEach((target, index) => {
@@ -350,6 +379,14 @@ export function renderRequestDetail(view: RequestView, now: Date): string[] {
             lines.push(pc.red(`        gone: ${LOST_COPY_CAUSE} (it waited at ${target.stored})`));
         } else if (target.stored) {
             lines.push(pc.dim(`        stored at ${target.stored}`));
+        }
+
+        const covered = view.covered.find((entry) => entry.path === target.path);
+
+        if (covered) {
+            lines.push(
+                pc.green(`        rule ${covered.rule} covers it now: ${covered.reason}; the next sweep deletes it`)
+            );
         }
     });
 
