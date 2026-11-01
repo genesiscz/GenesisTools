@@ -15,8 +15,10 @@ import { toolCommand } from "@genesiscz/utils/cli";
 import { SafeJSON } from "@genesiscz/utils/json";
 import { out } from "@genesiscz/utils/logger";
 import {
+    type ApprovalDeps,
     type ApprovalItemUpdate,
     type ApprovalPrompt,
+    appApproveParams,
     createRmRequest,
     defaultRmConfig,
     defaultRuleContext,
@@ -52,7 +54,7 @@ import {
 import { stripAnsi } from "@genesiscz/utils/string";
 import { type Command, CommanderError } from "commander";
 import { describePolicy } from "../commands/profiles";
-import { approveMany, denyPicked, underDecisionLock } from "../commands/requests";
+import { approveMany, askForApproval, denyPicked, underDecisionLock } from "../commands/requests";
 import { applyRmSetting, saveRmSetting } from "../commands/settings";
 import { agentMayDrainEarly } from "../commands/trash";
 import { createRmProgram } from "../program";
@@ -1795,6 +1797,148 @@ describe("a rule that covers a request now", () => {
     });
 });
 
+describe("tools rm ask: an agent opens the person's window", () => {
+    /** Runs `ask` for `id` with a person who answers `approved`, recording every prompt the window got. */
+    /** No app on this platform when `approved` is false; else the window answers Touch ID. `typed` must never run. */
+    async function ask(id: string, ctx: RunContext, approved = true) {
+        const prompts: ApprovalPrompt[] = [];
+        const typed: string[] = [];
+        const confirm: ApprovalDeps = {
+            interactive: () => true,
+            platform: approved ? "darwin" : "linux",
+            typed: async () => {
+                typed.push("typed");
+                return true;
+            },
+            dialog: () => false,
+            app: async (prompt) => {
+                prompts.push(prompt);
+                return {
+                    kind: "answered",
+                    outcome: {
+                        approved: true,
+                        via: "touch-id",
+                        detail: "touched",
+                        choices: { selected: null, disposal: "trash", remember: "once", note: null },
+                    },
+                };
+            },
+        };
+        const lines: string[] = [];
+        const println = spyOn(out, "println").mockImplementation((raw?: unknown) => {
+            lines.push(stripAnsi(String(raw ?? "")));
+        });
+        const exitCode = process.exitCode;
+        let code: typeof process.exitCode;
+
+        try {
+            process.exitCode = 0;
+            await askForApproval(id, ctx, { confirm });
+            code = process.exitCode;
+        } finally {
+            println.mockRestore();
+            process.exitCode = exitCode;
+        }
+
+        return { prompts, typed, lines, code };
+    }
+
+    function agentCtx(askMinMB: number): RunContext {
+        const set = { ...config, notify: { ...config.notify, askMinMB } };
+        return { ...context(), caller: AGENT, config: set, base: set };
+    }
+
+    test("under the size set for agents no window opens: the agent hands the user approve", async () => {
+        const request = asideRequest("ask-small");
+        const { prompts, lines, code } = await ask(request.id, agentCtx(10));
+
+        expect(prompts).toEqual([]);
+        expect(code).toBe(1);
+        expect(lines.at(-1)).toMatch(
+            new RegExp(
+                `^Request ${request.id} is [\\d.]+ (B|KB)( \\(.+\\))?, under the 10 MB set for agents: hand the user \`! ${toolCommand("rm")} approve ${request.id}\``
+            )
+        );
+        expect(loadRmRequest(request.id)?.status).toBe("pending");
+    });
+
+    test("an unknown size counts as 0, and the line says so", async () => {
+        const target = {
+            path: file(join(base, "ask-unknown", "x.txt")),
+            kind: "file" as const,
+            rule: "default",
+            reason: "r",
+        };
+        const request = createRmRequest({ kind: "delete", caller: AGENT, cwd: base, reason: null, targets: [target] });
+        const { lines } = await ask(request.id, agentCtx(10));
+
+        expect(lines.at(-1)).toContain("1 size not measured yet counts as 0");
+    });
+
+    test("at or over the size the window opens with the dialog only, Touch ID waits for a click, the ledger says ask", async () => {
+        const request = asideRequest("ask-big");
+        const { prompts, typed, code } = await ask(request.id, {
+            ...agentCtx(0),
+            base: { ...agentCtx(0).base, approval: "code" },
+        });
+
+        expect(prompts).toHaveLength(0);
+        expect(typed).toEqual([]);
+        expect(code).toBe(1);
+
+        const again = asideRequest("ask-big-window");
+        const window = await ask(again.id, agentCtx(0));
+
+        expect(window.prompts).toHaveLength(1);
+        expect(window.prompts[0]?.openedBy).toBe("ask");
+        expect(appApproveParams(window.prompts[0] ?? { title: "", lines: [], code: "", caller: AGENT }).arm).toBe(
+            "click"
+        );
+        expect(window.typed).toEqual([]);
+        const code2 = window.code;
+        expect(code2).toBe(0);
+        expect(loadRmRequest(again.id)?.status).toBe("approved");
+        const approved = readRmLedger().filter((entry) => entry.action === "approve" && entry.requestId === again.id);
+        expect(approved.map((entry) => entry.person)).toEqual([{ via: "touch-id", opened: "ask" }]);
+    });
+
+    test("without a way to ask a person, it prints why and the hand-over line, and exits 1", async () => {
+        const request = asideRequest("ask-no-app");
+        const { lines, code } = await ask(request.id, agentCtx(0), false);
+
+        expect(code).toBe(1);
+        expect(lines.some((line) => line.startsWith("Not confirmed: nothing on linux proves a person answered"))).toBe(
+            true
+        );
+        expect(lines.at(-1)).toBe(`Hand the user: ! ${toolCommand("rm")} approve ${request.id}`);
+        expect(loadRmRequest(request.id)?.status).toBe("pending");
+    });
+
+    test("a root request is the person's to open: the hand-over line, exit 1", async () => {
+        const root = createRmRequest({
+            kind: "root",
+            caller: AGENT,
+            cwd: base,
+            reason: "scratch",
+            targets: [{ path: base, kind: "dir", rule: "root", reason: "trust this folder" }],
+        });
+        const { prompts, lines, code } = await ask(root.id, agentCtx(0));
+
+        expect(prompts).toEqual([]);
+        expect(code).toBe(1);
+        expect(lines.at(-1)).toBe(
+            `Request ${root.id} asks to trust a folder, which only the user opens: hand the user \`! ${toolCommand("rm")} approve ${root.id}\``
+        );
+    });
+
+    test("the window an agent opened arms Touch ID only after a click; the window approve opens arms it at once", () => {
+        const prompt = { title: "t", lines: ["/x"], code: "abc234", caller: AGENT };
+
+        expect(appApproveParams({ ...prompt, openedBy: "ask" }).arm).toBe("click");
+        expect(appApproveParams(prompt).arm).toBeUndefined();
+    });
+});
+
 describe("one window for several requests", () => {
     /** An in-place delete request for `paths`, each a fresh file under `folder`. */
     function inPlaceAsk(folder: string, names: string[]): RmRequest {
@@ -2200,6 +2344,7 @@ describe("the request hint an agent reads", () => {
         expect(last).toContain("rm request k7m2qd: 2 paths wait for the user.");
         expect(last).toContain("Do not run approve yourself.");
         expect(last).toContain(`! ${toolCommand("rm")} approve k7m2qd`);
+        expect(last).toContain(`${toolCommand("rm")} ask k7m2qd`);
         expect(last).toContain(`${toolCommand("rm")} deny k7m2qd`);
     });
 });

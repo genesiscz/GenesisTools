@@ -45,6 +45,8 @@ describe("rm-user-verbs", () => {
         "tools rm -v drain --now",
         "tools rm drain --background --now",
         "bun src/rm/index.ts drain --now",
+        "tools rm approve --session aaaaaaaa",
+        "tools rm approve k7m2qd --help",
     ];
 
     it.each(caught)("blocks %j", (command) => {
@@ -64,10 +66,37 @@ describe("rm-user-verbs", () => {
         "tools rm trash",
         "tools rm --now dist",
         "tools rm drain && echo --nowhere",
+        // The agent's verb: it only opens the person's window.
+        "tools rm ask k7m2qd",
+        "./tools rm ask k7m2qd &",
+        // Help and a bare verb do nothing: Commander prints the help, or the verb asks for an id.
+        "tools rm approve --help",
+        "tools rm approve -h",
+        "tools rm approve",
+        "tools rm config set --help",
     ];
 
     it.each(allowed)("leaves %j alone", (command) => {
         expect(ids(command)).not.toContain("rm-user-verbs");
+    });
+});
+
+describe("rm-user-verbs offers the agent's verb", () => {
+    it("suggests tools rm ask for one request, and nothing for several or a filter", () => {
+        expect(only("tools rm approve k7m2qd", "rm-user-verbs")?.suggestion).toBe("tools rm ask k7m2qd");
+        expect(only("cd /w && tools rm approve k7m2qd", "rm-user-verbs")?.suggestion).toBe(
+            "cd /w && tools rm ask k7m2qd"
+        );
+        expect(only("tools rm approve a1b2 c3d4", "rm-user-verbs")?.suggestion).toBeUndefined();
+        expect(only("tools rm approve --older 1d", "rm-user-verbs")?.suggestion).toBeUndefined();
+        expect(only("tools rm roots add /tmp/x", "rm-user-verbs")?.suggestion).toBeUndefined();
+    });
+
+    it("says approve is the person's verb and ask the agent's", () => {
+        const rule = only("tools rm approve k7m2qd", "rm-user-verbs");
+
+        expect(rule?.why).toContain("ask");
+        expect(rule?.why).not.toContain("would approve itself");
     });
 });
 

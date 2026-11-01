@@ -6,12 +6,14 @@ import { rmEnablePresetCommand, rmRequestHintLine } from "@genesiscz/utils/genes
 import { logger, out } from "@genesiscz/utils/logger";
 import {
     type ApprovalChoices,
+    type ApprovalDeps,
     type ApprovalPrompt,
     alreadyAskedInPlace,
     appendRmLedger,
     approvalItemReason,
     confirmByPerson,
     createAsideRequest,
+    DEFAULT_APPROVAL_DEPS,
     defaultRuleContext,
     disposalGraceMinutes,
     effectiveConfig,
@@ -641,9 +643,13 @@ export function printRequestHint(id: string, count: number): void {
 /** For a verb only a person may run (approve, roots add, config set): ask, and log how it was answered. */
 export async function requirePerson(
     ctx: RunContext,
-    prompt: Pick<ApprovalPrompt, "title" | "lines" | "code" | "request" | "remember" | "updates">
+    prompt: Pick<ApprovalPrompt, "title" | "lines" | "code" | "request" | "remember" | "updates" | "openedBy">,
+    options: { deps?: ApprovalDeps } = {}
 ): Promise<PersonAnswer> {
-    const outcome = await confirmByPerson({ ...prompt, caller: ctx.caller, approval: ctx.base.approval });
+    const outcome = await confirmByPerson(
+        { ...prompt, caller: ctx.caller, approval: ctx.base.approval },
+        options.deps ?? DEFAULT_APPROVAL_DEPS
+    );
 
     if (!outcome.approved) {
         out.println(pc.red(`Not confirmed: ${outcome.detail}.`));
@@ -655,6 +661,8 @@ export async function requirePerson(
         via: outcome.via,
         choices: outcomeChoices(outcome),
         deniedByPerson: outcome.deniedByPerson === true,
+        ...(prompt.openedBy ? { opened: prompt.openedBy } : {}),
+        detail: outcome.detail,
     };
 }
 
@@ -665,6 +673,10 @@ export interface PersonAnswer {
     choices: ApprovalChoices;
     /** The person pressed Deny in the window (a timeout or a failed touch is not). */
     deniedByPerson: boolean;
+    /** `ask`: an agent opened the window (`tools rm ask`); the ledger says so. */
+    opened?: "ask";
+    /** What the person check said, e.g. why no window could ask. */
+    detail?: string;
 }
 
 export function minutesOption(value: string): number {

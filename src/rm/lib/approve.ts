@@ -582,7 +582,7 @@ export function saveApproved(input: {
         via: answer.via,
         caller: ctx.caller,
         batchId,
-        person: { via: answer.via },
+        person: { via: answer.via, ...(answer.opened ? { opened: answer.opened } : {}) },
     });
 }
 

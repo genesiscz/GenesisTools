@@ -3,11 +3,14 @@ import { formatBytes, formatCount } from "@genesiscz/utils/format";
 import { logger, out } from "@genesiscz/utils/logger";
 import * as p from "@genesiscz/utils/prompts/p";
 import {
+    type ApprovalAsker,
+    type ApprovalDeps,
     ApprovalUpdates,
     appendRmLedger,
     approvalAsker,
     approvalDenyReason,
     createRmRequest,
+    DEFAULT_APPROVAL_DEPS,
     hardDenyReason,
     listRmRequests,
     loadRmMeasurementOf,
@@ -43,6 +46,7 @@ import {
     denyRequest,
     printDenyOutcome,
     reportLostCopies,
+    savedSizes,
 } from "../lib/approve";
 import { buildRequestViews, renderRequestDetail, renderRequestList, renderRequestRow } from "../lib/requests-view";
 import {
@@ -200,6 +204,19 @@ function coverageOf(ctx: RunContext): (request: RmRequest) => Array<{ path: stri
               }))
             : [];
     };
+}
+
+/** "asked by session shop-admin", "asked by Codex in shop", "asked by an agent": the window title's who. */
+export function askedByLabel(asker: ApprovalAsker | undefined): string {
+    if (!asker) {
+        return "asked by an agent";
+    }
+
+    if (asker.session) {
+        return `asked by session ${asker.session}`;
+    }
+
+    return asker.project ? `asked by ${asker.agent} in ${asker.project}` : `asked by ${asker.agent}`;
 }
 
 /** Why a batch approval leaves `request` out, or null: it takes only open delete requests a window can decide. */
@@ -620,8 +637,66 @@ async function pickAndDecide(ctx: RunContext): Promise<void> {
     }
 }
 
+/** The person check `ask` runs: `deps` (the real ones unless a test says) with no typed code, since an agent ran it. */
+function dialogOnly(deps: ApprovalDeps = DEFAULT_APPROVAL_DEPS): ApprovalDeps {
+    return { ...deps, interactive: () => false };
+}
+
+/** The line an agent passes on when only the person can open the request. */
+function handOver(id: string): string {
+    return `hand the user \`! ${toolCommand("rm")} approve ${id}\``;
+}
+
+/** The bytes a request's rows would show (saved sizes, else the size its aside move measured), and how many are unknown. */
+function requestBytes(request: RmRequest, entries: readonly ApproveEntry[]): { bytes: number; unknown: number } {
+    const saved = savedSizes(request, entries);
+    let bytes = 0;
+    let unknown = 0;
+
+    for (const { wanted, target } of entries) {
+        const size = target.kind === "missing" ? 0 : (saved.get(wanted.path) ?? wanted.bytes);
+
+        if (size === undefined) {
+            unknown++;
+        }
+
+        bytes += size ?? 0;
+    }
+
+    return { bytes, unknown };
+}
+
+/**
+ * `tools rm ask <id>`: an agent opens the person's approval window for its delete request, through the same steps
+ * `approve` takes (the sweep, the refusals, the recheck, the deny and the ledger are one copy, `decideOne`). It never
+ * approves by itself: the person check takes the window or the macOS dialog, never a typed code, and the window arms
+ * Touch ID only after a click. A request under `notify.askMinMB` opens nothing; the agent hands the person approve.
+ */
+export async function askForApproval(
+    id: string,
+    ctx: RunContext,
+    deps: { confirm?: ApprovalDeps } = {}
+): Promise<void> {
+    await underDecisionLock(
+        id,
+        (holder) =>
+            `Request ${id} is open in an approval window${holder ? ` (pid ${holder})` : ""}. The user answers that window.`,
+        () => decideOne(id, ctx, { through: "ask", confirm: deps.confirm })
+    );
+}
+
 /** `tools rm approve <id>`: shows the request to a person and does what they picked; the caller holds its lock. */
 async function approveOne(id: string, ctx: RunContext): Promise<void> {
+    await decideOne(id, ctx, { through: "approve" });
+}
+
+/** One request through the person check: `approve` (a person ran it) or `ask` (an agent opened the window). */
+async function decideOne(
+    id: string,
+    ctx: RunContext,
+    options: { through: "approve" | "ask"; confirm?: ApprovalDeps }
+): Promise<void> {
+    const ask = options.through === "ask";
     // A path a rule covers now is decided by it before any window opens; a request it closes needs no person.
     const swept = sweepRequests(ctx, { ids: [id] });
 
@@ -657,6 +732,12 @@ async function approveOne(id: string, ctx: RunContext): Promise<void> {
         return;
     }
 
+    if (ask && request.kind === "root") {
+        out.println(`Request ${id} asks to trust a folder, which only the user opens: ${handOver(id)}`);
+        process.exitCode = 1;
+        return;
+    }
+
     const prepared = prepareApproval(request, ctx);
     const { openEntries } = prepared;
 
@@ -671,29 +752,57 @@ async function approveOne(id: string, ctx: RunContext): Promise<void> {
         return;
     }
 
+    if (ask) {
+        const gate = ctx.base.notify.askMinMB;
+        const { bytes, unknown } = requestBytes(request, openEntries);
+
+        if (bytes < gate * 1024 * 1024) {
+            const counted =
+                unknown > 0
+                    ? ` (${formatCount(unknown, "size")} not measured yet ${unknown === 1 ? "counts" : "count"} as 0)`
+                    : "";
+            out.println(
+                `Request ${id} is ${formatBytes(bytes)}${counted}, under the ${gate} MB set for agents: ${handOver(id)}`
+            );
+            process.exitCode = 1;
+            return;
+        }
+    }
+
     // The window opens now; the sizes not saved yet follow into it as they are measured.
     const measuring = new AbortController();
     const rows = approvalRows(request, openEntries, { signal: measuring.signal });
     const info = approvalRequestInfo(request, rows.items);
-    const who = info.asker ? (info.asker.session ?? info.asker.project ?? info.asker.agent) : "an agent";
+    const who = askedByLabel(info.asker);
     const verb =
         request.kind === "delete"
             ? `Delete ${openEntries.length === 1 ? "1 item" : `${openEntries.length} items`}`
             : `Trust ${shown(openEntries[0]?.target.path ?? "", ctx.cwd)}`;
     out.println(pc.dim(`Opening the approval window for ${id} (${formatCount(openEntries.length, "item")})…`));
-    const answer = await requirePerson(ctx, {
-        title: `${verb} for ${who}?`,
-        lines: approvalLines(
-            request,
-            openEntries,
-            ctx,
-            rows.items.map((item) => item.bytes)
-        ),
-        code: id,
-        request: info,
-        remember: rememberOptions(request.kind, request.caller),
-        updates: rows.updates,
-    }).finally(() => measuring.abort());
+    const confirm = ask ? dialogOnly(options.confirm) : options.confirm;
+    const answer = await requirePerson(
+        ctx,
+        {
+            title: `${verb} ${who}?`,
+            lines: approvalLines(
+                request,
+                openEntries,
+                ctx,
+                rows.items.map((item) => item.bytes)
+            ),
+            code: id,
+            request: info,
+            remember: rememberOptions(request.kind, request.caller),
+            updates: rows.updates,
+            ...(ask ? { openedBy: "ask" as const } : {}),
+        },
+        confirm ? { deps: confirm } : {}
+    ).finally(() => measuring.abort());
+
+    if (ask && !answer.approved && !answer.deniedByPerson) {
+        out.println(`Hand the user: ! ${toolCommand("rm")} approve ${id}`);
+        process.exitCode = 1;
+    }
     applyApprovalAnswer({
         ctx,
         request,
@@ -878,6 +987,19 @@ export function registerRequestCommands(program: Command): void {
 
             out.println(`Name the request ids, or run ${toolCommand("rm")} approve in a terminal for the picker.`);
             process.exitCode = 1;
+        });
+
+    program
+        .command("ask")
+        .description(
+            "open the user's approval window for a delete request (an agent's verb: it never approves by itself; " +
+                "run it in the background, the window waits up to 180 s)"
+        )
+        .argument("<id>", "the request id")
+        .action(async (id: string) => {
+            const ctx = runContext();
+            recoverAsideJournals();
+            await askForApproval(id, ctx);
         });
 
     program
