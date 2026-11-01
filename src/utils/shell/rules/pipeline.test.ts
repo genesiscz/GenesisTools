@@ -897,6 +897,108 @@ BASH`;
     });
 });
 
+describe("exit-code-after-pipeline: the escapes the shell around a body removes come off first", () => {
+    it("reads the escaped $? of a body nested in a double-quoted body as the inner shell's", () => {
+        expect(violation(`zsh -c "bash -c 'false | tail -1; echo \\$?'"`, PIPE)).toMatchObject({
+            matched: "false | tail -1",
+            suggestion: `zsh -c "bash -c '(set -o pipefail; false | tail -1); echo \\$?'"`,
+        });
+
+        const escaped = String.raw`zsh -c "bash -c \"false | tail -1; echo \\\$?\""`;
+        expect(violation(escaped, PIPE)).toMatchObject({
+            matched: "false | tail -1",
+            suggestion: String.raw`zsh -c "bash -c \"(set -o pipefail; false | tail -1); echo \\\$?\""`,
+        });
+    });
+
+    it("reads an escaped $? in an unquoted heredoc a shell reads as that shell's, and a bare $? as the outer one's", () => {
+        expect(violation("bash <<EOF\nfalse | tail -1; echo \\$?\nEOF", PIPE)).toMatchObject({
+            matched: "false | tail -1",
+            suggestion: "bash <<EOF\n(set -o pipefail; false | tail -1); echo \\$?\nEOF",
+        });
+        expect(violation('zsh <<EOF\ncmd | tail -1\necho "rc=\\$?"\nEOF', PIPE)?.matched).toBe("cmd | tail -1");
+        expect(violation("bash <<EOF\nfalse | tail -1; echo $?\nEOF", PIPE)).toBeUndefined();
+    });
+
+    it("leaves single-quoted bodies and quoted heredocs as typed", () => {
+        expect(violation("bash -c 'false | tail -1; echo \\$?'", PIPE)).toBeUndefined();
+        expect(violation("bash <<'EOF'\nfalse | tail -1; echo \\$?\nEOF", PIPE)).toBeUndefined();
+        expect(violation("cat <<EOF\nfalse | tail -1; echo \\$?\nEOF", PIPE)).toBeUndefined();
+        expect(violation(`zsh -c 'bash -c "false | tail -1; echo \\$?"'`, PIPE)?.matched).toBe("false | tail -1");
+    });
+
+    // Each shape was run in zsh 5.9 with a known status before it: the shell that expands the `$?` is the one the
+    // comment names.
+    it("leaves a $? that a shell around a nested body expands to that shell", () => {
+        for (const command of [
+            // zsh -c expands it inside its own double quotes, so bash reads a number.
+            String.raw`zsh -c "bash -c \"false | tail -1; echo \$?\""`,
+            String.raw`zsh -c "bash -c \"false | tail -1; echo \\\\\$?\""`,
+            // The outer zsh expands it: the single quotes are text inside its double quotes.
+            `zsh -c "bash -c 'false | tail -1; echo $?'"`,
+            // The outer zsh expands it before bash runs the escaped backticks.
+            'bash -c "x=\\`false | tail -1; echo $?\\`"',
+            // The outer zsh expands the heredoc, single quotes and all.
+            "bash <<EOF\nzsh -c 'false | tail -1; echo $?'\nEOF",
+            // bash expands it inside the double quotes of its own line.
+            'bash <<EOF\nzsh -c "false | tail -1; echo \\$?"\nEOF',
+            // bash -c expands the heredoc it feeds to the inner bash.
+            'bash -c "bash <<EOF\nfalse | tail -1; echo \\$?\nEOF"',
+            // A heredoc inside a heredoc: the middle bash expands the inner one.
+            "bash <<'A'\nbash <<B\nfalse | tail -1; echo $?\nB\nA",
+        ]) {
+            expect([command, violation(command, PIPE)]).toEqual([command, undefined]);
+        }
+    });
+
+    it("reads a $? that every shell around a nested body leaves escaped as the nested body's own", () => {
+        for (const [command, suggestion] of [
+            [
+                String.raw`zsh -c "bash -c \"false | tail -1; echo \\\$?\""`,
+                String.raw`zsh -c "bash -c \"(set -o pipefail; false | tail -1); echo \\\$?\""`,
+            ],
+            [
+                'bash -c "x=\\`false | tail -1; echo \\$?\\`"',
+                'bash -c "x=\\`(set -o pipefail; false | tail -1); echo \\$?\\`"',
+            ],
+            [
+                'bash <<EOF\nzsh -c "false | tail -1; echo \\\\\\$?"\nEOF',
+                'bash <<EOF\nzsh -c "(set -o pipefail; false | tail -1); echo \\\\\\$?"\nEOF',
+            ],
+            [
+                "bash <<EOF\nzsh -c 'false | tail -1; echo \\$?'\nEOF",
+                "bash <<EOF\nzsh -c '(set -o pipefail; false | tail -1); echo \\$?'\nEOF",
+            ],
+            [
+                'bash -c "bash <<EOF\nfalse | tail -1; echo \\\\\\$?\nEOF"',
+                'bash -c "bash <<EOF\n(set -o pipefail; false | tail -1); echo \\\\\\$?\nEOF"',
+            ],
+            [
+                "bash <<'A'\nbash <<B\nfalse | tail -1; echo \\$?\nB\nA",
+                "bash <<'A'\nbash <<B\n(set -o pipefail; false | tail -1); echo \\$?\nB\nA",
+            ],
+        ]) {
+            expect([command, violation(command, PIPE)?.suggestion]).toEqual([command, suggestion]);
+        }
+    });
+
+    it("reads a $(...) or backtick body the shell around runs with its own escapes, not the body's", () => {
+        // The outer zsh runs the $(...), where \$ is a literal `$`: bash later reads its own status.
+        expect(violation("bash <<EOF\necho $(false | tail -1; echo \\$?)\nEOF", PIPE)).toBeUndefined();
+        expect(violation('bash -c "echo $(false | tail -1; echo \\$?)"', PIPE)).toBeUndefined();
+        expect(violation("bash <<EOF\nx=\\\\$(false | tail -1; echo \\$?)\nEOF", PIPE)).toBeUndefined();
+        // In backticks `\\` is one backslash, and `\$?` is then a literal.
+        expect(violation("x=`false | tail -1; echo \\\\$?`; echo $x", PIPE)).toBeUndefined();
+        expect(violation('echo "`false | tail -1; echo \\\\$?`"', PIPE)).toBeUndefined();
+        // The escaped `\$(` is bash's own substitution, which reads the pipeline's status.
+        expect(violation("bash <<EOF\necho \\$(false | tail -1; echo \\$?)\nEOF", PIPE)).toMatchObject({
+            matched: "false | tail -1",
+            suggestion: "bash <<EOF\necho \\$( (set -o pipefail; false | tail -1); echo \\$?)\nEOF",
+        });
+        expect(violation("x=`false | tail -1; echo \\$?`; echo $x", PIPE)?.matched).toBe("false | tail -1");
+    });
+});
+
 // ---------------------------------------------------------------------------
 // pipestatus-under-zsh: `${PIPESTATUS[0]}` under the zsh-backed Bash tool
 // ---------------------------------------------------------------------------
@@ -1365,5 +1467,49 @@ describe("what the model reads", () => {
         expect(text).toContain("expands to an empty string");
         expect(text).toContain("1-indexed");
         expect(text).toContain("your command, corrected:\ncmd | tail; echo ${pipestatus[1]}");
+    });
+});
+
+describe("the follow-ups of the 2026-11-01 audit", () => {
+    it("copies every backslash the typed $? carries onto the inserted left status", () => {
+        expect(violation("zsh -c \"bash -c 'false | rg x; echo \\$?'\"", GREP)?.suggestion).toBe(
+            "zsh -c \"bash -c 'false | rg x; echo \\$? left_exit=\\${PIPESTATUS[0]}'\""
+        );
+        expect(violation('bash -c "false | rg x; echo \\$?"', GREP)?.suggestion).toBe(
+            'bash -c "false | rg x; echo \\$? left_exit=\\${PIPESTATUS[0]}"'
+        );
+    });
+
+    it("puts a space between $( and the pipefail subshell, which would otherwise open arithmetic", () => {
+        expect(violation("x=$(false | tail -1; echo $?); echo $x", PIPE)?.suggestion).toBe(
+            "x=$( (set -o pipefail; false | tail -1); echo $?); echo $x"
+        );
+    });
+
+    it("reads a pipeline and its $? inside one $(...) that the outer shell expands as the outer shell's", () => {
+        expect(violation('bash -c "echo $(false | tail -1; echo $?)"', PIPE)?.suggestion).toBe(
+            'bash -c "echo $( (set -o pipefail; false | tail -1); echo $?)"'
+        );
+        // Escaped, the substitution is bash's, and so is everything in it.
+        expect(violation('bash -c "echo \\$(false | tail -1; echo \\$?)"', PIPE)).toBeDefined();
+        // The outer shell's $? after a pipeline the body runs stays skipped.
+        expect(violation('bash -c "false | tail -1; echo $?"', PIPE)).toBeUndefined();
+    });
+
+    it("names the element each wrong $pipestatus read is, and the one its label names", () => {
+        expect(
+            violation(
+                "git diff --name-only | rg '\\.ts$' | xargs bunx biome check 2>&1 | tail -3; echo biome=$pipestatus[2]",
+                INDEX
+            )?.detail
+        ).toBe("$pipestatus[2] is element 2 (rg '\\.ts$'), while biome= names element 3 (xargs bunx biome check 2>&1)");
+        expect(violation("a | b; echo $pipestatus[3]", INDEX)?.detail).toBe(
+            "$pipestatus[3] names element 3 of 2, so it expands to nothing"
+        );
+        const v = violation("make 2>&1 | tail -5; echo $pipestatus[2]", INDEX);
+        expect(v?.detail).toBe("$pipestatus[2] is element 2 (tail -5), a filter that exits 0");
+        expect(v && renderViolation(v)).toContain(
+            "  here: $pipestatus[2] is element 2 (tail -5), a filter that exits 0"
+        );
     });
 });

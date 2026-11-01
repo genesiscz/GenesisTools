@@ -572,6 +572,42 @@ describe("git-checkout-overwrites-file: git show <ref>:<path> > <path>", () => {
     it("is a saved revert when the same command copied the file first", () => {
         expect(ids("cp a.ts /tmp/a && git show main:a.ts > a.ts")).toEqual([SAVED]);
     });
+
+    it("reads a redirection glued to the object, and every target zsh's MULTIOS writes", () => {
+        for (const [command, target] of [
+            ["git show main:a.ts>a.ts", "a.ts"],
+            ["git show main:a.ts>|a.ts", "a.ts"],
+            ["git show main:a.ts >! a.ts", "a.ts"],
+            ["git show main:a.ts > a.ts > /dev/null", "a.ts"],
+            ["git show main:a.ts >/dev/null >a.ts", "a.ts"],
+            ['git show main:"a b.ts">"a b.ts"', '"a b.ts"'],
+        ]) {
+            const v = only(command, CHECKOUT);
+            const suggestion = command.replace("git show", `${gate(target)}git show`);
+
+            expect(v?.severity).toBe("block");
+            expect(v?.suggestion).toBe(suggestion);
+            expect(ids(suggestion)).toEqual([]);
+        }
+
+        for (const command of [
+            "git show main:a.ts>>a.ts",
+            "git show main:a.ts >> a.ts > /dev/null",
+            "git show main:a.ts>a.ts.orig",
+            "git show main:a.ts 2>a.ts",
+            'git show main:a.ts">"a.ts',
+            "git show main:a.ts\\>a.ts",
+        ]) {
+            expect(ids(command)).toEqual([]);
+        }
+    });
+
+    it("a heredoc operator that is only quoted text leaves the gate", () => {
+        const command = "echo 'cat <<EOF'\ngit checkout main -- a.ts";
+
+        expect(only(command, CHECKOUT)?.suggestion).toBe(`echo 'cat <<EOF'\n${gate("a.ts")}git checkout main -- a.ts`);
+        blockedWithoutSuggestion(["cat <<EOF\n`git checkout main -- a.ts`\nEOF"]);
+    });
 });
 
 describe("git-checkout-overwrites-file: paths that do not exist only create files", () => {
@@ -724,6 +760,25 @@ describe("git-checkout-overwrites-saved-file", () => {
         expect(ids("git diff -- a.ts 1>& /tmp/cc/a.patch && git checkout -- a.ts")).toEqual([SAVED]);
         expect(ids("git diff -- a.ts >&2 && git checkout -- a.ts")).toEqual([CHECKOUT]);
         expect(ids("git diff -- a.ts >& 2 && git checkout -- a.ts")).toEqual([CHECKOUT]);
+    });
+
+    it("reads a redirection glued to the path, >|, and every target zsh's MULTIOS writes", () => {
+        expect(ids("git diff a.ts>/tmp/a.patch && git checkout -- a.ts")).toEqual([SAVED]);
+        expect(ids("git diff a.ts >| /tmp/a.patch && git checkout -- a.ts")).toEqual([SAVED]);
+        expect(ids("git diff a.ts > /tmp/a.patch > /dev/null && git checkout -- a.ts")).toEqual([SAVED]);
+        expect(ids("git diff a.ts > /dev/null >/tmp/a.patch && git checkout -- a.ts")).toEqual([SAVED]);
+        expect(ids("git diff a.ts>/dev/null; git checkout -- a.ts")).toEqual([CHECKOUT]);
+        expect(ids("git diff a.ts > /dev/null > /dev/null; git checkout -- a.ts")).toEqual([CHECKOUT]);
+    });
+
+    it("reads only the last target of a save that bash or sh runs, which has no MULTIOS", () => {
+        // bash truncates /tmp/a.patch and writes the diff to /dev/null only.
+        expect(ids('bash -c "git diff a.ts > /tmp/a.patch > /dev/null; git checkout -- a.ts"')).toEqual([CHECKOUT]);
+        expect(ids("sh <<'EOF'\ngit diff a.ts > /tmp/a.patch > /dev/null; git checkout -- a.ts\nEOF")).toEqual([
+            CHECKOUT,
+        ]);
+        expect(ids('bash -c "git diff a.ts > /dev/null > /tmp/a.patch && git checkout -- a.ts"')).toEqual([SAVED]);
+        expect(ids('zsh -c "git diff a.ts > /tmp/a.patch > /dev/null && git checkout -- a.ts"')).toEqual([SAVED]);
     });
 
     it("blocks when a path was not saved, or the save does not hold the work", () => {

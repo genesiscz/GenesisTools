@@ -86,6 +86,7 @@ export function detectShellViolations(
             matched: match.matched,
             index: match.index,
             ...(match.suggestion !== undefined ? { suggestion: match.suggestion } : {}),
+            ...(match.detail !== undefined ? { detail: match.detail } : {}),
         });
     }
 
@@ -100,6 +101,7 @@ export function renderViolation(violation: ShellViolation): string {
     const lines = [
         `[${violation.severity}] ${violation.title} (rule ${violation.ruleId})`,
         `  matched (offset ${violation.index}): ${violation.matched}`,
+        ...(violation.detail !== undefined ? [`  here: ${violation.detail}`] : []),
         `  why: ${violation.why}`,
         `  wrong: ${violation.wrong}`,
         `  right: ${violation.right}`,
