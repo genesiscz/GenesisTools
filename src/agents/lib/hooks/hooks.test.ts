@@ -829,6 +829,32 @@ describe("applySetting", () => {
         expect(loaded.diff.contextLines).toBe(0);
         expect(loaded.diff.maxCaptureFileMB).toBe(0.5);
     });
+
+    it("caps a clone apart from a copy, and a file written before the clone cap existed follows its default", () => {
+        // The copy caps keep their values: they bound bytes the pre phase writes on a volume that cannot clone.
+        // The clone cap is new, 2 MB: the most the post phase can still diff and log whole (see config.ts).
+        expect(DEFAULT_HOOKS_CONFIG.diff.clone).toEqual({ maxFileMB: 2 });
+        expect(DEFAULT_HOOKS_CONFIG.diff.maxCaptureFileMB).toBe(0.256);
+        expect(DEFAULT_HOOKS_CONFIG.diff.maxCaptureMB).toBe(8);
+        expect(DEFAULT_HOOKS_CONFIG.diff.maxNamedPathMB).toBe(2);
+        expect(DEFAULT_HOOKS_CONFIG.diff.maxNamedPaths).toBe(8);
+        expect(applySetting(DEFAULT_HOOKS_CONFIG, "diff.clone.maxFileMB", "4").diff.clone).toEqual({ maxFileMB: 4 });
+        expect(() => applySetting(DEFAULT_HOOKS_CONFIG, "diff.clone.maxFileMB", "0")).toThrow("greater than 0");
+
+        const dir = mkdtempSync(join(tmpdir(), "gt-cfg-clone-"));
+        const older = join(dir, "older.json");
+        const tuned = join(dir, "tuned.json");
+        // A file the CLI wrote before 2026-11-01: every setting plus that day's shipped copy, neither with `clone`.
+        const { clone: _clone, ...diffBefore } = DEFAULT_HOOKS_CONFIG.diff;
+
+        writeFileSync(older, SafeJSON.stringify({ diff: diffBefore, [SHIPPED_DEFAULTS_KEY]: { diff: diffBefore } }));
+        writeFileSync(tuned, SafeJSON.stringify({ diff: { clone: { maxFileMB: 0.5 } } }));
+
+        expect(loadHooksConfig(older).diff.clone).toEqual({ maxFileMB: 2 });
+        expect(loadHooksConfig(older).diff.maxCaptureFileMB).toBe(0.256);
+        expect(loadHooksConfig(tuned).diff.clone).toEqual({ maxFileMB: 0.5 });
+        rmSync(dir, { recursive: true, force: true });
+    });
 });
 
 describe("collectStaleCaptures", () => {

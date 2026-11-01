@@ -86,9 +86,15 @@ function writePrivateFile(path: string, contents: string): void {
 /** How one dirty entry went into the clone tree; `failed` was logged and has no before-state. */
 type Stored = Placement | "failed";
 
+/** What the caps allow for one entry: a clone under `clone.maxFileMB`, a copy under the copy caps. */
+interface Allowed {
+    mayClone: boolean;
+    mayCopy: boolean;
+}
+
 interface CloneTree {
-    /** Puts `file` (repo-relative) into the tree. `mayCopy`: the byte budget still has room for a real copy. */
-    put: (file: string, mayCopy: boolean) => Stored;
+    /** Puts `file` (repo-relative) into the tree, as a clone or a copy where the caps allow each. */
+    put: (file: string, allowed: Allowed) => Stored;
     /** Makes the symlinks `put` deferred and returns the entries whose link could not be made. */
     finish: () => string[];
 }
@@ -106,7 +112,7 @@ interface CloneTree {
 function cloneTree({ root, tree, copyFile }: { root: string; tree: string; copyFile?: CopyFile }): CloneTree {
     const links: Array<{ path: string; target: string; file?: string }> = [];
 
-    const place = (source: string, destination: string, mayCopy: boolean, file?: string): Placement => {
+    const place = (source: string, destination: string, allowed: Allowed, file?: string): Placement => {
         const stat = lstatSync(source);
 
         if (stat.isSymbolicLink()) {
@@ -121,7 +127,7 @@ function cloneTree({ root, tree, copyFile }: { root: string; tree: string; copyF
             let placed: Placement = "cloned";
 
             for (const item of readdirSync(source)) {
-                const inner = place(join(source, item), join(destination, item), mayCopy);
+                const inner = place(join(source, item), join(destination, item), allowed);
 
                 if (inner === "declined") {
                     return "declined";
@@ -138,13 +144,13 @@ function cloneTree({ root, tree, copyFile }: { root: string; tree: string; copyF
         }
 
         mkdirSync(dirname(destination), { recursive: true, mode: DIR_MODE });
-        return cloneOrCopy({ source, destination, mode: FILE_MODE, mayCopy, copyFile });
+        return cloneOrCopy({ source, destination, mode: FILE_MODE, ...allowed, copyFile });
     };
 
     return {
-        put: (file, mayCopy) => {
+        put: (file, allowed) => {
             try {
-                return place(join(root, file), join(tree, file), mayCopy, file);
+                return place(join(root, file), join(tree, file), allowed, file);
             } catch (err) {
                 hookDiag("Could not clone or copy a dirty file, so it has no before-state", { err, root, file });
                 return "failed";
@@ -335,10 +341,10 @@ const NAMED_PLACEHOLDERS = 5;
  * not fit are written out, because a file that EXISTED but has no copy must never be reported
  * as one the command created.
  *
- * Each file goes into the clone tree as it is taken. The per-entry and entry caps hold for a
- * clone too: they bound what the post phase diffs, and the space a clone takes once its source
- * is rewritten. The total cap bounds the bytes the pre phase WRITES, so only a real copy (a
- * volume that cannot clone) spends it, and on such a volume the result is the old plan.
+ * Each file goes into the clone tree as it is taken. A clone is held to `clone.maxFileMB`, what
+ * the post phase can still diff and log, and to the entry cap. The two copy caps bound the bytes
+ * the pre phase WRITES, so only a real copy (a volume that cannot clone) spends them, and on such
+ * a volume the result is the old plan.
  */
 function fillCapture({
     root,
@@ -353,11 +359,12 @@ function fillCapture({
     mentioned: (relativePath: string) => boolean;
     tree: CloneTree;
 }): CapturePlan {
-    const fileCap = megabytes(config.maxCaptureFileMB);
+    const cloneCap = megabytes(config.clone.maxFileMB);
+    const copyCap = megabytes(config.maxCaptureFileMB);
     const totalCap = megabytes(config.maxCaptureMB);
     const sized = files.map((file) => {
         const found = { placeholder: false };
-        const size = entryBytes(join(root, file), fileCap, found);
+        const size = entryBytes(join(root, file), Math.max(cloneCap, copyCap), found);
 
         return { file, size, mine: mentioned(file), placeholder: found.placeholder };
     });
@@ -381,12 +388,17 @@ function fillCapture({
             continue;
         }
 
-        if (entry.size > fileCap || take.length >= config.maxCaptureFiles) {
+        const allowed = {
+            mayClone: entry.size <= cloneCap,
+            mayCopy: entry.size <= copyCap && copied + entry.size <= totalCap,
+        };
+
+        if ((!allowed.mayClone && entry.size > copyCap) || take.length >= config.maxCaptureFiles) {
             left.push(entry.file);
             continue;
         }
 
-        const stored = tree.put(entry.file, copied + entry.size <= totalCap);
+        const stored = tree.put(entry.file, allowed);
 
         if (stored === "failed") {
             failed += 1;
@@ -411,7 +423,7 @@ function fillCapture({
 
     if (left.length > placeholders.length + failed) {
         why.push(
-            `over the ${config.maxCaptureFileMB} MB per-entry / ${config.maxCaptureMB} MB total copied / ${config.maxCaptureFiles} entry cap`
+            `over the ${config.clone.maxFileMB} MB per-entry clone / ${config.maxCaptureFileMB} MB per-entry copy / ${config.maxCaptureMB} MB total copied / ${config.maxCaptureFiles} entry cap`
         );
     }
 

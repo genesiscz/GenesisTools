@@ -1165,7 +1165,12 @@ describe("files the command NAMES rather than works in", () => {
         calls += 1;
         current.toolUseId = `call-big-${calls}`;
 
-        const result = capturePre(current, { ...DEFAULT_HOOKS_CONFIG.diff, maxNamedPathMB: 0.001 });
+        // Both caps: a clone is held to its own (2 MB by default), a copy to the named-path one.
+        const result = capturePre(current, {
+            ...DEFAULT_HOOKS_CONFIG.diff,
+            maxNamedPathMB: 0.001,
+            clone: { maxFileMB: 0.001 },
+        });
 
         expect(result.named).toBe(0);
         expect(result.skipped.join(" ")).toContain("named-path cap");
@@ -1587,9 +1592,14 @@ describe("a tree too dirty to capture whole", () => {
     });
 
     it("never reports a file it could not capture as one the command created", () => {
-        // A per-entry cap below even the small file, so nothing in this root has a before-state. (The
-        // total cap would not do: it binds only real copies, and a clone writes no bytes.)
-        const diff = { ...DEFAULT_HOOKS_CONFIG.diff, highlight: "none" as const, maxCaptureFileMB: 0.000001 };
+        // Per-entry caps below even the small file, a clone's and a copy's, so nothing in this root has a
+        // before-state. (The total cap would not do: it binds only real copies, and a clone writes no bytes.)
+        const diff = {
+            ...DEFAULT_HOOKS_CONFIG.diff,
+            highlight: "none" as const,
+            maxCaptureFileMB: 0.000001,
+            clone: { maxFileMB: 0.000001 },
+        };
         const current = begin({ cwd: big, toolUseId: "bigtree-2" }, diff);
 
         writeFileSync(small, "alpha\nNOT-ADDED\ncharlie\n");
@@ -1608,6 +1618,7 @@ describe("a tree too dirty to capture whole", () => {
             ...DEFAULT_HOOKS_CONFIG.diff,
             highlight: "none" as const,
             maxCaptureFileMB: 0.000001,
+            clone: { maxFileMB: 0.000001 },
             maxFiles: 1,
             fullDiff: "path" as const,
         };
@@ -1720,8 +1731,14 @@ describe("the capture budget sees what an entry really weighs", () => {
         rmSync(tree, { recursive: true, force: true });
     });
 
+    // Each sets the clone cap too: on a volume that clones, the 0.1 MB copy cap alone takes nothing out.
     it("leaves a heavy untracked directory out and still captures the small file beside it", () => {
-        const diff = { ...DEFAULT_HOOKS_CONFIG.diff, highlight: "none" as const, maxCaptureFileMB: 0.1 };
+        const diff = {
+            ...DEFAULT_HOOKS_CONFIG.diff,
+            highlight: "none" as const,
+            maxCaptureFileMB: 0.1,
+            clone: { maxFileMB: 0.1 },
+        };
         const current = begin({ cwd: tree, toolUseId: "budget-1" }, diff);
 
         writeFileSync(join(tree, "note.md"), "alpha\nBRAVO-SMALL\n");
@@ -1733,7 +1750,7 @@ describe("the capture budget sees what an entry really weighs", () => {
     });
 
     it("reports the heavy directory as left out rather than silently capturing it", () => {
-        const diff = { ...DEFAULT_HOOKS_CONFIG.diff, maxCaptureFileMB: 0.1 };
+        const diff = { ...DEFAULT_HOOKS_CONFIG.diff, maxCaptureFileMB: 0.1, clone: { maxFileMB: 0.1 } };
         const current = payload({ cwd: tree, toolUseId: "budget-2" });
 
         calls += 1;
@@ -1795,7 +1812,12 @@ describe("the capture budget sees what an entry really weighs", () => {
         // An EARLIER command left it dirty; this is not the current command's change.
         writeFileSync(big, `EARLIER-EDIT\n${lines.join("\n")}\n`);
 
-        const diff = { ...DEFAULT_HOOKS_CONFIG.diff, highlight: "none" as const, maxCaptureFileMB: 0.1 };
+        const diff = {
+            ...DEFAULT_HOOKS_CONFIG.diff,
+            highlight: "none" as const,
+            maxCaptureFileMB: 0.1,
+            clone: { maxFileMB: 0.1 },
+        };
         const current = begin({ cwd: tree, toolUseId: "budget-4" }, diff);
 
         writeFileSync(big, `EARLIER-EDIT\n${lines.join("\n")}\nTHIS-COMMAND\n`);
@@ -1970,6 +1992,12 @@ describe("the before-state: clones of the dirty files, and none for a command th
     let tree: string;
     let outside: string;
     let turn = 0;
+    // Whether this volume clones at all (APFS yes; ext4 on the CI runner no). The assertions that need a real
+    // clone run only where one can be made; everywhere else the capture copies, and that path is tested too.
+    let canClone = false;
+    const cannotClone: CopyFile = () => {
+        throw Object.assign(new Error("operation not supported"), { code: "ENOTSUP" });
+    };
 
     const run = (args: string[]) => spawnSync("git", ["-C", tree, ...args], { encoding: "utf8", env: process.env });
 
@@ -1995,6 +2023,14 @@ describe("the before-state: clones of the dirty files, and none for a command th
         writeFileSync(join(tree, "staged-gone.ts"), "gone\n");
         run(["add", "-A"]);
         run(["commit", "-qm", "init"]);
+        writeFileSync(join(outside, "clone-probe"), "probe\n");
+
+        try {
+            copyFileSync(join(outside, "clone-probe"), join(outside, "clone-probe.clone"), CLONE_ONLY);
+            canClone = true;
+        } catch {
+            canClone = false;
+        }
     });
 
     beforeEach(() => {
@@ -2166,9 +2202,6 @@ describe("the before-state: clones of the dirty files, and none for a command th
 
         // 2 KB in total: room for the two small files, not for the large one.
         const diff = { ...plain.diff, maxCaptureMB: 0.002 };
-        const cannotClone: CopyFile = () => {
-            throw Object.assign(new Error("operation not supported"), { code: "ENOTSUP" });
-        };
         const copied = pre("bun /x/edit.ts", { copyFile: cannotClone, diff });
 
         expect(lstatSync(join(copied.dir, "1", "small.ts")).isFile()).toBe(true);
@@ -2182,12 +2215,77 @@ describe("the before-state: clones of the dirty files, and none for a command th
         expect(runDiffPost({ payload: copied.current, config: plain, record: () => {} }).message).toContain("(+1 -1)");
 
         // The same caps with a working clone: a clone writes no bytes, so the total cap does not apply.
+        if (!canClone) {
+            return;
+        }
+
         writeFileSync(join(tree, "tracked.ts"), "one\nDIRTY\nthree\n");
 
         const cloned = pre("bun /x/edit.ts", { copyFile: (s, d, m) => copyFileSync(s, d, m), diff });
 
         expect(readFileSync(join(cloned.dir, "1", "large.ts"), "utf8")).toBe(`${"l".repeat(3_000)}\n`);
         expect(existsSync(join(cloned.dir, "1.left"))).toBe(false);
+    });
+
+    it("clones a dirty file up to diff.clone.maxFileMB, and copies one only within the copy cap", () => {
+        // 300 KB: over the 0.256 MB a real copy may take, under the 2 MB a clone may. A clone moves no bytes,
+        // so its cap is set by what the post phase can still diff and log (see `clone` in config.ts).
+        const mid = `${"m".repeat(300_000)}\n`;
+
+        writeFileSync(join(tree, "mid.ts"), mid);
+
+        const copied = pre("bun /x/edit.ts", { copyFile: cannotClone });
+
+        expect(existsSync(join(copied.dir, "1", "mid.ts"))).toBe(false);
+        expect(readFileSync(join(copied.dir, "1.left"), "utf8")).toBe("mid.ts\n");
+
+        if (!canClone) {
+            return;
+        }
+
+        const cloned = pre("bun /x/edit.ts");
+
+        expect(readFileSync(join(cloned.dir, "1", "mid.ts"), "utf8")).toBe(mid);
+        expect(existsSync(join(cloned.dir, "1.left"))).toBe(false);
+
+        const capped = pre("bun /x/edit.ts", { diff: { ...plain.diff, clone: { maxFileMB: 0.1 } } });
+
+        expect(readFileSync(join(capped.dir, "1.left"), "utf8")).toBe("mid.ts\n");
+    });
+
+    it("clones a named file up to the clone cap, and copies one only within diff.maxNamedPathMB", () => {
+        const named = join(outside, "named.log");
+        const diff = { ...plain.diff, maxNamedPathMB: 0.000_01 };
+        const copied = pre(`bun /x/edit.ts ${named}`, { copyFile: cannotClone, diff });
+
+        expect(existsSync(join(copied.dir, "named", "1"))).toBe(false);
+        expect(copied.result.skipped.join("\n")).toContain(`${named}: 13 bytes, this volume cannot clone it`);
+
+        if (!canClone) {
+            return;
+        }
+
+        const cloned = pre(`bun /x/edit.ts ${named}`, { diff });
+
+        expect(readFileSync(join(cloned.dir, "named", "1"), "utf8")).toBe("first\nsecond\n");
+        expect(cloned.result.skipped).toEqual([]);
+    });
+
+    it("never reads a file a clone refused as dataless, so a placeholder the size check missed is not downloaded", () => {
+        // `clonefile(2)` answers EDEADLK for a dataless file it would have to materialize. A copy would read
+        // it, and that read is the download.
+        const reads: string[] = [];
+        const { dir, result } = pre("bun /x/edit.ts", {
+            copyFile: (source) => {
+                reads.push(source);
+                throw Object.assign(new Error("resource deadlock avoided"), { code: "EDEADLK" });
+            },
+        });
+
+        expect(reads).toEqual([join(tree, "tracked.ts")]);
+        expect(existsSync(join(dir, "1", "tracked.ts"))).toBe(false);
+        expect(readFileSync(join(dir, "1.left"), "utf8")).toBe("tracked.ts\n");
+        expect(result.skipped.join(" ")).toContain("1 could not be cloned or copied");
     });
 
     it("copies a write-protected file instead of cloning it, so the capture can still be removed", () => {
