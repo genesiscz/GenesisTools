@@ -162,7 +162,8 @@ export type PinAuthSource = "launch-env" | "argv" | "oauth-env" | "default-named
  */
 export interface PinHost {
     kind: string;
-    id: string;
+    /** The host's id for the session (a T3 Code thread); absent when the process served the host without one. */
+    id?: string;
 }
 
 export interface SessionPin {

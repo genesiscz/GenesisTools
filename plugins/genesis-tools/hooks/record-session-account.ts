@@ -45,7 +45,7 @@ interface HookInput {
 /** The app that hosts this session (T3 Code), and its id for it (the T3 thread). */
 interface PinHost {
     kind: string;
-    id: string;
+    id?: string;
 }
 
 /**
@@ -54,8 +54,9 @@ interface PinHost {
  * 🛑 A copy: the source is `AGENT_HOST_MARKERS` in `src/utils/ai/active-processes.ts`, which this standalone
  * hook cannot import. A new host is one row in BOTH tables; `record-hook.test.ts` fails while they differ.
  */
-export const AGENT_HOST_MARKERS: readonly { kind: string; envKey: string }[] = [
-    { kind: "t3", envKey: "T3CODE_THREAD_ID" },
+export const AGENT_HOST_MARKERS: readonly { kind: string; envKey: string; carriesId: boolean }[] = [
+    { kind: "t3", envKey: "T3CODE_THREAD_ID", carriesId: true },
+    { kind: "t3", envKey: "T3CODE_CLI_PATH", carriesId: false },
 ];
 
 /**
@@ -64,10 +65,10 @@ export const AGENT_HOST_MARKERS: readonly { kind: string; envKey: string }[] = [
  */
 export function hostFromEnv(env: NodeJS.ProcessEnv): PinHost | null {
     for (const marker of AGENT_HOST_MARKERS) {
-        const id = env[marker.envKey];
+        const value = env[marker.envKey];
 
-        if (id) {
-            return { kind: marker.kind, id };
+        if (value) {
+            return marker.carriesId ? { kind: marker.kind, id: value } : { kind: marker.kind };
         }
     }
 

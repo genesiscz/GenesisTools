@@ -46,24 +46,29 @@ export interface ActiveAgentProcess extends PsProcessRow {
     host: AgentHost | null;
 }
 
-/** An app that hosts agent sessions, and its id for this one (a T3 Code thread id). */
+/** An app that hosts agent sessions, and its id for this one (a T3 Code thread id) when the process serves one. */
 export interface AgentHost {
     kind: string;
-    id: string;
+    id?: string;
 }
 
 /**
- * The apps that host agent sessions, each recognised by the variable it sets on every agent it starts. A new host
- * is one row here.
+ * The apps that host agent sessions, each recognised by a variable it sets on the agents it starts; the first row
+ * whose variable is set wins. `carriesId`: the value is the host's id for the session. T3 Code sets its thread on a
+ * Claude child only; a Codex app-server or a Grok ACP process serves its threads without one, and every child gets
+ * `T3CODE_CLI_PATH` (checked 2026-11-01). A new host is rows here (and in the pin hook's copy).
  */
-const AGENT_HOST_MARKERS: readonly { kind: string; envKey: string }[] = [{ kind: "t3", envKey: "T3CODE_THREAD_ID" }];
+const AGENT_HOST_MARKERS: readonly { kind: string; envKey: string; carriesId: boolean }[] = [
+    { kind: "t3", envKey: "T3CODE_THREAD_ID", carriesId: true },
+    { kind: "t3", envKey: "T3CODE_CLI_PATH", carriesId: false },
+];
 
 export function agentHostFromEnv(environment: Readonly<Record<string, string>> | null | undefined): AgentHost | null {
     for (const marker of AGENT_HOST_MARKERS) {
-        const id = environment?.[marker.envKey];
+        const value = environment?.[marker.envKey];
 
-        if (id) {
-            return { kind: marker.kind, id };
+        if (value) {
+            return marker.carriesId ? { kind: marker.kind, id: value } : { kind: marker.kind };
         }
     }
 
