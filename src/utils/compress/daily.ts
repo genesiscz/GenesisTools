@@ -25,8 +25,14 @@ import {
  * and yesterday's failures as plain files (LauncherFailures.swift `recorded`).
  */
 export const DAY_LOGS_PLAIN_DAYS = 2;
-/** ai-proxy transcripts: today and yesterday in UTC (a realtime session keeps writing its start day after midnight). */
-export const TRANSCRIPTS_PLAIN_DAYS = 2;
+/**
+ * ai-proxy transcripts: only today's UTC day stays plain by date. A realtime session that keeps writing its start day
+ * after UTC midnight is held back by the plan's quiet window (no write for 2 hours), and the proxy opens a file only for
+ * each append, so a cold file of a past day holds no writer. Two days were kept before: the pass runs just after LOCAL
+ * midnight, which in Prague is still the day before in UTC, so a transcript stayed plain for over two days after its
+ * last write (2026-11-01: a 5.6 GB day, cold for 26 hours).
+ */
+export const TRANSCRIPTS_PLAIN_DAYS = 1;
 /** The app's hang and stack captures (`logs/hangs/`): today and yesterday stay plain for `tools hub dev monitor`. */
 export const HANGS_PLAIN_DAYS = 2;
 
