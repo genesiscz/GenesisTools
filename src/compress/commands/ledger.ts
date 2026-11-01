@@ -2,7 +2,12 @@ import { statSync } from "node:fs";
 import { maintainObjectStore, summaryLine } from "@genesiscz/utils/agents/objects/maintain";
 import { suggestEnumFlag } from "@genesiscz/utils/cli";
 import { toolCommand } from "@genesiscz/utils/cli/tool-command";
-import { dailyPassLockPath, planDailyCompression, runDailyCompression } from "@genesiscz/utils/compress/daily";
+import {
+    type DailyPassReport,
+    dailyPassLockPath,
+    planDailyCompression,
+    runDailyCompression,
+} from "@genesiscz/utils/compress/daily";
 import { type LedgerOp, ledgerPath, searchLedger } from "@genesiscz/utils/compress/ledger";
 import { sampleFolder } from "@genesiscz/utils/compress/operations";
 import { PRESET_NAMES, PRESETS, sampleFile, type TrialGoal, tryPresets } from "@genesiscz/utils/compress/presets";
@@ -195,7 +200,14 @@ async function runDaily(options: { dryRun?: boolean; json?: boolean }): Promise<
         return;
     }
 
-    const { compression, objectStore } = pass;
+    reportDailyPass(pass, options.json === true);
+}
+
+/**
+ * Prints a finished daily pass. Exit status 1 when the agents-objects step failed or found another pass holding its
+ * lock, in the JSON form too: a script reads the status, not the text.
+ */
+export function reportDailyPass({ compression, objectStore }: DailyPassReport, json: boolean): void {
     const summary = compression.map(({ target, report }) => ({
         target: target.name,
         compressed: report.compressed.length,
@@ -204,7 +216,11 @@ async function runDaily(options: { dryRun?: boolean; json?: boolean }): Promise<
         failed: report.failed,
     }));
 
-    if (options.json) {
+    if (!objectStore || objectStore.skipped === "locked") {
+        process.exitCode = 1;
+    }
+
+    if (json) {
         out.result({ targets: summary, objectStore });
         return;
     }
@@ -216,10 +232,6 @@ async function runDaily(options: { dryRun?: boolean; json?: boolean }): Promise<
     }
 
     out.println(`${pc.bold("agents-objects")}: ${objectStore ? summaryLine(objectStore) : "failed, see the day log"}`);
-
-    if (!objectStore || objectStore.skipped === "locked") {
-        process.exitCode = 1;
-    }
 }
 
 export function registerLedgerCommands(program: Command): void {
