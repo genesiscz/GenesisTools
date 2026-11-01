@@ -50,6 +50,7 @@ import {
 import { isObject } from "@genesiscz/utils/object";
 import { ripgrepBinary } from "@genesiscz/utils/ripgrep";
 import { atomicWriteIo } from "@genesiscz/utils/storage/atomic-file";
+import { withTimeZone } from "@genesiscz/utils/test/timezone";
 import { planDailyCompression, runDailyCompression } from "./daily";
 import { compressFile, decompressFile, digestZstdContent, verifyCompressedFile } from "./file";
 import { recordCompression, searchLedger } from "./ledger";
@@ -1655,7 +1656,7 @@ describe("day logs", () => {
         stream.destroy();
     });
 
-    it("the daily pass keeps a week of day logs and two days of transcripts plain, and never starts from a test process", () => {
+    it("the daily pass keeps two days of day files, failures included, and of transcripts plain, and never starts from a test process", () => {
         const dir = scratch("daily");
         const now = new Date("2026-10-13T12:00:00");
         const targets = planDailyCompression({ now, logsDir: dir }).map(({ target }) => [
@@ -1664,7 +1665,7 @@ describe("day logs", () => {
         ]);
 
         expect(targets).toEqual([
-            ["logs", "2026-10-07"],
+            ["logs", "2026-10-12"],
             ["ai-proxy-transcripts", new Date(now.getTime() - 86_400_000).toISOString().slice(0, 10)],
             ["app-hangs", "2026-10-12"],
         ]);
@@ -1679,6 +1680,20 @@ describe("day logs", () => {
                 "app-perf.log",
             ].map((name) => hangs.dayOf(name))
         ).toEqual(["2026-10-11", "2026-10-11", undefined, undefined]);
+        const logs = planDailyCompression({ now, logsDir: dir }).find(({ target }) => target.name === "logs")!.target;
+        expect(
+            ["2026-10-11.log", "2026-10-11-profiling.log", "2026-10-11-failures.jsonl", "2026-10-11.log.zst"].map(
+                (name) => logs.dayOf(name)
+            )
+        ).toEqual(["2026-10-11", "2026-10-11", "2026-10-11", undefined]);
+        // The day after the spring clock change, just after midnight: yesterday is one calendar day back, not 24 hours.
+        withTimeZone("Europe/Prague", () => {
+            expect(
+                planDailyCompression({ now: new Date(2026, 2, 30, 0, 30), logsDir: dir }).find(
+                    ({ target }) => target.name === "logs"
+                )!.target.firstPlainDay
+            ).toBe("2026-03-29");
+        });
         expect(startDailyCompressionOnce(dir, "2026-10-13")).toBe(false);
         expect(readdirSync(dir)).toEqual([]);
     });
