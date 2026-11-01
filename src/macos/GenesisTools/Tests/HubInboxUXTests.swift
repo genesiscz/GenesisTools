@@ -336,6 +336,34 @@ final class HubInboxUXTests: XCTestCase {
         XCTAssertTrue(closed.contains("Your answer"), closed)
     }
 
+    /// Decision 31 of 2026-11-01 as the loader sends it now (`fromRecord`): the options carry the words the agent wrote
+    /// only in the prompt, the prompt keeps the rest, and the reasoning is the agent's pick line. The card draws the
+    /// question under its title, the words on the option rows and the reasoning behind the lightbulb, never as
+    /// Context: the widget's card reads the same fields.
+    @MainActor
+    func testATitledDecisionDrawsItsQuestionAndTheReasoningAsThePickNotAsContext() throws {
+        let item = try Self.decision(#"""
+        {"number":31,"title":"When to empty the removal folder",
+         "prompt":"The folder holds 81.8 GB. A move frees nothing.",
+         "context":null,"proposal":"One day is enough to notice anything missing.",
+         "reasoning":"One day is enough to notice anything missing.","recommended":"b","confidence":"medium",
+         "choices":[{"id":"a","label":"empty it now"},{"id":"b","label":"keep it until tomorrow evening","recommended":true},
+                    {"id":"c","label":"let macOS clear it"}]}
+        """#)
+        XCTAssertEqual(item.shownPrompt, "The folder holds 81.8 GB. A move frees nothing.")
+        XCTAssertTrue(item.findFields.contains { $0.key == "prompt" })
+        XCTAssertFalse(item.findFields.contains { $0.key == "context" })
+        let text = try Self.drawnText(Self.render(card: item, name: "inbox-card-letter-options"))
+        for expected in ["81.8 GB", "One day is enough", "empty it now", "keep it until tomorrow evening",
+                         "let macOS clear it"] {
+            XCTAssertTrue(text.contains(expected), "\(expected) in: \(text)")
+        }
+        XCTAssertFalse(text.contains("Context"), text)
+        // An untitled decision's heading is its prompt: the card does not print it twice.
+        let untitled = try Self.decision(#"{"prompt":"Keep the cache?","choices":[{"id":"a","label":"keep"}]}"#)
+        XCTAssertNil(untitled.shownPrompt)
+    }
+
     // MARK: - Fixtures
 
     /// The decision of the 2026-11-01 screenshot with invented paths and answer: a long context, one cited file with
