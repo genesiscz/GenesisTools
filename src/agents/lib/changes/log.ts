@@ -59,6 +59,66 @@ export function sessionChangesPath(session: string): string {
     return genesisToolsDir("agents", safe, "changes.jsonl");
 }
 
+/**
+ * When a Bash command of `session` last recorded writing each path (`tools rm`'s own-files rule asks): the change log
+ * is read once, on the first lookup, and each path is found by its exact `"path":` text, newest row first. A row
+ * of another source, a torn line, a missing log or an unsafe id answer null.
+ */
+export function bashWriteLookup(session: string): (path: string) => string | null {
+    let text: string | null | undefined;
+
+    const load = (): string | null => {
+        if (text !== undefined) {
+            return text;
+        }
+
+        try {
+            text = readFileSync(sessionChangesPath(session), "utf8");
+        } catch {
+            text = null;
+        }
+
+        return text;
+    };
+
+    return (path) => {
+        const log = load();
+
+        if (!log) {
+            return null;
+        }
+
+        const needle = `"path":${SafeJSON.stringify(path)}`;
+
+        for (let at = log.lastIndexOf(needle); at >= 0; at = at === 0 ? -1 : log.lastIndexOf(needle, at - 1)) {
+            const start = log.lastIndexOf("\n", at) + 1;
+            const end = log.indexOf("\n", at);
+            let row: unknown;
+
+            try {
+                row = SafeJSON.parse(log.slice(start, end < 0 ? undefined : end), { strict: true });
+            } catch {
+                continue;
+            }
+
+            if (
+                typeof row === "object" &&
+                row !== null &&
+                "source" in row &&
+                row.source === "bash" &&
+                "path" in row &&
+                row.path === path &&
+                "ts" in row &&
+                typeof row.ts === "string"
+            ) {
+                return row.ts;
+            }
+        }
+
+        return null;
+    };
+}
+
 /** The harness file tools this log records: Edit and MultiEdit as `edit`, Write as `write`. */
 export function fileToolSource(tool: string): "edit" | "write" | null {
     const normalized = tool.toLowerCase().replace(/_/g, "");

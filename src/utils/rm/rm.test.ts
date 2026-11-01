@@ -155,6 +155,7 @@ function ctx(overrides: Partial<RmRuleContext> = {}): RmRuleContext {
         asidePending: () => null,
         git: probeGit,
         nestedRepos: (target) => findNestedRepos(target),
+        ownBashWrite: () => null,
         // No temp root unless a test names one: every fixture lives in the per-user temp folder.
         tempRoots: [],
         tempTree: measureTempTree,
@@ -2652,7 +2653,7 @@ describe("the default rule says what nearly matched", () => {
 
     test("a file the session did not write with its own tools says what counts as its own", () => {
         expect(reasonOf(file(join(dir("elsewhere"), "built.bin"))).reason).toBe(
-            "only files written with the Write, Edit or NotebookEdit tool count as this session's own files"
+            "only files the Write, Edit or NotebookEdit tool wrote, or a Bash command of this session made, count as its own files"
         );
     });
 
@@ -2816,5 +2817,37 @@ describe("rule tmp-small: a small temp path goes without a request", () => {
         file(join(leftover, "entry"));
 
         expect(verdictOf(leftover, small)).toEqual({ kind: "allow", rule: "tmp-small" });
+    });
+});
+
+describe("own files a Bash command of the session made", () => {
+    test("a file the session's Bash command made counts as its own; one that existed before the command does not", () => {
+        const made = file(join(dir("bash-own"), "announce-2026-10-06.jsonl.zst"));
+        const now = new Date().toISOString();
+        // The row is written after the command, so a file born before the command (a `mv ~/x ./y` keeps its
+        // birthtime) is not one the command made: a row an hour after the file's birth stands for that.
+        const later = new Date(Date.now() + 60 * 60_000).toISOString();
+        const bash = (when: string) => (path: string) => (path === made ? when : null);
+
+        expect(verdictOf(made, ctx({ ownBashWrite: bash(now) }))).toEqual({ kind: "allow", rule: "own-files" });
+        const context = ctx({ ownBashWrite: bash(now) });
+        expect(evaluateTarget(resolveTarget(made, context.cwd), context).reason).toBe(
+            "a file a Bash command of this session made, not tracked by git"
+        );
+        expect(verdictOf(made, ctx({ ownBashWrite: bash(later) }))).toEqual({ kind: "ask", rule: "default" });
+        expect(verdictOf(made, ctx({ ownBashWrite: () => null }))).toEqual({ kind: "ask", rule: "default" });
+    });
+
+    test("the settings turn it off: own-bash-files, or own files as a whole", () => {
+        const made = file(join(dir("bash-own-off"), "made.txt"));
+        const now = new Date().toISOString();
+        const bash = (path: string) => (path === made ? now : null);
+
+        expect(verdictOf(made, ctx({ ownBashWrite: bash, config: { ...config, ownFilesFromBash: false } })).kind).toBe(
+            "ask"
+        );
+        expect(verdictOf(made, ctx({ ownBashWrite: bash, config: { ...config, allowOwnFiles: false } })).kind).toBe(
+            "ask"
+        );
     });
 });

@@ -110,6 +110,11 @@ export interface RmRuleContext {
     presets: readonly RmPreset[];
     /** Files the calling session wrote, by absolute path. */
     ownFiles: ReadonlySet<string>;
+    /**
+     * When a Bash command of the calling session last recorded writing `path` (an ISO time), or null: the agents
+     * change log, read by the GenesisTools caller (`bashWriteLookup`), so this package parses no tool's format.
+     */
+    ownBashWrite: (path: string) => string | null;
     /** The per-session scratch root (`/tmp/cc`). */
     scratchRoots: readonly string[];
     /** The pending request whose aside folder the target is, holds, or sits in; null when none. */
@@ -398,12 +403,23 @@ export const RM_RULES: readonly RmRule[] = [
     },
     {
         id: "own-files",
-        evaluate: (target, ctx) =>
-            ctx.config.allowOwnFiles &&
-            target.kind === "file" &&
-            (ctx.ownFiles.has(target.path) || ctx.ownFiles.has(target.canonical))
-                ? { kind: "allow", rule: "own-files", reason: "a file this session wrote, not tracked by git" }
-                : null,
+        evaluate: (target, ctx) => {
+            if (!ctx.config.allowOwnFiles || target.kind !== "file") {
+                return null;
+            }
+
+            if (ctx.ownFiles.has(target.path) || ctx.ownFiles.has(target.canonical)) {
+                return { kind: "allow", rule: "own-files", reason: "a file this session wrote, not tracked by git" };
+            }
+
+            return ctx.config.ownFilesFromBash && madeByBash(target, ctx)
+                ? {
+                      kind: "allow",
+                      rule: "own-files",
+                      reason: "a file a Bash command of this session made, not tracked by git",
+                  }
+                : null;
+        },
     },
     {
         id: "git-untracked",
@@ -471,6 +487,36 @@ export const RM_RULES: readonly RmRule[] = [
     },
 ];
 
+/** A Bash command runs at most 10 minutes in the harnesses; the row is written once it ended. */
+const BASH_COMMAND_WINDOW_MS = 15 * 60_000;
+
+/**
+ * Whether a Bash command of the session made `target`: the change log names the path, and the file was born inside
+ * that command (up to 15 minutes before its row, a minute of clock slack after). A file a command only moved keeps
+ * its old birthtime (`mv ~/notes.txt ./scratch.txt`), so it never counts, and neither does one swapped in later.
+ */
+function madeByBash(target: RmTarget, ctx: RmRuleContext): boolean {
+    const at = ctx.ownBashWrite(target.path) ?? ctx.ownBashWrite(target.canonical);
+
+    if (!at) {
+        return false;
+    }
+
+    let born: number;
+
+    try {
+        born = lstatSync(target.path).birthtimeMs;
+    } catch (error) {
+        logger.debug({ path: target.path, error }, "rm: cannot read a birthtime");
+        return false;
+    }
+
+    const wrote = Date.parse(at);
+    return born > 0 && born >= wrote - BASH_COMMAND_WINDOW_MS && born <= wrote + 60_000;
+}
+
+/**
+ * The tmp-small rule (owner, 2026-11-01:
 /**
  * The tmp-small rule (owner, 2026-11-01: "the size limit for deleting a temp path without a request ... when a path
  * falls under such a rule, tools rm must never ask the person"): a path inside a temp root, at most `tmpSmallMB`,
@@ -604,7 +650,9 @@ function defaultAskReason(target: RmTarget, ctx: RmRuleContext): string {
     }
 
     if (sessionId && ctx.config.allowOwnFiles && target.kind === "file") {
-        return "only files written with the Write, Edit or NotebookEdit tool count as this session's own files";
+        return ctx.config.ownFilesFromBash
+            ? "only files the Write, Edit or NotebookEdit tool wrote, or a Bash command of this session made, count as its own files"
+            : "only files written with the Write, Edit or NotebookEdit tool count as this session's own files";
     }
 
     return DEFAULT_ASK_REASON;
@@ -908,7 +956,7 @@ export function defaultRuleContext(
     config: RmConfig,
     caller: RmCaller,
     cwd: string,
-    hints?: RmRuleHints
+    extra: { hints?: RmRuleHints; ownBashWrite?: (path: string) => string | null } = {}
 ): RmRuleContext {
     const pending = pendingAsideDirs();
     const live = new Map<string, boolean>();
@@ -919,6 +967,7 @@ export function defaultRuleContext(
         home: homedir(),
         presets: presetsFor(config),
         ownFiles: sessionOwnFiles(caller),
+        ownBashWrite: extra.ownBashWrite ?? (() => null),
         scratchRoots: sessionScratchRoots(caller),
         asidePending: (target) => pendingAsideFor(target.canonical, pending),
         git: probeGit,
@@ -930,6 +979,6 @@ export function defaultRuleContext(
             live.set(dir, known);
             return known;
         },
-        hints,
+        hints: extra.hints,
     };
 }
