@@ -65,6 +65,11 @@ export interface RmTarget {
      * anything else by then: a file swapped in, or a parent turned into a symlink.
      */
     identity: string | null;
+    /**
+     * Where the content is when it moved away from `path` (a copy set aside for a person): the rules judge the
+     * place by `path` and the content (size, repositories inside, birthtime) here. Unset: the content is at `path`.
+     */
+    content?: string;
 }
 
 /** Who asks. `sessionId` scopes the session's own scratch folder and its own files. */
@@ -505,7 +510,7 @@ function madeByBash(target: RmTarget, ctx: RmRuleContext): boolean {
     let born: number;
 
     try {
-        born = lstatSync(target.path).birthtimeMs;
+        born = lstatSync(target.content ?? target.path).birthtimeMs;
     } catch (error) {
         logger.debug({ path: target.path, error }, "rm: cannot read a birthtime");
         return false;
@@ -554,7 +559,7 @@ function tmpSmallVerdict(target: RmTarget, ctx: RmRuleContext, git: () => RmGitF
         }
     }
 
-    const facts = ctx.tempTree(target.path, limitMB * 1024 * 1024);
+    const facts = ctx.tempTree(target.content ?? target.path, limitMB * 1024 * 1024);
 
     if (facts.over || facts.refuse) {
         return null;
@@ -902,7 +907,7 @@ const NESTED_SKIP = new Set(["node_modules", ".build", "target", "Pods"]);
 export function findNestedRepos(target: RmTarget, maxDepth = 4, maxDirs = 5000): string[] {
     const found: string[] = [];
     let visited = 0;
-    const queue: Array<{ dir: string; depth: number }> = [{ dir: target.path, depth: 0 }];
+    const queue: Array<{ dir: string; depth: number }> = [{ dir: target.content ?? target.path, depth: 0 }];
 
     // A read index, not `shift()`: shifting a 5000-entry array moves every element each time.
     for (let head = 0; head < queue.length && visited < maxDirs && found.length < 20; head++) {
@@ -981,4 +986,30 @@ export function defaultRuleContext(
         },
         hints: extra.hints,
     };
+}
+
+/**
+ * Minutes a moved item waits before the drain. A folder a preset matches (a build or an install recreates it) gets
+ * the preset grace whichever rule allowed it, e.g. a node_modules in the session's scratch. The session's own
+ * scratch gets the scratch grace: throwaway output that hid 11 GB for the hour of the other grace on a full disk
+ * (2026-11-01). The rest waits longer.
+ */
+export function graceMinutesFor(
+    item: { target: RmTarget; verdict: RmVerdict },
+    ctx: RmRuleContext,
+    override?: number
+): number {
+    if (override !== undefined) {
+        return override;
+    }
+
+    const isPreset =
+        item.verdict.rule === "preset" ||
+        (item.target.kind === "dir" && matchPreset(item.target.path, ctx.presets) !== null);
+
+    if (isPreset) {
+        return ctx.config.grace.presetMinutes;
+    }
+
+    return item.verdict.rule === "session-scratch" ? ctx.config.grace.scratchMinutes : ctx.config.grace.otherMinutes;
 }

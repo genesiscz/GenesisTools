@@ -7,7 +7,7 @@ import { env } from "@genesiscz/utils/env";
 import { logger } from "@genesiscz/utils/logger";
 import type { RmConfig } from "./config";
 import { isInside } from "./paths";
-import { matchPreset } from "./presets";
+import { listRmRequests } from "./requests";
 import {
     evaluateTarget,
     type RmCaller,
@@ -28,6 +28,7 @@ export * from "./measure";
 export * from "./paths";
 export * from "./presets";
 export * from "./profiles";
+export * from "./request-rules";
 export * from "./request-state";
 export * from "./request-store";
 export * from "./requests";
@@ -99,33 +100,23 @@ export function planRemoval(inputs: readonly string[], ctx: RmRuleContext): RmPl
 }
 
 /**
- * Minutes a moved item waits before the drain. A folder a preset matches (a build or an install recreates it) gets
- * the preset grace whichever rule allowed it, e.g. a node_modules in the session's scratch. The session's own
- * scratch gets the scratch grace: throwaway output that hid 11 GB for the hour of the other grace on a full disk
- * (2026-11-01). The rest waits longer.
+ * Whether the background drainer has work: a batch waits, the trash holds an orphan from a run that died, or a
+ * request waits (the drainer's sweep closes the ones a rule covers or whose paths are gone).
  */
-export function graceMinutesFor(item: RmPlanItem, ctx: RmRuleContext, override?: number): number {
-    if (override !== undefined) {
-        return override;
-    }
-
-    const isPreset =
-        item.verdict.rule === "preset" ||
-        (item.target.kind === "dir" && matchPreset(item.target.path, ctx.presets) !== null);
-
-    if (isPreset) {
-        return ctx.config.grace.presetMinutes;
-    }
-
-    return item.verdict.rule === "session-scratch" ? ctx.config.grace.scratchMinutes : ctx.config.grace.otherMinutes;
+export function drainerNeeded(config: RmConfig, paths?: TrashPaths, requestsDir?: string): boolean {
+    return (
+        listBatches(paths).length > 0 ||
+        trashHasEntries(config) ||
+        listRmRequests({ dir: requestsDir }).some((request) => request.kind === "delete")
+    );
 }
 
 /**
- * Starts the background drainer when a batch waits or the trash holds an orphan from a run that died; a running
- * drainer makes the new one exit at once. Every `tools rm` run calls it, so leftovers never pile up.
+ * Starts the background drainer when it has work (`drainerNeeded`); a running drainer makes the new one exit at
+ * once. Every `tools rm` run calls it, so leftovers never pile up and a request a rule covers never waits long.
  */
 export function kickDrainer(config: RmConfig, paths?: TrashPaths): void {
-    if (listBatches(paths).length === 0 && !trashHasEntries(config)) {
+    if (!drainerNeeded(config, paths)) {
         return;
     }
 

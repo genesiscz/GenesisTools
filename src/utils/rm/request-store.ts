@@ -155,6 +155,10 @@ export function pruneRmRequests(
         dryRun?: boolean;
         caller?: RmCaller | null;
         present?: (path: string) => boolean;
+        /** The end states to write; both unless said (the drainer's sweep writes only `gone`). */
+        reasons?: ReadonlyArray<"gone" | "expired">;
+        /** Only these requests. */
+        ids?: readonly string[];
     } = {}
 ): RmPruneResult {
     const dir = options.dir ?? rmRequestsDir();
@@ -168,11 +172,14 @@ export function pruneRmRequests(
     const ids = readdirSync(dir)
         .filter((name) => /^[a-z0-9]{4,12}\.json$/.test(name))
         .map((name) => name.slice(0, -5))
+        .filter((id) => !options.ids || options.ids.includes(id))
         .sort();
+    const allowed = (reason: "gone" | "expired" | null) =>
+        reason !== null && (!options.reasons || options.reasons.includes(reason)) ? reason : null;
 
     for (const id of ids) {
         const raw = readRmRequestFile(rmRequestFile(id, dir));
-        const reason = raw ? pruneReason(raw, now, options.present) : null;
+        const reason = raw ? allowed(pruneReason(raw, now, options.present)) : null;
 
         if (!reason) {
             continue;
@@ -186,7 +193,7 @@ export function pruneRmRequests(
         const update = updateRmRequest(
             id,
             (fresh) => {
-                const again = pruneReason(fresh, now, options.present);
+                const again = allowed(pruneReason(fresh, now, options.present));
                 return again ? { ...fresh, status: again, decidedAt: now.toISOString(), decidedVia: "prune" } : null;
             },
             dir

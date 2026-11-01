@@ -17,7 +17,7 @@ import {
     writeFileSync,
 } from "node:fs";
 import { tmpdir } from "node:os";
-import { dirname, join } from "node:path";
+import { basename, dirname, join } from "node:path";
 import { SafeJSON } from "@genesiscz/utils/json";
 import { sessionScratchPath } from "../../../plugins/genesis-tools/hooks/session-scratch";
 import {
@@ -41,6 +41,7 @@ import {
     defaultTempRoots,
     disposalGraceMinutes,
     drainDue,
+    drainerNeeded,
     effectiveConfig,
     evaluateTarget,
     filterRmLedger,
@@ -66,6 +67,7 @@ import {
     measureTempTree,
     moveAside,
     moveToTrash,
+    newBatchId,
     parseRmConfig,
     pathPresent,
     pendingAsideDirs,
@@ -103,12 +105,15 @@ import {
     rmLedgerPath,
     rmMeasurementsDir,
     rmRequestLockFile,
+    ruleCoverage,
+    ruledLine,
     runDrainer,
     saveRmConfig,
     saveRmRequest,
     scanPresets,
     scratchSessionLive,
     sweepOrphans,
+    sweepRmRequests,
     type TrashPaths,
     targetChangeReason,
     totalRmLedger,
@@ -2849,5 +2854,175 @@ describe("own files a Bash command of the session made", () => {
         expect(verdictOf(made, ctx({ ownBashWrite: bash, config: { ...config, allowOwnFiles: false } })).kind).toBe(
             "ask"
         );
+    });
+});
+
+describe("the request sweep: a rule decides a pending request after it was asked", () => {
+    let temp: string;
+    let requestsDir: string;
+    let sweepPaths: TrashPaths;
+    const contextFor = (request: { caller: RmCaller | null; cwd: string }) =>
+        ctx({ caller: request.caller ?? AGENT, cwd: request.cwd, tempRoots: [temp] });
+
+    beforeAll(() => {
+        temp = dir("sweep-tmp");
+        requestsDir = dir("sweep-requests");
+        sweepPaths = { batchesDir: join(base, "sweep-state", "batches"), lockPath: join(base, "sweep-state", "lock") };
+    });
+
+    /** A request of AGENT: one path left in place and one set aside, both as `tools rm` leaves them. */
+    function request(inPlace: string, asidePath: string, rule = "default") {
+        const verdict = { kind: "ask" as const, rule, reason: "no rule allows it" };
+        const aside = moveAside({
+            inputs: [{ target: resolveTarget(asidePath, base), verdict }],
+            caller: AGENT,
+            batchId: newBatchId(),
+            root: dir("sweep-aside", basename(asidePath)),
+        });
+        return createRmRequest(
+            {
+                kind: "delete",
+                caller: AGENT,
+                cwd: base,
+                reason: "cleanup",
+                targets: [{ path: inPlace, kind: "file", rule: "default", reason: "no rule" }, ...aside.moved],
+                asideDir: aside.dir,
+            },
+            requestsDir
+        );
+    }
+
+    test("a request every path of which a rule covers closes as ruled; its paths and copies go to the trash", () => {
+        const inPlace = file(join(temp, "ruled-a", "x.txt"));
+        const asideOriginal = file(join(temp, "ruled-b", "y.txt"));
+        const asked = request(inPlace, asideOriginal);
+        const covered = ruleCoverage(asked, contextFor(asked));
+
+        expect(covered.map((entry) => [entry.target.path, entry.verdict.rule])).toEqual([
+            [inPlace, "tmp-small"],
+            [asideOriginal, "tmp-small"],
+        ]);
+
+        const swept = sweepRmRequests({ contextFor, caller: null, dir: requestsDir, paths: sweepPaths });
+        const closed = loadRmRequest(asked.id, requestsDir);
+
+        expect(swept.ruled).toMatchObject([{ id: asked.id, closed: true }]);
+        expect(closed?.status).toBe("ruled");
+        expect(closed?.decidedVia).toBe("rule tmp-small");
+        expect(closed?.ruled?.map((entry) => entry.path)).toEqual([inPlace, asideOriginal]);
+        expect(ruledLine("tmp-small", closed?.ruled?.[0]?.reason ?? "")).toMatch(
+            /^refused: rule tmp-small, .+ path, [\d.]+ KB under 10 MB, not git-tracked, no unsaved repo inside; deleted without a request$/
+        );
+        expect(existsSync(inPlace)).toBe(false);
+        expect(existsSync(asked.targets[1]?.stored ?? "")).toBe(false);
+        const moved = listBatches(sweepPaths).flatMap((batch) => batch.items);
+        expect(moved.filter((item) => item.rule === "tmp-small").map((item) => item.original)).toEqual(
+            expect.arrayContaining([inPlace, asideOriginal])
+        );
+        expect(
+            readRmLedger().some(
+                (entry) =>
+                    entry.action === "close" && entry.requestId === asked.id && entry.reason === "ruled: tmp-small"
+            )
+        ).toBe(true);
+    });
+
+    test("a path no rule covers keeps the request open with only that path; a git rule's aside copy stays", () => {
+        const covered = file(join(temp, "part-a", "x.txt"));
+        const outside = file(join(dir("sweep-outside"), "y.txt"));
+        const asked = request(covered, outside);
+        const tracked = request(
+            file(join(dir("sweep-outside-2"), "z.txt")),
+            file(join(temp, "part-c", "t.txt")),
+            "git-tracked"
+        );
+
+        const swept = sweepRmRequests({ contextFor, caller: null, dir: requestsDir, paths: sweepPaths });
+        const open = loadRmRequest(asked.id, requestsDir);
+
+        expect(swept.ruled.find((entry) => entry.id === asked.id)).toMatchObject({ closed: false });
+        expect(open?.status).toBe("pending");
+        expect(open?.targets.map((target) => target.path)).toEqual([outside]);
+        expect(open?.ruled?.map((entry) => entry.path)).toEqual([covered]);
+        expect(swept.ruled.some((entry) => entry.id === tracked.id)).toBe(false);
+        expect(loadRmRequest(tracked.id, requestsDir)?.targets).toHaveLength(2);
+    });
+
+    test("a request whose paths are all gone closes as gone; one an approval window holds is left alone", () => {
+        // Both paths left in place, then deleted by something else: nothing is left to decide. (A lost aside copy
+        // is `copy-lost`, which stays open for a person.)
+        const gone = [file(join(dir("sweep-gone"), "a.txt")), file(join(dir("sweep-gone"), "b.txt"))];
+        const asked = createRmRequest(
+            {
+                kind: "delete",
+                caller: AGENT,
+                cwd: base,
+                reason: "cleanup",
+                targets: gone.map((path) => ({ path, kind: "file" as const, rule: "default", reason: "no rule" })),
+            },
+            requestsDir
+        );
+
+        for (const path of gone) {
+            unlinkSync(path);
+        }
+        const held = request(file(join(temp, "held-a", "x.txt")), file(join(temp, "held-b", "y.txt")));
+        // pid 1 runs for the whole boot, so its lock is held, not taken over.
+        writeFileSync(rmRequestLockFile(held.id, requestsDir), "1");
+
+        try {
+            const swept = sweepRmRequests({ contextFor, caller: null, dir: requestsDir, paths: sweepPaths });
+
+            expect(swept.gone).toContain(asked.id);
+            expect(loadRmRequest(asked.id, requestsDir)?.status).toBe("gone");
+            expect(swept.busy).toContain(held.id);
+            expect(loadRmRequest(held.id, requestsDir)?.status).toBe("pending");
+        } finally {
+            unlinkSync(rmRequestLockFile(held.id, requestsDir));
+        }
+    });
+
+    test("the drainer sweeps at start and every sweep.everyMinutes, and stays sweep.lingerMinutes while requests wait", async () => {
+        const quiet = { ...config, sweep: { everyMinutes: 5, lingerMinutes: 20 } };
+        const emptyPaths = {
+            batchesDir: join(base, "sweep-drainer", "batches"),
+            lockPath: join(base, "sweep-drainer", "lock"),
+        };
+        let clock = Date.now();
+        let sweeps = 0;
+        const slept: number[] = [];
+        const run = (waiting: boolean) =>
+            runDrainer({
+                config: quiet,
+                paths: emptyPaths,
+                now: () => new Date(clock),
+                sleep: async (ms) => {
+                    slept.push(ms);
+                    clock += ms;
+                },
+                sweepRequests: () => {
+                    sweeps++;
+                },
+                requestsWaiting: () => waiting,
+            });
+
+        await run(true);
+
+        expect(sweeps).toBe(5);
+        expect(slept).toEqual([300_000, 300_000, 300_000, 300_000]);
+
+        sweeps = 0;
+        slept.length = 0;
+        await run(false);
+
+        expect([sweeps, slept.length]).toEqual([1, 0]);
+    });
+
+    test("a waiting request starts the drainer; nothing to do does not", () => {
+        const empty = { ...config, trashRoot: join(base, "sweep-empty", "GenesisTools", "rm") };
+        const none = { batchesDir: join(base, "sweep-none", "batches"), lockPath: join(base, "sweep-none", "lock") };
+
+        expect(drainerNeeded(empty, none, dir("sweep-no-requests"))).toBe(false);
+        expect(drainerNeeded(empty, none, requestsDir)).toBe(true);
     });
 });

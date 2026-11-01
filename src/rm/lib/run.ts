@@ -30,12 +30,15 @@ import {
     type RmPriorDenial,
     type RmRequest,
     type RmRuleContext,
+    type RmSweepResult,
     type RmVerdictKind,
     recheckAfterWait,
     recoverAsideJournals,
     requestsAlsoNaming,
     rmCallerFromRuntime,
+    ruledLine,
     startRmMeasurement,
+    sweepRmRequests,
     type TrashBatch,
 } from "@genesiscz/utils/rm";
 import pc from "picocolors";
@@ -73,6 +76,48 @@ export function ruleContextFor(config: RmConfig, caller: RmCaller, cwd: string):
         hints: { enablePreset: rmEnablePresetCommand },
         ownBashWrite: caller.sessionId ? bashWriteLookup(caller.sessionId) : undefined,
     });
+}
+
+/** The rule context of the session that asked `request`, with its own profiles applied; null for a request with no caller. */
+export function requestRuleContext(base: RmConfig, request: RmRequest): RmRuleContext | null {
+    if (!request.caller) {
+        return null;
+    }
+
+    return ruleContextFor(effectiveConfig(base, request.caller, request.cwd).config, request.caller, request.cwd);
+}
+
+/**
+ * Runs the request sweep (`sweepRmRequests`) as the user's config and each asking session's rules say, and prints
+ * what it closed unless `quiet`: the drainer, `tools rm drain` and `approve` run it.
+ */
+export function sweepRequests(
+    ctx: RunContext,
+    options: { ids?: readonly string[]; quiet?: boolean } = {}
+): RmSweepResult {
+    const result = sweepRmRequests({
+        contextFor: (request) => requestRuleContext(ctx.base, request),
+        caller: ctx.caller,
+        ids: options.ids,
+    });
+
+    if (!options.quiet) {
+        for (const close of result.ruled) {
+            for (const entry of close.ruled) {
+                out.println(pc.green(`${close.id} ${entry.path}: ${ruledLine(entry.rule, entry.reason)}`));
+            }
+
+            if (close.closed) {
+                out.println(pc.dim(`  request ${close.id} closed: a rule decided every path`));
+            }
+        }
+
+        for (const id of result.gone) {
+            out.println(pc.dim(`request ${id} closed: every path is gone`));
+        }
+    }
+
+    return result;
 }
 
 export function shown(path: string, cwd: string): string {

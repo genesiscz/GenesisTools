@@ -6,6 +6,7 @@ import {
     type DrainProgress,
     drainDue,
     listBatches,
+    listRmRequests,
     loadRmRequest,
     measureBytes,
     type RmCaller,
@@ -20,7 +21,7 @@ import type { Command } from "commander";
 import pc from "picocolors";
 import { isApprovedBatch } from "../lib/approve";
 import { notifyDrainFailure } from "../lib/notify";
-import { runContext } from "../lib/run";
+import { runContext, sweepRequests } from "../lib/run";
 import { renderTrash, resolveBatchSuffix } from "../lib/trash-view";
 
 /**
@@ -145,14 +146,17 @@ export function registerTrashCommands(program: Command): void {
 
     program
         .command("drain")
-        .description("delete what waits in the trash: the due batches, or all with --now")
+        .description(
+            "delete what waits in the trash (the due batches, or all with --now), and sweep the requests a rule now covers"
+        )
         .option("--now", "every batch, also those still in their grace period (a person's; an agent: only its own)")
         .option(
             "--background",
-            `run as the background drainer until the trash is empty (${toolCommand("rm")} starts it)`
+            `run as the background drainer until the trash is empty and no request waits (${toolCommand("rm")} starts it)`
         )
         .action(async (flags: { now?: boolean; background?: boolean }) => {
-            const { config, caller } = runContext();
+            const ctx = runContext();
+            const { config, caller } = ctx;
             // Every rm run starts this drainer: an aside run that died before it opened its request gets it here.
             recoverAsideJournals();
 
@@ -161,10 +165,19 @@ export function registerTrashCommands(program: Command): void {
             const onFailure = (failure: DrainFailure) => told.push(notifyDrainFailure(failure, config));
 
             if (flags.background) {
-                await runDrainer({ config, onFailure });
+                await runDrainer({
+                    config,
+                    onFailure,
+                    sweepRequests: () => {
+                        sweepRequests(ctx, { quiet: true });
+                    },
+                    requestsWaiting: () => listRmRequests().some((request) => request.kind === "delete"),
+                });
                 await Promise.all(told);
                 return;
             }
+
+            sweepRequests(ctx);
 
             const elapsed = createStopwatch();
             const onItem = (progress: DrainProgress) =>
