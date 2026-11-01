@@ -1,6 +1,9 @@
 import { describe, expect, test } from "bun:test";
 import type { AccountUsage } from "@app/claude/lib/usage/api";
+import { renderToString } from "ink";
+import { createElement } from "react";
 import {
+    AccountSection,
     absentRowsFor,
     estimateAccountHeight,
     grantWarningText,
@@ -235,4 +238,19 @@ describe("an account without a 5-hour limit", () => {
         // The idle row costs two lines on a narrow column ("not used" drops below the bar).
         expect(estimateAccountHeight(idle, PROMINENT, 45)).toBe(6);
     });
+
+    // The estimator alone cannot see a row that wraps: render the section and count what the terminal gets.
+    // 40 (MIN_ACCOUNT_COLUMN_WIDTH) and 45 are the narrow layout without an inline countdown: 13 cells after
+    // the bar for a 17-cell "— no 5h limit".
+    for (const width of [40, 45, 55, 120]) {
+        test(`the absent row fits a ${width}-cell column, and the rendered height matches the estimate`, () => {
+            const absent = account({ usage: { five_hour: null, seven_day: WEEKLY } });
+            const section = createElement(AccountSection, { account: absent, prominentBuckets: PROMINENT, width });
+            const lines = renderToString(section, { columns: width }).split("\n");
+
+            expect(lines.find((line) => line.includes("no 5h limit"))).toBeDefined();
+            expect(Math.max(...lines.map((line) => Bun.stringWidth(line)))).toBeLessThanOrEqual(width);
+            expect(lines).toHaveLength(estimateAccountHeight(absent, PROMINENT, width));
+        });
+    }
 });

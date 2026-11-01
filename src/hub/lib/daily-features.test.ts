@@ -370,7 +370,7 @@ describe("forecast", () => {
         );
         expect(window).toMatchObject({ stale: true, exhaustAt: null, beforeReset: false, utilization: 55 });
         expect(
-            forecastFromSamples([sample({ utilization: 90, timestamp: isoAgo(24 * 60) })], NOW)[0]?.warning
+            forecastFromSamples([sample({ utilization: 90, timestamp: isoAgo(24 * 60) })], { now: NOW })[0]?.warning
         ).toBeNull();
     });
 
@@ -384,7 +384,7 @@ describe("forecast", () => {
         // 99 % five hours ago, five days into the week: the average reaches 100 % about 73 min after that sample.
         const [account] = forecastFromSamples(
             [sample({ bucket: "seven_day", kind: "weekly", utilization: 99, timestamp: isoAgo(5 * 60), resetsAt })],
-            NOW
+            { now: NOW }
         );
 
         expect(account?.windows[0]).toMatchObject({ beforeReset: true, minutesToExhaust: 0, stale: false });
@@ -402,7 +402,7 @@ describe("forecast", () => {
         // 60 % three days into the week: 20 %/day, so 100 % two days from now, two days before the reset.
         const [account] = forecastFromSamples(
             [sample({ bucket: "seven_day", kind: "weekly", utilization: 60, timestamp: isoAgo(0), resetsAt })],
-            NOW
+            { now: NOW }
         );
         const at = new Date(NOW.getTime() + 2 * 24 * 3_600_000);
 
@@ -421,7 +421,7 @@ describe("forecast", () => {
         const side = sample({ account: "side", utilization: 5, timestamp: isoAgo(5) });
         const absent = new Map([[absentKey("anthropic-sub", "work"), ["five_hour"]]]);
 
-        const [sideForecast, work] = forecastFromSamples([...old5h, weekly, side], NOW, absent);
+        const [sideForecast, work] = forecastFromSamples([...old5h, weekly, side], { now: NOW, absent });
 
         expect(work).toMatchObject({ account: "work", absentWindows: ["five_hour"], warning: null });
         expect(work.windows.map((window) => window.bucket)).toEqual(["seven_day"]);
@@ -460,7 +460,7 @@ describe("forecast", () => {
                 sample({ account: "side", utilization: 5, timestamp: isoAgo(5) }),
                 sample({ account: "side", utilization: 5, timestamp: isoAgo(1) }),
             ],
-            NOW
+            { now: NOW }
         );
         expect(accounts.map((account) => account.account)).toEqual(["side", "work"]);
         expect(accounts[1].warning).toContain("5h runs out");
