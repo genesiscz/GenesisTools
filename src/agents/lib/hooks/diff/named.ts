@@ -1,5 +1,6 @@
 import { chmodSync, copyFileSync, mkdirSync, readFileSync, type Stats, statSync, writeFileSync } from "node:fs";
 import { join } from "node:path";
+import { cloudReadRisk } from "@genesiscz/utils/fs/cloud-placeholder";
 import { SafeJSON } from "@genesiscz/utils/json";
 import { type DiffConfig, megabytes } from "../config";
 import { hookDiag } from "../log";
@@ -79,6 +80,15 @@ export function captureNamed({
         }
 
         if (!stat.isFile()) {
+            continue;
+        }
+
+        // The copy reads the bytes, and reading a cloud placeholder downloads it, so a plain `ls` of a
+        // Dropbox folder pulled its files down (2026-11-01). Such a file gets no before-state.
+        const risk = cloudReadRisk(path, stat);
+
+        if (risk) {
+            skipped.push(`${path}: ${risk}, not copied`);
             continue;
         }
 
