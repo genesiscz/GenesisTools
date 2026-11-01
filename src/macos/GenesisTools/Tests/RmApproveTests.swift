@@ -1,3 +1,4 @@
+import GenesisKit
 import LocalAuthentication
 import XCTest
 @testable import GenesisToolsHost
@@ -34,7 +35,8 @@ final class RmApproveTests: XCTestCase {
 
         XCTAssertEqual(content.items.map(\.name), ["Dark 2", "Export.md", "old.txt"])
         XCTAssertEqual(content.items.map(\.folder), ["~/Notes/Design", "~/Notes/Design", "~/Notes"])
-        XCTAssertEqual(content.items.map(\.size), ["Empty folder", "12 kB", "Already gone"])
+        XCTAssertEqual(content.items.map(\.size), [ByteFormat.file(0), "12 kB", "Already gone"])
+        XCTAssertEqual(content.items.first?.notes.map(\.word), ["empty folder"])
         XCTAssertEqual(content.items.map(\.gone), [false, false, true])
         XCTAssertEqual(content.items.map(\.reason).first, "Outside this session's scratch, its own files and the trusted folders")
         // An aside item opens where it waits; only a markdown file that is there offers Genesis Markdown.
@@ -48,7 +50,7 @@ final class RmApproveTests: XCTestCase {
         func size(_ kind: String, _ bytes: Int64?, empty: Bool? = nil) -> String? {
             RmWindowContent.size(RmApproveItem(path: "/x", kind: kind, bytes: bytes, empty: empty, storedAt: nil, reason: ""))
         }
-        XCTAssertEqual(size("dir", 0, empty: true), "Empty folder")
+        XCTAssertEqual(size("dir", 0, empty: true), ByteFormat.file(0))
         XCTAssertEqual(size("file", 0), "Empty file")
         XCTAssertEqual(size("dir", 3_210_000_000), "3.21 GB")
         XCTAssertEqual(size("missing", 10), "Already gone")
