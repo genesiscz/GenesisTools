@@ -520,19 +520,23 @@ function madeByBash(target: RmTarget, ctx: RmRuleContext): boolean {
     return born > 0 && born >= wrote - BASH_COMMAND_WINDOW_MS && born <= wrote + 60_000;
 }
 
-/**
- * The tmp-small rule (owner, 2026-11-01:
+/** The folder of `tmpSmallExcluded` that holds `target` (as configured, e.g. `/tmp/removable`), or null. */
+function stagingRootOf(target: RmTarget, ctx: RmRuleContext): string | null {
+    return ctx.config.tmpSmallExcluded.find((root) => isInside(target.canonical, realOrSelf(root))) ?? null;
+}
+
 /**
  * The tmp-small rule (owner, 2026-11-01: "the size limit for deleting a temp path without a request ... when a path
  * falls under such a rule, tools rm must never ask the person"): a path inside a temp root, at most `tmpSmallMB`,
  * holding no socket and no repository with unsaved work at any depth, is deleted without a request. A scratch root
  * or a project folder under it holds every session's scratch and never matches; a session's scratch folder matches
- * only once that session has ended. The system's and running services' folders at the top of a temp root stay.
+ * only once that session has ended. The system's and running services' folders at the top of a temp root stay, and
+ * so does a staging folder of `tmpSmallExcluded`, whatever its size: a person reviews it before it goes.
  */
 function tmpSmallVerdict(target: RmTarget, ctx: RmRuleContext, git: () => RmGitFacts): RmVerdict | null {
     const limitMB = ctx.config.tmpSmallMB;
 
-    if (limitMB <= 0 || target.kind === "missing") {
+    if (limitMB <= 0 || target.kind === "missing" || stagingRootOf(target, ctx)) {
         return null;
     }
 
@@ -613,6 +617,11 @@ const SESSION_UUID = /^[0-9a-f]{8}-[0-9a-f]{4}-[0-9a-f]{4}-[0-9a-f]{4}-[0-9a-f]{
 function defaultAskReason(target: RmTarget, ctx: RmRuleContext): string {
     const { caller } = ctx;
     const sessionId = caller.isInAgent ? caller.sessionId : null;
+    const staging = stagingRootOf(target, ctx);
+
+    if (staging) {
+        return `inside ${staging}, a staging area for the user's review: tmp-small never deletes there (tmp-small-exclude)`;
+    }
 
     if (sessionId) {
         for (const root of ctx.scratchRoots) {

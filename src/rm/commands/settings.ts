@@ -1,4 +1,5 @@
 import { homedir } from "node:os";
+import { isAbsolute, resolve } from "node:path";
 import { toolCommand } from "@genesiscz/utils/cli";
 import { out } from "@genesiscz/utils/logger";
 import {
@@ -38,6 +39,8 @@ const SETTINGS = [
     "own-files",
     "own-bash-files",
     "tmp-small-mb",
+    "tmp-small-exclude",
+    "tmp-small-include",
     "grace-preset",
     "grace-other",
     "grace-scratch",
@@ -49,6 +52,15 @@ const SETTINGS = [
     "disable-profile",
     "enable-profile",
 ] as const;
+
+/** A folder setting: an absolute path, written without a trailing slash. */
+function absoluteFolder(value: string): string {
+    if (!isAbsolute(value)) {
+        throw new Error(`Not an absolute folder: ${value} (use a full path, e.g. /tmp/removable)`);
+    }
+
+    return resolve(value);
+}
 
 function yesNo(value: string): boolean {
     if (/^(yes|true|on|1)$/i.test(value)) {
@@ -106,6 +118,12 @@ export function applyRmSetting(config: RmConfig, key: Setting, value: string): R
             return { ...config, ownFilesFromBash: yesNo(value) };
         case "tmp-small-mb":
             return { ...config, tmpSmallMB: megabytesOption(value) };
+        case "tmp-small-exclude":
+            return { ...config, tmpSmallExcluded: [...new Set([...config.tmpSmallExcluded, absoluteFolder(value)])] };
+        case "tmp-small-include": {
+            const folder = absoluteFolder(value);
+            return { ...config, tmpSmallExcluded: config.tmpSmallExcluded.filter((root) => root !== folder) };
+        }
         case "grace-preset":
             return { ...config, grace: { ...config.grace, presetMinutes: minutesOption(value) } };
         case "grace-other":
