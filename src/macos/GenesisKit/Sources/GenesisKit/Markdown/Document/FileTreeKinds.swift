@@ -37,7 +37,12 @@ enum FileTree {
 
     static func kind(for url: URL, isDirectory: Bool) -> MarkdownTreeNode.Kind {
         if isDirectory { return .folder }
-        switch url.pathExtension.lowercased() {
+        return kind(ofFileExtension: url.pathExtension)
+    }
+
+    /// A file's kind from its extension alone, for a list of names that has no URLs ("Go to Location…").
+    static func kind(ofFileExtension ext: String) -> MarkdownTreeNode.Kind {
+        switch ext.lowercased() {
         case "md", "markdown", "mdx": return .markdown
         case "canvas": return .canvas
         case "base": return .base
@@ -48,7 +53,11 @@ enum FileTree {
     /// Also every source file the viewer highlights (`DocumentPreview.codeLanguages`), so a click,
     /// a search hit or a drop opens `Report.ts` as a tab rather than in another app.
     static func isReadable(_ url: URL) -> Bool {
-        let ext = url.pathExtension.lowercased()
+        isReadable(fileExtension: url.pathExtension)
+    }
+
+    static func isReadable(fileExtension ext: String) -> Bool {
+        let ext = ext.lowercased()
         return readableExtensions.contains(ext) || DocumentPreview.codeLanguages[ext] != nil
     }
 

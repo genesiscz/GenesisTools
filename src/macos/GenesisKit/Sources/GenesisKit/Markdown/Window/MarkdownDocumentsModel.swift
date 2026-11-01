@@ -200,26 +200,45 @@ final class MarkdownDocumentsModel: ObservableObject {
     /// (and clears it) when it opens its search, so a plain ⌘⇧F searches the whole tree again.
     @Published var treeSearchScope: URL?
 
-    /// A path from "Go to Location…". A folder shows in the file tree: revealed and selected when it
-    /// is under the tree's root, else the tree's new root. A file opens as a tab and the tree stays
-    /// where it is. Returns what is wrong, nil when it went.
+    /// A path from "Go to Location…", the text alone (no row of its list). A folder shows in the file tree:
+    /// revealed and selected when it is under the tree's root, else the tree's new root. A file opens as a tab and
+    /// the tree stays where it is. Returns what is wrong, nil when it went.
     func goTo(_ raw: String) -> String? {
-        guard let url = MarkdownGoTo.url(from: raw, base: filesRootURL) else { return "Type a path." }
-        var isDirectory: ObjCBool = false
-        guard FileManager.default.fileExists(atPath: url.path, isDirectory: &isDirectory) else {
-            return "Nothing at \((url.path as NSString).abbreviatingWithTildeInPath)."
-        }
+        let base = goToStartFolder
+        let query = MarkdownPathCompletion.query(raw, base: base)
+        return perform(MarkdownPathCompletion.action(text: raw, base: base, pick: .text, query: query, reveal: false))
+    }
 
-        if isDirectory.boolValue {
-            revealInSidebar(url)
-        } else {
+    /// The folder "Go to Location…" opens with, and the one a relative path starts from.
+    var goToStartFolder: URL {
+        if configuration.goToStartsIn == .noteFolder, let doc = selected {
+            return doc.url.deletingLastPathComponent()
+        }
+        return filesRootURL
+    }
+
+    /// Runs what Return in "Go to Location…" decided. Returns what is wrong, nil when it went; a folder that only goes
+    /// into the field (`.complete`) is the sheet's to do.
+    func perform(_ action: MarkdownGoToAction) -> String? {
+        switch action {
+        case .open(let url):
             // A tree that follows the open document would move to the file's folder: pinned first.
             if filesRoot.isEmpty {
                 filesRoot = filesRootURL.standardizedFileURL.path
             }
-            open([url])
+            switch configuration.goToOpensAs {
+            case .tab: open([url])
+            case .previewTab: openPreview(url)
+            }
+            return nil
+        case .reveal(let url):
+            revealInSidebar(url)
+            return nil
+        case .complete:
+            return nil
+        case .problem(let text):
+            return text
         }
-        return nil
     }
 
     /// The file sidebar, open, with `item` (a folder or a file) shown ("Show in Sidebar"). Its folders open, the
