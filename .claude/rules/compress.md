@@ -57,8 +57,11 @@ Loaded by Claude Code when you read, write or edit a file under `src/utils/compr
   its per-day results the same way, or the window it scans stays plain.
 - **A level is chosen by who waits for the write, not by the read.** The frame header carries the frame's size, so the
   decoder's window is one frame at most at every level, and reads cost the same at levels 3 to 22 (2026-11-01,
-  `bun scripts/benchmarks/compress/levels.ts`). The background daily pass takes level 22, rare folder archives 19
-  long, the bundle pack that every `bun run app` waits on 9 long. Change a level only with a new run of that bench.
+  `bun scripts/benchmarks/compress/levels.ts`). The rule: the lowest level after which the next measured level
+  costs more than 10 times the CPU per extra MB saved. That is level 9 for the daily pass, folder archives (long),
+  the bundle pack that every `bun run app` waits on (long) and databases; only the hand-picked `max` is 22 long.
+  Level 19 and 22 cost 20 to 100 times the CPU for a few percent (the owner rejected them on 2026-11-01). Change a
+  level only with a new run of that bench.
 - **Media is left alone.** `tools compress pack` runs a level-3 trial on a sample and skips under 30% saving
   (`DEFAULT_MIN_SAVING`); photos, video and audio measured 0.2-7%.
 - **APFS clones.** `cp -c` backups share blocks, so `du` over-counts and removing one clone frees almost nothing.
