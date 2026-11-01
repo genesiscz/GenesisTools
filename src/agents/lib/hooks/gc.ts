@@ -1,7 +1,18 @@
-import { lstatSync, readdirSync, rmdirSync, rmSync, statSync } from "node:fs";
+import { existsSync, lstatSync, readdirSync, rmdirSync, rmSync, statSync, utimesSync, writeFileSync } from "node:fs";
 import { join } from "node:path";
+import { assertPrivateFile } from "./diff/private-dir";
 import { hookDiag } from "./log";
-import { claimsRoot, hookDataRoot, mentionsRoot, unpushedRoot } from "./paths";
+import { claimsRoot, hookDataRoot, mentionsRoot, sweepStampPath, unpushedRoot } from "./paths";
+
+/**
+ * When a capture with no `background.json` is abandoned: its post phase never ran (an interrupted turn, a killed
+ * hook, a crash). A foreground call ends within its timeout, 10 minutes in Claude Code, so an hour leaves a margin
+ * for a slow harness. A background call's capture waits for its task (`flushDeferred`) and keeps the horizon.
+ */
+export const ABANDONED_CAPTURE_MS = 60 * 60 * 1000;
+
+/** How often a post phase may sweep: one `stat` of the stamp per call in between, no walk. */
+const SWEEP_EVERY_MS = 10 * 60 * 1000;
 
 export interface StaleCapture {
     path: string;
@@ -55,16 +66,21 @@ function safeList(path: string): string[] {
  *
  * 🛑 The horizon is a floor, never a ceiling: lowering it below the longest command you
  * actually run deletes a LIVE capture and silently loses that command's diff.
+ *
+ * `abandonedMs` is the shorter age for a capture with no `background.json`, a foreground call
+ * (`ABANDONED_CAPTURE_MS`); without it every capture waits for the horizon.
  */
 export function collectStaleCaptures(options: {
     now: number;
     horizonMs?: number;
+    abandonedMs?: number;
     sessionId?: string;
     root?: string;
     write?: boolean;
 }): GcResult {
     const root = options.root ?? hookDataRoot();
     const horizonMs = options.horizonMs ?? 6 * 60 * 60 * 1000;
+    const abandonedMs = Math.min(options.abandonedMs ?? horizonMs, horizonMs);
     const write = options.write ?? false;
     const removed: StaleCapture[] = [];
     let kept = 0;
@@ -90,7 +106,9 @@ export function collectStaleCaptures(options: {
                 }
 
                 // A session sweep is explicit: that session is over, so age does not gate it.
-                if (!options.sessionId && ageMs < horizonMs) {
+                const limit = existsSync(join(path, "background.json")) ? horizonMs : abandonedMs;
+
+                if (!options.sessionId && ageMs < limit) {
                     kept += 1;
                     continue;
                 }
@@ -220,6 +238,48 @@ export function collectStaleCaptures(options: {
     }
 
     return { removed, kept, bytes, write };
+}
+
+/**
+ * The sweep a post phase runs: captures whose post phase never ran, an hour on (`ABANDONED_CAPTURE_MS`), and
+ * everything else past the horizon, at most once per `everyMs`. Before it only a session end swept, and only past
+ * six hours, so a session that ran for days kept every interrupted call's capture. The stamp's mtime is the last
+ * sweep; it lives beside the data root, which `collectStaleCaptures` walks as harnesses. `null`: not due yet.
+ */
+export function sweepAbandonedCaptures({
+    now,
+    root,
+    stamp = sweepStampPath(),
+    everyMs = SWEEP_EVERY_MS,
+}: {
+    now: number;
+    root?: string;
+    stamp?: string;
+    everyMs?: number;
+}): GcResult | null {
+    try {
+        if (now - statSync(stamp).mtimeMs < everyMs) {
+            return null;
+        }
+    } catch (err) {
+        // No stamp yet is the first sweep on this machine.
+        if ((err as NodeJS.ErrnoException)?.code !== "ENOENT") {
+            hookDiag("Could not read the capture sweep stamp", { err, stamp });
+            return null;
+        }
+    }
+
+    // Stamped BEFORE the walk, so the post phases of a parallel batch do not all sweep at once.
+    try {
+        assertPrivateFile(stamp);
+        writeFileSync(stamp, "", { mode: 0o600 });
+        utimesSync(stamp, new Date(now), new Date(now));
+    } catch (err) {
+        hookDiag("Could not write the capture sweep stamp", { err, stamp });
+        return null;
+    }
+
+    return collectStaleCaptures({ now, abandonedMs: ABANDONED_CAPTURE_MS, root, write: true });
 }
 
 function removeIfEmpty(dir: string): void {
