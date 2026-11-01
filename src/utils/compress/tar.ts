@@ -597,13 +597,39 @@ export function listArchive(archive: string, { hash = false }: { hash?: boolean 
     return lister.entries;
 }
 
+let systemTarIsBsdtar: boolean | undefined;
+
+/**
+ * Extract options for the system `tar`. bsdtar on macOS reads every `._name` entry as AppleDouble metadata
+ * (libarchive's `mac-ext`, on by default where copyfile exists): it writes no file for it and applies its bytes to the
+ * entry that follows, so a real `._name` file from the folder vanished on unpack, or the unpack failed on the next
+ * entry's metadata. `COPYFILE_DISABLE` and `--no-mac-metadata` leave that reading on; `tar:!mac-ext` turns it off.
+ * GNU tar has no `--options` and does not read `._` entries that way.
+ */
+function extractOptions(): string[] {
+    if (process.platform !== "darwin") {
+        return [];
+    }
+
+    if (systemTarIsBsdtar === undefined) {
+        const version = Bun.spawnSync(["tar", "--version"], { stdout: "pipe", stderr: "pipe" });
+        systemTarIsBsdtar = version.stdout.toString().includes("bsdtar");
+    }
+
+    return systemTarIsBsdtar ? ["--options", "tar:!mac-ext"] : [];
+}
+
 /**
  * Unpacks a `.tar.zst` into `destination` (created when missing) with the system `tar`, fed one decompressed frame at
- * a time. The archive's top folder lands inside `destination`.
+ * a time. The archive's top folder lands inside `destination`. A `._name` entry is restored as the file it was.
  */
 export async function unpackArchive({ archive, destination }: { archive: string; destination: string }): Promise<void> {
     mkdirSync(destination, { recursive: true });
-    const proc = Bun.spawn(["tar", "-kxf", "-", "-C", destination], { stdin: "pipe", stdout: "pipe", stderr: "pipe" });
+    const proc = Bun.spawn(["tar", ...extractOptions(), "-kxf", "-", "-C", destination], {
+        stdin: "pipe",
+        stdout: "pipe",
+        stderr: "pipe",
+    });
     const stderr = drain(proc.stderr);
     const stdout = drain(proc.stdout);
 
