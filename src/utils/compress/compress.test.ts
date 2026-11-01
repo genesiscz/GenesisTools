@@ -24,6 +24,7 @@ import { tmpdir } from "node:os";
 import { join } from "node:path";
 import { createZstdCompress, constants as zlibConstants } from "node:zlib";
 import { env } from "@genesiscz/utils/env";
+import { fileFlags, SF_DATALESS } from "@genesiscz/utils/fs/cloud-placeholder";
 import {
     readFirstLines,
     readLastLines,
@@ -1034,9 +1035,30 @@ describe("folder archives", () => {
                 { env: process.env }
             );
             expect(marked.exitCode).toBe(0);
+            // Bytes in 0 blocks without the dataless flag: the content is here, so it is not a placeholder.
+            writeFileSync(join(tree, "hole.bin"), "");
+            truncateSync(join(tree, "hole.bin"), 64 * 1024);
+            expect(statSync(join(tree, "hole.bin")).blocks).toBe(0);
+            expect((fileFlags(join(tree, "hole.bin")) ?? 0) & SF_DATALESS).toBe(0);
+            const normal = ["top.txt", "link", "hole.bin"];
+
+            // A decmpfs file (UF_COMPRESSED) keeps its content in its xattrs: a normal file too.
+            if (Bun.which("ditto")) {
+                writeFileSync(join(dir, "plain.txt"), "line of text that repeats\n".repeat(2000));
+                const ditto = Bun.spawnSync(
+                    ["ditto", "--hfsCompression", join(dir, "plain.txt"), join(tree, "compressed.txt")],
+                    { env: process.env }
+                );
+                expect(ditto.exitCode).toBe(0);
+                expect((fileFlags(join(tree, "compressed.txt")) ?? 0) & 0x20).toBe(0x20);
+                normal.push("compressed.txt");
+            }
+
             const refusal = compressPath({ source: tree, force: true, caller: "test" });
             await expect(refusal).rejects.toBeInstanceOf(CompressRefusal);
-            await expect(refusal).rejects.toThrow(/stub-00\.note, .*stub-19\.note and 1 more/);
+            await expect(refusal).rejects.toThrow(
+                /holds 21 cloud placeholders .*stub-00\.note, .*stub-19\.note and 1 more/
+            );
             await expect(refusal).rejects.toThrow("cloud copy");
             expect(existsSync(`${tree}.zst`)).toBe(false);
             await expect(
@@ -1044,13 +1066,8 @@ describe("folder archives", () => {
             ).rejects.toThrow("stub-00.note");
 
             // The normal files beside the stubs pack without the flag.
-            const listed = await compressPath({
-                source: tree,
-                files: ["top.txt", "link"],
-                force: true,
-                caller: "test",
-            });
-            expect(listed.record.files).toBe(2);
+            const listed = await compressPath({ source: tree, files: normal, force: true, caller: "test" });
+            expect(listed.record.files).toBe(normal.length);
             rmSync(`${tree}.zst`);
 
             const { record } = await compressPath({

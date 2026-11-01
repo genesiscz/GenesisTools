@@ -24,8 +24,9 @@ tools compress daily --dry-run                # what the once-a-day pass would c
   `--remove-original`, and only when it did not change while it was read. Free space is checked first: the output
   needs room while the original still exists, and the refusal says how much.
 - **Cloud placeholders are refused.** Before anything reads the data, `pack` looks at each file's metadata: a file
-  with the `com.dropbox.placeholder` xattr (a stub the old Dropbox app left, its bytes here are zeros) or with bytes
-  in 0 blocks (a dataless file, which a read would download; an all-hole sparse file looks the same) stops the run.
+  with the `com.dropbox.placeholder` xattr (a stub the old Dropbox app left, its bytes here are zeros) or with the
+  `SF_DATALESS` flag (a File Provider file, which a read would download) stops the run. Only a file with bytes in 0
+  blocks is asked for its flags, so an all-hole sparse file or a decmpfs-compressed file packs as usual.
   The refusal names up to 20 of them and writes nothing: their real content lives in the cloud copy.
   `--include-placeholders` packs them as they are, for a legacy folder where the stub is all that is left, and
   `--remove-original` then removes them after the check like any other file.

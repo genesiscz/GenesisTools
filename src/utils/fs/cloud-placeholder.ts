@@ -54,19 +54,32 @@ export const DROPBOX_PLACEHOLDER_XATTR = "com.dropbox.placeholder";
 /** `XATTR_NOFOLLOW`: a symlink's own attributes, never its target's. */
 const XATTR_NOFOLLOW = 0x0001;
 
-type Getxattr = (path: Buffer, name: Buffer) => number;
+/** The `st_flags` bit of a dataless file (sys/stat.h): its content is with the File Provider, not on this disk. */
+export const SF_DATALESS = 0x40000000;
 
-let getxattr: Getxattr | null | undefined;
+/** `ATTR_CMN_FLAGS` in an attrlist's common group: the file's `st_flags`. */
+const ATTR_CMN_FLAGS = 0x00040000;
+/** `ATTR_BIT_MAP_COUNT`: the five attribute groups of an attrlist. */
+const ATTR_BIT_MAP_COUNT = 5;
+/** `FSOPT_NOFOLLOW`: a symlink's own attributes, never its target's. */
+const FSOPT_NOFOLLOW = 0x00000001;
 
-function loadGetxattr(): Getxattr | null {
-    if (getxattr !== undefined) {
-        return getxattr;
+interface LibSystem {
+    getxattr: (path: Buffer, name: Buffer) => number;
+    getattrlist: (path: Buffer, attrList: Uint8Array, attrBuf: Uint8Array) => number;
+}
+
+let libSystem: LibSystem | null | undefined;
+
+function loadLibSystem(): LibSystem | null {
+    if (libSystem !== undefined) {
+        return libSystem;
     }
 
-    getxattr = null;
+    libSystem = null;
 
     if (process.platform !== "darwin") {
-        return getxattr;
+        return libSystem;
     }
 
     try {
@@ -75,34 +88,69 @@ function loadGetxattr(): Getxattr | null {
                 args: [FFIType.ptr, FFIType.ptr, FFIType.ptr, FFIType.u64, FFIType.u32, FFIType.i32],
                 returns: FFIType.i64,
             },
+            getattrlist: {
+                args: [FFIType.ptr, FFIType.ptr, FFIType.ptr, FFIType.u64, FFIType.u32],
+                returns: FFIType.i32,
+            },
         });
-        // A null buffer of size 0 asks for the value's size only, so no attribute bytes are read either.
-        getxattr = (path, name) => Number(lib.symbols.getxattr(path, name, null, 0, 0, XATTR_NOFOLLOW));
+        libSystem = {
+            // A null buffer of size 0 asks for the value's size only, so no attribute bytes are read either.
+            getxattr: (path, name) => Number(lib.symbols.getxattr(path, name, null, 0, 0, XATTR_NOFOLLOW)),
+            getattrlist: (path, attrList, attrBuf) =>
+                lib.symbols.getattrlist(path, attrList, attrBuf, attrBuf.length, FSOPT_NOFOLLOW),
+        };
     } catch (err) {
-        logger.debug({ err }, "[cloud-placeholder] getxattr is not available; no file is seen as a Dropbox stub");
+        logger.debug({ err }, "[cloud-placeholder] getxattr and getattrlist are not available");
     }
 
-    return getxattr;
+    return libSystem;
 }
 
 /** Whether `path` itself (a symlink is not followed) carries the xattr `name`. macOS only; false elsewhere. */
 export function hasXattr(path: string, name: string): boolean {
-    const call = loadGetxattr();
+    const lib = loadLibSystem();
 
-    if (!call) {
+    if (!lib) {
         return false;
     }
 
-    return call(Buffer.from(`${path}\0`), Buffer.from(`${name}\0`)) >= 0;
+    return lib.getxattr(Buffer.from(`${path}\0`), Buffer.from(`${name}\0`)) >= 0;
+}
+
+/**
+ * The `st_flags` of `path` itself (a symlink is not followed), from one `getattrlist(ATTR_CMN_FLAGS)` call: metadata
+ * only, so a dataless file is not downloaded. The attrlist and the reply (a u32 length, then the u32 flags) have the
+ * same layout on arm64 and x86_64, unlike `struct stat`. Null off macOS or when the call fails.
+ */
+export function fileFlags(path: string): number | null {
+    const lib = loadLibSystem();
+
+    if (!lib) {
+        return null;
+    }
+
+    const attrList = new Uint8Array(24);
+    const view = new DataView(attrList.buffer);
+    view.setUint16(0, ATTR_BIT_MAP_COUNT, true);
+    view.setUint32(4, ATTR_CMN_FLAGS, true);
+    const reply = new Uint8Array(8);
+
+    if (lib.getattrlist(Buffer.from(`${path}\0`), attrList, reply) !== 0) {
+        return null;
+    }
+
+    return new DataView(reply.buffer).getUint32(4, true);
 }
 
 export type CloudPlaceholderKind = "dataless" | "dropbox-stub";
 
 /**
- * Whether the file at `path` is a cloud placeholder, decided from metadata only (its stat and one xattr lookup), so
- * nothing is downloaded: `dataless` for bytes in 0 blocks ({@link isDatalessFile}; a sparse file that is all holes
- * looks the same), `dropbox-stub` for a file with {@link DROPBOX_PLACEHOLDER_XATTR}. A dataless file is never asked
- * for its xattrs.
+ * Whether the file at `path` is a cloud placeholder, decided from metadata only, so nothing is downloaded:
+ * `dataless` for a file with {@link SF_DATALESS}, `dropbox-stub` for a file with {@link DROPBOX_PLACEHOLDER_XATTR}.
+ * Bytes in 0 blocks ({@link isDatalessFile}) only make a file a candidate, read with one {@link fileFlags} call: an
+ * all-hole sparse file or a `UF_COMPRESSED` (decmpfs) file has neither mark and is a normal file. A dataless file is
+ * never asked for its xattrs. Off macOS nothing is a placeholder; where the flags cannot be read, a candidate counts
+ * as dataless.
  */
 export function cloudPlaceholderKind(
     path: string,
@@ -113,7 +161,11 @@ export function cloudPlaceholderKind(
     }
 
     if (isDatalessFile(stat)) {
-        return "dataless";
+        const flags = fileFlags(path);
+
+        if (flags === null || (flags & SF_DATALESS) !== 0) {
+            return "dataless";
+        }
     }
 
     return hasXattr(path, DROPBOX_PLACEHOLDER_XATTR) ? "dropbox-stub" : null;
