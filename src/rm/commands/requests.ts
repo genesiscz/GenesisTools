@@ -203,10 +203,12 @@ function mergeUpdates(sources: readonly ApprovalUpdates[]): ApprovalUpdates {
     return merged;
 }
 
-/** A request of a batch approval and the rows the window shows for it. */
+/** A request of a batch approval, the rows the window shows for it, and its in-place rows an earlier part shows. */
 interface BatchPart {
     request: RmRequest;
     rows: ApproveEntry[];
+    /** Decided by the earlier part's row: approved through the shared-path settle, denied or unticked here. */
+    shared: ApproveEntry[];
 }
 
 /** The person check and the background drain of a batch approval; tests replace them. */
@@ -223,7 +225,8 @@ function rowKey(target: RmRequestTarget): string {
 /**
  * `tools rm approve <id> <id> ...`: one window and one person check for the rows of several requests. The set is
  * fixed when every lock is held, so a request made while the window is open never rides along. An in-place path
- * that two requests name is one row (the first request owns it; the shared-path settle decides the other).
+ * that two requests name is one row: the first request owns it, an approval reaches the other through the shared-path
+ * settle, and a Deny or an unticked row denies the path in every request that names it.
  */
 export async function approveMany(
     ids: readonly string[],
@@ -273,6 +276,7 @@ export async function approveMany(
             }
 
             const rows = openEntries.filter((entry) => entry.wanted.stored || !inPlaceOwner.has(entry.wanted.path));
+            const shared = openEntries.filter((entry) => !rows.includes(entry));
 
             for (const { wanted } of rows) {
                 if (wanted.stored) {
@@ -282,7 +286,7 @@ export async function approveMany(
                 }
             }
 
-            parts.push({ request, rows });
+            parts.push({ request, rows, shared });
         }
 
         const shown = parts.filter((part) => part.rows.length > 0);
@@ -325,9 +329,10 @@ export async function approveMany(
             updates: mergeUpdates(perPart.map((rows) => rows.updates)),
         }).finally(() => measuring.abort());
 
-        for (const part of shown) {
+        // Every part, also one whose rows are all shared: a Deny or an unticked shared row must reach it too.
+        for (const part of parts) {
             // An earlier request's approval may have decided a path of this one (the shared-path settle): read it
-            // again, and decide only the rows the window showed for it.
+            // again, and decide only the rows the window showed for it, its own or the earlier part's.
             const fresh = loadRmRequest(part.request.id);
 
             if (fresh?.status !== "pending") {
@@ -337,7 +342,7 @@ export async function approveMany(
             const again = prepareApproval(fresh, ctx, true);
             // Each row keeps the identity pinned BEFORE the window opened: the checks after the wait (and the
             // verified rename) compare against what the person was shown, so a path swapped meanwhile is refused.
-            const pinned = new Map(part.rows.map((entry) => [rowKey(entry.wanted), entry.target]));
+            const pinned = new Map([...part.rows, ...part.shared].map((entry) => [rowKey(entry.wanted), entry.target]));
             const openEntries = again.openEntries.flatMap((entry) => {
                 const target = pinned.get(rowKey(entry.wanted));
                 return target ? [{ wanted: entry.wanted, target }] : [];

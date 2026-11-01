@@ -1,10 +1,8 @@
 import { createHash, randomBytes } from "node:crypto";
 import {
-    closeSync,
     existsSync,
     lstatSync,
     mkdirSync,
-    openSync,
     readdirSync,
     readFileSync,
     renameSync,
@@ -12,7 +10,6 @@ import {
     statSync,
     unlinkSync,
     writeFileSync,
-    writeSync,
 } from "node:fs";
 import { rm } from "node:fs/promises";
 import { basename, dirname, isAbsolute, join, relative } from "node:path";
@@ -20,6 +17,7 @@ import { createStopwatch } from "@genesiscz/utils/format";
 import { walkFiles } from "@genesiscz/utils/fs/disk-usage";
 import { SafeJSON } from "@genesiscz/utils/json";
 import { logger } from "@genesiscz/utils/logger";
+import { isArbitrationBusy, withPathArbitrationSync } from "@genesiscz/utils/process/path-arbitration";
 import { isProcessAlive } from "@genesiscz/utils/process-alive";
 import { atomicWriteFileSync } from "@genesiscz/utils/storage/atomic-file";
 import { isTrashRootName, loadRmConfig, type RmConfig, rmDataDir } from "./config";
@@ -991,44 +989,127 @@ export function restoreBatch(
     return result;
 }
 
-/** The drainer's single-instance lock; null when a live drainer holds it. */
+/** How long an empty lock file counts as held: a writer that creates the file first and writes its pid after. */
+const EMPTY_LOCK_MS = 5_000;
+
+/**
+ * A single-holder lock file (the drainer's, a request's decision lock, a measurement pass); null when a live process
+ * holds it. The file appears with this pid already in it (written to a private file, then linked into place), so no
+ * reader ever finds it empty and takes it for a dead holder's. A dead holder's lock is removed only under the path's
+ * claim arbiter, after a second read finds the same content: two processes that both saw the dead holder can no
+ * longer remove each other's new lock.
+ */
 export function acquireDrainerLock(lockPath: string): (() => void) | null {
     mkdirSync(dirname(lockPath), { recursive: true });
 
     for (let attempt = 0; attempt < 2; attempt++) {
-        try {
-            const fd = openSync(lockPath, "wx");
-            writeSync(fd, String(process.pid));
-            closeSync(fd);
+        if (createLockFile(lockPath)) {
             return () => {
                 try {
                     if (readFileSync(lockPath, "utf8").trim() === String(process.pid)) {
                         unlinkSync(lockPath);
                     }
                 } catch (error) {
-                    logger.debug({ lockPath, error }, "rm: drainer lock already gone");
+                    logger.debug({ lockPath, error }, "rm: lock already gone");
                 }
             };
-        } catch (error) {
-            const holder = Number(readLock(lockPath));
+        }
 
-            if (isProcessAlive(holder)) {
-                logger.debug({ holder }, "rm: a drainer is already running");
-                return null;
-            }
+        const seen = readLock(lockPath);
 
-            logger.debug({ lockPath, holder, error }, "rm: taking over a dead drainer's lock");
-            unlinkSync(lockPath);
+        if (seen !== null && lockHeld(lockPath, seen)) {
+            logger.debug({ lockPath, holder: seen }, "rm: a live process holds the lock");
+            return null;
+        }
+
+        if (seen !== null && !removeStaleLock(lockPath, seen)) {
+            return null;
         }
     }
 
     return null;
 }
 
-function readLock(lockPath: string): string {
+/** Creates `lockPath` holding this pid in one step; false when the name is taken. */
+function createLockFile(lockPath: string): boolean {
+    const draft = `${lockPath}.${process.pid}-${randomBytes(4).toString("hex")}.tmp`;
+    writeFileSync(draft, String(process.pid), { flag: "wx" });
+
+    try {
+        renameNoReplace(draft, lockPath);
+        return true;
+    } catch (error) {
+        try {
+            unlinkSync(draft);
+        } catch (cleanup) {
+            logger.debug({ draft, error: cleanup }, "rm: lock draft already gone");
+        }
+
+        if (!DESTINATION_TAKEN.has((error as NodeJS.ErrnoException).code ?? "")) {
+            throw error;
+        }
+
+        return false;
+    }
+}
+
+/** A live pid holds the lock, or an empty file young enough to be a writer between its create and its pid write. */
+function lockHeld(lockPath: string, content: string): boolean {
+    if (content !== "") {
+        return isProcessAlive(Number(content));
+    }
+
+    try {
+        return Date.now() - statSync(lockPath).mtimeMs < EMPTY_LOCK_MS;
+    } catch (error) {
+        logger.debug({ lockPath, error }, "rm: the lock went away while it was read");
+        return false;
+    }
+}
+
+/**
+ * Removes a stale lock under the path's claim arbiter, only when it still holds `seen` and that is still stale. True
+ * when the name is free to take again; false when another process takes the lock over right now, or the lock
+ * changed since it was read (a new holder took it). Exported for the race test in rm.test.ts.
+ */
+export function removeStaleLock(lockPath: string, seen: string): boolean {
+    try {
+        return withPathArbitrationSync(lockPath, () => {
+            const now = readLock(lockPath);
+
+            if (now === null) {
+                return true;
+            }
+
+            if (now !== seen || lockHeld(lockPath, now)) {
+                logger.debug({ lockPath, seen, now }, "rm: the lock changed hands while it was checked");
+                return false;
+            }
+
+            logger.debug({ lockPath, holder: now }, "rm: taking over a dead holder's lock");
+            unlinkSync(lockPath);
+            return true;
+        });
+    } catch (error) {
+        if (isArbitrationBusy(error)) {
+            logger.debug({ lockPath }, "rm: another process is taking the lock over");
+            return false;
+        }
+
+        throw error;
+    }
+}
+
+/** The lock's content, or null when no file is there any more. */
+function readLock(lockPath: string): string | null {
     try {
         return readFileSync(lockPath, "utf8").trim();
-    } catch {
+    } catch (error) {
+        if ((error as NodeJS.ErrnoException).code === "ENOENT") {
+            return null;
+        }
+
+        logger.debug({ lockPath, error }, "rm: unreadable lock");
         return "";
     }
 }

@@ -38,6 +38,7 @@ import {
     isLiveQuarantine,
     judge,
     judgeOwn,
+    moveBlocker,
     openPaths,
     ownBuildOutput,
     ownSessionDirs,
@@ -6406,6 +6407,8 @@ describe("tmp-reclaim --own-session lists only the live session's build output",
         expect(typeof verdict === "string" ? verdict : verdict.path).toBe(hub);
         expect(judgeOwn(hub, { ...options, minAgeMinutes: 10 })).toBe("recent");
         expect(judgeOwn(hub, { ...options, open: [join(hub, "build.db")] })).toBe("open-file");
+        const asideInHub = { dir: join(hub, "arm64-apple-macosx"), requestId: "asdown" };
+        expect(judgeOwn(hub, { ...options, pending: [asideInHub] })).toBe("aside-pending");
         expect(judgeOwn(join(dir, "pluggable/b-notes"), options)).toBe("not-build-output");
         expect(judgeOwn(join(dir, "removals/old/arm64-apple-macosx"), options)).toBe("skipped-folder");
         expect(judgeOwn(join(dir, "linked-triple"), options)).toBe("symlink");
@@ -6604,5 +6607,42 @@ describe("tmp-reclaim never lists a pending aside copy", () => {
 
         saveRmRequest({ ...request, status: "denied" });
         expect(judge(scratch, protection, [], pendingAsideDirs())).not.toBe("aside-pending");
+    });
+
+    test("the guard right before an apply move reads the pending asides again, so one made during the scan counts", () => {
+        const scratch = fs.realpathSync(fs.mkdtempSync(join(tmpdir(), "babysit-aside-late-")));
+        const asideDir = join(scratch, "rm-aside", "20261101-000000-2-abcd");
+        fs.mkdirSync(asideDir, { recursive: true });
+        fs.writeFileSync(join(asideDir, "0-y-copy.txt"), "y");
+        // The plan was judged before this request existed; the move guard must not trust that snapshot.
+        expect(moveBlocker(scratch, { open: [] })).toBeNull();
+        const request: RmRequest = {
+            id: "asdlat",
+            kind: "delete",
+            createdAt: new Date().toISOString(),
+            caller: null,
+            cwd: scratch,
+            reason: null,
+            status: "pending",
+            asideDir,
+            targets: [
+                {
+                    path: join(scratch, "late.txt"),
+                    kind: "file",
+                    rule: "default",
+                    reason: "no rule allows it",
+                    stored: join(asideDir, "0-y-copy.txt"),
+                },
+            ],
+        };
+        saveRmRequest(request);
+
+        expect(moveBlocker(scratch, { open: [] })).toBe("aside-pending");
+        expect(moveBlocker(asideDir, { open: [] })).toBe("aside-pending");
+        expect(moveBlocker(scratch, { open: [join(scratch, "held.log")], pending: [] })).toBe("open-file");
+        expect(moveBlocker(join(scratch, "nothing-here"), { open: [], pending: [] })).toBe("gone");
+
+        saveRmRequest({ ...request, status: "denied" });
+        expect(moveBlocker(scratch, { open: [] })).toBeNull();
     });
 });
