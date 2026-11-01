@@ -30,8 +30,9 @@ Add the MCP server to a client: `tools mcp-manager install alza "tools alza mcp"
 
 ## How it reaches Alza
 
-Cloudflare answers Bun's fetch with HTTP 403. Requests go through `@genesiscz/utils/http/impersonate`, a curl_cffi
-sidecar with a Chrome TLS fingerprint, started through `uv` (install it with `brew install uv`). Data comes from the
+Cloudflare answers Bun's fetch with HTTP 403. Requests go through `@genesiscz/utils/http/impersonate`, which loads
+libcurl-impersonate (the library curl_cffi wraps) with a Chrome TLS fingerprint; the first request downloads the
+pinned library, so nothing has to be installed. Data comes from the
 Android app's JSON routes (search, product detail, reviews, questions, facets, alternatives, EAN, AlzaBox places) and
 from the server-rendered category pages. The route inventory comes from
 [alza-mcp-community](https://github.com/lukabudik/alza-mcp-community) (MIT). Price history comes from
