@@ -7,6 +7,7 @@ import {
     openSync,
     readdirSync,
     readFileSync,
+    statSync,
     unlinkSync,
     writeSync,
 } from "node:fs";
@@ -154,7 +155,7 @@ function claimLedgerLine(marker: string): boolean {
         } catch (error) {
             const holder = readMarker(marker);
 
-            if (holder === LEDGER_DONE || isProcessAlive(Number(holder))) {
+            if (holder === LEDGER_DONE || isProcessAlive(Number(holder)) || claimInProgress(marker, holder)) {
                 return false;
             }
 
@@ -164,6 +165,26 @@ function claimLedgerLine(marker: string): boolean {
     }
 
     return false;
+}
+
+/** How long an empty marker counts as a claim in progress; the open and the pid write are microseconds apart. */
+const EMPTY_MARKER_MS = 5_000;
+
+/**
+ * An empty marker is another process between its O_EXCL open and its pid write. Read as pid 0 it looked dead, so two
+ * processes both wrote the line (the concurrency test logged 31 of 30 under load). Only an old empty marker is stale.
+ */
+function claimInProgress(marker: string, holder: string): boolean {
+    if (holder !== "") {
+        return false;
+    }
+
+    try {
+        return Date.now() - statSync(marker).mtimeMs < EMPTY_MARKER_MS;
+    } catch (error) {
+        logger.debug({ marker, error }, "rm: the ledger marker went away while it was read");
+        return false;
+    }
 }
 
 function readMarker(marker: string): string {
