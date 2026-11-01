@@ -11,7 +11,7 @@ import * as p from "@genesiscz/utils/prompts/p";
 import { createBoxTable, formatDotStatus, truncateDisplay } from "@genesiscz/utils/table";
 import { checkInstances, checkLaunchers, type Finding } from "../lib/doctor";
 import { type T3HostSpec, t3HostFor } from "../lib/hosts";
-import { type EmbedAccountStatus, instanceIdFor, instanceRows, syncAccounts } from "../lib/instances";
+import { type EmbedAccountStatus, embedRunnable, instanceIdFor, instanceRows, syncAccounts } from "../lib/instances";
 import { launcherPath } from "../lib/launchers";
 import { planUpserts, providerInstances, readSettings, type UpsertResult, upsertInstances } from "../lib/settings-file";
 import {
@@ -93,22 +93,16 @@ export interface ProvidersAddOptions extends PathFlags {
     json?: boolean;
 }
 
-function accountsFor(alias: HarnessId, accounts: readonly AccountEntry[]): AccountEntry[] {
-    const provider = harnessPluginId(alias);
-
-    return accounts.filter((account) => account.enabled && account.provider === provider);
-}
-
 async function resolveAccountValue(
     alias: HarnessId,
     options: ProvidersAddOptions,
-    accounts: readonly AccountEntry[]
+    runnable: readonly AccountEntry[]
 ): Promise<string | null> {
     if (options.account) {
         return options.account.trim();
     }
 
-    const names = accountsFor(alias, accounts).map((account) => account.name);
+    const names = runnable.map((account) => account.name);
 
     if (!isInteractive()) {
         out.error(`--account is required: ${["auto", ...names].join(", ")}, or proxy:<account>/<provider>.`);
@@ -163,23 +157,21 @@ async function resolveSteer(
     return null;
 }
 
-/** Refuses an account name the AI config does not hold for this agent's provider. */
-function checkNamedAccount(alias: HarnessId, value: string, accounts: readonly AccountEntry[]): boolean {
+/** Refuses an account the agent's embed launcher cannot run (`embedRunnable`), so no instance fails at its launch. */
+function checkNamedAccount(alias: HarnessId, value: string, runnable: readonly AccountEntry[]): boolean {
     const request = parseEmbedAccountRequest(value);
 
     if (request.kind !== "account") {
         return true;
     }
 
-    const candidates = accountsFor(alias, accounts);
-
-    if (candidates.some((account) => account.name === request.name || account.id === request.name)) {
+    if (runnable.some((account) => account.name === request.name || account.id === request.name)) {
         return true;
     }
 
     out.error(
-        `No enabled ${harnessPluginId(alias)} account "${request.name}". Known: ${
-            candidates.map((account) => account.name).join(", ") || "(none)"
+        `No ${harnessPluginId(alias)} account "${request.name}" that ${alias} can run in T3 Code (enabled, not gate-only, with the credentials its launcher needs). Runnable: ${
+            runnable.map((account) => account.name).join(", ") || "(none)"
         }, or auto, or proxy:<account>/<provider>.`
     );
 
@@ -196,12 +188,12 @@ export async function providersAddCommand(aliasArg: string, options: ProvidersAd
     }
 
     const paths = resolvePaths(options);
-    const accounts = await loadAccounts();
-    const account = await resolveAccountValue(alias, options, accounts);
     const host = await t3HostFor(alias);
+    const runnable = (await loadAccounts()).filter((entry) => embedRunnable(entry, alias, host));
+    const account = await resolveAccountValue(alias, options, runnable);
     const steer = await resolveSteer(alias, host, options.steer);
 
-    if (account === null || steer === null || !checkNamedAccount(alias, account, accounts)) {
+    if (account === null || steer === null || !checkNamedAccount(alias, account, runnable)) {
         process.exitCode = 1;
         return;
     }
