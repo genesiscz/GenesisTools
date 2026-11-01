@@ -9,7 +9,7 @@
 import Foundation
 
 /// 1-based, inclusive, counted over the whole file the way an editor and grep count them.
-public struct MarkdownLineRange: Equatable, Sendable {
+public struct MarkdownLineRange: Hashable, Sendable {
     public let first: Int
     public let last: Int
 
