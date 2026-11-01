@@ -1,6 +1,7 @@
 import { randomInt } from "node:crypto";
 import { existsSync, mkdirSync, readdirSync, readFileSync } from "node:fs";
 import { join } from "node:path";
+import { toolCommand } from "@genesiscz/utils/cli/tool-command";
 import { SafeJSON } from "@genesiscz/utils/json";
 import { logger } from "@genesiscz/utils/logger";
 import { atomicWriteFileSync } from "@genesiscz/utils/storage/atomic-file";
@@ -217,6 +218,18 @@ export function requestBatchId(id: string, dir = rmRequestsDir()): string | null
     }
 
     return request.batchId ?? null;
+}
+
+/**
+ * The one line an agent must pass on, which stands alone: agents often keep only `| tail -1` of `tools rm`, and a
+ * hook repeats it when the output was cut (`>/dev/null`).
+ */
+export function rmRequestHintLine(id: string, count: number): string {
+    const rm = toolCommand("rm");
+    return (
+        `rm request ${id}: ${count} path(s) wait for the user. Do not run approve yourself. ` +
+        `Tell the user: ! ${rm} approve ${id}. Cancel your own: ${rm} deny ${id}`
+    );
 }
 
 /** For each path, the other pending requests that name it too (an agent asked twice). */

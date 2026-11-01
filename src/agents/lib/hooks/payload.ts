@@ -100,6 +100,15 @@ export function normalizeEvent(value: unknown): string {
         .replace(/_/g, "");
 }
 
+/** PostToolUse: the text a shell tool printed (stdout and stderr, or the harness's single output field). */
+export function toolOutputText(payload: Pick<HookPayload, "toolResponse">): string {
+    const response = payload.toolResponse ?? {};
+    return ["stdout", "stderr", "output"]
+        .map((field) => response[field])
+        .filter((value): value is string => typeof value === "string")
+        .join("\n");
+}
+
 export function parseHookPayload(text: string): HookPayload | null {
     let raw: Record<string, unknown>;
 
