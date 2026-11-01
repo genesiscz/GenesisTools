@@ -4,6 +4,7 @@ import { formatLocalDate } from "@genesiscz/utils/date";
 import { carrySavedEntries } from "@genesiscz/utils/fs/identity-cache";
 import { logger } from "@genesiscz/utils/logger";
 import { dayLogDigestsDir, dayOfPlainDayLog } from "@genesiscz/utils/logger/day-logs";
+import { LockTimeoutError, withFileLock } from "@genesiscz/utils/storage/file-lock";
 import { genesisToolsDir } from "@genesiscz/utils/storage/root";
 import { PRESETS } from "./presets";
 import {
@@ -126,13 +127,54 @@ function sweepClaims(logsDir: string, today: string): void {
     }
 }
 
-/** The daily pass: compresses every old file of every target, recording each one in the ledger. */
+/** The lock one daily pass holds over its logs folder for its whole run (`runDailyCompression`). */
+export function dailyPassLockPath(logsDir: string): string {
+    return join(logsDir, ".daily-compress.lock");
+}
+
+export type DailyPassReports = Array<{ target: DailyTarget; report: OldFileReport }>;
+
+/**
+ * The daily pass: compresses every old file of every target, recording each one in the ledger. Only one pass runs per
+ * logs folder: `tools compress daily` opens the logger, which may start the detached pass of the day beside it, and two
+ * passes over one file once deleted its only copy (each retired what the other had compressed). The second caller
+ * returns `null` at once and leaves the work to the pass that holds the lock; a lock whose holder died is taken over.
+ */
 export async function runDailyCompression(
     options: { now?: Date; logsDir?: string; retire?: (path: string) => void; releaseGraceMs?: number } = {}
-): Promise<Array<{ target: DailyTarget; report: OldFileReport }>> {
+): Promise<DailyPassReports | null> {
     const now = options.now ?? new Date();
     const logsDir = options.logsDir ?? genesisToolsDir("logs");
-    const reports: Array<{ target: DailyTarget; report: OldFileReport }> = [];
+    const lock = dailyPassLockPath(logsDir);
+    let held = false;
+
+    try {
+        return await withFileLock(
+            lock,
+            async () => {
+                held = true;
+                return await compressDailyTargets({ ...options, now, logsDir });
+            },
+            0
+        );
+    } catch (err) {
+        if (err instanceof LockTimeoutError && !held) {
+            logger.info({ lock }, "[compress] another daily pass holds the lock; this one does nothing");
+            return null;
+        }
+
+        throw err;
+    }
+}
+
+async function compressDailyTargets(options: {
+    now: Date;
+    logsDir: string;
+    retire?: (path: string) => void;
+    releaseGraceMs?: number;
+}): Promise<DailyPassReports> {
+    const { now, logsDir } = options;
+    const reports: DailyPassReports = [];
 
     for (const { target, plan } of planDailyCompression({ now, logsDir })) {
         const report = await applyOldFileCompression(plan, {
