@@ -348,6 +348,7 @@ export function approvalRows(
             kind: target.kind,
             storedAt: wanted.stored,
             reason: cameBack(wanted) ? CAME_BACK_REASON : approvalItemReason(wanted.rule, wanted.reason),
+            rule: wanted.rule,
             alsoIn: alsoIn.get(wanted.path),
         };
 
