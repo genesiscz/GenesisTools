@@ -10,6 +10,7 @@ export {
 } from "./file";
 export {
     type ApplyRetentionOptions,
+    type ArchiveLimits,
     applyFolderRetention,
     applyOldFileCompression,
     type FolderRetentionOptions,
@@ -20,6 +21,7 @@ export {
     type OldFileReport,
     planFolderRetention,
     planOldFileCompression,
+    type RankedArchive,
     removePath,
 } from "./retention";
 export {
