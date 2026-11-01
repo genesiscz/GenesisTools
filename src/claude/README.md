@@ -444,3 +444,23 @@ tools claude migrate-to codex \
   --dry-run \
   --non-interactive
 ```
+
+## Embedding apps (T3 Code): `tools claude embed`
+
+An app that runs claude as a provider (T3 Code) points its binary path at a launcher, and the launcher runs
+`tools claude embed -- "$@"`. The account comes from the operand before `--`, else from
+`TOOLS_CLAUDE_EMBED_ACCOUNT` (set per T3 provider instance): an account name, `auto`, or
+`proxy:<account>/<provider>`. The child process carries `TOOLS_CLAUDE_ACCOUNT`, so
+`tools claude who` names its account, and a T3 child shows its thread as `t3:<thread>`.
+
+- It is `tools claude run --sdk` for the account: the real binary with no shell, so T3's permission mode applies.
+- An automatic pick keeps the account a resumed session last ran on while that account can serve, so a thread does
+  not lose its prompt cache to an account switch. A T3 capability probe (`--no-session-persistence`, no session)
+  reuses the last automatic pick and runs no usage ranking.
+- `proxy:<account>/<provider>` runs Claude Code against the ai-proxy without the shell wrapper.
+- `TOOLS_CLAUDE_EMBED_STEER=next` rewrites a steer (a stream-json user message with `priority: "now"`, which aborts
+  the running tool) to `priority: "next"`, which waits for the next tool boundary. A steer then no longer stops a
+  command; the Stop button still does.
+
+`tools t3 launchers install` writes the launchers and `tools t3 providers add|sync` writes the T3 instances
+(see `src/t3/README.md`).
