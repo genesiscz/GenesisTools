@@ -16,7 +16,7 @@ import {
     writeFileSync,
 } from "node:fs";
 import { tmpdir } from "node:os";
-import { join } from "node:path";
+import { dirname, join } from "node:path";
 import { countObjects, type MaintenanceReport, maintainObjectStore } from "@genesiscz/utils/agents/objects/maintain";
 import { writeBlobs } from "@genesiscz/utils/agents/objects/store";
 import { runDailyCompression } from "@genesiscz/utils/compress/daily";
@@ -29,6 +29,7 @@ import { reportDailyPass } from "../../../compress/commands/ledger";
 import { rawLogFiles, rawTransition, resolveSessionArgument } from "../../commands/changes";
 import { fileDiff, readBlobs } from "./diff";
 import {
+    bashWriteLookup,
     type ChangeEvent,
     commandEditsFiles,
     fileToolSource,
@@ -96,6 +97,33 @@ describe("the session argument", () => {
         const result = resolveSessionArgument("7399934a", () => ({ kind: "ambiguous", candidates: [match, other] }));
         expect("error" in result && result.error).toContain("more than one session");
         expect("error" in result && result.error).toContain(other.sessionId);
+    });
+});
+
+describe("the Bash writes a session recorded", () => {
+    test("names when a Bash row last wrote a path; an Edit row or another path answers null", () => {
+        const session = `bash-writes-${process.pid}`;
+        const log = sessionChangesPath(session);
+        const row = (path: string, source: string, ts: string) =>
+            SafeJSON.stringify({ ts, provider: "claude", session, turn: "t", tool: "Bash", cwd: "/w", path, source });
+        mkdirSync(dirname(log), { recursive: true });
+        writeFileSync(
+            log,
+            [
+                row("/w/made.txt", "bash", "2026-11-01T10:00:00.000Z"),
+                row("/w/edited.ts", "edit", "2026-11-01T10:01:00.000Z"),
+                row("/w/made.txt", "bash", "2026-11-01T10:05:00.000Z"),
+                "{ torn",
+                "",
+            ].join("\n")
+        );
+        const lookup = bashWriteLookup(session);
+
+        expect(lookup("/w/made.txt")).toBe("2026-11-01T10:05:00.000Z");
+        expect(lookup("/w/edited.ts")).toBeNull();
+        expect(lookup("/w/other.txt")).toBeNull();
+        expect(bashWriteLookup("no-such-session")("/w/made.txt")).toBeNull();
+        expect(bashWriteLookup("../escape")("/w/made.txt")).toBeNull();
     });
 });
 
