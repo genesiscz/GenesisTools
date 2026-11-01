@@ -125,13 +125,11 @@ Contracts: [hosted MCP](https://docs.apify.com/mcp), [official MCP implementatio
 
 ## Development and verification
 
-The root Devbox recipe is source-only and has no credentials, ports or stack. From this worktree run:
+From the repository root, run:
 
 ```sh
-devbox config check --json
-devbox setup --apply --json
-devbox run -- 'bun scripts/test.ts src/apify/lib/apify.test.ts'
-devbox run -- 'node_modules/.bin/tsc -p src/apify/tsconfig.json --noEmit'
+bun scripts/test.ts src/apify/lib/apify.test.ts
+bunx tsc -p src/apify/tsconfig.json --noEmit
 ```
 
 All tests inject API fetchers, credential stores or MCP sessions. They do not read a live token or run an Actor. Native keychain behavior and real paid Actor/Standby execution require separately authorized integration verification.
