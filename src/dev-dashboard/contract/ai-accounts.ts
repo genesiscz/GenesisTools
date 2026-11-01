@@ -34,7 +34,10 @@ export interface LimitMoney {
     capCurrency?: string;
 }
 
-/** One rate-limit window, provider-neutral. Claude has 5 to 6, codex 2, grok 1. */
+/**
+ * One rate-limit window, provider-neutral. Claude has 4 to 6 (none named `five_hour` on an account without a
+ * 5-hour limit), codex 2, grok 1.
+ */
 export interface LimitWindow {
     /** Provider-native id: `five_hour`, `seven_day_opus`, `primary`, `monthly`. */
     key: string;
@@ -49,6 +52,13 @@ export interface LimitWindow {
     severity?: LimitSeverity;
     isActive?: boolean;
     money?: LimitMoney;
+}
+
+/** A window the provider confirmed this account does not have; mirrors `AbsentLimit` in `account-features.ts`. */
+export interface AbsentLimit {
+    /** The `LimitWindow.key` the window would carry: `five_hour`. */
+    key: string;
+    kind: LimitKind;
 }
 
 export interface AccountPlan {
@@ -75,6 +85,8 @@ export interface AccountUsageSnapshot {
     label?: string;
     fetchedAt: string;
     limits: LimitWindow[];
+    /** Windows the account does not have: never in `limits`, shown as "no limit", never 0 %. Missing = unknown. */
+    absentLimits?: AbsentLimit[];
     plan?: AccountPlan;
     auth?: AccountAuthHealth;
     stale?: { lastSuccessAt: string; reason: string };
@@ -129,6 +141,11 @@ export interface LimitSeries {
     key: string;
     label: string;
     points: LimitSeriesPoint[];
+    /**
+     * The window no longer exists for this account (the current snapshot lists it in `absentLimits`): its line
+     * stops at this point instead of carrying the last value to the end of the chart.
+     */
+    endedAt?: string;
 }
 
 export interface AiUsageSeriesResult {

@@ -73,6 +73,14 @@ describe("limitSeriesFrom", () => {
         [`${providerAccountKey("openai-sub", "work")}|five_hour`, "Session"],
     ]);
 
+    test("a window the current snapshot lists as absent ends at its last point; the others carry on", () => {
+        const absent = new Set([`${providerAccountKey("anthropic-sub", "work")}|five_hour`]);
+        const [claude, codex] = limitSeriesFrom(ENTRIES, ACCOUNTS, LABELS, {}, absent);
+
+        expect(claude).toMatchObject({ provider: "anthropic-sub", endedAt: "1" });
+        expect(codex.endedAt).toBeUndefined();
+    });
+
     test("each provider's history keeps its own account id, label and provider", () => {
         const series = limitSeriesFrom(ENTRIES, ACCOUNTS, LABELS, {});
 

@@ -3,7 +3,7 @@ import { formatBlockedNotice, formatNeedsLoginNotice } from "@genesiscz/utils/ai
 import { formatRelativeTime } from "@genesiscz/utils/format";
 import { useState } from "react";
 import { providerMeta } from "@/lib/provider-meta";
-import { LimitBar } from "./LimitBar";
+import { AbsentLimitRow, LimitBar } from "./LimitBar";
 import { ProviderBadge } from "./ProviderBadge";
 
 interface AccountCardProps {
@@ -74,6 +74,9 @@ export function AccountCard({ snapshot, color, nowMs, prominentKeys, index = 0 }
     // card blank, so fall back to everything rather than showing nothing.
     const limits = showAllWindows || prominent.length === 0 ? snapshot.limits : prominent;
     const hiddenWindows = snapshot.limits.length - limits.length;
+    const absent = (snapshot.absentLimits ?? []).filter(
+        (limit) => showAllWindows || !prominentKeys || prominentKeys.length === 0 || prominentKeys.includes(limit.key)
+    );
     const staleAgo = snapshot.stale
         ? formatRelativeTime(new Date(snapshot.stale.lastSuccessAt), { compact: true })
         : null;
@@ -120,6 +123,9 @@ export function AccountCard({ snapshot, color, nowMs, prominentKeys, index = 0 }
 
             {limits.length > 0 ? (
                 <div className="flex flex-col gap-3">
+                    {absent.map((limit) => (
+                        <AbsentLimitRow key={`absent:${limit.key}`} limit={limit} />
+                    ))}
                     {limits.map((window) => (
                         <LimitBar key={`${window.key}:${window.scopeModel ?? ""}`} window={window} nowMs={nowMs} />
                     ))}
