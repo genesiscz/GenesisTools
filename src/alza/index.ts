@@ -2,6 +2,7 @@
 import { runTool } from "@genesiscz/utils/cli";
 import { handleReadmeFlag } from "@genesiscz/utils/readme";
 import { Command } from "commander";
+import { registerAccountCommands } from "./commands/account";
 import { registerCatalogCommands } from "./commands/catalog";
 import { resolveStorefront } from "./commands/run";
 import { STOREFRONT_IDS } from "./lib/storefront";
@@ -11,12 +12,13 @@ handleReadmeFlag(import.meta.url);
 const program = new Command()
     .name("alza")
     .description(
-        "Alza.cz catalog from the terminal and as an MCP server: search, products, reviews, questions, deals, price history"
+        "Alza.cz from the terminal and as an MCP server: search, products, reviews, questions, deals, price history; sign-in, basket, orders, watchdogs"
     )
     .option("--country [id]", `Storefront: ${STOREFRONT_IDS.join(", ")} (default cz)`)
     .option("--json", "Print the result as JSON");
 
 registerCatalogCommands(program);
+registerAccountCommands(program);
 
 program
     .command("mcp")

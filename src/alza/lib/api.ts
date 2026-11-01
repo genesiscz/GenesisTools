@@ -22,8 +22,8 @@ import { STOREFRONTS, type Storefront, type StorefrontId } from "./storefront";
  * lukabudik/alza-mcp-community docs/mobile-endpoint-coverage.md (MIT).
  */
 
-const WEBAPI = "https://webapi.alza.cz";
-const APP_USER_AGENT = "Alza/2026.17.0 (Android)";
+export const WEBAPI = "https://webapi.alza.cz";
+export const APP_USER_AGENT = "Alza/2026.17.0 (Android)";
 
 /** `orderBy` of the v5 search body. */
 export const SEARCH_SORTS = { relevance: 0, "price-asc": 1, "price-desc": 2, newest: 5, rating: 6 } as const;
@@ -39,11 +39,33 @@ export class AlzaApiError extends Error {
     }
 }
 
+/** Cookies that outlive one process (the visitor basket is keyed by a cookie, not by Balancer-Guid). */
+export interface AlzaCookieJar {
+    header(): string | undefined;
+    absorb(setCookie: string | undefined): void;
+}
+
 export interface AlzaApiOptions {
     storefront?: StorefrontId;
     http?: ImpersonatedHttpClient;
-    /** Bearer token for account routes (phase B). */
+    /** Bearer token for account routes; asked only by requests that pass `withToken`. */
     accessToken?: () => Promise<string | undefined>;
+    /** Persisted visitor id for the Balancer-Guid header; a random one per process when absent. */
+    visitorId?: string;
+    cookies?: AlzaCookieJar;
+}
+
+export type HttpMethod = "GET" | "POST" | "PUT" | "DELETE";
+
+export interface JsonRequestInit {
+    method?: HttpMethod;
+    body?: unknown;
+    /** Send the signed-in account's Bearer token when there is one. */
+    withToken?: boolean;
+    /** Send exactly this token and never ask the token callback (a diagnostic must not refresh). */
+    token?: string;
+    /** Neither send nor absorb the persisted cookies. */
+    noCookies?: boolean;
 }
 
 export interface SearchBody {
@@ -55,12 +77,13 @@ export interface SearchBody {
 
 export class AlzaApi {
     readonly storefront: Storefront;
-    readonly visitorId = randomUUID();
-    private readonly http: ImpersonatedHttpClient;
+    readonly visitorId: string;
+    readonly http: ImpersonatedHttpClient;
     private readonly ownsHttp: boolean;
 
     constructor(private readonly options: AlzaApiOptions = {}) {
         this.storefront = STOREFRONTS[options.storefront ?? "cz"];
+        this.visitorId = options.visitorId ?? randomUUID();
         this.ownsHttp = !options.http;
         this.http = options.http ?? new ImpersonatedHttpClient({ label: "alza" });
     }
@@ -167,11 +190,8 @@ export class AlzaApi {
         return pathOrUrl.startsWith("http") ? pathOrUrl : `${this.storefront.baseUrl}${pathOrUrl}`;
     }
 
-    private async json<S extends z.ZodType>(
-        schema: S,
-        pathOrUrl: string,
-        init: { method?: "GET" | "POST"; body?: unknown } = {}
-    ): Promise<z.infer<S>> {
+    /** One JSON route: the Android app's headers, the persisted cookies, an optional Bearer token, a zod-checked answer. */
+    async json<S extends z.ZodType>(schema: S, pathOrUrl: string, init: JsonRequestInit = {}): Promise<z.infer<S>> {
         const url = this.absolute(pathOrUrl);
         const headers: Record<string, string> = {
             accept: "application/json",
@@ -183,9 +203,14 @@ export class AlzaApi {
             headers["content-type"] = "application/json";
         }
 
-        const token = await this.options.accessToken?.();
+        const token = init.token ?? (init.withToken ? await this.options.accessToken?.() : undefined);
         if (token) {
             headers.authorization = `Bearer ${token}`;
+        }
+
+        const cookie = init.noCookies ? undefined : this.options.cookies?.header();
+        if (cookie) {
+            headers.cookie = cookie;
         }
 
         const response = await this.http.request({
@@ -194,11 +219,17 @@ export class AlzaApi {
             headers,
             body: init.body === undefined ? undefined : SafeJSON.stringify(init.body),
         });
+        if (!init.noCookies) {
+            this.options.cookies?.absorb(response.headers["set-cookie"]);
+        }
+
         this.assertOk(url, response);
 
-        let parsed: unknown;
+        let parsed: unknown = null;
         try {
-            parsed = SafeJSON.parse(response.text, { strict: true });
+            if (response.text.trim() !== "") {
+                parsed = SafeJSON.parse(response.text, { strict: true });
+            }
         } catch (error) {
             logger.warn({ error, url, head: response.text.slice(0, 200) }, "alza answered non-JSON");
             throw new AlzaApiError(`Alza answered ${url} with a non-JSON body`, response.status);
@@ -219,6 +250,14 @@ export class AlzaApi {
     private assertOk(url: string, response: ImpersonatedResponse): void {
         if (response.status >= 200 && response.status < 300) {
             return;
+        }
+
+        if (response.status === 401) {
+            logger.warn({ url, status: 401 }, "alza refused the request as unauthenticated");
+            throw new AlzaApiError(
+                `Alza answered ${new URL(url).pathname} with HTTP 401 (not signed in or the token was rejected)`,
+                401
+            );
         }
 
         const challenged = response.status === 403 && response.text.includes("<html");
