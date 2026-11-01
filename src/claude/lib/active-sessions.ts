@@ -19,7 +19,11 @@ import { logger } from "@genesiscz/utils/logger";
  * this pane bill"; session files and statusline state do not record it.
  */
 
-export type ClaudeProcessKind = "tui" | "sdk" | "mcp";
+/**
+ * `tui`: an interactive Claude Code. `sdk`: Claude Code driven over stdin by an app (T3 Code, the Agent SDK).
+ * `launcher`: the gt-claude wrapper that started one of them. `mcp`: the `tools claude mcp` stdio server.
+ */
+export type ClaudeProcessKind = "tui" | "sdk" | "launcher" | "mcp";
 
 // The ps / lsof / account-env scan is the same on every coding agent. Re-exported so the tests that pin the
 // parsers keep their import.
@@ -145,9 +149,10 @@ async function readSessionTail(filePath: string): Promise<SessionTail> {
 
 /**
  * The real claude binary is a session (the Claude driver's process part says what runs its CLI); bun launchers are
- * not. The gt-claude wrapper is an SDK process, except when its last arg is `mcp`: that is the `tools claude mcp`
+ * not. The gt-claude wrapper is a launcher, except when its last arg is `mcp`: that is the `tools claude mcp`
  * stdio server (the command takes no arguments), which any MCP host may spawn with no tty. The wrapper is read first,
- * so a wrapper line that names the CLI package stays the wrapper.
+ * so a wrapper line that names the CLI package stays the wrapper. A claude that reads its prompts as stream-json on
+ * stdin is driven by an app (T3 Code, the Agent SDK), not typed into, so it is `sdk`.
  */
 export function classifyClaudeArgs(args: string): ClaudeProcessKind | null {
     const tokens = args.split(/\s+/);
@@ -155,14 +160,21 @@ export function classifyClaudeArgs(args: string): ClaudeProcessKind | null {
     const base = argv0.split("/").pop() ?? "";
 
     if (base === "gt-claude") {
-        return tokens[tokens.length - 1] === "mcp" ? "mcp" : "sdk";
+        return tokens[tokens.length - 1] === "mcp" ? "mcp" : "launcher";
     }
 
     if (harnessDriver("claude").parts.process.runsCli({ argv0, name: base, command: args })) {
-        return "tui";
+        return readsStreamJsonInput(tokens) ? "sdk" : "tui";
     }
 
     return null;
+}
+
+function readsStreamJsonInput(tokens: string[]): boolean {
+    return tokens.some(
+        (token, i) =>
+            token === "--input-format=stream-json" || (token === "--input-format" && tokens[i + 1] === "stream-json")
+    );
 }
 
 export function extractLaunchDetails(args: string): { resumeId: string | null; model: string | null } {
@@ -176,7 +188,8 @@ export function extractLaunchDetails(args: string): { resumeId: string | null; m
     for (let i = entry === null ? 0 : entry + 1; i < tokens.length; i++) {
         const token = tokens[i];
 
-        if (token === "--resume" || token === "-r") {
+        // `--session-id` names the session a new launch creates (T3 Code passes it for a new thread).
+        if (token === "--resume" || token === "-r" || token === "--session-id") {
             const next = tokens[i + 1];
 
             if (next && /^[\w-]+$/.test(next)) {
@@ -184,6 +197,8 @@ export function extractLaunchDetails(args: string): { resumeId: string | null; m
             }
         } else if (token.startsWith("--resume=")) {
             resumeId = token.slice("--resume=".length) || null;
+        } else if (token.startsWith("--session-id=")) {
+            resumeId = token.slice("--session-id=".length) || null;
         } else if (token === "--model") {
             model = tokens[i + 1] ?? null;
         } else if (token.startsWith("--model=")) {
@@ -206,24 +221,29 @@ export function parseAccountEnv(envArgs: string): LiveAccount {
 /**
  * A `tools claude mcp` server is never a session, whatever its tty says: Grok and Cursor
  * spawn it with no controlling tty, and it used to read as a dead headless Claude session.
- * An SDK child that shares a tty with a TUI session is that session's own launcher, not a
- * separate agent. Both bill the same account and add a row that reads like an unidentified
- * session, so they are hidden unless asked for. A headless SDK agent with no TUI on its tty
- * is a real, separately billable session and always shows.
+ * A gt-claude launcher whose claude child is listed, or that shares a tty with a TUI session,
+ * only started that session. Its environment has no TOOLS_CLAUDE_ACCOUNT (the launcher puts
+ * the account into the child's environment), so it read as a second session on the keychain
+ * login: every T3 Code thread showed twice, once as `keychain?`. A launcher with neither is
+ * an agent that runs in the launcher itself, and always shows.
  */
 export function isHelperChild(
-    proc: { kind: string; tty: string },
-    all: ReadonlyArray<{ kind: string; tty: string }>
+    proc: { pid: number; kind: string; tty: string },
+    all: ReadonlyArray<{ ppid: number; kind: string; tty: string }>
 ): boolean {
     if (proc.kind === "mcp") {
         return true;
     }
 
-    if (proc.kind !== "sdk" || proc.tty === "??") {
+    if (proc.kind !== "launcher") {
         return false;
     }
 
-    return all.some((other) => other.kind === "tui" && other.tty === proc.tty);
+    if (all.some((other) => other.ppid === proc.pid)) {
+        return true;
+    }
+
+    return proc.tty !== "??" && all.some((other) => other.kind === "tui" && other.tty === proc.tty);
 }
 
 /** Claude's contribution to the shared `who`. */
@@ -231,6 +251,7 @@ export const CLAUDE_WHO_SOURCE: AgentWhoSource = {
     alias: "claude",
     classify: classifyClaudeArgs,
     isHelper: isHelperChild,
+    sessionKinds: ["tui", "sdk"],
     resumeIdFromArgs: (args) => extractLaunchDetails(args).resumeId,
     modelFromArgs: (args) => extractLaunchDetails(args).model,
     async activeSessions(): Promise<AgentSessionFacts[]> {

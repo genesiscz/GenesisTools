@@ -42,6 +42,32 @@ export interface ActiveAgentProcess extends PsProcessRow {
     /** Set instead of account for ai-proxy sessions (`…_ACCOUNT=proxy:…`). */
     proxyTarget: string | null;
     cwd: string | null;
+    /** The app that runs this process with no terminal of its own (T3 Code), or null. */
+    host: AgentHost | null;
+}
+
+/** An app that hosts agent sessions, and its id for this one (a T3 Code thread id). */
+export interface AgentHost {
+    kind: string;
+    id: string;
+}
+
+/**
+ * The apps that host agent sessions, each recognised by the variable it sets on every agent it starts. A new host
+ * is one row here.
+ */
+const AGENT_HOST_MARKERS: readonly { kind: string; envKey: string }[] = [{ kind: "t3", envKey: "T3CODE_THREAD_ID" }];
+
+export function agentHostFromEnv(environment: Readonly<Record<string, string>> | null | undefined): AgentHost | null {
+    for (const marker of AGENT_HOST_MARKERS) {
+        const id = environment?.[marker.envKey];
+
+        if (id) {
+            return { kind: marker.kind, id };
+        }
+    }
+
+    return null;
 }
 
 export interface AgentProcessScan {
@@ -136,6 +162,8 @@ function scanFromKernel(scan: AgentProcessScan): ActiveAgentProcess[] {
         // A row with no owner (the platform names none, as a Windows CIM row) is kept: nothing says it is another user's.
         if (
             row.pid <= 0 ||
+            // The scan itself runs as `tools <agent> who`, a launcher of this agent, and is no session.
+            row.pid === process.pid ||
             row.zombie ||
             (row.uid !== null && row.uid !== euid && euid !== 0) ||
             row.startMs === null
@@ -172,6 +200,7 @@ function scanFromKernel(scan: AgentProcessScan): ActiveAgentProcess[] {
             account,
             proxyTarget,
             cwd: readProcessCwd(row.pid),
+            host: agentHostFromEnv(environment),
         });
     }
     return found.sort((a, b) =>

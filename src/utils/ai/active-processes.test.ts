@@ -5,7 +5,7 @@ import { join } from "node:path";
 import * as kernel from "@genesiscz/utils/process/libproc-table";
 import * as processes from "@genesiscz/utils/process/processes";
 import { withTimeZoneAsync } from "@genesiscz/utils/test/timezone";
-import { listActiveAgentProcesses, parseLsofCwd, parsePsLine } from "./active-processes";
+import { agentHostFromEnv, listActiveAgentProcesses, parseLsofCwd, parsePsLine } from "./active-processes";
 
 /**
  * The `ps` and `lsof` readers behind `tools <agent> who`. A row that half-parses is worse than
@@ -169,5 +169,20 @@ describe.skipIf(process.platform !== "darwin")("listActiveAgentProcesses on live
         } finally {
             spawn.mockRestore();
         }
+    });
+});
+
+describe("agentHostFromEnv", () => {
+    test("a T3 Code child names its thread", () => {
+        expect(agentHostFromEnv({ T3CODE_THREAD_ID: "thread-1", PATH: "/usr/bin" })).toEqual({
+            kind: "t3",
+            id: "thread-1",
+        });
+    });
+
+    test("no marker, an empty marker or no environment is no host", () => {
+        expect(agentHostFromEnv({ PATH: "/usr/bin" })).toBeNull();
+        expect(agentHostFromEnv({ T3CODE_THREAD_ID: "" })).toBeNull();
+        expect(agentHostFromEnv(null)).toBeNull();
     });
 });
