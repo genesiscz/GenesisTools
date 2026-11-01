@@ -20,7 +20,7 @@ export const Route = createFileRoute("/")({
 
 function IndexPending() {
 	return (
-		<div className="min-h-screen bg-[#050508] flex items-center justify-center text-sm text-muted-foreground">
+		<div className="min-h-screen bg-background flex items-center justify-center text-sm text-muted-foreground">
 			Loading conversations...
 		</div>
 	);
