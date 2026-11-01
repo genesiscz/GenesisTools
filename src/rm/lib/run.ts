@@ -462,12 +462,15 @@ function summary(item: RmPlanItem): Record<string, string | undefined> {
 }
 
 export function printRequestHint(id: string, count: number): void {
+    const rm = toolCommand("rm");
     out.println(pc.yellow(`${count} path(s) need the user's confirmation (request ${id}).`));
-    out.println(`Ask the user to run:  ${pc.bold(`${toolCommand("rm")} approve ${id}`)}`);
     out.println(
-        pc.dim(
-            `  In Claude Code they can type: ! ${toolCommand("rm")} approve ${id}. It lists the paths and asks them to confirm.`
-        )
+        pc.dim(`  In Claude Code the user types: ! ${rm} approve ${id}. It lists the paths and asks them to confirm.`)
+    );
+    // The last line stands alone: agents often keep only `| tail -1` of this output.
+    out.println(
+        `rm request ${id}: ${count} path(s) wait for the user. Do not run approve yourself. ` +
+            `Tell the user: ! ${rm} approve ${id}. Cancel your own: ${rm} deny ${id}`
     );
 }
 
