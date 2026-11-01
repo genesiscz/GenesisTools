@@ -2,6 +2,7 @@ import { resolve } from "node:path";
 import { runTool, suggestEnumFlag } from "@genesiscz/utils/cli";
 import { pickEnumFlag } from "@genesiscz/utils/cli/enum-flag";
 import { withInterrupt } from "@genesiscz/utils/cli/interrupt";
+import { toolCommand } from "@genesiscz/utils/cli/tool-command";
 import { out } from "@genesiscz/utils/logger";
 import { toolDataDir } from "@genesiscz/utils/storage/root";
 import { prepareVideoEvidence } from "@genesiscz/utils/video/evidence";
@@ -56,7 +57,7 @@ export function registerVideoCommands(program: Command): void {
                 }
             ) => {
                 const codec = await pickEnumFlag({
-                    tool: "tools video encode",
+                    tool: toolCommand("video", "encode"),
                     subcommand: ["encode"],
                     flag: "--codec",
                     given: options.codec,
