@@ -197,15 +197,20 @@ operating-system user. `--by agent|session|day|rule|action` prints the totals mo
 - the verb itself asks (`drain --now` does not ask: an agent's run drains early only its own session's batches).
   With GenesisTools.app installed, a window shows the paths and who asked, and "Approve with
   Touch ID" goes on only after Touch ID (or the account password). An agent can open the window but cannot touch the
-  sensor. Without the app a macOS dialog asks, and only a click on Approve goes on. The default never takes a typed
+  sensor. Without the app the platform's dialog asks, and only a click on Approve goes on. The default never takes a typed
   code: "outside an agent" is read from environment variables an agent can clear, and a terminal an agent fakes
   types a code as well as a person.
 
 The setting `approval` picks the way: `auto` (the default: Touch ID when the installed app offers it, else the
-dialog; on Linux and Windows, which have neither, it refuses), `touch-id` (refuse without the app) or `code` (never
-Touch ID: the typed code on a terminal outside an agent, else the macOS dialog). `tools rm config set approval code`
-asks the person the current way first. On Linux and Windows, where `auto` cannot ask, the person accepts the typed
-code by writing `"approval": "code"` into `~/.genesis-tools/rm/config.json` by hand.
+dialog), `touch-id` (refuse without the app) or `code` (never Touch ID: the typed code on a terminal outside an
+agent, else the dialog). `tools rm config set approval code` asks the person the current way first.
+
+The dialog is one entry per platform in `PERSON_DIALOGS` (`src/utils/rm/approval.ts`), each with Cancel (or No) as
+the default button: `osascript` on macOS; `zenity --question`, else `kdialog --warningyesno`, on Linux with a display
+(`DISPLAY` or `WAYLAND_DISPLAY`); a Windows Forms message box through `powershell -NoProfile -Command` on Windows
+(the text goes in as base64, so a path is never read as PowerShell). With no dialog program `auto` refuses, since
+nothing there proves a person answered; the person then accepts the typed code by writing `"approval": "code"` into
+`~/.genesis-tools/rm/config.json` by hand.
 
 In Claude Code, run `! tools rm approve <id>` from the prompt.
 
@@ -215,17 +220,17 @@ In Claude Code, run `! tools rm approve <id>` from the prompt.
 agent's: it opens the same approval window for one of its delete requests, through the same steps as `approve` (the
 sweep, the refusals, the recheck after the wait, deny and the ledger), and never approves by itself:
 
-- The person check takes only the GenesisTools.app window or the macOS dialog, never a typed code. The window opens
+- The person check takes only the GenesisTools.app window or the platform's dialog, never a typed code. The window opens
   with Touch ID off and arms it when the person clicks "Approve with Touch ID…", so a touch meant for another prompt
   never approves it. The ledger's approve line says `person: { via, opened: "ask" }`.
 - A request under `notify.askMinMB` (default 10, `ask-min-mb`; the sizes `approve` would show, an unmeasured one
   counted as 0) opens nothing: `ask` prints `Request <id> is <size>, under the 10 MB set for agents: hand the user
   \`! tools rm approve <id>\`` and exits 1. A root request is the person's to open the same way.
-- With no way to ask (another platform, or `approval: touch-id` without the app), it prints why and the hand-over
-  line, and exits 1.
+- With no way to ask (no window and no dialog program, or `approval: touch-id` without the app), it prints why and
+  the hand-over line, and exits 1.
 - The window waits up to 180 s, so an agent runs `ask` in the background.
 
-Without GenesisTools.app on macOS, `approve` and `ask` fall back to the macOS dialog. The typed code (a clack prompt
+Without GenesisTools.app, `approve` and `ask` fall back to the platform's dialog. The typed code (a clack prompt
 through the `p` facade) is used only when the person set `approval: code` and runs `approve` in a terminal outside an
 agent: a terminal an agent fakes types a code as well as a person.
 
@@ -261,7 +266,7 @@ in the background, which saves each path's size, emptiness and file count to
 `~/.genesis-tools/rm/requests/measured/<id>/` (one file per path) with the top path's mtime. `approve` shows a saved size at once
 while that mtime is unchanged; a row without one says "Measuring…" until its size arrives (from the pass that still
 runs, or walked by `approve` itself), and the total under the rows appears when every size is in. The git facts
-follow the same way. The typed code prints the sizes as they come. Only the AppleScript dialog (the fallback when
+follow the same way. The typed code prints the sizes as they come. Only the dialog (the fallback when
 GenesisTools.app cannot ask) cannot change once it shows, so it lists only the sizes known when it opened.
 
 ## The trash and the drain

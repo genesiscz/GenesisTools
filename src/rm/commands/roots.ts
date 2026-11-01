@@ -28,7 +28,7 @@ export function registerRootCommands(program: Command): void {
 
     roots
         .command("add")
-        .description("trust a folder (a person only: a typed code, or a macOS dialog)")
+        .description("trust a folder (a person only: a typed code, or a dialog)")
         .argument("<dir>", "the folder")
         .option("--note <text>", "why it is trusted")
         .action(async (dir: string, flags: { note?: string }) => {

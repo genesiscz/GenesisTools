@@ -37,6 +37,8 @@ import {
     confirmByPerson,
     createAsideRequest,
     createRmRequest,
+    type DialogResult,
+    type DialogSystem,
     defaultRmConfig,
     defaultTempRoots,
     disposalGraceMinutes,
@@ -68,6 +70,7 @@ import {
     moveAside,
     moveToTrash,
     newBatchId,
+    PERSON_DIALOGS,
     parseRmConfig,
     pathPresent,
     pendingAsideDirs,
@@ -112,6 +115,7 @@ import {
     saveRmRequest,
     scanPresets,
     scratchSessionLive,
+    showPersonDialog,
     sweepOrphans,
     sweepRmRequests,
     type TrashPaths,
@@ -710,7 +714,11 @@ describe("requests and approval", () => {
 
         expect((await confirmByPerson({ ...prompt, approval: "code", caller: person }, deps)).approved).toBe(true);
         expect(calls).toEqual(["dialog", "typed"]);
-        expect((await confirmByPerson({ ...prompt, caller: AGENT }, { ...deps, platform: "linux" })).via).toBe("none");
+        // Linux with no dialog program on it.
+        expect(
+            (await confirmByPerson({ ...prompt, caller: AGENT }, { ...deps, platform: "linux", dialog: () => null }))
+                .via
+        ).toBe("none");
     });
 
     describe("Touch ID through GenesisTools.app", () => {
@@ -1840,7 +1848,12 @@ describe("security review fixes: a typed code is not proof of a person", () => {
                 calls.push("typed");
                 return true;
             },
+            // A Linux or Windows system here has no dialog program: the table's own tests cover those that do.
             dialog: () => {
+                if (platform !== "darwin") {
+                    return null;
+                }
+
                 calls.push("dialog");
                 return false;
             },
@@ -1848,7 +1861,7 @@ describe("security review fixes: a typed code is not proof of a person", () => {
         };
     }
 
-    test("auto never takes the typed code: the macOS dialog asks, other platforms refuse", async () => {
+    test("auto never takes the typed code: the dialog asks, and a platform without a dialog program refuses", async () => {
         const calls: string[] = [];
         const mac = await confirmByPerson(prompt, deps("darwin", calls));
         const linux = await confirmByPerson(prompt, deps("linux", calls));
@@ -1883,6 +1896,122 @@ describe("security review fixes: a typed code is not proof of a person", () => {
         expect(asked.via).toBe("dialog");
         expect(linux.approved).toBe(false);
         expect(calls).toEqual(["dialog"]);
+    });
+});
+
+describe("the dialog on each platform (PERSON_DIALOGS)", () => {
+    const prompt = {
+        title: "Delete 2 items asked by session sess-111?",
+        lines: ["/work/shop/cache  2.0 MB", "/work/shop/it's $HOME"],
+        code: "abc234",
+        caller: AGENT,
+    };
+
+    /** A system with `programs` on PATH; `run` answers `result` and records the argv. Nothing real runs. */
+    function system(programs: string[], result: DialogResult, options: { display?: boolean } = {}) {
+        const runs: string[][] = [];
+        const fake: DialogSystem = {
+            which: (program) => (programs.includes(program) ? `/usr/bin/${program}` : null),
+            run: (argv) => {
+                runs.push(argv);
+                return result;
+            },
+            hasDisplay: () => options.display ?? true,
+        };
+        return { fake, runs };
+    }
+
+    test("macOS: osascript, Cancel the default, and only the Approve button approves", () => {
+        const approve = system(["osascript"], { exitCode: 0, stdout: "button returned:Approve, gave up:false" });
+        const gaveUp = system(["osascript"], { exitCode: 0, stdout: "button returned:, gave up:true" });
+
+        expect(showPersonDialog(prompt, "darwin", approve.fake)).toBe(true);
+        expect(showPersonDialog(prompt, "darwin", gaveUp.fake)).toBe(false);
+        expect(approve.runs[0]?.[0]).toBe("/usr/bin/osascript");
+        expect(approve.runs[0]?.[2]).toContain('default button "Cancel"');
+        expect(approve.runs[0]?.[2]).toContain("/work/shop/cache  2.0 MB");
+    });
+
+    test("Linux: zenity first, with the request, the size and the paths, Cancel the default, no markup", () => {
+        const both = system(["zenity", "kdialog"], { exitCode: 0, stdout: "" });
+        const cancelled = system(["zenity"], { exitCode: 1, stdout: "" });
+
+        expect(showPersonDialog(prompt, "linux", both.fake)).toBe(true);
+        expect(showPersonDialog(prompt, "linux", cancelled.fake)).toBe(false);
+
+        const argv = both.runs[0] ?? [];
+        expect(argv[0]).toBe("/usr/bin/zenity");
+        expect(argv).toContain("--question");
+        expect(argv).toContain("--default-cancel");
+        expect(argv).toContain("--no-markup");
+        expect(argv).toContain(`--text=${prompt.title}\n\n${prompt.lines.join("\n")}`);
+    });
+
+    test("Linux: kdialog when zenity is missing; exit 0 is the only yes", () => {
+        const kde = system(["kdialog"], { exitCode: 0, stdout: "" });
+        const no = system(["kdialog"], { exitCode: 1, stdout: "" });
+
+        expect(showPersonDialog(prompt, "linux", kde.fake)).toBe(true);
+        expect(showPersonDialog(prompt, "linux", no.fake)).toBe(false);
+        expect(kde.runs[0]?.slice(0, 4)).toEqual(["/usr/bin/kdialog", "--title", "Confirm deletion", "--warningyesno"]);
+        expect(kde.runs[0]?.[4]).toContain("/work/shop/cache  2.0 MB");
+    });
+
+    test("Windows: a PowerShell message box, No the default, the text as base64 so no path is read as PowerShell", () => {
+        const yes = system(["powershell"], { exitCode: 0, stdout: "Yes\r\n" });
+        const no = system(["powershell"], { exitCode: 0, stdout: "No\r\n" });
+
+        expect(showPersonDialog(prompt, "win32", yes.fake)).toBe(true);
+        expect(showPersonDialog(prompt, "win32", no.fake)).toBe(false);
+
+        const [program, noProfile, command, script = ""] = yes.runs[0] ?? [];
+        expect([program, noProfile, command]).toEqual(["/usr/bin/powershell", "-NoProfile", "-Command"]);
+        expect(script).toContain("[System.Windows.Forms.MessageBox]::Show(");
+        expect(script).toContain("'YesNo', 'Warning', 'Button2'");
+        expect(script).not.toContain("$HOME");
+        const encoded = /FromBase64String\('([^']+)'\)/.exec(script)?.[1] ?? "";
+        expect(Buffer.from(encoded, "base64").toString("utf8")).toContain("/work/shop/it's $HOME");
+    });
+
+    test("no dialog program, no display, or a platform without one: null, and nothing runs", () => {
+        const none = system([], { exitCode: 0, stdout: "Yes" });
+        const headless = system(["zenity", "kdialog"], { exitCode: 0, stdout: "" }, { display: false });
+
+        expect(showPersonDialog(prompt, "linux", none.fake)).toBeNull();
+        expect(showPersonDialog(prompt, "win32", none.fake)).toBeNull();
+        expect(showPersonDialog(prompt, "darwin", none.fake)).toBeNull();
+        expect(showPersonDialog(prompt, "linux", headless.fake)).toBeNull();
+        expect(showPersonDialog(prompt, "freebsd", headless.fake)).toBeNull();
+        expect([...none.runs, ...headless.runs]).toEqual([]);
+        expect(Object.keys(PERSON_DIALOGS).sort()).toEqual(["darwin", "linux", "win32"]);
+    });
+
+    test("confirmByPerson takes the platform's dialog on Linux, and refuses with the reason when there is none", async () => {
+        const linux = (dialog: ApprovalDeps["dialog"]): ApprovalDeps => ({
+            interactive: () => false,
+            platform: "linux",
+            typed: async () => {
+                throw new Error("an agent's prompt reached the typed code");
+            },
+            dialog,
+            app: async () => {
+                throw new Error("the app is macOS only");
+            },
+        });
+
+        expect(
+            await confirmByPerson(
+                prompt,
+                linux(() => true)
+            )
+        ).toMatchObject({ approved: true, via: "dialog" });
+
+        const none = await confirmByPerson(
+            prompt,
+            linux(() => null)
+        );
+        expect(none).toMatchObject({ approved: false, via: "none" });
+        expect(none.detail).toStartWith("no dialog program on linux can ask a person (osascript on macOS, zenity or");
     });
 });
 

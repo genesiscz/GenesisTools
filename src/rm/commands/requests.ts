@@ -669,8 +669,9 @@ function requestBytes(request: RmRequest, entries: readonly ApproveEntry[]): { b
 /**
  * `tools rm ask <id>`: an agent opens the person's approval window for its delete request, through the same steps
  * `approve` takes (the sweep, the refusals, the recheck, the deny and the ledger are one copy, `decideOne`). It never
- * approves by itself: the person check takes the window or the macOS dialog, never a typed code, and the window arms
- * Touch ID only after a click. A request under `notify.askMinMB` opens nothing; the agent hands the person approve.
+ * approves by itself: the person check takes the window or the platform's dialog, never a typed code, and the window
+ * arms Touch ID only after a click. A request under `notify.askMinMB` opens nothing, and neither does a system with no
+ * window and no dialog program: the agent hands the person approve.
  */
 export async function askForApproval(
     id: string,
@@ -946,7 +947,7 @@ export function registerRequestCommands(program: Command): void {
     program
         .command("approve")
         .description(
-            "confirm an agent's request (a person only: Touch ID through GenesisTools.app, a typed code, or a macOS dialog)"
+            "confirm an agent's request (a person only: Touch ID through GenesisTools.app, a typed code, or a dialog)"
         )
         .argument("[ids...]", "request ids: one window for all of them; none: a picker on a terminal")
         .option("--session <id>", "also every pending request of this session (an id or its prefix)")
