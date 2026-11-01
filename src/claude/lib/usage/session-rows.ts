@@ -1,6 +1,6 @@
 import { cleanPromptText } from "@app/claude/lib/cmux/sessions";
 import { getSessionListing, type SessionMetadataRecord } from "@app/claude/lib/history/search";
-import { loadPins, type PinHost } from "@genesiscz/utils/agent-sessions/pins";
+import { loadPins, type PinHost, type SessionPin } from "@genesiscz/utils/agent-sessions/pins";
 import {
     type ClaudeTailUsage,
     emptyClaudeTailUsage,
@@ -114,6 +114,11 @@ export interface ListSessionRowsOptions {
     hours?: number;
     /** If the hours window has fewer rows, append older sessions by mtime. */
     minRows?: number;
+    /**
+     * Keep only the sessions this host app ran, by its kind in the pin journal (`t3`). The filter runs before the
+     * window and the top-up, so `minRows` counts hosted sessions and an older hosted one is appended.
+     */
+    host?: string;
     excludeSubagents?: boolean;
     /** Exact transcript paths; forwarded to the catalog before any tail reads. */
     filePaths?: string[];
@@ -326,11 +331,16 @@ interface RowJoins {
     live: Set<string> | null;
 }
 
+/** A record's session id: the indexed one, else the transcript's file name. */
+function recordSessionId(record: SessionMetadataRecord): string {
+    return record.sessionId ?? record.filePath.split("/").pop()?.replace(".jsonl", "") ?? "";
+}
+
 function buildRow(record: SessionMetadataRecord, usage: TailUsage, now: number, joins: RowJoins): SessionRow {
     const cwd = record.cwd ?? "(unknown)";
     const lastCacheAt = usage.lastCacheAt ?? record.mtime;
     const { status, ttlSec } = computeCacheStatus(lastCacheAt, now);
-    const sessionId = record.sessionId ?? record.filePath.split("/").pop()?.replace(".jsonl", "") ?? "";
+    const sessionId = recordSessionId(record);
     const model = usage.model ? simplifyModel(usage.model) : null;
     const prevModel = usage.prevModel ? simplifyModel(usage.prevModel) : null;
 
@@ -386,25 +396,43 @@ export async function listSessionRowsWithTimings(
     const prof = profiler.scope("claude-sessions");
     const started = performance.now();
     const now = opts.now ?? Date.now();
+    const readPins = (): Promise<Map<string, SessionPin>> => loadPins({ readOnly: true }).catch(() => new Map());
+    // The host lives in the pin journal only, so a host filter reads it before the window is cut.
+    const hostPins = opts.host === undefined ? null : await readPins();
+    const hosted = hostPins
+        ? new Set(
+              [...hostPins]
+                  .filter(([, pin]) => pin.host?.kind === opts.host)
+                  .map(([sessionId]) => sessionId.toLowerCase())
+          )
+        : null;
+    // The SQL top-up (`newest`) counts every session, so it cannot find older HOSTED ones: a host filter with
+    // `minRows` reads the whole index and tops up below, after the filter.
+    const pushWindowDown = opts.hours !== undefined && !(hosted !== null && opts.minRows !== undefined);
     const result = await prof.measureAsync("listing", () =>
         getSessionListing({
             excludeSubagents: opts.excludeSubagents ?? true,
             ...(opts.filePaths === undefined ? {} : { filePaths: opts.filePaths }),
             // The window and the top-up go down to the refresh and the SQL read; the filters
             // below then keep exactly what they kept before.
-            ...(opts.hours === undefined ? {} : { mtimeFrom: now - opts.hours * 60 * 60 * 1000, newest: opts.minRows }),
+            ...(pushWindowDown && opts.hours !== undefined
+                ? { mtimeFrom: now - opts.hours * 60 * 60 * 1000, newest: opts.minRows }
+                : {}),
             ...(opts.maxDiscoveryAgeMs === undefined ? {} : { maxDiscoveryAgeMs: opts.maxDiscoveryAgeMs }),
             ...(opts.refresh === undefined ? {} : { refresh: opts.refresh }),
         })
     );
     const listingMs = performance.now() - started;
+    const sessions = hosted
+        ? result.sessions.filter((r) => hosted.has(recordSessionId(r).toLowerCase()))
+        : result.sessions;
     const cutoff = opts.hours === undefined ? Number.NEGATIVE_INFINITY : now - opts.hours * 60 * 60 * 1000;
-    const inWindow = result.sessions.filter((r) => r.mtime >= cutoff);
+    const inWindow = sessions.filter((r) => r.mtime >= cutoff);
     const need = opts.minRows !== undefined ? Math.max(0, opts.minRows - inWindow.length) : 0;
     const extra =
         need === 0
             ? []
-            : result.sessions
+            : sessions
                   .filter((r) => r.mtime < cutoff)
                   .sort((a, b) => b.mtime - a.mtime)
                   .slice(0, need);
@@ -431,7 +459,7 @@ export async function listSessionRowsWithTimings(
     const tailMs = performance.now() - tailStarted;
     const joinStarted = performance.now();
     const joins = await prof.measureAsync("journals", async () => {
-        const pins = await loadPins({ readOnly: true }).catch(() => new Map());
+        const pins = hostPins ?? (await readPins());
         const accounts = new Map<string, string | null>();
         const hosts = new Map<string, PinHost>();
 
@@ -484,11 +512,6 @@ export async function listSessionRowsWithTimings(
             records: records.length,
         },
     };
-}
-
-/** The rows whose session ran inside this host app (`t3`), so an account's T3 sessions can be read apart. */
-export function rowsOnHost<Row extends Pick<SessionRow, "host">>(rows: Row[], kind: string): Row[] {
-    return rows.filter((row) => row.host?.kind === kind);
 }
 
 /** Same row math as the usage TUI Sessions tab. */

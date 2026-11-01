@@ -1,11 +1,12 @@
 import { describe, expect, test } from "bun:test";
 import { EventEmitter } from "node:events";
-import { mkdtempSync } from "node:fs";
+import { mkdtempSync, readdirSync } from "node:fs";
 import { tmpdir } from "node:os";
 import { join } from "node:path";
 import { type DirectRunDeps, pumpLines, relayBytes } from "@app/ai/lib/embed/direct-run";
 import type { ScoredAccount } from "@app/claude/lib/usage/account-picker";
 import { rewriteSteerLine, runClaudeBinaryDirect } from "../lib/direct-run";
+import { claudeEmbedAccountName } from "../lib/embed";
 import { isHostProbe, readEmbedLastPick, writeEmbedLastPick } from "../lib/embed-pick";
 import {
     buildLaunchArgs,
@@ -326,5 +327,31 @@ describe("host probe launches", () => {
         writeEmbedLastPick("work", path);
         expect(readEmbedLastPick(["work", "personal"], path)).toBe("work");
         expect(readEmbedLastPick(["personal"], path)).toBeNull();
+    });
+
+    test("an embed account id that tools t3 providers add accepted reaches start as the account's name", () => {
+        // `providers add claude --account <id>` accepts an id (checkNamedAccount matches id or name); start matches
+        // names only, so the launcher turns the id into the name it can resolve.
+        const accounts = [
+            { id: "acc_work", name: "work" },
+            { id: "acc_side", name: "acc_work-renamed" },
+            { id: "acc_shop", name: "acc_side" },
+        ];
+
+        expect(claudeEmbedAccountName("acc_work", accounts)).toBe("work");
+        expect(claudeEmbedAccountName("work", accounts)).toBe("work");
+        // An id wins over a name that spells another account's id, as in the shared resolver.
+        expect(claudeEmbedAccountName("acc_side", accounts)).toBe("acc_work-renamed");
+        expect(claudeEmbedAccountName("nobody", accounts)).toBe("nobody");
+    });
+
+    test("the last pick is saved when its folder does not exist yet, and leaves no temp file", () => {
+        const folder = join(mkdtempSync(join(tmpdir(), "embed-pick-")), "claude", "nested");
+        const path = join(folder, "last.json");
+
+        writeEmbedLastPick("work", path);
+
+        expect(readEmbedLastPick(["work"], path)).toBe("work");
+        expect(readdirSync(folder)).toEqual(["last.json"]);
     });
 });

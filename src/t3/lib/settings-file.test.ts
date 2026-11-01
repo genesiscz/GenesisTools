@@ -9,7 +9,14 @@ import { SafeJSON } from "@genesiscz/utils/json";
 import { makeTempDir } from "@genesiscz/utils/paths";
 import { upsertFor } from "../commands/shared";
 import { T3_HOSTS, t3HostFor } from "./hosts";
-import { buildInstance, embedAccountStatus, type InstanceRequest, instanceIdFor, syncAccounts } from "./instances";
+import {
+    buildInstance,
+    embedAccountStatus,
+    InstanceIdCollisionError,
+    type InstanceRequest,
+    instanceIdFor,
+    syncAccounts,
+} from "./instances";
 import { scanObject, scanRoot } from "./json-splice";
 import { parseLauncherCheckout, renderLauncher, writeLauncher } from "./launchers";
 import { planUpserts, SettingsChangedError, upsertInstances } from "./settings-file";
@@ -141,6 +148,30 @@ describe("upsertInstances", () => {
 
         expect(result.backupPath).toBe(join(backupDir, "settings-2026-11-01T10-00-00-000Z.json"));
         expect(readFileSync(result.backupPath ?? "", "utf8")).toBe(FIXTURE);
+    });
+
+    it("refuses two accounts that map to one instance id, in one batch or against a written instance", async () => {
+        const { settingsPath, backupDir } = sandbox();
+        const laptop = upsertFor(request({ account: "work laptop" }));
+        const dashed = upsertFor(request({ account: "work-laptop" }));
+
+        expect(laptop.id).toBe(dashed.id);
+        await expect(upsertInstances({ settingsPath, backupDir, upserts: [laptop, dashed] })).rejects.toThrow(
+            new InstanceIdCollisionError("gt-claude-work-laptop", ["work laptop", "work-laptop"])
+        );
+        expect(readFileSync(settingsPath, "utf8")).toBe(FIXTURE);
+        expect(existsSync(backupDir)).toBe(false);
+
+        await upsertInstances({ settingsPath, backupDir, upserts: [laptop] });
+        const written = readFileSync(settingsPath, "utf8");
+
+        await expect(upsertInstances({ settingsPath, backupDir, upserts: [dashed] })).rejects.toThrow(
+            InstanceIdCollisionError
+        );
+        expect(() => planUpserts(written, [upsertFor(request({ account: "WORK LAPTOP" }))])).toThrow(/"work laptop"/);
+        expect(readFileSync(settingsPath, "utf8")).toBe(written);
+        // The same account again is still an update, not a collision.
+        expect((await upsertInstances({ settingsPath, backupDir, upserts: [laptop] })).status).toBe("unchanged");
     });
 
     it("is a no-op the second time, with no write and no backup", async () => {

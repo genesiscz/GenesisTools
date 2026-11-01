@@ -1,9 +1,17 @@
 import { SafeJSON } from "@genesiscz/utils/json";
 import { logger } from "@genesiscz/utils/logger";
+import { VAULT_UNLOCK_TIMEOUT_MS } from "@genesiscz/utils/security/keyring/app-gate";
 import type { CodexAccountBinding } from "./account";
+import { ACCOUNT_BOUND_ERROR_CODE, ACCOUNT_BOUND_REFUSAL, breaksAccountBinding } from "./account-bound";
 
 /** The account the proxy logs the app-server in as. `authenticate` sends the one `account/login/start`. */
-export type EmbedProxyAccount = Pick<CodexAccountBinding, "authenticate" | "refresh">;
+export interface EmbedProxyAccount extends Pick<CodexAccountBinding, "authenticate" | "refresh"> {
+    /**
+     * Resolves once the account's tokens are in hand. A vault read can wait for the user at the approval window, so it
+     * has its own deadline, and the login's short timer starts only after it.
+     */
+    credentials?(): Promise<unknown>;
+}
 
 /** Every request the proxy itself sends carries this id prefix, so its response is recognised and hidden. */
 export const EMBED_REQUEST_PREFIX = "genesis-tools-embed:";
@@ -12,6 +20,12 @@ const REFRESH_METHOD = "account/chatgptAuthTokens/refresh";
 
 /** Codex answers the external-token login in well under a second; a login still pending after this is a failure. */
 export const EMBED_LOGIN_TIMEOUT_MS = 25_000;
+
+/**
+ * How long the tokens may take. The app bounds the vault approval at `VAULT_UNLOCK_TIMEOUT_MS`, the wait for another
+ * instance's open window included; the minute on top covers the keychain read and a token refresh.
+ */
+export const EMBED_CREDENTIALS_TIMEOUT_MS = VAULT_UNLOCK_TIMEOUT_MS + 60_000;
 
 const encoder = new TextEncoder();
 const decoder = new TextDecoder();
@@ -113,7 +127,24 @@ export interface CodexEmbedProxyOptions {
     toHost(bytes: Uint8Array): void;
     /** The login failed or timed out; the caller stops the app-server. */
     onLoginFailed(error: Error): void;
+    /** From the moment the credentials are ready to the login's answer. */
     loginTimeoutMs?: number;
+    /** For `account.credentials()`. */
+    credentialsTimeoutMs?: number;
+}
+
+/** `work`, or a rejection with `message` once `ms` have passed. The timer never outlives the race. */
+async function withDeadline<T>(work: Promise<T>, ms: number, message: string): Promise<T> {
+    let timer: ReturnType<typeof setTimeout> | undefined;
+    const deadline = new Promise<never>((_resolve, reject) => {
+        timer = setTimeout(() => reject(new Error(message)), ms);
+    });
+
+    try {
+        return await Promise.race([work, deadline]);
+    } finally {
+        clearTimeout(timer);
+    }
 }
 
 /**
@@ -122,7 +153,9 @@ export interface CodexEmbedProxyOptions {
  * The host's `initialized` notification passes on, and right behind it the proxy sends one `account/login/start` with
  * the account's external tokens. Host lines that arrive while that login runs wait in order, so the host's first
  * `account/read` already sees the account. The login's response and the app-server's token refresh requests are the
- * proxy's own and never reach the host. Every other line passes on byte for byte, in both directions.
+ * proxy's own and never reach the host. A host request that would change the account (a login, a logout, a
+ * configuration write, another model provider: `breaksAccountBinding`) gets an RPC error and never reaches the
+ * app-server, as in the account-bound terminal. Every other line passes on byte for byte, in both directions.
  */
 export class CodexEmbedProxy {
     private state: ProxyState = "waiting";
@@ -134,6 +167,12 @@ export class CodexEmbedProxy {
     constructor(private readonly options: CodexEmbedProxyOptions) {}
 
     hostLine(line: Uint8Array): void {
+        const message = parseObject(decoder.decode(line));
+
+        if (message && this.refuseIdentityChange(message)) {
+            return;
+        }
+
         if (this.state === "logging-in") {
             this.queued.push(line);
             return;
@@ -141,7 +180,7 @@ export class CodexEmbedProxy {
 
         this.options.toChild(line);
 
-        if (this.state === "waiting" && this.isInitialized(line)) {
+        if (this.state === "waiting" && message?.method === "initialized" && !("id" in message)) {
             this.state = "logging-in";
             void this.login();
         }
@@ -170,28 +209,46 @@ export class CodexEmbedProxy {
         this.options.toHost(line);
     }
 
-    private isInitialized(line: Uint8Array): boolean {
-        const text = decoder.decode(line);
+    /**
+     * True when the host's line was a request that would change the bound account. It is answered with an RPC error
+     * (a notification is dropped) and never reaches the app-server, whatever state the login is in. Every line is
+     * parsed for this, because a key spelled with a JSON escape (`model\u005fprovider`) slips past a text check.
+     */
+    private refuseIdentityChange(message: Record<string, unknown>): boolean {
+        const { id, method, params } = message;
 
-        if (!text.includes('"initialized"')) {
+        if (typeof method !== "string" || !breaksAccountBinding(method, params)) {
             return false;
         }
 
-        const message = parseObject(text);
-        return message?.method === "initialized" && !("id" in message);
+        logger.warn({ method }, "[codex-embed] refused a host request that would change the account");
+
+        if (id !== undefined) {
+            this.options.toHost(
+                encodeMessage({ id, error: { code: ACCOUNT_BOUND_ERROR_CODE, message: ACCOUNT_BOUND_REFUSAL } })
+            );
+        }
+
+        return true;
     }
 
     private async login(): Promise<void> {
-        let timer: ReturnType<typeof setTimeout> | undefined;
-        const timeout = new Promise<never>((_resolve, reject) => {
-            timer = setTimeout(
-                () => reject(new Error("Codex app-server did not answer the account login in time")),
-                this.options.loginTimeoutMs ?? EMBED_LOGIN_TIMEOUT_MS
-            );
-        });
-
         try {
-            await Promise.race([this.options.account.authenticate({ request: (m, p) => this.request(m, p) }), timeout]);
+            const credentials = this.options.account.credentials?.();
+
+            if (credentials) {
+                await withDeadline(
+                    credentials,
+                    this.options.credentialsTimeoutMs ?? EMBED_CREDENTIALS_TIMEOUT_MS,
+                    "The account's tokens were not ready in time"
+                );
+            }
+
+            await withDeadline(
+                this.options.account.authenticate({ request: (m, p) => this.request(m, p) }),
+                this.options.loginTimeoutMs ?? EMBED_LOGIN_TIMEOUT_MS,
+                "Codex app-server did not answer the account login in time"
+            );
             logger.info("[codex-embed] account login accepted");
             this.state = "ready";
         } catch (error) {
@@ -199,8 +256,6 @@ export class CodexEmbedProxy {
             this.queued = [];
             this.options.onLoginFailed(error instanceof Error ? error : new Error(String(error)));
             return;
-        } finally {
-            clearTimeout(timer);
         }
 
         const held = this.queued;

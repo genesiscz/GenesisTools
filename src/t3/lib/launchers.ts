@@ -14,6 +14,7 @@ import { ACCOUNT_PROVIDER_ALIASES } from "@genesiscz/utils/ai/providers/alias-li
 import { toolCommand } from "@genesiscz/utils/cli/tool-command";
 import type { HarnessId } from "@genesiscz/utils/harness/types";
 import { logger } from "@genesiscz/utils/logger";
+import { shellQuote } from "@genesiscz/utils/shell/quote";
 import { atomicWriteFileSync } from "@genesiscz/utils/storage/atomic-file";
 import { genesisToolsDir } from "@genesiscz/utils/storage/root";
 
@@ -44,10 +45,6 @@ export function launcherFileName(spec: LauncherSpec): string {
 
 export function launcherPath(binDir: string, spec: LauncherSpec): string {
     return join(binDir, launcherFileName(spec));
-}
-
-function shellQuote(value: string): string {
-    return `'${value.replace(/'/g, `'\\''`)}'`;
 }
 
 /** The launcher script. The exec line is the one `parseLauncherCheckout` reads back. */

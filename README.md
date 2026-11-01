@@ -164,8 +164,8 @@ you. Set `TOOLS_SKIP_AUTOINSTALL=1` to suppress that.
 ## 🎯 Claude Code plugin
 
 The repo ships two Claude Code plugins through the marketplace file at
-`.claude-plugin/marketplace.json`. The main one, `genesis-tools` (currently version 1.0.77),
-contains **6 commands**, **31 skills**, **2 subagents**, and **6 hook registrations**.
+`.claude-plugin/marketplace.json`. The main one, `genesis-tools` (its current version is the `version` field
+there and in `plugins/genesis-tools/.claude-plugin/plugin.json`), contains **6 commands**, **31 skills**, **2 subagents**, and **6 hook registrations**.
 
 The plugin does **not** register an MCP server — `plugin.json` has no `mcpServers` entry. The
 genesis-tools MCP server described further down is a separate opt-in step

@@ -8,7 +8,7 @@ import { logger } from "@genesiscz/utils/logger";
 import { atomicWriteFileSync, isJsonObject } from "@genesiscz/utils/storage/atomic-file";
 import { withFileLock } from "@genesiscz/utils/storage/file-lock";
 import { toolDataDir } from "@genesiscz/utils/storage/root";
-import { isOwnedInstanceId, type T3Instance } from "./instances";
+import { InstanceIdCollisionError, isOwnedInstanceId, type T3Instance } from "./instances";
 import { detectIndentUnit, scanRoot, upsertMember } from "./json-splice";
 
 const { log } = logger.scoped("t3:settings");
@@ -101,6 +101,8 @@ export function providerInstances(data: Record<string, unknown>): Record<string,
 /** One owned instance to write. `build` gets the instance as it is on disk now, so a re-merge sees fresh state. */
 export interface InstanceUpsert {
     id: string;
+    /** The account the instance runs as; it names both sides when two upserts share an id. */
+    account?: string;
     build(existing: T3Instance | undefined): T3Instance;
 }
 
@@ -110,11 +112,28 @@ export interface UpsertPlan {
     changed: string[];
 }
 
-/** The new file text after every upsert. Bytes outside the changed instances stay identical. */
+/**
+ * The new file text after every upsert. Bytes outside the changed instances stay identical. Two upserts with one id
+ * throw `InstanceIdCollisionError` before anything is planned: the second would silently overwrite the first.
+ */
 export function planUpserts(text: string, upserts: readonly InstanceUpsert[]): UpsertPlan {
     let next = text;
     const changed: string[] = [];
     const unit = detectIndentUnit(text);
+    const byId = new Map<string, InstanceUpsert>();
+
+    for (const upsert of upserts) {
+        const earlier = byId.get(upsert.id);
+
+        if (earlier) {
+            throw new InstanceIdCollisionError(
+                upsert.id,
+                [earlier.account, upsert.account].filter((account) => account !== undefined)
+            );
+        }
+
+        byId.set(upsert.id, upsert);
+    }
 
     for (const upsert of upserts) {
         if (!isOwnedInstanceId(upsert.id)) {

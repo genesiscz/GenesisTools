@@ -197,16 +197,15 @@ async function serveAsAccount(input: { binding: CodexAccountBinding; argv: strin
         out.printlnErr(`${toolCommand("codex embed")}: ${input.binding.name} could not log in: ${error.message}`);
         child.kill("SIGTERM");
     };
-    // The vault read takes seconds (the keychain unlocks the master key), so it runs while codex boots and answers the
-    // host's initialize; only the login waits for it.
+    // The vault read takes seconds (the keychain unlocks the master key), and minutes when the user has to approve it,
+    // so it runs while codex boots and answers the host's initialize. The login waits for it under its own deadline,
+    // and the short login timer starts after it.
     const ready = input.binding.tokens();
     ready.catch((error: unknown) => fail(error instanceof Error ? error : new Error(String(error))));
     const proxy = new CodexEmbedProxy({
         account: {
-            authenticate: async (client) => {
-                await ready;
-                await input.binding.authenticate(client);
-            },
+            credentials: () => ready,
+            authenticate: (client) => input.binding.authenticate(client),
             refresh: (previousAccountId) => input.binding.refresh(previousAccountId),
         },
         toChild: (bytes) => {
@@ -311,7 +310,7 @@ export const codexEmbed: EmbedLauncher = {
 
         const entry = await pickLaunchAccount({
             alias: "codex",
-            tool: "codex embed",
+            tool: toolCommand("codex embed"),
             subcommand: ["embed"],
             requested: request.kind === "auto" ? "auto" : request.name,
         });

@@ -1,7 +1,14 @@
 import { describe, expect, it } from "bun:test";
 import { SafeJSON } from "@genesiscz/utils/json";
+import { ACCOUNT_BOUND_REFUSAL } from "./account-bound";
 import { embedArgvMode } from "./embed";
-import { CodexEmbedProxy, EMBED_REQUEST_PREFIX, type EmbedProxyAccount, LineSplitter } from "./embed-proxy";
+import {
+    CodexEmbedProxy,
+    type CodexEmbedProxyOptions,
+    EMBED_REQUEST_PREFIX,
+    type EmbedProxyAccount,
+    LineSplitter,
+} from "./embed-proxy";
 
 const encoder = new TextEncoder();
 const decoder = new TextDecoder();
@@ -32,7 +39,10 @@ function fakeAccount(overrides: Partial<EmbedProxyAccount> = {}): EmbedProxyAcco
     };
 }
 
-function harness(account: EmbedProxyAccount = fakeAccount()) {
+function harness(
+    account: EmbedProxyAccount = fakeAccount(),
+    timeouts: Pick<CodexEmbedProxyOptions, "loginTimeoutMs" | "credentialsTimeoutMs"> = {}
+) {
     const toChild: Uint8Array[] = [];
     const toHost: Uint8Array[] = [];
     const failures: Error[] = [];
@@ -46,6 +56,7 @@ function harness(account: EmbedProxyAccount = fakeAccount()) {
         toHost: (line) => toHost.push(line),
         onLoginFailed: (error) => failures.push(error),
         loginTimeoutMs: 1000,
+        ...timeouts,
     });
 
     return { proxy, toChild, toHost, failures, childEnded: () => childEnded };
@@ -166,6 +177,93 @@ describe("CodexEmbedProxy", () => {
 
         expect(failures.map((error) => error.message)).toEqual(["bad token"]);
         expect(texts(toChild).some((text) => text.includes("thread/start"))).toBe(false);
+    });
+
+    it("starts the login timer only once the tokens are ready, so a slow vault approval is not a failed login", async () => {
+        let release = () => {};
+        const tokens = new Promise<void>((resolve) => {
+            release = resolve;
+        });
+        const { proxy, toChild, failures } = harness(fakeAccount({ credentials: () => tokens }), {
+            loginTimeoutMs: 30,
+            credentialsTimeoutMs: 5000,
+        });
+
+        proxy.hostLine(bytes('{"method":"initialized"}\n'));
+        await Bun.sleep(80);
+
+        expect(failures).toEqual([]);
+        expect(texts(toChild).some((text) => text.includes(EMBED_REQUEST_PREFIX))).toBe(false);
+
+        release();
+        await flush();
+        proxy.childLine(bytes(`{"id":"${injected(toChild).id}","result":{"type":"chatgptAuthTokens"}}\n`));
+        await flush();
+
+        expect(failures).toEqual([]);
+    });
+
+    it("gives up when the tokens miss their own deadline, and sends no login", async () => {
+        const { proxy, toChild, failures } = harness(fakeAccount({ credentials: () => new Promise(() => {}) }), {
+            credentialsTimeoutMs: 20,
+        });
+
+        proxy.hostLine(bytes('{"method":"initialized"}\n'));
+        await Bun.sleep(60);
+
+        expect(failures.map((error) => error.message)).toEqual(["The account's tokens were not ready in time"]);
+        expect(texts(toChild).some((text) => text.includes(EMBED_REQUEST_PREFIX))).toBe(false);
+    });
+
+    it("answers a host request that would change the account with an RPC error and never forwards it", async () => {
+        const { proxy, toChild, toHost } = harness();
+
+        proxy.hostLine(bytes('{"method":"initialized"}\n'));
+        await flush();
+        proxy.childLine(bytes(`{"id":"${injected(toChild).id}","result":{"type":"chatgptAuthTokens"}}\n`));
+        await flush();
+        const forwarded = toChild.length;
+        const refused = [
+            '{"id":3,"method":"account/logout"}\n',
+            '{"id":4,"method":"account/login/start","params":{"type":"apiKey","apiKey":"x"}}\n',
+            '{"id":5,"method":"config/value/write","params":{"keyPath":"model","value":"m"}}\n',
+            '{"id":6,"method":"thread/start","params":{"modelProvider":"other"}}\n',
+            '{"id":7,"method":"thread/start","params":{"config":{"model\\u005fprovider":"other"}}}\n',
+            '{"method":"config/batchWrite","params":{}}\n',
+        ];
+
+        for (const line of refused) {
+            proxy.hostLine(bytes(line));
+        }
+
+        expect(toChild).toHaveLength(forwarded);
+        expect(texts(toHost).map((text) => SafeJSON.parse(text, { strict: true }))).toEqual(
+            [3, 4, 5, 6, 7].map((id) => ({ id, error: { code: -32600, message: ACCOUNT_BOUND_REFUSAL } }))
+        );
+
+        const allowed = [
+            '{"id":8,"method":"thread/start","params":{"modelProvider":"openai"}}\n',
+            '{"id":9,"method":"config/read","params":{}}\n',
+        ];
+
+        for (const line of allowed) {
+            proxy.hostLine(bytes(line));
+        }
+
+        expect(texts(toChild).slice(forwarded)).toEqual(allowed);
+    });
+
+    it("refuses an identity change that arrives while the login is still running", async () => {
+        const { proxy, toChild, toHost } = harness();
+
+        proxy.hostLine(bytes('{"method":"initialized"}\n'));
+        proxy.hostLine(bytes('{"id":2,"method":"account/logout"}\n'));
+        await flush();
+        proxy.childLine(bytes(`{"id":"${injected(toChild).id}","result":{"type":"chatgptAuthTokens"}}\n`));
+        await flush();
+
+        expect(texts(toChild).some((text) => text.includes("account/logout"))).toBe(false);
+        expect(texts(toHost)).toHaveLength(1);
     });
 
     it("closes the app-server's stdin only after the held lines went out", async () => {
