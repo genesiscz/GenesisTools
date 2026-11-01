@@ -7,10 +7,12 @@ import {
     defaultTrashPaths,
     isAskAction,
     isRmApproval,
+    isRmNotifyOnRequest,
     isTrashRootName,
     loadRmConfig,
     presetsFor,
     RM_APPROVALS,
+    RM_NOTIFY_ON_REQUEST,
     type RmConfig,
     rmConfigPath,
     saveRmConfig,
@@ -24,6 +26,7 @@ import { minutesOption, requirePerson, runContext } from "../lib/run";
 
 const SETTINGS = [
     "approval",
+    "notify-on-request",
     "ask-action",
     "aside-unsaved",
     "session-scratch",
@@ -63,6 +66,12 @@ export function applyRmSetting(config: RmConfig, key: Setting, value: string): R
             }
 
             return { ...config, approval: value };
+        case "notify-on-request":
+            if (!isRmNotifyOnRequest(value)) {
+                throw new Error(`notify-on-request takes ${RM_NOTIFY_ON_REQUEST.join(", ")}.`);
+            }
+
+            return { ...config, notify: { ...config.notify, onRequest: value } };
         case "ask-action":
             if (!isAskAction(value)) {
                 throw new Error("ask-action takes aside or request.");
