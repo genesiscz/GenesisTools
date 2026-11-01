@@ -106,3 +106,18 @@ Nothing is rolled back, and that is deliberate: a dead turn's transcript is the 
 - **A session missing from `tools grok sessions`** has metadata with a blank or absent `sessionId`, which cannot be resumed. It is skipped rather than shown as a resumable row that would silently start a new conversation.
 
 Skill: `gt:handoff-to`, then `references/grok.md` (readiness gate, checkpoint contract, verification discipline).
+
+## Embedding apps (T3 Code): `tools grok embed`
+
+An app that runs grok as a provider (T3 Code) points its binary path at a launcher, and the launcher runs
+`tools grok embed -- "$@"`. The account comes from the operand before `--`, else from
+`TOOLS_GROK_EMBED_ACCOUNT` (set per T3 provider instance): an account name, `auto`, or
+`proxy:<account>/<provider>`. The child process carries `TOOLS_GROK_ACCOUNT`, so
+`tools grok who` names its account, and a T3 child shows its thread as `t3:<thread>`.
+
+- T3 runs `<launcher> agent stdio` (ACP), with `--permission-mode` or `--always-approve`. The launcher runs the
+  real grok with the account's auth file, or a vault grant it releases when grok exits.
+- `--version` and `--help` probes run with no account. `proxy:` is refused.
+
+`tools t3 launchers install` writes the launchers and `tools t3 providers add|sync` writes the T3 instances
+(see `src/t3/README.md`).

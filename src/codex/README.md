@@ -390,3 +390,21 @@ checkout). An unknown or ambiguous `--project` fails the spawn; `tools codex sta
   reads the app-server `projectId` only behind its `localProjectTaskMembership` flag, which was off.
 
 To land a worker under a project in Desktop today, start it in a folder that project owns by those rules.
+
+## Embedding apps (T3 Code): `tools codex embed`
+
+An app that runs codex as a provider (T3 Code) points its binary path at a launcher, and the launcher runs
+`tools codex embed -- "$@"`. The account comes from the operand before `--`, else from
+`TOOLS_CODEX_EMBED_ACCOUNT` (set per T3 provider instance): an account name, `auto`, or
+`proxy:<account>/<provider>`. The child process carries `TOOLS_CODEX_ACCOUNT`, so
+`tools codex who` names its account, and a T3 child shows its thread as `t3:<thread>`.
+
+- T3 runs `<launcher> app-server`. The launcher starts the real `codex app-server` in token-only mode and logs it in
+  as the account over the app-server's own JSON-RPC right after T3's `initialized`; T3 never sees that request. The
+  home's `auth.json` is never read or written for the login, and the vault answers token refreshes.
+- `--version`, `app-server --help` and `exec` go to the real binary unchanged. `exec` (T3's text generation)
+  still bills the login in `auth.json`.
+- `proxy:` is refused: the ai-proxy does not serve the app-server protocol.
+
+`tools t3 launchers install` writes the launchers and `tools t3 providers add|sync` writes the T3 instances
+(see `src/t3/README.md`).
