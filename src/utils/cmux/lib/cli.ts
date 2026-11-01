@@ -2,6 +2,7 @@ import { existsSync } from "node:fs";
 import { homedir } from "node:os";
 import { join } from "node:path";
 import { isCmuxAccessDenied } from "@genesiscz/utils/cmux/lib/access-denied";
+import { CmuxCommandError } from "@genesiscz/utils/cmux/lib/command-error";
 import { env } from "@genesiscz/utils/env";
 import { SafeJSON } from "@genesiscz/utils/json";
 import { logger } from "@genesiscz/utils/logger";
@@ -178,9 +179,8 @@ function logCmuxFailure(args: string[], code: number, stderr: string): void {
 export async function runCmuxJSON<T = unknown>(args: string[], opts: CmuxTimeoutOpt = {}): Promise<T> {
     const result = await runCmux(args, { json: true, ...opts });
     if (result.code !== 0) {
-        const message = `cmux ${args.join(" ")} failed (${result.code}): ${result.stderr.trim()}`;
         logCmuxFailure(args, result.code, result.stderr);
-        throw new Error(message);
+        throw new CmuxCommandError(args, result);
     }
     try {
         return SafeJSON.parse(result.stdout, { strict: true }) as T;
@@ -194,7 +194,7 @@ export async function runCmuxOk(args: string[], opts: CmuxTimeoutOpt = {}): Prom
     const result = await runCmux(args, opts);
     if (result.code !== 0) {
         logCmuxFailure(args, result.code, result.stderr);
-        throw new Error(`cmux ${args.join(" ")} failed (${result.code}): ${result.stderr.trim()}`);
+        throw new CmuxCommandError(args, result);
     }
     return result;
 }
