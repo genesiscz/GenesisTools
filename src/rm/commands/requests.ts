@@ -1,56 +1,47 @@
-import { toolCommand } from "@genesiscz/utils/cli";
+import { isInteractive, toolCommand } from "@genesiscz/utils/cli";
 import { formatBytes } from "@genesiscz/utils/format";
-import { out } from "@genesiscz/utils/logger";
+import { logger, out } from "@genesiscz/utils/logger";
+import * as p from "@genesiscz/utils/prompts/p";
 import {
+    ApprovalUpdates,
     appendRmLedger,
+    approvalAsker,
     approvalDenyReason,
     createRmRequest,
     hardDenyReason,
-    kickDrainer,
     listRmRequests,
     loadRmMeasurementOf,
     loadRmRequest,
     lockRmRequest,
     mayDenyRmRequest,
     measureRmRequest,
+    pruneReason,
     pruneRmRequests,
+    RM_APPROVED_TRASH_MINUTES,
     type RmRequest,
     type RmRequestTarget,
-    recheckAfterWait,
     recoverAsideJournals,
     rememberOptions,
-    requestBatchIds,
     requestLive,
+    reserveRmRequestId,
     resolveTarget,
-    saveRmRequest,
-    stillAside,
     updateRmRequest,
 } from "@genesiscz/utils/rm";
 import type { Command } from "commander";
 import pc from "picocolors";
 import {
+    type ApprovalDenyCheck,
     type ApproveEntry,
+    applyApprovalAnswer,
     approvalRequestInfo,
     approvalRows,
-    approveDelete,
-    approveRoots,
     CAME_BACK_REASON,
     cameBack,
-    type DenyOutcome,
     denyRequest,
-    savedSizes,
-    splitBySelection,
+    printDenyOutcome,
 } from "../lib/approve";
-import { buildRequestViews, renderRequestDetail, renderRequestList } from "../lib/requests-view";
-import {
-    minutesOption,
-    type PersonAnswer,
-    printRequestHint,
-    type RunContext,
-    requirePerson,
-    runContext,
-    shown,
-} from "../lib/run";
+import { buildRequestViews, renderRequestDetail, renderRequestList, renderRequestRow } from "../lib/requests-view";
+import { minutesOption, printRequestHint, type RunContext, requirePerson, runContext, shown } from "../lib/run";
 
 function approvalLines(
     request: RmRequest,
@@ -75,52 +66,6 @@ function approvalLines(
     }
 
     return lines;
-}
-
-/**
- * Records the decision on the request: approved (with the ticked and the put-back paths) and its batch. A path that
- * was refused, changed while the person decided, or could not be moved keeps the request pending, with only those.
- */
-export function saveApproved(input: {
-    request: RmRequest;
-    answer: PersonAnswer;
-    approved: readonly ApproveEntry[];
-    denied: readonly ApproveEntry[];
-    pending: readonly RmRequestTarget[];
-    batchId?: string;
-    ctx: RunContext;
-}): void {
-    const { request, answer, approved, denied, pending, batchId, ctx } = input;
-    saveRmRequest({
-        ...request,
-        status: pending.length > 0 ? "pending" : "approved",
-        targets: pending.length > 0 ? request.targets.filter((target) => pending.includes(target)) : request.targets,
-        decidedAt: new Date().toISOString(),
-        decidedVia: answer.via,
-        decided: {
-            approved: [
-                ...new Set([...(request.decided?.approved ?? []), ...approved.map((entry) => entry.wanted.path)]),
-            ],
-            denied: [...new Set([...(request.decided?.denied ?? []), ...denied.map((entry) => entry.wanted.path)])],
-            disposal: request.kind === "delete" ? answer.choices.disposal : undefined,
-            remember: request.kind === "delete" ? answer.choices.remember : undefined,
-        },
-        // A second approval of the same request makes a second batch: both stay restorable, the newest is batchId.
-        batchId: batchId ?? request.batchId,
-        batchIds: batchId ? [...requestBatchIds(request), batchId] : request.batchIds,
-    });
-    appendRmLedger({ action: "approve", requestId: request.id, via: answer.via, caller: ctx.caller, batchId });
-}
-
-function exitPendingFor(id: string, pending: readonly RmRequestTarget[]): void {
-    if (pending.length === 0) {
-        return;
-    }
-
-    out.println(
-        pc.yellow(`Request ${id} stays pending for ${pending.length} blocked, changed or not put back path(s).`)
-    );
-    process.exitCode = 1;
 }
 
 interface RequestsFlags {
@@ -183,6 +128,408 @@ export async function underDecisionLock(
     }
 }
 
+/** A request's rows for the approval window, and the paths the rules refuse before any prompt. */
+interface PreparedApproval {
+    /** Paths the rules refuse now: they keep the request pending and the window does not show them. */
+    blocked: ApproveEntry[];
+    openEntries: ApproveEntry[];
+    denyOf: ApprovalDenyCheck;
+}
+
+/** The rows `request` offers a person and the paths refused before the prompt (printed unless `quiet`). */
+function prepareApproval(request: RmRequest, ctx: RunContext, quiet = false): PreparedApproval {
+    // An aside item is approved where it waits (its stored copy); the original path is what gets recorded.
+    const entries: ApproveEntry[] = request.targets.map((t) => ({
+        wanted: t,
+        target: resolveTarget(t.stored ?? t.path, request.cwd),
+    }));
+    // A root is trusted, not deleted: only the hard-deny rules apply to it, not the worktree ones.
+    const denyOf: ApprovalDenyCheck = request.kind === "root" ? hardDenyReason : approvalDenyReason;
+    const refused = entries
+        .map((entry) => ({ entry, denied: denyOf(entry.target, ctx.rules) }))
+        .filter((refusal) => refusal.denied !== null);
+
+    if (!quiet) {
+        for (const { entry, denied } of refused) {
+            out.println(pc.red(`refuse ${entry.wanted.path}: ${denied}`));
+        }
+    }
+
+    const blocked = refused.map((refusal) => refusal.entry);
+    return { blocked, openEntries: entries.filter((entry) => !blocked.includes(entry)), denyOf };
+}
+
+/** Why a batch approval leaves `request` out, or null: it takes only open delete requests a window can decide. */
+function leftOutReason(request: RmRequest | null, id: string): string | null {
+    const rm = toolCommand("rm");
+
+    if (!request) {
+        return "no such request";
+    }
+
+    if (request.status !== "pending") {
+        return `it is ${request.status}`;
+    }
+
+    if (request.kind === "root") {
+        return `a root request is approved on its own: ${rm} approve ${id}`;
+    }
+
+    if (requestLive(request).state === "gone") {
+        return `nothing is left to decide: ${rm} prune`;
+    }
+
+    const deniedBefore = new Set(request.decided?.denied ?? []);
+
+    if (request.targets.some((target) => deniedBefore.has(target.path) && !cameBack(target))) {
+        return `it has unfinished recovery: ${rm} deny ${id}`;
+    }
+
+    return null;
+}
+
+/** One stream of row updates for a window that shows the rows of several requests. */
+function mergeUpdates(sources: readonly ApprovalUpdates[]): ApprovalUpdates {
+    const merged = new ApprovalUpdates();
+    Promise.all(
+        sources.map(async (source) => {
+            for await (const update of source.read()) {
+                merged.push(update);
+            }
+        })
+    )
+        .catch((error: unknown) => logger.warn({ error }, "rm: merging the batch window's row updates failed"))
+        .finally(() => merged.close());
+    return merged;
+}
+
+/** A request of a batch approval and the rows the window shows for it. */
+interface BatchPart {
+    request: RmRequest;
+    rows: ApproveEntry[];
+}
+
+/** The person check and the background drain of a batch approval; tests replace them. */
+export interface BatchDeps {
+    ask: typeof requirePerson;
+    kickDrainer: (config: RunContext["config"]) => void;
+}
+
+/** The same path as a row key: an aside copy and an in-place path of one name are different objects. */
+function rowKey(target: RmRequestTarget): string {
+    return `${target.path}\u0000${target.stored ?? ""}`;
+}
+
+/**
+ * `tools rm approve <id> <id> ...`: one window and one person check for the rows of several requests. The set is
+ * fixed when every lock is held, so a request made while the window is open never rides along. An in-place path
+ * that two requests name is one row (the first request owns it; the shared-path settle decides the other).
+ */
+export async function approveMany(
+    ids: readonly string[],
+    ctx: RunContext,
+    deps: Partial<BatchDeps> = {}
+): Promise<void> {
+    const ask = deps.ask ?? requirePerson;
+    const releases: Array<() => void> = [];
+
+    try {
+        const parts: BatchPart[] = [];
+        const inPlaceOwner = new Map<string, string>();
+        const asidePaths = new Set<string>();
+
+        for (const id of [...new Set(ids)].sort()) {
+            const lock = lockRmRequest(id);
+
+            if (!lock.ok) {
+                const holder = lock.holder ? ` (pid ${lock.holder})` : "";
+                out.println(pc.yellow(`left out ${id}: it is open in an approval window${holder}`));
+                continue;
+            }
+
+            releases.push(lock.release);
+            const request = loadRmRequest(id);
+            const why = leftOutReason(request, id);
+
+            if (why || !request) {
+                out.println(pc.yellow(`left out ${id}: ${why ?? "no such request"}`));
+                continue;
+            }
+
+            const { openEntries } = prepareApproval(request, ctx);
+
+            // The window answers with paths, so two aside copies of one path cannot be told apart in it.
+            if (openEntries.some((entry) => entry.wanted.stored && asidePaths.has(entry.wanted.path))) {
+                out.println(pc.yellow(`left out ${id}: another request here has an aside copy of the same path`));
+                continue;
+            }
+
+            const rows = openEntries.filter((entry) => entry.wanted.stored || !inPlaceOwner.has(entry.wanted.path));
+
+            for (const { wanted } of rows) {
+                if (wanted.stored) {
+                    asidePaths.add(wanted.path);
+                } else {
+                    inPlaceOwner.set(wanted.path, id);
+                }
+            }
+
+            parts.push({ request, rows });
+        }
+
+        const shown = parts.filter((part) => part.rows.length > 0);
+
+        if (shown.length === 0) {
+            out.println(pc.red("Nothing to approve."));
+            process.exitCode = 1;
+            return;
+        }
+
+        const measuring = new AbortController();
+        const perPart = shown.map((part) => approvalRows(part.request, part.rows, { signal: measuring.signal }));
+        const items = perPart.flatMap((rows) => rows.items);
+        const sessions = new Set(shown.map((part) => part.request.caller?.sessionId ?? null));
+        const askedAt = shown.map((part) => part.request.createdAt).sort()[0];
+        const lines = shown.flatMap((part, index) => {
+            const caller = part.request.caller;
+            const who = caller?.sessionTitle ?? caller?.project ?? caller?.agent ?? "a person";
+            const sizes = (perPart[index]?.items ?? []).map((item) => item.bytes);
+            return [
+                `${part.request.id} · ${who} · ${part.rows.length} item(s)`,
+                ...approvalLines(part.request, part.rows, ctx, sizes).map((line) => `  ${line}`),
+            ];
+        });
+        out.println(pc.dim(`Opening the approval window for ${items.length} item(s) from ${shown.length} requests…`));
+        const answer = await ask(ctx, {
+            title: `Delete ${items.length} items from ${shown.length} requests?`,
+            lines,
+            code: reserveRmRequestId(),
+            request: {
+                id: null,
+                kind: "delete",
+                why: null,
+                cwd: ctx.cwd,
+                graceMinutes: RM_APPROVED_TRASH_MINUTES,
+                askedAt,
+                asker: sessions.size === 1 ? approvalAsker(shown[0]?.request.caller) : undefined,
+                items,
+            },
+            updates: mergeUpdates(perPart.map((rows) => rows.updates)),
+        }).finally(() => measuring.abort());
+
+        for (const part of shown) {
+            // An earlier request's approval may have decided a path of this one (the shared-path settle): read it
+            // again, and decide only the rows the window showed for it.
+            const fresh = loadRmRequest(part.request.id);
+
+            if (fresh?.status !== "pending") {
+                continue;
+            }
+
+            const again = prepareApproval(fresh, ctx, true);
+            const keys = new Set(part.rows.map((entry) => rowKey(entry.wanted)));
+            const openEntries = again.openEntries.filter((entry) => keys.has(rowKey(entry.wanted)));
+            const notShown = again.openEntries.filter((entry) => !keys.has(rowKey(entry.wanted)));
+            const paths = new Set(openEntries.map((entry) => entry.wanted.path));
+            const selected = answer.choices.selected?.filter((path) => paths.has(path)) ?? null;
+
+            if (openEntries.length === 0) {
+                continue;
+            }
+
+            applyApprovalAnswer({
+                ctx,
+                request: fresh,
+                openEntries,
+                blocked: [...again.blocked, ...notShown],
+                answer,
+                selected,
+                denyOf: again.denyOf,
+                kickDrainer: deps.kickDrainer,
+            });
+        }
+    } finally {
+        for (const release of releases) {
+            release();
+        }
+    }
+}
+
+/** The requests of this very session, which it may deny without a person (`mayDenyRmRequest` for an agent). */
+function ownSession(request: RmRequest, caller: RunContext["caller"]): boolean {
+    return (
+        caller.sessionId !== null &&
+        request.caller?.agent === caller.agent &&
+        request.caller?.sessionId === caller.sessionId
+    );
+}
+
+/**
+ * The picker's deny: the caller's own requests go at once, the other sessions' after ONE person check, and each deny
+ * records how the person answered (`touch-id`, `dialog`), so the asking agent reads it as the person's answer.
+ */
+async function denyPicked(ids: readonly string[], ctx: RunContext): Promise<void> {
+    const releases: Array<() => void> = [];
+
+    try {
+        const requests: RmRequest[] = [];
+
+        for (const id of [...new Set(ids)].sort()) {
+            const lock = lockRmRequest(id);
+
+            if (!lock.ok) {
+                out.println(pc.yellow(`left out ${id}: it is open in an approval window`));
+                continue;
+            }
+
+            releases.push(lock.release);
+            const request = loadRmRequest(id);
+
+            if (request?.status !== "pending") {
+                out.println(pc.yellow(`left out ${id}: ${request ? `it is ${request.status}` : "no such request"}`));
+                continue;
+            }
+
+            requests.push(request);
+        }
+
+        const own = requests.filter((request) => ownSession(request, ctx.caller));
+        const others = requests.filter((request) => !own.includes(request));
+
+        for (const request of own) {
+            const outcome = denyRequest(request, { caller: ctx.caller, via: "cli" });
+            printDenyOutcome(request.id, outcome, `Request ${request.id} denied.`);
+        }
+
+        if (others.length === 0) {
+            return;
+        }
+
+        let typed: string;
+
+        try {
+            typed = (await p.text({ message: "A note for the asking agent (optional, Enter for none)" })).trim();
+        } catch (error) {
+            logger.debug({ error }, "rm: the deny note was cancelled");
+            out.println("Nothing done.");
+            return;
+        }
+
+        const answer = await requirePerson(ctx, {
+            title: `Deny ${others.length} request(s) from other sessions?`,
+            lines: others.flatMap((request) => [
+                `${request.id} · ${request.caller?.sessionTitle ?? request.caller?.agent ?? "a person"}`,
+                ...request.targets.map((target) => `  ${target.path}`),
+            ]),
+            code: reserveRmRequestId(),
+        });
+
+        if (!answer.approved) {
+            return;
+        }
+
+        for (const request of others) {
+            const outcome = denyRequest(request, { caller: ctx.caller, via: answer.via, note: typed || null });
+            printDenyOutcome(request.id, outcome, `Request ${request.id} denied.`);
+        }
+    } finally {
+        for (const release of releases) {
+            release();
+        }
+    }
+}
+
+/** The picker's close: the ticked requests nothing is left of become `gone`, as prune closes them; nothing moves. */
+function closePicked(ids: readonly string[], ctx: RunContext): void {
+    const now = new Date();
+
+    for (const id of ids) {
+        const update = updateRmRequest(id, (fresh) =>
+            pruneReason(fresh, now) === "gone"
+                ? { ...fresh, status: "gone", decidedAt: now.toISOString(), decidedVia: "person" }
+                : null
+        );
+
+        if (update.kind === "saved") {
+            appendRmLedger({ action: "close", requestId: id, reason: "gone", caller: ctx.caller });
+            out.println(`closed ${pc.bold(id)}: gone`);
+        } else {
+            out.println(
+                pc.yellow(
+                    `left ${id}: ${update.kind === "busy" ? "open in an approval window" : "something is still there to decide"}`
+                )
+            );
+        }
+    }
+}
+
+type PickerAction = "approve" | "deny" | "close" | "cancel";
+
+const PICKER_ACTIONS: Record<
+    PickerAction,
+    { label: string; run: (ids: string[], ctx: RunContext) => Promise<void> | void }
+> = {
+    approve: { label: "Approve the ticked ones (one window)", run: (ids, ctx) => approveMany(ids, ctx) },
+    deny: { label: "Deny the ticked ones", run: denyPicked },
+    close: { label: "Close the ticked gone ones (nothing moves)", run: closePicked },
+    cancel: { label: "Cancel", run: () => out.println("Nothing done.") },
+};
+
+function isPickerAction(value: unknown): value is PickerAction {
+    return typeof value === "string" && value in PICKER_ACTIONS;
+}
+
+/** `tools rm approve` with no id, for a person at a terminal: tick requests, then pick what happens to them. */
+async function pickAndDecide(ctx: RunContext): Promise<void> {
+    const requests = listRmRequests();
+
+    if (requests.length === 0) {
+        out.println("No pending requests.");
+        return;
+    }
+
+    const now = new Date();
+    const views = buildRequestViews(requests, { sizeOf: listedSize }).sort(
+        (a, b) =>
+            (a.request.caller?.sessionId ?? "").localeCompare(b.request.caller?.sessionId ?? "") ||
+            a.request.createdAt.localeCompare(b.request.createdAt)
+    );
+    let ticked: string[];
+    let action: unknown;
+
+    try {
+        ticked = (
+            await p.multiselect({
+                message: "Which requests?",
+                options: views.map((view) => ({
+                    value: view.request.id,
+                    label: renderRequestRow(view, now),
+                    hint: `${(view.request.caller?.sessionId ?? "person").slice(0, 8)} ${view.request.caller?.sessionTitle ?? ""}`.trim(),
+                })),
+                required: false,
+            })
+        ).map(String);
+
+        if (ticked.length === 0) {
+            out.println("Nothing ticked.");
+            return;
+        }
+
+        action = await p.select({
+            message: `What happens to the ${ticked.length} ticked request(s)?`,
+            options: Object.entries(PICKER_ACTIONS).map(([value, { label }]) => ({ value, label })),
+        });
+    } catch (error) {
+        logger.debug({ error }, "rm: the request picker was cancelled");
+        out.println("Nothing done.");
+        return;
+    }
+
+    if (isPickerAction(action)) {
+        await PICKER_ACTIONS[action].run(ticked, ctx);
+    }
+}
+
 /** `tools rm approve <id>`: shows the request to a person and does what they picked; the caller holds its lock. */
 async function approveOne(id: string, ctx: RunContext): Promise<void> {
     const request = loadRmRequest(id);
@@ -213,21 +560,8 @@ async function approveOne(id: string, ctx: RunContext): Promise<void> {
         return;
     }
 
-    // An aside item is approved where it waits (its stored copy); the original path is what gets recorded.
-    const entries: ApproveEntry[] = request.targets.map((t) => ({
-        wanted: t,
-        target: resolveTarget(t.stored ?? t.path, request.cwd),
-    }));
-    // A root is trusted, not deleted: only the hard-deny rules apply to it, not the worktree ones.
-    const denyOf = request.kind === "root" ? hardDenyReason : approvalDenyReason;
-    const blocked = entries
-        .map((e) => ({ ...e, denied: denyOf(e.target, ctx.rules) }))
-        .filter((e) => e.denied !== null);
-    const openEntries = entries.filter((e) => !blocked.some((b) => b.wanted === e.wanted));
-
-    for (const entry of blocked) {
-        out.println(pc.red(`refuse ${entry.wanted.path}: ${entry.denied}`));
-    }
+    const prepared = prepareApproval(request, ctx);
+    const { openEntries } = prepared;
 
     if (openEntries.length === 0) {
         out.println(pc.red(`Nothing to approve in ${id}: every path was refused above.`));
@@ -258,75 +592,15 @@ async function approveOne(id: string, ctx: RunContext): Promise<void> {
         remember: rememberOptions(request.kind, request.caller),
         updates: rows.updates,
     }).finally(() => measuring.abort());
-
-    if (!answer.approved) {
-        if (answer.deniedByPerson) {
-            const outcome = denyRequest(request, {
-                caller: ctx.caller,
-                via: answer.via,
-                note: answer.choices.note,
-            });
-            printDenyOutcome(id, outcome, `Request ${id} denied.`);
-        }
-
-        return;
-    }
-
-    const { approved, denied } = splitBySelection(openEntries, answer.choices.selected);
-
-    if (approved.length === 0) {
-        const outcome = denyRequest(request, { caller: ctx.caller, via: answer.via, note: answer.choices.note });
-        printDenyOutcome(id, outcome, `Nothing was ticked: request ${id} denied.`);
-        return;
-    }
-
-    // The prompt can wait for minutes: each ticked path must still name what the person was shown, and still
-    // pass the rules no approval overrides. A changed one stays in the request, which stays pending for it, as
-    // do the paths refused before the prompt.
-    const pending: RmRequestTarget[] = blocked.map((entry) => entry.wanted);
-    const ready = approved.filter(({ wanted, target }) => {
-        const reason = recheckAfterWait(target, ctx.rules, denyOf);
-
-        if (reason) {
-            out.println(pc.red(`refuse ${wanted.path}: ${reason}`));
-            pending.push(wanted);
-        }
-
-        return reason === null;
-    });
-
-    if (ready.length === 0) {
-        process.exitCode = 1;
-        return;
-    }
-
-    if (request.kind === "root") {
-        approveRoots(ctx, request, ready, answer.via);
-        saveApproved({ request, answer, approved: ready, denied, pending, ctx });
-        exitPendingFor(id, pending);
-        return;
-    }
-
-    const { batch, back } = approveDelete({
+    applyApprovalAnswer({
         ctx,
         request,
-        approved: ready,
-        denied,
-        choices: answer.choices,
-        onRefused: (entry) => pending.push(entry.wanted),
-        sizes: savedSizes(request, ready),
+        openEntries,
+        blocked: prepared.blocked,
+        answer,
+        selected: answer.choices.selected,
+        denyOf: prepared.denyOf,
     });
-    const moved = ready.filter((entry) => !pending.includes(entry.wanted));
-    // An unticked aside copy that could not go home stays pending, so its aside folder stays guarded.
-    pending.push(
-        ...stillAside(
-            denied.map((entry) => entry.wanted),
-            back
-        )
-    );
-    saveApproved({ request, answer, approved: moved, denied, pending, batchId: batch?.id, ctx });
-    kickDrainer(ctx.config);
-    exitPendingFor(id, pending);
 }
 
 /** `tools rm deny <id>`: closes a request and puts its aside copies back; the caller holds its lock. */
@@ -368,31 +642,6 @@ function denyOne(id: string, ctx: RunContext): void {
     const outcome = denyRequest(request, { caller: ctx.caller, via: "cli" });
     printDenyOutcome(id, outcome, `Request ${id} closed.`);
     process.exitCode = outcome.waiting.length > 0 ? 1 : 0;
-}
-
-/** Prints what a deny did: the copies that were already gone, then the closed line, or that some copies still wait. */
-function printDenyOutcome(id: string, outcome: DenyOutcome, closedLine: string): void {
-    if (outcome.lost.length > 0) {
-        const paths = outcome.lost.map((target) => target.path).join(", ");
-        out.println(pc.yellow(`${outcome.lost.length} set-aside copy(ies) were already gone: ${paths}`));
-    }
-
-    if (outcome.waiting.length > 0) {
-        out.println(`Request ${id} still needs recovery.`);
-
-        if (outcome.waiting.some(cameBack)) {
-            out.println(
-                pc.dim(
-                    `  the path is back; ${toolCommand("rm")} approve ${id} deletes the set-aside copy, or move the copy yourself`
-                )
-            );
-        }
-
-        process.exitCode = 1;
-        return;
-    }
-
-    out.println(closedLine);
 }
 
 export function registerRequestCommands(program: Command): void {
@@ -488,16 +737,45 @@ export function registerRequestCommands(program: Command): void {
         .description(
             "confirm an agent's request (a person only: Touch ID through GenesisTools.app, a typed code, or a macOS dialog)"
         )
-        .argument("<id>", "the request id")
-        .action(async (id: string) => {
+        .argument("[ids...]", "request ids: one window for all of them; none: a picker on a terminal")
+        .option("--session <id>", "also every pending request of this session (an id or its prefix)")
+        .option("--older <duration>", "also every pending request older than 30m, 2h, 1d, ...", minutesOption)
+        .action(async (ids: string[], flags: { session?: string; older?: number }) => {
             const ctx = runContext();
             recoverAsideJournals();
-            await underDecisionLock(
-                id,
-                (holder) =>
-                    `Request ${id} is open in an approval window${holder ? ` (pid ${holder})` : ""}. Answer that window.`,
-                () => approveOne(id, ctx)
-            );
+            const filtered = flags.session !== undefined || flags.older !== undefined;
+            const matched = filtered ? pickRequests({ session: flags.session, older: flags.older }, new Date()) : [];
+            const chosen = [...new Set([...ids, ...matched.map((request) => request.id)])];
+            const [only] = chosen;
+
+            if (chosen.length === 1 && only) {
+                await underDecisionLock(
+                    only,
+                    (holder) =>
+                        `Request ${only} is open in an approval window${holder ? ` (pid ${holder})` : ""}. Answer that window.`,
+                    () => approveOne(only, ctx)
+                );
+                return;
+            }
+
+            if (chosen.length > 1) {
+                await approveMany(chosen, ctx);
+                return;
+            }
+
+            if (filtered) {
+                out.println("No pending request matches.");
+                process.exitCode = 1;
+                return;
+            }
+
+            if (isInteractive() && !ctx.caller.isInAgent) {
+                await pickAndDecide(ctx);
+                return;
+            }
+
+            out.println(`Name the request ids, or run ${toolCommand("rm")} approve in a terminal for the picker.`);
+            process.exitCode = 1;
         });
 
     program
