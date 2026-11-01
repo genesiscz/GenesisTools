@@ -64,6 +64,7 @@ import { shortRmPath } from "./display";
 import { notifyNewRequest, type RequestNotice } from "./notify";
 import { buildRequestViews, renderRequestDetail, renderRequestList } from "./requests-view";
 import { type ExecuteDeps, executePlan, type PersonAnswer, printRequestHint, type RunContext } from "./run";
+import { batchSuffix, renderTrash, resolveBatchSuffix } from "./trash-view";
 
 const AGENT: RmCaller = { agent: "claude-code", sessionId: "sess-2222", isInAgent: true };
 const PERSON: RmCaller = { agent: "person", sessionId: null, isInAgent: false };
@@ -1566,5 +1567,74 @@ describe("the request hint an agent reads", () => {
         expect(last).toContain("Do not run approve yourself.");
         expect(last).toContain(`! ${toolCommand("rm")} approve k7m2qd`);
         expect(last).toContain(`${toolCommand("rm")} deny k7m2qd`);
+    });
+});
+
+describe("the trash view", () => {
+    const now = new Date("2026-11-01T14:32:00.000Z");
+    const minutes = (n: number) => new Date(now.getTime() + n * 60_000).toISOString();
+    const caller = {
+        agent: "claude-code",
+        sessionId: "aaaaaaaa-1111-4111-8111-111111111111",
+        isInAgent: true,
+        sessionTitle: "shop cleanup",
+    };
+    const batches = [
+        {
+            id: "20261101-153000-111-fc7b",
+            createdAt: minutes(-30),
+            drainAfter: minutes(26),
+            caller,
+            items: [
+                {
+                    original: "/work/shop/node_modules",
+                    stored: "/t/1",
+                    kind: "dir" as const,
+                    rule: "preset",
+                    bytes: 3 * 1024 * 1024,
+                },
+                {
+                    original: "/work/shop/dist",
+                    stored: "/t/2",
+                    kind: "dir" as const,
+                    rule: "preset",
+                    bytes: 1024 * 1024,
+                },
+            ],
+        },
+        {
+            id: "20261101-153500-222-a1c3",
+            createdAt: minutes(-5),
+            drainAfter: minutes(55),
+            caller: null,
+            items: [{ original: "/work/shop/.cache", stored: "/t/3", kind: "dir" as const, rule: "preset" }],
+            incomplete: true as const,
+        },
+    ];
+
+    test("prints the totals and next drain, one row per batch, and the undo and drain commands", () => {
+        const lines = renderTrash(batches, { now }).map(stripAnsi);
+
+        expect(lines[0]).toMatch(/^rm trash {2}2 batches · 3 items · 4\.0 MB · next drain \d\d:\d\d \(in 26 min\)$/);
+        expect(lines[1]).toMatch(
+            /^ {2}fc7b {2}\d\d:\d\d \(in 26 min\)\s+4\.0 MB {2}aaaaaaaa shop cleanup {2}2 items {2}\/work\/shop\/node_modules \+1$/
+        );
+        expect(lines[2]).toMatch(/^ {2}a1c3 {2}● incomplete: restore it\s+- {2}-\s+1 item {2}\/work\/shop\/\.cache$/);
+        expect(lines.at(-1)).toBe(
+            `Undo: ${toolCommand("rm")} restore <batch>   Drain now (a person): ${toolCommand("rm")} drain --now`
+        );
+        expect(renderTrash([], { now })).toEqual(["The trash is empty."]);
+    });
+
+    test("a batch id tail restores exactly one batch, and an ambiguous or short one is refused", () => {
+        const ids = ["20261101-153000-111-fc7b", "20261101-160000-333-0fc7b", "20261101-153500-222-a1c3"];
+
+        expect(batchSuffix(ids[2], ids)).toBe("a1c3");
+        expect(batchSuffix(ids[0], ids)).toBe("-fc7b");
+        expect(resolveBatchSuffix("a1c3", ids)).toEqual({ id: ids[2] });
+        expect(resolveBatchSuffix(ids[0], ids)).toEqual({ id: ids[0] });
+        expect(resolveBatchSuffix("fc7b", ids)).toEqual({ ambiguous: [ids[0], ids[1]] });
+        expect(resolveBatchSuffix("c3", ids)).toBeNull();
+        expect(resolveBatchSuffix("zzzz", ids)).toBeNull();
     });
 });

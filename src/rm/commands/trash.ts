@@ -16,26 +16,35 @@ import {
 import type { Command } from "commander";
 import pc from "picocolors";
 import { runContext } from "../lib/run";
-
-function dueIn(drainAfter: string): string {
-    const minutes = Math.ceil((Date.parse(drainAfter) - Date.now()) / 60_000);
-    return minutes <= 0 ? "due now" : `in ${minutes} min`;
-}
+import { renderTrash, resolveBatchSuffix } from "../lib/trash-view";
 
 /**
  * The batches `id` names: a batch id as given, or every batch the approvals of request `id` made that is still in
  * the trash, oldest first (the window prints the request id before the batch exists). With none left, the newest
  * one, so the restore says why.
  */
-function restoreTargets(id: string): string[] {
-    const inTrash = new Set(listBatches().map((batch) => batch.id));
+function restoreTargets(id: string): string[] | { ambiguous: string[] } {
+    const ids = listBatches().map((batch) => batch.id);
+    const inTrash = new Set(ids);
 
     if (inTrash.has(id)) {
         return [id];
     }
 
     const request = loadRmRequest(id);
-    const made = request ? requestBatchIds(request) : [];
+
+    if (!request) {
+        // A tail of a batch id as `tools rm trash` prints it (`fc7b`); an ambiguous one names no batch.
+        const match = resolveBatchSuffix(id, ids);
+
+        if (match && "ambiguous" in match) {
+            return match;
+        }
+
+        return [match?.id ?? id];
+    }
+
+    const made = requestBatchIds(request);
     const left = made.filter((batchId) => inTrash.has(batchId));
     return left.length > 0 ? left : [made.at(-1) ?? id];
 }
@@ -60,32 +69,34 @@ export function registerTrashCommands(program: Command): void {
                 return;
             }
 
-            if (rows.length === 0) {
-                out.println("The trash is empty.");
-                return;
-            }
+            const measured = new Map(rows.flatMap((row) => (row.bytes === null ? [] : [[row.id, row.bytes] as const])));
 
-            for (const batch of rows) {
-                const size = batch.bytes === null ? "" : ` ${formatBytes(batch.bytes)}`;
-                const drain = batch.incomplete
-                    ? pc.yellow("incomplete: its run stopped; never drained, restore it")
-                    : pc.dim(`drain ${dueIn(batch.drainAfter)}`);
-                out.println(`${pc.bold(batch.id)} ${batch.items.length} item(s)${size} ${drain}`);
-
-                for (const item of batch.items) {
-                    out.println(pc.dim(`  ${item.original}`));
-                }
+            for (const line of renderTrash(batches, { now: new Date(), measured })) {
+                out.println(line);
             }
         });
 
     program
         .command("restore")
         .description("move a batch (or some of its paths) back where it was")
-        .argument("<batch>", `the batch id (${toolCommand("rm")} trash lists them), or the id of the approved request`)
+        .argument(
+            "<batch>",
+            `the batch id or its tail as ${toolCommand("rm")} trash prints it (fc7b), or the id of the approved request`
+        )
         .argument("[paths...]", "only these original paths")
         .action((id: string, paths: string[]) => {
             const ctx = runContext();
             const batchIds = restoreTargets(id);
+
+            if (!Array.isArray(batchIds)) {
+                out.println(
+                    pc.red(`${id} matches ${batchIds.ambiguous.length} batches: ${batchIds.ambiguous.join(", ")}`)
+                );
+                out.println(pc.dim("Type more of the id, or the whole id."));
+                process.exitCode = 1;
+                return;
+            }
+
             let skipped = 0;
 
             for (const batchId of batchIds) {
