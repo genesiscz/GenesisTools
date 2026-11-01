@@ -5,6 +5,7 @@ import { isTurnProvider } from "@genesiscz/utils/ai/transcripts/turn-state";
 import type { Command } from "commander";
 import { registerProviderUsageCommand } from "../usage/provider-usage";
 import { registerAgentCmuxCommand } from "./cmux";
+import { registerEmbedCommand } from "./embed";
 import { agentWhoSource } from "./launch";
 import { registerAgentMessageCommand } from "./message";
 import { registerAgentResumeCommand, registerAgentRunCommand } from "./run";
@@ -38,6 +39,8 @@ export function registerAgentTool(program: Command, spec: AgentToolSpec): void {
     shared("run", () => {
         registerAgentRunCommand(program, spec);
     });
+
+    registerEmbedCommand(program, spec.alias);
     shared("resume", () => {
         registerAgentResumeCommand(program, spec);
     });

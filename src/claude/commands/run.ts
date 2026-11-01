@@ -3,7 +3,9 @@ import { loadConfigFresh } from "@app/ai-proxy/lib/config";
 import { runAiProxyUp } from "@app/ai-proxy/lib/lifecycle";
 import { REASONING_EFFORT_SUFFIXES } from "@app/ai-proxy/lib/resolve-model";
 import type { AiProxyConfig, ProxyModelMeta } from "@app/ai-proxy/lib/types";
+import { runClaudeBinaryDirect, steerModeFromEnv } from "@app/claude/lib/direct-run";
 import { ensureOnboardingSkippedForOAuthToken } from "@app/claude/lib/launch-env";
+import { resolveClaudeBinaryForTeammates } from "@app/claude/lib/teammate-wrapper";
 import * as p from "@clack/prompts";
 import { findClaudeCommand } from "@genesiscz/utils/claude";
 import { isInteractive, suggestCommand } from "@genesiscz/utils/cli";
@@ -19,6 +21,11 @@ interface RunOptions {
     effort?: string;
     list?: boolean;
     start?: boolean;
+    /**
+     * For an app that embeds Claude Code (`tools claude embed proxy:<target>`): run the real binary with no shell, so
+     * the user's `ccc` wrapper cannot add --dangerously-skip-permissions over the app's permission mode.
+     */
+    sdk?: boolean;
 }
 
 /** What the proxy's `:<effort>` suffix accepts — the proxy's own list, so the two cannot drift. */
@@ -353,6 +360,16 @@ export async function runProxySession(
         pc.dim(`Starting Claude Code on ${pc.magenta(model.proxyId)} (${effortNote}${ctxNote}) via ${baseUrl}...`)
     );
     logger.info({ model: model.proxyId, baseUrl, passthrough }, "[run] spawning claude against ai-proxy");
+
+    if (opts.sdk) {
+        process.exit(
+            await runClaudeBinaryDirect({
+                argv: [resolveClaudeBinaryForTeammates(), ...passthrough],
+                env: launchEnv,
+                steer: steerModeFromEnv(),
+            })
+        );
+    }
 
     process.exit(await spawnClaude(passthrough, launchEnv));
 }
