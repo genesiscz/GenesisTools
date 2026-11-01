@@ -3,6 +3,7 @@
 
 import { isAbsolute } from "node:path";
 import { toolCommand } from "@genesiscz/utils/cli/tool-command";
+import { scratchRootNames } from "@genesiscz/utils/rm/scratch-dirs";
 import { SHELL_RULES, type ShellMatch, type ShellRule } from "@genesiscz/utils/shell/rules";
 import {
     commandTokenIndex,
@@ -122,8 +123,8 @@ export const rmUseToolsRm: ShellRule = {
 
 /** A full session id as the harnesses write it: a UUID. */
 const SESSION_UUID = /^[0-9a-f]{8}-[0-9a-f]{4}-[0-9a-f]{4}-[0-9a-f]{4}-[0-9a-f]{12}$/i;
-/** The agent scratch roots directly in /tmp (`AGENT_SCRATCH_DIRS` in src/utils/rm/aside.ts): never loose themselves. */
-const SCRATCH_ROOT_NAMES = new Set(["cc", "codex", "grok", "copilot", "agents"]);
+/** The agent scratch roots directly in /tmp: never loose themselves. */
+const SCRATCH_ROOT_NAMES = scratchRootNames();
 const TEMP_CHILD = /^(?:\/private)?\/tmp\/([^/]+)\/?$|^\$\{?TMPDIR\}?\/([^/]+)\/?$/;
 const CC_SCRATCH = /^(?:\/private)?\/tmp\/cc\/[^/]+\/([^/]+)/;
 const REDIRECT = /^(?:\d|&)?>>?\|?/;
