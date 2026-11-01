@@ -56,7 +56,7 @@ and ctime, so a same-length copy renamed over it with the old mtime is not taken
 | Data | Policy | Reader |
 |---|---|---|
 | `~/.genesis-tools/logs/<date>.log`, `<date>-profiling.log`, `<date>-failures.jsonl` | daily pass: older than yesterday become `.zst` | `tools daemon stats` (keeps finished days), `tools genesis-tools logs`, `tools jev sessions`, `{{tail}}`, `{{lines}}`, `poll-duty.ts`, `tools compress cat`, `rg -z` |
-| `~/.genesis-tools/ai-proxy/transcripts/<UTC day>/<session>.jsonl` | daily pass: older than yesterday (UTC) become `.zst` | `tools ai-proxy calls --show` |
+| `~/.genesis-tools/ai-proxy/transcripts/<UTC day>/<session>.jsonl` | daily pass: older than today (UTC) become `.zst`, once a file had no write for 2 hours (a realtime session that writes its start day past UTC midnight stays plain until it goes quiet) | `tools ai-proxy calls --show` |
 | `~/.genesis-tools/codex/migrate-home/<stamp>/` | after each applied run: newest 2 runs of the last 14 days stay folders, the rest `<stamp>.zst` | restore: `tools compress unpack` |
 | `~/.genesis-tools/app/retired.noindex/<ms>/` | after each build: newest 2 and every running bundle stay folders, idle ones `<ms>.zst`, at most 5 and 14 days | restore: `tools compress unpack` |
 
