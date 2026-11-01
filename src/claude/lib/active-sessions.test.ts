@@ -84,14 +84,24 @@ describe("classifyClaudeArgs", () => {
     test("a gt-claude line that names the CLI package stays the wrapper", () => {
         expect(
             classifyClaudeArgs("/Users/x/.genesis-tools/bin/gt-claude /x/node_modules/@anthropic-ai/claude-code/cli.js")
-        ).toBe("sdk");
+        ).toBe("launcher");
     });
 
-    test("gt-claude wrapper is an sdk session", () => {
-        expect(classifyClaudeArgs("/Users/x/.genesis-tools/bin/gt-claude --preload /x/y.ts")).toBe("sdk");
+    test("gt-claude wrapper is a launcher", () => {
+        expect(classifyClaudeArgs("/Users/x/.genesis-tools/bin/gt-claude --preload /x/y.ts")).toBe("launcher");
         expect(
             classifyClaudeArgs("/Users/x/.genesis-tools/bin/gt-claude /x/src/claude/index.ts start work -- --resume a1")
+        ).toBe("launcher");
+    });
+
+    test("a claude an app drives over stream-json stdin is sdk", () => {
+        expect(
+            classifyClaudeArgs(
+                "/Users/x/.bun/bin/claude --output-format stream-json --verbose --input-format stream-json --model m"
+            )
         ).toBe("sdk");
+        expect(classifyClaudeArgs("/Users/x/.bun/bin/claude --input-format=stream-json")).toBe("sdk");
+        expect(classifyClaudeArgs("/Users/x/.bun/bin/claude -p --output-format stream-json")).toBe("tui");
     });
 
     test("gt-claude running the stdio mcp server is an mcp helper", () => {
@@ -136,6 +146,13 @@ describe("extractLaunchDetails", () => {
             model: null,
         });
         expect(extractLaunchDetails("/bin/claude --resume").resumeId).toBeNull();
+    });
+
+    test("--session-id names the session a new launch creates", () => {
+        expect(extractLaunchDetails("/bin/claude --input-format stream-json --session-id=abc-123").resumeId).toBe(
+            "abc-123"
+        );
+        expect(extractLaunchDetails("/bin/claude --session-id abc-456 --model m").resumeId).toBe("abc-456");
     });
 });
 
@@ -489,23 +506,31 @@ describe("assignSessionIds with hook hints", () => {
 });
 
 describe("isHelperChild", () => {
-    const tui = { kind: "tui" as const, tty: "ttys020" };
+    const tui = { pid: 20, ppid: 1, kind: "tui" as const, tty: "ttys020" };
 
-    test("an SDK launcher sharing a TUI's tty is a helper", () => {
-        expect(isHelperChild({ kind: "sdk", tty: "ttys020" }, [tui])).toBe(true);
+    test("a launcher sharing a TUI's tty is a helper", () => {
+        expect(isHelperChild({ pid: 10, kind: "launcher", tty: "ttys020" }, [tui])).toBe(true);
+    });
+
+    test("a launcher whose claude child is listed is a helper, with no tty (T3 Code)", () => {
+        const child = { pid: 31, ppid: 30, kind: "sdk", tty: "??" };
+
+        expect(isHelperChild({ pid: 30, kind: "launcher", tty: "??" }, [child])).toBe(true);
+        expect(isHelperChild(child, [child])).toBe(false);
     });
 
     test("an mcp server is a helper even with no tty (Grok/Cursor host)", () => {
-        expect(isHelperChild({ kind: "mcp", tty: "??" }, [tui])).toBe(true);
-        expect(isHelperChild({ kind: "mcp", tty: "ttys020" }, [tui])).toBe(true);
+        expect(isHelperChild({ pid: 10, kind: "mcp", tty: "??" }, [tui])).toBe(true);
+        expect(isHelperChild({ pid: 10, kind: "mcp", tty: "ttys020" }, [tui])).toBe(true);
     });
 
-    test("a headless agent with no tty is a real session", () => {
-        expect(isHelperChild({ kind: "sdk", tty: "??" }, [tui])).toBe(false);
+    test("a launcher with no child and no TUI on its tty is a real session", () => {
+        expect(isHelperChild({ pid: 10, kind: "launcher", tty: "??" }, [tui])).toBe(false);
+        expect(isHelperChild({ pid: 10, kind: "launcher", tty: "ttys099" }, [tui])).toBe(false);
     });
 
-    test("an SDK session alone on its tty is a real session", () => {
-        expect(isHelperChild({ kind: "sdk", tty: "ttys099" }, [tui])).toBe(false);
+    test("an sdk session sharing a TUI's tty is still a session", () => {
+        expect(isHelperChild({ pid: 40, kind: "sdk", tty: "ttys020" }, [tui])).toBe(false);
     });
 
     test("a TUI is never a helper", () => {
@@ -560,6 +585,7 @@ describe("Claude who JSON contract", () => {
         kind: "tui",
         account: "work",
         proxyTarget: null,
+        host: null,
         cwd: "/repo/fixture",
     };
 
@@ -608,6 +634,7 @@ describe("Claude who JSON contract", () => {
                     kind: "tui",
                     account: "work",
                     proxyTarget: null,
+                    host: null,
                     cwd: row.cwd,
                     resumeId: sessionId,
                     model: null,
@@ -653,6 +680,7 @@ describe("running session resume selection", () => {
             kind: "tui",
             account: "work",
             proxyTarget: null,
+            host: null,
             cwd: "/repo/fixture",
         };
         const scan = spyOn(processScan, "listActiveAgentProcesses").mockResolvedValue([
@@ -739,6 +767,7 @@ describe("running sessions the resume picker may focus", () => {
             kind: "tui",
             account: "work",
             proxyTarget: null,
+            host: null,
             cwd: "/repo/fixture",
         };
         const scan = spyOn(processScan, "listActiveAgentProcesses").mockResolvedValue([
@@ -805,6 +834,7 @@ describe("helper processes cannot claim live sessions", () => {
                 kind: "tui",
                 account: "work",
                 proxyTarget: null,
+                host: null,
                 cwd: "/repo/fixture",
             };
             const scan = spyOn(processScan, "listActiveAgentProcesses").mockResolvedValue([
@@ -938,6 +968,7 @@ describe("bounded adapter catalogs cannot prove cwd uniqueness", () => {
                         kind: "tui",
                         account: "work",
                         proxyTarget: null,
+                        host: null,
                         cwd,
                     },
                 ]);

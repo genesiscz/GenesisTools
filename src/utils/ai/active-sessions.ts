@@ -40,7 +40,9 @@ export interface AgentWhoSource {
     classify(args: string): string | null;
     /** Kinds that are machinery rather than billable sessions; hidden unless `--all`. */
     helperKinds?: readonly string[];
-    /** A helper decided from the whole table (Claude: an SDK launcher sharing a TUI's tty). */
+    /** Kinds that each hold one session, for the "open twice" count. Default: `tui` only. */
+    sessionKinds?: readonly string[];
+    /** A helper decided from the whole table (Claude: a launcher whose claude child is listed). */
     isHelper?(process: Omit<ActiveAgentProcess, "args">, all: readonly Omit<ActiveAgentProcess, "args">[]): boolean;
     /** The session id the process names on its own argv (`--resume <id>`, `-r <id>`, `resume <id>`), or null. */
     resumeIdFromArgs?(args: string): string | null;
@@ -380,10 +382,11 @@ export async function listActiveAgentSessions(
         active.filter((session) => session.active !== false),
         cmux.hints
     );
-    // Only TUI processes count: a helper shares its parent's tty, and counting it would report
+    // Only session-holding processes count: a helper shares its parent's tty, and counting it would report
     // every ordinary session as "open twice".
+    const sessionKinds = new Set(source.sessionKinds ?? ["tui"]);
     const instances = countSessionInstances(
-        procs.filter((proc) => proc.kind === "tui").map((proc) => assignments.get(proc.pid)?.sessionId ?? null)
+        procs.filter((proc) => sessionKinds.has(proc.kind)).map((proc) => assignments.get(proc.pid)?.sessionId ?? null)
     );
 
     // Only resolved sessions get a tail read: an unresolved pid has no single transcript to quote,
@@ -426,6 +429,7 @@ export async function listActiveAgentSessions(
             account: proc.account,
             proxyTarget: proc.proxyTarget,
             cwd: proc.cwd,
+            host: proc.host,
             resumeId: proc.resumeId,
             model: proc.model,
             sessionId: assignment.sessionId,
