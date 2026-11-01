@@ -1,4 +1,10 @@
-import type { AccountUsageSnapshot, LimitWindow } from "@genesiscz/utils/ai/providers/account-features";
+import {
+    type AbsentLimit,
+    type AccountUsageSnapshot,
+    absentLimitKindLabel,
+    absentLimitText,
+    type LimitWindow,
+} from "@genesiscz/utils/ai/providers/account-features";
 import { planRenewalWarning } from "@genesiscz/utils/ai/providers/plugins/anthropic-sub/subscription";
 import { formatBlockedNotice, formatNeedsLoginNotice } from "@genesiscz/utils/ai/usage-poll/format-blocked";
 import { formatMoney, percentOf } from "@genesiscz/utils/ai/usage-poll/format-money";
@@ -53,6 +59,15 @@ export function orderWindows(limits: readonly LimitWindow[], prominent?: string[
     }
 
     return out;
+}
+
+/**
+ * Windows the provider says this account does not have, as rows: the prominent ones, or all of them when
+ * every window shows. Each is one dim "no limit" line, never a 0 % bar.
+ */
+export function absentRows(snapshot: Pick<AccountUsageSnapshot, "absentLimits">, prominent?: string[]): AbsentLimit[] {
+    const absent = snapshot.absentLimits ?? [];
+    return !prominent || prominent.length === 0 ? absent : absent.filter((limit) => prominent.includes(limit.key));
 }
 
 /**
@@ -154,7 +169,13 @@ export function GenericAccountSection({
                     </Box>
                 );
             })}
-            {windows.length === 0 && !snapshot.error ? (
+            {absentRows(snapshot, prominent).map((limit) => (
+                <Box key={`absent:${limit.key}`}>
+                    <Text dimColor>{absentLimitKindLabel(limit).padEnd(LABEL_WIDTH)}</Text>
+                    <Text dimColor>{`— ${absentLimitText(limit)}`}</Text>
+                </Box>
+            ))}
+            {windows.length === 0 && absentRows(snapshot, prominent).length === 0 && !snapshot.error ? (
                 <Box>
                     <Text dimColor>{"  no limit windows reported"}</Text>
                 </Box>

@@ -3,7 +3,7 @@ import { APICallError, RetryError } from "ai";
 import { byId } from "../catalog";
 import { AiConfigStore } from "../config/AiConfigStore";
 import type { AccountEntry } from "../config/schema";
-import type { AccountUsageSnapshot, LimitWindow } from "../providers/account-features";
+import { type AccountUsageSnapshot, absentLimitText, type LimitWindow } from "../providers/account-features";
 import { pollAccounts } from "../usage-poll/poll";
 import { ModelResolutionError, resolveModelTarget } from "./resolve";
 import { isUnlisted, type ResolvedBinding, type ResolvedTarget, type ResolveOptions } from "./types";
@@ -81,6 +81,8 @@ export function rankAutoAccounts(
             return { index, tier: 1 as Tier, candidate: { target, why: "no usage data" } satisfies AutoCandidate };
         }
 
+        const snapshot = byAccount.get(target.account.id);
+        const absent = (snapshot?.absentLimits ?? []).map(absentLimitText);
         const usedPct = Math.max(...windows.map((window) => window.percentUsed));
         const weekly = windows.filter((window) => window.kind === "weekly" || window.kind === "scoped");
         const weeklyLeftPct = 100 - Math.max(0, ...weekly.map((window) => window.percentUsed));
@@ -89,7 +91,11 @@ export function rankAutoAccounts(
         return {
             index,
             tier,
-            candidate: { target, usedPct, why: `${describe(windows)} used${note}` } satisfies AutoCandidate,
+            candidate: {
+                target,
+                usedPct,
+                why: `${describe(windows)} used${note}${absent.length > 0 ? `, ${absent.join(", ")}` : ""}`,
+            } satisfies AutoCandidate,
         };
     });
 

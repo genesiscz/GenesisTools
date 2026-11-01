@@ -1,4 +1,8 @@
-import type { AccountUsageSnapshot } from "@genesiscz/utils/ai/providers/account-features";
+import {
+    type AccountUsageSnapshot,
+    absentLimitText,
+    hasAbsentLimit,
+} from "@genesiscz/utils/ai/providers/account-features";
 import { readSnapshotsCache, type SnapshotsCache } from "@genesiscz/utils/ai/usage-poll/legacy-cache";
 import { toolCommand } from "@genesiscz/utils/cli/tool-command";
 import { formatDuration } from "@genesiscz/utils/format";
@@ -13,6 +17,8 @@ export interface AccountBudget {
     name: string;
     fiveHourLeft: number | null;
     fiveHourResetsAt: string | null;
+    /** The account has no 5-hour limit: `fiveHourLeft` is null, and the 5h column shows a dash, not `?`. */
+    fiveHourAbsent: boolean;
     weeklyLeft: number | null;
     weeklyResetsAt: string | null;
     /** Why the numbers are missing or old. */
@@ -50,6 +56,7 @@ export function budgetsFromSnapshots(
             name: account.name,
             fiveHourLeft: session ? left(session.percentUsed) : null,
             fiveHourResetsAt: session?.resetsAt ?? null,
+            fiveHourAbsent: hasAbsentLimit(snapshot, { kind: "session" }),
             weeklyLeft: weekly ? left(weekly.percentUsed) : null,
             weeklyResetsAt: weekly?.resetsAt ?? null,
             note: !snapshot
@@ -63,7 +70,13 @@ export function budgetsFromSnapshots(
     });
 }
 
-function windowLeft(percentLeft: number | null, resetsAt: string | null, now: number): string {
+const NO_SESSION_LIMIT = absentLimitText({ kind: "session" });
+
+function windowLeft(percentLeft: number | null, resetsAt: string | null, now: number, absent = false): string {
+    if (absent) {
+        return "—";
+    }
+
     if (percentLeft === null) {
         return "?";
     }
@@ -84,7 +97,7 @@ export function accountChoiceMessage(input: {
     const table = formatTable(
         input.budgets.map((budget) => [
             budget.name,
-            windowLeft(budget.fiveHourLeft, budget.fiveHourResetsAt, now),
+            windowLeft(budget.fiveHourLeft, budget.fiveHourResetsAt, now, budget.fiveHourAbsent),
             windowLeft(budget.weeklyLeft, budget.weeklyResetsAt, now),
             budget.note ?? "",
         ]),
@@ -93,11 +106,16 @@ export function accountChoiceMessage(input: {
         { maxColWidth: 120 }
     );
     const rows = input.budgets.length > 0 ? table.split("\n").map((line) => `  ${line.trimEnd()}`) : [];
+    // "—" alone would read as missing data; "?" already means that.
+    const legend = input.budgets.some((budget) => budget.fiveHourAbsent)
+        ? [`  — in 5h: ${NO_SESSION_LIMIT} on this account (no 5-hour window to run out; the weekly one decides)`]
+        : [];
 
     return [
         `--account is required: ${toolCommand("cmux agents new")} never picks a ${input.agent} account by itself.`,
         input.budgets.length > 0 ? `${input.agent} accounts:` : `no enabled ${input.agent} account.`,
         ...rows,
+        ...legend,
         "",
         "AGENT INSTRUCTION: do not choose silently. Either ask the user which account to use, or pick the",
         "account with the most headroom AND tell the user in your reply which one you picked and why.",

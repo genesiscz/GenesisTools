@@ -1,8 +1,10 @@
 import { AiConfigStore } from "@genesiscz/utils/ai/config/AiConfigStore";
-import type {
-    AccountIdentity,
-    AccountUsageSnapshot,
-    DiscoveredHome,
+import {
+    type AccountIdentity,
+    type AccountUsageSnapshot,
+    absentLimitKindLabel,
+    absentLimitText,
+    type DiscoveredHome,
 } from "@genesiscz/utils/ai/providers/account-features";
 import { providerAliasOf } from "@genesiscz/utils/ai/providers/aliases";
 import { registerBuiltInPlugins } from "@genesiscz/utils/ai/providers/plugins";
@@ -163,5 +165,9 @@ function renderUsage(snapshot: AccountUsageSnapshot | null): void {
 
     for (const window of snapshot.limits) {
         renderCliKeyRow(window.label, formatLimitLine(window));
+    }
+
+    for (const limit of snapshot.absentLimits ?? []) {
+        renderCliKeyRow(absentLimitKindLabel(limit), `— ${absentLimitText(limit)} on this account`);
     }
 }

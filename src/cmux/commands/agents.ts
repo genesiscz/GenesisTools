@@ -423,7 +423,7 @@ function addNewOptions(command: Command): Command {
         .requiredOption("--repo <name|path>", "Project name under ~/Tresors/Projects, or a directory path")
         .option(
             "--account <name>",
-            "Account (required). Omit it to list every account with its 5h and weekly budget left"
+            "Account (required). Omit it to list every account with its 5h (where it has one) and weekly budget left"
         )
         .option("--model <id>", "Model id or alias, passed to tools <agent> run -m")
         .option("--prompt <text>", "Initial prompt. Passed after -- to tools <agent> run.")
