@@ -120,13 +120,20 @@ export function registerAuditCommands(program: Command): void {
                 ]
                     .filter(Boolean)
                     .join(" ");
+                // A person checked it from a shell an agent's session started (`! tools rm approve`): name both.
+                const startedFrom = caller?.isInAgent
+                    ? [caller.agent, caller.sessionId?.slice(0, 8)].filter(Boolean).join(" ")
+                    : null;
+                const by = entry.person
+                    ? `person via ${entry.person.via}${startedFrom ? ` (started from ${startedFrom})` : ""}`
+                    : `${who}${entry.via ? ` via ${entry.via}` : ""}`;
                 const size = entry.bytes === undefined ? "" : ` ${formatBytes(entry.bytes)}`;
                 const subject = entry.path ? shown(entry.path, cwd) : (entry.requestId ?? "");
                 const extra = entry.rule ? pc.dim(` ${entry.rule}`) : "";
                 out.println(
                     `${pc.dim(formatLocalDateTimeStamp(entry.at, { seconds: false }))} ${pc.bold(entry.action.padEnd(8))}${size} ${subject}${extra}`
                 );
-                out.println(pc.dim(`                 ${who}${entry.via ? ` via ${entry.via}` : ""}`));
+                out.println(pc.dim(`                 ${by}`));
             }
 
             if (read.length > newest.length) {
