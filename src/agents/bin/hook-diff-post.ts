@@ -6,6 +6,7 @@ import { loadHooksConfig, megabytes } from "../lib/hooks/config";
 import { composePostDiff, noteFileToolInput, recordFileToolChange } from "../lib/hooks/diff/run";
 import { logDecision, setDiagLogPath, setMaxLogBytes } from "../lib/hooks/log";
 import { isTerminalTool, normalizeEvent, parseHookPayload } from "../lib/hooks/payload";
+import { rmRequestNotice } from "../lib/hooks/rm-requests";
 
 if (env.agents.areHooksDisabled()) {
     process.exit(0);
@@ -59,7 +60,15 @@ for (const item of [...flushed, decision]) {
     );
 }
 
-if (message && !config.shadow) {
+// A `tools rm` call whose output was cut (`>/dev/null`, `| head`) still tells the model about the request it opened.
+const rmNotice = await rmRequestNotice(payload);
+
+if ((message || rmNotice) && !config.shadow) {
     // systemMessage is the only field the USER sees; additionalContext is model-only.
-    process.stdout.write(SafeJSON.stringify({ systemMessage: message }));
+    process.stdout.write(
+        SafeJSON.stringify({
+            ...(message ? { systemMessage: message } : {}),
+            ...(rmNotice ? { hookSpecificOutput: { hookEventName: "PostToolUse", additionalContext: rmNotice } } : {}),
+        })
+    );
 }

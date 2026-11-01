@@ -24,6 +24,7 @@ import { grokCurrentModel } from "@genesiscz/utils/agent-sessions/readers/grok-m
 import { changedOnly, SHIPPED_DEFAULTS_KEY, storedOverrides } from "@genesiscz/utils/agents/hooks/config-section";
 import { env } from "@genesiscz/utils/env";
 import { SafeJSON } from "@genesiscz/utils/json";
+import type { RmRequest } from "@genesiscz/utils/rm";
 import { codexEntriesFor, codexWiring, installCodexHooks, uninstallCodexHooks } from "./codex";
 import {
     DEFAULT_HOOKS_CONFIG,
@@ -68,6 +69,7 @@ import {
 import { nativeDiffState } from "./native-diff";
 import { callDir, hookDataRoot, safeSegment, sessionDir } from "./paths";
 import { HARNESS_HOOK_FACTS, harnessHookFacts, parseHookPayload } from "./payload";
+import { rmRequestNotice } from "./rm-requests";
 import { applySetting, SETTABLE_KEYS, setHooksConfig } from "./set-config";
 import {
     bumpContextCounts,
@@ -2100,5 +2102,51 @@ describe("HARNESS_HOOK_FACTS", () => {
         });
         expect(harnessHookFacts("cursor")).toBeUndefined();
         expect(harnessHookFacts("constructor")).toBeUndefined();
+    });
+});
+
+describe("rm request notice", () => {
+    const sessionId = "aaaaaaaa-1111-4111-8111-111111111111";
+    const now = new Date("2026-11-01T14:00:00.000Z");
+    const request = (id: string, minutesAgo: number, session = sessionId): RmRequest => ({
+        id,
+        kind: "delete",
+        createdAt: new Date(now.getTime() - minutesAgo * 60_000).toISOString(),
+        caller: { agent: "claude-code", sessionId: session, isInAgent: true },
+        cwd: "/work/shop",
+        reason: null,
+        targets: [{ path: "/work/shop/.smoke.tmp.ts", kind: "file", rule: "default", reason: "no rule allows it" }],
+        status: "pending",
+    });
+    const deps = {
+        now: () => now,
+        requests: () => [request("k7m2qd", 1), request("old111", 90), request("othr22", 1, "bbbb")],
+    };
+    const payloadOf = (command: string, stdout = "") =>
+        parseHookPayload(
+            SafeJSON.stringify({
+                hook_event_name: "PostToolUse",
+                session_id: sessionId,
+                tool_name: "Bash",
+                tool_input: { command },
+                tool_response: { stdout, stderr: "" },
+            })
+        );
+
+    it("repeats a request the call opened when its output was cut", async () => {
+        const payload = payloadOf("tools rm ./.smoke.tmp.ts > /dev/null 2>&1");
+        const notice = payload ? await rmRequestNotice(payload, deps) : null;
+
+        expect(notice).toContain("rm request k7m2qd: 1 path(s) wait for the user. Do not run approve yourself.");
+        expect(notice).not.toContain("old111");
+        expect(notice).not.toContain("othr22");
+    });
+
+    it("stays quiet when the output already named the request, and for any other command", async () => {
+        const shown = payloadOf("tools rm ./.smoke.tmp.ts", "rm request k7m2qd: 1 path(s) wait for the user.");
+        const other = payloadOf("ls -la");
+
+        expect(shown ? await rmRequestNotice(shown, deps) : "missing").toBeNull();
+        expect(other ? await rmRequestNotice(other, deps) : "missing").toBeNull();
     });
 });
