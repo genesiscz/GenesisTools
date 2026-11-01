@@ -55,7 +55,7 @@ const READERS = new Set([
 const AWKS = new Set(["awk", "gawk", "mawk"]);
 
 function isCounter(scan: ShellScan, element: Span): boolean {
-    const word = simpleCommandWord(element.text);
+    const word = simpleCommandWord(element, scan.command);
 
     if (word === "wc") {
         return true;
@@ -193,7 +193,7 @@ function devnullHits(scan: ShellScan, consumes: (later: Span[]) => boolean): Dev
                 const producer = elements[k];
                 const redirects = [...producer.text.matchAll(STDERR_TO_DEVNULL)];
 
-                if (redirects.length === 0 || QUIET_STDERR_PRODUCERS.has(simpleCommandWord(producer.text))) {
+                if (redirects.length === 0 || QUIET_STDERR_PRODUCERS.has(simpleCommandWord(producer, scan.command))) {
                     continue;
                 }
 
@@ -281,31 +281,119 @@ function wrapping(scan: ShellScan, hit: DevnullHit, hits: readonly DevnullHit[],
     return { from, to: pipe + (scan.command[pipe + 1] === "&" ? 2 : 1), text: `{ ${text}; ${echo}; } |` };
 }
 
-// The status line for a tsc or tsgo producer (run directly or through bunx, npx
-// or `bun x`), escaped once inside a double-quoted `sh -c "…"` body. Null for
-// any other producer, and inside a backtick or two double-quoted bodies, where
-// the corrected command only drops the redirect.
+// Package runners and the word after them that makes them one (`bun x`).
+const RUNNERS: ReadonlyMap<string, string | null> = new Map([
+    ["bunx", null],
+    ["npx", null],
+    ["bun", "x"],
+    ["pnpm", "dlx"],
+    ["yarn", "dlx"],
+    ["npm", "exec"],
+]);
+
+// The status line for a tsc or tsgo producer (run directly or through a package
+// runner), escaped once inside a double-quoted `sh -c "…"` body or an unquoted
+// heredoc a shell reads, whose `$?` the shell around it expands first. Null for
+// any other producer, inside a backtick or two such layers, and in an unquoted
+// heredoc whose command is not a shell, where the corrected command only drops
+// the redirect.
 function statusEcho(scan: ShellScan, producer: Span): string | null {
     const { words } = wordsFrom(scan, producer.start);
     let at = commandTokenIndex(words.map((text) => ({ text, start: 0 })));
-    const runner = commandWord(words[at] ?? "");
+    const sub = RUNNERS.get(commandWord(words[at] ?? ""));
 
-    if (runner === "bunx" || runner === "npx" || (runner === "bun" && words[at + 1] === "x")) {
-        const skip = runner === "bun" ? at + 1 : at;
-        at = words.findIndex((w, i) => i > skip && !w.startsWith("-"));
+    // The program is the first word that is not a flag or the value of -p/--package.
+    if (sub === null || (sub !== undefined && words[at + 1] === sub)) {
+        at += sub ? 2 : 1;
+
+        while (words[at]?.startsWith("-")) {
+            at += words[at] === "-p" || words[at] === "--package" ? 2 : 1;
+        }
     }
 
     const word = commandWord(words[at] ?? "");
-    const quotes = scan.executableRanges
-        .filter((range) => producer.start >= range.start && producer.start < range.end)
-        .map((range) => scan.command[range.start - 1]);
-    const doubled = quotes.filter((q) => q === '"').length;
 
-    if ((word !== "tsc" && word !== "tsgo") || quotes.includes("`") || doubled > 1) {
+    if (word !== "tsc" && word !== "tsgo") {
         return null;
     }
 
+    // A layer whose `$?` the shell around it expands first, unless that shell
+    // also runs the substitution the producer sits in.
+    const expands = (start: number, end: number) =>
+        producer.start >= start && producer.start < end && !substitutedFrom(scan, start, producer);
+    const ranges = scan.executableRanges.filter((r) => producer.start >= r.start && producer.start < r.end);
+    const doubled = ranges.filter((r) => scan.command[r.start - 1] === '"' && expands(r.start, r.end)).length;
+    const heredocs = scan.heredocs.filter((h) => !h.quoted && h.fed && expands(h.start, h.end));
+
+    if (
+        ranges.some((r) => scan.command[r.start - 1] === "`") ||
+        doubled + heredocs.length > 1 ||
+        heredocs.some((h) => !shellReads(scan, h.opener))
+    ) {
+        return null;
+    }
+
+    if (heredocs.length === 1) {
+        return `echo "${word} rc=\\$?" >&2`;
+    }
+
     return doubled === 1 ? `echo \\"${word} rc=\\$?\\" >&2` : `echo "${word} rc=$?" >&2`;
+}
+
+// Whether the producer sits in a `$(…)` that opens at or after `from` with a `$`
+// no backslash escapes: the shell that expands the layer from `from` runs it.
+// The scan reads `\\$(` in a heredoc as the inner shell's `\$(`, so a statement
+// that follows such a `$(` without being its unit's first counts on its own.
+function substitutedFrom(scan: ShellScan, from: number, producer: Span): boolean {
+    const { command } = scan;
+    const holds = (s: Span) => producer.start >= s.start && producer.start < s.start + s.text.length;
+    const opens = (start: number) => {
+        let open = start;
+
+        while (open > 0 && /\s/.test(command[open - 1])) {
+            open--;
+        }
+
+        let slashes = 0;
+
+        while (command[open - 3 - slashes] === "\\") {
+            slashes++;
+        }
+
+        return open - 2 >= from && command.slice(open - 2, open) === "$(" && slashes % 2 === 0;
+    };
+
+    return scan.units.some((statements) =>
+        statements.some((s, k) => opens(s.start) && (k === 0 ? statements.some(holds) : holds(s)))
+    );
+}
+
+// Whether the command before a heredoc's `<<` is a shell. Its line starts at a
+// newline of the cleaned text, where a backslash-newline is blank, or at the `(`
+// that opens the substitution or subshell around it.
+function shellReads(scan: ShellScan, opener: number): boolean {
+    const body = scan.executableRanges
+        .filter((r) => r.start <= opener && opener < r.end)
+        .sort((a, b) => b.start - a.start)[0];
+    const base = body?.start ?? 0;
+    const cleaned = body ? cleanedBody(scan.command, body) : scan.cleaned;
+    let from = opener - base;
+
+    for (let depth = 0; from > 0; from--) {
+        const ch = cleaned[from - 1];
+
+        if (ch === ")") {
+            depth++;
+        } else if (ch === "(" && depth > 0) {
+            depth--;
+        } else if (depth === 0 && (ch === "(" || ch === "\n")) {
+            break;
+        }
+    }
+
+    const [outer] = splitSubstitutions(cleaned.slice(from, opener - base));
+    const element = splitPipeline(splitStatements(outer).at(-1) ?? outer).at(-1);
+    return SHELLS.has(simpleCommandWord(element?.text ?? ""));
 }
 
 // ---------------------------------------------------------------------------
@@ -380,13 +468,16 @@ function positionals(args: readonly string[], program: ProgramFlags): Positional
 
 // find [-H|-L|-P|-E|-X|-d|-s|-x] [-f path] <start points…> <expression>: the
 // start points end at the first word that starts with `-`, or is `(` or `!`.
-function findStartPoints(args: readonly string[]): string[] {
+function findParts(args: readonly string[]): { options: string[]; points: string[]; expression: string[] } {
+    const options: string[] = [];
     const points: string[] = [];
+    let i = 0;
 
-    for (let i = 0; i < args.length; i++) {
+    for (; i < args.length; i++) {
         const arg = args[i];
 
         if (points.length === 0 && /^-[HLPEXdsx]+$/.test(arg)) {
+            options.push(arg);
             continue;
         }
 
@@ -403,7 +494,7 @@ function findStartPoints(args: readonly string[]): string[] {
         points.push(arg);
     }
 
-    return points;
+    return { options, points, expression: args.slice(i) };
 }
 
 const FD_FLAGS: ProgramFlags = {
@@ -528,7 +619,7 @@ const PATH_OPERANDS: ReadonlyMap<string, (args: readonly string[]) => Operands> 
     [
         "find",
         (args: readonly string[]) => ({
-            paths: findStartPoints(args),
+            paths: findParts(args).points,
             lists: !args.some((arg, i) => arg === "-maxdepth" && args[i + 1] === "0"),
         }),
     ],
@@ -792,7 +883,7 @@ interface ShellHeredoc {
 // the original command, from the line after the operator to the delimiter line.
 function shellHeredoc(scan: ShellScan, elements: readonly Span[]): ShellHeredoc | null {
     for (let k = 0; k < elements.length; k++) {
-        if (!SHELLS.has(simpleCommandWord(elements[k].text))) {
+        if (!SHELLS.has(simpleCommandWord(elements[k], scan.command))) {
             continue;
         }
 
@@ -1092,7 +1183,7 @@ function everyHitCovered(scan: ShellScan, hits: readonly DevnullHit[]): boolean 
                 (hit) => hit.statement.start === info.span.start && element.start >= hit.producer.start
             );
 
-            if (own || !PATH_OPERANDS.has(simpleCommandWord(element.text))) {
+            if (own || !PATH_OPERANDS.has(simpleCommandWord(element, scan.command))) {
                 continue;
             }
 
@@ -1125,17 +1216,17 @@ function everyHitCovered(scan: ShellScan, hits: readonly DevnullHit[]): boolean 
 // failure is a missing path, and a missing path is the honest 0.
 const SCRATCH_PATH = /^\/(?:private\/)?tmp\/[^$`*?[{~]*$/;
 
-// A mistyped ls, du or stat flag also prints 0, so their flags must be known.
+// A mistyped flag, primary or value also prints 0, and a find primary or fd flag
+// can name a path outside /tmp or run a command, so each must be in a safe table.
 function everyHitScratch(scan: ShellScan, hits: readonly DevnullHit[]): boolean {
     return hits.every((hit) => {
         const p = parseElement(scan, hit.producer);
-        const known = p && KNOWN_FLAGS.get(p.word);
         return (
             !!p &&
             COVERABLE_PRODUCERS.has(p.word) &&
             p.paths.length > 0 &&
             p.paths.every((path) => SCRATCH_PATH.test(path) && !path.split("/").includes("..")) &&
-            (!known || flagsValid(known, positionals(wordsOf(scan, hit.producer).args, known)))
+            scratchFlagsSafe(p.word, wordsOf(scan, hit.producer).args)
         );
     });
 }
@@ -1311,7 +1402,7 @@ interface KnownFlags extends ProgramFlags {
 }
 
 const longFlags = (list: string) => new Set(list.split(" ").map((name) => `--${name}`));
-const valueFlags = (list: string, value: RegExp) => list.split(" ").map((flag): [string, RegExp] => [flag, value]);
+const valueFlags = <T>(list: string, value: T) => list.split(" ").map((flag): [string, T] => [flag, value]);
 const NUMBER = /^\d+$/;
 const ANY_VALUE = /^/;
 // A glob with no alternation, class or escape always parses.
@@ -1458,6 +1549,136 @@ function flagsValid(known: KnownFlags, { flags, values }: Positionals): boolean 
 // backslash only before `|`, `.`, `/` or `-`.
 function literalPattern(pattern: string): boolean {
     return pattern !== "" && !/[()[\]{}*+?\\]/.test(pattern.replace(/\\[|./-]/g, ""));
+}
+
+// The scratch route's tables: a find primary or an fd flag that names another
+// path, runs a command, or takes a value that can fail is not here. Checked
+// against BSD find, the bfs that Claude Code runs as `find`, and fd 10.5. A
+// number has at most 9 digits, and a date's year is one BSD find parses.
+const DATE = /^(\d{4})-(\d\d)-(\d\d)(?:[T ](?:[01]\d|2[0-3]):[0-5]\d(?::[0-5]\d)?)?$/;
+const literalDate = {
+    test(value: string): boolean {
+        const [, y = "", m = "", d = ""] = DATE.exec(value) ?? [];
+        const day = new Date(Date.UTC(+y, +m - 1, +d));
+        return +y >= 1971 && +y <= 2038 && day.getUTCMonth() === +m - 1 && day.getUTCDate() === +d;
+    },
+};
+const COUNT = /^\d{1,9}$/;
+const SCRATCH_FIND: ReadonlyMap<string, Pick<RegExp, "test"> | null> = new Map<string, Pick<RegExp, "test"> | null>([
+    ...valueFlags("-empty -print -print0 -prune -depth -d -quit -true -false -ls -xdev -mount -nogroup -nouser", null),
+    ...valueFlags("-name -iname -path -ipath -wholename -iwholename -lname -ilname", ANY_VALUE),
+    ...valueFlags("-maxdepth -mindepth", COUNT),
+    ...valueFlags("-amin -Bmin -cmin -mmin -inum -links", /^[-+]?\d{1,9}$/),
+    ...valueFlags("-atime -Btime -ctime -mtime", /^[-+]?(?:\d{1,9}|(?:\d{1,9}[smhdw])+)$/),
+    ...valueFlags("-newerat -newerBt -newerct -newermt", literalDate),
+    // BSD find refuses more than 2^63 bytes.
+    ["-size", /^[-+]?(?:\d{1,9}[ckMG]?|\d{1,6}T|\d{1,3}P)$/],
+    ["-type", /^[bcdflps](?:,[bcdflps])*$/],
+    ["-perm", /^[-+]?[0-7]{1,4}$/],
+]);
+const FIND_BINARY = new Set(["-a", "-and", "-o", "-or"]);
+
+// Every option and primary is in SCRATCH_FIND with a value it takes, and the
+// expression is whole: no dangling operator, no empty or unclosed group.
+function findSafe(args: readonly string[]): boolean {
+    const { options, expression } = findParts(args);
+    let depth = 0;
+    // An operand is due at the start and after `(`, `!` or a binary operator.
+    let due = true;
+
+    for (let i = 0; i < expression.length; i++) {
+        const arg = expression[i];
+        const value = SCRATCH_FIND.get(arg);
+
+        if (arg === "(" || arg === "!" || arg === "-not") {
+            depth += arg === "(" ? 1 : 0;
+            due = true;
+        } else if (arg === ")" || FIND_BINARY.has(arg)) {
+            if (due || (arg === ")" && --depth < 0)) {
+                return false;
+            }
+
+            due = arg !== ")";
+        } else if (
+            value === undefined ||
+            (value !== null && (++i === expression.length || !value.test(expression[i])))
+        ) {
+            return false;
+        } else {
+            due = false;
+        }
+    }
+
+    // bfs refuses a cluster of d, s and x alone (`-dx`), but not one with H, L, P or E.
+    return (
+        options.every((option) => !option.includes("X") && (option.length === 2 || /[HLPE]/.test(option))) &&
+        depth === 0 &&
+        (!due || expression.length === 0)
+    );
+}
+
+const SCRATCH_FD: KnownFlags = {
+    ...FD_FLAGS,
+    letters: "01EFHILSacdegijpstu",
+    names: longFlags(
+        "hidden no-ignore no-ignore-vcs no-ignore-parent no-require-git unrestricted case-sensitive ignore-case " +
+            "glob regex fixed-strings absolute-path follow full-path print0 max-depth min-depth exact-depth exclude " +
+            "prune type extension size color threads max-results show-errors"
+    ),
+    risky: new Set(),
+    values: new Map([
+        ...valueFlags("-d --max-depth --min-depth --exact-depth --max-results", COUNT),
+        ...valueFlags("-j --threads", /^[1-9]\d{0,2}$/),
+        ...valueFlags("-e --extension", ANY_VALUE),
+        ...valueFlags("-E --exclude", PLAIN_GLOB),
+        ...valueFlags(
+            "-t --type",
+            /^(?:[fdlspbcxe]|file|dir|directory|symlink|socket|pipe|block-device|char-device|executable|empty)$/
+        ),
+        ...valueFlags("-S --size", /^[-+]?\d{1,9}(?:[bkmgt]|[kmgt]i)$/i),
+        ...valueFlags("-c --color", /^(?:auto|always|never)$/),
+    ]),
+};
+// Flags fd refuses together, and -g with --regex, where the later one decides
+// how the pattern parses.
+const FD_CONFLICTS = [
+    ["-F --fixed-strings", "-g --glob"],
+    ["-g --glob", "--regex"],
+    ["--exact-depth", "-d --max-depth --min-depth --prune"],
+    ["--prune", "-S --size"],
+].map((pair) => pair.map((names) => names.split(" ")));
+
+// fd's pattern is a Rust regex, or a glob under -g, and a `/` in it fails
+// without -p. A regex passes when it is literal once `.*` and `.+` are gone.
+function fdSafe({ words, flags }: Positionals): boolean {
+    const pattern = words[0] ?? "";
+    const has = (...names: string[]) => names.some((name) => flags.has(name));
+
+    if (FD_CONFLICTS.some(([a, b]) => has(...a) && has(...b)) || (pattern.includes("/") && !has("-p", "--full-path"))) {
+        return false;
+    }
+
+    if (has("-F", "--fixed-strings")) {
+        return true;
+    }
+
+    const core = pattern.replace(/\.[*+]/g, "");
+    return has("-g", "--glob") ? PLAIN_GLOB.test(pattern) : core === "" || literalPattern(core);
+}
+
+function scratchFlagsSafe(word: string, args: readonly string[]): boolean {
+    if (word === "find") {
+        return findSafe(args);
+    }
+
+    const known = word === "fd" ? SCRATCH_FD : KNOWN_FLAGS.get(word);
+
+    if (!known) {
+        return false;
+    }
+
+    const given = positionals(args, known);
+    return flagsValid(known, given) && (word !== "fd" || fdSafe(given));
 }
 
 // `$(rg -l x .)`, `$(fd …)`, `$(find …)`: paths that a lister just found.
@@ -1763,7 +1984,7 @@ export const ddSkipSilentShortRead: ShellRule = {
                     const words = tokenize(elements[k]).map((t) => t.text);
 
                     if (
-                        simpleCommandWord(elements[k].text) === "dd" &&
+                        simpleCommandWord(elements[k], scan.command) === "dd" &&
                         words.includes("status=none") &&
                         words.some((w) => /^(?:skip|iseek)=/.test(w)) &&
                         laterElements(elements, k).some((e) => isCounter(scan, e))
