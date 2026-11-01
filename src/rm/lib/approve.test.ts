@@ -67,7 +67,7 @@ import {
 } from "./approve";
 import { shortRmPath } from "./display";
 import { renderLedger } from "./log-view";
-import { type NotifyDeps, notifyNewRequest, type RequestNotice } from "./notify";
+import { type NotifyDeps, notifyDrainFailure, notifyNewRequest, type RequestNotice } from "./notify";
 import { buildRequestViews, renderRequestDetail, renderRequestList } from "./requests-view";
 import { type ExecuteDeps, executePlan, type PersonAnswer, printRequestHint, type RunContext } from "./run";
 import { renderConfig, renderPresets, renderRoots } from "./settings-view";
@@ -2070,6 +2070,39 @@ describe("a person denies from the picker", () => {
             "these are fixtures, keep them",
             "these are fixtures, keep them",
         ]);
+    });
+});
+
+describe("a drain failure reaches the person", () => {
+    test("one message names the batch, the paths and the commands; the setting can pick a notification or none", async () => {
+        const sent: Array<{ mode: string; title: string; text: string }> = [];
+        const deps = {
+            send: async (mode: "inbox" | "notification", notice: RequestNotice) => {
+                sent.push({ mode, ...notice });
+            },
+            now: () => new Date(),
+        };
+        const failure = {
+            batch: {
+                id: "20261101-180000-1-fc7b",
+                createdAt: "",
+                drainAfter: "",
+                caller: AGENT,
+                items: [],
+            },
+            items: [{ path: "/work/shop/go/pkg/mod", reason: "EACCES: permission denied" }],
+        };
+
+        await notifyDrainFailure(failure, config, deps);
+        await notifyDrainFailure(failure, { ...config, notify: { ...config.notify, onFailure: "none" } }, deps);
+        await notifyDrainFailure(failure, { ...config, notify: { ...config.notify, onFailure: "notification" } }, deps);
+
+        expect(sent.map((notice) => notice.mode)).toEqual(["inbox", "notification"]);
+        expect(sent[0]?.title).toBe(`${toolCommand("rm")} could not delete 1 item`);
+        expect(sent[0]?.text).toContain("/work/shop/go/pkg/mod (EACCES: permission denied)");
+        expect(sent[0]?.text).toContain("batch 20261101-180000-1-fc7b");
+        expect(sent[0]?.text).toContain(`${toolCommand("rm")} drain --now`);
+        expect(sent[0]?.text).toContain(`${toolCommand("rm")} restore 20261101-180000-1-fc7b`);
     });
 });
 

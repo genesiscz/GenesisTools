@@ -2,6 +2,7 @@ import { toolCommand } from "@genesiscz/utils/cli";
 import { createStopwatch, formatBytes, formatCount } from "@genesiscz/utils/format";
 import { out } from "@genesiscz/utils/logger";
 import {
+    type DrainFailure,
     type DrainProgress,
     drainDue,
     listBatches,
@@ -18,6 +19,7 @@ import {
 import type { Command } from "commander";
 import pc from "picocolors";
 import { isApprovedBatch } from "../lib/approve";
+import { notifyDrainFailure } from "../lib/notify";
 import { runContext } from "../lib/run";
 import { renderTrash, resolveBatchSuffix } from "../lib/trash-view";
 
@@ -154,8 +156,13 @@ export function registerTrashCommands(program: Command): void {
             // Every rm run starts this drainer: an aside run that died before it opened its request gets it here.
             recoverAsideJournals();
 
+            // A failure is told once; the inbox post is awaited before the process may end.
+            const told: Array<Promise<void>> = [];
+            const onFailure = (failure: DrainFailure) => told.push(notifyDrainFailure(failure, config));
+
             if (flags.background) {
-                await runDrainer({ config });
+                await runDrainer({ config, onFailure });
+                await Promise.all(told);
                 return;
             }
 
@@ -166,7 +173,8 @@ export function registerTrashCommands(program: Command): void {
             const agentOnly = flags.now === true && caller.isInAgent;
             const forceOnly = agentOnly ? (batch: TrashBatch) => agentMayDrainEarly(batch, caller) : undefined;
             const swept = await sweepOrphans({ config, onItem });
-            const drained = await drainDue({ config, force: flags.now, forceOnly, onItem });
+            const drained = await drainDue({ config, force: flags.now, forceOnly, onItem, onFailure });
+            await Promise.all(told);
             const left = listBatches().filter((batch) => !batch.incomplete).length;
 
             for (const entry of swept.held) {
