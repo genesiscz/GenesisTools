@@ -37,6 +37,22 @@ function account(
 
 const score = (accounts: AccountUsage[]) => scoreAccounts(accounts, { now: NOW });
 
+describe("an account without a 5-hour limit", () => {
+    test("the opus line says it has no 5h limit instead of 5h 100% left", () => {
+        const scored = score([
+            {
+                accountName: "work",
+                usage: { five_hour: null, seven_day: { utilization: 80, resets_at: WEEK_LATER } },
+            },
+        ]);
+        const pick = pickOpus(scored, NOW);
+
+        expect(pick?.accountName).toBe("work");
+        expect(pick?.line).toContain("no 5h limit");
+        expect(pick?.line).not.toContain("5h 100% left");
+    });
+});
+
 describe("pickOpus", () => {
     test("below the 10% floor is skipped, so 9% loses to 14%", () => {
         const scored = score([

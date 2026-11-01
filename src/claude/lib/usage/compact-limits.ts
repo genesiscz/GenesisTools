@@ -1,4 +1,5 @@
 import type { UsageBucket, UsageResponse } from "./api";
+import { fiveHourState } from "./limits";
 
 export interface CompactLimit {
     /** 0–100, % of the bucket still LEFT (headroom). */
@@ -6,7 +7,10 @@ export interface CompactLimit {
     resetsAt: string | null;
 }
 
-/** The three numbers the picker shows: 5h session, weekly, Fable weekly. */
+/**
+ * The three numbers the picker shows: 5h session, weekly, Fable weekly. `session` is unset for an account
+ * without a 5-hour limit (`ScoredAccount.absentLimits` says so), which every gate reads as no constraint.
+ */
 export interface CompactLimits {
     session?: CompactLimit;
     weekly?: CompactLimit;
@@ -54,6 +58,8 @@ function fromBucket(bucket: UsageBucket | null | undefined): CompactLimit | unde
  */
 export function extractCompactLimits(usage: UsageResponse): CompactLimits {
     const compact: CompactLimits = {};
+    // An old header reading still lists a 0 % session for an account without a 5-hour limit.
+    const hasSession = fiveHourState(usage) !== "absent";
 
     if (Array.isArray(usage.limits)) {
         for (const raw of usage.limits) {
@@ -62,7 +68,7 @@ export function extractCompactLimits(usage: UsageResponse): CompactLimits {
             }
 
             if (raw.kind === "session") {
-                compact.session = fromUsed(raw.percent, raw.resets_at);
+                compact.session = hasSession ? fromUsed(raw.percent, raw.resets_at) : undefined;
             } else if (raw.kind === "weekly_all") {
                 compact.weekly = fromUsed(raw.percent, raw.resets_at);
             } else if (raw.kind === "weekly_scoped" && raw.scope?.model?.display_name?.toLowerCase() === "fable") {
@@ -71,7 +77,10 @@ export function extractCompactLimits(usage: UsageResponse): CompactLimits {
         }
     }
 
-    compact.session ??= fromBucket(usage.five_hour);
+    if (hasSession) {
+        compact.session ??= fromBucket(usage.five_hour);
+    }
+
     compact.weekly ??= fromBucket(usage.seven_day);
 
     return compact;

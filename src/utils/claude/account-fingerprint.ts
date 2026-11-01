@@ -15,7 +15,9 @@ import { logger } from "@genesiscz/utils/logger";
  * The server tells you through the unified rate-limit headers: each account has
  * its own 5h and 7d window anchors. Two tokens reporting the SAME pair of reset
  * epochs are the same account, because those anchors are set by that account's
- * own first use of each window.
+ * own first use of each window. An account without a 5-hour limit (since
+ * 2026-10-31) sends no 5h headers, so its key is `?|<7d reset>`: the weekly
+ * anchor alone, which is weaker evidence.
  *
  * 🛑 This spends quota (one 1-token completion per token), so it is never part
  * of a default diagnostic run — `tools claude doctor --identity` opts in.

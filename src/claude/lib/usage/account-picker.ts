@@ -1,8 +1,10 @@
 import type { ClaudeModelFamily } from "@app/claude/lib/models";
+import type { AbsentLimit } from "@genesiscz/utils/ai/providers/account-features";
 import { toolCommand } from "@genesiscz/utils/cli/tool-command";
 import type { AccountUsage, UsageBucket } from "./api";
 import { isSubscriptionExpiredError } from "./api";
 import { type CompactLimits, effectiveLeftPct, extractCompactLimits } from "./compact-limits";
+import { absentLimitsOf } from "./limits";
 import { planAllowsClaudeCode } from "./subscription";
 
 /**
@@ -136,6 +138,12 @@ export interface ScoredAccount {
     dataNote?: string;
     /** Compact 5h / weekly / Fable readout for the table-picker columns. */
     limits?: CompactLimits;
+    /**
+     * Windows the account does not have (`[{ key: "five_hour", kind: "session" }]` for an account without a
+     * 5-hour limit). Then `limits.session` is unset and the session numbers above are neutral (100 % headroom,
+     * usable 1, never cooling), so an older reader still ranks the account by its weekly window.
+     */
+    absentLimits?: AbsentLimit[];
 }
 
 export interface ScoreOptions {
@@ -211,7 +219,11 @@ function weeklyPhrase(view: BucketView, name: string): string {
     return `${name} ${Math.round(view.headroomPct)}% left (${reset})`;
 }
 
-function sessionPhrase(view: BucketView): string {
+function sessionPhrase(view: BucketView, absent: boolean): string {
+    if (absent) {
+        return "no 5h limit";
+    }
+
     const reset = view.hasScheduledReset ? `resets in ${fmtHours(view.hoursToReset)}` : "no active window";
     return `5h ${Math.round(view.headroomPct)}% left (${reset})`;
 }
@@ -284,7 +296,10 @@ export function scoreAccounts(accounts: AccountUsage[], opts: ScoreOptions = {})
         }
 
         const usage = account.usage;
-        const session = viewBucket(usage.five_hour, SESSION_PERIOD_HOURS, now);
+        const absentLimits = absentLimitsOf(usage);
+        // No 5-hour limit is no constraint: the weekly (or Fable) window decides alone.
+        const sessionAbsent = absentLimits.some((limit) => limit.key === "five_hour");
+        const session = viewBucket(sessionAbsent ? null : usage.five_hour, SESSION_PERIOD_HOURS, now);
         const weekly = viewBucket(usage.seven_day, WEEKLY_PERIOD_HOURS, now);
         const limits = extractCompactLimits(usage);
 
@@ -323,11 +338,12 @@ export function scoreAccounts(accounts: AccountUsage[], opts: ScoreOptions = {})
         const fableRate = limits.fable ? fableLeft / fableResetHours : Number.POSITIVE_INFINITY;
 
         const dead = binding.headroomPct <= DEAD_HEADROOM_PCT;
-        const cooling = !dead && session.headroomPct <= COOLING_HEADROOM_PCT;
+        const cooling = !dead && !sessionAbsent && session.headroomPct <= COOLING_HEADROOM_PCT;
         const group: AccountGroup = loginExpired ? "expired" : dead ? "dead" : fableAvailable ? "fable" : "opus";
         const fableBinds = group === "fable" && fableRate < weeklyRate;
         const bindingRate = fableBinds ? fableRate : weeklyRate;
         const score = bindingRate * usableFraction;
+        const absentField = absentLimits.length > 0 ? { absentLimits } : {};
         const grouped = {
             group,
             score,
@@ -349,6 +365,7 @@ export function scoreAccounts(accounts: AccountUsage[], opts: ScoreOptions = {})
                 why: `${bindingName} exhausted — refills in ${fmtHours(binding.hoursToReset)}`,
                 dataNote: staleNote,
                 limits,
+                ...absentField,
             };
         }
 
@@ -361,7 +378,7 @@ export function scoreAccounts(accounts: AccountUsage[], opts: ScoreOptions = {})
                 sessionHeadroomPct: session.headroomPct,
                 weeklyHeadroomPct: binding.headroomPct,
                 sessionUsableFraction: usableFraction,
-                why: `would stall — ${sessionPhrase(session)}, needs ${Math.round(paceLine)}% to keep pace · ${weeklyPhrase(binding, bindingName)}`,
+                why: `would stall — ${sessionPhrase(session, false)}, needs ${Math.round(paceLine)}% to keep pace · ${weeklyPhrase(binding, bindingName)}`,
                 dataNote: staleNote,
                 limits,
             };
@@ -376,9 +393,10 @@ export function scoreAccounts(accounts: AccountUsage[], opts: ScoreOptions = {})
             sessionHeadroomPct: session.headroomPct,
             weeklyHeadroomPct: binding.headroomPct,
             sessionUsableFraction: usableFraction,
-            why: `${fmtRate(weeklyRate)} sustainable — ${weeklyPhrase(binding, bindingName)} · ${sessionPhrase(session)}${usableNote}`,
+            why: `${fmtRate(weeklyRate)} sustainable — ${weeklyPhrase(binding, bindingName)} · ${sessionPhrase(session, sessionAbsent)}${usableNote}`,
             dataNote: staleNote,
             limits,
+            ...absentField,
         };
     });
 
@@ -395,8 +413,21 @@ export function scoreAccounts(accounts: AccountUsage[], opts: ScoreOptions = {})
             return b.sessionUsableFraction - a.sessionUsableFraction;
         }
 
-        return b.sessionHeadroomPct - a.sessionHeadroomPct;
+        return b.sessionHeadroomPct - a.sessionHeadroomPct || noSessionLimitFirst(a, b);
     });
+}
+
+/**
+ * The last tie-break: an account without a 5-hour limit before one whose 5-hour window is merely idle. Both
+ * read 100 % headroom, but the idle window opens on the first turn and caps a burst from then on.
+ */
+function noSessionLimitFirst(a: ScoredAccount, b: ScoredAccount): number {
+    return Number(hasNoSessionLimit(b)) - Number(hasNoSessionLimit(a));
+}
+
+/** The account has no 5-hour limit (`absentLimits` names its session window). */
+export function hasNoSessionLimit(scored: Pick<ScoredAccount, "absentLimits">): boolean {
+    return scored.absentLimits?.some((limit) => limit.kind === "session") ?? false;
 }
 
 /**
@@ -413,6 +444,7 @@ export function sortGrouped(scored: ScoredAccount[]): ScoredAccount[] {
             Number(a.cooling) - Number(b.cooling) ||
             Number(b.surplus) - Number(a.surplus) ||
             (a.surplus ? a.bindingResetHours - b.bindingResetHours : 0) ||
-            b.score - a.score
+            b.score - a.score ||
+            noSessionLimitFirst(a, b)
     );
 }

@@ -1,4 +1,4 @@
-import { FABLE_EXHAUSTED_PCT, fmtHours, type ScoredAccount } from "./account-picker";
+import { FABLE_EXHAUSTED_PCT, fmtHours, hasNoSessionLimit, type ScoredAccount } from "./account-picker";
 import { type CompactLimit, effectiveLeftPct } from "./compact-limits";
 
 /**
@@ -96,9 +96,11 @@ function resetPhrase(limit: CompactLimit | undefined, now: Date): string {
 }
 
 function opusLine(candidate: Candidate, now: Date): string {
+    const session = hasNoSessionLimit(candidate.scored) ? "no 5h limit" : `5h ${pct(candidate.sessionLeft)} left`;
+
     return (
         `${candidate.scored.accountName} · wk ${pct(candidate.weeklyLeft)} left ` +
-        `(${resetPhrase(candidate.weekly, now)}) · 5h ${pct(candidate.sessionLeft)} left`
+        `(${resetPhrase(candidate.weekly, now)}) · ${session}`
     );
 }
 

@@ -59,6 +59,26 @@ const ACCOUNTS = new Map<string, AIAccountEntry>([
 
 const OPTS = buildAccountTableOpts({ message: "Launch as?", scored: SCORED, accountsByName: ACCOUNTS }, NOW);
 
+describe("an account without a 5-hour limit in the picker", () => {
+    const absent: ScoredAccount = {
+        ...scoredAccount("work", "ready", { weekly: { leftPct: 70, resetsAt: in38h } }),
+        absentLimits: [{ key: "five_hour", kind: "session" }],
+    };
+    const opts = buildAccountTableOpts({ message: "Launch as?", scored: [absent], accountsByName: new Map() }, NOW);
+
+    test("shows a dash in 5H with the legend in the hint, and says why in the detail zone", () => {
+        const frame = stripAnsi(renderFrame(opts, buildFrameParts(opts), "active", 0));
+
+        expect(opts.hint).toContain("— in 5H: no 5h limit");
+        expect(frame).toContain("— no 5h limit on this account");
+        expect(frame).not.toMatch(/5 Hour\s+█/);
+    });
+
+    test("negative control: a table without such an account keeps the plain hint", () => {
+        expect(OPTS.hint).toBe("(best first, % left)");
+    });
+});
+
 describe("account table select frame", () => {
     test("active frame: labeled headers, coarse resets, focus pointer", () => {
         const parts = buildFrameParts(OPTS);
