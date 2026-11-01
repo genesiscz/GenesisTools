@@ -231,6 +231,18 @@ export function instanceRows(
     });
 }
 
+/**
+ * Whether an agent's embed launcher can run this account: enabled, not gate-only (the launch picker leaves those
+ * out), under the agent's provider, and with what its host protocol needs (`T3HostSpec.syncs`: a Claude account needs
+ * its long-lived token, because `tools claude run` lists only those). `providers sync` makes an instance for each, and
+ * `providers add` accepts only these.
+ */
+export function embedRunnable(account: AccountEntry, alias: HarnessId, host: T3HostSpec): boolean {
+    return (
+        account.enabled && !isGateOnly(account) && account.provider === harnessPluginId(alias) && host.syncs(account)
+    );
+}
+
 /** The accounts `providers sync` makes one instance for, per agent, with the agent's T3 Code host facts. */
 export async function syncAccounts(
     accounts: readonly AccountEntry[],
@@ -239,13 +251,9 @@ export async function syncAccounts(
     const perAgent = await Promise.all(
         ACCOUNT_PROVIDER_ALIASES.map(async (alias) => {
             const host = await hostOf(alias);
-            const provider = harnessPluginId(alias);
 
             return accounts
-                .filter(
-                    (account) =>
-                        account.enabled && !isGateOnly(account) && account.provider === provider && host.syncs(account)
-                )
+                .filter((account) => embedRunnable(account, alias, host))
                 .map((account) => ({ alias, account, host }));
         })
     );

@@ -12,6 +12,7 @@ import { T3_HOSTS, t3HostFor } from "./hosts";
 import {
     buildInstance,
     embedAccountStatus,
+    embedRunnable,
     InstanceIdCollisionError,
     type InstanceRequest,
     instanceIdFor,
@@ -324,6 +325,16 @@ describe("instance ids, drivers and accounts", () => {
             "claude:work",
             "codex:personal",
         ]);
+        // `providers add` takes the same set: a Claude account with no long-lived token, a gate-only account and an
+        // account of another provider would each write an instance that fails at its launch.
+        const claudeHost = await t3HostFor("claude");
+        const codexHost = await t3HostFor("codex");
+        expect(
+            accounts.filter((entry) => embedRunnable(entry, "claude", claudeHost)).map((entry) => entry.name)
+        ).toEqual(["work"]);
+        expect(accounts.filter((entry) => embedRunnable(entry, "codex", codexHost)).map((entry) => entry.name)).toEqual(
+            ["personal"]
+        );
     });
 });
 
