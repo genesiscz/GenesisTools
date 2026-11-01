@@ -1,25 +1,31 @@
-import { describe, expect, test } from "bun:test";
+import { describe, expect, spyOn, test } from "bun:test";
 import { spawnSync } from "node:child_process";
 import {
     appendFileSync,
+    chmodSync,
     existsSync,
+    linkSync,
     mkdirSync,
     mkdtempSync,
     readdirSync,
     readFileSync,
+    renameSync,
     statSync,
+    unlinkSync,
     utimesSync,
     writeFileSync,
 } from "node:fs";
 import { tmpdir } from "node:os";
 import { join } from "node:path";
-import { countObjects, maintainObjectStore } from "@genesiscz/utils/agents/objects/maintain";
+import { countObjects, type MaintenanceReport, maintainObjectStore } from "@genesiscz/utils/agents/objects/maintain";
 import { writeBlobs } from "@genesiscz/utils/agents/objects/store";
 import { runDailyCompression } from "@genesiscz/utils/compress/daily";
 import { SafeJSON } from "@genesiscz/utils/json";
 import { readJsonlRows } from "@genesiscz/utils/jsonl";
+import { out } from "@genesiscz/utils/logger";
 import { claimDailyPass } from "@genesiscz/utils/logger/daily-trigger";
 import { computeSessionChanges, gitBlobOid } from "@genesiscz/utils/session-changes";
+import { reportDailyPass } from "../../../compress/commands/ledger";
 import { rawLogFiles, rawTransition, resolveSessionArgument } from "../../commands/changes";
 import { fileDiff, readBlobs } from "./diff";
 import {
@@ -850,5 +856,179 @@ describe("the change-log object store maintenance", () => {
         expect(pass.objectStore).toMatchObject({ packed: 1, dryRun: false });
         expect(s.count()).toMatchObject({ loose: 0, packs: 1, packed: 1 });
         expect(s.readable([named])).toEqual([named]);
+    });
+
+    test.skipIf(process.platform === "win32" || process.getuid?.() === 0)(
+        "a change log that exists but cannot be read stops the pass before anything moves; a missing log names nothing",
+        async () => {
+            const now = new Date();
+            const s = scratchStore();
+            const [named = "", orphan = ""] = s.write("named only by a log the pass cannot read\n", "no row, old\n");
+            s.row("s-1", "/repo/a.ts", named, new Date(now.getTime() - DAY));
+            s.age(named, new Date(now.getTime() - 40 * DAY));
+            s.age(orphan, new Date(now.getTime() - 40 * DAY));
+            // A session folder without a log and a plain file beside the sessions hold no rows, and are no error.
+            mkdirSync(join(s.agents, "s-empty"));
+            writeFileSync(join(s.agents, "hooks.json"), "{}");
+            const locked = join(s.agents, "s-1", "changes.jsonl");
+            chmodSync(locked, 0o000);
+
+            try {
+                await expect(
+                    maintainObjectStore({ now, root: s.store, logsDir: s.agents, settle: noSettle })
+                ).rejects.toThrow(`cannot read the change log ${locked}`);
+                expect(s.readable([named, orphan])).toEqual([named, orphan].sort());
+                expect(s.count()).toMatchObject({ loose: 2, packs: 0 });
+            } finally {
+                chmodSync(locked, 0o644);
+            }
+
+            const report = await maintainObjectStore({ now, root: s.store, logsDir: s.agents, settle: noSettle });
+            expect(report).toMatchObject({ packed: 1, dropped: { loose: 1, packed: 0 } });
+            expect(s.readable([named, orphan])).toEqual([named]);
+        }
+    );
+
+    test("a pack retirement cut between its index and its pack loses nothing: recovery makes the pair whole", async () => {
+        const now = new Date();
+
+        // The order a pass used before (rename the index, then the pack), and the hard-link order it uses now.
+        for (const cut of ["index renamed, pack not yet", "both linked, store index unlinked"]) {
+            const s = scratchStore();
+            const [stale = "", kept = ""] = s.write("named 35 days ago\n", "named today\n");
+            s.row("s-old", "/repo/old.ts", stale, new Date(now.getTime() - 35 * DAY));
+            s.row("s-1", "/repo/new.ts", kept, now);
+            await maintainObjectStore({
+                now: new Date(now.getTime() - 10 * DAY),
+                root: s.store,
+                logsDir: s.agents,
+                settle: noSettle,
+            });
+            const packDir = join(s.store, "objects", "pack");
+            const base = readdirSync(packDir)
+                .find((name) => name.endsWith(".idx"))
+                ?.slice(0, -".idx".length);
+            expect(base, cut).toBeDefined();
+
+            // A pass that died an hour ago while it retired that pack; a row it would have read names the stale blob.
+            const retiredPacks = join(
+                s.store,
+                "gt-maintenance",
+                `retired-1-${now.getTime() - 60 * 60 * 1000}`,
+                "objects",
+                "pack"
+            );
+            mkdirSync(retiredPacks, { recursive: true });
+
+            if (cut === "index renamed, pack not yet") {
+                renameSync(join(packDir, `${base}.idx`), join(retiredPacks, `${base}.idx`));
+            } else {
+                for (const name of readdirSync(packDir).filter((name) => name.startsWith(`${base}.`))) {
+                    linkSync(join(packDir, name), join(retiredPacks, name));
+                }
+
+                unlinkSync(join(packDir, `${base}.idx`));
+            }
+
+            s.row("s-2", "/repo/old.ts", stale, now);
+            expect(s.readable([stale, kept]), cut).toEqual([]);
+
+            await maintainObjectStore({ now, root: s.store, logsDir: s.agents, settle: noSettle });
+
+            expect(s.readable([stale, kept]), cut).toEqual([stale, kept].sort());
+            const packs = readdirSync(packDir);
+            expect(
+                packs.filter((name) => name.endsWith(".pack") && !packs.includes(name.replace(/\.pack$/, ".idx"))),
+                cut
+            ).toEqual([]);
+            expect(readdirSync(join(s.store, "gt-maintenance")).filter((name) => name.startsWith("retired-"))).toEqual(
+                []
+            );
+            const fsck = spawnSync("git", ["--git-dir", s.store, "fsck", "--no-dangling"], {
+                encoding: "utf8",
+                env: process.env,
+            });
+            expect(fsck.status, `${cut}: ${fsck.stderr}`).toBe(0);
+        }
+    });
+
+    test.skipIf(process.platform === "win32" || process.getuid?.() === 0)(
+        "a moved-aside object that does not read back keeps the folder for the next pass",
+        async () => {
+            const now = new Date();
+            const s = scratchStore();
+            const [stale = ""] = s.write("named 40 days ago, moved aside by a pass that died\n");
+            const retired = join(s.store, "gt-maintenance", `retired-1-${now.getTime() - 60 * 60 * 1000}`);
+            const moved = join(retired, "objects", stale.slice(0, 2), stale.slice(2));
+            mkdirSync(join(retired, "objects", stale.slice(0, 2)), { recursive: true });
+            renameSync(s.loosePath(stale), moved);
+            s.row("s-2", "/repo/old.ts", stale, now);
+            chmodSync(moved, 0o000);
+
+            try {
+                await expect(
+                    maintainObjectStore({ now, root: s.store, logsDir: s.agents, settle: noSettle })
+                ).rejects.toThrow("did not read back");
+                expect(existsSync(moved)).toBe(true);
+            } finally {
+                chmodSync(moved, 0o444);
+            }
+
+            const report = await maintainObjectStore({ now, root: s.store, logsDir: s.agents, settle: noSettle });
+            expect(report.restored).toBe(1);
+            expect(s.readable([stale])).toEqual([stale]);
+            expect(existsSync(retired)).toBe(false);
+        }
+    );
+
+    test("tools compress daily exits 1 when the agents-objects step failed or found its lock held, with --json too", () => {
+        const report = (skipped?: "locked"): MaintenanceReport => ({
+            root: "/store",
+            dryRun: false,
+            retentionDays: 30,
+            cutoff: "",
+            before: null,
+            after: null,
+            packed: 0,
+            keptLoose: 0,
+            dropped: { loose: 0, packed: 0 },
+            missing: 0,
+            restored: 0,
+            packsRetired: 0,
+            garbageRemoved: 0,
+            elapsedMs: 0,
+            ...(skipped ? { skipped } : {}),
+        });
+        const result = spyOn(out, "result").mockImplementation(() => undefined);
+        const println = spyOn(out, "println").mockImplementation(() => undefined);
+        const exitCode = process.exitCode;
+        const codes: Record<string, typeof process.exitCode> = {};
+
+        try {
+            for (const [name, objectStore] of [
+                ["failed", null],
+                ["locked", report("locked")],
+                ["ran", report()],
+            ] as const) {
+                for (const json of [true, false]) {
+                    process.exitCode = 0;
+                    reportDailyPass({ compression: [], objectStore }, json);
+                    codes[`${name}${json ? " --json" : ""}`] = process.exitCode;
+                }
+            }
+        } finally {
+            process.exitCode = exitCode;
+            result.mockRestore();
+            println.mockRestore();
+        }
+
+        expect(codes).toEqual({
+            failed: 1,
+            "failed --json": 1,
+            locked: 1,
+            "locked --json": 1,
+            ran: 0,
+            "ran --json": 0,
+        });
     });
 });

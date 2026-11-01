@@ -631,6 +631,12 @@ tools compress daily             # the daily pass now: the logs, then agents-obj
   rows written meanwhile are read, and any object they name comes back. One step at a time
   (`gt-maintenance/lock` in the store). The store gets `gc.auto=0` and `gc.pruneExpire=never` when it
   is made and on every pass, so no git command can start a gc that prunes it.
+- **Fail closed:** a change log that exists but cannot be read (a permission or I/O error) stops the
+  step before anything moves; only a missing log names nothing. A pack moves aside as a whole pair:
+  both files are hard-linked under `gt-maintenance/retired-*` before the store's copies go, the
+  index first. The next step's recovery puts back a pack a dead step left half moved, and keeps the
+  moved-aside folder while an object it holds does not read back. `tools compress daily` exits 1
+  when the step failed or found its lock held, with `--json` too.
 
 ## Proving a change
 
