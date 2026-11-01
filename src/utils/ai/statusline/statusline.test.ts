@@ -107,6 +107,22 @@ describe("statusline segments reproduce the shell script", () => {
         expect(stale).toContain("⌁?");
     });
 
+    test("an account without a 5-hour limit drops the 5h slot, never printing 0 % or ?", () => {
+        const absent = accountSegment(
+            {
+                name: "work",
+                fiveHour: null,
+                fiveHourAbsent: true,
+                sevenDay: 54,
+                sevenDayFable: 12,
+                stale: false,
+                fetchedAt: 1_000,
+            },
+            1_000
+        );
+        expect(stripAnsi(absent)).toBe(" ⚿ work (W:54%;F:12%)");
+    });
+
     test("layout drops parts that do not fit and measures visible width without ANSI", () => {
         expect(visibleWidth(`${ANSI.red}abc${ANSI.reset}`)).toBe(3);
         expect(buildLine(["12345", "67890", "x"], 6)).toBe("12345x");
