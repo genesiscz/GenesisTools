@@ -69,6 +69,16 @@ export interface RmPolicy {
     allowSessionScratch: boolean;
     /** The own-files rule: files the caller's session wrote go without asking. */
     allowOwnFiles: boolean;
+    /**
+     * The own-files rule also counts a file a Bash command of the session made (the agents change log), not only
+     * files the Write, Edit or NotebookEdit tool wrote.
+     */
+    ownFilesFromBash: boolean;
+    /**
+     * The tmp-small rule: a temp path (`/tmp`, the per-user temp folder) of at most this many megabytes, not tracked
+     * by git and holding no unsaved repository, is deleted without a request. 0 turns the rule off.
+     */
+    tmpSmallMB: number;
 }
 
 /** Which callers a profile applies to. Every field that is set must match. */
@@ -100,8 +110,11 @@ export interface RmConfig extends RmPolicy {
     roots: RmRoot[];
     /** Extra paths that are never deleted, nor any folder that contains one. */
     protect: string[];
-    /** Minutes a moved-aside item waits before the drain deletes it, so `tools rm restore` can bring it back. */
-    grace: { presetMinutes: number; otherMinutes: number };
+    /**
+     * Minutes a moved-aside item waits before the drain deletes it, so `tools rm restore` can bring it back: preset
+     * folders, the calling session's own scratch, and everything else.
+     */
+    grace: { presetMinutes: number; otherMinutes: number; scratchMinutes: number };
     trashRoot: string;
     disabledPresets: string[];
     /** Opt-in presets the user turned on. */
@@ -112,8 +125,17 @@ export interface RmConfig extends RmPolicy {
     disabledProfiles: string[];
     /** How a person confirms. Not a profile setting: it belongs to the person, not to the caller. */
     approval: RmApproval;
-    /** How a person hears of what waits for them. The person's, like `approval`, never a profile's. */
-    notify: { onRequest: RmNotifyOnRequest };
+    /**
+     * How a person hears of what waits for them, and when an agent may raise a window: a new request, a drain that
+     * failed, and the smallest request (MB) `tools rm ask` opens the approval window for. The person's, like
+     * `approval`, never a profile's.
+     */
+    notify: { onRequest: RmNotifyOnRequest; onFailure: RmNotifyOnRequest; askMinMB: number };
+    /**
+     * The drainer's request sweep: every `everyMinutes` it closes the pending requests a rule now covers or whose
+     * paths are all gone, and it keeps running `lingerMinutes` after the trash emptied while requests wait.
+     */
+    sweep: { everyMinutes: number; lingerMinutes: number };
 }
 
 export function rmDataDir(...segments: string[]): string {
@@ -128,7 +150,7 @@ export function defaultRmConfig(): RmConfig {
     return {
         roots: [],
         protect: [],
-        grace: { presetMinutes: 0, otherMinutes: 60 },
+        grace: { presetMinutes: 0, otherMinutes: 60, scratchMinutes: 5 },
         trashRoot: defaultTrashRoot(),
         disabledPresets: [],
         enabledPresets: [],
@@ -136,11 +158,14 @@ export function defaultRmConfig(): RmConfig {
         profiles: [],
         disabledProfiles: [],
         approval: "auto",
-        notify: { onRequest: "inbox" },
+        notify: { onRequest: "inbox", onFailure: "inbox", askMinMB: 10 },
+        sweep: { everyMinutes: 5, lingerMinutes: 60 },
         askAction: "aside",
         asideUnsaved: false,
         allowSessionScratch: true,
         allowOwnFiles: true,
+        ownFilesFromBash: true,
+        tmpSmallMB: 10,
     };
 }
 
@@ -198,11 +223,12 @@ function validateRmConfig(value: unknown): void {
     const boolean = (v: unknown): boolean => typeof v === "boolean";
     const texts = (v: unknown): boolean => Array.isArray(v) && v.every(text);
     const nonnegative = (v: unknown): boolean => typeof v === "number" && Number.isFinite(v) && v >= 0;
+    const positive = (v: unknown): boolean => typeof v === "number" && Number.isFinite(v) && v > 0;
     const grace = (v: unknown): boolean => {
         if (!isRecord(v)) {
             return false;
         }
-        check(v, { presetMinutes: nonnegative, otherMinutes: nonnegative });
+        check(v, { presetMinutes: nonnegative, otherMinutes: nonnegative, scratchMinutes: nonnegative });
         return true;
     };
     const policy = (v: Record<string, unknown>): void => {
@@ -210,9 +236,25 @@ function validateRmConfig(value: unknown): void {
             asideUnsaved: boolean,
             allowSessionScratch: boolean,
             allowOwnFiles: boolean,
+            ownFilesFromBash: boolean,
+            tmpSmallMB: nonnegative,
             askAction: isAskAction,
             grace,
         });
+    };
+    const notify = (v: unknown): boolean => {
+        if (!isRecord(v)) {
+            return false;
+        }
+        check(v, { onRequest: isRmNotifyOnRequest, onFailure: isRmNotifyOnRequest, askMinMB: nonnegative });
+        return true;
+    };
+    const sweep = (v: unknown): boolean => {
+        if (!isRecord(v)) {
+            return false;
+        }
+        check(v, { everyMinutes: positive, lingerMinutes: nonnegative });
+        return true;
     };
     const preset = (item: unknown): boolean => {
         if (!isRecord(item) || parsePreset(item) === null) {
@@ -252,7 +294,8 @@ function validateRmConfig(value: unknown): void {
     policy(value);
     check(value, {
         approval: isRmApproval,
-        notify: (v) => isRecord(v) && (!("onRequest" in v) || isRmNotifyOnRequest(v.onRequest)),
+        notify,
+        sweep,
         trashRoot: isTrashRootName,
         roots: (v) => Array.isArray(v) && v.every(root),
         customPresets: (v) => Array.isArray(v) && v.every(preset),
@@ -345,8 +388,14 @@ function parseProfile(value: unknown): RmProfile | null {
         asideUnsaved: optionalBool(value.asideUnsaved),
         allowSessionScratch: optionalBool(value.allowSessionScratch),
         allowOwnFiles: optionalBool(value.allowOwnFiles),
+        ownFilesFromBash: optionalBool(value.ownFilesFromBash),
+        tmpSmallMB: optionalMinutes(value.tmpSmallMB),
         grace: grace
-            ? { presetMinutes: optionalMinutes(grace.presetMinutes), otherMinutes: optionalMinutes(grace.otherMinutes) }
+            ? {
+                  presetMinutes: optionalMinutes(grace.presetMinutes),
+                  otherMinutes: optionalMinutes(grace.otherMinutes),
+                  scratchMinutes: optionalMinutes(grace.scratchMinutes),
+              }
             : undefined,
         disabledPresets: Array.isArray(value.disabledPresets) ? strings(value.disabledPresets) : undefined,
         roots: Array.isArray(value.roots) ? strings(value.roots) : undefined,
@@ -377,6 +426,9 @@ export function parseRmConfig(raw: unknown): RmConfig {
     }
 
     const grace = isRecord(raw.grace) ? raw.grace : {};
+    // A config saved before a nested setting existed reads its default.
+    const notify = isRecord(raw.notify) ? raw.notify : {};
+    const sweep = isRecord(raw.sweep) ? raw.sweep : {};
 
     return {
         roots: Array.isArray(raw.roots) ? raw.roots.map(parseRoot).filter((r): r is RmRoot => r !== null) : [],
@@ -384,6 +436,7 @@ export function parseRmConfig(raw: unknown): RmConfig {
         grace: {
             presetMinutes: minutes(grace.presetMinutes, defaults.grace.presetMinutes),
             otherMinutes: minutes(grace.otherMinutes, defaults.grace.otherMinutes),
+            scratchMinutes: minutes(grace.scratchMinutes, defaults.grace.scratchMinutes),
         },
         trashRoot: isTrashRootName(raw.trashRoot) ? raw.trashRoot : defaults.trashRoot,
         disabledPresets: strings(raw.disabledPresets),
@@ -396,16 +449,23 @@ export function parseRmConfig(raw: unknown): RmConfig {
             ? raw.profiles.map(parseProfile).filter((p): p is RmProfile => p !== null)
             : [],
         approval: isRmApproval(raw.approval) ? raw.approval : defaults.approval,
-        // A config saved before `notify` existed reads the default.
         notify: {
-            onRequest:
-                isRecord(raw.notify) && isRmNotifyOnRequest(raw.notify.onRequest)
-                    ? raw.notify.onRequest
-                    : defaults.notify.onRequest,
+            onRequest: isRmNotifyOnRequest(notify.onRequest) ? notify.onRequest : defaults.notify.onRequest,
+            onFailure: isRmNotifyOnRequest(notify.onFailure) ? notify.onFailure : defaults.notify.onFailure,
+            askMinMB: minutes(notify.askMinMB, defaults.notify.askMinMB),
+        },
+        sweep: {
+            everyMinutes:
+                typeof sweep.everyMinutes === "number" && sweep.everyMinutes > 0
+                    ? minutes(sweep.everyMinutes, defaults.sweep.everyMinutes)
+                    : defaults.sweep.everyMinutes,
+            lingerMinutes: minutes(sweep.lingerMinutes, defaults.sweep.lingerMinutes),
         },
         askAction: isAskAction(raw.askAction) ? raw.askAction : defaults.askAction,
         asideUnsaved: bool(raw.asideUnsaved, defaults.asideUnsaved),
         allowSessionScratch: bool(raw.allowSessionScratch, defaults.allowSessionScratch),
         allowOwnFiles: bool(raw.allowOwnFiles, defaults.allowOwnFiles),
+        ownFilesFromBash: bool(raw.ownFilesFromBash, defaults.ownFilesFromBash),
+        tmpSmallMB: minutes(raw.tmpSmallMB, defaults.tmpSmallMB),
     };
 }

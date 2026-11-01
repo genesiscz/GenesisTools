@@ -11,7 +11,7 @@ import {
 } from "@genesiscz/utils/rm";
 import type { Command } from "commander";
 import pc from "picocolors";
-import { minutesOption, requirePerson, runContext } from "../lib/run";
+import { megabytesOption, minutesOption, requirePerson, runContext } from "../lib/run";
 
 interface ProfileFlags {
     agent?: string;
@@ -22,8 +22,11 @@ interface ProfileFlags {
     asideUnsaved?: boolean;
     sessionScratch?: boolean;
     ownFiles?: boolean;
+    ownBashFiles?: boolean;
+    tmpSmallMb?: number;
     gracePreset?: number;
     graceOther?: number;
+    graceScratch?: number;
     disablePreset?: string[];
     root?: string[];
     protect?: string[];
@@ -49,7 +52,9 @@ interface PolicyView {
     asideUnsaved?: boolean;
     allowSessionScratch?: boolean;
     allowOwnFiles?: boolean;
-    grace?: { presetMinutes?: number; otherMinutes?: number };
+    ownFilesFromBash?: boolean;
+    tmpSmallMB?: number;
+    grace?: { presetMinutes?: number; otherMinutes?: number; scratchMinutes?: number };
     disabledPresets?: string[];
     protect?: string[];
     roots?: Array<string | { path: string }>;
@@ -79,9 +84,19 @@ export function describePolicy(config: PolicyView): string[] {
         lines.push(`own files without asking: ${config.allowOwnFiles ? "yes" : "no"}`);
     }
 
+    if (config.ownFilesFromBash !== undefined) {
+        lines.push(`files its Bash commands made count as its own: ${config.ownFilesFromBash ? "yes" : "no"}`);
+    }
+
+    if (config.tmpSmallMB !== undefined) {
+        lines.push(
+            `small temp paths without a request: ${config.tmpSmallMB > 0 ? `up to ${config.tmpSmallMB} MB` : "off"}`
+        );
+    }
+
     if (config.grace) {
         lines.push(
-            `grace: presets ${graceText(config.grace.presetMinutes)}, others ${graceText(config.grace.otherMinutes)}`
+            `grace: presets ${graceText(config.grace.presetMinutes)}, own scratch ${graceText(config.grace.scratchMinutes)}, others ${graceText(config.grace.otherMinutes)}`
         );
     }
 
@@ -180,8 +195,12 @@ export function registerProfileCommands(program: Command): void {
         .option("--no-session-scratch", "the session's own scratch needs the user too")
         .option("--own-files", "files the session wrote go without asking")
         .option("--no-own-files", "files the session wrote need the user too")
+        .option("--own-bash-files", "files the session's Bash commands made count as its own")
+        .option("--no-own-bash-files", "only files the Write, Edit or NotebookEdit tool wrote count as its own")
+        .option("--tmp-small-mb <mb>", "temp paths up to this size go without a request (0: off)", megabytesOption)
         .option("--grace-preset <duration>", "how long preset folders wait in the trash", minutesOption)
         .option("--grace-other <duration>", "how long everything else waits in the trash", minutesOption)
+        .option("--grace-scratch <duration>", "how long the session's own scratch waits in the trash", minutesOption)
         .option("--disable-preset <ids...>", "presets this profile does not allow")
         .option("--root <dirs...>", "extra trusted roots")
         .option("--protect <paths...>", "extra paths that are never deleted")
@@ -217,9 +236,17 @@ export function registerProfileCommands(program: Command): void {
                 asideUnsaved: flags.asideUnsaved,
                 allowSessionScratch: flags.sessionScratch,
                 allowOwnFiles: flags.ownFiles,
+                ownFilesFromBash: flags.ownBashFiles,
+                tmpSmallMB: flags.tmpSmallMb,
                 grace:
-                    flags.gracePreset !== undefined || flags.graceOther !== undefined
-                        ? { presetMinutes: flags.gracePreset, otherMinutes: flags.graceOther }
+                    flags.gracePreset !== undefined ||
+                    flags.graceOther !== undefined ||
+                    flags.graceScratch !== undefined
+                        ? {
+                              presetMinutes: flags.gracePreset,
+                              otherMinutes: flags.graceOther,
+                              scratchMinutes: flags.graceScratch,
+                          }
                         : undefined,
                 disabledPresets: flags.disablePreset,
                 roots: flags.root?.map((dir) => resolve(dir)),
