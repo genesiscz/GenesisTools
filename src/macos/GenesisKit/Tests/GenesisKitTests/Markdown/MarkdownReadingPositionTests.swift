@@ -6,7 +6,8 @@ import XCTest
 /// A note that changes on disk keeps the reader where they were (Martin, 2026-11-01: "when the Genesis Markdown
 /// markdown is updated it shouldnt jump to the start of the document - restore the position i was in"). The page
 /// tests run the real template in a hidden window that is never ordered front; the editor tests use a plain TextKit 1
-/// text view in a hidden window.
+/// text view in a hidden window. A hidden page gets no animation frames, so they come from timers, installed before the
+/// page loads: every render's second pass (after a late layout) runs before the test reads the page.
 @MainActor
 final class MarkdownReadingPositionTests: XCTestCase {
     private final class Loaded: NSObject, WKNavigationDelegate {
@@ -23,6 +24,10 @@ final class MarkdownReadingPositionTests: XCTestCase {
         loaded = Loaded()
         let config = WKWebViewConfiguration()
         config.setURLSchemeHandler(MarkdownWebView.AssetSchemeHandler(), forURLScheme: MarkdownWebView.assetScheme)
+        config.userContentController.addUserScript(WKUserScript(
+            source: "window.requestAnimationFrame = (cb) => setTimeout(() => cb(performance.now()), 16); window.cancelAnimationFrame = (id) => clearTimeout(id);",
+            injectionTime: .atDocumentStart, forMainFrameOnly: true
+        ))
         web = WKWebView(frame: NSRect(x: 0, y: 0, width: 800, height: 600), configuration: config)
         web.navigationDelegate = loaded
         window = NSWindow(contentRect: web.frame, styleMask: [.borderless], backing: .buffered, defer: false)
@@ -41,10 +46,24 @@ final class MarkdownReadingPositionTests: XCTestCase {
 
     // MARK: The page
 
-    private func render(_ markdown: String, same: Bool = true) async throws {
+    /// Renders, then waits until the render's second pass (one animation frame later) has run. `meanwhile` runs after
+    /// the render and before that frame: a late layout, a reader's scroll, a jump.
+    private func render(_ markdown: String, same: Bool = true, meanwhile: String = "") async throws {
         tag += 1
-        _ = try await web.evaluateJavaScript(
-            "window.gnRender(\(MarkdownWebView.jsString(markdown)),[],false,null,{},false,\(tag),\(same));true")
+        _ = try await web.evaluateJavaScript("""
+        window.gnRender(\(MarkdownWebView.jsString(markdown)),[],false,null,{},false,\(tag),\(same));
+        setTimeout(function(){\(meanwhile)},0);
+        window.gnTestFrame=0;setTimeout(function(){window.gnTestFrame=1;},40);true
+        """)
+        for _ in 0..<200 {
+            if try await js("window.gnTestFrame", as: Int.self) == 1 { return }
+            try await Task.sleep(nanoseconds: 20_000_000)
+        }
+        XCTFail("the frame after render \(tag) never came")
+    }
+
+    private func scrollTop() async throws -> Double {
+        try await js("document.scrollingElement.scrollTop", as: Double.self) ?? .nan
     }
 
     private func js<T>(_ script: String, as: T.Type = T.self) async throws -> T? {
@@ -138,6 +157,56 @@ final class MarkdownReadingPositionTests: XCTestCase {
         let after = try await topBlock()
         XCTAssertTrue(after.text.hasPrefix("Paragraph 40:"), "back on the paragraph once the file is whole: \(after.text)")
         XCTAssertEqual(after.top, before.top, accuracy: 1)
+    }
+
+    /// The writer empties the file before it writes it again, and the page draws the empty file on the way: a reader
+    /// at the bottom is at the bottom again once the file is whole.
+    func testAReaderAtTheBottomStaysThereThroughARenderTooShortToScroll() async throws {
+        try await render(Self.note)
+        _ = try await js("var sc=document.scrollingElement;sc.scrollTop=sc.scrollHeight;true", as: Bool.self)
+        try await render(Self.paragraphs([1]))
+        try await render(Self.note + "\n\n" + Self.paragraphs(Array(1...6), prefix: "Appended"))
+        let gap = try await js("var sc=document.scrollingElement;sc.scrollHeight-sc.clientHeight-sc.scrollTop", as: Double.self)
+        XCTAssertEqual(gap ?? -1, 0, accuracy: 1, "at the very bottom again")
+        let last = try await js("document.querySelector('#gn-article p:last-child').textContent", as: String.self)
+        XCTAssertEqual(last?.hasPrefix("Appended 6:"), true)
+    }
+
+    /// Images and diagrams lay out a frame after the render and push the reader's block down: the second pass puts it
+    /// back.
+    func testTheSecondPassPutsTheBlockBackAfterALateLayout() async throws {
+        try await render(Self.note)
+        try await scroll(to: "Paragraph 40:", top: -12)
+        let before = try await topBlock()
+        try await render(Self.paragraphs(Array(1...5), prefix: "Added") + "\n\n" + Self.note,
+                         meanwhile: "document.querySelector('#gn-article p').style.paddingTop='300px';")
+        let grown = try await js("parseInt(document.querySelector('#gn-article p').style.paddingTop,10)", as: Int.self)
+        XCTAssertEqual(grown, 300, "the late layout ran")
+        let after = try await topBlock()
+        XCTAssertTrue(after.text.hasPrefix("Paragraph 40:"), after.text)
+        XCTAssertEqual(after.top, before.top, accuracy: 1)
+    }
+
+    /// A reader who scrolled, or a jump (a link to lines, a find), between the render and its second pass decides the
+    /// position: the second pass does not pull the page back to the old block.
+    func testTheSecondPassLeavesAReaderWhoScrolledOrJumpedMeanwhile() async throws {
+        let late = "document.querySelector('#gn-article p').style.paddingTop='300px';"
+        try await render(Self.note)
+        try await scroll(to: "Paragraph 40:", top: -12)
+        try await render(Self.paragraphs(Array(1...5), prefix: "Added") + "\n\n" + Self.note,
+                         meanwhile: late + "document.scrollingElement.scrollTop=1234;")
+        let scrolled = try await scrollTop()
+        XCTAssertEqual(scrolled, 1234, accuracy: 1, "the reader's scroll stays")
+
+        try await scroll(to: "Paragraph 40:", top: -12)
+        try await render(Self.paragraphs(Array(1...6), prefix: "Added") + "\n\n" + Self.note,
+                         meanwhile: late + "window.gnHighlightLines(150,150,'blocks',true);window.gnTestJumped=document.scrollingElement.scrollTop;")
+        let jumped = try await js("window.gnTestJumped", as: Double.self)
+        let top = try await scrollTop()
+        XCTAssertNotNil(jumped)
+        XCTAssertEqual(top, jumped ?? .nan, accuracy: 1, "the jump stays where it put the page")
+        let marked = try await js("document.querySelector('#gn-article .gn-hl').textContent.slice(0,13)", as: String.self)
+        XCTAssertEqual(marked, "Paragraph 70:", "the jump's block: body line 150 is paragraph 70 after 6 added paragraphs")
     }
 
     func testTheSelectionStaysOnTheSameWords() async throws {
