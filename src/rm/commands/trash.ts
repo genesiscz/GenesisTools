@@ -5,9 +5,10 @@ import {
     type DrainProgress,
     drainDue,
     listBatches,
+    loadRmRequest,
     measureBytes,
     recoverAsideJournals,
-    requestBatchId,
+    requestBatchIds,
     restoreBatch,
     runDrainer,
     sweepOrphans,
@@ -21,13 +22,22 @@ function dueIn(drainAfter: string): string {
     return minutes <= 0 ? "due now" : `in ${minutes} min`;
 }
 
-/** A batch id as given, or the batch an approved request made (the window prints the request id before the batch exists). */
-function restoreTarget(id: string): string {
-    if (listBatches().some((batch) => batch.id === id)) {
-        return id;
+/**
+ * The batches `id` names: a batch id as given, or every batch the approvals of request `id` made that is still in
+ * the trash, oldest first (the window prints the request id before the batch exists). With none left, the newest
+ * one, so the restore says why.
+ */
+function restoreTargets(id: string): string[] {
+    const inTrash = new Set(listBatches().map((batch) => batch.id));
+
+    if (inTrash.has(id)) {
+        return [id];
     }
 
-    return requestBatchId(id) ?? id;
+    const request = loadRmRequest(id);
+    const made = request ? requestBatchIds(request) : [];
+    const left = made.filter((batchId) => inTrash.has(batchId));
+    return left.length > 0 ? left : [made.at(-1) ?? id];
 }
 
 export function registerTrashCommands(program: Command): void {
@@ -75,22 +85,32 @@ export function registerTrashCommands(program: Command): void {
         .argument("[paths...]", "only these original paths")
         .action((id: string, paths: string[]) => {
             const ctx = runContext();
-            const batchId = restoreTarget(id);
-            const result = restoreBatch(batchId, { config: ctx.config, only: paths, caller: ctx.caller });
+            const batchIds = restoreTargets(id);
+            let skipped = 0;
 
-            for (const path of result.restored) {
-                out.println(pc.green(`restored ${path}`));
+            for (const batchId of batchIds) {
+                if (batchIds.length > 1) {
+                    out.println(pc.bold(`batch ${batchId}`));
+                }
+
+                const result = restoreBatch(batchId, { config: ctx.config, only: paths, caller: ctx.caller });
+
+                for (const path of result.restored) {
+                    out.println(pc.green(`restored ${path}`));
+                }
+
+                for (const skip of result.skipped) {
+                    out.println(pc.yellow(`kept in the trash ${skip.path}: ${skip.reason}`));
+                }
+
+                for (const path of result.notMoved) {
+                    out.println(pc.dim(`never moved, still in place ${path}`));
+                }
+
+                skipped += result.skipped.length;
             }
 
-            for (const skip of result.skipped) {
-                out.println(pc.yellow(`kept in the trash ${skip.path}: ${skip.reason}`));
-            }
-
-            for (const path of result.notMoved) {
-                out.println(pc.dim(`never moved, still in place ${path}`));
-            }
-
-            process.exitCode = result.skipped.length > 0 ? 1 : 0;
+            process.exitCode = skipped > 0 ? 1 : 0;
         });
 
     program
