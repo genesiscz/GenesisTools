@@ -26,6 +26,8 @@ export interface SendOptions {
     includeSelf?: boolean;
     enter?: boolean;
     paste?: boolean;
+    /** Type the text as keystrokes instead of pasting it. Unlike a paste, a typed send does not see a person's draft. */
+    type?: boolean;
     exactSession?: boolean;
     /** Type even while a dialog is open in the session; see `openDialogFor` in `@genesiscz/utils/agents/dialogs`. */
     force?: boolean;
@@ -423,11 +425,13 @@ export async function sendToSessionPane(
         });
     }
 
-    // Multi-line text always goes as one paste: typed keystrokes turn each newline into Enter, so the agent got
-    // every line as its own prompt. A backslash goes the same way: `cmux send` reads `\n` and `\r` in its text as
-    // Enter and `\t` as Tab, so a message that mentions "\n" was cut in two at it and only half of it was submitted
-    // (2026-11-01). A single line without a backslash keeps the typed path unless --paste asks for the paste.
-    const paste = opts.paste === true || /[\n\r\\]/.test(text);
+    // A message goes as one paste. `cmux paste` refuses while a person is typing in that prompt or a dialog is open,
+    // while typed keystrokes land in the middle of the person's draft: an agent's message was typed into an unsent
+    // prompt that way on 2026-11-01. A paste also keeps the text literal, where `cmux send` reads `\n`, `\r` and `\t`
+    // in it as Enter and Tab. Only a slash command, or --type, keeps the typed path, so the prompt sees keystrokes;
+    // text with a newline or a backslash is pasted even then.
+    const typed = opts.type === true || (opts.paste !== true && text.trimStart().startsWith("/"));
+    const paste = !typed || /[\n\r\\]/.test(text);
     const force = opts.force === true;
 
     if (surfaceId) {
@@ -447,7 +451,11 @@ export async function sendToSessionPane(
             await deliver({ target, surfaceId, text, enter, enterDelayMs, paste, force });
             return { kind: "typed", query: queryTrim, target, surfaceId, enter, source: result.source };
         } catch (err) {
-            if (result.source !== "recorded" || paste) {
+            // cmux answers `invalid_params` before it touches the pane, so such a paste sent nothing and is safe to
+            // retry. Any other failed paste may have landed and is never sent twice.
+            const refused = err instanceof Error && err.message.includes("invalid_params");
+
+            if (result.source !== "recorded" || (paste && !refused)) {
                 throw err;
             }
             // Recorded refs outlived their pane (cmux restart). Fall back to the matcher.
