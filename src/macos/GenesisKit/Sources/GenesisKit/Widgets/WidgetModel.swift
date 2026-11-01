@@ -328,10 +328,13 @@ public final class WidgetModel: ObservableObject {
 
     /// What a file link in the widget does (`.pathLinks` on every panel): Inbox behavior → Clicking a file link
     /// (`fileLinkClick`), read at each click, so a change in Settings applies to the next one. One instance, so a
-    /// panel that renders again hands its texts the same link environment.
-    private(set) lazy var pathLinks = PathLinkHandler(click: { [weak self] in
-        FileLinkClick(preference: self?.snapshot?.state.preferences.fileLinkClick)
-    })
+    /// panel that renders again hands its texts the same link environment. A link to a file that is gone says so in
+    /// the widget's own note (announced, held on hover, for the note duration), not in a toast at the pointer.
+    private(set) lazy var pathLinks = PathLinkHandler(
+        click: { [weak self] in FileLinkClick(preference: self?.snapshot?.state.preferences.fileLinkClick) },
+        system: SystemPathLinks(missing: { [weak self] path in
+            self?.postNote("Not on disk: \(PathDisplay.tilde(path))", tone: .warning)
+        }))
 
     /// Shows `text` as the widget's note, with an optional button (Undo, Send again). It is announced, and it fades
     /// after the note duration setting (`noteSeconds`, 6 s by default); a note with a button stays at least 10 s. A
