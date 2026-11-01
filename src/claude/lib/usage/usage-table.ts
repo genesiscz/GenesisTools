@@ -1,7 +1,8 @@
+import { absentLimitText } from "@genesiscz/utils/ai/providers/account-features";
 import type { AIAccountEntry } from "@genesiscz/utils/config/ai.types";
 import { accent, padVisible } from "@genesiscz/utils/prompts/clack/table-select";
 import pc from "picocolors";
-import type { ScoredAccount } from "./account-picker";
+import { hasNoSessionLimit, type ScoredAccount } from "./account-picker";
 import { type CompactLimit, effectiveLeftPct } from "./compact-limits";
 
 export const TIER_BADGE: Record<ScoredAccount["tier"], string> = {
@@ -85,6 +86,9 @@ function fmtRelative(from: Date, to: Date): string {
 
     return `${Math.max(1, minutes)}m`;
 }
+
+/** The table legend for the dash in the 5H column (an account without a 5-hour limit has no 5H cell). */
+export const NO_SESSION_LIMIT_LEGEND = `— in 5H: ${absentLimitText({ kind: "session" })}`;
 
 /** The five table cells for one account: name, 5h / weekly / Fable headroom, coarse resets. */
 export function accountCells(scored: ScoredAccount, now: Date = new Date()): string[] {
@@ -210,7 +214,9 @@ export function detailBlock(
     return [
         identity.join(" · "),
         subscription,
-        limitRow("5 Hour", limits.session, resetCell(limits.session, now, pace?.session), now),
+        hasNoSessionLimit(scored)
+            ? `${pc.dim(padVisible("5 Hour", DETAIL_LABEL_W))} ${pc.dim(`— ${absentLimitText({ kind: "session" })} on this account`)}`
+            : limitRow("5 Hour", limits.session, resetCell(limits.session, now, pace?.session), now),
         limitRow("Weekly", limits.weekly, resetCell(limits.weekly, now, pace?.weekly), now),
         limitRow("Fable", limits.fable, fableReset, now),
     ];

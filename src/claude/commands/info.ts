@@ -1,5 +1,6 @@
 import { AIConfig } from "@genesiscz/utils/ai/AIConfig";
 import { AiConfigStore } from "@genesiscz/utils/ai/config/AiConfigStore";
+import { type AbsentLimit, absentLimitText } from "@genesiscz/utils/ai/providers/account-features";
 import { toolCommand } from "@genesiscz/utils/cli/tool-command";
 import type { AIAccountEntry } from "@genesiscz/utils/config/ai.types";
 import { SafeJSON } from "@genesiscz/utils/json";
@@ -7,18 +8,23 @@ import { out } from "@genesiscz/utils/logger";
 import { withVaultPurpose } from "@genesiscz/utils/security/vault-purpose";
 import type { Command } from "commander";
 import pc from "picocolors";
-import { normalizeLimits } from "../lib/usage/limits";
+import { absentLimitsOf, normalizeLimits } from "../lib/usage/limits";
 import { peekSharedUsage } from "../lib/usage/shared-cache";
 
 interface InfoOptions {
     format?: string;
 }
 
-interface AccountInfoPayload {
+export interface AccountInfoPayload {
     name: string;
     label: string | null;
-    /** Bucket key (five_hour, seven_day, seven_day_fable, ...) -> rounded percent. */
-    usage: Record<string, number> | null;
+    /**
+     * Bucket key (five_hour, seven_day, seven_day_fable, ...) -> rounded percent. A window the account does not
+     * have is null here and named in `absentLimits` (`five_hour` on an account without a 5-hour limit).
+     */
+    usage: Record<string, number | null> | null;
+    /** Windows the account does not have; the statusline drops their slot. Empty when none is known absent. */
+    absentLimits: AbsentLimit[];
     stale: boolean;
     fetchedAt: number | null;
 }
@@ -83,18 +89,26 @@ async function readAnthropicAccounts(): Promise<InfoAccount[]> {
     return store.data().accounts.filter((a) => a.provider === "anthropic-sub");
 }
 
-async function buildPayload(account: InfoAccount): Promise<AccountInfoPayload> {
+export async function buildPayload(
+    account: InfoAccount,
+    { peek = peekSharedUsage }: { peek?: typeof peekSharedUsage } = {}
+): Promise<AccountInfoPayload> {
     // Passive cache read only — `tools claude info` must never hit the network
     // (it is called from the statusline on every cache-miss refresh).
-    const cached = await peekSharedUsage();
+    const cached = await peek();
     const accountUsage = cached?.accounts.find((a) => a.accountName === account.name);
+    const absentLimits = absentLimitsOf(accountUsage?.usage);
 
-    let usage: Record<string, number> | null = null;
+    let usage: Record<string, number | null> | null = null;
 
     if (accountUsage?.usage) {
         usage = {};
         for (const limit of normalizeLimits(accountUsage.usage)) {
             usage[limit.bucket] = Math.round(limit.percent);
+        }
+
+        for (const limit of absentLimits) {
+            usage[limit.key] = null;
         }
     }
 
@@ -102,6 +116,7 @@ async function buildPayload(account: InfoAccount): Promise<AccountInfoPayload> {
         name: account.name,
         label: account.label ?? null,
         usage,
+        absentLimits,
         stale: Boolean(accountUsage?.stale),
         fetchedAt: cached?.fetchedAt ?? null,
     };
@@ -116,7 +131,8 @@ function printText(payload: AccountInfoPayload): void {
     }
 
     for (const [bucket, pct] of Object.entries(payload.usage)) {
-        out.print(`  ${bucket}: ${pct}%`);
+        const absent = payload.absentLimits.find((limit) => limit.key === bucket);
+        out.print(`  ${bucket}: ${absent ? absentLimitText(absent) : `${pct}%`}`);
     }
 
     if (payload.stale) {

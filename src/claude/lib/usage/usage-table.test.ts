@@ -1,6 +1,8 @@
 import { describe, expect, test } from "bun:test";
+import { stripAnsi } from "@genesiscz/utils/string";
 import pc from "picocolors";
 import type { ScoredAccount } from "./account-picker";
+import { renderAccountUsage } from "./display";
 import { accountCells } from "./usage-table";
 
 const NOW = new Date("2026-07-10T12:00:00Z");
@@ -41,5 +43,41 @@ describe("expired-row rendering", () => {
     test("a subscription-expired account renders its name struck through", () => {
         const dead = { ...scored(50, 60_000), subscriptionExpired: true };
         expect(accountCells(dead, NOW)[0]).toBe(pc.strikethrough(pc.dim("a")));
+    });
+});
+
+describe("renderAccountUsage (tools claude usage --no-tui)", () => {
+    const strip = stripAnsi;
+
+    test("an account without a 5-hour limit prints no 5h bar, says so, and names only the windows the headers had", () => {
+        const text = strip(
+            renderAccountUsage({
+                accountName: "work",
+                usage: {
+                    five_hour: null,
+                    seven_day: { utilization: 30, resets_at: null },
+                    quota: { source: "headers", fiveHourStatus: null, sevenDayStatus: "allowed" },
+                },
+            })
+        );
+
+        expect(text).toContain("Current session\n  — no 5h limit on this account");
+        expect(text).toContain("Weekly and Fable from the rate-limit headers");
+        expect(text).not.toMatch(/Current session\n\s+0% used/);
+    });
+
+    test("negative control: an idle 5h window keeps its 0% bar", () => {
+        const text = strip(
+            renderAccountUsage({
+                accountName: "work",
+                usage: {
+                    five_hour: { utilization: 0, resets_at: null },
+                    seven_day: { utilization: 30, resets_at: null },
+                },
+            })
+        );
+
+        expect(text).toMatch(/Current session\n\s+0% used/);
+        expect(text).not.toContain("no 5h limit");
     });
 });

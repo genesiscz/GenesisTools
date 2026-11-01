@@ -2,13 +2,14 @@ import type { AccountUsage } from "@app/claude/lib/usage/api";
 import { BUCKET_LABELS, BUCKET_PERIODS_MS, colorForPct, isResetImminent } from "@app/claude/lib/usage/constants";
 import { formatSpendBalance } from "@app/claude/lib/usage/display";
 import type { NormalizedLimit, NormalizedSpend, Severity } from "@app/claude/lib/usage/limits";
-import { normalizeLimits, normalizeSpend } from "@app/claude/lib/usage/limits";
+import { absentLimitsOf, normalizeLimits, normalizeSpend } from "@app/claude/lib/usage/limits";
 import {
     formatCoarseSpan,
     formatRenewsAt,
     planAllowsClaudeCode,
     planRenewalWarning,
 } from "@app/claude/lib/usage/subscription";
+import { type AbsentLimit, absentLimitText } from "@genesiscz/utils/ai/providers/account-features";
 import { formatRelativeTime } from "@genesiscz/utils/format";
 import { useTerminalSize } from "@genesiscz/utils/ink/hooks/use-terminal-size";
 import { UsageBar } from "@genesiscz/utils/ink/usage-dashboard/components/usage-bar";
@@ -198,6 +199,25 @@ function BucketRow({ limit, layout, frozen = false }: BucketRowProps) {
     );
 }
 
+/**
+ * A window the account does not have (no 5-hour limit): its label, a dash where the percent goes and the
+ * reason, never a bar. An empty 0 % bar here read as an unused 5h window.
+ */
+function AbsentRow({ limit, layout }: { limit: AbsentLimit; layout: RowLayout }) {
+    const label = BUCKET_LABELS[limit.key] ?? limit.key.replace(/_/g, " ");
+
+    return (
+        <Text dimColor>
+            {`${fitLabel(label, layout.nameWidth)}${" ".repeat(layout.barWidth)}${"—".padStart(5)} ${absentLimitText(limit)}`}
+        </Text>
+    );
+}
+
+/** The absent windows the Overview shows: the prominent ones, one line each. */
+export function absentRowsFor(account: AccountUsage, prominentBuckets: string[]): AbsentLimit[] {
+    return absentLimitsOf(account.usage).filter((limit) => prominentBuckets.includes(limit.key));
+}
+
 interface SpendRowProps {
     spend: NormalizedSpend;
     layout: RowLayout;
@@ -285,6 +305,8 @@ export function estimateAccountHeight(account: AccountUsage, prominentBuckets: s
     for (const limit of visibleLimitsFor(account, prominentBuckets)) {
         lines += bucketRowLines(limit, layout);
     }
+
+    lines += absentRowsFor(account, prominentBuckets).length;
 
     const spend = normalizeSpend(account.usage);
     if (spend?.enabled) {
@@ -576,6 +598,9 @@ export function AccountSection({ account, prominentBuckets, width }: AccountSect
             />
             {planText ? <Text color="yellow">{`  ${planText}`}</Text> : null}
             {staleText && !staleInline ? <Text color={planDead ? "red" : "yellow"}>{`  ${staleText}`}</Text> : null}
+            {absentRowsFor(account, prominentBuckets).map((limit) => (
+                <AbsentRow key={`absent:${limit.key}`} limit={limit} layout={layout} />
+            ))}
             {visibleLimits.map((limit) => (
                 <BucketRow
                     key={`${limit.bucket}:${limit.scope_model ?? ""}`}

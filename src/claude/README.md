@@ -28,7 +28,8 @@ tools claude resume
 # Claude usage
 tools claude usage
 
-# Start the session timer on accounts with one tiny request (same command as tools ai warmup)
+# Start the session timer on accounts with one tiny request (same command as tools ai warmup);
+# an account without a 5-hour limit is skipped while its weekly window runs
 tools claude warmup --all
 
 # Migrate Claude assets to Codex (interactive wizard)

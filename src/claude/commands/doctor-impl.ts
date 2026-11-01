@@ -119,9 +119,12 @@ async function reportIdentities(accounts: AIAccountEntry[]): Promise<number> {
         const { fiveHourReset, sevenDayReset, fiveHourUtilization } = result.fingerprint;
         const when = fiveHourReset ? new Date(Number(fiveHourReset) * 1000).toLocaleTimeString() : "?";
         const weekly = sevenDayReset ? new Date(Number(sevenDayReset) * 1000).toLocaleDateString() : "?";
-        out.printlnErr(
-            `  ${pc.green("✔")} ${result.account} ${pc.dim(`5h resets ${when} · 7d resets ${weekly} · 5h used ${fiveHourUtilization ?? "?"}`)}`
-        );
+        // No 5h headers beside the weekly ones: the account has no 5-hour limit, not a failed probe.
+        const noFiveHour = fiveHourReset === null && fiveHourUtilization === null && sevenDayReset !== null;
+        const detail = noFiveHour
+            ? `no 5h limit · 7d resets ${weekly}`
+            : `5h resets ${when} · 7d resets ${weekly} · 5h used ${fiveHourUtilization ?? "?"}`;
+        out.printlnErr(`  ${pc.green("✔")} ${result.account} ${pc.dim(detail)}`);
     }
 
     const duplicates = findDuplicateAccounts(results);
