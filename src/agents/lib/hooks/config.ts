@@ -178,8 +178,10 @@ export interface DiffConfig {
     namedPathsShowCreated: boolean;
     /**
      * Whether a named file in a temp folder outside every git work tree is printed: a session's
-     * PR body, repro script or scratch JSON. Off: 146 such blocks in a day (2026-10-14), none of
-     * them the work itself.
+     * PR body, repro script or scratch JSON. On since 2026-11-01: work that lives in the session's
+     * scratch folder (rules drafted in `/tmp/cc/<project>/<session>/`) printed nothing, and the
+     * owner read it as a broken diff. Off was the default from 2026-10-15 (146 such blocks in a day,
+     * 2026-10-14). A file the command CREATES there stays hidden by `namedPathsShowCreated`.
      */
     showTempScratch: boolean;
     /**

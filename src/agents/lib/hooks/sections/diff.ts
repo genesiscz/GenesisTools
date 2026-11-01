@@ -48,7 +48,7 @@ const DEFAULT_DIFF: DiffConfig = {
     maxNamedPaths: 8,
     maxNamedPathMB: 2,
     namedPathsShowCreated: false,
-    showTempScratch: false,
+    showTempScratch: true,
     dedupeAcrossSessions: true,
     othersSummary: "line",
     maxMessageChars: 9_900,
