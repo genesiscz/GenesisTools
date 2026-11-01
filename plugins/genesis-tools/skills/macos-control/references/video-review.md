@@ -5,10 +5,10 @@ For recording an animation and the exact top/side 36-tile ffmpeg layouts, see
 [capturing-animations.md](capturing-animations.md). Prefer the existing video tool for timestamped
 contact sheets; use the custom layouts only when that shape improves the inspection.
 
-~~~sh
+```sh
 tools video probe /absolute/path/demo.mp4 --json
 tools video frames /absolute/path/demo.mp4 --fps 2 --frames-per-image 1 --out /absolute/path/evidence --json
-~~~
+```
 
 Choose 1, 2, 3 or 4 FPS and 1, 4, 8, 16 or 32 frames per image.
 The JSON result includes contact-sheet paths, full-resolution PNG paths, requested/actual timestamps and
